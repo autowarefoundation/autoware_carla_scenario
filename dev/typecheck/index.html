@@ -2128,9 +2128,8 @@ function or method of a checked module.</p>
 <li>Run <code>uv run pytest autoware_carla_scenario/test/carla_scenario/test_typecheck_library.py</code>.</li>
 </ol>
 <h3 id="what-is-checked-of-the-framework">What is checked of the framework<a class="headerlink" href="#what-is-checked-of-the-framework" title="Permanent link">&para;</a></h3>
-<p>Every module but two now has an entry other than <code>"not yet checked (#45)"</code>:
-<code>ros2.commands</code> and <code>ros2.transport</code>, which came with the ROS 2 ego, are not
-yet checked. 154 of the package's 236 modules (65%; about 36,000 of 67,500 lines) are <code>CHECKED</code>:
+<p>Every module now has an entry other than <code>"not yet checked (#45)"</code>. 159 of
+the package's 236 modules (67%; about 37,000 of 67,500 lines) are <code>CHECKED</code>:
 the kinematics, the coordinate frames and poses, the conversions between
 Lanelet2, OpenDRIVE and CARLA world poses (<code>coordinate.transform</code>), the stop
 lines read off a Lanelet2 map (<code>utils.stop_line</code>, <code>coordinate.stop_line</code>)
@@ -2152,7 +2151,9 @@ walk-straight actions and the background-traffic source and sink
 the scenario's route (<code>route.active</code>),
 the <code>signals</code> package (the signal controllers and their registry), the ego,
 NPC vehicle and pedestrian entities, the Autoware ego
-(<code>entity.autoware_entity</code>), the entity registry and the policy
+(<code>entity.autoware_entity</code>), the ego driven by ROS 2 nodes over DDS
+(<code>entity.ros2_entity</code>) with its configs, commands, arbitration and transport
+interface (<code>ros2</code>, <code>ros2.config</code>, <code>ros2.commands</code>, <code>ros2.transport</code>), the entity registry and the policy
 warm-up with the Chaos powertrain model, <code>BaseScenario</code>, the scenario
 runner's run loop and the queue that runs scenarios one after another
 (<code>scenario_runner</code>, <code>scenario_queue</code>), the UI's runner, which runs them in
@@ -2181,7 +2182,7 @@ driver's configs and client interface, trajectory follower and observations
 <code>driver.geometry</code>), and the <code>autoware_bridge</code>, <code>autoware_stack</code>, <code>entity</code>,
 <code>driver</code> and <code>maps</code> packages themselves, whose <code>__init__</code> re-exports what is not checked
 through models of it (see <em>A class a checked package only re-exports</em>
-below). 80
+below). 83
 functions and methods of those modules are <code>UNCALLED</code>: most of them a
 condition's <code>get_details()</code> or a backend's <code>describe()</code>, what takes a traffic
 backend's options node (<code>Mapping[str, Any]</code>), what reads a route search, a
@@ -2210,17 +2211,19 @@ odd.route or a condition's details (writing the result and its environment,
 <code>ScenarioRunner._warn_if_route_leaves_odd()</code>; collecting the condition
 statuses, <code>_collect_condition_statuses()</code>), the queue's pytest fixture
 (<code>ScenarioQueue.as_fixture()</code>), <code>maps.config.resolve_map_paths()</code>,
-which reads the <code>map</code> config node of any shape (<code>Any</code>), the driver configs'
-<code>from_mapping()</code> (a Hydra node, <code>Mapping[str, Any]</code>) and
-<code>encode_frame_jpeg()</code> (cv2). The 80 <code>EXCLUDED</code> modules other than the
-two not yet checked fall in three groups. Many fit more than one (about 55
-import what Codon cannot compile, 32 build on an excluded module and 21 hold
-values Codon has no type for), so each is counted once, in the first group
-that fits it:</p>
+which reads the <code>map</code> config node of any shape (<code>Any</code>), the driver and
+ROS 2 configs' <code>from_mapping()</code> (a Hydra node, <code>Mapping[str, Any]</code>), what
+builds the ROS 2 ego's Cyclone DDS transport (<code>entity.ros2_entity._cyclone_transport()</code>,
+which imports <code>ros2.cyclone</code> inside it) and
+<code>encode_frame_jpeg()</code> (cv2). The 77 <code>EXCLUDED</code> modules fall in
+three groups. Many fit more than one (about 55 import what Codon cannot
+compile, 29 build on an excluded module and 20 hold values Codon has no type
+for), so each is counted once, in the first group that fits it:</p>
 <ul>
 <li><strong>55 import what Codon cannot compile</strong>: pyxodr,
   pydantic, grpc, omegaconf and hydra, yaml, openodd (a Rust extension),
-  cyclonedds (the ROS 2 ego's DDS transport and messages), or
+  cyclonedds (<code>ros2.cyclone</code> and <code>ros2.messages</code>, the ROS 2 ego's DDS
+  transport and its message types), or
   a standard module Codon lacks (<code>json</code>, <code>inspect</code>, <code>tempfile</code>, <code>importlib</code>
   beyond <code>importlib.metadata</code>, or more of <code>os</code>, <code>pathlib</code>, <code>shutil</code>, <code>signal</code>,
   <code>subprocess</code>, <code>importlib.metadata</code> or <code>urllib.parse</code> than their shims
@@ -2232,17 +2235,16 @@ that fits it:</p>
   openodd, and the rest of what reads Lanelet2. A reason names <code>pathlib</code>
   only where the module uses more of it than the shim declares, and the
   other shimmed modules likewise.</li>
-<li><strong>22 build on an excluded module</strong>, and import nothing Codon lacks
+<li><strong>19 build on an excluded module</strong>, and import nothing Codon lacks
   themselves: they import a module that is neither checked nor modelled, or
   names that its package's model does not declare. Among them are the
   packages that re-export one (<code>authoring</code>, <code>odd</code>, <code>sweeper</code>,
-  <code>coverage</code>, <code>examples</code>, <code>scaffold</code>, <code>ros2</code>), the ROS 2 ego and its
-  configs (<code>entity.ros2_entity</code>, <code>ros2.config</code>), the
+  <code>coverage</code>, <code>examples</code>, <code>scaffold</code>), the
   authoring compiler, builders and validator, <code>odd.probes</code> and <code>odd.route</code>,
   the coverage half of the route check (names of <code>odd.model</code> and <code>coverage.items</code> that the odd and coverage
   models do not declare, such as <code>UNDECIDED</code>; both also hold attribute
   values of any type, <code>dict[str, Any]</code>) and
-  <code>traffic.registry</code> (the <code>registry</code>, in its plugin loader); 6 of the 22
+  <code>traffic.registry</code> (the <code>registry</code>, in its plugin loader); 5 of the 19
   also hold values Codon has no type for.</li>
 <li><strong>3 hold values Codon has no type for</strong>, and nothing else keeps them out:
   <code>Any</code> (<code>trajectory.authoring</code>, <code>authoring.registry</code>'s
@@ -2966,7 +2968,10 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   itself), so <code>self.vertices = tuple(vertices)</code> compiles; the source keeps
   its tuple. A dataclass field's <code>field(default=())</code> is an empty <code>List[X]</code>
   (<code>Pin.warnings</code>); a tuple display (<code>("a",)</code>) stays a fixed-length Codon
-  tuple, which is no <code>List[X]</code>: pass <code>tuple([...])</code> of a list instead. A parameter <code>tuple[X, ...]</code> is dropped (a caller may pass a
+  tuple, which is no <code>List[X]</code>: pass <code>tuple([...])</code> of a list instead
+  (<code>ros2.config</code>'s default <code>sources</code>; <code>CommandSourceConfig.topics</code>, which
+  returns a one- or a two-element tuple, likewise, so its two returns have
+  one type). A parameter <code>tuple[X, ...]</code> is dropped (a caller may pass a
   tuple), and the library check calls it with a <code>List[X]</code>.
   <code>Phase.states</code> and <code>SignalController.phases</code> (<code>signals.controller</code>) are
   checked this way. What only a tuple does is not checked: its hash (a
@@ -3032,7 +3037,17 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   it. Call it in the <code>else</code> branch of <code>if TYPE_CHECKING:</code> and check in the
   first branch what it can (<code>ScenarioRunner</code> calls <code>require_goal()</code>, built
   on the ego's class, and <code>_warn_if_route_leaves_odd()</code>, which plans the
-  route with odd.route, in the <code>else</code> branch).
+  route with odd.route, in the <code>else</code> branch; <code>Ros2EgoEntity.on_scenario_start()</code>
+  builds its Cyclone DDS transport, <code>_cyclone_transport()</code>, there too). A
+  private helper that imports such a module inside it needs an <code>UNCALLED</code>
+  entry of its own: its import is rewritten, and refused, even when nothing
+  compiled calls it.
+- <strong>A type alias imported from another module, inside an alias of this one</strong>
+  (<code>Received = Tuple[str, Command]</code>, with <code>Command</code> a <code>Union</code> alias of
+  <code>ros2.commands</code>) is "not defined" to Codon 0.19, though the imported alias
+  works as an annotation. Spell the union out in the alias
+  (<code>ros2.transport.Received</code>; <code>test_ros2_commands.py</code> checks the two are
+  equal).
 - <strong>An entity looked up by role is looked up by kind</strong>:
   <code>find_entity_by_role_name</code> returns an entity of any kind (<code>Optional[Any]</code>),
   so a checked module asks <code>entity.registry</code> for the kind it acts on,
@@ -3349,7 +3364,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 13, 2026 10:15:08 UTC"><span class="timeago" datetime="2026-10-13T10:15:08+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 13, 2026 10:15:08 UTC">2026-10-13</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 13, 2026 11:43:28 UTC"><span class="timeago" datetime="2026-10-13T11:43:28+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 13, 2026 11:43:28 UTC">2026-10-13</span>
   </span>
 
     
