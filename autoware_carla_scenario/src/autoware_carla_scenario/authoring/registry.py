@@ -32,6 +32,10 @@ import re
 # -- would let a renamed state leave a dead option in the editor that only
 # fails when the scenario is built.
 from ..action_state import ActionState
+
+# Free to import for the same reason: metrics reads CARLA only when a metric
+# is read, so the Metric card's options are the metrics themselves.
+from ..metrics import BUILT_IN_METRICS
 from dataclasses import dataclass
 from typing import Any, Literal, Optional
 
@@ -2531,21 +2535,9 @@ register_condition_spec(
     )
 )
 
-#: The metrics a Metric card can watch, as ``metrics.BUILT_IN_METRICS`` keys
-#: them.  Listed rather than read from there: that module imports CARLA, and
-#: the editor imports this one without it (a test keeps the two in step).
-METRIC_OPTIONS: tuple[SelectOption, ...] = (
-    SelectOption("collision_any", "Collision (any)"),
-    SelectOption("collision_front", "Collision (front)"),
-    SelectOption("collision_rear", "Collision (rear)"),
-    SelectOption("collision_lateral", "Collision (lateral)"),
-    SelectOption("collision_at_fault", "Collision at fault"),
-    SelectOption("offroad", "Off the road"),
-    SelectOption("offroad_or_collision", "Off the road or collision"),
-    SelectOption("offroad_or_collision_at_fault", "Off the road or collision at fault"),
-    SelectOption("wrong_lane", "Against the lane"),
-    SelectOption("min_distance_to_obstacle_m", "Distance to obstacle (m)"),
-    SelectOption("min_distance_to_lane_boundary_m", "Distance to lane edge (m)"),
+#: The metrics a Metric card can watch.
+METRIC_OPTIONS: tuple[SelectOption, ...] = tuple(
+    SelectOption(metric.key, metric.title) for metric in BUILT_IN_METRICS.values()
 )
 
 register_condition_spec(

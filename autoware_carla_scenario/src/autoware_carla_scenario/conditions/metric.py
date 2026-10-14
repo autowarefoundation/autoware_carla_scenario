@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Optional
 
+from ..metrics import BUILT_IN_METRICS, read_metric
 from .base import BaseCondition, ScenarioResult
 from .comparison import ComparisonRule, ScalarComparisonRule
 
@@ -61,10 +62,6 @@ class MetricCondition(BaseCondition):
         *,
         label: str,
     ) -> None:
-        # Imported here: metrics finds the ego with conditions.base, so a
-        # module-level import would close a cycle through this package.
-        from ..metrics import BUILT_IN_METRICS  # noqa: PLC0415
-
         super().__init__(label=label)
         if metric not in BUILT_IN_METRICS:
             known = ", ".join(sorted(BUILT_IN_METRICS))
@@ -104,8 +101,6 @@ class MetricCondition(BaseCondition):
             ScenarioResult with passed=True while the comparison holds, None
             otherwise.
         """
-        from ..metrics import read_metric  # noqa: PLC0415
-
         actual = read_metric(self._metric, world)
         if actual is None or not self._comparison.satisfied(actual):
             return None

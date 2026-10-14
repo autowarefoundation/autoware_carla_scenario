@@ -28,6 +28,7 @@ from .maps.opendrive import map_asset_env_var
 from .coordinate.poses import CarlaWorldPose
 from .coverage.collector import CoverageCollector
 from .measures import set_measured_scenario
+from .metrics import reset_metrics
 from .odd import OddCase, OddDefinition, reset_probes, resolve_odd
 from .coordinate.transform import to_opendrive
 from .entity.vehicle_entity import _set_warmup_done
@@ -1114,6 +1115,7 @@ class ScenarioRunner:
             # on every tick and judged against its modules, then the
             # scenario's own items, declared in setup() with register_cover().
             reset_probes()
+            reset_metrics()
             # An ODD that maps its taxonomy onto scenario measures reads this
             # scenario's, its own replacements included.
             if TYPE_CHECKING:
@@ -1276,6 +1278,7 @@ class ScenarioRunner:
 
         finally:
             set_measured_scenario(None)
+            reset_metrics()
             logger.info("[%s] === Cleanup start ===", scenario_name)
             _set_warmup_done(False)
 

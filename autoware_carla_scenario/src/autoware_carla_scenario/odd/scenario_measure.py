@@ -27,8 +27,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Optional
 
-from ..measures import BUILT_IN_MEASURES, read_measure
-from ..metrics import is_metric
+from ..measures import BUILT_IN_MEASURES, check_measure_key, read_measure
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
@@ -42,14 +41,7 @@ class ScenarioMeasure:
     key: str
 
     def __init__(self, key: str) -> None:
-        if not key:
-            raise ValueError("scenario_measure(): key must not be empty")
-        if is_metric(key):
-            raise ValueError(
-                f"scenario_measure({key}): {key} is a metric, how the ego drove, "
-                "not a condition it drives in: an ODD cannot map onto it. Watch "
-                "it with MetricCondition instead (docs/metrics.md)"
-            )
+        check_measure_key(key, "scenario_measure")
         self.key = key
 
     @property

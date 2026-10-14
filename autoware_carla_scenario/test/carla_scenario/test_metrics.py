@@ -36,12 +36,9 @@ from autoware_carla_scenario.metrics import (
     WRONG_LANE,
     is_metric,
     read_metric,
+    reset_metrics,
 )
-from autoware_carla_scenario.measures import (
-    BUILT_IN_MEASURES,
-    read_measure,
-    set_measured_scenario,
-)
+from autoware_carla_scenario.measures import BUILT_IN_MEASURES, read_measure
 from autoware_carla_scenario.odd import load_odd_binding, scenario_measure
 
 #: A car's half-extents: 4.6 m by 2 m.
@@ -181,10 +178,12 @@ def _car(actor_id: int, at: tuple[float, float], yaw: float = 0.0) -> _Actor:
 
 
 @pytest.fixture(autouse=True)
-def _no_scenario() -> Iterator[None]:
-    set_measured_scenario(None)
+def _fresh() -> Iterator[None]:
+    # A stand-in world is collected after its test, and the next one can take
+    # its id(): what was read for that id must not carry over.
+    reset_metrics()
     yield
-    set_measured_scenario(None)
+    reset_metrics()
 
 
 def _read(key: str, world: _World) -> Optional[float]:
@@ -534,7 +533,10 @@ def test_an_unknown_metric_is_refused() -> None:
 
 
 def test_the_editor_offers_every_metric() -> None:
-    assert [o.value for o in METRIC_OPTIONS] == list(BUILT_IN_METRICS)
+    assert [(o.value, o.label) for o in METRIC_OPTIONS] == [
+        (m.key, m.title) for m in BUILT_IN_METRICS.values()
+    ]
+    assert all(m.title for m in BUILT_IN_METRICS.values())
     spec = get_condition_spec("metric")
     assert spec is not None
     assert spec.target == "..conditions:MetricCondition"

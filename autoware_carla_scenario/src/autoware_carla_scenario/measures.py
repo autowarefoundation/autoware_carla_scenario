@@ -34,7 +34,7 @@ from typing import TYPE_CHECKING, Callable, Optional
 
 from .conditions.base import find_actor_in_list
 from .constants import EGO_ROLE_NAME
-from .metrics import reset_metrics
+from .metrics import is_metric
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
@@ -52,6 +52,7 @@ __all__ = [
     "PEDESTRIAN_MOVING_MS",
     "VEHICLE_AHEAD_GAP_M",
     "VEHICLE_AHEAD_RELATIVE_SPEED_KPH",
+    "check_measure_key",
     "in_ego_frame",
     "measured_scenario",
     "read_measure",
@@ -322,6 +323,26 @@ BUILT_IN_MEASURES: dict[str, Measure] = {
 }
 
 
+def check_measure_key(key: str, where: str) -> None:
+    """Refuse *key* as a measure's: empty, or a metric's.
+
+    A metric (:mod:`autoware_carla_scenario.metrics`) reads how the ego drove,
+    an outcome, which nothing maps onto or sets as a measure.  *where* names
+    the caller in the message, e.g. ``"register_measure"``.
+
+    Raises:
+        ValueError: If *key* is empty or a metric's.
+    """
+    if not key:
+        raise ValueError(f"{where}(): key must not be empty")
+    if is_metric(key):
+        raise ValueError(
+            f"{where}({key}): {key} is a metric, how the ego drove, not a "
+            "condition it drives in: an ODD cannot map onto it, nor a scenario "
+            "measure it. Watch it with MetricCondition instead (docs/metrics.md)"
+        )
+
+
 # ---------------------------------------------------------------------------
 # The running scenario
 # ---------------------------------------------------------------------------
@@ -337,7 +358,6 @@ def set_measured_scenario(scenario: Optional["BaseScenario"]) -> None:
     _MEASURED["scenario"] = scenario
     _CACHE.at, _CACHE.around = None, None
     _SET_OFF.clear()
-    reset_metrics()
 
 
 def measured_scenario() -> Optional["BaseScenario"]:

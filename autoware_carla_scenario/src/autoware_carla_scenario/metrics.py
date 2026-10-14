@@ -44,28 +44,26 @@ import math
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable, Optional
 
-from .conditions.base import find_actor_in_list
 from .constants import EGO_ROLE_NAME
+from .entity_role import find_actor_in_list
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
 
 __all__ = [
+    "BUILT_IN_METRICS",
     "COLLISION_ANY",
     "COLLISION_AT_FAULT",
     "COLLISION_FRONT",
     "COLLISION_LATERAL",
     "COLLISION_REAR",
-    "BUILT_IN_METRICS",
-    "LANE_SEARCH_RADIUS_M",
     "MIN_DISTANCE_TO_LANE_BOUNDARY_M",
     "MIN_DISTANCE_TO_OBSTACLE_M",
+    "Metric",
     "OFFROAD",
     "OFFROAD_OR_COLLISION",
     "OFFROAD_OR_COLLISION_AT_FAULT",
     "WRONG_LANE",
-    "WRONG_LANE_HEADING_RAD",
-    "Metric",
     "is_metric",
     "read_metric",
     "reset_metrics",
@@ -95,12 +93,22 @@ MIN_DISTANCE_TO_OBSTACLE_M = "min_distance_to_obstacle_m"
 MIN_DISTANCE_TO_LANE_BOUNDARY_M = "min_distance_to_lane_boundary_m"
 
 #: How far the ego must turn from its lane's heading to be against it, in
-#: radians: AlpaSim's 2/3 pi (120 degrees).
-WRONG_LANE_HEADING_RAD = math.pi * 2.0 / 3.0
+#: degrees: AlpaSim's 2/3 pi.
+_WRONG_LANE_HEADING_DEG = 120.0
 #: How far from the ego's centre a lane beside its own still counts towards
 #: the drivable area, in metres: AlpaSim's lane search radius.
-LANE_SEARCH_RADIUS_M = 6.0
+_LANE_SEARCH_RADIUS_M = 6.0
+#: How many lanes beside its own the drivable area is walked to, at most.
+_MAX_SIDE_LANES = 8
 
+#: What the ego's box meets in a frame, as bits: a road user at its front
+#: edge, at its rear edge, at its side only, and the edge of the road.
+_FRONT = 1
+_REAR = 2
+_LATERAL = 4
+_OFFROAD = 8
+_ANY_COLLISION = _FRONT | _REAR | _LATERAL
+_AT_FAULT = _FRONT | _LATERAL
 
 #: A point on the ground, ``(x, y)`` in CARLA's world frame.
 Point = tuple[float, float]
@@ -108,8 +116,28 @@ Point = tuple[float, float]
 #: rear right, rear left.
 Box = list[Point]
 
-#: How many lanes beside its own the drivable area is walked to, at most.
-_MAX_SIDE_LANES = 8
+
+@dataclass(frozen=True)
+class Metric:
+    """How the ego drove, read off the world.
+
+    Attributes:
+        key: Its key, AlpaSim's metric name, e.g. :data:`COLLISION_ANY`.
+        read: Reads it from the world; ``None`` when there is nothing to read.
+        title: A short name, as the scenario editor lists it.
+        unit: The unit it is read in; ``""`` for an event (``1`` or ``0``).
+        text: A description.
+        aggregation: How AlpaSim folds a run's frames into one value:
+            ``"max"`` (an event that happened at some point), ``"min"`` (the
+            closest the ego came), ``"mean"`` or ``"last"``.
+    """
+
+    key: str
+    read: Callable[[carla.World], Optional[float]]
+    title: str = ""
+    unit: str = ""
+    text: str = ""
+    aggregation: str = "max"
 
 
 # ---------------------------------------------------------------------------
@@ -117,12 +145,14 @@ _MAX_SIDE_LANES = 8
 # ---------------------------------------------------------------------------
 
 
-def _box_of(actor: "carla.Actor") -> Box:
-    """*actor*'s bounding box on the ground, in the world frame."""
-    transform = actor.get_transform()
-    yaw = math.radians(transform.rotation.yaw)
+def _box_of(actor: "carla.Actor", transform: "carla.Transform") -> Box:
+    """*actor*'s bounding box on the ground, in the world frame, *transform*
+    being where the actor is."""
+    heading = math.radians(transform.rotation.yaw)
+    yaw = heading
     extent_x, extent_y = 0.0, 0.0
     offset_x, offset_y = 0.0, 0.0
+    # Not getattr() with a default, which Codon lacks (docs/typecheck.md).
     try:
         box = actor.bounding_box
         extent_x, extent_y = float(box.extent.x), float(box.extent.y)
@@ -133,7 +163,6 @@ def _box_of(actor: "carla.Actor") -> Box:
     # CARLA's frame is left-handed: +y is to the right of +x.
     forward = (math.cos(yaw), math.sin(yaw))
     right = (-forward[1], forward[0])
-    heading = math.radians(transform.rotation.yaw)
     centre = (
         transform.location.x
         + offset_x * math.cos(heading)
@@ -175,12 +204,20 @@ def _inside(point: Point, box: Box) -> bool:
     return True
 
 
+def _point_segment_distance(p: Point, a: Point, b: Point) -> float:
+    dx, dy = b[0] - a[0], b[1] - a[1]
+    length2 = dx * dx + dy * dy
+    t = 0.0
+    if length2 > 0.0:
+        t = max(0.0, min(1.0, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / length2))
+    return math.hypot(p[0] - (a[0] + t * dx), p[1] - (a[1] + t * dy))
+
+
 def _segments_cross(a: Point, b: Point, c: Point, d: Point) -> bool:
     """Whether segment *ab* meets segment *cd*, touching included."""
-    d1, d2 = _cross(c, d, a), _cross(c, d, b)
-    d3, d4 = _cross(a, b, c), _cross(a, b, d)
-    if ((d1 > 0.0) != (d2 > 0.0) and d1 != 0.0 and d2 != 0.0) and (
-        (d3 > 0.0) != (d4 > 0.0) and d3 != 0.0 and d4 != 0.0
+    if (
+        _cross(c, d, a) * _cross(c, d, b) < 0.0
+        and _cross(a, b, c) * _cross(a, b, d) < 0.0
     ):
         return True
     return (
@@ -189,15 +226,6 @@ def _segments_cross(a: Point, b: Point, c: Point, d: Point) -> bool:
         or _point_segment_distance(c, a, b) <= 1e-9
         or _point_segment_distance(d, a, b) <= 1e-9
     )
-
-
-def _point_segment_distance(p: Point, a: Point, b: Point) -> float:
-    dx, dy = b[0] - a[0], b[1] - a[1]
-    length2 = dx * dx + dy * dy
-    t = 0.0
-    if length2 > 0.0:
-        t = max(0.0, min(1.0, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / length2))
-    return math.hypot(p[0] - (a[0] + t * dx), p[1] - (a[1] + t * dy))
 
 
 def _edges(box: Box) -> list[tuple[Point, Point]]:
@@ -225,163 +253,29 @@ def _box_distance(one: Box, other: Box) -> float:
     """Metres between two boxes on the ground; ``0.0`` when they meet."""
     if _boxes_meet(one, other):
         return 0.0
+    one_edges, other_edges = _edges(one), _edges(other)
     best = math.inf
     for p in one:
-        for a, b in _edges(other):
+        for a, b in other_edges:
             best = min(best, _point_segment_distance(p, a, b))
     for p in other:
-        for a, b in _edges(one):
+        for a, b in one_edges:
             best = min(best, _point_segment_distance(p, a, b))
     return best
 
 
-# ---------------------------------------------------------------------------
-# The frame: the ego and the road users around it, read once
-# ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class Metric:
-    """How the ego drove, read off the world.
-
-    Attributes:
-        key: Its key, AlpaSim's metric name, e.g. :data:`COLLISION_ANY`.
-        read: Reads it from the world; ``None`` when there is nothing to read.
-        unit: The unit it is read in; ``""`` for an event (``1`` or ``0``).
-        text: A description.
-        aggregation: How AlpaSim folds a run's frames into one value:
-            ``"max"`` (an event that happened at some point), ``"min"`` (the
-            closest the ego came), ``"mean"`` or ``"last"``.
-    """
-
-    key: str
-    read: Callable[[carla.World], Optional[float]]
-    unit: str = ""
-    text: str = ""
-    aggregation: str = "max"
-
-
-class _Collisions:
-    """How the ego's box meets the others' in one frame."""
-
-    front: bool
-    rear: bool
-    lateral: bool
-
-    def __init__(self) -> None:
-        self.front = False
-        self.rear = False
-        self.lateral = False
-
-    @property
-    def any(self) -> bool:
-        return self.front or self.rear or self.lateral
-
-    @property
-    def at_fault(self) -> bool:
-        return self.front or self.lateral
-
-
-class _Frame:
-    """What one frame of one world reads: the ego, its box and the others'."""
-
-    ego: Optional["carla.Actor"]
-    ego_box: Box
-    others: list[Box]
-
-    def __init__(
-        self, ego: Optional["carla.Actor"], ego_box: Box, others: list[Box]
-    ) -> None:
-        self.ego = ego
-        self.ego_box = ego_box
-        self.others = others
-
-
-class _Cache:
-    """The frame read last, by ``(id(world), frame)``, and each world's map."""
-
-    at: Optional[tuple[int, int]]
-    frame: Optional[_Frame]
-    maps: dict[int, "carla.Map"]
-
-    def __init__(self) -> None:
-        self.at = None
-        self.frame = None
-        self.maps = {}
-
-
-_CACHE = _Cache()
-
-
-def reset_metrics() -> None:
-    """Forget what was read: the last frame and the worlds' maps.
-
-    :func:`~autoware_carla_scenario.measures.set_measured_scenario` calls it
-    when a run starts and ends,
-    so a run never reads the frame or the map of the one before it.
-    """
-    _CACHE.at = None
-    _CACHE.frame = None
-    _CACHE.maps = {}
-
-
-def _frame(world: "carla.World") -> _Frame:
-    at: Optional[tuple[int, int]] = None
-    try:
-        at = (id(world), int(world.get_snapshot().frame))
-    except Exception:
-        at = None
-    if at is not None and _CACHE.at is not None and at == _CACHE.at:
-        cached = _CACHE.frame
-        if cached is not None:
-            return cached
-    found = _read_frame(world)
-    _CACHE.at, _CACHE.frame = at, found
-    return found
-
-
-def _read_frame(world: "carla.World") -> _Frame:
-    try:
-        actors = list(world.get_actors())
-        ego = find_actor_in_list(actors, EGO_ROLE_NAME)
-    except Exception:
-        return _Frame(None, [], [])
-    if ego is None:
-        return _Frame(None, [], [])
-    others: list[Box] = []
-    for actor in actors:
-        kind = actor.type_id
-        if actor.id == ego.id or not (
-            kind.startswith("vehicle.") or kind.startswith("walker.")
-        ):
-            continue
-        others.append(_box_of(actor))
-    return _Frame(ego, _box_of(ego), others)
-
-
-def _map(world: "carla.World") -> "carla.Map":
-    key = id(world)
-    if key not in _CACHE.maps:
-        _CACHE.maps[key] = world.get_map()
-    return _CACHE.maps[key]
-
-
-def _driving_lane_type() -> int:
-    import typesafe_carla.carla as carla  # noqa: PLC0415
-
-    # typesafe_carla's lane type is an int (an IntEnum on the API side).
-    return int(carla.LaneType.Driving)
-
-
-def _driving_waypoint(world: "carla.World", point: Point) -> "Optional[carla.Waypoint]":
-    """The driving lane under *point*, ``None`` when it is on none."""
-    import typesafe_carla.carla as carla  # noqa: PLC0415
-
-    return _map(world).get_waypoint(
-        carla.Location(x=point[0], y=point[1], z=0.0),
-        project_to_road=False,
-        lane_type=_driving_lane_type(),
-    )
+def _collision_bits(box: Box, others: list[Box]) -> int:
+    """AlpaSim's ``CollisionScorer``: each road user the ego's box meets meets
+    its front edge, else its rear edge, else its side."""
+    bits = 0
+    for other in others:
+        if _segment_meets_box(box[0], box[1], other):
+            bits |= _FRONT
+        elif _segment_meets_box(box[2], box[3], other):
+            bits |= _REAR
+        elif _boxes_meet(box, other):
+            bits |= _LATERAL
+    return bits
 
 
 def _centre(box: Box) -> Point:
@@ -392,59 +286,203 @@ def _centre(box: Box) -> Point:
 
 
 # ---------------------------------------------------------------------------
-# Collisions and obstacles
+# The frame: the ego and the road users around it, read once
 # ---------------------------------------------------------------------------
 
 
-def _collisions(world: "carla.World") -> Optional[_Collisions]:
-    """AlpaSim's ``CollisionScorer``: each road user the ego's box meets
-    meets its front edge, else its rear edge, else its side."""
-    frame = _frame(world)
-    if frame.ego is None:
-        return None
-    found = _Collisions()
-    box = frame.ego_box
-    front = (box[0], box[1])
-    rear = (box[2], box[3])
-    for other in frame.others:
-        if not _boxes_meet(box, other):
-            continue
-        if _segment_meets_box(front[0], front[1], other):
-            found.front = True
-        elif _segment_meets_box(rear[0], rear[1], other):
-            found.rear = True
-        else:
-            found.lateral = True
+class _Frame:
+    """What one frame of one world reads, each part once: the ego, its box and
+    the others', what its box meets, and the lane under its centre."""
+
+    ego: Optional["carla.Actor"]
+    ego_yaw: float
+    ego_box: Box
+    others: list[Box]
+    #: What the ego's box meets: _FRONT, _REAR, _LATERAL, and _OFFROAD once
+    #: the road has been read (offroad_read).
+    hits: int
+    offroad_read: bool
+    centre_read: bool
+    centre_waypoint: Optional["carla.Waypoint"]
+
+    def __init__(
+        self,
+        ego: Optional["carla.Actor"],
+        ego_yaw: float,
+        ego_box: Box,
+        others: list[Box],
+    ) -> None:
+        self.ego = ego
+        self.ego_yaw = ego_yaw
+        self.ego_box = ego_box
+        self.others = others
+        self.hits = _collision_bits(ego_box, others) if ego is not None else 0
+        self.offroad_read = False
+        self.centre_read = False
+        self.centre_waypoint = None
+
+
+class _Cache:
+    """The frame read last, by ``(id(world), frame)``, and the map of the world
+    read last, by ``id(world)``."""
+
+    at: Optional[tuple[int, int]]
+    frame: Optional[_Frame]
+    map_of: int
+    carla_map: Optional["carla.Map"]
+    driving: int
+
+    def __init__(self) -> None:
+        self.at = None
+        self.frame = None
+        self.map_of = 0
+        self.carla_map = None
+        self.driving = 0
+
+
+_CACHE = _Cache()
+
+
+def reset_metrics() -> None:
+    """Forget what was read: the last frame and the map.
+
+    The runner calls it when a run starts and ends, so a run never reads the
+    frame or the map of the one before it.
+    """
+    _CACHE.at = None
+    _CACHE.frame = None
+    _CACHE.map_of = 0
+    _CACHE.carla_map = None
+
+
+def _frame(world: "carla.World") -> _Frame:
+    at: Optional[tuple[int, int]] = None
+    try:
+        at = (id(world), int(world.get_snapshot().frame))
+    except Exception:
+        pass
+    cached = _CACHE.frame
+    if at is not None and at == _CACHE.at and cached is not None:
+        return cached
+    found = _read_frame(world)
+    _CACHE.at, _CACHE.frame = at, found
     return found
 
 
-def _event(happened: bool) -> float:
-    return 1.0 if happened else 0.0
+def _read_frame(world: "carla.World") -> _Frame:
+    try:
+        actors = list(world.get_actors())
+        ego = find_actor_in_list(actors, EGO_ROLE_NAME)
+    except Exception:
+        return _Frame(None, 0.0, [], [])
+    if ego is None:
+        return _Frame(None, 0.0, [], [])
+    others: list[Box] = []
+    for actor in actors:
+        kind = actor.type_id
+        if actor.id == ego.id or not (
+            kind.startswith("vehicle.") or kind.startswith("walker.")
+        ):
+            continue
+        others.append(_box_of(actor, actor.get_transform()))
+    transform = ego.get_transform()
+    return _Frame(ego, transform.rotation.yaw, _box_of(ego, transform), others)
+
+
+def _map(world: "carla.World") -> "carla.Map":
+    """*world*'s map, fetched once: CARLA builds it anew on every call."""
+    cached = _CACHE.carla_map
+    if cached is not None and _CACHE.map_of == id(world):
+        return cached
+    import typesafe_carla.carla as carla  # noqa: PLC0415
+
+    found = world.get_map()
+    _CACHE.map_of, _CACHE.carla_map = id(world), found
+    # typesafe_carla's lane type is an int (an IntEnum on the API side).
+    _CACHE.driving = int(carla.LaneType.Driving)
+    return found
+
+
+def _driving_waypoint(world: "carla.World", point: Point) -> "Optional[carla.Waypoint]":
+    """The driving lane under *point*, ``None`` when it is on none."""
+    import typesafe_carla.carla as carla  # noqa: PLC0415
+
+    carla_map = _map(world)
+    return carla_map.get_waypoint(
+        carla.Location(x=point[0], y=point[1], z=0.0),
+        project_to_road=False,
+        lane_type=_CACHE.driving,
+    )
+
+
+def _offroad_bits(world: "carla.World", frame: _Frame) -> int:
+    """AlpaSim's ``offroad``: the ego's box is not on the driving lanes.
+
+    AlpaSim asks whether the union of the lanes around the ego covers its box;
+    CARLA answers per point, so this asks it of the box's corners.  Raises
+    without a map.
+    """
+    if not frame.offroad_read:
+        for corner in frame.ego_box:
+            if _driving_waypoint(world, corner) is None:
+                frame.hits |= _OFFROAD
+                break
+        frame.offroad_read = True
+    return frame.hits
+
+
+def _centre_waypoint(world: "carla.World", frame: _Frame) -> "Optional[carla.Waypoint]":
+    """The driving lane under the ego's centre."""
+    if not frame.centre_read:
+        frame.centre_waypoint = _driving_waypoint(world, _centre(frame.ego_box))
+        frame.centre_read = True
+    return frame.centre_waypoint
+
+
+# ---------------------------------------------------------------------------
+# The metrics
+# ---------------------------------------------------------------------------
+
+
+def _event(world: "carla.World", mask: int) -> Optional[float]:
+    """``1.0`` when the ego's box meets any of *mask*, else ``0.0``."""
+    frame = _frame(world)
+    if frame.ego is None:
+        return None
+    hits = _offroad_bits(world, frame) if mask & _OFFROAD else frame.hits
+    return 1.0 if hits & mask else 0.0
 
 
 def _collision_any(world: "carla.World") -> Optional[float]:
-    found = _collisions(world)
-    return None if found is None else _event(found.any)
+    return _event(world, _ANY_COLLISION)
 
 
 def _collision_front(world: "carla.World") -> Optional[float]:
-    found = _collisions(world)
-    return None if found is None else _event(found.front)
+    return _event(world, _FRONT)
 
 
 def _collision_rear(world: "carla.World") -> Optional[float]:
-    found = _collisions(world)
-    return None if found is None else _event(found.rear)
+    return _event(world, _REAR)
 
 
 def _collision_lateral(world: "carla.World") -> Optional[float]:
-    found = _collisions(world)
-    return None if found is None else _event(found.lateral)
+    return _event(world, _LATERAL)
 
 
 def _collision_at_fault(world: "carla.World") -> Optional[float]:
-    found = _collisions(world)
-    return None if found is None else _event(found.at_fault)
+    return _event(world, _AT_FAULT)
+
+
+def _offroad(world: "carla.World") -> Optional[float]:
+    return _event(world, _OFFROAD)
+
+
+def _offroad_or_collision(world: "carla.World") -> Optional[float]:
+    return _event(world, _OFFROAD | _ANY_COLLISION)
+
+
+def _offroad_or_collision_at_fault(world: "carla.World") -> Optional[float]:
+    return _event(world, _OFFROAD | _AT_FAULT)
 
 
 def _min_distance_to_obstacle_m(world: "carla.World") -> Optional[float]:
@@ -456,70 +494,25 @@ def _min_distance_to_obstacle_m(world: "carla.World") -> Optional[float]:
     return min(_box_distance(frame.ego_box, other) for other in frame.others)
 
 
-# ---------------------------------------------------------------------------
-# The road
-# ---------------------------------------------------------------------------
-
-
-def _is_offroad(world: "carla.World") -> Optional[bool]:
-    """AlpaSim's ``offroad``: the ego's box is not on the driving lanes.
-
-    AlpaSim asks whether the union of the lanes around the ego covers its box;
-    CARLA answers per point, so this asks it of the box's corners.
-    """
-    frame = _frame(world)
-    if frame.ego is None:
-        return None
-    for corner in frame.ego_box:
-        if _driving_waypoint(world, corner) is None:
-            return True
-    return False
-
-
-def _offroad(world: "carla.World") -> Optional[float]:
-    offroad = _is_offroad(world)
-    return None if offroad is None else _event(offroad)
-
-
-def _offroad_or_collision(world: "carla.World") -> Optional[float]:
-    offroad = _is_offroad(world)
-    found = _collisions(world)
-    if offroad is None or found is None:
-        return None
-    return _event(offroad or found.any)
-
-
-def _offroad_or_collision_at_fault(world: "carla.World") -> Optional[float]:
-    offroad = _is_offroad(world)
-    found = _collisions(world)
-    if offroad is None or found is None:
-        return None
-    return _event(offroad or found.at_fault)
-
-
-def _heading_gap(one_deg: float, other_deg: float) -> float:
-    """The angle between two headings, in radians, from 0 to pi."""
-    gap = math.radians(one_deg - other_deg) % (2.0 * math.pi)
-    return min(gap, 2.0 * math.pi - gap)
-
-
 def _wrong_lane(world: "carla.World") -> Optional[float]:
-    """AlpaSim's ``wrong_lane``: the ego heads more than
-    :data:`WRONG_LANE_HEADING_RAD` away from the driving lane under its centre.
+    """AlpaSim's ``wrong_lane``: the ego heads more than 120 degrees away from
+    the driving lane under its centre.
 
     ``None`` when its centre is on no driving lane: off the road, there is no
     lane to be the wrong way along.
     """
+    # Imported here: the kinematics package imports CARLA, and this module
+    # does not at import time (the scenario editor reads it without CARLA).
+    from .kinematics.angle import normalize_angle_deg  # noqa: PLC0415
+
     frame = _frame(world)
     if frame.ego is None:
         return None
-    waypoint = _driving_waypoint(world, _centre(frame.ego_box))
+    waypoint = _centre_waypoint(world, frame)
     if waypoint is None:
         return None
-    gap = _heading_gap(
-        frame.ego.get_transform().rotation.yaw, waypoint.transform.rotation.yaw
-    )
-    return _event(gap > WRONG_LANE_HEADING_RAD)
+    gap = abs(normalize_angle_deg(frame.ego_yaw - waypoint.transform.rotation.yaw))
+    return 1.0 if gap > _WRONG_LANE_HEADING_DEG else 0.0
 
 
 def _lateral(waypoint: "carla.Waypoint", point: Point) -> float:
@@ -535,18 +528,17 @@ def _side_width(waypoint: "carla.Waypoint", right: bool, start: float) -> float:
     """How far the driving lanes reach beyond *waypoint*'s, to one side.
 
     Lanes beside it are walked while they are driving lanes whose near edge is
-    within :data:`LANE_SEARCH_RADIUS_M` of the ego's centre, *start* metres
+    within :data:`_LANE_SEARCH_RADIUS_M` of the ego's centre, *start* metres
     from it; their widths are summed.  A lane of the opposite direction counts,
     as it does in AlpaSim, whose lane union takes every lane around the ego.
     """
-    driving = _driving_lane_type()
     reach = 0.0
     lane = waypoint
     for _ in range(_MAX_SIDE_LANES):
         beside = lane.get_right_lane() if right else lane.get_left_lane()
-        if beside is None or int(beside.lane_type) != driving:
+        if beside is None or int(beside.lane_type) != _CACHE.driving:
             break
-        if start + reach > LANE_SEARCH_RADIUS_M:
+        if start + reach > _LANE_SEARCH_RADIUS_M:
             break
         reach += float(beside.lane_width)
         # Across the centre line, CARLA's "right" of a lane of the opposite
@@ -568,120 +560,108 @@ def _min_distance_to_lane_boundary_m(world: "carla.World") -> Optional[float]:
     frame = _frame(world)
     if frame.ego is None:
         return None
-    offroad = _is_offroad(world)
-    if offroad is None or offroad:
+    if _offroad_bits(world, frame) & _OFFROAD:
         return 0.0
-    centre = _centre(frame.ego_box)
-    waypoint = _driving_waypoint(world, centre)
+    waypoint = _centre_waypoint(world, frame)
     if waypoint is None:
         return 0.0
     half = float(waypoint.lane_width) / 2.0
     laterals = [_lateral(waypoint, corner) for corner in frame.ego_box]
-    centre_lateral = _lateral(waypoint, centre)
+    centre_lateral = _lateral(waypoint, _centre(frame.ego_box))
     right_edge = half + _side_width(waypoint, True, half - centre_lateral)
     left_edge = half + _side_width(waypoint, False, half + centre_lateral)
     gap = min(right_edge - max(laterals), left_edge + min(laterals))
     return max(gap, 0.0)
 
 
-def _by_key(metrics: list[Metric]) -> dict[str, Metric]:
-    found: dict[str, Metric] = {}
-    for metric in metrics:
-        found[metric.key] = metric
-    return found
-
-
 #: The built-in metrics, by key: AlpaSim's, as CARLA reads them.
-BUILT_IN_METRICS: dict[str, Metric] = _by_key(
-    [
+BUILT_IN_METRICS: dict[str, Metric] = {
+    m.key: m
+    for m in [
         Metric(
             COLLISION_ANY,
             _collision_any,
-            "",
-            "1 while the ego's bounding box overlaps another vehicle's or a "
-            "pedestrian's, else 0 (AlpaSim collision_any)",
-            aggregation="max",
+            title="Collision (any)",
+            text="1 while the ego's bounding box overlaps another vehicle's or "
+            "a pedestrian's, else 0 (AlpaSim collision_any)",
         ),
         Metric(
             COLLISION_FRONT,
             _collision_front,
-            "",
-            "1 while another road user's box overlaps the ego's front edge "
+            title="Collision (front)",
+            text="1 while another road user's box overlaps the ego's front edge "
             "(AlpaSim collision_front)",
-            aggregation="max",
         ),
         Metric(
             COLLISION_REAR,
             _collision_rear,
-            "",
-            "1 while another road user's box overlaps the ego's rear edge and "
-            "not its front (AlpaSim collision_rear)",
-            aggregation="max",
+            title="Collision (rear)",
+            text="1 while another road user's box overlaps the ego's rear edge "
+            "and not its front (AlpaSim collision_rear)",
         ),
         Metric(
             COLLISION_LATERAL,
             _collision_lateral,
-            "",
-            "1 while another road user's box overlaps the ego's and neither its "
-            "front nor its rear edge (AlpaSim collision_lateral)",
-            aggregation="max",
+            title="Collision (lateral)",
+            text="1 while another road user's box overlaps the ego's and "
+            "neither its front nor its rear edge (AlpaSim collision_lateral)",
         ),
         Metric(
             COLLISION_AT_FAULT,
             _collision_at_fault,
-            "",
-            "1 during a front or a lateral collision (AlpaSim collision_at_fault)",
-            aggregation="max",
+            title="Collision at fault",
+            text="1 during a front or a lateral collision "
+            "(AlpaSim collision_at_fault)",
         ),
         Metric(
             OFFROAD,
             _offroad,
-            "",
-            "1 while a corner of the ego's box is on no driving lane "
+            title="Off the road",
+            text="1 while a corner of the ego's box is on no driving lane "
             "(AlpaSim offroad)",
-            aggregation="max",
         ),
         Metric(
             OFFROAD_OR_COLLISION,
             _offroad_or_collision,
-            "",
-            "1 while off the road or in any collision (AlpaSim offroad_or_collision)",
-            aggregation="max",
+            title="Off the road or collision",
+            text="1 while off the road or in any collision "
+            "(AlpaSim offroad_or_collision)",
         ),
         Metric(
             OFFROAD_OR_COLLISION_AT_FAULT,
             _offroad_or_collision_at_fault,
-            "",
-            "1 while off the road or in a collision at fault "
+            title="Off the road or collision at fault",
+            text="1 while off the road or in a collision at fault "
             "(AlpaSim offroad_or_collision_at_fault)",
-            aggregation="max",
         ),
         Metric(
             WRONG_LANE,
             _wrong_lane,
-            "",
-            "1 while the ego heads more than 120 degrees away from the driving "
-            "lane under it, else 0; unread off the road (AlpaSim wrong_lane)",
-            aggregation="max",
+            title="Against the lane",
+            text="1 while the ego heads more than 120 degrees away from the "
+            "driving lane under it, else 0; unread off the road "
+            "(AlpaSim wrong_lane)",
         ),
         Metric(
             MIN_DISTANCE_TO_OBSTACLE_M,
             _min_distance_to_obstacle_m,
-            "m",
-            "Box to box, to the nearest other vehicle or pedestrian; 0 when "
-            "touching (AlpaSim min_distance_to_obstacle_m)",
+            title="Distance to obstacle",
+            unit="m",
+            text="Box to box, to the nearest other vehicle or pedestrian; 0 "
+            "when touching (AlpaSim min_distance_to_obstacle_m)",
             aggregation="min",
         ),
         Metric(
             MIN_DISTANCE_TO_LANE_BOUNDARY_M,
             _min_distance_to_lane_boundary_m,
-            "m",
-            "From the ego's box to the edge of the driving lanes around it; 0 off "
-            "the road (AlpaSim min_distance_to_lane_boundary_m)",
+            title="Distance to lane edge",
+            unit="m",
+            text="From the ego's box to the edge of the driving lanes around "
+            "it; 0 off the road (AlpaSim min_distance_to_lane_boundary_m)",
             aggregation="min",
         ),
     ]
-)
+}
 
 
 def is_metric(key: str) -> bool:

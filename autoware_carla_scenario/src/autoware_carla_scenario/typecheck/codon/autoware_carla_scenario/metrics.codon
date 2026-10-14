@@ -1,6 +1,6 @@
 # Model of autoware_carla_scenario.metrics (docs/metrics.md): the keys of the
 # built-in metrics, AlpaSim's metric names, which a scenario passes to
-# MetricCondition or read_metric(), and the thresholds they read with.
+# MetricCondition or read_metric().
 
 import typesafe_carla.carla as carla
 
@@ -15,9 +15,6 @@ OFFROAD_OR_COLLISION_AT_FAULT: str = "offroad_or_collision_at_fault"
 WRONG_LANE: str = "wrong_lane"
 MIN_DISTANCE_TO_OBSTACLE_M: str = "min_distance_to_obstacle_m"
 MIN_DISTANCE_TO_LANE_BOUNDARY_M: str = "min_distance_to_lane_boundary_m"
-
-WRONG_LANE_HEADING_RAD: float = 2.0943951023931953
-LANE_SEARCH_RADIUS_M: float = 6.0
 
 
 def is_metric(key: str) -> bool:
