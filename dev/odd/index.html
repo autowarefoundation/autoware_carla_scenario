@@ -1482,6 +1482,34 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Scenario measures">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-vehicle-ahead" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The vehicle ahead
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#measure-versions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Measure versions
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
         
       </ul>
@@ -1927,6 +1955,34 @@
       
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label="Scenario measures">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-vehicle-ahead" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The vehicle ahead
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#measure-versions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Measure versions
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
         
@@ -2450,12 +2506,13 @@ an ODD has no <code>probes</code> submodule.</p>
 pedestrian running out -- are not read by ODD probes: they are <strong>measures</strong>
 of the scenario, under keys the framework fixes
 (<code>autoware_carla_scenario.measures</code>). Every <code>BaseScenario</code> has these, read
-generically in the ego's frame:</p>
+generically around the ego:</p>
 <table>
 <thead>
 <tr>
 <th>Key</th>
 <th>Unit</th>
+<th>Version</th>
 <th>Reads</th>
 </tr>
 </thead>
@@ -2463,25 +2520,91 @@ generically in the ego's frame:</p>
 <tr>
 <td><code>vehicle_ahead_gap_m</code></td>
 <td>m</td>
-<td>The nearest vehicle ahead in the ego's lane or a lane beside it, centre to centre along the ego's heading (up to <code>AHEAD_RANGE_M</code>); a vehicle about to cut in is measured from before it changes lanes</td>
+<td>2</td>
+<td>The free road to the nearest vehicle ahead on the ego's lane or a lane beside it: its rear bumper less the ego's front bumper, along the ego's lane on the Lanelet2 map (up to <code>AHEAD_RANGE_M</code>); a vehicle about to cut in is measured from before it changes lanes</td>
 </tr>
 <tr>
 <td><code>vehicle_ahead_relative_speed_kph</code></td>
 <td>km/h</td>
-<td>That vehicle's speed along the ego's heading less the ego's</td>
+<td>2</td>
+<td>That vehicle's speed along the ego's lane less the ego's</td>
 </tr>
 <tr>
 <td><code>crossing_pedestrian_gap_m</code></td>
 <td>m</td>
 <td>How far ahead the nearest pedestrian ahead that is moving was when it set off, held while it crosses</td>
+<td></td>
 </tr>
 <tr>
 <td><code>crossing_pedestrian_speed_ms</code></td>
 <td>m/s</td>
 <td>That pedestrian's speed</td>
+<td></td>
 </tr>
 </tbody>
 </table>
+<p>The pedestrian measures read in the ego's frame: ahead along its heading,
+within <code>PEDESTRIAN_LATERAL_M</code> of its centre line.</p>
+<h4 id="the-vehicle-ahead">The vehicle ahead<a class="headerlink" href="#the-vehicle-ahead" title="Permanent link">&para;</a></h4>
+<p>The vehicle-ahead measures read along the road, as a driver would say "the
+car in front is 15 m ahead", and from the map:</p>
+<ul>
+<li><strong>The ego's lane</strong> is the lanelet the ego is on -- of those under its
+  origin (within <code>ON_LANELET_M</code>), the one whose centreline runs closest to its
+  heading, within <code>EGO_LANE_HEADING_DEG</code> -- with every lanelet following it up
+  to <code>AHEAD_RANGE_M</code> ahead (each branch where the lane branches: the measure
+  does not know the route) and the lanelet before it. Its arc length <code>s</code> runs
+  along their centrelines, on from one to the next.</li>
+<li><strong>A vehicle counts</strong> when its origin is on one of those lanelets, or on a
+  lanelet beside one of them -- its left or right neighbour in the Lanelet2
+  routing graph, whether a lane change is allowed across the line or not --
+  and further along the ego's lane than the ego's origin. A lane two over, an
+  oncoming lane or a vehicle off the lanelets does not count, however near.</li>
+<li><strong>The gap</strong> is <code>s</code> of the vehicle's rear bumper less <code>s</code> of the ego's front
+  bumper. A bumper is the middle of the end of the actor's bounding box,
+  along its own heading (<code>Bumpers</code>, <code>bumpers_of</code>), and it is projected onto
+  the ego's lane: onto the lanelet the vehicle is on, or the one it is beside,
+  and those before and after it. So the gap does not depend on where the
+  lanelets beside each other are cut or how long they are -- the outer lane of
+  a bend is longer than the inner one, and the same <code>s</code> on the two is not
+  side by side -- and on a bend it is the distance along the road, not a
+  straight line. A vehicle in the lane beside that overlaps the ego reads a
+  negative gap.</li>
+<li><strong>The relative speed</strong> is the vehicle's velocity along the lane's tangent at
+  its rear bumper less the ego's along the tangent at its front bumper: two
+  vehicles keeping pace round a bend read 0 though their headings differ.</li>
+</ul>
+<p>Without a lane to measure along -- no Lanelet2 map loaded, or the ego on no
+lanelet that runs its way -- the measures fall back to the <strong>geometric</strong>
+definition: a vehicle ahead of the ego's origin within three
+<code>LANE_HALF_WIDTH_M</code> of its centre line counts, and the gap is bumper to bumper
+along the ego's heading. The run logs a warning the first time, and the
+coverage file says how many frames each definition read
+(<code>measures.vehicle_ahead_gap_m.definitions</code>: <code>along_lane</code>, <code>geometric</code>;
+<code>vehicle_ahead_definitions()</code> in Python).</p>
+<h4 id="measure-versions">Measure versions<a class="headerlink" href="#measure-versions" title="Permanent link">&para;</a></h4>
+<p>A measure's <strong>version</strong> (<code>Measure.version</code>, <code>measure_version(key)</code>) says
+which definition it reads with, and is raised whenever what it reads changes
+meaning. The vehicle-ahead measures are version 2. Version 1 (before
+autoware-carla-scenario 11.0) read the gap centre to centre along the ego's
+heading -- 4.75 m more than version 2 for a Lincoln MKZ behind a Mini on
+CARLA 0.10 -- and counted a vehicle within three half-lanes of the ego's centre line,
+whatever the map.</p>
+<p>Coverage keeps the versions apart. openodd's merge treats two coverage items
+as the same when their name, buckets, event and criteria agree; it does not
+read their description. So the cover item of an ODD attribute mapped onto a
+measure past version 1 is written under its version,
+<code>odd.dynamic.vehicle_ahead_gap#2</code>: merged with files written before, the
+report lists <code>odd.dynamic.vehicle_ahead_gap</code> (version 1) and
+<code>odd.dynamic.vehicle_ahead_gap#2</code> (version 2) apart, never one bucket's hits
+added to the other's. <code>#&lt;n&gt;</code> is the suffix openodd itself gives a second
+definition of an item; its sampler reads past it to the ODD's attribute, so a
+coverage-driven sweep (<code>strategy: coverage</code>) still counts what version 2
+covered -- and what version 1 covered too, which it cannot tell apart: point
+<code>coverage_from</code> at version 2's files only. Each coverage file also lists the
+measures its ODD reads under <code>measures</code>, with their version, unit and text.
+A scenario that replaces a built-in measure (<code>register_measure</code>) promises the
+same quantity, so its replacement carries the built-in's version.</p>
 <p>Each reads nothing (missing) while there is no such road user. A scenario
 that knows better replaces one -- it knows which actor <em>is</em> its cut-in
 vehicle -- or adds one of its own:</p>
@@ -2947,7 +3070,7 @@ keyed by measure:</p>
 <a id="__codelineno-17-3" name="__codelineno-17-3" href="#__codelineno-17-3"></a><span class="w">  </span><span class="nt">vehicle_ahead_gap_m</span><span class="p">:</span>
 <a id="__codelineno-17-4" name="__codelineno-17-4" href="#__codelineno-17-4"></a><span class="w">    </span><span class="nt">key</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">scenario.npc_gap_m</span>
 <a id="__codelineno-17-5" name="__codelineno-17-5" href="#__codelineno-17-5"></a><span class="w">    </span><span class="nt">target</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">measure</span><span class="w">                    </span><span class="c1"># the gap the measure reads at the start</span>
-<a id="__codelineno-17-6" name="__codelineno-17-6" href="#__codelineno-17-6"></a><span class="w">    </span><span class="nt">range</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">6.0</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">30.0</span><span class="p p-Indicator">]</span><span class="w">                 </span><span class="c1"># what the scenario can stage</span>
+<a id="__codelineno-17-6" name="__codelineno-17-6" href="#__codelineno-17-6"></a><span class="w">    </span><span class="nt">range</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">2.0</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">30.0</span><span class="p p-Indicator">]</span><span class="w">                 </span><span class="c1"># what the scenario can stage</span>
 <a id="__codelineno-17-7" name="__codelineno-17-7" href="#__codelineno-17-7"></a><span class="w">  </span><span class="nt">vehicle_ahead_relative_speed_kph</span><span class="p">:</span>
 <a id="__codelineno-17-8" name="__codelineno-17-8" href="#__codelineno-17-8"></a><span class="w">    </span><span class="nt">key</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">scenario.npc_initial_speed_kmh</span>
 <a id="__codelineno-17-9" name="__codelineno-17-9" href="#__codelineno-17-9"></a><span class="w">    </span><span class="nt">offset</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${ego.initial_speed_kmh}</span><span class="w">   </span><span class="c1"># its speed less the ego's</span>
@@ -3000,31 +3123,49 @@ mapped onto by <code>scale</code> and <code>offset</code>, and the mapping is th
 that the parameter brings the measure about. It holds where the two are the
 same quantity by definition. It is a guess where they are not:
 <code>npc_ahead_m</code> is the NPC's <code>s</code> along its lanelet less the ego's along its
-own, while <code>vehicle_ahead_gap_m</code> is centre to centre along the ego's heading.
+own, while <code>vehicle_ahead_gap_m</code> is bumper to bumper along the ego's lane.
 Neighbouring lanelets do not run alike on a curve -- the outer one is longer,
-and their <code>s</code> do not line up -- so no constant offset is right wherever the
-scenario is placed (on CARLA 0.10 Town04_Opt one guessed +11 m was measured
-2.2 m off, and the right offset there is right nowhere else).</p>
+and their <code>s</code> do not line up -- and the bumpers depend on the vehicles, so no
+constant offset is right wherever the scenario is placed (on CARLA 0.10
+Town04_Opt one guessed +11 m was measured 2.2 m off, and the right offset
+there is right nowhere else).</p>
 <p>A measure that the <strong>initial placement alone determines</strong> can be the
 parameter instead. The scenario takes "the measure should read <em>v</em> at the
 start" and solves for the placement that makes it so, evaluating the
 measure's own definition on the poses it will spawn at; the control says
 <code>target: measure</code>, and the value drawn is written unchanged:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario</span><span class="w"> </span><span class="kn">import</span> <span class="n">place_at_vehicle_ahead_gap</span><span class="p">,</span> <span class="n">solve_along</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario</span><span class="w"> </span><span class="kn">import</span> <span class="n">place_at_vehicle_ahead_gap</span><span class="p">,</span> <span class="n">vehicle_bumpers</span>
 <a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a>
 <a id="__codelineno-18-3" name="__codelineno-18-3" href="#__codelineno-18-3"></a><span class="c1"># The NPC's s on its lanelet at which vehicle_ahead_gap_m reads cfg.npc_gap_m,</span>
 <a id="__codelineno-18-4" name="__codelineno-18-4" href="#__codelineno-18-4"></a><span class="c1"># seen from where the ego spawns -- whatever the two lanelets' shapes.</span>
 <a id="__codelineno-18-5" name="__codelineno-18-5" href="#__codelineno-18-5"></a><span class="n">ego_at</span> <span class="o">=</span> <span class="n">to_carla_world</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_spawn_pose</span><span class="p">)</span><span class="o">.</span><span class="n">to_carla_transform</span><span class="p">()</span>
-<a id="__codelineno-18-6" name="__codelineno-18-6" href="#__codelineno-18-6"></a><span class="n">npc_pose</span> <span class="o">=</span> <span class="n">place_at_vehicle_ahead_gap</span><span class="p">(</span><span class="n">ego_at</span><span class="p">,</span> <span class="n">cfg</span><span class="o">.</span><span class="n">npc_lanelet_id</span><span class="p">,</span> <span class="n">cfg</span><span class="o">.</span><span class="n">npc_gap_m</span><span class="p">)</span>
+<a id="__codelineno-18-6" name="__codelineno-18-6" href="#__codelineno-18-6"></a><span class="n">npc_pose</span> <span class="o">=</span> <span class="n">place_at_vehicle_ahead_gap</span><span class="p">(</span>
+<a id="__codelineno-18-7" name="__codelineno-18-7" href="#__codelineno-18-7"></a>    <span class="n">ego_at</span><span class="p">,</span>
+<a id="__codelineno-18-8" name="__codelineno-18-8" href="#__codelineno-18-8"></a>    <span class="n">cfg</span><span class="o">.</span><span class="n">npc_lanelet_id</span><span class="p">,</span>
+<a id="__codelineno-18-9" name="__codelineno-18-9" href="#__codelineno-18-9"></a>    <span class="n">cfg</span><span class="o">.</span><span class="n">npc_gap_m</span><span class="p">,</span>
+<a id="__codelineno-18-10" name="__codelineno-18-10" href="#__codelineno-18-10"></a>    <span class="n">ego_bumpers</span><span class="o">=</span><span class="n">vehicle_bumpers</span><span class="p">(</span><span class="n">world</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">ego_config</span><span class="o">.</span><span class="n">vehicle_type</span><span class="p">),</span>
+<a id="__codelineno-18-11" name="__codelineno-18-11" href="#__codelineno-18-11"></a>    <span class="n">npc_bumpers</span><span class="o">=</span><span class="n">vehicle_bumpers</span><span class="p">(</span><span class="n">world</span><span class="p">,</span> <span class="n">cfg</span><span class="o">.</span><span class="n">npc_vehicle_type</span><span class="p">),</span>
+<a id="__codelineno-18-12" name="__codelineno-18-12" href="#__codelineno-18-12"></a><span class="p">)</span>
 </code></pre></div>
-<p><code>place_at_vehicle_ahead_gap</code> reads the gap with the measure's own geometry
-(<code>measures.vehicle_ahead_gap_between</code>) for the NPC at each <code>s</code> of its
-lanelet, as a <code>Lanelet2Pose</code> spawns there, and narrows the first crossing of
-<em>v</em> down by bisection (<code>solve_along</code>, a 1-D root find that takes any
-<code>s -&gt; measure</code> function, for a measure of a scenario's own). A gap the
-lanelet cannot reach -- too short, turning away, or out of the lanes the
-measure counts -- is refused with the gaps it does reach, so a drawn case
-that cannot be staged fails at setup rather than running another gap.</p>
+<p><code>place_at_vehicle_ahead_gap</code> reads the gap with the measure's own code
+(<code>measures.vehicle_ahead_gap_between</code>, which the measure reads every vehicle
+with) for the NPC at each <code>s</code> of its lanelet, as a <code>Lanelet2Pose</code> spawns
+there -- on the centreline, heading along it -- and narrows the first
+crossing of <em>v</em> down by bisection (<code>solve_along</code>, a 1-D root find that takes
+any <code>s -&gt; measure</code> function, for a measure of a scenario's own). It solves
+on the NPC's own lanelet and projects the NPC onto the ego's lane, so it does
+not matter where the lanelets beside each other start or how long they are.
+A gap the lanelet cannot reach -- too short, turning away, or out of the
+lanes the measure counts -- is refused with the gaps it does reach, so a
+drawn case that cannot be staged fails at setup rather than running another
+gap.</p>
+<p>The gap is bumper to bumper, so the placement needs both vehicles' sizes
+before either is spawned. CARLA gives a blueprint no size: <code>vehicle_bumpers</code>
+spawns one vehicle of the blueprint high above the map, reads its bounding
+box and destroys it before the world ticks again, once per blueprint per
+process. The NPC is then spawned once, where the gap reads right, rather
+than spawned, measured and moved -- a move that would race its initial
+speed and the first tick.</p>
 <p>Which to use:</p>
 <table>
 <thead>
@@ -3050,13 +3191,13 @@ that cannot be staged fails at setup rather than running another gap.</p>
 </table>
 <p>The relative speed of <code>cut_in</code> is the first kind: both vehicles start at
 their speeds along their lanes, and the measure is the NPC's velocity along
-the ego's heading less the ego's, so its <code>offset: ${ego.initial_speed_kmh}</code>
-writes it exactly where the two lanes are parallel at the start. On a curve
-the NPC's heading differs from the ego's by the angle between their spawn
-points, and the measure reads its speed times the cosine of that: 15 m
-ahead on a 100 m radius at 30 km/h, it reads 30 × (1 − cos 0.15) = 0.34 km/h
-less than written. That is below what a relative-speed bucket resolves, so it
-stays a raw setting.</p>
+the ego's lane at the NPC less the ego's along it at the ego, so its
+<code>offset: ${ego.initial_speed_kmh}</code> writes it exactly: on a bend the NPC
+heads along its lane, which runs alongside the ego's lane where it is. (A
+lane beside a bend is shorter or longer than the ego's, so an NPC on it
+covers the ego's lane a few per cent slower or faster -- 3.5 m off a 100 m
+radius, 3.5 % -- which the measure does not count: it reads speeds, not how
+fast <code>s</code> changes.)</p>
 <p>The weather and the sun are set for every scenario, through the
 <code>environment</code> config, which sets them before the run starts
 (<code>EnvironmentAction</code>); the built-in probes reading them have controls of
@@ -3114,7 +3255,7 @@ the last word over the config.</p>
 <tr>
 <td><code>cut_in/*</code></td>
 <td><code>vehicle_ahead_gap_m</code></td>
-<td><code>npc_gap_m</code> (<code>target: measure</code>), 6-30 m</td>
+<td><code>npc_gap_m</code> (<code>target: measure</code>), 2-30 m</td>
 </tr>
 <tr>
 <td><code>cut_in/*</code></td>
@@ -3176,7 +3317,7 @@ from. Coverage is read when the sweep is expanded: to resume a sweep
 <a id="__codelineno-19-5" name="__codelineno-19-5" href="#__codelineno-19-5"></a>
 <a id="__codelineno-19-6" name="__codelineno-19-6" href="#__codelineno-19-6"></a><span class="n">sampler</span> <span class="o">=</span> <span class="n">OddSampler</span><span class="p">(</span>
 <a id="__codelineno-19-7" name="__codelineno-19-7" href="#__codelineno-19-7"></a>    <span class="n">resolve_odd</span><span class="p">(</span><span class="s2">"path/to/urban.yaml"</span><span class="p">),</span>
-<a id="__codelineno-19-8" name="__codelineno-19-8" href="#__codelineno-19-8"></a>    <span class="n">controls</span><span class="o">=</span><span class="p">{</span><span class="s2">"vehicle_ahead_gap_m"</span><span class="p">:</span> <span class="n">OddKnob</span><span class="p">(</span><span class="s2">"scenario.npc_gap_m"</span><span class="p">,</span> <span class="nb">range</span><span class="o">=</span><span class="p">(</span><span class="mf">6.0</span><span class="p">,</span> <span class="mf">30.0</span><span class="p">))},</span>
+<a id="__codelineno-19-8" name="__codelineno-19-8" href="#__codelineno-19-8"></a>    <span class="n">controls</span><span class="o">=</span><span class="p">{</span><span class="s2">"vehicle_ahead_gap_m"</span><span class="p">:</span> <span class="n">OddKnob</span><span class="p">(</span><span class="s2">"scenario.npc_gap_m"</span><span class="p">,</span> <span class="nb">range</span><span class="o">=</span><span class="p">(</span><span class="mf">2.0</span><span class="p">,</span> <span class="mf">30.0</span><span class="p">))},</span>
 <a id="__codelineno-19-9" name="__codelineno-19-9" href="#__codelineno-19-9"></a>    <span class="n">seed</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span>
 <a id="__codelineno-19-10" name="__codelineno-19-10" href="#__codelineno-19-10"></a>    <span class="n">strategy</span><span class="o">=</span><span class="s2">"coverage"</span><span class="p">,</span>
 <a id="__codelineno-19-11" name="__codelineno-19-11" href="#__codelineno-19-11"></a>    <span class="n">coverage</span><span class="o">=</span><span class="n">load_and_merge</span><span class="p">([</span><span class="n">Path</span><span class="p">(</span><span class="s2">"outputs"</span><span class="p">)]),</span>
@@ -3402,7 +3543,7 @@ target.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 13, 2026 22:12:47 UTC"><span class="timeago" datetime="2026-10-13T22:12:47+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 13, 2026 22:12:47 UTC">2026-10-13</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 14, 2026 09:32:51 UTC"><span class="timeago" datetime="2026-10-14T09:32:51+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 14, 2026 09:32:51 UTC">2026-10-14</span>
   </span>
 
     

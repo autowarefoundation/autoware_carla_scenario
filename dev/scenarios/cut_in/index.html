@@ -1763,7 +1763,7 @@ side.</p>
 </tr>
 <tr>
 <td>or, measured</td>
-<td><code>npc_gap_m</code>: the gap <code>vehicle_ahead_gap_m</code> reads at the start (centre to centre along the ego's heading); NPC1's <code>s</code> is solved for so it does. Unset by default; an ODD-sampled sweep sets it</td>
+<td><code>npc_gap_m</code>: the gap <code>vehicle_ahead_gap_m</code> reads at the start (bumper to bumper, along the ego's lane); NPC1's <code>s</code> is solved for so it does. Unset by default; an ODD-sampled sweep sets it, 2-30 m</td>
 </tr>
 <tr>
 <td>NPC1 and ego initial speed</td>
@@ -1853,15 +1853,29 @@ lanelet:</p>
 </code></pre></div>
 <h2 id="placing-npc1-by-the-measured-gap">Placing NPC1 by the measured gap<a class="headerlink" href="#placing-npc1-by-the-measured-gap" title="Permanent link">&para;</a></h2>
 <p><code>npc_ahead_m</code> is a raw setting: NPC1's <code>s</code> on its lanelet less the ego's on
-its own. Lanelets side by side are not the same length on a curve -- the
-outer one is longer -- so the gap the <code>vehicle_ahead_gap_m</code> measure then
-reads is not <code>npc_ahead_m</code>, and differs from place to place.</p>
+its own. It is not the gap the <code>vehicle_ahead_gap_m</code> measure reads: the
+measure is bumper to bumper -- NPC1's rear bumper less the ego's front bumper
+-- along the ego's lane (<a href="../../odd/#scenario-measures">Scenario measures</a>),
+and lanelets side by side are not the same length on a curve (the outer one
+is longer), so their <code>s</code> do not line up and the difference changes from
+place to place.</p>
 <p><code>npc_gap_m</code> is that gap itself. When it is set, the scenario places NPC1
 with <code>place_at_vehicle_ahead_gap</code>: from the ego's spawn pose, it finds the
-<code>s</code> on NPC1's lanelet at which the measure's own geometry reads <code>npc_gap_m</code>,
-so the run starts at exactly that gap wherever it is placed. A gap the
-lanelet cannot reach (too short, or curving out of the lanes the measure
-counts) fails the setup, saying what gaps it does reach.</p>
+<code>s</code> on NPC1's lanelet at which the measure -- the same code, run on the
+poses the two will spawn at -- reads <code>npc_gap_m</code>, so the run starts at
+exactly that gap wherever it is placed. The bumpers are the vehicles' own:
+before either is spawned, one of each blueprint (<code>ego.vehicle_type</code>,
+<code>npc_vehicle_type</code>) is spawned high above the map, its bounding box read and
+the vehicle destroyed (<code>vehicle_bumpers</code>, once per blueprint), so NPC1 is
+spawned once, where the gap reads right, rather than spawned and moved. A
+gap the lanelet cannot reach (too short, or curving out of the lanes the
+measure counts) fails the setup, saying what gaps it does reach.</p>
+<p>On CARLA 0.10 Town04_Opt, with the ego (a Lincoln MKZ) on lanelet 79016 at
+<code>s</code> = 640 and NPC1 (a Mini) placed on lanelet 77298 beside it, gaps of 2.5,
+8, 12, 15, 20, 25 and 30 m were measured back within 0.001 m on the first
+tick (within 0.01 m two ticks later). Placed by a calibrated <code>npc_ahead_m</code>
+offset instead, and measured centre to centre, the same place read 2.2 m
+more than drawn.</p>
 <p>The scenario's controls draw the gap this way (<code>target: measure</code>,
 <a href="../../odd/#controls">Controls</a>), so a sweep's <code>vehicle_ahead_gap</code> draws are
 the gaps the runs start at:</p>
@@ -1892,7 +1906,7 @@ the start, up to the cosine of the small heading difference on a curve.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 14, 2026 07:51:19 UTC"><span class="timeago" datetime="2026-10-14T07:51:19+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 14, 2026 07:51:19 UTC">2026-10-14</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 14, 2026 09:32:51 UTC"><span class="timeago" datetime="2026-10-14T09:32:51+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 14, 2026 09:32:51 UTC">2026-10-14</span>
   </span>
 
     
