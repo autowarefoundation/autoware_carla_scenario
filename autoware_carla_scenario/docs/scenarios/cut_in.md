@@ -78,8 +78,11 @@ gap the lanelet cannot reach (too short, or curving out of the lanes the
 measure counts) fails the setup, saying what gaps it does reach.
 
 On CARLA 0.10 Town04_Opt, with the ego (a Lincoln MKZ) on lanelet 79016 at
-`s` = 640 and NPC1 (a Mini) placed on lanelet 77298 beside it, the measure
-reads 8, 15 and 25 m back within 0.1 m one tick into the run.
+`s` = 640 and NPC1 (a Mini) placed on lanelet 77298 beside it, gaps of 2.5,
+8, 12, 15, 20, 25 and 30 m were measured back within 0.001 m on the first
+tick (within 0.01 m two ticks later). Placed by a calibrated `npc_ahead_m`
+offset instead, and measured centre to centre, the same place read 2.2 m
+more than drawn.
 
 The scenario's controls draw the gap this way (`target: measure`,
 [Controls](../odd.md#controls)), so a sweep's `vehicle_ahead_gap` draws are

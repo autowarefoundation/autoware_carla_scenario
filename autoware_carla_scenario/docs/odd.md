@@ -300,8 +300,8 @@ A measure's **version** (`Measure.version`, `measure_version(key)`) says
 which definition it reads with, and is raised whenever what it reads changes
 meaning. The vehicle-ahead measures are version 2. Version 1 (before
 autoware-carla-scenario 11.0) read the gap centre to centre along the ego's
-heading -- about 4.4 m more than version 2 for a Lincoln MKZ behind a Mini --
-and counted a vehicle within three half-lanes of the ego's centre line,
+heading -- 4.75 m more than version 2 for a Lincoln MKZ behind a Mini on
+CARLA 0.10 -- and counted a vehicle within three half-lanes of the ego's centre line,
 whatever the map.
 
 Coverage keeps the versions apart. openodd's merge treats two coverage items
