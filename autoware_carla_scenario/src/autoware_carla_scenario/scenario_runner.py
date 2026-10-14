@@ -373,6 +373,9 @@ class _ScenarioClock:
         world: The CARLA world whose simulated time is read.
     """
 
+    _world: carla.World
+    _simulated_start: float
+
     def __init__(self, world: "carla.World") -> None:
         self._world = world
         self._simulated_start = self._simulated_now()

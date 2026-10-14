@@ -6,8 +6,8 @@ framework (``codon/``).  The library check (:func:`.check.typecheck_library`,
 module at a time, as each is made to compile.  This file says which:
 
 * :data:`CHECKED`: modules compiled from their real source.  Every function
-  and every method of every public class, protected (``_``) ones included,
-  is called with a value of each parameter's annotated type, so their bodies
+  and every method of every class, protected (``_``) ones included, is
+  called with a value of each parameter's annotated type, so their bodies
   are checked.
 * :data:`EXCLUDED`: every other module, with the reason it is not compiled.
   :data:`NOT_YET_CHECKED` marks one that could be: moving it into

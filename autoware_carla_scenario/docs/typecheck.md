@@ -398,8 +398,9 @@ the model, which declares the whole public API.
 
 Codon checks a function only when something calls it, so the check appends a
 function to each checked module that calls every function and every
-method of every public class (constructors, static and class methods,
-properties, dunder methods and protected `_` ones included) with a value of
+method of every class (constructors, static and class methods,
+properties, dunder methods, protected `_` ones and those of `_` classes
+included) with a value of
 each parameter's annotated type:
 
 ```python
@@ -455,12 +456,29 @@ compile. 12 were fixed in the module (shape-typed arrays, an annotated
 local, an lxml element type for `coordinate.transform._cubic()`, and the
 driver taking `Optional[Union[A, B]]`), and 13 are `UNCALLED`, each with the
 reason, most of them because they take `Any` and only an `UNCALLED` function
-calls them. Three things are left out:
+calls them.
+
+**The methods of `_` classes are called too** (#182). A `_` class is a
+module's own helper, and was left to be compiled through what uses it, but
+what uses it does not always compile it. Of the 42 methods of the 20 `_`
+classes of the checked modules, an error injected into each found 4 that
+nothing compiled: `_Never.__init__` and `_BackendAction.__init__`
+(`actions.background_traffic`), reached only from constructors that are
+`UNCALLED`; `_BackendAction.set_traffic_backend()`, which
+`BaseScenario._hand_backend_to()` calls behind a `hasattr()` on a
+`BaseAction`, which Codon decides statically as false; and
+`route.search._Search.__post_init__()`, which Codon's constructor does not
+call. The check now calls them as it calls a public class's: 47 calls,
+beside about 1460 others, none with a parameter the check cannot call with.
+Measured before any fix, 3 failed, and all 3 were fixed in the module:
+`_ScenarioClock` declares the `_world` and `_simulated_start` it assigns on
+`self`, and `_BackendAction.__init__` branches into a `BaseCondition` local
+instead of choosing between `until` and `_Never()` with a conditional
+expression, which Codon 0.19 cannot type. Each of the 4 now reports an
+injected error. Two things are left out:
 
 - a module's dunders (PEP 562's `__getattr__`), which are Python's hooks, not
   the module's code; a class's (`__eq__`, `__enter__`) are called, as before;
-- the methods of a `_` class, a module's own helper, which is compiled
-  through what uses it;
 - what `UNCALLED` names, as for a public function.
 
 A protected member that calls an `UNCALLED` one calls it in the `else`
