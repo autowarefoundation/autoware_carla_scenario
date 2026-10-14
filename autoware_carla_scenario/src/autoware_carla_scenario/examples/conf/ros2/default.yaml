@@ -33,5 +33,13 @@ ros2:
       topic: /planning/scenario_planning/trajectory
       priority: 0
       stale_s: 0.3
+  # Cameras whose frames the framework publishes itself (sensor_msgs/Image,
+  # bgra8, stamped in simulation time), for a CARLA server built without ROS 2.
+  # Each takes driver.cameras' rendering and mount fields (image_width,
+  # image_height, fov, fps, position_x/y/z, roll, pitch, yaw) and:
+  #   - logical_id: camera_front
+  #     topic: /carla/hero/main_cam/image   # CARLA's own name for it
+  #     frame_id: main_cam
+  cameras: []
   # Gains for tracking a trajectory (driver.control's, see conf/driver/default.yaml).
   control: {}

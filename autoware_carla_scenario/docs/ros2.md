@@ -23,7 +23,7 @@ flowchart LR
     CARLA["CARLA server<br/>(native ROS 2)"]
     E -->|"/localization/kinematic_state<br/>/vehicle/status/steering_status<br/>/vehicle/speed"| P
     P -->|"trajectory / control /<br/>steering + acceleration"| E
-    CARLA -->|"camera, /clock"| P
+    CARLA -->|"camera, /clock<br/>(or the entity, for a server<br/>built without ROS 2)"| P
 ```
 
 ## Installing
@@ -82,8 +82,35 @@ CARLA's world with `y` flipped, as CARLA's own ROS 2 interface publishes it -- w
 its origin on the rear axle, Autoware's `base_link` (`rear_axle_offset_m`, derived
 from the wheel physics when `null`).
 
-Cameras and `/clock` are not the entity's: CARLA publishes them itself when the
-server is built with ROS 2.
+Cameras and `/clock` are CARLA's to publish when the server is built with ROS 2. For a
+server built without it, the entity publishes them as well:
+
+| Setting | Type | Contents |
+| --- | --- | --- |
+| `clock_topic` | `rosgraph_msgs/Clock` | the simulation time, every tick |
+| `cameras[].topic` | `sensor_msgs/Image` | each frame of a camera on the ego, `bgra8`, stamped with the simulation time it was rendered at |
+
+A camera in `cameras` takes the rendering and mount fields of a
+[driver camera](driver_interface.md) (`image_width`, `image_height`, `fov`, `fps`,
+`position_x/y/z`, `roll`, `pitch`, `yaw`, in CARLA's convention), plus its `topic` and
+`frame_id`. Its frames go out from the sensor's own thread as they are rendered, the
+way CARLA's own interface publishes them, and under the names a node already
+subscribes to:
+
+```yaml
+ros2:
+  clock_topic: /clock
+  cameras:
+    - logical_id: main_cam
+      topic: /carla/hero/main_cam/image
+      frame_id: main_cam
+      image_width: 1280
+      image_height: 720
+      fov: 60.0
+      fps: 10.0
+      position_x: 1.25
+      position_z: 1.58
+```
 
 ## Where commands come from
 
@@ -177,7 +204,9 @@ installed. They are written in XCDR1, the representation `rmw_cyclonedds_cpp` wr
   matching them is not tested.
 * The ego's role name is `Ego`, where VisionPilot subscribes its camera under
   `/carla/hero/...`; whether CARLA's own ROS 2 topics follow the role name has not
-  been checked against a server yet.
+  been checked against a server yet. A camera in `cameras` is published under the
+  `topic` it names, whatever the role name.
+* A camera in `cameras` publishes no `sensor_msgs/CameraInfo`.
 * Commands are read in the local frame `frame_id` names; nothing transforms a plan
   published in another frame (a Lanelet2 `map`, say).
 * `control` and `steer_accel` hand the acceleration to CARLA's Ackermann controller as

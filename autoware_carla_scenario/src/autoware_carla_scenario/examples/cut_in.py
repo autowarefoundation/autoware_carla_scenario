@@ -44,6 +44,7 @@ from autoware_carla_scenario import (
     LaneChangeDirection,
     Lanelet2Pose,
     PersistentCondition,
+    SetSpeedAction,
     SpawnTransform,
     StickyCondition,
     TimeoutCondition,
@@ -143,6 +144,15 @@ class CutInScenario(BaseScenario):
             cfg.side,
         )
 
+        # Held at that speed, not only started at it: on a road whose limit is
+        # higher, the TrafficManager would otherwise speed it up and away from
+        # the ego -- and it refuses a forced lane change at speed (above some
+        # 10 m/s on CARLA 0.10's Town04 highway).
+        self.register_pre_tick(
+            SetSpeedAction(
+                CUT_IN_ROLE, cfg.npc_initial_speed_kmh, label="npc_initial_speed"
+            )
+        )
         self.register_pre_tick(
             LaneChangeAction(
                 CUT_IN_ROLE,
