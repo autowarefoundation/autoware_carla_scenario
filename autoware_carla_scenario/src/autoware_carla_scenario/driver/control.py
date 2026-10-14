@@ -365,8 +365,8 @@ class TrajectoryFollower:
 
     @staticmethod
     def _lookahead_point(
-        points: np.ndarray, lookahead_m: float
-    ) -> Optional[np.ndarray]:
+        points: np.ndarray[tuple[int, int], np.dtype[np.float64]], lookahead_m: float
+    ) -> Optional[np.ndarray[tuple[int], np.dtype[np.float64]]]:
         """Return the first plan point at least *lookahead_m* ahead of the rig origin.
 
         Falls back to the farthest point when the plan is shorter than the lookahead,
@@ -389,7 +389,7 @@ class TrajectoryFollower:
 
     def _lateral(
         self,
-        target: np.ndarray,
+        target: np.ndarray[tuple[int], np.dtype[np.float64]],
         speed_mps: float,
         dt_s: float,
         yaw_rate_rps: Optional[float],
@@ -527,7 +527,7 @@ def _reference(
     return speed, acceleration, float(np.interp(now_s, times_s, arc)) - along
 
 
-def _travel_m(points: np.ndarray) -> float:
+def _travel_m(points: np.ndarray[tuple[int, int], np.dtype[np.float64]]) -> float:
     """How far a plan's ``(N, 3)`` points travel, end to end along the path."""
     if len(points) < 2:
         return 0.0

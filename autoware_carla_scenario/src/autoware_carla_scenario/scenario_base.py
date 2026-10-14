@@ -362,7 +362,7 @@ class BaseScenario(ABC):
         if self._spawn_pose is None:
             msg = f"spawn_pose is required for {type(self).__name__}"
             raise ValueError(msg)
-        ll2_pose = self._spawn_pose
+        ll2_pose: Lanelet2Pose = self._spawn_pose
         world = self.world
         # Placed as the Lanelet2 pose it was written as, on the centreline of
         # the lanelet the author named.

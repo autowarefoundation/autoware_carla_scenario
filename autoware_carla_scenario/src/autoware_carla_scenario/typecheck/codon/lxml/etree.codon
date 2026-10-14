@@ -1,0 +1,8 @@
+# lxml's element, for the checker (docs/typecheck.md). lxml does not compile
+# with Codon: the model declares what the framework reads of pyxodr's XML
+# elements (`lane_xml`, `road_xml`) in coordinate.codon, and this names that
+# same class, so a checked module that annotates a parameter with lxml's
+# element (coordinate/transform.py's `_cubic`) takes the elements pyxodr's
+# lanes and roads hold.
+
+from autoware_carla_scenario.coordinate import _XmlElement as _Element

@@ -76,7 +76,7 @@ def test_every_excluded_module_has_a_reason() -> None:
     assert all(reason.strip() for reason in EXCLUDED.values())
 
 
-def test_every_uncalled_function_is_a_public_one_of_a_checked_module() -> None:
+def test_every_uncalled_function_is_one_of_a_checked_module() -> None:
     modules = package_modules()
     for name, reason in UNCALLED.items():
         assert reason.strip(), f"{name}: no reason"
@@ -395,8 +395,12 @@ def total(xs: Sequence[float]) -> float:
     return 0.0
 
 
-def _private(x: Any) -> None:
+def _private(x: float) -> None:
     pass
+
+
+def __getattr__(name: str) -> object:
+    return name
 
 
 class Vector:
@@ -418,7 +422,7 @@ class Vector:
     def unit(cls, scale: float) -> Vector:
         return cls(scale)
 
-    def _helper(self, anything: Any) -> None:
+    def _helper(self, scale: float) -> None:
         pass
 
 
@@ -455,9 +459,44 @@ def test_every_public_function_and_method_is_called_with_typed_values() -> None:
     assert "    Vector.unit(_acs_value(float))" in calls
     assert "    Config(_acs_value(str), _acs_value(list[int]))" in calls
     assert "    _acs_value(Level).up()" in calls
-    assert not [c for c in calls if "_private" in c or "_helper" in c or "Level(" in c]
+    assert not [c for c in calls if "Level(" in c]
     label = checks.labels[calls.index("    where(_acs_value(OpenDrivePose))") + 1]
     assert label == "where(pose: OpenDrivePose)"
+
+
+def test_protected_functions_and_methods_are_called_too() -> None:
+    # A `_` function or method is a hook a subclass or another module uses
+    # (BaseScenario._setup_ego_spawn): Codon compiles its body only when
+    # something calls it, so the check calls it as it calls a public one.
+    calls = render_library_checks(ast.parse(_MODULE)).source.splitlines()
+    assert "    _private(_acs_value(float))" in calls
+    assert "    _acs_value(Vector)._helper(_acs_value(float))" in calls
+    # A dunder of the module (PEP 562's lazy `__getattr__`) is Python's hook,
+    # not the module's code: it is not called.
+    assert not [c for c in calls if "__getattr__" in c]
+    # One the check cannot call with is a problem of the module, as a public
+    # one is, unless UNCALLED names it.
+    tree = ast.parse("def _anything(x: Any) -> None:\n    pass\n")
+    assert render_library_checks(tree).problems
+    assert not render_library_checks(tree, ["_anything"]).problems
+
+
+def test_an_optional_union_parameter_is_called_with_each_member() -> None:
+    source = """
+def lookup(ref: Optional[Union[EntityRole, str]]) -> None:
+    pass
+
+
+def override(value: Optional[float | str]) -> None:
+    pass
+"""
+    checks = render_library_checks(ast.parse(source))
+    calls = checks.source.splitlines()
+    assert checks.problems == []
+    assert "    lookup(_acs_value(EntityRole))" in calls
+    assert "    lookup(_acs_value(str))" in calls
+    assert "    override(_acs_value(float))" in calls
+    assert "    override(_acs_value(str))" in calls
 
 
 def test_a_parameter_the_check_cannot_call_with_is_a_problem_of_the_module() -> None:
@@ -919,6 +958,62 @@ def test_a_wrong_module_is_refused_at_its_line(
     assert located, result.format()
     assert located[0].path == str(tmp_path / "zz_library_check_case.py")
     assert located[0].line == line, result.format()
+
+
+_PROTECTED = """
+from __future__ import annotations
+
+
+class Gauge:
+    size: float
+
+    def __init__(self, size: float) -> None:
+        self.size = size
+
+    def _scaled(self, k: float) -> float:
+        return self.size * k
+
+
+def _doubled(x: float) -> float:
+    return x * 2.0
+"""
+
+
+@needs_codon
+def test_protected_functions_and_methods_compile(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    result = _check_case(_PROTECTED, tmp_path, monkeypatch)
+    assert result.ok, result.format()
+
+
+@needs_codon
+@pytest.mark.parametrize(
+    ("right", "wrong", "realized"),
+    [
+        ("return self.size * k", "return self.size + str(k)", "_scaled"),
+        ("return x * 2.0", "return x + 'two'", "_doubled"),
+    ],
+    ids=["method", "function"],
+)
+def test_an_error_in_a_protected_function_or_method_is_reported(
+    right: str,
+    wrong: str,
+    realized: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Nothing public calls _scaled() or _doubled(): only the check's own call
+    # compiles them, so an error in either is found only because of it.
+    source = _PROTECTED.replace(right, wrong)
+    result = _check_case(source, tmp_path, monkeypatch)
+    assert not result.ok
+    stripped = [text.strip() for text in textwrap.dedent(source).splitlines()]
+    located = [d for d in result.diagnostics if d.path and d.path.endswith(".py")]
+    assert located, result.format()
+    assert located[0].path == str(tmp_path / "zz_library_check_case.py")
+    assert located[0].line == stripped.index(wrong) + 1, result.format()
+    assert realized in result.format()
 
 
 @needs_codon
@@ -1986,13 +2081,27 @@ def launcher() -> Optional[Path]:
 """
 
 
+def _check_signals_case(
+    source: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> TypeCheckResult:
+    # A signal handler's frame is CPython's frame object, which Codon has no
+    # type for (`Any`): the handler is compiled through signal.signal(), which
+    # calls it as CPython does, not called with values of its own.
+    monkeypatch.setitem(
+        check.UNCALLED,
+        f"{_FAKE}.Recorder._on_signal",
+        "a signal handler, whose frame Codon has no type for",
+    )
+    return _check_case(source, tmp_path, monkeypatch)
+
+
 @needs_codon
 def test_the_signal_atexit_and_pipe_shims_and_their_models_take_what_cpython_takes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     for shim in ("signal.codon", "atexit.codon", "dotenv", "ffmpeg"):
         assert (model_dir() / shim).exists(), shim
-    result = _check_case(_PROCESS_SIGNALS, tmp_path, monkeypatch)
+    result = _check_signals_case(_PROCESS_SIGNALS, tmp_path, monkeypatch)
     assert result.ok, result.format()
 
 
@@ -2048,7 +2157,7 @@ def test_the_signal_atexit_and_pipe_shims_and_their_models_refuse_what_cpython_r
 ) -> None:
     source = _PROCESS_SIGNALS.replace(right, wrong, 1)
     assert source != _PROCESS_SIGNALS
-    result = _check_case(source, tmp_path, monkeypatch)
+    result = _check_signals_case(source, tmp_path, monkeypatch)
     assert not result.ok
     needle = at if at is not None else wrong
     line = next(
