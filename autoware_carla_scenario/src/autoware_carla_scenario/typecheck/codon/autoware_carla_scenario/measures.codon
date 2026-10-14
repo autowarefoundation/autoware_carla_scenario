@@ -21,6 +21,20 @@ ON_LANELET_M: float = 0.2
 EGO_LANE_HEADING_DEG: float = 60.0
 PEDESTRIAN_LATERAL_M: float = 10.0
 PEDESTRIAN_MOVING_MS: float = 0.5
+PROBE_ROLE: str = "bumper_probe"
+
+
+class Measure:
+    key: str
+    unit: str
+    text: str
+    version: int
+
+    def __init__(self, key: str, read, unit: str = "", text: str = "", version: int = 1):
+        self.key = key
+        self.unit = unit
+        self.text = text
+        self.version = version
 
 
 class Bumpers:
@@ -59,4 +73,8 @@ def vehicle_ahead_definitions() -> Dict[str, int]:
 def vehicle_ahead_gap_between(ego: carla.Transform, ego_bumpers: Bumpers,
                               other: carla.Transform,
                               other_bumpers: Bumpers) -> Optional[float]:
+    raise NotImplementedError()
+
+
+def prepare_vehicle_ahead() -> None:
     raise NotImplementedError()

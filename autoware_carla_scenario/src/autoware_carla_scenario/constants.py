@@ -5,6 +5,10 @@ from .entity_role import EntityRole
 # CARLA role_name attribute value assigned to the ego vehicle actor.
 EGO_ROLE_NAME: EntityRole = EntityRole.ego()
 
+# CARLA role_name of the vehicle placement.vehicle_bumpers() spawns high above
+# the map to measure a blueprint, and the vehicle-ahead measures skip.
+BUMPER_PROBE_ROLE_NAME: str = "bumper_probe"
+
 # Default port for the CARLA TrafficManager.
 # The CARLA default (8000) often conflicts with other services (e.g. VS Code),
 # so we use a different port to avoid ``RuntimeError: std::exception``.

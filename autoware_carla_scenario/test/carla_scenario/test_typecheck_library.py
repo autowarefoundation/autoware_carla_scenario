@@ -76,7 +76,7 @@ def test_every_excluded_module_has_a_reason() -> None:
     assert all(reason.strip() for reason in EXCLUDED.values())
 
 
-def test_every_uncalled_function_is_a_public_one_of_a_checked_module() -> None:
+def test_every_uncalled_function_is_one_of_a_checked_module() -> None:
     modules = package_modules()
     for name, reason in UNCALLED.items():
         assert reason.strip(), f"{name}: no reason"
@@ -395,8 +395,12 @@ def total(xs: Sequence[float]) -> float:
     return 0.0
 
 
-def _private(x: Any) -> None:
+def _private(x: float) -> None:
     pass
+
+
+def __getattr__(name: str) -> object:
+    return name
 
 
 class Vector:
@@ -418,7 +422,19 @@ class Vector:
     def unit(cls, scale: float) -> Vector:
         return cls(scale)
 
-    def _helper(self, anything: Any) -> None:
+    def _helper(self, scale: float) -> None:
+        pass
+
+
+@dataclass
+class _Walk:
+    steps: int
+    seen: list[int] = field(init=False)
+
+    def __post_init__(self) -> None:
+        self.seen = []
+
+    def step(self, n: int) -> None:
         pass
 
 
@@ -455,9 +471,157 @@ def test_every_public_function_and_method_is_called_with_typed_values() -> None:
     assert "    Vector.unit(_acs_value(float))" in calls
     assert "    Config(_acs_value(str), _acs_value(list[int]))" in calls
     assert "    _acs_value(Level).up()" in calls
-    assert not [c for c in calls if "_private" in c or "_helper" in c or "Level(" in c]
+    assert not [c for c in calls if "Level(" in c]
     label = checks.labels[calls.index("    where(_acs_value(OpenDrivePose))") + 1]
     assert label == "where(pose: OpenDrivePose)"
+
+
+_DEFAULTS_RENDERED = """
+def nearest(x: float, max_distance: float = 150.0) -> float:
+    return x
+
+
+def run(cwd: str, *args: str, timeout: int, env: str = "") -> None:
+    pass
+
+
+def plain(x: float) -> None:
+    pass
+
+
+class Bridge:
+    def configure(self, goal: float, waypoints: Optional[list[float]] = None) -> None:
+        pass
+
+    def start(self, world: float, *, skip: Collection[int] = ()) -> None:
+        pass
+
+    @staticmethod
+    def make(size: float = 1.0) -> None:
+        pass
+"""
+
+
+def test_a_function_with_defaults_is_called_without_them_too() -> None:
+    # Every call passes every argument, so no default would be compiled: one
+    # call more leaves out each argument that has one (#183).
+    checks = render_library_checks(ast.parse(_DEFAULTS_RENDERED))
+    calls = checks.source.splitlines()
+    assert "    nearest(_acs_value(float), _acs_value(float))" in calls
+    assert "    nearest(_acs_value(float))" in calls
+    label = checks.labels[calls.index("    nearest(_acs_value(float))") + 1]
+    assert label == "nearest(x: float), with the default of `max_distance`"
+    # A `*args: T` is still given one T, so the positional parameters before
+    # it are passed; the keyword-only one without a default is too.
+    assert "    run(_acs_value(str), _acs_value(str), timeout=_acs_value(int))" in calls
+    # A function without a default is called once.
+    assert [c for c in calls if c.startswith("    plain(")] == [
+        "    plain(_acs_value(float))"
+    ]
+    # A method through its class: its dispatch thunk fills in no default.
+    assert "    Bridge.configure(_acs_value(Bridge), _acs_value(float))" in calls
+    assert "    Bridge.start(_acs_value(Bridge), _acs_value(float))" in calls
+    assert "    Bridge.make()" in calls
+
+
+_FIELD_DEFAULTS_RENDERED = """
+from dataclasses import dataclass, field
+from typing import Any, Sequence
+
+
+@dataclass
+class Docker:
+    workspace: str
+    launch: Sequence[str]
+    colcon_args: Sequence[str] = ("--symlink-install",)
+    env: dict[str, str] = field(default_factory=dict)
+    extra: dict[str, Any] = field(default_factory=dict)
+    timeout: float = 10.0
+    required: int = field(kw_only=True)
+
+
+@dataclass
+class Point:
+    x: float
+    y: float
+
+
+@dataclass
+class Defaults:
+    k: float = 0.0
+"""
+
+
+def test_a_dataclass_is_constructed_without_its_field_defaults_too() -> None:
+    # Every constructor call passes every field, so no field default would
+    # be compiled: one call more passes only the fields without one (#188).
+    checks = render_library_checks(ast.parse(_FIELD_DEFAULTS_RENDERED))
+    calls = checks.source.splitlines()
+    assert (
+        "    Docker(_acs_value(str), _acs_value(Sequence[str]), "
+        "_acs_value(Sequence[str]), _acs_value(dict[str, str]), "
+        "timeout=_acs_value(float), required=_acs_value(int))" in calls
+    )
+    # A field after a defaulted one is passed by keyword; a `field()` with no
+    # default (here keyword-only) is required.  The `Any` field is left out
+    # of both calls.
+    required = (
+        "    Docker(_acs_value(str), _acs_value(Sequence[str]), "
+        "required=_acs_value(int))"
+    )
+    assert required in calls
+    label = checks.labels[calls.index(required) + 1]
+    assert label == (
+        "Docker.__init__(workspace: str, launch: Sequence[str], required: int), "
+        "with the default of `colcon_args`, `env`, `timeout`"
+    )
+    # A dataclass without a default is constructed once; one with only
+    # defaulted fields is constructed with none too.
+    assert [c for c in calls if c.startswith("    Point(")] == [
+        "    Point(_acs_value(float), _acs_value(float))"
+    ]
+    assert "    Defaults()" in calls
+
+
+def test_protected_functions_and_methods_are_called_too() -> None:
+    # A `_` function or method is a hook a subclass or another module uses
+    # (BaseScenario._setup_ego_spawn): Codon compiles its body only when
+    # something calls it, so the check calls it as it calls a public one.
+    calls = render_library_checks(ast.parse(_MODULE)).source.splitlines()
+    assert "    _private(_acs_value(float))" in calls
+    assert "    _acs_value(Vector)._helper(_acs_value(float))" in calls
+    # So are the methods of a `_` class: what uses such a helper may not
+    # compile them (an UNCALLED constructor, a call behind `hasattr`), and
+    # Codon's constructor does not call a dataclass's __post_init__ (#182).
+    assert "    _Walk(_acs_value(int))" in calls
+    assert "    _acs_value(_Walk).__post_init__()" in calls
+    assert "    _acs_value(_Walk).step(_acs_value(int))" in calls
+    # A dunder of the module (PEP 562's lazy `__getattr__`) is Python's hook,
+    # not the module's code: it is not called.
+    assert not [c for c in calls if "__getattr__" in c]
+    # One the check cannot call with is a problem of the module, as a public
+    # one is, unless UNCALLED names it.
+    tree = ast.parse("def _anything(x: Any) -> None:\n    pass\n")
+    assert render_library_checks(tree).problems
+    assert not render_library_checks(tree, ["_anything"]).problems
+
+
+def test_an_optional_union_parameter_is_called_with_each_member() -> None:
+    source = """
+def lookup(ref: Optional[Union[EntityRole, str]]) -> None:
+    pass
+
+
+def override(value: Optional[float | str]) -> None:
+    pass
+"""
+    checks = render_library_checks(ast.parse(source))
+    calls = checks.source.splitlines()
+    assert checks.problems == []
+    assert "    lookup(_acs_value(EntityRole))" in calls
+    assert "    lookup(_acs_value(str))" in calls
+    assert "    override(_acs_value(float))" in calls
+    assert "    override(_acs_value(str))" in calls
 
 
 def test_a_parameter_the_check_cannot_call_with_is_a_problem_of_the_module() -> None:
@@ -563,14 +727,18 @@ def test_a_dataclass_is_constructed_with_each_member_of_a_union_field() -> None:
     checks = render_library_checks(ast.parse(_DATACLASS_FIELDS))
     calls = [c.strip() for c in checks.source.splitlines() if "Run(" in c]
     # A dict[str, Any] field with a default is left out of the call, and the
-    # fields after it are passed by keyword.
+    # fields after it are passed by keyword.  The last call passes only the
+    # field without a default, so the defaults are compiled (#188).
     assert calls == [
-        f"Run(_acs_value(str), _acs_value({scenario}), "
-        f"npc=_acs_value({npc}), timeout=_acs_value(float))"
-        for scenario in ("Straight", "Turn")
-        for npc in ("Straight", "Turn")
+        *(
+            f"Run(_acs_value(str), _acs_value({scenario}), "
+            f"npc=_acs_value({npc}), timeout=_acs_value(float))"
+            for scenario in ("Straight", "Turn")
+            for npc in ("Straight", "Turn")
+        ),
+        "Run(_acs_value(str))",
     ]
-    label = checks.labels[checks.source.splitlines().index("    " + calls[-1]) + 1]
+    label = checks.labels[checks.source.splitlines().index("    " + calls[-2]) + 1]
     assert label == "Run.__init__(name: str, scenario: Turn, npc: Turn, timeout: float)"
     # Without a default, the field cannot be left out: a problem, as before.
     lines = _DATACLASS_FIELDS.splitlines()
@@ -919,6 +1087,206 @@ def test_a_wrong_module_is_refused_at_its_line(
     assert located, result.format()
     assert located[0].path == str(tmp_path / "zz_library_check_case.py")
     assert located[0].line == line, result.format()
+
+
+_PROTECTED = """
+from __future__ import annotations
+
+
+class Gauge:
+    size: float
+
+    def __init__(self, size: float) -> None:
+        self.size = size
+
+    def _scaled(self, k: float) -> float:
+        return self.size * k
+
+
+def _doubled(x: float) -> float:
+    return x * 2.0
+
+
+class _Meter:
+    reading: float
+
+    def __init__(self, reading: float) -> None:
+        self.reading = reading
+
+    def offset(self, k: float) -> float:
+        return self.reading - k
+"""
+
+
+@needs_codon
+def test_protected_functions_and_methods_compile(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    result = _check_case(_PROTECTED, tmp_path, monkeypatch)
+    assert result.ok, result.format()
+
+
+@needs_codon
+@pytest.mark.parametrize(
+    ("right", "wrong", "realized"),
+    [
+        ("return self.size * k", "return self.size + str(k)", "_scaled"),
+        ("return x * 2.0", "return x + 'two'", "_doubled"),
+        ("return self.reading - k", "return self.reading - str(k)", "offset"),
+    ],
+    ids=["method", "function", "private-class-method"],
+)
+def test_an_error_in_a_protected_function_or_method_is_reported(
+    right: str,
+    wrong: str,
+    realized: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Nothing public calls _scaled(), _doubled() or _Meter.offset(): only the
+    # check's own call compiles them, so an error in any is found only
+    # because of it.
+    source = _PROTECTED.replace(right, wrong)
+    result = _check_case(source, tmp_path, monkeypatch)
+    assert not result.ok
+    stripped = [text.strip() for text in textwrap.dedent(source).splitlines()]
+    located = [d for d in result.diagnostics if d.path and d.path.endswith(".py")]
+    assert located, result.format()
+    assert located[0].path == str(tmp_path / "zz_library_check_case.py")
+    assert located[0].line == stripped.index(wrong) + 1, result.format()
+    assert realized in result.format()
+
+
+_DEFAULTS = """
+from __future__ import annotations
+
+from typing import Callable, Collection, Dict, List, Optional, Sequence
+
+from autoware_carla_scenario.kinematics.vector import Vector3
+
+
+def nearest(x: float, max_distance: float = 150.0) -> float:
+    return x + max_distance
+
+
+class Route:
+    _waypoints: List[Vector3]
+
+    def __init__(self, goal: Vector3, waypoints: Sequence[Vector3] = ()) -> None:
+        self._waypoints = list(waypoints)
+
+
+class Launch:
+    _args: Sequence[str]
+
+    def __init__(self, args: Sequence[str] = ("--symlink-install", "-v")) -> None:
+        self._args = args
+
+
+def hold(ids: List[int], spare: Collection[int] = ()) -> int:
+    return len([i for i in ids if i not in spare])
+
+
+def first(poses: Optional[Sequence[Vector3]] = None) -> int:
+    kept: List[Vector3] = []
+    if poses:
+        kept = list(poses)
+    return len(kept)
+
+
+def tally(ids: List[int] = [], names: Dict[str, Vector3] = {}) -> float:
+    return sum(ids) + sum(v.x for v in names.values())
+
+
+class Box:
+    def add(self, more: List[Vector3] = [], *, by: Dict[str, float] = {}) -> int:
+        return len(more) + len(by)
+
+
+def height(ground: Optional[Callable[[float], Optional[float]]] = None) -> float:
+    z: Optional[float] = None
+    if ground is not None:
+        z = ground(1.0)
+    if z is None:
+        return 0.0
+    return z
+"""
+
+
+@needs_codon
+def test_defaults_compile(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # The calls without the defaults compile a `()` of a Sequence[T] (an empty
+    # List[T]), a `None` of an Optional the transform drops, and an empty
+    # `[]` / `{}`, which Codon would make a list of None (#183).  A tuple
+    # display of a Sequence[T] is a List[T] too, so it can be kept in a
+    # Sequence[T] attribute (#188).
+    result = _check_case(_DEFAULTS, tmp_path, monkeypatch)
+    assert result.ok, result.format()
+
+
+@needs_codon
+def test_a_default_of_the_wrong_type_is_reported(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Every other call passes `max_distance`: only the one leaving it out
+    # compiles the default.
+    source = _DEFAULTS.replace(
+        "max_distance: float = 150.0", 'max_distance: float = "far"'
+    )
+    assert source != _DEFAULTS
+    result = _check_case(source, tmp_path, monkeypatch)
+    assert not result.ok
+    assert "with the default of `max_distance`" in result.format(), result.format()
+
+
+_FIELD_DEFAULTS = """
+from dataclasses import dataclass, field
+from typing import Dict, List, Sequence
+
+from autoware_carla_scenario.kinematics.vector import Vector3
+
+
+@dataclass
+class Launch:
+    workspace: str
+    colcon_args: Sequence[str] = ("--symlink-install", "--merge-install")
+    one: Sequence[str] = ("a",)
+    sizes: tuple[float, ...] = field(default=(1.0, 2.0))
+    origin: Vector3 = field(default_factory=lambda: Vector3(0.0, 0.0, 0.0))
+    env: Dict[str, str] = field(default_factory=dict)
+    max_distance: float = 150.0
+
+    def arguments(self) -> List[str]:
+        return [self.workspace] + list(self.colcon_args) + list(self.one)
+"""
+
+
+@needs_codon
+def test_field_defaults_compile(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The constructor call passing only the required fields compiles each
+    # field default against its field's type: a tuple display of a
+    # `Sequence[str]` or `tuple[float, ...]` field is a list of it (#188).
+    result = _check_case(_FIELD_DEFAULTS, tmp_path, monkeypatch)
+    assert result.ok, result.format()
+
+
+@needs_codon
+def test_a_field_default_of_the_wrong_type_is_reported(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Every other constructor call passes `max_distance`: only the one
+    # passing the required fields alone compiles the default.
+    source = _FIELD_DEFAULTS.replace(
+        "max_distance: float = 150.0", 'max_distance: float = "far"'
+    )
+    assert source != _FIELD_DEFAULTS
+    result = _check_case(source, tmp_path, monkeypatch)
+    assert not result.ok
+    assert "Launch.__init__(workspace: str), with the default of" in (
+        result.format()
+    ), result.format()
 
 
 @needs_codon
@@ -1986,13 +2354,27 @@ def launcher() -> Optional[Path]:
 """
 
 
+def _check_signals_case(
+    source: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> TypeCheckResult:
+    # A signal handler's frame is CPython's frame object, which Codon has no
+    # type for (`Any`): the handler is compiled through signal.signal(), which
+    # calls it as CPython does, not called with values of its own.
+    monkeypatch.setitem(
+        check.UNCALLED,
+        f"{_FAKE}.Recorder._on_signal",
+        "a signal handler, whose frame Codon has no type for",
+    )
+    return _check_case(source, tmp_path, monkeypatch)
+
+
 @needs_codon
 def test_the_signal_atexit_and_pipe_shims_and_their_models_take_what_cpython_takes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     for shim in ("signal.codon", "atexit.codon", "dotenv", "ffmpeg"):
         assert (model_dir() / shim).exists(), shim
-    result = _check_case(_PROCESS_SIGNALS, tmp_path, monkeypatch)
+    result = _check_signals_case(_PROCESS_SIGNALS, tmp_path, monkeypatch)
     assert result.ok, result.format()
 
 
@@ -2048,7 +2430,7 @@ def test_the_signal_atexit_and_pipe_shims_and_their_models_refuse_what_cpython_r
 ) -> None:
     source = _PROCESS_SIGNALS.replace(right, wrong, 1)
     assert source != _PROCESS_SIGNALS
-    result = _check_case(source, tmp_path, monkeypatch)
+    result = _check_signals_case(source, tmp_path, monkeypatch)
     assert not result.ok
     needle = at if at is not None else wrong
     line = next(

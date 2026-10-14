@@ -54,6 +54,18 @@ which :func:`transform_source_lines` maps back onto the handler):
   the callable out.
 * ``raise X from None`` becomes ``raise X``: Codon 0.19 cannot type the
   ``None`` cause.
+* The ``()`` default of a dropped ``Sequence[X]`` / ``Collection[X]`` /
+  ``tuple[X, ...]`` parameter becomes ``List[X]()``, its tuple display
+  default ``List[X]([...])``, and the ``None``
+  default of a dropped ``Optional`` of one, or of a ``Callable``, the
+  ``None`` of its type (``Optional[List[X]]()``): Codon would otherwise type
+  the parameter as an empty tuple or as ``NoneType``.
+* The tuple display default of a class-level ``Sequence[X]``-like or
+  ``tuple[X, ...]`` field (``("a", "b")``, or ``field(default=(...))``)
+  becomes ``List[X](["a", "b"])``, and its ``()`` ``List[X]()``: the field
+  is a list, and a display a fixed-length tuple.  A ``list`` / ``dict`` /
+  ``set`` ``default_factory`` of an abstract collection (``Mapping[str,
+  str]``) becomes an empty one of the concrete type (``Dict[str, str]()``).
 * A class-level ``tuple[X, ...]`` becomes ``List[X]``, and ``tuple(x)``
   becomes ``_acs_tuple(x)``, a list unless *x* is a tuple: Codon's tuples
   have a fixed length.  ``callable(x)``, which Codon 0.19 lacks, becomes
@@ -123,7 +135,7 @@ MISSING_BUILTIN_EXCEPTIONS = (
 PRELUDE = (
     "from autoware_carla_scenario._lists import _acs_list\n"
     "from autoware_carla_scenario._tc import _Required as _acs_Required, "
-    "_acs_callable, _acs_tuple\n"
+    "_acs_Returning, _acs_callable, _acs_tuple\n"
     "from autoware_carla_scenario._exceptions import "
     + ", ".join(MISSING_BUILTIN_EXCEPTIONS)
     + "\n"
@@ -503,6 +515,88 @@ def codon_annotation(node: ast.AST, *, class_level: bool = False) -> str | None:
     return None
 
 
+def callable_annotation(node: ast.AST) -> str | None:
+    """``Callable[[A, B], R]`` in Codon's spelling, or ``None``.
+
+    Codon 0.19 has a ``Callable[[A, B], R]`` type, which a function of that
+    signature converts to.  The transform drops a ``Callable`` parameter
+    annotation (the parameter becomes generic, so a lambda still checks) and
+    leaves a class-level one as written, but the check needs a value to call
+    with: one of that type, when Codon can express its argument and result
+    types (not ``Any``).
+    """
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        try:
+            node = ast.parse(node.value, mode="eval").body
+        except SyntaxError:
+            return None
+    if not (isinstance(node, ast.Subscript) and _dotted(node.value) in _CALLABLE_NAMES):
+        return None
+    if not (isinstance(node.slice, ast.Tuple) and len(node.slice.elts) == 2):
+        return None
+    params, result = node.slice.elts
+    if not isinstance(params, ast.List):
+        return None  # Callable[..., R]: no argument types to call with
+    args = [codon_annotation(p, class_level=True) for p in params.elts]
+    ret = codon_annotation(result, class_level=True)
+    if ret is None or any(a is None for a in args):
+        return None
+    return f"Callable[[{', '.join(a for a in args if a is not None)}], {ret}]"
+
+
+def _members_or_self(node: ast.AST) -> list[ast.AST]:
+    """The members of a union or an ``Optional`` (``None`` included), or *node*."""
+    if isinstance(node, ast.Subscript) and _dotted(node.value) in (
+        "Optional",
+        "typing.Optional",
+    ):
+        return [*_members_or_self(node.slice), ast.Constant(None)]
+    members = _union_members(node)
+    if members is None:
+        return [node]
+    return [inner for member in members for inner in _members_or_self(member)]
+
+
+def union_callable_annotation(node: ast.AST) -> str | None:
+    """``_acs_Returning[R, 2]`` for a ``Callable[[A, B], R]`` with a union among
+    ``A, B``, or an ``Optional`` of one; ``None`` for any other annotation.
+
+    Codon 0.19 crashes on a ``Callable`` type with a union argument ("union
+    already sealed").  The check calls with ``_acs_Returning[R, N]`` (the
+    model's ``_tc.codon``) instead: a callable that takes ``N`` arguments of
+    any type and returns an ``R``.  So the body is compiled with the number of
+    arguments it passes checked, their types unchecked, and with the ``R`` it
+    gets back checked.  Every member of each union, and ``R``,
+    must be a type Codon can express.
+    """
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        try:
+            node = ast.parse(node.value, mode="eval").body
+        except SyntaxError:
+            return None
+    rest = [m for m in _members_or_self(node) if not _is_none(m)]
+    if len(rest) != 1:
+        return None
+    node = rest[0]
+    if not (isinstance(node, ast.Subscript) and _dotted(node.value) in _CALLABLE_NAMES):
+        return None
+    if not (isinstance(node.slice, ast.Tuple) and len(node.slice.elts) == 2):
+        return None
+    params, result = node.slice.elts
+    if not isinstance(params, ast.List):
+        return None
+    union = False
+    for param in params.elts:
+        members = [m for m in _members_or_self(param) if not _is_none(m)]
+        union = union or len(members) > 1
+        if any(codon_annotation(m, class_level=True) is None for m in members):
+            return None
+    ret = codon_annotation(result, class_level=True)
+    if not union or ret is None:
+        return None
+    return f"_acs_Returning[{ret}, {len(params.elts)}]"
+
+
 def _field_default(
     call: ast.Call, edits: _Edits, annotation: ast.expr | None = None
 ) -> str | None:
@@ -543,6 +637,8 @@ def _field_default(
                     and _builtin_generic(annotation.value) == name
                     else None
                 )
+                if typed is None and annotation is not None:
+                    typed = _abstract_factory_type(annotation, name)
                 if (
                     typed is None
                     and isinstance(annotation, ast.Subscript)
@@ -565,6 +661,82 @@ def _field_default(
         if typed is not None:
             return f"{typed}()"
     return None
+
+
+#: The abstract collections a ``default_factory`` builds a value of, by the
+#: factory, and the concrete Codon collection that value is.
+_ABSTRACT_FACTORIES = {
+    "list": ({"Sequence", "MutableSequence", "Iterable", "Collection"}, "List"),
+    "dict": ({"Mapping", "MutableMapping"}, "Dict"),
+    "set": ({"AbstractSet"}, "Set"),
+}
+
+
+def _abstract_factory_type(annotation: ast.AST, factory: str) -> str | None:
+    """``Dict[K, V]`` for ``Mapping[K, V] = field(default_factory=dict)``.
+
+    The empty collection a factory builds for a field annotated with an
+    abstract collection the ``typing`` shim maps onto it (``Mapping`` onto
+    ``Dict``): Codon would type a bare ``{}`` from what is put in it, and
+    nothing is, so a dict of ``None``.  ``None`` when the annotation is no
+    such collection or names a type Codon cannot express.
+    """
+    if factory not in _ABSTRACT_FACTORIES or not isinstance(annotation, ast.Subscript):
+        return None
+    names, concrete = _ABSTRACT_FACTORIES[factory]
+    base_name = _dotted(annotation.value) or ""
+    if base_name.rsplit(".", 1)[-1] not in names:
+        return None
+    typed = codon_annotation(annotation, class_level=True)
+    if typed is None or not typed.startswith(f"{base_name}["):
+        return None
+    return concrete + typed[len(base_name) :]
+
+
+#: The abstract collections an empty tuple is a value of, checked as a list.
+_SEQUENCE_NAMES = {"Sequence", "MutableSequence", "Iterable", "Collection"}
+
+
+def _sequence_list(annotation: ast.AST) -> str | None:
+    """``List[X]`` for a ``Sequence[X]``-like or ``tuple[X, ...]`` annotation.
+
+    The type a parameter's ``()`` default is checked as (``Collection[int] =
+    ()``): an empty list of the element type, as ``field(default=())`` is.
+    ``None`` for any other annotation, or an element Codon cannot express.
+    """
+    if isinstance(annotation, ast.Constant) and isinstance(annotation.value, str):
+        try:
+            annotation = ast.parse(annotation.value, mode="eval").body
+        except SyntaxError:
+            return None
+    if not isinstance(annotation, ast.Subscript):
+        return None
+    base = (_dotted(annotation.value) or "").rsplit(".", 1)[-1]
+    if base in _TUPLE_NAMES:
+        typed = codon_annotation(annotation, class_level=True)
+        return typed if typed is not None and typed.startswith("List[") else None
+    if base not in _SEQUENCE_NAMES or isinstance(annotation.slice, ast.Tuple):
+        return None
+    item = codon_annotation(annotation.slice, class_level=True)
+    return None if item is None else f"List[{item}]"
+
+
+def _optional_member(annotation: ast.AST) -> ast.AST | None:
+    """``X`` of an ``Optional[X]`` / ``X | None`` / ``Union[X, None]``, or ``None``."""
+    if isinstance(annotation, ast.Constant) and isinstance(annotation.value, str):
+        try:
+            annotation = ast.parse(annotation.value, mode="eval").body
+        except SyntaxError:
+            return None
+    if isinstance(annotation, ast.Subscript) and _dotted(annotation.value) in (
+        _OPTIONAL_NAMES
+    ):
+        return annotation.slice
+    members = _union_members(annotation)
+    if members is None or not any(_is_none(m) for m in members):
+        return None
+    rest = [m for m in members if not _is_none(m)]
+    return rest[0] if len(rest) == 1 else None
 
 
 def _names_any(annotation: ast.AST) -> bool:
@@ -672,6 +844,82 @@ class _Rewriter(ast.NodeVisitor):
             self._rewrite_bare_star(args)
         self._default_required_keywords(args)
 
+    def _rewrite_defaults(self, args: ast.arguments) -> None:
+        """Type a default the dropped annotation of its parameter would type.
+
+        A ``Sequence[X]`` / ``Collection[X]`` / ``tuple[X, ...]`` parameter is
+        dropped (a caller may pass a tuple), so the parameter is generic, and
+        its default ``()`` would make it Codon's empty tuple, which has no
+        elements, no ``X`` and a fixed length.  It becomes ``List[X]()``, the
+        value a caller's list of ``X`` is, as ``field(default=())`` does, and
+        a tuple display (``("a", "b")``, a fixed-length ``Tuple[str, str]``)
+        a list of its elements, ``List[X](["a", "b"])``, as a field's.  An
+        empty ``[]`` / ``{}`` (of a ``list[X]`` / ``dict[K, V]`` parameter,
+        or ``[]`` of a sequence) becomes an empty one of that type: Codon
+        would make it a list of ``None``.
+
+        A ``None`` default of an ``Optional`` of one (``Optional[Sequence[X]]
+        = None``) or of a ``Callable`` (also dropped) would be Codon's
+        ``NoneType``, which has nothing of ``X``, and no call: a body that
+        tests it for ``None`` first is still compiled with it.  It becomes the
+        ``None`` of the ``Optional`` (``Optional[List[X]]()``), a ``Callable``
+        spelled as the library check calls with it (:func:`callable_annotation`,
+        :func:`union_callable_annotation`).  The source keeps its default.
+        """
+        positional = [*args.posonlyargs, *args.args]
+        pairs = [
+            *zip(positional[len(positional) - len(args.defaults) :], args.defaults),
+            *zip(args.kwonlyargs, args.kw_defaults),
+        ]
+        for arg, default in pairs:
+            if default is None or arg.annotation is None:
+                continue
+            if _annotation_names(arg.annotation) & (
+                self._later_classes | self._type_vars
+            ):
+                continue  # a type Codon cannot name here
+            typed: str | None = None
+            if isinstance(default, ast.Tuple) and default.elts:
+                # `("a", "b")`: a list of the elements, as a field's (#188).
+                listed = _sequence_list(arg.annotation)
+                if listed is not None:
+                    self._list_display(default, listed)
+                continue
+            if isinstance(default, ast.Tuple):
+                typed = _sequence_list(arg.annotation)
+            elif isinstance(default, (ast.List, ast.Dict)) and not (
+                default.elts if isinstance(default, ast.List) else default.keys
+            ):
+                # `[]` / `{}`, which Codon types from what is put in it, and
+                # nothing is: a list of `None` ("'List[NoneType]' does not
+                # match expected type 'List[int]'").  An empty one of the
+                # parameter's type, as `field(default_factory=list)` is.
+                kept = codon_annotation(arg.annotation)
+                kinds = (
+                    ("list", "List")
+                    if isinstance(default, ast.List)
+                    else (
+                        "dict",
+                        "Dict",
+                    )
+                )
+                if kept is not None and kept.split("[", 1)[0] in kinds:
+                    typed = kept if "[" in kept else None
+                elif isinstance(default, ast.List):
+                    typed = _sequence_list(arg.annotation)
+            elif _is_none(default):
+                member = _optional_member(arg.annotation)
+                inner = (
+                    None
+                    if member is None
+                    else _sequence_list(member)
+                    or callable_annotation(member)
+                    or union_callable_annotation(member)
+                )
+                typed = None if inner is None else f"Optional[{inner}]"
+            if typed is not None:
+                self.edits.replace(*self.edits.node_span(default), f"{typed}()")
+
     def _default_required_keywords(self, args: ast.arguments) -> None:
         """Give a required keyword-only parameter after a default one.
 
@@ -764,6 +1012,7 @@ class _Rewriter(ast.NodeVisitor):
                 self.visit(decorator)
         if classmethod_ and self._class_name is not None:
             self._rewrite_classmethod(node, self._class_name)
+        self._rewrite_defaults(node.args)
         self._rewrite_arguments(node.args, skip_first=classmethod_)
         self._rewrite_returns(node)
         for default in [*node.args.defaults, *node.args.kw_defaults]:
@@ -899,10 +1148,75 @@ class _Rewriter(ast.NodeVisitor):
             self.enums.append((node.name, value_type))
         return [stmt for stmt, _, _ in members]
 
+    def _rewrite_tuple_default(self, value: ast.expr, annotation: ast.expr) -> bool:
+        """Make a field's tuple display default a list of its sequence type.
+
+        A field ``Sequence[X]`` / ``tuple[X, ...]`` is declared as a
+        ``List[X]``, and its default ``("a", "b")`` would be a fixed-length
+        Codon tuple (``Tuple[str, str]``), which is no ``List[X]``: it becomes
+        ``List[X](["a", "b"])``, a list of the field's element type, and
+        ``()`` becomes ``List[X]()``.  Only the brackets are replaced, so the
+        elements are rewritten as anywhere else.  *value* is the default
+        itself or a ``field(default=(...))`` call; ``False`` (and nothing
+        replaced) when it is no parenthesized tuple of such a field.
+        """
+        call: ast.Call | None = None
+        if isinstance(value, ast.Call) and _dotted(value.func) in _FIELD_FUNCTIONS:
+            call = value
+            value = next(
+                (kw.value for kw in call.keywords if kw.arg == "default"), value
+            )
+        if not isinstance(value, ast.Tuple):
+            return False
+        if any(isinstance(e, ast.Starred) for e in value.elts):
+            return False
+        if _annotation_names(annotation) & (self._later_classes | self._type_vars):
+            return False  # a type Codon cannot name here
+        typed = _sequence_list(annotation)
+        start, end = self.edits.node_span(value)
+        if typed is None or self.edits.text(start, start + 1) != "(":
+            return False
+        if call is not None:
+            # `field(default=(...))`: the default alone, as `_field_default`
+            # makes it.
+            call_start, call_end = self.edits.node_span(call)
+            self.edits.replace(call_start, start, "")
+            self.edits.replace(end, call_end, "")
+        if not value.elts:
+            self.edits.replace(start, end, f"{typed}()")
+            return True
+        self._list_display(value, typed)
+        for element in value.elts:
+            self.visit(element)
+        return True
+
+    def _list_display(self, value: ast.Tuple, typed: str) -> bool:
+        """Make the tuple display *value* the list *typed* of its elements.
+
+        ``("a", "b")`` becomes ``List[str](["a", "b"])``.  Only the brackets
+        are replaced, so the caller visits the elements.  ``False`` (and
+        nothing replaced) for a display with no brackets or a starred
+        element.
+        """
+        start, end = self.edits.node_span(value)
+        if self.edits.text(start, start + 1) != "(" or any(
+            isinstance(e, ast.Starred) for e in value.elts
+        ):
+            return False
+        self.edits.replace(start, start + 1, f"{typed}([")
+        self.edits.replace(end - 1, end, "])")
+        return True
+
     def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
         class_level = self._class_depth > 0 and self._function_depth == 0
         value = node.value
         if (
+            class_level
+            and value is not None
+            and self._rewrite_tuple_default(value, node.annotation)
+        ):
+            value = None  # replaced as a whole
+        elif (
             class_level
             and isinstance(value, ast.Call)
             and _dotted(value.func) in _FIELD_FUNCTIONS

@@ -1,10 +1,10 @@
-"""The calls the library check compiles: everything public, with typed values.
+"""The calls the library check compiles: every function, with typed values.
 
 Codon only checks a function it compiles, and it compiles a function only
 when something calls it.  To check a framework module on its own, the library
 check (:func:`.check.typecheck_library`) appends a function to the module
-that calls every public function and every method of every public class,
-each with a value of every parameter's annotated type::
+that calls every function and every method of every class, each
+with a value of every parameter's annotated type::
 
     def _acs_library_check():
         normalize_angle_deg(_acs_value(float))
@@ -16,7 +16,22 @@ each with a value of every parameter's annotated type::
 pointer: Codon types it as a ``T``, and nothing compiled is ever run.  The
 calls are written in the module's own namespace, so an annotation means what
 it means in the module.  A parameter annotated with a union
-(``Lanelet2Pose | OpenDrivePose``) is called once with each member.
+(``Lanelet2Pose | OpenDrivePose``, or ``Optional[Union[A, B]]``) is called
+once with each member.  A function with a defaulted parameter is called
+once more with only the arguments that have none (a method through its
+class), so its defaults are compiled too (:meth:`_Renderer._defaults_call`),
+and a dataclass with a defaulted field is constructed once more with only
+the fields that have none (:meth:`_Renderer._required_fields_call`).
+
+Protected (``_``) functions and methods are called too: they are the hooks a
+subclass or another module uses (``BaseScenario._setup_ego_spawn``), and
+Codon would compile one only if a public function called it.  A module's
+dunders (PEP 562's ``__getattr__``) are Python's hooks, not the module's
+code, and are left out; a class's (``__eq__``, ``__enter__``) are called.
+The methods of a ``_`` class are called as a public class's are: what uses
+such a helper may not compile it (a constructor that is ``UNCALLED``, a call
+behind a ``hasattr`` that Codon decides statically, a dataclass's
+``__post_init__``, which Codon's constructor does not call).
 
 Some annotations give the check nothing to call with (``Any``, ``object``,
 ``Callable[..., R]``, none at all): each is reported as a problem of the
@@ -42,10 +57,13 @@ from .transform import (
     _ENUM_BASES,
     _dotted,
     _is_none,
+    _members_or_self,
     _names_any,
     _union_members,
+    callable_annotation,
     codon_annotation,
     uncalled_nodes,
+    union_callable_annotation,
 )
 
 __all__ = [
@@ -68,92 +86,12 @@ LIBRARY_PACKAGE = "_acs_lib"
 MAX_CALLS = 16
 
 _DATACLASS = {"dataclass", "dataclasses.dataclass"}
+_FIELD_FUNCTIONS = {"field", "dataclasses.field"}
+#: OmegaConf's mandatory-value marker: a field "defaulted" to it is required.
+_MANDATORY = {"MISSING"}
 _SKIPPED_DECORATORS = {"overload", "typing.overload"}
 _PROPERTIES = {"property", "functools.cached_property", "cached_property"}
 _OBJECT_OPERAND = {"__eq__", "__ne__"}
-_CALLABLE = {"Callable", "typing.Callable", "collections.abc.Callable"}
-
-
-def callable_annotation(node: ast.AST) -> str | None:
-    """``Callable[[A, B], R]`` in Codon's spelling, or ``None``.
-
-    Codon 0.19 has a ``Callable[[A, B], R]`` type, which a function of that
-    signature converts to.  The transform drops a ``Callable`` parameter
-    annotation (the parameter becomes generic, so a lambda still checks) and
-    leaves a class-level one as written, but the check needs a value to call
-    with: one of that type, when Codon can express its argument and result
-    types (not ``Any``).
-    """
-    if isinstance(node, ast.Constant) and isinstance(node.value, str):
-        try:
-            node = ast.parse(node.value, mode="eval").body
-        except SyntaxError:
-            return None
-    if not (isinstance(node, ast.Subscript) and _dotted(node.value) in _CALLABLE):
-        return None
-    if not (isinstance(node.slice, ast.Tuple) and len(node.slice.elts) == 2):
-        return None
-    params, result = node.slice.elts
-    if not isinstance(params, ast.List):
-        return None  # Callable[..., R]: no argument types to call with
-    args = [codon_annotation(p, class_level=True) for p in params.elts]
-    ret = codon_annotation(result, class_level=True)
-    if ret is None or any(a is None for a in args):
-        return None
-    return f"Callable[[{', '.join(a for a in args if a is not None)}], {ret}]"
-
-
-def _members_or_self(node: ast.AST) -> list[ast.AST]:
-    """The members of a union or an ``Optional`` (``None`` included), or *node*."""
-    if isinstance(node, ast.Subscript) and _dotted(node.value) in (
-        "Optional",
-        "typing.Optional",
-    ):
-        return [*_members_or_self(node.slice), ast.Constant(None)]
-    members = _union_members(node)
-    if members is None:
-        return [node]
-    return [inner for member in members for inner in _members_or_self(member)]
-
-
-def union_callable_annotation(node: ast.AST) -> str | None:
-    """``_acs_Returning[R, 2]`` for a ``Callable[[A, B], R]`` with a union among
-    ``A, B``, or an ``Optional`` of one; ``None`` for any other annotation.
-
-    Codon 0.19 crashes on a ``Callable`` type with a union argument ("union
-    already sealed").  The check calls with ``_acs_Returning[R, N]`` (the
-    model's ``_tc.codon``) instead: a callable that takes ``N`` arguments of
-    any type and returns an ``R``.  So the body is compiled with the number of
-    arguments it passes checked, their types unchecked, and with the ``R`` it
-    gets back checked.  Every member of each union, and ``R``,
-    must be a type Codon can express.
-    """
-    if isinstance(node, ast.Constant) and isinstance(node.value, str):
-        try:
-            node = ast.parse(node.value, mode="eval").body
-        except SyntaxError:
-            return None
-    rest = [m for m in _members_or_self(node) if not _is_none(m)]
-    if len(rest) != 1:
-        return None
-    node = rest[0]
-    if not (isinstance(node, ast.Subscript) and _dotted(node.value) in _CALLABLE):
-        return None
-    if not (isinstance(node.slice, ast.Tuple) and len(node.slice.elts) == 2):
-        return None
-    params, result = node.slice.elts
-    if not isinstance(params, ast.List):
-        return None
-    union = False
-    for param in params.elts:
-        members = [m for m in _members_or_self(param) if not _is_none(m)]
-        union = union or len(members) > 1
-        if any(codon_annotation(m, class_level=True) is None for m in members):
-            return None
-    ret = codon_annotation(result, class_level=True)
-    if not union or ret is None:
-        return None
-    return f"_acs_Returning[{ret}, {len(params.elts)}]"
 
 
 def workspace_module(module: str) -> str:
@@ -202,10 +140,13 @@ class _Renderer:
         self.uncalled = set(uncalled)
         #: Classes by name, for the base classes of a dataclass.
         self.classes: dict[str, ast.ClassDef] = dict(classes or {})
+        # `_acs_Returning` comes with the transform's PRELUDE, which a
+        # parameter's default may name above this function; imported again
+        # here, Codon 0.19 cannot type the module ("cannot typecheck").
         self.lines = [
             "",
             "",
-            "from autoware_carla_scenario._tc import _acs_Returning, _acs_value",
+            "from autoware_carla_scenario._tc import _acs_value",
             "",
             "",
             f"def {LIBRARY_CHECK}():",
@@ -238,9 +179,10 @@ class _Renderer:
             and isinstance(annotation, ast.Subscript)
             and _dotted(annotation.value) in ("Optional", "typing.Optional")
         ):
-            # Optional[Callable[...]], which codon_annotation drops: called
-            # with the callable, as `Callable[...] | None` is.
-            members = [annotation.slice]
+            # Optional[Callable[...]] or Optional[Union[A, B]], which
+            # codon_annotation drops: called with the callable, or with each
+            # member, as `Callable[...] | None` and `A | B | None` are.
+            members = _members_or_self(annotation)
         if members is not None:
             texts = [
                 codon_annotation(m, class_level=True)
@@ -276,7 +218,14 @@ class _Renderer:
         drop_first: bool,
         owner: str | None = None,
         receiver: str | None = None,
+        class_head: str | None = None,
     ) -> None:
+        """Emit the calls of *func*, and one leaving its defaults out.
+
+        *class_head* (``Class.method``) is what a method called on a value
+        (*head*, ``_acs_value(Class).method``) is called through to leave its
+        defaults out: its dispatch thunk fills in none.
+        """
         args = func.args
         positional = [*args.posonlyargs, *args.args][1 if drop_first else 0 :]
         vararg = _called_vararg(args.vararg)
@@ -287,13 +236,73 @@ class _Renderer:
         choices = [self.types(arg, owner, where) for arg in every]
         if any(c is None for c in choices):
             return
+        typed = [c for c in choices if c]
         self._emit_calls(
             head,
             where,
             positional,
             args.kwonlyargs,
-            [c for c in choices if c],
+            typed,
             receiver=receiver,
+        )
+        self._defaults_call(
+            func,
+            dict(zip((a.arg for a in every), typed)),
+            where,
+            positional,
+            head=class_head or head,
+            receiver=receiver if class_head is None else f"_acs_value({owner})",
+        )
+
+    def _defaults_call(
+        self,
+        func: ast.FunctionDef | ast.AsyncFunctionDef,
+        typed: dict[str, list[str]],
+        where: str,
+        positional: list[ast.arg],
+        *,
+        head: str,
+        receiver: str | None,
+    ) -> None:
+        """One call more, leaving out every argument that has a default.
+
+        The calls of :meth:`_emit_calls` pass every argument, so no default
+        is compiled: this one leaves them out (each parameter given its
+        first type), so Codon compiles each default against the body, as a
+        caller that leaves it out has it compiled.  A method is called
+        through its class (*head*), as a dispatch thunk fills in no default.
+        A ``*args: T`` is still given one ``T``, so the positional
+        parameters before it are all passed.  Nothing is emitted for a
+        function without a default.
+        """
+        args = func.args
+        every = [*args.posonlyargs, *args.args]
+        defaulted = {a.arg for a in every[len(every) - len(args.defaults) :]}
+        defaulted |= {
+            a.arg for a, d in zip(args.kwonlyargs, args.kw_defaults) if d is not None
+        }
+        vararg = _called_vararg(args.vararg)
+        passed_positional = [
+            a for a in positional if vararg is not None or a.arg not in defaulted
+        ]
+        passed_keyword = [a for a in args.kwonlyargs if a.arg not in defaulted]
+        left_out = [
+            a.arg
+            for a in [*positional, *args.kwonlyargs]
+            if a not in passed_positional and a not in passed_keyword
+        ]
+        if not left_out:
+            return
+        values = [receiver] if receiver is not None else []
+        values += [f"_acs_value({typed[a.arg][0]})" for a in passed_positional]
+        values += [f"{a.arg}=_acs_value({typed[a.arg][0]})" for a in passed_keyword]
+        signature = ", ".join(
+            f"{a.arg}: {typed[a.arg][0]}" for a in [*passed_positional, *passed_keyword]
+        )
+        self.emit(
+            f"{head}({', '.join(values)})",
+            f"{where}({signature}), with the default of "
+            + ", ".join(f"`{name}`" for name in left_out),
         )
 
     def _emit_calls(
@@ -343,10 +352,7 @@ class _Renderer:
         elif decorators & _DATACLASS and not is_enum:
             self._dataclass_init(node)
         for method in methods:
-            dunder = method.name.startswith("__") and method.name.endswith("__")
-            if method.name == "__init__" or (
-                method.name.startswith("_") and not dunder
-            ):
+            if method.name == "__init__":
                 continue
             kinds = {_dotted(d) or "" for d in method.decorator_list}
             where = f"{name}.{method.name}"
@@ -381,6 +387,7 @@ class _Renderer:
                     where,
                     drop_first=True,
                     owner=name,
+                    class_head=f"{name}.{method.name}",
                 )
 
     def _dataclass_init(self, node: ast.ClassDef) -> None:
@@ -413,7 +420,7 @@ class _Renderer:
         keyword: list[ast.arg] = []
         choices: list[list[str]] = []
         left_out = False
-        for arg in fields.values():
+        for arg, _ in fields.values():
             if arg.arg == _LEFT_OUT:
                 left_out = True
                 continue
@@ -433,17 +440,64 @@ class _Renderer:
         self._emit_calls(
             node.name, f"{node.name}.__init__", positional, keyword, choices
         )
+        self._required_fields_call(
+            node.name,
+            fields,
+            dict(zip((a.arg for a in [*positional, *keyword]), choices)),
+        )
 
-    def _fields(self, node: ast.ClassDef, seen: set[str]) -> dict[str, ast.arg] | None:
+    def _required_fields_call(
+        self,
+        name: str,
+        fields: dict[str, tuple[ast.arg, bool]],
+        typed: dict[str, list[str]],
+    ) -> None:
+        """One constructor call more, passing only the fields with no default.
+
+        The calls of :meth:`_dataclass_init` pass every field, so no field
+        default is compiled: this one leaves them out (each field given its
+        first type), so Codon compiles each default against the field's
+        type, as a caller that leaves it out has it compiled.  A required
+        field after a defaulted one (a ``kw_only`` field) is passed by
+        keyword.  Nothing is emitted for a dataclass without a default.
+        """
+        passed_positional: list[str] = []
+        passed_keyword: list[str] = []
+        left_out: list[str] = []
+        seen_default = False
+        for field_name, (arg, has_default) in fields.items():
+            if has_default:
+                seen_default = True
+                if arg.arg != _LEFT_OUT:
+                    left_out.append(field_name)
+                continue
+            (passed_keyword if seen_default else passed_positional).append(field_name)
+        if not left_out:
+            return
+
+        values = [f"_acs_value({typed[f][0]})" for f in passed_positional]
+        values += [f"{f}=_acs_value({typed[f][0]})" for f in passed_keyword]
+        signature = ", ".join(
+            f"{f}: {typed[f][0]}" for f in [*passed_positional, *passed_keyword]
+        )
+        self.emit(
+            f"{name}({', '.join(values)})",
+            f"{name}.__init__({signature}), with the default of "
+            + ", ".join(f"`{f}`" for f in left_out),
+        )
+
+    def _fields(
+        self, node: ast.ClassDef, seen: set[str]
+    ) -> dict[str, tuple[ast.arg, bool]] | None:
         """The fields of the dataclass *node*, its bases' first, by name.
 
-        A field the call leaves out is an ``ast.arg`` named
-        :data:`_LEFT_OUT`.  ``None`` when more than one base brings fields
-        (Python and Codon 0.19 order them differently).
+        Each with whether it has a default.  A field the call leaves out is
+        an ``ast.arg`` named :data:`_LEFT_OUT`.  ``None`` when more than one
+        base brings fields (Python and Codon 0.19 order them differently).
         """
         seen = seen | {node.name}
-        fields: dict[str, ast.arg] = {}
-        inherited: list[dict[str, ast.arg]] = []
+        fields: dict[str, tuple[ast.arg, bool]] = {}
+        inherited: list[dict[str, tuple[ast.arg, bool]]] = []
         for base in [b for n in node.bases for b in self._dataclasses_of(n, seen)]:
             base_fields = self._fields(base, seen)
             if base_fields is None:
@@ -477,11 +531,11 @@ class _Renderer:
                 continue
             name = stmt.target.id
             if value is not None and _names_any(stmt.annotation):
-                fields[name] = ast.arg(_LEFT_OUT, stmt.annotation)
+                fields[name] = (ast.arg(_LEFT_OUT, stmt.annotation), True)
                 continue
             arg = ast.arg(name, stmt.annotation)
             arg.lineno = stmt.lineno
-            fields[name] = arg
+            fields[name] = (arg, _has_default(value))
         return fields
 
     def _dataclasses_of(
@@ -528,11 +582,32 @@ class _Renderer:
 _LEFT_OUT = "_acs_left_out"
 
 
+def _has_default(value: ast.expr | None) -> bool:
+    """Whether a dataclass field assigned *value* has a default.
+
+    OmegaConf's mandatory-value marker (``spawn_lanelet_id: int = MISSING``,
+    the string ``"???"``) is none: it is a placeholder for a value the config
+    must supply, not one of the field's type, so the call passes the field
+    and the marker is not compiled.  Python does not enforce it: a dataclass
+    built without the field (``NpcVehicleConfig()``, or from
+    ``OmegaConf.to_container()``) holds the string, unchecked.
+    """
+    if value is None or (_dotted(value) or "").rsplit(".", 1)[-1] in _MANDATORY:
+        return False
+    if isinstance(value, ast.Call) and _dotted(value.func) in _FIELD_FUNCTIONS:
+        return any(kw.arg in ("default", "default_factory") for kw in value.keywords)
+    return True
+
+
 def _is_dataclass(node: ast.ClassDef) -> bool:
     return bool(
         {_dotted(d.func if isinstance(d, ast.Call) else d) for d in node.decorator_list}
         & _DATACLASS
     )
+
+
+def _is_dunder(name: str) -> bool:
+    return name.startswith("__") and name.endswith("__")
 
 
 def _combinations(choices: list[list[str]]) -> list[tuple[str, ...]]:
@@ -566,9 +641,9 @@ def render_library_checks(
     renderer = _Renderer(uncalled, {**(classes or {}), **own})
     for node in tree.body:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            if not node.name.startswith("_"):
+            if not _is_dunder(node.name):
                 renderer.function(node)
-        elif isinstance(node, ast.ClassDef) and not node.name.startswith("_"):
+        elif isinstance(node, ast.ClassDef):
             renderer.cls(node)
     renderer.lines.append("    pass")
     return LibraryChecks(

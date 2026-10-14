@@ -4,7 +4,8 @@
 # themselves are declared through BaseScenario.register_cover().  CoverItem and
 # CrossItem are declared for the library check (scenario_base, which holds
 # them), with only the name scenario_base reads; a scenario never builds one.
-# CoverageCollector (below) is what the checked scenario_runner uses of it.
+# CoverageCollector and prepare_measures() (below) are what the checked
+# scenario_runner uses of it.
 # COVERAGE_SCHEMA, CoverGroup, CoverageReport and merge_coverage() are
 # declared for the library check of the package's __init__, which re-exports
 # them (openodd's, a Rust extension).
@@ -147,4 +148,8 @@ class CoverageReport:
 
 def merge_coverage(documents) -> CoverageReport:
     """openodd's merge of coverage documents (Sequence[dict[str, Any]])."""
+    raise NotImplementedError()
+
+
+def prepare_measures(odd) -> None:
     raise NotImplementedError()

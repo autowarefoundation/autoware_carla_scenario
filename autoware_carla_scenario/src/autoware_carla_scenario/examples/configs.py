@@ -87,8 +87,14 @@ class TrafficLightComplianceConfig:
     #: Fail-safe timeout in seconds.
     timeout_seconds: float = 5.0
 
-    #: Speed threshold (km/h) considered "moving".
+    #: Speed threshold (km/h) considered "moving": reaching it while the
+    #: light is red fails the run.
     moving_speed_kmh: float = 1.0
+
+    #: Speed (km/h) the ego must reach after the light turns green for the run
+    #: to pass, before ``timeout_seconds``. ``None`` uses ``moving_speed_kmh``,
+    #: which passes a mere creep; set it higher to require a real departure.
+    departure_speed_kmh: float | None = None
 
     #: Margin (seconds) subtracted from the red phase duration when computing
     #: the required standstill time.

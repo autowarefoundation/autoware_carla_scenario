@@ -263,9 +263,13 @@ car in front is 15 m ahead", and from the map:
 - **The ego's lane** is the lanelet the ego is on -- of those under its
   origin (within `ON_LANELET_M`), the one whose centreline runs closest to its
   heading, within `EGO_LANE_HEADING_DEG` -- with every lanelet following it up
-  to `AHEAD_RANGE_M` ahead (each branch where the lane branches: the measure
-  does not know the route) and the lanelet before it. Its arc length `s` runs
-  along their centrelines, on from one to the next.
+  to `AHEAD_RANGE_M` ahead and the lanelets behind it. Where the lane
+  branches, **every branch** is the ego's lane: the measure does not know the
+  route, so a vehicle ahead on either branch counts. Behind, the lane runs back
+  one way only, through the first of the lanelets before each (Lanelet2's
+  `previous(...)[0]`), where lanes merge; a lanelet joining the ego's lane
+  is not its lane, nor beside it. Its arc length `s` runs along their
+  centrelines, on from one to the next.
 - **A vehicle counts** when its origin is on one of those lanelets, or on a
   lanelet beside one of them -- its left or right neighbour in the Lanelet2
   routing graph, whether a lane change is allowed across the line or not --
@@ -279,8 +283,12 @@ car in front is 15 m ahead", and from the map:
   lanelets beside each other are cut or how long they are -- the outer lane of
   a bend is longer than the inner one, and the same `s` on the two is not
   side by side -- and on a bend it is the distance along the road, not a
-  straight line. A vehicle in the lane beside that overlaps the ego reads a
-  negative gap.
+  straight line. A vehicle on the ego's own lane that overlaps it reads a
+  negative gap; one in a lane beside that overlaps it (its rear bumper behind
+  the ego's front bumper) is alongside, not ahead, and does not count, so it
+  never hides the vehicle that is ahead. One beside and ahead of the ego
+  counts, which is how a vehicle about to cut in is measured before it
+  changes lanes.
 - **The relative speed** is the vehicle's velocity along the lane's tangent at
   its rear bumper less the ego's along the tangent at its front bumper: two
   vehicles keeping pace round a bend read 0 though their headings differ.
@@ -292,30 +300,54 @@ definition: a vehicle ahead of the ego's origin within three
 along the ego's heading. The run logs a warning the first time, and the
 coverage file says how many frames each definition read
 (`measures.vehicle_ahead_gap_m.definitions`: `along_lane`, `geometric`;
-`vehicle_ahead_definitions()` in Python).
+`vehicle_ahead_definitions()` in Python). The geometric definition, too,
+does not count a vehicle alongside in the next lane.
+
+A reading costs about 3 ms with ten vehicles around the ego on CARLA
+Town04_Opt (it was some 170 ms).
+The ego's lane is found once and kept while its lanelet is still the ego's
+-- the ego on it, running its way, and no lanelet overlapping it (found by
+geometry, however the map cuts a fork's branches or an exit into lanelets)
+running closer to the ego's heading -- and the whole
+map is searched only when it is not (or, off the lanelets, once the ego has
+moved 2 m or turned 5°); a vehicle is placed by
+the lane's own lanelets, not by searching the map; and a projection reads
+only the stretch of a centreline near the point. The Lanelet2 routing graph
+the lane is read from -- some 25 s to build on Town04_Opt -- is built in the
+run's setup whenever the ODD maps a vehicle-ahead measure
+(`prepare_measures`), with every lanelet's bounding box, not on the first
+tick. A failed reading reads nothing and is warned of once a run.
 
 #### Measure versions
 
 A measure's **version** (`Measure.version`, `measure_version(key)`) says
 which definition it reads with, and is raised whenever what it reads changes
 meaning. The vehicle-ahead measures are version 2. Version 1 (before
-autoware-carla-scenario 11.0) read the gap centre to centre along the ego's
+autoware-carla-scenario 12.0) read the gap centre to centre along the ego's
 heading -- 4.75 m more than version 2 for a Lincoln MKZ behind a Mini on
-CARLA 0.10 -- and counted a vehicle within three half-lanes of the ego's centre line,
-whatever the map.
+CARLA 0.10 -- and counted a vehicle within three half-lanes of the ego's
+centre line, whatever the map.
 
 Coverage keeps the versions apart. openodd's merge treats two coverage items
 as the same when their name, buckets, event and criteria agree; it does not
 read their description. So the cover item of an ODD attribute mapped onto a
 measure past version 1 is written under its version,
-`odd.dynamic.vehicle_ahead_gap#2`: merged with files written before, the
+`odd.dynamic.vehicle_ahead_gap@v2`: merged with files written before, the
 report lists `odd.dynamic.vehicle_ahead_gap` (version 1) and
-`odd.dynamic.vehicle_ahead_gap#2` (version 2) apart, never one bucket's hits
-added to the other's. `#<n>` is the suffix openodd itself gives a second
-definition of an item; its sampler reads past it to the ODD's attribute, so a
-coverage-driven sweep (`strategy: coverage`) still counts what version 2
-covered -- and what version 1 covered too, which it cannot tell apart: point
-`coverage_from` at version 2's files only. Each coverage file also lists the
+`odd.dynamic.vehicle_ahead_gap@v2` (version 2) apart, never one bucket's hits
+added to the other's. The mark is `@v<n>`, not `#<n>`: `#<n>` is the suffix
+openodd's merge gives an item it meets defined differently (version 1 files
+whose buckets changed merge as `odd.dynamic.vehicle_ahead_gap#2`), and
+openodd's sampler adds up an item's `#<n>` definitions. A coverage-driven
+sweep (`strategy: coverage`) reads only the current version: `OddSampler`
+hands openodd's sampler the `@v2` items under the attribute's own item name
+and leaves the older ones out (`current_measure_coverage`), so a
+`coverage_from` that also holds version 1's files is safe. The 12.0.0
+release wrote version 2 as `#2`; those files read as version 1, and their
+hits are left out of a coverage-driven sweep on purpose: since 12.0.0 a
+vehicle alongside in the next lane no longer counts as ahead, which changed
+what version 2 reads, not only its name. Each
+coverage file also lists the
 measures its ODD reads under `measures`, with their version, unit and text.
 A scenario that replaces a built-in measure (`register_measure`) promises the
 same quantity, so its replacement carries the built-in's version.
@@ -806,9 +838,11 @@ gap.
 
 The gap is bumper to bumper, so the placement needs both vehicles' sizes
 before either is spawned. CARLA gives a blueprint no size: `vehicle_bumpers`
-spawns one vehicle of the blueprint high above the map, reads its bounding
-box and destroys it before the world ticks again, once per blueprint per
-process. The NPC is then spawned once, where the gap reads right, rather
+reads the bounding box of a vehicle of the blueprint already in the world
+when there is one, and otherwise spawns one high above the map (higher again
+if that spawn is refused), reads its bounding box and destroys it before the
+world ticks again -- once per blueprint per process. The vehicle-ahead
+measures do not count a vehicle that far above the ego. The NPC is then spawned once, where the gap reads right, rather
 than spawned, measured and moved -- a move that would race its initial
 speed and the first tick.
 

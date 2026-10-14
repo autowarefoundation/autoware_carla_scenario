@@ -362,7 +362,7 @@ class BaseScenario(ABC):
         if self._spawn_pose is None:
             msg = f"spawn_pose is required for {type(self).__name__}"
             raise ValueError(msg)
-        ll2_pose = self._spawn_pose
+        ll2_pose: Lanelet2Pose = self._spawn_pose
         world = self.world
         # Placed as the Lanelet2 pose it was written as, on the centreline of
         # the lanelet the author named.
@@ -786,9 +786,12 @@ class BaseScenario(ABC):
                 f"register_measure({key}): the built-in measure is in "
                 f"{built_in.unit!r}, not {unit!r}"
             )
+        version = 1
         if built_in is not None:
             unit = built_in.unit
-        self._measures[key] = Measure(key, read, unit, text)
+            # A replacement measures the same thing, better: the same version.
+            version = built_in.version
+        self._measures[key] = Measure(key, read, unit, text, version)
 
     def _restore_measures(self) -> None:
         """Back to the measures the scenario had before its first attempt.

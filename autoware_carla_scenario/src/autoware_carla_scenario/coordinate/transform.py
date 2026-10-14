@@ -36,6 +36,7 @@ import typesafe_carla.carla as carla
 import numpy as np
 
 if TYPE_CHECKING:
+    import lxml.etree
     from pyxodr.road_objects.lane import Lane
     from pyxodr.road_objects.lane_section import LaneSection
     from pyxodr.road_objects.road import Road
@@ -587,7 +588,8 @@ def _beats(
 
 
 def _project_onto_ref_line(
-    ref_line: np.ndarray, point: np.ndarray
+    ref_line: np.ndarray[tuple[int, int], np.dtype[np.float64]],
+    point: np.ndarray[tuple[int], np.dtype[np.float64]],
 ) -> tuple[int, float, float, float, float]:
     """Project *point* onto *ref_line* at its nearest vertex.
 
@@ -607,7 +609,9 @@ def _project_onto_ref_line(
 
 
 def _overshoot_along(
-    ref_line: np.ndarray, nearest_idx: int, point: np.ndarray
+    ref_line: np.ndarray[tuple[int, int], np.dtype[np.float64]],
+    nearest_idx: int,
+    point: np.ndarray[tuple[int], np.dtype[np.float64]],
 ) -> float:
     """How far (m) *point* lies past the start or end of *ref_line*.
 
@@ -675,7 +679,9 @@ def _carla_to_lanelet2(pose: CarlaWorldPose) -> Lanelet2Pose:
 # ---------------------------------------------------------------------------
 
 
-def _compute_arc_lengths_2d(points: np.ndarray) -> np.ndarray:
+def _compute_arc_lengths_2d(
+    points: np.ndarray[tuple[int, int], np.dtype[np.float64]],
+) -> np.ndarray[tuple[int], np.dtype[np.float64]]:
     """Compute cumulative arc lengths along a 2D polyline (shape N×2)."""
     deltas = np.diff(points, axis=0)
     seg_lengths = np.linalg.norm(deltas, axis=1)
@@ -712,7 +718,11 @@ def _interpolate_at_s(
     return x, y, z, heading
 
 
-def _heading_at_s(ref_line: np.ndarray, arc_lengths: np.ndarray, s: float) -> float:
+def _heading_at_s(
+    ref_line: np.ndarray[tuple[int, int], np.dtype[np.float64]],
+    arc_lengths: np.ndarray[tuple[int], np.dtype[np.float64]],
+    s: float,
+) -> float:
     """Return the tangent heading (radians) at arc length s along a 2D polyline."""
     s_clamped = float(np.clip(s, arc_lengths[0], arc_lengths[-1]))
     idx = int(np.searchsorted(arc_lengths, s_clamped, side="right")) - 1
@@ -725,7 +735,7 @@ def _heading_at_s(ref_line: np.ndarray, arc_lengths: np.ndarray, s: float) -> fl
 def _signed_perp_distance(
     x: float,
     y: float,
-    ref_line: np.ndarray,
+    ref_line: np.ndarray[tuple[int, int], np.dtype[np.float64]],
     nearest_idx: int,
     heading_ref: float,
 ) -> float:
@@ -799,7 +809,7 @@ def _lane_width_at_ds(lane: Lane, ds: float) -> float:
     return _cubic(active, ds - float(active.attrib.get("sOffset", "0.0")))
 
 
-def _cubic(elem, ds: float) -> float:
+def _cubic(elem: lxml.etree._Element, ds: float) -> float:
     """Evaluate an OpenDRIVE ``a + b·ds + c·ds² + d·ds³`` record at *ds*."""
     a = float(elem.attrib["a"])
     b = float(elem.attrib["b"])

@@ -1145,3 +1145,146 @@ def test_an_empty_tuple_default_takes_the_type_of_its_field() -> None:
     assert "    warnings: List[str] = List[str]()" in out
     assert '    pair: tuple[str, int] = ("a", 1)' in out
     assert "    none: Optional[List[str]] = None" in out
+
+
+def test_a_tuple_display_default_of_a_sequence_field_is_a_list_of_its_type() -> None:
+    # A `Sequence[X]` / `tuple[X, ...]` field is declared as a `List[X]` (the
+    # typing shim's `Sequence` is `List`), and its tuple display would be a
+    # fixed-length Codon tuple: a list of the
+    # field's element type, which the constructor call leaving it out
+    # compiles (#188).  Only the brackets are replaced, so an element is
+    # rewritten as anywhere else.
+    out = _transform(
+        """
+        @dataclass
+        class Docker:
+            colcon_args: Sequence[str] = ("--symlink-install", "--merge-install")
+            one: Sequence[str] = ("a",)
+            fixed: tuple[str, ...] = ("x", "y")
+            wrapped: Sequence[int] = field(default=(1, 2))
+            nested: Sequence[Set[str]] = (frozenset({"a"}),)
+            pair: tuple[str, int] = ("a", 1)
+            bare: Sequence[int] = 1, 2
+            empty: Sequence["Pose"] = ()
+            env: Mapping[str, str] = field(default_factory=dict)
+            ids: Sequence[int] = field(default_factory=list)
+            flags: AbstractSet[str] = field(default_factory=set)
+        """
+    )
+    assert (
+        '    colcon_args: Sequence[str] = List[str](["--symlink-install", '
+        '"--merge-install"])' in out
+    )
+    assert '    one: Sequence[str] = List[str](["a",])' in out
+    assert '    fixed: List[str] = List[str](["x", "y"])' in out
+    assert "    wrapped: Sequence[int] = List[int]([1, 2])" in out
+    assert '    nested: Sequence[Set[str]] = List[Set[str]]([set({"a"}),])' in out
+    # A fixed-length tuple, a display without brackets, or no sequence: left
+    # as written.
+    assert '    pair: tuple[str, int] = ("a", 1)' in out
+    assert "    bare: Sequence[int] = 1, 2" in out
+    # An empty one is an empty list, as `field(default=())` is.
+    assert "    empty: Sequence[Pose] = List[Pose]()" in out
+    # A factory of an abstract collection builds the concrete one the typing
+    # shim maps it onto, of the field's types (Codon would make a bare `{}` a
+    # dict of None).
+    assert "    env: Mapping[str, str] = Dict[str, str]()" in out
+    assert "    ids: Sequence[int] = List[int]()" in out
+    assert "    flags: AbstractSet[str] = Set[str]()" in out
+
+
+def test_an_empty_tuple_default_of_a_sequence_parameter_is_an_empty_list() -> None:
+    # The parameter's annotation is dropped (a caller may pass a tuple), so
+    # its `()` would be Codon's empty tuple: it is typed as the list a
+    # caller's sequence of the element type is, as `field(default=())` is.
+    out = _transform(
+        """
+        def route(
+            goal: Pose,
+            waypoints: Sequence[Pose] = (),
+            *,
+            skip: Collection[int] = (),
+            quoted: "Sequence[Pose]" = (),
+            inner: Sequence["Pose"] = (),
+            fixed: tuple[str, ...] = (),
+            pair: tuple[str, int] = (),
+            listed: list[int] = (),
+            later: Sequence[Later] = (),
+            filled: Sequence[int] = (1, 2),
+            one: tuple[str, ...] = ("a",),
+            filled_pair: tuple[str, int] = ("a", 1),
+            starred: Sequence[int] = (*IDS,),
+        ) -> None:
+            pass
+
+
+        class Later:
+            pass
+        """
+    )
+    assert "    waypoints = List[Pose]()," in out
+    assert "    skip = List[int]()," in out
+    assert "    quoted = List[Pose]()," in out
+    assert "    inner = List[Pose]()," in out
+    assert "    fixed = List[str]()," in out
+    # Not a sequence of one element type, or annotated as Codon keeps it:
+    # left as written.
+    assert "    pair: tuple[str, int] = ()," in out
+    assert "    listed: list[int] = ()," in out
+    # A class defined further down, which Codon cannot name in a signature.
+    assert "    later = ()," in out
+    # A display is a list of its elements, as a field's (#188); a
+    # fixed-length tuple, or one with a starred element, is left as written.
+    assert "    filled = List[int]([1, 2])," in out
+    assert '    one = List[str](["a",]),' in out
+    assert '    filled_pair: tuple[str, int] = ("a", 1),' in out
+    assert "    starred = (*IDS,)," in out
+
+
+def test_a_none_default_of_a_dropped_optional_parameter_is_its_types_none() -> None:
+    # An Optional of a sequence, or of a Callable, is dropped too, and a `None`
+    # default would be Codon's NoneType, which has no element and no call:
+    # it is the None of the Optional the library check calls with.
+    out = _transform(
+        """
+        def configure(
+            poses: Optional[Sequence[Pose]] = None,
+            ground: Optional[Callable[[float, float], Optional[float]]] = None,
+            lookup: Callable[[Union[A, B]], Pose] | None = None,
+            label: Optional[str] = None,
+            anything: Optional[Callable[..., float]] = None,
+        ) -> None:
+            pass
+        """
+    )
+    assert "    poses = Optional[List[Pose]]()," in out
+    assert (
+        "    ground = Optional[Callable[[float, float], Optional[float]]](),"
+    ) in out
+    assert "    lookup = Optional[_acs_Returning[Pose, 1]]()," in out
+    # An annotation Codon keeps types its None already.
+    assert "    label: Optional[str] = None," in out
+    # Nothing Codon can express: left as written.
+    assert "    anything = None," in out
+
+
+def test_an_empty_list_or_dict_default_takes_the_type_of_its_parameter() -> None:
+    # Codon types a bare `[]` from what is put in it, and nothing is: a list
+    # of None, which a `list[int]` parameter refuses.
+    out = _transform(
+        """
+        def start(
+            ids: list[int] = [],
+            names: Dict[str, int] = {},
+            seq: Sequence[str] = [],
+            full: list[int] = [1],
+            bare: list = [],
+        ) -> None:
+            pass
+        """
+    )
+    assert "    ids: list[int] = list[int]()," in out
+    assert "    names: Dict[str, int] = Dict[str, int]()," in out
+    assert "    seq = List[str]()," in out
+    assert "    full: list[int] = [1]," in out
+    assert "    bare: list = []," in out

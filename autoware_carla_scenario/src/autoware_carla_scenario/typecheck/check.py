@@ -16,8 +16,8 @@ the import the runtime uses too), and the scenario package's own modules.  A mod
 with a message saying so.
 
 :func:`typecheck_library` compiles the framework's own modules instead (those
-:mod:`.library` lists as checked), each with calls to everything public
-appended (:mod:`.library_driver`), next to the same model.
+:mod:`.library` lists as checked), each with calls to every function and method,
+protected ones included, appended (:mod:`.library_driver`), next to the same model.
 """
 
 from __future__ import annotations
@@ -1084,8 +1084,8 @@ def typecheck_library(
 ) -> TypeCheckResult:
     """Compile the framework's own modules, as :data:`.library.CHECKED` lists them.
 
-    Each module is compiled from its source, every public function and
-    method called with a value of each parameter's annotated type
+    Each module is compiled from its source, every function and method
+    (protected ``_`` ones included) called with a value of each parameter's annotated type
     (:mod:`.library_driver`), so its body is checked.  A framework module
     one of them imports that is not checked itself stands in through the
     model, as it does for a scenario.  All of *modules* are compiled

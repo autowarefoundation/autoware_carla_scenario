@@ -211,7 +211,7 @@ model re-exports the checked definitions, as it does in the full run.
 checked `entity.registry`, which the model does not declare, and
 `entity._spawn` holds the checked `GroundProjectionConfig`, which the model
 `VehicleEntityConfig` must share. The modules it imports are checked as
-fully as the named ones: their public functions are called too, and **errors
+fully as the named ones: their functions and methods are called too, and **errors
 are reported for every compiled module**, not only the named ones. An error
 in a module the named one imports is an error the full run reports as well,
 and it would stop the named module from compiling anyway. Hiding it would
@@ -236,9 +236,10 @@ compile). numpy is not one: Codon ships its own, and a module's numpy calls
 compile. Every module of the package except `typecheck/` is in exactly one of
 the two, which the test suite checks, so **a new module needs an entry**.
 
-`UNCALLED` names the few public functions and methods of a checked module the
-check leaves out (`module.Class.method`), each with its reason: one whose job
-Codon cannot express, in a module that otherwise compiles. Today that is
+`UNCALLED` names the few functions and methods of a checked module the
+check leaves out (`module.Class.method`, or `module._helper` for a protected
+one), each with its reason: one whose job Codon cannot express, in a module
+that otherwise compiles. Today that is
 what builds a condition's details (`get_details()`, `to_summary_dict()`,
 `to_dict()`: a `dict[str, Any]` of mixed value types) and what serialises
 them (`ScenarioResult.to_json()`, with `json`), and what reads the
@@ -247,8 +248,8 @@ authoring package's pydantic specs, typed `Any`
 only when something calls it, so neither its body nor an import made inside
 it is compiled: a module that needs a standard module Codon lacks for one
 function imports it inside that function (`import json` in `to_json()`) and
-lists the function here. A test checks that every entry names a public
-function or method of a checked module.
+lists the function here. A test checks that every entry names a function or
+method of a checked module.
 
 To check one more module:
 
@@ -316,8 +317,9 @@ driver's configs and client interface, trajectory follower and observations
 `driver.geometry`), and the `autoware_bridge`, `autoware_stack`, `entity`,
 `driver`, `maps` and `coverage` packages themselves, whose `__init__` re-exports what is not checked
 through models of it (see *A class a checked package only re-exports*
-below). 76
-functions and methods of those modules are `UNCALLED`: most of them a
+below). 89
+functions and methods of those modules are `UNCALLED` (13 of them
+protected helpers, see *What is compiled* below): most of them a
 condition's `get_details()` or a backend's `describe()`, what takes a traffic
 backend's options node (`Mapping[str, Any]`), what reads a route search, a
 match, a constraint or a binding from YAML values of any type
@@ -343,8 +345,14 @@ statuses, `_collect_condition_statuses()`), the queue's pytest fixture
 which reads the `map` config node of any shape (`Any`), the driver and
 ROS 2 configs' `from_mapping()` (a Hydra node, `Mapping[str, Any]`), what
 builds the ROS 2 ego's published cameras (`entity.ros2_entity._publishing_camera()`,
-which imports `ros2.camera` inside it) and
-`encode_frame_jpeg()` (cv2). The 77 `EXCLUDED` modules fall in
+which imports `ros2.camera` inside it),
+`encode_frame_jpeg()` (cv2), and protected helpers of the same kinds: what
+reads a `map` setting, a route search's segment, a signal group or phase, or
+a `TrajectoryVertex` call's arguments, each of any type (`Any`), walks or
+binds a sweeper constraint of any kind, builds a condition's status (its
+details), or takes the list a plain tick callback goes into
+(`BaseScenario._register_tick()`, a `List[Callable[[carla.World], None]]`,
+which the check has no value of). The 77 `EXCLUDED` modules fall in
 four groups. Many fit more than one (about 55 import what Codon cannot
 compile, 28 build on an excluded module and 20 hold values Codon has no type
 for), so each is counted once, in the first group that fits it:
@@ -389,10 +397,11 @@ the model, which declares the whole public API.
 ### What is compiled
 
 Codon checks a function only when something calls it, so the check appends a
-function to each checked module that calls every public function and every
-method of every public class (constructors, static and class methods,
-properties and dunder methods included) with a value of each parameter's
-annotated type:
+function to each checked module that calls every function and every
+method of every class (constructors, static and class methods,
+properties, dunder methods, protected `_` ones and those of `_` classes
+included) with a value of
+each parameter's annotated type:
 
 ```python
 def _acs_library_check():
@@ -403,7 +412,8 @@ def _acs_library_check():
 
 `_acs_value(T)` is a `T` Codon cannot tell from a real one; nothing compiled
 is ever run. A parameter annotated with a union (`Lanelet2Pose |
-OpenDrivePose`, or `Union[BaseAction, Callable[[carla.World], None]]`) is
+OpenDrivePose`, `Union[BaseAction, Callable[[carla.World], None]]`, or an
+`Optional` of one, `Optional[Union[EntityRole, str]]`) is
 called once with each member, so the body is checked for every type it
 accepts. A parameter with no annotation, or one Codon cannot
 express (`Any`, `object`, `Callable[..., R]`, `Callable[[Any], Any]`, ...),
@@ -431,6 +441,165 @@ class (`TrafficBackend.start(_acs_value(TrafficBackend), ...,
 skip_actor_ids=...)`): Codon 0.19 calls a method a subclass may override
 through a dispatch thunk, which takes neither a keyword argument nor
 `**kwargs`, and the call through the class checks the same body.
+
+**Defaults are compiled too** (#183). The calls above pass every
+argument, so no default was ever compiled: `find_nearest_traffic_light(...,
+max_distance: float = "far")` passed the check. A function or method with a
+defaulted parameter is now called once more, with only the arguments that
+have no default, each of its first type:
+
+```python
+    find_nearest_traffic_light(_acs_value(carla.World), _acs_value(Lanelet2Pose))
+    AutowareBridge.configure(_acs_value(AutowareBridge), _acs_value(BridgePose), _acs_value(BridgePose))
+```
+
+A method is called through its class (`AutowareBridge.configure(...)`, not
+`_acs_value(AutowareBridge).configure(...)`): a dispatch thunk fills in no
+default, and through it `AutowareBridge.configure()` and
+`FakeAutowareBridge.configure()` do not compile. A `*args: T` is still given
+one `T` (`run_uv(cwd, *args: str, timeout: int, env=None)` with one `str`
+and `timeout`), so the positional parameters before it are passed, defaulted
+or not: without it `run_uv()` does not compile. A function with no default gets no
+such call. An error in a default is reported at the call, which names it
+(`<library check: find_nearest_traffic_light(world: carla.World, location:
+Lanelet2Pose), with the default of `max_distance`>: error: 'str' does not
+match expected type 'float'`).
+
+That was 169 calls more, beside the 1525 others (1694 in all), when it came
+in. Measured before any fix, 13 of them failed, and all 13 are fixed by
+the transform, with no change to a module:
+
+- 11 had a `()` default on a `Sequence[X]` or `Collection[X]` parameter
+  (`RoutingAction.__init__`'s `waypoints`, `set_mission()` / `route_to()` of
+  `BridgeHandshake` and `BridgedEgoEntity`, `EgoVehicle.route_to()`, the
+  `skip_actor_ids` of the three traffic backends' `start()`,
+  `utils.vehicles.hold_vehicles_still()` and
+  `scenario_runner._hold_vehicles_still()`). The parameter's annotation is
+  dropped, so the `()` made it Codon's empty tuple ("'Tuple' does not match
+  expected type 'List[Lanelet2Pose]'"). The transform makes such a default
+  `List[X]()`, as it does a dataclass's `field(default=())`.
+- 2 had a `None` default on an `Optional` parameter whose annotation the
+  transform drops: `EgoConfig.__init__`'s `waypoint_poses:
+  Optional[Sequence[Lanelet2Pose]]`, and the `Callable` parameters of
+  `trajectory.resolve.resolve_trajectory()`. `None` alone is Codon's
+  `NoneType`, which has no elements and no call, and a body that tests it
+  for `None` first is compiled with it all the same. The transform makes
+  such a default the `None` of the `Optional` the library check calls with:
+  `Optional[List[Lanelet2Pose]]()`, `Optional[Callable[[float, float],
+  Optional[float]]]()`, and for a `Callable` with a union among its
+  arguments `Optional[_acs_Returning[CarlaWorldPose, 1]]()` (the transform's
+  prelude imports `_acs_Returning`; the check's own function does not import
+  it again, which Codon 0.19 cannot type: "cannot typecheck").
+
+**So are the field defaults of a dataclass** (#188). The check drops
+`@dataclass`, and Codon gives the class a constructor that takes each field,
+with its default; every constructor call above passes every field, so no
+field default was compiled: `stop_timeout_s: float = "far"` on
+`CommandAutowareLauncher` passed the check. A dataclass with a defaulted
+field is now constructed once more, with only the fields that have no
+default, each of its first type:
+
+```python
+    DockerAutowareConfig(_acs_value(Path), _acs_value(Sequence[str]))
+    DriverClientConfig()
+```
+
+A field without a default after one with (a `field(kw_only=True)`) is passed
+by keyword. A field with no default of its own (`field()`, or
+`field(init=False)`, which the constructor leaves out anyway) is not one
+with a default, and neither is a field "defaulted" to OmegaConf's
+mandatory-value marker (`spawn_lanelet_id: int = MISSING`, the string
+`"???"`): the marker is no value of the field but a placeholder for one the
+config must supply, so the call passes the field, and the marker is not
+compiled against the field's type. Nothing enforces that in Python: reading
+the field from Hydra's config raises `MissingMandatoryValue`, but
+`OmegaConf.to_container()` returns `"???"` for it, and a dataclass built
+without it (`NpcVehicleConfig()`) holds the string, which the check does not
+see. A field the call leaves out because its annotation names `Any` (*A
+dataclass field may hold a union or a free-form mapping*, below) is left out
+of this call too. An error is
+reported at the call, which names the defaults it leaves out
+(`<library check: CommandAutowareLauncher.__init__(argv: Sequence[str]),
+with the default of `env`, `log_dir`, `stop_timeout_s`>: error: 'str' does
+not match expected type 'float'`).
+
+That is 96 calls more, beside the 1694 others (1790 in all, 265 of them
+leaving defaults out), at the time of writing. Measured before any fix, 5
+of the 96 failed, at the first error of each. Those 5 classes have 10
+defaults Codon refused, of four causes; all are fixed in the check, with no
+change to a module and nothing `UNCALLED` (9 by the transform, whose output
+changes at those 9 defaults alone, and 1 by the call):
+
+- 3 had a tuple display default on a `Sequence[X]` or `tuple[X, ...]`
+  field (`DockerAutowareConfig.colcon_args`, `DriverClientConfig.cameras`
+  and `map_formats`). The field is declared as a `List[X]` (the `typing`
+  shim's `Sequence` is `List`), and the display is a fixed-length Codon
+  tuple ("'Tuple[str,str,str]' does not match expected type 'List[str]'").
+  The transform makes it `List[X]([...])`, a list of the field's element
+  type, replacing only the brackets, so the elements are rewritten as
+  anywhere else.
+- 4 had a plain `()` default on such a field
+  (`DockerAutowareConfig.ros_domain_ids` and `docker_args`,
+  `DriverClientConfig.lidars`, `PlannedRoute.via`), which only a
+  `field(default=())` of a `tuple[X, ...]` was typed for. The transform
+  makes it `List[X]()`, written directly or through `field(default=())`,
+  for a `Sequence[X]` as for a `tuple[X, ...]`.
+- 2 had `field(default_factory=dict)` on a `Mapping[str, str]` field
+  (`env` of `DockerAutowareConfig` and of `CommandAutowareLauncher`): the
+  factory is typed only for a `dict[K, V]` field, so it was a bare `{}`,
+  a dict of `None` ("'Dict[NoneType,NoneType]' does not match expected type
+  'Dict[str,str]'"). The transform makes a `list`, `dict` or `set` factory
+  of an abstract collection the concrete one the `typing` shim maps it
+  onto, of the field's types (`Dict[str, str]()`).
+- 1 was the OmegaConf marker on an `int` field
+  (`NpcVehicleConfig.spawn_lanelet_id: int = MISSING`, "'str' does not
+  match expected type 'int'"), which the call now passes, as above.
+
+**Protected functions and methods are called too** (#175). A `_` method is
+often a hook a subclass or another module uses: six example scenarios call
+`BaseScenario._setup_ego_spawn()`, and the model's `BaseScenario` is what a
+scenario compiles against, so before the driver called it, nothing compiled
+its real body, and an error injected into it passed the check. The check now
+calls every `_` function of a checked module and every `_` method of its
+public classes, as it calls a public one: about 340 of them, beside about
+920 public ones. Measured before any fix, 25 of them failed: 15 had a
+parameter the check cannot call with, 8 a bare `np.ndarray` parameter, and
+`_setup_ego_spawn()` and `scenario_runner._build_condition_status()` did not
+compile. 12 were fixed in the module (shape-typed arrays, an annotated
+local, an lxml element type for `coordinate.transform._cubic()`, and the
+driver taking `Optional[Union[A, B]]`), and 13 are `UNCALLED`, each with the
+reason, most of them because they take `Any` and only an `UNCALLED` function
+calls them.
+
+**The methods of `_` classes are called too** (#182). A `_` class is a
+module's own helper, and was left to be compiled through what uses it, but
+what uses it does not always compile it. Of the 42 methods of the 20 `_`
+classes of the checked modules, an error injected into each found 4 that
+nothing compiled: `_Never.__init__` and `_BackendAction.__init__`
+(`actions.background_traffic`), reached only from constructors that are
+`UNCALLED`; `_BackendAction.set_traffic_backend()`, which
+`BaseScenario._hand_backend_to()` calls behind a `hasattr()` on a
+`BaseAction`, which Codon decides statically as false; and
+`route.search._Search.__post_init__()`, which Codon's constructor does not
+call. The check now calls them as it calls a public class's: 53 calls
+(for the 48 methods of the 21 `_` classes there are since #180), beside
+about 1470 others, none with a parameter the check cannot call with.
+Measured before any fix, 3 of the first 47 failed, and all 3 were fixed in the module:
+`_ScenarioClock` declares the `_world` and `_simulated_start` it assigns on
+`self`, and `_BackendAction.__init__` branches into a `BaseCondition` local
+instead of choosing between `until` and `_Never()` with a conditional
+expression, which Codon 0.19 cannot type. Each of the 4 now reports an
+injected error. Two things are left out:
+
+- a module's dunders (PEP 562's `__getattr__`), which are Python's hooks, not
+  the module's code; a class's (`__eq__`, `__enter__`) are called, as before;
+- what `UNCALLED` names, as for a public function.
+
+A protected member that calls an `UNCALLED` one calls it in the `else`
+branch of `if TYPE_CHECKING:`, as a public one does (see *A call into a
+module Codon cannot compile, from a function it must* below).
+`_setup_ego_spawn()` needs no such branch: the `register_route_to_goal()` it
+ends with is checked (#174).
 
 ### Checked modules and the model
 
@@ -545,10 +714,26 @@ module too (`SetSpeedAction`'s default `SpeedCondition` from
 What Codon 0.19 needs that Python does not, beyond
 [the rewrites above](#writing-a-scenario-that-type-checks):
 
-- **Annotate what the check calls**: every public parameter, with a type
-  Codon can express. Spell a union out (`Lanelet2Pose | OpenDrivePose`) rather
+- **Annotate what the check calls**: every parameter of a function or method
+  it calls, protected (`_`) ones included, with a type Codon can express. Spell a union out (`Lanelet2Pose | OpenDrivePose`) rather
   than through an alias (`AnyPose`); a union with `object` or `Any` in it
   gives nothing to call with.
+- **A default must have the parameter's type** (#183): the check compiles
+  each function once with its defaults. A `()` default of a sequence
+  parameter is checked as an empty `List[X]`, so `X` must be a type Codon can
+  express and name there: a class defined further down the module is not
+  (the `()` is left as it is, and fails). A `None` default of a dropped
+  `Optional` is typed only for a sequence or a `Callable` the check can call
+  with; `Optional[Callable[..., R]]` and `Optional[Mapping[K, V]]` stay a
+  bare `None`, so a body that uses them past an `is None` test fails. A
+  tuple display default (`= ("a", "b")`) of a sequence parameter is checked
+  as a list of its elements, `List[X](["a", "b"])`, as a dataclass field's
+  is (#188); a fixed-length Codon tuple is no `List[X]`.
+  An empty `[]` / `{}` default of a `list[X]` / `dict[K, V]` parameter (or
+  `[]` of a sequence) is checked as an empty one of that type; Codon would
+  make it a list of `None`. A `None` default is not checked against its
+  annotation: Codon makes `speed: float = None` an `Optional[float]`, which
+  passes (mypy, in pre-commit, reports it).
 - **Declare attributes** on any class in a hierarchy (exceptions included)
   and on a class with `__slots__`, at class level (`_value: str`).
 - **`hasattr()` instead of `getattr(x, name, default)`**: Codon decides
@@ -756,7 +941,12 @@ What Codon 0.19 needs that Python does not, beyond
   `get_roads()`), so a checked module annotates with pyxodr's own classes
   under `TYPE_CHECKING` (`utils/traffic_light.py`, which may not import
   `coordinate`; `coordinate/transform.py`) and takes the network
-  `MapManager` returns. Nothing else of pyxodr is there.
+  `MapManager` returns. Nothing else of pyxodr is there. `codon/lxml/` names
+  the XML element `coordinate.codon` declares likewise, as
+  `lxml.etree._Element`, the type of pyxodr's `lane_xml` and `road_xml`
+  (`coordinate.transform._cubic()`; `import lxml.etree` under
+  `TYPE_CHECKING`, since Codon does not find `etree` with
+  `from lxml import etree`).
   `test_typecheck_model.py` compares the constructor and `get_roads()` with
   pyxodr's and loads the fixture map's OpenDRIVE with them.
 - **lanelet2 is modelled**: `codon/lanelet2/` and
@@ -902,7 +1092,12 @@ What Codon 0.19 needs that Python does not, beyond
   `ndarray` needs its dtype and dimension count, so a parameter annotated
   with a bare `np.ndarray` or numpy.typing's `NDArray[...]` does not
   translate; numpy's shape-typed array does (see *An array is typed by its
-  shape* below).
+  shape* below). A bare `np.ndarray` parameter compiles while only its
+  callers reach it, but the check has no value of it to call with
+  ("cannot typecheck '_travel_m(_acs_value(np.ndarray))'"): the protected
+  geometry helpers of `coordinate.transform` and `driver.control` take
+  `np.ndarray[tuple[int, int], np.dtype[np.float64]]` and their points
+  `np.ndarray[tuple[int], np.dtype[np.float64]]`.
 - **An overridden method takes concrete types**: Codon 0.19 cannot call a
   method a subclass overrides when one of its parameters is generic, which an
   abstract collection (`Sequence[X]`) or an unannotated parameter is.
@@ -1008,7 +1203,10 @@ What Codon 0.19 needs that Python does not, beyond
   mapping of any values) keeps its declaration, its empty default is built as
   that type (`dict[str, Any]()`), and the check's constructor call leaves it
   out, passing the fields after it by keyword. A `default_factory=list` on a
-  `List[int]` field is built as a `List[int]` as on a `list[int]` one.
+  `List[int]` field is built as a `List[int]` as on a `list[int]` one, and a
+  `list`, `dict` or `set` factory of an abstract collection as the one the
+  `typing` shim maps it onto (`env: Mapping[str, str] =
+  field(default_factory=dict)` as a `Dict[str, str]`, #188).
 - **`object.__setattr__(self, "name", value)`**, as a frozen dataclass sets
   its fields, is checked as `self.name = value`: Codon 0.19 has no
   `object.__setattr__`.
@@ -1093,7 +1291,13 @@ What Codon 0.19 needs that Python does not, beyond
   `Optional[Path]` local (`shipped: Optional[Path] = candidate`, as
   `maps.resolver._find_xodr()` does): Codon types a tuple by its members,
   and a bare annotation without a value (`found: Optional[Path]`) does not
-  change the type of what is assigned to it later.
+  change the type of what is assigned to it later. An attribute is not
+  narrowed either: after `if self._spawn_pose is None: raise ...`,
+  `self._spawn_pose` is still an `Optional[Lanelet2Pose]`, and
+  `snap_to_carla_road()`'s `isinstance` dispatch takes its CARLA branch for
+  it ("'Lanelet2Pose' does not match expected type 'CarlaWorldPose'").
+  `BaseScenario._setup_ego_spawn()` reads it into
+  `ll2_pose: Lanelet2Pose = self._spawn_pose` first.
 - **Codon does not narrow a union either**, with `is` or `isinstance`, and an
   attribute holding a union (`Union[Sequence[int], TrafficLightTarget,
   None]`) reaches every use as the union. Store it split by kind
@@ -1138,13 +1342,21 @@ What Codon 0.19 needs that Python does not, beyond
   `tuple[X, ...]` / `Tuple[X, ...]` becomes `List[X]`, and `tuple(x)` of a
   list or a generator becomes a list (a tuple passed to `tuple()` stays
   itself), so `self.vertices = tuple(vertices)` compiles; the source keeps
-  its tuple. A dataclass field's `field(default=())` is an empty `List[X]`
-  (`Pin.warnings`); a tuple display (`("a",)`) stays a fixed-length Codon
-  tuple, which is no `List[X]`: pass `tuple([...])` of a list instead
-  (`ros2.config`'s default `sources`; `CommandSourceConfig.topics`, which
-  returns a one- or a two-element tuple, likewise, so its two returns have
-  one type). A parameter `tuple[X, ...]` is dropped (a caller may pass a
-  tuple), and the library check calls it with a `List[X]`.
+  its tuple. A dataclass field's `()` default, written directly or as
+  `field(default=())`, is an empty `List[X]` (`Pin.warnings`,
+  `PlannedRoute.via`), for a `Sequence[X]` field as for a `tuple[X, ...]`
+  one, and its tuple display default (`("a", "b")`) a list of its elements,
+  `List[X](["a", "b"])` (`DockerAutowareConfig.colcon_args`, #188). Any
+  other tuple display stays a fixed-length Codon tuple, which is no
+  `List[X]`: pass `tuple([...])` of a list instead (`ros2.config`'s
+  `_default_sources()`; `CommandSourceConfig.topics`, which returns a one-
+  or a two-element tuple, likewise, so its two returns have one type). A
+  parameter `tuple[X, ...]` is dropped (a caller may pass a tuple), and the
+  library check calls it with a `List[X]`. Its `()` default, and that of a
+  `Sequence[X]`, `MutableSequence[X]`, `Iterable[X]` or `Collection[X]`
+  parameter, is an empty `List[X]` too (`RoutingAction(..., waypoints:
+  Sequence[Lanelet2Pose] = ())`), and its tuple display default a list of
+  its elements, as a field's; see *Defaults are compiled too* above.
   `Phase.states` and `SignalController.phases` (`signals.controller`) are
   checked this way. What only a tuple does is not checked: its hash (a
   frozen dataclass's `__hash__`), its equality with another tuple and its
