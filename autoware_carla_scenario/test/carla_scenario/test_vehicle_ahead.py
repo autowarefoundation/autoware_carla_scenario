@@ -596,6 +596,50 @@ def test_a_moment_of_heading_drift_at_a_fork_does_not_lock_onto_the_branch(
 
 
 @pytest.fixture
+def long_fork() -> Iterator[LaneMap]:
+    """A fork whose branches are cut in two, as a map splits an exit: the
+    second pieces overlap where they start, but are not siblings in the
+    routing graph (their predecessors differ)."""
+
+    def bend(x: float) -> float:
+        return (x - 50.0) ** 2 / 400.0
+
+    built = _build(
+        {
+            "before": _bounds(_xs(0.0, 50.0), lambda x: 0.0),
+            "straight": _bounds(_xs(50.0, 60.0), lambda x: 0.0),
+            "straight_b": _bounds(_xs(60.0, 150.0), lambda x: 0.0),
+            "branch": _bounds(_xs(50.0, 60.0), bend),
+            "branch_b": _bounds(_xs(60.0, 150.0), bend),
+        }
+    )
+    yield from _lane_maps.loaded(built)
+
+
+def test_drift_onto_an_overlapping_lanelet_that_is_no_sibling_does_not_hold(
+    long_fork: LaneMap,
+) -> None:
+    """The second piece of the other branch overlaps the ego's, though the
+    routing graph does not make them siblings: a few degrees' drift on the
+    tick the lane is chosen again picks it, and the next tick is back."""
+    lead = _vehicle(2, _on(long_fork, "straight_b", 0, 40.0))
+    gaps = []
+    for s in range(52, 90):
+        if s < 60:
+            pose = _on(long_fork, "straight", 0, float(s - 50))
+        else:
+            pose = _on(long_fork, "straight_b", 0, float(s - 60))
+        if s == 61:  # the first tick on straight_b, 4 degrees towards the branch
+            pose = SimpleNamespace(x=pose.x, y=pose.y, yaw=pose.yaw - 4.0)
+        gaps.append(_gap(_ego(pose), lead))
+
+    fresh = [100.0 - 1.8 - (s + 2.6) for s in range(52, 90)]
+    assert gaps[:9] == pytest.approx(fresh[:9], abs=0.05)
+    assert gaps[9] is None  # that tick read along the branch
+    assert gaps[10:] == pytest.approx(fresh[10:], abs=0.05)
+
+
+@pytest.fixture
 def merge() -> Iterator[LaneMap]:
     """Two lanelets that merge into one: the ego's, straight, and one coming
     in from the left."""
@@ -781,6 +825,12 @@ def test_the_routing_graph_is_built_before_the_run(straight_road: LaneMap) -> No
 
     prepare_measures(default_odd())  # maps vehicle_ahead_gap_m
     assert manager._routing_graph is not None
+    # And the lanelets' boxes the lane's rivals are found among.
+    from autoware_carla_scenario import measures
+
+    assert {box[0] for box in measures._LINES.boxes} == {
+        int(lanelet.id) for lanelet in straight_road.map.laneletLayer
+    }
 
 
 def test_without_a_map_there_is_nothing_to_prepare(no_map: None) -> None:

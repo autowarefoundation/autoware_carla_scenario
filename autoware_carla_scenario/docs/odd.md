@@ -306,16 +306,17 @@ does not count a vehicle alongside in the next lane.
 A reading costs about 3 ms with ten vehicles around the ego on CARLA
 Town04_Opt (it was some 170 ms).
 The ego's lane is found once and kept while its lanelet is still the ego's
--- the ego on it, running its way, and no lanelet overlapping it where the
-lane branches or merges running closer to the ego's heading -- and the whole
+-- the ego on it, running its way, and no lanelet overlapping it (found by
+geometry, however the map cuts a fork's branches or an exit into lanelets)
+running closer to the ego's heading -- and the whole
 map is searched only when it is not (or, off the lanelets, once the ego has
 moved 2 m or turned 5°); a vehicle is placed by
 the lane's own lanelets, not by searching the map; and a projection reads
 only the stretch of a centreline near the point. The Lanelet2 routing graph
 the lane is read from -- some 25 s to build on Town04_Opt -- is built in the
 run's setup whenever the ODD maps a vehicle-ahead measure
-(`prepare_measures`), not on the first tick. A failed reading reads nothing
-and is warned of once a run.
+(`prepare_measures`), with every lanelet's bounding box, not on the first
+tick. A failed reading reads nothing and is warned of once a run.
 
 #### Measure versions
 
