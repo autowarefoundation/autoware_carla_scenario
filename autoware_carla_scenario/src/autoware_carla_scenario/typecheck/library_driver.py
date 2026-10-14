@@ -33,6 +33,13 @@ such a helper may not compile it (a constructor that is ``UNCALLED``, a call
 behind a ``hasattr`` that Codon decides statically, a dataclass's
 ``__post_init__``, which Codon's constructor does not call).
 
+The class-level defaults of a class with a constructor (``STABILIZE_TICKS:
+int = 5``) are assigned to typed locals (:meth:`_Renderer._class_defaults`):
+Codon makes such a member a field and drops its value, so nothing else
+compiles it::
+
+        _acs_cls_default_12: int = 5
+
 Some annotations give the check nothing to call with (``Any``, ``object``,
 ``Callable[..., R]``, none at all): each is reported as a problem of the
 module, to be fixed there with a type Codon can check.  ``object`` is
@@ -55,6 +62,7 @@ from .driver import Driver
 from .transform import (
     PRELUDE,
     _ENUM_BASES,
+    _TYPE_VAR_NAMES,
     _dotted,
     _is_none,
     _members_or_self,
@@ -79,6 +87,8 @@ __all__ = [
 
 #: The function appended to every checked module.
 LIBRARY_CHECK = "_acs_library_check"
+#: The prefix of the local a class-level default is assigned to.
+CLASS_DEFAULT = "_acs_cls_default"
 #: Where the checked modules live in the check's workspace.
 LIBRARY_PACKAGE = "_acs_lib"
 #: The most calls made for one function: past it, a union parameter is
@@ -91,6 +101,7 @@ _FIELD_FUNCTIONS = {"field", "dataclasses.field"}
 _MANDATORY = {"MISSING"}
 _SKIPPED_DECORATORS = {"overload", "typing.overload"}
 _PROPERTIES = {"property", "functools.cached_property", "cached_property"}
+_CLASS_VAR = {"ClassVar", "typing.ClassVar"}
 _OBJECT_OPERAND = {"__eq__", "__ne__"}
 
 
@@ -136,17 +147,25 @@ class _Renderer:
         self,
         uncalled: Collection[str] = (),
         classes: Mapping[str, ast.ClassDef] | None = None,
+        *,
+        constructed: Collection[str] = (),
+        type_vars: Collection[str] = (),
     ) -> None:
         self.uncalled = set(uncalled)
-        #: Classes by name, for the base classes of a dataclass.
+        #: Classes by name, for the base classes of a dataclass and the
+        #: annotation a class-level default overrides.
         self.classes: dict[str, ast.ClassDef] = dict(classes or {})
+        #: Classes the module's top level constructs with no argument.
+        self.constructed = set(constructed)
+        #: The module's ``TypeVar``s, which Codon cannot type a local with.
+        self.type_vars = set(type_vars)
         # `_acs_Returning` comes with the transform's PRELUDE, which a
         # parameter's default may name above this function; imported again
         # here, Codon 0.19 cannot type the module ("cannot typecheck").
         self.lines = [
             "",
             "",
-            "from autoware_carla_scenario._tc import _acs_value",
+            "from autoware_carla_scenario._tc import _acs_value, _expect_bool",
             "",
             "",
             f"def {LIBRARY_CHECK}():",
@@ -351,6 +370,8 @@ class _Renderer:
             self.calls(init, name, f"{name}.__init__", drop_first=True, owner=name)
         elif decorators & _DATACLASS and not is_enum:
             self._dataclass_init(node)
+        if not is_enum and not decorators & _DATACLASS:
+            self._class_defaults(node)
         for method in methods:
             if method.name == "__init__":
                 continue
@@ -389,6 +410,124 @@ class _Renderer:
                     owner=name,
                     class_head=f"{name}.{method.name}",
                 )
+
+    def _class_defaults(self, node: ast.ClassDef) -> None:
+        """A typed local for each class-level default of *node* (#190).
+
+        On a class with a constructor, its own or a base's, Codon makes
+        ``x: T = v`` a field and drops ``v``, so no call compiles it.  Each is
+        assigned to a local of its type instead, ``_acs_cls_default_N: T =
+        v``, which compiles ``v`` against ``T``.  A default written without
+        an annotation (``REISSUES_BY_DEFAULT = True``) overrides one a base
+        declares, and is given the base's annotation, a ``ClassVar[T]``'s
+        ``T``.
+
+        Left out, as compiled already or as having no type to check:
+
+        - a ``ClassVar``, which Codon keeps as a class variable, with its value;
+        - every default of a class with no constructor that the module's top
+          level constructs with no argument (``_CACHE = _Cache()``): Codon's
+          generated constructor takes each field with its default, and that
+          call compiles them;
+        - a default without an annotation whose name no base declares (a base
+          not checked, or not a class of a checked module), or a dunder
+          (``__slots__``);
+        - an annotation Codon cannot express, or naming a ``TypeVar``;
+        - a value naming another member of the class, which means something
+          else at the function's scope.
+
+        A dataclass's defaults are compiled through its constructor
+        (:meth:`_required_fields_call`), and an enum's members are values.
+        """
+        if node.name in self.constructed and not self._defines_init(node, set()):
+            return  # Codon's generated constructor takes each default
+        members = {
+            target.id
+            for stmt in node.body
+            if isinstance(stmt, (ast.Assign, ast.AnnAssign))
+            for target in (
+                stmt.targets if isinstance(stmt, ast.Assign) else [stmt.target]
+            )
+            if isinstance(target, ast.Name)
+        }
+        for stmt in node.body:
+            annotation: ast.expr | None
+            if isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name):
+                if stmt.value is None or _is_class_var(stmt.annotation):
+                    continue
+                name, annotation = stmt.target.id, stmt.annotation
+                assigned: ast.expr = stmt.value
+            elif (
+                isinstance(stmt, ast.Assign)
+                and len(stmt.targets) == 1
+                and isinstance(stmt.targets[0], ast.Name)
+                and not _is_dunder(stmt.targets[0].id)
+            ):
+                name, assigned = stmt.targets[0].id, stmt.value
+                inherited = self._inherited_annotation(node, name, set())
+                if inherited is None:
+                    continue
+                annotation = _class_var_type(inherited)
+                if annotation is None:
+                    continue  # a bare `ClassVar`: no type to check against
+            else:
+                continue
+            if _names(annotation) & self.type_vars or _names(assigned) & members:
+                continue
+            typed = codon_annotation(annotation, class_level=True)
+            if typed is None:
+                continue
+            value = ast.unparse(assigned)
+            if typed == "bool":
+                # Codon converts any value assigned to a `bool` with its
+                # `__bool__` (`x: bool = "x"` compiles); a call does not.
+                value = f"_expect_bool({value})"
+            self.emit(
+                f"{CLASS_DEFAULT}_{len(self.lines) + 1}: {typed} = {value}",
+                f"class-level default of {node.name}.{name}",
+            )
+
+    def _defines_init(self, node: ast.ClassDef, seen: set[str]) -> bool:
+        """Whether *node* or a base defines ``__init__``; a base not found may."""
+        if any(
+            isinstance(m, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and m.name == "__init__"
+            for m in node.body
+        ):
+            return True
+        seen = seen | {node.name}
+        for base_node in node.bases:
+            if _dotted(base_node) in ("object", "builtins.object"):
+                continue
+            base = self.classes.get((_dotted(base_node) or "").rsplit(".", 1)[-1])
+            if base is None or base.name in seen or self._defines_init(base, seen):
+                return True
+        return False
+
+    def _inherited_annotation(
+        self, node: ast.ClassDef, name: str, seen: set[str]
+    ) -> ast.expr | None:
+        """The annotation a base of *node* declares *name* with, or ``None``.
+
+        The bases are searched depth first, left to right, as Python's method
+        resolution order finds a member in a single inheritance chain.
+        """
+        seen = seen | {node.name}
+        for base_node in node.bases:
+            base = self.classes.get((_dotted(base_node) or "").rsplit(".", 1)[-1])
+            if base is None or base.name in seen:
+                continue
+            for stmt in base.body:
+                if (
+                    isinstance(stmt, ast.AnnAssign)
+                    and isinstance(stmt.target, ast.Name)
+                    and stmt.target.id == name
+                ):
+                    return stmt.annotation
+            found = self._inherited_annotation(base, name, seen)
+            if found is not None:
+                return found
+        return None
 
     def _dataclass_init(self, node: ast.ClassDef) -> None:
         """The generated ``__init__`` of a dataclass: one value per field.
@@ -610,6 +749,40 @@ def _is_dunder(name: str) -> bool:
     return name.startswith("__") and name.endswith("__")
 
 
+def _is_class_var(annotation: ast.expr) -> bool:
+    """Whether *annotation* is ``ClassVar[T]`` or a bare ``ClassVar``."""
+    if isinstance(annotation, ast.Subscript):
+        annotation = annotation.value
+    return _dotted(annotation) in _CLASS_VAR
+
+
+def _class_var_type(annotation: ast.expr) -> ast.expr | None:
+    """The type of a member declared *annotation*: ``T`` of ``ClassVar[T]``.
+
+    ``None`` for a bare ``ClassVar``, which names no type.
+    """
+    if not _is_class_var(annotation):
+        return annotation
+    return annotation.slice if isinstance(annotation, ast.Subscript) else None
+
+
+def _names(node: ast.AST) -> set[str]:
+    return {n.id for n in ast.walk(node) if isinstance(n, ast.Name)}
+
+
+def _module_level_nodes(tree: ast.Module) -> list[ast.AST]:
+    """Every node the module runs when imported, outside a function or class."""
+    out: list[ast.AST] = []
+    stack: list[ast.AST] = list(tree.body)
+    while stack:
+        node = stack.pop()
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            continue
+        out.append(node)
+        stack.extend(ast.iter_child_nodes(node))
+    return out
+
+
 def _combinations(choices: list[list[str]]) -> list[tuple[str, ...]]:
     total = 1
     for c in choices:
@@ -638,7 +811,29 @@ def render_library_checks(
     them is constructed with its fields too.
     """
     own = {n.name: n for n in tree.body if isinstance(n, ast.ClassDef)}
-    renderer = _Renderer(uncalled, {**(classes or {}), **own})
+    constructed = {
+        node.func.id
+        for node in _module_level_nodes(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and not node.args
+        and not node.keywords
+    }
+    type_vars = {
+        target.id
+        for stmt in tree.body
+        if isinstance(stmt, ast.Assign)
+        and isinstance(stmt.value, ast.Call)
+        and _dotted(stmt.value.func) in _TYPE_VAR_NAMES
+        for target in stmt.targets
+        if isinstance(target, ast.Name)
+    }
+    renderer = _Renderer(
+        uncalled,
+        {**(classes or {}), **own},
+        constructed=constructed,
+        type_vars=type_vars,
+    )
     for node in tree.body:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             if not _is_dunder(node.name):

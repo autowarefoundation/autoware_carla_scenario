@@ -583,6 +583,106 @@ def test_a_dataclass_is_constructed_without_its_field_defaults_too() -> None:
     assert "    Defaults()" in calls
 
 
+_CLASS_DEFAULTS_RENDERED = """
+from dataclasses import dataclass
+from enum import Enum
+from typing import ClassVar, Optional, TypeVar
+
+T = TypeVar("T")
+DEFAULT_PORT = 8000
+
+
+class Action:
+    REISSUES: ClassVar[bool] = False
+    KIND: ClassVar = "action"
+    port: int = DEFAULT_PORT
+    label: Optional[str] = None
+    ready: bool = True
+    LIMIT: float = 2.0
+    TWICE: float = LIMIT * 2
+    held: T = None
+    __slots__ = ("_value",)
+
+    def __init__(self) -> None:
+        pass
+
+
+class Follow(Action):
+    REISSUES = True
+    port = 9000
+    KIND = "follow"
+    undeclared = 1
+
+
+class Mixin:
+    backend: Optional[str] = None
+
+
+class _Memo:
+    generation: int = -1
+
+
+_MEMO = _Memo()
+
+
+@dataclass
+class Config:
+    timeout: float = 1.0
+
+
+class Color(Enum):
+    RED: str = "red"
+"""
+
+
+def test_a_class_level_default_is_assigned_to_a_typed_local() -> None:
+    # Codon makes `x: T = v` of a class with a constructor a field and drops
+    # `v`: the check assigns it to a local of type T, so it is compiled (#190).
+    checks = render_library_checks(ast.parse(_CLASS_DEFAULTS_RENDERED))
+    lines = checks.source.splitlines()
+    defaults = {
+        checks.labels[n]: line.split(": ", 1)[1]
+        for n, line in enumerate(lines, 1)
+        if "_acs_cls_default_" in line
+    }
+    assert defaults == {
+        "class-level default of Action.port": "int = DEFAULT_PORT",
+        "class-level default of Action.label": "Optional[str] = None",
+        # Codon converts any value assigned to a `bool`; a call does not.
+        "class-level default of Action.ready": "bool = _expect_bool(True)",
+        "class-level default of Action.LIMIT": "float = 2.0",
+        # An override without an annotation takes its base's, a ClassVar's T.
+        "class-level default of Follow.REISSUES": "bool = _expect_bool(True)",
+        "class-level default of Follow.port": "int = 9000",
+        # A class with no constructor is checked too: what derives from it
+        # may have one.
+        "class-level default of Mixin.backend": "Optional[str] = None",
+    }
+    # Each local is named after its line, so no two share a name.
+    for n, line in enumerate(lines, 1):
+        if "_acs_cls_default_" in line:
+            assert line.startswith(f"    _acs_cls_default_{n}: ")
+    # Left out: a ClassVar (Codon keeps its value) and an override of a bare
+    # one, a value naming another member (`LIMIT * 2`), a TypeVar, a dunder,
+    # a name no base declares, the defaults of a class the module constructs
+    # with no argument and no constructor of its own (Codon's generated one
+    # takes them), and a dataclass's and an enum's.
+    for absent in (
+        "Action.REISSUES",
+        "Action.KIND",
+        "Follow.KIND",
+        "Action.TWICE",
+        "Action.held",
+        "__slots__",
+        "Follow.undeclared",
+        "_Memo.generation",
+        "Config.timeout",
+        "Color.RED",
+    ):
+        assert not [label for label in defaults if label.endswith(absent)]
+    assert "from autoware_carla_scenario._tc import _acs_value, _expect_bool" in lines
+
+
 def test_protected_functions_and_methods_are_called_too() -> None:
     # A `_` function or method is a hook a subclass or another module uses
     # (BaseScenario._setup_ego_spawn): Codon compiles its body only when
@@ -1287,6 +1387,96 @@ def test_a_field_default_of_the_wrong_type_is_reported(
     assert "Launch.__init__(workspace: str), with the default of" in (
         result.format()
     ), result.format()
+
+
+_CLASS_DEFAULTS = """
+from __future__ import annotations
+
+from typing import ClassVar, List, Optional
+
+from autoware_carla_scenario.kinematics.vector import Vector3
+
+DEFAULT_PORT = 8000
+
+
+class Action:
+    REISSUES: ClassVar[bool] = False
+    port: int = DEFAULT_PORT
+    scale: float = 1
+    origin: Optional[Vector3] = None
+    names: List[str] = []
+    ready: bool = True
+
+    def __init__(self) -> None:
+        pass
+
+    def describe(self) -> str:
+        return str(self.port) + str(self.scale) + str(self.ready)
+
+
+class Follow(Action):
+    REISSUES = True
+    port = 9000
+
+    def __init__(self) -> None:
+        super().__init__()
+
+
+def tuples(xs: List[int]) -> tuple[int, ...]:
+    return tuple(xs)
+"""
+
+
+@needs_codon
+def test_class_level_defaults_and_tuple_returns_compile(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Each class-level default is compiled against its annotation (#190), an
+    # override without one against its base's, and a `tuple[X, ...]` return
+    # is checked as a List[X] (#191).
+    result = _check_case(_CLASS_DEFAULTS, tmp_path, monkeypatch)
+    assert result.ok, result.format()
+
+
+@pytest.mark.parametrize(
+    ("right", "wrong", "reported"),
+    [
+        (
+            "port: int = DEFAULT_PORT",
+            'port: int = "x"',
+            "class-level default of Action.port",
+        ),
+        (
+            "origin: Optional[Vector3] = None",
+            "origin: Optional[Vector3] = 1.0",
+            "class-level default of Action.origin",
+        ),
+        # Codon converts any value assigned to a `bool`: the check calls.
+        ("ready: bool = True", 'ready: bool = "x"', "Action.ready"),
+        ("    REISSUES = True", '    REISSUES = "x"', "Follow.REISSUES"),
+        ("    port = 9000", '    port = "x"', "Follow.port"),
+        # Nothing uses what `tuples` returns: only its annotation checks it.
+        (
+            "    return tuple(xs)",
+            "    return 1",
+            "'List[int]' does not match expected type 'int'",
+        ),
+    ],
+)
+@needs_codon
+def test_a_wrong_class_level_default_or_tuple_return_is_reported(
+    right: str,
+    wrong: str,
+    reported: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Before #190 and #191, each of these compiled: Codon dropped the default
+    # of a class with a constructor, and the check the tuple return.
+    assert _CLASS_DEFAULTS.count(right) == 1
+    result = _check_case(_CLASS_DEFAULTS.replace(right, wrong), tmp_path, monkeypatch)
+    assert not result.ok
+    assert reported in result.format(), result.format()
 
 
 @needs_codon
