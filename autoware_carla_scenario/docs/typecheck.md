@@ -460,16 +460,13 @@ default, and through it `AutowareBridge.configure()` and
 one `T` (`run_uv(cwd, *args: str, timeout: int, env=None)` with one `str`
 and `timeout`), so the positional parameters before it are passed, defaulted
 or not: without it `run_uv()` does not compile. A function with no default gets no
-such call, and neither does a dataclass's generated constructor: its fields'
-defaults are not compiled by the library check (a field `Sequence[str] =
-("a", "b")` is a fixed-length Codon tuple, which a `List[str]` field
-refuses). An error in a default is reported at the call, which names it
+such call. An error in a default is reported at the call, which names it
 (`<library check: find_nearest_traffic_light(world: carla.World, location:
 Lanelet2Pose), with the default of `max_distance`>: error: 'str' does not
 match expected type 'float'`).
 
-That is 169 calls more, beside the 1525 others (1694 in all), at the time of
-writing. Measured before any fix, 13 of them failed, and all 13 are fixed by
+That was 169 calls more, beside the 1525 others (1694 in all), when it came
+in. Measured before any fix, 13 of them failed, and all 13 are fixed by
 the transform, with no change to a module:
 
 - 11 had a `()` default on a `Sequence[X]` or `Collection[X]` parameter
@@ -493,6 +490,64 @@ the transform, with no change to a module:
   arguments `Optional[_acs_Returning[CarlaWorldPose, 1]]()` (the transform's
   prelude imports `_acs_Returning`; the check's own function does not import
   it again, which Codon 0.19 cannot type: "cannot typecheck").
+
+**So are the field defaults of a dataclass** (#188). The check drops
+`@dataclass`, and Codon gives the class a constructor that takes each field,
+with its default; every constructor call above passes every field, so no
+field default was compiled: `stop_timeout_s: float = "far"` on
+`CommandAutowareLauncher` passed the check. A dataclass with a defaulted
+field is now constructed once more, with only the fields that have no
+default, each of its first type:
+
+```python
+    DockerAutowareConfig(_acs_value(Path), _acs_value(Sequence[str]))
+    DriverClientConfig()
+```
+
+A field without a default after one with (a `field(kw_only=True)`) is passed
+by keyword. A field with no default of its own (`field()`, or
+`field(init=False)`, which the constructor leaves out anyway) is not one
+with a default, and neither is a field "defaulted" to OmegaConf's
+mandatory-value marker (`spawn_lanelet_id: int = MISSING`, the string
+`"???"`): Hydra refuses to build the config without a value, so the field is
+never left at it, and the call passes it. A field the call leaves out because
+its annotation names `Any` (*A dataclass field may hold a union or a
+free-form mapping*, below) is left out of this call too. An error is
+reported at the call, which names the defaults it leaves out
+(`<library check: CommandAutowareLauncher.__init__(argv: Sequence[str]),
+with the default of `env`, `log_dir`, `stop_timeout_s`>: error: 'str' does
+not match expected type 'float'`).
+
+That is 96 calls more, beside the 1694 others (1790 in all, 265 of them
+leaving defaults out), at the time of writing. Measured before any fix, 5
+of the 96 failed, at the first error of each, and the transform's old and
+new output differ in 10 defaults of those 5 classes, one cause each; all
+are fixed in the check, with no change to a module and nothing `UNCALLED`:
+
+- 3 had a tuple display default on a `Sequence[X]` or `tuple[X, ...]`
+  field (`DockerAutowareConfig.colcon_args`, `DriverClientConfig.cameras`
+  and `map_formats`). The field is declared as a `List[X]` (the `typing`
+  shim's `Sequence` is `List`), and the display is a fixed-length Codon
+  tuple ("'Tuple[str,str,str]' does not match expected type 'List[str]'").
+  The transform makes it `List[X]([...])`, a list of the field's element
+  type, replacing only the brackets, so the elements are rewritten as
+  anywhere else.
+- 4 had a plain `()` default on such a field
+  (`DockerAutowareConfig.ros_domain_ids` and `docker_args`,
+  `DriverClientConfig.lidars`, `PlannedRoute.via`), which only a
+  `field(default=())` of a `tuple[X, ...]` was typed for. The transform
+  makes it `List[X]()`, written directly or through `field(default=())`,
+  for a `Sequence[X]` as for a `tuple[X, ...]`.
+- 2 had `field(default_factory=dict)` on a `Mapping[str, str]` field
+  (`env` of `DockerAutowareConfig` and of `CommandAutowareLauncher`): the
+  factory is typed only for a `dict[K, V]` field, so it was a bare `{}`,
+  a dict of `None` ("'Dict[NoneType,NoneType]' does not match expected type
+  'Dict[str,str]'"). The transform makes a `list`, `dict` or `set` factory
+  of an abstract collection the concrete one the `typing` shim maps it
+  onto, of the field's types (`Dict[str, str]()`).
+- 1 was the OmegaConf marker on an `int` field
+  (`NpcVehicleConfig.spawn_lanelet_id: int = MISSING`, "'str' does not
+  match expected type 'int'"), which the call now passes, as above.
 
 **Protected functions and methods are called too** (#175). A `_` method is
 often a hook a subclass or another module uses: six example scenarios call
@@ -666,7 +721,8 @@ What Codon 0.19 needs that Python does not, beyond
   with; `Optional[Callable[..., R]]` and `Optional[Mapping[K, V]]` stay a
   bare `None`, so a body that uses them past an `is None` test fails. A
   tuple display default (`= ("a", "b")`) of a sequence parameter is a
-  fixed-length Codon tuple: pass `tuple([...])` of a list, as for a field.
+  fixed-length Codon tuple: pass `tuple([...])` of a list (a dataclass
+  field's is made a list by the check, #188).
   An empty `[]` / `{}` default of a `list[X]` / `dict[K, V]` parameter (or
   `[]` of a sequence) is checked as an empty one of that type; Codon would
   make it a list of `None`. A `None` default is not checked against its
@@ -1141,7 +1197,10 @@ What Codon 0.19 needs that Python does not, beyond
   mapping of any values) keeps its declaration, its empty default is built as
   that type (`dict[str, Any]()`), and the check's constructor call leaves it
   out, passing the fields after it by keyword. A `default_factory=list` on a
-  `List[int]` field is built as a `List[int]` as on a `list[int]` one.
+  `List[int]` field is built as a `List[int]` as on a `list[int]` one, and a
+  `list`, `dict` or `set` factory of an abstract collection as the one the
+  `typing` shim maps it onto (`env: Mapping[str, str] =
+  field(default_factory=dict)` as a `Dict[str, str]`, #188).
 - **`object.__setattr__(self, "name", value)`**, as a frozen dataclass sets
   its fields, is checked as `self.name = value`: Codon 0.19 has no
   `object.__setattr__`.
@@ -1277,12 +1336,15 @@ What Codon 0.19 needs that Python does not, beyond
   `tuple[X, ...]` / `Tuple[X, ...]` becomes `List[X]`, and `tuple(x)` of a
   list or a generator becomes a list (a tuple passed to `tuple()` stays
   itself), so `self.vertices = tuple(vertices)` compiles; the source keeps
-  its tuple. A dataclass field's `field(default=())` is an empty `List[X]`
-  (`Pin.warnings`); a tuple display (`("a",)`) stays a fixed-length Codon
-  tuple, which is no `List[X]`: pass `tuple([...])` of a list instead
-  (`ros2.config`'s default `sources`; `CommandSourceConfig.topics`, which
-  returns a one- or a two-element tuple, likewise, so its two returns have
-  one type). A parameter `tuple[X, ...]` is dropped (a caller may pass a
+  its tuple. A dataclass field's `()` default, written directly or as
+  `field(default=())`, is an empty `List[X]` (`Pin.warnings`,
+  `PlannedRoute.via`), for a `Sequence[X]` field as for a `tuple[X, ...]`
+  one, and its tuple display default (`("a", "b")`) a list of its elements,
+  `List[X](["a", "b"])` (`DockerAutowareConfig.colcon_args`, #188). Any
+  other tuple display stays a fixed-length Codon tuple, which is no
+  `List[X]`: pass `tuple([...])` of a list instead (`ros2.config`'s
+  `_default_sources()`; `CommandSourceConfig.topics`, which returns a one-
+  or a two-element tuple, likewise, so its two returns have one type). A parameter `tuple[X, ...]` is dropped (a caller may pass a
   tuple), and the library check calls it with a `List[X]`. Its `()`
   default, and that of a `Sequence[X]`, `MutableSequence[X]`,
   `Iterable[X]` or `Collection[X]` parameter, is an empty `List[X]` too

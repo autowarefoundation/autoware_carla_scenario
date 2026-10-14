@@ -19,7 +19,9 @@ it means in the module.  A parameter annotated with a union
 (``Lanelet2Pose | OpenDrivePose``, or ``Optional[Union[A, B]]``) is called
 once with each member.  A function with a defaulted parameter is called
 once more with only the arguments that have none (a method through its
-class), so its defaults are compiled too (:meth:`_Renderer._defaults_call`).
+class), so its defaults are compiled too (:meth:`_Renderer._defaults_call`),
+and a dataclass with a defaulted field is constructed once more with only
+the fields that have none (:meth:`_Renderer._required_fields_call`).
 
 Protected (``_``) functions and methods are called too: they are the hooks a
 subclass or another module uses (``BaseScenario._setup_ego_spawn``), and
@@ -84,6 +86,9 @@ LIBRARY_PACKAGE = "_acs_lib"
 MAX_CALLS = 16
 
 _DATACLASS = {"dataclass", "dataclasses.dataclass"}
+_FIELD_FUNCTIONS = {"field", "dataclasses.field"}
+#: OmegaConf's mandatory-value marker: a field "defaulted" to it is required.
+_MANDATORY = {"MISSING"}
 _SKIPPED_DECORATORS = {"overload", "typing.overload"}
 _PROPERTIES = {"property", "functools.cached_property", "cached_property"}
 _OBJECT_OPERAND = {"__eq__", "__ne__"}
@@ -415,7 +420,7 @@ class _Renderer:
         keyword: list[ast.arg] = []
         choices: list[list[str]] = []
         left_out = False
-        for arg in fields.values():
+        for arg, _ in fields.values():
             if arg.arg == _LEFT_OUT:
                 left_out = True
                 continue
@@ -435,17 +440,64 @@ class _Renderer:
         self._emit_calls(
             node.name, f"{node.name}.__init__", positional, keyword, choices
         )
+        self._required_fields_call(
+            node.name,
+            fields,
+            dict(zip((a.arg for a in [*positional, *keyword]), choices)),
+        )
 
-    def _fields(self, node: ast.ClassDef, seen: set[str]) -> dict[str, ast.arg] | None:
+    def _required_fields_call(
+        self,
+        name: str,
+        fields: dict[str, tuple[ast.arg, bool]],
+        typed: dict[str, list[str]],
+    ) -> None:
+        """One constructor call more, passing only the fields with no default.
+
+        The calls of :meth:`_dataclass_init` pass every field, so no field
+        default is compiled: this one leaves them out (each field given its
+        first type), so Codon compiles each default against the field's
+        type, as a caller that leaves it out has it compiled.  A required
+        field after a defaulted one (a ``kw_only`` field) is passed by
+        keyword.  Nothing is emitted for a dataclass without a default.
+        """
+        passed_positional: list[str] = []
+        passed_keyword: list[str] = []
+        left_out: list[str] = []
+        seen_default = False
+        for field_name, (arg, has_default) in fields.items():
+            if has_default:
+                seen_default = True
+                if arg.arg != _LEFT_OUT:
+                    left_out.append(field_name)
+                continue
+            (passed_keyword if seen_default else passed_positional).append(field_name)
+        if not left_out:
+            return
+
+        values = [f"_acs_value({typed[f][0]})" for f in passed_positional]
+        values += [f"{f}=_acs_value({typed[f][0]})" for f in passed_keyword]
+        signature = ", ".join(
+            f"{f}: {typed[f][0]}" for f in [*passed_positional, *passed_keyword]
+        )
+        self.emit(
+            f"{name}({', '.join(values)})",
+            f"{name}.__init__({signature}), with the default of "
+            + ", ".join(f"`{f}`" for f in left_out),
+        )
+
+    def _fields(
+        self, node: ast.ClassDef, seen: set[str]
+    ) -> dict[str, tuple[ast.arg, bool]] | None:
         """The fields of the dataclass *node*, its bases' first, by name.
 
-        A field the call leaves out is an ``ast.arg`` named
-        :data:`_LEFT_OUT`.  ``None`` when more than one base brings fields
-        (Python and Codon 0.19 order them differently).
+        Each with whether it has a default.  A field the call leaves out is
+        an ``ast.arg`` named :data:`_LEFT_OUT`.  ``None`` when more than one
+        base brings fields (Python and Codon 0.19 order them differently).
         """
         seen = seen | {node.name}
-        fields: dict[str, ast.arg] = {}
-        inherited: list[dict[str, ast.arg]] = []
+        fields: dict[str, tuple[ast.arg, bool]] = {}
+        inherited: list[dict[str, tuple[ast.arg, bool]]] = []
         for base in [b for n in node.bases for b in self._dataclasses_of(n, seen)]:
             base_fields = self._fields(base, seen)
             if base_fields is None:
@@ -479,11 +531,11 @@ class _Renderer:
                 continue
             name = stmt.target.id
             if value is not None and _names_any(stmt.annotation):
-                fields[name] = ast.arg(_LEFT_OUT, stmt.annotation)
+                fields[name] = (ast.arg(_LEFT_OUT, stmt.annotation), True)
                 continue
             arg = ast.arg(name, stmt.annotation)
             arg.lineno = stmt.lineno
-            fields[name] = arg
+            fields[name] = (arg, _has_default(value))
         return fields
 
     def _dataclasses_of(
@@ -528,6 +580,20 @@ class _Renderer:
 
 #: The name of a dataclass field the constructor call leaves out.
 _LEFT_OUT = "_acs_left_out"
+
+
+def _has_default(value: ast.expr | None) -> bool:
+    """Whether a dataclass field assigned *value* has a default.
+
+    OmegaConf's mandatory-value marker (``spawn_lanelet_id: int = MISSING``,
+    the string ``"???"``) is none: Hydra refuses to build the config without
+    a value, so the field is never left at it, and the call passes it.
+    """
+    if value is None or (_dotted(value) or "").rsplit(".", 1)[-1] in _MANDATORY:
+        return False
+    if isinstance(value, ast.Call) and _dotted(value.func) in _FIELD_FUNCTIONS:
+        return any(kw.arg in ("default", "default_factory") for kw in value.keywords)
+    return True
 
 
 def _is_dataclass(node: ast.ClassDef) -> bool:

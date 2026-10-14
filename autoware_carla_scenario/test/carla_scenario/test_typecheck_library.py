@@ -524,6 +524,65 @@ def test_a_function_with_defaults_is_called_without_them_too() -> None:
     assert "    Bridge.make()" in calls
 
 
+_FIELD_DEFAULTS_RENDERED = """
+from dataclasses import dataclass, field
+from typing import Any, Sequence
+
+
+@dataclass
+class Docker:
+    workspace: str
+    launch: Sequence[str]
+    colcon_args: Sequence[str] = ("--symlink-install",)
+    env: dict[str, str] = field(default_factory=dict)
+    extra: dict[str, Any] = field(default_factory=dict)
+    timeout: float = 10.0
+    required: int = field(kw_only=True)
+
+
+@dataclass
+class Point:
+    x: float
+    y: float
+
+
+@dataclass
+class Defaults:
+    k: float = 0.0
+"""
+
+
+def test_a_dataclass_is_constructed_without_its_field_defaults_too() -> None:
+    # Every constructor call passes every field, so no field default would
+    # be compiled: one call more passes only the fields without one (#188).
+    checks = render_library_checks(ast.parse(_FIELD_DEFAULTS_RENDERED))
+    calls = checks.source.splitlines()
+    assert (
+        "    Docker(_acs_value(str), _acs_value(Sequence[str]), "
+        "_acs_value(Sequence[str]), _acs_value(dict[str, str]), "
+        "timeout=_acs_value(float), required=_acs_value(int))" in calls
+    )
+    # A field after a defaulted one is passed by keyword; a `field()` with no
+    # default (here keyword-only) is required.  The `Any` field is left out
+    # of both calls.
+    required = (
+        "    Docker(_acs_value(str), _acs_value(Sequence[str]), "
+        "required=_acs_value(int))"
+    )
+    assert required in calls
+    label = checks.labels[calls.index(required) + 1]
+    assert label == (
+        "Docker.__init__(workspace: str, launch: Sequence[str], required: int), "
+        "with the default of `colcon_args`, `env`, `timeout`"
+    )
+    # A dataclass without a default is constructed once; one with only
+    # defaulted fields is constructed with none too.
+    assert [c for c in calls if c.startswith("    Point(")] == [
+        "    Point(_acs_value(float), _acs_value(float))"
+    ]
+    assert "    Defaults()" in calls
+
+
 def test_protected_functions_and_methods_are_called_too() -> None:
     # A `_` function or method is a hook a subclass or another module uses
     # (BaseScenario._setup_ego_spawn): Codon compiles its body only when
@@ -668,14 +727,18 @@ def test_a_dataclass_is_constructed_with_each_member_of_a_union_field() -> None:
     checks = render_library_checks(ast.parse(_DATACLASS_FIELDS))
     calls = [c.strip() for c in checks.source.splitlines() if "Run(" in c]
     # A dict[str, Any] field with a default is left out of the call, and the
-    # fields after it are passed by keyword.
+    # fields after it are passed by keyword.  The last call passes only the
+    # field without a default, so the defaults are compiled (#188).
     assert calls == [
-        f"Run(_acs_value(str), _acs_value({scenario}), "
-        f"npc=_acs_value({npc}), timeout=_acs_value(float))"
-        for scenario in ("Straight", "Turn")
-        for npc in ("Straight", "Turn")
+        *(
+            f"Run(_acs_value(str), _acs_value({scenario}), "
+            f"npc=_acs_value({npc}), timeout=_acs_value(float))"
+            for scenario in ("Straight", "Turn")
+            for npc in ("Straight", "Turn")
+        ),
+        "Run(_acs_value(str))",
     ]
-    label = checks.labels[checks.source.splitlines().index("    " + calls[-1]) + 1]
+    label = checks.labels[checks.source.splitlines().index("    " + calls[-2]) + 1]
     assert label == "Run.__init__(name: str, scenario: Turn, npc: Turn, timeout: float)"
     # Without a default, the field cannot be left out: a problem, as before.
     lines = _DATACLASS_FIELDS.splitlines()
@@ -1165,6 +1228,56 @@ def test_a_default_of_the_wrong_type_is_reported(
     result = _check_case(source, tmp_path, monkeypatch)
     assert not result.ok
     assert "with the default of `max_distance`" in result.format(), result.format()
+
+
+_FIELD_DEFAULTS = """
+from dataclasses import dataclass, field
+from typing import Dict, List, Sequence
+
+from autoware_carla_scenario.kinematics.vector import Vector3
+
+
+@dataclass
+class Launch:
+    workspace: str
+    colcon_args: Sequence[str] = ("--symlink-install", "--merge-install")
+    one: Sequence[str] = ("a",)
+    sizes: tuple[float, ...] = field(default=(1.0, 2.0))
+    origin: Vector3 = field(default_factory=lambda: Vector3(0.0, 0.0, 0.0))
+    env: Dict[str, str] = field(default_factory=dict)
+    max_distance: float = 150.0
+
+    def arguments(self) -> List[str]:
+        return [self.workspace] + list(self.colcon_args) + list(self.one)
+"""
+
+
+@needs_codon
+def test_field_defaults_compile(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The constructor call passing only the required fields compiles each
+    # field default against its field's type: a tuple display of a
+    # `Sequence[str]` or `tuple[float, ...]` field is a list of it (#188).
+    result = _check_case(_FIELD_DEFAULTS, tmp_path, monkeypatch)
+    assert result.ok, result.format()
+
+
+@needs_codon
+def test_a_field_default_of_the_wrong_type_is_reported(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Every other constructor call passes `max_distance`: only the one
+    # passing the required fields alone compiles the default.
+    source = _FIELD_DEFAULTS.replace(
+        "max_distance: float = 150.0", 'max_distance: float = "far"'
+    )
+    assert source != _FIELD_DEFAULTS
+    result = _check_case(source, tmp_path, monkeypatch)
+    assert not result.ok
+    assert "Launch.__init__(workspace: str), with the default of" in (
+        result.format()
+    ), result.format()
 
 
 @needs_codon

@@ -59,6 +59,12 @@ which :func:`transform_source_lines` maps back onto the handler):
   default of a dropped ``Optional`` of one, or of a ``Callable``, the
   ``None`` of its type (``Optional[List[X]]()``): Codon would otherwise type
   the parameter as an empty tuple or as ``NoneType``.
+* The tuple display default of a class-level ``Sequence[X]``-like or
+  ``tuple[X, ...]`` field (``("a", "b")``, or ``field(default=(...))``)
+  becomes ``List[X](["a", "b"])``, and its ``()`` ``List[X]()``: the field
+  is a list, and a display a fixed-length tuple.  A ``list`` / ``dict`` /
+  ``set`` ``default_factory`` of an abstract collection (``Mapping[str,
+  str]``) becomes an empty one of the concrete type (``Dict[str, str]()``).
 * A class-level ``tuple[X, ...]`` becomes ``List[X]``, and ``tuple(x)``
   becomes ``_acs_tuple(x)``, a list unless *x* is a tuple: Codon's tuples
   have a fixed length.  ``callable(x)``, which Codon 0.19 lacks, becomes
@@ -630,6 +636,8 @@ def _field_default(
                     and _builtin_generic(annotation.value) == name
                     else None
                 )
+                if typed is None and annotation is not None:
+                    typed = _abstract_factory_type(annotation, name)
                 if (
                     typed is None
                     and isinstance(annotation, ast.Subscript)
@@ -652,6 +660,36 @@ def _field_default(
         if typed is not None:
             return f"{typed}()"
     return None
+
+
+#: The abstract collections a ``default_factory`` builds a value of, by the
+#: factory, and the concrete Codon collection that value is.
+_ABSTRACT_FACTORIES = {
+    "list": ({"Sequence", "MutableSequence", "Iterable", "Collection"}, "List"),
+    "dict": ({"Mapping", "MutableMapping"}, "Dict"),
+    "set": ({"AbstractSet"}, "Set"),
+}
+
+
+def _abstract_factory_type(annotation: ast.AST, factory: str) -> str | None:
+    """``Dict[K, V]`` for ``Mapping[K, V] = field(default_factory=dict)``.
+
+    The empty collection a factory builds for a field annotated with an
+    abstract collection the ``typing`` shim maps onto it (``Mapping`` onto
+    ``Dict``): Codon would type a bare ``{}`` from what is put in it, and
+    nothing is, so a dict of ``None``.  ``None`` when the annotation is no
+    such collection or names a type Codon cannot express.
+    """
+    if factory not in _ABSTRACT_FACTORIES or not isinstance(annotation, ast.Subscript):
+        return None
+    names, concrete = _ABSTRACT_FACTORIES[factory]
+    base_name = _dotted(annotation.value) or ""
+    if base_name.rsplit(".", 1)[-1] not in names:
+        return None
+    typed = codon_annotation(annotation, class_level=True)
+    if typed is None or not typed.startswith(f"{base_name}["):
+        return None
+    return concrete + typed[len(base_name) :]
 
 
 #: The abstract collections an empty tuple is a value of, checked as a list.
@@ -1101,10 +1139,59 @@ class _Rewriter(ast.NodeVisitor):
             self.enums.append((node.name, value_type))
         return [stmt for stmt, _, _ in members]
 
+    def _rewrite_tuple_default(self, value: ast.expr, annotation: ast.expr) -> bool:
+        """Make a field's tuple display default a list of its sequence type.
+
+        A field ``Sequence[X]`` / ``tuple[X, ...]`` is declared as a
+        ``List[X]``, and its default ``("a", "b")`` would be a fixed-length
+        Codon tuple (``Tuple[str, str]``), which is no ``List[X]``: it becomes
+        ``List[X](["a", "b"])``, a list of the field's element type, and
+        ``()`` becomes ``List[X]()``.  Only the brackets are replaced, so the
+        elements are rewritten as anywhere else.  *value* is the default
+        itself or a ``field(default=(...))`` call; ``False`` (and nothing
+        replaced) when it is no parenthesized tuple of such a field.
+        """
+        call: ast.Call | None = None
+        if isinstance(value, ast.Call) and _dotted(value.func) in _FIELD_FUNCTIONS:
+            call = value
+            value = next(
+                (kw.value for kw in call.keywords if kw.arg == "default"), value
+            )
+        if not isinstance(value, ast.Tuple):
+            return False
+        if any(isinstance(e, ast.Starred) for e in value.elts):
+            return False
+        if _annotation_names(annotation) & (self._later_classes | self._type_vars):
+            return False  # a type Codon cannot name here
+        typed = _sequence_list(annotation)
+        start, end = self.edits.node_span(value)
+        if typed is None or self.edits.text(start, start + 1) != "(":
+            return False
+        if call is not None:
+            # `field(default=(...))`: the default alone, as `_field_default`
+            # makes it.
+            call_start, call_end = self.edits.node_span(call)
+            self.edits.replace(call_start, start, "")
+            self.edits.replace(end, call_end, "")
+        if not value.elts:
+            self.edits.replace(start, end, f"{typed}()")
+            return True
+        self.edits.replace(start, start + 1, f"{typed}([")
+        self.edits.replace(end - 1, end, "])")
+        for element in value.elts:
+            self.visit(element)
+        return True
+
     def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
         class_level = self._class_depth > 0 and self._function_depth == 0
         value = node.value
         if (
+            class_level
+            and value is not None
+            and self._rewrite_tuple_default(value, node.annotation)
+        ):
+            value = None  # replaced as a whole
+        elif (
             class_level
             and isinstance(value, ast.Call)
             and _dotted(value.func) in _FIELD_FUNCTIONS
