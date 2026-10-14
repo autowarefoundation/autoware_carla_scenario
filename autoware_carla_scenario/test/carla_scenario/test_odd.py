@@ -542,8 +542,8 @@ class TestProbes:
             # Scenario measures, in the ego's frame, which this world's ego
             # cannot give (see test_measures.py). The vehicle-ahead ones are
             # their definition's second version, and written as it.
-            "odd.dynamic.vehicle_ahead_gap#2": [],
-            "odd.dynamic.vehicle_ahead_relative_speed#2": [],
+            "odd.dynamic.vehicle_ahead_gap@v2": [],
+            "odd.dynamic.vehicle_ahead_relative_speed@v2": [],
             "odd.dynamic.crossing_pedestrian_gap": [],
             "odd.dynamic.crossing_pedestrian_speed": [],
         }

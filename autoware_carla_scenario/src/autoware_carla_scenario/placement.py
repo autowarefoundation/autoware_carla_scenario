@@ -37,6 +37,7 @@ from typing import Callable, Optional
 
 import typesafe_carla.carla as carla
 
+from .constants import BUMPER_PROBE_ROLE_NAME
 from .coordinate.poses import Lanelet2Pose
 from .coordinate.transform import lanelet_length, to_carla_world
 from .measures import (
@@ -149,7 +150,7 @@ def solve_along(
 
 
 #: The role name of the vehicle :func:`vehicle_bumpers` spawns to measure.
-_PROBE_ROLE = "bumper_probe"
+_PROBE_ROLE = BUMPER_PROBE_ROLE_NAME
 #: Where :func:`vehicle_bumpers` spawns it: this high above the map's origin,
 #: clear of everything on the road, and higher by as much again if that fails.
 _PROBE_HEIGHT_M = 500.0
@@ -162,12 +163,19 @@ def vehicle_bumpers(world: carla.World, vehicle_type: str) -> Bumpers:
     spawned where it will drive.
 
     CARLA gives a blueprint no size: a vehicle's bounding box is known only
-    once it is spawned.  So one is spawned high above the map, read and
-    destroyed straight away, before the world is ticked again; the result is
-    remembered by blueprint id for the rest of the process.  Placing a
-    vehicle for a bumper-to-bumper gap needs its size where it is placed, and
-    this way it is placed once, where the gap reads right, rather than
-    spawned and then moved.
+    once it is spawned.  A vehicle of the blueprint already in the world --
+    an ego kept from an earlier scenario, a vehicle another one spawned -- is
+    read as it is: its bounding box taken as is, scaled or modded as that
+    actor may be, not the blueprint's stock one.  Otherwise one is spawned
+    high above the map (tried at :data:`_PROBE_HEIGHT_M`, then twice and
+    three times as high), read and destroyed straight away, before the world
+    is ticked again; the vehicle-ahead measures do not count it, by its role
+    name (:data:`~autoware_carla_scenario.constants.BUMPER_PROBE_ROLE_NAME`)
+    or by its height.
+    The result is remembered by blueprint id for the rest of the process.
+    Placing a vehicle for a bumper-to-bumper gap needs its size where it is
+    placed, and this way it is placed once, where the gap reads right, rather
+    than spawned and then moved.
 
     Raises:
         ValueError: When the blueprint is not a vehicle CARLA has, or no
@@ -175,6 +183,11 @@ def vehicle_bumpers(world: carla.World, vehicle_type: str) -> Bumpers:
     """
     if vehicle_type in _BUMPERS:
         return _BUMPERS[vehicle_type]
+    for existing in world.get_actors():
+        if existing.type_id == vehicle_type:
+            found = bumpers_of_box(existing.bounding_box)
+            _BUMPERS[vehicle_type] = found
+            return found
     library = world.get_blueprint_library()
     known = {bp.id for bp in library.filter("vehicle.*")}
     if vehicle_type not in known:
