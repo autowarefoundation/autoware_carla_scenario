@@ -982,24 +982,51 @@ classDiagram
         +destroy()
     }
 
-    class AutowareEntity {
+    class ExternallyDrivenEgo {
         +use_autopilot = false
-        +requires_goal = true
+        +stack_name: str
+        +termination_requested: bool
+        +termination_reason: str | None
+        +change_lane() refuses
+        +set_desired_speed() refuses
+        +turn_at_junction() refuses
     }
 
-    class CarlaDriverEntity {
-        +use_autopilot = false
-        +termination_requested: bool
+    class CarlaDriverEntity
+
+    class Ros2EgoEntity
+
+    class BridgedEgoEntity {
+        +requires_goal = true
+        +bridge: AutowareBridge
+        +launcher: AutowareLauncher | None
+        +set_mission(initial_pose, goal_pose, waypoints)
+        +route_to(world, goal)
+        +is_initialized: bool
     }
+
+    class AutowareEgoEntity
 
     VehicleEntityConfig <|-- EgoConfig
     SpawnLocation <|.. SpawnTransform
     SpawnLocation <|.. SpawnPointIndex
     VehicleEntityConfig --> SpawnLocation
     VehicleEntity --> VehicleEntityConfig
-    EgoVehicle <|-- AutowareEntity
-    EgoVehicle <|-- CarlaDriverEntity
+    EgoVehicle <|-- ExternallyDrivenEgo
+    ExternallyDrivenEgo <|-- CarlaDriverEntity
+    ExternallyDrivenEgo <|-- Ros2EgoEntity
+    ExternallyDrivenEgo <|-- BridgedEgoEntity
+    BridgedEgoEntity <|-- AutowareEgoEntity
 ```
+
+**The ego hierarchy** splits on who drives. `EgoVehicle` is driven by the traffic
+backend. `ExternallyDrivenEgo` is the base of every ego a stack of its own drives:
+it opts out of the TrafficManager, refuses TrafficManager manoeuvres instead of
+delegating them, and carries the termination request. `BridgedEgoEntity` adds the
+splatsim-consistent [`AutowareBridge`](autoware.md) handshake — the mission handed
+over, readiness awaited, the stack launched and stopped per scenario — which
+depends only on the abstract bridge, so it is not particular to Autoware;
+`AutowareEgoEntity` is that handshake with Autoware on the other end.
 
 **Ego lifecycle hooks**: `ScenarioRunner` calls `on_scenario_start()` after the warm-up
 ticks, `on_tick()` on every simulation tick, and `on_scenario_end()` during teardown.
@@ -1016,11 +1043,13 @@ delegated to whichever backend drives it.
 
 **Who drives the ego**: `use_autopilot` decides whether the backend is given the
 ego actor to drive or told to keep its hands off it. `EgoVehicle` opts in (TrafficManager drives);
-`AutowareEntity` opts out and nothing drives the actor; `CarlaDriverEntity` opts out and
-drives it itself from an external policy's plan.
+every `ExternallyDrivenEgo` opts out: on its own it leaves the actor for something
+outside the scenario, `CarlaDriverEntity` drives it from an external policy's plan,
+`Ros2EgoEntity` from ROS 2 nodes' commands, and `BridgedEgoEntity` leaves it to the
+stack it handed the mission to.
 
 **Where the ego is going**: `requires_goal` says whether an entity can start without a
-destination. An `AutowareEntity` cannot — the goal is what makes it move at all — and
+destination. A `BridgedEgoEntity` (`AutowareEgoEntity`) cannot — the goal is what makes it move at all — and
 `BaseScenario.require_goal()`, asked by `register_route_to_goal` and by `ScenarioRunner`
 once `setup()` returns, refuses one that has none. An ego driven by the TrafficManager or
 a driver policy reads no goal, so a scenario may name none and the routing action is
