@@ -1172,6 +1172,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#staying-on-the-lanes-ahead" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Staying on the lanes ahead
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#placing-npc1-by-the-measured-gap" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1636,6 +1647,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#staying-on-the-lanes-ahead" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Staying on the lanes ahead
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#placing-npc1-by-the-measured-gap" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1705,7 +1727,7 @@ side.</p>
 </tr>
 <tr>
 <td><strong>Fail</strong></td>
-<td>The ego hits NPC1, or 20 s pass.</td>
+<td>The ego collides with anything -- NPC1, another actor, a static object (<code>ego_collided</code>); the ego's centre is on none of the lanes ahead of it -- the matched lanelet and the lanelets that follow it, up to 1000 m from its start -- for 0.2 s: it changed lanes, turned onto a lanelet that does not follow it, or left the road (<code>ego_left_its_lane</code>); or 20 s pass.</td>
 </tr>
 </tbody>
 </table>
@@ -1763,8 +1785,72 @@ side.</p>
 <td>Timeout</td>
 <td>20 s</td>
 </tr>
+<tr>
+<td>Fail on any collision of the ego</td>
+<td>on: <code>fail_on_any_collision</code> (off: only a collision with NPC1, <code>hit_cut_in_vehicle</code>)</td>
+</tr>
+<tr>
+<td>Fail on leaving the lanes ahead</td>
+<td>on: <code>fail_on_leaving_lane</code></td>
+</tr>
+<tr>
+<td>The lanes ahead reach</td>
+<td>1000 m from the start of the matched lanelet: <code>lanes_ahead_m</code></td>
+</tr>
+<tr>
+<td>Off them for</td>
+<td>0.2 s: <code>leaving_lane_seconds</code> (0: the first tick off)</td>
+</tr>
 </tbody>
 </table>
+<h2 id="staying-on-the-lanes-ahead">Staying on the lanes ahead<a class="headerlink" href="#staying-on-the-lanes-ahead" title="Permanent link">&para;</a></h2>
+<p>The ego is to keep its lane while NPC1 cuts in: braking, or slowing, is the
+answer the scenario is after, and a run that swerved into the next lane or off
+the road has not passed it, whatever it did not hit. The lanes ahead are the
+lanelet the ego spawns on and the ones that follow it in the routing graph
+(<code>lanelets_ahead</code>: <code>following</code> without lane changes, every branch, up to
+<code>lanes_ahead_m</code>); in none of them is in the lane beside, on a lanelet that
+turns off them, or in no lanelet at all.</p>
+<p>It is not a condition of its own but a composition of the framework's,
+<code>left_lanes_ahead</code> in <code>examples/cut_in.py</code>, which any scenario can build the
+same way:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="n">on_lanes</span> <span class="o">=</span> <span class="p">[</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>    <span class="n">EntityLanePositionCondition</span><span class="p">(</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>        <span class="n">EGO_ROLE_NAME</span><span class="p">,</span> <span class="n">Lanelet2Pose</span><span class="p">(</span><span class="n">lanelet_id</span><span class="o">=</span><span class="n">i</span><span class="p">,</span> <span class="n">s</span><span class="o">=</span><span class="mf">0.0</span><span class="p">),</span> <span class="n">label</span><span class="o">=</span><span class="sa">f</span><span class="s2">"ego_on_lanelet_</span><span class="si">{</span><span class="n">i</span><span class="si">}</span><span class="s2">"</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>    <span class="p">)</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="n">lanelets_ahead</span><span class="p">(</span><span class="n">spawn</span><span class="o">.</span><span class="n">lanelet_id</span><span class="p">,</span> <span class="mf">1000.0</span><span class="p">)</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="p">]</span>
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="bp">self</span><span class="o">.</span><span class="n">register_fail_condition</span><span class="p">(</span>
+<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>    <span class="n">PersistentCondition</span><span class="p">(</span>                     <span class="c1"># off them for 0.2 s, not one tick at a seam</span>
+<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a>        <span class="n">NotCondition</span><span class="p">(</span>                        <span class="c1"># on none of them -- off the road included</span>
+<a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a>            <span class="n">OrCondition</span><span class="p">(</span><span class="n">on_lanes</span><span class="p">),</span>           <span class="c1"># on one of them</span>
+<a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a>            <span class="n">holds_when_pending</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+<a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a>        <span class="p">),</span>
+<a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a>        <span class="mf">0.2</span><span class="p">,</span>
+<a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a>        <span class="n">label</span><span class="o">=</span><span class="s2">"ego_left_its_lane"</span><span class="p">,</span>
+<a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a>    <span class="p">)</span>
+<a id="__codelineno-1-16" name="__codelineno-1-16" href="#__codelineno-1-16"></a><span class="p">)</span>
+</code></pre></div>
+<p><code>holds_when_pending=True</code> is what makes it a logical NOT. A condition that has
+not fired returns nothing, and a plain <code>NotCondition</code> only flips the verdict of
+a child that has, so it could not say "on none of these". The position tested
+is the vehicle's centre (its CARLA location), so a wheel over the line is not
+leaving the lane; a seam between two lanelets is covered by the next one, and
+the 0.2 s wait absorbs a tick that falls between them.</p>
+<p>A scenario document says the same with the editor's cards -- Persistent, NOT
+(with <em>Holds while the child does not</em>), ANY and one Position (Lanelet2) per
+lanelet:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">persistent</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span><span class="nt">params</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">duration</span><span class="p">:</span><span class="w"> </span><span class="nv">0.2</span><span class="p p-Indicator">}</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">  </span><span class="nt">children</span><span class="p">:</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">not</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="w">      </span><span class="nt">params</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">holds_when_pending</span><span class="p">:</span><span class="w"> </span><span class="nv">true</span><span class="p p-Indicator">}</span>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="w">      </span><span class="nt">children</span><span class="p">:</span>
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="w">        </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">any</span>
+<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="w">          </span><span class="nt">children</span><span class="p">:</span>
+<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="w">            </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="nv">entity_lane_position</span><span class="p p-Indicator">,</span><span class="nt"> params</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">entity</span><span class="p">:</span><span class="w"> </span><span class="nv">ego</span><span class="p p-Indicator">,</span><span class="nt"> lanelet_id</span><span class="p">:</span><span class="w"> </span><span class="nv">79016</span><span class="p p-Indicator">}}</span>
+<a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="w">            </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="nv">entity_lane_position</span><span class="p p-Indicator">,</span><span class="nt"> params</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">entity</span><span class="p">:</span><span class="w"> </span><span class="nv">ego</span><span class="p p-Indicator">,</span><span class="nt"> lanelet_id</span><span class="p">:</span><span class="w"> </span><span class="nv">79017</span><span class="p p-Indicator">}}</span>
+</code></pre></div>
 <h2 id="placing-npc1-by-the-measured-gap">Placing NPC1 by the measured gap<a class="headerlink" href="#placing-npc1-by-the-measured-gap" title="Permanent link">&para;</a></h2>
 <p><code>npc_ahead_m</code> is a raw setting: NPC1's <code>s</code> on its lanelet less the ego's on
 its own. Lanelets side by side are not the same length on a curve -- the
@@ -1779,7 +1865,7 @@ counts) fails the setup, saying what gaps it does reach.</p>
 <p>The scenario's controls draw the gap this way (<code>target: measure</code>,
 <a href="../../odd/#controls">Controls</a>), so a sweep's <code>vehicle_ahead_gap</code> draws are
 the gaps the runs start at:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>cut_in/left<span class="w"> </span><span class="nv">map</span><span class="o">=</span>&lt;map&gt;<span class="w"> </span>scenario.npc_gap_m<span class="o">=</span><span class="m">15</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>cut_in/left<span class="w"> </span><span class="nv">map</span><span class="o">=</span>&lt;map&gt;<span class="w"> </span>scenario.npc_gap_m<span class="o">=</span><span class="m">15</span>
 </code></pre></div>
 <p>The relative speed needs no solving: <code>npc_initial_speed_kmh</code> less the ego's
 initial speed is what the <code>vehicle_ahead_relative_speed_kph</code> measure reads at
@@ -1806,7 +1892,7 @@ the start, up to the cosine of the small heading difference on a curve.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 13, 2026 22:11:58 UTC"><span class="timeago" datetime="2026-10-13T22:11:58+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 13, 2026 22:11:58 UTC">2026-10-13</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 14, 2026 07:51:19 UTC"><span class="timeago" datetime="2026-10-14T07:51:19+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 14, 2026 07:51:19 UTC">2026-10-14</span>
   </span>
 
     
