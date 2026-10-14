@@ -419,22 +419,32 @@ class _Line:
 
 
 class _Lines:
-    """Centrelines by lanelet id, for the map loaded (by its identity)."""
+    """Centrelines by lanelet id, for the map they were read off.
 
-    map_id: int = 0
+    The map itself is held, not its ``id()``: a map freed and another loaded
+    may get the same ``id()``, and would be read with the old one's lines."""
+
+    lanelet_map: Optional[lanelet2.core.LaneletMap] = None
     by_id: dict[int, _Line] = {}
 
 
 _LINES = _Lines()
 
 
+def _forget_other_maps(lanelet_map: lanelet2.core.LaneletMap) -> None:
+    """Drop what was read off a map other than *lanelet_map*."""
+    held = _LINES.lanelet_map
+    if held is None or held is not lanelet_map:
+        _LINES.lanelet_map = lanelet_map
+        _LINES.by_id = {}
+        _FRAME_MEMO.key, _FRAME_MEMO.frame = None, None
+
+
 def _line(lanelet_id: int) -> _Line:
     """The centreline of *lanelet_id* in CARLA world coordinates."""
     mm = MapManager.get_instance()
     lanelet_map = mm.lanelet_map
-    if _LINES.map_id != id(lanelet_map):
-        _LINES.map_id = id(lanelet_map)
-        _LINES.by_id = {}
+    _forget_other_maps(lanelet_map)
     if lanelet_id in _LINES.by_id:
         return _LINES.by_id[lanelet_id]
     offset_x, offset_y = mm.mgrs_offset
@@ -625,7 +635,8 @@ class _LaneFrame:
 class _FrameMemo:
     """The last lane frame built, and the ego pose and map it was built for."""
 
-    key: Optional[tuple[int, float, float, float]] = None
+    #: The ego's x, y and yaw; the map is :data:`_LINES`'s.
+    key: Optional[tuple[float, float, float]] = None
     frame: Optional[_LaneFrame] = None
 
 
@@ -640,7 +651,8 @@ def _lane_frame(ego: _Vehicle) -> Optional[_LaneFrame]:
         lanelet_map = mm.lanelet_map
     except RuntimeError:
         return None
-    key = (id(lanelet_map), ego.x, ego.y, ego.yaw)
+    _forget_other_maps(lanelet_map)
+    key = (ego.x, ego.y, ego.yaw)
     if _FRAME_MEMO.key is not None and _FRAME_MEMO.key == key:
         return _FRAME_MEMO.frame
     frame: Optional[_LaneFrame] = None
