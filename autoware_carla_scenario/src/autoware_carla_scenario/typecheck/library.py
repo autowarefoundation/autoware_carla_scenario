@@ -5,9 +5,10 @@ framework (``codon/``).  The library check (:func:`.check.typecheck_library`,
 ``scenario-check --library``) compiles the framework's own source instead, a
 module at a time, as each is made to compile.  This file says which:
 
-* :data:`CHECKED`: modules compiled from their real source.  Every public
-  function and every method of every public class is called with a value of
-  each parameter's annotated type, so their bodies are checked.
+* :data:`CHECKED`: modules compiled from their real source.  Every function
+  and every method of every public class, protected (``_``) ones included,
+  is called with a value of each parameter's annotated type, so their bodies
+  are checked.
 * :data:`EXCLUDED`: every other module, with the reason it is not compiled.
   :data:`NOT_YET_CHECKED` marks one that could be: moving it into
   :data:`CHECKED` is a matter of making its source compile.  "imports X"
@@ -17,10 +18,10 @@ module at a time, as each is made to compile.  This file says which:
 Every module of the package except ``typecheck/`` is in exactly one of the
 two (``test_typecheck_library.py``), so a new module needs an entry here.
 
-:data:`UNCALLED` names the few public functions and methods of a checked
-module the check leaves out, each with its reason: one whose job Codon cannot
-express (a dict of mixed value types, ``json``), in a module that otherwise
-compiles.
+:data:`UNCALLED` names the few functions and methods of a checked module the
+check leaves out, each with its reason: one whose job Codon cannot express (a
+dict of mixed value types, ``json``, a parameter of ``Any``), in a module that
+otherwise compiles.
 
 To move a module into :data:`CHECKED`, delete its :data:`EXCLUDED` entry, add
 it to :data:`CHECKED`, run ``uv run scenario-check --library`` and fix what
@@ -262,7 +263,7 @@ _YAML = (
     "booleans, lists, mappings or None), which Codon cannot express"
 )
 
-#: Public functions and methods of checked modules the check does not call,
+#: Functions and methods of checked modules the check does not call,
 #: by dotted name (``module.Class.method``), with the reason.  Codon compiles
 #: a function only when something calls it, so the body of one listed here is
 #: not checked; nor are the imports made inside it, which is where a module
@@ -345,6 +346,19 @@ UNCALLED: dict[str, str] = {
     "autoware_carla_scenario.sweeper.bindings.parse_binding": _YAML,
     "autoware_carla_scenario.sweeper.constraints.parse_constraint": _YAML,
     "autoware_carla_scenario.utils.stop_line._road_marking_stop_lines": "returns a road marking's `refers` parameters as line strings, and a `refers` parameter may be any of lanelet2's primitives (a polygon, a lanelet, ...), which the lanelet2 model types as what they all have (id, attributes); regulatory_element_stop_lines calls it in the `else` branch of `if TYPE_CHECKING:`",
+    "autoware_carla_scenario.maps.config._setting": "reads one `map` setting off a config of any shape (`map_config: Any`: a MapConfig, an OmegaConf node or the editor's MapRef, read with hasattr/getattr and indexing), which Codon cannot express; only resolve_map_paths, itself uncalled, calls it",
+    "autoware_carla_scenario.maps.config._flag": "reads a boolean `map` setting with _setting, off a config of any shape (`map_config: Any`), which Codon cannot express; only resolve_map_paths, itself uncalled, calls it",
+    "autoware_carla_scenario.route.model._tristate": f"{_YAML} (a segment's opposite_lane, stop_line, ... flags); only _parse_segment, itself uncalled, calls it",
+    "autoware_carla_scenario.route.model._parse_segment": f"{_YAML} (one segment of a route search); only parse_route_search, itself uncalled, calls it",
+    "autoware_carla_scenario.scenario_base.BaseScenario._register_tick": "takes the list a plain callback goes into (`List[Callable[[carla.World], None]]`), and the check has no value of a list of callables to call with; register_init(), register_pre_tick() and register_post_tick() call it with BaseScenario's own lists, so its body is compiled through them",
+    "autoware_carla_scenario.signals.controller._group_members": "reads the authoring package's pydantic signal groups (`list[Any]`, so the runtime does not import authoring); only build_controllers, itself uncalled, calls it",
+    "autoware_carla_scenario.signals.controller._phase_states": "reads one of the authoring package's pydantic phases (`Any`, so the runtime does not import authoring); only build_controllers, itself uncalled, calls it",
+    "autoware_carla_scenario.sweeper.constraints._bind_set_level_constraints": "walks a constraint tree of any node (`constraint: Any`: a Constraint, or any object with `constraints` or `constraint`), which Codon cannot express; find_matching_lanelets calls it with each Constraint, so its body is compiled through it",
+    "autoware_carla_scenario.sweeper.constraints._bind_children": "reads the children of a constraint of any kind with hasattr (`constraint: Any`), which Codon cannot express; the constraints' _bind_set_level() call it with themselves, so its body is compiled through them",
+    "autoware_carla_scenario.sweeper.constraints._cache_ids": "sets `_cached_ids` on a frozen constraint of any kind with `object.__setattr__` (`constraint: Any`), which Codon cannot express; the set-level constraints' _bind_set_level() call it with themselves, so its body is compiled through them",
+    "autoware_carla_scenario.trajectory.model._whole": "checks that a value of any type (`value: Any`: whatever a YAML document or a caller wrote for a lane or junction index) is a whole number, which Codon cannot express; the route poses' __post_init__ call it with their own fields, so its body is compiled through them",
+    "autoware_carla_scenario.trajectory.model._vertex_advance": "takes a TrajectoryVertex call's `*args` and `**kwargs` as written (`tuple[Any, ...]`, `dict[str, Any]`), which Codon cannot express; only _refusing_vertex_times, itself uncalled, calls it",
+    "autoware_carla_scenario.scenario_runner._build_condition_status": "builds a ConditionStatus, which holds the condition's details (`dict[str, Any]`), which Codon cannot express; only _collect_condition_statuses, itself uncalled, calls it",
 }
 
 #: Every other module, with the reason it is not compiled.
