@@ -427,6 +427,18 @@ class Vector:
 
 
 @dataclass
+class _Walk:
+    steps: int
+    seen: list[int] = field(init=False)
+
+    def __post_init__(self) -> None:
+        self.seen = []
+
+    def step(self, n: int) -> None:
+        pass
+
+
+@dataclass
 class Config:
     name: str
     ids: list[int] = field(default_factory=list)
@@ -471,6 +483,12 @@ def test_protected_functions_and_methods_are_called_too() -> None:
     calls = render_library_checks(ast.parse(_MODULE)).source.splitlines()
     assert "    _private(_acs_value(float))" in calls
     assert "    _acs_value(Vector)._helper(_acs_value(float))" in calls
+    # So are the methods of a `_` class: what uses such a helper may not
+    # compile them (an UNCALLED constructor, a call behind `hasattr`), and
+    # Codon's constructor does not call a dataclass's __post_init__ (#182).
+    assert "    _Walk(_acs_value(int))" in calls
+    assert "    _acs_value(_Walk).__post_init__()" in calls
+    assert "    _acs_value(_Walk).step(_acs_value(int))" in calls
     # A dunder of the module (PEP 562's lazy `__getattr__`) is Python's hook,
     # not the module's code: it is not called.
     assert not [c for c in calls if "__getattr__" in c]
@@ -976,6 +994,16 @@ class Gauge:
 
 def _doubled(x: float) -> float:
     return x * 2.0
+
+
+class _Meter:
+    reading: float
+
+    def __init__(self, reading: float) -> None:
+        self.reading = reading
+
+    def offset(self, k: float) -> float:
+        return self.reading - k
 """
 
 
@@ -993,8 +1021,9 @@ def test_protected_functions_and_methods_compile(
     [
         ("return self.size * k", "return self.size + str(k)", "_scaled"),
         ("return x * 2.0", "return x + 'two'", "_doubled"),
+        ("return self.reading - k", "return self.reading - str(k)", "offset"),
     ],
-    ids=["method", "function"],
+    ids=["method", "function", "private-class-method"],
 )
 def test_an_error_in_a_protected_function_or_method_is_reported(
     right: str,
@@ -1003,8 +1032,9 @@ def test_an_error_in_a_protected_function_or_method_is_reported(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Nothing public calls _scaled() or _doubled(): only the check's own call
-    # compiles them, so an error in either is found only because of it.
+    # Nothing public calls _scaled(), _doubled() or _Meter.offset(): only the
+    # check's own call compiles them, so an error in any is found only
+    # because of it.
     source = _PROTECTED.replace(right, wrong)
     result = _check_case(source, tmp_path, monkeypatch)
     assert not result.ok

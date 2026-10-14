@@ -3,7 +3,7 @@
 Codon only checks a function it compiles, and it compiles a function only
 when something calls it.  To check a framework module on its own, the library
 check (:func:`.check.typecheck_library`) appends a function to the module
-that calls every function and every method of every public class, each
+that calls every function and every method of every class, each
 with a value of every parameter's annotated type::
 
     def _acs_library_check():
@@ -24,8 +24,10 @@ subclass or another module uses (``BaseScenario._setup_ego_spawn``), and
 Codon would compile one only if a public function called it.  A module's
 dunders (PEP 562's ``__getattr__``) are Python's hooks, not the module's
 code, and are left out; a class's (``__eq__``, ``__enter__``) are called.
-The classes called are the public ones: a ``_`` class is a module's helper,
-compiled through what uses it.
+The methods of a ``_`` class are called as a public class's are: what uses
+such a helper may not compile it (a constructor that is ``UNCALLED``, a call
+behind a ``hasattr`` that Codon decides statically, a dataclass's
+``__post_init__``, which Codon's constructor does not call).
 
 Some annotations give the check nothing to call with (``Any``, ``object``,
 ``Callable[..., R]``, none at all): each is reported as a problem of the
@@ -579,7 +581,7 @@ def render_library_checks(
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             if not _is_dunder(node.name):
                 renderer.function(node)
-        elif isinstance(node, ast.ClassDef) and not node.name.startswith("_"):
+        elif isinstance(node, ast.ClassDef):
             renderer.cls(node)
     renderer.lines.append("    pass")
     return LibraryChecks(

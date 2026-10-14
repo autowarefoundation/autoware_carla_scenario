@@ -162,9 +162,14 @@ class _BackendAction(BaseAction):
     def __init__(
         self, label: str, *, until: Optional[BaseCondition] = None, **kwargs: Any
     ) -> None:
-        super().__init__(
-            label, until=until if until is not None else _Never(), **kwargs
-        )
+        # Branched into a local of the common base: Codon 0.19 cannot type a
+        # conditional expression whose branches are different classes.
+        stop: BaseCondition
+        if until is not None:
+            stop = until
+        else:
+            stop = _Never()
+        super().__init__(label, until=stop, **kwargs)
         self._backend: Optional["TrafficBackend"] = None
 
     def set_traffic_backend(self, backend: "TrafficBackend") -> None:
