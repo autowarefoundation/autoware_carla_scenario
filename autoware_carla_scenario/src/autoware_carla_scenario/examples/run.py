@@ -389,7 +389,35 @@ def build_ego_entity(cfg: DictConfig) -> EgoVehicle | None:
 
         driver_dict = _to_dict(driver_cfg)
         control = ControlConfig.from_mapping(driver_dict.get("control", {}))
-        return CarlaDriverEntity(DriverClientConfig.from_mapping(driver_dict), control)
+        bridge_dict = driver_dict.get("bridge")
+        if bridge_dict is None:
+            return CarlaDriverEntity(
+                DriverClientConfig.from_mapping(driver_dict), control
+            )
+        # A stack serving the policy's world (splatsim, say) dials the bridge the
+        # framework hosts for the mission and reports when it is ready, as
+        # autoware_carla_interface does for ego.entity=autoware.
+        from autoware_carla_scenario import (  # noqa: PLC0415
+            AutowareBridgeConfig,
+            GrpcAutowareBridgeServer,
+        )
+        from autoware_carla_scenario.utils.config import (  # noqa: PLC0415
+            checked_options,
+        )
+
+        bridge_cfg = AutowareBridgeConfig(
+            **checked_options(AutowareBridgeConfig, bridge_dict)
+        )
+        scenario_cfg = cfg.get("scenario") or {}
+        # autostart=False: the entity starts the bridge when its own scenario
+        # starts, as AutowareEgoEntity does.
+        return CarlaDriverEntity(
+            DriverClientConfig.from_mapping(driver_dict),
+            control,
+            bridge=GrpcAutowareBridgeServer(bridge_cfg, autostart=False),
+            bridge_config=bridge_cfg,
+            episode_name=str(scenario_cfg.get("name", "")),
+        )
 
     if entity == "ros2":
         # ROS 2 nodes drive the ego over DDS (docs/ros2.md). The DDS binding is

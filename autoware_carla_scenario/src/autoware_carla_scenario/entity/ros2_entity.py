@@ -20,15 +20,17 @@ goes stale after its ``stale_s``.  That is how a ROS 2 bridge that relays to CAR
 behaves, and what a node measuring wall-clock deadlines -- a safety island's
 heartbeat watch -- needs; a lockstep would stall the simulation under it.
 
-Cameras and ``/clock`` are not this entity's: CARLA publishes them itself when
-built with ROS 2.
+Cameras and ``/clock`` are CARLA's to publish when it is built with ROS 2.  For a
+server built without it, the entity publishes them itself: the cameras in
+``cameras``, each frame from its sensor's callback, and ``/clock`` with the state.
 """
 
 from __future__ import annotations
 
 import logging
 import math
-from typing import TYPE_CHECKING, Optional, Tuple
+import threading
+from typing import TYPE_CHECKING, List, Optional, Tuple
 
 from ..constants import FIXED_DELTA_SECONDS, US_PER_S
 from ..driver.base import EgoObservation
@@ -44,9 +46,10 @@ from ..ros2.commands import (
     TrajectoryCommand,
 )
 from ..ros2.config import Ros2EgoConfig
-from ..ros2.transport import Ros2EgoTransport
+from ..ros2.transport import CameraFrame, Ros2EgoTransport
+from ..sensor.carla_camera import CarlaCameraSensor, CarlaCameraSensorConfig
 from ..utils.powertrain import ChaosPowertrain
-from .ego import EgoVehicle
+from .externally_driven import ExternallyDrivenEgo
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
@@ -95,7 +98,7 @@ def plan_from_trajectory(command: TrajectoryCommand, anchor_us: int) -> Trajecto
     return plan
 
 
-class Ros2EgoEntity(EgoVehicle):
+class Ros2EgoEntity(ExternallyDrivenEgo):
     """Ego vehicle whose commands come from ROS 2 nodes over DDS.
 
     Args:
@@ -108,8 +111,7 @@ class Ros2EgoEntity(EgoVehicle):
             when the scenario starts, which needs the ``ros2`` extra.
     """
 
-    #: The ROS 2 nodes drive; TrafficManager must keep its hands off this actor.
-    use_autopilot: bool = False
+    stack_name: str = "ROS 2"
 
     _config: Ros2EgoConfig
     _transport: Optional[Ros2EgoTransport]
@@ -119,6 +121,10 @@ class Ros2EgoEntity(EgoVehicle):
     _open: bool
     _active: Optional[str]
     _active_fresh: bool
+    _cameras: List[CarlaCameraSensor]
+    #: Held while a frame is published, so that :meth:`on_scenario_end` cannot
+    #: close the transport under a sensor thread.
+    _publishing: threading.Lock
     #: The trajectory command last tracked and its timed plan.
     _planned: Optional[Tuple[TrajectoryCommand, Trajectory]]
 
@@ -137,6 +143,8 @@ class Ros2EgoEntity(EgoVehicle):
         self._open = False
         self._active = None
         self._active_fresh = False
+        self._cameras = []
+        self._publishing = threading.Lock()
         self._planned = None
 
     # ------------------------------------------------------------------
@@ -185,6 +193,17 @@ class Ros2EgoEntity(EgoVehicle):
         self._transport.open()
         self._open = True
         self._transport.publish_state(self._state(world, actor)[0])
+        if TYPE_CHECKING:
+            # The cameras' listener (ros2.camera) is outside the static check.
+            pass
+        else:
+            for index, camera in enumerate(self._config.cameras):
+                sensor = _publishing_camera(camera.to_sensor_config(), self, index)
+                sensor.attach(world, actor)
+                self._cameras.append(sensor)
+                logger.info(
+                    "Publishing camera %r on %s", camera.logical_id, camera.topic
+                )
 
     def on_tick(self, world: "carla.World", elapsed: float) -> None:
         """Publish the ego's state, take the commands, and apply the one that drives."""
@@ -203,15 +222,54 @@ class Ros2EgoEntity(EgoVehicle):
     def on_scenario_end(self, world: "carla.World") -> None:
         """Leave the DDS domain.
 
-        A failure is logged rather than raised, so it cannot abort the rest of
-        the scenario's cleanup.
+        The cameras are destroyed first.  A failure is logged rather than raised,
+        so it cannot abort the rest of the scenario's cleanup.
         """
+        for sensor in self._cameras:
+            try:
+                sensor.destroy()
+            except Exception:  # noqa: BLE001 - teardown must not raise
+                logger.exception("Failed to destroy a published camera")
+        self._cameras = []
+        with self._publishing:
+            self._close_transport()
+
+    def _close_transport(self) -> None:
         if self._transport is not None and self._open:
             try:
                 self._transport.close()
             except Exception:  # noqa: BLE001 - teardown must not raise
                 logger.exception("Failed to close the ROS 2 transport")
         self._open = False
+
+    def _publish_frame(self, index: int, image: "carla.Image") -> None:
+        """A published camera's listener: hand its frame to the transport.
+
+        Runs on a CARLA sensor thread.  A frame after :meth:`on_scenario_end`
+        has closed the transport is dropped.
+        """
+        with self._publishing:
+            transport = self._transport
+            if transport is None or not self._open:
+                return
+            if TYPE_CHECKING:
+                # typesafe_carla's Codon raw_data is a view (as in
+                # CarlaCameraSensor.get_image).
+                bgra = image.raw_data.tobytes()
+            else:
+                bgra = bytes(image.raw_data)
+            try:
+                transport.publish_image(
+                    CameraFrame(
+                        camera=index,
+                        stamp_us=int(round(float(image.timestamp) * US_PER_S)),
+                        width=int(image.width),
+                        height=int(image.height),
+                        bgra=bgra,
+                    )
+                )
+            except Exception:  # noqa: BLE001 - a sensor thread must not die
+                logger.exception("Failed to publish a camera frame")
 
     # ------------------------------------------------------------------
     # State
@@ -341,6 +399,15 @@ def _steering_tire_angle(actor: "carla.Actor") -> float:
     right = float(actor.get_wheel_steer_angle(wheels.FR_Wheel))
     # CARLA reports degrees, positive to the right.
     return -math.radians(0.5 * (left + right))
+
+
+def _publishing_camera(
+    config: CarlaCameraSensorConfig, entity: Ros2EgoEntity, index: int
+) -> CarlaCameraSensor:
+    """A camera that publishes each frame through *entity* (:mod:`..ros2.camera`)."""
+    from ..ros2.camera import PublishingCamera  # noqa: PLC0415
+
+    return PublishingCamera(config, entity, index)
 
 
 def _cyclone_transport(config: Ros2EgoConfig) -> Ros2EgoTransport:

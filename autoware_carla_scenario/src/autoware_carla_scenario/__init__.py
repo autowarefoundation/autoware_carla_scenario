@@ -4,7 +4,6 @@ Public API re-exported for convenience::
 
     from autoware_carla_scenario import (
         AutowareEgoEntity,
-        AutowareEntity,
         CarlaDriverEntity,
         DriverClientConfig,
         EGO_ROLE_NAME,
@@ -165,6 +164,7 @@ if TYPE_CHECKING:
         get_stop_line_poses as get_stop_line_poses,
         get_stop_line_poses_with_following as get_stop_line_poses_with_following,
         lanelet2_traffic_light_id_to_opendrive_controller_id as lanelet2_traffic_light_id_to_opendrive_controller_id,
+        lanelets_ahead as lanelets_ahead,
         snap_to_carla_road as snap_to_carla_road,
         to_carla_location as to_carla_location,
         to_carla_world as to_carla_world,
@@ -175,6 +175,7 @@ if TYPE_CHECKING:
     from .placement import (
         place_at_vehicle_ahead_gap as place_at_vehicle_ahead_gap,
         solve_along as solve_along,
+        vehicle_bumpers as vehicle_bumpers,
     )
     from .driver import (
         BaseEgoDriverClient as BaseEgoDriverClient,
@@ -193,9 +194,9 @@ if TYPE_CHECKING:
     )
     from .entity import (
         AutowareEgoEntity as AutowareEgoEntity,
-        AutowareEntity as AutowareEntity,
         CarlaDriverEntity as CarlaDriverEntity,
         EgoVehicle as EgoVehicle,
+        ExternallyDrivenEgo as ExternallyDrivenEgo,
         PedestrianEntity as PedestrianEntity,
         PedestrianEntityConfig as PedestrianEntityConfig,
         SpawnLocation as SpawnLocation,
@@ -364,7 +365,6 @@ __all__ = [
     "TimeHeadwayCondition",
     "TimeToCollisionCondition",
     "AutowareEgoEntity",
-    "AutowareEntity",
     # autoware bridge
     "AutowareBridge",
     "AutowareBridgeConfig",
@@ -384,6 +384,7 @@ __all__ = [
     "EgoDriverGrpcClient",
     "EgoConfig",
     "EgoVehicle",
+    "ExternallyDrivenEgo",
     "PedestrianEntity",
     "PedestrianEntityConfig",
     "SpawnLocation",
@@ -410,9 +411,11 @@ __all__ = [
     "GroundProjectionConfig",
     "snap_to_carla_road",
     "lanelet2_traffic_light_id_to_opendrive_controller_id",
+    "lanelets_ahead",
     # Placing road users for a measure
     "place_at_vehicle_ahead_gap",
     "solve_along",
+    "vehicle_bumpers",
     "find_actor_by_role_name",
     # Kinematics
     "CoordinateFrame",
@@ -577,6 +580,7 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
         ".coordinate",
         "get_stop_line_poses_with_following",
     ),
+    "lanelets_ahead": (".coordinate", "lanelets_ahead"),
     "snap_to_carla_road": (".coordinate", "snap_to_carla_road"),
     "to_carla_location": (".coordinate", "to_carla_location"),
     "to_carla_world": (".coordinate", "to_carla_world"),
@@ -585,11 +589,12 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "to_opendrive": (".coordinate", "to_opendrive"),
     "place_at_vehicle_ahead_gap": (".placement", "place_at_vehicle_ahead_gap"),
     "solve_along": (".placement", "solve_along"),
+    "vehicle_bumpers": (".placement", "vehicle_bumpers"),
     # entity
     "AutowareEgoEntity": (".entity", "AutowareEgoEntity"),
-    "AutowareEntity": (".entity", "AutowareEntity"),
     "CarlaDriverEntity": (".entity", "CarlaDriverEntity"),
     "EgoVehicle": (".entity", "EgoVehicle"),
+    "ExternallyDrivenEgo": (".entity", "ExternallyDrivenEgo"),
     "PedestrianEntity": (".entity", "PedestrianEntity"),
     "PedestrianEntityConfig": (".entity", "PedestrianEntityConfig"),
     "SpawnLocation": (".entity", "SpawnLocation"),

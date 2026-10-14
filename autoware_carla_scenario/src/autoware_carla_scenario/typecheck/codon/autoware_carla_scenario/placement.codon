@@ -3,13 +3,23 @@
 
 import typesafe_carla.carla as carla
 
-from ._tc import _keyword_only
+from ._tc import _keyword_only, _Required
 from ._poses import Lanelet2Pose
+from .measures import Bumpers
 
 
 def _expect_read_at(read_at):
     """A Callable[[float], Optional[float]] argument."""
     value: Optional[float] = read_at(0.0)
+
+
+def _required_bumpers(value, where: Literal[str]) -> Bumpers:
+    if isinstance(value, _Required):
+        compile_error(where + " is a required keyword argument")
+    elif isinstance(value, Bumpers):
+        return value
+    else:
+        compile_error(where + " must be Bumpers (vehicle_bumpers())")
 
 
 def solve_along(read_at, target: float, low: float, high: float, *_kw,
@@ -20,6 +30,14 @@ def solve_along(read_at, target: float, low: float, high: float, *_kw,
     raise NotImplementedError()
 
 
+def vehicle_bumpers(world: carla.World, vehicle_type: str) -> Bumpers:
+    raise NotImplementedError()
+
+
 def place_at_vehicle_ahead_gap(ego: carla.Transform, lanelet_id: int,
-                               gap_m: float) -> Lanelet2Pose:
+                               gap_m: float, *_kw, ego_bumpers = _Required(),
+                               npc_bumpers = _Required()) -> Lanelet2Pose:
+    _keyword_only(_kw, "place_at_vehicle_ahead_gap(): ego_bumpers, npc_bumpers")
+    _required_bumpers(ego_bumpers, "place_at_vehicle_ahead_gap(): ego_bumpers")
+    _required_bumpers(npc_bumpers, "place_at_vehicle_ahead_gap(): npc_bumpers")
     raise NotImplementedError()

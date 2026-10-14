@@ -1,8 +1,7 @@
 """Ego vehicle driven by an external policy over the ``egodriver`` gRPC contract.
 
 Where :class:`~autoware_carla_scenario.entity.ego.EgoVehicle` hands the vehicle to
-CARLA's TrafficManager and :class:`~autoware_carla_scenario.entity.autoware_entity.AutowareEntity`
-leaves it standing still, this entity closes the loop against a driver policy served with
+CARLA's TrafficManager, this entity closes the loop against a driver policy served with
 ``carla-driver-interface`` or any other implementation of ``egodriver.EgodriverService``.
 
 Each simulation tick the entity applies control; every
@@ -10,13 +9,29 @@ Each simulation tick the entity applies control; every
 submits fresh observations and asks the policy to re-plan.  Between policy steps the most
 recent plan keeps being tracked, which is how the upstream runtime handles a policy that
 runs slower than the simulation.
+
+Given a ``bridge``, the entity also holds the splatsim-consistent
+:class:`~autoware_carla_scenario.entity.bridged_ego.BridgeHandshake`, for a stack that
+serves the policy's world -- one that renders what its cameras see, say -- and must come
+up before the policy can drive: the stack pulls the scenario's mission over the bridge,
+and the policy starts (its warm-up included) only once the stack reports ready.  Until
+then the entity is not initialized, so the runner holds the scenario clock.
 """
 
 from __future__ import annotations
 
 import logging
 import uuid
-from typing import TYPE_CHECKING, Dict, FrozenSet, List, Mapping, Optional, Tuple
+from typing import (
+    TYPE_CHECKING,
+    Dict,
+    FrozenSet,
+    List,
+    Mapping,
+    Optional,
+    Sequence,
+    Tuple,
+)
 
 from ..constants import FIXED_DELTA_SECONDS
 from ..driver.base import BaseEgoDriverClient, DriverClientConfig, EgoObservation
@@ -37,10 +52,15 @@ from ..driver.observation import (
 )
 from carla_driver_interface.protocol import LidarSweep, pack_lidar_sweep
 from ._policy_warmup import PolicyWarmup
-from .ego import EgoVehicle
+from .bridged_ego import BridgeHandshake
+from .externally_driven import ExternallyDrivenEgo
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
+
+    from ..autoware_bridge.base import AutowareBridge, AutowareBridgeConfig
+    from ..autoware_stack.launcher import AutowareLauncher
+    from ..coordinate import CarlaWorldPose, GroundProjectionConfig, Lanelet2Pose
 
     from ..sensor.carla_camera import CarlaCameraSensor
     from ..sensor.carla_lidar import CarlaLidarSensor
@@ -59,7 +79,7 @@ _US_PER_S: int = 1_000_000
 _DEBUG_LOG_INTERVAL: int = 10
 
 
-class CarlaDriverEntity(EgoVehicle):
+class CarlaDriverEntity(ExternallyDrivenEgo):
     """Ego vehicle controlled by an external driver policy.
 
     Args:
@@ -70,18 +90,49 @@ class CarlaDriverEntity(EgoVehicle):
             in-process gRPC channel.  ``None`` builds an
             :class:`~autoware_carla_scenario.driver.egodriver_client.EgoDriverGrpcClient`
             from *config*.
+        bridge: The bridge a stack serving the policy's world dials, for the
+            mission and readiness handshake.  ``None`` (the default) runs the
+            policy alone, from the first tick.
+        bridge_config: Bridge connection settings.  ``None`` uses the defaults.
+        launcher: Starts that stack when the scenario starts and stops it when it
+            ends.  Needs a *bridge*.
+        episode_name: The scenario's name, for the launcher's logs.
+
+    Raises:
+        ValueError: If a *launcher* is given without a *bridge*.
     """
 
-    #: The policy drives; TrafficManager must keep its hands off this actor.
-    use_autopilot: bool = False
+    stack_name: str = "driver policy"
 
     def __init__(
         self,
         config: Optional[DriverClientConfig] = None,
         control_config: Optional[ControlConfig] = None,
         client: Optional[BaseEgoDriverClient] = None,
+        *,
+        bridge: Optional["AutowareBridge"] = None,
+        bridge_config: Optional["AutowareBridgeConfig"] = None,
+        launcher: Optional["AutowareLauncher"] = None,
+        episode_name: str = "",
     ) -> None:
         super().__init__()
+        if launcher is not None and bridge is None:
+            raise ValueError(
+                "CarlaDriverEntity: a launcher starts a stack that dials the bridge, "
+                "so it needs a bridge"
+            )
+        #: The handshake with the stack serving the policy's world, if any.
+        self._handshake: Optional[BridgeHandshake] = None
+        if bridge is not None:
+            self._handshake = BridgeHandshake(
+                bridge_config,
+                bridge,
+                self.stack_name,
+                launcher=launcher,
+                episode_name=episode_name,
+            )
+            # That stack plans from a mission, and the mission needs a goal.
+            self.requires_goal = True
         self._config = config or DriverClientConfig()
         self._client = (
             client if client is not None else EgoDriverGrpcClient(self._config)
@@ -99,7 +150,6 @@ class CarlaDriverEntity(EgoVehicle):
         #: history -- as the upstream runtime does -- rather than only the newest.
         self._pending_egomotion: List[EgoObservation] = []
         self._rear_axle_offset_m: float = 0.0
-        self._termination_requested: bool = False
         self._session_open: bool = False
         self._drive_count: int = 0
         self._map: Optional["carla.Map"] = None
@@ -127,14 +177,34 @@ class CarlaDriverEntity(EgoVehicle):
         return self._client
 
     @property
-    def termination_requested(self) -> bool:
-        """Whether the policy asked to end the session early."""
-        return self._termination_requested
+    def handshake(self) -> Optional[BridgeHandshake]:
+        """The handshake with the stack serving the policy's world, if there is one."""
+        return self._handshake
 
     @property
     def is_initialized(self) -> bool:
-        """``False`` until the run-up onto the spawn pose (``warmup_s``) is over."""
+        """``False`` until the bridged stack is ready and the run-up is over."""
+        if self._handshake is not None and not self._handshake.ready:
+            return False
         return self._warmup is None
+
+    def route_to(
+        self,
+        world: "carla.World",
+        goal: "Lanelet2Pose",
+        *,
+        initial_pose: Optional["CarlaWorldPose"] = None,
+        ground_projection: Optional["GroundProjectionConfig"] = None,
+        waypoints: Sequence["Lanelet2Pose"] = (),
+    ) -> None:
+        """Hand *goal* to the bridged stack's mission; a no-op without a bridge.
+
+        The policy itself is given the road ahead rather than a destination.
+        """
+        if self._handshake is not None:
+            self._handshake.route_to(
+                world, goal, initial_pose, ground_projection, waypoints
+            )
 
     @property
     def carried_actor_ids(self) -> FrozenSet[int]:
@@ -153,47 +223,6 @@ class CarlaDriverEntity(EgoVehicle):
         return self._drive_count
 
     # ------------------------------------------------------------------
-    # Manoeuvres
-    # ------------------------------------------------------------------
-
-    def change_lane(self, world: "carla.World", direction) -> None:  # noqa: ANN001
-        """Refuse a TrafficManager manoeuvre: nothing here is driven by it.
-
-        The driver policy holds the controls; a manoeuvre forced through the
-        TrafficManager would be overwritten by the next control it applies.
-        """
-        del world
-        logger.warning(
-            "%s: a lane change was asked for, but this entity is not driven by "
-            "the TrafficManager, so forcing one there would do nothing. The policy decides its own manoeuvres.",
-            type(self).__name__,
-        )
-
-    def set_desired_speed(self, world: "carla.World", speed_kmh: float) -> None:
-        """Refuse a TrafficManager speed: nothing here is driven by it.
-
-        The driver policy holds the throttle; a desired speed set on the
-        TrafficManager would be overwritten by the next control it applies,
-        while the action reported progress and completion.
-        """
-        del world, speed_kmh
-        logger.warning(
-            "%s: a speed was set, but this entity is not driven by the "
-            "TrafficManager, so the command would go to an actor it does not "
-            "control. The policy decides its own speed.",
-            type(self).__name__,
-        )
-
-    def turn_at_junction(self, world: "carla.World", direction, **kwargs) -> None:  # noqa: ANN001, ANN003
-        """Refuse a TrafficManager route: nothing here is driven by it."""
-        del world, direction, kwargs
-        logger.warning(
-            "%s: a turn was asked for, but this entity is not driven by the "
-            "TrafficManager, so setting a route there would do nothing.",
-            type(self).__name__,
-        )
-
-    # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
 
@@ -208,6 +237,13 @@ class CarlaDriverEntity(EgoVehicle):
             raise RuntimeError(
                 "CarlaDriverEntity.on_scenario_start called before spawn()"
             )
+        # A retried scenario runs this entity again: the policy's request to end
+        # the attempt before does not end this one.
+        self._reset_termination()
+        if self._handshake is not None:
+            # Before anything moves the ego: the mission is checked against
+            # where it stands.
+            self._handshake.start(actor, type(self).__name__)
 
         self._rear_axle_offset_m = rear_axle_offset(
             actor, self._config.rear_axle_offset_m
@@ -244,6 +280,12 @@ class CarlaDriverEntity(EgoVehicle):
         self._client.start_session(session_uuid, str(self._map.name))
         self._session_open = True
 
+        if self._handshake is None:
+            self._begin_driving(world, actor)
+
+    def _begin_driving(self, world: "carla.World", actor: "carla.Actor") -> None:
+        """Start the run-up, or send the first route: the policy's first tick."""
+        assert self._map is not None  # noqa: S101 - fetched when the session opened
         if self._config.warmup_s > 0.0:
             # The ego leaves for its run-up before the first tick: its spawn
             # pose is where it arrives, not where its history begins.
@@ -270,6 +312,8 @@ class CarlaDriverEntity(EgoVehicle):
         actor = self.actor
         if actor is None or not self._session_open:
             return
+        if self._handshake is not None and not self._await_stack(world, actor):
+            return
 
         self._sim_time_us += int(round(_FIXED_DELTA_S * _US_PER_S))
 
@@ -292,8 +336,27 @@ class CarlaDriverEntity(EgoVehicle):
             return
         self._apply_control(actor, observation)
 
+    def _await_stack(self, world: "carla.World", actor: "carla.Actor") -> bool:
+        """Poll the bridged stack; whether the policy may drive on this tick.
+
+        The tick the stack turns ready starts the policy (its run-up, or its first
+        route), which then drives from the next one.  A stack that fails ends the run.
+        """
+        assert self._handshake is not None  # noqa: S101 - checked by the caller
+        was_ready = self._handshake.ready
+        reason = self._handshake.poll()
+        if reason is not None:
+            self._terminate(reason)
+            return False
+        if not self._handshake.ready:
+            return False
+        if not was_ready:
+            self._begin_driving(world, actor)
+            return False
+        return True
+
     def on_scenario_end(self, world: "carla.World") -> None:
-        """Close the driver session and destroy the cameras.
+        """Close the driver session, the bridged stack and the cameras.
 
         Teardown failures are logged rather than raised so that one unreachable policy
         cannot abort the rest of the scenario cleanup.
@@ -307,6 +370,8 @@ class CarlaDriverEntity(EgoVehicle):
             except Exception:  # noqa: BLE001 - teardown must not raise
                 logger.warning("Failed to close the driver session", exc_info=True)
             self._session_open = False
+        if self._handshake is not None:
+            self._handshake.close(type(self).__name__)
 
         for logical_id, camera in self._cameras:
             try:
@@ -325,10 +390,11 @@ class CarlaDriverEntity(EgoVehicle):
         self._map = None
         self._renderer = None
 
+        reason = self.termination_reason
         logger.info(
             "Driver session finished after %d policy step(s)%s",
             self._drive_count,
-            " (terminated by the policy)" if self._termination_requested else "",
+            f" ({reason})" if reason is not None else "",
         )
 
     # ------------------------------------------------------------------
@@ -484,9 +550,8 @@ class CarlaDriverEntity(EgoVehicle):
                 ),
             )
 
-        if outcome.terminate_session and not self._termination_requested:
-            logger.info("Driver policy requested session termination")
-            self._termination_requested = True
+        if outcome.terminate_session and not self.termination_requested:
+            self._terminate("The driver policy requested session termination")
 
     def _renderer_data(self, observation: EgoObservation) -> bytes:
         """Return the CARLA ground-truth payload for this policy step.

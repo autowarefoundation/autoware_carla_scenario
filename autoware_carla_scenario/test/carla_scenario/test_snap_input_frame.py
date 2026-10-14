@@ -78,7 +78,7 @@ def _snapped_poses(monkeypatch: pytest.MonkeyPatch) -> List[Any]:
     # supplies; what the goal is expressed in afterwards is not this file's
     # subject, so it is stubbed rather than set up.
     monkeypatch.setattr(
-        "autoware_carla_scenario.entity.autoware_entity.to_map_frame",
+        "autoware_carla_scenario.entity.bridged_ego.to_map_frame",
         lambda pose: pose,
     )
     return seen

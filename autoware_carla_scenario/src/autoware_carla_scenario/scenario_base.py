@@ -185,8 +185,9 @@ class BaseScenario(ABC):
                 Using a fixed seed ensures deterministic NPC behaviour across
                 runs.  Defaults to :attr:`DEFAULT_RANDOM_SEED` (``0``).
             ego_type: :class:`EgoVehicle` subclass to instantiate for the ego
-                actor.  Pass :class:`AutowareEntity` to disable TrafficManager
-                autopilot on the ego vehicle.  ``None`` (default) uses
+                actor.  Pass
+                :class:`~autoware_carla_scenario.entity.externally_driven.ExternallyDrivenEgo`
+                to disable TrafficManager autopilot on the ego vehicle.  ``None`` (default) uses
                 :class:`EgoVehicle`.
             ego_entity: Pre-built ego entity to use instead of instantiating
                 *ego_type*.  Required for entities that need constructor
@@ -408,12 +409,18 @@ class BaseScenario(ABC):
 
         The entity's own rule
         (:attr:`~autoware_carla_scenario.entity.ego.EgoVehicle.requires_goal`),
-        read off the instance the scenario was given or, when it will be built
-        from :attr:`ego_type`, off that class.
+        read off the instance the scenario was given -- which can say so of
+        itself, as a driver-policy ego given a bridge does -- or, when it will be
+        built from :attr:`ego_type`, off that class.
         """
         entity = self.ego_entity
-        ego_class = type(entity) if entity is not None else self.ego_type
-        return ego_class.requires_goal
+        # Two returns rather than one conditional expression over the class,
+        # for the static check (docs/typecheck.md): Codon cannot hold a class
+        # as a value.  Read off the instance, ``requires_goal`` is the class's
+        # unless the entity set its own (a driver-policy ego given a bridge).
+        if entity is not None:
+            return entity.requires_goal
+        return self.ego_type.requires_goal
 
     def require_goal(self) -> Optional[Lanelet2Pose]:
         """Return :attr:`goal_pose`, refusing an ego that cannot start without one.
@@ -533,16 +540,22 @@ class BaseScenario(ABC):
             # destination: there is no mission to hand over.
             return
 
-        self.register_init(
-            RoutingAction(
-                EGO_ROLE_NAME,
-                goal,
-                initial_pose=initial_pose,
-                ground_projection=self._ground_projection,
-                waypoints=self.waypoint_poses,
-                label="route_ego_to_goal",
-            )
+        action = RoutingAction(
+            EGO_ROLE_NAME,
+            goal,
+            initial_pose=initial_pose,
+            ground_projection=self._ground_projection,
+            waypoints=self.waypoint_poses,
+            label="route_ego_to_goal",
         )
+        if TYPE_CHECKING:
+            # register_init() takes a Union and dispatches on isinstance, and
+            # Codon compiles both branches (docs/typecheck.md): the check does
+            # for this action what register_init() does for one.
+            self._init_actions.append(action)
+            self._hand_backend_to(action)
+        else:
+            self.register_init(action)
 
     @abstractmethod
     def setup(self) -> None:

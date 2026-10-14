@@ -90,7 +90,7 @@ All conditions inherit from `BaseCondition` and return a
 | `ScenarioResult` | Pass / fail outcome with message, elapsed time, and per-condition statuses. |
 | `ConditionStatus` | Per-condition leaf record used for reporting. |
 | `AlwaysTrueCondition` | Default trigger for actions. |
-| `AndCondition`, `OrCondition`, `NotCondition` | Logical combinators. |
+| `AndCondition`, `OrCondition`, `NotCondition` | Logical combinators. `NotCondition(child, holds_when_pending=True)` is the logical NOT -- it holds while the child has not fired -- where the default flips a fired child's verdict; with `OrCondition` over `EntityLanePositionCondition`s it says "on none of these lanelets" ([cut-in](scenarios/cut_in.md#staying-on-the-lanes-ahead)). |
 | `StickyCondition`, `PersistentCondition` | Latch / persist a child condition's truth value. |
 | `TimeoutCondition`, `ElapsedTimeCondition` | Time-based triggers. |
 | `MetricCondition(metric, rule, value, tolerance, *, label)` | A built-in metric -- how the ego drives -- against a threshold; usually a fail condition. See [Metrics](metrics.md). |
@@ -188,6 +188,7 @@ asked of the ones it did. See [Traffic Backends](traffic_backends.md).
 | `project_onto_road` | Project a `CarlaWorldPose` onto a specified OpenDRIVE road. |
 | `snap_to_carla_road` | Ray-cast a pose onto the rendered CARLA ground surface. |
 | `GroundProjectionConfig` | Ray-cast tuning for `snap_to_carla_road`. |
+| `lanelets_ahead` | A lanelet and the lanelets that follow it in the routing graph (no lane changes, every branch), up to a distance: the lanes a vehicle keeps to without changing lanes. |
 | `get_stop_line_poses`, `get_stop_line_poses_with_following` | Resolve stop-line `Lanelet2Pose`s for a lanelet (optionally including following lanelets). |
 
 ## Entities (`autoware_carla_scenario.entity`)
@@ -196,8 +197,11 @@ asked of the ones it did. See [Traffic Backends](traffic_backends.md).
 |--------|-------------|
 | `VehicleEntity`, `VehicleEntityConfig` | Generic vehicle actor with retry-aware spawn. |
 | `EgoVehicle` | Subclass with the fixed `EGO_ROLE_NAME`, plus the `on_scenario_start` / `on_tick` / `on_scenario_end` lifecycle hooks `ScenarioRunner` calls. |
-| `AutowareEntity` | Opts out of TrafficManager autopilot and leaves the actor for an external stack. |
-| `CarlaDriverEntity` | Drives the ego from an external policy's plan over the `egodriver` gRPC contract. See [External Driver Interface](driver_interface.md). |
+| `ExternallyDrivenEgo` | Base of every ego driven by a stack of its own rather than the TrafficManager: opts out of autopilot, refuses TrafficManager manoeuvres, and carries the termination request. |
+| `BridgeHandshake` | The mission and readiness handshake with a stack over the `AutowareBridge`, optionally launching it per scenario; held by an ego (`entity.bridged_ego`). |
+| `BridgedEgoEntity` | The ego that is nothing but a `BridgeHandshake`: the stack drives. |
+| `AutowareEgoEntity` | The `BridgedEgoEntity` driven by Autoware through `autoware_carla_interface`. See [Autoware](autoware.md). |
+| `CarlaDriverEntity` | Drives the ego from an external policy's plan over the `egodriver` gRPC contract; given a `bridge`, starts the policy once a stack serving its world is ready. See [External Driver Interface](driver_interface.md). |
 | `SpawnLocation` (Protocol) | Tag interface implemented by spawn-point providers. |
 | `SpawnTransform` | Spawn at an explicit `carla.Transform`. |
 | `SpawnPointIndex` | Spawn at the N-th map spawn point. |

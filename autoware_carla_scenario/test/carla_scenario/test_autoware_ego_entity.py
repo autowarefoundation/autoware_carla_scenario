@@ -23,7 +23,7 @@ from autoware_carla_scenario.autoware_bridge import (
     FakeAutowareBridge,
 )
 from autoware_carla_scenario.constants import EGO_ROLE_NAME
-from autoware_carla_scenario.entity import AutowareEgoEntity, AutowareEntity
+from autoware_carla_scenario.entity import AutowareEgoEntity
 
 #: Where the fake ego actually stands, and the same pose in the map frame.
 _CARLA_SPAWN = carla.Transform(
@@ -47,7 +47,7 @@ def _map_frame_without_a_map(monkeypatch: pytest.MonkeyPatch) -> None:
         )
 
     monkeypatch.setattr(
-        "autoware_carla_scenario.entity.autoware_entity.to_map_frame", _flip_y
+        "autoware_carla_scenario.entity.bridged_ego.to_map_frame", _flip_y
     )
 
 
@@ -152,7 +152,7 @@ def _place(entity: AutowareEgoEntity, world) -> "_FakeActor":
         a for a in world.get_actors() if a.attributes["role_name"] == str(EGO_ROLE_NAME)
     )
     with mock.patch(
-        "autoware_carla_scenario.entity.autoware_entity.spawn_vehicle_actor",
+        "autoware_carla_scenario.entity.ego.spawn_vehicle_actor",
         return_value=actor,
     ):
         return entity.spawn(world, _spawn_config())
@@ -197,12 +197,6 @@ def test_constructor_requires_bridge() -> None:
         AutowareEgoEntity(initial_pose=_INITIAL, goal_pose=_GOAL)  # type: ignore[call-arg]
 
 
-def test_autoware_entity_placeholder_still_exists() -> None:
-    # The bare placeholder is kept for backwards compatibility (used by run.py).
-    assert AutowareEntity is not AutowareEgoEntity
-    assert AutowareEntity.use_autopilot is False
-
-
 # ---------------------------------------------------------------------------
 # Spawn behaviour
 # ---------------------------------------------------------------------------
@@ -220,7 +214,7 @@ def test_spawn_places_the_ego_where_the_scenario_said(
         return spawned
 
     monkeypatch.setattr(
-        "autoware_carla_scenario.entity.autoware_entity.spawn_vehicle_actor",
+        "autoware_carla_scenario.entity.ego.spawn_vehicle_actor",
         _fake_spawn,
     )
     entity = _make_entity()
@@ -240,7 +234,7 @@ def test_destroy_destroys_the_ego_it_spawned(
     """The actor is the scenario's, so it does not outlive the run."""
     spawned = _FakeActor(42, str(EGO_ROLE_NAME))
     monkeypatch.setattr(
-        "autoware_carla_scenario.entity.autoware_entity.spawn_vehicle_actor",
+        "autoware_carla_scenario.entity.ego.spawn_vehicle_actor",
         lambda *a, **k: spawned,
     )
     entity = _make_entity()

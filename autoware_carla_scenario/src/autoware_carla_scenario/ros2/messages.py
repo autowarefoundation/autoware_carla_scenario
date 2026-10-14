@@ -15,10 +15,18 @@ which a builtin (``str``, ``bool``) is not.
 """
 
 from dataclasses import dataclass, field
-from typing import List
+from typing import Any, List, Optional, cast
 
 from cyclonedds.idl import IdlStruct
-from cyclonedds.idl.types import array, float32, float64, int32, sequence, uint32
+from cyclonedds.idl.types import (
+    array,
+    float32,
+    float64,
+    int32,
+    sequence,
+    uint8,
+    uint32,
+)
 
 __all__ = [
     "Clock",
@@ -26,6 +34,7 @@ __all__ = [
     "Duration",
     "Float64",
     "Header",
+    "Image",
     "Lateral",
     "Longitudinal",
     "Odometry",
@@ -85,6 +94,61 @@ class Float64(IdlStruct, typename="std_msgs::msg::dds_::Float64_"):
 @dataclass
 class Clock(IdlStruct, typename="rosgraph_msgs::msg::dds_::Clock_"):
     clock: Time = field(default_factory=Time)
+
+
+# sensor_msgs ------------------------------------------------------------------
+
+
+@dataclass
+class _ImageWire(IdlStruct, typename="autoware_carla_scenario::ImageWire_"):
+    """:class:`Image` with its pixels as one ``bytes`` block, for serializing.
+
+    Its CDR is byte for byte :class:`Image`'s.  Cyclone builds no type object for
+    a ``bytes`` member, so it cannot name a topic's type; it only serializes.
+    """
+
+    header: Header = field(default_factory=Header)
+    height: uint32 = 0
+    width: uint32 = 0
+    encoding: str = ""
+    is_bigendian: uint8 = 0
+    step: uint32 = 0
+    data: bytes = b""
+
+
+@dataclass
+class Image(IdlStruct, typename="sensor_msgs::msg::dds_::Image_"):
+    """``sensor_msgs/msg/Image``.  ``data`` may be ``bytes``; it is written as is."""
+
+    header: Header = field(default_factory=Header)
+    height: uint32 = 0
+    width: uint32 = 0
+    encoding: str = ""
+    is_bigendian: uint8 = 0
+    step: uint32 = 0
+    data: sequence[uint8] = field(default_factory=list)
+
+    def serialize(
+        self,
+        buffer: Optional[Any] = None,
+        endianness: Optional[Any] = None,
+        use_version_2: Optional[bool] = None,
+    ) -> bytes:
+        # Cyclone writes a sequence[uint8] element by element: some 120 ms for a
+        # 1280x720 BGRA frame, more than a 10 Hz camera's period.  The same
+        # struct with a bytes member goes as one block, in about 2 ms.
+        wire: Any = _ImageWire(
+            header=self.header,
+            height=self.height,
+            width=self.width,
+            encoding=self.encoding,
+            is_bigendian=self.is_bigendian,
+            step=self.step,
+            data=bytes(cast(Any, self.data)),
+        )
+        return wire.serialize(
+            buffer=buffer, endianness=endianness, use_version_2=use_version_2
+        )
 
 
 # geometry_msgs / nav_msgs ---------------------------------------------------

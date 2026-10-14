@@ -164,7 +164,7 @@ class CutInConfig:
     npc_ahead_m: float = 10.0
 
     #: The gap the NPC starts at, as ``vehicle_ahead_gap_m`` measures it (m):
-    #: centre to centre along the ego's heading.  When given it replaces
+    #: bumper to bumper along the ego's lane.  When given it replaces
     #: :attr:`npc_ahead_m`, and the NPC's ``s`` is solved for so the measure
     #: reads exactly this at the start (``place_at_vehicle_ahead_gap``).
     npc_gap_m: float | None = None
@@ -182,6 +182,23 @@ class CutInConfig:
 
     #: Fail-safe timeout in seconds.
     timeout_seconds: float = 20.0
+
+    #: Fail when the ego leaves the lanes ahead of it: its spawn lanelet and
+    #: the lanelets that follow it (:func:`lanelets_ahead`) -- a lane change,
+    #: a turn onto a lanelet that does not follow it, or leaving the road.
+    fail_on_leaving_lane: bool = True
+
+    #: How far ahead of the start of the spawn lanelet the lanes ahead reach
+    #: (m).  Further than the ego can drive before the timeout.
+    lanes_ahead_m: float = 1000.0
+
+    #: How long the ego has to be off those lanes before the run fails (s):
+    #: a tick or two off at a seam between lanelets is not leaving them.
+    leaving_lane_seconds: float = 0.2
+
+    #: Fail on any collision of the ego, with an actor or a static object;
+    #: ``False`` fails only on a collision with the cut-in vehicle.
+    fail_on_any_collision: bool = True
 
 
 @dataclass

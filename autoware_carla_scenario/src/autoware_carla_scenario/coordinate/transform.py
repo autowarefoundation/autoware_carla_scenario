@@ -156,6 +156,61 @@ def lanelet_length(lanelet_id: int) -> float:
     return float(lanelet2.geometry.length(lanelet2.geometry.to2D(lanelet.centerline)))
 
 
+def lanelets_ahead(lanelet_id: int, distance_m: float) -> list[int]:
+    """A lanelet and the lanelets that continue ahead of it, within a distance.
+
+    The lanes a vehicle on *lanelet_id* can follow without changing lanes:
+    the lanelet itself, then the routing graph's following lanelets
+    (``following(lanelet, withLaneChanges=False)``), transitively -- every
+    branch of a fork or a junction, no lane beside them.  A successor is
+    included when it begins less than *distance_m* from the start of
+    *lanelet_id*, along centerlines by the shortest chain.
+
+    The set an "ego stays on its lanes ahead" fail condition tests the ego's
+    position against: not on any of them is a lane change, a turn off the
+    road ahead, or leaving the road (see :class:`NotCondition`'s
+    ``holds_when_pending``).
+
+    Requires :class:`MapManager` to be initialised.
+
+    Args:
+        lanelet_id: The lanelet to start from.
+        distance_m: How far ahead to follow it (m), from its start.
+
+    Returns:
+        The lanelet ids, *lanelet_id* first, then by distance.
+    """
+    mm = MapManager.get_instance()
+    graph = mm.routing_graph
+    layer = mm.lanelet_map.laneletLayer
+    # The shortest distance from the start of lanelet_id to each lanelet's
+    # start: Dijkstra, on a frontier small enough to scan for its nearest.
+    begins: dict[int, float] = {lanelet_id: 0.0}
+    done: list[int] = []
+    frontier: list[int] = [lanelet_id]
+    while frontier:
+        index = 0
+        for i in range(1, len(frontier)):
+            if begins[frontier[i]] < begins[frontier[index]]:
+                index = i
+        current = frontier.pop(index)
+        if current in done:
+            continue
+        done.append(current)
+        lanelet = layer[current]
+        ends_at = begins[current] + float(
+            lanelet2.geometry.length(lanelet2.geometry.to2D(lanelet.centerline))
+        )
+        if ends_at >= distance_m:
+            continue
+        for successor in graph.following(lanelet, False):
+            successor_id = int(successor.id)
+            if successor_id not in begins or ends_at < begins[successor_id]:
+                begins[successor_id] = ends_at
+                frontier.append(successor_id)
+    return done
+
+
 def _carla_to_lanelet2_frame(pose: CarlaWorldPose) -> tuple[float, float, float]:
     """A CARLA pose's ``(x, y, heading)`` in the Lanelet2 map's frame."""
     mm = MapManager.get_instance()

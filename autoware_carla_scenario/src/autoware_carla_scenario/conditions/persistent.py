@@ -71,7 +71,8 @@ class PersistentCondition(BaseCondition):
                 return ScenarioResult(
                     passed=True,
                     message=(
-                        f"Child condition passed continuously for"
+                        f"Child condition '{self._condition.label}' passed"
+                        f" continuously since {self._true_start:.2f}s, for"
                         f" {elapsed - self._true_start:.2f}s"
                         f" (threshold: {self._duration}s)"
                     ),

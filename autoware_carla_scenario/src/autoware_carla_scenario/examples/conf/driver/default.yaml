@@ -46,6 +46,12 @@ driver:
   #   lidars:
   #     - {logical_id: lidar_top, channels: 64, range_m: 100.0, position_z: 2.0}
   lidars: []
+  # A stack serving the policy's world (splatsim, say) that pulls the scenario's
+  # mission over the AutowareBridge and reports when it is ready; the policy starts
+  # only then. null runs the policy alone. A mapping takes AutowareBridgeConfig's
+  # fields, e.g. {address: "0.0.0.0:50052", ready_timeout_ticks: 1200}; the
+  # scenario then needs a goal (ego.goal_lanelet_id).
+  bridge: null
   # Write the world's map here at scenario start (<map_dir>/<map_id>/, via roadgen:
   # the `map` extra); every traffic light is then sent with where to stop for it.
   map_dir: null

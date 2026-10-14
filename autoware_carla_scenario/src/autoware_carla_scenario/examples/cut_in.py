@@ -2,8 +2,12 @@
 
 An NPC starts in the lane beside the ego, a little ahead, and after a moment
 changes into the ego's lane. The ego must not hit it: the run passes once the
-NPC has been in the ego's lane for ``hold_seconds`` without a collision, and
-fails on a collision with it.
+NPC has been in the ego's lane for ``hold_seconds`` without a collision. It
+fails on any collision of the ego (``fail_on_any_collision``; off, only on one
+with the NPC), and when the ego leaves the lanes ahead of it -- its spawn
+lanelet and the lanelets that follow it -- for ``leaving_lane_seconds``: a lane
+change, a turn onto a lanelet that does not follow it, or leaving the road
+(``fail_on_leaving_lane``).
 
 ``side`` is the side of the ego the NPC comes from, so it changes lanes the
 other way. Its lanelet is the one beside the ego's, which a sweep binds with
@@ -11,12 +15,13 @@ the ``adjacent`` binding.
 
 Where it starts is given one of two ways. ``npc_ahead_m`` is a raw setting:
 the NPC's ``s`` along its lanelet less the ego's along its own. ``npc_gap_m``
-is the gap ``vehicle_ahead_gap_m`` should read at the start: the NPC's ``s``
-is solved for, from the two spawn poses, so it does
+is the gap ``vehicle_ahead_gap_m`` should read at the start -- bumper to
+bumper, along the ego's lane: the NPC's ``s`` is solved for, from the two
+spawn poses and the two vehicles' sizes, so it does
 (:func:`~autoware_carla_scenario.place_at_vehicle_ahead_gap`) -- the same
-wherever the scenario is placed, however the two lanelets curve.  The
-scenario's controls set ``npc_gap_m``, so a gap drawn from an ODD is the gap
-the run starts at.
+wherever the scenario is placed, however the two lanelets are cut and curve.
+The scenario's controls set ``npc_gap_m``, so a gap drawn from an ODD is the
+gap the run starts at.
 
 Typical usage
 -------------
@@ -33,6 +38,8 @@ import logging
 import typesafe_carla.carla as carla
 
 from autoware_carla_scenario import (
+    EGO_ROLE_NAME,
+    BaseCondition,
     BaseScenario,
     CollisionCondition,
     EgoConfig,
@@ -43,7 +50,10 @@ from autoware_carla_scenario import (
     LaneChangeAction,
     LaneChangeDirection,
     Lanelet2Pose,
+    NotCondition,
+    OrCondition,
     PersistentCondition,
+    SetSpeedAction,
     SpawnTransform,
     StickyCondition,
     TimeoutCondition,
@@ -51,10 +61,12 @@ from autoware_carla_scenario import (
     TrafficSignalAction,
     VehicleEntity,
     VehicleEntityConfig,
+    lanelets_ahead,
     place_at_vehicle_ahead_gap,
     snap_to_carla_road,
     to_carla_world,
     to_opendrive,
+    vehicle_bumpers,
 )
 
 from .configs import CutInConfig
@@ -69,6 +81,47 @@ _CHANGE_TOWARDS_EGO: dict[str, LaneChangeDirection] = {
     "left": LaneChangeDirection.RIGHT,
     "right": LaneChangeDirection.LEFT,
 }
+
+
+def left_lanes_ahead(
+    lanelet_id: int, distance_m: float, seconds: float
+) -> BaseCondition:
+    """The ego has been off the lanes ahead of *lanelet_id* for *seconds*.
+
+    A composition of the framework's conditions, no condition of its own: an
+    ``EntityLanePositionCondition`` for each lanelet :func:`lanelets_ahead`
+    returns, under an ``OrCondition`` (the ego is on one of them), under a
+    logical ``NotCondition`` (``holds_when_pending=True``: on none of them),
+    held for *seconds* (``PersistentCondition``) so that a tick off at a seam
+    between lanelets does not count.  On none of them is in a lane beside
+    them, on a lanelet that turns off them, or on no lanelet at all -- off the
+    road.  The position tested is the vehicle's centre, its CARLA location.
+
+    *seconds* of zero or less fails on the first tick off them.
+    """
+    # Appended one by one, and chosen by if/else: Codon gives neither a list
+    # comprehension nor a conditional expression the base class's type.
+    on_lanes: list[BaseCondition] = []
+    for lanelet in lanelets_ahead(lanelet_id, distance_m):
+        on_lanes.append(
+            EntityLanePositionCondition(
+                EGO_ROLE_NAME,
+                Lanelet2Pose(lanelet_id=lanelet, s=0.0),
+                label=f"ego_on_lanelet_{lanelet}",
+            )
+        )
+    on_any: BaseCondition
+    if len(on_lanes) == 1:
+        on_any = on_lanes[0]
+    else:
+        on_any = OrCondition(on_lanes, label="ego_on_its_lanes")
+    if seconds <= 0.0:
+        return NotCondition(on_any, label="ego_left_its_lane", holds_when_pending=True)
+    return PersistentCondition(
+        NotCondition(on_any, label="ego_off_its_lanes", holds_when_pending=True),
+        seconds,
+        label="ego_left_its_lane",
+    )
 
 
 class CutInScenario(BaseScenario):
@@ -115,9 +168,16 @@ class CutInScenario(BaseScenario):
         else:
             # The gap as the measure reads it, from where the ego spawns: x, y
             # and heading come off its lanelet, as _setup_ego_spawn places it.
+            # Bumper to bumper: both vehicles' sizes, from their blueprints.
             ego_pose: Lanelet2Pose = spawn
             ego_at = to_carla_world(ego_pose).to_carla_transform()
-            npc_pose = place_at_vehicle_ahead_gap(ego_at, cfg.npc_lanelet_id, npc_gap_m)
+            npc_pose = place_at_vehicle_ahead_gap(
+                ego_at,
+                cfg.npc_lanelet_id,
+                npc_gap_m,
+                ego_bumpers=vehicle_bumpers(world, self.ego_config.vehicle_type),
+                npc_bumpers=vehicle_bumpers(world, cfg.npc_vehicle_type),
+            )
         npc_snapped = snap_to_carla_road(
             npc_pose, world, ground_projection=self._ground_projection
         )
@@ -143,6 +203,15 @@ class CutInScenario(BaseScenario):
             cfg.side,
         )
 
+        # Held at that speed, not only started at it: on a road whose limit is
+        # higher, the TrafficManager would otherwise speed it up and away from
+        # the ego -- and it refuses a forced lane change at speed (above some
+        # 10 m/s on CARLA 0.10's Town04 highway).
+        self.register_pre_tick(
+            SetSpeedAction(
+                CUT_IN_ROLE, cfg.npc_initial_speed_kmh, label="npc_initial_speed"
+            )
+        )
         self.register_pre_tick(
             LaneChangeAction(
                 CUT_IN_ROLE,
@@ -162,9 +231,18 @@ class CutInScenario(BaseScenario):
         self.register_pass_condition(
             PersistentCondition(cut_in, cfg.hold_seconds, label="npc_cut_in_held")
         )
-        self.register_fail_condition(
-            CollisionCondition(target=CUT_IN_ROLE, label="hit_cut_in_vehicle")
-        )
+        if cfg.fail_on_any_collision:
+            self.register_fail_condition(CollisionCondition(label="ego_collided"))
+        else:
+            self.register_fail_condition(
+                CollisionCondition(target=CUT_IN_ROLE, label="hit_cut_in_vehicle")
+            )
+        if cfg.fail_on_leaving_lane:
+            self.register_fail_condition(
+                left_lanes_ahead(
+                    spawn.lanelet_id, cfg.lanes_ahead_m, cfg.leaving_lane_seconds
+                )
+            )
         self.register_fail_condition(
             TimeoutCondition(cfg.timeout_seconds, label="scenario_timeout")
         )

@@ -990,12 +990,7 @@ class ScenarioRunner:
             # did not, so an ego that cannot start without one is checked once
             # setup returns -- and here rather than inside `_setup_ego_spawn`,
             # which a scenario that snaps its own spawn never calls.
-            if TYPE_CHECKING:
-                # require_goal() reads the ego's class (`ego_type`), which
-                # Codon cannot hold as a value: the check does not compile it.
-                pass
-            else:
-                scenario.require_goal()
+            scenario.require_goal()
             self._warn_if_route_leaves_odd(scenario_name, scenario)
             logger.info("[%s] Spawning ego vehicle ...", scenario_name)
             if TYPE_CHECKING:
@@ -1057,7 +1052,7 @@ class ScenarioRunner:
             # the wait above, and a car the backend was already driving would
             # have spent that time going -- away from the scenario it was placed
             # for, before its own pre-tick actions had said how it should drive.
-            # When the ego opts out (e.g. AutowareEntity), its actor is named
+            # When the ego opts out (an ExternallyDrivenEgo), its actor is named
             # here so external control can drive it instead: one authority per
             # vehicle, passed as data rather than assumed by the backend.
             skip_ids: set[int] = set()
