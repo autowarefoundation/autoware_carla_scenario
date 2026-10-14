@@ -55,7 +55,8 @@ which :func:`transform_source_lines` maps back onto the handler):
 * ``raise X from None`` becomes ``raise X``: Codon 0.19 cannot type the
   ``None`` cause.
 * The ``()`` default of a dropped ``Sequence[X]`` / ``Collection[X]`` /
-  ``tuple[X, ...]`` parameter becomes ``List[X]()``, and the ``None``
+  ``tuple[X, ...]`` parameter becomes ``List[X]()``, its tuple display
+  default ``List[X]([...])``, and the ``None``
   default of a dropped ``Optional`` of one, or of a ``Callable``, the
   ``None`` of its type (``Optional[List[X]]()``): Codon would otherwise type
   the parameter as an empty tuple or as ``NoneType``.
@@ -850,7 +851,9 @@ class _Rewriter(ast.NodeVisitor):
         dropped (a caller may pass a tuple), so the parameter is generic, and
         its default ``()`` would make it Codon's empty tuple, which has no
         elements, no ``X`` and a fixed length.  It becomes ``List[X]()``, the
-        value a caller's list of ``X`` is, as ``field(default=())`` does.  An
+        value a caller's list of ``X`` is, as ``field(default=())`` does, and
+        a tuple display (``("a", "b")``, a fixed-length ``Tuple[str, str]``)
+        a list of its elements, ``List[X](["a", "b"])``, as a field's.  An
         empty ``[]`` / ``{}`` (of a ``list[X]`` / ``dict[K, V]`` parameter,
         or ``[]`` of a sequence) becomes an empty one of that type: Codon
         would make it a list of ``None``.
@@ -876,7 +879,13 @@ class _Rewriter(ast.NodeVisitor):
             ):
                 continue  # a type Codon cannot name here
             typed: str | None = None
-            if isinstance(default, ast.Tuple) and not default.elts:
+            if isinstance(default, ast.Tuple) and default.elts:
+                # `("a", "b")`: a list of the elements, as a field's (#188).
+                listed = _sequence_list(arg.annotation)
+                if listed is not None:
+                    self._list_display(default, listed)
+                continue
+            if isinstance(default, ast.Tuple):
                 typed = _sequence_list(arg.annotation)
             elif isinstance(default, (ast.List, ast.Dict)) and not (
                 default.elts if isinstance(default, ast.List) else default.keys
@@ -1176,10 +1185,26 @@ class _Rewriter(ast.NodeVisitor):
         if not value.elts:
             self.edits.replace(start, end, f"{typed}()")
             return True
-        self.edits.replace(start, start + 1, f"{typed}([")
-        self.edits.replace(end - 1, end, "])")
+        self._list_display(value, typed)
         for element in value.elts:
             self.visit(element)
+        return True
+
+    def _list_display(self, value: ast.Tuple, typed: str) -> bool:
+        """Make the tuple display *value* the list *typed* of its elements.
+
+        ``("a", "b")`` becomes ``List[str](["a", "b"])``.  Only the brackets
+        are replaced, so the caller visits the elements.  ``False`` (and
+        nothing replaced) for a display with no brackets or a starred
+        element.
+        """
+        start, end = self.edits.node_span(value)
+        if self.edits.text(start, start + 1) != "(" or any(
+            isinstance(e, ast.Starred) for e in value.elts
+        ):
+            return False
+        self.edits.replace(start, start + 1, f"{typed}([")
+        self.edits.replace(end - 1, end, "])")
         return True
 
     def visit_AnnAssign(self, node: ast.AnnAssign) -> None:

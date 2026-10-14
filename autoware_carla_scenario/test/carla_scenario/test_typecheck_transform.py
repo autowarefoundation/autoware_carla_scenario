@@ -1211,6 +1211,9 @@ def test_an_empty_tuple_default_of_a_sequence_parameter_is_an_empty_list() -> No
             listed: list[int] = (),
             later: Sequence[Later] = (),
             filled: Sequence[int] = (1, 2),
+            one: tuple[str, ...] = ("a",),
+            filled_pair: tuple[str, int] = ("a", 1),
+            starred: Sequence[int] = (*IDS,),
         ) -> None:
             pass
 
@@ -1230,8 +1233,12 @@ def test_an_empty_tuple_default_of_a_sequence_parameter_is_an_empty_list() -> No
     assert "    listed: list[int] = ()," in out
     # A class defined further down, which Codon cannot name in a signature.
     assert "    later = ()," in out
-    # Only an empty tuple: a display is left as written.
-    assert "    filled = (1, 2)," in out
+    # A display is a list of its elements, as a field's (#188); a
+    # fixed-length tuple, or one with a starred element, is left as written.
+    assert "    filled = List[int]([1, 2])," in out
+    assert '    one = List[str](["a",]),' in out
+    assert '    filled_pair: tuple[str, int] = ("a", 1),' in out
+    assert "    starred = (*IDS,)," in out
 
 
 def test_a_none_default_of_a_dropped_optional_parameter_is_its_types_none() -> None:

@@ -1176,6 +1176,13 @@ class Route:
         self._waypoints = list(waypoints)
 
 
+class Launch:
+    _args: Sequence[str]
+
+    def __init__(self, args: Sequence[str] = ("--symlink-install", "-v")) -> None:
+        self._args = args
+
+
 def hold(ids: List[int], spare: Collection[int] = ()) -> int:
     return len([i for i in ids if i not in spare])
 
@@ -1210,7 +1217,9 @@ def height(ground: Optional[Callable[[float], Optional[float]]] = None) -> float
 def test_defaults_compile(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # The calls without the defaults compile a `()` of a Sequence[T] (an empty
     # List[T]), a `None` of an Optional the transform drops, and an empty
-    # `[]` / `{}`, which Codon would make a list of None (#183).
+    # `[]` / `{}`, which Codon would make a list of None (#183).  A tuple
+    # display of a Sequence[T] is a List[T] too, so it can be kept in a
+    # Sequence[T] attribute (#188).
     result = _check_case(_DEFAULTS, tmp_path, monkeypatch)
     assert result.ok, result.format()
 

@@ -726,9 +726,9 @@ What Codon 0.19 needs that Python does not, beyond
   `Optional` is typed only for a sequence or a `Callable` the check can call
   with; `Optional[Callable[..., R]]` and `Optional[Mapping[K, V]]` stay a
   bare `None`, so a body that uses them past an `is None` test fails. A
-  tuple display default (`= ("a", "b")`) of a sequence parameter is a
-  fixed-length Codon tuple: pass `tuple([...])` of a list (a dataclass
-  field's is made a list by the check, #188).
+  tuple display default (`= ("a", "b")`) of a sequence parameter is checked
+  as a list of its elements, `List[X](["a", "b"])`, as a dataclass field's
+  is (#188); a fixed-length Codon tuple is no `List[X]`.
   An empty `[]` / `{}` default of a `list[X]` / `dict[K, V]` parameter (or
   `[]` of a sequence) is checked as an empty one of that type; Codon would
   make it a list of `None`. A `None` default is not checked against its
@@ -1350,12 +1350,13 @@ What Codon 0.19 needs that Python does not, beyond
   other tuple display stays a fixed-length Codon tuple, which is no
   `List[X]`: pass `tuple([...])` of a list instead (`ros2.config`'s
   `_default_sources()`; `CommandSourceConfig.topics`, which returns a one-
-  or a two-element tuple, likewise, so its two returns have one type). A parameter `tuple[X, ...]` is dropped (a caller may pass a
-  tuple), and the library check calls it with a `List[X]`. Its `()`
-  default, and that of a `Sequence[X]`, `MutableSequence[X]`,
-  `Iterable[X]` or `Collection[X]` parameter, is an empty `List[X]` too
-  (`RoutingAction(..., waypoints: Sequence[Lanelet2Pose] = ())`; see
-  *Defaults are compiled too* above).
+  or a two-element tuple, likewise, so its two returns have one type). A
+  parameter `tuple[X, ...]` is dropped (a caller may pass a tuple), and the
+  library check calls it with a `List[X]`. Its `()` default, and that of a
+  `Sequence[X]`, `MutableSequence[X]`, `Iterable[X]` or `Collection[X]`
+  parameter, is an empty `List[X]` too (`RoutingAction(..., waypoints:
+  Sequence[Lanelet2Pose] = ())`), and its tuple display default a list of
+  its elements, as a field's; see *Defaults are compiled too* above.
   `Phase.states` and `SignalController.phases` (`signals.controller`) are
   checked this way. What only a tuple does is not checked: its hash (a
   frozen dataclass's `__hash__`), its equality with another tuple and its
