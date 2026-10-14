@@ -341,9 +341,11 @@ the result and its environment, `_write_result()`; collecting the condition
 statuses, `_collect_condition_statuses()`), the queue's pytest fixture
 (`ScenarioQueue.as_fixture()`), `maps.config.resolve_map_paths()`,
 which reads the `map` config node of any shape (`Any`), the driver and
-ROS 2 configs' `from_mapping()` (a Hydra node, `Mapping[str, Any]`) and
-`encode_frame_jpeg()` (cv2). The 76 `EXCLUDED` modules fall in
-three groups. Many fit more than one (about 55 import what Codon cannot
+ROS 2 configs' `from_mapping()` (a Hydra node, `Mapping[str, Any]`), what
+builds the ROS 2 ego's published cameras (`entity.ros2_entity._publishing_camera()`,
+which imports `ros2.camera` inside it) and
+`encode_frame_jpeg()` (cv2). The 77 `EXCLUDED` modules fall in
+four groups. Many fit more than one (about 55 import what Codon cannot
 compile, 28 build on an excluded module and 20 hold values Codon has no type
 for), so each is counted once, in the first group that fits it:
 
@@ -377,6 +379,9 @@ for), so each is counted once, in the first group that fits it:
   `Any` (`trajectory.authoring`, `authoring.registry`'s
   field defaults), or a class as a value (`utils.config`, which `traffic.config`
   and `traffic.sumo.config` import only in their uncalled `from_mapping()`).
+- **1 has a callback the check cannot type**: `ros2.camera`, whose camera
+  hands each frame back to the ROS 2 ego from a CARLA sensor thread through
+  `CarlaCameraSensor`'s listen callback.
 
 The scenario check is not limited by this: it compiles every scenario against
 the model, which declares the whole public API.

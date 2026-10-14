@@ -13,7 +13,11 @@ import pytest
 
 from autoware_carla_scenario.driver.control import ControlConfig
 from autoware_carla_scenario.examples.run import _to_dict
-from autoware_carla_scenario.ros2 import CommandSourceConfig, Ros2EgoConfig
+from autoware_carla_scenario.ros2 import (
+    CommandSourceConfig,
+    Ros2CameraConfig,
+    Ros2EgoConfig,
+)
 
 _CONF = (
     Path(__file__).resolve().parents[2]
@@ -113,6 +117,52 @@ def test_from_mapping_builds_the_sources_and_ignores_the_control_section() -> No
     assert config.domain_id == 3
     (source,) = config.sources
     assert (source.name, source.priority) == ("c", 5)
+
+
+def test_a_camera_needs_a_topic() -> None:
+    with pytest.raises(ValueError, match="needs a topic"):
+        Ros2CameraConfig(logical_id="main_cam")
+
+
+def test_camera_topics_must_be_unique() -> None:
+    camera = Ros2CameraConfig(topic="/carla/hero/main_cam/image")
+    with pytest.raises(ValueError, match="camera topics must be unique"):
+        Ros2EgoConfig(cameras=(camera, camera))
+
+
+def test_from_mapping_builds_the_cameras() -> None:
+    config = Ros2EgoConfig.from_mapping(
+        {
+            "cameras": [
+                {
+                    "logical_id": "main_cam",
+                    "topic": "/carla/hero/main_cam/image",
+                    "frame_id": "main_cam",
+                    "image_width": 1280,
+                    "image_height": 720,
+                    "fov": 60.0,
+                    "fps": 10.0,
+                }
+            ]
+        }
+    )
+    (camera,) = config.cameras
+    assert camera.topic == "/carla/hero/main_cam/image"
+    assert camera.frame_id == "main_cam"
+    sensor = camera.to_sensor_config()
+    assert (sensor.image_width, sensor.image_height, sensor.fov, sensor.fps) == (
+        1280,
+        720,
+        60.0,
+        10.0,
+    )
+
+
+def test_from_mapping_rejects_an_unknown_camera_key() -> None:
+    with pytest.raises(ValueError, match="encoding"):
+        Ros2EgoConfig.from_mapping(
+            {"cameras": [{"topic": "/carla/hero/main_cam/image", "encoding": "rgb8"}]}
+        )
 
 
 # ---------------------------------------------------------------------------
