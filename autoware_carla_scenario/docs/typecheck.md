@@ -1431,8 +1431,10 @@ What Codon 0.19 needs that Python does not, beyond
   neither. `sweeper.constraints._comparison_rule()` looks the member up in a
   list of the members spelled out under `if TYPE_CHECKING:`, and by name in
   the `else` branch; `LaneletLengthConstraint.__post_init__()` validates its
-  rule against the names of that spelled-out list, and of
-  `list(ComparisonRule)` in the `else` branch.
+  rule against the names of the same members, spelled out again under
+  `if TYPE_CHECKING:`, and of `list(ComparisonRule)` in the `else` branch.
+  The run never reads the spelled-out lists, so `test_typecheck_model.py`
+  compares each with the enum's members.
 - **An exception class raised with no arguments** (`raise _Exhausted()` in
   `route.search`): Codon 0.19 raises no exception class without its own
   `__init__`, and its `Exception` takes a message where Python's takes none.
