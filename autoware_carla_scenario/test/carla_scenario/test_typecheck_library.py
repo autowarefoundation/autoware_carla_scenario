@@ -476,6 +476,54 @@ def test_every_public_function_and_method_is_called_with_typed_values() -> None:
     assert label == "where(pose: OpenDrivePose)"
 
 
+_DEFAULTS_RENDERED = """
+def nearest(x: float, max_distance: float = 150.0) -> float:
+    return x
+
+
+def run(cwd: str, *args: str, timeout: int, env: str = "") -> None:
+    pass
+
+
+def plain(x: float) -> None:
+    pass
+
+
+class Bridge:
+    def configure(self, goal: float, waypoints: Optional[list[float]] = None) -> None:
+        pass
+
+    def start(self, world: float, *, skip: Collection[int] = ()) -> None:
+        pass
+
+    @staticmethod
+    def make(size: float = 1.0) -> None:
+        pass
+"""
+
+
+def test_a_function_with_defaults_is_called_without_them_too() -> None:
+    # Every call passes every argument, so no default would be compiled: one
+    # call more leaves out each argument that has one (#183).
+    checks = render_library_checks(ast.parse(_DEFAULTS_RENDERED))
+    calls = checks.source.splitlines()
+    assert "    nearest(_acs_value(float), _acs_value(float))" in calls
+    assert "    nearest(_acs_value(float))" in calls
+    label = checks.labels[calls.index("    nearest(_acs_value(float))") + 1]
+    assert label == "nearest(x: float), with the default of `max_distance`"
+    # A `*args: T` is still given one T, so the positional parameters before
+    # it are passed; the keyword-only one without a default is too.
+    assert "    run(_acs_value(str), _acs_value(str), timeout=_acs_value(int))" in calls
+    # A function without a default is called once.
+    assert [c for c in calls if c.startswith("    plain(")] == [
+        "    plain(_acs_value(float))"
+    ]
+    # A method through its class: its dispatch thunk fills in no default.
+    assert "    Bridge.configure(_acs_value(Bridge), _acs_value(float))" in calls
+    assert "    Bridge.start(_acs_value(Bridge), _acs_value(float))" in calls
+    assert "    Bridge.make()" in calls
+
+
 def test_protected_functions_and_methods_are_called_too() -> None:
     # A `_` function or method is a hook a subclass or another module uses
     # (BaseScenario._setup_ego_spawn): Codon compiles its body only when
@@ -1044,6 +1092,79 @@ def test_an_error_in_a_protected_function_or_method_is_reported(
     assert located[0].path == str(tmp_path / "zz_library_check_case.py")
     assert located[0].line == stripped.index(wrong) + 1, result.format()
     assert realized in result.format()
+
+
+_DEFAULTS = """
+from __future__ import annotations
+
+from typing import Callable, Collection, Dict, List, Optional, Sequence
+
+from autoware_carla_scenario.kinematics.vector import Vector3
+
+
+def nearest(x: float, max_distance: float = 150.0) -> float:
+    return x + max_distance
+
+
+class Route:
+    _waypoints: List[Vector3]
+
+    def __init__(self, goal: Vector3, waypoints: Sequence[Vector3] = ()) -> None:
+        self._waypoints = list(waypoints)
+
+
+def hold(ids: List[int], spare: Collection[int] = ()) -> int:
+    return len([i for i in ids if i not in spare])
+
+
+def first(poses: Optional[Sequence[Vector3]] = None) -> int:
+    kept: List[Vector3] = []
+    if poses:
+        kept = list(poses)
+    return len(kept)
+
+
+def tally(ids: List[int] = [], names: Dict[str, Vector3] = {}) -> float:
+    return sum(ids) + sum(v.x for v in names.values())
+
+
+class Box:
+    def add(self, more: List[Vector3] = [], *, by: Dict[str, float] = {}) -> int:
+        return len(more) + len(by)
+
+
+def height(ground: Optional[Callable[[float], Optional[float]]] = None) -> float:
+    z: Optional[float] = None
+    if ground is not None:
+        z = ground(1.0)
+    if z is None:
+        return 0.0
+    return z
+"""
+
+
+@needs_codon
+def test_defaults_compile(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # The calls without the defaults compile a `()` of a Sequence[T] (an empty
+    # List[T]), a `None` of an Optional the transform drops, and an empty
+    # `[]` / `{}`, which Codon would make a list of None (#183).
+    result = _check_case(_DEFAULTS, tmp_path, monkeypatch)
+    assert result.ok, result.format()
+
+
+@needs_codon
+def test_a_default_of_the_wrong_type_is_reported(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Every other call passes `max_distance`: only the one leaving it out
+    # compiles the default.
+    source = _DEFAULTS.replace(
+        "max_distance: float = 150.0", 'max_distance: float = "far"'
+    )
+    assert source != _DEFAULTS
+    result = _check_case(source, tmp_path, monkeypatch)
+    assert not result.ok
+    assert "with the default of `max_distance`" in result.format(), result.format()
 
 
 @needs_codon

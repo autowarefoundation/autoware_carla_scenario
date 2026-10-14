@@ -442,6 +442,58 @@ skip_actor_ids=...)`): Codon 0.19 calls a method a subclass may override
 through a dispatch thunk, which takes neither a keyword argument nor
 `**kwargs`, and the call through the class checks the same body.
 
+**Defaults are compiled too** (#183). The calls above pass every
+argument, so no default was ever compiled: `find_nearest_traffic_light(...,
+max_distance: float = "far")` passed the check. A function or method with a
+defaulted parameter is now called once more, with only the arguments that
+have no default, each of its first type:
+
+```python
+    find_nearest_traffic_light(_acs_value(carla.World), _acs_value(Lanelet2Pose))
+    AutowareBridge.configure(_acs_value(AutowareBridge), _acs_value(BridgePose), _acs_value(BridgePose))
+```
+
+A method is called through its class (`AutowareBridge.configure(...)`, not
+`_acs_value(AutowareBridge).configure(...)`): a dispatch thunk fills in no
+default, and through it `AutowareBridge.configure()` and
+`FakeAutowareBridge.configure()` do not compile. A `*args: T` is still given
+one `T` (`run_uv(cwd, *args: str, timeout: int, env=None)` with one `str`
+and `timeout`), so the positional parameters before it are passed, defaulted
+or not: without it `run_uv()` does not compile. A function with no default gets no
+such call, and neither does a dataclass's generated constructor: its fields'
+defaults are not compiled by the library check (a field `Sequence[str] =
+("a", "b")` is a fixed-length Codon tuple, which a `List[str]` field
+refuses). An error in a default is reported at the call, which names it
+(`<library check: find_nearest_traffic_light(world: carla.World, location:
+Lanelet2Pose), with the default of `max_distance`>: error: 'str' does not
+match expected type 'float'`).
+
+That is 169 calls more, beside the 1525 others (1694 in all), at the time of
+writing. Measured before any fix, 13 of them failed, and all 13 are fixed by
+the transform, with no change to a module:
+
+- 11 had a `()` default on a `Sequence[X]` or `Collection[X]` parameter
+  (`RoutingAction.__init__`'s `waypoints`, `set_mission()` / `route_to()` of
+  `BridgeHandshake` and `BridgedEgoEntity`, `EgoVehicle.route_to()`, the
+  `skip_actor_ids` of the three traffic backends' `start()`,
+  `utils.vehicles.hold_vehicles_still()` and
+  `scenario_runner._hold_vehicles_still()`). The parameter's annotation is
+  dropped, so the `()` made it Codon's empty tuple ("'Tuple' does not match
+  expected type 'List[Lanelet2Pose]'"). The transform makes such a default
+  `List[X]()`, as it does a dataclass's `field(default=())`.
+- 2 had a `None` default on an `Optional` parameter whose annotation the
+  transform drops: `EgoConfig.__init__`'s `waypoint_poses:
+  Optional[Sequence[Lanelet2Pose]]`, and the `Callable` parameters of
+  `trajectory.resolve.resolve_trajectory()`. `None` alone is Codon's
+  `NoneType`, which has no elements and no call, and a body that tests it
+  for `None` first is compiled with it all the same. The transform makes
+  such a default the `None` of the `Optional` the library check calls with:
+  `Optional[List[Lanelet2Pose]]()`, `Optional[Callable[[float, float],
+  Optional[float]]]()`, and for a `Callable` with a union among its
+  arguments `Optional[_acs_Returning[CarlaWorldPose, 1]]()` (the transform's
+  prelude imports `_acs_Returning`; the check's own function does not import
+  it again, which Codon 0.19 cannot type: "cannot typecheck").
+
 **Protected functions and methods are called too** (#175). A `_` method is
 often a hook a subclass or another module uses: six example scenarios call
 `BaseScenario._setup_ego_spawn()`, and the model's `BaseScenario` is what a
@@ -605,6 +657,21 @@ What Codon 0.19 needs that Python does not, beyond
   it calls, protected (`_`) ones included, with a type Codon can express. Spell a union out (`Lanelet2Pose | OpenDrivePose`) rather
   than through an alias (`AnyPose`); a union with `object` or `Any` in it
   gives nothing to call with.
+- **A default must have the parameter's type** (#183): the check compiles
+  each function once with its defaults. A `()` default of a sequence
+  parameter is checked as an empty `List[X]`, so `X` must be a type Codon can
+  express and name there: a class defined further down the module is not
+  (the `()` is left as it is, and fails). A `None` default of a dropped
+  `Optional` is typed only for a sequence or a `Callable` the check can call
+  with; `Optional[Callable[..., R]]` and `Optional[Mapping[K, V]]` stay a
+  bare `None`, so a body that uses them past an `is None` test fails. A
+  tuple display default (`= ("a", "b")`) of a sequence parameter is a
+  fixed-length Codon tuple: pass `tuple([...])` of a list, as for a field.
+  An empty `[]` / `{}` default of a `list[X]` / `dict[K, V]` parameter (or
+  `[]` of a sequence) is checked as an empty one of that type; Codon would
+  make it a list of `None`. A `None` default is not checked against its
+  annotation: Codon makes `speed: float = None` an `Optional[float]`, which
+  passes (mypy, in pre-commit, reports it).
 - **Declare attributes** on any class in a hierarchy (exceptions included)
   and on a class with `__slots__`, at class level (`_value: str`).
 - **`hasattr()` instead of `getattr(x, name, default)`**: Codon decides
@@ -1216,7 +1283,11 @@ What Codon 0.19 needs that Python does not, beyond
   (`ros2.config`'s default `sources`; `CommandSourceConfig.topics`, which
   returns a one- or a two-element tuple, likewise, so its two returns have
   one type). A parameter `tuple[X, ...]` is dropped (a caller may pass a
-  tuple), and the library check calls it with a `List[X]`.
+  tuple), and the library check calls it with a `List[X]`. Its `()`
+  default, and that of a `Sequence[X]`, `MutableSequence[X]`,
+  `Iterable[X]` or `Collection[X]` parameter, is an empty `List[X]` too
+  (`RoutingAction(..., waypoints: Sequence[Lanelet2Pose] = ())`; see
+  *Defaults are compiled too* above).
   `Phase.states` and `SignalController.phases` (`signals.controller`) are
   checked this way. What only a tuple does is not checked: its hash (a
   frozen dataclass's `__hash__`), its equality with another tuple and its
