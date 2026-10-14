@@ -1,23 +1,33 @@
-"""Driving-quality measures: how the ego drove, read off the world per frame.
+"""Metrics: how the ego drove, read off the world per frame.
 
-The measures in :mod:`autoware_carla_scenario.measures` read what a scenario
-*sets up* (a vehicle ahead, a pedestrian crossing).  These read what the ego
-*does* with it: whether it is colliding, whether it is off the road or against
-the traffic, how close it comes to other road users and to the edge of the
-drivable lanes.  They are the per-timestep metrics of NVIDIA's AlpaSim
-(``src/eval/src/eval/scorers``, https://github.com/NVlabs/alpasim), kept under
-AlpaSim's own names so results read the same in both, and computed here from
-CARLA's actors and map instead of AlpaSim's trajdata map and logged boxes.
+A **metric** reads a quantity off the world while a run drives, under a key the
+framework fixes, as a measure (:mod:`autoware_carla_scenario.measures`) does.
+The two read different things, and are kept apart for it:
 
-Each is a built-in measure (:data:`~autoware_carla_scenario.measures.BUILT_IN_MEASURES`),
-so :func:`~autoware_carla_scenario.measures.read_measure` reads it and an ODD
-can map an attribute onto it by key (``measure: collision_any`` in a binding
-file) once its taxonomy has a concept for it.  A measure reads one frame;
-AlpaSim folds the frames of a run with the aggregation in
-:data:`TIME_AGGREGATION` (``max`` for an event: it happened at some point).
+* a **measure** reads what a scenario *sets up* -- the gap to a vehicle ahead,
+  a pedestrian's speed.  It is a condition the ego drives in, so an ODD can map
+  its taxonomy onto it (``measure:`` in a binding file), and a sweep can draw a
+  scenario's parameters from it;
+* a **metric** reads what the ego *does* with it -- whether it collides, leaves
+  the road, drives against the traffic, how close it comes to other road users
+  and to the edge of the lanes.  It is an outcome, so it has no place in an ODD:
+  the ego's own driving would decide whether a run is inside the domain it is
+  tested in, and an ODD that excluded, say, ``offroad`` would report a run that
+  left the road as outside the ODD rather than as failed.  An ODD refuses to map
+  onto a metric (:func:`~autoware_carla_scenario.odd.scenario_measure`).
+  A run watches one instead, with
+  :class:`~autoware_carla_scenario.conditions.MetricCondition`.
+
+The built-in metrics (:data:`BUILT_IN_METRICS`) are the per-timestep metrics of
+NVIDIA's AlpaSim (``src/eval/src/eval/scorers``,
+https://github.com/NVlabs/alpasim), kept under AlpaSim's own names so results
+read the same in both, and computed here from CARLA's actors and map instead of
+AlpaSim's trajdata map and logged boxes.  A metric reads one frame; AlpaSim
+folds the frames of a run into one value with :attr:`Metric.aggregation`
+(``max`` for an event: it happened at some point).
 
 An event (a collision, being off the road) reads ``1.0`` when it holds and
-``0.0`` when it does not, as AlpaSim's booleans do.  Every measure reads
+``0.0`` when it does not, as AlpaSim's booleans do.  Every metric reads
 ``None`` when there is no ego, and the map-based ones when the world has no
 map.
 
@@ -25,7 +35,7 @@ AlpaSim's metrics that need more than the world -- the logged ground-truth
 trajectory (``progress``, ``dist_to_gt_trajectory``, ``dist_to_gt_location``,
 ``min_ade``), the driver's plan (``plan_deviation``, ``open_loop_collision``),
 its safety monitor (``safety_monitor_triggered``) or a camera image
-(``img_is_black``) -- are not measures here; ``docs/odd.md`` says why.
+(``img_is_black``) -- are not metrics here; ``docs/metrics.md`` says why.
 """
 
 from __future__ import annotations
@@ -46,18 +56,19 @@ __all__ = [
     "COLLISION_FRONT",
     "COLLISION_LATERAL",
     "COLLISION_REAR",
-    "DRIVING_MEASURES",
-    "DrivingMeasure",
+    "BUILT_IN_METRICS",
     "LANE_SEARCH_RADIUS_M",
     "MIN_DISTANCE_TO_LANE_BOUNDARY_M",
     "MIN_DISTANCE_TO_OBSTACLE_M",
     "OFFROAD",
     "OFFROAD_OR_COLLISION",
     "OFFROAD_OR_COLLISION_AT_FAULT",
-    "TIME_AGGREGATION",
     "WRONG_LANE",
     "WRONG_LANE_HEADING_RAD",
-    "reset_driving_measures",
+    "Metric",
+    "is_metric",
+    "read_metric",
+    "reset_metrics",
 ]
 
 #: The ego's box overlaps another road user's, whichever side it is on.
@@ -90,20 +101,6 @@ WRONG_LANE_HEADING_RAD = math.pi * 2.0 / 3.0
 #: the drivable area, in metres: AlpaSim's lane search radius.
 LANE_SEARCH_RADIUS_M = 6.0
 
-#: How AlpaSim folds each measure's frames into one value per run.
-TIME_AGGREGATION: dict[str, str] = {
-    COLLISION_ANY: "max",
-    COLLISION_FRONT: "max",
-    COLLISION_REAR: "max",
-    COLLISION_LATERAL: "max",
-    COLLISION_AT_FAULT: "max",
-    OFFROAD: "max",
-    OFFROAD_OR_COLLISION: "max",
-    OFFROAD_OR_COLLISION_AT_FAULT: "max",
-    WRONG_LANE: "max",
-    MIN_DISTANCE_TO_OBSTACLE_M: "min",
-    MIN_DISTANCE_TO_LANE_BOUNDARY_M: "min",
-}
 
 #: A point on the ground, ``(x, y)`` in CARLA's world frame.
 Point = tuple[float, float]
@@ -244,20 +241,24 @@ def _box_distance(one: Box, other: Box) -> float:
 
 
 @dataclass(frozen=True)
-class DrivingMeasure:
-    """A driving-quality measure, as a built-in measure takes it.
+class Metric:
+    """How the ego drove, read off the world.
 
     Attributes:
         key: Its key, AlpaSim's metric name, e.g. :data:`COLLISION_ANY`.
         read: Reads it from the world; ``None`` when there is nothing to read.
-        unit: The unit it is read in; ``""`` for an event.
+        unit: The unit it is read in; ``""`` for an event (``1`` or ``0``).
         text: A description.
+        aggregation: How AlpaSim folds a run's frames into one value:
+            ``"max"`` (an event that happened at some point), ``"min"`` (the
+            closest the ego came), ``"mean"`` or ``"last"``.
     """
 
     key: str
     read: Callable[[carla.World], Optional[float]]
     unit: str = ""
     text: str = ""
+    aggregation: str = "max"
 
 
 class _Collisions:
@@ -312,10 +313,11 @@ class _Cache:
 _CACHE = _Cache()
 
 
-def reset_driving_measures() -> None:
+def reset_metrics() -> None:
     """Forget what was read: the last frame and the worlds' maps.
 
-    :func:`~autoware_carla_scenario.measures.set_measured_scenario` calls it,
+    :func:`~autoware_carla_scenario.measures.set_measured_scenario` calls it
+    when a run starts and ends,
     so a run never reads the frame or the map of the one before it.
     """
     _CACHE.at = None
@@ -582,81 +584,121 @@ def _min_distance_to_lane_boundary_m(world: "carla.World") -> Optional[float]:
     return max(gap, 0.0)
 
 
-#: The driving-quality measures:
-#: :mod:`~autoware_carla_scenario.measures` makes them built-in measures.
-DRIVING_MEASURES: list[DrivingMeasure] = [
-    DrivingMeasure(
-        COLLISION_ANY,
-        _collision_any,
-        "",
-        "1 while the ego's bounding box overlaps another vehicle's or a "
-        "pedestrian's, else 0 (AlpaSim collision_any)",
-    ),
-    DrivingMeasure(
-        COLLISION_FRONT,
-        _collision_front,
-        "",
-        "1 while another road user's box overlaps the ego's front edge "
-        "(AlpaSim collision_front)",
-    ),
-    DrivingMeasure(
-        COLLISION_REAR,
-        _collision_rear,
-        "",
-        "1 while another road user's box overlaps the ego's rear edge and "
-        "not its front (AlpaSim collision_rear)",
-    ),
-    DrivingMeasure(
-        COLLISION_LATERAL,
-        _collision_lateral,
-        "",
-        "1 while another road user's box overlaps the ego's and neither its "
-        "front nor its rear edge (AlpaSim collision_lateral)",
-    ),
-    DrivingMeasure(
-        COLLISION_AT_FAULT,
-        _collision_at_fault,
-        "",
-        "1 during a front or a lateral collision (AlpaSim collision_at_fault)",
-    ),
-    DrivingMeasure(
-        OFFROAD,
-        _offroad,
-        "",
-        "1 while a corner of the ego's box is on no driving lane " "(AlpaSim offroad)",
-    ),
-    DrivingMeasure(
-        OFFROAD_OR_COLLISION,
-        _offroad_or_collision,
-        "",
-        "1 while off the road or in any collision (AlpaSim offroad_or_collision)",
-    ),
-    DrivingMeasure(
-        OFFROAD_OR_COLLISION_AT_FAULT,
-        _offroad_or_collision_at_fault,
-        "",
-        "1 while off the road or in a collision at fault "
-        "(AlpaSim offroad_or_collision_at_fault)",
-    ),
-    DrivingMeasure(
-        WRONG_LANE,
-        _wrong_lane,
-        "",
-        "1 while the ego heads more than 120 degrees away from the driving "
-        "lane under it, else 0; unread off the road (AlpaSim wrong_lane)",
-    ),
-    DrivingMeasure(
-        MIN_DISTANCE_TO_OBSTACLE_M,
-        _min_distance_to_obstacle_m,
-        "m",
-        "Box to box, to the nearest other vehicle or pedestrian; 0 when "
-        "touching (AlpaSim min_distance_to_obstacle_m)",
-    ),
-    DrivingMeasure(
-        MIN_DISTANCE_TO_LANE_BOUNDARY_M,
-        _min_distance_to_lane_boundary_m,
-        "m",
-        "From the ego's box to the edge of the driving lanes around it; 0 off "
-        "the road (AlpaSim min_distance_to_lane_boundary_m)",
-    ),
-]
+def _by_key(metrics: list[Metric]) -> dict[str, Metric]:
+    found: dict[str, Metric] = {}
+    for metric in metrics:
+        found[metric.key] = metric
+    return found
+
+
+#: The built-in metrics, by key: AlpaSim's, as CARLA reads them.
+BUILT_IN_METRICS: dict[str, Metric] = _by_key(
+    [
+        Metric(
+            COLLISION_ANY,
+            _collision_any,
+            "",
+            "1 while the ego's bounding box overlaps another vehicle's or a "
+            "pedestrian's, else 0 (AlpaSim collision_any)",
+            aggregation="max",
+        ),
+        Metric(
+            COLLISION_FRONT,
+            _collision_front,
+            "",
+            "1 while another road user's box overlaps the ego's front edge "
+            "(AlpaSim collision_front)",
+            aggregation="max",
+        ),
+        Metric(
+            COLLISION_REAR,
+            _collision_rear,
+            "",
+            "1 while another road user's box overlaps the ego's rear edge and "
+            "not its front (AlpaSim collision_rear)",
+            aggregation="max",
+        ),
+        Metric(
+            COLLISION_LATERAL,
+            _collision_lateral,
+            "",
+            "1 while another road user's box overlaps the ego's and neither its "
+            "front nor its rear edge (AlpaSim collision_lateral)",
+            aggregation="max",
+        ),
+        Metric(
+            COLLISION_AT_FAULT,
+            _collision_at_fault,
+            "",
+            "1 during a front or a lateral collision (AlpaSim collision_at_fault)",
+            aggregation="max",
+        ),
+        Metric(
+            OFFROAD,
+            _offroad,
+            "",
+            "1 while a corner of the ego's box is on no driving lane "
+            "(AlpaSim offroad)",
+            aggregation="max",
+        ),
+        Metric(
+            OFFROAD_OR_COLLISION,
+            _offroad_or_collision,
+            "",
+            "1 while off the road or in any collision (AlpaSim offroad_or_collision)",
+            aggregation="max",
+        ),
+        Metric(
+            OFFROAD_OR_COLLISION_AT_FAULT,
+            _offroad_or_collision_at_fault,
+            "",
+            "1 while off the road or in a collision at fault "
+            "(AlpaSim offroad_or_collision_at_fault)",
+            aggregation="max",
+        ),
+        Metric(
+            WRONG_LANE,
+            _wrong_lane,
+            "",
+            "1 while the ego heads more than 120 degrees away from the driving "
+            "lane under it, else 0; unread off the road (AlpaSim wrong_lane)",
+            aggregation="max",
+        ),
+        Metric(
+            MIN_DISTANCE_TO_OBSTACLE_M,
+            _min_distance_to_obstacle_m,
+            "m",
+            "Box to box, to the nearest other vehicle or pedestrian; 0 when "
+            "touching (AlpaSim min_distance_to_obstacle_m)",
+            aggregation="min",
+        ),
+        Metric(
+            MIN_DISTANCE_TO_LANE_BOUNDARY_M,
+            _min_distance_to_lane_boundary_m,
+            "m",
+            "From the ego's box to the edge of the driving lanes around it; 0 off "
+            "the road (AlpaSim min_distance_to_lane_boundary_m)",
+            aggregation="min",
+        ),
+    ]
+)
+
+
+def is_metric(key: str) -> bool:
+    """Whether *key* is a built-in metric's."""
+    return key in BUILT_IN_METRICS
+
+
+def read_metric(key: str, world: "carla.World") -> Optional[float]:
+    """The built-in metric *key* in *world*.
+
+    ``None`` when there is nothing to read, the key is not a metric's, or the
+    metric raised.
+    """
+    if key not in BUILT_IN_METRICS:
+        return None
+    metric = BUILT_IN_METRICS[key]
+    try:
+        return metric.read(world)
+    except Exception:
+        return None

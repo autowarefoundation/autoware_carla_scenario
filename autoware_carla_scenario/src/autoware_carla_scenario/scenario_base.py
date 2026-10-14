@@ -41,6 +41,7 @@ from .entity.registry import register_pedestrian_entity as _register_pedestrian_
 from .entity.registry import register_vehicle_entity as _register_vehicle_entity
 from .entity.vehicle_entity import VehicleEntity, VehicleEntityConfig
 from .measures import BUILT_IN_MEASURES, Measure
+from .metrics import is_metric
 from .traffic.base import TrafficBackend
 from .traffic.driven import BackendDriven
 
@@ -762,6 +763,11 @@ class BaseScenario(ABC):
         """
         if not key:
             raise ValueError("register_measure(): key must not be empty")
+        if is_metric(key):
+            raise ValueError(
+                f"register_measure({key}): {key} is a built-in metric's key; a "
+                "measure reads what the scenario sets up, not how the ego drove"
+            )
         from .odd.unit_names import normalize_unit  # noqa: PLC0415
 
         built_in = BUILT_IN_MEASURES[key] if key in BUILT_IN_MEASURES else None

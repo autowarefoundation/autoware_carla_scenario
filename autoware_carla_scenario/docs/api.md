@@ -48,7 +48,8 @@ See [Coverage](coverage.md).
 | `BaseScenario.register_cross(name, items, *, text, target, cover_by, min_stay)` | Cross coverage of cover items sampled on the same event. |
 | `SamplingEvent` | When an item is sampled: `START`, `END` (default) or `TICK`. Re-exported from the top-level package. |
 | `CoverItem`, `CrossItem` | The item definitions `register_cover()` / `register_cross()` build. |
-| `BaseScenario.register_measure(key, read, *, unit, text)`, `.measure(key, world)`, `.measures` | A scenario's measures: what it sets up, under fixed keys (`autoware_carla_scenario.measures`: `VEHICLE_AHEAD_GAP_M`, `VEHICLE_AHEAD_RELATIVE_SPEED_KPH`, `CROSSING_PEDESTRIAN_GAP_M`, `CROSSING_PEDESTRIAN_SPEED_MS`; and the driving-quality measures after AlpaSim, `autoware_carla_scenario.driving_measures`: `COLLISION_ANY`, `OFFROAD`, `MIN_DISTANCE_TO_OBSTACLE_M`, ...). Replace a built-in one or add one of its own. See [Scenario measures](odd.md#scenario-measures). |
+| `autoware_carla_scenario.metrics`: `BUILT_IN_METRICS`, `Metric`, `read_metric(key, world)`, `COLLISION_ANY`, `COLLISION_AT_FAULT`, `OFFROAD`, `WRONG_LANE`, `MIN_DISTANCE_TO_OBSTACLE_M`, ... | How the ego drives, read off the world per frame: AlpaSim's metrics. An outcome, which no ODD maps onto. See [Metrics](metrics.md). |
+| `BaseScenario.register_measure(key, read, *, unit, text)`, `.measure(key, world)`, `.measures` | A scenario's measures: what it sets up, under fixed keys (`autoware_carla_scenario.measures`: `VEHICLE_AHEAD_GAP_M`, `VEHICLE_AHEAD_RELATIVE_SPEED_KPH`, `CROSSING_PEDESTRIAN_GAP_M`, `CROSSING_PEDESTRIAN_SPEED_MS`). Replace a built-in one or add one of its own. See [Scenario measures](odd.md#scenario-measures). |
 | `CoverageCollector` | Samples items on their events during a run; written as `{Scenario}_coverage.json`. |
 | `merge_coverage(documents)`, `CoverageReport` | Merge coverage files and grade them. |
 | `coverage.cod.export_cod(document, out_dir, stem)` | Write a run's ODD samples as an ASAM OpenODD COD table, manifest and taxonomy (`scenario-coverage --export-cod`). |
@@ -92,6 +93,7 @@ All conditions inherit from `BaseCondition` and return a
 | `AndCondition`, `OrCondition`, `NotCondition` | Logical combinators. |
 | `StickyCondition`, `PersistentCondition` | Latch / persist a child condition's truth value. |
 | `TimeoutCondition`, `ElapsedTimeCondition` | Time-based triggers. |
+| `MetricCondition(metric, rule, value, tolerance, *, label)` | A built-in metric -- how the ego drives -- against a threshold; usually a fail condition. See [Metrics](metrics.md). |
 | `EntityDistanceCondition`, `TimeToCollisionCondition` | Relative conditions between two entities: separation, and time to collision along the line joining them. |
 | `CollisionCondition`, `EntityExistenceCondition` | Safety checks. |
 | `TrafficSignalCondition` | Traffic-light state check. |

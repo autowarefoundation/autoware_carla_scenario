@@ -2531,6 +2531,62 @@ register_condition_spec(
     )
 )
 
+#: The metrics a Metric card can watch, as ``metrics.BUILT_IN_METRICS`` keys
+#: them.  Listed rather than read from there: that module imports CARLA, and
+#: the editor imports this one without it (a test keeps the two in step).
+METRIC_OPTIONS: tuple[SelectOption, ...] = (
+    SelectOption("collision_any", "Collision (any)"),
+    SelectOption("collision_front", "Collision (front)"),
+    SelectOption("collision_rear", "Collision (rear)"),
+    SelectOption("collision_lateral", "Collision (lateral)"),
+    SelectOption("collision_at_fault", "Collision at fault"),
+    SelectOption("offroad", "Off the road"),
+    SelectOption("offroad_or_collision", "Off the road or collision"),
+    SelectOption("offroad_or_collision_at_fault", "Off the road or collision at fault"),
+    SelectOption("wrong_lane", "Against the lane"),
+    SelectOption("min_distance_to_obstacle_m", "Distance to obstacle (m)"),
+    SelectOption("min_distance_to_lane_boundary_m", "Distance to lane edge (m)"),
+)
+
+register_condition_spec(
+    ConditionSpec(
+        type_id="metric",
+        title="Metric",
+        category="World",
+        builder="build_metric_condition",
+        target="..conditions:MetricCondition",
+        visual=ConditionVisual(
+            metric="Metric", rule="rule", value="value", details=("metric",)
+        ),
+        fields=(
+            FieldSpec(
+                name="metric",
+                label="Metric",
+                kind="select",
+                default="collision_at_fault",
+                options=METRIC_OPTIONS,
+            ),
+            _rule_field("greater_than_or_equal"),
+            FieldSpec(
+                name="value",
+                label="Value",
+                kind="number",
+                default=1.0,
+                help=(
+                    "In the metric's unit: metres for a distance, 1 (it "
+                    "happens) or 0 for an event."
+                ),
+            ),
+        ),
+        description=(
+            "How the ego drives, read off the world: a collision, leaving the "
+            "road, driving against the lane, how close it comes to other road "
+            "users or the lane edge (AlpaSim's metrics).  Usually a fail "
+            "condition."
+        ),
+    )
+)
+
 register_condition_spec(
     ConditionSpec(
         type_id="trajectory_time",

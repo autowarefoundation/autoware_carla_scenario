@@ -237,6 +237,19 @@ class ElapsedTimeCondition(BaseCondition):
         raise NotImplementedError()
 
 
+class MetricCondition(BaseCondition):
+    def __init__(self, metric: str,
+                 rule: ComparisonRule = ComparisonRule(4),  # GREATER_THAN_OR_EQUAL
+                 value: float = 1.0, tolerance: float = 1e-06, *_kw,
+                 label = _Required()):
+        _keyword_only(_kw, "MetricCondition(): label")
+        super().__init__(_required_str(label, "MetricCondition(): label"))
+
+    @property
+    def metric(self) -> str:
+        raise NotImplementedError()
+
+
 class TrajectoryTimeCondition(BaseCondition):
     def __init__(self, time: float, *_kw, label: str = "trajectory_time"):
         _keyword_only(_kw, "TrajectoryTimeCondition(): label")

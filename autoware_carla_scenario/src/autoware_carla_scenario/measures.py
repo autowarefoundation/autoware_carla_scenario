@@ -8,9 +8,7 @@ speaks the same vocabulary of what it sets up, whoever wrote it.
 
 Every :class:`~autoware_carla_scenario.BaseScenario` has the built-in measures
 (:data:`BUILT_IN_MEASURES`), which read the world generically, in the ego's
-frame.  Besides what a run sets up, they include how the ego drives it -- the
-driving-quality measures of :mod:`autoware_carla_scenario.driving_measures`
-(collisions, off the road, distances to obstacles and lane edges).  A scenario that knows better -- which actor *is* its cut-in vehicle --
+frame.  A scenario that knows better -- which actor *is* its cut-in vehicle --
 replaces one with :meth:`~autoware_carla_scenario.BaseScenario.register_measure`,
 or adds one of its own.
 
@@ -22,6 +20,10 @@ Two things are keyed by measures, and neither knows the ODD:
   (:func:`~autoware_carla_scenario.odd.scenario_measure`, ``measure:`` in a
   binding file), which is how coverage is measured and how a sweep draws the
   scenario's parameters from the ODD.
+
+How the ego drives what a run sets up -- a collision, leaving the road -- is
+not a measure but a **metric** (:mod:`autoware_carla_scenario.metrics`): an
+outcome, which no ODD maps onto and a condition watches instead.
 """
 
 from __future__ import annotations
@@ -32,7 +34,7 @@ from typing import TYPE_CHECKING, Callable, Optional
 
 from .conditions.base import find_actor_in_list
 from .constants import EGO_ROLE_NAME
-from .driving_measures import DRIVING_MEASURES, reset_driving_measures
+from .metrics import reset_metrics
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
@@ -320,17 +322,6 @@ BUILT_IN_MEASURES: dict[str, Measure] = {
 }
 
 
-def _add_driving_measures(measures: dict[str, Measure]) -> None:
-    """Add the driving-quality measures to *measures*."""
-    for driving in DRIVING_MEASURES:
-        measures[driving.key] = Measure(
-            driving.key, driving.read, driving.unit, driving.text
-        )
-
-
-_add_driving_measures(BUILT_IN_MEASURES)
-
-
 # ---------------------------------------------------------------------------
 # The running scenario
 # ---------------------------------------------------------------------------
@@ -346,7 +337,7 @@ def set_measured_scenario(scenario: Optional["BaseScenario"]) -> None:
     _MEASURED["scenario"] = scenario
     _CACHE.at, _CACHE.around = None, None
     _SET_OFF.clear()
-    reset_driving_measures()
+    reset_metrics()
 
 
 def measured_scenario() -> Optional["BaseScenario"]:

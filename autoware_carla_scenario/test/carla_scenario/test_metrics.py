@@ -1,4 +1,4 @@
-"""Driving-quality measures (:mod:`autoware_carla_scenario.driving_measures`).
+"""Metrics (:mod:`autoware_carla_scenario.metrics`) and the condition on them.
 
 AlpaSim's per-timestep metrics, read off a stand-in world: a straight road
 along +x with driving lanes side by side, and boxes on it.
@@ -7,33 +7,42 @@ along +x with driving lanes side by side, and boxes on it.
 from __future__ import annotations
 
 from types import SimpleNamespace
+from pathlib import Path
 from typing import Any, Iterator, Optional
 
 import pytest
 import typesafe_carla.carla as carla
 
+from autoware_carla_scenario import BaseScenario, EgoConfig
+from autoware_carla_scenario.authoring.registry import (
+    METRIC_OPTIONS,
+    get_condition_spec,
+)
+from autoware_carla_scenario.conditions import ComparisonRule, MetricCondition
 from autoware_carla_scenario.constants import EGO_ROLE_NAME
-from autoware_carla_scenario.driving_measures import (
+from autoware_carla_scenario.entity._spawn import SpawnPointIndex
+from autoware_carla_scenario.metrics import (
     COLLISION_ANY,
     COLLISION_AT_FAULT,
     COLLISION_FRONT,
     COLLISION_LATERAL,
     COLLISION_REAR,
-    DRIVING_MEASURES,
+    BUILT_IN_METRICS,
     MIN_DISTANCE_TO_LANE_BOUNDARY_M,
     MIN_DISTANCE_TO_OBSTACLE_M,
     OFFROAD,
     OFFROAD_OR_COLLISION,
     OFFROAD_OR_COLLISION_AT_FAULT,
-    TIME_AGGREGATION,
     WRONG_LANE,
+    is_metric,
+    read_metric,
 )
 from autoware_carla_scenario.measures import (
     BUILT_IN_MEASURES,
     read_measure,
     set_measured_scenario,
 )
-from autoware_carla_scenario.odd import scenario_measure
+from autoware_carla_scenario.odd import load_odd_binding, scenario_measure
 
 #: A car's half-extents: 4.6 m by 2 m.
 _CAR = (2.3, 1.0)
@@ -179,7 +188,7 @@ def _no_scenario() -> Iterator[None]:
 
 
 def _read(key: str, world: _World) -> Optional[float]:
-    return read_measure(key, world)  # type: ignore[arg-type]
+    return read_metric(key, world)  # type: ignore[arg-type]
 
 
 def _collisions(world: _World) -> dict[str, Optional[float]]:
@@ -200,25 +209,75 @@ def _collisions(world: _World) -> dict[str, Optional[float]]:
 # ---------------------------------------------------------------------------
 
 
-def test_every_driving_measure_is_built_in() -> None:
-    for driving in DRIVING_MEASURES:
-        assert BUILT_IN_MEASURES[driving.key].read is driving.read
-        assert BUILT_IN_MEASURES[driving.key].unit == driving.unit
-    assert set(TIME_AGGREGATION) == {d.key for d in DRIVING_MEASURES}
+def test_the_metrics_are_alpasim_s() -> None:
+    assert set(BUILT_IN_METRICS) == {
+        "collision_any",
+        "collision_front",
+        "collision_rear",
+        "collision_lateral",
+        "collision_at_fault",
+        "offroad",
+        "offroad_or_collision",
+        "offroad_or_collision_at_fault",
+        "wrong_lane",
+        "min_distance_to_obstacle_m",
+        "min_distance_to_lane_boundary_m",
+    }
+    for key, metric in BUILT_IN_METRICS.items():
+        assert metric.key == key
+        assert metric.aggregation == ("min" if metric.unit == "m" else "max")
+    assert read_metric("no_such_metric", _world()) is None  # type: ignore[arg-type]
 
 
-def test_an_odd_can_map_an_attribute_onto_one() -> None:
-    probe = scenario_measure(MIN_DISTANCE_TO_OBSTACLE_M)
+def test_a_metric_is_not_a_measure() -> None:
+    assert not set(BUILT_IN_METRICS) & set(BUILT_IN_MEASURES)
+    assert is_metric(OFFROAD)
+    assert not is_metric("vehicle_ahead_gap_m")
+    assert read_measure(OFFROAD, _world()) is None  # type: ignore[arg-type]
 
-    assert probe.unit == "m"
-    assert probe(_world(_car(2, (10.0, 0.0)))) == pytest.approx(10.0 - 4.6)
+
+def test_an_odd_cannot_map_onto_a_metric() -> None:
+    with pytest.raises(ValueError, match="is a metric"):
+        scenario_measure(COLLISION_AT_FAULT)
+
+
+def test_a_binding_file_cannot_map_onto_a_metric(tmp_path: Path) -> None:
+    (tmp_path / "taxonomy.yml").write_text(
+        "TAXONOMY:\n  dynamic:\n    clearance: float length\n"
+    )
+    binding = tmp_path / "quality.yaml"
+    binding.write_text(
+        "openodd: [taxonomy.yml]\n"
+        "probes:\n"
+        "  clearance: {measure: min_distance_to_obstacle_m}\n"
+    )
+
+    with pytest.raises(ValueError, match="is a metric"):
+        load_odd_binding(binding)
+
+
+class _Scenario(BaseScenario):
+    def setup(self) -> None:
+        pass
+
+    def is_done(self) -> bool:
+        return True
+
+
+def test_a_scenario_cannot_register_a_metric_as_a_measure() -> None:
+    scenario = _Scenario(
+        EgoConfig(vehicle_type="vehicle.x", spawn_location=SpawnPointIndex(0))
+    )
+
+    with pytest.raises(ValueError, match="metric"):
+        scenario.register_measure(OFFROAD, lambda world: 0.0)
 
 
 def test_nothing_is_read_without_an_ego() -> None:
     world = _World([_car(2, (10.0, 0.0))], _TWO_WAY)
 
-    for driving in DRIVING_MEASURES:
-        assert _read(driving.key, world) is None
+    for key in BUILT_IN_METRICS:
+        assert _read(key, world) is None
 
 
 def test_the_map_measures_are_not_read_without_a_map() -> None:
@@ -418,3 +477,64 @@ def test_a_frame_is_read_once() -> None:
 def test_headings_wrap() -> None:
     assert _read(WRONG_LANE, _world(yaw=350.0)) == 0.0
     assert _read(WRONG_LANE, _world(yaw=-179.0)) == 1.0
+
+
+# ---------------------------------------------------------------------------
+# Watching a metric
+# ---------------------------------------------------------------------------
+
+
+def test_an_event_condition_holds_while_it_happens() -> None:
+    condition = MetricCondition(COLLISION_AT_FAULT, label="collision at fault")
+
+    apart = _world(_car(2, (10.0, 0.0)))
+    assert condition.check(apart, 1.0) is None  # type: ignore[arg-type]
+    hit = _world(_car(2, (4.5, 0.0)))
+    result = condition.check(hit, 2.0)  # type: ignore[arg-type]
+    assert result is not None
+    assert result.passed
+    assert result.elapsed_seconds == 2.0
+    assert "collision_at_fault" in result.message
+
+
+def test_a_distance_condition_compares_in_metres() -> None:
+    condition = MetricCondition(
+        MIN_DISTANCE_TO_OBSTACLE_M,
+        ComparisonRule.LESS_THAN,
+        1.0,
+        label="closer than a metre",
+    )
+
+    clear = _world(_car(2, (5.7, 0.0)))
+    assert condition.check(clear, 0.0) is None  # type: ignore[arg-type]
+    close = _world(_car(2, (5.0, 0.0)))
+    result = condition.check(close, 0.0)  # type: ignore[arg-type]
+    assert result is not None and "m less than" in result.message
+    assert condition.get_details() == {
+        "metric": MIN_DISTANCE_TO_OBSTACLE_M,
+        "rule": "LESS_THAN",
+        "value": 1.0,
+        "unit": "m",
+        "tolerance": 1e-6,
+    }
+
+
+def test_nothing_read_does_not_hold() -> None:
+    condition = MetricCondition(
+        MIN_DISTANCE_TO_OBSTACLE_M, ComparisonRule.LESS_THAN, 1.0, label="near"
+    )
+
+    # Alone: no obstacle to be near.
+    assert condition.check(_world(), 0.0) is None  # type: ignore[arg-type]
+
+
+def test_an_unknown_metric_is_refused() -> None:
+    with pytest.raises(ValueError, match="not a metric"):
+        MetricCondition("vehicle_ahead_gap_m", label="x")
+
+
+def test_the_editor_offers_every_metric() -> None:
+    assert [o.value for o in METRIC_OPTIONS] == list(BUILT_IN_METRICS)
+    spec = get_condition_spec("metric")
+    assert spec is not None
+    assert spec.target == "..conditions:MetricCondition"

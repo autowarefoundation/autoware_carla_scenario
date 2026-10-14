@@ -157,12 +157,7 @@ def test_a_pedestrian_counts_once_it_sets_off() -> None:
 def test_nothing_there_is_missing() -> None:
     world = _world_of()
 
-    for key in (
-        VEHICLE_AHEAD_GAP_M,
-        VEHICLE_AHEAD_RELATIVE_SPEED_KPH,
-        CROSSING_PEDESTRIAN_GAP_M,
-        CROSSING_PEDESTRIAN_SPEED_MS,
-    ):
+    for key in BUILT_IN_MEASURES:
         assert read_measure(key, world) is None
     assert read_measure("no_such_measure", world) is None
 
