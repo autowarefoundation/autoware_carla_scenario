@@ -163,6 +163,7 @@ if TYPE_CHECKING:
         get_stop_line_poses as get_stop_line_poses,
         get_stop_line_poses_with_following as get_stop_line_poses_with_following,
         lanelet2_traffic_light_id_to_opendrive_controller_id as lanelet2_traffic_light_id_to_opendrive_controller_id,
+        lanelets_ahead as lanelets_ahead,
         snap_to_carla_road as snap_to_carla_road,
         to_carla_location as to_carla_location,
         to_carla_world as to_carla_world,
@@ -408,6 +409,7 @@ __all__ = [
     "GroundProjectionConfig",
     "snap_to_carla_road",
     "lanelet2_traffic_light_id_to_opendrive_controller_id",
+    "lanelets_ahead",
     # Placing road users for a measure
     "place_at_vehicle_ahead_gap",
     "solve_along",
@@ -575,6 +577,7 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
         ".coordinate",
         "get_stop_line_poses_with_following",
     ),
+    "lanelets_ahead": (".coordinate", "lanelets_ahead"),
     "snap_to_carla_road": (".coordinate", "snap_to_carla_road"),
     "to_carla_location": (".coordinate", "to_carla_location"),
     "to_carla_world": (".coordinate", "to_carla_world"),

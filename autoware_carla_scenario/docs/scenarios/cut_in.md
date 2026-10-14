@@ -19,7 +19,7 @@ uv run scenario --multirun hydra/sweeper=lanelet_constraint \
 | **Initialization** | Every traffic light green. |
 | **NPC1, after 2 s** | Change lane towards the ego. |
 | **Pass** | 3 s have passed since NPC1 reached the ego's OpenDRIVE lane (*lane of a position*: the matched lanelet at the ego's spawn, the same lane), with no collision. |
-| **Fail** | The ego hits NPC1, or 20 s pass. |
+| **Fail** | The ego collides with anything -- NPC1, another actor, a static object (`ego_collided`); the ego's centre is on none of the lanes ahead of it -- the matched lanelet and the lanelets that follow it, up to 1000 m from its start -- for 0.2 s: it changed lanes, turned onto a lanelet that does not follow it, or left the road (`ego_left_its_lane`); or 20 s pass. |
 
 ## Variants
 
@@ -54,6 +54,67 @@ uv run scenario --multirun hydra/sweeper=lanelet_constraint \
 | Held in the ego's lane for | 3 s |
 | Lanelet at least | 60 m |
 | Timeout | 20 s |
+| Fail on any collision of the ego | on: `fail_on_any_collision` (off: only a collision with NPC1, `hit_cut_in_vehicle`) |
+| Fail on leaving the lanes ahead | on: `fail_on_leaving_lane` |
+| The lanes ahead reach | 1000 m from the start of the matched lanelet: `lanes_ahead_m` |
+| Off them for | 0.2 s: `leaving_lane_seconds` (0: the first tick off) |
+
+## Staying on the lanes ahead
+
+The ego is to keep its lane while NPC1 cuts in: braking, or slowing, is the
+answer the scenario is after, and a run that swerved into the next lane or off
+the road has not passed it, whatever it did not hit. The lanes ahead are the
+lanelet the ego spawns on and the ones that follow it in the routing graph
+(`lanelets_ahead`: `following` without lane changes, every branch, up to
+`lanes_ahead_m`); in none of them is in the lane beside, on a lanelet that
+turns off them, or in no lanelet at all.
+
+It is not a condition of its own but a composition of the framework's,
+`left_lanes_ahead` in `examples/cut_in.py`, which any scenario can build the
+same way:
+
+```python
+on_lanes = [
+    EntityLanePositionCondition(
+        EGO_ROLE_NAME, Lanelet2Pose(lanelet_id=i, s=0.0), label=f"ego_on_lanelet_{i}"
+    )
+    for i in lanelets_ahead(spawn.lanelet_id, 1000.0)
+]
+self.register_fail_condition(
+    PersistentCondition(                     # off them for 0.2 s, not one tick at a seam
+        NotCondition(                        # on none of them -- off the road included
+            OrCondition(on_lanes),           # on one of them
+            holds_when_pending=True,
+        ),
+        0.2,
+        label="ego_left_its_lane",
+    )
+)
+```
+
+`holds_when_pending=True` is what makes it a logical NOT. A condition that has
+not fired returns nothing, and a plain `NotCondition` only flips the verdict of
+a child that has, so it could not say "on none of these". The position tested
+is the vehicle's centre (its CARLA location), so a wheel over the line is not
+leaving the lane; a seam between two lanelets is covered by the next one, and
+the 0.2 s wait absorbs a tick that falls between them.
+
+A scenario document says the same with the editor's cards -- Persistent, NOT
+(with *Holds while the child does not*), ANY and one Position (Lanelet2) per
+lanelet:
+
+```yaml
+- type: persistent
+  params: {duration: 0.2}
+  children:
+    - type: not
+      params: {holds_when_pending: true}
+      children:
+        - type: any
+          children:
+            - {type: entity_lane_position, params: {entity: ego, lanelet_id: 79016}}
+            - {type: entity_lane_position, params: {entity: ego, lanelet_id: 79017}}
+```
 
 ## Placing NPC1 by the measured gap
 

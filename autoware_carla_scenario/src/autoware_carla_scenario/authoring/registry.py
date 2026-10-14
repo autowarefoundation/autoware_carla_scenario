@@ -1604,6 +1604,21 @@ register_condition_spec(
         target="..conditions:NotCondition",
         kind="wrapper",
         visual=ConditionVisual(metric="NOT"),
+        fields=(
+            FieldSpec(
+                name="holds_when_pending",
+                label="Holds while the child does not",
+                kind="bool",
+                default=False,
+                required=False,
+                help=(
+                    "A logical NOT: hold on every tick the child has not "
+                    "fired, rather than flip the verdict of a child that has. "
+                    "Under ANY of lanelet positions, it says the entity is on "
+                    "none of them -- off its lanes, or off the road."
+                ),
+            ),
+        ),
         min_children=1,
         max_children=1,
         description="Invert the child condition (NotCondition).",
