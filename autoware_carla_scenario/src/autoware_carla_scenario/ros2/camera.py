@@ -27,7 +27,9 @@ class PublishingCamera(CarlaCameraSensor):
         index: The camera's index in its ``ros2.cameras``.
     """
 
-    def __init__(self, config: CarlaCameraSensorConfig, entity: Any, index: int) -> None:
+    def __init__(
+        self, config: CarlaCameraSensorConfig, entity: Any, index: int
+    ) -> None:
         super().__init__(config)
         self._entity = entity
         self._index = index
