@@ -2317,15 +2317,12 @@ default, and through it <code>AutowareBridge.configure()</code> and
 one <code>T</code> (<code>run_uv(cwd, *args: str, timeout: int, env=None)</code> with one <code>str</code>
 and <code>timeout</code>), so the positional parameters before it are passed, defaulted
 or not: without it <code>run_uv()</code> does not compile. A function with no default gets no
-such call, and neither does a dataclass's generated constructor: its fields'
-defaults are not compiled by the library check (a field <code>Sequence[str] =
-("a", "b")</code> is a fixed-length Codon tuple, which a <code>List[str]</code> field
-refuses). An error in a default is reported at the call, which names it
+such call. An error in a default is reported at the call, which names it
 (<code>&lt;library check: find_nearest_traffic_light(world: carla.World, location:
 Lanelet2Pose), with the default of</code>max_distance<code>&gt;: error: 'str' does not
 match expected type 'float'</code>).</p>
-<p>That is 169 calls more, beside the 1525 others (1694 in all), at the time of
-writing. Measured before any fix, 13 of them failed, and all 13 are fixed by
+<p>That was 169 calls more, beside the 1525 others (1694 in all), when it came
+in. Measured before any fix, 13 of them failed, and all 13 are fixed by
 the transform, with no change to a module:</p>
 <ul>
 <li>11 had a <code>()</code> default on a <code>Sequence[X]</code> or <code>Collection[X]</code> parameter
@@ -2349,6 +2346,66 @@ the transform, with no change to a module:</p>
   arguments <code>Optional[_acs_Returning[CarlaWorldPose, 1]]()</code> (the transform's
   prelude imports <code>_acs_Returning</code>; the check's own function does not import
   it again, which Codon 0.19 cannot type: "cannot typecheck").</li>
+</ul>
+<p><strong>So are the field defaults of a dataclass</strong> (#188). The check drops
+<code>@dataclass</code>, and Codon gives the class a constructor that takes each field,
+with its default; every constructor call above passes every field, so no
+field default was compiled: <code>stop_timeout_s: float = "far"</code> on
+<code>CommandAutowareLauncher</code> passed the check. A dataclass with a defaulted
+field is now constructed once more, with only the fields that have no
+default, each of its first type:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>    <span class="n">DockerAutowareConfig</span><span class="p">(</span><span class="n">_acs_value</span><span class="p">(</span><span class="n">Path</span><span class="p">),</span> <span class="n">_acs_value</span><span class="p">(</span><span class="n">Sequence</span><span class="p">[</span><span class="nb">str</span><span class="p">]))</span>
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>    <span class="n">DriverClientConfig</span><span class="p">()</span>
+</code></pre></div>
+<p>A field without a default after one with (a <code>field(kw_only=True)</code>) is passed
+by keyword. A field with no default of its own (<code>field()</code>, or
+<code>field(init=False)</code>, which the constructor leaves out anyway) is not one
+with a default, and neither is a field "defaulted" to OmegaConf's
+mandatory-value marker (<code>spawn_lanelet_id: int = MISSING</code>, the string
+<code>"???"</code>): the marker is no value of the field but a placeholder for one the
+config must supply, so the call passes the field, and the marker is not
+compiled against the field's type. Nothing enforces that in Python: reading
+the field from Hydra's config raises <code>MissingMandatoryValue</code>, but
+<code>OmegaConf.to_container()</code> returns <code>"???"</code> for it, and a dataclass built
+without it (<code>NpcVehicleConfig()</code>) holds the string, which the check does not
+see. A field the call leaves out because its annotation names <code>Any</code> (<em>A
+dataclass field may hold a union or a free-form mapping</em>, below) is left out
+of this call too. An error is
+reported at the call, which names the defaults it leaves out
+(<code>&lt;library check: CommandAutowareLauncher.__init__(argv: Sequence[str]),
+with the default of</code>env<code>,</code>log_dir<code>,</code>stop_timeout_s<code>&gt;: error: 'str' does
+not match expected type 'float'</code>).</p>
+<p>That is 96 calls more, beside the 1694 others (1790 in all, 265 of them
+leaving defaults out), at the time of writing. Measured before any fix, 5
+of the 96 failed, at the first error of each. Those 5 classes have 10
+defaults Codon refused, of four causes; all are fixed in the check, with no
+change to a module and nothing <code>UNCALLED</code> (9 by the transform, whose output
+changes at those 9 defaults alone, and 1 by the call):</p>
+<ul>
+<li>3 had a tuple display default on a <code>Sequence[X]</code> or <code>tuple[X, ...]</code>
+  field (<code>DockerAutowareConfig.colcon_args</code>, <code>DriverClientConfig.cameras</code>
+  and <code>map_formats</code>). The field is declared as a <code>List[X]</code> (the <code>typing</code>
+  shim's <code>Sequence</code> is <code>List</code>), and the display is a fixed-length Codon
+  tuple ("'Tuple[str,str,str]' does not match expected type 'List[str]'").
+  The transform makes it <code>List[X]([...])</code>, a list of the field's element
+  type, replacing only the brackets, so the elements are rewritten as
+  anywhere else.</li>
+<li>4 had a plain <code>()</code> default on such a field
+  (<code>DockerAutowareConfig.ros_domain_ids</code> and <code>docker_args</code>,
+  <code>DriverClientConfig.lidars</code>, <code>PlannedRoute.via</code>), which only a
+  <code>field(default=())</code> of a <code>tuple[X, ...]</code> was typed for. The transform
+  makes it <code>List[X]()</code>, written directly or through <code>field(default=())</code>,
+  for a <code>Sequence[X]</code> as for a <code>tuple[X, ...]</code>.</li>
+<li>2 had <code>field(default_factory=dict)</code> on a <code>Mapping[str, str]</code> field
+  (<code>env</code> of <code>DockerAutowareConfig</code> and of <code>CommandAutowareLauncher</code>): the
+  factory is typed only for a <code>dict[K, V]</code> field, so it was a bare <code>{}</code>,
+  a dict of <code>None</code> ("'Dict[NoneType,NoneType]' does not match expected type
+  'Dict[str,str]'"). The transform makes a <code>list</code>, <code>dict</code> or <code>set</code> factory
+  of an abstract collection the concrete one the <code>typing</code> shim maps it
+  onto, of the field's types (<code>Dict[str, str]()</code>).</li>
+<li>1 was the OmegaConf marker on an <code>int</code> field
+  (<code>NpcVehicleConfig.spawn_lanelet_id: int = MISSING</code>, "'str' does not
+  match expected type 'int'"), which the call now passes, as above.</li>
 </ul>
 <p><strong>Protected functions and methods are called too</strong> (#175). A <code>_</code> method is
 often a hook a subclass or another module uses: six example scenarios call
@@ -2509,8 +2566,9 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   <code>Optional</code> is typed only for a sequence or a <code>Callable</code> the check can call
   with; <code>Optional[Callable[..., R]]</code> and <code>Optional[Mapping[K, V]]</code> stay a
   bare <code>None</code>, so a body that uses them past an <code>is None</code> test fails. A
-  tuple display default (<code>= ("a", "b")</code>) of a sequence parameter is a
-  fixed-length Codon tuple: pass <code>tuple([...])</code> of a list, as for a field.
+  tuple display default (<code>= ("a", "b")</code>) of a sequence parameter is checked
+  as a list of its elements, <code>List[X](["a", "b"])</code>, as a dataclass field's
+  is (#188); a fixed-length Codon tuple is no <code>List[X]</code>.
   An empty <code>[]</code> / <code>{}</code> default of a <code>list[X]</code> / <code>dict[K, V]</code> parameter (or
   <code>[]</code> of a sequence) is checked as an empty one of that type; Codon would
   make it a list of <code>None</code>. A <code>None</code> default is not checked against its
@@ -2922,10 +2980,10 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   Convert under <code>if TYPE_CHECKING:</code>, which Codon reads as true and Python as
   false, so nothing changes at run time (<code>traffic_manager._vehicle()</code>):</li>
 </ul>
-<p><div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="k">if</span> <span class="n">TYPE_CHECKING</span><span class="p">:</span>
-<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>    <span class="k">return</span> <span class="n">actor</span><span class="o">.</span><span class="n">as_vehicle</span><span class="p">()</span>
-<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="k">else</span><span class="p">:</span>
-<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a>    <span class="k">return</span> <span class="n">actor</span>
+<p><div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="k">if</span> <span class="n">TYPE_CHECKING</span><span class="p">:</span>
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>    <span class="k">return</span> <span class="n">actor</span><span class="o">.</span><span class="n">as_vehicle</span><span class="p">()</span>
+<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="k">else</span><span class="p">:</span>
+<a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a>    <span class="k">return</span> <span class="n">actor</span>
 </code></pre></div>
 - <strong>An import of the framework inside an uncalled function</strong> is left as
   written: Codon does not compile it, so a checked module may import a
@@ -2984,7 +3042,10 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   mapping of any values) keeps its declaration, its empty default is built as
   that type (<code>dict[str, Any]()</code>), and the check's constructor call leaves it
   out, passing the fields after it by keyword. A <code>default_factory=list</code> on a
-  <code>List[int]</code> field is built as a <code>List[int]</code> as on a <code>list[int]</code> one.
+  <code>List[int]</code> field is built as a <code>List[int]</code> as on a <code>list[int]</code> one, and a
+  <code>list</code>, <code>dict</code> or <code>set</code> factory of an abstract collection as the one the
+  <code>typing</code> shim maps it onto (<code>env: Mapping[str, str] =
+  field(default_factory=dict)</code> as a <code>Dict[str, str]</code>, #188).
 - <strong><code>object.__setattr__(self, "name", value)</code></strong>, as a frozen dataclass sets
   its fields, is checked as <code>self.name = value</code>: Codon 0.19 has no
   <code>object.__setattr__</code>.
@@ -3032,18 +3093,18 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
 - <strong>An operator whose result depends on the operand</strong> (<code>Absolute - Absolute
   -&gt; Relative</code>, <code>Absolute - Relative -&gt; Absolute</code>) keeps its <code>@overload</code>
   stubs, for mypy, and spells the union out on the implementation:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="nd">@overload</span>
-<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="k">def</span><span class="w"> </span><span class="fm">__sub__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">:</span> <span class="n">AbsoluteVelocity</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">RelativeVelocity</span><span class="p">:</span> <span class="o">...</span>
-<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="nd">@overload</span>
-<a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a><span class="k">def</span><span class="w"> </span><span class="fm">__sub__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">:</span> <span class="n">RelativeVelocity</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">AbsoluteVelocity</span><span class="p">:</span> <span class="o">...</span>
-<a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a><span class="k">def</span><span class="w"> </span><span class="fm">__sub__</span><span class="p">(</span>
-<a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a>    <span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">:</span> <span class="n">AbsoluteVelocity</span> <span class="o">|</span> <span class="n">RelativeVelocity</span>
-<a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Union</span><span class="p">[</span><span class="n">RelativeVelocity</span><span class="p">,</span> <span class="n">AbsoluteVelocity</span><span class="p">]:</span>
-<a id="__codelineno-10-8" name="__codelineno-10-8" href="#__codelineno-10-8"></a>    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">other</span><span class="p">,</span> <span class="n">AbsoluteVelocity</span><span class="p">):</span>
-<a id="__codelineno-10-9" name="__codelineno-10-9" href="#__codelineno-10-9"></a>        <span class="k">return</span> <span class="n">RelativeVelocity</span><span class="p">(</span><span class="o">...</span><span class="p">)</span>
-<a id="__codelineno-10-10" name="__codelineno-10-10" href="#__codelineno-10-10"></a>    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">other</span><span class="p">,</span> <span class="n">RelativeVelocity</span><span class="p">):</span>
-<a id="__codelineno-10-11" name="__codelineno-10-11" href="#__codelineno-10-11"></a>        <span class="k">return</span> <span class="n">AbsoluteVelocity</span><span class="p">(</span><span class="o">...</span><span class="p">)</span>
-<a id="__codelineno-10-12" name="__codelineno-10-12" href="#__codelineno-10-12"></a>    <span class="k">return</span> <span class="bp">NotImplemented</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="nd">@overload</span>
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="k">def</span><span class="w"> </span><span class="fm">__sub__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">:</span> <span class="n">AbsoluteVelocity</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">RelativeVelocity</span><span class="p">:</span> <span class="o">...</span>
+<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a><span class="nd">@overload</span>
+<a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a><span class="k">def</span><span class="w"> </span><span class="fm">__sub__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">:</span> <span class="n">RelativeVelocity</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">AbsoluteVelocity</span><span class="p">:</span> <span class="o">...</span>
+<a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a><span class="k">def</span><span class="w"> </span><span class="fm">__sub__</span><span class="p">(</span>
+<a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a>    <span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">:</span> <span class="n">AbsoluteVelocity</span> <span class="o">|</span> <span class="n">RelativeVelocity</span>
+<a id="__codelineno-11-7" name="__codelineno-11-7" href="#__codelineno-11-7"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Union</span><span class="p">[</span><span class="n">RelativeVelocity</span><span class="p">,</span> <span class="n">AbsoluteVelocity</span><span class="p">]:</span>
+<a id="__codelineno-11-8" name="__codelineno-11-8" href="#__codelineno-11-8"></a>    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">other</span><span class="p">,</span> <span class="n">AbsoluteVelocity</span><span class="p">):</span>
+<a id="__codelineno-11-9" name="__codelineno-11-9" href="#__codelineno-11-9"></a>        <span class="k">return</span> <span class="n">RelativeVelocity</span><span class="p">(</span><span class="o">...</span><span class="p">)</span>
+<a id="__codelineno-11-10" name="__codelineno-11-10" href="#__codelineno-11-10"></a>    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">other</span><span class="p">,</span> <span class="n">RelativeVelocity</span><span class="p">):</span>
+<a id="__codelineno-11-11" name="__codelineno-11-11" href="#__codelineno-11-11"></a>        <span class="k">return</span> <span class="n">AbsoluteVelocity</span><span class="p">(</span><span class="o">...</span><span class="p">)</span>
+<a id="__codelineno-11-12" name="__codelineno-11-12" href="#__codelineno-11-12"></a>    <span class="k">return</span> <span class="bp">NotImplemented</span>
 </code></pre></div>
 <p>The check calls the implementation once per member, and Codon compiles
   only the <code>isinstance</code> branch of that member, so each call has one result
@@ -3117,17 +3178,21 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   <code>tuple[X, ...]</code> / <code>Tuple[X, ...]</code> becomes <code>List[X]</code>, and <code>tuple(x)</code> of a
   list or a generator becomes a list (a tuple passed to <code>tuple()</code> stays
   itself), so <code>self.vertices = tuple(vertices)</code> compiles; the source keeps
-  its tuple. A dataclass field's <code>field(default=())</code> is an empty <code>List[X]</code>
-  (<code>Pin.warnings</code>); a tuple display (<code>("a",)</code>) stays a fixed-length Codon
-  tuple, which is no <code>List[X]</code>: pass <code>tuple([...])</code> of a list instead
-  (<code>ros2.config</code>'s default <code>sources</code>; <code>CommandSourceConfig.topics</code>, which
-  returns a one- or a two-element tuple, likewise, so its two returns have
-  one type). A parameter <code>tuple[X, ...]</code> is dropped (a caller may pass a
-  tuple), and the library check calls it with a <code>List[X]</code>. Its <code>()</code>
-  default, and that of a <code>Sequence[X]</code>, <code>MutableSequence[X]</code>,
-  <code>Iterable[X]</code> or <code>Collection[X]</code> parameter, is an empty <code>List[X]</code> too
-  (<code>RoutingAction(..., waypoints: Sequence[Lanelet2Pose] = ())</code>; see
-  <em>Defaults are compiled too</em> above).
+  its tuple. A dataclass field's <code>()</code> default, written directly or as
+  <code>field(default=())</code>, is an empty <code>List[X]</code> (<code>Pin.warnings</code>,
+  <code>PlannedRoute.via</code>), for a <code>Sequence[X]</code> field as for a <code>tuple[X, ...]</code>
+  one, and its tuple display default (<code>("a", "b")</code>) a list of its elements,
+  <code>List[X](["a", "b"])</code> (<code>DockerAutowareConfig.colcon_args</code>, #188). Any
+  other tuple display stays a fixed-length Codon tuple, which is no
+  <code>List[X]</code>: pass <code>tuple([...])</code> of a list instead (<code>ros2.config</code>'s
+  <code>_default_sources()</code>; <code>CommandSourceConfig.topics</code>, which returns a one-
+  or a two-element tuple, likewise, so its two returns have one type). A
+  parameter <code>tuple[X, ...]</code> is dropped (a caller may pass a tuple), and the
+  library check calls it with a <code>List[X]</code>. Its <code>()</code> default, and that of a
+  <code>Sequence[X]</code>, <code>MutableSequence[X]</code>, <code>Iterable[X]</code> or <code>Collection[X]</code>
+  parameter, is an empty <code>List[X]</code> too (<code>RoutingAction(..., waypoints:
+  Sequence[Lanelet2Pose] = ())</code>), and its tuple display default a list of
+  its elements, as a field's; see <em>Defaults are compiled too</em> above.
   <code>Phase.states</code> and <code>SignalController.phases</code> (<code>signals.controller</code>) are
   checked this way. What only a tuple does is not checked: its hash (a
   frozen dataclass's <code>__hash__</code>), its equality with another tuple and its
@@ -3543,7 +3608,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 14, 2026 18:18:25 UTC"><span class="timeago" datetime="2026-10-14T18:18:25+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 14, 2026 18:18:25 UTC">2026-10-14</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 14, 2026 21:30:32 UTC"><span class="timeago" datetime="2026-10-14T21:30:32+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 14, 2026 21:30:32 UTC">2026-10-14</span>
   </span>
 
     
