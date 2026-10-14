@@ -1,10 +1,10 @@
-"""The calls the library check compiles: everything public, with typed values.
+"""The calls the library check compiles: every function, with typed values.
 
 Codon only checks a function it compiles, and it compiles a function only
 when something calls it.  To check a framework module on its own, the library
 check (:func:`.check.typecheck_library`) appends a function to the module
-that calls every public function and every method of every public class,
-each with a value of every parameter's annotated type::
+that calls every function and every method of every public class, each
+with a value of every parameter's annotated type::
 
     def _acs_library_check():
         normalize_angle_deg(_acs_value(float))
@@ -16,7 +16,16 @@ each with a value of every parameter's annotated type::
 pointer: Codon types it as a ``T``, and nothing compiled is ever run.  The
 calls are written in the module's own namespace, so an annotation means what
 it means in the module.  A parameter annotated with a union
-(``Lanelet2Pose | OpenDrivePose``) is called once with each member.
+(``Lanelet2Pose | OpenDrivePose``, or ``Optional[Union[A, B]]``) is called
+once with each member.
+
+Protected (``_``) functions and methods are called too: they are the hooks a
+subclass or another module uses (``BaseScenario._setup_ego_spawn``), and
+Codon would compile one only if a public function called it.  A module's
+dunders (PEP 562's ``__getattr__``) are Python's hooks, not the module's
+code, and are left out; a class's (``__eq__``, ``__enter__``) are called.
+The classes called are the public ones: a ``_`` class is a module's helper,
+compiled through what uses it.
 
 Some annotations give the check nothing to call with (``Any``, ``object``,
 ``Callable[..., R]``, none at all): each is reported as a problem of the
@@ -238,9 +247,10 @@ class _Renderer:
             and isinstance(annotation, ast.Subscript)
             and _dotted(annotation.value) in ("Optional", "typing.Optional")
         ):
-            # Optional[Callable[...]], which codon_annotation drops: called
-            # with the callable, as `Callable[...] | None` is.
-            members = [annotation.slice]
+            # Optional[Callable[...]] or Optional[Union[A, B]], which
+            # codon_annotation drops: called with the callable, or with each
+            # member, as `Callable[...] | None` and `A | B | None` are.
+            members = _members_or_self(annotation)
         if members is not None:
             texts = [
                 codon_annotation(m, class_level=True)
@@ -343,10 +353,7 @@ class _Renderer:
         elif decorators & _DATACLASS and not is_enum:
             self._dataclass_init(node)
         for method in methods:
-            dunder = method.name.startswith("__") and method.name.endswith("__")
-            if method.name == "__init__" or (
-                method.name.startswith("_") and not dunder
-            ):
+            if method.name == "__init__":
                 continue
             kinds = {_dotted(d) or "" for d in method.decorator_list}
             where = f"{name}.{method.name}"
@@ -535,6 +542,10 @@ def _is_dataclass(node: ast.ClassDef) -> bool:
     )
 
 
+def _is_dunder(name: str) -> bool:
+    return name.startswith("__") and name.endswith("__")
+
+
 def _combinations(choices: list[list[str]]) -> list[tuple[str, ...]]:
     total = 1
     for c in choices:
@@ -566,7 +577,7 @@ def render_library_checks(
     renderer = _Renderer(uncalled, {**(classes or {}), **own})
     for node in tree.body:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            if not node.name.startswith("_"):
+            if not _is_dunder(node.name):
                 renderer.function(node)
         elif isinstance(node, ast.ClassDef) and not node.name.startswith("_"):
             renderer.cls(node)
