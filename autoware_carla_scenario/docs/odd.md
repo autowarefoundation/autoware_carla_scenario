@@ -243,14 +243,82 @@ The road users a scenario stages -- a vehicle ahead in the next lane, a
 pedestrian running out -- are not read by ODD probes: they are **measures**
 of the scenario, under keys the framework fixes
 (`autoware_carla_scenario.measures`). Every `BaseScenario` has these, read
-generically in the ego's frame:
+generically around the ego:
 
-| Key | Unit | Reads |
-|---|---|---|
-| `vehicle_ahead_gap_m` | m | The nearest vehicle ahead in the ego's lane or a lane beside it, centre to centre along the ego's heading (up to `AHEAD_RANGE_M`); a vehicle about to cut in is measured from before it changes lanes |
-| `vehicle_ahead_relative_speed_kph` | km/h | That vehicle's speed along the ego's heading less the ego's |
+| Key | Unit | Version | Reads |
+|---|---|---|---|
+| `vehicle_ahead_gap_m` | m | 2 | The free road to the nearest vehicle ahead on the ego's lane or a lane beside it: its rear bumper less the ego's front bumper, along the ego's lane on the Lanelet2 map (up to `AHEAD_RANGE_M`); a vehicle about to cut in is measured from before it changes lanes |
+| `vehicle_ahead_relative_speed_kph` | km/h | 2 | That vehicle's speed along the ego's lane less the ego's |
 | `crossing_pedestrian_gap_m` | m | How far ahead the nearest pedestrian ahead that is moving was when it set off, held while it crosses |
 | `crossing_pedestrian_speed_ms` | m/s | That pedestrian's speed |
+
+The pedestrian measures read in the ego's frame: ahead along its heading,
+within `PEDESTRIAN_LATERAL_M` of its centre line.
+
+#### The vehicle ahead
+
+The vehicle-ahead measures read along the road, as a driver would say "the
+car in front is 15 m ahead", and from the map:
+
+- **The ego's lane** is the lanelet the ego is on -- of those under its
+  origin (within `ON_LANELET_M`), the one whose centreline runs closest to its
+  heading, within `EGO_LANE_HEADING_DEG` -- with every lanelet following it up
+  to `AHEAD_RANGE_M` ahead (each branch where the lane branches: the measure
+  does not know the route) and the lanelet before it. Its arc length `s` runs
+  along their centrelines, on from one to the next.
+- **A vehicle counts** when its origin is on one of those lanelets, or on a
+  lanelet beside one of them -- its left or right neighbour in the Lanelet2
+  routing graph, whether a lane change is allowed across the line or not --
+  and further along the ego's lane than the ego's origin. A lane two over, an
+  oncoming lane or a vehicle off the lanelets does not count, however near.
+- **The gap** is `s` of the vehicle's rear bumper less `s` of the ego's front
+  bumper. A bumper is the middle of the end of the actor's bounding box,
+  along its own heading (`Bumpers`, `bumpers_of`), and it is projected onto
+  the ego's lane: onto the lanelet the vehicle is on, or the one it is beside,
+  and those before and after it. So the gap does not depend on where the
+  lanelets beside each other are cut or how long they are -- the outer lane of
+  a bend is longer than the inner one, and the same `s` on the two is not
+  side by side -- and on a bend it is the distance along the road, not a
+  straight line. A vehicle in the lane beside that overlaps the ego reads a
+  negative gap.
+- **The relative speed** is the vehicle's velocity along the lane's tangent at
+  its rear bumper less the ego's along the tangent at its front bumper: two
+  vehicles keeping pace round a bend read 0 though their headings differ.
+
+Without a lane to measure along -- no Lanelet2 map loaded, or the ego on no
+lanelet that runs its way -- the measures fall back to the **geometric**
+definition: a vehicle ahead of the ego's origin within three
+`LANE_HALF_WIDTH_M` of its centre line counts, and the gap is bumper to bumper
+along the ego's heading. The run logs a warning the first time, and the
+coverage file says how many frames each definition read
+(`measures.vehicle_ahead_gap_m.definitions`: `along_lane`, `geometric`;
+`vehicle_ahead_definitions()` in Python).
+
+#### Measure versions
+
+A measure's **version** (`Measure.version`, `measure_version(key)`) says
+which definition it reads with, and is raised whenever what it reads changes
+meaning. The vehicle-ahead measures are version 2. Version 1 (before
+autoware-carla-scenario 11.0) read the gap centre to centre along the ego's
+heading -- about 4.4 m more than version 2 for a Lincoln MKZ behind a Mini --
+and counted a vehicle within three half-lanes of the ego's centre line,
+whatever the map.
+
+Coverage keeps the versions apart. openodd's merge treats two coverage items
+as the same when their name, buckets, event and criteria agree; it does not
+read their description. So the cover item of an ODD attribute mapped onto a
+measure past version 1 is written under its version,
+`odd.dynamic.vehicle_ahead_gap#2`: merged with files written before, the
+report lists `odd.dynamic.vehicle_ahead_gap` (version 1) and
+`odd.dynamic.vehicle_ahead_gap#2` (version 2) apart, never one bucket's hits
+added to the other's. `#<n>` is the suffix openodd itself gives a second
+definition of an item; its sampler reads past it to the ODD's attribute, so a
+coverage-driven sweep (`strategy: coverage`) still counts what version 2
+covered -- and what version 1 covered too, which it cannot tell apart: point
+`coverage_from` at version 2's files only. Each coverage file also lists the
+measures its ODD reads under `measures`, with their version, unit and text.
+A scenario that replaces a built-in measure (`register_measure`) promises the
+same quantity, so its replacement carries the built-in's version.
 
 Each reads nothing (missing) while there is no such road user. A scenario
 that knows better replaces one -- it knows which actor *is* its cut-in
@@ -657,7 +725,7 @@ controls:
   vehicle_ahead_gap_m:
     key: scenario.npc_gap_m
     target: measure                    # the gap the measure reads at the start
-    range: [6.0, 30.0]                 # what the scenario can stage
+    range: [2.0, 30.0]                 # what the scenario can stage
   vehicle_ahead_relative_speed_kph:
     key: scenario.npc_initial_speed_kmh
     offset: ${ego.initial_speed_kmh}   # its speed less the ego's
@@ -685,11 +753,12 @@ mapped onto by `scale` and `offset`, and the mapping is the author's claim
 that the parameter brings the measure about. It holds where the two are the
 same quantity by definition. It is a guess where they are not:
 `npc_ahead_m` is the NPC's `s` along its lanelet less the ego's along its
-own, while `vehicle_ahead_gap_m` is centre to centre along the ego's heading.
+own, while `vehicle_ahead_gap_m` is bumper to bumper along the ego's lane.
 Neighbouring lanelets do not run alike on a curve -- the outer one is longer,
-and their `s` do not line up -- so no constant offset is right wherever the
-scenario is placed (on CARLA 0.10 Town04_Opt one guessed +11 m was measured
-2.2 m off, and the right offset there is right nowhere else).
+and their `s` do not line up -- and the bumpers depend on the vehicles, so no
+constant offset is right wherever the scenario is placed (on CARLA 0.10
+Town04_Opt one guessed +11 m was measured 2.2 m off, and the right offset
+there is right nowhere else).
 
 A measure that the **initial placement alone determines** can be the
 parameter instead. The scenario takes "the measure should read *v* at the
@@ -698,22 +767,40 @@ measure's own definition on the poses it will spawn at; the control says
 `target: measure`, and the value drawn is written unchanged:
 
 ```python
-from autoware_carla_scenario import place_at_vehicle_ahead_gap, solve_along
+from autoware_carla_scenario import place_at_vehicle_ahead_gap, vehicle_bumpers
 
 # The NPC's s on its lanelet at which vehicle_ahead_gap_m reads cfg.npc_gap_m,
 # seen from where the ego spawns -- whatever the two lanelets' shapes.
 ego_at = to_carla_world(self._spawn_pose).to_carla_transform()
-npc_pose = place_at_vehicle_ahead_gap(ego_at, cfg.npc_lanelet_id, cfg.npc_gap_m)
+npc_pose = place_at_vehicle_ahead_gap(
+    ego_at,
+    cfg.npc_lanelet_id,
+    cfg.npc_gap_m,
+    ego_bumpers=vehicle_bumpers(world, self.ego_config.vehicle_type),
+    npc_bumpers=vehicle_bumpers(world, cfg.npc_vehicle_type),
+)
 ```
 
-`place_at_vehicle_ahead_gap` reads the gap with the measure's own geometry
-(`measures.vehicle_ahead_gap_between`) for the NPC at each `s` of its
-lanelet, as a `Lanelet2Pose` spawns there, and narrows the first crossing of
-*v* down by bisection (`solve_along`, a 1-D root find that takes any
-`s -> measure` function, for a measure of a scenario's own). A gap the
-lanelet cannot reach -- too short, turning away, or out of the lanes the
-measure counts -- is refused with the gaps it does reach, so a drawn case
-that cannot be staged fails at setup rather than running another gap.
+`place_at_vehicle_ahead_gap` reads the gap with the measure's own code
+(`measures.vehicle_ahead_gap_between`, which the measure reads every vehicle
+with) for the NPC at each `s` of its lanelet, as a `Lanelet2Pose` spawns
+there -- on the centreline, heading along it -- and narrows the first
+crossing of *v* down by bisection (`solve_along`, a 1-D root find that takes
+any `s -> measure` function, for a measure of a scenario's own). It solves
+on the NPC's own lanelet and projects the NPC onto the ego's lane, so it does
+not matter where the lanelets beside each other start or how long they are.
+A gap the lanelet cannot reach -- too short, turning away, or out of the
+lanes the measure counts -- is refused with the gaps it does reach, so a
+drawn case that cannot be staged fails at setup rather than running another
+gap.
+
+The gap is bumper to bumper, so the placement needs both vehicles' sizes
+before either is spawned. CARLA gives a blueprint no size: `vehicle_bumpers`
+spawns one vehicle of the blueprint high above the map, reads its bounding
+box and destroys it before the world ticks again, once per blueprint per
+process. The NPC is then spawned once, where the gap reads right, rather
+than spawned, measured and moved -- a move that would race its initial
+speed and the first tick.
 
 Which to use:
 
@@ -725,13 +812,13 @@ Which to use:
 
 The relative speed of `cut_in` is the first kind: both vehicles start at
 their speeds along their lanes, and the measure is the NPC's velocity along
-the ego's heading less the ego's, so its `offset: ${ego.initial_speed_kmh}`
-writes it exactly where the two lanes are parallel at the start. On a curve
-the NPC's heading differs from the ego's by the angle between their spawn
-points, and the measure reads its speed times the cosine of that: 15 m
-ahead on a 100 m radius at 30 km/h, it reads 30 × (1 − cos 0.15) = 0.34 km/h
-less than written. That is below what a relative-speed bucket resolves, so it
-stays a raw setting.
+the ego's lane at the NPC less the ego's along it at the ego, so its
+`offset: ${ego.initial_speed_kmh}` writes it exactly: on a bend the NPC
+heads along its lane, which runs alongside the ego's lane where it is. (A
+lane beside a bend is shorter or longer than the ego's, so an NPC on it
+covers the ego's lane a few per cent slower or faster -- 3.5 m off a 100 m
+radius, 3.5 % -- which the measure does not count: it reads speeds, not how
+fast `s` changes.)
 
 The weather and the sun are set for every scenario, through the
 `environment` config, which sets them before the run starts
@@ -765,7 +852,7 @@ The example scenarios declare these:
 
 | Scenario | Measure | Parameter |
 |---|---|---|
-| `cut_in/*` | `vehicle_ahead_gap_m` | `npc_gap_m` (`target: measure`), 6-30 m |
+| `cut_in/*` | `vehicle_ahead_gap_m` | `npc_gap_m` (`target: measure`), 2-30 m |
 | `cut_in/*` | `vehicle_ahead_relative_speed_kph` | `npc_initial_speed_kmh` less the ego's, -15 to 15 km/h |
 | `pedestrian_dart_out` | `crossing_pedestrian_gap_m` | `trigger_distance_m`, 8-30 m |
 | `pedestrian_dart_out` | `crossing_pedestrian_speed_ms` | `walk_speed_ms`, 0.8-3 m/s |
@@ -818,7 +905,7 @@ from autoware_carla_scenario.odd import OddKnob, OddSampler, resolve_odd
 
 sampler = OddSampler(
     resolve_odd("path/to/urban.yaml"),
-    controls={"vehicle_ahead_gap_m": OddKnob("scenario.npc_gap_m", range=(6.0, 30.0))},
+    controls={"vehicle_ahead_gap_m": OddKnob("scenario.npc_gap_m", range=(2.0, 30.0))},
     seed=0,
     strategy="coverage",
     coverage=load_and_merge([Path("outputs")]),

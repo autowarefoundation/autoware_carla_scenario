@@ -5,19 +5,27 @@ along its lanelet than the ego along its own" -- and an ODD-sampled sweep
 writes the value it drew for a measure into it through a control's ``scale``
 and ``offset``.  Where the raw setting and the measure are not the same
 quantity that mapping is a guess: the ego's and the NPC's lanelets do not run
-alike on a curve (the outer one is longer), so the arc length along one is
-not the gap :data:`~autoware_carla_scenario.measures.VEHICLE_AHEAD_GAP_M`
-reads, and no constant offset is right everywhere.
+alike on a curve (the outer one is longer, and neighbouring lanelets need not
+start or end side by side), and the measure is bumper to bumper, so the arc
+length along one is not the gap
+:data:`~autoware_carla_scenario.measures.VEHICLE_AHEAD_GAP_M` reads, and no
+constant offset is right everywhere.
 
 A measure that the initial placement alone determines can instead be the
 parameter: the scenario takes "the measure should read *v* at the start"
-and solves for the placement, evaluating the measure's own definition on the
-poses it would spawn at.  :func:`solve_along` is the solver, a 1-D root find
-along a lanelet; :func:`place_at_vehicle_ahead_gap` applies it to the gap to
-a vehicle ahead::
+and solves for the placement, evaluating the measure's own definition -- the
+same code, not a copy of it -- on the poses and the vehicles it would spawn.
+:func:`solve_along` is the solver, a 1-D root find along a lanelet;
+:func:`place_at_vehicle_ahead_gap` applies it to the gap to a vehicle ahead,
+with the vehicles' bumpers read off their blueprints before either is
+spawned (:func:`vehicle_bumpers`)::
 
     ego = self.ego_config.spawn_location.value      # after _setup_ego_spawn()
-    npc_pose = place_at_vehicle_ahead_gap(ego, cfg.npc_lanelet_id, cfg.npc_gap_m)
+    npc_pose = place_at_vehicle_ahead_gap(
+        ego, cfg.npc_lanelet_id, cfg.npc_gap_m,
+        ego_bumpers=vehicle_bumpers(world, self.ego_config.vehicle_type),
+        npc_bumpers=vehicle_bumpers(world, cfg.npc_vehicle_type),
+    )
 
 A control that writes such a parameter declares ``target: measure``
 (:mod:`autoware_carla_scenario.odd.sampler`, docs/odd.md, "Controls").
@@ -31,9 +39,14 @@ import typesafe_carla.carla as carla
 
 from .coordinate.poses import Lanelet2Pose
 from .coordinate.transform import lanelet_length, to_carla_world
-from .measures import VEHICLE_AHEAD_GAP_M, vehicle_ahead_gap_between
+from .measures import (
+    VEHICLE_AHEAD_GAP_M,
+    Bumpers,
+    bumpers_of_box,
+    vehicle_ahead_gap_between,
+)
 
-__all__ = ["place_at_vehicle_ahead_gap", "solve_along"]
+__all__ = ["place_at_vehicle_ahead_gap", "solve_along", "vehicle_bumpers"]
 
 #: How far apart :func:`solve_along` reads the measure, in metres of ``s``,
 #: before it narrows a crossing down.
@@ -135,29 +148,97 @@ def solve_along(
     )
 
 
+#: The role name of the vehicle :func:`vehicle_bumpers` spawns to measure.
+_PROBE_ROLE = "bumper_probe"
+#: Where :func:`vehicle_bumpers` spawns it: this high above the map's origin,
+#: clear of everything on the road, and higher by as much again if that fails.
+_PROBE_HEIGHT_M = 500.0
+#: Blueprint id -> its bumpers, as measured.
+_BUMPERS: dict[str, Bumpers] = {}
+
+
+def vehicle_bumpers(world: carla.World, vehicle_type: str) -> Bumpers:
+    """The bumpers of a vehicle of blueprint *vehicle_type*, before one is
+    spawned where it will drive.
+
+    CARLA gives a blueprint no size: a vehicle's bounding box is known only
+    once it is spawned.  So one is spawned high above the map, read and
+    destroyed straight away, before the world is ticked again; the result is
+    remembered by blueprint id for the rest of the process.  Placing a
+    vehicle for a bumper-to-bumper gap needs its size where it is placed, and
+    this way it is placed once, where the gap reads right, rather than
+    spawned and then moved.
+
+    Raises:
+        ValueError: When the blueprint is not a vehicle CARLA has, or no
+            vehicle of it can be spawned to measure.
+    """
+    if vehicle_type in _BUMPERS:
+        return _BUMPERS[vehicle_type]
+    library = world.get_blueprint_library()
+    known = {bp.id for bp in library.filter("vehicle.*")}
+    if vehicle_type not in known:
+        raise ValueError(
+            f"vehicle_bumpers(): {vehicle_type!r} is not a vehicle blueprint"
+        )
+    blueprint = library.find(vehicle_type)
+    blueprint.set_attribute("role_name", _PROBE_ROLE)
+    for attempt in range(1, 4):
+        at = carla.Transform(
+            carla.Location(x=0.0, y=0.0, z=_PROBE_HEIGHT_M * attempt),
+            carla.Rotation(),
+        )
+        actor = world.try_spawn_actor(blueprint, at)
+        if actor is None:
+            continue
+        spawned: carla.Actor = actor
+        try:
+            bumpers = bumpers_of_box(spawned.bounding_box)
+        finally:
+            spawned.destroy()
+        _BUMPERS[vehicle_type] = bumpers
+        return bumpers
+    raise ValueError(
+        f"vehicle_bumpers(): no {vehicle_type} could be spawned to measure"
+    )
+
+
 def place_at_vehicle_ahead_gap(
-    ego: carla.Transform, lanelet_id: int, gap_m: float
+    ego: carla.Transform,
+    lanelet_id: int,
+    gap_m: float,
+    *,
+    ego_bumpers: Bumpers,
+    npc_bumpers: Bumpers,
 ) -> Lanelet2Pose:
     """The pose on *lanelet_id* at which a vehicle is *gap_m* ahead of the ego.
 
     "Ahead" is what :data:`~autoware_carla_scenario.measures.VEHICLE_AHEAD_GAP_M`
-    reads (:func:`~autoware_carla_scenario.measures.vehicle_ahead_gap_between`):
-    centre to centre along the ego's heading, from an ego at *ego* (its spawn
-    transform) to a vehicle on the centreline of *lanelet_id*, placed as a
+    reads, by the same code
+    (:func:`~autoware_carla_scenario.measures.vehicle_ahead_gap_between`):
+    bumper to bumper along the ego's lane on the Lanelet2 map, from an ego at
+    *ego* (its spawn transform) with *ego_bumpers*, to a vehicle with
+    *npc_bumpers* on the centreline of *lanelet_id*, heading along it, as a
     :class:`~autoware_carla_scenario.Lanelet2Pose` spawns
-    (:func:`~autoware_carla_scenario.snap_to_carla_road` takes x and y from
-    the lanelet).  So the measure reads *gap_m* at the start, wherever the two
-    lanelets are and however differently they curve.
+    (:func:`~autoware_carla_scenario.snap_to_carla_road` takes x, y and the
+    heading from the lanelet).  The NPC's ``s`` is solved for on its own
+    lanelet, reading the gap where it would stand, so the measure reads
+    *gap_m* at the start however the two lanelets are cut, how long they are
+    and how they curve.  The bumpers come from :func:`vehicle_bumpers`.
 
     Raises:
         ValueError: When no point of the lanelet is *gap_m* ahead -- it is too
-            short, or turns away -- saying what gaps it does reach.
+            short, turns away, or is not on the ego's lane or beside it --
+            saying what gaps it does reach.
     """
     length = lanelet_length(lanelet_id)
 
     def read_at(s: float) -> Optional[float]:
         at = to_carla_world(Lanelet2Pose(lanelet_id=lanelet_id, s=s))
-        return vehicle_ahead_gap_between(ego, carla.Location(x=at.x, y=at.y, z=at.z))
+        other = carla.Transform(
+            carla.Location(x=at.x, y=at.y, z=at.z), carla.Rotation(yaw=at.yaw)
+        )
+        return vehicle_ahead_gap_between(ego, ego_bumpers, other, npc_bumpers)
 
     s = solve_along(
         read_at,

@@ -7,7 +7,7 @@ import math
 from collections.abc import Iterator
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Callable
+from typing import Any
 
 import pytest
 import typesafe_carla.carla as carla
@@ -19,44 +19,20 @@ from autoware_carla_scenario.coordinate.poses import CarlaWorldPose, Lanelet2Pos
 from autoware_carla_scenario.coordinate.transform import to_carla_world
 from autoware_carla_scenario.measures import (
     VEHICLE_AHEAD_GAP_M,
-    in_ego_frame,
+    Bumpers,
     read_measure,
     set_measured_scenario,
-    vehicle_ahead_gap_between,
 )
-from autoware_carla_scenario.placement import place_at_vehicle_ahead_gap, solve_along
+from autoware_carla_scenario.placement import (
+    place_at_vehicle_ahead_gap,
+    solve_along,
+    vehicle_bumpers,
+)
+
+from . import _lane_maps
+from ._lane_maps import LaneMap, bend, build_road, straight
 
 _DATA = Path(__file__).resolve().parents[3] / "data"
-
-
-def _transform(x: float, y: float, yaw: float) -> carla.Transform:
-    return carla.Transform(carla.Location(x=x, y=y, z=0.0), carla.Rotation(yaw=yaw))
-
-
-# ---------------------------------------------------------------------------
-# The measure's geometry
-# ---------------------------------------------------------------------------
-
-
-def test_the_ego_frame_is_ahead_and_to_the_right() -> None:
-    ego = _transform(10.0, 5.0, 90.0)  # facing +y
-
-    ahead, lateral = in_ego_frame(ego, carla.Location(x=7.0, y=25.0, z=0.0))
-
-    assert ahead == pytest.approx(20.0)
-    # CARLA is left-handed: facing +y, -x is on the right.
-    assert lateral == pytest.approx(3.0)
-
-
-def test_the_gap_is_read_only_for_a_vehicle_the_measure_counts() -> None:
-    ego = _transform(0.0, 0.0, 0.0)
-
-    assert vehicle_ahead_gap_between(ego, carla.Location(12.0, 3.5, 0.0)) == (
-        pytest.approx(12.0)
-    )
-    assert vehicle_ahead_gap_between(ego, carla.Location(-1.0, 0.0, 0.0)) is None
-    assert vehicle_ahead_gap_between(ego, carla.Location(10.0, 7.5, 0.0)) is None
-    assert vehicle_ahead_gap_between(ego, carla.Location(150.0, 0.0, 0.0)) is None
 
 
 # ---------------------------------------------------------------------------
@@ -93,101 +69,191 @@ def test_the_solver_says_what_it_can_reach() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Synthetic lanelets: a straight pair, and a curve whose lanes differ in length
+# Placement -> measure, on synthetic Lanelet2 maps
 # ---------------------------------------------------------------------------
 
-#: Lane width, in metres.
-_WIDTH = 3.5
+#: The ego's and the NPC's bumpers (a Lincoln MKZ and a Mini, about).
+_EGO = Bumpers(front=2.6, rear=2.2)
+_NPC = Bumpers(front=1.9, rear=1.8)
 
 
-def _on(
-    lanelets: dict[int, Callable[[float], CarlaWorldPose]],
-    monkeypatch,
-    length: float = 80.0,
+def _measured(ego: carla.Transform, npc: Lanelet2Pose) -> Any:
+    """What the measure reads with the ego at *ego* and the NPC spawned at
+    *npc*, as a Lanelet2Pose spawns (x, y and heading off the lanelet)."""
+    at = to_carla_world(npc)
+    world = _World(
+        [
+            _Actor(1, str(EGO_ROLE_NAME), ego, _EGO),
+            _Actor(2, "npc1", at.to_carla_transform(), _NPC),
+        ]
+    )
+    return read_measure(VEHICLE_AHEAD_GAP_M, world)
+
+
+def _ego_at(built: LaneMap, lane: str, segment: int, s: float) -> carla.Transform:
+    return to_carla_world(
+        Lanelet2Pose(lanelet_id=built.id(lane, segment), s=s)
+    ).to_carla_transform()
+
+
+@pytest.fixture
+def straight_road() -> Iterator[LaneMap]:
+    built = build_road(
+        straight(300.0),
+        [0.0, 100.0, 200.0, 300.0],
+        [-1.75, 1.75, 5.25],
+        {"ego": (0, False), "left": (1, False)},
+    )
+    yield from _lane_maps.loaded(built)
+
+
+_RADIUS = 120.0
+
+
+@pytest.fixture
+def curve() -> Iterator[LaneMap]:
+    """Town04's highway: three lanes round a bend, the outer one longer, so
+    the same ``s`` lies at different places on lanelets beside each other."""
+    arc = _RADIUS * math.radians(90.0)
+    built = build_road(
+        bend(30.0, _RADIUS, 90.0, 80.0),
+        [0.0, 30.0, 30.0 + arc / 2, 30.0 + arc, 30.0 + arc + 80.0],
+        [-5.25, -1.75, 1.75, 5.25],
+        {"outer": (0, False), "ego": (1, False), "inner": (2, False)},
+    )
+    yield from _lane_maps.loaded(built)
+
+
+@pytest.fixture
+def widths() -> Iterator[LaneMap]:
+    built = build_road(
+        straight(200.0),
+        [0.0, 200.0],
+        [-8.25, -1.25, 1.25, 3.75],
+        {"wide": (0, False), "ego": (1, False), "narrow": (2, False)},
+    )
+    yield from _lane_maps.loaded(built)
+
+
+@pytest.fixture(autouse=True)
+def _no_scenario() -> Iterator[None]:
+    set_measured_scenario(None)
+    yield
+    set_measured_scenario(None)
+
+
+def test_on_a_straight_road_the_gap_is_bumper_to_bumper(straight_road: LaneMap) -> None:
+    ego = _ego_at(straight_road, "ego", 0, 40.0)
+
+    pose = place_at_vehicle_ahead_gap(
+        ego, straight_road.id("left"), 15.0, ego_bumpers=_EGO, npc_bumpers=_NPC
+    )
+
+    # The NPC's origin 15 m plus both overhangs ahead of the ego's.
+    assert pose.s == pytest.approx(40.0 + 2.6 + 15.0 + 1.8, abs=1e-3)
+    assert _measured(ego, pose) == pytest.approx(15.0, abs=1e-3)
+
+
+@pytest.mark.parametrize("lane", ["outer", "inner"])
+@pytest.mark.parametrize("target", [2.0, 8.0, 15.0, 25.0])
+@pytest.mark.parametrize("ego_s", [5.0, 40.0])
+def test_on_a_curve_placement_reads_back_as_the_measure(
+    curve: LaneMap, lane: str, target: float, ego_s: float
 ) -> None:
-    """Make *lanelets* (id -> pose at s, each *length* long) the map placement reads."""
+    ego = _ego_at(curve, "ego", 1, ego_s)
 
-    def to_world(pose: Lanelet2Pose) -> CarlaWorldPose:
-        return lanelets[pose.lanelet_id](pose.s)
+    # The NPC's lanelet is the one beside the ego's; a gap past its end is
+    # not this lanelet's to stage.
+    pose = place_at_vehicle_ahead_gap(
+        ego, curve.id(lane, 1), target, ego_bumpers=_EGO, npc_bumpers=_NPC
+    )
 
-    monkeypatch.setattr(placement, "to_carla_world", to_world)
-    monkeypatch.setattr(placement, "lanelet_length", lambda i: length)
+    assert _measured(ego, pose) == pytest.approx(target, abs=0.05)
+    # The raw setting -- the NPC's s the ego's plus the gap and overhangs --
+    # is off by the lanes' difference in length up to there.
+    raw = Lanelet2Pose(lanelet_id=curve.id(lane, 1), s=ego_s + 2.6 + target + 1.8)
+    error = _measured(ego, raw) - target
+    assert (error < 0) == (lane == "outer")
 
 
-def _straight(start_x: float, y: float) -> Callable[[float], CarlaWorldPose]:
-    return lambda s: CarlaWorldPose(x=start_x + s, y=y, z=0.0, yaw=0.0)
+def test_placement_on_the_next_lanelet_of_the_lane_beside(curve: LaneMap) -> None:
+    """The ego near the end of its lanelet, the NPC on the lanelet after the
+    one beside it: s runs on from one lanelet to the next."""
+    ego = _ego_at(curve, "ego", 1, 85.0)
+
+    pose = place_at_vehicle_ahead_gap(
+        ego, curve.id("outer", 2), 20.0, ego_bumpers=_EGO, npc_bumpers=_NPC
+    )
+
+    assert _measured(ego, pose) == pytest.approx(20.0, abs=0.05)
 
 
-#: The radius of the ego's lane on the curve, in metres.
-_RADIUS = 400.0
+def test_placement_in_a_wide_lane_beside(widths: LaneMap) -> None:
+    ego = _ego_at(widths, "ego", 0, 30.0)
+
+    pose = place_at_vehicle_ahead_gap(
+        ego, widths.id("wide"), 12.0, ego_bumpers=_EGO, npc_bumpers=_NPC
+    )
+
+    assert _measured(ego, pose) == pytest.approx(12.0, abs=0.05)
 
 
-def _arc(radius: float) -> Callable[[float], CarlaWorldPose]:
-    """A lane turning right (CARLA's +yaw) about (0, _RADIUS), starting on the
-    line x = 0: s along it is radius * angle, so an outer lane is longer and
-    the same s is further back on it."""
+def test_a_gap_the_lanelet_cannot_reach_is_refused(straight_road: LaneMap) -> None:
+    ego = _ego_at(straight_road, "ego", 0, 60.0)
 
-    def at(s: float) -> CarlaWorldPose:
-        angle = s / radius
-        return CarlaWorldPose(
-            x=radius * math.sin(angle),
-            y=_RADIUS - radius * math.cos(angle),
-            z=0.0,
-            yaw=math.degrees(angle),
+    with pytest.raises(ValueError, match=r"on lanelet \d+ \(length 100\.0 m\)"):
+        place_at_vehicle_ahead_gap(
+            ego, straight_road.id("left"), 50.0, ego_bumpers=_EGO, npc_bumpers=_NPC
         )
 
-    return at
 
+def test_the_bumpers_are_measured_once_per_blueprint(monkeypatch) -> None:
+    spawned: list[str] = []
+    destroyed: list[int] = []
 
-def _gap(ego: carla.Transform, pose: Lanelet2Pose, lane: Callable) -> float:
-    at = lane(pose.s)
-    gap = vehicle_ahead_gap_between(ego, carla.Location(x=at.x, y=at.y, z=0.0))
-    assert gap is not None
-    return gap
+    class _Probe:
+        id = 7
+        bounding_box = SimpleNamespace(
+            location=SimpleNamespace(x=0.1), extent=SimpleNamespace(x=2.4)
+        )
 
+        def destroy(self) -> None:
+            destroyed.append(self.id)
 
-def test_on_straight_lanes_the_gap_is_the_offset_along_them(monkeypatch) -> None:
-    ego_lane, npc_lane = _straight(0.0, 0.0), _straight(-20.0, -_WIDTH)
-    _on({1: ego_lane, 2: npc_lane}, monkeypatch)
-    ego = _transform(5.0, 0.0, 0.0)
+    class _Blueprint:
+        def __init__(self, bp_id: str) -> None:
+            self.id = bp_id
 
-    pose = place_at_vehicle_ahead_gap(ego, 2, 15.0)
+        def set_attribute(self, key: str, value: str) -> None:
+            pass
 
-    # The NPC lanelet starts 20 m behind the ego's: 5 + 20 + 15.
-    assert pose.lanelet_id == 2
-    assert pose.s == pytest.approx(40.0, abs=1e-3)
-    assert _gap(ego, pose, npc_lane) == pytest.approx(15.0, abs=1e-3)
+    class _Library:
+        def filter(self, pattern: str) -> list[_Blueprint]:
+            return [_Blueprint("vehicle.lincoln.mkz")]
 
+        def find(self, bp_id: str) -> _Blueprint:
+            return _Blueprint(bp_id)
 
-@pytest.mark.parametrize("npc_radius", [_RADIUS - _WIDTH, _RADIUS + _WIDTH])
-@pytest.mark.parametrize("target", [6.0, 15.0, 30.0])
-def test_on_a_curve_the_gap_is_what_the_measure_reads(
-    monkeypatch, npc_radius: float, target: float
-) -> None:
-    ego_lane, npc_lane = _arc(_RADIUS), _arc(npc_radius)
-    _on({1: ego_lane, 2: npc_lane}, monkeypatch, length=600.0)
-    ego_s = 200.0
-    ego_at = ego_lane(ego_s)
-    ego = _transform(ego_at.x, ego_at.y, ego_at.yaw)
+    class _ProbeWorld:
+        def get_blueprint_library(self) -> _Library:
+            return _Library()
 
-    pose = place_at_vehicle_ahead_gap(ego, 2, target)
+        def try_spawn_actor(self, blueprint: _Blueprint, at: Any) -> _Probe:
+            spawned.append(blueprint.id)
+            return _Probe()
 
-    assert _gap(ego, pose, npc_lane) == pytest.approx(target, abs=1e-3)
-    # The raw setting -- the NPC's s the ego's plus the target -- is off by
-    # the lanes' difference in length up to there (200 m * 3.5 / 400 = 1.75 m),
-    # one way on the inner lane and the other on the outer.
-    raw = Lanelet2Pose(lanelet_id=2, s=ego_s + target)
-    error = _gap(ego, raw, npc_lane) - target
-    assert abs(error) > 1.0
-    assert (error > 0) == (npc_radius < _RADIUS)
+    monkeypatch.setattr(placement, "_BUMPERS", {})
+    world: Any = _ProbeWorld()
 
+    first = vehicle_bumpers(world, "vehicle.lincoln.mkz")
+    again = vehicle_bumpers(world, "vehicle.lincoln.mkz")
 
-def test_a_gap_the_lanelet_cannot_reach_is_refused(monkeypatch) -> None:
-    _on({1: _straight(0.0, 0.0), 2: _straight(0.0, -_WIDTH)}, monkeypatch)
-    ego = _transform(60.0, 0.0, 0.0)
-
-    with pytest.raises(ValueError, match=r"lanelet 2 \(length 80\.0 m\).* to 20\.00"):
-        place_at_vehicle_ahead_gap(ego, 2, 30.0)
+    assert first == again
+    assert (first.front, first.rear) == pytest.approx((2.5, 2.3))
+    assert spawned == ["vehicle.lincoln.mkz"]
+    assert destroyed == [7]
+    with pytest.raises(ValueError, match="not a vehicle blueprint"):
+        vehicle_bumpers(world, "vehicle.no.such")
 
 
 # ---------------------------------------------------------------------------
@@ -206,11 +272,17 @@ def nishishinjuku() -> Iterator[MapManager]:
 
 
 class _Actor:
-    def __init__(self, actor_id: int, role: str, transform: Any) -> None:
+    def __init__(
+        self, actor_id: int, role: str, transform: Any, bumpers: Bumpers
+    ) -> None:
         self.id = actor_id
         self.type_id = "vehicle.test"
         self.attributes = {"role_name": role}
         self._transform = transform
+        self.bounding_box = SimpleNamespace(
+            location=SimpleNamespace(x=(bumpers.front - bumpers.rear) / 2),
+            extent=SimpleNamespace(x=(bumpers.front + bumpers.rear) / 2),
+        )
 
     def get_location(self) -> Any:
         return self._transform.location
@@ -262,6 +334,11 @@ def _cut_in_npc_transform(monkeypatch, **config: Any) -> tuple[Any, Any]:
         return to_opendrive(to_carla_world(spawn))
 
     monkeypatch.setattr(cut_in, "snap_to_carla_road", snap)
+    monkeypatch.setattr(
+        cut_in,
+        "vehicle_bumpers",
+        lambda world, vehicle_type: _EGO if vehicle_type == "vehicle.x" else _NPC,
+    )
     monkeypatch.setattr(cut_in, "VehicleEntity", _Npc)
     monkeypatch.setattr(cut_in.CutInScenario, "_setup_ego_spawn", setup_ego_spawn)
     monkeypatch.setattr(cut_in.CutInScenario, "world", property(lambda self: None))
@@ -284,7 +361,12 @@ def test_cut_in_places_the_npc_at_the_measured_gap(
     set_measured_scenario(None)
     ego_at, npc_at = _cut_in_npc_transform(monkeypatch, npc_gap_m=gap)
 
-    world = _World([_Actor(1, str(EGO_ROLE_NAME), ego_at), _Actor(2, "npc1", npc_at)])
+    world = _World(
+        [
+            _Actor(1, str(EGO_ROLE_NAME), ego_at, _EGO),
+            _Actor(2, "npc1", npc_at, _NPC),
+        ]
+    )
 
     assert read_measure(VEHICLE_AHEAD_GAP_M, world) == pytest.approx(gap, abs=1e-2)
 

@@ -11,12 +11,13 @@ the ``adjacent`` binding.
 
 Where it starts is given one of two ways. ``npc_ahead_m`` is a raw setting:
 the NPC's ``s`` along its lanelet less the ego's along its own. ``npc_gap_m``
-is the gap ``vehicle_ahead_gap_m`` should read at the start: the NPC's ``s``
-is solved for, from the two spawn poses, so it does
+is the gap ``vehicle_ahead_gap_m`` should read at the start -- bumper to
+bumper, along the ego's lane: the NPC's ``s`` is solved for, from the two
+spawn poses and the two vehicles' sizes, so it does
 (:func:`~autoware_carla_scenario.place_at_vehicle_ahead_gap`) -- the same
-wherever the scenario is placed, however the two lanelets curve.  The
-scenario's controls set ``npc_gap_m``, so a gap drawn from an ODD is the gap
-the run starts at.
+wherever the scenario is placed, however the two lanelets are cut and curve.
+The scenario's controls set ``npc_gap_m``, so a gap drawn from an ODD is the
+gap the run starts at.
 
 Typical usage
 -------------
@@ -55,6 +56,7 @@ from autoware_carla_scenario import (
     snap_to_carla_road,
     to_carla_world,
     to_opendrive,
+    vehicle_bumpers,
 )
 
 from .configs import CutInConfig
@@ -115,9 +117,16 @@ class CutInScenario(BaseScenario):
         else:
             # The gap as the measure reads it, from where the ego spawns: x, y
             # and heading come off its lanelet, as _setup_ego_spawn places it.
+            # Bumper to bumper: both vehicles' sizes, from their blueprints.
             ego_pose: Lanelet2Pose = spawn
             ego_at = to_carla_world(ego_pose).to_carla_transform()
-            npc_pose = place_at_vehicle_ahead_gap(ego_at, cfg.npc_lanelet_id, npc_gap_m)
+            npc_pose = place_at_vehicle_ahead_gap(
+                ego_at,
+                cfg.npc_lanelet_id,
+                npc_gap_m,
+                ego_bumpers=vehicle_bumpers(world, self.ego_config.vehicle_type),
+                npc_bumpers=vehicle_bumpers(world, cfg.npc_vehicle_type),
+            )
         npc_snapped = snap_to_carla_road(
             npc_pose, world, ground_projection=self._ground_projection
         )
