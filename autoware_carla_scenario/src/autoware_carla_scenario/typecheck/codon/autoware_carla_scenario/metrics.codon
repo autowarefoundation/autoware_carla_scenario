@@ -23,7 +23,3 @@ def is_metric(key: str) -> bool:
 
 def read_metric(key: str, world: carla.World) -> Optional[float]:
     raise NotImplementedError()
-
-
-def reset_metrics() -> None:
-    raise NotImplementedError()

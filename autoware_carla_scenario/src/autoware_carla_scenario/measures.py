@@ -21,6 +21,10 @@ Two things are keyed by measures, and neither knows the ODD:
   binding file), which is how coverage is measured and how a sweep draws the
   scenario's parameters from the ODD.
 
+How the ego drives what a run sets up -- a collision, leaving the road -- is
+not a measure but a **metric** (:mod:`autoware_carla_scenario.metrics`): an
+outcome, which no ODD maps onto and a condition watches instead.
+
 The vehicle ahead, along the ego's lane
 ---------------------------------------
 :data:`VEHICLE_AHEAD_GAP_M` is the free road between the ego and the vehicle
@@ -57,10 +61,6 @@ These are version 2 of the vehicle-ahead measures (:attr:`Measure.version`);
 version 1 was centre to centre along the ego's heading, a vehicle counted
 within three half-lanes of the ego's centre line.  Coverage keeps the two
 apart (docs/odd.md, "Measure versions").
-
-How the ego drives what a run sets up -- a collision, leaving the road -- is
-not a measure but a **metric** (:mod:`autoware_carla_scenario.metrics`): an
-outcome, which no ODD maps onto and a condition watches instead.
 """
 
 from __future__ import annotations
@@ -73,9 +73,9 @@ from typing import TYPE_CHECKING, Callable, Optional
 import lanelet2.core
 import lanelet2.geometry
 
-from .conditions.base import find_actor_in_list
 from .constants import EGO_ROLE_NAME
 from .coordinate.map_manager import MapManager
+from .entity_role import find_actor_in_list
 from .metrics import is_metric
 
 if TYPE_CHECKING:

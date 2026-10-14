@@ -37,7 +37,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable, Optional
 
-from ..conditions.base import find_actor_in_list
+from ..entity_role import find_actor_in_list
 from ..constants import EGO_ROLE_NAME
 from ..kinematics import Vector3
 from .model import UNDECIDED

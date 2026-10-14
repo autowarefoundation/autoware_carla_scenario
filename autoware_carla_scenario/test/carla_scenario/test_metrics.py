@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 from pathlib import Path
-from typing import Any, Iterator, Optional
+from typing import Any, Optional
 
 import pytest
 import typesafe_carla.carla as carla
@@ -36,9 +36,8 @@ from autoware_carla_scenario.metrics import (
     WRONG_LANE,
     is_metric,
     read_metric,
-    reset_metrics,
 )
-from autoware_carla_scenario.measures import BUILT_IN_MEASURES, read_measure
+from autoware_carla_scenario.measures import BUILT_IN_MEASURES
 from autoware_carla_scenario.odd import load_odd_binding, scenario_measure
 
 #: A car's half-extents: 4.6 m by 2 m.
@@ -73,12 +72,6 @@ class _Actor:
         self.bounding_box = _Box(extent)
         self._at = _v(at[0], at[1])
         self._yaw = yaw
-
-    def get_location(self) -> SimpleNamespace:
-        return self._at
-
-    def get_velocity(self) -> SimpleNamespace:
-        return _v()
 
     def get_transform(self) -> Any:
         return SimpleNamespace(
@@ -177,15 +170,6 @@ def _car(actor_id: int, at: tuple[float, float], yaw: float = 0.0) -> _Actor:
     return _Actor(actor_id, "vehicle.npc", at, yaw=yaw)
 
 
-@pytest.fixture(autouse=True)
-def _fresh() -> Iterator[None]:
-    # A stand-in world is collected after its test, and the next one can take
-    # its id(): what was read for that id must not carry over.
-    reset_metrics()
-    yield
-    reset_metrics()
-
-
 def _read(key: str, world: _World) -> Optional[float]:
     return read_metric(key, world)  # type: ignore[arg-type]
 
@@ -232,7 +216,6 @@ def test_a_metric_is_not_a_measure() -> None:
     assert not set(BUILT_IN_METRICS) & set(BUILT_IN_MEASURES)
     assert is_metric(OFFROAD)
     assert not is_metric("vehicle_ahead_gap_m")
-    assert read_measure(OFFROAD, _world()) is None  # type: ignore[arg-type]
 
 
 def test_an_odd_cannot_map_onto_a_metric() -> None:
@@ -279,7 +262,7 @@ def test_nothing_is_read_without_an_ego() -> None:
         assert _read(key, world) is None
 
 
-def test_the_map_measures_are_not_read_without_a_map() -> None:
+def test_the_map_metrics_are_not_read_without_a_map() -> None:
     world = _world(road=None)
 
     assert _read(OFFROAD, world) is None

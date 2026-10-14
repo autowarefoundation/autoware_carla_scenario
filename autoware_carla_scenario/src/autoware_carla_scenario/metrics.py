@@ -66,7 +66,6 @@ __all__ = [
     "WRONG_LANE",
     "is_metric",
     "read_metric",
-    "reset_metrics",
 ]
 
 #: The ego's box overlaps another road user's, whichever side it is on.
@@ -264,25 +263,15 @@ def _box_distance(one: Box, other: Box) -> float:
     return best
 
 
-def _collision_bits(box: Box, others: list[Box]) -> int:
-    """AlpaSim's ``CollisionScorer``: each road user the ego's box meets meets
-    its front edge, else its rear edge, else its side."""
-    bits = 0
-    for other in others:
-        if _segment_meets_box(box[0], box[1], other):
-            bits |= _FRONT
-        elif _segment_meets_box(box[2], box[3], other):
-            bits |= _REAR
-        elif _boxes_meet(box, other):
-            bits |= _LATERAL
-    return bits
-
-
 def _centre(box: Box) -> Point:
     return (
         sum(p[0] for p in box) / len(box),
         sum(p[1] for p in box) / len(box),
     )
+
+
+def _radius(box: Box, centre: Point) -> float:
+    return math.hypot(box[0][0] - centre[0], box[0][1] - centre[1])
 
 
 # ---------------------------------------------------------------------------
@@ -291,51 +280,79 @@ def _centre(box: Box) -> Point:
 
 
 class _Frame:
-    """What one frame of one world reads, each part once: the ego, its box and
-    the others', what its box meets, and the lane under its centre."""
+    """What one frame of one world reads, each part once: the ego's box and
+    the others', what its box meets, and the lane under its centre.
 
-    ego: Optional["carla.Actor"]
+    Every box also has the circle around it (its centre and the distance to
+    its corners): two boxes whose circles are apart are apart, which spares
+    the exact tests for the road users nowhere near the ego.
+    """
+
+    has_ego: bool
     ego_yaw: float
     ego_box: Box
+    ego_centre: Point
+    ego_radius: float
     others: list[Box]
-    #: What the ego's box meets: _FRONT, _REAR, _LATERAL, and _OFFROAD once
-    #: the road has been read (offroad_read).
+    others_centre: list[Point]
+    others_radius: list[float]
+    #: What the ego's box meets: _FRONT, _REAR and _LATERAL once the road
+    #: users have been read (collisions_read), _OFFROAD once the road has
+    #: (offroad_read).
     hits: int
+    collisions_read: bool
     offroad_read: bool
     centre_read: bool
     centre_waypoint: Optional["carla.Waypoint"]
 
-    def __init__(
-        self,
-        ego: Optional["carla.Actor"],
-        ego_yaw: float,
-        ego_box: Box,
-        others: list[Box],
-    ) -> None:
-        self.ego = ego
+    def __init__(self, ego_yaw: float, ego_box: Box, others: list[Box]) -> None:
+        self.has_ego = bool(ego_box)
         self.ego_yaw = ego_yaw
         self.ego_box = ego_box
+        self.ego_centre = _centre(ego_box) if ego_box else (0.0, 0.0)
+        self.ego_radius = _radius(ego_box, self.ego_centre) if ego_box else 0.0
         self.others = others
-        self.hits = _collision_bits(ego_box, others) if ego is not None else 0
+        self.others_centre = [_centre(box) for box in others]
+        self.others_radius = [
+            _radius(box, centre) for box, centre in zip(others, self.others_centre)
+        ]
+        self.hits = 0
+        self.collisions_read = False
         self.offroad_read = False
         self.centre_read = False
         self.centre_waypoint = None
 
+    def clearance(self, i: int) -> float:
+        """How far apart the ego's circle and the *i*-th road user's are; at
+        most the distance between their boxes, and ``0.0`` when they overlap."""
+        centre = self.others_centre[i]
+        apart = math.hypot(
+            centre[0] - self.ego_centre[0], centre[1] - self.ego_centre[1]
+        )
+        return max(apart - self.ego_radius - self.others_radius[i], 0.0)
+
+
+_NO_EGO = _Frame(0.0, [], [])
+
 
 class _Cache:
-    """The frame read last, by ``(id(world), frame)``, and the map of the world
-    read last, by ``id(world)``."""
+    """The world read last, its last frame's number and what was read then,
+    and its map.
 
-    at: Optional[tuple[int, int]]
+    The world is held, not its ``id()``: a world freed and another made may
+    get the same ``id()``, and would be read off the old one's frame and map.
+    """
+
+    world: Optional["carla.World"]
+    at: Optional[int]
     frame: Optional[_Frame]
-    map_of: int
     carla_map: Optional["carla.Map"]
     driving: int
 
     def __init__(self) -> None:
+        self.world = None
         self.at = None
         self.frame = None
-        self.map_of = 0
         self.carla_map = None
         self.driving = 0
 
@@ -343,22 +360,14 @@ class _Cache:
 _CACHE = _Cache()
 
 
-def reset_metrics() -> None:
-    """Forget what was read: the last frame and the map.
-
-    The runner calls it when a run starts and ends, so a run never reads the
-    frame or the map of the one before it.
-    """
-    _CACHE.at = None
-    _CACHE.frame = None
-    _CACHE.map_of = 0
-    _CACHE.carla_map = None
-
-
 def _frame(world: "carla.World") -> _Frame:
-    at: Optional[tuple[int, int]] = None
+    held = _CACHE.world
+    if held is None or held is not world:
+        _CACHE.world = world
+        _CACHE.at, _CACHE.frame, _CACHE.carla_map = None, None, None
+    at: Optional[int] = None
     try:
-        at = (id(world), int(world.get_snapshot().frame))
+        at = int(world.get_snapshot().frame)
     except Exception:
         pass
     cached = _CACHE.frame
@@ -374,9 +383,9 @@ def _read_frame(world: "carla.World") -> _Frame:
         actors = list(world.get_actors())
         ego = find_actor_in_list(actors, EGO_ROLE_NAME)
     except Exception:
-        return _Frame(None, 0.0, [], [])
+        ego = None
     if ego is None:
-        return _Frame(None, 0.0, [], [])
+        return _NO_EGO
     others: list[Box] = []
     for actor in actors:
         kind = actor.type_id
@@ -386,18 +395,19 @@ def _read_frame(world: "carla.World") -> _Frame:
             continue
         others.append(_box_of(actor, actor.get_transform()))
     transform = ego.get_transform()
-    return _Frame(ego, transform.rotation.yaw, _box_of(ego, transform), others)
+    return _Frame(transform.rotation.yaw, _box_of(ego, transform), others)
 
 
 def _map(world: "carla.World") -> "carla.Map":
-    """*world*'s map, fetched once: CARLA builds it anew on every call."""
+    """The map of the world :func:`_frame` holds, fetched once: CARLA builds
+    it anew on every call."""
     cached = _CACHE.carla_map
-    if cached is not None and _CACHE.map_of == id(world):
+    if cached is not None:
         return cached
     import typesafe_carla.carla as carla  # noqa: PLC0415
 
     found = world.get_map()
-    _CACHE.map_of, _CACHE.carla_map = id(world), found
+    _CACHE.carla_map = found
     # typesafe_carla's lane type is an int (an IntEnum on the API side).
     _CACHE.driving = int(carla.LaneType.Driving)
     return found
@@ -413,6 +423,24 @@ def _driving_waypoint(world: "carla.World", point: Point) -> "Optional[carla.Way
         project_to_road=False,
         lane_type=_CACHE.driving,
     )
+
+
+def _collision_bits(frame: _Frame) -> int:
+    """AlpaSim's ``CollisionScorer``: each road user the ego's box meets meets
+    its front edge, else its rear edge, else its side."""
+    if not frame.collisions_read:
+        box = frame.ego_box
+        for i, other in enumerate(frame.others):
+            if frame.clearance(i) > 0.0:
+                continue
+            if _segment_meets_box(box[0], box[1], other):
+                frame.hits |= _FRONT
+            elif _segment_meets_box(box[2], box[3], other):
+                frame.hits |= _REAR
+            elif _boxes_meet(box, other):
+                frame.hits |= _LATERAL
+        frame.collisions_read = True
+    return frame.hits
 
 
 def _offroad_bits(world: "carla.World", frame: _Frame) -> int:
@@ -434,7 +462,7 @@ def _offroad_bits(world: "carla.World", frame: _Frame) -> int:
 def _centre_waypoint(world: "carla.World", frame: _Frame) -> "Optional[carla.Waypoint]":
     """The driving lane under the ego's centre."""
     if not frame.centre_read:
-        frame.centre_waypoint = _driving_waypoint(world, _centre(frame.ego_box))
+        frame.centre_waypoint = _driving_waypoint(world, frame.ego_centre)
         frame.centre_read = True
     return frame.centre_waypoint
 
@@ -447,10 +475,13 @@ def _centre_waypoint(world: "carla.World", frame: _Frame) -> "Optional[carla.Way
 def _event(world: "carla.World", mask: int) -> Optional[float]:
     """``1.0`` when the ego's box meets any of *mask*, else ``0.0``."""
     frame = _frame(world)
-    if frame.ego is None:
+    if not frame.has_ego:
         return None
-    hits = _offroad_bits(world, frame) if mask & _OFFROAD else frame.hits
-    return 1.0 if hits & mask else 0.0
+    if mask & _ANY_COLLISION:
+        _collision_bits(frame)
+    if mask & _OFFROAD:
+        _offroad_bits(world, frame)
+    return 1.0 if frame.hits & mask else 0.0
 
 
 def _collision_any(world: "carla.World") -> Optional[float]:
@@ -489,9 +520,17 @@ def _min_distance_to_obstacle_m(world: "carla.World") -> Optional[float]:
     """AlpaSim's ``MinDistanceToObstacleScorer``: box to box, ``None`` when
     the ego is alone."""
     frame = _frame(world)
-    if frame.ego is None or not frame.others:
+    if not frame.has_ego or not frame.others:
         return None
-    return min(_box_distance(frame.ego_box, other) for other in frame.others)
+    # Nearest circle first: once a circle is further than the best box yet,
+    # so are the boxes of it and of every road user after it.
+    order = sorted(range(len(frame.others)), key=frame.clearance)
+    best = math.inf
+    for i in order:
+        if frame.clearance(i) >= best:
+            break
+        best = min(best, _box_distance(frame.ego_box, frame.others[i]))
+    return best
 
 
 def _wrong_lane(world: "carla.World") -> Optional[float]:
@@ -506,7 +545,7 @@ def _wrong_lane(world: "carla.World") -> Optional[float]:
     from .kinematics.angle import normalize_angle_deg  # noqa: PLC0415
 
     frame = _frame(world)
-    if frame.ego is None:
+    if not frame.has_ego:
         return None
     waypoint = _centre_waypoint(world, frame)
     if waypoint is None:
@@ -558,7 +597,7 @@ def _min_distance_to_lane_boundary_m(world: "carla.World") -> Optional[float]:
     is an approximation through a junction or where a lane widens.
     """
     frame = _frame(world)
-    if frame.ego is None:
+    if not frame.has_ego:
         return None
     if _offroad_bits(world, frame) & _OFFROAD:
         return 0.0
@@ -567,7 +606,7 @@ def _min_distance_to_lane_boundary_m(world: "carla.World") -> Optional[float]:
         return 0.0
     half = float(waypoint.lane_width) / 2.0
     laterals = [_lateral(waypoint, corner) for corner in frame.ego_box]
-    centre_lateral = _lateral(waypoint, _centre(frame.ego_box))
+    centre_lateral = _lateral(waypoint, frame.ego_centre)
     right_edge = half + _side_width(waypoint, True, half - centre_lateral)
     left_edge = half + _side_width(waypoint, False, half + centre_lateral)
     gap = min(right_edge - max(laterals), left_edge + min(laterals))
