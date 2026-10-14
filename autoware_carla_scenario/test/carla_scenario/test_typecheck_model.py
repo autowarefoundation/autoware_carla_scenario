@@ -23,6 +23,7 @@ from typing import Any
 import dotenv
 import ffmpeg
 import ffmpeg.nodes
+import lxml.etree
 import pytest
 from pyxodr.road_objects.network import RoadNetwork as PyxodrRoadNetwork
 from pyxodr.road_objects.road import Road as PyxodrRoad
@@ -697,3 +698,32 @@ def test_the_road_network_model_loads_the_fixture_map() -> None:
     for road_id, road in network.road_ids_to_object.items():
         assert isinstance(road_id, str)
         assert isinstance(road, PyxodrRoad)
+
+
+def test_the_lxml_model_is_the_element_pyxodr_holds() -> None:
+    # codon/lxml/etree.codon names the XML element coordinate.codon declares
+    # as lxml.etree._Element (coordinate.transform._cubic()): pyxodr's roads,
+    # lane sections and lanes hold lxml elements, and every method the model
+    # declares of one (and of its attributes) is lxml's.
+    etree_model = _parse(model_dir() / "lxml" / "etree.codon")
+    assert [ast.unparse(node) for node in etree_model.body] == [
+        "from autoware_carla_scenario.coordinate import _XmlElement as _Element"
+    ]
+    element = _definitions("coordinate")["_XmlElement"][0]
+    attributes = _definitions("coordinate")["_XmlAttributes"][0]
+    assert isinstance(element, ast.ClassDef) and isinstance(attributes, ast.ClassDef)
+
+    road = PyxodrRoadNetwork(str(_XODR_PATH)).get_roads()[0]
+    section = road.lane_sections[0]
+    xml = [road.road_xml, section.lane_section_xml, section.lanes[0].lane_xml]
+    assert all(isinstance(each, lxml.etree._Element) for each in xml)
+    fields = [
+        stmt.target.id
+        for stmt in element.body
+        if isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name)
+    ]
+    assert fields == ["attrib"]
+    for name in [*_methods(element), *fields]:
+        assert hasattr(road.road_xml, name), name
+    for name in _methods(attributes):
+        assert hasattr(road.road_xml.attrib, name), name
