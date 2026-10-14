@@ -5,6 +5,9 @@
 # CrossItem are declared for the library check (scenario_base, which holds
 # them), with only the name scenario_base reads; a scenario never builds one.
 # CoverageCollector (below) is what the checked scenario_runner uses of it.
+# COVERAGE_SCHEMA, CoverGroup, CoverageReport and merge_coverage() are
+# declared for the library check of the package's __init__, which re-exports
+# them (openodd's, a Rust extension).
 
 from pathlib import Path
 
@@ -20,6 +23,18 @@ class SamplingEvent:
     START: ClassVar[SamplingEvent] = SamplingEvent("start")
     END: ClassVar[SamplingEvent] = SamplingEvent("end")
     TICK: ClassVar[SamplingEvent] = SamplingEvent("tick")
+
+
+# The schema a coverage file names (openodd.collector.COVERAGE_SCHEMA).
+COVERAGE_SCHEMA: str = "openodd.coverage/1"
+
+
+@tuple
+class CoverGroup:
+    value: str
+    ODD: ClassVar[CoverGroup] = CoverGroup("odd")
+    SITUATION: ClassVar[CoverGroup] = CoverGroup("situation")
+    SCENARIO: ClassVar[CoverGroup] = CoverGroup("scenario")
 
 
 def _expect_sampling_event(event):
@@ -119,3 +134,17 @@ class CoverageCollector:
                        environment: Optional[str] = None) -> None:
         _keyword_only(_kw, "CoverageCollector.record_outcome(): failed_at and environment")
         raise NotImplementedError()
+
+
+# What the package re-exports of coverage.report (openodd's merge): its
+# constructor is a compile error, so a scenario cannot build one; nothing of it
+# is declared but its constructor, as Python's.
+class CoverageReport:
+    def __init__(self, core):
+        compile_error("CoverageReport is not modelled: the static check cannot "
+                      "build one (typecheck/codon/autoware_carla_scenario/coverage.codon)")
+
+
+def merge_coverage(documents) -> CoverageReport:
+    """openodd's merge of coverage documents (Sequence[dict[str, Any]])."""
+    raise NotImplementedError()

@@ -38,11 +38,13 @@ from autoware_carla_scenario.autoware_bridge import base as bridge_base
 from autoware_carla_scenario.autoware_bridge import grpc_server as bridge_grpc_server
 from autoware_carla_scenario.autoware_stack import devcontainer as stack_devcontainer
 from autoware_carla_scenario.autoware_stack import launcher as stack_launcher
+from autoware_carla_scenario.conditions.comparison import ComparisonRule
 from autoware_carla_scenario.coordinate import map_manager as coordinate_map_manager
 from autoware_carla_scenario.coordinate import projection as coordinate_projection
 from autoware_carla_scenario.coordinate import transform as coordinate_transform
 from autoware_carla_scenario.coverage import collector as coverage_collector
 from autoware_carla_scenario.coverage import items as coverage_items
+from autoware_carla_scenario.coverage import report as coverage_report
 from autoware_carla_scenario.driver import egodriver_client
 from autoware_carla_scenario.entity import carla_driver_entity
 from autoware_carla_scenario.maps import cache as maps_cache
@@ -51,6 +53,7 @@ from autoware_carla_scenario.odd import probes as odd_probes
 from autoware_carla_scenario.odd import registry as odd_registry
 from autoware_carla_scenario.odd import route as odd_route
 from autoware_carla_scenario.route import frame as route_frame
+from autoware_carla_scenario.sweeper import constraints as sweeper_constraints
 from autoware_carla_scenario.traffic import context as traffic_context
 from autoware_carla_scenario.traffic import registry as traffic_registry
 from autoware_carla_scenario.trajectory import model as trajectory_model
@@ -205,6 +208,11 @@ _BOUNDARY: dict[str, tuple[str, Any]] = {
     "CoverItem": ("coverage", coverage_items.CoverItem),
     "CrossItem": ("coverage", coverage_items.CrossItem),
     "CoverageCollector": ("coverage", coverage_collector.CoverageCollector),
+    # What the checked coverage package re-exports.
+    "COVERAGE_SCHEMA": ("coverage", coverage_collector.COVERAGE_SCHEMA),
+    "CoverGroup": ("coverage", coverage_items.CoverGroup),
+    "CoverageReport": ("coverage", coverage_report.CoverageReport),
+    "merge_coverage": ("coverage", coverage_report.merge_coverage),
     "MapManager": ("coordinate", coordinate_map_manager.MapManager),
     # What map_manager and sweeper.map_loader import of coordinate.projection,
     # which the library check now compiles from its source too.
@@ -377,6 +385,7 @@ _MODULE_MODELS: dict[str, tuple[Any, tuple[str, ...]]] = {
 _UNBUILDABLE: dict[str, str] = {
     "AutowareLauncher": "autoware_stack/launcher",
     "CarlaDriverEntity": "entity",
+    "CoverageReport": "coverage",
     "EgoDriverGrpcClient": "driver/egodriver_client",
     "GrpcAutowareBridgeServer": "autoware_bridge/grpc_server",
     # Stand-ins of checked classes the library check replaces (_ros2.codon):
@@ -424,6 +433,49 @@ def test_the_devcontainer_model_holds_python_s_values() -> None:
     params = stack_devcontainer.DevContainer.__dataclass_params__  # type: ignore[attr-defined]
     assert params.frozen
     assert issubclass(stack_devcontainer.DevContainerError, ValueError)
+
+
+def test_the_coverage_model_holds_python_s_values() -> None:
+    # The constant is compared by its value, and the enum stand-in (a @tuple
+    # of ClassVars) by the value of each member.
+    definitions = _definitions("coverage")
+    constant = definitions["COVERAGE_SCHEMA"][0]
+    assert isinstance(constant, ast.AnnAssign) and constant.value is not None
+    assert ast.literal_eval(constant.value) == coverage_collector.COVERAGE_SCHEMA
+    node = definitions["CoverGroup"][0]
+    assert isinstance(node, ast.ClassDef)
+    members = {
+        stmt.target.id: ast.literal_eval(stmt.value.args[0])
+        for stmt in node.body
+        if isinstance(stmt, ast.AnnAssign)
+        and isinstance(stmt.target, ast.Name)
+        and isinstance(stmt.value, ast.Call)
+    }
+    assert members == {m.name: m.value for m in coverage_items.CoverGroup}
+
+
+def test_the_comparison_rules_spelled_out_for_codon_are_the_enum_s_members() -> None:
+    # sweeper.constraints lists the ComparisonRule members under
+    # `if TYPE_CHECKING:` (Codon iterates over no enum class), and the run
+    # never reads those lists: a member missing there passes every run-time
+    # test, so compare each list with the enum.
+    source = Path(sweeper_constraints.__file__).read_text()
+    spelled_out: list[list[str]] = []
+    for node in ast.walk(ast.parse(source)):
+        if not isinstance(node, ast.List) or not node.elts:
+            continue
+        names = [
+            element.attr
+            for element in node.elts
+            if isinstance(element, ast.Attribute)
+            and isinstance(element.value, ast.Name)
+            and element.value.id == "ComparisonRule"
+        ]
+        if len(names) == len(node.elts):
+            spelled_out.append(names)
+    assert len(spelled_out) == 2, spelled_out  # _comparison_rule, __post_init__
+    for names in spelled_out:
+        assert names == [rule.name for rule in ComparisonRule]
 
 
 def test_the_launcher_model_is_the_protocol_s_methods() -> None:

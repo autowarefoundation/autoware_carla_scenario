@@ -260,8 +260,8 @@ To check one more module:
 
 ### What is checked of the framework
 
-Every module now has an entry other than `"not yet checked (#45)"`. 159 of
-the package's 236 modules (67%; about 37,000 of 67,500 lines) are `CHECKED`:
+Every module now has an entry other than `"not yet checked (#45)"`. 161 of
+the package's 237 modules (68%; about 37,000 of 68,000 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the conversions between
 Lanelet2, OpenDRIVE and CARLA world poses (`coordinate.transform`), the stop
 lines read off a Lanelet2 map (`utils.stop_line`, `coordinate.stop_line`)
@@ -305,24 +305,23 @@ the `scenario_bridge` node's command and Python root beside it
 container with Docker (`autoware_stack.docker`, over a model of
 `autoware_stack.devcontainer`, which reads JSON and YAML), the Autoware
 bridge interface and its fake, the trajectory model, the measures, the ODD
-unit names (`odd.unit_names`), the planning of a scenario's route on the
+unit names (`odd.unit_names`), the placement of a road user so a scenario
+measure reads a given value (`placement`), the planning of a scenario's route on the
 Lanelet2 map that the ODD's route check starts from (`odd.route_plan`), the CARLA-only helpers, the traffic-light
 lookups included, and the scenario configs (`scenario_config`, `examples.configs`), the camera
 and LiDAR sensors (`sensor`), the six example scenarios, and the external
 driver's configs and client interface, trajectory follower and observations
 (`driver.base`, `driver.control`, `driver.observation`, over
 `driver.geometry`), and the `autoware_bridge`, `autoware_stack`, `entity`,
-`driver` and `maps` packages themselves, whose `__init__` re-exports what is not checked
+`driver`, `maps` and `coverage` packages themselves, whose `__init__` re-exports what is not checked
 through models of it (see *A class a checked package only re-exports*
-below). 78
+below). 77
 functions and methods of those modules are `UNCALLED`: most of them a
 condition's `get_details()` or a backend's `describe()`, what takes a traffic
 backend's options node (`Mapping[str, Any]`), what reads a route search, a
 match, a constraint or a binding from YAML values of any type
 (`Range.parse()`, `parse_route_search()`, `RouteMatch.from_config()`,
-`parse_constraint()`, `parse_binding()`), the length constraint's check of
-its rule, which iterates over the `ComparisonRule` enum
-(`LaneletLengthConstraint.__post_init__()`), the `[tool.uv.sources]` entry of a
+`parse_constraint()`, `parse_binding()`), the `[tool.uv.sources]` entry of a
 framework pin, a dict of str and bool values (`Pin.uv_source()`), the six members of
 `BaseScenario` built on the ego's class (`ego_type`, a `type[EgoVehicle]`:
 the constructor, `create_ego()`, `ego_requires_goal`, `require_goal()` and
@@ -343,9 +342,9 @@ statuses, `_collect_condition_statuses()`), the queue's pytest fixture
 (`ScenarioQueue.as_fixture()`), `maps.config.resolve_map_paths()`,
 which reads the `map` config node of any shape (`Any`), the driver and
 ROS 2 configs' `from_mapping()` (a Hydra node, `Mapping[str, Any]`) and
-`encode_frame_jpeg()` (cv2). The 77 `EXCLUDED` modules fall in
+`encode_frame_jpeg()` (cv2). The 76 `EXCLUDED` modules fall in
 three groups. Many fit more than one (about 55 import what Codon cannot
-compile, 29 build on an excluded module and 20 hold values Codon has no type
+compile, 28 build on an excluded module and 20 hold values Codon has no type
 for), so each is counted once, in the first group that fits it:
 
 - **55 import what Codon cannot compile**: pyxodr,
@@ -363,16 +362,16 @@ for), so each is counted once, in the first group that fits it:
   openodd, and the rest of what reads Lanelet2. A reason names `pathlib`
   only where the module uses more of it than the shim declares, and the
   other shimmed modules likewise.
-- **19 build on an excluded module**, and import nothing Codon lacks
+- **18 build on an excluded module**, and import nothing Codon lacks
   themselves: they import a module that is neither checked nor modelled, or
   names that its package's model does not declare. Among them are the
   packages that re-export one (`authoring`, `odd`, `sweeper`,
-  `coverage`, `examples`, `scaffold`), the
+  `examples`, `scaffold`), the
   authoring compiler, builders and validator, `odd.probes` and `odd.route`,
   the coverage half of the route check (names of `odd.model` and `coverage.items` that the odd and coverage
   models do not declare, such as `UNDECIDED`; both also hold attribute
   values of any type, `dict[str, Any]`) and
-  `traffic.registry` (the `registry`, in its plugin loader); 5 of the 19
+  `traffic.registry` (the `registry`, in its plugin loader); 5 of the 18
   also hold values Codon has no type for.
 - **3 hold values Codon has no type for**, and nothing else keeps them out:
   `Any` (`trajectory.authoring`, `authoring.registry`'s
@@ -1351,9 +1350,13 @@ What Codon 0.19 needs that Python does not, beyond
   (`driver/egodriver_client.codon`, grpc) and `CarlaDriverEntity`
   (`entity.codon`, grpc and carla_driver_interface's protocol), which the
   checked `autoware_bridge`, `driver` and `entity` packages re-export and no
-  checked module builds or uses. Each constructor takes Python's parameters
-  and is a `compile_error`: its config (`AutowareBridgeConfig`,
-  `DriverClientConfig`) is a checked class the model does not have, so a
+  checked module builds or uses, and `CoverageReport` (`coverage.codon`,
+  openodd's), which the checked `coverage` package re-exports with
+  `merge_coverage(documents)`, the `COVERAGE_SCHEMA` string and the
+  `CoverGroup` enum (`ODD`, `SITUATION`, `SCENARIO`). Each constructor takes
+  Python's parameters and is a `compile_error`: its config
+  (`AutowareBridgeConfig`, `DriverClientConfig`) is a checked class the model
+  does not have, or the class is only ever built by openodd's merge, so a
   scenario that builds one fails its check rather than passing it with
   arguments the run would refuse. Such a class derives from nothing in the
   model: a subclass of the model's `EgoVehicle` that nothing builds breaks
@@ -1427,7 +1430,11 @@ What Codon 0.19 needs that Python does not, beyond
   (`ComparisonRule[name]`, `for r in ComparisonRule`): the `enum` shim models
   neither. `sweeper.constraints._comparison_rule()` looks the member up in a
   list of the members spelled out under `if TYPE_CHECKING:`, and by name in
-  the `else` branch; the validator that iterates is `UNCALLED`.
+  the `else` branch; `LaneletLengthConstraint.__post_init__()` validates its
+  rule against the names of the same members, spelled out again under
+  `if TYPE_CHECKING:`, and of `list(ComparisonRule)` in the `else` branch.
+  The run never reads the spelled-out lists, so `test_typecheck_model.py`
+  compares each with the enum's members.
 - **An exception class raised with no arguments** (`raise _Exhausted()` in
   `route.search`): Codon 0.19 raises no exception class without its own
   `__init__`, and its `Exception` takes a message where Python's takes none.
