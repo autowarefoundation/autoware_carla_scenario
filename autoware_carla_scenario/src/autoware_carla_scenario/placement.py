@@ -149,7 +149,7 @@ def solve_along(
 
 
 #: The role name of the vehicle :func:`vehicle_bumpers` spawns to measure.
-_PROBE_ROLE = "bumper_probe"
+_PROBE_ROLE = "bumper_probe"  # measures.PROBE_ROLE, which the measure skips
 #: Where :func:`vehicle_bumpers` spawns it: this high above the map's origin,
 #: clear of everything on the road, and higher by as much again if that fails.
 _PROBE_HEIGHT_M = 500.0
@@ -163,8 +163,9 @@ def vehicle_bumpers(world: carla.World, vehicle_type: str) -> Bumpers:
 
     CARLA gives a blueprint no size: a vehicle's bounding box is known only
     once it is spawned.  A vehicle of the blueprint already in the world --
-    the ego, spawned before the scenario places the others -- is read as it
-    is.  Otherwise one is spawned high above the map (tried at
+    an ego kept from an earlier scenario, a vehicle another one spawned -- is
+    read as it is: its bounding box taken as is, scaled or modded as that
+    actor may be, not the blueprint's stock one.  Otherwise one is spawned high above the map (tried at
     :data:`_PROBE_HEIGHT_M`, then twice and three times as high), read and
     destroyed straight away, before the world is ticked again; the
     vehicle-ahead measures do not count a vehicle that far above the ego.

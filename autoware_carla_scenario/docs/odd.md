@@ -305,8 +305,11 @@ does not count a vehicle alongside in the next lane.
 
 A reading costs about 3 ms with ten vehicles around the ego on CARLA
 Town04_Opt (it was some 170 ms).
-The ego's lane is found once and kept while the ego stays on its lanelet
-(the whole map is searched only when it leaves it); a vehicle is placed by
+The ego's lane is found once and kept while its lanelet is still the ego's
+-- the ego on it, running its way, and no lanelet overlapping it where the
+lane branches or merges running closer to the ego's heading -- and the whole
+map is searched only when it is not (or, off the lanelets, once the ego has
+moved 2 m or turned 5°); a vehicle is placed by
 the lane's own lanelets, not by searching the map; and a projection reads
 only the stretch of a centreline near the point. The Lanelet2 routing graph
 the lane is read from -- some 25 s to build on Town04_Opt -- is built in the
@@ -338,8 +341,11 @@ openodd's sampler adds up an item's `#<n>` definitions. A coverage-driven
 sweep (`strategy: coverage`) reads only the current version: `OddSampler`
 hands openodd's sampler the `@v2` items under the attribute's own item name
 and leaves the older ones out (`current_measure_coverage`), so a
-`coverage_from` that also holds version 1's files is safe. (The 12.0.0
-release wrote version 2 as `#2`; those files read as version 1.) Each
+`coverage_from` that also holds version 1's files is safe. The 12.0.0
+release wrote version 2 as `#2`; those files read as version 1, and their
+hits are left out of a coverage-driven sweep on purpose: since 12.0.0 a
+vehicle alongside in the next lane no longer counts as ahead, which changed
+what version 2 reads, not only its name. Each
 coverage file also lists the
 measures its ODD reads under `measures`, with their version, unit and text.
 A scenario that replaces a built-in measure (`register_measure`) promises the

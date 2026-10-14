@@ -43,11 +43,12 @@ ahead, measured along the ego's lane on the Lanelet2 map:
   beside that overlaps it is alongside, not ahead, and does not count (it
   would hide the vehicle that is ahead).
 
-The lane is found once and kept while the ego stays on its lanelet
-(:func:`prepare_vehicle_ahead` builds the routing graph it needs before a
-run), and a vehicle is placed on it by the lane's own lanelets, not by
-searching the map, so a reading costs a few milliseconds with ten
-vehicles around.
+The lane is found once and kept while its lanelet is still the ego's (no
+lanelet overlapping it where the lane branches or merges runs closer to the
+ego's heading), and a vehicle is placed on it by the lane's own lanelets,
+not by searching the map, so a reading costs a few milliseconds with ten
+vehicles around.  :func:`prepare_vehicle_ahead` builds the routing graph
+the lane is read from before a run.
 
 So the gap does not depend on how the lanelets beside each other are cut or
 how long they are, and on a curve it is the distance along the road.  Where
@@ -101,6 +102,7 @@ __all__ = [
     "ON_LANELET_M",
     "PEDESTRIAN_LATERAL_M",
     "PEDESTRIAN_MOVING_MS",
+    "PROBE_ROLE",
     "VEHICLE_AHEAD_GAP_M",
     "VEHICLE_AHEAD_RELATIVE_SPEED_KPH",
     "VEHICLE_AHEAD_VERSION",
@@ -160,8 +162,16 @@ _KMH_PER_MS = 3.6
 _CANDIDATES = 16
 #: Segments of a polyline per block whose bounding box is checked first.
 _BLOCK = 16
-#: How far above or below the ego a vehicle is on no road of its, in metres.
+#: How far above or below the ego a vehicle is on no road of the ego's, in
+#: metres.
 _OFF_THE_ROAD_M = 100.0
+#: The role name of the vehicle placement.vehicle_bumpers() spawns, high
+#: above the map, to measure a blueprint; never a vehicle ahead.
+PROBE_ROLE = "bumper_probe"
+#: How far the ego, found on no lanelet, moves (m) or turns (degrees) before
+#: the map is searched for its lanelet again.
+_NOWHERE_M = 2.0
+_NOWHERE_DEG = 5.0
 #: Metres of lane looked along beyond a lanelet, either way, to project a
 #: point near its end onto: more than a vehicle's length.
 _REACH_MARGIN_M = 15.0
@@ -686,6 +696,15 @@ def _angle_between(a: float, b: float) -> float:
     return abs(math.atan2(math.sin(a - b), math.cos(a - b)))
 
 
+def _runs_closer(angle: float, d2: float, best_angle: float, best_d2: float) -> bool:
+    """Whether a lanelet at *angle* to the ego's heading, its centreline *d2*
+    (squared) away, is the ego's rather than one at *best_angle*,
+    *best_d2*: the closer heading, and of equal ones the nearer line."""
+    return angle < best_angle - 1e-9 or (
+        abs(angle - best_angle) <= 1e-9 and d2 < best_d2
+    )
+
+
 def _ego_lanelet(ego: _Vehicle) -> Optional[int]:
     """The lanelet the ego is on: of those under it, the one whose centreline
     runs closest to its heading (within :data:`EGO_LANE_HEADING_DEG`)."""
@@ -695,19 +714,9 @@ def _ego_lanelet(ego: _Vehicle) -> Optional[int]:
     for lanelet_id in _lanelets_at(ego.x, ego.y):
         _s, d2, yaw = _line(lanelet_id).project(ego.x, ego.y)
         angle = _angle_between(yaw, ego.yaw)
-        if angle < best_angle - 1e-9 or (
-            abs(angle - best_angle) <= 1e-9 and d2 < best_d2
-        ):
+        if _runs_closer(angle, d2, best_angle, best_d2):
             best, best_angle, best_d2 = lanelet_id, angle, d2
     return best
-
-
-def _still_on(lanelet_id: int, ego: _Vehicle) -> bool:
-    """Whether the ego is still on *lanelet_id*, running its way."""
-    if not _area(lanelet_id).holds(ego.x, ego.y):
-        return False
-    _s, _d2, yaw = _line(lanelet_id).project(ego.x, ego.y)
-    return _angle_between(yaw, ego.yaw) < math.radians(EGO_LANE_HEADING_DEG)
 
 
 def _beside(lanelet_id: int) -> list[int]:
@@ -745,6 +754,30 @@ class _LaneFrame:
     children: dict[int, list[int]]
     #: Lanelet beside the lane -> the lanelet of the lane it is beside.
     beside: dict[int, int]
+    #: The lanelets the ego's could be told apart from only by heading: the
+    #: other branches of each lanelet before it, and the other lanelets
+    #: merging into each one after it (they overlap where they meet).
+    rivals: list[int]
+
+    def still_the_egos(self, ego: _Vehicle) -> bool:
+        """Whether the ego's lanelet is still the one it is on: the ego is
+        still on it, running its way, and no rival under the ego runs closer
+        to its heading -- the rule :func:`_ego_lanelet` chooses by, asked of
+        the lanelets that overlap the ego's where a lane branches or merges,
+        so a moment's heading drift there does not hold the wrong branch."""
+        if not _area(self.ego_lanelet).holds(ego.x, ego.y):
+            return False
+        _s, d2, yaw = _line(self.ego_lanelet).project(ego.x, ego.y)
+        angle = _angle_between(yaw, ego.yaw)
+        if angle >= math.radians(EGO_LANE_HEADING_DEG):
+            return False
+        for rival in self.rivals:
+            if not _area(rival).holds(ego.x, ego.y):
+                continue
+            _rs, rival_d2, rival_yaw = _line(rival).project(ego.x, ego.y)
+            if _runs_closer(_angle_between(rival_yaw, ego.yaw), rival_d2, angle, d2):
+                return False
+        return True
 
     def __init__(self, ego_lanelet: int, reach: float) -> None:
         """The lane from *ego_lanelet* on, until *reach* metres past its start.
@@ -799,6 +832,18 @@ class _LaneFrame:
             for other in _beside(lanelet_id):
                 if other not in self.start and other not in self.beside:
                     self.beside[other] = lanelet_id
+        self.rivals = []
+        ego = layer[ego_lanelet]
+        for previous_lanelet in graph.previous(ego):
+            for sibling in graph.following(previous_lanelet):
+                sibling_id = int(sibling.id)
+                if sibling_id != ego_lanelet and sibling_id not in self.rivals:
+                    self.rivals.append(sibling_id)
+        for following_lanelet in graph.following(ego):
+            for sibling in graph.previous(following_lanelet):
+                sibling_id = int(sibling.id)
+                if sibling_id != ego_lanelet and sibling_id not in self.rivals:
+                    self.rivals.append(sibling_id)
 
     def reference(self, x: float, y: float) -> tuple[Optional[int], bool]:
         """The lanelet of the lane a vehicle at ``(x, y)`` is measured along,
@@ -818,11 +863,13 @@ class _LaneFrame:
         found: Optional[int] = on_lane
         if found is not None:
             return found, False
+        beside_d2 = math.inf
         for other in self.beside:
             if _area(other).holds(x, y):
-                found = self.beside[other]
-                return found, True
-        return found, False
+                _s, d2, _yaw = _line(other).project(x, y)
+                if d2 < beside_d2:
+                    found, beside_d2 = self.beside[other], d2
+        return found, found is not None
 
     def _around(self, lanelet_id: int) -> list[int]:
         """*lanelet_id* and the lanelets of the lane within
@@ -868,6 +915,9 @@ class _FrameMemo:
     frame: Optional[_LaneFrame] = None
     front: float = 0.0
     generation: int = -1
+    #: Where the ego was found on no lanelet running its way (x, y, yaw), so
+    #: the map is not searched again until it has moved or turned.
+    nowhere: Optional[tuple[float, float, float]] = None
 
 
 _FRAME_MEMO = _FrameMemo()
@@ -880,9 +930,11 @@ def _lane_frame(ego: _Vehicle) -> Optional[_LaneFrame]:
     that runs its way.
 
     The frame reaches :data:`AHEAD_RANGE_M` past the end of the ego's lanelet,
-    so it holds wherever on it the ego is: it is kept while the ego stays on
-    that lanelet, running its way, with the same front bumper, and the whole
-    map is searched for the ego's lanelet only when it leaves it."""
+    so it holds wherever on it the ego is: it is kept while that lanelet is
+    still the ego's (:meth:`_LaneFrame.still_the_egos`) and the front bumper
+    the same, and the whole map is searched for the ego's lanelet only when
+    it is not.  Found on no lanelet, the ego is not searched for again until
+    it has moved :data:`_NOWHERE_M` or turned :data:`_NOWHERE_DEG`."""
     mm = MapManager.get_instance()
     try:
         lanelet_map = mm.lanelet_map
@@ -894,9 +946,18 @@ def _lane_frame(ego: _Vehicle) -> Optional[_LaneFrame]:
         kept is not None
         and _FRAME_MEMO.generation == _LINES.generation
         and _FRAME_MEMO.front == ego.front
-        and _still_on(kept.ego_lanelet, ego)
+        and kept.still_the_egos(ego)
     ):
         return kept
+    nowhere = _FRAME_MEMO.nowhere
+    if (
+        kept is None
+        and nowhere is not None
+        and _FRAME_MEMO.generation == _LINES.generation
+        and math.hypot(ego.x - nowhere[0], ego.y - nowhere[1]) < _NOWHERE_M
+        and _angle_between(ego.yaw, nowhere[2]) < math.radians(_NOWHERE_DEG)
+    ):
+        return None
     frame: Optional[_LaneFrame] = None
     ego_lanelet = _ego_lanelet(ego)
     if ego_lanelet is not None:
@@ -906,6 +967,7 @@ def _lane_frame(ego: _Vehicle) -> Optional[_LaneFrame]:
         _FRAMES_BUILT["count"] += 1
     _FRAME_MEMO.frame, _FRAME_MEMO.front = frame, ego.front
     _FRAME_MEMO.generation = _LINES.generation
+    _FRAME_MEMO.nowhere = (ego.x, ego.y, ego.yaw) if frame is None else None
     return frame
 
 
@@ -1049,6 +1111,9 @@ def _vehicle_ahead(world: "carla.World") -> Optional[_Lead]:
                 if math.hypot(location.x - ego.x, location.y - ego.y) > reach:
                     continue
                 if abs(float(location.z) - ego_z) > _OFF_THE_ROAD_M:
+                    continue
+                attributes = actor.attributes
+                if "role_name" in attributes and attributes["role_name"] == PROBE_ROLE:
                     continue
                 others.append(_moving(actor))
             lead, definition = _nearest_ahead(ego, others)

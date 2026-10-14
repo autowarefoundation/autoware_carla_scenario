@@ -21,6 +21,7 @@ ON_LANELET_M: float = 0.2
 EGO_LANE_HEADING_DEG: float = 60.0
 PEDESTRIAN_LATERAL_M: float = 10.0
 PEDESTRIAN_MOVING_MS: float = 0.5
+PROBE_ROLE: str = "bumper_probe"
 
 
 class Measure:

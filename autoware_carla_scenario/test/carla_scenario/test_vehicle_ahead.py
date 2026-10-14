@@ -17,6 +17,7 @@ from autoware_carla_scenario.coordinate.transform import to_carla_world
 from autoware_carla_scenario.measures import (
     ALONG_LANE,
     GEOMETRIC,
+    PROBE_ROLE,
     VEHICLE_AHEAD_GAP_M,
     VEHICLE_AHEAD_RELATIVE_SPEED_KPH,
     VEHICLE_AHEAD_VERSION,
@@ -569,6 +570,31 @@ def test_every_branch_ahead_is_the_lane(fork: LaneMap) -> None:
     assert _gap(ego, on_branch, straight_on) == pytest.approx(55.6, abs=0.05)
 
 
+def test_a_moment_of_heading_drift_at_a_fork_does_not_lock_onto_the_branch(
+    fork: LaneMap,
+) -> None:
+    """Where the branches overlap, one tick whose heading favours the other
+    branch picks it; the next tick, heading straight on again, is back on
+    the straight branch -- not held on the other until the ego leaves it."""
+    lead = _vehicle(2, _on(fork, "straight", 0, 45.0))
+    gaps = []
+    for s in range(40, 80):
+        pose = (
+            _on(fork, "before", 0, float(s))
+            if s < 50
+            else _on(fork, "straight", 0, float(s - 50))
+        )
+        if s == 51:  # the first tick past the fork, a degree towards the branch
+            pose = SimpleNamespace(x=pose.x, y=pose.y, yaw=pose.yaw - 1.0)
+        gaps.append(_gap(_ego(pose), lead))
+
+    fresh = [95.0 - 1.8 - (s + 2.6) for s in range(40, 80)]
+    assert gaps[:11] == pytest.approx(fresh[:11], abs=0.05)
+    # That tick read along the branch: the lead is not on it.
+    assert gaps[11] is None
+    assert gaps[12:] == pytest.approx(fresh[12:], abs=0.05)
+
+
 @pytest.fixture
 def merge() -> Iterator[LaneMap]:
     """Two lanelets that merge into one: the ego's, straight, and one coming
@@ -651,6 +677,34 @@ def test_the_lane_is_kept_while_the_ego_stays_on_its_lanelet(
     )
     assert _gap(other, far) == pytest.approx(190.0 - 1.8 - 153.0, abs=1e-6)
     assert measures._FRAMES_BUILT["count"] == built + 3
+
+
+def test_off_the_lanelets_the_map_is_searched_again_only_once_the_ego_moves(
+    straight_road: LaneMap, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from autoware_carla_scenario import measures
+
+    searches: list[int] = []
+    find_nearest = measures.lanelet2.geometry.findNearest
+
+    def counted(*args: Any) -> Any:
+        searches.append(1)
+        return find_nearest(*args)
+
+    monkeypatch.setattr(measures.lanelet2.geometry, "findNearest", counted)
+    lead = _vehicle(2, _on(straight_road, "ego", 0, 80.0))
+    for s in (50.0, 50.5, 51.0, 51.5):  # 30 m off the road, creeping on
+        _gap(_ego(_on(straight_road, "ego", 0, s, t=-30.0)), lead)
+    assert len(searches) == 1
+
+    _gap(_ego(_on(straight_road, "ego", 0, 53.0, t=-30.0)), lead)  # 3 m on
+    assert len(searches) == 2
+
+    # Back on the road: found, and read along the lane.
+    assert _gap(_ego(_on(straight_road, "ego", 0, 53.0)), lead) == pytest.approx(
+        80.0 - 1.8 - 55.6, abs=1e-6
+    )
+    assert len(searches) == 3
 
 
 def test_many_overlapping_lanelets_are_all_asked(
@@ -757,5 +811,8 @@ def test_a_vehicle_far_above_the_ego_is_not_on_its_road(
     ego = _ego(_on(straight_road, "ego", 0, 50.0))
     probe = _vehicle(2, _on(straight_road, "ego", 0, 60.0))
     probe._location.z = 500.0
+    # Nor one by its role name, wherever it is.
+    by_role = _vehicle(3, _on(straight_road, "ego", 0, 60.0), role=PROBE_ROLE)
 
     assert _gap(ego, probe) is None
+    assert _gap(ego, by_role) is None
