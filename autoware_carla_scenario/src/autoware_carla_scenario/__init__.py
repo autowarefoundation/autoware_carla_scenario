@@ -4,7 +4,6 @@ Public API re-exported for convenience::
 
     from autoware_carla_scenario import (
         AutowareEgoEntity,
-        AutowareEntity,
         CarlaDriverEntity,
         DriverClientConfig,
         EGO_ROLE_NAME,
@@ -192,9 +191,9 @@ if TYPE_CHECKING:
     )
     from .entity import (
         AutowareEgoEntity as AutowareEgoEntity,
-        AutowareEntity as AutowareEntity,
         CarlaDriverEntity as CarlaDriverEntity,
         EgoVehicle as EgoVehicle,
+        ExternallyDrivenEgo as ExternallyDrivenEgo,
         PedestrianEntity as PedestrianEntity,
         PedestrianEntityConfig as PedestrianEntityConfig,
         SpawnLocation as SpawnLocation,
@@ -362,7 +361,6 @@ __all__ = [
     "TimeHeadwayCondition",
     "TimeToCollisionCondition",
     "AutowareEgoEntity",
-    "AutowareEntity",
     # autoware bridge
     "AutowareBridge",
     "AutowareBridgeConfig",
@@ -382,6 +380,7 @@ __all__ = [
     "EgoDriverGrpcClient",
     "EgoConfig",
     "EgoVehicle",
+    "ExternallyDrivenEgo",
     "PedestrianEntity",
     "PedestrianEntityConfig",
     "SpawnLocation",
@@ -584,9 +583,9 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "solve_along": (".placement", "solve_along"),
     # entity
     "AutowareEgoEntity": (".entity", "AutowareEgoEntity"),
-    "AutowareEntity": (".entity", "AutowareEntity"),
     "CarlaDriverEntity": (".entity", "CarlaDriverEntity"),
     "EgoVehicle": (".entity", "EgoVehicle"),
+    "ExternallyDrivenEgo": (".entity", "ExternallyDrivenEgo"),
     "PedestrianEntity": (".entity", "PedestrianEntity"),
     "PedestrianEntityConfig": (".entity", "PedestrianEntityConfig"),
     "SpawnLocation": (".entity", "SpawnLocation"),
