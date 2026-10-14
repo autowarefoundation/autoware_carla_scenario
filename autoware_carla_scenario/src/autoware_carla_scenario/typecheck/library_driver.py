@@ -586,8 +586,11 @@ def _has_default(value: ast.expr | None) -> bool:
     """Whether a dataclass field assigned *value* has a default.
 
     OmegaConf's mandatory-value marker (``spawn_lanelet_id: int = MISSING``,
-    the string ``"???"``) is none: Hydra refuses to build the config without
-    a value, so the field is never left at it, and the call passes it.
+    the string ``"???"``) is none: it is a placeholder for a value the config
+    must supply, not one of the field's type, so the call passes the field
+    and the marker is not compiled.  Python does not enforce it: a dataclass
+    built without the field (``NpcVehicleConfig()``, or from
+    ``OmegaConf.to_container()``) holds the string, unchecked.
     """
     if value is None or (_dotted(value) or "").rsplit(".", 1)[-1] in _MANDATORY:
         return False

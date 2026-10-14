@@ -509,10 +509,15 @@ by keyword. A field with no default of its own (`field()`, or
 `field(init=False)`, which the constructor leaves out anyway) is not one
 with a default, and neither is a field "defaulted" to OmegaConf's
 mandatory-value marker (`spawn_lanelet_id: int = MISSING`, the string
-`"???"`): Hydra refuses to build the config without a value, so the field is
-never left at it, and the call passes it. A field the call leaves out because
-its annotation names `Any` (*A dataclass field may hold a union or a
-free-form mapping*, below) is left out of this call too. An error is
+`"???"`): the marker is no value of the field but a placeholder for one the
+config must supply, so the call passes the field, and the marker is not
+compiled against the field's type. Nothing enforces that in Python: reading
+the field from Hydra's config raises `MissingMandatoryValue`, but
+`OmegaConf.to_container()` returns `"???"` for it, and a dataclass built
+without it (`NpcVehicleConfig()`) holds the string, which the check does not
+see. A field the call leaves out because its annotation names `Any` (*A
+dataclass field may hold a union or a free-form mapping*, below) is left out
+of this call too. An error is
 reported at the call, which names the defaults it leaves out
 (`<library check: CommandAutowareLauncher.__init__(argv: Sequence[str]),
 with the default of `env`, `log_dir`, `stop_timeout_s`>: error: 'str' does
@@ -520,9 +525,10 @@ not match expected type 'float'`).
 
 That is 96 calls more, beside the 1694 others (1790 in all, 265 of them
 leaving defaults out), at the time of writing. Measured before any fix, 5
-of the 96 failed, at the first error of each, and the transform's old and
-new output differ in 10 defaults of those 5 classes, one cause each; all
-are fixed in the check, with no change to a module and nothing `UNCALLED`:
+of the 96 failed, at the first error of each. Those 5 classes have 10
+defaults Codon refused, of four causes; all are fixed in the check, with no
+change to a module and nothing `UNCALLED` (9 by the transform, whose output
+changes at those 9 defaults alone, and 1 by the call):
 
 - 3 had a tuple display default on a `Sequence[X]` or `tuple[X, ...]`
   field (`DockerAutowareConfig.colcon_args`, `DriverClientConfig.cameras`
