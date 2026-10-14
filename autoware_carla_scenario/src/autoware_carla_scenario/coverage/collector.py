@@ -14,9 +14,12 @@ its scenario measures mean:
 
 * the cover item of an ODD attribute mapped onto a measure whose definition is
   past its first version is named for that version
-  (``odd.dynamic.vehicle_ahead_gap#2``), so openodd's merge, which keys an
+  (``odd.dynamic.vehicle_ahead_gap@v2``), so openodd's merge, which keys an
   item by its name, buckets, event and criteria -- not its text -- never adds
-  hits of one definition to another's (docs/odd.md, "Measure versions");
+  hits of one definition to another's (docs/odd.md, "Measure versions").
+  ``@v<n>``, not ``#<n>``: ``#<n>`` is openodd's own suffix for an item it
+  meets defined differently, and its sampler pools those;
+  :func:`current_measure_coverage` is the coverage a sampler reads instead;
 * ``measures``: each measure the ODD maps, with its version, unit and text,
   and for the vehicle-ahead measures how many frames each definition read
   them (:func:`~autoware_carla_scenario.measures.vehicle_ahead_definitions`).
@@ -26,6 +29,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from importlib import metadata
+from types import SimpleNamespace
 from typing import Any, Optional
 
 from openodd import Backend
@@ -39,7 +43,9 @@ __all__ = [
     "FRAMEWORK_DISTRIBUTION",
     "ODD_ARCHIVE_SUFFIX",
     "CoverageCollector",
+    "current_measure_coverage",
     "generator",
+    "prepare_measures",
     "versioned_item_name",
 ]
 
@@ -61,17 +67,95 @@ def generator() -> dict[str, Optional[str]]:
     return _generator(_framework())
 
 
+#: What a cover item's name is suffixed with for its measure's version.
+VERSION_MARK = "@v"
+
+
 def versioned_item_name(name: str, version: int) -> str:
     """The name a cover item of a measure of *version* is written under:
-    *name* itself for the first version, ``name#<version>`` after it.
+    *name* itself for the first version, ``name@v<version>`` after it.
 
-    ``#<n>`` is the suffix openodd's merge gives the n-th definition of an
-    item it meets, and the one its sampler reads past to the ODD's attribute,
-    so coverage of the current definition still steers a coverage-driven
-    sweep."""
+    Not ``name#<version>``: ``#<n>`` is the suffix openodd's merge gives the
+    n-th differing definition of an item, and a v1 item whose buckets changed
+    would take ``#2`` too; openodd's sampler, besides, pools an item's ``#<n>``
+    definitions.  :func:`current_measure_coverage` hands a sampler only the
+    current version's."""
     if version <= 1:
         return name
-    return f"{name}#{version}"
+    return f"{name}{VERSION_MARK}{version}"
+
+
+def _split_versioned(name: str) -> tuple[str, int, str]:
+    """``(base, version, rest)`` of a merged item's name: ``name@v2#3`` is
+    ``("name", 2, "#3")``, ``name#3`` is ``("name", 1, "#3")``."""
+    rest = ""
+    hash_at = name.find("#")
+    if hash_at >= 0:
+        name, rest = name[:hash_at], name[hash_at:]
+    mark_at = name.rfind(VERSION_MARK)
+    if mark_at >= 0 and name[mark_at + len(VERSION_MARK) :].isdigit():
+        return name[:mark_at], int(name[mark_at + len(VERSION_MARK) :]), rest
+    return name, 1, rest
+
+
+class _Renamed:
+    """A merged entry read under another name."""
+
+    def __init__(self, entry: Any, name: str) -> None:
+        self.name = name
+        self.buckets = list(entry.buckets)
+        self.target = entry.target
+        self.cover_by = getattr(entry, "cover_by", "hits")
+        self._entry = entry
+
+    def amount(self, bucket: str) -> float:
+        return float(self._entry.amount(bucket))
+
+
+def current_measure_coverage(coverage: Any, odd: Any) -> Any:
+    """*coverage* (a merged report) as a sampler of *odd* should read it.
+
+    The items of attributes mapped onto a measure past its first version
+    (:func:`versioned_item_name`) are kept only as the measure's current
+    version reads them, under the attribute's own item name, so a
+    coverage-driven sweep aims at what the current definition has not
+    covered -- never at hits of an older definition, nor both added up.
+    Any other item is kept as it is; *coverage* itself when nothing is
+    versioned."""
+    from ..measures import measure_version  # noqa: PLC0415
+
+    if coverage is None or odd is None:
+        return coverage
+    current = {
+        name: measure_version(key)
+        for name, key in _measured_items(odd).items()
+        if measure_version(key) > 1
+    }
+    if not current:
+        return coverage
+    entries: list[Any] = []
+    for entry in coverage.entries:
+        base, version, rest = _split_versioned(str(entry.name))
+        if base not in current:
+            entries.append(entry)
+        elif version == current[base]:
+            entries.append(_Renamed(entry, base + rest))
+    return SimpleNamespace(entries=entries)
+
+
+def prepare_measures(odd: Any) -> None:
+    """Build what the measures *odd* maps read before the run's first tick:
+    the routing graph, for the vehicle-ahead measures
+    (:func:`~autoware_carla_scenario.measures.prepare_vehicle_ahead`)."""
+    from ..measures import (  # noqa: PLC0415
+        VEHICLE_AHEAD_GAP_M,
+        VEHICLE_AHEAD_RELATIVE_SPEED_KPH,
+        prepare_vehicle_ahead,
+    )
+
+    keys = set(_measured_items(odd).values()) if odd is not None else set()
+    if keys & {VEHICLE_AHEAD_GAP_M, VEHICLE_AHEAD_RELATIVE_SPEED_KPH}:
+        prepare_vehicle_ahead()
 
 
 def _measured_items(odd: Any) -> dict[str, str]:

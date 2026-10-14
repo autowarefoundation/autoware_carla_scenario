@@ -28,9 +28,10 @@ ahead, measured along the ego's lane on the Lanelet2 map:
 
 * the **ego's lane** is the lanelet the ego is on (the one under it whose
   centreline runs closest to its heading), the lanelets following it -- every
-  branch, up to :data:`AHEAD_RANGE_M` ahead -- and the lanelet before it; its
-  arc length ``s`` runs along their centrelines, continued from one to the
-  next;
+  branch, up to :data:`AHEAD_RANGE_M` ahead, for the measure does not know
+  the route -- and back from it through the first lanelet before each
+  (``previous[0]``); its arc length ``s`` runs along their centrelines,
+  continued from one to the next;
 * a vehicle **counts** when it is on one of those lanelets or on a lanelet
   beside one (its left or right neighbour in the routing graph, a lane change
   allowed or not), and its origin is further along the lane than the ego's;
@@ -38,7 +39,16 @@ ahead, measured along the ego's lane on the Lanelet2 map:
   each bumper the middle of the actor's bounding box's end along its own
   heading (:class:`Bumpers`), projected onto the ego's lane: onto the lanelet
   the vehicle is on, or the one it is beside, and those around it.  A vehicle
-  in the lane beside that overlaps the ego reads a negative gap.
+  on the ego's lane that overlaps it reads a negative gap; one in a lane
+  beside that overlaps it is alongside, not ahead, and does not count (it
+  would hide the vehicle that is ahead).
+
+The lane is found once and kept while its lanelet is still the ego's (no
+lanelet overlapping it where the lane branches or merges runs closer to the
+ego's heading), and a vehicle is placed on it by the lane's own lanelets,
+not by searching the map, so a reading costs a few milliseconds with ten
+vehicles around.  :func:`prepare_vehicle_ahead` builds the routing graph
+the lane is read from before a run.
 
 So the gap does not depend on how the lanelets beside each other are cut or
 how long they are, and on a curve it is the distance along the road.  Where
@@ -70,7 +80,7 @@ import lanelet2.core
 import lanelet2.geometry
 
 from .conditions.base import find_actor_in_list
-from .constants import EGO_ROLE_NAME
+from .constants import BUMPER_PROBE_ROLE_NAME, EGO_ROLE_NAME
 from .coordinate.map_manager import MapManager
 
 if TYPE_CHECKING:
@@ -92,6 +102,7 @@ __all__ = [
     "ON_LANELET_M",
     "PEDESTRIAN_LATERAL_M",
     "PEDESTRIAN_MOVING_MS",
+    "PROBE_ROLE",
     "VEHICLE_AHEAD_GAP_M",
     "VEHICLE_AHEAD_RELATIVE_SPEED_KPH",
     "VEHICLE_AHEAD_VERSION",
@@ -100,6 +111,7 @@ __all__ = [
     "in_ego_frame",
     "measure_version",
     "measured_scenario",
+    "prepare_vehicle_ahead",
     "read_measure",
     "set_measured_scenario",
     "vehicle_ahead_definition",
@@ -145,8 +157,24 @@ PEDESTRIAN_LATERAL_M = 10.0
 PEDESTRIAN_MOVING_MS = 0.5
 
 _KMH_PER_MS = 3.6
-#: Lanelets nearest a point that are asked whether they hold it.
-_CANDIDATES = 8
+#: Lanelets nearest a point that are asked first whether they hold it
+#: (twice as many again while every one asked does: a big junction).
+_CANDIDATES = 16
+#: Segments of a polyline per block whose bounding box is checked first.
+_BLOCK = 16
+#: How far above or below the ego a vehicle is on no road of the ego's, in
+#: metres.
+_OFF_THE_ROAD_M = 100.0
+#: The role name of the vehicle placement.vehicle_bumpers() spawns, high
+#: above the map, to measure a blueprint; never a vehicle ahead.
+PROBE_ROLE = BUMPER_PROBE_ROLE_NAME
+#: How far the ego, found on no lanelet, moves (m) or turns (degrees) before
+#: the map is searched for its lanelet again.
+_NOWHERE_M = 2.0
+#: How far apart along a lanelet's bound it is asked whether it runs inside
+#: the ego's lanelet, in metres.
+_RIVAL_STEP_M = 1.0
+_NOWHERE_DEG = 5.0
 #: Metres of lane looked along beyond a lanelet, either way, to project a
 #: point near its end onto: more than a vehicle's length.
 _REACH_MARGIN_M = 15.0
@@ -252,6 +280,8 @@ _CACHE = _Cache()
 _SET_OFF: dict[int, float] = {}
 #: Definition -> how many frames the vehicle ahead was read with it.
 _DEFINITIONS: dict[str, int] = {}
+#: What the run has been warned of already (warned once a run).
+_WARNED: dict[str, int] = {}
 
 
 def _frame_of(world: "carla.World") -> Optional[int]:
@@ -383,12 +413,70 @@ def _moving(actor: "carla.Actor") -> _Vehicle:
 # ---------------------------------------------------------------------------
 
 
+def _box_d2(box: tuple[float, float, float, float], x: float, y: float) -> float:
+    """The squared distance from ``(x, y)`` to the box
+    ``(min_x, min_y, max_x, max_y)``; 0 inside it."""
+    dx = 0.0
+    if x < box[0]:
+        dx = box[0] - x
+    elif x > box[2]:
+        dx = x - box[2]
+    dy = 0.0
+    if y < box[1]:
+        dy = box[1] - y
+    elif y > box[3]:
+        dy = y - box[3]
+    return dx * dx + dy * dy
+
+
+def _blocks(
+    xs: list[float], ys: list[float], segments: int
+) -> list[tuple[float, float, float, float]]:
+    """The bounding box of each run of :data:`_BLOCK` segments of a polyline
+    through ``xs, ys``; segment ``i`` runs from point ``i`` to point
+    ``(i + 1) % len(xs)`` (so a closed polygon's last edge comes back)."""
+    boxes: list[tuple[float, float, float, float]] = []
+    n = len(xs)
+    for first in range(0, segments, _BLOCK):
+        last = min(first + _BLOCK, segments)
+        min_x, min_y = xs[first], ys[first]
+        max_x, max_y = min_x, min_y
+        for i in range(first + 1, last + 1):
+            x, y = xs[i % n], ys[i % n]
+            min_x, max_x = min(min_x, x), max(max_x, x)
+            min_y, max_y = min(min_y, y), max(max_y, y)
+        boxes.append((min_x, min_y, max_x, max_y))
+    return boxes
+
+
+def _union(
+    boxes: list[tuple[float, float, float, float]],
+) -> list[tuple[float, float, float, float]]:
+    """The bounding box of each run of :data:`_BLOCK` of *boxes*."""
+    groups: list[tuple[float, float, float, float]] = []
+    for first in range(0, len(boxes), _BLOCK):
+        min_x, min_y, max_x, max_y = boxes[first]
+        for k in range(first + 1, min(first + _BLOCK, len(boxes))):
+            box = boxes[k]
+            min_x, min_y = min(min_x, box[0]), min(min_y, box[1])
+            max_x, max_y = max(max_x, box[2]), max(max_y, box[3])
+        groups.append((min_x, min_y, max_x, max_y))
+    return groups
+
+
 class _Line:
-    """A lanelet's centreline in CARLA world coordinates, with its arc length."""
+    """A lanelet's centreline in CARLA world coordinates, with its arc length.
+
+    Its segments are bounded in blocks of :data:`_BLOCK`, and the blocks in
+    groups of as many, so a projection reads only the groups and blocks that
+    can hold the nearest foot: a lanelet of a real map runs to thousands of
+    points."""
 
     xs: list[float]
     ys: list[float]
     s: list[float]
+    boxes: list[tuple[float, float, float, float]]
+    groups: list[tuple[float, float, float, float]]
 
     def __init__(self, xs: list[float], ys: list[float]) -> None:
         self.xs = xs
@@ -397,6 +485,8 @@ class _Line:
         for i in range(1, len(xs)):
             s.append(s[-1] + math.hypot(xs[i] - xs[i - 1], ys[i] - ys[i - 1]))
         self.s = s
+        self.boxes = _blocks(xs, ys, max(len(xs) - 1, 0))
+        self.groups = _union(self.boxes)
 
     @property
     def length(self) -> float:
@@ -405,36 +495,151 @@ class _Line:
     def project(self, x: float, y: float) -> tuple[float, float, float]:
         """The foot of ``(x, y)`` on the line, clamped to it: its arc length,
         the squared distance to it, and the line's heading there (radians,
-        CARLA's yaw)."""
+        CARLA's yaw).  Of feet equally near, the first along the line."""
         best_s = 0.0
         best_d2 = math.inf
         best_yaw = 0.0
-        for i in range(len(self.xs) - 1):
-            ax, ay = self.xs[i], self.ys[i]
-            dx, dy = self.xs[i + 1] - ax, self.ys[i + 1] - ay
-            seg2 = dx * dx + dy * dy
-            if seg2 <= 0.0:
-                continue
-            t = min(max(((x - ax) * dx + (y - ay) * dy) / seg2, 0.0), 1.0)
-            fx, fy = ax + t * dx, ay + t * dy
-            d2 = (x - fx) * (x - fx) + (y - fy) * (y - fy)
-            if d2 < best_d2:
-                best_d2 = d2
-                best_s = self.s[i] + t * math.sqrt(seg2)
-                best_yaw = math.atan2(dy, dx)
+        best_i = -1
+        segments = len(self.xs) - 1
+        blocks = len(self.boxes)
+        groups = sorted([(_box_d2(g, x, y), n) for n, g in enumerate(self.groups)])
+        for group_bound, n in groups:
+            if group_bound > best_d2:
+                break
+            first_block = n * _BLOCK
+            order = sorted(
+                [
+                    (_box_d2(self.boxes[k], x, y), k)
+                    for k in range(first_block, min(first_block + _BLOCK, blocks))
+                ]
+            )
+            for bound, k in order:
+                if bound > best_d2:
+                    break
+                first = k * _BLOCK
+                for i in range(first, min(first + _BLOCK, segments)):
+                    ax, ay = self.xs[i], self.ys[i]
+                    dx, dy = self.xs[i + 1] - ax, self.ys[i + 1] - ay
+                    seg2 = dx * dx + dy * dy
+                    if seg2 <= 0.0:
+                        continue
+                    t = min(max(((x - ax) * dx + (y - ay) * dy) / seg2, 0.0), 1.0)
+                    fx, fy = ax + t * dx, ay + t * dy
+                    d2 = (x - fx) * (x - fx) + (y - fy) * (y - fy)
+                    if d2 < best_d2 or (d2 == best_d2 and i < best_i):
+                        best_d2 = d2
+                        best_i = i
+                        best_s = self.s[i] + t * math.sqrt(seg2)
+                        best_yaw = math.atan2(dy, dx)
         if best_d2 == math.inf and self.xs:  # a single point
             best_d2 = (x - self.xs[0]) ** 2 + (y - self.ys[0]) ** 2
         return best_s, best_d2, best_yaw
 
 
+class _Area:
+    """A lanelet's outline (its left bound, then its right bound back) in
+    CARLA world coordinates: what holds a point, as Lanelet2's distance to
+    the lanelet reads it, without searching the whole map."""
+
+    xs: list[float]
+    ys: list[float]
+    box: tuple[float, float, float, float]
+    boxes: list[tuple[float, float, float, float]]
+    groups: list[tuple[float, float, float, float]]
+
+    def __init__(self, xs: list[float], ys: list[float]) -> None:
+        self.xs = xs
+        self.ys = ys
+        self.box = (min(xs), min(ys), max(xs), max(ys))
+        self.boxes = _blocks(xs, ys, len(xs))
+        self.groups = _union(self.boxes)
+
+    def holds(self, x: float, y: float) -> bool:
+        """Whether ``(x, y)`` is inside the outline or within
+        :data:`ON_LANELET_M` of it."""
+        margin = ON_LANELET_M
+        box = self.box
+        if (
+            x < box[0] - margin
+            or x > box[2] + margin
+            or y < box[1] - margin
+            or y > box[3] + margin
+        ):
+            return False
+        return self._inside(x, y) or self._near_edge(x, y, margin)
+
+    def deep_inside(self, x: float, y: float) -> bool:
+        """Whether ``(x, y)`` is inside the outline by more than
+        :data:`ON_LANELET_M`: not on a boundary the lanelet shares."""
+        box = self.box
+        if x < box[0] or x > box[2] or y < box[1] or y > box[3]:
+            return False
+        return self._inside(x, y) and not self._near_edge(x, y, ON_LANELET_M)
+
+    def _inside(self, x: float, y: float) -> bool:
+        n = len(self.xs)
+        blocks = len(self.boxes)
+        inside = False
+        for g, group in enumerate(self.groups):
+            # A ray from (x, y) towards +x crosses only edges that span y and
+            # reach past x.
+            if y < group[1] or y > group[3] or x > group[2]:
+                continue
+            for k in range(g * _BLOCK, min((g + 1) * _BLOCK, blocks)):
+                block = self.boxes[k]
+                if y < block[1] or y > block[3] or x > block[2]:
+                    continue
+                first = k * _BLOCK
+                for i in range(first, min(first + _BLOCK, n)):
+                    j = i + 1 if i + 1 < n else 0
+                    yi, yj = self.ys[i], self.ys[j]
+                    if (yi > y) != (yj > y):
+                        cross = self.xs[i] + (y - yi) * (self.xs[j] - self.xs[i]) / (
+                            yj - yi
+                        )
+                        if x < cross:
+                            inside = not inside
+        return inside
+
+    def _near_edge(self, x: float, y: float, margin: float) -> bool:
+        n = len(self.xs)
+        blocks = len(self.boxes)
+        margin2 = margin * margin
+        for g, group in enumerate(self.groups):
+            if _box_d2(group, x, y) > margin2:
+                continue
+            for k in range(g * _BLOCK, min((g + 1) * _BLOCK, blocks)):
+                if _box_d2(self.boxes[k], x, y) > margin2:
+                    continue
+                first = k * _BLOCK
+                for i in range(first, min(first + _BLOCK, n)):
+                    j = i + 1 if i + 1 < n else 0
+                    ax, ay = self.xs[i], self.ys[i]
+                    dx, dy = self.xs[j] - ax, self.ys[j] - ay
+                    seg2 = dx * dx + dy * dy
+                    t = 0.0
+                    if seg2 > 0.0:
+                        t = min(max(((x - ax) * dx + (y - ay) * dy) / seg2, 0.0), 1.0)
+                    fx, fy = ax + t * dx, ay + t * dy
+                    if (x - fx) * (x - fx) + (y - fy) * (y - fy) <= margin2:
+                        return True
+        return False
+
+
 class _Lines:
-    """Centrelines by lanelet id, for the map they were read off.
+    """Centrelines and outlines by lanelet id, for the map they were read off.
 
     The map itself is held, not its ``id()``: a map freed and another loaded
     may get the same ``id()``, and would be read with the old one's lines."""
 
     lanelet_map: Optional[lanelet2.core.LaneletMap] = None
+    #: Raised each time another map is read: what a lane frame was built on.
+    generation: int = 0
     by_id: dict[int, _Line] = {}
+    areas: dict[int, _Area] = {}
+    #: Every lanelet's bounding box (id, min x, min y, max x, max y), in
+    #: CARLA world coordinates; read once a map.
+    boxes: list[tuple[int, float, float, float, float]] = []
 
 
 _LINES = _Lines()
@@ -446,7 +651,9 @@ def _forget_other_maps(lanelet_map: lanelet2.core.LaneletMap) -> None:
     if held is None or held is not lanelet_map:
         _LINES.lanelet_map = lanelet_map
         _LINES.by_id = {}
-        _FRAME_MEMO.key, _FRAME_MEMO.frame = None, None
+        _LINES.areas = {}
+        _LINES.boxes = []
+        _LINES.generation += 1
 
 
 def _line(lanelet_id: int) -> _Line:
@@ -467,23 +674,66 @@ def _line(lanelet_id: int) -> _Line:
     return line
 
 
+def _area(lanelet_id: int) -> _Area:
+    """The outline of *lanelet_id* in CARLA world coordinates."""
+    mm = MapManager.get_instance()
+    lanelet_map = mm.lanelet_map
+    _forget_other_maps(lanelet_map)
+    if lanelet_id in _LINES.areas:
+        return _LINES.areas[lanelet_id]
+    offset_x, offset_y = mm.mgrs_offset
+    lanelet = lanelet_map.laneletLayer[lanelet_id]
+    xs: list[float] = []
+    ys: list[float] = []
+    for point in lanelet.leftBound:
+        xs.append(float(point.x) - offset_x)
+        ys.append(-(float(point.y) - offset_y))
+    right_xs: list[float] = []
+    right_ys: list[float] = []
+    for point in lanelet.rightBound:
+        right_xs.append(float(point.x) - offset_x)
+        right_ys.append(-(float(point.y) - offset_y))
+    for i in range(len(right_xs) - 1, -1, -1):
+        xs.append(right_xs[i])
+        ys.append(right_ys[i])
+    area = _Area(xs, ys)
+    _LINES.areas[lanelet_id] = area
+    return area
+
+
 def _lanelets_at(x: float, y: float) -> list[int]:
-    """The lanelets whose bounds hold the CARLA world point ``(x, y)``."""
+    """The lanelets of the whole map whose bounds hold the CARLA world point
+    ``(x, y)``: asked of the nearest :data:`_CANDIDATES`, then of twice as
+    many while every one asked holds it (a junction where many overlap)."""
     mm = MapManager.get_instance()
     offset_x, offset_y = mm.mgrs_offset
     point = lanelet2.core.BasicPoint2d(x + offset_x, -y + offset_y)
-    found: list[int] = []
-    for distance, lanelet in lanelet2.geometry.findNearest(
-        mm.lanelet_map.laneletLayer, point, _CANDIDATES
-    ):
-        if float(distance) <= ON_LANELET_M:
-            found.append(int(lanelet.id))
-    return found
+    asked = _CANDIDATES
+    while True:
+        nearest = lanelet2.geometry.findNearest(
+            mm.lanelet_map.laneletLayer, point, asked
+        )
+        found: list[int] = []
+        for distance, lanelet in nearest:
+            if float(distance) <= ON_LANELET_M:
+                found.append(int(lanelet.id))
+        if len(nearest) < asked or len(found) < asked:
+            return found
+        asked *= 2
 
 
 def _angle_between(a: float, b: float) -> float:
     """The angle between two headings, in radians, in [0, pi]."""
     return abs(math.atan2(math.sin(a - b), math.cos(a - b)))
+
+
+def _runs_closer(angle: float, d2: float, best_angle: float, best_d2: float) -> bool:
+    """Whether a lanelet at *angle* to the ego's heading, its centreline *d2*
+    (squared) away, is the ego's rather than one at *best_angle*,
+    *best_d2*: the closer heading, and of equal ones the nearer line."""
+    return angle < best_angle - 1e-9 or (
+        abs(angle - best_angle) <= 1e-9 and d2 < best_d2
+    )
 
 
 def _ego_lanelet(ego: _Vehicle) -> Optional[int]:
@@ -495,11 +745,114 @@ def _ego_lanelet(ego: _Vehicle) -> Optional[int]:
     for lanelet_id in _lanelets_at(ego.x, ego.y):
         _s, d2, yaw = _line(lanelet_id).project(ego.x, ego.y)
         angle = _angle_between(yaw, ego.yaw)
-        if angle < best_angle - 1e-9 or (
-            abs(angle - best_angle) <= 1e-9 and d2 < best_d2
-        ):
+        if _runs_closer(angle, d2, best_angle, best_d2):
             best, best_angle, best_d2 = lanelet_id, angle, d2
     return best
+
+
+def _runs_inside(
+    area: _Area, line: _Line, xs: list[float], ys: list[float], limit: float
+) -> bool:
+    """Whether the polyline ``xs, ys`` runs through the inside of *area*
+    within *limit* (radians) of *line*'s heading there: asked of a segment
+    every :data:`_RIVAL_STEP_M` along it, for an overlap runs metres."""
+    since = _RIVAL_STEP_M
+    for i in range(len(xs) - 1):
+        since += math.hypot(xs[i + 1] - xs[i], ys[i + 1] - ys[i])
+        if since < _RIVAL_STEP_M:
+            continue
+        since = 0.0
+        mx = (xs[i] + xs[i + 1]) / 2
+        my = (ys[i] + ys[i + 1]) / 2
+        if not area.deep_inside(mx, my):
+            continue
+        yaw = math.atan2(ys[i + 1] - ys[i], xs[i + 1] - xs[i])
+        _s, _d2, along = line.project(mx, my)
+        if _angle_between(yaw, along) < limit:
+            return True
+    return False
+
+
+def _lanelet_boxes() -> list[tuple[int, float, float, float, float]]:
+    """Every lanelet of the map with its bounding box in CARLA world
+    coordinates: read off its bounds once a map (Lanelet2's own
+    ``LaneletLayer.search`` scans the layer on every call)."""
+    mm = MapManager.get_instance()
+    lanelet_map = mm.lanelet_map
+    _forget_other_maps(lanelet_map)
+    if _LINES.boxes:
+        return _LINES.boxes
+    offset_x, offset_y = mm.mgrs_offset
+    boxes: list[tuple[int, float, float, float, float]] = []
+    for lanelet in lanelet_map.laneletLayer:
+        min_x, min_y = math.inf, math.inf
+        max_x, max_y = -math.inf, -math.inf
+        for bound in (lanelet.leftBound, lanelet.rightBound):
+            for point in bound:
+                x = float(point.x) - offset_x
+                y = -(float(point.y) - offset_y)
+                min_x, max_x = min(min_x, x), max(max_x, x)
+                min_y, max_y = min(min_y, y), max(max_y, y)
+        boxes.append((int(lanelet.id), min_x, min_y, max_x, max_y))
+    _LINES.boxes = boxes
+    return boxes
+
+
+def _overlapping(lanelet_id: int) -> list[int]:
+    """The lanelets other than *lanelet_id* that overlap it -- a bound of
+    theirs runs through its inside, not along its boundary -- within
+    :data:`EGO_LANE_HEADING_DEG` of its centreline there: what could hold the
+    ego with it, and run its way.  Found among the lanelets whose bounding
+    box meets a block of its outline (:func:`_lanelet_boxes`)."""
+    mm = MapManager.get_instance()
+    layer = mm.lanelet_map.laneletLayer
+    offset_x, offset_y = mm.mgrs_offset
+    area = _area(lanelet_id)
+    line = _line(lanelet_id)
+    grow = 2 * ON_LANELET_M
+    limit = math.radians(EGO_LANE_HEADING_DEG)
+    candidates: list[int] = []
+    whole = area.box
+    for found_id, min_x, min_y, max_x, max_y in _lanelet_boxes():
+        if (
+            found_id == lanelet_id
+            or max_x < whole[0] - grow
+            or min_x > whole[2] + grow
+            or max_y < whole[1] - grow
+            or min_y > whole[3] + grow
+        ):
+            continue
+        # Block by block: a long lanelet's whole box, on a bend, meets
+        # lanelets nowhere near it.
+        for box in area.boxes:
+            if not (
+                max_x < box[0] - grow
+                or min_x > box[2] + grow
+                or max_y < box[1] - grow
+                or min_y > box[3] + grow
+            ):
+                candidates.append(found_id)
+                break
+    rivals: list[int] = []
+    own = layer[lanelet_id]
+    shared = {int(own.leftBound.id), int(own.rightBound.id)}
+    for candidate in candidates:
+        # Its bounds, not its centreline (which Lanelet2 computes slowly for
+        # a long lanelet): a lanelet that overlaps the ego's, not merely
+        # shares a boundary with it, runs a bound through its inside.
+        found = layer[candidate]
+        for bound in (found.leftBound, found.rightBound):
+            if int(bound.id) in shared:
+                continue  # the lane beside's boundary is the ego lanelet's
+            xs: list[float] = []
+            ys: list[float] = []
+            for point in bound:
+                xs.append(float(point.x) - offset_x)
+                ys.append(-(float(point.y) - offset_y))
+            if _runs_inside(area, line, xs, ys, limit):
+                rivals.append(candidate)
+                break
+    return rivals
 
 
 def _beside(lanelet_id: int) -> list[int]:
@@ -537,9 +890,40 @@ class _LaneFrame:
     children: dict[int, list[int]]
     #: Lanelet beside the lane -> the lanelet of the lane it is beside.
     beside: dict[int, int]
+    #: The lanelets the ego's could be told apart from only by heading: every
+    #: lanelet overlapping it that runs within :data:`EGO_LANE_HEADING_DEG`
+    #: of it somewhere -- the other branch where the lane forks, however the
+    #: map cuts the branches, a lanelet merging into it -- and its siblings
+    #: in the routing graph.
+    rivals: list[int]
+
+    def still_the_egos(self, ego: _Vehicle) -> bool:
+        """Whether the ego's lanelet is still the one it is on: the ego is
+        still on it, running its way, and no rival under the ego runs closer
+        to its heading -- the rule :func:`_ego_lanelet` chooses by, asked of
+        the lanelets that overlap the ego's where a lane branches or merges,
+        so a moment's heading drift there does not hold the wrong branch."""
+        if not _area(self.ego_lanelet).holds(ego.x, ego.y):
+            return False
+        _s, d2, yaw = _line(self.ego_lanelet).project(ego.x, ego.y)
+        angle = _angle_between(yaw, ego.yaw)
+        if angle >= math.radians(EGO_LANE_HEADING_DEG):
+            return False
+        for rival in self.rivals:
+            if not _area(rival).holds(ego.x, ego.y):
+                continue
+            _rs, rival_d2, rival_yaw = _line(rival).project(ego.x, ego.y)
+            if _runs_closer(_angle_between(rival_yaw, ego.yaw), rival_d2, angle, d2):
+                return False
+        return True
 
     def __init__(self, ego_lanelet: int, reach: float) -> None:
-        """The lane from *ego_lanelet* on, until *reach* metres past its start."""
+        """The lane from *ego_lanelet* on, until *reach* metres past its start.
+
+        Every lanelet following one is on the lane -- each branch where the
+        lane branches, for the measure does not know the route -- and the
+        lane runs back one way only, through the first of the lanelets before
+        each (``previous[0]``), where lanes merge."""
         mm = MapManager.get_instance()
         graph = mm.routing_graph
         layer = mm.lanelet_map.laneletLayer
@@ -586,24 +970,44 @@ class _LaneFrame:
             for other in _beside(lanelet_id):
                 if other not in self.start and other not in self.beside:
                     self.beside[other] = lanelet_id
+        self.rivals = _overlapping(ego_lanelet)
+        ego = layer[ego_lanelet]
+        for previous_lanelet in graph.previous(ego):
+            for sibling in graph.following(previous_lanelet):
+                sibling_id = int(sibling.id)
+                if sibling_id != ego_lanelet and sibling_id not in self.rivals:
+                    self.rivals.append(sibling_id)
+        for following_lanelet in graph.following(ego):
+            for sibling in graph.previous(following_lanelet):
+                sibling_id = int(sibling.id)
+                if sibling_id != ego_lanelet and sibling_id not in self.rivals:
+                    self.rivals.append(sibling_id)
 
-    def reference(self, x: float, y: float) -> Optional[int]:
-        """The lanelet of the lane a vehicle at ``(x, y)`` is measured along:
-        the one it is on, or the one beside the lanelet it is on; ``None``
-        when it is on neither."""
+    def reference(self, x: float, y: float) -> tuple[Optional[int], bool]:
+        """The lanelet of the lane a vehicle at ``(x, y)`` is measured along,
+        and whether the vehicle is beside the lane rather than on it: the
+        lanelet of the lane it is on (the nearest centreline, where two
+        hold it), or else the one beside the lanelet it is on; ``None`` when
+        it is on neither.  Only the frame's own lanelets are asked."""
         on_lane: Optional[int] = None
         on_lane_d2 = math.inf
-        beside: Optional[int] = None
-        for lanelet_id in _lanelets_at(x, y):
-            if lanelet_id in self.start:
+        for lanelet_id in self.start:
+            if _area(lanelet_id).holds(x, y):
                 _s, d2, _yaw = _line(lanelet_id).project(x, y)
                 if d2 < on_lane_d2:
                     on_lane, on_lane_d2 = lanelet_id, d2
-            elif beside is None and lanelet_id in self.beside:
-                beside = self.beside[lanelet_id]
-        if on_lane is not None:
-            return on_lane
-        return beside
+        # One Optional[int] for every return: Codon narrows on_lane to int
+        # past a None check, and a tuple of int is not one of Optional[int].
+        found: Optional[int] = on_lane
+        if found is not None:
+            return found, False
+        beside_d2 = math.inf
+        for other in self.beside:
+            if _area(other).holds(x, y):
+                _s, d2, _yaw = _line(other).project(x, y)
+                if d2 < beside_d2:
+                    found, beside_d2 = self.beside[other], d2
+        return found, found is not None
 
     def _around(self, lanelet_id: int) -> list[int]:
         """*lanelet_id* and the lanelets of the lane within
@@ -642,35 +1046,66 @@ class _LaneFrame:
 
 
 class _FrameMemo:
-    """The last lane frame built, and the ego pose and map it was built for."""
+    """The last lane frame built, the ego's front bumper it was built for and
+    the map (:attr:`_Lines.generation`): kept while the ego stays on its
+    lanelet."""
 
-    #: The ego's x, y and yaw; the map is :data:`_LINES`'s.
-    key: Optional[tuple[float, float, float]] = None
     frame: Optional[_LaneFrame] = None
+    front: float = 0.0
+    generation: int = -1
+    #: Where the ego was found on no lanelet running its way (x, y, yaw), so
+    #: the map is not searched again until it has moved or turned.
+    nowhere: Optional[tuple[float, float, float]] = None
 
 
 _FRAME_MEMO = _FrameMemo()
+#: How many lane frames were built: what a test reads to see one kept.
+_FRAMES_BUILT: dict[str, int] = {"count": 0}
 
 
 def _lane_frame(ego: _Vehicle) -> Optional[_LaneFrame]:
     """The ego's lane; ``None`` with no Lanelet2 map, or the ego on no lanelet
-    that runs its way."""
+    that runs its way.
+
+    The frame reaches :data:`AHEAD_RANGE_M` past the end of the ego's lanelet,
+    so it holds wherever on it the ego is: it is kept while that lanelet is
+    still the ego's (:meth:`_LaneFrame.still_the_egos`) and the front bumper
+    the same, and the whole map is searched for the ego's lanelet only when
+    it is not.  Found on no lanelet, the ego is not searched for again until
+    it has moved :data:`_NOWHERE_M` or turned :data:`_NOWHERE_DEG`."""
     mm = MapManager.get_instance()
     try:
         lanelet_map = mm.lanelet_map
     except RuntimeError:
         return None
     _forget_other_maps(lanelet_map)
-    key = (ego.x, ego.y, ego.yaw)
-    if _FRAME_MEMO.key is not None and _FRAME_MEMO.key == key:
-        return _FRAME_MEMO.frame
+    kept = _FRAME_MEMO.frame
+    if (
+        kept is not None
+        and _FRAME_MEMO.generation == _LINES.generation
+        and _FRAME_MEMO.front == ego.front
+        and kept.still_the_egos(ego)
+    ):
+        return kept
+    nowhere = _FRAME_MEMO.nowhere
+    if (
+        kept is None
+        and nowhere is not None
+        and _FRAME_MEMO.generation == _LINES.generation
+        and math.hypot(ego.x - nowhere[0], ego.y - nowhere[1]) < _NOWHERE_M
+        and _angle_between(ego.yaw, nowhere[2]) < math.radians(_NOWHERE_DEG)
+    ):
+        return None
     frame: Optional[_LaneFrame] = None
     ego_lanelet = _ego_lanelet(ego)
     if ego_lanelet is not None:
         found: int = ego_lanelet
-        s, _d2, _yaw = _line(found).project(ego.x, ego.y)
-        frame = _LaneFrame(found, s + ego.front + AHEAD_RANGE_M + _REACH_MARGIN_M)
-    _FRAME_MEMO.key, _FRAME_MEMO.frame = key, frame
+        reach = _line(found).length + ego.front + AHEAD_RANGE_M + _REACH_MARGIN_M
+        frame = _LaneFrame(found, reach)
+        _FRAMES_BUILT["count"] += 1
+    _FRAME_MEMO.frame, _FRAME_MEMO.front = frame, ego.front
+    _FRAME_MEMO.generation = _LINES.generation
+    _FRAME_MEMO.nowhere = (ego.x, ego.y, ego.yaw) if frame is None else None
     return frame
 
 
@@ -696,9 +1131,10 @@ class _EgoOnLane:
 def _ahead_along_lane(
     frame: _LaneFrame, ego: _Vehicle, on_lane: _EgoOnLane, other: _Vehicle
 ) -> Optional[_Lead]:
-    reference = frame.reference(other.x, other.y)
-    if reference is None:
+    found, beside = frame.reference(other.x, other.y)
+    if found is None:
         return None
+    reference: int = found
     origin, _yaw = frame.project(reference, other.x, other.y)
     if origin <= on_lane.origin:
         return None
@@ -706,6 +1142,10 @@ def _ahead_along_lane(
     rear, yaw = frame.project(reference, rear_x, rear_y)
     gap = rear - on_lane.front
     if gap > AHEAD_RANGE_M:
+        return None
+    if beside and gap < 0.0:
+        # Alongside the ego in the next lane, not ahead of it: it would hide
+        # the vehicle that is.
         return None
     along = other.vx * math.cos(yaw) + other.vy * math.sin(yaw)
     ego_along = ego.vx * math.cos(on_lane.yaw) + ego.vy * math.sin(on_lane.yaw)
@@ -724,6 +1164,8 @@ def _ahead_geometrically(ego: _Vehicle, other: _Vehicle) -> Optional[_Lead]:
     gap = rear - ego.front
     if gap > AHEAD_RANGE_M:
         return None
+    if gap < 0.0 and abs(lateral) > LANE_HALF_WIDTH_M:
+        return None  # alongside, in the next lane
     closing = (other.vx - ego.vx) * forward_x + (other.vy - ego.vy) * forward_y
     return _Lead(gap=gap, closing=closing)
 
@@ -794,20 +1236,35 @@ def _vehicle_ahead(world: "carla.World") -> Optional[_Lead]:
         ego_actor = find_actor_in_list(actors, EGO_ROLE_NAME)
         if ego_actor is not None:
             ego = _moving(ego_actor)
+            ego_z = float(ego_actor.get_location().z)
             reach = AHEAD_RANGE_M + 2 * _REACH_MARGIN_M
             others: list[_Vehicle] = []
             for actor in actors:
                 if actor.id == ego_actor.id or not actor.type_id.startswith("vehicle."):
                     continue
                 location = actor.get_location()
-                # Along the lane is never shorter than the straight line.
+                # Along the lane is never shorter than the straight line; and
+                # a vehicle far above or below is on no road of the ego's
+                # (vehicle_bumpers()'s probe, for one).
                 if math.hypot(location.x - ego.x, location.y - ego.y) > reach:
+                    continue
+                if abs(float(location.z) - ego_z) > _OFF_THE_ROAD_M:
+                    continue
+                attributes = actor.attributes
+                if "role_name" in attributes and attributes["role_name"] == PROBE_ROLE:
                     continue
                 others.append(_moving(actor))
             lead, definition = _nearest_ahead(ego, others)
             _record_definition(definition)
     except Exception:
-        logger.debug("the vehicle ahead could not be read", exc_info=True)
+        if "read" not in _WARNED:
+            _WARNED["read"] = 1
+            logger.warning(
+                "%s: the vehicle ahead could not be read; it reads nothing "
+                "while this lasts (warned once a run)",
+                VEHICLE_AHEAD_GAP_M,
+                exc_info=True,
+            )
         lead = None
     _CACHE.lead_at, _CACHE.lead = at, lead
     return lead
@@ -938,6 +1395,20 @@ def measure_version(key: str) -> int:
 _MEASURED: dict[str, Optional["BaseScenario"]] = {"scenario": None}
 
 
+def prepare_vehicle_ahead() -> None:
+    """Build what the vehicle-ahead measures read before a run starts: the
+    Lanelet2 routing graph, which takes tens of seconds on a large map and
+    would otherwise be built on the first tick that reads them, and the
+    lanelets' bounding boxes.  Nothing without a Lanelet2 map."""
+    mm = MapManager.get_instance()
+    try:
+        mm.lanelet_map
+    except RuntimeError:
+        return
+    mm.routing_graph
+    _lanelet_boxes()
+
+
 def set_measured_scenario(scenario: Optional["BaseScenario"]) -> None:
     """Make *scenario*'s measures the ones :func:`read_measure` reads.
 
@@ -949,6 +1420,7 @@ def set_measured_scenario(scenario: Optional["BaseScenario"]) -> None:
     _CACHE.lead_at, _CACHE.lead = None, None
     _SET_OFF.clear()
     _DEFINITIONS.clear()
+    _WARNED.clear()
 
 
 def measured_scenario() -> Optional["BaseScenario"]:

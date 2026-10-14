@@ -494,3 +494,38 @@ class TestRecordRun:
         coverage.record_outcome.assert_called_once_with(
             False, failed_at=1.0, environment=None
         )
+
+
+def test_what_the_odds_measures_read_is_built_before_the_first_tick(
+    tmp_path,
+) -> None:
+    """The vehicle-ahead measures' routing graph takes tens of seconds on a
+    large map: the runner builds it (prepare_measures) in setup, before the
+    world is ticked -- not on the first tick that reads it."""
+
+    class _Stop(Exception):
+        pass
+
+    calls: list[str] = []
+    runner = _make_runner(None)
+    runner.output_dir = tmp_path
+    world = MagicMock()
+    world.tick.side_effect = lambda *a, **k: calls.append("tick")
+    runner._world = world
+    scenario = MagicMock()
+    scenario.setup.side_effect = lambda: calls.append("setup")
+
+    def prepare(odd: object) -> None:
+        assert odd is runner.odd
+        calls.append("prepare")
+        raise _Stop  # enough: what follows is the ego, then the ticks
+
+    with patch(
+        "autoware_carla_scenario.scenario_runner.prepare_measures", side_effect=prepare
+    ):
+        try:
+            runner.run_scenario(scenario, reset_world=False)
+        except _Stop:
+            pass
+
+    assert calls[:2] == ["setup", "prepare"]

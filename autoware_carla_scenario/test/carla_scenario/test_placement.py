@@ -207,42 +207,74 @@ def test_a_gap_the_lanelet_cannot_reach_is_refused(straight_road: LaneMap) -> No
         )
 
 
-def test_the_bumpers_are_measured_once_per_blueprint(monkeypatch) -> None:
-    spawned: list[str] = []
-    destroyed: list[int] = []
-
-    class _Probe:
-        id = 7
-        bounding_box = SimpleNamespace(
+class _Probe:
+    def __init__(self, actor_id: int, type_id: str = "vehicle.lincoln.mkz") -> None:
+        self.id = actor_id
+        self.type_id = type_id
+        self.bounding_box = SimpleNamespace(
             location=SimpleNamespace(x=0.1), extent=SimpleNamespace(x=2.4)
         )
+        self.destroyed = False
 
-        def destroy(self) -> None:
-            destroyed.append(self.id)
+    def destroy(self) -> None:
+        self.destroyed = True
 
-    class _Blueprint:
-        def __init__(self, bp_id: str) -> None:
-            self.id = bp_id
 
-        def set_attribute(self, key: str, value: str) -> None:
-            pass
+class _Blueprint:
+    def __init__(self, bp_id: str) -> None:
+        self.id = bp_id
+        self.attributes: dict[str, str] = {}
 
-    class _Library:
-        def filter(self, pattern: str) -> list[_Blueprint]:
-            return [_Blueprint("vehicle.lincoln.mkz")]
+    def set_attribute(self, key: str, value: str) -> None:
+        self.attributes[key] = value
 
-        def find(self, bp_id: str) -> _Blueprint:
-            return _Blueprint(bp_id)
 
-    class _ProbeWorld:
-        def get_blueprint_library(self) -> _Library:
-            return _Library()
+class _Library:
+    def filter(self, pattern: str) -> list[_Blueprint]:
+        return [_Blueprint("vehicle.lincoln.mkz")]
 
-        def try_spawn_actor(self, blueprint: _Blueprint, at: Any) -> _Probe:
-            spawned.append(blueprint.id)
-            return _Probe()
+    def find(self, bp_id: str) -> _Blueprint:
+        return _Blueprint(bp_id)
 
+
+class _ProbeWorld:
+    """A world that spawns the probe after *refusals* refusals."""
+
+    def __init__(self, refusals: int = 0, actors: list[Any] | None = None) -> None:
+        self.refusals = refusals
+        self.actors = actors or []
+        self.heights: list[float] = []
+        self.probes: list[_Probe] = []
+
+    def get_blueprint_library(self) -> _Library:
+        return _Library()
+
+    def get_actors(self) -> list[Any]:
+        return self.actors
+
+    def try_spawn_actor(self, blueprint: _Blueprint, at: Any) -> _Probe | None:
+        self.heights.append(at.location.z)
+        assert blueprint.attributes["role_name"] == placement._PROBE_ROLE
+        if len(self.heights) <= self.refusals:
+            return None
+        probe = _Probe(7)
+        self.probes.append(probe)
+        return probe
+
+
+@pytest.fixture
+def _no_bumpers_known(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(placement, "_BUMPERS", {})
+
+
+def test_the_probe_has_the_role_the_measure_skips() -> None:
+    from autoware_carla_scenario.measures import PROBE_ROLE
+
+    assert placement._PROBE_ROLE == PROBE_ROLE
+
+
+@pytest.mark.usefixtures("_no_bumpers_known")
+def test_the_bumpers_are_measured_once_per_blueprint() -> None:
     world: Any = _ProbeWorld()
 
     first = vehicle_bumpers(world, "vehicle.lincoln.mkz")
@@ -250,8 +282,37 @@ def test_the_bumpers_are_measured_once_per_blueprint(monkeypatch) -> None:
 
     assert first == again
     assert (first.front, first.rear) == pytest.approx((2.5, 2.3))
-    assert spawned == ["vehicle.lincoln.mkz"]
-    assert destroyed == [7]
+    assert world.heights == [500.0]
+    assert [p.destroyed for p in world.probes] == [True]
+
+
+@pytest.mark.usefixtures("_no_bumpers_known")
+def test_a_vehicle_of_the_blueprint_already_spawned_is_read_not_probed() -> None:
+    world: Any = _ProbeWorld(actors=[_Probe(1, "vehicle.lincoln.mkz")])
+
+    bumpers = vehicle_bumpers(world, "vehicle.lincoln.mkz")
+
+    assert (bumpers.front, bumpers.rear) == pytest.approx((2.5, 2.3))
+    assert world.heights == []
+
+
+@pytest.mark.usefixtures("_no_bumpers_known")
+def test_a_refused_probe_is_tried_higher() -> None:
+    world: Any = _ProbeWorld(refusals=2)
+
+    bumpers = vehicle_bumpers(world, "vehicle.lincoln.mkz")
+
+    assert (bumpers.front, bumpers.rear) == pytest.approx((2.5, 2.3))
+    assert world.heights == [500.0, 1000.0, 1500.0]
+
+
+@pytest.mark.usefixtures("_no_bumpers_known")
+def test_no_probe_spawned_or_no_such_blueprint_is_an_error() -> None:
+    world: Any = _ProbeWorld(refusals=3)
+
+    with pytest.raises(ValueError, match="could be spawned to measure"):
+        vehicle_bumpers(world, "vehicle.lincoln.mkz")
+    assert world.heights == [500.0, 1000.0, 1500.0]
     with pytest.raises(ValueError, match="not a vehicle blueprint"):
         vehicle_bumpers(world, "vehicle.no.such")
 

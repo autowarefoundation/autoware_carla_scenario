@@ -787,9 +787,12 @@ class BaseScenario(ABC):
                 f"register_measure({key}): the built-in measure is in "
                 f"{built_in.unit!r}, not {unit!r}"
             )
+        version = 1
         if built_in is not None:
             unit = built_in.unit
-        self._measures[key] = Measure(key, read, unit, text)
+            # A replacement measures the same thing, better: the same version.
+            version = built_in.version
+        self._measures[key] = Measure(key, read, unit, text, version)
 
     def _restore_measures(self) -> None:
         """Back to the measures the scenario had before its first attempt.

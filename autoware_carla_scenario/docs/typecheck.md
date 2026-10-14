@@ -468,9 +468,10 @@ nothing compiled: `_Never.__init__` and `_BackendAction.__init__`
 `BaseScenario._hand_backend_to()` calls behind a `hasattr()` on a
 `BaseAction`, which Codon decides statically as false; and
 `route.search._Search.__post_init__()`, which Codon's constructor does not
-call. The check now calls them as it calls a public class's: 47 calls,
-beside about 1460 others, none with a parameter the check cannot call with.
-Measured before any fix, 3 failed, and all 3 were fixed in the module:
+call. The check now calls them as it calls a public class's: 53 calls
+(for the 48 methods of the 21 `_` classes there are since #180), beside
+about 1470 others, none with a parameter the check cannot call with.
+Measured before any fix, 3 of the first 47 failed, and all 3 were fixed in the module:
 `_ScenarioClock` declares the `_world` and `_simulated_start` it assigns on
 `self`, and `_BackendAction.__init__` branches into a `BaseCondition` local
 instead of choosing between `until` and `_Never()` with a conditional

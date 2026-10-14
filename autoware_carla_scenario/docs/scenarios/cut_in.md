@@ -131,9 +131,10 @@ with `place_at_vehicle_ahead_gap`: from the ego's spawn pose, it finds the
 `s` on NPC1's lanelet at which the measure -- the same code, run on the
 poses the two will spawn at -- reads `npc_gap_m`, so the run starts at
 exactly that gap wherever it is placed. The bumpers are the vehicles' own:
-before either is spawned, one of each blueprint (`ego.vehicle_type`,
-`npc_vehicle_type`) is spawned high above the map, its bounding box read and
-the vehicle destroyed (`vehicle_bumpers`, once per blueprint), so NPC1 is
+before either is spawned, a vehicle of each blueprint (`ego.vehicle_type`,
+`npc_vehicle_type`) already in the world is read, or else one is spawned
+high above the map, its bounding box read and the vehicle destroyed
+(`vehicle_bumpers`, once per blueprint), so NPC1 is
 spawned once, where the gap reads right, rather than spawned and moved. A
 gap the lanelet cannot reach (too short, or curving out of the lanes the
 measure counts) fails the setup, saying what gaps it does reach.

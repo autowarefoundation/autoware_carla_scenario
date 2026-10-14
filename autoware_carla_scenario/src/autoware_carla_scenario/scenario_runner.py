@@ -26,7 +26,7 @@ from .conditions.base import BaseCondition, ConditionStatus, find_actor_by_role_
 from .constants import DEFAULT_TM_PORT, EGO_ROLE_NAME, FIXED_DELTA_SECONDS
 from .maps.opendrive import map_asset_env_var
 from .coordinate.poses import CarlaWorldPose
-from .coverage.collector import CoverageCollector
+from .coverage.collector import CoverageCollector, prepare_measures
 from .measures import set_measured_scenario
 from .odd import OddCase, OddDefinition, reset_probes, resolve_odd
 from .coordinate.transform import to_opendrive
@@ -994,6 +994,10 @@ class ScenarioRunner:
             # which a scenario that snaps its own spawn never calls.
             scenario.require_goal()
             self._warn_if_route_leaves_odd(scenario_name, scenario)
+            # What the ODD's measures read is built now, not on the first tick
+            # that reads them: the vehicle-ahead measures' routing graph takes
+            # tens of seconds on a large map.
+            prepare_measures(self.odd)
             logger.info("[%s] Spawning ego vehicle ...", scenario_name)
             if TYPE_CHECKING:
                 # EgoVehicle.spawn() takes the model's EgoConfig (entity.ego

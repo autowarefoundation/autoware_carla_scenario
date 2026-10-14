@@ -164,8 +164,8 @@ three top-level categories:
 | `odd.dynamic.ego_speed` ³ | 0-5, then 10 km/h wide centred on 10, 20, ... 120 (5-15, 15-25, ...) | Ego velocity |
 | `odd.dynamic.traffic_density` | none, low (1-2), medium (3-5), high (6+) | Other vehicles within 50 m |
 | `odd.dynamic.pedestrian_nearby` | false, true | A walker within 50 m |
-| `odd.dynamic.vehicle_ahead_gap#2` ⁴ ⁵ | 0-10-20-30-50-100 m | Scenario measure `vehicle_ahead_gap_m`: bumper to bumper, along the ego's lane, to the nearest vehicle ahead on its lane or a lane beside it |
-| `odd.dynamic.vehicle_ahead_relative_speed#2` ⁴ ⁵ | -30, -15, -5, 5, 15, 30 km/h | Scenario measure `vehicle_ahead_relative_speed_kph`, along the ego's lane |
+| `odd.dynamic.vehicle_ahead_gap@v2` ⁴ ⁵ | 0-10-20-30-50-100 m | Scenario measure `vehicle_ahead_gap_m`: bumper to bumper, along the ego's lane, to the nearest vehicle ahead on its lane or a lane beside it |
+| `odd.dynamic.vehicle_ahead_relative_speed@v2` ⁴ ⁵ | -30, -15, -5, 5, 15, 30 km/h | Scenario measure `vehicle_ahead_relative_speed_kph`, along the ego's lane |
 | `odd.dynamic.crossing_pedestrian_gap` | 0-10-20-30-50 m | Scenario measure `crossing_pedestrian_gap_m`: how far ahead a pedestrian crossing ahead set off |
 | `odd.dynamic.crossing_pedestrian_speed` | 0.5, 1, 1.5, 2.5, 4 m/s | Scenario measure `crossing_pedestrian_speed_ms` |
 
@@ -183,7 +183,7 @@ buckets whose edge is at 50.
 ⁴ Covered by a stay of 1 s or more (`min_stay=1`): a gap the ego only closes through is not covered.
 
 ⁵ The item of a measure past its first definition is named for its version
-(`#2`), so it is never merged with the same attribute measured the old way
+(`@v2`), so it is never merged with the same attribute measured the old way
 ([Measure versions](odd.md#measure-versions)).
 
 A reading the simulator does not support returns nothing. The item then has
