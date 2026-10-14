@@ -164,7 +164,7 @@ class CutInConfig:
     npc_ahead_m: float = 10.0
 
     #: The gap the NPC starts at, as ``vehicle_ahead_gap_m`` measures it (m):
-    #: centre to centre along the ego's heading.  When given it replaces
+    #: bumper to bumper along the ego's lane.  When given it replaces
     #: :attr:`npc_ahead_m`, and the NPC's ``s`` is solved for so the measure
     #: reads exactly this at the start (``place_at_vehicle_ahead_gap``).
     npc_gap_m: float | None = None

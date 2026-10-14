@@ -1,7 +1,8 @@
 # Model of autoware_carla_scenario.measures (docs/odd.md, "Scenario measures"):
 # the keys a scenario's measures are read under, which a scenario passes to
-# BaseScenario.register_measure() and an ODD to odd.scenario_measure(), and the
-# ego-frame geometry the vehicle-ahead measures read in.
+# BaseScenario.register_measure() and an ODD to odd.scenario_measure(), the
+# vehicle-ahead definition (its version, the definitions it reads with, a
+# vehicle's bumpers) and the geometry it reads in.
 
 import typesafe_carla.carla as carla
 
@@ -10,16 +11,52 @@ VEHICLE_AHEAD_RELATIVE_SPEED_KPH: str = "vehicle_ahead_relative_speed_kph"
 CROSSING_PEDESTRIAN_GAP_M: str = "crossing_pedestrian_gap_m"
 CROSSING_PEDESTRIAN_SPEED_MS: str = "crossing_pedestrian_speed_ms"
 
+VEHICLE_AHEAD_VERSION: int = 2
+ALONG_LANE: str = "along_lane"
+GEOMETRIC: str = "geometric"
+
 AHEAD_RANGE_M: float = 100.0
 LANE_HALF_WIDTH_M: float = 1.75
+ON_LANELET_M: float = 0.2
+EGO_LANE_HEADING_DEG: float = 60.0
 PEDESTRIAN_LATERAL_M: float = 10.0
 PEDESTRIAN_MOVING_MS: float = 0.5
+
+
+class Bumpers:
+    front: float
+    rear: float
+
+    def __init__(self, front: float = 0.0, rear: float = 0.0):
+        self.front = front
+        self.rear = rear
+
+
+def bumpers_of_box(box: carla.BoundingBox) -> Bumpers:
+    raise NotImplementedError()
+
+
+def bumpers_of(actor: carla.Actor) -> Bumpers:
+    raise NotImplementedError()
+
+
+def measure_version(key: str) -> int:
+    raise NotImplementedError()
 
 
 def in_ego_frame(ego: carla.Transform, location: carla.Location) -> Tuple[float, float]:
     raise NotImplementedError()
 
 
-def vehicle_ahead_gap_between(ego: carla.Transform,
-                              location: carla.Location) -> Optional[float]:
+def vehicle_ahead_definition(ego: carla.Transform) -> str:
+    raise NotImplementedError()
+
+
+def vehicle_ahead_definitions() -> Dict[str, int]:
+    raise NotImplementedError()
+
+
+def vehicle_ahead_gap_between(ego: carla.Transform, ego_bumpers: Bumpers,
+                              other: carla.Transform,
+                              other_bumpers: Bumpers) -> Optional[float]:
     raise NotImplementedError()

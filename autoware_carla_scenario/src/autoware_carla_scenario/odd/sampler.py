@@ -11,7 +11,7 @@ say which, none of them knowing the others:
   ODD's taxonomy::
 
       controls:
-        vehicle_ahead_gap_m: {key: scenario.npc_gap_m, target: measure, range: [6, 30]}
+        vehicle_ahead_gap_m: {key: scenario.npc_gap_m, target: measure, range: [2, 30]}
 
   A control is a raw setting by default (``target: setting``): the drawn
   value is written as ``value * scale + offset``, a mapping the scenario's

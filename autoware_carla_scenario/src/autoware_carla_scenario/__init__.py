@@ -174,6 +174,7 @@ if TYPE_CHECKING:
     from .placement import (
         place_at_vehicle_ahead_gap as place_at_vehicle_ahead_gap,
         solve_along as solve_along,
+        vehicle_bumpers as vehicle_bumpers,
     )
     from .driver import (
         BaseEgoDriverClient as BaseEgoDriverClient,
@@ -412,6 +413,7 @@ __all__ = [
     # Placing road users for a measure
     "place_at_vehicle_ahead_gap",
     "solve_along",
+    "vehicle_bumpers",
     "find_actor_by_role_name",
     # Kinematics
     "CoordinateFrame",
@@ -584,6 +586,7 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "to_opendrive": (".coordinate", "to_opendrive"),
     "place_at_vehicle_ahead_gap": (".placement", "place_at_vehicle_ahead_gap"),
     "solve_along": (".placement", "solve_along"),
+    "vehicle_bumpers": (".placement", "vehicle_bumpers"),
     # entity
     "AutowareEgoEntity": (".entity", "AutowareEgoEntity"),
     "CarlaDriverEntity": (".entity", "CarlaDriverEntity"),
