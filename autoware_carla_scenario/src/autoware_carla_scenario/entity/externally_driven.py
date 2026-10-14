@@ -44,16 +44,16 @@ __all__ = ["ExternallyDrivenEgo"]
 class ExternallyDrivenEgo(EgoVehicle):
     """Ego vehicle driven by a stack of its own rather than the TrafficManager.
 
-    Subclasses set :attr:`driven_by` to name that stack in the refusals, and
+    Subclasses set :attr:`stack_name` to name that stack in what they log, and
     call :meth:`_terminate` when it fails in a way the run cannot recover from.
     """
 
     #: Something else drives; TrafficManager must keep its hands off this actor.
     use_autopilot: bool = False
 
-    #: What drives this ego, as the refusals name it ("Autoware", "The
-    #: policy"): the subject of "... decides its own speed".
-    driven_by: str = "The stack driving it"
+    #: The stack that drives this ego, as its messages name it: "the
+    #: Autoware stack", "the driver policy stack".
+    stack_name: str = "external"
 
     _termination_requested: bool
     _termination_reason: Optional[str]
@@ -101,12 +101,8 @@ class ExternallyDrivenEgo(EgoVehicle):
         the TrafficManager would do nothing, or be overwritten by the next
         control the stack applies.
         """
-        logger.warning(
-            "%s: a lane change was asked for, but this entity is not driven by "
-            "the TrafficManager, so forcing one there would do nothing. "
-            "%s decides its own manoeuvres.",
-            type(self).__name__,
-            self.driven_by,
+        self._refuse(
+            "a lane change was asked for", "forcing one there would do nothing"
         )
 
     def set_desired_speed(self, world: "carla.World", speed_kmh: float) -> None:
@@ -117,20 +113,24 @@ class ExternallyDrivenEgo(EgoVehicle):
         TrafficManager does not touch it -- while the action reported progress
         and completion, which is worse than refusing.
         """
-        logger.warning(
-            "%s: a speed was set, but this entity is not driven by the "
-            "TrafficManager, so the command would go to an actor it does not "
-            "control. %s decides its own speed.",
-            type(self).__name__,
-            self.driven_by,
+        self._refuse(
+            "a speed was set",
+            "the command would go to an actor it does not control",
         )
 
     def turn_at_junction(
         self, world: "carla.World", direction: "TurnDirection", **kwargs: Any
     ) -> None:
         """Refuse a TrafficManager route: nothing here is driven by it."""
+        self._refuse("a turn was asked for", "setting a route there would do nothing")
+
+    def _refuse(self, request: str, consequence: str) -> None:
+        """Log that *request* was refused, and why it would have done nothing."""
         logger.warning(
-            "%s: a turn was asked for, but this entity is not driven by the "
-            "TrafficManager, so setting a route there would do nothing.",
+            "%s: %s, but this entity is not driven by the TrafficManager, so %s. "
+            "That is left to the %s stack.",
             type(self).__name__,
+            request,
+            consequence,
+            self.stack_name,
         )

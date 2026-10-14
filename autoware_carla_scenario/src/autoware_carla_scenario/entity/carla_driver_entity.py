@@ -72,7 +72,7 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
             from *config*.
     """
 
-    driven_by: str = "The policy"
+    stack_name: str = "driver policy"
 
     def __init__(
         self,
@@ -160,6 +160,9 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
             raise RuntimeError(
                 "CarlaDriverEntity.on_scenario_start called before spawn()"
             )
+        # A retried scenario runs this entity again: the policy's request to end
+        # the attempt before does not end this one.
+        self._reset_termination()
 
         self._rear_axle_offset_m = rear_axle_offset(
             actor, self._config.rear_axle_offset_m
@@ -280,7 +283,7 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
         logger.info(
             "Driver session finished after %d policy step(s)%s",
             self._drive_count,
-            " (terminated by the policy)" if self._termination_requested else "",
+            " (terminated by the policy)" if self.termination_requested else "",
         )
 
     # ------------------------------------------------------------------
@@ -436,9 +439,8 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
                 ),
             )
 
-        if outcome.terminate_session and not self._termination_requested:
-            logger.info("Driver policy requested session termination")
-            self._termination_requested = True
+        if outcome.terminate_session and not self.termination_requested:
+            self._terminate("The driver policy requested session termination")
 
     def _renderer_data(self, observation: EgoObservation) -> bytes:
         """Return the CARLA ground-truth payload for this policy step.

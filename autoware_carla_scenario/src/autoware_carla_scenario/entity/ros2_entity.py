@@ -108,7 +108,7 @@ class Ros2EgoEntity(ExternallyDrivenEgo):
             when the scenario starts, which needs the ``ros2`` extra.
     """
 
-    driven_by: str = "The ROS 2 nodes"
+    stack_name: str = "ROS 2"
 
     _config: Ros2EgoConfig
     _transport: Optional[Ros2EgoTransport]

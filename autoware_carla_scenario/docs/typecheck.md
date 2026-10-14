@@ -467,12 +467,15 @@ be read first. `MODELLED_IMPORTS` in `typecheck/library.py` breaks such a
 cycle: the module it names (`measures`, `entity.ego`) imports the other
 (`scenario_base`) through its model, as it did before that one was checked.
 Its types are the model's, which never meet the checked module's.
-`entity.bridged_ego` imports `scenario_base` through the model too: its
-`BridgedEgoEntity.spawn()` overrides `EgoVehicle.spawn()`, so it takes the
-same, the model's, `EgoConfig`. Through the checked `scenario_base`, a run
-with an example scenario in it failed in Codon 0.19's code generation
-(`LLVM: error: value doesn't match function result type '{ ptr, ptr }'`, in
-`opt_ref_new` of the model's `BaseScenario`).
+The egos derived from `EgoVehicle` (`entity.bridged_ego`,
+`entity.autoware_entity`) do not override `EgoVehicle.spawn()`, so they never
+name `EgoConfig` and need no entry: Codon 0.19 cannot call `super().spawn()`
+through an intermediate class ("'EgoVehicle' does not match expected type"
+in its dispatch thunk), and an override that repeated the spawn instead would
+take `scenario_base` through the model as `entity.ego` does. Through the
+checked `scenario_base`, a run with an example scenario in it failed in Codon
+0.19's code generation (`LLVM: error: value doesn't match function result
+type '{ ptr, ptr }'`, in `opt_ref_new` of the model's `BaseScenario`).
 
 A model module that stands in for unchecked code declares only what the
 checked modules and scenarios use of it. `coordinate.codon` still declares,

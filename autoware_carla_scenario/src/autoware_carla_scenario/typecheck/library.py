@@ -475,11 +475,6 @@ MODELLED_IMPORTS: dict[str, tuple[str, ...]] = {
     # BaseScenario holds an EgoVehicle (`ego_entity`), and EgoVehicle.spawn()
     # takes an EgoConfig.
     "autoware_carla_scenario.entity.ego": ("autoware_carla_scenario.scenario_base",),
-    # BridgedEgoEntity.spawn() overrides EgoVehicle.spawn(), so it takes the
-    # same EgoConfig, the model's.
-    "autoware_carla_scenario.entity.bridged_ego": (
-        "autoware_carla_scenario.scenario_base",
-    ),
 }
 
 

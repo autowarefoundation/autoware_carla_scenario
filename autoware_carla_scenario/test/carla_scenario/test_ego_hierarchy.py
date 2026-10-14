@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Callable
 
 import pytest
 
@@ -53,9 +54,26 @@ def test_terminate_records_the_reason() -> None:
     assert entity.termination_reason is None
 
 
-def test_a_refusal_names_what_drives(caplog: pytest.LogCaptureFixture) -> None:
-    entity = AutowareEgoEntity(bridge=FakeAutowareBridge())
+@pytest.mark.parametrize(
+    "entity",
+    [AutowareEntity(), AutowareEgoEntity(bridge=FakeAutowareBridge())],
+    ids=lambda entity: type(entity).__name__,
+)
+@pytest.mark.parametrize(
+    "refuse",
+    [
+        lambda entity: entity.change_lane(None, None),
+        lambda entity: entity.set_desired_speed(None, 30.0),
+        lambda entity: entity.turn_at_junction(None, None),
+    ],
+    ids=["change_lane", "set_desired_speed", "turn_at_junction"],
+)
+def test_a_refusal_names_what_drives(
+    entity: ExternallyDrivenEgo,
+    refuse: Callable[[ExternallyDrivenEgo], None],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     with caplog.at_level(logging.WARNING):
-        entity.set_desired_speed(None, 30.0)  # type: ignore[arg-type]
+        refuse(entity)
     assert "not driven by the TrafficManager" in caplog.text
-    assert "Autoware decides its own speed" in caplog.text
+    assert "left to the Autoware stack" in caplog.text

@@ -40,13 +40,11 @@ if TYPE_CHECKING:
     from ..autoware_bridge.base import AutowareBridge, BridgePose
     from ..autoware_stack.launcher import AutowareLauncher
     from ..coordinate import GroundProjectionConfig, Lanelet2Pose
-    from ..scenario_base import EgoConfig
 
 from ..autoware_bridge.base import AutowareBridgeConfig
 from ..constants import EGO_ROLE_NAME
 from ..coordinate.poses import CarlaWorldPose
 from ..coordinate.transform import to_map_frame
-from ._spawn import spawn_vehicle_actor
 from .externally_driven import ExternallyDrivenEgo
 
 logger = logging.getLogger(__name__)
@@ -83,7 +81,7 @@ class BridgedEgoEntity(ExternallyDrivenEgo):
     ``CollisionCondition`` ...) works against it exactly as for a TrafficManager
     or driver ego, via ``actor.get_transform()``.
 
-    Subclasses name the stack (:attr:`~ExternallyDrivenEgo.driven_by`) and add
+    Subclasses name the stack (:attr:`~ExternallyDrivenEgo.stack_name`) and add
     what is particular to it.  One that also drives the ego from the framework
     extends the lifecycle hooks and calls these through ``super()``.
 
@@ -101,16 +99,12 @@ class BridgedEgoEntity(ExternallyDrivenEgo):
         episode_name: The scenario's name, for the launcher's logs.
     """
 
-    #: This entity spawns the ego, so it is the scenario's to clean up.
-    attaches_to_existing_actor: bool = False
+    stack_name: str = "bridged"
 
     #: The stack plans a route from the initial pose to a goal and only then
     #: engages: without one it never reports ready.
     requires_goal: bool = True
 
-    # Declared again, though EgoVehicle declares it: the check types an
-    # attribute a class assigns from that class's own declarations.
-    _vehicle: Optional["carla.Actor"]
     _config: AutowareBridgeConfig
     _bridge: AutowareBridge
     _launcher: Optional[AutowareLauncher]
@@ -294,48 +288,6 @@ class BridgedEgoEntity(ExternallyDrivenEgo):
         return self._ready
 
     # ------------------------------------------------------------------
-    # Actor lifecycle
-    # ------------------------------------------------------------------
-
-    def spawn(self, world: "carla.World", config: "EgoConfig") -> "carla.Actor":
-        """Place the ego where the scenario says the run starts.
-
-        The same :func:`spawn_vehicle_actor` call :class:`EgoVehicle` makes, at
-        the spawn pose ``setup()`` already resolved and wrote into *config* --
-        so the retries and ground projection behave as they do for any other
-        vehicle.  The interface node finds the actor afterwards by its
-        ``role_name``.
-
-        Args:
-            world: The CARLA world instance.
-            config: Ego configuration; its spawn location is where the ego goes.
-
-        Returns:
-            The spawned ego vehicle actor.
-
-        Raises:
-            RuntimeError: If the ego could not be spawned.
-        """
-        self._vehicle = spawn_vehicle_actor(
-            world,
-            config.vehicle_type,
-            str(EGO_ROLE_NAME),
-            config.spawn_location,
-            od_pose=config.od_pose,
-            spawn_retry_max_count=config.spawn_retry_max_count,
-            spawn_retry_t_step=config.spawn_retry_t_step,
-            spawn_retry_z_step=config.spawn_retry_z_step,
-            ground_projection=config.ground_projection,
-        )
-        logger.info(
-            "Spawned the %s ego: id=%d role_name=%s",
-            self.driven_by,
-            self._vehicle.id,
-            EGO_ROLE_NAME,
-        )
-        return self._vehicle
-
-    # ------------------------------------------------------------------
     # Lifecycle hooks (driven by ScenarioRunner)
     # ------------------------------------------------------------------
 
@@ -354,6 +306,12 @@ class BridgedEgoEntity(ExternallyDrivenEgo):
             raise RuntimeError(
                 f"{type(self).__name__}.on_scenario_start called before spawn()"
             )
+        logger.info(
+            "The %s stack is to attach to the ego: id=%d role_name=%s",
+            self.stack_name,
+            self.actor.id,
+            EGO_ROLE_NAME,
+        )
         # A retried scenario runs this entity again: nothing the attempt before
         # reached -- readiness least of all -- carries over to this one.
         self._configured = False
@@ -364,8 +322,8 @@ class BridgedEgoEntity(ExternallyDrivenEgo):
         self._boot_started = None
         if self._goal_pose is None:
             raise ValueError(
-                f"{type(self).__name__} has no goal: {self.driven_by} needs one "
-                "to plan a route. A scenario that calls "
+                f"{type(self).__name__} has no goal: the {self.stack_name} stack "
+                "needs one to plan a route. A scenario that calls "
                 "BaseScenario._setup_ego_spawn() gets it from its goal_pose "
                 "(ego.goal_lanelet_id in the config); one that does not must call "
                 "set_mission() from its setup(), where poses snapped onto the "
@@ -383,9 +341,9 @@ class BridgedEgoEntity(ExternallyDrivenEgo):
         goal_pose = self._goal_pose.moved_forward(offset)
         waypoint_poses = [pose.moved_forward(offset) for pose in self._waypoint_poses]
         logger.info(
-            "%s's base_link is %.3f m along the ego from its origin; "
+            "The %s stack's base_link is %.3f m along the ego from its origin; "
             "initial pose (%.2f, %.2f), goal (%.2f, %.2f) in the map frame",
-            self.driven_by,
+            self.stack_name,
             offset,
             initial_pose.position.x,
             initial_pose.position.y,
@@ -430,7 +388,7 @@ class BridgedEgoEntity(ExternallyDrivenEgo):
         self._boot_started = time.monotonic()
         logger.info(
             "Started %s stack #%d for %s; it is to dial the bridge at %s",
-            self.driven_by,
+            self.stack_name,
             episode.index,
             episode.name,
             address,
@@ -465,10 +423,10 @@ class BridgedEgoEntity(ExternallyDrivenEgo):
         if expected is None:
             logger.info(
                 "No initial pose was set; localizing at the ego's own pose "
-                "(%.2f, %.2f). %s fits the height to the map.",
+                "(%.2f, %.2f). The %s stack fits the height to the map.",
                 actual.position.x,
                 actual.position.y,
-                self.driven_by,
+                self.stack_name,
             )
             return actual
         # math.hypot of the differences, which is math.dist's own computation:
@@ -508,7 +466,7 @@ class BridgedEgoEntity(ExternallyDrivenEgo):
             code = self._launcher.poll()
             if code is not None:
                 self._stack_running = False
-                self._terminate(f"The {self.driven_by} stack exited with code {code}")
+                self._terminate(f"The {self.stack_name} stack exited with code {code}")
                 return
         if self._ready:
             return
@@ -517,7 +475,7 @@ class BridgedEgoEntity(ExternallyDrivenEgo):
             booting_s = time.monotonic() - self._boot_started
             if booting_s > self._config.boot_timeout_s:
                 self._terminate(
-                    f"{self.driven_by} did not reach the bridge within "
+                    f"The {self.stack_name} stack did not reach the bridge within "
                     f"{self._config.boot_timeout_s:.0f} s of being started"
                 )
             elif self._config.boot_tick_period_s > 0:
@@ -525,12 +483,12 @@ class BridgedEgoEntity(ExternallyDrivenEgo):
             return
         if self._bridge.is_ready():
             self._ready = True
-            logger.info("%s is ready; scenario may proceed", self.driven_by)
+            logger.info("The %s stack is ready; scenario may proceed", self.stack_name)
             return
         self._ready_ticks += 1
         if self._ready_ticks >= self._config.ready_timeout_ticks:
             self._terminate(
-                f"{self.driven_by} not ready after {self._ready_ticks} ticks"
+                f"The {self.stack_name} stack not ready after {self._ready_ticks} ticks"
             )
 
     def on_scenario_end(self, world: "carla.World") -> None:
@@ -542,7 +500,7 @@ class BridgedEgoEntity(ExternallyDrivenEgo):
                 logger.warning(
                     "%s: stopping the %s stack failed",
                     type(self).__name__,
-                    self.driven_by,
+                    self.stack_name,
                     exc_info=True,
                 )
             self._stack_running = False

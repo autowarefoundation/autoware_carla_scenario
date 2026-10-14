@@ -152,7 +152,7 @@ def _place(entity: AutowareEgoEntity, world) -> "_FakeActor":
         a for a in world.get_actors() if a.attributes["role_name"] == str(EGO_ROLE_NAME)
     )
     with mock.patch(
-        "autoware_carla_scenario.entity.bridged_ego.spawn_vehicle_actor",
+        "autoware_carla_scenario.entity.ego.spawn_vehicle_actor",
         return_value=actor,
     ):
         return entity.spawn(world, _spawn_config())
@@ -220,7 +220,7 @@ def test_spawn_places_the_ego_where_the_scenario_said(
         return spawned
 
     monkeypatch.setattr(
-        "autoware_carla_scenario.entity.bridged_ego.spawn_vehicle_actor",
+        "autoware_carla_scenario.entity.ego.spawn_vehicle_actor",
         _fake_spawn,
     )
     entity = _make_entity()
@@ -240,7 +240,7 @@ def test_destroy_destroys_the_ego_it_spawned(
     """The actor is the scenario's, so it does not outlive the run."""
     spawned = _FakeActor(42, str(EGO_ROLE_NAME))
     monkeypatch.setattr(
-        "autoware_carla_scenario.entity.bridged_ego.spawn_vehicle_actor",
+        "autoware_carla_scenario.entity.ego.spawn_vehicle_actor",
         lambda *a, **k: spawned,
     )
     entity = _make_entity()

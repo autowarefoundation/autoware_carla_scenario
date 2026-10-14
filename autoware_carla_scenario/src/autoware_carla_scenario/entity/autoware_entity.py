@@ -48,6 +48,9 @@ from .externally_driven import ExternallyDrivenEgo
 
 __all__ = ["AutowareEgoEntity", "AutowareEntity"]
 
+#: What both Autoware entities call the stack that drives them.
+_AUTOWARE: str = "Autoware"
+
 
 class AutowareEntity(ExternallyDrivenEgo):
     """Ego vehicle controlled by Autoware instead of TrafficManager.
@@ -62,7 +65,7 @@ class AutowareEntity(ExternallyDrivenEgo):
     :class:`AutowareEgoEntity`.
     """
 
-    driven_by: str = "Autoware"
+    stack_name: str = _AUTOWARE
 
 
 class AutowareEgoEntity(BridgedEgoEntity):
@@ -76,4 +79,4 @@ class AutowareEgoEntity(BridgedEgoEntity):
     ``autoware_carla_interface`` dials, or ``FakeAutowareBridge`` in tests.
     """
 
-    driven_by: str = "Autoware"
+    stack_name: str = _AUTOWARE

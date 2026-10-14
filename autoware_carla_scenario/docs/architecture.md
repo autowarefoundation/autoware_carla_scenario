@@ -984,7 +984,7 @@ classDiagram
 
     class ExternallyDrivenEgo {
         +use_autopilot = false
-        +driven_by: str
+        +stack_name: str
         +termination_requested: bool
         +termination_reason: str | None
         +change_lane() refuses
