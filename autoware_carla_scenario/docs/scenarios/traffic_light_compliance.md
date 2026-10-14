@@ -21,7 +21,7 @@ uv run scenario --multirun hydra/sweeper=lanelet_constraint \
 | **Ego** | Constraint search: a lanelet *before* a junction lanelet that has a traffic-light stop line, excluding the map's lanelets with no 3D model. Position *before stop line*: 10 m short of it. Goal: up the road, past the junction. |
 | **Initialization** | Every traffic light red. |
 | **After 5 s** | Every traffic light green. |
-| **Pass** | Both have happened: the ego stood still for 2 s, *and* after 5.5 s it was moving at 1 km/h or more. |
+| **Pass** | Both have happened: the ego stood still for 2 s, *and* after 5.5 s it was moving at 10 km/h or more. |
 | **Fail** | The ego moves at 1 km/h or more between 3 s and 4.9 s, while the light is still red -- or 8 s pass. |
 
 ## Parameters
@@ -30,7 +30,8 @@ uv run scenario --multirun hydra/sweeper=lanelet_constraint \
 |---|---|
 | Light turns green after | 5.0 s |
 | Must have stood still for | 2.0 s (5.0 s minus the 3.0 s it may take to settle) |
-| Counts as moving from | 1 km/h |
+| Counts as moving on red from | 1 km/h |
+| Counts as pulling away on green from | 10 km/h |
 | Ego initial speed | 0 km/h |
 | Spawn | 10 m before the stop line |
 | Timeout | 8 s |
@@ -43,4 +44,4 @@ uv run scenario --multirun hydra/sweeper=lanelet_constraint \
 
 <video controls muted playsinline width="100%" src="../media/traffic_light_compliance.mp4"></video>
 
-*Town10HD_Opt, the first case: the search matched lanelet 719, where the ego starts. Result: PASSED. Recorded with `scenario.moving_speed_kmh=15`, so the run ends once the ego is visibly pulling away on green rather than at its first 1 km/h; the same threshold then applies while the light is red.*
+*Town10HD_Opt, the first case: the search matched lanelet 719, where the ego starts. Result: PASSED. Recorded with `scenario.moving_speed_kmh=15`, from before the green check had a threshold of its own (`departure_speed_kmh`); that run also let the ego move at up to 15 km/h on red.*

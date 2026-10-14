@@ -8,7 +8,8 @@ This scenario verifies traffic light compliance by:
    :class:`~autoware_carla_scenario.TrafficSignalAction` with
    :class:`~autoware_carla_scenario.ElapsedTimeCondition`.
 4. Asserting the ego vehicle remains stopped during the red phase (1–2.9 s)
-   and begins moving after the green phase (3.1 s onward).
+   and pulls away after the green phase (3.5 s onward), reaching
+   ``departure_speed_kmh`` (``moving_speed_kmh`` when unset).
 
 The pass condition combines :class:`~autoware_carla_scenario.ElapsedTimeCondition`
 and :class:`~autoware_carla_scenario.SpeedCondition` via
@@ -120,8 +121,13 @@ class TrafficLightComplianceScenario(BaseScenario):
             )
         )
 
-        # 2) Verify ego moving after green phase
+        # 2) Verify ego pulled away after green phase
         green_check_time = cfg.light_switch_delay_seconds + 0.5
+        departure_speed_kmh = (
+            cfg.moving_speed_kmh
+            if cfg.departure_speed_kmh is None
+            else cfg.departure_speed_kmh
+        )
         moving_after_green = StickyCondition(
             AndCondition(
                 [
@@ -132,7 +138,7 @@ class TrafficLightComplianceScenario(BaseScenario):
                     ),
                     SpeedCondition(
                         entity_name=EGO_ROLE_NAME,
-                        value=cfg.moving_speed_kmh / 3.6,
+                        value=departure_speed_kmh / 3.6,
                         rule=ComparisonRule.GREATER_THAN_OR_EQUAL,
                         label="ego_moving_after_green",
                     ),
