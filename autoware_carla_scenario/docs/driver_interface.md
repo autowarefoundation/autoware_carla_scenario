@@ -177,6 +177,34 @@ since the `driver` group is composed after `ego`.
 policy expects. `carla-driver-interface`'s reference policies use
 `camera_front_wide_120fov`.
 
+### A stack serving the policy's world (`driver.bridge`)
+
+A policy can drive in a world something else serves it -- splatsim rendering what
+its cameras see, say -- that has to come up before the policy can drive, and has to
+know where the run goes. `driver.bridge` gives the ego the same
+[`AutowareBridge`](autoware.md) handshake an `ego.entity=autoware` run uses: the
+framework hosts the bridge, the stack's interface node dials it, pulls the
+scenario's mission (initial pose, goal, waypoints, at its `base_link`) and reports
+when it is ready.
+
+```yaml
+driver:
+  bridge:
+    address: 0.0.0.0:50052     # AutowareBridgeConfig's fields
+    ready_timeout_ticks: 1200
+```
+
+With a bridge the scenario needs a goal (`ego.goal_lanelet_id`, or one the scenario
+derives), handed over when the scenario starts. Until the stack reports ready the
+policy is not queried and the scenario's clock does not start; the policy then
+starts -- its warm-up first, when `warmup_s` is set -- on the tick the stack turns
+ready. A stack that is not ready within `ready_timeout_ticks`, or exits, ends the
+run. `null` (the default) runs the policy alone, from the first tick.
+
+From Python the same is `CarlaDriverEntity(config, bridge=..., bridge_config=...,
+launcher=...)`; a `launcher` starts and stops the stack per scenario, as it does for
+Autoware.
+
 ## Using it from Python
 
 Scenarios that build their ego themselves can attach the entity directly:
@@ -345,8 +373,8 @@ A policy can set `terminate_session` on its response. The entity records it, and
 `ScenarioRunner` ends the tick loop — but only after evaluating the scenario's own pass
 and fail conditions, so a condition firing on the same tick still decides the outcome.
 On its own, an early stop is reported as a failure with the message
-`Ego entity requested session termination`, because the scenario never satisfied its
-pass condition.
+`Ego entity requested session termination: The driver policy requested session
+termination`, because the scenario never satisfied its pass condition.
 
 ## Writing a policy
 

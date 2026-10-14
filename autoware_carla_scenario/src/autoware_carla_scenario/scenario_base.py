@@ -409,14 +409,15 @@ class BaseScenario(ABC):
 
         The entity's own rule
         (:attr:`~autoware_carla_scenario.entity.ego.EgoVehicle.requires_goal`),
-        read off the instance the scenario was given or, when it will be built
-        from :attr:`ego_type`, off that class.
+        read off the instance the scenario was given -- which can say so of
+        itself, as a driver-policy ego given a bridge does -- or, when it will be
+        built from :attr:`ego_type`, off that class.
         """
         entity = self.ego_entity
         # Two returns rather than one conditional expression over the class,
         # for the static check (docs/typecheck.md): Codon cannot hold a class
-        # as a value.  ``requires_goal`` is a class attribute no instance
-        # assigns, so reading it off the instance reads the class's.
+        # as a value.  Read off the instance, ``requires_goal`` is the class's
+        # unless the entity set its own (a driver-policy ego given a bridge).
         if entity is not None:
             return entity.requires_goal
         return self.ego_type.requires_goal

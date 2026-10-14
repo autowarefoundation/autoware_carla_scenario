@@ -260,9 +260,10 @@ class DriverClientConfig:
     def from_mapping(cls, mapping: Mapping[str, Any]) -> "DriverClientConfig":
         """Return a client config built from a plain mapping (e.g. a Hydra node).
 
-        The ``cameras`` entry is converted to :class:`DriverCameraConfig` objects and a
-        ``control`` entry, if present, is ignored -- the controller is configured
-        separately via :meth:`ControlConfig.from_mapping`.
+        The ``cameras`` entry is converted to :class:`DriverCameraConfig` objects; a
+        ``control`` entry and a ``bridge`` entry, if present, are ignored -- the
+        controller is configured via :meth:`ControlConfig.from_mapping` and the
+        bridge by the entity's ``bridge`` arguments.
 
         Raises:
             ValueError: If *mapping* holds a key this config does not define.
@@ -271,7 +272,7 @@ class DriverClientConfig:
         # utils.config reads a dataclass's fields from its class (docs/typecheck.md).
         from ..utils.config import checked_options as _checked  # noqa: PLC0415
 
-        values = _checked(cls, mapping, ignore={"control"})
+        values = _checked(cls, mapping, ignore={"control", "bridge"})
         cameras = values.pop("cameras", None)
         if cameras is not None:
             values["cameras"] = tuple(

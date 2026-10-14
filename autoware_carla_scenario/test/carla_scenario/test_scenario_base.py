@@ -342,7 +342,7 @@ class TestRouteToGoal:
         # Registered, not performed: the runner runs init actions once the ego
         # actor exists, and nothing has reached the entity yet.
         assert scenario.ego_entity is not None
-        assert scenario.ego_entity._goal_pose is None  # type: ignore[union-attr]
+        assert scenario.ego_entity.handshake._goal_pose is None  # type: ignore[union-attr]
 
     def test_the_registered_action_reaches_the_entity_by_name(self) -> None:
         """The scenario registers; the action finds the entity; the entity routes.
@@ -424,6 +424,24 @@ class TestRequireGoal:
         scenario = _SimpleScenario(_make_ego_config())
         scenario.ego_type = AutowareEgoEntity
 
+        assert scenario.ego_requires_goal is True
+
+    def test_the_rule_is_read_off_the_entity_itself(self) -> None:
+        """A driver-policy ego given a bridge needs a goal; its class does not."""
+        from unittest.mock import MagicMock
+
+        from autoware_carla_scenario.autoware_bridge import FakeAutowareBridge
+        from autoware_carla_scenario.driver.base import DriverClientConfig
+        from autoware_carla_scenario.entity import CarlaDriverEntity
+
+        config = DriverClientConfig(cameras=())
+        scenario = _SimpleScenario(_make_ego_config())
+        scenario.ego_entity = CarlaDriverEntity(config, client=MagicMock())
+        assert scenario.ego_requires_goal is False
+
+        scenario.ego_entity = CarlaDriverEntity(
+            config, client=MagicMock(), bridge=FakeAutowareBridge()
+        )
         assert scenario.ego_requires_goal is True
 
 
