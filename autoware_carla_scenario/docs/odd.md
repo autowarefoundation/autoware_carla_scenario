@@ -293,6 +293,55 @@ onto the four built-in measures; the two of the vehicle ahead count stays of
 1 s or more (`min_stay`), so a gap the ego only closes through is not
 covered.
 
+#### Driving measures
+
+Besides what a scenario sets up, the built-in measures read how the ego
+drives it: the per-timestep driving-quality metrics of NVIDIA's
+[AlpaSim](https://github.com/NVlabs/alpasim) (`src/eval/src/eval/scorers`),
+under AlpaSim's own names, computed from CARLA's actors and map
+(`autoware_carla_scenario.driving_measures`). An event reads `1` while it
+holds and `0` while it does not; every one reads nothing without an ego, and
+those of the road nothing without a map. A measure reads one frame; AlpaSim
+folds a run's frames into one value with the aggregation in the last column
+(`TIME_AGGREGATION`), which a taxonomy mapping one of these will want too.
+
+| Key | Unit | Reads | AlpaSim folds with |
+|---|---|---|---|
+| `collision_any` | | The ego's bounding box overlaps another vehicle's or a pedestrian's | max |
+| `collision_front` | | ... and the other overlaps the ego's front edge | max |
+| `collision_rear` | | ... its rear edge, and not its front | max |
+| `collision_lateral` | | ... neither edge: a side swipe | max |
+| `collision_at_fault` | | A front or a lateral collision | max |
+| `offroad` | | A corner of the ego's box is on no driving lane | max |
+| `offroad_or_collision` | | Off the road, or any collision | max |
+| `offroad_or_collision_at_fault` | | Off the road, or a collision at fault | max |
+| `wrong_lane` | | The ego heads more than 120 degrees away from the driving lane under its centre; nothing off the road | max |
+| `min_distance_to_obstacle_m` | m | Box to box, to the nearest other vehicle or pedestrian; `0` touching, nothing when the ego is alone | min |
+| `min_distance_to_lane_boundary_m` | m | From the ego's box to the edge of the driving lanes around it (lanes beside its own count while their near edge is within 6 m of its centre); `0` off the road | min |
+
+Where AlpaSim's geometry is not CARLA's, the reading follows CARLA: AlpaSim
+asks whether the union of the lane polygons around the ego covers its box,
+CARLA whether a point is on a driving lane, so `offroad` asks it of the box's
+corners; the lane boundary takes the lanes beside the ego's as parallel strips
+as wide as CARLA says they are there, an approximation through a junction.
+Boxes are those of vehicles (`vehicle.*`) and pedestrians (`walker.*`); props
+are not road users.
+
+AlpaSim's other metrics need more than the world, and are not measures:
+
+| AlpaSim metric | Needs |
+|---|---|
+| `progress`, `progress_rel`, `dist_to_gt_trajectory`, `dist_to_gt_location`, `gt_dist_traveled_m` | The logged ground-truth trajectory of the ego |
+| `min_ade@*`, `plan_deviation`, `open_loop_collision` | The driver's planned trajectories |
+| `safety_monitor_triggered` | The driver's safety monitor |
+| `img_is_black` | A camera image |
+| `dist_traveled_m`, `duration_frac_20s`, `avg_dist_between_incidents` | The run, not a frame: the coverage collector already weighs by distance and time (`cover_by`) |
+
+No taxonomy maps onto the driving measures yet. One that does names the key
+like any other measure (`measure: collision_any` in a binding file,
+`scenario_measure(COLLISION_ANY)` in Python); the keys are in the Codon model
+(`from autoware_carla_scenario.driving_measures import COLLISION_ANY`).
+
 
 
 ## Writing an ODD in OpenODD YAML

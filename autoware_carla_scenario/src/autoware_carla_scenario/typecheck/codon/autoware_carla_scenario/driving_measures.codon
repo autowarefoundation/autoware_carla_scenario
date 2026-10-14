@@ -1,0 +1,23 @@
+# Model of autoware_carla_scenario.driving_measures (docs/odd.md, "Driving
+# measures"): the keys of the driving-quality built-in measures, AlpaSim's
+# metric names, which a scenario passes to BaseScenario.measure() and an ODD to
+# odd.scenario_measure(), and the thresholds they read with.
+
+COLLISION_ANY: str = "collision_any"
+COLLISION_FRONT: str = "collision_front"
+COLLISION_REAR: str = "collision_rear"
+COLLISION_LATERAL: str = "collision_lateral"
+COLLISION_AT_FAULT: str = "collision_at_fault"
+OFFROAD: str = "offroad"
+OFFROAD_OR_COLLISION: str = "offroad_or_collision"
+OFFROAD_OR_COLLISION_AT_FAULT: str = "offroad_or_collision_at_fault"
+WRONG_LANE: str = "wrong_lane"
+MIN_DISTANCE_TO_OBSTACLE_M: str = "min_distance_to_obstacle_m"
+MIN_DISTANCE_TO_LANE_BOUNDARY_M: str = "min_distance_to_lane_boundary_m"
+
+WRONG_LANE_HEADING_RAD: float = 2.0943951023931953
+LANE_SEARCH_RADIUS_M: float = 6.0
+
+
+def reset_driving_measures() -> None:
+    raise NotImplementedError()

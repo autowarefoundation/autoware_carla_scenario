@@ -8,7 +8,9 @@ speaks the same vocabulary of what it sets up, whoever wrote it.
 
 Every :class:`~autoware_carla_scenario.BaseScenario` has the built-in measures
 (:data:`BUILT_IN_MEASURES`), which read the world generically, in the ego's
-frame.  A scenario that knows better -- which actor *is* its cut-in vehicle --
+frame.  Besides what a run sets up, they include how the ego drives it -- the
+driving-quality measures of :mod:`autoware_carla_scenario.driving_measures`
+(collisions, off the road, distances to obstacles and lane edges).  A scenario that knows better -- which actor *is* its cut-in vehicle --
 replaces one with :meth:`~autoware_carla_scenario.BaseScenario.register_measure`,
 or adds one of its own.
 
@@ -30,6 +32,7 @@ from typing import TYPE_CHECKING, Callable, Optional
 
 from .conditions.base import find_actor_in_list
 from .constants import EGO_ROLE_NAME
+from .driving_measures import DRIVING_MEASURES, reset_driving_measures
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
@@ -317,6 +320,17 @@ BUILT_IN_MEASURES: dict[str, Measure] = {
 }
 
 
+def _add_driving_measures(measures: dict[str, Measure]) -> None:
+    """Add the driving-quality measures to *measures*."""
+    for driving in DRIVING_MEASURES:
+        measures[driving.key] = Measure(
+            driving.key, driving.read, driving.unit, driving.text
+        )
+
+
+_add_driving_measures(BUILT_IN_MEASURES)
+
+
 # ---------------------------------------------------------------------------
 # The running scenario
 # ---------------------------------------------------------------------------
@@ -332,6 +346,7 @@ def set_measured_scenario(scenario: Optional["BaseScenario"]) -> None:
     _MEASURED["scenario"] = scenario
     _CACHE.at, _CACHE.around = None, None
     _SET_OFF.clear()
+    reset_driving_measures()
 
 
 def measured_scenario() -> Optional["BaseScenario"]:
