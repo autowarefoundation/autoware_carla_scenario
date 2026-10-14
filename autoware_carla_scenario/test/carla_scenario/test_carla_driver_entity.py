@@ -15,6 +15,11 @@ from unittest.mock import MagicMock
 import numpy as np
 import pytest
 
+from autoware_carla_scenario.autoware_bridge import (
+    AutowareBridgeConfig,
+    BridgePose,
+    FakeAutowareBridge,
+)
 from autoware_carla_scenario.driver.base import (
     BaseEgoDriverClient,
     DriveOutcome,
@@ -700,3 +705,202 @@ def test_a_named_policy_is_served_by_the_run() -> None:
         entity.on_tick(world, 0.0)
         assert len(entity._plan) > 0  # noqa: SLF001 - the served policy planned
         entity.on_scenario_end(world)
+
+
+# ---------------------------------------------------------------------------
+# A stack serving the policy's world, over the bridge
+# ---------------------------------------------------------------------------
+
+_GOAL = BridgePose.from_yaw(x=40.0, y=0.0, z=0.0, yaw=0.0)
+
+
+@pytest.fixture
+def _map_frame_without_a_map(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Convert CARLA poses to the map frame without a loaded map (see the Autoware tests)."""
+
+    def _flip_y(pose):
+        return BridgePose.from_yaw(
+            x=pose.x, y=-pose.y, z=pose.z, yaw=math.radians(-pose.yaw)
+        )
+
+    monkeypatch.setattr(
+        "autoware_carla_scenario.entity.bridged_ego.to_map_frame", _flip_y
+    )
+
+
+def _bridged_entity(
+    bridge: FakeAutowareBridge, *, goal: Optional[BridgePose] = _GOAL, **bridge_config
+) -> Tuple[CarlaDriverEntity, _FakeDriverClient]:
+    """An entity wired to a fake client and *bridge*, its mission set."""
+    config = DriverClientConfig(
+        cameras=(),
+        rear_axle_offset_m=-1.4,
+        send_renderer_data=False,
+        policy_timestep_s=0.05,
+    )
+    client = _FakeDriverClient(config)
+    bridge_config.setdefault("base_link_offset_m", -1.4)
+    entity = CarlaDriverEntity(
+        config,
+        client=client,
+        bridge=bridge,
+        bridge_config=AutowareBridgeConfig(**bridge_config),
+    )
+    entity._vehicle = _actor()  # noqa: SLF001 - stands in for spawn()
+    if goal is not None:
+        assert entity.handshake is not None
+        entity.handshake.set_mission(None, goal)
+    return entity, client
+
+
+def test_without_a_bridge_the_policy_needs_no_goal() -> None:
+    entity, _ = _entity()
+    assert entity.handshake is None
+    assert entity.requires_goal is False
+
+
+def test_a_bridge_makes_the_goal_required() -> None:
+    entity, _ = _bridged_entity(FakeAutowareBridge())
+    assert entity.requires_goal is True
+    # Only this instance: the class still runs a policy alone.
+    assert CarlaDriverEntity.requires_goal is False
+
+
+def test_a_launcher_needs_a_bridge() -> None:
+    with pytest.raises(ValueError, match="needs a bridge"):
+        CarlaDriverEntity(
+            DriverClientConfig(cameras=()),
+            client=MagicMock(),
+            launcher=MagicMock(),
+        )
+
+
+@pytest.mark.usefixtures("_map_frame_without_a_map")
+def test_a_bridged_ego_without_a_goal_is_refused() -> None:
+    entity, _ = _bridged_entity(FakeAutowareBridge(), goal=None)
+    with pytest.raises(ValueError, match="has no goal"):
+        entity.on_scenario_start(_world_with_route())
+
+
+@pytest.mark.usefixtures("_map_frame_without_a_map")
+def test_the_policy_waits_for_the_bridged_stack() -> None:
+    bridge = FakeAutowareBridge(ready_after=3)
+    entity, client = _bridged_entity(bridge)
+    world = _world_with_route()
+
+    entity.on_scenario_start(world)
+    # The mission is handed over at once; the policy has not started.
+    assert bridge.configured_goal is not None
+    assert bridge.configured_initial_pose is not None
+    assert client.routes == []
+    assert not entity.is_initialized
+
+    for tick in range(3):
+        entity.on_tick(world, tick * _TICK_S)
+        assert not entity.is_initialized
+        assert client.drives == []
+
+    # The tick the stack turns ready starts the policy; it drives from the next.
+    entity.on_tick(world, 3 * _TICK_S)
+    assert entity.is_initialized
+    assert len(client.routes) == 1
+    assert client.drives == []
+
+    entity.on_tick(world, 4 * _TICK_S)
+    assert len(client.drives) == 1
+
+
+@pytest.mark.usefixtures("_map_frame_without_a_map")
+def test_a_stack_that_never_comes_up_ends_the_run() -> None:
+    entity, client = _bridged_entity(
+        FakeAutowareBridge(ready_after=100), ready_timeout_ticks=2
+    )
+    world = _world_with_route()
+    entity.on_scenario_start(world)
+    for tick in range(4):
+        entity.on_tick(world, tick * _TICK_S)
+
+    assert entity.termination_requested
+    assert entity.termination_reason == (
+        "The driver policy stack not ready after 2 ticks"
+    )
+    assert client.drives == []
+
+
+@pytest.mark.usefixtures("_map_frame_without_a_map")
+def test_teardown_closes_the_bridge() -> None:
+    bridge = FakeAutowareBridge()
+    entity, client = _bridged_entity(bridge)
+    world = _world_with_route()
+    entity.on_scenario_start(world)
+    entity.on_scenario_end(world)
+
+    assert bridge.closed
+    assert client.closed == 1
+
+
+@pytest.mark.usefixtures("_map_frame_without_a_map")
+def test_a_retry_waits_for_the_stack_again() -> None:
+    bridge = FakeAutowareBridge()
+    entity, _ = _bridged_entity(bridge)
+    world = _world_with_route()
+    entity.on_scenario_start(world)
+    entity.on_tick(world, 0.0)
+    assert entity.is_initialized
+    entity.on_scenario_end(world)
+
+    entity.on_scenario_start(world)
+    assert not entity.is_initialized
+
+
+def _composed(overrides: List[str]):
+    from pathlib import Path
+
+    from hydra import compose, initialize_config_dir
+
+    conf = (
+        Path(__file__).resolve().parents[2]
+        / "src"
+        / "autoware_carla_scenario"
+        / "examples"
+        / "conf"
+    )
+    with initialize_config_dir(config_dir=str(conf), version_base=None):
+        return compose(config_name="config", overrides=overrides)
+
+
+def test_run_builds_a_policy_ego_without_a_bridge_by_default() -> None:
+    from autoware_carla_scenario.examples.run import build_ego_entity
+
+    entity = build_ego_entity(_composed(["ego.entity=carla_driver"]))
+    assert isinstance(entity, CarlaDriverEntity)
+    assert entity.handshake is None
+
+
+def test_run_gives_the_policy_ego_a_bridge_from_its_config() -> None:
+    from autoware_carla_scenario.autoware_bridge import GrpcAutowareBridgeServer
+    from autoware_carla_scenario.examples.run import build_ego_entity
+
+    entity = build_ego_entity(
+        _composed(
+            [
+                "ego.entity=carla_driver",
+                "driver.bridge={address:'localhost:50099',ready_timeout_ticks:40}",
+            ]
+        )
+    )
+    assert isinstance(entity, CarlaDriverEntity)
+    assert entity.handshake is not None
+    assert isinstance(entity.handshake.bridge, GrpcAutowareBridgeServer)
+    assert entity.handshake.config.address == "localhost:50099"
+    assert entity.handshake.config.ready_timeout_ticks == 40
+    assert entity.requires_goal is True
+
+
+def test_run_refuses_an_unknown_bridge_setting() -> None:
+    from autoware_carla_scenario.examples.run import build_ego_entity
+
+    with pytest.raises(ValueError, match="adress"):
+        build_ego_entity(
+            _composed(["ego.entity=carla_driver", "driver.bridge={adress:'x'}"])
+        )
