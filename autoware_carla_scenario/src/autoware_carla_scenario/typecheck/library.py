@@ -123,6 +123,7 @@ CHECKED: tuple[str, ...] = (
     "autoware_carla_scenario.coordinate.stop_line",
     "autoware_carla_scenario.coordinate.traffic_light",
     "autoware_carla_scenario.coordinate.transform",
+    "autoware_carla_scenario.coverage",
     "autoware_carla_scenario.driver",
     "autoware_carla_scenario.driver.base",
     "autoware_carla_scenario.driver.control",
@@ -341,7 +342,6 @@ UNCALLED: dict[str, str] = {
     "autoware_carla_scenario.scenario_runner._write_result": "writes the result with json, and the environment with environment.write() (platform, json), imported inside it, which Codon does not have; run_scenario calls it in the `else` branch of `if TYPE_CHECKING:`",
     "autoware_carla_scenario.signals.controller.build_controllers": "reads the authoring package's pydantic specs (MapRef.traffic_signal_controllers and signal_groups), typed `list[Any]` so the runtime does not import authoring, with getattr defaults for fields older documents lack",
     "autoware_carla_scenario.sweeper.bindings.parse_binding": _YAML,
-    "autoware_carla_scenario.sweeper.constraints.LaneletLengthConstraint.__post_init__": "checks the rule against the names of the ComparisonRule members, iterating over the enum, which the enum shim does not model (Codon 0.19 iterates over no class)",
     "autoware_carla_scenario.sweeper.constraints.parse_constraint": _YAML,
     "autoware_carla_scenario.utils.stop_line._road_marking_stop_lines": "returns a road marking's `refers` parameters as line strings, and a `refers` parameter may be any of lanelet2's primitives (a polygon, a lanelet, ...), which the lanelet2 model types as what they all have (id, attributes); regulatory_element_stop_lines calls it in the `else` branch of `if TYPE_CHECKING:`",
 }
@@ -370,7 +370,6 @@ EXCLUDED: dict[str, str] = {
     "autoware_carla_scenario.autoware_bridge.ros_bridge.node": "imports rclpy, autoware_adapi_v1_msgs, geometry_msgs, grpc",
     "autoware_carla_scenario.autoware_stack.devcontainer": "imports yaml, json; reads a JSONC and a Compose document of values of any type (`Any`), which Codon cannot express. The checked autoware_stack.docker and the package take what they use of it (`DevContainer`, `DevContainerError`, `read_devcontainer()`, `DEFAULT_WORKSPACE_MOUNT`) from its model (autoware_stack/devcontainer.codon)",
     "autoware_carla_scenario.carla_install": "imports tqdm, json, argparse, urllib.request, http, email, tarfile, platform, and more of pathlib and shutil than their shims declare (`PurePosixPath`, `Path.iterdir()`, `Path.rename()`, `shutil.disk_usage()`)",
-    "autoware_carla_scenario.coverage": "re-exports `COVERAGE_SCHEMA` from coverage.collector, which the coverage model does not declare; behind that, coverage.collector and coverage.report re-export openodd's (a Rust extension)",
     "autoware_carla_scenario.coverage.cod": "re-exports openodd's COD export (a Rust extension)",
     "autoware_carla_scenario.coverage.collector": "derives openodd's collector (a Rust extension)",
     "autoware_carla_scenario.coverage.items": "re-exports openodd's cover items (a Rust extension)",
