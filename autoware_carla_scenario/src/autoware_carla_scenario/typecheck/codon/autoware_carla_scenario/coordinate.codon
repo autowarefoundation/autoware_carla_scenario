@@ -146,6 +146,10 @@ def lanelet_length(lanelet_id: int) -> float:
     raise NotImplementedError()
 
 
+def lanelets_ahead(lanelet_id: int, distance_m: float) -> List[int]:
+    raise NotImplementedError()
+
+
 def get_stop_line_poses(lanelet_id: int) -> List[Lanelet2Pose]:
     raise NotImplementedError()
 

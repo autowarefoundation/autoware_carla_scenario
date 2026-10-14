@@ -110,9 +110,11 @@ def build_not_condition(
     """Build a :class:`NotCondition`."""
     from ..conditions import NotCondition  # noqa: PLC0415
 
+    params = compiled.params
     return NotCondition(
         condition=children[0],
         label=compiled.label,
+        holds_when_pending=params["holds_when_pending"],
     )
 
 
