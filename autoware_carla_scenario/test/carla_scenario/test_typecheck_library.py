@@ -787,8 +787,10 @@ def test_the_full_run_compiles_only_the_checked_modules() -> None:
         "entity.ego",
         "actions.turn",
         "actions.lane_change",
-        # AutowareEgoEntity overrides EgoVehicle.spawn(), and imports
+        # BridgedEgoEntity overrides EgoVehicle.spawn(), and imports
         # scenario_base through the model, as entity.ego does.
+        "entity.bridged_ego",
+        # AutowareEgoEntity derives from it, through ExternallyDrivenEgo.
         "entity.autoware_entity",
         # The run starts at coordinate.frames, which the model's _poses.codon
         # re-exports: the driver must read the model first.

@@ -23,8 +23,10 @@ Usage::
 
 from ._spawn import SpawnLocation, SpawnPointIndex, SpawnTransform
 from .autoware_entity import AutowareEgoEntity, AutowareEntity
+from .bridged_ego import BridgedEgoEntity
 from .carla_driver_entity import CarlaDriverEntity
 from .ego import EgoVehicle
+from .externally_driven import ExternallyDrivenEgo
 from .pedestrian_entity import PedestrianEntity, PedestrianEntityConfig
 from .registry import (
     clear_entities,
@@ -37,8 +39,10 @@ from .vehicle_entity import VehicleEntity, VehicleEntityConfig
 __all__ = [
     "AutowareEgoEntity",
     "AutowareEntity",
+    "BridgedEgoEntity",
     "CarlaDriverEntity",
     "EgoVehicle",
+    "ExternallyDrivenEgo",
     "PedestrianEntity",
     "PedestrianEntityConfig",
     "clear_entities",

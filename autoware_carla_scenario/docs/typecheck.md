@@ -282,8 +282,9 @@ walk-straight actions and the background-traffic source and sink
 (`actions.background_traffic`), the logical scenario's route search and matches (`route.model`) and
 the scenario's route (`route.active`),
 the `signals` package (the signal controllers and their registry), the ego,
-NPC vehicle and pedestrian entities, the Autoware ego
-(`entity.autoware_entity`), the ego driven by ROS 2 nodes over DDS
+NPC vehicle and pedestrian entities, the base of the externally driven egos
+(`entity.externally_driven`), the ego that takes its mission over the bridge
+(`entity.bridged_ego`) and the Autoware ego on it (`entity.autoware_entity`), the ego driven by ROS 2 nodes over DDS
 (`entity.ros2_entity`) with its configs, commands, arbitration and transport
 interface (`ros2`, `ros2.config`, `ros2.commands`, `ros2.transport`), the entity registry and the policy
 warm-up with the Chaos powertrain model, `BaseScenario`, the scenario
@@ -466,8 +467,8 @@ be read first. `MODELLED_IMPORTS` in `typecheck/library.py` breaks such a
 cycle: the module it names (`measures`, `entity.ego`) imports the other
 (`scenario_base`) through its model, as it did before that one was checked.
 Its types are the model's, which never meet the checked module's.
-`entity.autoware_entity` imports `scenario_base` through the model too: its
-`AutowareEgoEntity.spawn()` overrides `EgoVehicle.spawn()`, so it takes the
+`entity.bridged_ego` imports `scenario_base` through the model too: its
+`BridgedEgoEntity.spawn()` overrides `EgoVehicle.spawn()`, so it takes the
 same, the model's, `EgoConfig`. Through the checked `scenario_base`, a run
 with an example scenario in it failed in Codon 0.19's code generation
 (`LLVM: error: value doesn't match function result type '{ ptr, ptr }'`, in

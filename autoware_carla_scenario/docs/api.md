@@ -194,7 +194,10 @@ asked of the ones it did. See [Traffic Backends](traffic_backends.md).
 |--------|-------------|
 | `VehicleEntity`, `VehicleEntityConfig` | Generic vehicle actor with retry-aware spawn. |
 | `EgoVehicle` | Subclass with the fixed `EGO_ROLE_NAME`, plus the `on_scenario_start` / `on_tick` / `on_scenario_end` lifecycle hooks `ScenarioRunner` calls. |
+| `ExternallyDrivenEgo` | Base of every ego driven by a stack of its own rather than the TrafficManager: opts out of autopilot, refuses TrafficManager manoeuvres, and carries the termination request. |
 | `AutowareEntity` | Opts out of TrafficManager autopilot and leaves the actor for an external stack. |
+| `BridgedEgoEntity` | Hands a stack its mission over the `AutowareBridge` and waits for its readiness, optionally launching it per scenario. |
+| `AutowareEgoEntity` | The `BridgedEgoEntity` driven by Autoware through `autoware_carla_interface`. See [Autoware](autoware.md). |
 | `CarlaDriverEntity` | Drives the ego from an external policy's plan over the `egodriver` gRPC contract. See [External Driver Interface](driver_interface.md). |
 | `SpawnLocation` (Protocol) | Tag interface implemented by spawn-point providers. |
 | `SpawnTransform` | Spawn at an explicit `carla.Transform`. |

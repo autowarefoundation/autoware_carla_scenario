@@ -317,22 +317,35 @@ class TestMissingEntity:
 class TestSelfDrivenEgos:
     """An ego the TrafficManager does not drive must refuse, not pretend."""
 
-    @pytest.mark.parametrize("class_name", ["AutowareEgoEntity", "CarlaDriverEntity"])
+    @pytest.mark.parametrize(
+        "class_name",
+        ["AutowareEntity", "AutowareEgoEntity", "CarlaDriverEntity", "Ros2EgoEntity"],
+    )
     def test_the_class_overrides_set_desired_speed(self, class_name: str) -> None:
-        """Inherited, it would send the command to the TrafficManager.
+        """Inherited from BackendDriven, it would send the command to the TrafficManager.
 
         The runner puts these egos in `skip_actor_ids`, so the command would
         reach an actor the TrafficManager does not control -- while the action
         reported progress and completion, which is worse than refusing.
 
-        Asserted on the class's own namespace rather than by calling it,
-        because inheriting the method is exactly the defect: a call would
+        Asserted on where the method resolves rather than by calling it,
+        because inheriting BackendDriven's is exactly the defect: a call would
         succeed either way and only the TrafficManager would know.
         """
-        import autoware_carla_scenario as acs
+        import autoware_carla_scenario.entity as entities
+        from autoware_carla_scenario.entity.externally_driven import (
+            ExternallyDrivenEgo,
+        )
+        from autoware_carla_scenario.entity.ros2_entity import Ros2EgoEntity
+        from autoware_carla_scenario.traffic.driven import BackendDriven
 
-        entity_class = getattr(acs, class_name)
-        assert "set_desired_speed" in vars(entity_class), (
+        entity_class = (
+            Ros2EgoEntity
+            if class_name == "Ros2EgoEntity"
+            else getattr(entities, class_name)
+        )
+        assert issubclass(entity_class, ExternallyDrivenEgo)
+        assert entity_class.set_desired_speed is not BackendDriven.set_desired_speed, (
             f"{class_name} inherits set_desired_speed from BackendDriven, so a "
             f"speed command would go to the TrafficManager"
         )

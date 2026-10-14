@@ -37,7 +37,7 @@ from ..driver.observation import (
 )
 from carla_driver_interface.protocol import LidarSweep, pack_lidar_sweep
 from ._policy_warmup import PolicyWarmup
-from .ego import EgoVehicle
+from .externally_driven import ExternallyDrivenEgo
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
@@ -59,7 +59,7 @@ _US_PER_S: int = 1_000_000
 _DEBUG_LOG_INTERVAL: int = 10
 
 
-class CarlaDriverEntity(EgoVehicle):
+class CarlaDriverEntity(ExternallyDrivenEgo):
     """Ego vehicle controlled by an external driver policy.
 
     Args:
@@ -72,8 +72,7 @@ class CarlaDriverEntity(EgoVehicle):
             from *config*.
     """
 
-    #: The policy drives; TrafficManager must keep its hands off this actor.
-    use_autopilot: bool = False
+    driven_by: str = "The policy"
 
     def __init__(
         self,
@@ -99,7 +98,6 @@ class CarlaDriverEntity(EgoVehicle):
         #: history -- as the upstream runtime does -- rather than only the newest.
         self._pending_egomotion: List[EgoObservation] = []
         self._rear_axle_offset_m: float = 0.0
-        self._termination_requested: bool = False
         self._session_open: bool = False
         self._drive_count: int = 0
         self._map: Optional["carla.Map"] = None
@@ -127,11 +125,6 @@ class CarlaDriverEntity(EgoVehicle):
         return self._client
 
     @property
-    def termination_requested(self) -> bool:
-        """Whether the policy asked to end the session early."""
-        return self._termination_requested
-
-    @property
     def is_initialized(self) -> bool:
         """``False`` until the run-up onto the spawn pose (``warmup_s``) is over."""
         return self._warmup is None
@@ -151,47 +144,6 @@ class CarlaDriverEntity(EgoVehicle):
     def drive_count(self) -> int:
         """Number of ``drive`` calls made so far."""
         return self._drive_count
-
-    # ------------------------------------------------------------------
-    # Manoeuvres
-    # ------------------------------------------------------------------
-
-    def change_lane(self, world: "carla.World", direction) -> None:  # noqa: ANN001
-        """Refuse a TrafficManager manoeuvre: nothing here is driven by it.
-
-        The driver policy holds the controls; a manoeuvre forced through the
-        TrafficManager would be overwritten by the next control it applies.
-        """
-        del world
-        logger.warning(
-            "%s: a lane change was asked for, but this entity is not driven by "
-            "the TrafficManager, so forcing one there would do nothing. The policy decides its own manoeuvres.",
-            type(self).__name__,
-        )
-
-    def set_desired_speed(self, world: "carla.World", speed_kmh: float) -> None:
-        """Refuse a TrafficManager speed: nothing here is driven by it.
-
-        The driver policy holds the throttle; a desired speed set on the
-        TrafficManager would be overwritten by the next control it applies,
-        while the action reported progress and completion.
-        """
-        del world, speed_kmh
-        logger.warning(
-            "%s: a speed was set, but this entity is not driven by the "
-            "TrafficManager, so the command would go to an actor it does not "
-            "control. The policy decides its own speed.",
-            type(self).__name__,
-        )
-
-    def turn_at_junction(self, world: "carla.World", direction, **kwargs) -> None:  # noqa: ANN001, ANN003
-        """Refuse a TrafficManager route: nothing here is driven by it."""
-        del world, direction, kwargs
-        logger.warning(
-            "%s: a turn was asked for, but this entity is not driven by the "
-            "TrafficManager, so setting a route there would do nothing.",
-            type(self).__name__,
-        )
 
     # ------------------------------------------------------------------
     # Lifecycle

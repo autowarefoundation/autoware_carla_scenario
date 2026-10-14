@@ -46,7 +46,7 @@ from ..ros2.commands import (
 from ..ros2.config import Ros2EgoConfig
 from ..ros2.transport import Ros2EgoTransport
 from ..utils.powertrain import ChaosPowertrain
-from .ego import EgoVehicle
+from .externally_driven import ExternallyDrivenEgo
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
@@ -95,7 +95,7 @@ def plan_from_trajectory(command: TrajectoryCommand, anchor_us: int) -> Trajecto
     return plan
 
 
-class Ros2EgoEntity(EgoVehicle):
+class Ros2EgoEntity(ExternallyDrivenEgo):
     """Ego vehicle whose commands come from ROS 2 nodes over DDS.
 
     Args:
@@ -108,8 +108,7 @@ class Ros2EgoEntity(EgoVehicle):
             when the scenario starts, which needs the ``ros2`` extra.
     """
 
-    #: The ROS 2 nodes drive; TrafficManager must keep its hands off this actor.
-    use_autopilot: bool = False
+    driven_by: str = "The ROS 2 nodes"
 
     _config: Ros2EgoConfig
     _transport: Optional[Ros2EgoTransport]

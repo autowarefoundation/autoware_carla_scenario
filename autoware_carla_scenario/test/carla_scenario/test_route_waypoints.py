@@ -146,7 +146,7 @@ def test_the_entity_snaps_each_waypoint_as_the_lanelet_pose_it_was_written_as(
 
     monkeypatch.setattr("autoware_carla_scenario.coordinate.snap_to_carla_road", _snap)
     monkeypatch.setattr(
-        "autoware_carla_scenario.entity.autoware_entity.to_map_frame",
+        "autoware_carla_scenario.entity.bridged_ego.to_map_frame",
         lambda p: BridgePose.from_yaw(p.x, p.y, p.z, math.radians(p.yaw)),
     )
 

@@ -131,8 +131,10 @@ CHECKED: tuple[str, ...] = (
     "autoware_carla_scenario.entity",
     "autoware_carla_scenario.entity._policy_warmup",
     "autoware_carla_scenario.entity.autoware_entity",
+    "autoware_carla_scenario.entity.bridged_ego",
     "autoware_carla_scenario.entity._spawn",
     "autoware_carla_scenario.entity.ego",
+    "autoware_carla_scenario.entity.externally_driven",
     "autoware_carla_scenario.entity.pedestrian_entity",
     "autoware_carla_scenario.entity.registry",
     "autoware_carla_scenario.entity.ros2_entity",
@@ -386,7 +388,7 @@ EXCLUDED: dict[str, str] = {
     "autoware_carla_scenario.editor.routes": "imports fastapi, starlette, anyio",
     "autoware_carla_scenario.editor.scenario_map": "reaches pydantic models through authoring.models; imports editor.map_preview (json)",
     "autoware_carla_scenario.editor.service": "imports yaml, tempfile, zipfile, contextlib; reaches pydantic models through authoring.models; takes form fields as `Mapping[str, Any]`, which Codon cannot express",
-    "autoware_carla_scenario.entity.carla_driver_entity": "imports carla_driver_interface.protocol, which its model (geometry only) does not declare, uuid, and driver.renderer (the protocol's messages) and driver.hdmap_export (roadgen, json), which are neither checked nor modelled; builds an EgoDriverGrpcClient (grpc), which its model refuses to build, and encodes camera frames with encode_frame_jpeg (cv2); change_lane() and turn_at_junction() leave `direction` unannotated",
+    "autoware_carla_scenario.entity.carla_driver_entity": "imports carla_driver_interface.protocol, which its model (geometry only) does not declare, uuid, and driver.renderer (the protocol's messages) and driver.hdmap_export (roadgen, json), which are neither checked nor modelled; builds an EgoDriverGrpcClient (grpc), which its model refuses to build, and encodes camera frames with encode_frame_jpeg (cv2)",
     "autoware_carla_scenario.examples": "re-exports examples.run (omegaconf, hydra, json) and the registry (omegaconf, importlib)",
     "autoware_carla_scenario.examples.expand": "imports json, the registry (omegaconf, importlib) and sweeper.expand (omegaconf), which are not checked, and examples.run (hydra) inside it",
     "autoware_carla_scenario.environment": "imports platform, json, more of functools and sys than Codon's declare (`lru_cache()`, `sys.prefix`), and more of importlib.metadata than its shim declares (`distributions()`, `packages_distributions()`, `Distribution`) and of urllib.parse (`urlparse()`, `unquote()`); records packages as `dict[str, Any]`, which Codon cannot express",
@@ -434,7 +436,7 @@ EXCLUDED: dict[str, str] = {
 #: Without it, a checked module handing its own pose to a model function
 #: (``to_opendrive``) would hand the wrong type.
 REPLACED_MODELS: dict[str, tuple[str, ...]] = {
-    # So the checked AutowareEgoEntity hands the pose the model's to_map_frame
+    # So the checked BridgedEgoEntity hands the pose the model's to_map_frame
     # returns to the checked AutowareBridge.configure().
     "_bridge_pose": ("autoware_carla_scenario.autoware_bridge.base",),
     # So a scenario hands the GroundProjectionConfig it imports from the
@@ -473,9 +475,9 @@ MODELLED_IMPORTS: dict[str, tuple[str, ...]] = {
     # BaseScenario holds an EgoVehicle (`ego_entity`), and EgoVehicle.spawn()
     # takes an EgoConfig.
     "autoware_carla_scenario.entity.ego": ("autoware_carla_scenario.scenario_base",),
-    # AutowareEgoEntity.spawn() overrides EgoVehicle.spawn(), so it takes the
+    # BridgedEgoEntity.spawn() overrides EgoVehicle.spawn(), so it takes the
     # same EgoConfig, the model's.
-    "autoware_carla_scenario.entity.autoware_entity": (
+    "autoware_carla_scenario.entity.bridged_ego": (
         "autoware_carla_scenario.scenario_base",
     ),
 }
