@@ -211,7 +211,7 @@ model re-exports the checked definitions, as it does in the full run.
 checked `entity.registry`, which the model does not declare, and
 `entity._spawn` holds the checked `GroundProjectionConfig`, which the model
 `VehicleEntityConfig` must share. The modules it imports are checked as
-fully as the named ones: their public functions are called too, and **errors
+fully as the named ones: their functions and methods are called too, and **errors
 are reported for every compiled module**, not only the named ones. An error
 in a module the named one imports is an error the full run reports as well,
 and it would stop the named module from compiling anyway. Hiding it would
