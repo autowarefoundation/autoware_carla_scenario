@@ -9,6 +9,7 @@ extra); :class:`FakeRos2Transport` stands in for it in tests.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from typing import List, Tuple, Union
 
 from .commands import (
@@ -20,7 +21,7 @@ from .commands import (
 )
 from .config import Ros2EgoConfig
 
-__all__ = ["FakeRos2Transport", "Received", "Ros2EgoTransport"]
+__all__ = ["CameraFrame", "FakeRos2Transport", "Received", "Ros2EgoTransport"]
 
 #: A command and the name of the source it came from.  ``Tuple[str, Command]``,
 #: with the union spelled out: Codon 0.19 does not resolve an alias imported
@@ -28,11 +29,33 @@ __all__ = ["FakeRos2Transport", "Received", "Ros2EgoTransport"]
 Received = Tuple[str, Union[SteerAccelCommand, ControlCommand, TrajectoryCommand]]
 
 
+@dataclass(frozen=True)
+class CameraFrame:
+    """One frame of a camera the entity publishes.
+
+    Attributes:
+        camera: Index of the camera in :attr:`~.config.Ros2EgoConfig.cameras`.
+        stamp_us: Simulation time the frame was rendered at, microseconds.
+        width: Image width, pixels.
+        height: Image height, pixels.
+        bgra: The pixels, row by row, four bytes each (B, G, R, A), as CARLA
+            renders them.
+    """
+
+    camera: int
+    stamp_us: int
+    width: int
+    height: int
+    bgra: bytes
+
+
 class Ros2EgoTransport(ABC):
     """Moves the ego's state out to ROS 2 and its commands in.
 
     The lifecycle is :meth:`open` once when the scenario starts, then each tick
     :meth:`publish_state` and :meth:`poll`, and :meth:`close` at teardown.
+    :meth:`publish_image` is called from a CARLA sensor thread, between
+    :meth:`open` and :meth:`close`.
 
     Args:
         config: Topics, domain and command sources.
@@ -51,6 +74,11 @@ class Ros2EgoTransport(ABC):
     @abstractmethod
     def publish_state(self, state: EgoState) -> None:
         """Publish the ego's state on every configured state topic."""
+        ...
+
+    @abstractmethod
+    def publish_image(self, frame: CameraFrame) -> None:
+        """Publish *frame* on its camera's topic."""
         ...
 
     @abstractmethod
@@ -76,6 +104,7 @@ class FakeRos2Transport(Ros2EgoTransport):
     opened: int
     closed: int
     published: List[EgoState]
+    images: List[CameraFrame]
     _queue: List[Received]
 
     def __init__(self, config: Ros2EgoConfig) -> None:
@@ -83,6 +112,7 @@ class FakeRos2Transport(Ros2EgoTransport):
         self.opened = 0
         self.closed = 0
         self.published = []
+        self.images = []
         self._queue = []
 
     def deliver(self, source_name: str, command: Command) -> None:
@@ -94,6 +124,9 @@ class FakeRos2Transport(Ros2EgoTransport):
 
     def publish_state(self, state: EgoState) -> None:
         self.published.append(state)
+
+    def publish_image(self, frame: CameraFrame) -> None:
+        self.images.append(frame)
 
     def poll(self) -> List[Received]:
         received, self._queue = self._queue, []

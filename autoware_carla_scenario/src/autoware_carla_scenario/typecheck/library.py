@@ -132,8 +132,10 @@ CHECKED: tuple[str, ...] = (
     "autoware_carla_scenario.entity",
     "autoware_carla_scenario.entity._policy_warmup",
     "autoware_carla_scenario.entity.autoware_entity",
+    "autoware_carla_scenario.entity.bridged_ego",
     "autoware_carla_scenario.entity._spawn",
     "autoware_carla_scenario.entity.ego",
+    "autoware_carla_scenario.entity.externally_driven",
     "autoware_carla_scenario.entity.pedestrian_entity",
     "autoware_carla_scenario.entity.registry",
     "autoware_carla_scenario.entity.ros2_entity",
@@ -303,6 +305,7 @@ UNCALLED: dict[str, str] = {
     "autoware_carla_scenario.driver.control.ControlConfig.from_mapping": "takes a Hydra node (`Mapping[str, Any]`) of mixed value types, which Codon cannot express, reads the dataclass's fields from its class (`dataclasses.fields(cls)`) and builds the config with `**` of a dict",
     "autoware_carla_scenario.driver.observation.encode_frame_jpeg": "encodes with cv2 (OpenCV), which Codon cannot compile; cv2 is imported inside it, so it is not compiled",
     "autoware_carla_scenario.entity.registry.find_entity_by_role_name": "returns the entity of any kind registered under a role (`Optional[Any]`), which Codon cannot express; find_vehicle_entity and find_pedestrian_entity are its typed lookups",
+    "autoware_carla_scenario.entity.ros2_entity._publishing_camera": "builds the camera of ros2.camera (imported inside it), whose listener the check cannot type through CarlaCameraSensor's listen callback; Ros2EgoEntity.on_scenario_start calls it in the `else` branch of `if TYPE_CHECKING:`",
     "autoware_carla_scenario.maps.config.resolve_map_paths": "takes the `map` config node as `Any` (a MapConfig, an OmegaConf node or the editor's MapRef, read with hasattr/getattr and indexing), which Codon cannot express",
     "autoware_carla_scenario.entity.registry.register_entity": "takes an entity of any kind (`Any`: a vehicle, a pedestrian or a duck-typed object); Codon resolves its isinstance() dispatch by the static type rather than the class, so a subclass of BackendDriven takes the wrong branch; register_vehicle_entity and register_pedestrian_entity are its typed counterparts, which scenario_base calls",
     "autoware_carla_scenario.conditions.not_condition.NotCondition.get_details": _DETAILS,
@@ -326,6 +329,7 @@ UNCALLED: dict[str, str] = {
     "autoware_carla_scenario.coordinate.projection.read_map_origin": f"{_YAML} (map_projector_info.yaml); map_origin calls it in the `else` branch of `if TYPE_CHECKING:`",
     "autoware_carla_scenario.coordinate.projection.read_projector_type": f"{_YAML} (map_projector_info.yaml); resolve_projector calls it in the `else` branch of `if TYPE_CHECKING:`",
     "autoware_carla_scenario.ros2.config.CommandSourceConfig.from_mapping": _DRIVER_FROM_MAPPING,
+    "autoware_carla_scenario.ros2.config.Ros2CameraConfig.from_mapping": _DRIVER_FROM_MAPPING,
     "autoware_carla_scenario.ros2.config.Ros2EgoConfig.from_mapping": _DRIVER_FROM_MAPPING,
     "autoware_carla_scenario.route.model.Range.parse": _YAML,
     "autoware_carla_scenario.route.model.RouteMatch.from_config": _YAML,
@@ -382,7 +386,7 @@ EXCLUDED: dict[str, str] = {
     "autoware_carla_scenario.editor.routes": "imports fastapi, starlette, anyio",
     "autoware_carla_scenario.editor.scenario_map": "reaches pydantic models through authoring.models; imports editor.map_preview (json)",
     "autoware_carla_scenario.editor.service": "imports yaml, tempfile, zipfile, contextlib; reaches pydantic models through authoring.models; takes form fields as `Mapping[str, Any]`, which Codon cannot express",
-    "autoware_carla_scenario.entity.carla_driver_entity": "imports carla_driver_interface.protocol, which its model (geometry only) does not declare, uuid, and driver.renderer (the protocol's messages) and driver.hdmap_export (roadgen, json), which are neither checked nor modelled; builds an EgoDriverGrpcClient (grpc), which its model refuses to build, and encodes camera frames with encode_frame_jpeg (cv2); change_lane() and turn_at_junction() leave `direction` unannotated",
+    "autoware_carla_scenario.entity.carla_driver_entity": "imports carla_driver_interface.protocol, which its model (geometry only) does not declare, uuid, and driver.renderer (the protocol's messages) and driver.hdmap_export (roadgen, json), which are neither checked nor modelled; builds an EgoDriverGrpcClient (grpc), which its model refuses to build, and encodes camera frames with encode_frame_jpeg (cv2)",
     "autoware_carla_scenario.examples": "re-exports examples.run (omegaconf, hydra, json) and the registry (omegaconf, importlib)",
     "autoware_carla_scenario.examples.expand": "imports json, the registry (omegaconf, importlib) and sweeper.expand (omegaconf), which are not checked, and examples.run (hydra) inside it",
     "autoware_carla_scenario.environment": "imports platform, json, more of functools and sys than Codon's declare (`lru_cache()`, `sys.prefix`), and more of importlib.metadata than its shim declares (`distributions()`, `packages_distributions()`, `Distribution`) and of urllib.parse (`urlparse()`, `unquote()`); records packages as `dict[str, Any]`, which Codon cannot express",
@@ -401,6 +405,7 @@ EXCLUDED: dict[str, str] = {
     "autoware_carla_scenario.odd.units": "re-exports openodd's units (a Rust extension)",
     "autoware_carla_scenario.pytest_fixtures": "imports pytest, and takes the scenario's class (`Type[BaseScenario]`), which Codon cannot hold as a value",
     "autoware_carla_scenario.registry": "imports omegaconf (`DictConfig`, under `TYPE_CHECKING`) and more of importlib.metadata than its shim declares (`entry_points()`); holds scenario classes (`type[BaseScenario]`) and their config classes as values, which Codon cannot hold",
+    "autoware_carla_scenario.ros2.camera": "subclasses CarlaCameraSensor with a listener that hands each frame back to the ROS 2 ego from a CARLA sensor thread, which the check cannot type through the listen callback",
     "autoware_carla_scenario.ros2.cyclone": "imports cyclonedds (its domain participant, readers, writers, topics and QoS policies) and ros2.messages, which imports it too; ros2/cyclone.codon models the CycloneRos2Transport that entity.ros2_entity builds",
     "autoware_carla_scenario.ros2.messages": "imports cyclonedds (the IdlStruct base of every message, and the IDL field types `array[float64, 36]` and `sequence[TrajectoryPoint]`, which Codon cannot express)",
     "autoware_carla_scenario.scaffold": "re-exports scaffold.generator (argparse, jinja2)",
@@ -430,7 +435,7 @@ EXCLUDED: dict[str, str] = {
 #: Without it, a checked module handing its own pose to a model function
 #: (``to_opendrive``) would hand the wrong type.
 REPLACED_MODELS: dict[str, tuple[str, ...]] = {
-    # So the checked AutowareEgoEntity hands the pose the model's to_map_frame
+    # So the checked BridgedEgoEntity hands the pose the model's to_map_frame
     # returns to the checked AutowareBridge.configure().
     "_bridge_pose": ("autoware_carla_scenario.autoware_bridge.base",),
     # So a scenario hands the GroundProjectionConfig it imports from the
@@ -469,11 +474,6 @@ MODELLED_IMPORTS: dict[str, tuple[str, ...]] = {
     # BaseScenario holds an EgoVehicle (`ego_entity`), and EgoVehicle.spawn()
     # takes an EgoConfig.
     "autoware_carla_scenario.entity.ego": ("autoware_carla_scenario.scenario_base",),
-    # AutowareEgoEntity.spawn() overrides EgoVehicle.spawn(), so it takes the
-    # same EgoConfig, the model's.
-    "autoware_carla_scenario.entity.autoware_entity": (
-        "autoware_carla_scenario.scenario_base",
-    ),
 }
 
 

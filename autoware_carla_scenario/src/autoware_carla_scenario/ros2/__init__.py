@@ -27,15 +27,17 @@ from .commands import (
     TrajectoryCommand,
     TrajectoryCommandPoint,
 )
-from .config import CommandSourceConfig, Ros2EgoConfig
-from .transport import FakeRos2Transport, Ros2EgoTransport
+from .config import CommandSourceConfig, Ros2CameraConfig, Ros2EgoConfig
+from .transport import CameraFrame, FakeRos2Transport, Ros2EgoTransport
 
 __all__ = [
+    "CameraFrame",
     "CommandArbiter",
     "CommandSourceConfig",
     "ControlCommand",
     "EgoState",
     "FakeRos2Transport",
+    "Ros2CameraConfig",
     "Ros2EgoConfig",
     "Ros2EgoTransport",
     "SteerAccelCommand",

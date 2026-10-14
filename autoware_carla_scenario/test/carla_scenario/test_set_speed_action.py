@@ -23,10 +23,17 @@ import pytest
 from autoware_carla_scenario import SetSpeedAction
 from autoware_carla_scenario.action_state import ActionState
 from autoware_carla_scenario.actions.set_speed import ARRIVAL_TOLERANCE_KMH
+from autoware_carla_scenario.entity import (
+    AutowareEgoEntity,
+    CarlaDriverEntity,
+)
 from autoware_carla_scenario.entity.registry import (
     register_entity,
     unregister_entity,
 )
+from autoware_carla_scenario.entity.externally_driven import ExternallyDrivenEgo
+from autoware_carla_scenario.entity.ros2_entity import Ros2EgoEntity
+from autoware_carla_scenario.traffic.driven import BackendDriven
 
 if TYPE_CHECKING:
     from autoware_carla_scenario.authoring.models import ScenarioDocument
@@ -317,33 +324,35 @@ class TestMissingEntity:
 class TestSelfDrivenEgos:
     """An ego the TrafficManager does not drive must refuse, not pretend."""
 
-    @pytest.mark.parametrize("class_name", ["AutowareEgoEntity", "CarlaDriverEntity"])
-    def test_the_class_overrides_set_desired_speed(self, class_name: str) -> None:
-        """Inherited, it would send the command to the TrafficManager.
+    @pytest.mark.parametrize(
+        "entity_class",
+        [AutowareEgoEntity, CarlaDriverEntity, Ros2EgoEntity],
+        ids=lambda entity_class: entity_class.__name__,
+    )
+    def test_the_class_overrides_set_desired_speed(
+        self, entity_class: "type[ExternallyDrivenEgo]"
+    ) -> None:
+        """Inherited from BackendDriven, it would send the command to the TrafficManager.
 
         The runner puts these egos in `skip_actor_ids`, so the command would
         reach an actor the TrafficManager does not control -- while the action
         reported progress and completion, which is worse than refusing.
 
-        Asserted on the class's own namespace rather than by calling it,
-        because inheriting the method is exactly the defect: a call would
+        Asserted on where the method resolves rather than by calling it,
+        because inheriting BackendDriven's is exactly the defect: a call would
         succeed either way and only the TrafficManager would know.
         """
-        import autoware_carla_scenario as acs
-
-        entity_class = getattr(acs, class_name)
-        assert "set_desired_speed" in vars(entity_class), (
-            f"{class_name} inherits set_desired_speed from BackendDriven, so a "
-            f"speed command would go to the TrafficManager"
+        assert entity_class.set_desired_speed is not BackendDriven.set_desired_speed, (
+            f"{entity_class.__name__} inherits set_desired_speed from "
+            f"BackendDriven, so a speed command would go to the TrafficManager"
         )
 
     def test_a_refusal_is_logged_rather_than_silent(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
-        from autoware_carla_scenario import CarlaDriverEntity
-
+        entity = CarlaDriverEntity(client=MagicMock())
         with caplog.at_level("WARNING"):
-            CarlaDriverEntity.set_desired_speed(MagicMock(), MagicMock(), 30.0)
+            entity.set_desired_speed(MagicMock(), 30.0)
         assert "not driven by the TrafficManager" in caplog.text
 
 

@@ -282,8 +282,9 @@ walk-straight actions and the background-traffic source and sink
 (`actions.background_traffic`), the logical scenario's route search and matches (`route.model`) and
 the scenario's route (`route.active`),
 the `signals` package (the signal controllers and their registry), the ego,
-NPC vehicle and pedestrian entities, the Autoware ego
-(`entity.autoware_entity`), the ego driven by ROS 2 nodes over DDS
+NPC vehicle and pedestrian entities, the base of the externally driven egos
+(`entity.externally_driven`), the ego that takes its mission over the bridge
+(`entity.bridged_ego`) and the Autoware ego on it (`entity.autoware_entity`), the ego driven by ROS 2 nodes over DDS
 (`entity.ros2_entity`) with its configs, commands, arbitration and transport
 interface (`ros2`, `ros2.config`, `ros2.commands`, `ros2.transport`), the entity registry and the policy
 warm-up with the Chaos powertrain model, `BaseScenario`, the scenario
@@ -340,9 +341,11 @@ the result and its environment, `_write_result()`; collecting the condition
 statuses, `_collect_condition_statuses()`), the queue's pytest fixture
 (`ScenarioQueue.as_fixture()`), `maps.config.resolve_map_paths()`,
 which reads the `map` config node of any shape (`Any`), the driver and
-ROS 2 configs' `from_mapping()` (a Hydra node, `Mapping[str, Any]`) and
-`encode_frame_jpeg()` (cv2). The 76 `EXCLUDED` modules fall in
-three groups. Many fit more than one (about 55 import what Codon cannot
+ROS 2 configs' `from_mapping()` (a Hydra node, `Mapping[str, Any]`), what
+builds the ROS 2 ego's published cameras (`entity.ros2_entity._publishing_camera()`,
+which imports `ros2.camera` inside it) and
+`encode_frame_jpeg()` (cv2). The 77 `EXCLUDED` modules fall in
+four groups. Many fit more than one (about 55 import what Codon cannot
 compile, 28 build on an excluded module and 20 hold values Codon has no type
 for), so each is counted once, in the first group that fits it:
 
@@ -376,6 +379,9 @@ for), so each is counted once, in the first group that fits it:
   `Any` (`trajectory.authoring`, `authoring.registry`'s
   field defaults), or a class as a value (`utils.config`, which `traffic.config`
   and `traffic.sumo.config` import only in their uncalled `from_mapping()`).
+- **1 has a callback the check cannot type**: `ros2.camera`, whose camera
+  hands each frame back to the ROS 2 ego from a CARLA sensor thread through
+  `CarlaCameraSensor`'s listen callback.
 
 The scenario check is not limited by this: it compiles every scenario against
 the model, which declares the whole public API.
@@ -464,12 +470,15 @@ be read first. `MODELLED_IMPORTS` in `typecheck/library.py` breaks such a
 cycle: the module it names (`measures`, `entity.ego`) imports the other
 (`scenario_base`) through its model, as it did before that one was checked.
 Its types are the model's, which never meet the checked module's.
-`entity.autoware_entity` imports `scenario_base` through the model too: its
-`AutowareEgoEntity.spawn()` overrides `EgoVehicle.spawn()`, so it takes the
-same, the model's, `EgoConfig`. Through the checked `scenario_base`, a run
-with an example scenario in it failed in Codon 0.19's code generation
-(`LLVM: error: value doesn't match function result type '{ ptr, ptr }'`, in
-`opt_ref_new` of the model's `BaseScenario`).
+The egos derived from `EgoVehicle` (`entity.bridged_ego`,
+`entity.autoware_entity`) do not override `EgoVehicle.spawn()`, so they never
+name `EgoConfig` and need no entry: Codon 0.19 cannot call `super().spawn()`
+through an intermediate class ("'EgoVehicle' does not match expected type"
+in its dispatch thunk), and an override that repeated the spawn instead would
+take `scenario_base` through the model as `entity.ego` does. Through the
+checked `scenario_base`, a run with an example scenario in it failed in Codon
+0.19's code generation (`LLVM: error: value doesn't match function result
+type '{ ptr, ptr }'`, in `opt_ref_new` of the model's `BaseScenario`).
 
 A model module that stands in for unchecked code declares only what the
 checked modules and scenarios use of it. `coordinate.codon` still declares,

@@ -9,14 +9,16 @@ and validated where none is installed.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Mapping, Optional, Tuple
+from typing import Any, List, Mapping, Optional, Tuple
 
 from ..constants import US_PER_S
+from ..sensor.carla_camera import CarlaCameraSensorConfig
 
 __all__ = [
     "COMMAND_KINDS",
     "ON_STALE_ACTIONS",
     "CommandSourceConfig",
+    "Ros2CameraConfig",
     "Ros2EgoConfig",
 ]
 
@@ -125,6 +127,86 @@ class CommandSourceConfig:
         return cls(**checked_options(cls, mapping))
 
 
+@dataclass(frozen=True)
+class Ros2CameraConfig:
+    """A camera on the ego whose frames the entity publishes itself.
+
+    For a CARLA server built without ROS 2, which publishes no camera of its
+    own.  Each frame goes out as a ``sensor_msgs/msg/Image`` in ``bgra8``, stamped
+    with its simulation time, as CARLA's own ROS 2 interface publishes it.  The
+    rendering and mount fields are a driver camera's
+    (:class:`~..driver.base.DriverCameraConfig`): CARLA's convention, x forward,
+    y right, z up, degrees.
+
+    Attributes:
+        topic: The image topic.  CARLA's own interface names it
+            ``/carla/<role name>/<sensor ros_name>/image``.
+        frame_id: ``header.frame_id`` of the published images; the
+            :attr:`logical_id` when empty.
+        logical_id: The camera's name in logs.
+    """
+
+    topic: str = ""
+    frame_id: str = ""
+    logical_id: str = "camera"
+    image_width: int = 960
+    image_height: int = 604
+    fov: float = 120.0
+    fps: float = 20.0
+    position_x: float = 1.5
+    position_y: float = 0.0
+    position_z: float = 1.6
+    roll: float = 0.0
+    pitch: float = 0.0
+    yaw: float = 0.0
+
+    def __post_init__(self) -> None:
+        if not self.topic:
+            raise ValueError(f"camera {self.logical_id!r} needs a topic")
+        if self.image_width <= 0 or self.image_height <= 0 or self.fps <= 0.0:
+            raise ValueError(
+                f"camera {self.logical_id!r}: image size and fps must be positive"
+            )
+
+    @property
+    def header_frame_id(self) -> str:
+        """The ``header.frame_id`` its images carry."""
+        return self.frame_id if self.frame_id else self.logical_id
+
+    def to_sensor_config(self) -> CarlaCameraSensorConfig:
+        """The CARLA sensor configuration of this camera."""
+        return CarlaCameraSensorConfig(
+            image_width=self.image_width,
+            image_height=self.image_height,
+            fov=self.fov,
+            fps=self.fps,
+            position_x=self.position_x,
+            position_y=self.position_y,
+            position_z=self.position_z,
+            roll=self.roll,
+            pitch=self.pitch,
+            yaw=self.yaw,
+        )
+
+    @classmethod
+    def from_mapping(cls, mapping: Mapping[str, Any]) -> "Ros2CameraConfig":
+        """Build from a plain mapping (e.g. a Hydra node).
+
+        Raises:
+            ValueError: If *mapping* holds a key this config does not define.
+        """
+        from ..utils.config import checked_options  # noqa: PLC0415
+
+        return cls(**checked_options(cls, mapping))
+
+
+def _no_cameras() -> Tuple[Ros2CameraConfig, ...]:
+    # tuple() of a typed list, as _default_sources: the check reads a
+    # variable-length tuple field as a list (docs/typecheck.md).
+    cameras: List[Ros2CameraConfig] = []
+    return tuple(cameras)
+
+
 def _default_sources() -> Tuple[CommandSourceConfig, ...]:
     # tuple() of a list, not a display: the check reads a variable-length
     # tuple field as a list (docs/typecheck.md).
@@ -161,6 +243,8 @@ class Ros2EgoConfig:
             ``None`` derives it from the wheel physics.
         on_stale: One of :data:`ON_STALE_ACTIONS`.
         sources: The command sources, see :class:`CommandSourceConfig`.
+        cameras: Cameras whose frames the entity publishes, for a CARLA server
+            built without ROS 2; see :class:`Ros2CameraConfig`.
     """
 
     domain_id: int = 0
@@ -173,6 +257,7 @@ class Ros2EgoConfig:
     rear_axle_offset_m: Optional[float] = None
     on_stale: str = "hold"
     sources: Tuple[CommandSourceConfig, ...] = field(default_factory=_default_sources)
+    cameras: Tuple[Ros2CameraConfig, ...] = field(default_factory=_no_cameras)
 
     def __post_init__(self) -> None:
         if self.on_stale not in ON_STALE_ACTIONS:
@@ -185,6 +270,9 @@ class Ros2EgoConfig:
         names = [source.name for source in self.sources]
         if len(set(names)) != len(names):
             raise ValueError(f"command source names must be unique, got {names}")
+        topics = [camera.topic for camera in self.cameras]
+        if len(set(topics)) != len(topics):
+            raise ValueError(f"camera topics must be unique, got {topics}")
 
     @classmethod
     def from_mapping(cls, mapping: Mapping[str, Any]) -> "Ros2EgoConfig":
@@ -204,5 +292,10 @@ class Ros2EgoConfig:
         if sources is not None:
             values["sources"] = tuple(
                 CommandSourceConfig.from_mapping(source) for source in sources
+            )
+        cameras = values.pop("cameras", None)
+        if cameras is not None:
+            values["cameras"] = tuple(
+                Ros2CameraConfig.from_mapping(camera) for camera in cameras
             )
         return cls(**values)
