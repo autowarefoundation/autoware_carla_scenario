@@ -414,6 +414,10 @@ class BaseScenario(ABC):
         built from :attr:`ego_type`, off that class.
         """
         entity = self.ego_entity
+        # Two returns rather than one conditional expression over the class,
+        # for the static check (docs/typecheck.md): Codon cannot hold a class
+        # as a value.  Read off the instance, ``requires_goal`` is the class's
+        # unless the entity set its own (a driver-policy ego given a bridge).
         if entity is not None:
             return entity.requires_goal
         return self.ego_type.requires_goal
@@ -536,16 +540,22 @@ class BaseScenario(ABC):
             # destination: there is no mission to hand over.
             return
 
-        self.register_init(
-            RoutingAction(
-                EGO_ROLE_NAME,
-                goal,
-                initial_pose=initial_pose,
-                ground_projection=self._ground_projection,
-                waypoints=self.waypoint_poses,
-                label="route_ego_to_goal",
-            )
+        action = RoutingAction(
+            EGO_ROLE_NAME,
+            goal,
+            initial_pose=initial_pose,
+            ground_projection=self._ground_projection,
+            waypoints=self.waypoint_poses,
+            label="route_ego_to_goal",
         )
+        if TYPE_CHECKING:
+            # register_init() takes a Union and dispatches on isinstance, and
+            # Codon compiles both branches (docs/typecheck.md): the check does
+            # for this action what register_init() does for one.
+            self._init_actions.append(action)
+            self._hand_backend_to(action)
+        else:
+            self.register_init(action)
 
     @abstractmethod
     def setup(self) -> None:

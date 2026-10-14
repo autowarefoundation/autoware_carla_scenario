@@ -32,7 +32,7 @@ from .coordinate import (CarlaWorldPose, CoordinateFrame, FrameMismatchError,
                          find_nearest_traffic_light, frame_of, get_stop_line_poses,
                          get_stop_line_poses_with_following,
                          lanelet2_traffic_light_id_to_opendrive_controller_id,
-                         snap_to_carla_road, to_carla_location, to_carla_world, to_lanelet2,
+                         lanelets_ahead, snap_to_carla_road, to_carla_location, to_carla_world, to_lanelet2,
                          to_opendrive)
 from .entity import (EgoVehicle, PedestrianEntity, PedestrianEntityConfig, SpawnLocation,
                      SpawnPointIndex, SpawnTransform, VehicleEntity, VehicleEntityConfig)

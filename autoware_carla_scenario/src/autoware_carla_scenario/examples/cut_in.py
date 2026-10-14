@@ -2,8 +2,12 @@
 
 An NPC starts in the lane beside the ego, a little ahead, and after a moment
 changes into the ego's lane. The ego must not hit it: the run passes once the
-NPC has been in the ego's lane for ``hold_seconds`` without a collision, and
-fails on a collision with it.
+NPC has been in the ego's lane for ``hold_seconds`` without a collision. It
+fails on any collision of the ego (``fail_on_any_collision``; off, only on one
+with the NPC), and when the ego leaves the lanes ahead of it -- its spawn
+lanelet and the lanelets that follow it -- for ``leaving_lane_seconds``: a lane
+change, a turn onto a lanelet that does not follow it, or leaving the road
+(``fail_on_leaving_lane``).
 
 ``side`` is the side of the ego the NPC comes from, so it changes lanes the
 other way. Its lanelet is the one beside the ego's, which a sweep binds with
@@ -33,6 +37,8 @@ import logging
 import typesafe_carla.carla as carla
 
 from autoware_carla_scenario import (
+    EGO_ROLE_NAME,
+    BaseCondition,
     BaseScenario,
     CollisionCondition,
     EgoConfig,
@@ -43,6 +49,8 @@ from autoware_carla_scenario import (
     LaneChangeAction,
     LaneChangeDirection,
     Lanelet2Pose,
+    NotCondition,
+    OrCondition,
     PersistentCondition,
     SetSpeedAction,
     SpawnTransform,
@@ -52,6 +60,7 @@ from autoware_carla_scenario import (
     TrafficSignalAction,
     VehicleEntity,
     VehicleEntityConfig,
+    lanelets_ahead,
     place_at_vehicle_ahead_gap,
     snap_to_carla_road,
     to_carla_world,
@@ -70,6 +79,47 @@ _CHANGE_TOWARDS_EGO: dict[str, LaneChangeDirection] = {
     "left": LaneChangeDirection.RIGHT,
     "right": LaneChangeDirection.LEFT,
 }
+
+
+def left_lanes_ahead(
+    lanelet_id: int, distance_m: float, seconds: float
+) -> BaseCondition:
+    """The ego has been off the lanes ahead of *lanelet_id* for *seconds*.
+
+    A composition of the framework's conditions, no condition of its own: an
+    ``EntityLanePositionCondition`` for each lanelet :func:`lanelets_ahead`
+    returns, under an ``OrCondition`` (the ego is on one of them), under a
+    logical ``NotCondition`` (``holds_when_pending=True``: on none of them),
+    held for *seconds* (``PersistentCondition``) so that a tick off at a seam
+    between lanelets does not count.  On none of them is in a lane beside
+    them, on a lanelet that turns off them, or on no lanelet at all -- off the
+    road.  The position tested is the vehicle's centre, its CARLA location.
+
+    *seconds* of zero or less fails on the first tick off them.
+    """
+    # Appended one by one, and chosen by if/else: Codon gives neither a list
+    # comprehension nor a conditional expression the base class's type.
+    on_lanes: list[BaseCondition] = []
+    for lanelet in lanelets_ahead(lanelet_id, distance_m):
+        on_lanes.append(
+            EntityLanePositionCondition(
+                EGO_ROLE_NAME,
+                Lanelet2Pose(lanelet_id=lanelet, s=0.0),
+                label=f"ego_on_lanelet_{lanelet}",
+            )
+        )
+    on_any: BaseCondition
+    if len(on_lanes) == 1:
+        on_any = on_lanes[0]
+    else:
+        on_any = OrCondition(on_lanes, label="ego_on_its_lanes")
+    if seconds <= 0.0:
+        return NotCondition(on_any, label="ego_left_its_lane", holds_when_pending=True)
+    return PersistentCondition(
+        NotCondition(on_any, label="ego_off_its_lanes", holds_when_pending=True),
+        seconds,
+        label="ego_left_its_lane",
+    )
 
 
 class CutInScenario(BaseScenario):
@@ -172,9 +222,18 @@ class CutInScenario(BaseScenario):
         self.register_pass_condition(
             PersistentCondition(cut_in, cfg.hold_seconds, label="npc_cut_in_held")
         )
-        self.register_fail_condition(
-            CollisionCondition(target=CUT_IN_ROLE, label="hit_cut_in_vehicle")
-        )
+        if cfg.fail_on_any_collision:
+            self.register_fail_condition(CollisionCondition(label="ego_collided"))
+        else:
+            self.register_fail_condition(
+                CollisionCondition(target=CUT_IN_ROLE, label="hit_cut_in_vehicle")
+            )
+        if cfg.fail_on_leaving_lane:
+            self.register_fail_condition(
+                left_lanes_ahead(
+                    spawn.lanelet_id, cfg.lanes_ahead_m, cfg.leaving_lane_seconds
+                )
+            )
         self.register_fail_condition(
             TimeoutCondition(cfg.timeout_seconds, label="scenario_timeout")
         )
