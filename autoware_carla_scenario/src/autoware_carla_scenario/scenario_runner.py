@@ -989,12 +989,7 @@ class ScenarioRunner:
             # did not, so an ego that cannot start without one is checked once
             # setup returns -- and here rather than inside `_setup_ego_spawn`,
             # which a scenario that snaps its own spawn never calls.
-            if TYPE_CHECKING:
-                # require_goal() reads the ego's class (`ego_type`), which
-                # Codon cannot hold as a value: the check does not compile it.
-                pass
-            else:
-                scenario.require_goal()
+            scenario.require_goal()
             self._warn_if_route_leaves_odd(scenario_name, scenario)
             logger.info("[%s] Spawning ego vehicle ...", scenario_name)
             if TYPE_CHECKING:
