@@ -20,6 +20,15 @@ scenario:
   cut_in_after_seconds: 2.0
   hold_seconds: 3.0
   timeout_seconds: 20.0
+  # Fail when the ego leaves the lanes ahead of it -- its spawn lanelet and
+  # the lanelets that follow it, up to lanes_ahead_m from the start of the
+  # spawn lanelet -- for leaving_lane_seconds: a lane change, a turn off, or
+  # leaving the road. The position is the vehicle's centre.
+  fail_on_leaving_lane: true
+  lanes_ahead_m: 300.0
+  leaving_lane_seconds: 0.2
+  # Fail on any collision of the ego; false fails only on one with the NPC.
+  fail_on_any_collision: true
 
 ego:
   initial_speed_kmh: 30.0
