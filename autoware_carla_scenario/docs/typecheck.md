@@ -669,7 +669,9 @@ What Codon 0.19 needs that Python does not, beyond
   fixed-length Codon tuple: pass `tuple([...])` of a list, as for a field.
   An empty `[]` / `{}` default of a `list[X]` / `dict[K, V]` parameter (or
   `[]` of a sequence) is checked as an empty one of that type; Codon would
-  make it a list of `None`.
+  make it a list of `None`. A `None` default is not checked against its
+  annotation: Codon makes `speed: float = None` an `Optional[float]`, which
+  passes (mypy, in pre-commit, reports it).
 - **Declare attributes** on any class in a hierarchy (exceptions included)
   and on a class with `__slots__`, at class level (`_value: str`).
 - **`hasattr()` instead of `getattr(x, name, default)`**: Codon decides

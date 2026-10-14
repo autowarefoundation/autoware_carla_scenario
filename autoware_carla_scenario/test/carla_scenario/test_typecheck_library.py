@@ -1097,7 +1097,7 @@ def test_an_error_in_a_protected_function_or_method_is_reported(
 _DEFAULTS = """
 from __future__ import annotations
 
-from typing import Callable, Collection, List, Optional, Sequence
+from typing import Callable, Collection, Dict, List, Optional, Sequence
 
 from autoware_carla_scenario.kinematics.vector import Vector3
 
@@ -1124,6 +1124,15 @@ def first(poses: Optional[Sequence[Vector3]] = None) -> int:
     return len(kept)
 
 
+def tally(ids: List[int] = [], names: Dict[str, Vector3] = {}) -> float:
+    return sum(ids) + sum(v.x for v in names.values())
+
+
+class Box:
+    def add(self, more: List[Vector3] = [], *, by: Dict[str, float] = {}) -> int:
+        return len(more) + len(by)
+
+
 def height(ground: Optional[Callable[[float], Optional[float]]] = None) -> float:
     z: Optional[float] = None
     if ground is not None:
@@ -1137,7 +1146,8 @@ def height(ground: Optional[Callable[[float], Optional[float]]] = None) -> float
 @needs_codon
 def test_defaults_compile(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # The calls without the defaults compile a `()` of a Sequence[T] (an empty
-    # List[T]) and a `None` of an Optional the transform drops (#183).
+    # List[T]), a `None` of an Optional the transform drops, and an empty
+    # `[]` / `{}`, which Codon would make a list of None (#183).
     result = _check_case(_DEFAULTS, tmp_path, monkeypatch)
     assert result.ok, result.format()
 
