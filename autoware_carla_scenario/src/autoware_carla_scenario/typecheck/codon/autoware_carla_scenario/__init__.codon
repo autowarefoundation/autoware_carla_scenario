@@ -42,6 +42,7 @@ from .kinematics import (AbsoluteAcceleration, AbsoluteVelocity, FrenetAccelerat
 from .coverage import SamplingEvent
 from .odd import (OddAttribute, OddCondition, OddDefinition, OddModule, all_of, any_of,
                   default_odd, module_holds, register_odd)
+from .placement import place_at_vehicle_ahead_gap, solve_along
 from .scenario_base import BaseScenario, EgoConfig
 from .scenario_config import (DriverCameraSpec, DriverConfig, DriverControlSpec, DriverLidarSpec,
                               EgoVehicleConfig, EntityConfig, MapConfig, NpcVehicleConfig,

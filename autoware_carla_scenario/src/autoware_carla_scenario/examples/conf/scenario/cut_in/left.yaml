@@ -11,7 +11,11 @@ scenario:
   side: left
   npc_lanelet_id: 19
   # 10 m ahead in the next lane, both at 30 km/h; it changes lanes after 2 s.
+  # npc_ahead_m is along the NPC's lanelet (its s less the ego's); npc_gap_m,
+  # when set, is the gap vehicle_ahead_gap_m reads at the start instead, and
+  # the NPC's s is solved for so it does, however the lanelets curve.
   npc_ahead_m: 10.0
+  npc_gap_m: null
   npc_initial_speed_kmh: 30.0
   cut_in_after_seconds: 2.0
   hold_seconds: 3.0
@@ -24,14 +28,18 @@ ego:
 
 # What this scenario's parameters set, by scenario measure (measures.py), for
 # a sweep that draws them from an ODD (sweep.odd_sample, docs/odd.md). The
-# cut-in vehicle starts npc_ahead_m ahead in the next lane -- the gap the
-# built-in vehicle_ahead_gap_m measures until it cuts in -- and its speed less
-# the ego's is the relative speed. The ranges are what the scenario can stage:
-# a vehicle closer than 6 m overlaps the ego's at spawn. Which ODD attribute
+# gap is drawn as the measure itself (target: measure): npc_gap_m is the gap
+# the built-in vehicle_ahead_gap_m reads at the start, and the scenario solves
+# the NPC's placement for it, so it is exact wherever the case is placed. The
+# relative speed is a raw setting, exact by definition: both start along their
+# lanes at their speeds, and the measure is the NPC's speed along the ego's
+# heading less the ego's. The ranges are what the scenario can stage: a
+# vehicle closer than 6 m overlaps the ego's at spawn. Which ODD attribute
 # these are is the ODD's to say, by mapping its taxonomy onto the measures.
 controls:
   vehicle_ahead_gap_m:
-    key: scenario.npc_ahead_m
+    key: scenario.npc_gap_m
+    target: measure
     range: [6.0, 30.0]
   vehicle_ahead_relative_speed_kph:
     key: scenario.npc_initial_speed_kmh

@@ -1,0 +1,3 @@
+# autoware_carla_scenario.ros2 is checked from its source (typecheck/library.py);
+# this package holds models of the ros2 modules that are not. A scenario
+# importing the package itself finds none of its names here.

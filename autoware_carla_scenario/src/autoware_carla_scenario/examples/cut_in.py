@@ -9,6 +9,15 @@ fails on a collision with it.
 other way. Its lanelet is the one beside the ego's, which a sweep binds with
 the ``adjacent`` binding.
 
+Where it starts is given one of two ways. ``npc_ahead_m`` is a raw setting:
+the NPC's ``s`` along its lanelet less the ego's along its own. ``npc_gap_m``
+is the gap ``vehicle_ahead_gap_m`` should read at the start: the NPC's ``s``
+is solved for, from the two spawn poses, so it does
+(:func:`~autoware_carla_scenario.place_at_vehicle_ahead_gap`) -- the same
+wherever the scenario is placed, however the two lanelets curve.  The
+scenario's controls set ``npc_gap_m``, so a gap drawn from an ODD is the gap
+the run starts at.
+
 Typical usage
 -------------
 On every lane of a map with a lane beside it, one case each::
@@ -43,7 +52,9 @@ from autoware_carla_scenario import (
     TrafficSignalAction,
     VehicleEntity,
     VehicleEntityConfig,
+    place_at_vehicle_ahead_gap,
     snap_to_carla_road,
+    to_carla_world,
     to_opendrive,
 )
 
@@ -97,9 +108,17 @@ class CutInScenario(BaseScenario):
             )
         )
 
-        npc_pose = Lanelet2Pose(
-            lanelet_id=cfg.npc_lanelet_id, s=spawn.s + cfg.npc_ahead_m
-        )
+        npc_gap_m = cfg.npc_gap_m
+        if npc_gap_m is None:
+            npc_pose = Lanelet2Pose(
+                lanelet_id=cfg.npc_lanelet_id, s=spawn.s + cfg.npc_ahead_m
+            )
+        else:
+            # The gap as the measure reads it, from where the ego spawns: x, y
+            # and heading come off its lanelet, as _setup_ego_spawn places it.
+            ego_pose: Lanelet2Pose = spawn
+            ego_at = to_carla_world(ego_pose).to_carla_transform()
+            npc_pose = place_at_vehicle_ahead_gap(ego_at, cfg.npc_lanelet_id, npc_gap_m)
         npc_snapped = snap_to_carla_road(
             npc_pose, world, ground_projection=self._ground_projection
         )
@@ -119,7 +138,7 @@ class CutInScenario(BaseScenario):
         npc.spawn(world)
         self.register_entity(npc)
         logger.info(
-            "Cut-in NPC on lanelet %d at s=%.1f, %s of the ego",
+            "Cut-in NPC on lanelet %d at s=%.2f, %s of the ego",
             cfg.npc_lanelet_id,
             npc_pose.s,
             cfg.side,

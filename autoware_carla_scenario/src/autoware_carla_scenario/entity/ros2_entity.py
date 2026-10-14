@@ -30,7 +30,7 @@ from __future__ import annotations
 import logging
 import math
 import threading
-from typing import TYPE_CHECKING, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, List, Optional, Tuple
 
 from ..constants import FIXED_DELTA_SECONDS, US_PER_S
 from ..driver.base import EgoObservation
@@ -190,12 +190,7 @@ class Ros2EgoEntity(EgoVehicle):
             actor.get_physics_control()
         )
         if self._transport is None:
-            if TYPE_CHECKING:
-                # ros2.cyclone imports cyclonedds, which Codon cannot compile:
-                # the check builds no transport (docs/typecheck.md).
-                raise ImportError("the static check builds no Cyclone DDS transport")
-            else:
-                self._transport = _cyclone_transport(self._config)
+            self._transport = _cyclone_transport(self._config)
         self._transport.open()
         self._open = True
         self._transport.publish_state(self._state(world, actor)[0])
@@ -207,7 +202,9 @@ class Ros2EgoEntity(EgoVehicle):
                 sensor = _publishing_camera(camera.to_sensor_config(), self, index)
                 sensor.attach(world, actor)
                 self._cameras.append(sensor)
-                logger.info("Publishing camera %r on %s", camera.logical_id, camera.topic)
+                logger.info(
+                    "Publishing camera %r on %s", camera.logical_id, camera.topic
+                )
 
     def on_tick(self, world: "carla.World", elapsed: float) -> None:
         """Publish the ego's state, take the commands, and apply the one that drives."""

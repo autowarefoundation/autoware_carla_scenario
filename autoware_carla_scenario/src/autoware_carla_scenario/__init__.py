@@ -171,6 +171,10 @@ if TYPE_CHECKING:
         to_map_frame as to_map_frame,
         to_opendrive as to_opendrive,
     )
+    from .placement import (
+        place_at_vehicle_ahead_gap as place_at_vehicle_ahead_gap,
+        solve_along as solve_along,
+    )
     from .driver import (
         BaseEgoDriverClient as BaseEgoDriverClient,
         ControlConfig as ControlConfig,
@@ -404,6 +408,9 @@ __all__ = [
     "GroundProjectionConfig",
     "snap_to_carla_road",
     "lanelet2_traffic_light_id_to_opendrive_controller_id",
+    # Placing road users for a measure
+    "place_at_vehicle_ahead_gap",
+    "solve_along",
     "find_actor_by_role_name",
     # Kinematics
     "CoordinateFrame",
@@ -573,6 +580,8 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "to_lanelet2": (".coordinate", "to_lanelet2"),
     "to_map_frame": (".coordinate", "to_map_frame"),
     "to_opendrive": (".coordinate", "to_opendrive"),
+    "place_at_vehicle_ahead_gap": (".placement", "place_at_vehicle_ahead_gap"),
+    "solve_along": (".placement", "solve_along"),
     # entity
     "AutowareEgoEntity": (".entity", "AutowareEgoEntity"),
     "AutowareEntity": (".entity", "AutowareEntity"),

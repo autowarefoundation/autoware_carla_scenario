@@ -157,15 +157,22 @@ background_traffic:
 # The weather and the sun (`environment` below) are set for every scenario.
 #
 #   controls:
-#     vehicle_ahead_gap_m: {key: scenario.npc_ahead_m, range: [6, 30]}
+#     vehicle_ahead_gap_m: {key: scenario.npc_gap_m, target: measure, range: [6, 30]}
 controls: {}
 
 # The weather and the sun every run starts in (EnvironmentAction, during
 # initialization); null leaves the world's own. A sweep's odd_sample draws
 # these from the ODD (docs/odd.md), as can a single run:
 #
-#   uv run scenario ... environment.precipitation=80 environment.sun_altitude_angle=-10
+#   uv run scenario ... environment.rain=80 environment.sun_altitude_angle=-10
+#
+# `rain` is rain as a camera sees it: precipitation with the cloudiness,
+# standing water and wetness CARLA's rain presets pair with it. `precipitation`
+# alone sets only the falling drops, which barely show. Cloudiness, standing
+# water or wetness given beside `rain` win over the ones it derives;
+# `precipitation` may not be given with it. rain=0 is a dry, clear day.
 environment:
+  rain: null
   cloudiness: null
   precipitation: null
   precipitation_deposits: null

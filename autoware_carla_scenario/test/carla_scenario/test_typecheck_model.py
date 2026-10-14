@@ -28,7 +28,12 @@ from pyxodr.road_objects.network import RoadNetwork as PyxodrRoadNetwork
 from pyxodr.road_objects.road import Road as PyxodrRoad
 
 import autoware_carla_scenario as acs
-from autoware_carla_scenario import carla_install, environment, trajectory_recorder
+from autoware_carla_scenario import (
+    carla_install,
+    environment,
+    ros2,
+    trajectory_recorder,
+)
 from autoware_carla_scenario.autoware_bridge import base as bridge_base
 from autoware_carla_scenario.autoware_bridge import grpc_server as bridge_grpc_server
 from autoware_carla_scenario.autoware_stack import devcontainer as stack_devcontainer
@@ -362,6 +367,9 @@ _MODULE_MODELS: dict[str, tuple[Any, tuple[str, ...]]] = {
     ),
     # A pydantic model: its fields by keyword only, as Python's signature.
     "ui/models": (ui_models, ("RunProgress", "Status")),
+    # The base and config of ros2/cyclone.codon's CycloneRos2Transport, shared
+    # with the checked ros2.transport and ros2.config (REPLACED_MODELS).
+    "_ros2": (ros2, ("Ros2EgoConfig", "Ros2EgoTransport")),
 }
 
 #: Classes the model declares only so a checked package can re-export them:
@@ -371,6 +379,10 @@ _UNBUILDABLE: dict[str, str] = {
     "CarlaDriverEntity": "entity",
     "EgoDriverGrpcClient": "driver/egodriver_client",
     "GrpcAutowareBridgeServer": "autoware_bridge/grpc_server",
+    # Stand-ins of checked classes the library check replaces (_ros2.codon):
+    # a scenario has no ROS 2 transport to build.
+    "Ros2EgoConfig": "_ros2",
+    "Ros2EgoTransport": "_ros2",
 }
 
 
@@ -449,6 +461,26 @@ def test_a_class_only_re_exported_cannot_be_built_in_a_scenario(name: str) -> No
     call = body[0].value
     assert isinstance(call, ast.Call) and isinstance(call.func, ast.Name)
     assert call.func.id == "compile_error", name
+
+
+def test_the_cyclone_model_is_the_transport_ros2_entity_builds() -> None:
+    # ros2.cyclone imports cyclonedds (the `ros2` extra), so it is compared
+    # only where that is installed. The model declares the constructor
+    # entity.ros2_entity._cyclone_transport() calls, and derives from the
+    # Ros2EgoTransport that the library check replaces with the checked one.
+    # Skip on cyclonedds alone: an ImportError of ros2.cyclone's own (a moved
+    # name) must fail the test, not skip it.
+    pytest.importorskip("cyclonedds")
+    from autoware_carla_scenario.ros2 import cyclone  # noqa: PLC0415
+
+    assert sorted(_definitions("ros2/cyclone")) == ["CycloneRos2Transport"]
+    node = _definitions("ros2/cyclone")["CycloneRos2Transport"][0]
+    assert isinstance(node, ast.ClassDef)
+    assert [ast.unparse(b) for b in node.bases] == ["Ros2EgoTransport"]
+    assert cyclone.CycloneRos2Transport.__mro__[1] is ros2.Ros2EgoTransport
+    _assert_declared_as_in_python(
+        "CycloneRos2Transport", "ros2/cyclone", cyclone.CycloneRos2Transport
+    )
 
 
 #: The model of the third-party carla_driver_interface (its geometry): what the

@@ -13,7 +13,39 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["EnvironmentAction"]
+__all__ = ["EnvironmentAction", "rain_weather"]
+
+#: CARLA's rain presets (``SoftRain``, ``MidRainy``, ``HardRain``; LibCarla's
+#: ``WeatherParameters.cpp``), by precipitation: the cloudiness, standing water
+#: and wetness that come with it.  The wetness is the night presets', the ones
+#: that set it.  Precipitation alone barely shows in a camera image -- a few
+#: drops -- on a dry road under a clear sky: it is these that make it rain.
+_RAIN_PRESETS: tuple[tuple[float, float, float, float], ...] = (
+    # precipitation, cloudiness, precipitation_deposits, wetness
+    (0.0, 0.0, 0.0, 0.0),
+    (30.0, 60.0, 50.0, 30.0),
+    (60.0, 80.0, 60.0, 60.0),
+    (100.0, 100.0, 90.0, 100.0),
+)
+
+
+def rain_weather(rain: float) -> dict[str, float]:
+    """The weather fields of rain at intensity *rain* (0-100), as CARLA's presets set them.
+
+    ``precipitation`` is *rain*; ``cloudiness``, ``precipitation_deposits`` and
+    ``wetness`` are interpolated linearly between CARLA's rain presets.
+    """
+    level = min(max(float(rain), 0.0), 100.0)
+    for (p0, c0, d0, w0), (p1, c1, d1, w1) in zip(_RAIN_PRESETS, _RAIN_PRESETS[1:]):
+        if level <= p1:
+            t = (level - p0) / (p1 - p0)
+            return {
+                "precipitation": level,
+                "cloudiness": c0 + t * (c1 - c0),
+                "precipitation_deposits": d0 + t * (d1 - d0),
+                "wetness": w0 + t * (w1 - w0),
+            }
+    raise AssertionError("unreachable: the presets end at 100")
 
 
 def _set_weather_field(
@@ -80,6 +112,13 @@ class EnvironmentAction(BaseAction):
         fog_distance: Metres before fog starts.
         sun_altitude_angle: Degrees above the horizon; negative is night.
         sun_azimuth_angle: Degrees.
+        rain: Rain as a camera sees it, 0-100: ``precipitation``, and the
+            ``cloudiness``, ``precipitation_deposits`` and ``wetness`` CARLA's
+            rain presets pair with it (:func:`rain_weather`).  Cloudiness,
+            standing water or wetness given as well wins over the one *rain*
+            derives; precipitation may not be given with it.  ``rain=0`` is a
+            dry road under a clear sky, whatever the map's own weather.
+            Keyword-only.
         condition: Trigger condition (see :class:`BaseCondition`).
         timing: Tick phase.
         label: Human-readable identifier.
@@ -102,11 +141,21 @@ class EnvironmentAction(BaseAction):
         condition: Optional[BaseCondition] = None,
         timing: TickTiming = TickTiming.PRE_TICK,
         *,
+        rain: Optional[float] = None,
         label: str = "environment",
         once: bool = True,
     ) -> None:
         super().__init__(label=label, condition=condition, timing=timing, once=once)
+        if rain is not None and precipitation is not None:
+            # rain sets the precipitation: both would leave the probe reading a
+            # different rain than the one asked for.
+            raise ValueError(
+                "EnvironmentAction: give rain or precipitation, not both "
+                "(rain sets the precipitation)"
+            )
         settings: dict[str, float] = {}
+        if rain is not None:
+            settings.update(rain_weather(rain))
         for name, value in (
             ("cloudiness", cloudiness),
             ("precipitation", precipitation),

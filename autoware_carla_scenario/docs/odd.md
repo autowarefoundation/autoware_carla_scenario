@@ -655,7 +655,8 @@ keyed by measure:
 # scenario/cut_in/left.yaml
 controls:
   vehicle_ahead_gap_m:
-    key: scenario.npc_ahead_m
+    key: scenario.npc_gap_m
+    target: measure                    # the gap the measure reads at the start
     range: [6.0, 30.0]                 # what the scenario can stage
   vehicle_ahead_relative_speed_kph:
     key: scenario.npc_initial_speed_kmh
@@ -667,6 +668,7 @@ controls:
 | Field | Meaning |
 |---|---|
 | `key` | The config key the value is written to |
+| `target` | `setting` (the default): the key is a raw setting, written through `scale` and `offset`. `measure`: the key takes the measure's value at the start itself, written unchanged -- no `scale`, `offset`, `integer` or `values` (see below) |
 | `range` | Numeric: `[low, high]` in the measure's unit, the values the scenario can bring about. A bucket is drawn only where it meets the range (by more than an edge), and only that part of it |
 | `values` | Per bucket label. Categorical: the value to write, or `[low, high)` to draw it from (`[x, x]` is `x`); a bucket without one is not drawn. Numeric: a range to draw from instead of the bucket's interval -- which an unbounded bucket (`-inf`/`inf` edges) needs to be drawn at all |
 | `scale`, `offset` | A numeric value drawn in the unit is written as `value * scale + offset` (`scale` not zero) |
@@ -676,6 +678,61 @@ controls:
 `{measure: key}` is short for `{measure: {key: key}}`. The ODD's attribute
 and the measure share a unit: the binding takes the measure's.
 
+#### Raw settings and measure-targeted controls
+
+A raw setting (`target: setting`) is a scenario parameter the drawn value is
+mapped onto by `scale` and `offset`, and the mapping is the author's claim
+that the parameter brings the measure about. It holds where the two are the
+same quantity by definition. It is a guess where they are not:
+`npc_ahead_m` is the NPC's `s` along its lanelet less the ego's along its
+own, while `vehicle_ahead_gap_m` is centre to centre along the ego's heading.
+Neighbouring lanelets do not run alike on a curve -- the outer one is longer,
+and their `s` do not line up -- so no constant offset is right wherever the
+scenario is placed (on CARLA 0.10 Town04_Opt one guessed +11 m was measured
+2.2 m off, and the right offset there is right nowhere else).
+
+A measure that the **initial placement alone determines** can be the
+parameter instead. The scenario takes "the measure should read *v* at the
+start" and solves for the placement that makes it so, evaluating the
+measure's own definition on the poses it will spawn at; the control says
+`target: measure`, and the value drawn is written unchanged:
+
+```python
+from autoware_carla_scenario import place_at_vehicle_ahead_gap, solve_along
+
+# The NPC's s on its lanelet at which vehicle_ahead_gap_m reads cfg.npc_gap_m,
+# seen from where the ego spawns -- whatever the two lanelets' shapes.
+ego_at = to_carla_world(self._spawn_pose).to_carla_transform()
+npc_pose = place_at_vehicle_ahead_gap(ego_at, cfg.npc_lanelet_id, cfg.npc_gap_m)
+```
+
+`place_at_vehicle_ahead_gap` reads the gap with the measure's own geometry
+(`measures.vehicle_ahead_gap_between`) for the NPC at each `s` of its
+lanelet, as a `Lanelet2Pose` spawns there, and narrows the first crossing of
+*v* down by bisection (`solve_along`, a 1-D root find that takes any
+`s -> measure` function, for a measure of a scenario's own). A gap the
+lanelet cannot reach -- too short, turning away, or out of the lanes the
+measure counts -- is refused with the gaps it does reach, so a drawn case
+that cannot be staged fails at setup rather than running another gap.
+
+Which to use:
+
+| The measure is | Control |
+|---|---|
+| decided by where and how road users start, and the parameter is that measure by definition (`npc_initial_speed_kmh` less the ego's is the relative speed) | a raw setting, with the `offset` that makes it the measure |
+| decided by where road users start, but the parameter is another quantity (an arc length for a gap) | `target: measure`, with the scenario solving its placement |
+| decided by what the run then drives (a pedestrian's gap when it sets off, anything a controller or traffic changes) | a raw setting; how far the measure drifts from what was drawn is read off the runs, in openodd's case plot (its drift/calibration view), not solved at setup |
+
+The relative speed of `cut_in` is the first kind: both vehicles start at
+their speeds along their lanes, and the measure is the NPC's velocity along
+the ego's heading less the ego's, so its `offset: ${ego.initial_speed_kmh}`
+writes it exactly where the two lanes are parallel at the start. On a curve
+the NPC's heading differs from the ego's by the angle between their spawn
+points, and the measure reads its speed times the cosine of that: 15 m
+ahead on a 100 m radius at 30 km/h, it reads 30 × (1 − cos 0.15) = 0.34 km/h
+less than written. That is below what a relative-speed bucket resolves, so it
+stays a raw setting.
+
 The weather and the sun are set for every scenario, through the
 `environment` config, which sets them before the run starts
 (`EnvironmentAction`); the built-in probes reading them have controls of
@@ -683,9 +740,23 @@ their own:
 
 | Probe | Key | Ranges |
 |---|---|---|
-| `rain` | `environment.precipitation` | `none` 0, `light` 1-30, `moderate` 30-70, `heavy` 70-100 |
+| `rain` | `environment.rain` | `none` 0, `light` 1-30, `moderate` 30-70, `heavy` 70-100 |
 | `fog` | `environment.fog_density` | as `rain` |
 | `illumination` | `environment.sun_altitude_angle` | `day` 15-90, `low_sun` 0-15, `twilight` -6-0, `night` -90 to -6 |
+
+`environment.rain` sets the precipitation and, with it, the cloudiness,
+standing water and wetness of CARLA's rain presets (`EnvironmentAction`'s
+`rain`): precipitation alone draws only the falling drops, and a camera sees a
+dry road under a clear sky. The probe reads the precipitation, so a drawn value
+still reads back as its bucket. `rain` and `precipitation` cannot both be set
+(the run fails at its start), and the `none` bucket, `rain=0`, is a dry road
+under a clear sky whatever the map's own weather.
+
+Fog is drawn as `fog_density` alone. How thick that looks is the server's: a
+CARLA 0.10 server on the UE 5.8 engine (the `ue58-dev` tree) multiplies it by `carla.Weather.FogDensityScale`,
+whose default 0.001 leaves even `fog_density=100` a faint haze on the horizon.
+Start it with `-ExecCmds="carla.Weather.FogDensityScale 0.01"` for fog a
+camera sees.
 
 A scenario that sets the weather itself (its own `EnvironmentAction`) has
 the last word over the config.
@@ -694,7 +765,7 @@ The example scenarios declare these:
 
 | Scenario | Measure | Parameter |
 |---|---|---|
-| `cut_in/*` | `vehicle_ahead_gap_m` | `npc_ahead_m`, 6-30 m |
+| `cut_in/*` | `vehicle_ahead_gap_m` | `npc_gap_m` (`target: measure`), 6-30 m |
 | `cut_in/*` | `vehicle_ahead_relative_speed_kph` | `npc_initial_speed_kmh` less the ego's, -15 to 15 km/h |
 | `pedestrian_dart_out` | `crossing_pedestrian_gap_m` | `trigger_distance_m`, 8-30 m |
 | `pedestrian_dart_out` | `crossing_pedestrian_speed_ms` | `walk_speed_ms`, 0.8-3 m/s |
@@ -747,7 +818,7 @@ from autoware_carla_scenario.odd import OddKnob, OddSampler, resolve_odd
 
 sampler = OddSampler(
     resolve_odd("path/to/urban.yaml"),
-    controls={"vehicle_ahead_gap_m": OddKnob("scenario.npc_ahead_m", range=(6.0, 30.0))},
+    controls={"vehicle_ahead_gap_m": OddKnob("scenario.npc_gap_m", range=(6.0, 30.0))},
     seed=0,
     strategy="coverage",
     coverage=load_and_merge([Path("outputs")]),

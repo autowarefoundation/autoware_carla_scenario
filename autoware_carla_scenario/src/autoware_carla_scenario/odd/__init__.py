@@ -62,6 +62,7 @@ from .sampler import (
     OddKnob,
     OddSample,
     OddSampler,
+    controls_from_mapping,
     knobs_from_mapping,
 )
 from .registry import (
@@ -109,6 +110,7 @@ __all__ = [
     "fog",
     "illumination",
     "in_junction",
+    "controls_from_mapping",
     "knobs_from_mapping",
     "lane_count",
     "lanelet_location",

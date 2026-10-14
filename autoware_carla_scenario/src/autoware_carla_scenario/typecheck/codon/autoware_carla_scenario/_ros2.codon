@@ -1,0 +1,30 @@
+# Model of autoware_carla_scenario.ros2.config's Ros2EgoConfig and
+# ros2.transport's Ros2EgoTransport (docs/typecheck.md): the base and the
+# config of ros2/cyclone.codon's CycloneRos2Transport. Both modules are
+# checked, and the library check compiles them in this module's place
+# (REPLACED_MODELS, typecheck/library.py), so the model CycloneRos2Transport
+# derives from the checked Ros2EgoTransport and takes the checked
+# Ros2EgoConfig that the checked Ros2EgoEntity hands it.
+#
+# The scenario check has neither: no scenario builds a ROS 2 transport, and
+# the ros2 package is not in the model. Each constructor takes Python's
+# parameters and is a compile_error, so a scenario that builds one (or a
+# CycloneRos2Transport) fails its check rather than passing it.
+
+
+class Ros2EgoConfig:
+    def __init__(self, domain_id=0, frame_id="map", child_frame_id="base_link",
+                 kinematic_state_topic="/localization/kinematic_state",
+                 steering_status_topic="/vehicle/status/steering_status",
+                 speed_topic="/vehicle/speed", clock_topic=None,
+                 rear_axle_offset_m=None, on_stale="hold", sources=(), cameras=()):
+        compile_error("Ros2EgoConfig is not modelled: the static check of a "
+                      "scenario cannot build one (typecheck/codon/"
+                      "autoware_carla_scenario/_ros2.codon)")
+
+
+class Ros2EgoTransport:
+    def __init__(self, config):
+        compile_error("Ros2EgoTransport is not modelled: the static check of a "
+                      "scenario cannot build one (typecheck/codon/"
+                      "autoware_carla_scenario/_ros2.codon)")
