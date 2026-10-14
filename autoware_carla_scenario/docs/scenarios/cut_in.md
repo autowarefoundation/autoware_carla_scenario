@@ -19,7 +19,7 @@ uv run scenario --multirun hydra/sweeper=lanelet_constraint \
 | **Initialization** | Every traffic light green. |
 | **NPC1, after 2 s** | Change lane towards the ego. |
 | **Pass** | 3 s have passed since NPC1 reached the ego's OpenDRIVE lane (*lane of a position*: the matched lanelet at the ego's spawn, the same lane), with no collision. |
-| **Fail** | The ego collides with anything -- NPC1, another actor, a static object (`ego_collided`); the ego's centre is on none of the lanes ahead of it -- the matched lanelet and the lanelets that follow it, up to 300 m from its start -- for 0.2 s: it changed lanes, turned off, or left the road (`ego_left_its_lane`); or 20 s pass. |
+| **Fail** | The ego collides with anything -- NPC1, another actor, a static object (`ego_collided`); the ego's centre is on none of the lanes ahead of it -- the matched lanelet and the lanelets that follow it, up to 1000 m from its start -- for 0.2 s: it changed lanes, turned onto a lanelet that does not follow it, or left the road (`ego_left_its_lane`); or 20 s pass. |
 
 ## Variants
 
@@ -56,7 +56,7 @@ uv run scenario --multirun hydra/sweeper=lanelet_constraint \
 | Timeout | 20 s |
 | Fail on any collision of the ego | on: `fail_on_any_collision` (off: only a collision with NPC1, `hit_cut_in_vehicle`) |
 | Fail on leaving the lanes ahead | on: `fail_on_leaving_lane` |
-| The lanes ahead reach | 300 m from the start of the matched lanelet: `lanes_ahead_m` |
+| The lanes ahead reach | 1000 m from the start of the matched lanelet: `lanes_ahead_m` |
 | Off them for | 0.2 s: `leaving_lane_seconds` (0: the first tick off) |
 
 ## Staying on the lanes ahead
@@ -78,7 +78,7 @@ on_lanes = [
     EntityLanePositionCondition(
         EGO_ROLE_NAME, Lanelet2Pose(lanelet_id=i, s=0.0), label=f"ego_on_lanelet_{i}"
     )
-    for i in lanelets_ahead(spawn.lanelet_id, 300.0)
+    for i in lanelets_ahead(spawn.lanelet_id, 1000.0)
 ]
 self.register_fail_condition(
     PersistentCondition(                     # off them for 0.2 s, not one tick at a seam
@@ -115,8 +115,6 @@ lanelet:
             - {type: entity_lane_position, params: {entity: ego, lanelet_id: 79016}}
             - {type: entity_lane_position, params: {entity: ego, lanelet_id: 79017}}
 ```
-
-"Off the road" alone is the same with every lanelet of the road under the ANY.
 
 ## Placing NPC1 by the measured gap
 

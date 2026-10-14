@@ -6,7 +6,8 @@ NPC has been in the ego's lane for ``hold_seconds`` without a collision. It
 fails on any collision of the ego (``fail_on_any_collision``; off, only on one
 with the NPC), and when the ego leaves the lanes ahead of it -- its spawn
 lanelet and the lanelets that follow it -- for ``leaving_lane_seconds``: a lane
-change, a turn off, or leaving the road (``fail_on_leaving_lane``).
+change, a turn onto a lanelet that does not follow it, or leaving the road
+(``fail_on_leaving_lane``).
 
 ``side`` is the side of the ego the NPC comes from, so it changes lanes the
 other way. Its lanelet is the one beside the ego's, which a sweep binds with

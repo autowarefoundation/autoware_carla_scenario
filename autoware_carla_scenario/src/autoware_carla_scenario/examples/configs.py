@@ -185,12 +185,12 @@ class CutInConfig:
 
     #: Fail when the ego leaves the lanes ahead of it: its spawn lanelet and
     #: the lanelets that follow it (:func:`lanelets_ahead`) -- a lane change,
-    #: a turn off, or leaving the road.
+    #: a turn onto a lanelet that does not follow it, or leaving the road.
     fail_on_leaving_lane: bool = True
 
     #: How far ahead of the start of the spawn lanelet the lanes ahead reach
     #: (m).  Further than the ego can drive before the timeout.
-    lanes_ahead_m: float = 300.0
+    lanes_ahead_m: float = 1000.0
 
     #: How long the ego has to be off those lanes before the run fails (s):
     #: a tick or two off at a seam between lanelets is not leaving them.

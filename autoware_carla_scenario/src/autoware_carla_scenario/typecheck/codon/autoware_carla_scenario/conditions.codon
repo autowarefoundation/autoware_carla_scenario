@@ -206,7 +206,7 @@ class OrCondition(BaseCondition):
 class NotCondition(BaseCondition):
     def __init__(self, condition: BaseCondition, *_kw, label: Optional[str] = None,
                  holds_when_pending: bool = False):
-        _keyword_only(_kw, "NotCondition(): label")
+        _keyword_only(_kw, "NotCondition(): label and holds_when_pending")
         _expect_condition(condition)
         super().__init__(_optional_label(label))
 
