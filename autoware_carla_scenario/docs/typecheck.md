@@ -260,8 +260,8 @@ To check one more module:
 
 ### What is checked of the framework
 
-Every module now has an entry other than `"not yet checked (#45)"`. 161 of
-the package's 237 modules (68%; about 37,000 of 68,000 lines) are `CHECKED`:
+Every module now has an entry other than `"not yet checked (#45)"`. 163 of
+the package's 240 modules (68%; about 37,600 of 68,200 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the conversions between
 Lanelet2, OpenDRIVE and CARLA world poses (`coordinate.transform`), the stop
 lines read off a Lanelet2 map (`utils.stop_line`, `coordinate.stop_line`)
@@ -316,17 +316,16 @@ driver's configs and client interface, trajectory follower and observations
 `driver.geometry`), and the `autoware_bridge`, `autoware_stack`, `entity`,
 `driver`, `maps` and `coverage` packages themselves, whose `__init__` re-exports what is not checked
 through models of it (see *A class a checked package only re-exports*
-below). 77
+below). 76
 functions and methods of those modules are `UNCALLED`: most of them a
 condition's `get_details()` or a backend's `describe()`, what takes a traffic
 backend's options node (`Mapping[str, Any]`), what reads a route search, a
 match, a constraint or a binding from YAML values of any type
 (`Range.parse()`, `parse_route_search()`, `RouteMatch.from_config()`,
 `parse_constraint()`, `parse_binding()`), the `[tool.uv.sources]` entry of a
-framework pin, a dict of str and bool values (`Pin.uv_source()`), the six members of
+framework pin, a dict of str and bool values (`Pin.uv_source()`), the three members of
 `BaseScenario` built on the ego's class (`ego_type`, a `type[EgoVehicle]`:
-the constructor, `create_ego()`, `ego_requires_goal`, `require_goal()` and
-`register_route_to_goal()`) or on cover expressions of any value (`register_cover()`),
+the constructor and `create_ego()`) or on cover expressions of any value (`register_cover()`),
 the run-time wrapper of `TrajectoryVertex.__init__`
 (`_refusing_vertex_times`), the road-marking pattern of the stop lines, which returns a `refers`
 parameter (any of lanelet2's primitives) as a line string
@@ -1026,6 +1025,18 @@ What Codon 0.19 needs that Python does not, beyond
   `TypeVar` (`(init: _Init) -> _Init`), so mypy still sees the typed
   `__init__`; the check drops an annotation that names a module-level
   `TypeVar`.
+- **A class chosen by a conditional expression** (`type(entity) if entity is
+  not None else self.ego_type`) does not compile: Codon cannot hold a class
+  as a value ("'type[Optional[EgoVehicle]]' does not match expected type
+  'EgoVehicle'"). Read a class attribute off each in its own branch, the
+  instance or the class (`BaseScenario.ego_requires_goal`, which reads
+  `requires_goal`, a class attribute no instance assigns).
+- **A call to a `register_*()` method that takes a `Union`** (`register_init`,
+  `Union[BaseAction, Callable[[carla.World], None]]`) compiles both
+  `isinstance` branches of its dispatch with the caller's type. Where the
+  caller has an action, do in the `if TYPE_CHECKING:` branch what the method
+  does for one, and call it in the `else` branch
+  (`BaseScenario.register_route_to_goal`).
 - **`isinstance(x, (A, *OTHERS))`** does not compile: Codon 0.19 cannot
   unpack a tuple of classes into `isinstance`. Spell the classes out
   (`Trajectory.is_relative`).
@@ -1196,7 +1207,7 @@ What Codon 0.19 needs that Python does not, beyond
 - **A call into a module Codon cannot compile, from a function it must**: a
   function `UNCALLED` names is still compiled when a checked function calls
   it. Call it in the `else` branch of `if TYPE_CHECKING:` and check in the
-  first branch what it can (`ScenarioRunner` calls `require_goal()`, built
+  first branch what it can (`ScenarioRunner` calls `create_ego()`, built
   on the ego's class, in the `else` branch). A
   private helper that imports such a module inside it needs an `UNCALLED`
   entry of its own: its import is rewritten, and refused, even when nothing
