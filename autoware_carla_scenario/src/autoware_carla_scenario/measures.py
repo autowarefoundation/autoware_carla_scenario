@@ -235,8 +235,12 @@ class _Lead:
 
 class _Cache:
     """What was read for which world at which frame: (id(world), frame), and
-    the pedestrians around the ego and the vehicle ahead then."""
+    the pedestrians around the ego and the vehicle ahead then.
 
+    The world is held too: a world freed and another made may get the same
+    ``id()``, and its first frames would be read off the old one's cache."""
+
+    world: Optional["carla.World"] = None
     at: Optional[tuple[int, int]] = None
     around: Optional[list[_Around]] = None
     lead_at: Optional[tuple[int, int]] = None
@@ -258,6 +262,11 @@ def _frame_of(world: "carla.World") -> Optional[int]:
 
 
 def _frame_key(world: "carla.World") -> Optional[tuple[int, int]]:
+    held = _CACHE.world
+    if held is None or held is not world:
+        _CACHE.world = world
+        _CACHE.at, _CACHE.around = None, None
+        _CACHE.lead_at, _CACHE.lead = None, None
     frame = _frame_of(world)
     if frame is None:
         return None
@@ -935,6 +944,7 @@ def set_measured_scenario(scenario: Optional["BaseScenario"]) -> None:
     The runner sets the scenario it runs, and clears it when the run ends.
     """
     _MEASURED["scenario"] = scenario
+    _CACHE.world = None
     _CACHE.at, _CACHE.around = None, None
     _CACHE.lead_at, _CACHE.lead = None, None
     _SET_OFF.clear()

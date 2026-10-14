@@ -171,6 +171,34 @@ def test_the_gap_runs_on_across_lanelets(straight_road: LaneMap) -> None:
     assert _gap(ego, beside, lead) == pytest.approx(110.0 - 1.8 - 92.6, abs=1e-6)
 
 
+class _FrameZeroWorld(_World):
+    """A world at frame 0, as every freshly made world is."""
+
+    def get_snapshot(self) -> Any:
+        return SimpleNamespace(frame=0)
+
+
+def test_a_new_world_is_not_read_off_the_last_ones_cache(
+    straight_road: LaneMap,
+) -> None:
+    """Worlds made one after another, each freed before the next, may share
+    an id(); each is read for itself, not off the cache of the one before."""
+    ego = _ego(_on(straight_road, "ego", 0, 50.0))
+    scenes = {
+        ahead: [ego, _vehicle(2, _on(straight_road, "ego", 0, 50.0 + ahead))]
+        for ahead in range(10, 30)
+    }
+    gaps = {
+        # Each world is freed as soon as it is read, so the next one made
+        # takes its place in memory, and its id().
+        ahead: read_measure(VEHICLE_AHEAD_GAP_M, _FrameZeroWorld(actors))
+        for ahead, actors in scenes.items()
+    }
+    assert gaps == {
+        ahead: pytest.approx(ahead - 2.6 - 1.8, abs=1e-6) for ahead in scenes
+    }
+
+
 def test_a_vehicle_alongside_or_behind(straight_road: LaneMap) -> None:
     ego = _ego(_on(straight_road, "ego", 0, 50.0))
 
