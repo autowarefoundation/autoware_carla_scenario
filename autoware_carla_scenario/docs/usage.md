@@ -392,12 +392,13 @@ Tests that the ego vehicle correctly stops at a red light and proceeds after gre
 | `scenario.light_switch_delay_seconds` | float | `5.0` | Delay before switching red to green |
 | `scenario.merging_time_seconds` | float | `3.0` | Margin subtracted from red phase duration |
 | `scenario.timeout_seconds` | float | `8.0` | Maximum scenario duration |
-| `scenario.moving_speed_kmh` | float | `1.0` | Speed threshold to detect "moving" (km/h) |
+| `scenario.moving_speed_kmh` | float | `1.0` | Speed (km/h) that counts as moving while the light is red, which fails the run |
+| `scenario.departure_speed_kmh` | float | `10.0` | Speed (km/h) the ego must reach after green to pass; `null` uses `moving_speed_kmh` |
 
 **Behavior:**
 - Sets all traffic lights to RED initially
 - Registers a TrafficSignalAction to switch to GREEN after `light_switch_delay_seconds`
-- Pass conditions: ego is at standstill during red AND moves above `moving_speed_kmh` during green
+- Pass conditions: ego is at standstill during red AND reaches `departure_speed_kmh` during green
 - Uses StickyCondition + AndCondition for combined checks
 
 #### Temporary Stop
