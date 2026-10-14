@@ -105,7 +105,13 @@ FLAKY_FIELDS = {
 
 
 class OddSampler(_OddSampler):
-    """openodd's sampler, with the CARLA backend's knobs by default."""
+    """openodd's sampler, with the CARLA backend's knobs by default.
+
+    The ``coverage`` it aims past is read as the scenario measures' current
+    definitions read it: the items of a measure past its first version only
+    as that version wrote them
+    (:func:`~autoware_carla_scenario.coverage.collector.current_measure_coverage`,
+    docs/odd.md, "Measure versions")."""
 
     def __init__(
         self,
@@ -113,7 +119,11 @@ class OddSampler(_OddSampler):
         knobs: Optional[Mapping[str, OddKnob]] = None,
         **kw: Any,
     ) -> None:
+        from ..coverage.collector import current_measure_coverage  # noqa: PLC0415
+
         kw.setdefault("backend", CARLA_BACKEND)
+        if kw.get("coverage") is not None:
+            kw["coverage"] = current_measure_coverage(kw["coverage"], odd)
         super().__init__(odd, knobs, **kw)
 
 

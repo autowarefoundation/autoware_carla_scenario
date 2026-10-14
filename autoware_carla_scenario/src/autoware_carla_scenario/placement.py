@@ -162,12 +162,16 @@ def vehicle_bumpers(world: carla.World, vehicle_type: str) -> Bumpers:
     spawned where it will drive.
 
     CARLA gives a blueprint no size: a vehicle's bounding box is known only
-    once it is spawned.  So one is spawned high above the map, read and
-    destroyed straight away, before the world is ticked again; the result is
-    remembered by blueprint id for the rest of the process.  Placing a
-    vehicle for a bumper-to-bumper gap needs its size where it is placed, and
-    this way it is placed once, where the gap reads right, rather than
-    spawned and then moved.
+    once it is spawned.  A vehicle of the blueprint already in the world --
+    the ego, spawned before the scenario places the others -- is read as it
+    is.  Otherwise one is spawned high above the map (tried at
+    :data:`_PROBE_HEIGHT_M`, then twice and three times as high), read and
+    destroyed straight away, before the world is ticked again; the
+    vehicle-ahead measures do not count a vehicle that far above the ego.
+    The result is remembered by blueprint id for the rest of the process.
+    Placing a vehicle for a bumper-to-bumper gap needs its size where it is
+    placed, and this way it is placed once, where the gap reads right, rather
+    than spawned and then moved.
 
     Raises:
         ValueError: When the blueprint is not a vehicle CARLA has, or no
@@ -175,6 +179,11 @@ def vehicle_bumpers(world: carla.World, vehicle_type: str) -> Bumpers:
     """
     if vehicle_type in _BUMPERS:
         return _BUMPERS[vehicle_type]
+    for existing in world.get_actors():
+        if existing.type_id == vehicle_type:
+            found = bumpers_of_box(existing.bounding_box)
+            _BUMPERS[vehicle_type] = found
+            return found
     library = world.get_blueprint_library()
     known = {bp.id for bp in library.filter("vehicle.*")}
     if vehicle_type not in known:

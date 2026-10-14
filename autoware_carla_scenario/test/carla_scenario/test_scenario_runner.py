@@ -494,3 +494,17 @@ class TestRecordRun:
         coverage.record_outcome.assert_called_once_with(
             False, failed_at=1.0, environment=None
         )
+
+
+def test_what_the_odds_measures_read_is_built_before_the_first_tick() -> None:
+    """The vehicle-ahead measures' routing graph takes tens of seconds on a
+    large map: the runner builds it (prepare_measures) in setup, before the
+    tick loop, not on the first tick that reads it."""
+    import inspect
+
+    source = inspect.getsource(ScenarioRunner.run_scenario)
+
+    assert "prepare_measures(self.odd)" in source
+    assert source.index("prepare_measures(self.odd)") < source.index(
+        "while not scenario.is_done()"
+    )
