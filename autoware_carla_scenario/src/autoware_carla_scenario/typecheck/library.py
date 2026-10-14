@@ -337,7 +337,7 @@ UNCALLED: dict[str, str] = {
     "autoware_carla_scenario.route.model.parse_route_search": _YAML,
     "autoware_carla_scenario.scenario_base.BaseScenario.__init__": "takes and stores the ego's class (`ego_type: type[EgoVehicle] | None`), and Codon cannot hold a class as a value",
     "autoware_carla_scenario.scenario_base.BaseScenario.create_ego": "instantiates the ego's class held in `ego_type`, which Codon cannot hold as a value",
-    "autoware_carla_scenario.scenario_base.BaseScenario.ego_requires_goal": "reads `requires_goal` off the ego's class (`type(entity)` or `ego_type`), which Codon cannot hold as a value",
+    "autoware_carla_scenario.scenario_base.BaseScenario.ego_requires_goal": "reads `requires_goal` off `ego_type` when the scenario was given no ego, a class Codon cannot hold as a value",
     "autoware_carla_scenario.scenario_base.BaseScenario.require_goal": "asks ego_requires_goal, which reads the ego's class (`ego_type`)",
     "autoware_carla_scenario.scenario_base.BaseScenario.register_route_to_goal": "asks require_goal, which reads the ego's class (`ego_type`)",
     "autoware_carla_scenario.scenario_base.BaseScenario.register_cover": "builds a CoverItem of values of any type (`expression: Callable[[carla.World], Any]`, `values: Iterable[Any]`, `ignore: Callable[[Any], bool]`, `event: SamplingEvent | BaseCondition`), which Codon cannot express; coverage.items is not checked",

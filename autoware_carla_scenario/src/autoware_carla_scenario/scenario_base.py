@@ -409,12 +409,14 @@ class BaseScenario(ABC):
 
         The entity's own rule
         (:attr:`~autoware_carla_scenario.entity.ego.EgoVehicle.requires_goal`),
-        read off the instance the scenario was given or, when it will be built
-        from :attr:`ego_type`, off that class.
+        read off the instance the scenario was given -- which can say so of
+        itself, as a driver-policy ego given a bridge does -- or, when it will be
+        built from :attr:`ego_type`, off that class.
         """
         entity = self.ego_entity
-        ego_class = type(entity) if entity is not None else self.ego_type
-        return ego_class.requires_goal
+        if entity is not None:
+            return entity.requires_goal
+        return self.ego_type.requires_goal
 
     def require_goal(self) -> Optional[Lanelet2Pose]:
         """Return :attr:`goal_pose`, refusing an ego that cannot start without one.

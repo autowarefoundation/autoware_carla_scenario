@@ -992,16 +992,25 @@ classDiagram
         +turn_at_junction() refuses
     }
 
-    class CarlaDriverEntity
+    class CarlaDriverEntity {
+        +handshake: BridgeHandshake | None
+    }
+
+    class BridgeHandshake {
+        +bridge: AutowareBridge
+        +launcher: AutowareLauncher | None
+        +set_mission(initial_pose, goal_pose, waypoints)
+        +route_to(world, goal)
+        +start(actor)
+        +poll() reason | None
+        +ready: bool
+    }
 
     class Ros2EgoEntity
 
     class BridgedEgoEntity {
         +requires_goal = true
-        +bridge: AutowareBridge
-        +launcher: AutowareLauncher | None
-        +set_mission(initial_pose, goal_pose, waypoints)
-        +route_to(world, goal)
+        +handshake: BridgeHandshake
         +is_initialized: bool
     }
 
@@ -1017,16 +1026,22 @@ classDiagram
     ExternallyDrivenEgo <|-- Ros2EgoEntity
     ExternallyDrivenEgo <|-- BridgedEgoEntity
     BridgedEgoEntity <|-- AutowareEgoEntity
+    BridgedEgoEntity *-- BridgeHandshake
+    CarlaDriverEntity o-- BridgeHandshake
 ```
 
 **The ego hierarchy** splits on who drives. `EgoVehicle` is driven by the traffic
 backend. `ExternallyDrivenEgo` is the base of every ego a stack of its own drives:
 it opts out of the TrafficManager, refuses TrafficManager manoeuvres instead of
-delegating them, and carries the termination request. `BridgedEgoEntity` adds the
+delegating them, and carries the termination request. `BridgeHandshake` is the
 splatsim-consistent [`AutowareBridge`](autoware.md) handshake — the mission handed
 over, readiness awaited, the stack launched and stopped per scenario — which
-depends only on the abstract bridge, so it is not particular to Autoware;
-`AutowareEgoEntity` is that handshake with Autoware on the other end.
+depends only on the abstract bridge, so it is not particular to Autoware. An ego
+holds one rather than inheriting it, as the static check takes single inheritance
+only: `BridgedEgoEntity` is the ego that is nothing but the handshake (the stack
+drives), `AutowareEgoEntity` is that with Autoware on the other end, and a
+`CarlaDriverEntity` given a bridge holds one beside its policy loop, starting the
+policy once the stack is ready.
 
 **Ego lifecycle hooks**: `ScenarioRunner` calls `on_scenario_start()` after the warm-up
 ticks, `on_tick()` on every simulation tick, and `on_scenario_end()` during teardown.
