@@ -2264,8 +2264,9 @@ the model, which declares the whole public API.</p>
 <h3 id="what-is-compiled">What is compiled<a class="headerlink" href="#what-is-compiled" title="Permanent link">&para;</a></h3>
 <p>Codon checks a function only when something calls it, so the check appends a
 function to each checked module that calls every function and every
-method of every public class (constructors, static and class methods,
-properties, dunder methods and protected <code>_</code> ones included) with a value of
+method of every class (constructors, static and class methods,
+properties, dunder methods, protected <code>_</code> ones and those of <code>_</code> classes
+included) with a value of
 each parameter's annotated type:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="k">def</span><span class="w"> </span><span class="nf">_acs_library_check</span><span class="p">():</span>
 <a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>    <span class="n">normalize_angle_deg</span><span class="p">(</span><span class="n">_acs_value</span><span class="p">(</span><span class="nb">float</span><span class="p">))</span>
@@ -2315,12 +2316,29 @@ compile. 12 were fixed in the module (shape-typed arrays, an annotated
 local, an lxml element type for <code>coordinate.transform._cubic()</code>, and the
 driver taking <code>Optional[Union[A, B]]</code>), and 13 are <code>UNCALLED</code>, each with the
 reason, most of them because they take <code>Any</code> and only an <code>UNCALLED</code> function
-calls them. Three things are left out:</p>
+calls them.</p>
+<p><strong>The methods of <code>_</code> classes are called too</strong> (#182). A <code>_</code> class is a
+module's own helper, and was left to be compiled through what uses it, but
+what uses it does not always compile it. Of the 42 methods of the 20 <code>_</code>
+classes of the checked modules, an error injected into each found 4 that
+nothing compiled: <code>_Never.__init__</code> and <code>_BackendAction.__init__</code>
+(<code>actions.background_traffic</code>), reached only from constructors that are
+<code>UNCALLED</code>; <code>_BackendAction.set_traffic_backend()</code>, which
+<code>BaseScenario._hand_backend_to()</code> calls behind a <code>hasattr()</code> on a
+<code>BaseAction</code>, which Codon decides statically as false; and
+<code>route.search._Search.__post_init__()</code>, which Codon's constructor does not
+call. The check now calls them as it calls a public class's: 53 calls
+(for the 48 methods of the 21 <code>_</code> classes there are since #180), beside
+about 1470 others, none with a parameter the check cannot call with.
+Measured before any fix, 3 of the first 47 failed, and all 3 were fixed in the module:
+<code>_ScenarioClock</code> declares the <code>_world</code> and <code>_simulated_start</code> it assigns on
+<code>self</code>, and <code>_BackendAction.__init__</code> branches into a <code>BaseCondition</code> local
+instead of choosing between <code>until</code> and <code>_Never()</code> with a conditional
+expression, which Codon 0.19 cannot type. Each of the 4 now reports an
+injected error. Two things are left out:</p>
 <ul>
 <li>a module's dunders (PEP 562's <code>__getattr__</code>), which are Python's hooks, not
   the module's code; a class's (<code>__eq__</code>, <code>__enter__</code>) are called, as before;</li>
-<li>the methods of a <code>_</code> class, a module's own helper, which is compiled
-  through what uses it;</li>
 <li>what <code>UNCALLED</code> names, as for a public function.</li>
 </ul>
 <p>A protected member that calls an <code>UNCALLED</code> one calls it in the <code>else</code>
@@ -3458,7 +3476,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 14, 2026 11:23:15 UTC"><span class="timeago" datetime="2026-10-14T11:23:15+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 14, 2026 11:23:15 UTC">2026-10-14</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 14, 2026 15:29:30 UTC"><span class="timeago" datetime="2026-10-14T15:29:30+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 14, 2026 15:29:30 UTC">2026-10-14</span>
   </span>
 
     
