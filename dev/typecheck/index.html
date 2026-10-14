@@ -2085,7 +2085,7 @@ model re-exports the checked definitions, as it does in the full run.
 checked <code>entity.registry</code>, which the model does not declare, and
 <code>entity._spawn</code> holds the checked <code>GroundProjectionConfig</code>, which the model
 <code>VehicleEntityConfig</code> must share. The modules it imports are checked as
-fully as the named ones: their public functions are called too, and <strong>errors
+fully as the named ones: their functions and methods are called too, and <strong>errors
 are reported for every compiled module</strong>, not only the named ones. An error
 in a module the named one imports is an error the full run reports as well,
 and it would stop the named module from compiling anyway. Hiding it would
@@ -2106,9 +2106,10 @@ nobody has made compile yet; any other reason names what keeps a module out
 compile). numpy is not one: Codon ships its own, and a module's numpy calls
 compile. Every module of the package except <code>typecheck/</code> is in exactly one of
 the two, which the test suite checks, so <strong>a new module needs an entry</strong>.</p>
-<p><code>UNCALLED</code> names the few public functions and methods of a checked module the
-check leaves out (<code>module.Class.method</code>), each with its reason: one whose job
-Codon cannot express, in a module that otherwise compiles. Today that is
+<p><code>UNCALLED</code> names the few functions and methods of a checked module the
+check leaves out (<code>module.Class.method</code>, or <code>module._helper</code> for a protected
+one), each with its reason: one whose job Codon cannot express, in a module
+that otherwise compiles. Today that is
 what builds a condition's details (<code>get_details()</code>, <code>to_summary_dict()</code>,
 <code>to_dict()</code>: a <code>dict[str, Any]</code> of mixed value types) and what serialises
 them (<code>ScenarioResult.to_json()</code>, with <code>json</code>), and what reads the
@@ -2117,8 +2118,8 @@ authoring package's pydantic specs, typed <code>Any</code>
 only when something calls it, so neither its body nor an import made inside
 it is compiled: a module that needs a standard module Codon lacks for one
 function imports it inside that function (<code>import json</code> in <code>to_json()</code>) and
-lists the function here. A test checks that every entry names a public
-function or method of a checked module.</p>
+lists the function here. A test checks that every entry names a function or
+method of a checked module.</p>
 <p>To check one more module:</p>
 <ol>
 <li>Move its entry from <code>EXCLUDED</code> to <code>CHECKED</code>.</li>
@@ -2184,8 +2185,9 @@ driver's configs and client interface, trajectory follower and observations
 <code>driver.geometry</code>), and the <code>autoware_bridge</code>, <code>autoware_stack</code>, <code>entity</code>,
 <code>driver</code>, <code>maps</code> and <code>coverage</code> packages themselves, whose <code>__init__</code> re-exports what is not checked
 through models of it (see <em>A class a checked package only re-exports</em>
-below). 76
-functions and methods of those modules are <code>UNCALLED</code>: most of them a
+below). 89
+functions and methods of those modules are <code>UNCALLED</code> (13 of them
+protected helpers, see <em>What is compiled</em> below): most of them a
 condition's <code>get_details()</code> or a backend's <code>describe()</code>, what takes a traffic
 backend's options node (<code>Mapping[str, Any]</code>), what reads a route search, a
 match, a constraint or a binding from YAML values of any type
@@ -2211,8 +2213,14 @@ statuses, <code>_collect_condition_statuses()</code>), the queue's pytest fixtur
 which reads the <code>map</code> config node of any shape (<code>Any</code>), the driver and
 ROS 2 configs' <code>from_mapping()</code> (a Hydra node, <code>Mapping[str, Any]</code>), what
 builds the ROS 2 ego's published cameras (<code>entity.ros2_entity._publishing_camera()</code>,
-which imports <code>ros2.camera</code> inside it) and
-<code>encode_frame_jpeg()</code> (cv2). The 77 <code>EXCLUDED</code> modules fall in
+which imports <code>ros2.camera</code> inside it),
+<code>encode_frame_jpeg()</code> (cv2), and protected helpers of the same kinds: what
+reads a <code>map</code> setting, a route search's segment, a signal group or phase, or
+a <code>TrajectoryVertex</code> call's arguments, each of any type (<code>Any</code>), walks or
+binds a sweeper constraint of any kind, builds a condition's status (its
+details), or takes the list a plain tick callback goes into
+(<code>BaseScenario._register_tick()</code>, a <code>List[Callable[[carla.World], None]]</code>,
+which the check has no value of). The 77 <code>EXCLUDED</code> modules fall in
 four groups. Many fit more than one (about 55 import what Codon cannot
 compile, 28 build on an excluded module and 20 hold values Codon has no type
 for), so each is counted once, in the first group that fits it:</p>
@@ -2255,10 +2263,10 @@ for), so each is counted once, in the first group that fits it:</p>
 the model, which declares the whole public API.</p>
 <h3 id="what-is-compiled">What is compiled<a class="headerlink" href="#what-is-compiled" title="Permanent link">&para;</a></h3>
 <p>Codon checks a function only when something calls it, so the check appends a
-function to each checked module that calls every public function and every
+function to each checked module that calls every function and every
 method of every public class (constructors, static and class methods,
-properties and dunder methods included) with a value of each parameter's
-annotated type:</p>
+properties, dunder methods and protected <code>_</code> ones included) with a value of
+each parameter's annotated type:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="k">def</span><span class="w"> </span><span class="nf">_acs_library_check</span><span class="p">():</span>
 <a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>    <span class="n">normalize_angle_deg</span><span class="p">(</span><span class="n">_acs_value</span><span class="p">(</span><span class="nb">float</span><span class="p">))</span>
 <a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>    <span class="n">Vector3</span><span class="p">(</span><span class="n">_acs_value</span><span class="p">(</span><span class="nb">float</span><span class="p">),</span> <span class="n">_acs_value</span><span class="p">(</span><span class="nb">float</span><span class="p">),</span> <span class="n">_acs_value</span><span class="p">(</span><span class="nb">float</span><span class="p">))</span>
@@ -2266,7 +2274,8 @@ annotated type:</p>
 </code></pre></div>
 <p><code>_acs_value(T)</code> is a <code>T</code> Codon cannot tell from a real one; nothing compiled
 is ever run. A parameter annotated with a union (<code>Lanelet2Pose |
-OpenDrivePose</code>, or <code>Union[BaseAction, Callable[[carla.World], None]]</code>) is
+OpenDrivePose</code>, <code>Union[BaseAction, Callable[[carla.World], None]]</code>, or an
+<code>Optional</code> of one, <code>Optional[Union[EntityRole, str]]</code>) is
 called once with each member, so the body is checked for every type it
 accepts. A parameter with no annotation, or one Codon cannot
 express (<code>Any</code>, <code>object</code>, <code>Callable[..., R]</code>, <code>Callable[[Any], Any]</code>, ...),
@@ -2292,6 +2301,33 @@ class (<code>TrafficBackend.start(_acs_value(TrafficBackend), ...,
 skip_actor_ids=...)</code>): Codon 0.19 calls a method a subclass may override
 through a dispatch thunk, which takes neither a keyword argument nor
 <code>**kwargs</code>, and the call through the class checks the same body.</p>
+<p><strong>Protected functions and methods are called too</strong> (#175). A <code>_</code> method is
+often a hook a subclass or another module uses: six example scenarios call
+<code>BaseScenario._setup_ego_spawn()</code>, and the model's <code>BaseScenario</code> is what a
+scenario compiles against, so before the driver called it, nothing compiled
+its real body, and an error injected into it passed the check. The check now
+calls every <code>_</code> function of a checked module and every <code>_</code> method of its
+public classes, as it calls a public one: about 340 of them, beside about
+920 public ones. Measured before any fix, 25 of them failed: 15 had a
+parameter the check cannot call with, 8 a bare <code>np.ndarray</code> parameter, and
+<code>_setup_ego_spawn()</code> and <code>scenario_runner._build_condition_status()</code> did not
+compile. 12 were fixed in the module (shape-typed arrays, an annotated
+local, an lxml element type for <code>coordinate.transform._cubic()</code>, and the
+driver taking <code>Optional[Union[A, B]]</code>), and 13 are <code>UNCALLED</code>, each with the
+reason, most of them because they take <code>Any</code> and only an <code>UNCALLED</code> function
+calls them. Three things are left out:</p>
+<ul>
+<li>a module's dunders (PEP 562's <code>__getattr__</code>), which are Python's hooks, not
+  the module's code; a class's (<code>__eq__</code>, <code>__enter__</code>) are called, as before;</li>
+<li>the methods of a <code>_</code> class, a module's own helper, which is compiled
+  through what uses it;</li>
+<li>what <code>UNCALLED</code> names, as for a public function.</li>
+</ul>
+<p>A protected member that calls an <code>UNCALLED</code> one calls it in the <code>else</code>
+branch of <code>if TYPE_CHECKING:</code>, as a public one does (see <em>A call into a
+module Codon cannot compile, from a function it must</em> below).
+<code>_setup_ego_spawn()</code> needs no such branch: the <code>register_route_to_goal()</code> it
+ends with is checked (#174).</p>
 <h3 id="checked-modules-and-the-model">Checked modules and the model<a class="headerlink" href="#checked-modules-and-the-model" title="Permanent link">&para;</a></h3>
 <p>The checked modules are compiled next to the same model the scenario check
 uses. Every import of the framework in a checked module is pointed at what
@@ -2395,8 +2431,8 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
 <p>What Codon 0.19 needs that Python does not, beyond
 <a href="#writing-a-scenario-that-type-checks">the rewrites above</a>:</p>
 <ul>
-<li><strong>Annotate what the check calls</strong>: every public parameter, with a type
-  Codon can express. Spell a union out (<code>Lanelet2Pose | OpenDrivePose</code>) rather
+<li><strong>Annotate what the check calls</strong>: every parameter of a function or method
+  it calls, protected (<code>_</code>) ones included, with a type Codon can express. Spell a union out (<code>Lanelet2Pose | OpenDrivePose</code>) rather
   than through an alias (<code>AnyPose</code>); a union with <code>object</code> or <code>Any</code> in it
   gives nothing to call with.</li>
 <li><strong>Declare attributes</strong> on any class in a hierarchy (exceptions included)
@@ -2606,7 +2642,12 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   <code>get_roads()</code>), so a checked module annotates with pyxodr's own classes
   under <code>TYPE_CHECKING</code> (<code>utils/traffic_light.py</code>, which may not import
   <code>coordinate</code>; <code>coordinate/transform.py</code>) and takes the network
-  <code>MapManager</code> returns. Nothing else of pyxodr is there.
+  <code>MapManager</code> returns. Nothing else of pyxodr is there. <code>codon/lxml/</code> names
+  the XML element <code>coordinate.codon</code> declares likewise, as
+  <code>lxml.etree._Element</code>, the type of pyxodr's <code>lane_xml</code> and <code>road_xml</code>
+  (<code>coordinate.transform._cubic()</code>; <code>import lxml.etree</code> under
+  <code>TYPE_CHECKING</code>, since Codon does not find <code>etree</code> with
+  <code>from lxml import etree</code>).
   <code>test_typecheck_model.py</code> compares the constructor and <code>get_roads()</code> with
   pyxodr's and loads the fixture map's OpenDRIVE with them.</li>
 <li><strong>lanelet2 is modelled</strong>: <code>codon/lanelet2/</code> and
@@ -2752,7 +2793,12 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   <code>ndarray</code> needs its dtype and dimension count, so a parameter annotated
   with a bare <code>np.ndarray</code> or numpy.typing's <code>NDArray[...]</code> does not
   translate; numpy's shape-typed array does (see <em>An array is typed by its
-  shape</em> below).</li>
+  shape</em> below). A bare <code>np.ndarray</code> parameter compiles while only its
+  callers reach it, but the check has no value of it to call with
+  ("cannot typecheck '_travel_m(_acs_value(np.ndarray))'"): the protected
+  geometry helpers of <code>coordinate.transform</code> and <code>driver.control</code> take
+  <code>np.ndarray[tuple[int, int], np.dtype[np.float64]]</code> and their points
+  <code>np.ndarray[tuple[int], np.dtype[np.float64]]</code>.</li>
 <li><strong>An overridden method takes concrete types</strong>: Codon 0.19 cannot call a
   method a subclass overrides when one of its parameters is generic, which an
   abstract collection (<code>Sequence[X]</code>) or an unannotated parameter is.
@@ -2939,7 +2985,13 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   <code>Optional[Path]</code> local (<code>shipped: Optional[Path] = candidate</code>, as
   <code>maps.resolver._find_xodr()</code> does): Codon types a tuple by its members,
   and a bare annotation without a value (<code>found: Optional[Path]</code>) does not
-  change the type of what is assigned to it later.
+  change the type of what is assigned to it later. An attribute is not
+  narrowed either: after <code>if self._spawn_pose is None: raise ...</code>,
+  <code>self._spawn_pose</code> is still an <code>Optional[Lanelet2Pose]</code>, and
+  <code>snap_to_carla_road()</code>'s <code>isinstance</code> dispatch takes its CARLA branch for
+  it ("'Lanelet2Pose' does not match expected type 'CarlaWorldPose'").
+  <code>BaseScenario._setup_ego_spawn()</code> reads it into
+  <code>ll2_pose: Lanelet2Pose = self._spawn_pose</code> first.
 - <strong>Codon does not narrow a union either</strong>, with <code>is</code> or <code>isinstance</code>, and an
   attribute holding a union (<code>Union[Sequence[int], TrafficLightTarget,
   None]</code>) reaches every use as the union. Store it split by kind
@@ -3406,7 +3458,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 14, 2026 08:11:15 UTC"><span class="timeago" datetime="2026-10-14T08:11:15+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 14, 2026 08:11:15 UTC">2026-10-14</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 14, 2026 11:23:15 UTC"><span class="timeago" datetime="2026-10-14T11:23:15+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 14, 2026 11:23:15 UTC">2026-10-14</span>
   </span>
 
     
