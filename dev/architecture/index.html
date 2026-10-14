@@ -3413,23 +3413,49 @@ cycles normally and the scenario just waits forever.</p>
         +destroy()
     }
 
-    class AutowareEntity {
+    class ExternallyDrivenEgo {
         +use_autopilot = false
-        +requires_goal = true
+        +stack_name: str
+        +termination_requested: bool
+        +termination_reason: str | None
+        +change_lane() refuses
+        +set_desired_speed() refuses
+        +turn_at_junction() refuses
     }
 
-    class CarlaDriverEntity {
-        +use_autopilot = false
-        +termination_requested: bool
+    class CarlaDriverEntity
+
+    class Ros2EgoEntity
+
+    class BridgedEgoEntity {
+        +requires_goal = true
+        +bridge: AutowareBridge
+        +launcher: AutowareLauncher | None
+        +set_mission(initial_pose, goal_pose, waypoints)
+        +route_to(world, goal)
+        +is_initialized: bool
     }
+
+    class AutowareEgoEntity
 
     VehicleEntityConfig &lt;|-- EgoConfig
     SpawnLocation &lt;|.. SpawnTransform
     SpawnLocation &lt;|.. SpawnPointIndex
     VehicleEntityConfig --&gt; SpawnLocation
     VehicleEntity --&gt; VehicleEntityConfig
-    EgoVehicle &lt;|-- AutowareEntity
-    EgoVehicle &lt;|-- CarlaDriverEntity</code></pre>
+    EgoVehicle &lt;|-- ExternallyDrivenEgo
+    ExternallyDrivenEgo &lt;|-- CarlaDriverEntity
+    ExternallyDrivenEgo &lt;|-- Ros2EgoEntity
+    ExternallyDrivenEgo &lt;|-- BridgedEgoEntity
+    BridgedEgoEntity &lt;|-- AutowareEgoEntity</code></pre>
+<p><strong>The ego hierarchy</strong> splits on who drives. <code>EgoVehicle</code> is driven by the traffic
+backend. <code>ExternallyDrivenEgo</code> is the base of every ego a stack of its own drives:
+it opts out of the TrafficManager, refuses TrafficManager manoeuvres instead of
+delegating them, and carries the termination request. <code>BridgedEgoEntity</code> adds the
+splatsim-consistent <a href="../autoware/"><code>AutowareBridge</code></a> handshake — the mission handed
+over, readiness awaited, the stack launched and stopped per scenario — which
+depends only on the abstract bridge, so it is not particular to Autoware;
+<code>AutowareEgoEntity</code> is that handshake with Autoware on the other end.</p>
 <p><strong>Ego lifecycle hooks</strong>: <code>ScenarioRunner</code> calls <code>on_scenario_start()</code> after the warm-up
 ticks, <code>on_tick()</code> on every simulation tick, and <code>on_scenario_end()</code> during teardown.
 They are no-ops on <code>EgoVehicle</code>, so a TrafficManager-driven ego costs nothing. An ego
@@ -3443,10 +3469,12 @@ itself, and an entity's manoeuvre intents (<code>change_lane</code>, <code>turn_
 delegated to whichever backend drives it.</p>
 <p><strong>Who drives the ego</strong>: <code>use_autopilot</code> decides whether the backend is given the
 ego actor to drive or told to keep its hands off it. <code>EgoVehicle</code> opts in (TrafficManager drives);
-<code>AutowareEntity</code> opts out and nothing drives the actor; <code>CarlaDriverEntity</code> opts out and
-drives it itself from an external policy's plan.</p>
+every <code>ExternallyDrivenEgo</code> opts out: on its own it leaves the actor for something
+outside the scenario, <code>CarlaDriverEntity</code> drives it from an external policy's plan,
+<code>Ros2EgoEntity</code> from ROS 2 nodes' commands, and <code>BridgedEgoEntity</code> leaves it to the
+stack it handed the mission to.</p>
 <p><strong>Where the ego is going</strong>: <code>requires_goal</code> says whether an entity can start without a
-destination. An <code>AutowareEntity</code> cannot — the goal is what makes it move at all — and
+destination. A <code>BridgedEgoEntity</code> (<code>AutowareEgoEntity</code>) cannot — the goal is what makes it move at all — and
 <code>BaseScenario.require_goal()</code>, asked by <code>register_route_to_goal</code> and by <code>ScenarioRunner</code>
 once <code>setup()</code> returns, refuses one that has none. An ego driven by the TrafficManager or
 a driver policy reads no goal, so a scenario may name none and the routing action is
@@ -3708,7 +3736,7 @@ CARLA map name using the <code>_map_name_to_env_var()</code> function:</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 11, 2026 07:57:07 UTC"><span class="timeago" datetime="2026-10-11T07:57:07+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 11, 2026 07:57:07 UTC">2026-10-11</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 14, 2026 06:52:49 UTC"><span class="timeago" datetime="2026-10-14T06:52:49+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 14, 2026 06:52:49 UTC">2026-10-14</span>
   </span>
 
     
