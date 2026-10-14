@@ -25,7 +25,6 @@ from autoware_carla_scenario.action_state import ActionState
 from autoware_carla_scenario.actions.set_speed import ARRIVAL_TOLERANCE_KMH
 from autoware_carla_scenario.entity import (
     AutowareEgoEntity,
-    AutowareEntity,
     CarlaDriverEntity,
 )
 from autoware_carla_scenario.entity.registry import (
@@ -327,7 +326,7 @@ class TestSelfDrivenEgos:
 
     @pytest.mark.parametrize(
         "entity_class",
-        [AutowareEntity, AutowareEgoEntity, CarlaDriverEntity, Ros2EgoEntity],
+        [AutowareEgoEntity, CarlaDriverEntity, Ros2EgoEntity],
         ids=lambda entity_class: entity_class.__name__,
     )
     def test_the_class_overrides_set_desired_speed(

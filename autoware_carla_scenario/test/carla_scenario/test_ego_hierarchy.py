@@ -10,7 +10,6 @@ import pytest
 from autoware_carla_scenario.autoware_bridge import FakeAutowareBridge
 from autoware_carla_scenario.entity import (
     AutowareEgoEntity,
-    AutowareEntity,
     BridgedEgoEntity,
     CarlaDriverEntity,
     EgoVehicle,
@@ -21,7 +20,7 @@ from autoware_carla_scenario.entity.ros2_entity import Ros2EgoEntity
 
 @pytest.mark.parametrize(
     "entity_class",
-    [AutowareEntity, AutowareEgoEntity, CarlaDriverEntity, Ros2EgoEntity],
+    [AutowareEgoEntity, CarlaDriverEntity, Ros2EgoEntity],
 )
 def test_every_self_driven_ego_is_externally_driven(entity_class: type) -> None:
     assert issubclass(entity_class, ExternallyDrivenEgo)
@@ -55,11 +54,6 @@ def test_terminate_records_the_reason() -> None:
 
 
 @pytest.mark.parametrize(
-    "entity",
-    [AutowareEntity(), AutowareEgoEntity(bridge=FakeAutowareBridge())],
-    ids=lambda entity: type(entity).__name__,
-)
-@pytest.mark.parametrize(
     "refuse",
     [
         lambda entity: entity.change_lane(None, None),
@@ -69,10 +63,10 @@ def test_terminate_records_the_reason() -> None:
     ids=["change_lane", "set_desired_speed", "turn_at_junction"],
 )
 def test_a_refusal_names_what_drives(
-    entity: ExternallyDrivenEgo,
     refuse: Callable[[ExternallyDrivenEgo], None],
     caplog: pytest.LogCaptureFixture,
 ) -> None:
+    entity = AutowareEgoEntity(bridge=FakeAutowareBridge())
     with caplog.at_level(logging.WARNING):
         refuse(entity)
     assert "not driven by the TrafficManager" in caplog.text

@@ -185,8 +185,9 @@ class BaseScenario(ABC):
                 Using a fixed seed ensures deterministic NPC behaviour across
                 runs.  Defaults to :attr:`DEFAULT_RANDOM_SEED` (``0``).
             ego_type: :class:`EgoVehicle` subclass to instantiate for the ego
-                actor.  Pass :class:`AutowareEntity` to disable TrafficManager
-                autopilot on the ego vehicle.  ``None`` (default) uses
+                actor.  Pass
+                :class:`~autoware_carla_scenario.entity.externally_driven.ExternallyDrivenEgo`
+                to disable TrafficManager autopilot on the ego vehicle.  ``None`` (default) uses
                 :class:`EgoVehicle`.
             ego_entity: Pre-built ego entity to use instead of instantiating
                 *ego_type*.  Required for entities that need constructor

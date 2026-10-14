@@ -992,8 +992,6 @@ classDiagram
         +turn_at_junction() refuses
     }
 
-    class AutowareEntity
-
     class CarlaDriverEntity
 
     class Ros2EgoEntity
@@ -1015,7 +1013,6 @@ classDiagram
     VehicleEntityConfig --> SpawnLocation
     VehicleEntity --> VehicleEntityConfig
     EgoVehicle <|-- ExternallyDrivenEgo
-    ExternallyDrivenEgo <|-- AutowareEntity
     ExternallyDrivenEgo <|-- CarlaDriverEntity
     ExternallyDrivenEgo <|-- Ros2EgoEntity
     ExternallyDrivenEgo <|-- BridgedEgoEntity
@@ -1046,7 +1043,7 @@ delegated to whichever backend drives it.
 
 **Who drives the ego**: `use_autopilot` decides whether the backend is given the
 ego actor to drive or told to keep its hands off it. `EgoVehicle` opts in (TrafficManager drives);
-every `ExternallyDrivenEgo` opts out: `AutowareEntity` leaves the actor for something
+every `ExternallyDrivenEgo` opts out: on its own it leaves the actor for something
 outside the scenario, `CarlaDriverEntity` drives it from an external policy's plan,
 `Ros2EgoEntity` from ROS 2 nodes' commands, and `BridgedEgoEntity` leaves it to the
 stack it handed the mission to.

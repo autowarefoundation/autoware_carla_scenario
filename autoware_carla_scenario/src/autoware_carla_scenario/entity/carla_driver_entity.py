@@ -1,8 +1,7 @@
 """Ego vehicle driven by an external policy over the ``egodriver`` gRPC contract.
 
 Where :class:`~autoware_carla_scenario.entity.ego.EgoVehicle` hands the vehicle to
-CARLA's TrafficManager and :class:`~autoware_carla_scenario.entity.autoware_entity.AutowareEntity`
-leaves it standing still, this entity closes the loop against a driver policy served with
+CARLA's TrafficManager, this entity closes the loop against a driver policy served with
 ``carla-driver-interface`` or any other implementation of ``egodriver.EgodriverService``.
 
 Each simulation tick the entity applies control; every

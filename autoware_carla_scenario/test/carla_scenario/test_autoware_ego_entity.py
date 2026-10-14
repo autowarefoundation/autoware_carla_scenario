@@ -23,7 +23,7 @@ from autoware_carla_scenario.autoware_bridge import (
     FakeAutowareBridge,
 )
 from autoware_carla_scenario.constants import EGO_ROLE_NAME
-from autoware_carla_scenario.entity import AutowareEgoEntity, AutowareEntity
+from autoware_carla_scenario.entity import AutowareEgoEntity
 
 #: Where the fake ego actually stands, and the same pose in the map frame.
 _CARLA_SPAWN = carla.Transform(
@@ -195,12 +195,6 @@ def test_constructor_requires_bridge() -> None:
     # bridge is a required keyword argument until the live gRPC transport lands.
     with pytest.raises(TypeError):
         AutowareEgoEntity(initial_pose=_INITIAL, goal_pose=_GOAL)  # type: ignore[call-arg]
-
-
-def test_autoware_entity_placeholder_still_exists() -> None:
-    # The bare placeholder is kept for backwards compatibility (used by run.py).
-    assert AutowareEntity is not AutowareEgoEntity
-    assert AutowareEntity.use_autopilot is False
 
 
 # ---------------------------------------------------------------------------

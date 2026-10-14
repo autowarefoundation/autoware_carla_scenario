@@ -224,31 +224,37 @@ class TestCreateEgo:
         assert ego.use_autopilot is True
 
     def test_ego_type_is_instantiated_when_given(self) -> None:
-        from autoware_carla_scenario.entity.autoware_entity import AutowareEntity
+        from autoware_carla_scenario.entity.externally_driven import (
+            ExternallyDrivenEgo,
+        )
 
         scenario = _SimpleScenario(_make_ego_config())
-        scenario.ego_type = AutowareEntity
+        scenario.ego_type = ExternallyDrivenEgo
         ego = scenario.create_ego()
-        assert isinstance(ego, AutowareEntity)
+        assert isinstance(ego, ExternallyDrivenEgo)
         assert ego.use_autopilot is False
 
     def test_a_prebuilt_entity_takes_precedence(self) -> None:
         """Entities needing constructor arguments are supplied as instances."""
-        from autoware_carla_scenario.entity.autoware_entity import AutowareEntity
+        from autoware_carla_scenario.entity.externally_driven import (
+            ExternallyDrivenEgo,
+        )
         from autoware_carla_scenario.entity.ego import EgoVehicle
 
         scenario = _SimpleScenario(_make_ego_config())
         scenario.ego_type = EgoVehicle
-        prebuilt = AutowareEntity()
+        prebuilt = ExternallyDrivenEgo()
         scenario.ego_entity = prebuilt
 
         assert scenario.create_ego() is prebuilt
 
     def test_create_ego_returns_the_same_instance_each_call(self) -> None:
-        from autoware_carla_scenario.entity.autoware_entity import AutowareEntity
+        from autoware_carla_scenario.entity.externally_driven import (
+            ExternallyDrivenEgo,
+        )
 
         scenario = _SimpleScenario(_make_ego_config())
-        scenario.ego_entity = AutowareEntity()
+        scenario.ego_entity = ExternallyDrivenEgo()
         assert scenario.create_ego() is scenario.create_ego()
 
     def test_default_ego_never_requests_termination(self) -> None:

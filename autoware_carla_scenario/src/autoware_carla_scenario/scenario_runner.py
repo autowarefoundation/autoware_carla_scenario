@@ -1056,7 +1056,7 @@ class ScenarioRunner:
             # the wait above, and a car the backend was already driving would
             # have spent that time going -- away from the scenario it was placed
             # for, before its own pre-tick actions had said how it should drive.
-            # When the ego opts out (e.g. AutowareEntity), its actor is named
+            # When the ego opts out (an ExternallyDrivenEgo), its actor is named
             # here so external control can drive it instead: one authority per
             # vehicle, passed as data rather than assumed by the backend.
             skip_ids: set[int] = set()

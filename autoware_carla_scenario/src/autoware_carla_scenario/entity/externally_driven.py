@@ -17,7 +17,6 @@ The hierarchy::
 
     EgoVehicle                      driven by the traffic backend
     └── ExternallyDrivenEgo         driven by a stack of its own
-        ├── AutowareEntity          (nothing; left standing for an outside stack)
         ├── CarlaDriverEntity       (an egodriver policy over gRPC)
         ├── Ros2EgoEntity           (ROS 2 nodes over DDS)
         └── BridgedEgoEntity        (a stack that reaches the AutowareBridge)
