@@ -3536,14 +3536,20 @@ in a <code>--multirun</code> batch it counts the expanded cases:</p>
 <td><code>scenario.moving_speed_kmh</code></td>
 <td>float</td>
 <td><code>1.0</code></td>
-<td>Speed threshold to detect "moving" (km/h)</td>
+<td>Speed (km/h) that counts as moving while the light is red, which fails the run</td>
+</tr>
+<tr>
+<td><code>scenario.departure_speed_kmh</code></td>
+<td>float</td>
+<td><code>10.0</code></td>
+<td>Speed (km/h) the ego must reach after green to pass; <code>null</code> uses <code>moving_speed_kmh</code></td>
 </tr>
 </tbody>
 </table>
 <p><strong>Behavior:</strong>
 - Sets all traffic lights to RED initially
 - Registers a TrafficSignalAction to switch to GREEN after <code>light_switch_delay_seconds</code>
-- Pass conditions: ego is at standstill during red AND moves above <code>moving_speed_kmh</code> during green
+- Pass conditions: ego is at standstill during red AND reaches <code>departure_speed_kmh</code> during green
 - Uses StickyCondition + AndCondition for combined checks</p>
 <h4 id="temporary-stop">Temporary Stop<a class="headerlink" href="#temporary-stop" title="Permanent link">&para;</a></h4>
 <p>Tests that the ego vehicle stops at a designated stop line for a minimum duration, then restarts.</p>
@@ -4169,7 +4175,7 @@ the <code>carla_driver</code> entity:</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 13, 2026 07:18:48 UTC"><span class="timeago" datetime="2026-10-13T07:18:48+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 13, 2026 07:18:48 UTC">2026-10-13</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 14, 2026 14:00:12 UTC"><span class="timeago" datetime="2026-10-14T14:00:12+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 14, 2026 14:00:12 UTC">2026-10-14</span>
   </span>
 
     
