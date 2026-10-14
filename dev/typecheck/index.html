@@ -2128,8 +2128,8 @@ function or method of a checked module.</p>
 <li>Run <code>uv run pytest autoware_carla_scenario/test/carla_scenario/test_typecheck_library.py</code>.</li>
 </ol>
 <h3 id="what-is-checked-of-the-framework">What is checked of the framework<a class="headerlink" href="#what-is-checked-of-the-framework" title="Permanent link">&para;</a></h3>
-<p>Every module now has an entry other than <code>"not yet checked (#45)"</code>. 161 of
-the package's 237 modules (68%; about 37,000 of 68,000 lines) are <code>CHECKED</code>:
+<p>Every module now has an entry other than <code>"not yet checked (#45)"</code>. 163 of
+the package's 240 modules (68%; about 37,600 of 68,200 lines) are <code>CHECKED</code>:
 the kinematics, the coordinate frames and poses, the conversions between
 Lanelet2, OpenDRIVE and CARLA world poses (<code>coordinate.transform</code>), the stop
 lines read off a Lanelet2 map (<code>utils.stop_line</code>, <code>coordinate.stop_line</code>)
@@ -2184,17 +2184,16 @@ driver's configs and client interface, trajectory follower and observations
 <code>driver.geometry</code>), and the <code>autoware_bridge</code>, <code>autoware_stack</code>, <code>entity</code>,
 <code>driver</code>, <code>maps</code> and <code>coverage</code> packages themselves, whose <code>__init__</code> re-exports what is not checked
 through models of it (see <em>A class a checked package only re-exports</em>
-below). 77
+below). 76
 functions and methods of those modules are <code>UNCALLED</code>: most of them a
 condition's <code>get_details()</code> or a backend's <code>describe()</code>, what takes a traffic
 backend's options node (<code>Mapping[str, Any]</code>), what reads a route search, a
 match, a constraint or a binding from YAML values of any type
 (<code>Range.parse()</code>, <code>parse_route_search()</code>, <code>RouteMatch.from_config()</code>,
 <code>parse_constraint()</code>, <code>parse_binding()</code>), the <code>[tool.uv.sources]</code> entry of a
-framework pin, a dict of str and bool values (<code>Pin.uv_source()</code>), the six members of
+framework pin, a dict of str and bool values (<code>Pin.uv_source()</code>), the three members of
 <code>BaseScenario</code> built on the ego's class (<code>ego_type</code>, a <code>type[EgoVehicle]</code>:
-the constructor, <code>create_ego()</code>, <code>ego_requires_goal</code>, <code>require_goal()</code> and
-<code>register_route_to_goal()</code>) or on cover expressions of any value (<code>register_cover()</code>),
+the constructor and <code>create_ego()</code>) or on cover expressions of any value (<code>register_cover()</code>),
 the run-time wrapper of <code>TrajectoryVertex.__init__</code>
 (<code>_refusing_vertex_times</code>), the road-marking pattern of the stop lines, which returns a <code>refers</code>
 parameter (any of lanelet2's primitives) as a line string
@@ -2875,6 +2874,18 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   <code>TypeVar</code> (<code>(init: _Init) -&gt; _Init</code>), so mypy still sees the typed
   <code>__init__</code>; the check drops an annotation that names a module-level
   <code>TypeVar</code>.
+- <strong>A class chosen by a conditional expression</strong> (<code>type(entity) if entity is
+  not None else self.ego_type</code>) does not compile: Codon cannot hold a class
+  as a value ("'type[Optional[EgoVehicle]]' does not match expected type
+  'EgoVehicle'"). Read a class attribute off each in its own branch, the
+  instance or the class (<code>BaseScenario.ego_requires_goal</code>, which reads
+  <code>requires_goal</code>, a class attribute no instance assigns).
+- <strong>A call to a <code>register_*()</code> method that takes a <code>Union</code></strong> (<code>register_init</code>,
+  <code>Union[BaseAction, Callable[[carla.World], None]]</code>) compiles both
+  <code>isinstance</code> branches of its dispatch with the caller's type. Where the
+  caller has an action, do in the <code>if TYPE_CHECKING:</code> branch what the method
+  does for one, and call it in the <code>else</code> branch
+  (<code>BaseScenario.register_route_to_goal</code>).
 - <strong><code>isinstance(x, (A, *OTHERS))</code></strong> does not compile: Codon 0.19 cannot
   unpack a tuple of classes into <code>isinstance</code>. Spell the classes out
   (<code>Trajectory.is_relative</code>).
@@ -3042,7 +3053,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
 - <strong>A call into a module Codon cannot compile, from a function it must</strong>: a
   function <code>UNCALLED</code> names is still compiled when a checked function calls
   it. Call it in the <code>else</code> branch of <code>if TYPE_CHECKING:</code> and check in the
-  first branch what it can (<code>ScenarioRunner</code> calls <code>require_goal()</code>, built
+  first branch what it can (<code>ScenarioRunner</code> calls <code>create_ego()</code>, built
   on the ego's class, in the <code>else</code> branch). A
   private helper that imports such a module inside it needs an <code>UNCALLED</code>
   entry of its own: its import is rewritten, and refused, even when nothing
@@ -3395,7 +3406,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 14, 2026 06:52:49 UTC"><span class="timeago" datetime="2026-10-14T06:52:49+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 14, 2026 06:52:49 UTC">2026-10-14</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 14, 2026 08:11:15 UTC"><span class="timeago" datetime="2026-10-14T08:11:15+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 14, 2026 08:11:15 UTC">2026-10-14</span>
   </span>
 
     
