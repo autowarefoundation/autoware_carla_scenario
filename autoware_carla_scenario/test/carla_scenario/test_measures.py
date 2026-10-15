@@ -319,26 +319,3 @@ def test_two_worlds_at_the_same_frame_are_read_apart() -> None:
 
     assert read_measure(VEHICLE_AHEAD_GAP_M, near) == pytest.approx(5.0)
     assert read_measure(VEHICLE_AHEAD_GAP_M, far) == pytest.approx(40.0)
-
-
-def test_the_codon_model_has_every_measure_key() -> None:
-    """Scenarios and Python ODDs import the keys; the static check compiles them."""
-    import ast
-
-    from autoware_carla_scenario import measures
-    from autoware_carla_scenario.typecheck import model_dir
-
-    tree = ast.parse(
-        (model_dir() / "autoware_carla_scenario" / "measures.codon").read_text()
-    )
-    modelled = {
-        node.target.id: ast.literal_eval(node.value)
-        for node in tree.body
-        if isinstance(node, ast.AnnAssign)
-        and isinstance(node.target, ast.Name)
-        and node.value is not None
-    }
-    for name in measures.__all__:
-        value = getattr(measures, name)
-        if isinstance(value, (str, float)):
-            assert modelled.get(name) == value, name

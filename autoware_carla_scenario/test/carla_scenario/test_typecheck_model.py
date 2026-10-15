@@ -32,6 +32,7 @@ import autoware_carla_scenario as acs
 from autoware_carla_scenario import (
     carla_install,
     environment,
+    measures,
     metrics,
     ros2,
     trajectory_recorder,
@@ -383,6 +384,9 @@ _MODULE_MODELS: dict[str, tuple[Any, tuple[str, ...]]] = {
     # What a scenario imports of the checked metrics: every name of its
     # __all__, the values compared below.
     "metrics": (metrics, tuple(metrics.__all__)),
+    # What a scenario or a Python ODD imports of the checked measures: every
+    # name of its __all__, the values compared below.
+    "measures": (measures, tuple(measures.__all__)),
 }
 
 #: Classes the model declares only so a checked package can re-export them:
@@ -472,75 +476,125 @@ def _literal(node: ast.expr, constants: dict[str, Any]) -> Any:
     return ast.literal_eval(node)
 
 
-def test_the_metrics_model_holds_python_s_values() -> None:
-    # The keys are compared by value, and each built-in metric by every field
-    # but `read`: Python's is a private function of the module, the model's a
-    # stub (_acs_unread), and nothing in the model runs.
-    definitions = _definitions("metrics")
+def _model_constants(module: str, python: Any) -> dict[str, Any]:
+    """The constants of *python*'s ``__all__`` (str, int, float), each compared
+    with its model's value: name -> value."""
+    definitions = _definitions(module)
     constants: dict[str, Any] = {}
-    for name in metrics.__all__:
-        value = getattr(metrics, name)
-        if isinstance(value, str):
+    for name in python.__all__:
+        value = getattr(python, name)
+        if isinstance(value, (str, int, float)) and not isinstance(value, bool):
             node = definitions[name][0]
             assert isinstance(node, ast.AnnAssign) and node.value is not None
+            assert ast.unparse(node.annotation) == type(value).__name__, name
             constants[name] = ast.literal_eval(node.value)
             assert constants[name] == value, name
+    return constants
 
-    node = definitions["BUILT_IN_METRICS"][0]
+
+def _assert_frozen_fields(module: str, python: type) -> dict[str, ast.AnnAssign]:
+    """Model class *python* is a @tuple of the frozen dataclass's fields, in
+    order, of the same types and defaults (but a `read`, a callable): the
+    model's fields, by name."""
+    assert python.__dataclass_params__.frozen  # type: ignore[attr-defined]
+    node = _definitions(module)[python.__name__][0]
+    assert isinstance(node, ast.ClassDef)
+    assert [ast.unparse(d) for d in node.decorator_list] == ["tuple"]
+    model_fields = {
+        stmt.target.id: stmt
+        for stmt in node.body
+        if isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name)
+    }
+    assert list(model_fields) == [f.name for f in dataclasses.fields(python)]
+    for field in dataclasses.fields(python):
+        stmt = model_fields[field.name]
+        if field.name == "read":
+            assert (
+                ast.unparse(stmt.annotation)
+                == "Callable[[carla.World], Optional[float]]"
+            )
+            continue
+        assert ast.unparse(stmt.annotation) == field.type, field.name
+        if field.default is not dataclasses.MISSING:
+            assert stmt.value is not None, field.name
+            assert ast.literal_eval(stmt.value) == field.default, field.name
+    new = _methods(node).get("__new__")
+    # A `read` field needs the __new__ that takes any callable: Codon 0.19
+    # crashes on a `Callable` field given a function of another type.
+    assert new is not None or "read" not in model_fields, python.__name__
+    if new is not None:
+        # A __new__ that takes any callable as `read` takes Python's
+        # parameters: the fields, in order, with their defaults.
+        assert _model_params(new, drop_first=False) == _python_params(
+            python, drop_first=False
+        )
+        for arg, default in zip(reversed(new.args.args), reversed(new.args.defaults)):
+            field_default = model_fields[arg.arg].value
+            assert field_default is not None, arg.arg
+            assert ast.literal_eval(default) == ast.literal_eval(field_default)
+    return model_fields
+
+
+def _assert_built_ins(
+    module: str, table: str, python: dict[str, Any], constants: dict[str, Any]
+) -> None:
+    """The model's *table* holds *python*'s entries, by key and in order, each
+    built with every field's value but its `read`: Python's is a private
+    function of the module, the model's a stub (_acs_unread), and nothing in
+    the model runs."""
+    node = _definitions(module)[table][0]
+    entry = type(next(iter(python.values())))
     assert isinstance(node, ast.AnnAssign) and isinstance(node.value, ast.Dict)
-    assert ast.unparse(node.annotation) == "Dict[str, Metric]"
-    fields = [f.name for f in dataclasses.fields(metrics.Metric)]
+    assert ast.unparse(node.annotation) == f"Dict[str, {entry.__name__}]"
+    fields = [f.name for f in dataclasses.fields(entry)]
     modelled: dict[str, dict[str, Any]] = {}
     for key_node, call in zip(node.value.keys, node.value.values):
         assert key_node is not None and isinstance(call, ast.Call)
-        assert ast.unparse(call.func) == "Metric"
+        assert ast.unparse(call.func) == entry.__name__
         arguments = dict(zip(fields, call.args))
         arguments.update({k.arg: k.value for k in call.keywords if k.arg})
         assert ast.unparse(arguments.pop("read")) == "_acs_unread"
         values = {f: _literal(a, constants) for f, a in arguments.items()}
         modelled[_literal(key_node, constants)] = values
-    assert list(modelled) == list(metrics.BUILT_IN_METRICS)
-    for key, metric in metrics.BUILT_IN_METRICS.items():
+    assert list(modelled) == list(python)
+    for key, built_in in python.items():
+        assert built_in.key == key
         defaults = {
             f.name: f.default
-            for f in dataclasses.fields(metric)
+            for f in dataclasses.fields(built_in)
             if f.default is not dataclasses.MISSING
         }
-        expected = {f: getattr(metric, f) for f in fields if f != "read"}
+        expected = {f: getattr(built_in, f) for f in fields if f != "read"}
         assert {**defaults, **modelled[key]} == expected, key
-    assert metrics.Metric.__dataclass_params__.frozen  # type: ignore[attr-defined]
-    metric_node = definitions["Metric"][0]
-    assert isinstance(metric_node, ast.ClassDef)
-    assert [ast.unparse(d) for d in metric_node.decorator_list] == ["tuple"]
-    # The fields' types and defaults, which a metric built in a scenario takes.
-    model_fields = {
-        stmt.target.id: stmt
-        for stmt in metric_node.body
-        if isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name)
+
+
+def test_the_metrics_model_holds_python_s_values() -> None:
+    # The keys are compared by value, each built-in metric by every field but
+    # `read`, and Metric's fields by type and default.
+    constants = _model_constants("metrics", metrics)
+    _assert_built_ins(
+        "metrics", "BUILT_IN_METRICS", metrics.BUILT_IN_METRICS, constants
+    )
+    _assert_frozen_fields("metrics", metrics.Metric)
+
+
+def test_the_measures_model_holds_python_s_values() -> None:
+    # Scenarios and Python ODDs import the keys and the other constants; each
+    # built-in measure is compared by every field but `read`, and Measure's
+    # and Bumpers' fields by type and default.
+    constants = _model_constants("measures", measures)
+    assert set(constants) >= {
+        "VEHICLE_AHEAD_GAP_M",
+        "VEHICLE_AHEAD_RELATIVE_SPEED_KPH",
+        "CROSSING_PEDESTRIAN_GAP_M",
+        "CROSSING_PEDESTRIAN_SPEED_MS",
+        "VEHICLE_AHEAD_VERSION",
     }
-    assert list(model_fields) == fields
-    # Its __new__, which takes any callable as `read`, takes Python's
-    # parameters: the fields, in order, with their defaults.
-    new = _methods(metric_node)["__new__"]
-    assert _model_params(new, drop_first=False) == _python_params(
-        metrics.Metric, drop_first=False
+    _assert_built_ins(
+        "measures", "BUILT_IN_MEASURES", measures.BUILT_IN_MEASURES, constants
     )
-    for arg, default in zip(reversed(new.args.args), reversed(new.args.defaults)):
-        field_default = model_fields[arg.arg].value
-        assert field_default is not None, arg.arg
-        assert ast.literal_eval(default) == ast.literal_eval(field_default), arg.arg
-    assert (
-        ast.unparse(model_fields["read"].annotation)
-        == "Callable[[carla.World], Optional[float]]"
-    )
-    for field in dataclasses.fields(metrics.Metric):
-        if field.name == "read":
-            continue
-        stmt = model_fields[field.name]
-        assert ast.unparse(stmt.annotation) == field.type, field.name
-        if field.default is not dataclasses.MISSING:
-            assert stmt.value is not None, field.name
-            assert ast.literal_eval(stmt.value) == field.default, field.name
+    _assert_frozen_fields("measures", measures.Measure)
+    _assert_frozen_fields("measures", measures.Bumpers)
 
 
 def test_the_comparison_rules_spelled_out_for_codon_are_the_enum_s_members() -> None:

@@ -50,6 +50,7 @@ from pathlib import Path
 from typing import Any, ClassVar, Collection, Optional
 
 from ...constants import EGO_ROLE_NAME
+from ...coordinate.map_manager import run_carla_map
 from ...utils.traffic_light import traffic_light_state_name
 from ..base import (
     LaneChangeDirection,
@@ -588,7 +589,8 @@ class SumoTrafficBackend(TrafficBackend):
                 "the SUMO backend needs the world's OpenDRIVE, and the run has neither "
                 "a world nor an OpenDRIVE file"
             )
-        return str(context.world.get_map().to_opendrive())
+        # The run's map where one is held: get_map() builds a whole new one.
+        return str(run_carla_map(context.world).to_opendrive())
 
     @staticmethod
     def _sumo_id(actor: Any, entity: Any) -> str:

@@ -228,7 +228,11 @@ def _snap_opendrive_via_waypoint_xodr(
     ``(road_id, lane_id, s)`` directly against its internal OpenDRIVE
     geometry, producing exact x/y/z and yaw on the road surface.
     """
-    carla_map = world.get_map()
+    # Here rather than at the top, as below: map_manager imports pyxodr, whose
+    # Codon model imports this package's coordinate back (scenario-check --library).
+    from .map_manager import run_carla_map  # noqa: PLC0415
+
+    carla_map = run_carla_map(world)
 
     waypoint = carla_map.get_waypoint_xodr(
         int(pose.road_id),
@@ -294,7 +298,9 @@ def _snap_carla_via_waypoint(
     Uses ``get_waypoint()`` to project x/y onto the nearest road and the
     nearest spawn point for z.  The original yaw is preserved.
     """
-    carla_map = world.get_map()
+    from .map_manager import run_carla_map  # noqa: PLC0415
+
+    carla_map = run_carla_map(world)
 
     waypoint = carla_map.get_waypoint(
         carla.Location(x=pose.x, y=pose.y, z=0.0),
@@ -352,7 +358,9 @@ def _z_from_nearest_spawn_point(
     Emits a warning when the nearest spawn point is more than
     :data:`_SPAWN_POINT_WARN_DISTANCE` metres away.
     """
-    spawn_points = world.get_map().get_spawn_points()
+    from .map_manager import run_carla_map  # noqa: PLC0415
+
+    spawn_points = run_carla_map(world).get_spawn_points()
     if not spawn_points:
         return None
 

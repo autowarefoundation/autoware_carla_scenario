@@ -205,15 +205,17 @@ class MapManager:
         # Load OpenDRIVE road network (pyxodr takes a file path, not content)
         self._road_network = RoadNetwork(str(xodr_path))
 
+        # Build carla.Map for waypoint-based road/lane lookups (optional).
+        # First, so the z offset below reads its spawn points off this map
+        # rather than building a second one.
+        self._build_carla_map(
+            xodr_path.read_text(encoding="utf-8"), xodr_path.stem, carla_world
+        )
+
         # Compute vertical offset: Lanelet2 z (MGRS absolute elevation) minus
         # XODR z (elevation relative to geoReference origin).  This is constant
         # across the map and lets us convert z between the two systems.
         self._z_offset = self._compute_z_offset(carla_world)
-
-        # Build carla.Map for waypoint-based road/lane lookups (optional).
-        self._build_carla_map(
-            xodr_path.read_text(encoding="utf-8"), xodr_path.stem, carla_world
-        )
 
     # ------------------------------------------------------------------
     # Properties
@@ -375,7 +377,11 @@ class MapManager:
         assert self._lanelet_map is not None
         assert self._mgrs_offset is not None
 
-        carla_map = carla_world.get_map()
+        # The map _build_carla_map() just built for this world, when it could:
+        # CARLA builds a whole new one on every get_map().
+        held = self._carla_map
+        # Annotated, so Codon unwraps the Optional (docs/typecheck.md).
+        carla_map: carla.Map = held if held is not None else carla_world.get_map()
         spawn_points = carla_map.get_spawn_points()
         if not spawn_points:
             return None

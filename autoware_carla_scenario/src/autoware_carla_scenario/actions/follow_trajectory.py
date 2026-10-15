@@ -1252,10 +1252,11 @@ def _resolve_in_world(
     Imports :mod:`~autoware_carla_scenario.trajectory.resolve` (lanelet2)
     here, as it always has: only a run that follows a trajectory loads it.
     """
+    from ..coordinate.map_manager import run_carla_map  # noqa: PLC0415
     from ..trajectory.resolve import resolve_trajectory, road_height  # noqa: PLC0415
 
     return resolve_trajectory(
-        trajectory, road_height(world.get_map()), reference=reference
+        trajectory, road_height(run_carla_map(world)), reference=reference
     )
 
 

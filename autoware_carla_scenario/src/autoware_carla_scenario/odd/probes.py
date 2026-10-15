@@ -189,9 +189,9 @@ def _ego(world: "carla.World") -> Any:
 def _carla_map(world: "carla.World") -> Any:
     """The run's CARLA map, fetched once."""
     if _RUN.carla_map is None:
-        from ..coordinate.map_manager import MapManager  # noqa: PLC0415
+        from ..coordinate.map_manager import run_carla_map  # noqa: PLC0415
 
-        _RUN.carla_map = MapManager.get_instance().carla_map or world.get_map()
+        _RUN.carla_map = run_carla_map(world)
     return _RUN.carla_map
 
 

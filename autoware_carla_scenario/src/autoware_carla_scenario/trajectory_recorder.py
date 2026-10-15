@@ -39,6 +39,7 @@ from typing import IO, Any
 
 import typesafe_carla.carla as carla
 
+from .coordinate.map_manager import run_carla_map
 from .utils.traffic_light import traffic_light_state_name
 
 logger = logging.getLogger(__name__)
@@ -120,8 +121,14 @@ class TrajectoryRecorder:
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             self._out = self.path.open("w", buffering=1, encoding="utf-8")
+            # The run's map, not a fresh get_map(): only its name is wanted,
+            # and CARLA builds the whole road network for one.
             self._emit(
-                {"type": "world", "map": world.get_map().name, "episode": world.id}
+                {
+                    "type": "world",
+                    "map": run_carla_map(world).name,
+                    "episode": world.id,
+                }
             )
             for tl in world.get_actors().filter("traffic.traffic_light"):
                 self._lights.append(tl)

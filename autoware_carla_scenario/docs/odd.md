@@ -385,9 +385,15 @@ The attribute then reads the running scenario's measure, its replacement
 included, in the measure's unit: an attribute mapped onto a built-in measure
 takes its unit, and one given that is not it is refused.  The keys are in the
 Codon model (`from autoware_carla_scenario.measures import VEHICLE_AHEAD_GAP_M`),
-so a scenario or a Python ODD naming them is checked like any other. So are a
-metric's ([Metrics](metrics.md)): `autoware_carla_scenario.metrics` is modelled
-whole, `Metric` and `BUILT_IN_METRICS` included. The ODD names a measure key, never a scenario; the scenario names
+so a scenario or a Python ODD naming them is checked like any other
+([Static Check](typecheck.md)): `autoware_carla_scenario.measures` is modelled
+whole, `Measure`, `BUILT_IN_MEASURES`, `read_measure()`, `check_measure_key()`
+and `measured_scenario()` included. A `Measure` is frozen, as a `Metric` is:
+assigning to one of its fields fails the check, as it fails the run. A
+scenario may build its own (`Measure("my_measure", read, "m")`); the check
+calls its `read` with a world and refuses one that returns anything but a
+`float` or an `Optional[float]`. A metric's keys are modelled the same way
+([Metrics](metrics.md)): `autoware_carla_scenario.metrics` is modelled whole, `Metric` and `BUILT_IN_METRICS` included. The ODD names a measure key, never a scenario; the scenario names
 its measures, never the ODD. The default ODD maps
 `dynamic.vehicle_ahead_gap`, `dynamic.vehicle_ahead_relative_speed`,
 `dynamic.crossing_pedestrian_gap` and `dynamic.crossing_pedestrian_speed`

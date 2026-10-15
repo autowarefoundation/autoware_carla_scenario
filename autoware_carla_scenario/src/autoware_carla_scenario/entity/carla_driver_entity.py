@@ -35,6 +35,7 @@ from typing import (
 )
 
 from ..constants import FIXED_DELTA_SECONDS
+from ..coordinate.map_manager import run_carla_map
 from ..driver.base import BaseEgoDriverClient, DriverClientConfig, EgoObservation
 from ..driver.control import ControlConfig, TrajectoryFollower
 from ..driver.egodriver_client import EgoDriverGrpcClient
@@ -284,9 +285,10 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
             actor.get_physics_control()
         )
 
-        # CARLA rebuilds the map object on every ``get_map()`` call, so it is fetched
-        # once here and reused for the rolling route walk.
-        self._map = world.get_map()
+        # CARLA rebuilds the map object on every ``get_map()`` call, so the run's
+        # one is taken (the MapManager's, when it holds one) and reused for the
+        # rolling route walk.
+        self._map = run_carla_map(world)
 
         if self._config.send_renderer_data:
             self._attach_lidars(world, actor)

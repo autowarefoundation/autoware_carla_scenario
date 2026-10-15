@@ -25,6 +25,7 @@ from .conditions import EntityExistenceCondition, ScenarioResult, TimeoutConditi
 from .conditions.base import BaseCondition, ConditionStatus, find_actor_by_role_name
 from .constants import DEFAULT_TM_PORT, EGO_ROLE_NAME, FIXED_DELTA_SECONDS
 from .maps.opendrive import map_asset_env_var
+from .coordinate.map_manager import run_carla_map
 from .coordinate.poses import CarlaWorldPose
 from .coverage.collector import CoverageCollector, prepare_measures
 from .measures import set_measured_scenario
@@ -54,7 +55,9 @@ def _map_name_of(world: "carla.World") -> str:
     that refuses the question is worth a blank rather than a failed run.
     """
     try:
-        return str(world.get_map().name)
+        # The run's map, held for the batch: get_map() would build a whole new
+        # one (hundreds of MB on a large map) just for its name.
+        return str(run_carla_map(world).name)
     except Exception:  # pragma: no cover - defensive; CARLA-side failure
         logger.warning("Could not read the loaded map name", exc_info=True)
         return ""
