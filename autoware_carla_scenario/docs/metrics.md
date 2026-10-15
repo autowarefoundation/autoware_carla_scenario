@@ -107,4 +107,6 @@ A scenario or a Python ODD may import any name of
 `autoware_carla_scenario.metrics` -- the keys, `Metric`, `BUILT_IN_METRICS`,
 `is_metric()` and `read_metric()` -- and is checked against them like any
 other ([Static Check](typecheck.md)). A `Metric` is frozen: assigning to one of
-its fields fails the check, as it fails the run.
+its fields fails the check, as it fails the run. A scenario may build its own
+(`Metric("my_metric", read)`); the check calls its `read` with a world and
+refuses one that returns anything but a `float` or an `Optional[float]`.

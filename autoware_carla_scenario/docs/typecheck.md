@@ -180,12 +180,18 @@ names, order, defaults, keyword-only parameters, methods, enum members): every
 name `__init__.codon` exports, the names the checked modules import from the
 model (`_BOUNDARY`), and every name of the model modules that stand for one
 framework module each (`_MODULE_MODELS`), which must declare exactly the names
-compared. `metrics.codon` is one of those: it declares the whole of
-`metrics.__all__`, and the test also compares its keys and each built-in
-metric of `BUILT_IN_METRICS` (title, unit, text, aggregation) by value, and
-`Metric`'s field types and defaults. Only a built-in metric's `read` differs:
-Python's is a private function of the module, which no scenario can import,
-and the model's a stub (`_acs_unread`), since nothing in the model is read.
+compared, beside model-only helpers named `_acs_*`. `metrics.codon` is one of
+those: it declares the whole of `metrics.__all__`, and the test also compares
+its keys and each built-in metric of `BUILT_IN_METRICS` (title, unit, text,
+aggregation) by value, and `Metric`'s field types and defaults and its
+`__new__`'s parameters. Only a metric's `read` differs: Python's is a private
+function of the module, which no scenario can import, and the model's a stub
+(`_acs_unread`), since nothing in the model is read. `Metric()` takes any
+`read` a world can be passed to that returns a `float` or an `Optional[float]`
+-- a function returning `float`, a lambda -- as Python's does, and stores the
+stub: a Codon
+`Callable` field takes a function of its exact type only, and Codon 0.19
+crashes on any other.
 `measures.codon` is not among them yet: `test_measures.py` compares its keys
 and the other string and float constants by value, but not its classes and
 functions.

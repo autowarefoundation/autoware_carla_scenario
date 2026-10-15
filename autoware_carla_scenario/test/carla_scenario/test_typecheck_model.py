@@ -402,10 +402,14 @@ _UNBUILDABLE: dict[str, str] = {
 
 def test_a_module_model_declares_only_the_compared_names() -> None:
     # A name the module lacks would pass a scenario's check and fail its run.
-    # A model-only helper (`_acs_` prefix) is no name of the module.
-    for module, (_python, names) in _MODULE_MODELS.items():
-        declared = [n for n in _definitions(module) if not n.startswith("_acs_")]
+    # A model-only helper (`_acs_` prefix) is no name of the module, and must
+    # not stand in for one.
+    for module, (python, names) in _MODULE_MODELS.items():
+        definitions = _definitions(module)
+        declared = [n for n in definitions if not n.startswith("_acs_")]
         assert sorted(declared) == sorted(names), module
+        helpers = [n for n in definitions if n.startswith("_acs_")]
+        assert not [n for n in helpers if hasattr(python, n)], module
 
 
 _MODULE_MODEL_NAMES = [
@@ -515,6 +519,16 @@ def test_the_metrics_model_holds_python_s_values() -> None:
         if isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name)
     }
     assert list(model_fields) == fields
+    # Its __new__, which takes any callable as `read`, takes Python's
+    # parameters: the fields, in order, with their defaults.
+    new = _methods(metric_node)["__new__"]
+    assert _model_params(new, drop_first=False) == _python_params(
+        metrics.Metric, drop_first=False
+    )
+    for arg, default in zip(reversed(new.args.args), reversed(new.args.defaults)):
+        field_default = model_fields[arg.arg].value
+        assert field_default is not None, arg.arg
+        assert ast.literal_eval(default) == ast.literal_eval(field_default), arg.arg
     assert (
         ast.unparse(model_fields["read"].annotation)
         == "Callable[[carla.World], Optional[float]]"

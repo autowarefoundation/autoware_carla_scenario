@@ -1199,6 +1199,57 @@ def test_a_misused_metric_is_refused_at_its_line(
     assert error.line == _line_of(path, wrong)
 
 
+_OWN_METRIC_READERS = """
+
+
+def read_optional(world: carla.World) -> float | None:
+    return 1.0
+
+
+def read_float(world: carla.World) -> float:
+    return 1.0
+
+
+def read_text(world: carla.World) -> str:
+    return "far"
+"""
+
+
+@pytest.mark.parametrize(
+    "build",
+    [
+        'Metric("mine", read_optional)',
+        'Metric(key="mine", read=read_float, unit="m", aggregation="min")',
+        'Metric("mine", lambda world: 1.0, "Mine")',
+    ],
+    ids=["optional", "float-keywords", "lambda"],
+)
+def test_a_scenario_may_build_its_own_metric(tmp_path: Path, build: str) -> None:
+    # Python's Metric takes any callable of a world that returns a float; a
+    # Codon Callable field takes one of its exact type only, and crashed the
+    # compiler on a function returning `float` or on a lambda.
+    setup = (
+        "from autoware_carla_scenario.metrics import Metric\n"
+        f"mine: Metric = {build}\n"
+        'logger.info("%s %s", mine.key, str(mine.read(self.world)))\n'
+    )
+    scenario, config, _ = _write_case(tmp_path, setup, extra=_OWN_METRIC_READERS)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_a_metric_read_that_returns_no_number_is_refused(tmp_path: Path) -> None:
+    wrong = 'mine = Metric("mine", read_text)'
+    setup = "from autoware_carla_scenario.metrics import Metric\n" + wrong + "\n"
+    scenario, config, path = _write_case(tmp_path, setup, extra=_OWN_METRIC_READERS)
+    result = typecheck_scenario(scenario, config)
+    assert not result.ok, result.format()
+    assert any(
+        d.path == str(path) and d.line == _line_of(path, wrong)
+        for d in result.diagnostics
+    ), result.format()
+
+
 def test_a_scenario_may_read_the_pose_to_map_frame_returns(tmp_path: Path) -> None:
     scenario, config, _ = _write_case(
         tmp_path,
