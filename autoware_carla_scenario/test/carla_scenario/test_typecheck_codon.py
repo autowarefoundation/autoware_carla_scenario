@@ -790,6 +790,115 @@ def test_code_setup_does_not_reach_is_checked_at_its_line(
     assert any(label in frame for frame in error.trace), error.format()
 
 
+_PARENT_HEADER = _HEADER.replace(
+    "class CaseScenario(BaseScenario):", "class CaseParent(BaseScenario):"
+)
+
+_INHERITING_SCENARIO = """
+
+
+class CaseScenario(CaseParent):
+    def is_done(self) -> bool:
+        return True
+"""
+
+
+def test_a_subclass_inheriting_its_bases_init_compiles(tmp_path: Path) -> None:
+    # Codon 0.19 inherits no __init__: the check gives the subclass one passing
+    # everything on to CaseParent's, as Python does (#201).
+    scenario, config, _ = _write_case(
+        tmp_path, _VALID_SETUP, _INHERITING_SCENARIO, header=_PARENT_HEADER
+    )
+    result = typecheck_scenario(scenario, config, {"min_speed_kmh": 5})
+    assert result.ok, result.format()
+    assert not result.warnings, result.format()
+
+
+def test_a_wrong_argument_to_an_inherited_init_is_refused(tmp_path: Path) -> None:
+    extra = _INHERITING_SCENARIO + (
+        "\n\ndef build(ego: EgoConfig) -> CaseParent:\n"
+        '    return CaseScenario(ego, Lanelet2Pose(1, 0.0), config="fast")\n'
+    )
+    scenario, config, path = _write_case(
+        tmp_path, _VALID_SETUP, extra, header=_PARENT_HEADER
+    )
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "no function 'CaseParent.__init__'" in error.message, error.format()
+    # At the class that inherits the __init__, with the call in the trace.
+    assert error.path == str(path)
+    assert error.line == _line_of(path, "class CaseScenario(CaseParent):")
+    call = _line_of(path, 'config="fast"')
+    assert any(f"scenario.py:{call}]" in frame for frame in error.trace), error.format()
+
+
+def test_an_init_inherited_from_a_later_base_compiles(tmp_path: Path) -> None:
+    # Python takes CaseParent's __init__, past the mixin, which has none; the
+    # check calls it by name, as Codon's super() is the mixin's.
+    extra = (
+        "\n\n\nclass CaseMixin:\n"
+        "    def greeting(self) -> str:\n"
+        '        return "hello"\n'
+        "\n\nclass CaseScenario(CaseMixin, CaseParent):\n"
+        "    def is_done(self) -> bool:\n"
+        "        return True\n"
+        "\n\ndef build(ego: EgoConfig) -> CaseParent:\n"
+        "    return CaseScenario(ego, Lanelet2Pose(1, 0.0), config=CaseConfig())\n"
+    )
+    scenario, config, _ = _write_case(
+        tmp_path, _VALID_SETUP, extra, header=_PARENT_HEADER
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+    assert not result.warnings, result.format()
+
+
+_OPTIONAL_HEADER = _HEADER.replace(
+    "import logging\n", "import logging\nfrom typing import Optional\n"
+)
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        "\n    def _find(self) -> Optional[carla.Actor]:\n        return None\n",
+        "\n    def _where(self) -> carla.Transform | None:\n        return\n",
+        "\n    def _found(self) -> Optional[carla.Actor]:\n"
+        "        found: Optional[carla.Actor] = None\n"
+        "        return found\n",
+    ],
+    ids=["optional-actor", "optional-transform", "local-variable"],
+)
+def test_an_optional_function_returning_only_none_compiles(
+    tmp_path: Path, extra: str
+) -> None:
+    # A bare None is Codon's NoneType, and nothing else realizes carla.Actor:
+    # the check returns Optional[X]() and realizes X before the call (#202).
+    scenario, config, _ = _write_case(
+        tmp_path, _VALID_SETUP, extra, header=_OPTIONAL_HEADER
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+    assert not result.warnings, result.format()
+
+
+def test_an_error_in_an_optional_function_returning_none_is_reported(
+    tmp_path: Path,
+) -> None:
+    extra = (
+        "\n    def _find(self) -> Optional[carla.Actor]:\n"
+        "        self._config.timeout_seconds = self._config.name\n"
+        "        return None\n"
+    )
+    scenario, config, path = _write_case(
+        tmp_path, _VALID_SETUP, extra, header=_OPTIONAL_HEADER
+    )
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "does not match expected type" in error.message, error.format()
+    assert error.path == str(path)
+    assert error.line == _line_of(path, "timeout_seconds = self._config.name")
+    assert any("<scenario check: CaseScenario._find()>" in f for f in error.trace)
+
+
 def test_an_unreached_config_method_is_checked_at_its_line(tmp_path: Path) -> None:
     # The scenario's other modules get the appended calls too (#192).
     config = (

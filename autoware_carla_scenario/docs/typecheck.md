@@ -213,8 +213,10 @@ places, and the checker smooths over most of them (it rewrites `X | None` into
 `Optional[X]`, drops `@dataclass` and resolves `field(...)` defaults, accepts
 keyword-only parameters, required ones after a default included, gives a list of different conditions the type
 `list[BaseCondition]`, checks a `tuple[X, ...]` return annotation as a
-`List[X]`, and drops a parameter or return annotation naming a
-class the module defines further down, which Codon cannot name yet). What a
+`List[X]`, drops a parameter or return annotation naming a
+class the module defines further down, which Codon cannot name yet, gives a
+subclass that keeps its base's `__init__` that `__init__`, and types the
+`return None` of a function returning `Optional[X]`; see below). What a
 scenario has to do itself:
 
 - **Declare the attributes it assigns on `self`**, at class level, with their
@@ -273,6 +275,63 @@ class are not modelled), a class deriving from an exception, a `@classmethod`
 annotation naming one of CARLA's integer enumerations
 (`carla.TrafficLightState`), which typesafe_carla's Codon library has as a
 value whose members are `int`, not as a type: it becomes `int`.
+
+Two things Python does that Codon 0.19 does not are filled in for you:
+
+- **A subclass that inherits `__init__`.** Codon 0.19 inherits no
+  `__init__`: it gives a class without one a constructor taking each of its
+  fields, which refused a scenario deriving from another scenario and keeping
+  its constructor ("'config' is an invalid keyword argument for
+  `__init__()`", #201). The check appends one to such a class, after the
+  module, so no line moves:
+
+  ```python
+  @extend
+  class MyDerivedScenario:
+      def __init__(self, *args, **kwargs):
+          super().__init__(*args, **kwargs)
+  ```
+
+  It is added only where a base really defines an `__init__` (a class of the
+  scenario's modules, its own or one it inherits, or one of the model's, such
+  as `BaseScenario`'s), and never to a dataclass, an `Enum` or an exception,
+  which are built as before. When the `__init__` is a later base's
+  (`class MyDerivedScenario(MyMixin, MyScenario)`, the mixin having none),
+  it is called through that base, `MyScenario.__init__(self, *args,
+  **kwargs)`, as Python does: Codon's `super()` is the first base's. The
+  base's `__init__` still checks every argument: a wrong one is reported at
+  the `class` line of the subclass, with the call that passed it in the
+  trace:
+
+  ```text
+  scenario.py:52:9: error: no function 'MyScenario.__init__' with arguments (Super[MyScenario], EgoConfig, Lanelet2Pose, str)
+      during the realization of __init__(self: MyDerivedScenario, ...) [scenario.py:58]
+  ```
+
+  A literal `None` passed through it is refused, though Python takes it
+  (`MyDerivedScenario(ego, pose, None)`, or `config=None`): forwarded
+  through `*args` or `**kwargs`, it reaches the base's `__init__` as an
+  `Optional[NoneType]`, which no `Optional[X]` parameter takes. Leave the
+  argument to its default, pass a variable declared `Optional[X]`, or give
+  the subclass an `__init__` of its own.
+
+- **`return None` from a function returning `Optional[X]`.** A bare `None`
+  is Codon's `NoneType`, so a function whose only return is `return None`
+  could not be typed ("cannot typecheck 'None'"), and, when nothing else in
+  the program used `X` (`carla.Actor` in a scenario), `Optional[X]` failed
+  in code generation ("value doesn't match function result type 'ptr'",
+  #202). The check makes each `return None` (and bare `return`) of the
+  function itself `return Optional[X]()`, the `None` of its type (a nested
+  function is rewritten for its own annotation), and the appended calls
+  realize `X` (`_acs_value(X)`) before they call it. So
+
+  ```python
+  def _find_npc(self) -> Optional[carla.Actor]:
+      return None
+  ```
+
+  compiles as written, and so does a local `found: Optional[carla.Actor] =
+  None` returned at the end.
 
 ## Checking the framework itself
 
@@ -1840,10 +1899,14 @@ What Codon 0.19 needs that Python does not, beyond
   which is the computation CPython's `math.dist` makes (`AutowareEgoEntity`,
   `actions.background_traffic`, where `test_background_traffic.py` pins the
   two to the same number).
-- **A function whose only return is `return None`** cannot be typed, even
-  with an `Optional[X]` return annotation ("cannot typecheck 'None'"), and
-  `del` of a parameter is refused: return a local declared
-  `Optional[X] = None` (`_Never.check` in `actions.background_traffic`).
+- **A function whose only return is `return None`**: with an `Optional[X]`
+  return annotation, the check returns `Optional[X]()` and realizes `X`
+  before calling it ([*Writing a scenario that
+  type-checks*](#writing-a-scenario-that-type-checks), #202), so it compiles
+  as written, as does a local declared `Optional[X] = None` and returned
+  (`_Never.check` in `actions.background_traffic`). Without an `Optional`
+  annotation a bare `None` is still Codon's `NoneType` ("cannot typecheck
+  'None'"), and `del` of a parameter is refused.
 - **A method that takes `**kwargs`, called on a value whose class a checked
   subclass overrides it in**, is called through the base class under `if
   TYPE_CHECKING:`, and as written in the `else` branch: `actions.turn` calls

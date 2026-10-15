@@ -319,6 +319,7 @@ class _Renderer:
                 return  # a problem, reported for each such parameter
             if choice is not _LEFT_TO_DEFAULT:
                 typed[arg.arg] = choice
+        self._realize_optional_return(func, where)
         if len(typed) == len(every):
             self._emit_calls(
                 head,
@@ -336,6 +337,29 @@ class _Renderer:
             positional,
             head=class_head or head,
             receiver=receiver if class_head is None else f"_acs_value({owner})",
+        )
+
+    def _realize_optional_return(
+        self, func: ast.FunctionDef | ast.AsyncFunctionDef, where: str
+    ) -> None:
+        """``_acs_value(X)`` before calling a function returning ``Optional[X]``.
+
+        The transform makes its ``return None`` the ``None`` of X
+        (``Optional[X]()``), but if nothing else in the program realizes X
+        (``carla.Actor`` in a scenario), Codon 0.19 fails in code generation
+        ("value doesn't match function result type 'ptr'", #202): a value of
+        X, which the call does not use, realizes it.
+        """
+        returns = func.returns
+        if returns is None or _names(returns) & self.type_vars:
+            return
+        typed = codon_annotation(returns)
+        if typed is None or not (typed.startswith("Optional[") and typed.endswith("]")):
+            return
+        self.emit(
+            f"_acs_value({typed[len('Optional[') : -1]})",
+            f"{where}, realizing its return type",
+            func.lineno,
         )
 
     def _returns_any(
@@ -469,6 +493,7 @@ class _Renderer:
             if kinds & _PROPERTIES:
                 if self._returns_any(method, where):
                     continue
+                self._realize_optional_return(method, where)
                 self.emit(f"_acs_value({name}).{method.name}", where, method.lineno)
             elif "staticmethod" in kinds:
                 self.calls(method, f"{name}.{method.name}", where, drop_first=False)
