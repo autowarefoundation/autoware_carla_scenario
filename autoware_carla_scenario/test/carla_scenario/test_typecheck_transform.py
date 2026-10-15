@@ -19,7 +19,9 @@ from autoware_carla_scenario.typecheck.driver import render_driver
 from autoware_carla_scenario.typecheck.transform import (
     MISSING_BUILTIN_EXCEPTIONS,
     PRELUDE,
+    classes_with_init,
     codon_annotation,
+    inherited_inits,
     split_tuple_excepts,
     transform_source,
     transform_source_lines,
@@ -1360,3 +1362,150 @@ def test_an_empty_list_or_dict_default_takes_the_type_of_its_parameter() -> None
     assert "    seq = List[str]()," in out
     assert "    full: list[int] = [1]," in out
     assert "    bare: list = []," in out
+
+
+# ---------------------------------------------------------------------------
+# An inherited __init__ (#201) and the None of an Optional return (#202)
+# ---------------------------------------------------------------------------
+
+_INHERITED_INIT = (
+    "@extend\nclass {name}:\n"
+    "    def __init__(self, *args, **kwargs):\n"
+    "        super().__init__(*args, **kwargs)\n"
+)
+
+
+def test_a_class_inheriting_an_init_is_given_one_passing_everything_on() -> None:
+    source = textwrap.dedent(
+        """
+        class A:
+            def __init__(self, x: int, *, config: str = "") -> None:
+                self.x = x
+        class B(A):
+            def f(self) -> int:
+                return 1
+        class C(B):
+            pass
+        class D(A):
+            def __init__(self) -> None:
+                super().__init__(1)
+        class E:
+            y: int = 0
+        """
+    )
+    out, origin = transform_source_lines(source)
+    body = out[len(PRELUDE) :]
+    module, _, appended = body.partition("\n\n@extend\n")
+    assert module.count("\n") == source.count("\n")  # no line of the source moves
+    assert _INHERITED_INIT.format(name="B") in out
+    assert _INHERITED_INIT.format(name="C") in out  # through B
+    for name in ("A", "D", "E"):  # their own __init__, or none to inherit
+        assert f"class {name}:" not in appended
+    # An error in an appended constructor is reported at its class's line.
+    lines = out.splitlines()
+    prelude = PRELUDE.count("\n")
+    assert len(origin) == len(lines) - prelude
+    source_lines = source.splitlines()
+    for number, line in enumerate(lines[prelude:], start=1):
+        if "super().__init__(*args, **kwargs)" in line:
+            assert source_lines[origin[number - 1] - 1].startswith(
+                ("class B", "class C")
+            )
+
+
+def test_an_init_of_a_base_defined_elsewhere_is_inherited() -> None:
+    source = textwrap.dedent(
+        """
+        from autoware_carla_scenario import BaseScenario
+        from .parent import Parent as Base
+        class Mine(BaseScenario):
+            pass
+        class Other(Base):
+            pass
+        class Unknown(Elsewhere):
+            pass
+        """
+    )
+    out = transform_source(source, init_classes={"BaseScenario", "Parent"})
+    assert _INHERITED_INIT.format(name="Mine") in out
+    assert _INHERITED_INIT.format(name="Other") in out  # by its own name
+    assert "class Unknown:" not in out  # a base with no __init__ known
+    assert "@extend" not in transform_source(source)
+
+
+def test_a_dataclass_enum_or_exception_inherits_no_init() -> None:
+    tree = ast.parse(
+        textwrap.dedent(
+            """
+            class A:
+                def __init__(self, x: int) -> None:
+                    self.x = x
+            @dataclass
+            class B(A):
+                y: int = 0
+            class C(B):
+                pass
+            class Color(A, Enum):
+                RED = 1
+            class Failed(ValueError):
+                pass
+            """
+        )
+    )
+    # A dataclass generates its own constructor, and so does Codon for a class
+    # deriving from it; an exception derives statically.
+    assert inherited_inits(tree, {"ValueError"}, {"Failed"}) == []
+    classes = {n.name: n for n in tree.body if isinstance(n, ast.ClassDef)}
+    assert classes_with_init(classes) == {"A", "Color"}
+    assert classes_with_init(classes, {"ValueError"}) == {
+        "A",
+        "Color",
+        "Failed",
+        "ValueError",
+    }
+
+
+def test_return_none_of_an_optional_function_is_the_none_of_its_type() -> None:
+    out = _transform(
+        """
+        def find(world: carla.World) -> Optional[carla.Actor]:
+            if world:
+                return
+            def inner() -> int | None:
+                return None
+            fallback = lambda: None
+            return None
+        def where() -> carla.Transform | None:
+            return None  # nothing
+        def items() -> Optional[tuple[int, ...]]:
+            return None
+        def plain() -> None:
+            return None
+        def gen() -> Optional[int]:
+            yield 1
+            return None
+        """
+    )
+    assert "    if world:\n        return Optional[carla.Actor]()\n" in out
+    assert "\n    return Optional[carla.Actor]()\n" in out
+    # A nested function keeps its own, and is rewritten for its own type.
+    assert "        return Optional[int]()\n" in out
+    assert "fallback = lambda: None" in out
+    assert "    return Optional[carla.Transform]()  # nothing\n" in out
+    assert "    return Optional[List[int]]()\n" in out
+    assert "def plain() -> None:\n    return None\n" in out
+    assert "    yield 1\n    return None\n" in out  # a generator
+
+
+def test_return_none_is_left_when_the_annotation_is_dropped() -> None:
+    out = _transform(
+        """
+        def f() -> Optional[Later]:
+            return None
+        def g() -> Optional[Any]:
+            return None
+        class Later:
+            pass
+        """
+    )
+    assert out.count("    return None\n") == 2

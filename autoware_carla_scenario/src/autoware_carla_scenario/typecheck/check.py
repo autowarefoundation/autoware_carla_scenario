@@ -73,6 +73,7 @@ from .library_driver import (
 from .transform import (
     PRELUDE,
     class_declarations,
+    classes_with_init,
     redirect_imports,
     transform_source_lines,
     undeclared_attributes,
@@ -208,6 +209,16 @@ def _model_declarations() -> dict[str, set[str]]:
         return out
 
     return {name: closure(name) for name in classes}
+
+
+def _init_classes(classes: dict[str, ast.ClassDef]) -> set[str]:
+    """The classes that define an ``__init__``, of *classes* and of the model.
+
+    What a class without one of its own inherits (#201): the transform gives
+    such a class an ``__init__`` passing everything on to its base's.
+    """
+    model = {name for name, own in _model_declarations().items() if "__init__" in own}
+    return classes_with_init(classes, model - set(classes))
 
 
 # ---------------------------------------------------------------------------
@@ -491,6 +502,7 @@ def _build_workspace(
         for node in module.tree.body
         if isinstance(node, ast.ClassDef)
     }
+    init_classes = _init_classes(classes)
     for name, module in sorted(sources.modules.items()):
         rel = Path(*name.split("."))
         rel = rel / "__init__.py" if module.is_package else rel.with_suffix(".py")
@@ -498,7 +510,7 @@ def _build_workspace(
             problems.append(Diagnostic(attr.message(), str(module.path), attr.lineno))
         dest = root / rel
         dest.parent.mkdir(parents=True, exist_ok=True)
-        text, origin = transform_source_lines(module.text)
+        text, origin = transform_source_lines(module.text, init_classes=init_classes)
         checks = render_library_checks(
             module.tree, classes=classes, skip_any_returns=True
         )
@@ -989,6 +1001,7 @@ def _library_files(
         for node in sources.modules[name].tree.body
         if isinstance(node, ast.ClassDef)
     }
+    init_classes = _init_classes(classes)
     files: list[_LibraryFile] = []
     for name in names:
         module = sources.modules[name]
@@ -1008,7 +1021,9 @@ def _library_files(
         # run-time-only wrapper (trajectory.model's TrajectoryVertex.__init__)
         # is dropped, and the function it wraps is compiled as written.
         body, origin = transform_source_lines(
-            redirected, dropped_decorators=[n for n in uncalled if "." not in n]
+            redirected,
+            dropped_decorators=[n for n in uncalled if "." not in n],
+            init_classes=init_classes,
         )
         rel = workspace_module(name).replace(".", "/") + ".codon"
         # Python sets a module's `__file__`, which Codon 0.19 does not: a

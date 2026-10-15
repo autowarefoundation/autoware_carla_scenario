@@ -94,6 +94,14 @@ which :func:`transform_source_lines` maps back onto the handler):
   annotation naming a module-level ``TypeVar`` (which types such a wrapper
   for mypy) is dropped.
 
+* ``return None`` (and a bare ``return``) of a function whose kept return
+  annotation is ``Optional[X]`` becomes ``return Optional[X]()``: a bare
+  ``None`` is Codon's ``NoneType``, which cannot be typed as one (#202).
+* A top-level class with no ``__init__`` of its own whose base defines one
+  (in the module, or among *init_classes*: another module's, the model's) is
+  given one passing everything on to the base's, with ``@extend`` after the
+  module: Codon 0.19 inherits no ``__init__`` (#201).
+
 :func:`undeclared_attributes` reports what Codon additionally needs: an
 attribute a class assigns on ``self`` must be declared at class level, with
 its type, on any class in an inheritance hierarchy (Codon infers the type of
@@ -105,7 +113,7 @@ from __future__ import annotations
 
 import ast
 import builtins
-from collections.abc import Callable, Collection
+from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass, field
 
 __all__ = [
@@ -113,6 +121,8 @@ __all__ = [
     "PRELUDE",
     "UndeclaredAttribute",
     "class_declarations",
+    "classes_with_init",
+    "inherited_inits",
     "redirect_imports",
     "split_tuple_excepts",
     "uncalled_nodes",
@@ -1028,8 +1038,12 @@ class _Rewriter(ast.NodeVisitor):
         listed = self._list_return(node.returns)
         if listed is not None:
             self._write_annotation(node.returns, listed)
+            self._rewrite_none_returns(node, listed)
             return
-        if self._rewrite_annotation(node.returns, class_level=False) is None:
+        kept = self._rewrite_annotation(node.returns, class_level=False)
+        if kept is not None:
+            self._rewrite_none_returns(node, kept)
+        else:
             ann_start, ann_end = self.edits.node_span(node.returns)
             head = self.edits.text(self.edits.offset(node.lineno, 0), ann_start)
             arrow = head.rfind("->")
@@ -1043,6 +1057,40 @@ class _Rewriter(ast.NodeVisitor):
                     self.edits.replace(start - 1, ann_end, "\n" * breaks + ")")
                 else:
                     self.edits.replace(start, ann_end, "")
+
+    def _rewrite_none_returns(
+        self, node: ast.FunctionDef | ast.AsyncFunctionDef, kept: str
+    ) -> None:
+        """Make each ``return None`` of an ``Optional[X]`` function the ``None`` of X.
+
+        A bare ``None`` is Codon's ``NoneType``: a function whose only return
+        is ``return None`` (or ``return``) cannot be typed as an
+        ``Optional[X]`` ("cannot typecheck 'None'").  Each becomes ``return
+        Optional[X]()``, the ``None`` of the kept return annotation *kept*
+        (#202).  Only the function's own returns: a nested function or class
+        has its own annotation, and a generator's ``return`` ends it.
+        """
+        if not kept.startswith("Optional[") or not kept.endswith("]"):
+            return
+        returns: list[ast.Return] = []
+        stack: list[ast.AST] = list(node.body)
+        while stack:
+            sub = stack.pop()
+            if isinstance(
+                sub, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
+            ):
+                continue
+            if isinstance(sub, (ast.Yield, ast.YieldFrom)):
+                return  # a generator: its annotation is not what it returns
+            if isinstance(sub, ast.Return):
+                returns.append(sub)
+            stack.extend(ast.iter_child_nodes(sub))
+        for ret in returns:
+            if ret.value is None:
+                _, end = self.edits.node_span(ret)
+                self.edits.replace(end, end, f" {kept}()")
+            elif _is_none(ret.value):
+                self.edits.replace(*self.edits.node_span(ret.value), f"{kept}()")
 
     # -- visitors ----------------------------------------------------------
 
@@ -1519,37 +1567,63 @@ def split_tuple_excepts(source: str) -> tuple[str, list[int]]:
         origin[first - 1 : last] = origin[first - 1 : last] * len(copies)
 
 
-def transform_source(source: str, dropped_decorators: Collection[str] = ()) -> str:
+def transform_source(
+    source: str,
+    dropped_decorators: Collection[str] = (),
+    init_classes: Collection[str] = (),
+) -> str:
     """Rewrite *source* for Codon; the result starts with :data:`PRELUDE`.
 
     *dropped_decorators* names function decorators to drop besides
     ``@abstractmethod``: the library check passes the run-time-only wrappers
     :data:`.library.UNCALLED` lists, which Codon never compiles.
+    *init_classes* names the classes defined elsewhere (another module, the
+    model) that define an ``__init__``, their own or a base's
+    (:func:`classes_with_init`): a class of *source* deriving from one
+    without an ``__init__`` of its own inherits it (:func:`inherited_inits`).
     """
-    return transform_source_lines(source, dropped_decorators)[0]
+    return transform_source_lines(source, dropped_decorators, init_classes)[0]
 
 
 def transform_source_lines(
-    source: str, dropped_decorators: Collection[str] = ()
+    source: str,
+    dropped_decorators: Collection[str] = (),
+    init_classes: Collection[str] = (),
 ) -> tuple[str, list[int]]:
     """:func:`transform_source`, and the line of *source* each line comes from.
 
-    The second value has one entry per line after :data:`PRELUDE`, up to the
-    end of the module (the class constructors appended after it have none):
-    every rewrite keeps a line on its line but :func:`split_tuple_excepts`,
-    whose copies of a handler map to the lines they copy.
+    The second value has one entry per line after :data:`PRELUDE`: every
+    rewrite keeps a line on its line but :func:`split_tuple_excepts`, whose
+    copies of a handler map to the lines they copy.  The constructors
+    appended after the module (an Enum's lookup by value, an inherited
+    ``__init__``) map to the line of their class.
     """
     if not source.endswith("\n"):
         source += "\n"
     source, origin = split_tuple_excepts(source)
     tree = ast.parse(source)
     edits = _Edits(source.encode().splitlines(keepends=True))
-    rewriter = _Rewriter(edits, _exception_classes(tree), dropped_decorators)
+    exceptions = _exception_classes(tree)
+    rewriter = _Rewriter(edits, exceptions, dropped_decorators)
     rewriter.visit(tree)
-    return PRELUDE + edits.apply() + _enum_lookups(rewriter.enums), origin
+    lines = {
+        node.name: origin[node.lineno - 1]
+        for node in tree.body
+        if isinstance(node, ast.ClassDef)
+    }
+    appended = [
+        *_enum_lookups(rewriter.enums),
+        *_inherited_init_extensions(inherited_inits(tree, init_classes, exceptions)),
+    ]
+    text = PRELUDE + edits.apply()
+    origin = list(origin)
+    for name, block in appended:
+        text += block
+        origin += [lines[name]] * block.count("\n")
+    return text, origin
 
 
-def _enum_lookups(enums: list[tuple[str, str]]) -> str:
+def _enum_lookups(enums: list[tuple[str, str]]) -> list[tuple[str, str]]:
     """A constructor by value (``Color("red")``) for each rewritten Enum class.
 
     Codon gives a class without an ``__init__`` one that takes each field
@@ -1557,14 +1631,138 @@ def _enum_lookups(enums: list[tuple[str, str]]) -> str:
     value is added to it with ``@extend``, after the module, so no line of
     the source moves.  It is typed only: the ``Color`` it makes is not the
     member, which nothing the check compiles needs, since nothing runs.
+    Each is (the class, the lines appended).
     """
-    return "".join(
-        f"\n\n@extend\nclass {name}:\n"
-        f"    def __init__(self, value: {value_type}):\n"
-        f'        self._name_ = ""\n'
-        f"        self._value_ = value\n"
+    return [
+        (
+            name,
+            (
+                f"\n\n@extend\nclass {name}:\n"
+                f"    def __init__(self, value: {value_type}):\n"
+                f'        self._name_ = ""\n'
+                f"        self._value_ = value\n"
+            ),
+        )
         for name, value_type in enums
+    ]
+
+
+def _inherited_init_extensions(names: list[str]) -> list[tuple[str, str]]:
+    """The ``__init__`` each class of *names* inherits, appended with ``@extend``.
+
+    Codon 0.19 inherits no ``__init__``: a class without one gets a
+    constructor taking each of its fields, which refuses what the base's
+    takes ("'config' is an invalid keyword argument", #201).  The one
+    appended passes everything on to the base's, which checks it.
+    """
+    return [
+        (
+            name,
+            (
+                f"\n\n@extend\nclass {name}:\n"
+                "    def __init__(self, *args, **kwargs):\n"
+                "        super().__init__(*args, **kwargs)\n"
+            ),
+        )
+        for name in names
+    ]
+
+
+def _defines_init(node: ast.ClassDef) -> bool:
+    return any(
+        isinstance(m, (ast.FunctionDef, ast.AsyncFunctionDef)) and m.name == "__init__"
+        for m in node.body
     )
+
+
+def _is_dataclass_node(node: ast.ClassDef) -> bool:
+    return any(
+        _dotted(d.func if isinstance(d, ast.Call) else d)
+        in ("dataclass", "dataclasses.dataclass")
+        for d in node.decorator_list
+    )
+
+
+def _import_aliases(tree: ast.Module) -> dict[str, str]:
+    """``Parent`` -> ``Base`` for each ``from m import Base as Parent``."""
+    return {
+        alias.asname: alias.name
+        for stmt in tree.body
+        if isinstance(stmt, ast.ImportFrom)
+        for alias in stmt.names
+        if alias.asname is not None and alias.asname != alias.name
+    }
+
+
+def classes_with_init(
+    classes: Mapping[str, ast.ClassDef], known: Collection[str] = ()
+) -> set[str]:
+    """The classes of *classes* that have an explicit ``__init__``, inherited too.
+
+    A class defines one when its body does, or when it is no dataclass (which
+    has its constructor generated) and a base does: a base among *classes*,
+    or one *known* names (the model's classes that define one).  Bases are
+    looked up by their last name (``base.Base``: ``Base``).  The result
+    includes *known*.
+    """
+    known = set(known)
+    memo: dict[str, bool] = {}
+
+    def has(name: str, seen: frozenset[str]) -> bool:
+        if name in memo:
+            return memo[name]
+        node = classes.get(name)
+        if node is None:
+            return name in known
+        if name in seen:
+            return False
+        if _defines_init(node):
+            found = True
+        elif _is_dataclass_node(node):
+            found = False
+        else:
+            found = any(
+                has((_dotted(b) or "").rsplit(".", 1)[-1], seen | {name})
+                for b in node.bases
+            )
+        memo[name] = found
+        return found
+
+    return {name for name in classes if has(name, frozenset())} | known
+
+
+def inherited_inits(
+    tree: ast.Module,
+    init_classes: Collection[str] = (),
+    exceptions: Collection[str] = (),
+) -> list[str]:
+    """The top-level classes of *tree* that inherit an ``__init__`` (#201).
+
+    A class without an ``__init__`` of its own whose base defines one: a base
+    of the module (its own ``__init__`` or one it inherits), or one
+    *init_classes* names (looked up by the name it is defined with, through
+    ``from m import Base as Parent``).  A dataclass has its constructor
+    generated, and an Enum or an exception (*exceptions*, derived
+    statically) is constructed as Codon builds it, so none of them is one.
+    """
+    local = {n.name: n for n in tree.body if isinstance(n, ast.ClassDef)}
+    aliases = _import_aliases(tree)
+    known = {
+        alias
+        for alias, name in aliases.items()
+        if name in init_classes and alias not in local
+    } | (set(init_classes) - set(local))
+    with_init = classes_with_init(local, known)
+    out: list[str] = []
+    for name, node in local.items():
+        if _defines_init(node) or _is_dataclass_node(node) or name in exceptions:
+            continue
+        bases = [(_dotted(b) or "").rsplit(".", 1)[-1] for b in node.bases]
+        if any(b in _ENUM_BASES for b in bases) or node.keywords:
+            continue
+        if any(b in with_init for b in bases):
+            out.append(name)
+    return out
 
 
 def _exception_classes(tree: ast.Module) -> set[str]:

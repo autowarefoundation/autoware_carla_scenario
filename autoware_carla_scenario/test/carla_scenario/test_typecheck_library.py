@@ -627,6 +627,51 @@ def test_a_property_setter_is_called_by_assigning_the_property() -> None:
     assert message.startswith("Gauge.anything (setter): Codon cannot express `Any`")
 
 
+_OPTIONAL_RETURNS_RENDERED = """
+from typing import Optional
+
+import typesafe_carla.carla as carla
+
+
+def find(world: carla.World) -> Optional[carla.Actor]:
+    return None
+
+
+def count() -> int:
+    return 0
+
+
+class Gauge:
+    def where(self) -> carla.Transform | None:
+        return None
+
+    @property
+    def note(self) -> Optional[str]:
+        return None
+"""
+
+
+def test_the_type_an_optional_function_returns_is_realized_before_the_call() -> None:
+    # Its `return None` becomes `return Optional[X]()`, which Codon 0.19 fails
+    # to generate code for when nothing else realizes X (#202).
+    checks = render_library_checks(ast.parse(_OPTIONAL_RETURNS_RENDERED))
+    calls = checks.source.splitlines()
+    start = calls.index("    _acs_value(carla.Actor)")
+    assert calls[start : start + 2] == [
+        "    _acs_value(carla.Actor)",
+        "    find(_acs_value(carla.World))",
+    ]
+    assert checks.labels[start + 1] == "find, realizing its return type"
+    assert "    count()" in calls
+    assert not any("_acs_value(int)" in c for c in calls)
+    for value, call in [
+        ("carla.Transform", "_acs_value(Gauge).where()"),
+        ("str", "_acs_value(Gauge).note"),
+    ]:
+        at = calls.index(f"    {call}")
+        assert calls[at - 1] == f"    _acs_value({value})"
+
+
 _FIELD_DEFAULTS_RENDERED = """
 from dataclasses import dataclass, field
 from typing import Any, Sequence
