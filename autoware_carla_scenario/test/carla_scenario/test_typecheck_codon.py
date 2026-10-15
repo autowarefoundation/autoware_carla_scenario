@@ -1495,6 +1495,13 @@ def test_a_measure_read_that_returns_no_number_is_refused(tmp_path: Path) -> Non
     ), result.format()
 
 
+#: A method of the case scenario (it follows setup() in the class body).
+_GAP_METHOD = """
+    def _read_gap(self, world: carla.World) -> float | None:
+        return 1.0
+"""
+
+
 @pytest.mark.parametrize(
     "read",
     [
@@ -1503,16 +1510,20 @@ def test_a_measure_read_that_returns_no_number_is_refused(tmp_path: Path) -> Non
         "read_int",
         "lambda world: 1.0",
         "lambda world: None",
+        "self._read_gap",
     ],
-    ids=["optional", "float", "int", "lambda", "none-lambda"],
+    ids=["optional", "float", "int", "lambda", "none-lambda", "bound-method"],
 )
 def test_a_scenario_may_register_a_measure_read_as_python_does(
     tmp_path: Path, read: str
 ) -> None:
     # register_measure() checks *read* as Measure and Metric do (#216): a
-    # float, an int or None, or an Optional of one.
+    # float, an int or None, or an Optional of one. A bound method is the
+    # reader odd.md's "Scenario measures" shows.
     setup = f'self.register_measure("mine", {read}, unit="m")\n'
-    scenario, config, _ = _write_case(tmp_path, setup, extra=_OWN_METRIC_READERS)
+    scenario, config, _ = _write_case(
+        tmp_path, setup, extra=_GAP_METHOD + _OWN_METRIC_READERS
+    )
     result = typecheck_scenario(scenario, config)
     assert result.ok, result.format()
 
