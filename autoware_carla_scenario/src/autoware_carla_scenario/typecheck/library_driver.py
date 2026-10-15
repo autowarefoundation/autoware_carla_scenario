@@ -433,23 +433,16 @@ class _Renderer:
           not checked, or not a class of a checked module), or a dunder
           (``__slots__``);
         - an annotation Codon cannot express, or naming a ``TypeVar``;
-        - a value naming another member of the class, which means something
-          else at the function's scope.
+        - a value or annotation naming another name the class body binds (a
+          member, unpacked ones included, a method, a nested class), which
+          means something else at the function's scope.
 
         A dataclass's defaults are compiled through its constructor
         (:meth:`_required_fields_call`), and an enum's members are values.
         """
         if node.name in self.constructed and not self._defines_init(node, set()):
             return  # Codon's generated constructor takes each default
-        members = {
-            target.id
-            for stmt in node.body
-            if isinstance(stmt, (ast.Assign, ast.AnnAssign))
-            for target in (
-                stmt.targets if isinstance(stmt, ast.Assign) else [stmt.target]
-            )
-            if isinstance(target, ast.Name)
-        }
+        members = _class_body_names(node)
         for stmt in node.body:
             annotation: ast.expr | None
             if isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name):
@@ -472,7 +465,9 @@ class _Renderer:
                     continue  # a bare `ClassVar`: no type to check against
             else:
                 continue
-            if _names(annotation) & self.type_vars or _names(assigned) & members:
+            if _names(annotation) & self.type_vars or (
+                (_names(annotation) | _names(assigned)) & members
+            ):
                 continue
             typed = codon_annotation(annotation, class_level=True)
             if typed is None:
@@ -768,6 +763,34 @@ def _class_var_type(annotation: ast.expr) -> ast.expr | None:
 
 def _names(node: ast.AST) -> set[str]:
     return {n.id for n in ast.walk(node) if isinstance(n, ast.Name)}
+
+
+def _class_body_names(node: ast.ClassDef) -> set[str]:
+    """Every name *node*'s body binds: what its class-level values may name.
+
+    Assigned names, unpacked ones included (``LOW, HIGH = 0.0, 1.0``), and
+    the methods, nested classes and imports of the body; not the variables of
+    a comprehension or a lambda, which are their own scope.
+    """
+    out: set[str] = set()
+    stack: list[ast.AST] = list(node.body)
+    while stack:
+        sub = stack.pop()
+        if isinstance(sub, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            out.add(sub.name)
+            stack.extend(sub.decorator_list)
+            continue
+        if isinstance(sub, (ast.Import, ast.ImportFrom)):
+            out.update((a.asname or a.name).split(".")[0] for a in sub.names)
+            continue
+        if isinstance(
+            sub, (ast.Lambda, ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
+        ):
+            continue
+        if isinstance(sub, ast.Name) and isinstance(sub.ctx, ast.Store):
+            out.add(sub.id)
+        stack.extend(ast.iter_child_nodes(sub))
+    return out
 
 
 def _module_level_nodes(tree: ast.Module) -> list[ast.AST]:

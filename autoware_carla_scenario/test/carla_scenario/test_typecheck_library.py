@@ -586,10 +586,11 @@ def test_a_dataclass_is_constructed_without_its_field_defaults_too() -> None:
 _CLASS_DEFAULTS_RENDERED = """
 from dataclasses import dataclass
 from enum import Enum
-from typing import ClassVar, Optional, TypeVar
+from typing import ClassVar, List, Optional, TypeVar
 
 T = TypeVar("T")
 DEFAULT_PORT = 8000
+LOW = 0.0
 
 
 class Action:
@@ -600,6 +601,9 @@ class Action:
     ready: bool = True
     LIMIT: float = 2.0
     TWICE: float = LIMIT * 2
+    LOW, HIGH = 0.0, 1.0
+    MID: float = (LOW + HIGH) / 2
+    SQUARES: List[int] = [i * i for i in range(3)]
     held: T = None
     __slots__ = ("_value",)
 
@@ -651,6 +655,8 @@ def test_a_class_level_default_is_assigned_to_a_typed_local() -> None:
         # Codon converts any value assigned to a `bool`; a call does not.
         "class-level default of Action.ready": "bool = _expect_bool(True)",
         "class-level default of Action.LIMIT": "float = 2.0",
+        # A comprehension's variable is not a member of the class.
+        "class-level default of Action.SQUARES": "List[int] = [i * i for i in range(3)]",
         # An override without an annotation takes its base's, a ClassVar's T.
         "class-level default of Follow.REISSUES": "bool = _expect_bool(True)",
         "class-level default of Follow.port": "int = 9000",
@@ -663,7 +669,8 @@ def test_a_class_level_default_is_assigned_to_a_typed_local() -> None:
         if "_acs_cls_default_" in line:
             assert line.startswith(f"    _acs_cls_default_{n}: ")
     # Left out: a ClassVar (Codon keeps its value) and an override of a bare
-    # one, a value naming another member (`LIMIT * 2`), a TypeVar, a dunder,
+    # one, a value naming another member (`LIMIT * 2`, or `LOW`, which an
+    # unpacking binds and the module binds too), a TypeVar, a dunder,
     # a name no base declares, the defaults of a class the module constructs
     # with no argument and no constructor of its own (Codon's generated one
     # takes them), and a dataclass's and an enum's.
@@ -672,6 +679,7 @@ def test_a_class_level_default_is_assigned_to_a_typed_local() -> None:
         "Action.KIND",
         "Follow.KIND",
         "Action.TWICE",
+        "Action.MID",
         "Action.held",
         "__slots__",
         "Follow.undeclared",

@@ -591,9 +591,10 @@ module and the other checked modules, depth first. Left out:
   reported at the call);
 - a default without an annotation that no base declares (a base outside the
   checked modules), a dunder (`__slots__`), and one over a bare `ClassVar`;
-- an annotation Codon cannot express or naming a `TypeVar`, and a value
-  naming another member of the class (`TWICE: float = LIMIT * 2`), which at
-  the function's scope names something else, or nothing.
+- an annotation Codon cannot express or naming a `TypeVar`, and a value or
+  annotation naming anything else the class body binds (`TWICE: float =
+  LIMIT * 2`; a member unpacked, `LOW, HIGH = 0.0, 1.0`; a method; a nested
+  class), which at the function's scope names something else, or nothing.
 
 That is 22 defaults, at the time of writing: 20 annotated ones, in 10
 classes (`BaseScenario`, the five ego entities, `TurnAction`,
@@ -807,7 +808,7 @@ What Codon 0.19 needs that Python does not, beyond
   dataclass (a tuple display or `()` of a `tuple[X, ...]` member,
   `frozenset()`) is reported: assign such a value in `__init__` instead. A
   default naming another member of the class
-  (`TWICE: float = LIMIT * 2`) is not checked, as at the function's scope
+  (`TWICE: float = LIMIT * 2`), or anything else its body binds, is not checked, as at the function's scope
   the name is not the member; neither is a `None` default, which Codon
   makes an `Optional` of any annotation (`x: float = None` compiles). An
   override without an annotation (`REISSUES_BY_DEFAULT = True`) is checked
