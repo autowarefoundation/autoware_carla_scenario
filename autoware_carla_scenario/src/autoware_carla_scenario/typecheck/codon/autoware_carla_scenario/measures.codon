@@ -14,6 +14,9 @@
 
 import typesafe_carla.carla as carla
 
+# Under an _acs_ name: no name of the module in Python.
+from ._reader import _expect_reader as _acs_expect_read
+
 # Under an _acs_ name: BaseScenario is no name of measures in Python, which
 # imports it for its annotations only.
 from .scenario_base import BaseScenario as _acs_BaseScenario
@@ -40,11 +43,6 @@ def _acs_unread(world: carla.World) -> Optional[float]:
     raise NotImplementedError()
 
 
-def _acs_expect_read(read):
-    """A Callable[[carla.World], Optional[float]] argument."""
-    value: Optional[float] = read(carla.Client().get_world())
-
-
 # A frozen dataclass in Python, so @tuple here: an assignment to a field fails
 # the check as it fails the run.
 @tuple
@@ -58,8 +56,9 @@ class Measure:
     # Python takes any callable of a world that returns a float or None: a
     # function returning `float`, a lambda. Codon 0.19 crashes on one whose
     # type is not the field's exactly ("Codon compiler crashed", no line), so
-    # *read* is called with a world here, refused at its line when it returns
-    # anything else, and the field holds the stub: nothing in the model reads.
+    # *read* is called with a world here (_reader.codon), refused at its line
+    # when it returns anything but a float, an int or None, and the field
+    # holds the stub: nothing in the model reads.
     def __new__(key: str, read, unit: str = "", text: str = "",
                 version: int = 1) -> Measure:
         _acs_expect_read(read)
