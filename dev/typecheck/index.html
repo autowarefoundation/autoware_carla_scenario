@@ -2103,21 +2103,24 @@ names, order, defaults, keyword-only parameters, methods, enum members): every
 name <code>__init__.codon</code> exports, the names the checked modules import from the
 model (<code>_BOUNDARY</code>), and every name of the model modules that stand for one
 framework module each (<code>_MODULE_MODELS</code>), which must declare exactly the names
-compared, beside model-only helpers named <code>_acs_*</code>. <code>metrics.codon</code> is one of
-those: it declares the whole of <code>metrics.__all__</code>, and the test also compares
-its keys and each built-in metric of <code>BUILT_IN_METRICS</code> (title, unit, text,
-aggregation) by value, and <code>Metric</code>'s field types and defaults and its
-<code>__new__</code>'s parameters. Only a metric's <code>read</code> differs: Python's is a private
-function of the module, which no scenario can import, and the model's a stub
-(<code>_acs_unread</code>), since nothing in the model is read. <code>Metric()</code> takes any
-<code>read</code> a world can be passed to that returns a <code>float</code> or an <code>Optional[float]</code>
--- a function returning <code>float</code>, a lambda -- as Python's does, and stores the
-stub: a Codon
+compared, beside model-only helpers named <code>_acs_*</code>. <code>metrics.codon</code> and
+<code>measures.codon</code> are two of those: each declares the whole of its module's
+<code>__all__</code>, and the test also compares by value their constants (the keys,
+<code>VEHICLE_AHEAD_VERSION</code>, the distances and speeds the vehicle-ahead measures
+read with), each built-in entry of <code>BUILT_IN_METRICS</code> (title, unit, text,
+aggregation) and of <code>BUILT_IN_MEASURES</code> (unit, text, version), the field types
+and defaults of <code>Metric</code>, <code>Measure</code> and <code>Bumpers</code> (frozen dataclasses, so
+<code>@tuple</code>s: assigning to a field fails the check, as it fails the run), and
+the parameters of <code>Metric</code>'s and <code>Measure</code>'s <code>__new__</code>. Only a built-in's
+<code>read</code> differs: Python's is a private function of the module, which no
+scenario can import, and the model's a stub (<code>_acs_unread</code>), since nothing in
+the model is read. <code>Metric()</code> and <code>Measure()</code> take any <code>read</code> a world can be
+passed to that returns a <code>float</code> or an <code>Optional[float]</code> -- a function
+returning <code>float</code>, a lambda -- as Python's do, and store the stub: a Codon
 <code>Callable</code> field takes a function of its exact type only, and Codon 0.19
-crashes on any other.
-<code>measures.codon</code> is not among them yet: <code>test_measures.py</code> compares its keys
-and the other string and float constants by value, but not its classes and
-functions.</p>
+crashes on any other. <code>set_measured_scenario()</code> takes a scenario of any
+<code>BaseScenario</code> subclass or <code>None</code>, which Python annotates
+<code>Optional[BaseScenario]</code>: Codon's <code>Optional</code> takes no subclass.</p>
 <p>A scenario that imports a module with no model (lanelet2's <code>matching</code>, say,
 or a framework module outside the public API) is refused with a message
 naming the module. Third-party packages the framework reads are modelled as
@@ -3851,7 +3854,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 15, 2026 12:19:36 UTC"><span class="timeago" datetime="2026-10-15T12:19:36+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 15, 2026 12:19:36 UTC">2026-10-15</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 15, 2026 16:29:55 UTC"><span class="timeago" datetime="2026-10-15T16:29:55+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 15, 2026 16:29:55 UTC">2026-10-15</span>
   </span>
 
     
