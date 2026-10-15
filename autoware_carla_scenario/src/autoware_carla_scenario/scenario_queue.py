@@ -343,6 +343,8 @@ class ScenarioQueue:
                 except Exception as exc:
                     last_error = exc
                     last_message = f"{type(exc).__name__}: {exc}"
+                    # With its traceback: a batch that goes on keeps only a
+                    # line of it in the result.
                     logger.warning(
                         "[%d/%d] Scenario attempt %d/%d failed: %s",
                         i + 1,
@@ -350,6 +352,7 @@ class ScenarioQueue:
                         attempt + 1,
                         max_attempts,
                         exc,
+                        exc_info=True,
                     )
             else:
                 if not continue_on_error:
