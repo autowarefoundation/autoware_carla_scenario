@@ -129,14 +129,19 @@ scenario.py:88:16: error: 'MyConfig' object has no attribute 'timeout_secs'
     during the realization of _helper(self: MyScenario) [<scenario check: MyScenario._helper()>, scenario.py:87]
 ```
 
-One in what the appended line compiles itself (a class-level default, or a
-parameter's default) is at the line of the default, and the trace names it
+One in what the appended line compiles itself is at the line of the
+class-level default, or, for a parameter's default, at the `def` of its
+function, and the trace names the call
 (`reached by <scenario check: class-level default of MyScenario.RETRIES>`).
 
-A function the check cannot call, because a parameter has no annotation or one
-Codon cannot express (`Any`, `object`, `Callable[..., R]`), is **not refused**:
-it is left out of the appended calls with a **warning**, and compiled where
-`setup()` and `is_done()` reach it, generically, as before:
+A function the check cannot call, because a parameter has no annotation, one
+Codon cannot express (`Any`, `object`, `Callable[..., R]`) or one naming a
+`TypeVar` (a generic function), is **not refused**: it is left out of the
+appended calls with a **warning**, and compiled where `setup()` and
+`is_done()` reach it, generically, as before. So is one whose return
+annotation names `Any`, such as a custom condition's
+`get_details() -> dict[str, Any]` of mixed value types, which Codon cannot
+build (the library check lists the framework's own as uncalled):
 
 ```text
 my_scenario.py:40: warning: MyScenario._scaled: parameter `x` has no annotation; the check does not call it on its own, so it is compiled only where the scenario's constructor, setup() and is_done() reach it
@@ -223,9 +228,10 @@ scenario has to do itself:
   hook overrides included. Every function of the scenario's modules is
   compiled, whether `setup()` reaches it or not, with a value of each
   parameter's annotated type ([*What is checked*](#what-is-checked)). A
-  function with a parameter that has no annotation, or one Codon cannot
-  express, is only compiled where `setup()` and `is_done()` call it, and the
-  check warns about it, at the parameter's line.
+  function with a parameter that has no annotation, one Codon cannot
+  express or one naming a `TypeVar`, is only compiled where `setup()` and
+  `is_done()` call it, and the check warns about it, at the parameter's
+  line; so is one returning `Any`, with the warning at its `def`.
 - **Give each class-level default a value of its annotated type**
   (`RETRIES: int = 3`): it is compiled against the annotation.
 
@@ -1474,7 +1480,10 @@ What Codon 0.19 needs that Python does not, beyond
   and the lines after them where they are. A tuple that is not written out
   (`except errors:`, `except (*errors,):`) is left as it is, and Codon
   refuses it. `raise X from None` is rewritten to `raise X` by the check;
-  `raise X from exc` compiles as it is.
+  `raise X from exc` compiles as it is. A builtin exception class raised
+  as it is (`raise NotImplementedError`, an abstract stub) is rewritten to
+  an instance (`raise NotImplementedError()`), which Python raises anyway:
+  Codon 0.19 crashes on the class.
 - **`frozenset` is checked as a `set`**: Codon 0.19 has none, so the check
   rewrites `frozenset(...)` to `set(...)`, `frozenset[X](...)` to
   `Set[X](...)` and `frozenset[X]` / `FrozenSet[X]` to `Set[X]`; the source

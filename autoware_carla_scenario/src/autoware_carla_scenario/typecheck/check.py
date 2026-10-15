@@ -17,8 +17,8 @@ with a message saying so.  Each of the scenario's own modules also has the
 library check's calls appended (:func:`.library_driver.render_library_checks`),
 which the driver runs, so every function, method and class-level default in
 it is compiled, whether ``setup()`` reaches it or not; one the check cannot
-call (a parameter without an annotation it can call with) is left to what
-reaches it, with a warning.
+call (a parameter without an annotation it can call with, or a return
+annotation naming ``Any``) is left to what reaches it, with a warning.
 
 :func:`typecheck_library` compiles the framework's own modules instead (those
 :mod:`.library` lists as checked), each with calls to every function and method,
@@ -250,14 +250,15 @@ class TypeCheckResult:
     scenario: str
     ok: bool
     diagnostics: list[Diagnostic] = field(default_factory=list)
-    #: What the check left unchecked and why; none fails it.
-    warnings: list[Diagnostic] = field(default_factory=list)
     #: Why the scenario was not compiled at all (no Codon, no source file).
     skipped: str | None = None
     #: The compiler crashed: no verdict on the scenario either way.
     crashed: bool = False
     output: str = ""
     seconds: float = 0.0
+    #: What the check left unchecked and why; none fails it.  Last, so the
+    #: fields before it keep their positions.
+    warnings: list[Diagnostic] = field(default_factory=list)
 
     def format(self) -> str:
         if self.skipped is not None:
@@ -476,8 +477,9 @@ def _build_workspace(
     them, so every function, method and class-level default of the module is
     compiled, not only what the driver's own calls reach.  A function the
     calls cannot be made for (a parameter with no annotation, or one Codon
-    cannot express) is left out of them with a warning: the driver still
-    compiles it where it reaches it, as before.
+    cannot express or naming a ``TypeVar``), or one returning ``Any``
+    (``get_details() -> dict[str, Any]``), is left out of them with a
+    warning: the driver still compiles it where it reaches it, as before.
     """
     ws = _base_workspace(root, driver, codon_path)
     ws.appended_label = _SCENARIO_CHECK_LABEL
@@ -497,7 +499,9 @@ def _build_workspace(
         dest = root / rel
         dest.parent.mkdir(parents=True, exist_ok=True)
         text, origin = transform_source_lines(module.text)
-        checks = render_library_checks(module.tree, classes=classes)
+        checks = render_library_checks(
+            module.tree, classes=classes, skip_any_returns=True
+        )
         for line, message in checks.problems:
             ws.warnings.append(
                 _unchecked_warning(message, module.path, line, driver.reaches)

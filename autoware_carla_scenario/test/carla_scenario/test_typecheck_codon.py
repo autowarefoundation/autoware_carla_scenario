@@ -757,6 +757,20 @@ def test_code_setup_does_not_reach_is_checked_at_its_line(
     assert any(label in frame for frame in error.trace), error.format()
 
 
+def test_an_unreached_config_method_is_checked_at_its_line(tmp_path: Path) -> None:
+    # The scenario's other modules get the appended calls too (#192).
+    config = (
+        _CONFIG + "\n    def describe(self) -> str:\n        return 3 + self.name\n"
+    )
+    scenario, config_cls, _ = _write_case(tmp_path, _VALID_SETUP, config=config)
+    path = Path(sys.modules[config_cls.__module__].__file__ or "")
+    error = _only_error(typecheck_scenario(scenario, config_cls))
+    assert "unsupported operand type(s) for +" in error.message, error.format()
+    assert error.path == str(path)
+    assert error.line == _line_of(path, "return 3 + self.name")
+    assert any("<scenario check: CaseConfig.describe()>" in f for f in error.trace)
+
+
 def test_a_helper_the_check_cannot_call_is_left_to_what_reaches_it(
     tmp_path: Path,
 ) -> None:
@@ -783,6 +797,124 @@ def test_a_helper_the_check_cannot_call_is_left_to_what_reaches_it(
     error = _only_error(result)
     assert error.line == _line_of(path, "return x * 2.0"), error.format()
     assert len(result.warnings) == 1
+
+
+_SHAPES_HEADER = _HEADER.replace(
+    "import logging\n",
+    "import logging\nfrom dataclasses import dataclass\nfrom enum import Enum\n"
+    "from typing import Any, Optional, Protocol, TypeVar\n",
+)
+
+_SHAPES = """
+
+    _target: carla.Actor | None = None
+
+    def _pose_s(self, pose: Lanelet2Pose | OpenDrivePose) -> float:
+        if isinstance(pose, Lanelet2Pose):
+            return pose.s
+        return pose.s
+
+    @staticmethod
+    def _kmh(v: float) -> float:
+        return v * 3.6
+
+    @classmethod
+    def _twice(cls, n: int) -> list[int]:
+        return [n] * 2
+
+    def _goal_sum(self) -> int:
+        def add(a: int, b: int) -> int:
+            return a + b
+
+        total = 0
+        for goal in self._config.goal_lanelet_ids:
+            total = add(total, goal)
+        return total
+
+    @property
+    def timeout(self) -> float:
+        return self._config.timeout_seconds
+
+    def _target_x(self) -> float:
+        if self._target is None:
+            return 0.0
+        return self._target.get_location().x
+
+    def _describe(self, actor: carla.Actor) -> str:
+        if hasattr(actor, "type_id"):
+            return actor.type_id
+        return "unknown"
+
+
+class Phase(Enum):
+    START = 0
+    END = 1
+
+
+@dataclass
+class Waypoint:
+    lanelet_id: int
+    s: float = 0.0
+    tag: Optional[str] = None
+
+
+class HasSpeed(Protocol):
+    def speed(self) -> float: ...
+
+
+class _Strategy:
+    def pick(self, ids: list[int]) -> int:
+        raise NotImplementedError
+
+
+class FirstStrategy(_Strategy):
+    def pick(self, ids: list[int]) -> int:
+        return ids[0]
+
+
+T = TypeVar("T")
+
+
+def first(xs: list[T]) -> T:
+    return xs[0]
+
+
+class NearGoal(BaseCondition):
+    _threshold: float
+
+    def __init__(self, threshold: float, label: str = "near") -> None:
+        super().__init__(label=label)
+        self._threshold = threshold
+
+    def check(self, world: carla.World, elapsed: float) -> ScenarioResult | None:
+        if elapsed < self._threshold:
+            return None
+        return ScenarioResult(passed=True, message="done", elapsed_seconds=elapsed)
+
+    def get_details(self) -> dict[str, Any]:
+        return {"threshold": self._threshold, "kind": "near"}
+"""
+
+
+def test_valid_code_setup_does_not_reach_still_compiles(tmp_path: Path) -> None:
+    # Compiling every function (#192) must not refuse a valid scenario: a
+    # union parameter, static and class methods, a nested function, a
+    # property, an Optional narrowed by a None check, hasattr, an enum, a
+    # dataclass, a Protocol and an abstract stub (`raise NotImplementedError`,
+    # which Codon 0.19 crashes on as a class).  A generic function and a
+    # get_details() returning `dict[str, Any]` of mixed values (what the
+    # library check lists as UNCALLED) are left out, with a warning each.
+    scenario, config, path = _write_case(
+        tmp_path, _VALID_SETUP, _SHAPES, header=_SHAPES_HEADER
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+    assert [(w.line, w.severity) for w in result.warnings] == [
+        (_line_of(path, "def first("), "warning"),
+        (_line_of(path, "def get_details("), "warning"),
+    ], result.format()
+    assert "annotated with a TypeVar" in result.warnings[0].message
+    assert "returns `dict[str, Any]`" in result.warnings[1].message
 
 
 def test_a_config_value_of_the_wrong_type_is_reported_at_its_key(

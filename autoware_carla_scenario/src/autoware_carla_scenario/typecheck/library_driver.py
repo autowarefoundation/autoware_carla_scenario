@@ -154,8 +154,12 @@ class _Renderer:
         *,
         constructed: Collection[str] = (),
         type_vars: Collection[str] = (),
+        skip_any_returns: bool = False,
     ) -> None:
         self.uncalled = set(uncalled)
+        #: Leave out a function whose return annotation names ``Any``, as a
+        #: problem (the scenario check, which has no ``UNCALLED``).
+        self.skip_any_returns = skip_any_returns
         #: Classes by name, for the base classes of a dataclass and the
         #: annotation a class-level default overrides.
         self.classes: dict[str, ast.ClassDef] = dict(classes or {})
@@ -190,6 +194,17 @@ class _Renderer:
         if annotation is None:
             self.problems.append(
                 (arg.lineno, f"{where}: parameter `{arg.arg}` has no annotation")
+            )
+            return None
+        if _names(annotation) & self.type_vars:
+            # A generic function: Codon cannot type a value with a TypeVar,
+            # and the transform drops it, so it is compiled where it is called.
+            self.problems.append(
+                (
+                    arg.lineno,
+                    f"{where}: parameter `{arg.arg}` is annotated with a TypeVar "
+                    f"(`{ast.unparse(annotation)}`), which has no type to call with",
+                )
             )
             return None
         text = (
@@ -252,6 +267,8 @@ class _Renderer:
         (*head*, ``_acs_value(Class).method``) is called through to leave its
         defaults out: its dispatch thunk fills in none.
         """
+        if self._returns_any(func, where):
+            return
         args = func.args
         positional = [*args.posonlyargs, *args.args][1 if drop_first else 0 :]
         vararg = _called_vararg(args.vararg)
@@ -280,6 +297,32 @@ class _Renderer:
             head=class_head or head,
             receiver=receiver if class_head is None else f"_acs_value({owner})",
         )
+
+    def _returns_any(
+        self, func: ast.FunctionDef | ast.AsyncFunctionDef, where: str
+    ) -> bool:
+        """Whether *func* is left out, as returning ``Any``: a problem.
+
+        Only with :attr:`skip_any_returns`.  Such a function builds a value
+        Codon cannot express (``get_details() -> dict[str, Any]`` of mixed
+        value types), which the library check lists as ``UNCALLED``.
+        """
+        returns = func.returns
+        if isinstance(returns, ast.Constant) and isinstance(returns.value, str):
+            try:
+                returns = ast.parse(returns.value, mode="eval").body
+            except SyntaxError:
+                return False
+        if not self.skip_any_returns or returns is None or not _names_any(returns):
+            return False
+        self.problems.append(
+            (
+                func.lineno,
+                f"{where}: returns `{ast.unparse(returns)}`, which Codon cannot "
+                "express",
+            )
+        )
+        return True
 
     def _defaults_call(
         self,
@@ -394,6 +437,8 @@ class _Renderer:
             ):
                 continue
             if kinds & _PROPERTIES:
+                if self._returns_any(method, where):
+                    continue
                 self.emit(f"_acs_value({name}).{method.name}", where, method.lineno)
             elif "staticmethod" in kinds:
                 self.calls(method, f"{name}.{method.name}", where, drop_first=False)
@@ -842,6 +887,8 @@ def render_library_checks(
     tree: ast.Module,
     uncalled: Collection[str] = (),
     classes: Mapping[str, ast.ClassDef] | None = None,
+    *,
+    skip_any_returns: bool = False,
 ) -> LibraryChecks:
     """The function to append to the module *tree* is the source of.
 
@@ -849,7 +896,10 @@ def render_library_checks(
     ``Class.method``; ``Class.__init__`` for the constructor, generated or
     not), as :data:`.library.UNCALLED` lists them.  *classes* are the classes
     of the other checked modules, by name: a dataclass derived from one of
-    them is constructed with its fields too.
+    them is constructed with its fields too.  With *skip_any_returns* (the
+    scenario check, which has no ``UNCALLED``), a function whose return
+    annotation names ``Any`` is left out, as a problem.  A parameter
+    annotated with one of the module's ``TypeVar``s is a problem either way.
     """
     own = {n.name: n for n in tree.body if isinstance(n, ast.ClassDef)}
     constructed = {
@@ -874,6 +924,7 @@ def render_library_checks(
         {**(classes or {}), **own},
         constructed=constructed,
         type_vars=type_vars,
+        skip_any_returns=skip_any_returns,
     )
     for node in tree.body:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
