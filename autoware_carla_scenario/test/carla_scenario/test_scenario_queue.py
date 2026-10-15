@@ -294,6 +294,63 @@ class TestScenarioQueueUnit:
         assert queue._timeouts == {} and queue._cases == {}
         assert queue._scenario_results == {}
 
+    def test_a_releasing_run_retries_with_the_same_scenario(self) -> None:
+        """A retry gets the scenario, timeout and case it was added with,
+        though the queue has let go of them by then."""
+
+        class _FailsOnce(_RecordingRunner):
+            def __init__(self) -> None:
+                super().__init__()
+                self.calls: list[tuple[int, float | None, object]] = []
+
+            def run_scenario(
+                self, scenario, *, timeout_seconds=None, case=None, reset_world=True
+            ):  # noqa: ANN001, ANN202
+                self.calls.append((id(scenario), timeout_seconds, case))
+                if len(self.calls) == 1:
+                    raise RuntimeError("CARLA went away")
+                return super().run_scenario(
+                    scenario,
+                    timeout_seconds=timeout_seconds,
+                    case=case,
+                    reset_world=reset_world,
+                )
+
+        queue = ScenarioQueue(server=MagicMock(), cooldown_max_retries=1)
+        runner = _FailsOnce()
+        queue._runner = runner  # type: ignore[assignment]
+        scenario = _HeavyScenario(_make_ego_config())
+        case = MagicMock()
+        queue.add(scenario, timeout_seconds=7.0, case=case)
+
+        results = queue.run_all(release=True)
+
+        assert len(results) == 1
+        assert runner.calls == [(id(scenario), 7.0, case)] * 2
+
+    def test_a_releasing_run_that_fails_leaves_nothing_keyed(self) -> None:
+        """A case that fails every attempt ends the run; the cases after it
+        are out of the queue and leave nothing keyed by their ids."""
+
+        class _AlwaysFails(_RecordingRunner):
+            def run_scenario(self, scenario, **_):  # noqa: ANN001, ANN003, ANN202
+                raise RuntimeError("no")
+
+        queue = ScenarioQueue(server=MagicMock())
+        queue._runner = _AlwaysFails()  # type: ignore[assignment]
+        for k in range(3):
+            queue.add(
+                _HeavyScenario(_make_ego_config()),
+                timeout_seconds=float(k),
+                case=MagicMock(),
+            )
+
+        with pytest.raises(RuntimeError, match="failed after 1 attempt"):
+            queue.run_all(release=True)
+
+        assert len(queue) == 0
+        assert queue._timeouts == {} and queue._cases == {}
+
     def test_a_run_that_does_not_release_keeps_its_scenarios(self) -> None:
         queue = ScenarioQueue(server=MagicMock())
         runner = _RecordingRunner()

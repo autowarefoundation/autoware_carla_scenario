@@ -334,6 +334,15 @@ class ScenarioQueue:
                         exc,
                     )
             else:
+                if release:
+                    # The cases not run yet are out of the queue already:
+                    # leave nothing keyed by their ids either.
+                    for rest in pending:
+                        rest_key = id(rest)
+                        if rest_key in self._timeouts:
+                            del self._timeouts[rest_key]
+                        if rest_key in self._cases:
+                            del self._cases[rest_key]
                 # All attempts exhausted — re-raise the last error.
                 raise RuntimeError(
                     f"Scenario {type(scenario).__name__} failed after "
