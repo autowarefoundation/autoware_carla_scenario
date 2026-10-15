@@ -82,9 +82,7 @@ def turn_indicators_of(actor: "carla.Actor") -> TurnIndicatorState:
 def set_turn_indicators(actor: "carla.Actor", state: TurnIndicatorState) -> None:
     """Show *state* on vehicle *actor*'s turn indicators, its other lights as they are."""
     vehicle = _as_vehicle(actor)
-    vehicle.set_light_state(
-        with_turn_indicators(int(vehicle.get_light_state()), state)
-    )
+    vehicle.set_light_state(with_turn_indicators(int(vehicle.get_light_state()), state))
 
 
 def _as_vehicle(actor: "carla.Actor") -> "carla.Vehicle":

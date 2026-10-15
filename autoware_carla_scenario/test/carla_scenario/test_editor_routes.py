@@ -1384,6 +1384,7 @@ class TestEnvironmentTrack:
             "routing",
             "set_speed",
             "turn",
+            "turn_indicator",
         }
         assert offers[""] == {
             "environment",
