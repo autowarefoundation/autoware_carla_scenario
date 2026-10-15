@@ -549,6 +549,25 @@
   
   
     <li class="md-tabs__item">
+      <a href="../metrics/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Metrics
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
       <a href="../typecheck/" class="md-tabs__link">
         
   
@@ -1333,6 +1352,33 @@
     
   
     ODD
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../metrics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Metrics
   
 
     
@@ -2168,6 +2214,10 @@ directly.</p>
 <td>The item definitions <code>register_cover()</code> / <code>register_cross()</code> build.</td>
 </tr>
 <tr>
+<td><code>autoware_carla_scenario.metrics</code>: <code>BUILT_IN_METRICS</code>, <code>Metric</code>, <code>read_metric(key, world)</code>, <code>COLLISION_ANY</code>, <code>COLLISION_AT_FAULT</code>, <code>OFFROAD</code>, <code>WRONG_LANE</code>, <code>MIN_DISTANCE_TO_OBSTACLE_M</code>, ...</td>
+<td>How the ego drives, read off the world per frame: AlpaSim's metrics. An outcome, which no ODD maps onto. See <a href="../metrics/">Metrics</a>.</td>
+</tr>
+<tr>
 <td><code>BaseScenario.register_measure(key, read, *, unit, text)</code>, <code>.measure(key, world)</code>, <code>.measures</code></td>
 <td>A scenario's measures: what it sets up, under fixed keys (<code>autoware_carla_scenario.measures</code>: <code>VEHICLE_AHEAD_GAP_M</code>, <code>VEHICLE_AHEAD_RELATIVE_SPEED_KPH</code>, <code>CROSSING_PEDESTRIAN_GAP_M</code>, <code>CROSSING_PEDESTRIAN_SPEED_MS</code>). Replace a built-in one or add one of its own. See <a href="../odd/#scenario-measures">Scenario measures</a>.</td>
 </tr>
@@ -2304,6 +2354,10 @@ directly.</p>
 <tr>
 <td><code>TimeoutCondition</code>, <code>ElapsedTimeCondition</code></td>
 <td>Time-based triggers.</td>
+</tr>
+<tr>
+<td><code>MetricCondition(metric, rule, value, tolerance, *, label)</code></td>
+<td>A built-in metric -- how the ego drives -- against a threshold; usually a fail condition. See <a href="../metrics/">Metrics</a>.</td>
 </tr>
 <tr>
 <td><code>EntityDistanceCondition</code>, <code>TimeToCollisionCondition</code></td>
@@ -3029,7 +3083,7 @@ imports the other.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 14, 2026 09:19:54 UTC"><span class="timeago" datetime="2026-10-14T09:19:54+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 14, 2026 09:19:54 UTC">2026-10-14</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 15, 2026 00:39:45 UTC"><span class="timeago" datetime="2026-10-15T00:39:45+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 15, 2026 00:39:45 UTC">2026-10-15</span>
   </span>
 
     
