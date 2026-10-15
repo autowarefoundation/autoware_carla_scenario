@@ -2050,6 +2050,51 @@ def test_the_body_of_not_type_checking_is_run_time_only() -> None:
     assert len(compiled - run_time_only) == 1
 
 
+@pytest.mark.parametrize(
+    ("source", "run_time_only"),
+    [
+        # An `elif not TYPE_CHECKING:` is an `if` of its own.
+        (
+            "if x:\n    import b\nelif not TYPE_CHECKING:\n    import a\n"
+            "else:\n    import b2\n",
+            {"a"},
+        ),
+        ("if not (TYPE_CHECKING):\n    import a\nelse:\n    import b\n", {"a"}),
+        (
+            "import typing\nif not typing.TYPE_CHECKING:\n    import a\n"
+            "else:\n    import b\n",
+            {"a"},
+        ),
+        (
+            "if not TYPE_CHECKING:\n    if x:\n        import a\n    else:\n"
+            "        import a2\nelse:\n    if not TYPE_CHECKING:\n"
+            "        import a3\n    import b\n",
+            {"a", "a2", "a3"},
+        ),
+        # What the check cannot read as TYPE_CHECKING alone hides nothing.
+        ("if TYPE_CHECKING or x:\n    import b\nelse:\n    import b2\n", set()),
+        ("if not TYPE_CHECKING and x:\n    import b\nelse:\n    import b2\n", set()),
+        ("if not not TYPE_CHECKING:\n    import b\nelse:\n    import b2\n", set()),
+        (
+            "import typing as t\nif not t.TYPE_CHECKING:\n    import b\n"
+            "else:\n    import b2\n",
+            set(),
+        ),
+    ],
+)
+def test_only_code_codon_never_compiles_is_run_time_only(
+    source: str, run_time_only: set[str]
+) -> None:
+    # Reading check-time code as run-time-only would hide its imports: where
+    # the check cannot tell, it reports.
+    skipped = {
+        node.names[0].name
+        for node in check._run_time_only_nodes(ast.parse(source))
+        if isinstance(node, ast.Import)
+    }
+    assert skipped == run_time_only
+
+
 @needs_codon
 def test_an_import_in_the_body_of_not_type_checking_is_not_compiled(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
