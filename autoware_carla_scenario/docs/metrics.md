@@ -102,3 +102,9 @@ is the **Metric** card, under World.
 
 To read a metric yourself -- in a probe, a test, a recorder --
 `read_metric(key, world)` returns its value in the frame, or `None`.
+
+A scenario or a Python ODD may import any name of
+`autoware_carla_scenario.metrics` -- the keys, `Metric`, `BUILT_IN_METRICS`,
+`is_metric()` and `read_metric()` -- and is checked against them like any
+other ([Static Check](typecheck.md)). A `Metric` is frozen: assigning to one of
+its fields fails the check, as it fails the run.

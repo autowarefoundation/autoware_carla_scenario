@@ -32,6 +32,7 @@ import autoware_carla_scenario as acs
 from autoware_carla_scenario import (
     carla_install,
     environment,
+    metrics,
     ros2,
     trajectory_recorder,
 )
@@ -335,9 +336,9 @@ def _assert_declared_as_in_python(
 
 
 #: Model modules of one framework module each, which the library check
-#: compiles a checked module against (typecheck/library.py): model module ->
-#: the Python module it models and the names it declares, every one compared
-#: with the Python object below.
+#: compiles a checked module against (typecheck/library.py) or a scenario
+#: imports: model module -> the Python module it models and the names it
+#: declares, every one compared with the Python object below.
 _MODULE_MODELS: dict[str, tuple[Any, tuple[str, ...]]] = {
     "_bridge_pose": (bridge_base, ("BridgePose", "Quaternion", "Vector3")),
     "carla_install": (carla_install, ("installed_executable",)),
@@ -379,6 +380,9 @@ _MODULE_MODELS: dict[str, tuple[Any, tuple[str, ...]]] = {
     # The base and config of ros2/cyclone.codon's CycloneRos2Transport, shared
     # with the checked ros2.transport and ros2.config (REPLACED_MODELS).
     "_ros2": (ros2, ("Ros2EgoConfig", "Ros2EgoTransport")),
+    # What a scenario imports of the checked metrics: every name of its
+    # __all__, the values compared below.
+    "metrics": (metrics, tuple(metrics.__all__)),
 }
 
 #: Classes the model declares only so a checked package can re-export them:
@@ -398,8 +402,10 @@ _UNBUILDABLE: dict[str, str] = {
 
 def test_a_module_model_declares_only_the_compared_names() -> None:
     # A name the module lacks would pass a scenario's check and fail its run.
+    # A model-only helper (`_acs_` prefix) is no name of the module.
     for module, (_python, names) in _MODULE_MODELS.items():
-        assert sorted(_definitions(module)) == sorted(names), module
+        declared = [n for n in _definitions(module) if not n.startswith("_acs_")]
+        assert sorted(declared) == sorted(names), module
 
 
 _MODULE_MODEL_NAMES = [
@@ -453,6 +459,74 @@ def test_the_coverage_model_holds_python_s_values() -> None:
         and isinstance(stmt.value, ast.Call)
     }
     assert members == {m.name: m.value for m in coverage_items.CoverGroup}
+
+
+def _literal(node: ast.expr, constants: dict[str, Any]) -> Any:
+    """*node*'s value, a name being one of *constants*."""
+    if isinstance(node, ast.Name):
+        return constants[node.id]
+    return ast.literal_eval(node)
+
+
+def test_the_metrics_model_holds_python_s_values() -> None:
+    # The keys are compared by value, and each built-in metric by every field
+    # but `read`: Python's is a private function of the module, the model's a
+    # stub (_acs_unread), and nothing in the model runs.
+    definitions = _definitions("metrics")
+    constants: dict[str, Any] = {}
+    for name in metrics.__all__:
+        value = getattr(metrics, name)
+        if isinstance(value, str):
+            node = definitions[name][0]
+            assert isinstance(node, ast.AnnAssign) and node.value is not None
+            constants[name] = ast.literal_eval(node.value)
+            assert constants[name] == value, name
+
+    node = definitions["BUILT_IN_METRICS"][0]
+    assert isinstance(node, ast.AnnAssign) and isinstance(node.value, ast.Dict)
+    assert ast.unparse(node.annotation) == "Dict[str, Metric]"
+    fields = [f.name for f in dataclasses.fields(metrics.Metric)]
+    modelled: dict[str, dict[str, Any]] = {}
+    for key_node, call in zip(node.value.keys, node.value.values):
+        assert key_node is not None and isinstance(call, ast.Call)
+        assert ast.unparse(call.func) == "Metric"
+        arguments = dict(zip(fields, call.args))
+        arguments.update({k.arg: k.value for k in call.keywords if k.arg})
+        assert ast.unparse(arguments.pop("read")) == "_acs_unread"
+        values = {f: _literal(a, constants) for f, a in arguments.items()}
+        modelled[_literal(key_node, constants)] = values
+    assert list(modelled) == list(metrics.BUILT_IN_METRICS)
+    for key, metric in metrics.BUILT_IN_METRICS.items():
+        defaults = {
+            f.name: f.default
+            for f in dataclasses.fields(metric)
+            if f.default is not dataclasses.MISSING
+        }
+        expected = {f: getattr(metric, f) for f in fields if f != "read"}
+        assert {**defaults, **modelled[key]} == expected, key
+    assert metrics.Metric.__dataclass_params__.frozen  # type: ignore[attr-defined]
+    metric_node = definitions["Metric"][0]
+    assert isinstance(metric_node, ast.ClassDef)
+    assert [ast.unparse(d) for d in metric_node.decorator_list] == ["tuple"]
+    # The fields' types and defaults, which a metric built in a scenario takes.
+    model_fields = {
+        stmt.target.id: stmt
+        for stmt in metric_node.body
+        if isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name)
+    }
+    assert list(model_fields) == fields
+    assert (
+        ast.unparse(model_fields["read"].annotation)
+        == "Callable[[carla.World], Optional[float]]"
+    )
+    for field in dataclasses.fields(metrics.Metric):
+        if field.name == "read":
+            continue
+        stmt = model_fields[field.name]
+        assert ast.unparse(stmt.annotation) == field.type, field.name
+        if field.default is not dataclasses.MISSING:
+            assert stmt.value is not None, field.name
+            assert ast.literal_eval(stmt.value) == field.default, field.name
 
 
 def test_the_comparison_rules_spelled_out_for_codon_are_the_enum_s_members() -> None:

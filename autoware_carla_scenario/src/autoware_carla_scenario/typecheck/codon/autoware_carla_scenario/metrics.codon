@@ -1,6 +1,13 @@
 # Model of autoware_carla_scenario.metrics (docs/metrics.md): the keys of the
 # built-in metrics, AlpaSim's metric names, which a scenario passes to
-# MetricCondition or read_metric().
+# MetricCondition or read_metric(), the Metric they are read with and the
+# built-in ones by key (BUILT_IN_METRICS). test_typecheck_model.py compares
+# every name with the Python one, the keys and each built-in metric's fields
+# by value.
+#
+# Nothing here reads a metric: a built-in metric's `read` is _acs_unread(),
+# where Python's is a private function of the module, which no scenario
+# imports. Every other field holds Python's value.
 
 import typesafe_carla.carla as carla
 
@@ -15,6 +22,108 @@ OFFROAD_OR_COLLISION_AT_FAULT: str = "offroad_or_collision_at_fault"
 WRONG_LANE: str = "wrong_lane"
 MIN_DISTANCE_TO_OBSTACLE_M: str = "min_distance_to_obstacle_m"
 MIN_DISTANCE_TO_LANE_BOUNDARY_M: str = "min_distance_to_lane_boundary_m"
+
+
+# A frozen dataclass in Python, so @tuple here: an assignment to a field fails
+# the check as it fails the run.
+@tuple
+class Metric:
+    key: str
+    read: Callable[[carla.World], Optional[float]]
+    title: str = ""
+    unit: str = ""
+    text: str = ""
+    aggregation: str = "max"
+
+
+def _acs_unread(world: carla.World) -> Optional[float]:
+    raise NotImplementedError()
+
+
+BUILT_IN_METRICS: Dict[str, Metric] = {
+    COLLISION_ANY: Metric(
+        COLLISION_ANY,
+        _acs_unread,
+        title="Collision (any)",
+        text="1 while the ego's bounding box overlaps another vehicle's or "
+        "a pedestrian's, else 0 (AlpaSim collision_any)",
+    ),
+    COLLISION_FRONT: Metric(
+        COLLISION_FRONT,
+        _acs_unread,
+        title="Collision (front)",
+        text="1 while another road user's box overlaps the ego's front edge "
+        "(AlpaSim collision_front)",
+    ),
+    COLLISION_REAR: Metric(
+        COLLISION_REAR,
+        _acs_unread,
+        title="Collision (rear)",
+        text="1 while another road user's box overlaps the ego's rear edge "
+        "and not its front (AlpaSim collision_rear)",
+    ),
+    COLLISION_LATERAL: Metric(
+        COLLISION_LATERAL,
+        _acs_unread,
+        title="Collision (lateral)",
+        text="1 while another road user's box overlaps the ego's and "
+        "neither its front nor its rear edge (AlpaSim collision_lateral)",
+    ),
+    COLLISION_AT_FAULT: Metric(
+        COLLISION_AT_FAULT,
+        _acs_unread,
+        title="Collision at fault",
+        text="1 during a front or a lateral collision "
+        "(AlpaSim collision_at_fault)",
+    ),
+    OFFROAD: Metric(
+        OFFROAD,
+        _acs_unread,
+        title="Off the road",
+        text="1 while a corner of the ego's box is on no driving lane "
+        "(AlpaSim offroad)",
+    ),
+    OFFROAD_OR_COLLISION: Metric(
+        OFFROAD_OR_COLLISION,
+        _acs_unread,
+        title="Off the road or collision",
+        text="1 while off the road or in any collision "
+        "(AlpaSim offroad_or_collision)",
+    ),
+    OFFROAD_OR_COLLISION_AT_FAULT: Metric(
+        OFFROAD_OR_COLLISION_AT_FAULT,
+        _acs_unread,
+        title="Off the road or collision at fault",
+        text="1 while off the road or in a collision at fault "
+        "(AlpaSim offroad_or_collision_at_fault)",
+    ),
+    WRONG_LANE: Metric(
+        WRONG_LANE,
+        _acs_unread,
+        title="Against the lane",
+        text="1 while the ego heads more than 120 degrees away from the "
+        "driving lane under it, else 0; unread off the road "
+        "(AlpaSim wrong_lane)",
+    ),
+    MIN_DISTANCE_TO_OBSTACLE_M: Metric(
+        MIN_DISTANCE_TO_OBSTACLE_M,
+        _acs_unread,
+        title="Distance to obstacle",
+        unit="m",
+        text="Box to box, to the nearest other vehicle or pedestrian; 0 "
+        "when touching (AlpaSim min_distance_to_obstacle_m)",
+        aggregation="min",
+    ),
+    MIN_DISTANCE_TO_LANE_BOUNDARY_M: Metric(
+        MIN_DISTANCE_TO_LANE_BOUNDARY_M,
+        _acs_unread,
+        title="Distance to lane edge",
+        unit="m",
+        text="From the ego's box to the edge of the driving lanes around "
+        "it; 0 off the road (AlpaSim min_distance_to_lane_boundary_m)",
+        aggregation="min",
+    ),
+}
 
 
 def is_metric(key: str) -> bool:
