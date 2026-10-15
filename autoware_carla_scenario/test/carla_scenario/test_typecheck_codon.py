@@ -729,6 +729,16 @@ _DEFAULT_HEADER = _HEADER.replace(
             "<scenario check: unused_helper(x: float)>",
         ),
         (
+            "\n    @property\n    def limit(self) -> float:\n"
+            "        return self._config.timeout_seconds\n\n"
+            "    @limit.setter\n    def limit(self, seconds: float) -> None:\n"
+            "        self._config.timeout_seconds = str(seconds)\n",
+            _HEADER,
+            "self._config.timeout_seconds = str(seconds)",
+            "does not match expected type",
+            "<scenario check: CaseScenario.limit (setter)>",
+        ),
+        (
             "",
             _DEFAULT_HEADER,
             'RETRIES: int = "three"',
@@ -741,14 +751,15 @@ _DEFAULT_HEADER = _HEADER.replace(
         "public-method",
         "hook-override",
         "module-function",
+        "setter",
         "class-level-default",
     ],
 )
 def test_code_setup_does_not_reach_is_checked_at_its_line(
     tmp_path: Path, extra: str, header: str, needle: str, message: str, label: str
 ) -> None:
-    # Every function of the scenario's own modules is compiled (#192), with
-    # the call that reached it in the trace.
+    # Every function of the scenario's own modules is compiled (#192), and
+    # every property setter (#200), with the call that reached it in the trace.
     scenario, config, path = _write_case(tmp_path, _VALID_SETUP, extra, header=header)
     error = _only_error(typecheck_scenario(scenario, config))
     assert message in error.message, error.format()
@@ -835,6 +846,10 @@ _SHAPES = """
     def timeout(self) -> float:
         return self._config.timeout_seconds
 
+    @timeout.setter
+    def timeout(self, seconds: float | int) -> None:
+        self._config.timeout_seconds = float(seconds)
+
     def _target_x(self) -> float:
         if self._target is None:
             return 0.0
@@ -899,7 +914,7 @@ class NearGoal(BaseCondition):
 def test_valid_code_setup_does_not_reach_still_compiles(tmp_path: Path) -> None:
     # Compiling every function (#192) must not refuse a valid scenario: a
     # union parameter, static and class methods, a nested function, a
-    # property, an Optional narrowed by a None check, hasattr, an enum, a
+    # property and its setter (#200), an Optional narrowed by a None check, hasattr, an enum, a
     # dataclass, a Protocol and an abstract stub (`raise NotImplementedError`,
     # which Codon 0.19 crashes on as a class).  A generic function and a
     # get_details() returning `dict[str, Any]` of mixed values (what the
