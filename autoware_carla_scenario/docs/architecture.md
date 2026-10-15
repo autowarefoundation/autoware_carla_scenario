@@ -286,7 +286,7 @@ graph LR
         R2 --> R3["Attempt 2"]
         R3 -->|fail| R4["..."]
         R4 --> R5["Attempt N"]
-        R5 -->|fail| R6["RuntimeError"]
+        R5 -->|fail| R6["RuntimeError, or an errored result (continue_on_error)"]
     end
 ```
 
@@ -294,6 +294,7 @@ Key features:
 
 - **Cooldown**: Configurable wait time (`cooldown_seconds`) between consecutive scenarios to allow CARLA server cleanup.
 - **Retry**: Failed scenarios are retried up to `cooldown_max_retries` times before raising an error.
+  With `run_all(continue_on_error=True)`, which batch mode uses, a scenario that fails every attempt is recorded instead as a failed result naming the error (`errored_indices()` tells it from a scenario that ran and failed), the world is reloaded, and the queue goes on with the next one.
 - **Server ownership**: Accepts an external `CarlaServerManager` or creates and owns one internally.
 - **pytest integration**: `as_fixture()` generates a session-scoped pytest fixture with automatic skip when there is no CARLA to launch.
 

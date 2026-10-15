@@ -82,6 +82,11 @@ uv run scenario scenario='*/*'
 - All scenarios in a batch **must share the same map** (CARLA loads one map per session)
 - Results are written to `outputs/YYYY-MM-DD/HH-MM-SS/batch_results.json`
 - A summary table is printed at the end with per-scenario pass/fail status
+- A case that cannot run at all -- its run raises on every attempt
+  (`server.cooldown_max_retries`), e.g. a spawn point with no ground under it --
+  does not end the batch: it is reported as `[ERROR]` with the error, its
+  `batch_results.json` entry is `"passed": false` with `"error": true`, and the
+  batch goes on with the next case. Ctrl+C still stops the batch
 - A scenario with a `sweep:` section runs once, as configured; add `--multirun`
   to run every case of it (see [Running every sweep case in a batch](#running-every-sweep-case-in-a-batch))
 
@@ -490,7 +495,7 @@ Each scenario run generates output in `outputs/YYYY-MM-DD/HH-MM-SS/`:
 | Code | Meaning |
 |------|---------|
 | 0 | All scenarios passed |
-| 1 | One or more scenarios failed, or configuration/runtime error |
+| 1 | One or more scenarios failed or errored, or configuration/runtime error |
 
 ---
 
@@ -744,7 +749,7 @@ VIEWER_BASE_PATH=outputs uv run viewer
 ### Use Case 6: Resume a Failed Batch
 
 ```bash
-# Original batch run (5 scenarios, failed at the 4th)
+# Original batch run (5 scenarios, stopped at the 4th, e.g. by Ctrl+C)
 uv run scenario scenario='intersection_passing/*'
 
 # Resume from the 4th scenario
