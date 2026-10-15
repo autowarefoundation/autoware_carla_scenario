@@ -1043,11 +1043,16 @@ def run_batch(
             timeout_seconds=float(cfg.scenario.get("timeout_seconds", 60.0)),
             case=_odd_case(cfg),
         )
+    # From here the queue alone holds the scenarios, and lets each go once it
+    # has run: a batch reports results, and a finished scenario kept to the
+    # end keeps everything its run built (its entities, conditions, the ego's
+    # driver), case after case.
+    del scenarios, scenario
 
     logger.info("All %d scenario(s) built. Starting execution...", len(labels))
 
     with queue:
-        results = queue.run_all()
+        results = queue.run_all(release=True)
 
     all_passed = _print_summary(
         labels,
