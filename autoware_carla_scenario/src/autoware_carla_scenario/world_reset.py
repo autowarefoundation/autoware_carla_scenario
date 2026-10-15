@@ -58,8 +58,8 @@ def episode_of(world: carla.World) -> Optional[int]:
     client keeps it, unlike ``get_map()``, which builds the whole road network.
 
     The id is a random 64-bit number, and a client that hands it over signed
-    (typesafe-carla does) gives a negative one about every other load: any
-    number is an id, so only ``None`` says there is none.
+    (typesafe-carla 0.8.3 and earlier did) gives a negative one about every
+    other load: any number is an id, so only ``None`` says there is none.
     """
     try:
         return int(world.id)
