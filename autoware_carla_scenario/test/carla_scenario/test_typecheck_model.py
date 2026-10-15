@@ -519,6 +519,9 @@ def _assert_frozen_fields(module: str, python: type) -> dict[str, ast.AnnAssign]
             assert stmt.value is not None, field.name
             assert ast.literal_eval(stmt.value) == field.default, field.name
     new = _methods(node).get("__new__")
+    # A `read` field needs the __new__ that takes any callable: Codon 0.19
+    # crashes on a `Callable` field given a function of another type.
+    assert new is not None or "read" not in model_fields, python.__name__
     if new is not None:
         # A __new__ that takes any callable as `read` takes Python's
         # parameters: the fields, in order, with their defaults.
