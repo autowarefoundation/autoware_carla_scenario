@@ -69,9 +69,19 @@ class _FakeActor:
         self.destroyed = False
         self._transform = transform if transform is not None else _CARLA_SPAWN
         self.controls: List["carla.VehicleControl"] = []
+        self.type_id = "vehicle.lincoln.mkz"
+        self.light_state = 0
+        self.lights_set: List[int] = []
 
     def apply_control(self, control: "carla.VehicleControl") -> None:
         self.controls.append(control)
+
+    def get_light_state(self) -> int:
+        return self.light_state
+
+    def set_light_state(self, state: int) -> None:
+        self.light_state = int(state)
+        self.lights_set.append(int(state))
 
     def get_transform(self) -> "carla.Transform":
         return self._transform
@@ -770,3 +780,33 @@ def test_scenarios_run_back_to_back_each_with_a_fresh_stack(tmp_path) -> None:
     assert logs == ["autoware-000-left_turn.log", "autoware-001-left_turn.log"]
     for log in tmp_path.glob("autoware-*.log"):
         assert "goal 10.0" in log.read_text()
+
+
+# ---------------------------------------------------------------------------
+# Turn indicators
+# ---------------------------------------------------------------------------
+
+
+def test_autoware_s_turn_indicators_light_the_ego() -> None:
+    """The interface node drives; the framework lights what Autoware commands."""
+    bridge = FakeAutowareBridge()
+    ego_actor = _FakeActor(42, str(EGO_ROLE_NAME))
+    ego_actor.light_state = int(carla.VehicleLightState.LowBeam)
+    world = _FakeWorld([ego_actor])
+    entity = _make_entity(bridge=bridge)
+    _place(entity, world)
+    _drive_to_ready(entity, world)
+
+    bridge.report_turn_indicators(3)  # ENABLE_RIGHT
+    entity.on_tick(world, 0.0)
+    entity.on_tick(world, 0.0)  # nothing new reported: nothing set
+    bridge.report_turn_indicators(9)  # no such command: ignored
+    entity.on_tick(world, 0.0)
+    bridge.report_turn_indicators(1)  # DISABLE
+    entity.on_tick(world, 0.0)
+
+    low_beam = int(carla.VehicleLightState.LowBeam)
+    assert ego_actor.lights_set == [
+        low_beam | int(carla.VehicleLightState.RightBlinker),
+        low_beam,
+    ]

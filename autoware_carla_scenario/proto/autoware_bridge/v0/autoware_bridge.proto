@@ -33,7 +33,9 @@
 // latches the reported readiness so AutowareEgoEntity can poll it per tick.
 //
 // High-bandwidth data (sensors, control, /clock, tf) never flows here; it stays
-// on ROS 2 topics and direct CARLA control inside the interface node. Ego
+// on ROS 2 topics and direct CARLA control inside the interface node. The one
+// command that does is the turn indicators (ReportTurnIndicators): a change a
+// few times a run, which the framework applies to the CARLA ego itself. Ego
 // pose/velocity for scenario conditions is read directly from the CARLA world.
 //
 // This file is the design-time contract only. Stub generation (via
@@ -102,6 +104,13 @@ message ReportReadinessRequest {
 }
 message ReportReadinessResponse {}
 
+message ReportTurnIndicatorsRequest {
+  // autoware_vehicle_msgs/TurnIndicatorsCommand.command: 0 NO_COMMAND,
+  // 1 DISABLE, 2 ENABLE_LEFT, 3 ENABLE_RIGHT.
+  uint32 command = 1;
+}
+message ReportTurnIndicatorsResponse {}
+
 // -- Service ----------------------------------------------------------------
 
 // Hosted by the scenario library; the autoware_carla_interface node is the
@@ -116,4 +125,11 @@ service AutowareBridge {
   // engaged, and driving. The framework latches it so the entity can poll it
   // per tick.
   rpc ReportReadiness(ReportReadinessRequest) returns (ReportReadinessResponse);
+
+  // Push the turn indicators Autoware commands, each time the command changes.
+  // The interface node drives the ego but need not light its indicators, which
+  // the framework's scenarios read off the CARLA actor; the framework lights
+  // them from this. A client that never calls it leaves them to the scenario.
+  rpc ReportTurnIndicators(ReportTurnIndicatorsRequest)
+      returns (ReportTurnIndicatorsResponse);
 }

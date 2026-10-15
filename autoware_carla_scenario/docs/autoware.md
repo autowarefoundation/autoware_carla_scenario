@@ -11,6 +11,14 @@ routing and engaging through the AD API. Autoware itself only has to follow the
 scenario's world, ego and clock, which `autoware_carla_interface` does with
 `scenario_mode:=true`.
 
+Autoware's turn indicators reach the ego too. `scenario_bridge` forwards each
+change of `/control/command/turn_indicators_cmd` (`autoware_vehicle_msgs/TurnIndicatorsCommand`,
+its `turn_indicators_topic` parameter; empty turns it off) with the bridge's
+`ReportTurnIndicators`, and the entity lights the CARLA ego's indicators with it,
+leaving its other lights as they are. That is what a camera sees and what
+`TurnIndicatorCondition` reads, whether or not `autoware_carla_interface` lights them
+itself.
+
 Who starts Autoware is `autoware.launcher.type`:
 
 | Value | Who starts Autoware |

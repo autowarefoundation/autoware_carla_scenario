@@ -214,6 +214,7 @@ class CycloneRos2Transport(Ros2EgoTransport):
     _publishers: List[Tuple[DataWriter, _Build]]
     _image_writers: List[DataWriter]
     _drains: List[Tuple[str, _Drain]]
+    _turn_indicators: Optional[DataReader]
 
     def __init__(self, config: Ros2EgoConfig) -> None:
         super().__init__(config)
@@ -221,6 +222,7 @@ class CycloneRos2Transport(Ros2EgoTransport):
         self._publishers = []
         self._image_writers = []
         self._drains = []
+        self._turn_indicators = None
 
     def open(self) -> None:
         if self._participant is not None:
@@ -253,6 +255,13 @@ class CycloneRos2Transport(Ros2EgoTransport):
                 msg.Clock,
                 lambda state, stamp: msg.Clock(clock=stamp),
             ),
+            (
+                config.turn_indicators_report_topic,
+                msg.TurnIndicatorsReport,
+                lambda state, stamp: msg.TurnIndicatorsReport(
+                    stamp=stamp, report=state.turn_indicators
+                ),
+            ),
         )
         published = [(name, t, build) for name, t, build in state_topics if name]
         self._publishers = [
@@ -280,6 +289,13 @@ class CycloneRos2Transport(Ros2EgoTransport):
             (source.name, _source_drain(participant, source))
             for source in config.sources
         ]
+        if config.turn_indicators_command_topic:
+            self._turn_indicators = _reader(
+                participant,
+                config.turn_indicators_command_topic,
+                msg.TurnIndicatorsCommand,
+                1,
+            )
         logger.info(
             "Joined DDS domain %d: publishing %s; commands from %s",
             config.domain_id,
@@ -318,9 +334,16 @@ class CycloneRos2Transport(Ros2EgoTransport):
     def poll(self) -> List[Received]:
         return [(name, command) for name, drain in self._drains for command in drain()]
 
+    def poll_turn_indicators(self) -> Optional[int]:
+        if self._turn_indicators is None:
+            return None
+        samples = _take(self._turn_indicators, 1)
+        return int(samples[-1].command) if samples else None
+
     def close(self) -> None:
         # Dropping the participant deletes every entity it owns.
         self._drains = []
+        self._turn_indicators = None
         self._publishers = []
         self._image_writers = []
         self._participant = None

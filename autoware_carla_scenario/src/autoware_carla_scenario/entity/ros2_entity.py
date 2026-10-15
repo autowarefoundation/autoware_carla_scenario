@@ -49,6 +49,11 @@ from ..ros2.config import Ros2EgoConfig
 from ..ros2.transport import CameraFrame, Ros2EgoTransport
 from ..sensor.carla_camera import CarlaCameraSensor, CarlaCameraSensorConfig
 from ..utils.powertrain import ChaosPowertrain
+from ..utils.turn_indicator import (
+    autoware_report,
+    show_autoware_command,
+    turn_indicators_of,
+)
 from .externally_driven import ExternallyDrivenEgo
 
 if TYPE_CHECKING:
@@ -218,6 +223,25 @@ class Ros2EgoEntity(ExternallyDrivenEgo):
         selection = self._arbiter.select(state.stamp_us)
         self._note_selection(selection)
         self._apply(actor, selection, observation)
+        self._show_turn_indicators(actor, transport.poll_turn_indicators())
+
+    def _show_turn_indicators(
+        self, actor: "carla.Actor", command: Optional[int]
+    ) -> None:
+        """Light the ego's indicators as the newest ``TurnIndicatorsCommand`` asks."""
+        if command is None:
+            return
+        value: int = command
+        try:
+            changed = show_autoware_command(actor, value)
+        except ValueError:
+            logger.warning(
+                "TurnIndicatorsCommand %d is none of the message's values; ignored",
+                value,
+            )
+            return
+        if changed:
+            logger.info("Turn indicators: command %d", value)
 
     def on_scenario_end(self, world: "carla.World") -> None:
         """Leave the DDS domain.
@@ -293,6 +317,12 @@ class Ros2EgoEntity(ExternallyDrivenEgo):
                 _steering_tire_angle(actor)
                 if self._config.steering_status_topic
                 else 0.0
+            ),
+            # One more, likewise.
+            turn_indicators=(
+                autoware_report(turn_indicators_of(actor))
+                if self._config.turn_indicators_report_topic
+                else 1
             ),
         )
         return state, observation

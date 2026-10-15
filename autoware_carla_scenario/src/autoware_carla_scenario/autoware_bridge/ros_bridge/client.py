@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import logging
+import threading
 from typing import Optional
 
 from .._proto import autoware_bridge_pb2 as pb2
@@ -19,7 +20,7 @@ import grpc
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["ScenarioBridgeClient", "Mission"]
+__all__ = ["ScenarioBridgeClient", "Mission", "TurnIndicatorForwarder"]
 
 
 @dataclass(frozen=True)
@@ -104,8 +105,59 @@ class ScenarioBridgeClient:
             pb2.ReportReadinessRequest(ready=ready), timeout=timeout
         )
 
+    def report_turn_indicators(
+        self, command: int, timeout: Optional[float] = None
+    ) -> None:
+        """Push Autoware's turn-indicator command to the scenario framework.
+
+        Args:
+            command: An ``autoware_vehicle_msgs/TurnIndicatorsCommand`` value.
+            timeout: Per-RPC timeout in seconds.
+
+        Raises:
+            grpc.RpcError: If the server cannot be reached.
+        """
+        self._stub.ReportTurnIndicators(
+            pb2.ReportTurnIndicatorsRequest(command=command), timeout=timeout
+        )
+
     def close(self) -> None:
         """Close the channel.  Idempotent; a no-op for an injected channel."""
         if self._owns_channel and self._channel is not None:
             self._channel.close()
             self._channel = None  # type: ignore[assignment]
+
+
+class TurnIndicatorForwarder:
+    """Forwards Autoware's turn-indicator command to the scenario when it changes.
+
+    Autoware publishes ``TurnIndicatorsCommand`` every control cycle; the scenario
+    needs only the changes.  ``NO_COMMAND`` is not forwarded (it changes nothing),
+    and a command whose report failed is sent again with the next message.
+
+    Args:
+        client: The bridge client to report through.
+        timeout: Per-RPC timeout in seconds.
+    """
+
+    #: ``TurnIndicatorsCommand.NO_COMMAND``.
+    NO_COMMAND = 0
+
+    def __init__(self, client: ScenarioBridgeClient, timeout: Optional[float]) -> None:
+        self._client = client
+        self._timeout = timeout
+        self._sent: Optional[int] = None
+        self._lock = threading.Lock()
+
+    def observe(self, command: int) -> bool:
+        """Take one published command; whether it was reported now.
+
+        Raises:
+            grpc.RpcError: If reporting it failed; the next call retries.
+        """
+        with self._lock:
+            if command == self.NO_COMMAND or command == self._sent:
+                return False
+            self._client.report_turn_indicators(command, timeout=self._timeout)
+            self._sent = command
+            return True

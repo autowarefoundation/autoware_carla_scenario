@@ -359,3 +359,59 @@ def test_the_cameras_go_before_the_transport_closes() -> None:
     # A frame still in flight after the end is dropped.
     listener(_image(2.0))
     assert transport.images == []
+
+
+# ---------------------------------------------------------------------------
+# Turn indicators
+# ---------------------------------------------------------------------------
+
+# CARLA's VehicleLightState bits.
+_LOW_BEAM, _RIGHT_BLINKER, _LEFT_BLINKER = 0x2, 0x10, 0x20
+
+
+def _lights(actor: MagicMock, initial: int) -> List[int]:
+    """Have *actor* keep its light state as CARLA does; the states it was set to."""
+    state = [initial]
+    set_to: List[int] = []
+
+    def _set(value: int) -> None:
+        state[0] = int(value)
+        set_to.append(int(value))
+
+    actor.get_light_state.side_effect = lambda: state[0]
+    actor.set_light_state.side_effect = _set
+    return set_to
+
+
+def test_autoware_s_turn_indicators_command_lights_the_ego() -> None:
+    actor = _actor()
+    set_to = _lights(actor, _LOW_BEAM)
+    entity, transport, _, clock = _started(actor=actor)
+
+    transport.deliver_turn_indicators(2)  # ENABLE_LEFT
+    _tick(entity, clock)
+    transport.deliver_turn_indicators(2)  # the same, again: nothing to set
+    _tick(entity, clock)
+    transport.deliver_turn_indicators(0)  # NO_COMMAND changes nothing
+    _tick(entity, clock)
+    transport.deliver_turn_indicators(1)  # DISABLE
+    _tick(entity, clock)
+
+    assert set_to == [_LOW_BEAM | _LEFT_BLINKER, _LOW_BEAM]
+
+
+def test_the_state_reports_the_indicators_the_ego_shows() -> None:
+    actor = _actor()
+    _lights(actor, _RIGHT_BLINKER)
+    entity, transport, _, clock = _started(actor=actor)
+    _tick(entity, clock)
+    assert transport.published[-1].turn_indicators == 3  # ENABLE_RIGHT
+
+
+def test_an_unknown_turn_indicators_command_is_ignored() -> None:
+    actor = _actor()
+    set_to = _lights(actor, 0)
+    entity, transport, _, clock = _started(actor=actor)
+    transport.deliver_turn_indicators(9)
+    _tick(entity, clock)
+    assert set_to == []

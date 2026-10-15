@@ -19,6 +19,11 @@ scenario runner:
    flag and push it back with ``ReportReadiness``.  ``require_localization_initialized``
    controls whether localization is part of "ready".
 
+Throughout the run it also forwards Autoware's turn-indicator command
+(``turn_indicators_topic``, ``/control/command/turn_indicators_cmd``) with
+``ReportTurnIndicators`` whenever it changes, so the framework lights the CARLA
+ego's indicators, which its scenarios read; an empty topic turns that off.
+
 The startup runs as an **idempotent reconciliation loop**: a periodic tick (and
 every AD API state change) re-drives whichever step is still outstanding, so a
 step that cannot complete yet -- the AD API services are not up, the mission
@@ -55,7 +60,9 @@ from .ad_api import ReadinessAggregator
 from .ad_api import check_enum_values
 from .client import Mission
 from .client import ScenarioBridgeClient
+from .client import TurnIndicatorForwarder
 from .._proto import autoware_bridge_pb2 as pb2
+from autoware_vehicle_msgs.msg import TurnIndicatorsCommand
 from geometry_msgs.msg import Pose
 from geometry_msgs.msg import PoseWithCovarianceStamped
 import grpc
@@ -168,6 +175,17 @@ class ScenarioBridgeNode(Node):
         group = ReentrantCallbackGroup()
         self._create_ad_api_clients(group)
         self._subscribe_ad_api_states(group)
+        self._turn_indicators = TurnIndicatorForwarder(
+            self._client, self._rpc_timeout_s
+        )
+        if self._turn_indicators_topic:
+            self.create_subscription(
+                TurnIndicatorsCommand,
+                self._turn_indicators_topic,
+                self._on_turn_indicators,
+                1,
+                callback_group=group,
+            )
 
         # Reconciliation tick: polls GetMission until one arrives, then re-drives
         # the outstanding startup step on every pass.  It keeps ticking (rather
@@ -236,6 +254,15 @@ class ScenarioBridgeNode(Node):
             self.declare_parameter("step_timeout_s", 10.0)
             .get_parameter_value()
             .double_value
+        )
+        # Autoware's turn-indicator command, forwarded to the scenario so it
+        # lights the CARLA ego's indicators; empty turns that off.
+        self._turn_indicators_topic = (
+            self.declare_parameter(
+                "turn_indicators_topic", "/control/command/turn_indicators_cmd"
+            )
+            .get_parameter_value()
+            .string_value
         )
         return (
             self.declare_parameter("tick_period_s", 0.5)
@@ -593,6 +620,15 @@ class ScenarioBridgeNode(Node):
             msg.mode, msg.is_autoware_control_enabled, msg.is_autonomous_mode_available
         )
         self._advance()
+
+    def _on_turn_indicators(self, msg: TurnIndicatorsCommand) -> None:
+        try:
+            if self._turn_indicators.observe(int(msg.command)):
+                self.get_logger().info(f"turn indicators: command {msg.command}")
+        except grpc.RpcError as error:
+            self.get_logger().warning(
+                f"ReportTurnIndicators failed ({error.code()}); will retry"
+            )
 
     def destroy_node(self) -> bool:
         """Close the gRPC channel on shutdown."""
