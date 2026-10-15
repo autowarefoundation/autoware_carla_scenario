@@ -1613,7 +1613,7 @@ def transform_source_lines(
     }
     appended = [
         *_enum_lookups(rewriter.enums),
-        *_inherited_init_extensions(inherited_inits(tree, init_classes, exceptions)),
+        *_inherited_init_extensions(_inherited_bases(tree, init_classes, exceptions)),
     ]
     text = PRELUDE + edits.apply()
     origin = list(origin)
@@ -1647,13 +1647,18 @@ def _enum_lookups(enums: list[tuple[str, str]]) -> list[tuple[str, str]]:
     ]
 
 
-def _inherited_init_extensions(names: list[str]) -> list[tuple[str, str]]:
-    """The ``__init__`` each class of *names* inherits, appended with ``@extend``.
+def _inherited_init_extensions(
+    bases: list[tuple[str, str | None]],
+) -> list[tuple[str, str]]:
+    """The ``__init__`` each class of *bases* inherits, appended with ``@extend``.
 
     Codon 0.19 inherits no ``__init__``: a class without one gets a
     constructor taking each of its fields, which refuses what the base's
     takes ("'config' is an invalid keyword argument", #201).  The one
-    appended passes everything on to the base's, which checks it.
+    appended passes everything on to the base's, which checks it: through
+    ``super()``, or, when the ``__init__`` is a later base's (``class
+    S(Mixin, Base)``), through that base by name, as Codon's ``super()`` is
+    the first base's.
     """
     return [
         (
@@ -1661,10 +1666,14 @@ def _inherited_init_extensions(names: list[str]) -> list[tuple[str, str]]:
             (
                 f"\n\n@extend\nclass {name}:\n"
                 "    def __init__(self, *args, **kwargs):\n"
-                "        super().__init__(*args, **kwargs)\n"
+                + (
+                    "        super().__init__(*args, **kwargs)\n"
+                    if base is None
+                    else f"        {base}.__init__(self, *args, **kwargs)\n"
+                )
             ),
         )
-        for name in names
+        for name, base in bases
     ]
 
 
@@ -1745,6 +1754,20 @@ def inherited_inits(
     generated, and an Enum or an exception (*exceptions*, derived
     statically) is constructed as Codon builds it, so none of them is one.
     """
+    return [name for name, _ in _inherited_bases(tree, init_classes, exceptions)]
+
+
+def _inherited_bases(
+    tree: ast.Module,
+    init_classes: Collection[str] = (),
+    exceptions: Collection[str] = (),
+) -> list[tuple[str, str | None]]:
+    """:func:`inherited_inits`, each with the base whose ``__init__`` it is.
+
+    ``None`` when that is the first base (``super()`` reaches it), else the
+    base as the source spells it: Python takes the ``__init__`` of the first
+    base that has one (``class S(Mixin, Base)``: ``Base``'s).
+    """
     local = {n.name: n for n in tree.body if isinstance(n, ast.ClassDef)}
     aliases = _import_aliases(tree)
     known = {
@@ -1753,15 +1776,19 @@ def inherited_inits(
         if name in init_classes and alias not in local
     } | (set(init_classes) - set(local))
     with_init = classes_with_init(local, known)
-    out: list[str] = []
+    out: list[tuple[str, str | None]] = []
     for name, node in local.items():
         if _defines_init(node) or _is_dataclass_node(node) or name in exceptions:
             continue
         bases = [(_dotted(b) or "").rsplit(".", 1)[-1] for b in node.bases]
         if any(b in _ENUM_BASES for b in bases) or node.keywords:
             continue
-        if any(b in with_init for b in bases):
-            out.append(name)
+        for index, base in enumerate(bases):
+            if base in with_init:
+                out.append(
+                    (name, None if index == 0 else ast.unparse(node.bases[index]))
+                )
+                break
     return out
 
 

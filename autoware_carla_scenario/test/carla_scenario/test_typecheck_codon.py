@@ -809,6 +809,27 @@ def test_a_wrong_argument_to_an_inherited_init_is_refused(tmp_path: Path) -> Non
     assert any(f"scenario.py:{call}]" in frame for frame in error.trace), error.format()
 
 
+def test_an_init_inherited_from_a_later_base_compiles(tmp_path: Path) -> None:
+    # Python takes CaseParent's __init__, past the mixin, which has none; the
+    # check calls it by name, as Codon's super() is the mixin's.
+    extra = (
+        "\n\n\nclass CaseMixin:\n"
+        "    def greeting(self) -> str:\n"
+        '        return "hello"\n'
+        "\n\nclass CaseScenario(CaseMixin, CaseParent):\n"
+        "    def is_done(self) -> bool:\n"
+        "        return True\n"
+        "\n\ndef build(ego: EgoConfig) -> CaseParent:\n"
+        "    return CaseScenario(ego, Lanelet2Pose(1, 0.0), config=CaseConfig())\n"
+    )
+    scenario, config, _ = _write_case(
+        tmp_path, _VALID_SETUP, extra, header=_PARENT_HEADER
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+    assert not result.warnings, result.format()
+
+
 _OPTIONAL_HEADER = _HEADER.replace(
     "import logging\n", "import logging\nfrom typing import Optional\n"
 )

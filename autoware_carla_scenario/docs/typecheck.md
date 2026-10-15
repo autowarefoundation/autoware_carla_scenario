@@ -292,14 +292,25 @@ Two things Python does that Codon 0.19 does not are filled in for you:
   It is added only where a base really defines an `__init__` (a class of the
   scenario's modules, its own or one it inherits, or one of the model's, such
   as `BaseScenario`'s), and never to a dataclass, an `Enum` or an exception,
-  which are built as before. The base's `__init__` still checks every
-  argument: a wrong one is reported at the `class` line of the subclass,
-  with the call that passed it in the trace:
+  which are built as before. When the `__init__` is a later base's
+  (`class MyDerivedScenario(MyMixin, MyScenario)`, the mixin having none),
+  it is called through that base, `MyScenario.__init__(self, *args,
+  **kwargs)`, as Python does: Codon's `super()` is the first base's. The
+  base's `__init__` still checks every argument: a wrong one is reported at
+  the `class` line of the subclass, with the call that passed it in the
+  trace:
 
   ```text
   scenario.py:52:9: error: no function 'MyScenario.__init__' with arguments (Super[MyScenario], EgoConfig, Lanelet2Pose, str)
       during the realization of __init__(self: MyDerivedScenario, ...) [scenario.py:58]
   ```
+
+  A literal `None` passed through it is refused, though Python takes it
+  (`MyDerivedScenario(ego, pose, None)`, or `config=None`): forwarded
+  through `*args` or `**kwargs`, it reaches the base's `__init__` as an
+  `Optional[NoneType]`, which no `Optional[X]` parameter takes. Leave the
+  argument to its default, pass a variable declared `Optional[X]`, or give
+  the subclass an `__init__` of its own.
 
 - **`return None` from a function returning `Optional[X]`.** A bare `None`
   is Codon's `NoneType`, so a function whose only return is `return None`

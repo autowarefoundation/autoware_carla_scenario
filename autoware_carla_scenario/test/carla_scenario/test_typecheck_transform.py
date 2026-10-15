@@ -1433,6 +1433,31 @@ def test_an_init_of_a_base_defined_elsewhere_is_inherited() -> None:
     assert "@extend" not in transform_source(source)
 
 
+def test_an_init_of_a_later_base_is_called_through_that_base() -> None:
+    # Python takes the __init__ of the first base that has one; Codon's
+    # super() is the first base's, a mixin's generated constructor here.
+    source = textwrap.dedent(
+        """
+        import base
+        class Mixin:
+            def hello(self) -> int:
+                return 1
+        class A(Mixin, base.Parent):
+            pass
+        class B(base.Parent, Mixin):
+            pass
+        """
+    )
+    out = transform_source(source, init_classes={"Parent"})
+    assert (
+        "@extend\nclass A:\n"
+        "    def __init__(self, *args, **kwargs):\n"
+        "        base.Parent.__init__(self, *args, **kwargs)\n"
+    ) in out
+    assert _INHERITED_INIT.format(name="B") in out
+    assert "class Mixin:\n    def __init__" not in out
+
+
 def test_a_dataclass_enum_or_exception_inherits_no_init() -> None:
     tree = ast.parse(
         textwrap.dedent(
