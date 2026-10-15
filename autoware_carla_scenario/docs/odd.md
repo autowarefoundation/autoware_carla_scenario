@@ -393,7 +393,17 @@ onto the four built-in measures; the two of the vehicle ahead count stays of
 1 s or more (`min_stay`), so a gap the ego only closes through is not
 covered.
 
+#### Measures and metrics
 
+A measure reads a condition the ego drives in: what the scenario sets up.
+How the ego *drives* -- whether it collides, leaves the road, drives against
+the traffic, how close it comes to other road users -- is an outcome, read by a
+**metric** ([Metrics](metrics.md)). An ODD cannot map onto a metric:
+`scenario_measure("offroad")`, or `measure: offroad` in a binding file, is
+refused. Were it allowed, the ego's own driving would decide whether a run is
+inside the domain it is tested in, and an ODD excluding `offroad` would report
+a run that left the road as outside the ODD rather than as failed. A run
+watches a metric with `MetricCondition` instead.
 
 ## Writing an ODD in OpenODD YAML
 

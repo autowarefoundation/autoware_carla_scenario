@@ -32,6 +32,10 @@ import re
 # -- would let a renamed state leave a dead option in the editor that only
 # fails when the scenario is built.
 from ..action_state import ActionState
+
+# Free to import for the same reason: metrics reads CARLA only when a metric
+# is read, so the Metric card's options are the metrics themselves.
+from ..metrics import BUILT_IN_METRICS
 from dataclasses import dataclass
 from typing import Any, Literal, Optional
 
@@ -2543,6 +2547,50 @@ register_condition_spec(
             ),
         ),
         description="Scenario clock reaches a threshold (passes).",
+    )
+)
+
+#: The metrics a Metric card can watch.
+METRIC_OPTIONS: tuple[SelectOption, ...] = tuple(
+    SelectOption(metric.key, metric.title) for metric in BUILT_IN_METRICS.values()
+)
+
+register_condition_spec(
+    ConditionSpec(
+        type_id="metric",
+        title="Metric",
+        category="World",
+        builder="build_metric_condition",
+        target="..conditions:MetricCondition",
+        visual=ConditionVisual(
+            metric="Metric", rule="rule", value="value", details=("metric",)
+        ),
+        fields=(
+            FieldSpec(
+                name="metric",
+                label="Metric",
+                kind="select",
+                default="collision_at_fault",
+                options=METRIC_OPTIONS,
+            ),
+            _rule_field("greater_than_or_equal"),
+            FieldSpec(
+                name="value",
+                label="Value",
+                kind="number",
+                default=1.0,
+                help=(
+                    "In the metric's unit: metres for a distance, 1 (it "
+                    "happens) or 0 for an event."
+                ),
+            ),
+        ),
+        description=(
+            "How the ego drives, read off the world: a collision, leaving the "
+            "road, driving against the lane, how close it comes to other road "
+            "users or the lane edge (AlpaSim's metrics).  Usually a fail "
+            "condition."
+        ),
     )
 )
 
