@@ -52,7 +52,10 @@ def batch(monkeypatch: pytest.MonkeyPatch) -> _Batch:
         def __exit__(self, *_: object) -> None:
             pass
 
-        def run_all(self) -> list[object]:
+        def run_all(self, **_: object) -> list[object]:
+            return []
+
+        def errored_indices(self) -> list[int]:
             return []
 
     def fake_summary(
@@ -60,6 +63,7 @@ def batch(monkeypatch: pytest.MonkeyPatch) -> _Batch:
         _results: object,
         output_dir: object = None,
         overrides: list[list[str]] | None = None,
+        errored: object = (),
     ) -> bool:
         seen.labels = names
         seen.overrides = overrides

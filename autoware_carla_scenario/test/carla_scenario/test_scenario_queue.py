@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import gc
+import weakref
 from unittest.mock import MagicMock, patch
 
 import typesafe_carla.carla as carla
@@ -37,6 +39,75 @@ class _NullScenario(BaseScenario):
 
     def is_done(self) -> bool:
         return True
+
+
+class _HeavyScenario(_NullScenario):
+    """A scenario holding what a run leaves behind (a stand-in for its
+    entities, conditions and the ego's driver)."""
+
+    payload: bytearray
+
+    def __init__(self, ego_config: EgoConfig) -> None:
+        super().__init__(ego_config)
+        self.payload = bytearray(1 << 20)
+
+
+class _RecordingRunner:
+    """A runner that keeps no scenario: it records, when each one starts,
+    which scenarios it ran before are still alive.  (A MagicMock keeps every
+    argument it was called with.)"""
+
+    def __init__(self) -> None:
+        self._ran: list[weakref.ref[BaseScenario]] = []
+        self.alive_before: list[list[int]] = []
+        self.timeouts: list[float | None] = []
+        self.results: list[ScenarioResult] = []
+
+    def run_scenario(
+        self,
+        scenario: BaseScenario,
+        *,
+        timeout_seconds: float | None = None,
+        case: object = None,
+        reset_world: bool = True,
+    ) -> ScenarioResult:
+        gc.collect()
+        self.alive_before.append(
+            [k for k, ref in enumerate(self._ran) if ref() is not None]
+        )
+        self._ran.append(weakref.ref(scenario))
+        self.timeouts.append(timeout_seconds)
+        result = ScenarioResult(passed=True, message="ok", elapsed_seconds=0.0)
+        self.results.append(result)
+        return result
+
+    def reset_world(self) -> None:
+        pass
+
+
+class _SecondCaseRaises:
+    """A runner whose run of one scenario (``failing``) raises *error* on
+    every attempt; it records which scenarios it ran, by position, and when
+    it reloaded the world."""
+
+    def __init__(self, error: BaseException) -> None:
+        self.error = error
+        self.failing: BaseScenario | None = None
+        self.order: list[int] = []
+        self.ran: list[int] = []
+        self.events: list[str] = []
+
+    def run_scenario(self, scenario: BaseScenario, **_: object) -> ScenarioResult:
+        if id(scenario) not in self.order:
+            self.order.append(id(scenario))
+        self.ran.append(self.order.index(id(scenario)))
+        self.events.append("run")
+        if scenario is self.failing:
+            raise self.error
+        return ScenarioResult(passed=True, message="ok", elapsed_seconds=1.0)
+
+    def reset_world(self) -> None:
+        self.events.append("reset")
 
 
 def _make_queue_with_mock_runner() -> tuple[ScenarioQueue, MagicMock]:
@@ -222,6 +293,185 @@ class TestScenarioQueueUnit:
         queue.run_all()
 
         mock_runner.reset_world.assert_called_once_with()
+
+    def test_a_releasing_run_lets_go_of_each_scenario_once_it_has_run(
+        self,
+    ) -> None:
+        queue = ScenarioQueue(server=MagicMock())
+        runner = _RecordingRunner()
+        queue._runner = runner  # type: ignore[assignment]
+        refs = []
+        for k in range(4):
+            scenario = _HeavyScenario(_make_ego_config())
+            refs.append(weakref.ref(scenario))
+            queue.add(scenario, timeout_seconds=float(k + 1), case=MagicMock())
+        del scenario
+
+        results = queue.run_all(release=True)
+
+        # While each case ran, every case before it was already gone.
+        assert runner.alive_before == [[], [], [], []]
+        assert runner.timeouts == [1.0, 2.0, 3.0, 4.0]
+        assert results == runner.results
+        gc.collect()
+        assert all(ref() is None for ref in refs)
+        assert len(queue) == 0
+        assert queue._timeouts == {} and queue._cases == {}
+        assert queue._scenario_results == {}
+
+    def test_a_releasing_run_retries_with_the_same_scenario(self) -> None:
+        """A retry gets the scenario, timeout and case it was added with,
+        though the queue has let go of them by then."""
+
+        class _FailsOnce(_RecordingRunner):
+            def __init__(self) -> None:
+                super().__init__()
+                self.calls: list[tuple[int, float | None, object]] = []
+
+            def run_scenario(
+                self, scenario, *, timeout_seconds=None, case=None, reset_world=True
+            ):  # noqa: ANN001, ANN202
+                self.calls.append((id(scenario), timeout_seconds, case))
+                if len(self.calls) == 1:
+                    raise RuntimeError("CARLA went away")
+                return super().run_scenario(
+                    scenario,
+                    timeout_seconds=timeout_seconds,
+                    case=case,
+                    reset_world=reset_world,
+                )
+
+        queue = ScenarioQueue(server=MagicMock(), cooldown_max_retries=1)
+        runner = _FailsOnce()
+        queue._runner = runner  # type: ignore[assignment]
+        scenario = _HeavyScenario(_make_ego_config())
+        case = MagicMock()
+        queue.add(scenario, timeout_seconds=7.0, case=case)
+
+        results = queue.run_all(release=True)
+
+        assert len(results) == 1
+        assert runner.calls == [(id(scenario), 7.0, case)] * 2
+
+    def test_a_releasing_run_that_fails_leaves_nothing_keyed(self) -> None:
+        """A case that fails every attempt ends the run; the cases after it
+        are out of the queue and leave nothing keyed by their ids."""
+
+        class _AlwaysFails(_RecordingRunner):
+            def run_scenario(self, scenario, **_):  # noqa: ANN001, ANN003, ANN202
+                raise RuntimeError("no")
+
+        queue = ScenarioQueue(server=MagicMock())
+        queue._runner = _AlwaysFails()  # type: ignore[assignment]
+        for k in range(3):
+            queue.add(
+                _HeavyScenario(_make_ego_config()),
+                timeout_seconds=float(k),
+                case=MagicMock(),
+            )
+
+        with pytest.raises(RuntimeError, match="failed after 1 attempt"):
+            queue.run_all(release=True)
+
+        assert len(queue) == 0
+        assert queue._timeouts == {} and queue._cases == {}
+
+    @staticmethod
+    def _queue_whose_second_case_cannot_run(
+        error: BaseException, *, retries: int = 1, cases: int = 3
+    ) -> tuple[ScenarioQueue, "_SecondCaseRaises", list[BaseScenario]]:
+        queue = ScenarioQueue(server=MagicMock(), cooldown_max_retries=retries)
+        runner = _SecondCaseRaises(error)
+        queue._runner = runner  # type: ignore[assignment]
+        scenarios: list[BaseScenario] = [
+            _NullScenario(_make_ego_config()) for _ in range(cases)
+        ]
+        for scenario in scenarios:
+            queue.add(scenario)
+        runner.failing = scenarios[1]
+        return queue, runner, scenarios
+
+    @pytest.mark.parametrize("release", [False, True])
+    def test_a_run_that_continues_on_error_records_the_case_and_goes_on(
+        self, release: bool
+    ) -> None:
+        """A case that raises on every attempt is a failed result naming the
+        error; the world is reloaded and the next case runs."""
+        queue, runner, scenarios = self._queue_whose_second_case_cannot_run(
+            RuntimeError("ground_projection returned no hit at (1.0, 2.0)")
+        )
+
+        results = queue.run_all(release=release, continue_on_error=True)
+
+        assert len(results) == 3
+        assert results[0].passed and results[2].passed
+        assert not results[1].passed
+        assert results[1].message == (
+            "Errored after 2 attempt(s): RuntimeError: "
+            "ground_projection returned no hit at (1.0, 2.0)"
+        )
+        # Both attempts of the second case, then the third case.
+        assert runner.ran == [0, 1, 1, 2]
+        assert queue.errored_indices() == [1]
+        # Reloaded after the errored case, which never reached its own reload.
+        assert runner.events == ["run", "run", "run", "reset", "run"]
+        if not release:
+            assert queue.result_for(scenarios[1]) is results[1]
+
+    def test_an_errored_last_case_leaves_the_world_to_the_next_run(self) -> None:
+        queue, runner, _ = self._queue_whose_second_case_cannot_run(
+            RuntimeError("no"), retries=0, cases=2
+        )
+
+        results = queue.run_all(continue_on_error=True)
+
+        assert [r.passed for r in results] == [True, False]
+        assert queue.errored_indices() == [1]
+        assert runner.events == ["run", "run"]
+        assert queue._world_left_as_is
+
+    def test_a_run_forgets_the_errors_of_the_last(self) -> None:
+        queue, runner, _ = self._queue_whose_second_case_cannot_run(
+            RuntimeError("no"), retries=0
+        )
+        queue.run_all(continue_on_error=True)
+        runner.failing = None
+
+        queue.run_all(continue_on_error=True)
+
+        assert queue.errored_indices() == []
+
+    def test_a_run_ends_at_a_case_that_raises_by_default(self) -> None:
+        queue, runner, _ = self._queue_whose_second_case_cannot_run(RuntimeError("no"))
+
+        with pytest.raises(RuntimeError, match="failed after 2 attempt"):
+            queue.run_all()
+
+        assert runner.ran == [0, 1, 1]
+
+    def test_an_interrupt_ends_a_run_that_continues_on_error(self) -> None:
+        queue, runner, _ = self._queue_whose_second_case_cannot_run(KeyboardInterrupt())
+
+        with pytest.raises(KeyboardInterrupt):
+            queue.run_all(continue_on_error=True)
+
+        # Not retried, and the third case never ran.
+        assert runner.ran == [0, 1]
+
+    def test_a_run_that_does_not_release_keeps_its_scenarios(self) -> None:
+        queue = ScenarioQueue(server=MagicMock())
+        runner = _RecordingRunner()
+        queue._runner = runner  # type: ignore[assignment]
+        scenarios = [_HeavyScenario(_make_ego_config()) for _ in range(2)]
+        for scenario in scenarios:
+            queue.add(scenario)
+
+        queue.run_all()
+        again = queue.run_all()
+
+        assert len(queue) == 2
+        assert len(again) == 2
+        assert queue.result_for(scenarios[1]) is runner.results[-1]
 
     def test_owns_server_flag_when_no_server_provided(self) -> None:
         with patch("autoware_carla_scenario.scenario_queue.CarlaServerManager"):

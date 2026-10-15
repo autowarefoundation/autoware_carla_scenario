@@ -36,6 +36,7 @@ import json
 import logging
 import os
 import sys
+from collections.abc import Collection
 from pathlib import Path
 from typing import Any
 
@@ -770,11 +771,14 @@ def _write_batch_result_json(
     results: list[ScenarioResult],
     output_dir: Path,
     overrides: list[list[str]] | None = None,
+    errored: Collection[int] = (),
 ) -> Path:
     """Write a machine-readable JSON summary to *output_dir* and return the path.
 
     *overrides*, one list per result, are what each case ran with beyond the
-    command line's (its sweep case).
+    command line's (its sweep case).  A case in *errored* (indices into
+    *results*) raised rather than ran, and its entry says so with
+    ``"error": true``.
     """
     import json  # noqa: PLC0415
 
@@ -785,6 +789,7 @@ def _write_batch_result_json(
             "scenario": name,
             **({"overrides": overrides[i]} if overrides is not None else {}),
             **result.to_dict(),
+            **({"error": True} if i in errored else {}),
         }
         for i, (name, result) in enumerate(zip(names, results))
     ]
@@ -800,18 +805,21 @@ def _print_summary(
     results: list[ScenarioResult],
     output_dir: Path = Path("scenario_outputs"),
     overrides: list[list[str]] | None = None,
+    errored: Collection[int] = (),
 ) -> bool:
     """Print a formatted result table and return ``True`` if all passed.
 
-    A machine-readable JSON file is also written to *output_dir*.
+    A case in *errored* (indices into *results*) raised on every attempt
+    rather than ran: it is tagged ``ERROR``, not ``FAIL``, and counts as not
+    passed.  A machine-readable JSON file is also written to *output_dir*.
     """
     sep = "=" * 60
     thin = "-" * 60
     print(f"\n{sep}")  # noqa: T201
     print("Batch Scenario Results")  # noqa: T201
     print(sep)  # noqa: T201
-    for name, result in zip(names, results):
-        tag = "PASS" if result.passed else "FAIL"
+    for index, (name, result) in enumerate(zip(names, results)):
+        tag = "ERROR" if index in errored else "PASS" if result.passed else "FAIL"
         print(f"  [{tag}] {name} ({result.elapsed_seconds:.1f}s)")  # noqa: T201
         if not result.passed:
             for line in result.message.splitlines():
@@ -823,14 +831,17 @@ def _print_summary(
                 padded = cs.label.ljust(max_label_len)
                 print(f"    [{mark}] {padded} : {cs.message}")  # noqa: T201
 
-    json_path = _write_batch_result_json(names, results, output_dir, overrides)
+    json_path = _write_batch_result_json(
+        names, results, output_dir, overrides, errored=errored
+    )
     print(thin)  # noqa: T201
     print(f"Result JSON: {json_path}")  # noqa: T201
 
     passed = sum(1 for r in results if r.passed)
     total = len(results)
     print(thin)  # noqa: T201
-    print(f"{passed}/{total} scenarios passed")  # noqa: T201
+    errors = f", {len(errored)} errored" if errored else ""
+    print(f"{passed}/{total} scenarios passed{errors}")  # noqa: T201
     print(sep)  # noqa: T201
     return passed == total
 
@@ -1043,17 +1054,26 @@ def run_batch(
             timeout_seconds=float(cfg.scenario.get("timeout_seconds", 60.0)),
             case=_odd_case(cfg),
         )
+    # From here the queue alone holds the scenarios, and lets each go once it
+    # has run: a batch reports results, and a finished scenario kept to the
+    # end keeps everything its run built (its entities, conditions, the ego's
+    # driver), case after case.
+    del scenarios, scenario
 
     logger.info("All %d scenario(s) built. Starting execution...", len(labels))
 
     with queue:
-        results = queue.run_all()
+        # A case that cannot run (a spawn point without ground, say) is
+        # recorded as errored, and the rest of the batch still runs.
+        results = queue.run_all(release=True, continue_on_error=True)
+        errored = queue.errored_indices()
 
     all_passed = _print_summary(
         labels,
         results,
         output_dir=output_dir,
         overrides=case_overrides if expand else None,
+        errored=errored,
     )
     sys.exit(0 if all_passed else 1)
 

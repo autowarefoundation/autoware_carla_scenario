@@ -82,6 +82,9 @@ class ScenarioQueue:
     _cases: dict[int, OddCase]
     _results: List[ScenarioResult]
     _scenario_results: dict[int, ScenarioResult]
+    #: Indices into the last run_all()'s results of the cases that raised on
+    #: every attempt (``continue_on_error``).
+    _errored: List[int]
     _runner: Optional[ScenarioRunner]
     #: Whether run_all() left its last scenario's world as it was, unreset.
     _world_left_as_is: bool
@@ -208,6 +211,7 @@ class ScenarioQueue:
         self._cases = {}
         self._results = []
         self._scenario_results = {}
+        self._errored = []
         self._runner = None
         self._world_left_as_is = False
 
@@ -242,18 +246,40 @@ class ScenarioQueue:
     # Execution
     # ------------------------------------------------------------------
 
-    def run_all(self) -> List[ScenarioResult]:
+    def run_all(
+        self, *, release: bool = False, continue_on_error: bool = False
+    ) -> List[ScenarioResult]:
         """Execute every registered scenario in order.
 
         Must be called while the queue is started (inside the context manager
         or after :meth:`start`).
+
+        Args:
+            release: Let go of each scenario once it has run, keeping only its
+                result.  A finished scenario still holds everything its run
+                built -- its entities, conditions, the ego's driver session and
+                the trajectory it was following -- so a long batch that keeps
+                them all grows with every case.  The queue is empty afterwards:
+                :meth:`result_for` does not know the released scenarios, and a
+                later :meth:`run_all` runs only what was added since.  Leave it
+                off when the caller asks :meth:`result_for` or runs the same
+                scenarios again.
+            continue_on_error: Go on with the next scenario when one raises on
+                every attempt (a spawn point without ground, CARLA going away),
+                rather than end the run.  Its result is a failed
+                :class:`ScenarioResult` whose message names the error, and
+                :meth:`errored_indices` tells it from a scenario that ran and
+                failed.  The world is reloaded before the next scenario, as
+                after one that ran.  Off by default: a run that raises ends
+                there.  A :class:`KeyboardInterrupt` ends the run either way.
 
         Returns:
             A list of :class:`ScenarioResult` objects in registration order.
 
         Raises:
             RuntimeError: If called before :meth:`start` / outside the context
-                manager.
+                manager, or, without *continue_on_error*, when a scenario
+                raises on every attempt.
         """
         if self._runner is None:
             raise RuntimeError(
@@ -265,10 +291,28 @@ class ScenarioQueue:
             self._runner.reset_world()
             self._world_left_as_is = False
         results: List[ScenarioResult] = []
+        self._errored = []
         max_attempts = 1 + self._cooldown_max_retries
-        last = len(self._scenarios) - 1
-        for i, scenario in enumerate(self._scenarios):
+        total = len(self._scenarios)
+        # Taken from the end of a reversed copy, so that once the loop has
+        # moved on nothing here refers to a scenario that has run.
+        pending = list(reversed(self._scenarios))
+        if release:
+            self._scenarios = []
+        for i in range(total):
+            scenario = pending.pop()
+            key = id(scenario)
+            timeout_seconds = self._timeouts.get(key)
+            case = self._cases.get(key)
+            if release:
+                # Keyed by id(): a released scenario's id may be the next
+                # scenario's, so nothing is left keyed by it.
+                if key in self._timeouts:
+                    del self._timeouts[key]
+                if key in self._cases:
+                    del self._cases[key]
             last_error: Optional[Exception] = None
+            last_message = ""
             for attempt in range(max_attempts):
                 try:
                     # Cooldown: between consecutive scenarios on the first
@@ -285,36 +329,81 @@ class ScenarioQueue:
                         )
                     result = self._runner.run_scenario(
                         scenario,
-                        timeout_seconds=self._timeouts.get(id(scenario)),
-                        case=self._cases.get(id(scenario)),
+                        timeout_seconds=timeout_seconds,
+                        case=case,
                         # The map is reloaded for the next scenario; after the
                         # last there is none, and a later run_all() or a new
                         # queue loads it first.
-                        reset_world=i < last,
+                        reset_world=i < total - 1,
                     )
-                    self._scenario_results[id(scenario)] = result
+                    if not release:
+                        self._scenario_results[key] = result
                     results.append(result)
                     break
                 except Exception as exc:
                     last_error = exc
+                    last_message = f"{type(exc).__name__}: {exc}"
+                    # With its traceback: a batch that goes on keeps only a
+                    # line of it in the result.
                     logger.warning(
                         "[%d/%d] Scenario attempt %d/%d failed: %s",
                         i + 1,
-                        len(self._scenarios),
+                        total,
                         attempt + 1,
                         max_attempts,
                         exc,
+                        exc_info=True,
                     )
             else:
-                # All attempts exhausted — re-raise the last error.
-                raise RuntimeError(
-                    f"Scenario {type(scenario).__name__} failed after "
-                    f"{max_attempts} attempt(s)"
-                ) from last_error
+                if not continue_on_error:
+                    if release:
+                        # The cases not run yet are out of the queue already:
+                        # leave nothing keyed by their ids either.
+                        for rest in pending:
+                            rest_key = id(rest)
+                            if rest_key in self._timeouts:
+                                del self._timeouts[rest_key]
+                            if rest_key in self._cases:
+                                del self._cases[rest_key]
+                    # All attempts exhausted — re-raise the last error.
+                    raise RuntimeError(
+                        f"Scenario {type(scenario).__name__} failed after "
+                        f"{max_attempts} attempt(s)"
+                    ) from last_error
+                # All attempts exhausted: the case is recorded as errored and
+                # the run goes on.
+                result = ScenarioResult(
+                    passed=False,
+                    message=f"Errored after {max_attempts} attempt(s): {last_message}",
+                    elapsed_seconds=0.0,
+                )
+                logger.error(
+                    "[%d/%d] Scenario %s errored after %d attempt(s), "
+                    "going on with the next: %s",
+                    i + 1,
+                    total,
+                    type(scenario).__name__,
+                    max_attempts,
+                    last_message,
+                )
+                if not release:
+                    self._scenario_results[key] = result
+                results.append(result)
+                self._errored.append(i)
+                if i < total - 1:
+                    # A run that raises never reaches its own reload, so what
+                    # it spawned is still in the world.
+                    self._runner.reset_world()
 
-        self._world_left_as_is = bool(self._scenarios)
+        self._world_left_as_is = total > 0
         self._results = results
         return results
+
+    def errored_indices(self) -> List[int]:
+        """Return where, in the last :meth:`run_all`'s results, the scenarios
+        are that raised on every attempt (``continue_on_error``), rather than
+        ran and failed."""
+        return list(self._errored)
 
     def result_for(self, scenario: BaseScenario) -> ScenarioResult:
         """Return the :class:`ScenarioResult` for a specific scenario instance.
