@@ -19,6 +19,7 @@ CARLA session cannot be established.
 from __future__ import annotations
 
 import socket
+from collections.abc import Iterator
 
 import pytest
 
@@ -90,3 +91,18 @@ def free_port() -> int:
     with socket.socket() as probe:
         probe.bind(("localhost", 0))
         return int(probe.getsockname()[1])
+
+
+@pytest.fixture(autouse=True)
+def _map_manager_left_as_found() -> Iterator[None]:
+    """Put back the MapManager singleton a test found.
+
+    The run's paths read the map the MapManager holds (``run_carla_map``), so a
+    map one test left there would stand in for the next test's world. A
+    module's own MapManager, set up before its tests, is kept.
+    """
+    from autoware_carla_scenario.coordinate.map_manager import MapManager
+
+    found = MapManager._instance
+    yield
+    MapManager._instance = found

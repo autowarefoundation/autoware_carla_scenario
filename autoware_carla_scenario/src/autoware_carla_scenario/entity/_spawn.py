@@ -8,6 +8,8 @@ import math
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional, Union
 
+from ..coordinate.map_manager import run_carla_map
+
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
 
@@ -100,7 +102,8 @@ def spawn_vehicle_actor(
     # the explicit-transform path avoids the get_map() RPC call.
     spawn_points: Optional[list[carla.Transform]] = None
     if isinstance(spawn_location, SpawnPointIndex):
-        spawn_points = world.get_map().get_spawn_points()
+        # The run's map: get_map() builds a whole new one on every call.
+        spawn_points = run_carla_map(world).get_spawn_points()
         if spawn_location.value >= len(spawn_points):
             raise ValueError(
                 f"Spawn index {spawn_location.value} is out of range. "
@@ -210,7 +213,7 @@ def spawn_vehicle_actor(
 
     if actor is None:
         if spawn_points is None:
-            spawn_points = world.get_map().get_spawn_points()
+            spawn_points = run_carla_map(world).get_spawn_points()
         # Codon does not narrow the Optional; an annotated local unwraps it.
         known_points: list[carla.Transform] = spawn_points
         suggestions = "\n".join(

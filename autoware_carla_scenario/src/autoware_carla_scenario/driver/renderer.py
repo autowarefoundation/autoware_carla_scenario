@@ -29,6 +29,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple
 import numpy as np
 from numpy.typing import NDArray
 
+from ..coordinate.map_manager import run_carla_map
 from ..utils.traffic_light import traffic_light_state_name
 from carla_driver_interface.protocol import carla_driver_pb2, common_pb2
 
@@ -105,7 +106,8 @@ class RendererDataBuilder:
         self._world = world
         self._ego = ego_actor
         self._config = config
-        self._map = world.get_map()
+        # The run's map: get_map() builds a whole new one on every call.
+        self._map = run_carla_map(world)
         self._map_id = map_id
         self._lights: Optional[List[Tuple[Any, str, List[Any]]]] = None
         self._stop_lines: Optional[Dict[Tuple[int, int], List[Any]]] = None
