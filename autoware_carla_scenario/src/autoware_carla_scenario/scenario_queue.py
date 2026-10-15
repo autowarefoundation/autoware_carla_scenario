@@ -425,6 +425,9 @@ class ScenarioQueue:
     def stop(self) -> None:
         """Stop any Autoware stack left running, and the server if owned."""
         self._runner = None
+        # The map loaded for this queue's runs is not the next queue's: one
+        # that loads no lanelet map would read this one's (run_carla_map).
+        MapManager.reset()
         if self._autoware_launcher is not None:
             self._autoware_launcher.close()
         if self._owns_server:

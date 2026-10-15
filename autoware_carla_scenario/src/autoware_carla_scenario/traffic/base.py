@@ -200,6 +200,12 @@ class DrivenEntity:
     _lane_change_target: Optional[Tuple[int, int]] = None
     _lane_change_map: Optional["carla.Map"] = None
 
+    def forget_lane_change(self) -> None:
+        """Drop the lane change state, and the map it holds: a finished run's
+        scenarios stay in the queue, and their entities with them."""
+        self._lane_change_target = None
+        self._lane_change_map = None
+
 
 # ---------------------------------------------------------------------------
 # The interface

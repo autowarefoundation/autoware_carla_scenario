@@ -253,6 +253,20 @@ class TestTrafficManagerRelease:
         NullTrafficBackend().release(_stand_in(_Actor(1), role_name=None), _World())
 
 
+class TestVehicleEntityDestroy:
+    def test_it_holds_no_map_past_its_run(self) -> None:
+        """A finished run's scenarios stay in the queue, and their entities with
+        them: a map kept for a lane change would stay too, one a case."""
+        entity = VehicleEntity(
+            VehicleEntityConfig(role_name="npc1", spawn_location=SpawnPointIndex(0))
+        )
+        entity._lane_change_target = (1, 2)
+        entity._lane_change_map = object()  # type: ignore[assignment]
+        entity.destroy()
+        assert entity._lane_change_map is None
+        assert entity._lane_change_target is None
+
+
 class TestTrafficManagerClose:
     def test_the_manager_is_shut_down_once(self) -> None:
         """A fresh manager per run: shutting down resets its map cache."""
