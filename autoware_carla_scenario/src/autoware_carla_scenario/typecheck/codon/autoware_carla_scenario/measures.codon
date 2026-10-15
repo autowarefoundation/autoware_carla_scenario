@@ -1,10 +1,22 @@
 # Model of autoware_carla_scenario.measures (docs/odd.md, "Scenario measures"):
 # the keys a scenario's measures are read under, which a scenario passes to
 # BaseScenario.register_measure() and an ODD to odd.scenario_measure(), the
-# vehicle-ahead definition (its version, the definitions it reads with, a
-# vehicle's bumpers) and the geometry it reads in.
+# Measure they are read with and the built-in ones by key
+# (BUILT_IN_MEASURES), the vehicle-ahead definition (its version, the
+# definitions it reads with, a vehicle's bumpers), the geometry it reads in
+# and the running scenario's measures (read_measure()). It declares the whole
+# of measures.__all__; test_typecheck_model.py compares every name with the
+# Python one, the constants and each built-in measure's fields by value.
+#
+# Nothing here reads a measure: a built-in measure's `read` is _acs_unread(),
+# where Python's is a private function of the module, which no scenario
+# imports. Every other field holds Python's value.
 
 import typesafe_carla.carla as carla
+
+# Under an _acs_ name: BaseScenario is no name of measures in Python, which
+# imports it for its annotations only.
+from .scenario_base import BaseScenario as _acs_BaseScenario
 
 VEHICLE_AHEAD_GAP_M: str = "vehicle_ahead_gap_m"
 VEHICLE_AHEAD_RELATIVE_SPEED_KPH: str = "vehicle_ahead_relative_speed_kph"
@@ -24,26 +36,78 @@ PEDESTRIAN_MOVING_MS: float = 0.5
 PROBE_ROLE: str = "bumper_probe"
 
 
+def _acs_unread(world: carla.World) -> Optional[float]:
+    raise NotImplementedError()
+
+
+def _acs_expect_read(read):
+    """A Callable[[carla.World], Optional[float]] argument."""
+    value: Optional[float] = read(carla.Client().get_world())
+
+
+# A frozen dataclass in Python, so @tuple here: an assignment to a field fails
+# the check as it fails the run.
+@tuple
 class Measure:
     key: str
-    unit: str
-    text: str
-    version: int
+    read: Callable[[carla.World], Optional[float]]
+    unit: str = ""
+    text: str = ""
+    version: int = 1
 
-    def __init__(self, key: str, read, unit: str = "", text: str = "", version: int = 1):
-        self.key = key
-        self.unit = unit
-        self.text = text
-        self.version = version
+    # Python takes any callable of a world that returns a float or None: a
+    # function returning `float`, a lambda. Codon 0.19 crashes on one whose
+    # type is not the field's exactly ("Codon compiler crashed", no line), so
+    # *read* is called with a world here, refused at its line when it returns
+    # anything else, and the field holds the stub: nothing in the model reads.
+    def __new__(key: str, read, unit: str = "", text: str = "",
+                version: int = 1) -> Measure:
+        _acs_expect_read(read)
+        unread = Callable[[carla.World], Optional[float]](_acs_unread)
+        return __internal__.tuple_cast_unsafe((key, unread, unit, text, version), Measure)
 
 
+# A frozen dataclass in Python, so @tuple here.
+@tuple
 class Bumpers:
-    front: float
-    rear: float
+    front: float = 0.0
+    rear: float = 0.0
 
-    def __init__(self, front: float = 0.0, rear: float = 0.0):
-        self.front = front
-        self.rear = rear
+
+BUILT_IN_MEASURES: Dict[str, Measure] = {
+    VEHICLE_AHEAD_GAP_M: Measure(
+        VEHICLE_AHEAD_GAP_M,
+        _acs_unread,
+        "m",
+        "Bumper to bumper, along the ego's lane on the Lanelet2 map, to "
+        "the nearest vehicle ahead on its lane or a lane beside it (a "
+        "vehicle about to cut in is measured from before it changes "
+        "lanes); along the ego's heading where there is no lane",
+        VEHICLE_AHEAD_VERSION,
+    ),
+    VEHICLE_AHEAD_RELATIVE_SPEED_KPH: Measure(
+        VEHICLE_AHEAD_RELATIVE_SPEED_KPH,
+        _acs_unread,
+        "km/h",
+        "That vehicle's speed along the ego's lane less the ego's; "
+        "negative when the ego closes in",
+        VEHICLE_AHEAD_VERSION,
+    ),
+    CROSSING_PEDESTRIAN_GAP_M: Measure(
+        CROSSING_PEDESTRIAN_GAP_M,
+        _acs_unread,
+        "m",
+        "How far ahead the nearest pedestrian ahead that is moving was "
+        "when it set off, held while it crosses: one standing at the kerb "
+        "is not measured until it sets off",
+    ),
+    CROSSING_PEDESTRIAN_SPEED_MS: Measure(
+        CROSSING_PEDESTRIAN_SPEED_MS,
+        _acs_unread,
+        "m/s",
+        "That pedestrian's speed",
+    ),
+}
 
 
 def bumpers_of_box(box: carla.BoundingBox) -> Bumpers:
@@ -77,4 +141,42 @@ def vehicle_ahead_gap_between(ego: carla.Transform, ego_bumpers: Bumpers,
 
 
 def prepare_vehicle_ahead() -> None:
+    raise NotImplementedError()
+
+
+
+def check_measure_key(key: str, where: str) -> None:
+    raise NotImplementedError()
+
+
+def _acs_expect_scenario(scenario: _acs_BaseScenario) -> _acs_BaseScenario:
+    return scenario
+
+
+def _acs_expect_optional_scenario(scenario) -> Optional[_acs_BaseScenario]:
+    """An Optional[BaseScenario] argument (Codon's Optional does not take a subclass)."""
+    if isinstance(scenario, None):
+        return None
+    elif isinstance(scenario, Optional[NoneType]):
+        return None
+    elif isinstance(scenario, Optional):
+        if scenario is None:
+            return None
+        return _acs_expect_scenario(unwrap(scenario))
+    else:
+        return _acs_expect_scenario(scenario)
+
+
+# The scenario whose measures read_measure() reads, which the runner sets: an
+# Optional[BaseScenario], a scenario passing itself (a subclass) or None.
+def set_measured_scenario(scenario) -> None:
+    _acs_expect_optional_scenario(scenario)
+    raise NotImplementedError()
+
+
+def measured_scenario() -> Optional[_acs_BaseScenario]:
+    raise NotImplementedError()
+
+
+def read_measure(key: str, world: carla.World) -> Optional[float]:
     raise NotImplementedError()
