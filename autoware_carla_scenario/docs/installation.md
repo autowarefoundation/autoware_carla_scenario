@@ -35,7 +35,7 @@ way is used through `CARLA_EXECUTABLE`.
 
 The Python client is
 [typesafe_carla](https://github.com/hakuturu583/typesafe_carla), a plain
-dependency of the package (`typesafe-carla>=0.4.0,<0.5`, from PyPI, Linux
+dependency of the package (`typesafe-carla>=0.8.1,<0.9`, from PyPI, Linux
 x86_64 and aarch64), imported as `import typesafe_carla.carla as carla`. It also
 provides the Codon library the static check compiles scenarios against, and
 pulls in `typesafe-carla-toolchain`, the pinned Codon compiler. The official
@@ -144,7 +144,7 @@ requires a CARLA server: a live one, or one to launch (`scenario-setup`, or
 
 The package's runtime dependencies (declared in `pyproject.toml`):
 
-- `typesafe-carla>=0.4.0,<0.5` (Linux x86_64 and aarch64) — the CARLA client and its Codon
+- `typesafe-carla>=0.8.1,<0.9` (Linux x86_64 and aarch64) — the CARLA client and its Codon
   library; pulls in `typesafe-carla-toolchain`
 - `pyxodr>=0.1.0` — OpenDRIVE parser used by `MapManager` / `to_opendrive`
 - `opencv-python-headless>=4.8` — frame processing for the camera recorder (headless: the package makes no GUI calls)

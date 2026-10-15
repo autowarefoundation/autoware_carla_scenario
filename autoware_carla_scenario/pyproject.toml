@@ -1,6 +1,6 @@
 [project]
 name = "autoware-carla-scenario"
-version = "12.3.1"
+version = "12.3.2"
 description = "CARLA scenario testing framework for Autoware"
 readme = "README.md"
 license = "Apache-2.0"
@@ -34,7 +34,7 @@ dependencies = [
     # Codon library for the static check (typecheck/). It pulls in
     # typesafe-carla-toolchain, the pinned Codon the check needs. Both ship for
     # Linux x86_64 and aarch64 (aarch64 from typesafe-carla 0.4.0 on).
-    "typesafe-carla>=0.4.0,<0.5; sys_platform == 'linux' and (platform_machine == 'x86_64' or platform_machine == 'aarch64')",
+    "typesafe-carla>=0.8.1,<0.9; sys_platform == 'linux' and (platform_machine == 'x86_64' or platform_machine == 'aarch64')",
     "pyxodr>=0.1.0",
     # Headless: the only OpenCV calls in this package are imencode and
     # pointPolygonTest -- there is no imshow/namedWindow anywhere, so the GUI

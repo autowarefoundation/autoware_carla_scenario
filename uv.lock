@@ -158,7 +158,7 @@ wheels = [
 
 [[package]]
 name = "autoware-carla-scenario"
-version = "12.3.1"
+version = "12.3.2"
 source = { editable = "autoware_carla_scenario" }
 dependencies = [
     { name = "carla-driver-interface" },
@@ -234,7 +234,7 @@ requires-dist = [
     { name = "tomli", marker = "python_full_version < '3.11'", specifier = ">=1.1.0" },
     { name = "tqdm", specifier = ">=4.67.1" },
     { name = "traci", marker = "extra == 'sumo'", specifier = ">=1.23" },
-    { name = "typesafe-carla", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux')", specifier = ">=0.4.0,<0.5" },
+    { name = "typesafe-carla", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux')", specifier = ">=0.8.1,<0.9" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.34.0" },
 ]
 provides-extras = ["sumo", "map", "ros2"]
@@ -3908,15 +3908,15 @@ wheels = [
 
 [[package]]
 name = "typesafe-carla"
-version = "0.4.0"
+version = "0.8.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "typesafe-carla-toolchain" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/33/fe/c5e19973ed3116c5099a794e63dc2d43b4c6ad220001aef40e2d308c4de2/typesafe_carla-0.4.0.tar.gz", hash = "sha256:74e901abf34e99026124850f69c9f9fac35c4c8c4f139a00eb78b9c0d4c0ebd7", size = 672474, upload-time = "2026-10-10T18:26:29.434Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/6c/5b/7f2347238d35d65a5794af214078cabc4dc53af1135eb4f0419f431af494/typesafe_carla-0.8.1.tar.gz", hash = "sha256:fdd53cb788ca4726746e0a49f99e36a9c0d4e8cc5538173987e647946fefa09c", size = 704564, upload-time = "2026-10-15T00:49:35.303Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/4f/58/115e52cb6d7f394173de1a418eec4ac8b0152bd565031317493fc2b889e7/typesafe_carla-0.4.0-py3-none-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:1b6de6a22650e4632357cae77a22704688d8c9ec9edfe94e5e3956809e7238eb", size = 13708728, upload-time = "2026-10-10T18:26:24.187Z" },
-    { url = "https://files.pythonhosted.org/packages/28/0b/3a76034a58a4ef8ec558b4cfe9cb5d768161bc9e0908ef2d449fd2b9495f/typesafe_carla-0.4.0-py3-none-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:3f1be96f4f9bb1e1c69cdba9dfa324bcc2f97cd5962c6e22f6e8e6b3f9bb528b", size = 14399436, upload-time = "2026-10-10T18:26:26.676Z" },
+    { url = "https://files.pythonhosted.org/packages/b5/5a/72e06b32130584946c4d15ce8fff3b3e67ab1e28c508d61fe497b401faf9/typesafe_carla-0.8.1-py3-none-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:6092afce51f29c5352a0feadadc6f78507d75abe002a025f614db09c0dcac7e0", size = 15971925, upload-time = "2026-10-15T00:49:30.695Z" },
+    { url = "https://files.pythonhosted.org/packages/b4/03/627ab17f921094d4885af778897ba3bfab7cfcd402035979f93325943ad6/typesafe_carla-0.8.1-py3-none-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:9e305608d36bdf12e8c107c48f0d8a9ff8acb881cad184017c7342518b0a0b8e", size = 16873947, upload-time = "2026-10-15T00:49:33.221Z" },
 ]
 
 [[package]]
