@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -523,6 +524,9 @@ def test_run_batch_gives_each_scenario_its_own_timeout(
         def run_all(self, **_: object) -> list[object]:
             return []
 
+        def errored_indices(self) -> list[int]:
+            return []
+
     monkeypatch.setattr(run, "build_scenario", fake_build)
     monkeypatch.setattr(run, "ScenarioQueue", FakeQueue)
     monkeypatch.setattr(
@@ -625,3 +629,78 @@ def test_a_batch_lets_go_of_each_scenario_once_it_has_run(
     assert alive_while_running == [[], [], []]
     # ... and the summary still has every result.
     assert len(summarised) == 3
+
+
+def test_a_batch_goes_on_past_a_case_that_cannot_run(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A case that raises on every attempt is reported as errored, the cases
+    after it still run, and the batch exits non-zero."""
+    import json
+    from types import SimpleNamespace
+
+    from autoware_carla_scenario import ScenarioResult, scenario_queue
+    from autoware_carla_scenario.examples import run
+
+    monkeypatch.setenv("AUTOWARE_CARLA_SCENARIO_TYPECHECK", "off")
+    built: list[object] = []
+
+    def fake_build(cfg: object, **_: object) -> tuple[None, object]:
+        built.append(object())
+        return None, built[-1]
+
+    ran: list[int] = []
+
+    class FakeRunner:
+        def __init__(self, *_: object, **__: object) -> None:
+            self.xodr_path = None
+
+        def load_map_by_name(self, _name: str) -> None:
+            pass
+
+        def reset_world(self) -> None:
+            pass
+
+        def run_scenario(self, scenario: object, **_: object) -> ScenarioResult:
+            index = next(k for k, b in enumerate(built) if b is scenario)
+            ran.append(index)
+            if index == 1:
+                raise RuntimeError("ground_projection returned no hit")
+            return ScenarioResult(passed=True, message="ok", elapsed_seconds=1.0)
+
+    monkeypatch.setattr(run, "build_scenario", fake_build)
+    monkeypatch.setattr(scenario_queue, "CarlaServerManager", MagicMock())
+    monkeypatch.setattr(scenario_queue, "ScenarioRunner", FakeRunner)
+    monkeypatch.setattr(
+        run,
+        "resolve_map_paths",
+        lambda _m: SimpleNamespace(
+            install_xodr=None,
+            overwrite_xodr=False,
+            opendrive_path=None,
+            lanelet2_path=None,
+            name="M",
+            projector_type=None,
+        ),
+    )
+    monkeypatch.setattr(run, "build_traffic_backend", lambda _cfg: None)
+    monkeypatch.setattr(run, "_make_batch_output_dir", lambda: tmp_path)
+    monkeypatch.setattr(scenario_queue, "_wait_with_progress", lambda *_, **__: None)
+
+    with pytest.raises(SystemExit) as exited:
+        run.run_batch(
+            ["lane_change/left", "lane_change_fail/right", "lane_change/left"], []
+        )
+
+    assert exited.value.code == 1
+    assert ran == [0, 1, 2]
+    out = capsys.readouterr().out
+    assert "[ERROR] lane_change_fail/right" in out
+    assert "ground_projection returned no hit" in out
+    assert out.count("[PASS] lane_change/left") == 2
+    assert "2/3 scenarios passed, 1 errored" in out
+    entries = json.loads((tmp_path / "batch_results.json").read_text())
+    assert [e.get("error", False) for e in entries] == [False, True, False]
+    assert [e["passed"] for e in entries] == [True, False, True]
