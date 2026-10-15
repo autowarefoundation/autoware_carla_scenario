@@ -503,6 +503,14 @@ def rule_symbol(rule: object) -> str:
     return wanted
 
 
+#: A vehicle's turn indicators, by ``TurnIndicatorState`` member.
+_TURN_INDICATOR_STATES: tuple[SelectOption, ...] = (
+    SelectOption("OFF", "Off"),
+    SelectOption("LEFT", "Left"),
+    SelectOption("RIGHT", "Right"),
+    SelectOption("HAZARD", "Hazard (both)"),
+)
+
 #: Mirrors ``carla.TrafficLightState`` (same reason as above).
 TRAFFIC_LIGHT_STATES: tuple[SelectOption, ...] = (
     SelectOption("Green", "Green"),
@@ -921,6 +929,30 @@ register_action_spec(
             ),
         ),
         description="Force a lane change through the CARLA TrafficManager.",
+    )
+)
+
+register_action_spec(
+    ActionSpec(
+        type_id="turn_indicator",
+        title="Turn Indicator",
+        category="Vehicle / Lights",
+        builder="build_turn_indicator_action",
+        target="..actions:TurnIndicatorAction",
+        visual_kind="instant",
+        fields=(
+            FieldSpec(
+                name="state",
+                label="Indicators",
+                kind="select",
+                default="LEFT",
+                options=_TURN_INDICATOR_STATES,
+            ),
+        ),
+        description=(
+            "Light the vehicle's turn indicators (or hazard lights, or neither); "
+            "they stay so until set again."
+        ),
     )
 )
 
@@ -2157,6 +2189,34 @@ register_condition_spec(
             ),
         ),
         description="The entity stays (almost) stopped for a duration.",
+    )
+)
+
+register_condition_spec(
+    ConditionSpec(
+        type_id="turn_indicator",
+        title="Turn Indicator",
+        category="Entity",
+        builder="build_turn_indicator_condition",
+        target="..conditions:TurnIndicatorCondition",
+        argmap=(("entity", "entity_name"),),
+        visual=ConditionVisual(
+            metric="Turn indicator", subject="entity", value="state"
+        ),
+        fields=(
+            _entity_field("entity", "Subject"),
+            FieldSpec(
+                name="state",
+                label="Indicators",
+                kind="select",
+                default="LEFT",
+                options=_TURN_INDICATOR_STATES,
+            ),
+        ),
+        description=(
+            "The vehicle shows these turn indicators -- however they were lit, "
+            "a driver policy's command included."
+        ),
     )
 )
 

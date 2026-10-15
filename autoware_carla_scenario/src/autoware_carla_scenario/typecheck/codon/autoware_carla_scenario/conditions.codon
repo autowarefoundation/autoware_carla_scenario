@@ -40,6 +40,15 @@ class SpeedDirection:
 
 
 @tuple
+class TurnIndicatorState:
+    value: int
+    OFF: ClassVar[TurnIndicatorState] = TurnIndicatorState(1)
+    LEFT: ClassVar[TurnIndicatorState] = TurnIndicatorState(2)
+    RIGHT: ClassVar[TurnIndicatorState] = TurnIndicatorState(3)
+    HAZARD: ClassVar[TurnIndicatorState] = TurnIndicatorState(4)
+
+
+@tuple
 class SpeedCoordinateSystem:
     value: int
     WORLD: ClassVar[SpeedCoordinateSystem] = SpeedCoordinateSystem(1)
@@ -315,6 +324,13 @@ class SpeedCondition(BaseCondition):
         _expect_role(entity_name)
         _expect_optional_role(reference_entity_name)
         super().__init__(_required_str(label, "SpeedCondition(): label"))
+
+
+class TurnIndicatorCondition(BaseCondition):
+    def __init__(self, entity_name, state: TurnIndicatorState, *_kw, label = _Required()):
+        _keyword_only(_kw, "TurnIndicatorCondition(): label")
+        _expect_role(entity_name)
+        super().__init__(_required_str(label, "TurnIndicatorCondition(): label"))
 
 
 class RouteProgressCondition(BaseCondition):

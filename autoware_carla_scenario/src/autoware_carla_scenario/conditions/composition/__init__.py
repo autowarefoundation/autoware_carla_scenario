@@ -21,6 +21,7 @@ from .standstill import StandstillCondition
 from .temporary_stop import TemporaryStopCondition
 from .time_headway import TimeHeadwayCondition
 from .time_to_collision import TimeToCollisionCondition
+from .turn_indicator import TurnIndicatorCondition, TurnIndicatorState
 from .waypoint import WaypointCheckType, WaypointCondition
 
 __all__ = [
@@ -43,6 +44,8 @@ __all__ = [
     "TemporaryStopCondition",
     "TimeHeadwayCondition",
     "TimeToCollisionCondition",
+    "TurnIndicatorCondition",
+    "TurnIndicatorState",
     "WaypointCheckType",
     "WaypointCondition",
     "entity_axes",

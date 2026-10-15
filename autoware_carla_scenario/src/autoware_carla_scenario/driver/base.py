@@ -323,6 +323,10 @@ class DriveOutcome:
             ``CarlaDriveDebugInfo``.
         inference_seconds: How long the policy took, from the same message.
         debug_scalars: Free-form diagnostics the policy chose to surface.
+        turn_indicator: The turn indicators the policy commands with this plan
+            (``VehicleCommand.turn_indicator``, numbered as Autoware's
+            ``TurnIndicatorsCommand``: 0 no command, 1 off, 2 left, 3 right).
+            0 leaves the indicators as they are.
     """
 
     trajectory: Trajectory
@@ -331,6 +335,7 @@ class DriveOutcome:
     policy_name: str = ""
     inference_seconds: float = 0.0
     debug_scalars: Dict[str, float] = field(default_factory=dict)
+    turn_indicator: int = 0
 
 
 class BaseEgoDriverClient(ABC):

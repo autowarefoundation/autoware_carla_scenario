@@ -46,6 +46,7 @@ __all__ = [
     "build_standstill_condition",
     "build_temporary_stop_condition",
     "build_temporary_stop_at_stop_lines_condition",
+    "build_turn_indicator_condition",
     "build_entity_distance_condition",
     "build_distance_condition",
     "build_relative_speed_condition",
@@ -67,6 +68,7 @@ __all__ = [
     "build_traffic_sink_action",
     "build_traffic_source_action",
     "build_walk_straight_action",
+    "build_turn_indicator_action",
     "build_follow_trajectory_action",
     "build_lane_change_action",
     "build_routing_action",
@@ -456,6 +458,23 @@ def build_temporary_stop_at_stop_lines_condition(
         s_margin=params["s_margin"],
         speed_threshold=params["speed_threshold"],
         stop_duration=params["stop_duration"],
+        label=compiled.label,
+    )
+
+
+def build_turn_indicator_condition(
+    compiled: "CompiledCondition",
+    children: "list[BaseCondition]",
+    ctx: "BuildContext",
+) -> "BaseCondition":
+    """Build a :class:`TurnIndicatorCondition`."""
+    from ..conditions import TurnIndicatorCondition  # noqa: PLC0415
+    from ..conditions import TurnIndicatorState  # noqa: PLC0415
+
+    params = compiled.params
+    return TurnIndicatorCondition(
+        entity_name=str(params["entity"]),
+        state=TurnIndicatorState[str(params["state"])],
         label=compiled.label,
     )
 
@@ -886,6 +905,28 @@ def build_walk_straight_action(
     return WalkStraightAction(
         entity_name=compiled.actor_role,
         speed_ms=params["speed_ms"],
+        condition=condition,
+        timing=timing,
+        label=compiled.label,
+        once=compiled.node.once,
+    )
+
+
+def build_turn_indicator_action(
+    compiled: "CompiledAction",
+    condition: "BaseCondition | None",
+    timing: Any,
+    ctx: "BuildContext",
+) -> "BaseAction":
+    """Build a :class:`TurnIndicatorAction`."""
+    from ..actions import TurnIndicatorAction  # noqa: PLC0415
+    from ..utils.turn_indicator import TurnIndicatorState  # noqa: PLC0415
+
+    assert compiled.actor_role is not None  # noqa: S101 -- required by the spec
+    params = compiled.params
+    return TurnIndicatorAction(
+        entity_name=compiled.actor_role,
+        state=TurnIndicatorState[str(params["state"])],
         condition=condition,
         timing=timing,
         label=compiled.label,

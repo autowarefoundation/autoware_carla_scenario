@@ -35,7 +35,7 @@ from .scenario_base import BaseScenario
 from .server import CarlaServerManager
 from .traffic.base import TrafficBackend, TrafficContext
 from .traffic.driven import BackendDriven
-from .world_reset import reload_current_map
+from .world_reset import episode_of, reload_current_map, short_map_name
 from .traffic.config import TrafficManagerBackendConfig
 from .traffic.traffic_manager import TrafficManagerBackend
 from .trajectory_recorder import TrajectoryRecorder
@@ -414,6 +414,13 @@ class ScenarioRunner:
     _xodr_path: Optional[Path]
     _client: carla.Client
     _world: Optional[carla.World]
+    #: The map the runs are for: the one load_map_by_name() last loaded (its
+    #: short name), or "" when this runner loaded none.
+    _batch_map: str
+    #: The OpenDRIVE load_map_by_overwriting_xodr() installed for it, if any.
+    _batch_xodr: Optional[Path]
+    #: The episode this runner last loaded _batch_map into, or -1.
+    _batch_episode: int
 
     def __init__(
         self,
@@ -478,6 +485,9 @@ class ScenarioRunner:
         # timeout fails the load with a bare 'std::exception'.
         self._client.set_timeout(60.0)
         self._world = None
+        self._batch_map = ""
+        self._batch_xodr = None
+        self._batch_episode = -1
 
     @property
     def traffic_backend(self) -> TrafficBackend:
@@ -675,6 +685,9 @@ class ScenarioRunner:
         shutil.copy2(xodr_path, dest)
         self._xodr_path = xodr_path
         self.load_map_by_name(map_name)
+        # After load_map_by_name(), which forgets any OpenDRIVE: the map is to
+        # be loaded again the way it was here, installed file and all.
+        self._batch_xodr = xodr_path
 
     def load_map_by_name(self, map_name: str) -> None:
         """Load a built-in CARLA map by name (e.g. ``"Town10HD_Opt"``).
@@ -704,6 +717,64 @@ class ScenarioRunner:
             )
 
         self._world = self._client.load_world(map_name)
+        # The map the runs are for, to reset the world to -- not whatever map
+        # the server happens to run then (see _world_for_next_run).
+        self._batch_map = short_map_name(map_name)
+        self._batch_xodr = None
+        self._batch_episode = episode_of(self._world)
+
+    def _load_batch_map(self) -> None:
+        """Load the runs' map again, the way it was loaded first."""
+        if self._batch_xodr is not None:
+            # Annotated, so Codon unwraps the Optional (docs/typecheck.md).
+            xodr: Path = self._batch_xodr
+            self.load_map_by_overwriting_xodr(xodr, self._batch_map)
+        else:
+            self.load_map_by_name(self._batch_map)
+
+    def _world_for_next_run(self, scenario_name: str) -> "carla.World":
+        """Return the world the next run sets up on, loading the runs' map if
+        the server has gone over to another.
+
+        The server is shared: another client loading a world of its own on it
+        replaces this runner's (the ego vanishes, the clock restarts), and a
+        scenario set up on that map would snap its poses against roads it was
+        not written for -- or, had it reloaded this very map, among its
+        actors, settings and weather.  Every load starts a new episode, so the
+        episode id -- which the client holds, and costs nothing to read --
+        says whether anyone loaded a world since this runner last did; then
+        the batch's map is loaded again, OpenDRIVE and all, whatever map the
+        server runs.
+
+        The id is the one the client last heard of on its tick stream: a load
+        the stream has not told it about yet goes unseen, the run fails on the
+        foreign world, and its retry sees the new episode.
+
+        A runner that loaded no map itself runs on whatever world there is,
+        as it always has.
+        """
+        if not self._batch_map:
+            if self._world is None:
+                self._world = self._client.get_world()
+            # Annotated, so Codon unwraps the Optional (docs/typecheck.md).
+            held: "carla.World" = self._world
+            return held
+        world = self._client.get_world()
+        episode = episode_of(world)
+        if episode >= 0 and episode == self._batch_episode:
+            self._world = world
+            return world
+        logger.warning(
+            "[%s] The CARLA world is not the one these runs loaded (another "
+            "client loaded a world on this server, or a reset failed): "
+            "loading %r again",
+            scenario_name,
+            self._batch_map,
+        )
+        self._load_batch_map()
+        reloaded = self._client.get_world()
+        self._world = reloaded
+        return reloaded
 
     # ------------------------------------------------------------------
     # Video rendering from recording
@@ -803,7 +874,11 @@ class ScenarioRunner:
     # ------------------------------------------------------------------
 
     def reset_world(self, scenario_name: str = "") -> None:
-        """Reload the current map, so the next scenario starts on a clean world."""
+        """Reload the map, so the next scenario starts on a clean world.
+
+        The map is the one :meth:`load_map_by_name` loaded, when this runner
+        loaded one, and the server's current map otherwise.
+        """
         # Reload the world to guarantee a completely clean state (all
         # actors, sensors, physics state, settings and weather are reset).
         # This is more reliable than destroying actors individually, which
@@ -813,11 +888,19 @@ class ScenarioRunner:
         try:
             world = self._client.get_world()
             world.tick()
-            reload_current_map(self._client)
+            if self._batch_map:
+                # The runs' map, not the current one, and its OpenDRIVE
+                # installed again: another client may have loaded a world (or
+                # installed an OpenDRIVE) of its own on this server meanwhile.
+                self._load_batch_map()
+            else:
+                reload_current_map(self._client)
             # After reload, get the fresh world and tick it once so that
             # CARLA fully initialises the new world state.
-            self._world = self._client.get_world()
-            self._world.tick()
+            fresh = self._client.get_world()
+            fresh.tick()
+            self._world = fresh
+            self._batch_episode = episode_of(fresh)
             logger.info("[%s] World reloaded and ticked", scenario_name)
         except Exception:
             logger.warning(
@@ -875,12 +958,8 @@ class ScenarioRunner:
         """
         if timeout_seconds is None:
             timeout_seconds = self.timeout_seconds
-        if self._world is None:
-            self._world = self._client.get_world()
-
-        # Annotated, so Codon unwraps the Optional (docs/typecheck.md).
-        world: "carla.World" = self._world
         scenario_name = type(scenario).__name__
+        world = self._world_for_next_run(scenario_name)
         file_stem = _run_file_stem(self.output_dir, scenario_name)
 
         # A batch runs several scenarios against one world, so the entities of
