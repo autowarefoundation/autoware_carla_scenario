@@ -19,15 +19,21 @@ it means in the module.  A parameter annotated with a union
 (``Lanelet2Pose | OpenDrivePose``, or ``Optional[Union[A, B]]``) is called
 once with each member.  A function with a defaulted parameter is called
 once more with only the arguments that have none (a method through its
-class), so its defaults are compiled too (:meth:`_Renderer._defaults_call`),
-and a dataclass with a defaulted field is constructed once more with only
-the fields that have none (:meth:`_Renderer._required_fields_call`).
+class), so its defaults are compiled too (:meth:`_Renderer._defaults_call`).
+A function with parameters Codon cannot express, each of them defaulted
+(``ego_type: type[EgoVehicle] | None = None``), is called that way alone.  A
+dataclass with a defaulted field is constructed once more with only the
+fields that have none (:meth:`_Renderer._required_fields_call`).
 
 Protected (``_``) functions and methods are called too: they are the hooks a
 subclass or another module uses (``BaseScenario._setup_ego_spawn``), and
 Codon would compile one only if a public function called it.  A module's
 dunders (PEP 562's ``__getattr__``) are Python's hooks, not the module's
 code, and are left out; a class's (``__eq__``, ``__enter__``) are called.
+A property's setter is called by assigning the property, once with each
+member of its value's annotation (:meth:`_Renderer._setter`)::
+
+        _acs_value(BaseScenario).goal_pose = _acs_value(Lanelet2Pose)
 The methods of a ``_`` class are called as a public class's are: what uses
 such a helper may not compile it (a constructor that is ``UNCALLED``, a call
 behind a ``hasattr`` that Codon decides statically, a dataclass's
@@ -188,8 +194,20 @@ class _Renderer:
         self.labels[len(self.lines)] = label
         self.origins[len(self.lines)] = line
 
-    def types(self, arg: ast.arg, owner: str | None, where: str) -> list[str] | None:
-        """The Codon types to call with for *arg*; ``None`` after a problem."""
+    def types(
+        self,
+        arg: ast.arg,
+        owner: str | None,
+        where: str,
+        *,
+        defaulted: bool = False,
+    ) -> list[str] | None:
+        """The Codon types to call with for *arg*; ``None`` after a problem.
+
+        A *defaulted* parameter whose annotation Codon cannot express is no
+        problem: :data:`_LEFT_TO_DEFAULT` is returned instead, and the
+        function is called only leaving it out (:meth:`calls`).
+        """
         annotation = arg.annotation
         if annotation is None:
             self.problems.append(
@@ -240,6 +258,8 @@ class _Renderer:
         if owner is not None and method in _OBJECT_OPERAND:
             if _dotted(annotation) == "object":
                 return [owner]
+        if defaulted:
+            return _LEFT_TO_DEFAULT
         self.problems.append(
             (
                 arg.lineno,
@@ -266,6 +286,12 @@ class _Renderer:
         *class_head* (``Class.method``) is what a method called on a value
         (*head*, ``_acs_value(Class).method``) is called through to leave its
         defaults out: its dispatch thunk fills in none.
+
+        A parameter whose annotation Codon cannot express is a problem,
+        unless it has a default (``ego_type: type[EgoVehicle] | None =
+        None``): then only the call leaving the defaults out is emitted, so
+        the body is compiled with the default (#199).  One the call would
+        still pass (a defaulted parameter before a ``*args: T``) is a problem.
         """
         if self._returns_any(func, where):
             return
@@ -276,22 +302,36 @@ class _Renderer:
             # `*args: T`, given one T, so the body is compiled for one.
             positional.append(vararg)
         every = [*positional, *args.kwonlyargs]
-        choices = [self.types(arg, owner, where) for arg in every]
-        if any(c is None for c in choices):
-            return
-        typed = [c for c in choices if c]
-        self._emit_calls(
-            head,
-            where,
-            positional,
-            args.kwonlyargs,
-            typed,
-            receiver=receiver,
-            line=func.lineno,
-        )
+        defaulted = _defaulted(func)
+        passed, _ = _defaults_split(func, positional)
+        choices = [
+            self.types(
+                arg,
+                owner,
+                where,
+                defaulted=arg.arg in defaulted and arg not in passed,
+            )
+            for arg in every
+        ]
+        typed: dict[str, list[str]] = {}
+        for arg, choice in zip(every, choices):
+            if choice is None:
+                return  # a problem, reported for each such parameter
+            if choice is not _LEFT_TO_DEFAULT:
+                typed[arg.arg] = choice
+        if len(typed) == len(every):
+            self._emit_calls(
+                head,
+                where,
+                positional,
+                args.kwonlyargs,
+                [typed[a.arg] for a in every],
+                receiver=receiver,
+                line=func.lineno,
+            )
         self._defaults_call(
             func,
-            dict(zip((a.arg for a in every), typed)),
+            typed,
             where,
             positional,
             head=class_head or head,
@@ -345,22 +385,9 @@ class _Renderer:
         parameters before it are all passed.  Nothing is emitted for a
         function without a default.
         """
-        args = func.args
-        every = [*args.posonlyargs, *args.args]
-        defaulted = {a.arg for a in every[len(every) - len(args.defaults) :]}
-        defaulted |= {
-            a.arg for a, d in zip(args.kwonlyargs, args.kw_defaults) if d is not None
-        }
-        vararg = _called_vararg(args.vararg)
-        passed_positional = [
-            a for a in positional if vararg is not None or a.arg not in defaulted
-        ]
-        passed_keyword = [a for a in args.kwonlyargs if a.arg not in defaulted]
-        left_out = [
-            a.arg
-            for a in [*positional, *args.kwonlyargs]
-            if a not in passed_positional and a not in passed_keyword
-        ]
+        passed, left_out = _defaults_split(func, positional)
+        passed_positional = [a for a in passed if a in positional]
+        passed_keyword = [a for a in passed if a not in positional]
         if not left_out:
             return
         values = [receiver] if receiver is not None else []
@@ -432,8 +459,11 @@ class _Renderer:
             where = f"{name}.{method.name}"
             if where in self.uncalled:
                 continue
+            if any(k.endswith(".setter") for k in kinds):
+                self._setter(method, name, where)
+                continue
             if kinds & _SKIPPED_DECORATORS or any(
-                k.endswith((".setter", ".deleter")) for k in kinds
+                k.endswith(".deleter") for k in kinds
             ):
                 continue
             if kinds & _PROPERTIES:
@@ -465,6 +495,36 @@ class _Renderer:
                     owner=name,
                     class_head=f"{name}.{method.name}",
                 )
+
+    def _setter(
+        self, method: ast.FunctionDef | ast.AsyncFunctionDef, owner: str, where: str
+    ) -> None:
+        """Assign the property *method* is the setter of (#200).
+
+        ``_acs_value(C).x = _acs_value(T)``, once per member of the value's
+        annotation ``T``: Codon compiles a setter only where something
+        assigns the property, as it compiles a function only where something
+        calls it.
+        """
+        params = [*method.args.posonlyargs, *method.args.args]
+        if len(params) != 2:
+            self.problems.append(
+                (
+                    method.lineno,
+                    f"{where} (setter): takes {len(params)} parameters, not "
+                    "`self` and the value",
+                )
+            )
+            return
+        texts = self.types(params[1], owner, f"{where} (setter)")
+        if texts is None:
+            return
+        for text in texts:
+            self.emit(
+                f"_acs_value({owner}).{method.name} = _acs_value({text})",
+                f"{where} (setter)",
+                method.lineno,
+            )
 
     def _class_defaults(self, node: ast.ClassDef) -> None:
         """A typed local for each class-level default of *node* (#190).
@@ -777,6 +837,39 @@ class _Renderer:
 
 #: The name of a dataclass field the constructor call leaves out.
 _LEFT_OUT = "_acs_left_out"
+
+#: What :meth:`_Renderer.types` returns for a defaulted parameter Codon cannot
+#: express: the function is called only leaving it out.
+_LEFT_TO_DEFAULT: list[str] = []
+
+
+def _defaulted(func: ast.FunctionDef | ast.AsyncFunctionDef) -> set[str]:
+    """The names of *func*'s parameters that have a default."""
+    args = func.args
+    every = [*args.posonlyargs, *args.args]
+    defaulted = {a.arg for a in every[len(every) - len(args.defaults) :]}
+    defaulted |= {
+        a.arg for a, d in zip(args.kwonlyargs, args.kw_defaults) if d is not None
+    }
+    return defaulted
+
+
+def _defaults_split(
+    func: ast.FunctionDef | ast.AsyncFunctionDef, positional: list[ast.arg]
+) -> tuple[list[ast.arg], list[str]]:
+    """What the call leaving the defaults out passes, and the names it leaves out.
+
+    *positional* are the parameters the calls pass by position (a typed
+    ``*args`` last).  A ``*args: T`` is still given one ``T``, so the
+    positional parameters before it are all passed.
+    """
+    args = func.args
+    defaulted = _defaulted(func)
+    vararg = _called_vararg(args.vararg)
+    passed = [a for a in positional if vararg is not None or a.arg not in defaulted]
+    passed += [a for a in args.kwonlyargs if a.arg not in defaulted]
+    left_out = [a.arg for a in [*positional, *args.kwonlyargs] if a not in passed]
+    return passed, left_out
 
 
 def _has_default(value: ast.expr | None) -> bool:

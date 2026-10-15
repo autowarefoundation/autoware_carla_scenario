@@ -389,7 +389,7 @@ driver's configs and client interface, trajectory follower and observations
 `driver.geometry`), and the `autoware_bridge`, `autoware_stack`, `entity`,
 `driver`, `maps` and `coverage` packages themselves, whose `__init__` re-exports what is not checked
 through models of it (see *A class a checked package only re-exports*
-below). 90
+below). 89
 functions and methods of those modules are `UNCALLED` (13 of them
 protected helpers, see *What is compiled* below): most of them a
 condition's `get_details()` or a backend's `describe()`, what takes a traffic
@@ -397,9 +397,9 @@ backend's options node (`Mapping[str, Any]`), what reads a route search, a
 match, a constraint or a binding from YAML values of any type
 (`Range.parse()`, `parse_route_search()`, `RouteMatch.from_config()`,
 `parse_constraint()`, `parse_binding()`), the `[tool.uv.sources]` entry of a
-framework pin, a dict of str and bool values (`Pin.uv_source()`), the three members of
-`BaseScenario` built on the ego's class (`ego_type`, a `type[EgoVehicle]`:
-the constructor and `create_ego()`) or on cover expressions of any value (`register_cover()`),
+framework pin, a dict of str and bool values (`Pin.uv_source()`), the two members of
+`BaseScenario` built on the ego's class (`create_ego()`, which instantiates
+`ego_type`, a `type[EgoVehicle]`) or on cover expressions of any value (`register_cover()`),
 the run-time wrapper of `TrajectoryVertex.__init__`
 (`_refusing_vertex_times`), the road-marking pattern of the stop lines, which returns a `refers`
 parameter (any of lanelet2's primitives) as a line string
@@ -471,8 +471,8 @@ the model, which declares the whole public API.
 Codon checks a function only when something calls it, so the check appends a
 function to each checked module that calls every function and every
 method of every class (constructors, static and class methods,
-properties, dunder methods, protected `_` ones and those of `_` classes
-included) with a value of
+properties and their setters, dunder methods, protected `_` ones and those
+of `_` classes included) with a value of
 each parameter's annotated type:
 
 ```python
@@ -490,9 +490,12 @@ called once with each member, so the body is checked for every type it
 accepts. A parameter with no annotation, or one Codon cannot
 express (`Any`, `object`, `Callable[..., R]`, `Callable[[Any], Any]`, ...),
 gives the check nothing to call with and is reported as a problem of the
-module, at its line: annotate it with the type its callers pass. The one
-exception is `other: object` in `__eq__` and `__ne__`, which Python requires;
-it is called with the class itself. A `Callable` whose argument and result
+module, at its line: annotate it with the type its callers pass. The
+exceptions are `other: object` in `__eq__` and `__ne__`, which Python
+requires, called with the class itself, and a parameter Codon cannot express
+that has a default: a function whose every such parameter has one is called
+only leaving the defaults out (*Defaults are compiled too*, below), so its body
+is compiled with them (#199). A `Callable` whose argument and result
 types Codon can express (`Callable[[carla.World], Optional[float]]`, a
 dataclass field too, or an `Optional` of one) is called with a value of
 Codon's `Callable` type, which a function of that signature converts to. One
@@ -737,6 +740,49 @@ branch of `if TYPE_CHECKING:`, as a public one does (see *A call into a
 module Codon cannot compile, from a function it must* below).
 `_setup_ego_spawn()` needs no such branch: the `register_route_to_goal()` it
 ends with is checked (#174).
+
+**A constructor is compiled with the defaults of what Codon cannot
+express** (#199). `BaseScenario.__init__` takes the ego's class (`ego_type:
+type[EgoVehicle] | None = None`), and Codon cannot hold a class as a value, so
+the whole constructor was `UNCALLED`, though only one line stores it: its
+other ~25 lines were compiled nowhere (the example scenarios compile against
+the model's `BaseScenario`), and an injected `self._tm_port = "x"` passed
+every run. A function some of whose parameters Codon cannot express, each
+with a default, is now called once, leaving out every defaulted argument,
+instead of being a problem:
+
+```python
+    BaseScenario(_acs_value(EgoConfig))
+```
+
+and the one line that stores the class is under `if not TYPE_CHECKING:`,
+which Python runs and Codon does not (`ego_type` stays declared at class
+level, so `ego_requires_goal` still reads it). The error is reported at its
+line, through the call that leaves the defaults out (`<library check:
+BaseScenario.__init__(ego_config: EgoConfig), with the default of
+`spawn_pose`, `ground_projection`, `random_seed`, `ego_type`,
+`ego_entity`>`). A parameter Codon cannot express with no default is a
+problem as before, and so is a defaulted one that call would still pass (one
+before a `*args: T`, which is given one `T`).
+
+**Property setters are called too** (#200). Codon compiles an `@x.setter`
+only where something assigns the property, so an error injected into the
+setter of `ScenarioRunner.xodr_path` passed a run of `scenario_runner` alone:
+only the full run found it, through `ScenarioQueue.start()`. The check now
+assigns each property that has a setter, once with each member of the
+annotation of the value it takes:
+
+```python
+    _acs_value(BaseScenario).goal_pose = _acs_value(Optional[Lanelet2Pose])
+    _acs_value(ScenarioRunner).xodr_path = _acs_value(Optional[Path])
+```
+
+An error is reported at its line, through `<library check:
+ScenarioRunner.xodr_path (setter)>`. That is 3 assignments, for the 3
+setters of 2 modules (`scenario_base` and `scenario_runner`), at the time of
+writing; none failed when it came in. A deleter is not called. The scenario
+check appends the same calls to a scenario's own modules (#197), so a setter
+of a scenario nothing assigns is compiled too.
 
 ### Checked modules and the model
 
@@ -1714,10 +1760,12 @@ What Codon 0.19 needs that Python does not, beyond
   replaced with `coordinate.snap`): the example scenarios import it from the
   top-level package, which is the model, and hand it both to the model's
   `BaseScenario` and to the checked `VehicleEntityConfig` (#99). The
-  top-level package model itself is not replaced: the examples would then
-  derive from the checked `BaseScenario`, and their constructors' calls to
-  `super().__init__()` would compile `BaseScenario.__init__`, which is
-  `UNCALLED` (it stores the ego's class, `ego_type`). The model of
+  top-level package model itself is not replaced: the examples derive from
+  the model's `BaseScenario`, so their constructors' calls to
+  `super().__init__()` compile the model's constructor. The checked
+  `BaseScenario.__init__` is compiled by the library check's own call, with
+  its defaults; the one line that stores the ego's class (`ego_type`) is
+  under `if not TYPE_CHECKING:` (#199). The model of
   `ros2.cyclone` (`ros2/cyclone.codon`, cyclonedds) declares the
   `CycloneRos2Transport` constructor that the checked
   `entity.ros2_entity._cyclone_transport()` calls; its base `Ros2EgoTransport`
