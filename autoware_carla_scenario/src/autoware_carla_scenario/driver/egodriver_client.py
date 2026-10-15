@@ -34,6 +34,7 @@ from carla_driver_interface.protocol import (
     EGODRIVER_SERVICE_FULL_NAME,
     MAX_MESSAGE_BYTES,
     carla_driver_pb2,
+    carla_driver_pb2_grpc,
     channel_options,
     common_pb2,
     egodriver_pb2,
@@ -76,6 +77,11 @@ class EgoDriverGrpcClient(BaseEgoDriverClient):
         self._owns_channel = channel is None
         self._channel: Optional[grpc.Channel] = channel
         self._stub: Optional[egodriver_pb2_grpc.EgodriverServiceStub] = None
+        self._vehicle: Optional[carla_driver_pb2_grpc.CarlaVehicleServiceStub] = None
+        #: Whether the policy serves ``CarlaVehicleService``; ``False`` once it
+        #: answered UNIMPLEMENTED (carla-driver-interface < 2.1), so it is not
+        #: asked again.
+        self._serves_vehicle_commands = True
         self._session_uuid: Optional[str] = None
 
     # ------------------------------------------------------------------
@@ -99,6 +105,7 @@ class EgoDriverGrpcClient(BaseEgoDriverClient):
             )
             self._channel = grpc.insecure_channel(target, options=channel_options())
         self._stub = egodriver_pb2_grpc.EgodriverServiceStub(self._channel)
+        self._vehicle = carla_driver_pb2_grpc.CarlaVehicleServiceStub(self._channel)
         return self._stub
 
     def _camera_specs(self) -> list:
@@ -281,8 +288,9 @@ class EgoDriverGrpcClient(BaseEgoDriverClient):
         """Ask the policy for a plan.
 
         Returns:
-            The plan in the **local** frame, plus the policy's termination flag
-            and whatever diagnostics it chose to surface.
+            The plan in the **local** frame, plus the policy's termination flag,
+            its vehicle command (``CarlaVehicleService.get_vehicle_command``,
+            asked right after) and whatever diagnostics it chose to surface.
         """
         stub = self._require_session()
         response = stub.drive(
@@ -301,7 +309,36 @@ class EgoDriverGrpcClient(BaseEgoDriverClient):
             debug_info=raw_debug,
         )
         _decode_debug_info(raw_debug, outcome)
+        outcome.turn_indicator = self._turn_indicator()
         return outcome
+
+    def _turn_indicator(self) -> int:
+        """The turn indicator the policy decided with its latest drive.
+
+        0 (no command) from a policy that does not serve ``CarlaVehicleService``.
+        """
+        if not self._serves_vehicle_commands or self._vehicle is None:
+            return 0
+        try:
+            command = self._vehicle.get_vehicle_command(
+                carla_driver_pb2.VehicleCommandRequest(session_uuid=self._session_uuid),
+                timeout=self._config.timeout_s,
+            )
+        except grpc.RpcError as error:
+            if error.code() != grpc.StatusCode.UNIMPLEMENTED:
+                # The plan already arrived: an indicator is not worth losing it.
+                logger.warning(
+                    "get_vehicle_command failed (%s); no turn indicator this step",
+                    error.code(),
+                )
+                return 0
+            logger.info(
+                "The driver policy serves no CarlaVehicleService "
+                "(carla-driver-interface < 2.1); it commands no turn indicators"
+            )
+            self._serves_vehicle_commands = False
+            return 0
+        return int(command.turn_indicator)
 
     def close_session(self) -> None:
         """Close the session and the channel.  Safe to call more than once."""
@@ -317,6 +354,8 @@ class EgoDriverGrpcClient(BaseEgoDriverClient):
                 logger.warning("close_session RPC failed", exc_info=True)
         self._session_uuid = None
         self._stub = None
+        self._vehicle = None
+        self._serves_vehicle_commands = True
         if self._channel is not None and self._owns_channel:
             self._channel.close()
         self._channel = None

@@ -1,5 +1,5 @@
 version = 1
-revision = 5
+revision = 3
 requires-python = ">=3.10, <3.15"
 resolution-markers = [
     "python_full_version >= '3.13' and sys_platform == 'emscripten'",
@@ -206,7 +206,7 @@ sumo = [
 
 [package.metadata]
 requires-dist = [
-    { name = "carla-driver-interface", specifier = ">=2.0,<3" },
+    { name = "carla-driver-interface", specifier = ">=2.1,<3" },
     { name = "cyclonedds", marker = "python_full_version < '3.14' and platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'ros2'", specifier = ">=11.0.1" },
     { name = "eclipse-sumo", marker = "extra == 'sumo'", specifier = ">=1.23" },
     { name = "fastapi", specifier = ">=0.115.0" },
@@ -403,7 +403,7 @@ wheels = [
 
 [[package]]
 name = "carla-driver-interface"
-version = "2.0.0"
+version = "2.1.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "grpcio" },
@@ -416,9 +416,9 @@ dependencies = [
     { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/9f/c5/2ad141d68dfe02470b1b5249d0e64a23f7702ebfb482a8a3d396c191a72f/carla_driver_interface-2.0.0.tar.gz", hash = "sha256:db058b92d608c4b8db1994f32d8ffdcd9c5b271945b615af1bf34ec77e0b349a", size = 71248, upload-time = "2026-10-10T00:11:42.481Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/af/40/49345b900703409fa3ca2d4998074f431825936bf1bcad9c590647b657fa/carla_driver_interface-2.1.0.tar.gz", hash = "sha256:7506de3b9954b45c2f4d13ece61d6d0da7637743fa4ea640425aaef7a884c2c0", size = 74363, upload-time = "2026-10-15T14:07:14.157Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a0/4b/0567c8c1a7d23b1e5d96b7f091283f7880d595e4dcc0c2832845c0f7bb28/carla_driver_interface-2.0.0-py3-none-any.whl", hash = "sha256:8903c5664110eb2276f9d9c1471f40c969de4bc98b45c80a42a358f89bd970aa", size = 78972, upload-time = "2026-10-10T00:11:41.04Z" },
+    { url = "https://files.pythonhosted.org/packages/cf/21/18923f5c4b9dab3ad4c60877ee1a9f6985419cb80d9f4ecdfd6f4a5bb742/carla_driver_interface-2.1.0-py3-none-any.whl", hash = "sha256:675c681659aec8f6219fa82f90dd1baa2de82dc835bcfb6b78cb1495dff1b626", size = 82376, upload-time = "2026-10-15T14:07:12.863Z" },
 ]
 
 [[package]]

@@ -8,10 +8,12 @@ server.
 from __future__ import annotations
 
 import math
+from concurrent import futures
 from types import SimpleNamespace
 from typing import List, Optional, Sequence, Tuple
 from unittest.mock import MagicMock
 
+import grpc
 import numpy as np
 import pytest
 
@@ -27,7 +29,19 @@ from autoware_carla_scenario.driver.base import (
     DriverClientConfig,
     EgoObservation,
 )
+from carla_driver_interface.driver import (
+    BaseDriver,
+    DriveContext,
+    DriveResult,
+    TurnIndicator,
+)
 from carla_driver_interface.protocol import carla_driver_pb2
+from carla_driver_interface.protocol import (
+    add_CarlaVehicleServiceServicer_to_server,
+    add_EgodriverServiceServicer_to_server,
+)
+from carla_driver_interface.server import serving
+from carla_driver_interface.service import EgodriverServicer
 from autoware_carla_scenario.driver.geometry import Pose, Trajectory
 from autoware_carla_scenario.entity.carla_driver_entity import CarlaDriverEntity
 
@@ -41,7 +55,11 @@ class _FakeDriverClient(BaseEgoDriverClient):
     """Records every call and answers ``drive`` with a straight-ahead plan."""
 
     def __init__(
-        self, config: DriverClientConfig, *, terminate_after: Optional[int] = None
+        self,
+        config: DriverClientConfig,
+        *,
+        terminate_after: Optional[int] = None,
+        turn_indicators: Sequence[int] = (),
     ) -> None:
         super().__init__(config)
         self.started: List[Tuple[str, str]] = []
@@ -53,6 +71,8 @@ class _FakeDriverClient(BaseEgoDriverClient):
         self.renderer_payloads: List[bytes] = []
         self.closed = 0
         self._terminate_after = terminate_after
+        #: The turn indicator each drive answers, in order; then none.
+        self._turn_indicators = list(turn_indicators)
 
     def start_session(self, session_uuid: str, scene_id: str) -> None:
         self.started.append((session_uuid, scene_id))
@@ -97,7 +117,14 @@ class _FakeDriverClient(BaseEgoDriverClient):
             self._terminate_after is not None
             and len(self.drives) >= self._terminate_after
         )
-        return DriveOutcome(trajectory=plan, terminate_session=terminate)
+        step = len(self.drives) - 1
+        return DriveOutcome(
+            trajectory=plan,
+            terminate_session=terminate,
+            turn_indicator=(
+                self._turn_indicators[step] if step < len(self._turn_indicators) else 0
+            ),
+        )
 
     def close_session(self) -> None:
         self.closed += 1
@@ -145,6 +172,7 @@ def _entity(
     *,
     cameras: Tuple[DriverCameraConfig, ...] = (),
     terminate_after: Optional[int] = None,
+    turn_indicators: Sequence[int] = (),
     **config_overrides,
 ) -> Tuple[CarlaDriverEntity, _FakeDriverClient]:
     """Return an entity wired to a fake client, with the ego actor already 'spawned'."""
@@ -152,7 +180,9 @@ def _entity(
     config = DriverClientConfig(
         cameras=cameras, rear_axle_offset_m=-1.4, **config_overrides
     )
-    client = _FakeDriverClient(config, terminate_after=terminate_after)
+    client = _FakeDriverClient(
+        config, terminate_after=terminate_after, turn_indicators=turn_indicators
+    )
     entity = CarlaDriverEntity(config, client=client)
     entity._vehicle = _actor()  # noqa: SLF001 - stands in for spawn()
     return entity, client
@@ -410,6 +440,204 @@ def test_policy_termination_is_reported() -> None:
 
     entity.on_tick(world, _TICK_S)
     assert entity.termination_requested is True
+
+
+# CARLA's VehicleLightState bits.
+_LOW_BEAM, _RIGHT_BLINKER, _LEFT_BLINKER = 0x2, 0x10, 0x20
+
+
+def _light_states(actor: MagicMock, initial: int) -> List[int]:
+    """Have *actor* keep its light state as CARLA does; the states it was set to."""
+    state = [initial]
+    set_to: List[int] = []
+
+    def _set(value: int) -> None:
+        state[0] = int(value)
+        set_to.append(int(value))
+
+    actor.get_light_state.side_effect = lambda: state[0]
+    actor.set_light_state.side_effect = _set
+    return set_to
+
+
+def test_the_policy_s_turn_indicator_lights_the_ego() -> None:
+    entity, _ = _entity(
+        policy_timestep_s=0.05,
+        turn_indicators=(
+            TurnIndicator.ENABLE_LEFT,
+            TurnIndicator.ENABLE_LEFT,
+            TurnIndicator.NO_COMMAND,
+            TurnIndicator.ENABLE_RIGHT,
+            TurnIndicator.DISABLE,
+        ),
+    )
+    actor = entity.actor
+    assert actor is not None
+    set_to = _light_states(actor, _LOW_BEAM)
+    world = _world_with_route()
+    entity.on_scenario_start(world)
+
+    shown = []
+    for tick in range(5):
+        entity.on_tick(world, tick * _TICK_S)
+        shown.append(entity.turn_indicator)
+
+    # Held until the policy asks for another; the headlights stay on throughout.
+    assert shown == [
+        TurnIndicator.ENABLE_LEFT,
+        TurnIndicator.ENABLE_LEFT,
+        TurnIndicator.ENABLE_LEFT,
+        TurnIndicator.ENABLE_RIGHT,
+        TurnIndicator.DISABLE,
+    ]
+    assert set_to == [
+        _LOW_BEAM | _LEFT_BLINKER,
+        _LOW_BEAM | _RIGHT_BLINKER,
+        _LOW_BEAM,
+    ]
+
+
+def test_the_policy_s_next_command_puts_back_what_a_scenario_changed() -> None:
+    """As docs/driver_interface.md says: an action on the ego holds until then."""
+    entity, _ = _entity(
+        policy_timestep_s=0.05,
+        turn_indicators=(TurnIndicator.ENABLE_LEFT, TurnIndicator.ENABLE_LEFT),
+    )
+    actor = entity.actor
+    assert actor is not None
+    set_to = _light_states(actor, 0)
+    world = _world_with_route()
+    entity.on_scenario_start(world)
+
+    entity.on_tick(world, 0.0)
+    actor.set_light_state(_RIGHT_BLINKER)  # a TurnIndicatorAction on the ego
+    entity.on_tick(world, _TICK_S)
+
+    assert set_to == [_LEFT_BLINKER, _RIGHT_BLINKER, _LEFT_BLINKER]
+
+
+def test_a_policy_that_never_signals_leaves_the_lights_alone() -> None:
+    entity, _ = _entity(policy_timestep_s=0.05)
+    world = _world_with_route()
+    entity.on_scenario_start(world)
+    for tick in range(3):
+        entity.on_tick(world, tick * _TICK_S)
+
+    actor = entity.actor
+    assert actor is not None
+    actor.set_light_state.assert_not_called()
+    assert entity.turn_indicator == TurnIndicator.NO_COMMAND
+
+
+def test_an_unknown_turn_indicator_is_ignored() -> None:
+    entity, _ = _entity(policy_timestep_s=0.05, turn_indicators=(7,))
+    world = _world_with_route()
+    entity.on_scenario_start(world)
+    entity.on_tick(world, 0.0)
+
+    actor = entity.actor
+    assert actor is not None
+    actor.set_light_state.assert_not_called()
+    assert entity.turn_indicator == TurnIndicator.NO_COMMAND
+
+
+class _SignalsLeft(BaseDriver):
+    name = "signals_left"
+
+    def drive(self, ctx: DriveContext) -> DriveResult:
+        return DriveResult(
+            trajectory_in_rig=Trajectory.empty(),
+            turn_indicator=TurnIndicator.ENABLE_LEFT,
+        )
+
+
+def test_the_turn_indicator_arrives_over_the_wire() -> None:
+    with serving(_SignalsLeft(), port=0, host="127.0.0.1") as port:
+        config = DriverClientConfig(
+            address=f"127.0.0.1:{port}",
+            cameras=(),
+            rear_axle_offset_m=-1.4,
+            send_renderer_data=False,
+            policy_timestep_s=0.05,
+            timeout_s=10.0,
+        )
+        entity = CarlaDriverEntity(config)
+        entity._vehicle = _actor()  # noqa: SLF001 - stands in for spawn()
+        set_to = _light_states(entity._vehicle, 0)  # noqa: SLF001
+        world = _world_with_route()
+        entity.on_scenario_start(world)
+        entity.on_tick(world, 0.0)
+        entity.on_scenario_end(world)
+
+    assert entity.turn_indicator == TurnIndicator.ENABLE_LEFT
+    assert set_to == [_LEFT_BLINKER]
+
+
+def test_a_policy_without_the_vehicle_service_commands_nothing() -> None:
+    """A policy server older than CarlaVehicleService still drives; it signals nothing."""
+    server = grpc.server(futures.ThreadPoolExecutor(max_workers=2))
+    add_EgodriverServiceServicer_to_server(EgodriverServicer(_SignalsLeft()), server)
+    port = server.add_insecure_port("127.0.0.1:0")
+    server.start()
+    try:
+        config = DriverClientConfig(
+            address=f"127.0.0.1:{port}",
+            cameras=(),
+            rear_axle_offset_m=-1.4,
+            send_renderer_data=False,
+            policy_timestep_s=0.05,
+            timeout_s=10.0,
+        )
+        entity = CarlaDriverEntity(config)
+        entity._vehicle = _actor()  # noqa: SLF001 - stands in for spawn()
+        world = _world_with_route()
+        entity.on_scenario_start(world)
+        for tick in range(2):
+            entity.on_tick(world, tick * _TICK_S)
+        entity.on_scenario_end(world)
+    finally:
+        server.stop(grace=None)
+
+    assert entity.drive_count == 2
+    assert entity.turn_indicator == TurnIndicator.NO_COMMAND
+    entity._vehicle.set_light_state.assert_not_called()  # noqa: SLF001
+
+
+class _VehicleServiceDown(EgodriverServicer):
+    """Plans, but its CarlaVehicleService fails."""
+
+    def get_vehicle_command(self, request, context):  # type: ignore[no-untyped-def]
+        context.abort(grpc.StatusCode.INTERNAL, "indicator head crashed")
+
+
+def test_a_failing_vehicle_command_keeps_the_plan() -> None:
+    server = grpc.server(futures.ThreadPoolExecutor(max_workers=2))
+    servicer = _VehicleServiceDown(_SignalsLeft())
+    add_EgodriverServiceServicer_to_server(servicer, server)
+    add_CarlaVehicleServiceServicer_to_server(servicer, server)
+    port = server.add_insecure_port("127.0.0.1:0")
+    server.start()
+    try:
+        config = DriverClientConfig(
+            address=f"127.0.0.1:{port}",
+            cameras=(),
+            rear_axle_offset_m=-1.4,
+            send_renderer_data=False,
+            policy_timestep_s=0.05,
+            timeout_s=10.0,
+        )
+        entity = CarlaDriverEntity(config)
+        entity._vehicle = _actor()  # noqa: SLF001 - stands in for spawn()
+        world = _world_with_route()
+        entity.on_scenario_start(world)
+        for tick in range(2):
+            entity.on_tick(world, tick * _TICK_S)
+        entity.on_scenario_end(world)
+    finally:
+        server.stop(grace=None)
+
+    assert entity.drive_count == 2
+    assert entity.turn_indicator == TurnIndicator.NO_COMMAND
 
 
 def test_a_plain_ego_never_requests_termination() -> None:

@@ -30,6 +30,8 @@ from .composition import (
     TemporaryStopCondition,
     TimeHeadwayCondition,
     TimeToCollisionCondition,
+    TurnIndicatorCondition,
+    TurnIndicatorState,
     WaypointCheckType,
     WaypointCondition,
 )
@@ -87,6 +89,8 @@ __all__ = [
     "TimeHeadwayCondition",
     "TimeToCollisionCondition",
     "TimeoutCondition",
+    "TurnIndicatorCondition",
+    "TurnIndicatorState",
     "WaypointCheckType",
     "WaypointCondition",
     "TrafficSignalCondition",
