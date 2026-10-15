@@ -196,6 +196,8 @@ def test_every_built_in_scenario_config_compiles(config_name: str) -> None:
     assert classes is not None
     result = typecheck_scenario(*classes, run._to_dict(cfg.scenario))
     assert result.ok, result.format()
+    # Every function is called by the check: none is left out (#192).
+    assert not result.warnings, result.format()
 
 
 def test_the_scenario_package_template_compiles() -> None:
@@ -209,6 +211,8 @@ def test_the_scenario_package_template_compiles() -> None:
     values = yaml.safe_load((conf / "default.yaml").read_text())["scenario"]
     result = typecheck_scenario(ReachGoalScenario, ReachGoalConfig, values)
     assert result.ok, result.format()
+    # Every function is called by the check: none is left out (#192).
+    assert not result.warnings, result.format()
 
 
 def test_a_scaffolded_scenario_package_compiles(tmp_path: Path) -> None:
@@ -232,6 +236,8 @@ def test_a_scaffolded_scenario_package_compiles(tmp_path: Path) -> None:
     )
     result = typecheck_scenario(scenario_cls, config_cls, values)
     assert result.ok, result.format()
+    # Every function is called by the check: none is left out (#192).
+    assert not result.warnings, result.format()
 
 
 def test_a_correct_scenario_compiles(tmp_path: Path) -> None:
@@ -681,6 +687,102 @@ def test_temporary_stop_takes_a_union_of_poses_only(
         error = _only_error(result)
         assert message in error.message, error.format()
         assert error.line == _line_of(path, "TemporaryStopCondition(EGO_ROLE_NAME")
+
+
+_DEFAULT_HEADER = _HEADER.replace(
+    "    _config: CaseConfig\n",
+    '    _config: CaseConfig\n    RETRIES: int = "three"\n',
+)
+
+
+@pytest.mark.parametrize(
+    ("extra", "header", "needle", "message", "label"),
+    [
+        (
+            "\n    def _helper(self) -> float:\n"
+            "        return self._config.timeout_secs\n",
+            _HEADER,
+            "self._config.timeout_secs",
+            "has no attribute 'timeout_secs'",
+            "<scenario check: CaseScenario._helper()>",
+        ),
+        (
+            "\n    def describe(self) -> str:\n        return 3 + self._config.name\n",
+            _HEADER,
+            "3 + self._config.name",
+            "unsupported operand type(s) for +",
+            "<scenario check: CaseScenario.describe()>",
+        ),
+        (
+            "\n    def initial_speeds_mps(self, ego_actor: carla.Actor | None) -> dict[int, float]:\n"
+            '        return {1: "fast"}\n',
+            _HEADER,
+            'return {1: "fast"}',
+            "does not match expected type",
+            "<scenario check: CaseScenario.initial_speeds_mps(",
+        ),
+        (
+            "\n\ndef unused_helper(x: float) -> float:\n    return x.missing()\n",
+            _HEADER,
+            "x.missing()",
+            "has no attribute 'missing'",
+            "<scenario check: unused_helper(x: float)>",
+        ),
+        (
+            "",
+            _DEFAULT_HEADER,
+            'RETRIES: int = "three"',
+            "does not match expected type",
+            "reached by <scenario check: class-level default of CaseScenario.RETRIES>",
+        ),
+    ],
+    ids=[
+        "private-helper",
+        "public-method",
+        "hook-override",
+        "module-function",
+        "class-level-default",
+    ],
+)
+def test_code_setup_does_not_reach_is_checked_at_its_line(
+    tmp_path: Path, extra: str, header: str, needle: str, message: str, label: str
+) -> None:
+    # Every function of the scenario's own modules is compiled (#192), with
+    # the call that reached it in the trace.
+    scenario, config, path = _write_case(tmp_path, _VALID_SETUP, extra, header=header)
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert message in error.message, error.format()
+    assert error.path == str(path)
+    assert error.line == _line_of(path, needle)
+    assert any(label in frame for frame in error.trace), error.format()
+
+
+def test_a_helper_the_check_cannot_call_is_left_to_what_reaches_it(
+    tmp_path: Path,
+) -> None:
+    # A parameter without an annotation gives the appended calls nothing to
+    # call with: the helper is skipped with a warning, not refused, and is
+    # compiled where setup() reaches it, as before.
+    extra = "\n    def _scaled(self, x):\n        return x * 2.0\n"
+    scenario, config, path = _write_case(tmp_path, _VALID_SETUP, extra)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+    assert not result.diagnostics
+    [warning] = result.warnings
+    assert warning.severity == "warning"
+    assert "CaseScenario._scaled: parameter `x` has no annotation" in warning.message
+    assert "compiled only where" in warning.message
+    assert warning.path == str(path)
+    assert warning.line == _line_of(path, "def _scaled(self, x)")
+    assert f"{path}:{warning.line}: warning: " in result.format()
+
+    # Reached from setup(), it is compiled for what setup() passes.
+    called = _VALID_SETUP + '        self._scaled("fast")\n'
+    scenario, config, path = _write_case(tmp_path, called, extra)
+    result = typecheck_scenario(scenario, config)
+    error = _only_error(result)
+    assert error.line == _line_of(path, "return x * 2.0"), error.format()
+    assert len(result.warnings) == 1
 
 
 def test_a_config_value_of_the_wrong_type_is_reported_at_its_key(

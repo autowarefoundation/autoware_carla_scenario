@@ -126,6 +126,10 @@ class LibraryChecks:
     labels: dict[int, str] = field(default_factory=dict)
     #: (line of the module, message): a parameter the check cannot call with.
     problems: list[tuple[int, str]] = field(default_factory=list)
+    #: Line of :attr:`source` (1-based) -> the line of the module that holds
+    #: what the call on it compiles (the function's ``def``, the class-level
+    #: default, the dataclass's ``class``).
+    lines: dict[int, int] = field(default_factory=dict)
 
 
 def _called_vararg(vararg: ast.arg | None) -> ast.arg | None:
@@ -172,10 +176,13 @@ class _Renderer:
         ]
         self.labels: dict[int, str] = {}
         self.problems: list[tuple[int, str]] = []
+        self.origins: dict[int, int] = {}
 
-    def emit(self, text: str, label: str) -> None:
+    def emit(self, text: str, label: str, line: int) -> None:
+        """Append the statement *text*, for what *label* names at *line*."""
         self.lines.append(f"    {text}")
         self.labels[len(self.lines)] = label
+        self.origins[len(self.lines)] = line
 
     def types(self, arg: ast.arg, owner: str | None, where: str) -> list[str] | None:
         """The Codon types to call with for *arg*; ``None`` after a problem."""
@@ -263,6 +270,7 @@ class _Renderer:
             args.kwonlyargs,
             typed,
             receiver=receiver,
+            line=func.lineno,
         )
         self._defaults_call(
             func,
@@ -322,6 +330,7 @@ class _Renderer:
             f"{head}({', '.join(values)})",
             f"{where}({signature}), with the default of "
             + ", ".join(f"`{name}`" for name in left_out),
+            func.lineno,
         )
 
     def _emit_calls(
@@ -333,6 +342,7 @@ class _Renderer:
         choices: list[list[str]],
         *,
         receiver: str | None = None,
+        line: int,
     ) -> None:
         for combo in _combinations(choices):
             values = [receiver] if receiver is not None else []
@@ -344,7 +354,7 @@ class _Renderer:
             signature = ", ".join(
                 f"{a.arg}: {t}" for a, t in zip([*positional, *keyword], combo)
             )
-            self.emit(f"{head}({', '.join(values)})", f"{where}({signature})")
+            self.emit(f"{head}({', '.join(values)})", f"{where}({signature})", line)
 
     def function(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
         if node.name not in self.uncalled:
@@ -384,7 +394,7 @@ class _Renderer:
             ):
                 continue
             if kinds & _PROPERTIES:
-                self.emit(f"_acs_value({name}).{method.name}", where)
+                self.emit(f"_acs_value({name}).{method.name}", where, method.lineno)
             elif "staticmethod" in kinds:
                 self.calls(method, f"{name}.{method.name}", where, drop_first=False)
             elif "classmethod" in kinds:
@@ -480,6 +490,7 @@ class _Renderer:
             self.emit(
                 f"{CLASS_DEFAULT}_{len(self.lines) + 1}: {typed} = {value}",
                 f"class-level default of {node.name}.{name}",
+                stmt.lineno,
             )
 
     def _defines_init(self, node: ast.ClassDef, seen: set[str]) -> bool:
@@ -572,17 +583,22 @@ class _Renderer:
             # Past a field left out, the fields are passed by keyword.
             (keyword if left_out else positional).append(arg)
         self._emit_calls(
-            node.name, f"{node.name}.__init__", positional, keyword, choices
+            node.name,
+            f"{node.name}.__init__",
+            positional,
+            keyword,
+            choices,
+            line=node.lineno,
         )
         self._required_fields_call(
-            node.name,
+            node,
             fields,
             dict(zip((a.arg for a in [*positional, *keyword]), choices)),
         )
 
     def _required_fields_call(
         self,
-        name: str,
+        node: ast.ClassDef,
         fields: dict[str, tuple[ast.arg, bool]],
         typed: dict[str, list[str]],
     ) -> None:
@@ -609,6 +625,7 @@ class _Renderer:
         if not left_out:
             return
 
+        name = node.name
         values = [f"_acs_value({typed[f][0]})" for f in passed_positional]
         values += [f"{f}=_acs_value({typed[f][0]})" for f in passed_keyword]
         signature = ", ".join(
@@ -618,6 +635,7 @@ class _Renderer:
             f"{name}({', '.join(values)})",
             f"{name}.__init__({signature}), with the default of "
             + ", ".join(f"`{f}`" for f in left_out),
+            node.lineno,
         )
 
     def _fields(
@@ -865,7 +883,10 @@ def render_library_checks(
             renderer.cls(node)
     renderer.lines.append("    pass")
     return LibraryChecks(
-        "\n".join(renderer.lines) + "\n", renderer.labels, renderer.problems
+        "\n".join(renderer.lines) + "\n",
+        renderer.labels,
+        renderer.problems,
+        renderer.origins,
     )
 
 

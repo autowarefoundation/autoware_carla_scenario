@@ -691,6 +691,26 @@ def test_a_class_level_default_is_assigned_to_a_typed_local() -> None:
     assert "from autoware_carla_scenario._tc import _acs_value, _expect_bool" in lines
 
 
+def test_each_appended_line_names_the_line_it_compiles() -> None:
+    # The scenario check reports an error on an appended line at the line of
+    # what it compiles (#192): a function's `def`, a class-level default.
+    source = _CLASS_DEFAULTS_RENDERED
+    checks = render_library_checks(ast.parse(source))
+    module = source.splitlines()
+    assert set(checks.lines) == set(checks.labels)
+    for n, label in checks.labels.items():
+        line = module[checks.lines[n] - 1]
+        if label.startswith("class-level default of "):
+            member = label.rsplit(".", 1)[1]
+            assert line.lstrip().startswith(member), (label, line)
+        else:
+            owner, _, name = label.split("(", 1)[0].rpartition(".")
+            # A dataclass's generated constructor is at its `class` line.
+            assert f"def {name}(" in line or (
+                name == "__init__" and f"class {owner}" in line
+            ), (label, line)
+
+
 def test_protected_functions_and_methods_are_called_too() -> None:
     # A `_` function or method is a hook a subclass or another module uses
     # (BaseScenario._setup_ego_spawn): Codon compiles its body only when

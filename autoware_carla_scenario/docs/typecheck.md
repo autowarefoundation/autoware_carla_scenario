@@ -94,16 +94,67 @@ scenario.setup()
 done: bool = scenario.is_done()
 ```
 
-Codon checks a function only when something calls it, so what is checked is
+Codon checks a function only when something calls it. The program checks
 everything `setup()` and `is_done()` reach: the calls into the framework, the
 scenario's own helpers, and, through `register_pass_condition()` and the
 other `register_*` methods, the `check()` of a custom condition and the
 `execute()` of a custom action.
 
+**Then it compiles the rest of the scenario's own modules too** (#192). Each
+module the checker copies gets the library check's function appended
+([*What is compiled*](#what-is-compiled)), and the program calls it after the
+lines above:
+
+```python
+def _acs_library_check():                      # appended to my_scenario.py
+    MyScenario(_acs_value(EgoConfig), _acs_value(Lanelet2Pose), ...)
+    _acs_value(MyScenario)._goal_ids(_acs_value(int))    # a helper setup() never calls
+    _acs_value(MyScenario).initial_speeds_mps(_acs_value(Optional[carla.Actor]))
+    unused_probe(_acs_value(carla.World))                # a module-level function
+    _acs_cls_default_9: int = "three"                    # MyScenario.RETRIES: int = "three"
+```
+
+So an error is reported wherever it is in those modules, not only on the path
+`setup()` takes: in a private helper or a public method nothing calls yet, in
+a hook override the runner calls later (`initial_speeds_mps()`), in a
+module-level function, in a class-level default, or in the config class's
+methods. Each call passes a value of each parameter's annotated type, and a
+defaulted parameter's default is compiled by one more call that leaves it out.
+
+The error is reported at the scenario file's own line. One in a function's
+body is at that line, with the call that reached it in the trace:
+
+```text
+scenario.py:88:16: error: 'MyConfig' object has no attribute 'timeout_secs'
+    during the realization of _helper(self: MyScenario) [<scenario check: MyScenario._helper()>, scenario.py:87]
+```
+
+One in what the appended line compiles itself (a class-level default, or a
+parameter's default) is at the line of the default, and the trace names it
+(`reached by <scenario check: class-level default of MyScenario.RETRIES>`).
+
+A function the check cannot call, because a parameter has no annotation or one
+Codon cannot express (`Any`, `object`, `Callable[..., R]`), is **not refused**:
+it is left out of the appended calls with a **warning**, and compiled where
+`setup()` and `is_done()` reach it, generically, as before:
+
+```text
+my_scenario.py:40: warning: MyScenario._scaled: parameter `x` has no annotation; the check does not call it on its own, so it is compiled only where the scenario's constructor, setup() and is_done() reach it
+```
+
+A warning does not fail the check (`result.ok` stays true; they are in
+`result.warnings`), and `scenario-check` and the runner print them. Annotate
+the parameter to have the function checked on its own. Refusing such a
+function would have refused a scenario that passed before, for a helper that
+compiles wherever it is called. No built-in example, the scenario package
+template or a scaffolded package has one.
+
 An ODD written in Python ([ODD](odd.md)) is checked the same way: the program
 calls its builder (`odd: OddDefinition = urban_odd()`). Every attribute's
 probe is then called with a world, and every condition must come from an
-attribute. The runner checks the ODD named by the `odd` key under the same
+attribute. The ODD's own modules have every function compiled as a
+scenario's do, with the same warning for one the check cannot call (compiled
+where the builder reaches it). The runner checks the ODD named by the `odd` key under the same
 `typecheck` mode, and `scenario-odd check` does it without running anything.
 
 ### The model
@@ -168,9 +219,23 @@ scenario has to do itself:
   The check builds the config the same way and refuses an unconverted
   mapping at its `scenario.<key>`.
 
+- **Annotate every parameter of every function and method**, helpers and
+  hook overrides included. Every function of the scenario's modules is
+  compiled, whether `setup()` reaches it or not, with a value of each
+  parameter's annotated type ([*What is checked*](#what-is-checked)). A
+  function with a parameter that has no annotation, or one Codon cannot
+  express, is only compiled where `setup()` and `is_done()` call it, and the
+  check warns about it, at the parameter's line.
+- **Give each class-level default a value of its annotated type**
+  (`RETRIES: int = 3`): it is compiled against the annotation.
+
 Annotations Codon cannot express (`Union` of two types, `Any`, `Callable`,
 `Sequence`, `type[...]`) are dropped from parameters, which become generic:
-Codon then checks each call with the arguments it is given.
+Codon then checks each call with the arguments it is given. The appended
+calls give a union parameter (`Lanelet2Pose | OpenDrivePose`) each of its
+members in turn, and a `Callable[[A], R]` of types Codon can express a value
+of that signature; `Any`, `object` and `Callable[..., R]` give them nothing to
+call with, hence the warning.
 
 The checker also rewrites what Codon spells differently: an `Enum` class (its
 members become instances with a `name` and a typed `value`; a lookup by value,

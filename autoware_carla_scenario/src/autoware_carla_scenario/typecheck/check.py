@@ -13,7 +13,12 @@ framework's public API (as far as the model goes), the CARLA API, which is
 typesafe_carla's Codon library (``import typesafe_carla.carla as carla``,
 the import the runtime uses too), and the scenario package's own modules.  A module outside those
 (yaml, say) has no Codon model, and a scenario importing one fails the check
-with a message saying so.
+with a message saying so.  Each of the scenario's own modules also has the
+library check's calls appended (:func:`.library_driver.render_library_checks`),
+which the driver runs, so every function, method and class-level default in
+it is compiled, whether ``setup()`` reaches it or not; one the check cannot
+call (a parameter without an annotation it can call with) is left to what
+reaches it, with a warning.
 
 :func:`typecheck_library` compiles the framework's own modules instead (those
 :mod:`.library` lists as checked), each with calls to every function and method,
@@ -35,9 +40,14 @@ from dataclasses import dataclass, field
 from collections.abc import Callable, Collection, Iterable, Iterator, Mapping
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
-from .driver import DRIVER_MODULE, render_driver, render_odd_driver
+from .driver import (
+    DRIVER_MODULE,
+    render_driver,
+    render_module_checks,
+    render_odd_driver,
+)
 from .toolchain import (
     SUPPORTED_CODON_SERIES,
     Toolchain,
@@ -207,7 +217,7 @@ def _model_declarations() -> dict[str, set[str]]:
 
 @dataclass(frozen=True)
 class Diagnostic:
-    """One compile error, located in the file the author wrote."""
+    """One compile error (or warning), located in the file the author wrote."""
 
     message: str
     path: str | None = None
@@ -215,6 +225,8 @@ class Diagnostic:
     column: int | None = None
     #: Codon's "during the realization of ..." lines, outermost last.
     trace: tuple[str, ...] = ()
+    #: A warning does not fail the check (:attr:`TypeCheckResult.warnings`).
+    severity: Literal["error", "warning"] = "error"
 
     def format(self) -> str:
         where = ""
@@ -225,7 +237,7 @@ class Diagnostic:
                 if self.column is not None:
                     where += f":{self.column}"
             where += ": "
-        text = f"{where}error: {self.message}"
+        text = f"{where}{self.severity}: {self.message}"
         for frame in self.trace:
             text += f"\n    {frame}"
         return text
@@ -238,6 +250,8 @@ class TypeCheckResult:
     scenario: str
     ok: bool
     diagnostics: list[Diagnostic] = field(default_factory=list)
+    #: What the check left unchecked and why; none fails it.
+    warnings: list[Diagnostic] = field(default_factory=list)
     #: Why the scenario was not compiled at all (no Codon, no source file).
     skipped: str | None = None
     #: The compiler crashed: no verdict on the scenario either way.
@@ -249,12 +263,17 @@ class TypeCheckResult:
         if self.skipped is not None:
             return f"{self.scenario}: static check skipped: {self.skipped}"
         if self.ok:
-            return f"{self.scenario}: static check passed ({self.seconds:.1f}s)"
-        head = f"{self.scenario}: static check failed"
-        if self.crashed:
-            head += " (the Codon compiler crashed)"
+            head = f"{self.scenario}: static check passed ({self.seconds:.1f}s)"
+            shown = self.warnings
+        else:
+            head = f"{self.scenario}: static check failed"
+            if self.crashed:
+                head += " (the Codon compiler crashed)"
+            shown = [*self.diagnostics, *self.warnings]
+        if not shown:
+            return head
         lines = [head + ":"]
-        lines += ["  " + d.format().replace("\n", "\n  ") for d in self.diagnostics]
+        lines += ["  " + d.format().replace("\n", "\n  ") for d in shown]
         return "\n".join(lines)
 
 
@@ -397,6 +416,15 @@ class _Workspace:
     #: workspace-relative file -> (its lines before the calls the library
     #: check appended, appended line -> the call on it)
     appended: dict[str, tuple[int, dict[int, str]]] = field(default_factory=dict)
+    #: workspace-relative file -> (appended line -> the line of the file
+    #: holding what the call on it compiles), where an error on an appended
+    #: line is reported at that line (the scenario check) rather than at the
+    #: call (the library check, whose appended calls are not the author's)
+    appended_origins: dict[str, dict[int, int]] = field(default_factory=dict)
+    #: What an appended call is named as in a diagnostic.
+    appended_label: str = "library check"
+    #: Problems that do not fail the check (:attr:`TypeCheckResult.warnings`).
+    warnings: list[Diagnostic] = field(default_factory=list)
     #: workspace-relative file -> the line of the original each of its lines
     #: after the prelude comes from (:func:`.transform.transform_source_lines`)
     origins: dict[str, list[int]] = field(default_factory=dict)
@@ -423,12 +451,44 @@ def _declarations(sources: _Sources) -> dict[str, set[str]]:
     return declared
 
 
+#: The label of an appended call in a scenario's (or an ODD's) check.
+_SCENARIO_CHECK_LABEL = "scenario check"
+
+
+def _unchecked_warning(message: str, path: Path, line: int, reach: str) -> Diagnostic:
+    """A function the appended calls cannot call: compiled only as far as reached."""
+    return Diagnostic(
+        f"{message}; the check does not call it on its own, so it is compiled "
+        f"only where {reach} reach it",
+        str(path),
+        line,
+        severity="warning",
+    )
+
+
 def _build_workspace(
     root: Path, sources: _Sources, driver: Any, codon_path: Path
 ) -> tuple[_Workspace, list[Diagnostic]]:
+    """The scenario's (or the ODD's) modules, rewritten, beside the model.
+
+    Each module has the library check's calls appended
+    (:func:`.library_driver.render_library_checks`) and the driver runs
+    them, so every function, method and class-level default of the module is
+    compiled, not only what the driver's own calls reach.  A function the
+    calls cannot be made for (a parameter with no annotation, or one Codon
+    cannot express) is left out of them with a warning: the driver still
+    compiles it where it reaches it, as before.
+    """
     ws = _base_workspace(root, driver, codon_path)
+    ws.appended_label = _SCENARIO_CHECK_LABEL
     problems: list[Diagnostic] = []
     declared = _declarations(sources)
+    classes = {
+        node.name: node
+        for module in sources.modules.values()
+        for node in module.tree.body
+        if isinstance(node, ast.ClassDef)
+    }
     for name, module in sorted(sources.modules.items()):
         rel = Path(*name.split("."))
         rel = rel / "__init__.py" if module.is_package else rel.with_suffix(".py")
@@ -437,9 +497,17 @@ def _build_workspace(
         dest = root / rel
         dest.parent.mkdir(parents=True, exist_ok=True)
         text, origin = transform_source_lines(module.text)
-        dest.write_text(text)
-        ws.files[rel.as_posix()] = str(module.path)
-        ws.origins[rel.as_posix()] = origin
+        checks = render_library_checks(module.tree, classes=classes)
+        for line, message in checks.problems:
+            ws.warnings.append(
+                _unchecked_warning(message, module.path, line, driver.reaches)
+            )
+        dest.write_text(text + checks.source)
+        key = rel.as_posix()
+        ws.files[key] = str(module.path)
+        ws.origins[key] = origin
+        ws.appended[key] = (text.count("\n"), checks.labels)
+        ws.appended_origins[key] = checks.lines
     # Every package on the way needs an __init__; one not compiled is empty.
     for rel_name in list(ws.files):
         parent = Path(rel_name).parent
@@ -451,7 +519,9 @@ def _build_workspace(
             if not init_py.exists() and not init_codon.exists():
                 init_codon.write_text("")
             parent = parent.parent
-    (root / DRIVER_MODULE).write_text(driver.source)
+    (root / DRIVER_MODULE).write_text(
+        driver.source + render_module_checks(sorted(sources.modules))
+    )
     return ws, problems
 
 
@@ -472,20 +542,27 @@ def _parse_output(output: str, ws: _Workspace) -> list[Diagnostic]:
     for rel in ws.files:
         by_basename.setdefault(Path(rel).name, []).append(rel)
 
-    def locate(file: str, line: int) -> tuple[str, int, bool] | None:
-        """(path to show, line, is the scenario's own file)."""
+    def locate(file: str, line: int) -> tuple[str, int, bool, str | None] | None:
+        """(path to show, line, is the scenario's own file, the appended call)."""
         if file == DRIVER_MODULE:
             key = ws.driver.config_lines.get(line)
-            return (key if key else ws.driver_label, 0 if key else line, False)
+            return (key if key else ws.driver_label, 0 if key else line, False, None)
         candidates = by_basename.get(Path(file).name, [])
         if len(candidates) != 1:
             return None
         rel = candidates[0]
         if rel in ws.appended and line > ws.appended[rel][0]:
-            # A call the library check appended: name the call it makes.
-            call = ws.appended[rel][1].get(line - ws.appended[rel][0])
-            return (f"<library check: {call or rel}>", 0, False)
-        return (ws.files[rel], _original_line(ws.origins.get(rel), line), True)
+            # A call the check appended: name the call it makes, and, in a
+            # scenario, report it at the line of what it compiles (a
+            # class-level default, a parameter's default).
+            appended = line - ws.appended[rel][0]
+            call = ws.appended[rel][1].get(appended)
+            note = f"<{ws.appended_label}: {call or rel}>"
+            origin = ws.appended_origins.get(rel, {}).get(appended)
+            if origin is not None:
+                return (ws.files[rel], origin, True, note)
+            return (note, 0, False, None)
+        return (ws.files[rel], _original_line(ws.origins.get(rel), line), True, None)
 
     errors: list[tuple[str, list[tuple[str, int, int | None, str]]]] = []
     for raw in output.splitlines():
@@ -521,11 +598,17 @@ def _parse_output(output: str, ws: _Workspace) -> list[Diagnostic]:
         ) or next(((f, loc) for f, loc in located if loc), (None, None))
         column = pf[2] if pf is not None else None
         trace = []
+        if primary is not None and primary[3] is not None:
+            # The error is on an appended line itself: say which call it is.
+            trace.append(f"reached by {primary[3]}")
+            column = None  # a column of the appended line, not of the file's
         for f, loc in located[1:]:
             if f[0] == DRIVER_MODULE:
                 continue  # the generated program: nothing the author wrote
             if loc is not None:
                 where = f"{Path(loc[0]).name}:{loc[1]}" if loc[1] else loc[0]
+                if loc[3] is not None:
+                    where = f"{loc[3]}, {where}"
             else:
                 where = f"{f[0]}:{f[1]}" if f[0] else ""
             trace.append(f"{f[3]} [{where}]" if where else f[3])
@@ -717,7 +800,9 @@ def _compile(
         else:
             ws, problems = build(Path(tmp))
         if problems:
-            return TypeCheckResult(name, ok=False, diagnostics=problems)
+            return TypeCheckResult(
+                name, ok=False, diagnostics=problems, warnings=list(ws.warnings)
+            )
         env = codon_environment(toolchain, ws.root)
         try:
             proc = subprocess.run(  # noqa: S603 - a fixed compiler invocation
@@ -755,6 +840,7 @@ def _compile(
         name,
         ok=proc.returncode == 0,
         diagnostics=diagnostics,
+        warnings=list(ws.warnings),
         crashed=crashed,
         output=output,
         seconds=seconds,
