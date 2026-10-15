@@ -354,6 +354,7 @@ def _decode_debug_info(raw: bytes, outcome: DriveOutcome) -> None:
     outcome.policy_name = str(message.policy_name)
     outcome.inference_seconds = float(message.inference_seconds)
     outcome.debug_scalars = dict(message.scalars)
+    outcome.turn_indicator = int(message.turn_indicator)
 
 
 def _vec3(values: NDArray[np.float64]) -> common_pb2.Vec3:

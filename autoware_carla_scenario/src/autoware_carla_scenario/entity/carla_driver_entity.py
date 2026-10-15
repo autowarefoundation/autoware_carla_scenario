@@ -8,7 +8,8 @@ Each simulation tick the entity applies control; every
 :attr:`~autoware_carla_scenario.driver.base.DriverClientConfig.policy_timestep_s` it also
 submits fresh observations and asks the policy to re-plan.  Between policy steps the most
 recent plan keeps being tracked, which is how the upstream runtime handles a policy that
-runs slower than the simulation.
+runs slower than the simulation.  The turn indicators the policy asks for are lit on the
+ego and held until it asks for others.
 
 Given a ``bridge``, the entity also holds the splatsim-consistent
 :class:`~autoware_carla_scenario.entity.bridged_ego.BridgeHandshake`, for a stack that
@@ -50,6 +51,7 @@ from ..driver.observation import (
     route_waypoints_in_rig,
     sensor_pose_in_rig,
 )
+from carla_driver_interface.driver import TurnIndicator
 from carla_driver_interface.protocol import LidarSweep, pack_lidar_sweep
 from ._policy_warmup import PolicyWarmup
 from .bridged_ego import BridgeHandshake
@@ -161,10 +163,18 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
         #: What the policy is told the ego accelerates at: Autoware's estimate,
         #: not CARLA's per-step one.
         self._acceleration = AccelerationEstimate()
+        #: The turn indicators last lit at the policy's request; ``NO_COMMAND``
+        #: until it asks for any.
+        self._turn_indicator: TurnIndicator = TurnIndicator.NO_COMMAND
 
     # ------------------------------------------------------------------
     # Properties
     # ------------------------------------------------------------------
+
+    @property
+    def turn_indicator(self) -> TurnIndicator:
+        """The turn indicators lit at the policy's request (``NO_COMMAND``: none yet)."""
+        return self._turn_indicator
 
     @property
     def config(self) -> DriverClientConfig:
@@ -255,6 +265,7 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
         self._attach_cameras(world, actor)
         self._world = world
         self._acceleration.reset()
+        self._turn_indicator = TurnIndicator.NO_COMMAND
         # The ego drives on CARLA's own (Chaos) vehicle physics: this entity puts it
         # on no other, so its pedals are worked out from that model.
         self._follower.powertrain = ChaosPowertrain.from_physics_control(
@@ -538,6 +549,7 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
         self._plan = outcome.trajectory
         self._drive_count += 1
         self._last_policy_time_us = self._sim_time_us
+        self._show_turn_indicator(actor, outcome.turn_indicator, outcome.policy_name)
 
         if outcome.debug_scalars and self._drive_count % _DEBUG_LOG_INTERVAL == 0:
             logger.info(
@@ -552,6 +564,45 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
 
         if outcome.terminate_session and not self.termination_requested:
             self._terminate("The driver policy requested session termination")
+
+    def _show_turn_indicator(
+        self, actor: "carla.Actor", requested: int, policy_name: str
+    ) -> None:
+        """Light the ego's turn indicators as the policy asks.
+
+        Only the blinker bits change, so the rest of the ego's lights stay as they
+        are; ``NO_COMMAND``, or the indicators already lit, changes nothing.
+        """
+        if requested == TurnIndicator.NO_COMMAND or requested == self._turn_indicator:
+            return
+        try:
+            indicator = TurnIndicator(requested)
+        except ValueError:
+            logger.warning(
+                "[%s] asked for turn indicator %d, which this runtime does not know; "
+                "ignored",
+                policy_name or "driver",
+                requested,
+            )
+            return
+        import typesafe_carla.carla as carla  # noqa: PLC0415
+
+        lights = carla.VehicleLightState
+        left, right = int(lights.LeftBlinker), int(lights.RightBlinker)
+        blinkers = {
+            TurnIndicator.DISABLE: 0,
+            TurnIndicator.ENABLE_LEFT: left,
+            TurnIndicator.ENABLE_RIGHT: right,
+        }[indicator]
+        others = int(actor.get_light_state()) & ~(left | right)
+        actor.set_light_state(others | blinkers)
+        self._turn_indicator = indicator
+        logger.info(
+            "[%s] step %d: turn indicator %s",
+            policy_name or "driver",
+            self._drive_count,
+            indicator.name,
+        )
 
     def _renderer_data(self, observation: EgoObservation) -> bytes:
         """Return the CARLA ground-truth payload for this policy step.
@@ -604,6 +655,7 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
             "drive_count": float(self._drive_count),
             "plan_length": float(len(self._plan)),
             "rear_axle_offset_m": self._rear_axle_offset_m,
+            "turn_indicator": float(self._turn_indicator),
         }
 
 

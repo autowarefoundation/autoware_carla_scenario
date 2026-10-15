@@ -8,7 +8,7 @@ The wire contract is alpasim's `egodriver.EgodriverService`. Its policy side is
 [**`carla-driver-interface`**](https://github.com/hakuturu583/carla_driver_interface)
 (2.x), a light package (grpcio, protobuf, numpy, Pillow; Python 3.10+) a policy
 depends on without pulling in the scenario framework. It is versioned on its own: the
-framework accepts any `carla-driver-interface>=2.0,<3`, so a policy and a scenario
+framework accepts any `carla-driver-interface>=2.1,<3`, so a policy and a scenario
 package can share an environment whenever their majors agree.
 
 A policy run as a separate process may be on another major. Each side declares the
@@ -344,6 +344,18 @@ OpenDRIVE describe the same roads in the same frame.
 its inference time, and whatever scalars it chose to publish. They are logged every ten
 policy steps. Anything that does not parse is left as raw bytes — the field is
 deliberately unstructured, and a policy is free to use its own encoding.
+
+### Turn indicators
+
+The same message carries the turn indicators the policy asks for,
+`CarlaDriveDebugInfo.turn_indicator` (`DriveResult.turn_indicator` on the policy side,
+carla-driver-interface 2.1+). The entity lights the ego's `LeftBlinker` / `RightBlinker`
+with it, leaving its other lights as they are, and holds them until the policy asks for
+others: `DISABLE` turns both off, and `NO_COMMAND` -- the default, and what a policy that
+never sets the field sends -- changes nothing. The numbers are Autoware's
+`TurnIndicatorsCommand` ones, so a planner that classifies Autoware's recorded signal
+(DISABLE / LEFT / RIGHT) passes its class plus one. `CarlaDriverEntity.turn_indicator`
+is what is lit now; a value the runtime does not know is logged and ignored.
 
 ## Coordinate frames
 
