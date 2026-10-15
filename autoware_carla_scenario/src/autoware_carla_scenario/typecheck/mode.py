@@ -111,6 +111,9 @@ def _enforce(result: TypeCheckResult, mode: TypecheckMode) -> TypeCheckResult:
         logger.warning("%s", result.format())
     elif not result.ok:
         raise ScenarioTypeError(result)
+    elif result.warnings:
+        # Passed, with a function the check could not call on its own.
+        logger.warning("%s", result.format())
     else:
         logger.info("%s", result.format())
     return result

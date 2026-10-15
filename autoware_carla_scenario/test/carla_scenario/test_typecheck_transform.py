@@ -615,6 +615,25 @@ def test_raise_from_none_loses_its_cause_and_raise_from_an_exception_keeps_it() 
     assert lines[8] == '    raise RuntimeError("bad f") from exc'
 
 
+def test_a_builtin_exception_class_raised_as_it_is_is_instantiated() -> None:
+    # Codon 0.19 crashes on `raise NotImplementedError` (#192 compiles every
+    # abstract stub); Python raises an instance of the class either way.
+    out = _transform(
+        """
+        def pick(ids: list[int]) -> int:
+            if not ids:
+                raise ValueError from None
+            if ids[0] < 0:
+                raise exc
+            raise NotImplementedError
+        """
+    )
+    lines = out.splitlines()
+    assert lines[3] == "        raise ValueError()"
+    assert lines[5] == "        raise exc"
+    assert lines[6] == "    raise NotImplementedError()"
+
+
 def test_super_new_in_a_singleton_s_new_allocates_the_class() -> None:
     # Codon 0.19's object.__new__ takes no class (MapManager's singleton).
     out = _transform(
