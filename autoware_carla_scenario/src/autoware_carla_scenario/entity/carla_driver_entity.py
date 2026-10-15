@@ -40,7 +40,11 @@ from ..driver.control import ControlConfig, TrajectoryFollower
 from ..driver.egodriver_client import EgoDriverGrpcClient
 from ..driver.geometry import Pose, Trajectory
 from ..utils.powertrain import ChaosPowertrain
-from ..utils.turn_indicator import TurnIndicatorState, set_turn_indicators
+from ..utils.turn_indicator import (
+    TurnIndicatorState,
+    set_turn_indicators,
+    turn_indicators_of,
+)
 from ..driver.renderer import RendererDataBuilder
 from ..driver.observation import (
     AccelerationEstimate,
@@ -557,8 +561,6 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
         self._plan = outcome.trajectory
         self._drive_count += 1
         self._last_policy_time_us = self._sim_time_us
-        self._show_turn_indicator(actor, outcome.turn_indicator, outcome.policy_name)
-
         if outcome.debug_scalars and self._drive_count % _DEBUG_LOG_INTERVAL == 0:
             logger.info(
                 "[%s] step %d: %s",
@@ -573,15 +575,19 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
         if outcome.terminate_session and not self.termination_requested:
             self._terminate("The driver policy requested session termination")
 
+        self._show_turn_indicator(actor, outcome.turn_indicator, outcome.policy_name)
+
     def _show_turn_indicator(
         self, actor: "carla.Actor", requested: int, policy_name: str
     ) -> None:
         """Light the ego's turn indicators as the policy asks.
 
         Only the blinker bits change, so the rest of the ego's lights stay as they
-        are; ``NO_COMMAND``, or the indicators already lit, changes nothing.
+        are; ``NO_COMMAND`` changes nothing.  Compared with what the ego shows,
+        not with the last command: indicators a scenario set since are put back
+        on the policy's next command, as ``docs/driver_interface.md`` says.
         """
-        if requested == TurnIndicator.NO_COMMAND or requested == self._turn_indicator:
+        if requested == TurnIndicator.NO_COMMAND:
             return
         try:
             indicator = TurnIndicator(requested)
@@ -593,8 +599,13 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
                 requested,
             )
             return
-        set_turn_indicators(actor, _SHOWN[indicator])
+        changed = indicator != self._turn_indicator
         self._turn_indicator = indicator
+        if turn_indicators_of(actor) == _SHOWN[indicator]:
+            return
+        set_turn_indicators(actor, _SHOWN[indicator])
+        if not changed:
+            return
         logger.info(
             "[%s] step %d: turn indicator %s",
             policy_name or "driver",

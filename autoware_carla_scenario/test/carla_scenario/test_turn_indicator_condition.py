@@ -117,3 +117,12 @@ def test_the_action_skips_a_missing_entity_or_a_walker() -> None:
     walker = _world(0, type_id="walker.pedestrian.0001")
     action.execute(walker)
     walker.get_actors.return_value[0].set_light_state.assert_not_called()
+
+
+def test_the_editor_offers_every_state() -> None:
+    """The authoring select lists exactly the enum's members."""
+    from autoware_carla_scenario.authoring.registry import _TURN_INDICATOR_STATES
+
+    assert [o.value for o in _TURN_INDICATOR_STATES] == [
+        m.name for m in TurnIndicatorState
+    ]

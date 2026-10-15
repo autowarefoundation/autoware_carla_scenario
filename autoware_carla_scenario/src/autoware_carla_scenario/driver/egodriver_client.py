@@ -326,7 +326,12 @@ class EgoDriverGrpcClient(BaseEgoDriverClient):
             )
         except grpc.RpcError as error:
             if error.code() != grpc.StatusCode.UNIMPLEMENTED:
-                raise
+                # The plan already arrived: an indicator is not worth losing it.
+                logger.warning(
+                    "get_vehicle_command failed (%s); no turn indicator this step",
+                    error.code(),
+                )
+                return 0
             logger.info(
                 "The driver policy serves no CarlaVehicleService "
                 "(carla-driver-interface < 2.1); it commands no turn indicators"
@@ -350,6 +355,7 @@ class EgoDriverGrpcClient(BaseEgoDriverClient):
         self._session_uuid = None
         self._stub = None
         self._vehicle = None
+        self._serves_vehicle_commands = True
         if self._channel is not None and self._owns_channel:
             self._channel.close()
         self._channel = None

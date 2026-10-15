@@ -36,7 +36,10 @@ from carla_driver_interface.driver import (
     TurnIndicator,
 )
 from carla_driver_interface.protocol import carla_driver_pb2
-from carla_driver_interface.protocol import add_EgodriverServiceServicer_to_server
+from carla_driver_interface.protocol import (
+    add_CarlaVehicleServiceServicer_to_server,
+    add_EgodriverServiceServicer_to_server,
+)
 from carla_driver_interface.server import serving
 from carla_driver_interface.service import EgodriverServicer
 from autoware_carla_scenario.driver.geometry import Pose, Trajectory
@@ -494,6 +497,25 @@ def test_the_policy_s_turn_indicator_lights_the_ego() -> None:
     ]
 
 
+def test_the_policy_s_next_command_puts_back_what_a_scenario_changed() -> None:
+    """As docs/driver_interface.md says: an action on the ego holds until then."""
+    entity, _ = _entity(
+        policy_timestep_s=0.05,
+        turn_indicators=(TurnIndicator.ENABLE_LEFT, TurnIndicator.ENABLE_LEFT),
+    )
+    actor = entity.actor
+    assert actor is not None
+    set_to = _light_states(actor, 0)
+    world = _world_with_route()
+    entity.on_scenario_start(world)
+
+    entity.on_tick(world, 0.0)
+    actor.set_light_state(_RIGHT_BLINKER)  # a TurnIndicatorAction on the ego
+    entity.on_tick(world, _TICK_S)
+
+    assert set_to == [_LEFT_BLINKER, _RIGHT_BLINKER, _LEFT_BLINKER]
+
+
 def test_a_policy_that_never_signals_leaves_the_lights_alone() -> None:
     entity, _ = _entity(policy_timestep_s=0.05)
     world = _world_with_route()
@@ -579,6 +601,43 @@ def test_a_policy_without_the_vehicle_service_commands_nothing() -> None:
     assert entity.drive_count == 2
     assert entity.turn_indicator == TurnIndicator.NO_COMMAND
     entity._vehicle.set_light_state.assert_not_called()  # noqa: SLF001
+
+
+class _VehicleServiceDown(EgodriverServicer):
+    """Plans, but its CarlaVehicleService fails."""
+
+    def get_vehicle_command(self, request, context):  # type: ignore[no-untyped-def]
+        context.abort(grpc.StatusCode.INTERNAL, "indicator head crashed")
+
+
+def test_a_failing_vehicle_command_keeps_the_plan() -> None:
+    server = grpc.server(futures.ThreadPoolExecutor(max_workers=2))
+    servicer = _VehicleServiceDown(_SignalsLeft())
+    add_EgodriverServiceServicer_to_server(servicer, server)
+    add_CarlaVehicleServiceServicer_to_server(servicer, server)
+    port = server.add_insecure_port("127.0.0.1:0")
+    server.start()
+    try:
+        config = DriverClientConfig(
+            address=f"127.0.0.1:{port}",
+            cameras=(),
+            rear_axle_offset_m=-1.4,
+            send_renderer_data=False,
+            policy_timestep_s=0.05,
+            timeout_s=10.0,
+        )
+        entity = CarlaDriverEntity(config)
+        entity._vehicle = _actor()  # noqa: SLF001 - stands in for spawn()
+        world = _world_with_route()
+        entity.on_scenario_start(world)
+        for tick in range(2):
+            entity.on_tick(world, tick * _TICK_S)
+        entity.on_scenario_end(world)
+    finally:
+        server.stop(grace=None)
+
+    assert entity.drive_count == 2
+    assert entity.turn_indicator == TurnIndicator.NO_COMMAND
 
 
 def test_a_plain_ego_never_requests_termination() -> None:

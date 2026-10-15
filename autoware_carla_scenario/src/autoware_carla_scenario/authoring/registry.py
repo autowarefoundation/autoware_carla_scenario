@@ -503,7 +503,6 @@ def rule_symbol(rule: object) -> str:
     return wanted
 
 
-#: Mirrors ``carla.TrafficLightState`` (same reason as above).
 #: A vehicle's turn indicators, by ``TurnIndicatorState`` member.
 _TURN_INDICATOR_STATES: tuple[SelectOption, ...] = (
     SelectOption("OFF", "Off"),
@@ -512,6 +511,7 @@ _TURN_INDICATOR_STATES: tuple[SelectOption, ...] = (
     SelectOption("HAZARD", "Hazard (both)"),
 )
 
+#: Mirrors ``carla.TrafficLightState`` (same reason as above).
 TRAFFIC_LIGHT_STATES: tuple[SelectOption, ...] = (
     SelectOption("Green", "Green"),
     SelectOption("Yellow", "Yellow"),
