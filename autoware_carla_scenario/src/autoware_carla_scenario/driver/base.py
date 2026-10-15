@@ -323,8 +323,8 @@ class DriveOutcome:
             ``CarlaDriveDebugInfo``.
         inference_seconds: How long the policy took, from the same message.
         debug_scalars: Free-form diagnostics the policy chose to surface.
-        turn_indicator: The turn indicators the policy asks for, as
-            ``CarlaDriveDebugInfo.turn_indicator`` numbers them (Autoware's
+        turn_indicator: The turn indicators the policy commands with this plan
+            (``VehicleCommand.turn_indicator``, numbered as Autoware's
             ``TurnIndicatorsCommand``: 0 no command, 1 off, 2 left, 3 right).
             0 leaves the indicators as they are.
     """

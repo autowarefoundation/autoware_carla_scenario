@@ -8,10 +8,12 @@ server.
 from __future__ import annotations
 
 import math
+from concurrent import futures
 from types import SimpleNamespace
 from typing import List, Optional, Sequence, Tuple
 from unittest.mock import MagicMock
 
+import grpc
 import numpy as np
 import pytest
 
@@ -34,7 +36,9 @@ from carla_driver_interface.driver import (
     TurnIndicator,
 )
 from carla_driver_interface.protocol import carla_driver_pb2
+from carla_driver_interface.protocol import add_EgodriverServiceServicer_to_server
 from carla_driver_interface.server import serving
+from carla_driver_interface.service import EgodriverServicer
 from autoware_carla_scenario.driver.geometry import Pose, Trajectory
 from autoware_carla_scenario.entity.carla_driver_entity import CarlaDriverEntity
 
@@ -545,6 +549,36 @@ def test_the_turn_indicator_arrives_over_the_wire() -> None:
 
     assert entity.turn_indicator == TurnIndicator.ENABLE_LEFT
     assert set_to == [_LEFT_BLINKER]
+
+
+def test_a_policy_without_the_vehicle_service_commands_nothing() -> None:
+    """A policy server older than CarlaVehicleService still drives; it signals nothing."""
+    server = grpc.server(futures.ThreadPoolExecutor(max_workers=2))
+    add_EgodriverServiceServicer_to_server(EgodriverServicer(_SignalsLeft()), server)
+    port = server.add_insecure_port("127.0.0.1:0")
+    server.start()
+    try:
+        config = DriverClientConfig(
+            address=f"127.0.0.1:{port}",
+            cameras=(),
+            rear_axle_offset_m=-1.4,
+            send_renderer_data=False,
+            policy_timestep_s=0.05,
+            timeout_s=10.0,
+        )
+        entity = CarlaDriverEntity(config)
+        entity._vehicle = _actor()  # noqa: SLF001 - stands in for spawn()
+        world = _world_with_route()
+        entity.on_scenario_start(world)
+        for tick in range(2):
+            entity.on_tick(world, tick * _TICK_S)
+        entity.on_scenario_end(world)
+    finally:
+        server.stop(grace=None)
+
+    assert entity.drive_count == 2
+    assert entity.turn_indicator == TurnIndicator.NO_COMMAND
+    entity._vehicle.set_light_state.assert_not_called()  # noqa: SLF001
 
 
 def test_a_plain_ego_never_requests_termination() -> None:

@@ -145,6 +145,8 @@ if TYPE_CHECKING:
         TimeoutCondition as TimeoutCondition,
         TrafficSignalCondition as TrafficSignalCondition,
         TrafficSignalControllerCondition as TrafficSignalControllerCondition,
+        TurnIndicatorCondition as TurnIndicatorCondition,
+        TurnIndicatorState as TurnIndicatorState,
         WaypointCheckType as WaypointCheckType,
         WaypointCondition as WaypointCondition,
         find_actor_by_role_name as find_actor_by_role_name,
@@ -365,6 +367,8 @@ __all__ = [
     "TemporaryStopCondition",
     "TimeHeadwayCondition",
     "TimeToCollisionCondition",
+    "TurnIndicatorCondition",
+    "TurnIndicatorState",
     "AutowareEgoEntity",
     # autoware bridge
     "AutowareBridge",
@@ -556,6 +560,8 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "TemporaryStopCondition": (".conditions", "TemporaryStopCondition"),
     "TimeHeadwayCondition": (".conditions", "TimeHeadwayCondition"),
     "TimeToCollisionCondition": (".conditions", "TimeToCollisionCondition"),
+    "TurnIndicatorCondition": (".conditions", "TurnIndicatorCondition"),
+    "TurnIndicatorState": (".conditions", "TurnIndicatorState"),
     "TimeoutCondition": (".conditions", "TimeoutCondition"),
     "TrafficSignalCondition": (".conditions", "TrafficSignalCondition"),
     "TrafficSignalControllerCondition": (

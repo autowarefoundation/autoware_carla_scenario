@@ -2162,6 +2162,39 @@ register_condition_spec(
 
 register_condition_spec(
     ConditionSpec(
+        type_id="turn_indicator",
+        title="Turn Indicator",
+        category="Entity",
+        builder="build_turn_indicator_condition",
+        target="..conditions:TurnIndicatorCondition",
+        argmap=(("entity", "entity_name"),),
+        visual=ConditionVisual(
+            metric="Turn indicator", subject="entity", value="state"
+        ),
+        fields=(
+            _entity_field("entity", "Subject"),
+            FieldSpec(
+                name="state",
+                label="Indicators",
+                kind="select",
+                default="LEFT",
+                options=(
+                    SelectOption("OFF", "Off"),
+                    SelectOption("LEFT", "Left"),
+                    SelectOption("RIGHT", "Right"),
+                    SelectOption("HAZARD", "Hazard (both)"),
+                ),
+            ),
+        ),
+        description=(
+            "The vehicle shows these turn indicators -- however they were lit, "
+            "a driver policy's command included."
+        ),
+    )
+)
+
+register_condition_spec(
+    ConditionSpec(
         type_id="lane_change_settled",
         title="Lane Change Settled",
         category="Entity",

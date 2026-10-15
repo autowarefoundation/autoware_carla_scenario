@@ -345,17 +345,33 @@ its inference time, and whatever scalars it chose to publish. They are logged ev
 policy steps. Anything that does not parse is left as raw bytes — the field is
 deliberately unstructured, and a policy is free to use its own encoding.
 
-### Turn indicators
+## Turn indicators
 
-The same message carries the turn indicators the policy asks for,
-`CarlaDriveDebugInfo.turn_indicator` (`DriveResult.turn_indicator` on the policy side,
-carla-driver-interface 2.1+). The entity lights the ego's `LeftBlinker` / `RightBlinker`
-with it, leaving its other lights as they are, and holds them until the policy asks for
-others: `DISABLE` turns both off, and `NO_COMMAND` -- the default, and what a policy that
-never sets the field sends -- changes nothing. The numbers are Autoware's
-`TurnIndicatorsCommand` ones, so a planner that classifies Autoware's recorded signal
-(DISABLE / LEFT / RIGHT) passes its class plus one. `CarlaDriverEntity.turn_indicator`
-is what is lit now; a value the runtime does not know is logged and ignored.
+A policy commands the ego's turn indicators as well as its plan
+(`DriveResult.turn_indicator` on the policy side, carla-driver-interface 2.1+). The
+egodriver contract carries only the plan, so the command does not ride in the response:
+after each `drive` the client asks for it with `carla_driver.v0.CarlaVehicleService`'s
+`get_vehicle_command`, which the policy's server serves on the same port. A server that
+predates it answers UNIMPLEMENTED, and the policy is then taken to command nothing.
+
+The entity lights the ego's `LeftBlinker` / `RightBlinker` with the command, leaving its
+other lights as they are, and holds them until the policy asks for others: `DISABLE`
+turns both off, and `NO_COMMAND` -- the default, and what a policy that never sets it
+sends -- changes nothing. The numbers are Autoware's `TurnIndicatorsCommand` ones, so a
+planner that classifies Autoware's recorded signal (DISABLE / LEFT / RIGHT) passes its
+class plus one. `CarlaDriverEntity.turn_indicator` is what is lit now; a value the
+runtime does not know is logged and ignored.
+
+Because the indicators are the CARLA vehicle's own lights, a scenario checks them with
+`TurnIndicatorCondition` -- the policy signals left before it turns, say:
+
+```python
+from autoware_carla_scenario import EntityRole, TurnIndicatorCondition, TurnIndicatorState
+
+signals_left = TurnIndicatorCondition(
+    EntityRole.ego(), TurnIndicatorState.LEFT, label="ego_signals_left"
+)
+```
 
 ## Coordinate frames
 

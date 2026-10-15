@@ -46,6 +46,7 @@ __all__ = [
     "build_standstill_condition",
     "build_temporary_stop_condition",
     "build_temporary_stop_at_stop_lines_condition",
+    "build_turn_indicator_condition",
     "build_entity_distance_condition",
     "build_distance_condition",
     "build_relative_speed_condition",
@@ -456,6 +457,23 @@ def build_temporary_stop_at_stop_lines_condition(
         s_margin=params["s_margin"],
         speed_threshold=params["speed_threshold"],
         stop_duration=params["stop_duration"],
+        label=compiled.label,
+    )
+
+
+def build_turn_indicator_condition(
+    compiled: "CompiledCondition",
+    children: "list[BaseCondition]",
+    ctx: "BuildContext",
+) -> "BaseCondition":
+    """Build a :class:`TurnIndicatorCondition`."""
+    from ..conditions import TurnIndicatorCondition  # noqa: PLC0415
+    from ..conditions import TurnIndicatorState  # noqa: PLC0415
+
+    params = compiled.params
+    return TurnIndicatorCondition(
+        entity_name=str(params["entity"]),
+        state=TurnIndicatorState[str(params["state"])],
         label=compiled.label,
     )
 

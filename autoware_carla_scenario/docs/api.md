@@ -109,6 +109,7 @@ tree internally:
 - `EntityLanePositionCondition`
 - `SpeedCondition`, `SpeedDirection`, `SpeedCoordinateSystem`
 - `StandstillCondition`
+- `TurnIndicatorCondition`, `TurnIndicatorState` -- the turn indicators a vehicle shows (OFF / LEFT / RIGHT / HAZARD), read off its CARLA light state
 - `TemporaryStopCondition`
 - `WaypointCondition`, `WaypointCheckType`
 
