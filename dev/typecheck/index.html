@@ -2067,7 +2067,8 @@ those models declare.</p>
 places, and the checker smooths over most of them (it rewrites <code>X | None</code> into
 <code>Optional[X]</code>, drops <code>@dataclass</code> and resolves <code>field(...)</code> defaults, accepts
 keyword-only parameters, required ones after a default included, gives a list of different conditions the type
-<code>list[BaseCondition]</code>, and drops a parameter or return annotation naming a
+<code>list[BaseCondition]</code>, checks a <code>tuple[X, ...]</code> return annotation as a
+<code>List[X]</code>, and drops a parameter or return annotation naming a
 class the module defines further down, which Codon cannot name yet). What a
 scenario has to do itself:</p>
 <ul>
@@ -2175,8 +2176,8 @@ method of a checked module.</p>
 <li>Run <code>uv run pytest autoware_carla_scenario/test/carla_scenario/test_typecheck_library.py</code>.</li>
 </ol>
 <h3 id="what-is-checked-of-the-framework">What is checked of the framework<a class="headerlink" href="#what-is-checked-of-the-framework" title="Permanent link">&para;</a></h3>
-<p>Every module now has an entry other than <code>"not yet checked (#45)"</code>. 163 of
-the package's 240 modules (68%; about 37,600 of 68,200 lines) are <code>CHECKED</code>:
+<p>Every module now has an entry other than <code>"not yet checked (#45)"</code>. 165 of
+the package's 242 modules (68%; about 40,000 of 71,100 lines) are <code>CHECKED</code>:
 the kinematics, the coordinate frames and poses, the conversions between
 Lanelet2, OpenDRIVE and CARLA world poses (<code>coordinate.transform</code>), the stop
 lines read off a Lanelet2 map (<code>utils.stop_line</code>, <code>coordinate.stop_line</code>)
@@ -2231,7 +2232,7 @@ driver's configs and client interface, trajectory follower and observations
 <code>driver.geometry</code>), and the <code>autoware_bridge</code>, <code>autoware_stack</code>, <code>entity</code>,
 <code>driver</code>, <code>maps</code> and <code>coverage</code> packages themselves, whose <code>__init__</code> re-exports what is not checked
 through models of it (see <em>A class a checked package only re-exports</em>
-below). 89
+below). 90
 functions and methods of those modules are <code>UNCALLED</code> (13 of them
 protected helpers, see <em>What is compiled</em> below): most of them a
 condition's <code>get_details()</code> or a backend's <code>describe()</code>, what takes a traffic
@@ -2453,6 +2454,66 @@ changes at those 9 defaults alone, and 1 by the call):</p>
   (<code>NpcVehicleConfig.spawn_lanelet_id: int = MISSING</code>, "'str' does not
   match expected type 'int'"), which the call now passes, as above.</li>
 </ul>
+<p><strong>So are class-level defaults</strong> (#190). On a class with a constructor, its
+own or a base's, Codon makes a class-level <code>x: T = v</code> a field and drops <code>v</code>:
+no call compiles it, and <code>BackendDriven._tm_port: int = "x"</code>,
+<code>BaseScenario.STABILIZE_TICKS: int = "a"</code> and <code>AutowareEgoEntity.stack_name:
+str = 1</code> passed the check. The check's function now assigns each such default
+to a local of its type, which compiles the value against the annotation:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>    <span class="n">_acs_cls_default_10</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">DEFAULT_TM_PORT</span>
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>    <span class="n">_acs_cls_default_13</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="n">_expect_bool</span><span class="p">(</span><span class="kc">True</span><span class="p">)</span>
+</code></pre></div>
+<p>Each local is named after its line in the function, and an error is reported
+at it, labelled with the member (<code>&lt;library check: class-level default of
+BackendDriven._tm_port&gt;: error: 'int' does not match expected type 'str'</code>;
+Codon names the two types the other way round in an annotated assignment). A
+<code>bool</code> default goes through <code>_expect_bool()</code> (<code>_tc.codon</code>): Codon converts
+any value assigned to a <code>bool</code> local with its <code>__bool__</code>, so <code>ready: bool =
+"x"</code> would compile, and a call converts nothing. A default written without
+an annotation, overriding one a base declares (<code>REISSUES_BY_DEFAULT = True</code>
+on <code>FollowTrajectoryAction</code>, whose base declares <code>REISSUES_BY_DEFAULT:
+ClassVar[bool] = False</code>), is checked against the base's annotation, a
+<code>ClassVar[T]</code>'s <code>T</code>; the base is found by name among the classes of its
+module and the other checked modules, depth first. Left out:</p>
+<ul>
+<li>the defaults of a dataclass, compiled by the constructor call that leaves
+  them out (above), and the members of an enum, which are its values;</li>
+<li>a <code>ClassVar</code>, which Codon keeps as a class variable, with its value;</li>
+<li>every default of a class that has no <code>__init__</code>, its own or a base's, and
+  that its module's top level constructs with no argument (<code>_CACHE =
+  _Cache()</code> in <code>measures</code>): Codon's generated constructor takes each field
+  with its default, and that call compiles them already (an error is
+  reported at the call);</li>
+<li>a default without an annotation that no base declares (a base outside the
+  checked modules), a dunder (<code>__slots__</code>), and one over a bare <code>ClassVar</code>;</li>
+<li>an annotation Codon cannot express or naming a <code>TypeVar</code>, and a value or
+  annotation naming anything else the class body binds (<code>TWICE: float =
+  LIMIT * 2</code>; a member unpacked, <code>LOW, HIGH = 0.0, 1.0</code>; a method; a nested
+  class), which at the function's scope names something else, or nothing.</li>
+</ul>
+<p>That is 22 defaults, at the time of writing: 20 annotated ones, in 10
+classes (<code>BaseScenario</code>, the five ego entities, <code>TurnAction</code>,
+<code>CollisionCondition</code>, <code>DrivenEntity</code> and <code>BackendDriven</code>), and the 2
+unannotated overrides of <code>BaseAction.REISSUES_BY_DEFAULT</code>
+(<code>FollowTrajectoryAction</code>, <code>_BackendAction</code>). Of the 34 non-<code>ClassVar</code>
+class-level defaults outside dataclasses and enums, the other 14 are those
+of <code>measures</code>' <code>_Cache</code>, <code>_Lines</code> and <code>_FrameMemo</code>, which the module
+constructs; the 7 <code>ClassVar</code>s are left out. None failed when it came in.</p>
+<p><strong>So are the values a function returns as a <code>tuple[X, ...]</code></strong> (#191). Codon's
+tuples have a fixed length, and the transform dropped such a return
+annotation, so nothing checked what the function returns:
+<code>signals.registry.registered_signal_controllers()</code> returning <code>1</code> passed the
+check. A class-level <code>tuple[X, ...]</code> is a <code>List[X]</code>, and <code>tuple(x)</code> of a list
+is one, so the transform now writes the return annotation as <code>List[X]</code>
+(<code>Optional[List[X]]</code>, <code>dict[str, List[X]]</code> inside another type), and the
+error is reported at the <code>return</code>. It stays dropped when it names an abstract
+collection (a parameter's is dropped, so the function may return it as it
+got it), a class defined further down the module or a <code>TypeVar</code>, and so does
+a <code>Union</code>, <code>Any</code> or <code>Callable</code> return (a <code>Callable</code> return kept fails for a
+nested function). That is 10 return annotations, in 6 modules, at the time
+of writing: <code>actions.routing</code>, <code>maps.resolver</code>, <code>route.model</code>,
+<code>signals.registry</code>, 3 in <code>ros2.config</code> and 3 in <code>signals.controller</code>
+(one of them <code>dict[str, tuple[int, ...]]</code>). None failed when it came in.</p>
 <p><strong>Protected functions and methods are called too</strong> (#175). A <code>_</code> method is
 often a hook a subclass or another module uses: six example scenarios call
 <code>BaseScenario._setup_ego_spawn()</code>, and the model's <code>BaseScenario</code> is what a
@@ -2622,6 +2683,18 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   passes (mypy, in pre-commit, reports it).</li>
 <li><strong>Declare attributes</strong> on any class in a hierarchy (exceptions included)
   and on a class with <code>__slots__</code>, at class level (<code>_value: str</code>).</li>
+<li><strong>A class-level default is compiled as written</strong> (#190): the library check
+  assigns it to a local of its annotation in its own function, which the
+  transform does not rewrite. So a default the transform would rewrite in a
+  dataclass (a tuple display or <code>()</code> of a <code>tuple[X, ...]</code> member,
+  <code>frozenset()</code>) is reported: assign such a value in <code>__init__</code> instead. A
+  default naming another member of the class
+  (<code>TWICE: float = LIMIT * 2</code>), or anything else its body binds, is not checked, as at the function's scope
+  the name is not the member; neither is a <code>None</code> default, which Codon
+  makes an <code>Optional</code> of any annotation (<code>x: float = None</code> compiles). An
+  override without an annotation (<code>REISSUES_BY_DEFAULT = True</code>) is checked
+  against its base's annotation only when the base is a class of its module
+  or of a checked one.</li>
 <li><strong><code>hasattr()</code> instead of <code>getattr(x, name, default)</code></strong>: Codon decides
   <code>hasattr</code> when it compiles, so the branch for a type without the attribute
   is never compiled.</li>
@@ -3026,10 +3099,10 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   Convert under <code>if TYPE_CHECKING:</code>, which Codon reads as true and Python as
   false, so nothing changes at run time (<code>traffic_manager._vehicle()</code>):</li>
 </ul>
-<p><div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="k">if</span> <span class="n">TYPE_CHECKING</span><span class="p">:</span>
-<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>    <span class="k">return</span> <span class="n">actor</span><span class="o">.</span><span class="n">as_vehicle</span><span class="p">()</span>
-<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="k">else</span><span class="p">:</span>
-<a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a>    <span class="k">return</span> <span class="n">actor</span>
+<p><div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="k">if</span> <span class="n">TYPE_CHECKING</span><span class="p">:</span>
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>    <span class="k">return</span> <span class="n">actor</span><span class="o">.</span><span class="n">as_vehicle</span><span class="p">()</span>
+<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a><span class="k">else</span><span class="p">:</span>
+<a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a>    <span class="k">return</span> <span class="n">actor</span>
 </code></pre></div>
 - <strong>An import of the framework inside an uncalled function</strong> is left as
   written: Codon does not compile it, so a checked module may import a
@@ -3139,18 +3212,18 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
 - <strong>An operator whose result depends on the operand</strong> (<code>Absolute - Absolute
   -&gt; Relative</code>, <code>Absolute - Relative -&gt; Absolute</code>) keeps its <code>@overload</code>
   stubs, for mypy, and spells the union out on the implementation:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="nd">@overload</span>
-<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="k">def</span><span class="w"> </span><span class="fm">__sub__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">:</span> <span class="n">AbsoluteVelocity</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">RelativeVelocity</span><span class="p">:</span> <span class="o">...</span>
-<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a><span class="nd">@overload</span>
-<a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a><span class="k">def</span><span class="w"> </span><span class="fm">__sub__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">:</span> <span class="n">RelativeVelocity</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">AbsoluteVelocity</span><span class="p">:</span> <span class="o">...</span>
-<a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a><span class="k">def</span><span class="w"> </span><span class="fm">__sub__</span><span class="p">(</span>
-<a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a>    <span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">:</span> <span class="n">AbsoluteVelocity</span> <span class="o">|</span> <span class="n">RelativeVelocity</span>
-<a id="__codelineno-11-7" name="__codelineno-11-7" href="#__codelineno-11-7"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Union</span><span class="p">[</span><span class="n">RelativeVelocity</span><span class="p">,</span> <span class="n">AbsoluteVelocity</span><span class="p">]:</span>
-<a id="__codelineno-11-8" name="__codelineno-11-8" href="#__codelineno-11-8"></a>    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">other</span><span class="p">,</span> <span class="n">AbsoluteVelocity</span><span class="p">):</span>
-<a id="__codelineno-11-9" name="__codelineno-11-9" href="#__codelineno-11-9"></a>        <span class="k">return</span> <span class="n">RelativeVelocity</span><span class="p">(</span><span class="o">...</span><span class="p">)</span>
-<a id="__codelineno-11-10" name="__codelineno-11-10" href="#__codelineno-11-10"></a>    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">other</span><span class="p">,</span> <span class="n">RelativeVelocity</span><span class="p">):</span>
-<a id="__codelineno-11-11" name="__codelineno-11-11" href="#__codelineno-11-11"></a>        <span class="k">return</span> <span class="n">AbsoluteVelocity</span><span class="p">(</span><span class="o">...</span><span class="p">)</span>
-<a id="__codelineno-11-12" name="__codelineno-11-12" href="#__codelineno-11-12"></a>    <span class="k">return</span> <span class="bp">NotImplemented</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="nd">@overload</span>
+<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a><span class="k">def</span><span class="w"> </span><span class="fm">__sub__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">:</span> <span class="n">AbsoluteVelocity</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">RelativeVelocity</span><span class="p">:</span> <span class="o">...</span>
+<a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a><span class="nd">@overload</span>
+<a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a><span class="k">def</span><span class="w"> </span><span class="fm">__sub__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">:</span> <span class="n">RelativeVelocity</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">AbsoluteVelocity</span><span class="p">:</span> <span class="o">...</span>
+<a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a><span class="k">def</span><span class="w"> </span><span class="fm">__sub__</span><span class="p">(</span>
+<a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a>    <span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">:</span> <span class="n">AbsoluteVelocity</span> <span class="o">|</span> <span class="n">RelativeVelocity</span>
+<a id="__codelineno-12-7" name="__codelineno-12-7" href="#__codelineno-12-7"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Union</span><span class="p">[</span><span class="n">RelativeVelocity</span><span class="p">,</span> <span class="n">AbsoluteVelocity</span><span class="p">]:</span>
+<a id="__codelineno-12-8" name="__codelineno-12-8" href="#__codelineno-12-8"></a>    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">other</span><span class="p">,</span> <span class="n">AbsoluteVelocity</span><span class="p">):</span>
+<a id="__codelineno-12-9" name="__codelineno-12-9" href="#__codelineno-12-9"></a>        <span class="k">return</span> <span class="n">RelativeVelocity</span><span class="p">(</span><span class="o">...</span><span class="p">)</span>
+<a id="__codelineno-12-10" name="__codelineno-12-10" href="#__codelineno-12-10"></a>    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">other</span><span class="p">,</span> <span class="n">RelativeVelocity</span><span class="p">):</span>
+<a id="__codelineno-12-11" name="__codelineno-12-11" href="#__codelineno-12-11"></a>        <span class="k">return</span> <span class="n">AbsoluteVelocity</span><span class="p">(</span><span class="o">...</span><span class="p">)</span>
+<a id="__codelineno-12-12" name="__codelineno-12-12" href="#__codelineno-12-12"></a>    <span class="k">return</span> <span class="bp">NotImplemented</span>
 </code></pre></div>
 <p>The check calls the implementation once per member, and Codon compiles
   only the <code>isinstance</code> branch of that member, so each call has one result
@@ -3396,9 +3469,9 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   lists (above), but a tuple built otherwise (a display grown in a loop,
   <code>a + (b,)</code>) is not, and turning the source's tuple into a list changes what
   the class does (a frozen dataclass's hash, its equality with a tuple). A
-  function that only <em>returns</em> one compiles: the check drops the
-  <code>tuple[X, ...]</code> return annotation
-  (<code>signals.registry.registered_signal_controllers()</code>).
+  function that returns one is checked as returning a <code>List[X]</code> (#191):
+  return <code>tuple(x)</code> of a list (<code>signals.registry.registered_signal_controllers()</code>),
+  not a tuple display, which is a fixed-length Codon tuple, nor <code>()</code>.
 - <strong>No <code>**</code> of a dict in a call</strong> (<code>f(**extra)</code> with <code>extra</code> a <code>dict</code>):
   Codon unpacks only a named tuple into keyword arguments. Write one call
   per set of keywords (<code>RoutingAction</code> passes <code>waypoints=</code> only when there
@@ -3654,7 +3727,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 14, 2026 21:30:32 UTC"><span class="timeago" datetime="2026-10-14T21:30:32+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 14, 2026 21:30:32 UTC">2026-10-14</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 15, 2026 01:39:42 UTC"><span class="timeago" datetime="2026-10-15T01:39:42+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 15, 2026 01:39:42 UTC">2026-10-15</span>
   </span>
 
     
