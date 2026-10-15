@@ -636,8 +636,7 @@ class TestTheBatchMap:
         assert runner._world is not None and runner._world.id == server.episode
         warning = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
         assert any(
-            "'Town10HD_Opt'" in message and "'Odaiba_generated'" in message
-            for message in warning
+            "'Odaiba_generated' again" in message for message in warning
         ), warning
 
     def test_an_installed_opendrive_is_installed_again(self, tmp_path, monkeypatch):
@@ -660,7 +659,9 @@ class TestTheBatchMap:
         assert server.loads == ["Odaiba_generated", "Odaiba_generated"]
         assert installed.read_text() == "<OpenDRIVE/>"
 
-    def test_a_reload_of_the_same_map_loads_nothing(self):
+    def test_a_foreign_reload_of_the_same_map_is_loaded_again(self):
+        """Another client's world of the same map holds its own actors,
+        settings and weather: the run gets a clean one."""
         server = _SharedServer(("Odaiba_generated",), "Odaiba_generated")
         runner = _runner_on(server)
         runner.load_map_by_name("Odaiba_generated")
@@ -668,7 +669,41 @@ class TestTheBatchMap:
 
         _set_up_once(runner)
 
-        assert server.loads == ["Odaiba_generated"]
+        assert server.loads == ["Odaiba_generated", "Odaiba_generated"]
+        assert runner._world is not None and runner._world.id == server.episode
+
+    def test_the_reset_installs_the_opendrive_again(self, tmp_path, monkeypatch):
+        xodr = tmp_path / "odaiba.xodr"
+        xodr.write_text("<OpenDRIVE/>")
+        installed = tmp_path / "installed.xodr"
+        monkeypatch.setenv("ODAIBA_GENERATED_PATH", str(installed))
+        server = _SharedServer(("Odaiba_generated",), "Odaiba_generated")
+        runner = _runner_on(server)
+        with patch(
+            "autoware_carla_scenario.scenario_runner.map_asset_env_var",
+            return_value="ODAIBA_GENERATED_PATH",
+        ):
+            runner.load_map_by_overwriting_xodr(xodr, "Odaiba_generated")
+            # Another queue installs its own OpenDRIVE for the same map.
+            installed.write_text("<OpenDRIVE>someone else's</OpenDRIVE>")
+
+            runner.reset_world("Case1")
+
+        assert server.loads == ["Odaiba_generated", "Odaiba_generated"]
+        assert installed.read_text() == "<OpenDRIVE/>"
+
+    def test_a_runner_that_loaded_no_map_resets_to_the_current_one(self):
+        """As before: the server's map, and no world fetched per run."""
+        server = _SharedServer(("Odaiba_generated", "Town10HD_Opt"), "Town10HD_Opt")
+        runner = _runner_on(server)
+        held = server.get_world()
+        runner._world = held
+
+        _set_up_once(runner)
+        assert runner._world is held
+        runner.reset_world("Case0")
+
+        assert server.loads == ["Town10HD_Opt"]
 
     def test_the_normal_path_loads_no_more_than_before(self):
         """One load at the start and one per reset; no map read to check."""
