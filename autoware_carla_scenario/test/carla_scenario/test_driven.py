@@ -18,6 +18,7 @@ from typing import Optional
 import pytest
 
 from autoware_carla_scenario.conditions import LaneChangeSettledCondition
+from autoware_carla_scenario.coordinate.map_manager import MapManager
 from autoware_carla_scenario.traffic import LaneChangeDirection
 from autoware_carla_scenario.traffic.driven import BackendDriven
 
@@ -86,6 +87,13 @@ class _World:
 
     def get_map(self) -> _Map:
         return self._map
+
+
+class _NoMapWorld:
+    """A world whose map must not be fetched again."""
+
+    def get_map(self) -> _Map:
+        raise AssertionError("get_map() called: the run's map is MapManager's")
 
 
 class _TrafficManager:
@@ -192,6 +200,24 @@ class TestChangeLane:
         vehicle = _Vehicle(_Actor(_Transform(_Location())))
         vehicle.change_lane(_World(_Map(_Waypoint(1, 1))), LaneChangeDirection.LEFT)
         assert vehicle.lane_change_finished(_World(_Map(None))) is False
+
+    def test_the_run_map_is_used_not_a_new_one(self) -> None:
+        """CARLA builds a new map, road graph and all, on every ``get_map()``.
+
+        The map kept for the completion check lives as long as the vehicle --
+        every scenario of a queue -- so one built here per lane change made a
+        batch grow by a map a case.
+        """
+        shared = _Map(_Waypoint(1, 1, right=_Waypoint(1, 2)))
+        MapManager.reset()
+        MapManager.get_instance()._carla_map = shared
+        try:
+            vehicle, _tm, _world = _vehicle_on(1, 1, right=_Waypoint(1, 2))
+            vehicle.change_lane(_NoMapWorld(), LaneChangeDirection.RIGHT)
+        finally:
+            MapManager.reset()
+        assert vehicle._lane_change_map is shared
+        assert vehicle._lane_change_target == (1, 2)
 
     def test_without_an_actor_nothing_is_sent(self) -> None:
         vehicle = _Vehicle(actor=None)

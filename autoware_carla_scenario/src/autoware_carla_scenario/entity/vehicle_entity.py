@@ -144,3 +144,4 @@ class VehicleEntity(BackendDriven):
         if self._vehicle is not None:
             self._vehicle.destroy()
             self._vehicle = None
+        self.forget_lane_change()

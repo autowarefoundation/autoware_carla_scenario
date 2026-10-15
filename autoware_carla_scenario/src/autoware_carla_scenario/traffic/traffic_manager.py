@@ -21,6 +21,7 @@ from ..constants import (
     LANE_CHANGE_CENTER_TOLERANCE_M,
     LANE_CHANGE_HEADING_TOLERANCE_DEG,
 )
+from ..coordinate.map_manager import MapManager
 from ..kinematics.angle import normalize_angle_deg
 from .base import (
     DrivenEntity,
@@ -308,7 +309,7 @@ class TrafficManagerBackend(TrafficBackend):
         if tm is None:
             return
 
-        carla_map = world.get_map()
+        carla_map = _run_map(world)
         entity._lane_change_target = _adjacent_lane(
             carla_map, actor.get_location(), direction
         )
@@ -425,7 +426,7 @@ class TrafficManagerBackend(TrafficBackend):
         if tm is None:
             return
 
-        current = world.get_map().get_waypoint(actor.get_location())
+        current = _run_map(world).get_waypoint(actor.get_location())
         path = compute_turn_route(
             current,
             direction,
@@ -499,6 +500,20 @@ def _vehicle(actor: "carla.Actor") -> "carla.Vehicle":
         return actor.as_vehicle()
     else:
         return actor
+
+
+def _run_map(world: "carla.World") -> "carla.Map":
+    """The run's CARLA map: the one MapManager holds, else the world's.
+
+    Not a fresh ``world.get_map()``: CARLA builds a new map, road graph and all
+    (hundreds of MB on a large map), on every call, and a map kept on an entity
+    (``_lane_change_map``) lived as long as the entity -- every scenario of a
+    queue, so a batch grew by a map a case.
+    """
+    shared = MapManager.get_instance().carla_map
+    if shared is not None:
+        return shared
+    return world.get_map()
 
 
 def _require_actor(entity: DrivenEntity, what: str) -> Optional["carla.Actor"]:
