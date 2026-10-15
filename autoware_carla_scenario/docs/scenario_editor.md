@@ -651,7 +651,7 @@ cut_in-wheelhouse.zip
 `-- cut_in_scenario_wheelhouse/
     |-- cut_in_scenario-0.1.0-py3-none-any.whl     # the scenario itself
     |-- autoware_carla_scenario-*.whl              # the framework, at the pinned commit
-    |-- typesafe_carla-0.2.*.whl                   # the CARLA client, CPython package prebuilt
+    |-- typesafe_carla-*.whl                       # the CARLA client, CPython package prebuilt
     |-- typesafe_carla_toolchain-*.whl             # the Codon compiler it pins
     |-- ... every transitive dependency, ~94 wheels
     |-- requirements.txt                           # the whole set, pinned
