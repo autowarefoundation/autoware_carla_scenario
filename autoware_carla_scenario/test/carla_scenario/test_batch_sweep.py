@@ -52,7 +52,7 @@ def batch(monkeypatch: pytest.MonkeyPatch) -> _Batch:
         def __exit__(self, *_: object) -> None:
             pass
 
-        def run_all(self) -> list[object]:
+        def run_all(self, **_: object) -> list[object]:
             return []
 
     def fake_summary(
