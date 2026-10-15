@@ -120,6 +120,7 @@ tree internally:
 | `BaseAction` | Abstract base. Owns a trigger `BaseCondition`, a `TickTiming`, and an `execute(world)` side effect. |
 | `TickTiming` | Enum: `PRE_TICK` / `POST_TICK`. |
 | `TurnAction`, `TurnDirection` | Steer the ego through left / right turns via the CARLA TrafficManager route hints. |
+| `TurnIndicatorAction` | Light a vehicle's turn indicators (`TurnIndicatorState`: `OFF` / `LEFT` / `RIGHT` / `HAZARD`), its other lights as they are; they stay so until set again. |
 | `LaneChangeAction`, `LaneChangeDirection` | Trigger a TrafficManager lane change. |
 | `TrafficSignalAction`, `TrafficLightTarget` | Set traffic-light states (e.g. all RED, all GREEN, or a specific actor). |
 | `FollowTrajectoryAction` | Move a vehicle or pedestrian along a `Trajectory` (OpenSCENARIO `FollowTrajectoryAction`); `speed` paces the segments no time does; `held_vertex` names the vertex a waypoint condition is holding it at; `appear_on_start=True` brings a hidden entity in on its first vertex, moving at `speed`, when a run starts. See [Trajectories and Recorded-Scene Replay](trajectory.md). |

@@ -40,6 +40,7 @@ from ..driver.control import ControlConfig, TrajectoryFollower
 from ..driver.egodriver_client import EgoDriverGrpcClient
 from ..driver.geometry import Pose, Trajectory
 from ..utils.powertrain import ChaosPowertrain
+from ..utils.turn_indicator import TurnIndicatorState, set_turn_indicators
 from ..driver.renderer import RendererDataBuilder
 from ..driver.observation import (
     AccelerationEstimate,
@@ -79,6 +80,13 @@ _US_PER_S: int = 1_000_000
 
 #: Log the policy's own diagnostics every N policy steps (~1 s at 10 Hz).
 _DEBUG_LOG_INTERVAL: int = 10
+
+#: What each turn-indicator command a policy can give shows on the ego.
+_SHOWN: Dict[TurnIndicator, TurnIndicatorState] = {
+    TurnIndicator.DISABLE: TurnIndicatorState.OFF,
+    TurnIndicator.ENABLE_LEFT: TurnIndicatorState.LEFT,
+    TurnIndicator.ENABLE_RIGHT: TurnIndicatorState.RIGHT,
+}
 
 
 class CarlaDriverEntity(ExternallyDrivenEgo):
@@ -585,17 +593,7 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
                 requested,
             )
             return
-        import typesafe_carla.carla as carla  # noqa: PLC0415
-
-        lights = carla.VehicleLightState
-        left, right = int(lights.LeftBlinker), int(lights.RightBlinker)
-        blinkers = {
-            TurnIndicator.DISABLE: 0,
-            TurnIndicator.ENABLE_LEFT: left,
-            TurnIndicator.ENABLE_RIGHT: right,
-        }[indicator]
-        others = int(actor.get_light_state()) & ~(left | right)
-        actor.set_light_state(others | blinkers)
+        set_turn_indicators(actor, _SHOWN[indicator])
         self._turn_indicator = indicator
         logger.info(
             "[%s] step %d: turn indicator %s",

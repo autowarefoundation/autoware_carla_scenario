@@ -363,14 +363,22 @@ class plus one. `CarlaDriverEntity.turn_indicator` is what is lit now; a value t
 runtime does not know is logged and ignored.
 
 Because the indicators are the CARLA vehicle's own lights, a scenario checks them with
-`TurnIndicatorCondition` -- the policy signals left before it turns, say:
+`TurnIndicatorCondition` -- the policy signals left before it turns, say -- and sets
+another vehicle's with `TurnIndicatorAction` (a car ahead signalling that it pulls
+out). An action aimed at the policy's ego holds only until the policy's next command.
 
 ```python
-from autoware_carla_scenario import EntityRole, TurnIndicatorCondition, TurnIndicatorState
+from autoware_carla_scenario import (
+    EntityRole,
+    TurnIndicatorAction,
+    TurnIndicatorCondition,
+    TurnIndicatorState,
+)
 
 signals_left = TurnIndicatorCondition(
     EntityRole.ego(), TurnIndicatorState.LEFT, label="ego_signals_left"
 )
+npc_signals_right = TurnIndicatorAction(EntityRole.npc(1), TurnIndicatorState.RIGHT)
 ```
 
 ## Coordinate frames

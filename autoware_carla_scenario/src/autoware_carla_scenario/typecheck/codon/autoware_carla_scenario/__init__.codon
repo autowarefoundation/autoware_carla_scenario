@@ -9,7 +9,8 @@
 from .actions import (BaseAction, EnvironmentAction, FollowTrajectoryAction,
                       LaneChangeAction, RoutingAction,
                       SetSpeedAction, TickTiming, TrafficLightTarget, TrafficSignalAction,
-                      TrafficSignalControllerAction, TurnAction, WalkStraightAction,
+                      TrafficSignalControllerAction, TurnAction, TurnIndicatorAction,
+                      WalkStraightAction,
                       TrafficSourceAction, TrafficSinkAction)
 from .conditions import (AccelerationCondition, AccelerationDirection, AlwaysTrueCondition,
                          AndCondition, BaseCondition, CollisionCondition, CollisionTargetType,

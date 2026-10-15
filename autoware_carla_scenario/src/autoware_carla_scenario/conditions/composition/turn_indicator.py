@@ -2,53 +2,25 @@
 
 from __future__ import annotations
 
-from enum import Enum, auto
 from typing import TYPE_CHECKING, Any, Optional, Union
 
 from ...entity_role import EntityRole
+from ...utils.turn_indicator import TurnIndicatorState, is_vehicle, turn_indicators_of
 from ..base import ScenarioResult, find_actor_in_list
 from .base import CompositionCondition
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
 
-
-class TurnIndicatorState(Enum):
-    """Which turn indicators a vehicle shows.
-
-    Attributes:
-        OFF: Neither.
-        LEFT: The left one only.
-        RIGHT: The right one only.
-        HAZARD: Both, as hazard lights show them.
-    """
-
-    OFF = auto()
-    LEFT = auto()
-    RIGHT = auto()
-    HAZARD = auto()
-
-
-def turn_indicator_state(light_state: int) -> TurnIndicatorState:
-    """The turn indicators a ``carla.VehicleLightState`` bit set shows."""
-    import typesafe_carla.carla as carla  # noqa: PLC0415
-
-    left = (light_state & int(carla.VehicleLightState.LeftBlinker)) != 0
-    right = (light_state & int(carla.VehicleLightState.RightBlinker)) != 0
-    if left and right:
-        return TurnIndicatorState.HAZARD
-    if left:
-        return TurnIndicatorState.LEFT
-    if right:
-        return TurnIndicatorState.RIGHT
-    return TurnIndicatorState.OFF
+__all__ = ["TurnIndicatorCondition", "TurnIndicatorState"]
 
 
 class TurnIndicatorCondition(CompositionCondition):
     """Pass while a vehicle's turn indicators are in *state*.
 
     Reads the CARLA vehicle's light state, so it holds whatever lit them: a
-    driver policy's command (``ego.entity=carla_driver``), a scenario, or the
+    driver policy's command (``ego.entity=carla_driver``), a
+    :class:`~autoware_carla_scenario.actions.TurnIndicatorAction`, or the
     simulator itself.  An entity that is not a vehicle never passes.
 
     Args:
@@ -88,10 +60,9 @@ class TurnIndicatorCondition(CompositionCondition):
         """
         assert self._entity_name is not None
         entity = find_actor_in_list(world.get_actors(), self._entity_name)
-        if entity is None or not str(entity.type_id).startswith("vehicle."):
+        if entity is None or not is_vehicle(entity):
             return None
-        shown = turn_indicator_state(int(_as_vehicle(entity).get_light_state()))
-        if shown != self._state:
+        if turn_indicators_of(entity) != self._state:
             return None
         return ScenarioResult(
             passed=True,
@@ -101,17 +72,3 @@ class TurnIndicatorCondition(CompositionCondition):
             ),
             elapsed_seconds=elapsed,
         )
-
-
-def _as_vehicle(actor: "carla.Actor") -> "carla.Vehicle":
-    """*actor* as the vehicle its light state is read from.
-
-    At run time that is *actor* itself, which typesafe_carla's Python API takes
-    as it is; its Codon library has the light state on a ``carla.Vehicle``
-    only, which the check gets with the checked conversion (Codon reads
-    ``TYPE_CHECKING`` as a compile-time true, docs/typecheck.md).
-    """
-    if TYPE_CHECKING:
-        return actor.as_vehicle()
-    else:
-        return actor

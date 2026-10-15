@@ -66,6 +66,7 @@ CHECKED: tuple[str, ...] = (
     "autoware_carla_scenario.actions.traffic_signal",
     "autoware_carla_scenario.actions.traffic_signal_controller",
     "autoware_carla_scenario.actions.turn",
+    "autoware_carla_scenario.actions.turn_indicator",
     "autoware_carla_scenario.actions.walk_straight",
     "autoware_carla_scenario.authoring.framework_pin",
     "autoware_carla_scenario.authoring.uv_tool",
@@ -218,6 +219,7 @@ CHECKED: tuple[str, ...] = (
     "autoware_carla_scenario.utils.powertrain",
     "autoware_carla_scenario.utils.stop_line",
     "autoware_carla_scenario.utils.traffic_light",
+    "autoware_carla_scenario.utils.turn_indicator",
     "autoware_carla_scenario.utils.vehicles",
 )
 
