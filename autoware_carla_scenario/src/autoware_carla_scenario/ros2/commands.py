@@ -43,6 +43,8 @@ class EgoState:
         angular_velocity: ``(3,)`` angular velocity in ``base_link``, rad/s.
         speed_mps: Ground speed.
         steering_tire_angle_rad: Front tyre angle, positive to the left.
+        turn_indicators: The indicators the ego shows, as a
+            ``TurnIndicatorsReport`` value (1 off, 2 left, 3 right).
     """
 
     stamp_us: int
@@ -51,6 +53,7 @@ class EgoState:
     angular_velocity: np.ndarray[tuple[int], np.dtype[np.float64]]
     speed_mps: float
     steering_tire_angle_rad: float
+    turn_indicators: int = 1
 
 
 @dataclass(frozen=True)

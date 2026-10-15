@@ -136,6 +136,21 @@ def test_readiness_latches_against_a_later_false(
 # ---------------------------------------------------------------------------
 
 
+def test_the_newest_turn_indicator_command_is_taken_once(
+    bridge: GrpcAutowareBridgeServer,
+) -> None:
+    assert bridge.take_turn_indicators() is None
+    with _client(bridge) as stub:
+        for command in (2, 3):
+            stub.ReportTurnIndicators(
+                pb2.ReportTurnIndicatorsRequest(command=command),
+                timeout=_RPC_TIMEOUT_S,
+            )
+    assert bridge.client_connected
+    assert bridge.take_turn_indicators() == 3
+    assert bridge.take_turn_indicators() is None
+
+
 def test_close_is_idempotent(bridge: GrpcAutowareBridgeServer) -> None:
     bridge.close()
     bridge.close()  # must not raise

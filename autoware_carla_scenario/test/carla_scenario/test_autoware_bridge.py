@@ -85,3 +85,11 @@ def test_from_rpy_is_a_unit_quaternion() -> None:
     pose = BridgePose.from_rpy(x=0.0, y=0.0, z=0.0, roll=0.3, pitch=-0.2, yaw=1.1)
     r = pose.rotation
     assert r.w**2 + r.x**2 + r.y**2 + r.z**2 == pytest.approx(1.0)
+
+
+def test_turn_indicators_are_taken_once() -> None:
+    bridge = FakeAutowareBridge()
+    assert bridge.take_turn_indicators() is None
+    bridge.report_turn_indicators(2)
+    assert bridge.take_turn_indicators() == 2
+    assert bridge.take_turn_indicators() is None
