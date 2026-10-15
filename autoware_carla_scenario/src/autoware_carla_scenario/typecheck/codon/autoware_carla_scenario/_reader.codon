@@ -1,0 +1,17 @@
+# The reader check shared by BaseScenario.register_measure() (scenario_base),
+# Measure (measures) and Metric (metrics): each takes a
+# Callable[[carla.World], Optional[float]], which Python takes as any callable
+# of a world returning a float, an int or None. It lives here, not in
+# measures.codon, because measures imports scenario_base.
+
+import typesafe_carla.carla as carla
+
+from ._tc import _expect_optional_float
+
+
+def _expect_reader(read):
+    """A Callable[[carla.World], Optional[float]] argument: *read* is called
+    with a world, and what it returns must be None (Optional[NoneType]), a
+    float, an int or an Optional of one of them; anything else is refused at
+    the line that passes *read* ("expected a float (or an int)")."""
+    _expect_optional_float(read(carla.Client().get_world()))
