@@ -36,7 +36,7 @@ import json
 import logging
 import os
 import sys
-from collections.abc import Collection
+from collections.abc import Collection, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -136,6 +136,65 @@ register_scenario(
     "pedestrian_dart_out", PedestrianDartOutScenario, PedestrianDartOutConfig
 )
 register_scenario("cut_in", CutInScenario, CutInConfig)
+
+
+# ---------------------------------------------------------------------------
+# Process memory
+# ---------------------------------------------------------------------------
+
+#: glibc's ``mallopt`` parameter for the number of malloc arenas.
+_M_ARENA_MAX = -8
+
+#: The arenas a run keeps: few enough that freed memory is reused rather than
+#: stranded in an arena no thread allocates from again.
+_ARENA_MAX = 2
+
+
+def _arena_max_set_by_user(environ: Mapping[str, str]) -> bool:
+    """Return whether the environment already says how many arenas to keep."""
+    if environ.get("MALLOC_ARENA_MAX"):
+        return True
+    return "arena_max" in environ.get("GLIBC_TUNABLES", "")
+
+
+def _cap_malloc_arenas() -> bool:
+    """Cap glibc's malloc arenas, so a long batch does not fragment its heap.
+
+    Every ``world.get_map()`` builds a whole client-side ``carla.Map``: on a
+    large map (Odaiba) some 270 MB -- a 72 MB OpenDRIVE string, the road
+    geometry and an rtree -- and seconds of work.  The run reuses the one it
+    holds, but whatever is built and dropped is allocated on whichever thread
+    asks, and glibc gives each thread an arena of its own (up to eight per
+    core): memory freed in one is not reused by the next allocation on
+    another, so the resident size of a cut_in batch on Odaiba grew some 40 MB
+    a case although nothing leaked.  With ``arena_max=2`` it stays flat.
+
+    Before any worker thread starts, as arenas are made for threads.  Only on
+    glibc Linux, and not when ``MALLOC_ARENA_MAX`` or ``GLIBC_TUNABLES``
+    already set it: the user's choice stands.  Any failure is ignored -- this
+    is a tuning, not something a run needs.
+
+    Returns:
+        Whether the cap was applied.
+    """
+    if not sys.platform.startswith("linux") or _arena_max_set_by_user(os.environ):
+        return False
+    try:
+        import ctypes  # noqa: PLC0415
+        import ctypes.util  # noqa: PLC0415
+        import platform  # noqa: PLC0415
+
+        if platform.libc_ver()[0] != "glibc":
+            return False
+        libc_name = ctypes.util.find_library("c")
+        if not libc_name:
+            return False
+        libc = ctypes.CDLL(libc_name)
+        # mallopt() returns 1 on success, 0 on error.
+        return bool(libc.mallopt(_M_ARENA_MAX, _ARENA_MAX))
+    except Exception:  # any libc oddity: a tuning is not worth a failed run
+        logger.debug("Could not cap the malloc arenas", exc_info=True)
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -1365,6 +1424,8 @@ def _extract_resume_from(argv: list[str]) -> tuple[int, list[str]]:
 
 def main() -> None:
     """CLI entry point: detect glob patterns and dispatch accordingly."""
+    # First, before anything starts a thread (see _cap_malloc_arenas).
+    _cap_malloc_arenas()
     # Discover external scenario packages (entry-point plugins) before we touch
     # the config search path or the scenario registry, so their scenarios and
     # conf dirs are available to both the glob and single-run code paths.

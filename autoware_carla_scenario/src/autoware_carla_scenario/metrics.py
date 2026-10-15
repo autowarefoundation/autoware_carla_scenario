@@ -406,7 +406,9 @@ def _map(world: "carla.World") -> "carla.Map":
         return cached
     import typesafe_carla.carla as carla  # noqa: PLC0415
 
-    found = world.get_map()
+    from .coordinate.map_manager import run_carla_map  # noqa: PLC0415
+
+    found = run_carla_map(world)
     _CACHE.carla_map = found
     # typesafe_carla's lane type is an int (an IntEnum on the API side).
     _CACHE.driving = int(carla.LaneType.Driving)

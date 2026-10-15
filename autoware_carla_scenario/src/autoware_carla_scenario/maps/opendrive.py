@@ -131,11 +131,14 @@ def _from_server(
         client = carla.Client(host, port)
         client.set_timeout(timeout)
         world = client.get_world()
-        if _short_map_name(world.get_map().name) != wanted:
+        # Once: CARLA builds the whole map, road network and all, on every
+        # get_map() call (hundreds of MB on a large map).
+        current = world.get_map()
+        if _short_map_name(current.name) != wanted:
             if not load:
                 raise OpenDriveUnavailable(
                     f"The CARLA server at {host}:{port} has "
-                    f"{_short_map_name(world.get_map().name)} open, not {wanted}."
+                    f"{_short_map_name(current.name)} open, not {wanted}."
                 )
             available = {_short_map_name(name) for name in client.get_available_maps()}
             if wanted not in available:
@@ -145,7 +148,8 @@ def _from_server(
                 )
             logger.info("Loading %s on %s:%s to read its OpenDRIVE", wanted, host, port)
             world = client.load_world(wanted)
-        return str(world.get_map().to_opendrive())
+            current = world.get_map()
+        return str(current.to_opendrive())
     except OpenDriveUnavailable:
         raise
     except RuntimeError as exc:  # CARLA raises bare RuntimeErrors for transport
