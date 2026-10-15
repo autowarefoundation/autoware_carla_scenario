@@ -21,7 +21,7 @@ from ..constants import (
     LANE_CHANGE_CENTER_TOLERANCE_M,
     LANE_CHANGE_HEADING_TOLERANCE_DEG,
 )
-from ..coordinate.map_manager import MapManager
+from ..coordinate.map_manager import run_carla_map
 from ..kinematics.angle import normalize_angle_deg
 from .base import (
     DrivenEntity,
@@ -97,6 +97,7 @@ class TrafficManagerBackend(TrafficBackend):
     _background_count: int
     _started: bool
     _released: set[int]
+    _lane_changed: List[DrivenEntity]
 
     def __init__(
         self,
@@ -122,6 +123,10 @@ class TrafficManagerBackend(TrafficBackend):
         self._started = False
         #: Actors taken back with :meth:`release`, never handed to autopilot.
         self._released = set()
+        #: The vehicles this backend left lane change state on (a map with
+        #: it), forgotten when the run closes: the queue keeps a finished
+        #: run's scenarios, and their entities with them.
+        self._lane_changed = []
 
     # ------------------------------------------------------------------
     # Properties
@@ -190,6 +195,9 @@ class TrafficManagerBackend(TrafficBackend):
         self._background_count = 0
         self._started = False
         self._released = set()
+        for entity in self._lane_changed:
+            entity.forget_lane_change()
+        self._lane_changed = []
         if self._closed or self._client is None:
             return
         self._closed = True
@@ -309,11 +317,12 @@ class TrafficManagerBackend(TrafficBackend):
         if tm is None:
             return
 
-        carla_map = _run_map(world)
+        carla_map = run_carla_map(world)
         entity._lane_change_target = _adjacent_lane(
             carla_map, actor.get_location(), direction
         )
         entity._lane_change_map = carla_map
+        self._lane_changed.append(entity)
         if entity._lane_change_target is None:
             logger.warning(
                 "%s: no lane %s to change into",
@@ -426,7 +435,7 @@ class TrafficManagerBackend(TrafficBackend):
         if tm is None:
             return
 
-        current = _run_map(world).get_waypoint(actor.get_location())
+        current = run_carla_map(world).get_waypoint(actor.get_location())
         path = compute_turn_route(
             current,
             direction,
@@ -500,20 +509,6 @@ def _vehicle(actor: "carla.Actor") -> "carla.Vehicle":
         return actor.as_vehicle()
     else:
         return actor
-
-
-def _run_map(world: "carla.World") -> "carla.Map":
-    """The run's CARLA map: the one MapManager holds, else the world's.
-
-    Not a fresh ``world.get_map()``: CARLA builds a new map, road graph and all
-    (hundreds of MB on a large map), on every call, and a map kept on an entity
-    (``_lane_change_map``) lived as long as the entity -- every scenario of a
-    queue, so a batch grew by a map a case.
-    """
-    shared = MapManager.get_instance().carla_map
-    if shared is not None:
-        return shared
-    return world.get_map()
 
 
 def _require_actor(entity: DrivenEntity, what: str) -> Optional["carla.Actor"]:

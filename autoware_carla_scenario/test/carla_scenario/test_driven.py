@@ -101,6 +101,9 @@ class _TrafficManager:
         self.lane_changes: list[tuple[object, bool]] = []
         self.paths: list[tuple[object, list]] = []
 
+    def shut_down(self) -> None:
+        self.shut_downs = getattr(self, "shut_downs", 0) + 1
+
     def force_lane_change(self, actor, to_right: bool) -> None:  # noqa: ANN001
         self.lane_changes.append((actor, to_right))
 
@@ -218,6 +221,19 @@ class TestChangeLane:
             MapManager.reset()
         assert vehicle._lane_change_map is shared
         assert vehicle._lane_change_target == (1, 2)
+
+    def test_closing_the_run_forgets_the_lane_change(self) -> None:
+        """The runner closes the backend at the end of every run, but never
+        destroys an NPC: the backend drops the state (and the map) it left on
+        the vehicles, which the queue keeps with their scenarios."""
+        vehicle, tm, world = _vehicle_on(1, 1, right=_Waypoint(1, 2))
+        vehicle.change_lane(world, LaneChangeDirection.RIGHT)
+        assert vehicle._lane_change_map is not None
+        backend = vehicle._fallback_backend
+        assert backend is not None
+        backend.close()
+        assert vehicle._lane_change_map is None
+        assert vehicle._lane_change_target is None
 
     def test_without_an_actor_nothing_is_sent(self) -> None:
         vehicle = _Vehicle(actor=None)
