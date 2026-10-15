@@ -524,6 +524,109 @@ def test_a_function_with_defaults_is_called_without_them_too() -> None:
     assert "    Bridge.make()" in calls
 
 
+_LEFT_TO_DEFAULTS_RENDERED = """
+from typing import Any, Callable, Optional
+
+
+class Holder:
+    def __init__(
+        self, size: float, kind: type[Base] | None = None, *, tag: Any = None
+    ) -> None:
+        pass
+
+
+def build(x: float, factory: Optional[Callable[..., float]] = None) -> None:
+    pass
+
+
+def needs(x: float, kind: type[Base]) -> None:
+    pass
+
+
+def spread(first: Any = None, *rest: int) -> None:
+    pass
+"""
+
+
+def test_a_defaulted_parameter_codon_cannot_express_is_left_to_its_default() -> None:
+    # Each parameter Codon cannot express has a default: the function is
+    # called leaving them out, and only so, instead of being a problem (#199).
+    checks = render_library_checks(ast.parse(_LEFT_TO_DEFAULTS_RENDERED))
+    calls = checks.source.splitlines()
+    assert [c for c in calls if c.startswith("    Holder(")] == [
+        "    Holder(_acs_value(float))"
+    ]
+    label = checks.labels[calls.index("    Holder(_acs_value(float))") + 1]
+    assert label == "Holder.__init__(size: float), with the default of `kind`, `tag`"
+    assert [c for c in calls if c.startswith("    build(")] == [
+        "    build(_acs_value(float))"
+    ]
+    # A required one is still a problem, as is a defaulted one the call
+    # would pass (before a `*args: T`, which is given one T).
+    assert not [c for c in calls if c.startswith(("    needs(", "    spread("))]
+    lines = _LEFT_TO_DEFAULTS_RENDERED.splitlines()
+    assert sorted(
+        (lines[line - 1].split("(")[0], m.split(":")[0]) for line, m in checks.problems
+    ) == [("def needs", "needs"), ("def spread", "spread")]
+    assert all("Codon cannot express" in m for _, m in checks.problems)
+
+
+_SETTERS_RENDERED = """
+from typing import Any, Optional
+
+
+class Gauge:
+    @property
+    def level(self) -> float:
+        return 0.0
+
+    @level.setter
+    def level(self, value: float | str) -> None:
+        pass
+
+    @level.deleter
+    def level(self) -> None:
+        pass
+
+    @property
+    def note(self) -> Optional[str]:
+        return None
+
+    @note.setter
+    def note(self, value: Optional[str]) -> None:
+        pass
+
+    @property
+    def anything(self) -> int:
+        return 0
+
+    @anything.setter
+    def anything(self, value: Any) -> None:
+        pass
+"""
+
+
+def test_a_property_setter_is_called_by_assigning_the_property() -> None:
+    # Codon compiles a setter only where the property is assigned: the check
+    # assigns it, once per member of the value's annotation (#200).
+    checks = render_library_checks(ast.parse(_SETTERS_RENDERED))
+    calls = checks.source.splitlines()
+    assert [c for c in calls if " = " in c] == [
+        "    _acs_value(Gauge).level = _acs_value(float)",
+        "    _acs_value(Gauge).level = _acs_value(str)",
+        "    _acs_value(Gauge).note = _acs_value(Optional[str])",
+    ]
+    for call in [c for c in calls if " = " in c]:
+        name = call.split(".")[1].split(" ")[0]
+        assert checks.labels[calls.index(call) + 1] == f"Gauge.{name} (setter)"
+    # The getter is read as before; the deleter is not called.
+    assert calls.count("    _acs_value(Gauge).level") == 1
+    lines = _SETTERS_RENDERED.splitlines()
+    [(line, message)] = checks.problems
+    assert lines[line - 1].strip() == "def anything(self, value: Any) -> None:"
+    assert message.startswith("Gauge.anything (setter): Codon cannot express `Any`")
+
+
 _FIELD_DEFAULTS_RENDERED = """
 from dataclasses import dataclass, field
 from typing import Any, Sequence
@@ -1409,6 +1512,88 @@ def test_a_default_of_the_wrong_type_is_reported(
     result = _check_case(source, tmp_path, monkeypatch)
     assert not result.ok
     assert "with the default of `max_distance`" in result.format(), result.format()
+
+
+_INIT_AND_SETTER = """
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+from autoware_carla_scenario.kinematics.vector import Vector3
+
+
+class Holder:
+    kind: type[Vector3]
+    _size: float
+    _scale: float
+
+    def __init__(self, size: float, kind: type[Vector3] | None = None) -> None:
+        self._size = size
+        if not TYPE_CHECKING:
+            self.kind = kind or Vector3
+        self._scale = 2.0
+
+
+class Gauge:
+    _level: float
+
+    def __init__(self) -> None:
+        self._level = 0.0
+
+    @property
+    def level(self) -> float:
+        return self._level
+
+    @level.setter
+    def level(self, value: float | int) -> None:
+        self._level = float(value)
+"""
+
+
+@needs_codon
+def test_a_constructor_left_to_its_default_and_a_setter_compile(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    result = _check_case(_INIT_AND_SETTER, tmp_path, monkeypatch)
+    assert result.ok, result.format()
+
+
+@needs_codon
+@pytest.mark.parametrize(
+    ("right", "wrong", "label"),
+    [
+        (
+            "self._scale = 2.0",
+            'self._scale = "two"',
+            "Holder.__init__(size: float), with the default of `kind`",
+        ),
+        (
+            "self._level = float(value)",
+            "self._level = str(value)",
+            "Gauge.level (setter)",
+        ),
+    ],
+    ids=["constructor-left-to-default", "setter"],
+)
+def test_an_error_in_a_constructor_left_to_its_default_or_a_setter_is_reported(
+    right: str,
+    wrong: str,
+    label: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Nothing calls Holder() or assigns Gauge.level: only the check's own
+    # calls compile them (#199, #200).
+    source = _INIT_AND_SETTER.replace(right, wrong)
+    assert source != _INIT_AND_SETTER
+    result = _check_case(source, tmp_path, monkeypatch)
+    assert not result.ok
+    stripped = [text.strip() for text in textwrap.dedent(source).splitlines()]
+    located = [d for d in result.diagnostics if d.path and d.path.endswith(".py")]
+    assert located, result.format()
+    assert located[0].path == str(tmp_path / "zz_library_check_case.py")
+    assert located[0].line == stripped.index(wrong) + 1, result.format()
+    assert f"<library check: {label}>" in result.format(), result.format()
 
 
 _FIELD_DEFAULTS = """

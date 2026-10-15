@@ -198,7 +198,10 @@ class BaseScenario(ABC):
         from .entity.ego import EgoVehicle as _EgoVehicle  # noqa: PLC0415
 
         self.ego_config = ego_config
-        self.ego_type = ego_type or _EgoVehicle
+        if not TYPE_CHECKING:
+            # Codon cannot hold a class as a value (docs/typecheck.md): the
+            # check compiles the rest of the constructor, with no `ego_type`.
+            self.ego_type = ego_type or _EgoVehicle
         self.ego_entity = ego_entity
         self._spawn_pose = spawn_pose
         self._ground_projection = ground_projection or GroundProjectionConfig()
