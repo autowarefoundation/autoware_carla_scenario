@@ -40,7 +40,7 @@ from .entity.registry import register_entity as _register_entity
 from .entity.registry import register_pedestrian_entity as _register_pedestrian_entity
 from .entity.registry import register_vehicle_entity as _register_vehicle_entity
 from .entity.vehicle_entity import VehicleEntity, VehicleEntityConfig
-from .measures import BUILT_IN_MEASURES, Measure
+from .measures import BUILT_IN_MEASURES, Measure, check_measure_key
 from .traffic.base import TrafficBackend
 from .traffic.driven import BackendDriven
 
@@ -773,8 +773,7 @@ class BaseScenario(ABC):
                 replacing one.
             text: A description.
         """
-        if not key:
-            raise ValueError("register_measure(): key must not be empty")
+        check_measure_key(key, "register_measure")
         from .odd.unit_names import normalize_unit  # noqa: PLC0415
 
         built_in = BUILT_IN_MEASURES[key] if key in BUILT_IN_MEASURES else None

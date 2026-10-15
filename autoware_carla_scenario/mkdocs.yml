@@ -97,6 +97,7 @@ nav:
   - Logical Scenarios from Routes: logical_scenarios.md
   - Coverage: coverage.md
   - ODD: odd.md
+  - Metrics: metrics.md
   - Static Check: typecheck.md
   - Container Image: docker.md
   - Architecture: architecture.md

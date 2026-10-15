@@ -13,6 +13,10 @@ Valid role names:
 from __future__ import annotations
 
 import re
+from typing import TYPE_CHECKING, Optional, Union
+
+if TYPE_CHECKING:
+    import typesafe_carla.carla as carla
 
 
 _PATTERN = re.compile(r"^(Ego|[a-z]+[1-9]\d*)$")
@@ -90,3 +94,32 @@ class EntityRole:
 
     def __hash__(self) -> int:
         return hash(self._value)
+
+
+def _role_name(actor: "carla.Actor") -> Optional[str]:
+    """The ``role_name`` attribute of *actor*, or ``None`` if it has none."""
+    # Not attributes.get(): Codon's dict.get() requires a default of the
+    # value type, and no string means "absent".
+    attributes = actor.attributes
+    return attributes["role_name"] if "role_name" in attributes else None
+
+
+def find_actor_in_list(
+    actors: Union[carla.ActorList, list[carla.Actor]],
+    role_name: Union["EntityRole", str],
+) -> Optional["carla.Actor"]:
+    """Find a single actor by its ``role_name`` in a pre-fetched actor list.
+
+    Args:
+        actors: Pre-fetched actors (e.g. ``world.get_actors()``, or a list).
+        role_name: The ``role_name`` attribute value to search for.
+            Accepts both :class:`EntityRole` and plain ``str``.
+
+    Returns:
+        The matching actor, or ``None`` if no actor with that role name exists.
+    """
+    name = str(role_name)
+    return next(
+        (a for a in actors if _role_name(a) == name),
+        None,
+    )

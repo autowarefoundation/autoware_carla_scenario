@@ -18,13 +18,16 @@ The ODD names a measure key, never a scenario; a scenario names its measures
 and its controls, never the ODD.  The sampler joins them on the key: an
 attribute measured by key *k* is drawn by the running scenario's control of
 *k* (:mod:`autoware_carla_scenario.odd.sampler`).
+
+A metric (:mod:`autoware_carla_scenario.metrics`) is refused: it reads how the
+ego drove, which is an outcome of a run, not a condition of the domain.
 """
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Optional
 
-from ..measures import BUILT_IN_MEASURES, read_measure
+from ..measures import BUILT_IN_MEASURES, check_measure_key, read_measure
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
@@ -38,8 +41,7 @@ class ScenarioMeasure:
     key: str
 
     def __init__(self, key: str) -> None:
-        if not key:
-            raise ValueError("scenario_measure(): key must not be empty")
+        check_measure_key(key, "scenario_measure")
         self.key = key
 
     @property

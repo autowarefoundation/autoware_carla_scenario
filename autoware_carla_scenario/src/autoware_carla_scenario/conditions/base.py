@@ -7,38 +7,14 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Optional, Union
 
-from ..entity_role import EntityRole
+from ..entity_role import EntityRole, _role_name
+
+# Re-exported: it lives in entity_role, below this package, so a module that
+# finds an actor by role need not import the conditions (and CARLA) for it.
+from ..entity_role import find_actor_in_list as find_actor_in_list
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
-
-
-def _role_name(actor: "carla.Actor") -> Optional[str]:
-    """The ``role_name`` attribute of *actor*, or ``None`` if it has none."""
-    # Not attributes.get(): Codon's dict.get() requires a default of the
-    # value type, and no string means "absent".
-    attributes = actor.attributes
-    return attributes["role_name"] if "role_name" in attributes else None
-
-
-def find_actor_in_list(
-    actors: Union[carla.ActorList, list[carla.Actor]], role_name: Union[EntityRole, str]
-) -> Optional["carla.Actor"]:
-    """Find a single actor by its ``role_name`` in a pre-fetched actor list.
-
-    Args:
-        actors: Pre-fetched actors (e.g. ``world.get_actors()``, or a list).
-        role_name: The ``role_name`` attribute value to search for.
-            Accepts both :class:`EntityRole` and plain ``str``.
-
-    Returns:
-        The matching actor, or ``None`` if no actor with that role name exists.
-    """
-    name = str(role_name)
-    return next(
-        (a for a in actors if _role_name(a) == name),
-        None,
-    )
 
 
 def find_actor_pair(

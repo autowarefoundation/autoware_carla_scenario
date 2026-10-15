@@ -57,6 +57,7 @@ __all__ = [
     "build_collision_condition",
     "build_elapsed_time_condition",
     "build_traffic_signal_controller_condition",
+    "build_metric_condition",
     "build_timeout_condition",
     "build_traffic_signal_condition",
     "build_trajectory_time_condition",
@@ -673,6 +674,24 @@ def build_traffic_signal_controller_condition(
     return TrafficSignalControllerCondition(
         controller=str(params["controller"]),
         phase=str(params["signal_phase"]),
+        label=compiled.label,
+    )
+
+
+def build_metric_condition(
+    compiled: "CompiledCondition",
+    children: "list[BaseCondition]",
+    ctx: "BuildContext",
+) -> "BaseCondition":
+    """Build a :class:`MetricCondition`."""
+    from ..conditions import MetricCondition  # noqa: PLC0415
+    from ..conditions import ComparisonRule  # noqa: PLC0415
+
+    params = compiled.params
+    return MetricCondition(
+        metric=str(params["metric"]),
+        rule=ComparisonRule[str(params["rule"]).upper()],
+        value=params["value"],
         label=compiled.label,
     )
 

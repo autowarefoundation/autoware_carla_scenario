@@ -21,6 +21,10 @@ Two things are keyed by measures, and neither knows the ODD:
   binding file), which is how coverage is measured and how a sweep draws the
   scenario's parameters from the ODD.
 
+How the ego drives what a run sets up -- a collision, leaving the road -- is
+not a measure but a **metric** (:mod:`autoware_carla_scenario.metrics`): an
+outcome, which no ODD maps onto and a condition watches instead.
+
 The vehicle ahead, along the ego's lane
 ---------------------------------------
 :data:`VEHICLE_AHEAD_GAP_M` is the free road between the ego and the vehicle
@@ -79,9 +83,10 @@ from typing import TYPE_CHECKING, Callable, Optional
 import lanelet2.core
 import lanelet2.geometry
 
-from .conditions.base import find_actor_in_list
 from .constants import BUMPER_PROBE_ROLE_NAME, EGO_ROLE_NAME
 from .coordinate.map_manager import MapManager
+from .entity_role import find_actor_in_list
+from .metrics import is_metric
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
@@ -108,6 +113,7 @@ __all__ = [
     "VEHICLE_AHEAD_VERSION",
     "bumpers_of",
     "bumpers_of_box",
+    "check_measure_key",
     "in_ego_frame",
     "measure_version",
     "measured_scenario",
@@ -1386,6 +1392,26 @@ def measure_version(key: str) -> int:
     if key in BUILT_IN_MEASURES:
         return BUILT_IN_MEASURES[key].version
     return 1
+
+
+def check_measure_key(key: str, where: str) -> None:
+    """Refuse *key* as a measure's: empty, or a metric's.
+
+    A metric (:mod:`autoware_carla_scenario.metrics`) reads how the ego drove,
+    an outcome, which nothing maps onto or sets as a measure.  *where* names
+    the caller in the message, e.g. ``"register_measure"``.
+
+    Raises:
+        ValueError: If *key* is empty or a metric's.
+    """
+    if not key:
+        raise ValueError(f"{where}(): key must not be empty")
+    if is_metric(key):
+        raise ValueError(
+            f"{where}({key}): {key} is a metric, how the ego drove, not a "
+            "condition it drives in: an ODD cannot map onto it, nor a scenario "
+            "measure it. Watch it with MetricCondition instead (docs/metrics.md)"
+        )
 
 
 # ---------------------------------------------------------------------------

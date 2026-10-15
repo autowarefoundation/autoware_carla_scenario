@@ -34,6 +34,7 @@ from .composition import (
     WaypointCondition,
 )
 from .elapsed_time import ElapsedTimeCondition
+from .metric import MetricCondition
 from .entity_existence import EntityExistenceCondition
 from .not_condition import NotCondition
 from .or_condition import OrCondition
@@ -59,6 +60,7 @@ __all__ = [
     "ConditionStatus",
     "compare",
     "ElapsedTimeCondition",
+    "MetricCondition",
     "TrajectoryTimeCondition",
     "DistanceCoordinateSystem",
     "EntityDistanceCondition",
