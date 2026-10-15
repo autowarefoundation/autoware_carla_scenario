@@ -68,10 +68,20 @@ def _method_calls(stmts: list[ast.stmt]) -> list[ast.Call]:
 
 
 def _through_class(call: ast.Call) -> bool:
-    """``Class.method(...)``: the receiver is a capitalised bare name."""
+    """``Class.method(...)`` or ``module.Class.method(...)``: the receiver is
+    a capitalised name, bare or the last part of a dotted one."""
     assert isinstance(call.func, ast.Attribute)
     receiver = call.func.value
-    return isinstance(receiver, ast.Name) and receiver.id[:1].isupper()
+    if isinstance(receiver, ast.Name):
+        return receiver.id[:1].isupper()
+    return isinstance(receiver, ast.Attribute) and receiver.attr[:1].isupper()
+
+
+def _keywords(call: ast.Call) -> tuple[dict[str, str], list[str]]:
+    """The named keyword arguments, and the ``**`` unpackings in order."""
+    named = {kw.arg: ast.dump(kw.value) for kw in call.keywords if kw.arg is not None}
+    unpacked = [ast.dump(kw.value) for kw in call.keywords if kw.arg is None]
+    return named, unpacked
 
 
 def _pairs() -> list[_Pair]:
@@ -125,9 +135,7 @@ def test_else_branch_passes_the_checked_arguments(pair: _Pair) -> None:
         f"{pair}: positional arguments differ: checked "
         f"{ast.unparse(pair.then_call)!r}, run {ast.unparse(pair.else_call)!r}"
     )
-    then_kwargs = {kw.arg: ast.dump(kw.value) for kw in pair.then_call.keywords}
-    else_kwargs = {kw.arg: ast.dump(kw.value) for kw in pair.else_call.keywords}
-    assert else_kwargs == then_kwargs, (
+    assert _keywords(pair.else_call) == _keywords(pair.then_call), (
         f"{pair}: keyword arguments differ: checked "
         f"{ast.unparse(pair.then_call)!r}, run {ast.unparse(pair.else_call)!r}"
     )
