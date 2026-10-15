@@ -79,6 +79,9 @@ from autoware_carla_scenario import (
     TrajectoryVertex,
     TurnAction,
     TurnDirection,
+    TurnIndicatorAction,
+    TurnIndicatorCondition,
+    TurnIndicatorState,
     snap_to_carla_road,
 )
 
@@ -285,6 +288,25 @@ _COVER_EXTRA = """
 def ego_gap(world: carla.World) -> float | None:
     return 4.0
 """
+
+
+def test_turn_indicators_compile(tmp_path: Path) -> None:
+    """An NPC signals right once the ego signals left."""
+    setup = """
+        self.register_pre_tick(
+            TurnIndicatorAction(
+                "npc1",
+                TurnIndicatorState.RIGHT,
+                TurnIndicatorCondition(
+                    EGO_ROLE_NAME, TurnIndicatorState.LEFT, label="ego_signals_left"
+                ),
+                label="npc_signals_right",
+            )
+        )
+"""
+    scenario, config, _ = _write_case(tmp_path, setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
 
 
 def test_cover_items_compile(tmp_path: Path) -> None:

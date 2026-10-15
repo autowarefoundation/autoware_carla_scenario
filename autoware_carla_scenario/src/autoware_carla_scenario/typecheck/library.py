@@ -66,6 +66,7 @@ CHECKED: tuple[str, ...] = (
     "autoware_carla_scenario.actions.traffic_signal",
     "autoware_carla_scenario.actions.traffic_signal_controller",
     "autoware_carla_scenario.actions.turn",
+    "autoware_carla_scenario.actions.turn_indicator",
     "autoware_carla_scenario.actions.walk_straight",
     "autoware_carla_scenario.authoring.framework_pin",
     "autoware_carla_scenario.authoring.uv_tool",
@@ -100,6 +101,7 @@ CHECKED: tuple[str, ...] = (
     "autoware_carla_scenario.conditions.composition.temporary_stop",
     "autoware_carla_scenario.conditions.composition.time_headway",
     "autoware_carla_scenario.conditions.composition.time_to_collision",
+    "autoware_carla_scenario.conditions.composition.turn_indicator",
     "autoware_carla_scenario.conditions.composition.waypoint",
     "autoware_carla_scenario.conditions.elapsed_time",
     "autoware_carla_scenario.conditions.metric",
@@ -217,6 +219,7 @@ CHECKED: tuple[str, ...] = (
     "autoware_carla_scenario.utils.powertrain",
     "autoware_carla_scenario.utils.stop_line",
     "autoware_carla_scenario.utils.traffic_light",
+    "autoware_carla_scenario.utils.turn_indicator",
     "autoware_carla_scenario.utils.vehicles",
 )
 
@@ -300,6 +303,7 @@ UNCALLED: dict[str, str] = {
     "autoware_carla_scenario.conditions.composition.standstill.StandstillCondition.get_details": _DETAILS,
     "autoware_carla_scenario.conditions.composition.time_headway.TimeHeadwayCondition.get_details": _DETAILS,
     "autoware_carla_scenario.conditions.composition.time_to_collision.TimeToCollisionCondition.get_details": _DETAILS,
+    "autoware_carla_scenario.conditions.composition.turn_indicator.TurnIndicatorCondition.get_details": _DETAILS,
     "autoware_carla_scenario.conditions.composition.waypoint.WaypointCondition.get_details": _DETAILS,
     "autoware_carla_scenario.conditions.elapsed_time.ElapsedTimeCondition.get_details": _DETAILS,
     "autoware_carla_scenario.conditions.metric.MetricCondition.get_details": _DETAILS,

@@ -9,7 +9,8 @@
 from .actions import (BaseAction, EnvironmentAction, FollowTrajectoryAction,
                       LaneChangeAction, RoutingAction,
                       SetSpeedAction, TickTiming, TrafficLightTarget, TrafficSignalAction,
-                      TrafficSignalControllerAction, TurnAction, WalkStraightAction,
+                      TrafficSignalControllerAction, TurnAction, TurnIndicatorAction,
+                      WalkStraightAction,
                       TrafficSourceAction, TrafficSinkAction)
 from .conditions import (AccelerationCondition, AccelerationDirection, AlwaysTrueCondition,
                          AndCondition, BaseCondition, CollisionCondition, CollisionTargetType,
@@ -26,6 +27,7 @@ from .conditions import (AccelerationCondition, AccelerationDirection, AlwaysTru
                          StandstillCondition, StickyCondition, TemporaryStopCondition,
                          TimeHeadwayCondition, TimeToCollisionCondition, TimeoutCondition,
                          TrafficSignalCondition, TrafficSignalControllerCondition,
+                         TurnIndicatorCondition, TurnIndicatorState,
                          WaypointCheckType, WaypointCondition, find_actor_by_role_name)
 from .constants import EGO_ROLE_NAME
 from .coordinate import (CarlaWorldPose, CoordinateFrame, FrameMismatchError,
