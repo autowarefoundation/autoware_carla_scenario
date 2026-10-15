@@ -466,3 +466,17 @@ class MapManager:
                 best_z = float(np.interp(arc[min_idx], arc, z_coords))
 
         return ll2_z - best_z
+
+
+def run_carla_map(world: carla.World) -> carla.Map:
+    """The run's CARLA map: the one :class:`MapManager` holds, else the world's.
+
+    Not a fresh ``world.get_map()`` where one is held: CARLA builds a new map,
+    road graph and all (hundreds of MB on a large map), on every call, and one
+    kept by something a finished run leaves behind (its scenario, kept by the
+    queue) stays with it.
+    """
+    shared = MapManager.get_instance().carla_map
+    if shared is not None:
+        return shared
+    return world.get_map()

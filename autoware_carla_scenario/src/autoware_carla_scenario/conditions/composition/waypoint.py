@@ -5,6 +5,7 @@ from __future__ import annotations
 from enum import Enum, auto
 from typing import TYPE_CHECKING, Any, Optional, Union
 
+from ...coordinate.map_manager import run_carla_map
 from ...entity_role import EntityRole
 from ..base import ScenarioResult, find_actor_by_role_name
 from .base import CompositionCondition
@@ -85,7 +86,8 @@ class WaypointCondition(CompositionCondition):
             return None
 
         if self._carla_map is None:
-            self._carla_map = world.get_map()
+            # The run's: one fetched here would stay with the scenario.
+            self._carla_map = run_carla_map(world)
 
         waypoint = self._carla_map.get_waypoint(entity.get_location())
         if waypoint is None:

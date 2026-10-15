@@ -18,6 +18,7 @@ from typing import Optional
 import pytest
 
 from autoware_carla_scenario.conditions import LaneChangeSettledCondition
+from autoware_carla_scenario.coordinate.map_manager import MapManager
 from autoware_carla_scenario.traffic import LaneChangeDirection
 from autoware_carla_scenario.traffic.driven import BackendDriven
 
@@ -88,10 +89,20 @@ class _World:
         return self._map
 
 
+class _NoMapWorld:
+    """A world whose map must not be fetched again."""
+
+    def get_map(self) -> _Map:
+        raise AssertionError("get_map() called: the run's map is MapManager's")
+
+
 class _TrafficManager:
     def __init__(self) -> None:
         self.lane_changes: list[tuple[object, bool]] = []
         self.paths: list[tuple[object, list]] = []
+
+    def shut_down(self) -> None:
+        self.shut_downs = getattr(self, "shut_downs", 0) + 1
 
     def force_lane_change(self, actor, to_right: bool) -> None:  # noqa: ANN001
         self.lane_changes.append((actor, to_right))
@@ -192,6 +203,37 @@ class TestChangeLane:
         vehicle = _Vehicle(_Actor(_Transform(_Location())))
         vehicle.change_lane(_World(_Map(_Waypoint(1, 1))), LaneChangeDirection.LEFT)
         assert vehicle.lane_change_finished(_World(_Map(None))) is False
+
+    def test_the_run_map_is_used_not_a_new_one(self) -> None:
+        """CARLA builds a new map, road graph and all, on every ``get_map()``.
+
+        The map kept for the completion check lives as long as the vehicle --
+        every scenario of a queue -- so one built here per lane change made a
+        batch grow by a map a case.
+        """
+        shared = _Map(_Waypoint(1, 1, right=_Waypoint(1, 2)))
+        MapManager.reset()
+        MapManager.get_instance()._carla_map = shared
+        try:
+            vehicle, _tm, _world = _vehicle_on(1, 1, right=_Waypoint(1, 2))
+            vehicle.change_lane(_NoMapWorld(), LaneChangeDirection.RIGHT)
+        finally:
+            MapManager.reset()
+        assert vehicle._lane_change_map is shared
+        assert vehicle._lane_change_target == (1, 2)
+
+    def test_closing_the_run_forgets_the_lane_change(self) -> None:
+        """The runner closes the backend at the end of every run, but never
+        destroys an NPC: the backend drops the state (and the map) it left on
+        the vehicles, which the queue keeps with their scenarios."""
+        vehicle, tm, world = _vehicle_on(1, 1, right=_Waypoint(1, 2))
+        vehicle.change_lane(world, LaneChangeDirection.RIGHT)
+        assert vehicle._lane_change_map is not None
+        backend = vehicle._fallback_backend
+        assert backend is not None
+        backend.close()
+        assert vehicle._lane_change_map is None
+        assert vehicle._lane_change_target is None
 
     def test_without_an_actor_nothing_is_sent(self) -> None:
         vehicle = _Vehicle(actor=None)

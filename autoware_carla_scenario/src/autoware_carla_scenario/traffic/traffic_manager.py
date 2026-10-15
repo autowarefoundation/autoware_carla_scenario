@@ -21,6 +21,7 @@ from ..constants import (
     LANE_CHANGE_CENTER_TOLERANCE_M,
     LANE_CHANGE_HEADING_TOLERANCE_DEG,
 )
+from ..coordinate.map_manager import run_carla_map
 from ..kinematics.angle import normalize_angle_deg
 from .base import (
     DrivenEntity,
@@ -96,6 +97,7 @@ class TrafficManagerBackend(TrafficBackend):
     _background_count: int
     _started: bool
     _released: set[int]
+    _lane_changed: List[DrivenEntity]
 
     def __init__(
         self,
@@ -121,6 +123,10 @@ class TrafficManagerBackend(TrafficBackend):
         self._started = False
         #: Actors taken back with :meth:`release`, never handed to autopilot.
         self._released = set()
+        #: The vehicles this backend left lane change state on (a map with
+        #: it), forgotten when the run closes: the queue keeps a finished
+        #: run's scenarios, and their entities with them.
+        self._lane_changed = []
 
     # ------------------------------------------------------------------
     # Properties
@@ -180,6 +186,10 @@ class TrafficManagerBackend(TrafficBackend):
         and safe to call after a failed :meth:`prepare`, because teardown runs
         whatever happened during the run.
         """
+        # First: nothing below may keep a finished run's map on its vehicles.
+        for entity in self._lane_changed:
+            entity.forget_lane_change()
+        self._lane_changed = []
         for actor in self._background.values():
             try:
                 actor.destroy()
@@ -308,11 +318,12 @@ class TrafficManagerBackend(TrafficBackend):
         if tm is None:
             return
 
-        carla_map = world.get_map()
+        carla_map = run_carla_map(world)
         entity._lane_change_target = _adjacent_lane(
             carla_map, actor.get_location(), direction
         )
         entity._lane_change_map = carla_map
+        self._lane_changed.append(entity)
         if entity._lane_change_target is None:
             logger.warning(
                 "%s: no lane %s to change into",
@@ -425,7 +436,7 @@ class TrafficManagerBackend(TrafficBackend):
         if tm is None:
             return
 
-        current = world.get_map().get_waypoint(actor.get_location())
+        current = run_carla_map(world).get_waypoint(actor.get_location())
         path = compute_turn_route(
             current,
             direction,
