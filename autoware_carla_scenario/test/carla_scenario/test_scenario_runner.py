@@ -529,3 +529,156 @@ def test_what_the_odds_measures_read_is_built_before_the_first_tick(
             pass
 
     assert calls[:2] == ["setup", "prepare"]
+
+
+class _SharedServer:
+    """A CARLA client on a server other clients may load worlds on.
+
+    Every load starts a new episode, as on a real server; the worlds it hands
+    out say which episode and which map they belong to, and every map name
+    asked for is counted (``get_map()`` builds the whole road network).
+    """
+
+    def __init__(self, maps: tuple[str, ...], current: str) -> None:
+        self.maps = maps
+        self.current = current
+        self.episode = 1
+        self.loads: list[str] = []
+        self.map_reads = 0
+
+    def get_available_maps(self) -> list[str]:
+        return [f"/Game/Carla/Maps/{name}" for name in self.maps]
+
+    def load_world(self, name: str) -> MagicMock:
+        self.loads.append(name)
+        self.foreign_load(name)
+        return self.get_world()
+
+    def reload_world(self) -> MagicMock:  # pragma: no cover - must not be called
+        raise AssertionError("reload_world() cannot reload a map on CARLA UE5")
+
+    def foreign_load(self, name: str) -> None:
+        """Another client loads *name* on the same server."""
+        self.current = name
+        self.episode += 1
+
+    def get_world(self) -> MagicMock:
+        world = MagicMock()
+        world.id = self.episode
+        loaded = f"Carla/Maps/{self.current}"
+
+        def get_map() -> MagicMock:
+            self.map_reads += 1
+            carla_map = MagicMock()
+            carla_map.name = loaded
+            return carla_map
+
+        world.get_map.side_effect = get_map
+        return world
+
+
+class _Stop(Exception):
+    """Ends a run once the part under test is over."""
+
+
+def _runner_on(server: _SharedServer) -> ScenarioRunner:
+    runner = _make_runner(None)
+    runner._client = server  # type: ignore[assignment]
+    return runner
+
+
+def _set_up_once(runner: ScenarioRunner) -> None:
+    """Start a run and stop it where the scenario would build its ego.
+
+    That is right after the runner has settled which world the run is on.
+    """
+    scenario = MagicMock()
+    scenario.create_ego.side_effect = _Stop
+    with pytest.raises(_Stop):
+        runner.run_scenario(scenario, reset_world=False)
+
+
+class TestTheBatchMap:
+    """A batch runs on the map it loaded, even when another client loads a
+    world of its own on the same server between (or during) its runs."""
+
+    def test_reload_map_loads_the_named_map_not_the_current_one(self):
+        from autoware_carla_scenario.world_reset import reload_map
+
+        server = _SharedServer(("Odaiba_generated", "Town10HD_Opt"), "Town10HD_Opt")
+
+        reload_map(server, "/Game/Carla/Maps/Odaiba_generated")  # type: ignore[arg-type]
+
+        assert server.loads == ["Odaiba_generated"]
+
+    def test_the_reset_reloads_the_batch_map_not_a_foreign_one(self):
+        server = _SharedServer(("Odaiba_generated", "Town10HD_Opt"), "Town10HD_Opt")
+        runner = _runner_on(server)
+        runner.load_map_by_name("Odaiba_generated")
+        server.foreign_load("Town10HD_Opt")
+
+        runner.reset_world("Case9")
+
+        assert server.loads == ["Odaiba_generated", "Odaiba_generated"]
+        assert server.current == "Odaiba_generated"
+
+    def test_a_run_on_a_foreign_map_loads_the_batch_map_first(self, caplog):
+        server = _SharedServer(("Odaiba_generated", "Town10HD_Opt"), "Town10HD_Opt")
+        runner = _runner_on(server)
+        runner.load_map_by_name("Odaiba_generated")
+        server.foreign_load("Town10HD_Opt")
+
+        with caplog.at_level("WARNING", logger="autoware_carla_scenario"):
+            _set_up_once(runner)
+
+        assert server.loads == ["Odaiba_generated", "Odaiba_generated"]
+        assert server.current == "Odaiba_generated"
+        assert runner._world is not None and runner._world.id == server.episode
+        warning = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+        assert any(
+            "'Town10HD_Opt'" in message and "'Odaiba_generated'" in message
+            for message in warning
+        ), warning
+
+    def test_an_installed_opendrive_is_installed_again(self, tmp_path, monkeypatch):
+        xodr = tmp_path / "odaiba.xodr"
+        xodr.write_text("<OpenDRIVE/>")
+        installed = tmp_path / "installed.xodr"
+        monkeypatch.setenv("ODAIBA_GENERATED_PATH", str(installed))
+        server = _SharedServer(("Odaiba_generated", "Town10HD_Opt"), "Town10HD_Opt")
+        runner = _runner_on(server)
+        with patch(
+            "autoware_carla_scenario.scenario_runner.map_asset_env_var",
+            return_value="ODAIBA_GENERATED_PATH",
+        ):
+            runner.load_map_by_overwriting_xodr(xodr, "Odaiba_generated")
+            installed.write_text("<OpenDRIVE>someone else's</OpenDRIVE>")
+            server.foreign_load("Town10HD_Opt")
+
+            _set_up_once(runner)
+
+        assert server.loads == ["Odaiba_generated", "Odaiba_generated"]
+        assert installed.read_text() == "<OpenDRIVE/>"
+
+    def test_a_reload_of_the_same_map_loads_nothing(self):
+        server = _SharedServer(("Odaiba_generated",), "Odaiba_generated")
+        runner = _runner_on(server)
+        runner.load_map_by_name("Odaiba_generated")
+        server.foreign_load("Odaiba_generated")
+
+        _set_up_once(runner)
+
+        assert server.loads == ["Odaiba_generated"]
+
+    def test_the_normal_path_loads_no_more_than_before(self):
+        """One load at the start and one per reset; no map read to check."""
+        server = _SharedServer(("Odaiba_generated",), "Town10HD_Opt")
+        runner = _runner_on(server)
+        runner.load_map_by_name("Odaiba_generated")
+
+        for case in range(3):
+            _set_up_once(runner)
+            runner.reset_world(f"Case{case}")
+
+        assert server.loads == ["Odaiba_generated"] * 4
+        assert server.map_reads == 0
