@@ -415,3 +415,25 @@ def test_an_unknown_turn_indicators_command_is_ignored() -> None:
     transport.deliver_turn_indicators(9)
     _tick(entity, clock)
     assert set_to == []
+
+
+def test_a_repeated_command_leaves_what_a_scenario_set() -> None:
+    """Autoware sends DISABLE every cycle; the scenario's hazard lights stay."""
+    actor = _actor()
+    set_to = _lights(actor, 0)
+    entity, transport, _, clock = _started(actor=actor)
+    transport.deliver_turn_indicators(1)  # DISABLE: already off, nothing to set
+    _tick(entity, clock)
+    actor.set_light_state(_LEFT_BLINKER | _RIGHT_BLINKER)  # a TurnIndicatorAction
+    transport.deliver_turn_indicators(1)  # DISABLE again: no change, not applied
+    _tick(entity, clock)
+    assert set_to == [_LEFT_BLINKER | _RIGHT_BLINKER]
+
+
+def test_the_report_carries_this_tick_s_command() -> None:
+    actor = _actor()
+    _lights(actor, 0)
+    entity, transport, _, clock = _started(actor=actor)
+    transport.deliver_turn_indicators(2)
+    _tick(entity, clock)
+    assert transport.published[-1].turn_indicators == 2

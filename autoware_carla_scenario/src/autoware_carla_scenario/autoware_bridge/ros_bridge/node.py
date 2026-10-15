@@ -175,9 +175,12 @@ class ScenarioBridgeNode(Node):
         group = ReentrantCallbackGroup()
         self._create_ad_api_clients(group)
         self._subscribe_ad_api_states(group)
+        # The short timeout GetMission polls with: a report runs on an executor
+        # thread, and an unreachable server must not pin it for rpc_timeout_s.
         self._turn_indicators = TurnIndicatorForwarder(
-            self._client, self._rpc_timeout_s
+            self._client, self._mission_poll_timeout_s
         )
+        self._turn_indicators_failing = False
         if self._turn_indicators_topic:
             self.create_subscription(
                 TurnIndicatorsCommand,
@@ -623,12 +626,22 @@ class ScenarioBridgeNode(Node):
 
     def _on_turn_indicators(self, msg: TurnIndicatorsCommand) -> None:
         try:
-            if self._turn_indicators.observe(int(msg.command)):
-                self.get_logger().info(f"turn indicators: command {msg.command}")
+            reported = self._turn_indicators.observe(int(msg.command))
         except grpc.RpcError as error:
-            self.get_logger().warning(
-                f"ReportTurnIndicators failed ({error.code()}); will retry"
-            )
+            # Once per outage: the next message retries, at the control rate.
+            if not self._turn_indicators_failing:
+                self._turn_indicators_failing = True
+                self.get_logger().warning(
+                    f"ReportTurnIndicators failed ({error.code()}); retrying"
+                )
+            return
+        if reported is None:
+            return
+        if self._turn_indicators_failing:
+            self._turn_indicators_failing = False
+            self.get_logger().info("ReportTurnIndicators reaches the scenario again")
+        if reported:
+            self.get_logger().info(f"turn indicators: command {msg.command}")
 
     def destroy_node(self) -> bool:
         """Close the gRPC channel on shutdown."""

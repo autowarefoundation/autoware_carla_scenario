@@ -810,3 +810,11 @@ def test_autoware_s_turn_indicators_light_the_ego() -> None:
         low_beam | int(carla.VehicleLightState.RightBlinker),
         low_beam,
     ]
+
+
+def test_a_command_is_kept_until_there_is_an_ego_to_show_it() -> None:
+    bridge = FakeAutowareBridge()
+    entity = _make_entity(bridge=bridge)
+    bridge.report_turn_indicators(2)
+    entity.on_tick(_FakeWorld([]), 0.0)  # no ego yet
+    assert bridge.turn_indicators == 2  # not taken

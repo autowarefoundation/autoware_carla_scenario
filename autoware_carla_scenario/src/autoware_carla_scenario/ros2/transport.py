@@ -90,14 +90,14 @@ class Ros2EgoTransport(ABC):
         """
         ...
 
-    @abstractmethod
     def poll_turn_indicators(self) -> Optional[int]:
         """The newest ``TurnIndicatorsCommand`` value since the last poll, if any.
 
         Kept apart from :meth:`poll`: the indicators are not a command that
-        drives, so they take no part in choosing the source that does.
+        drives, so they take no part in choosing the source that does.  A
+        transport that reads none returns ``None``, the default.
         """
-        ...
+        return None
 
     @abstractmethod
     def close(self) -> None:

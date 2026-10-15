@@ -19,6 +19,11 @@ ros2:
   speed_topic: /vehicle/speed                             # std_msgs/Float64, m/s
   # rosgraph_msgs/Clock, for a CARLA server built without ROS 2.
   clock_topic: null
+  # autoware_vehicle_msgs/TurnIndicatorsCommand the ego's indicators are lit
+  # from (on a change, whichever source drives), and the TurnIndicatorsReport of
+  # what it shows.
+  turn_indicators_command_topic: /control/command/turn_indicators_cmd
+  turn_indicators_report_topic: /vehicle/status/turn_indicators_status
   # null derives it from the wheel physics.
   rear_axle_offset_m: null
   # hold | brake: what to do once every source has gone stale.

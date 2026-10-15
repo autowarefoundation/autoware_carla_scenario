@@ -297,7 +297,7 @@ class CycloneRos2Transport(Ros2EgoTransport):
                 1,
             )
         logger.info(
-            "Joined DDS domain %d: publishing %s; commands from %s",
+            "Joined DDS domain %d: publishing %s; commands from %s%s",
             config.domain_id,
             ", ".join(
                 [name for name, _, _ in published]
@@ -307,6 +307,11 @@ class CycloneRos2Transport(Ros2EgoTransport):
             ", ".join(
                 f"{source.name} ({source.kind}: {', '.join(source.topics)})"
                 for source in config.sources
+            ),
+            (
+                f"; turn indicators from {config.turn_indicators_command_topic}"
+                if config.turn_indicators_command_topic
+                else ""
             ),
         )
 

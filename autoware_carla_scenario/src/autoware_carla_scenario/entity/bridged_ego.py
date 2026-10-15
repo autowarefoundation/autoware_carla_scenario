@@ -663,11 +663,15 @@ class BridgedEgoEntity(ExternallyDrivenEgo):
         The interface node drives the ego but need not light its indicators,
         which scenarios read off the actor (``TurnIndicatorCondition``).
         """
+        # The actor first: a command taken with no ego to show it on is lost
+        # until the stack reports it again.
+        if self.actor is None:
+            return
+        actor: "carla.Actor" = self.actor
         command = self._handshake.bridge.take_turn_indicators()
-        if command is None or self.actor is None:
+        if command is None:
             return
         value: int = command
-        actor: "carla.Actor" = self.actor
         try:
             changed = show_autoware_command(actor, value)
         except ValueError:
