@@ -3008,6 +3008,11 @@ neither starts the other.</p>
 <li>All scenarios in a batch <strong>must share the same map</strong> (CARLA loads one map per session)</li>
 <li>Results are written to <code>outputs/YYYY-MM-DD/HH-MM-SS/batch_results.json</code></li>
 <li>A summary table is printed at the end with per-scenario pass/fail status</li>
+<li>A case that cannot run at all -- its run raises on every attempt
+  (<code>server.cooldown_max_retries</code>), e.g. a spawn point with no ground under it --
+  does not end the batch: it is reported as <code>[ERROR]</code> with the error, its
+  <code>batch_results.json</code> entry is <code>"passed": false</code> with <code>"error": true</code>, and the
+  batch goes on with the next case. Ctrl+C still stops the batch</li>
 <li>A scenario with a <code>sweep:</code> section runs once, as configured; add <code>--multirun</code>
   to run every case of it (see <a href="#running-every-sweep-case-in-a-batch">Running every sweep case in a batch</a>)</li>
 </ul>
@@ -3752,7 +3757,7 @@ in each bucket, and the buckets no route reaches
 </tr>
 <tr>
 <td>1</td>
-<td>One or more scenarios failed, or configuration/runtime error</td>
+<td>One or more scenarios failed or errored, or configuration/runtime error</td>
 </tr>
 </tbody>
 </table>
@@ -4156,7 +4161,7 @@ the <code>carla_driver</code> entity:</p>
 <a id="__codelineno-25-7" name="__codelineno-25-7" href="#__codelineno-25-7"></a><span class="c1"># 3. Open http://localhost:9000 in a browser</span>
 </code></pre></div>
 <h3 id="use-case-6-resume-a-failed-batch">Use Case 6: Resume a Failed Batch<a class="headerlink" href="#use-case-6-resume-a-failed-batch" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-26-1" name="__codelineno-26-1" href="#__codelineno-26-1"></a><span class="c1"># Original batch run (5 scenarios, failed at the 4th)</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-26-1" name="__codelineno-26-1" href="#__codelineno-26-1"></a><span class="c1"># Original batch run (5 scenarios, stopped at the 4th, e.g. by Ctrl+C)</span>
 <a id="__codelineno-26-2" name="__codelineno-26-2" href="#__codelineno-26-2"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span><span class="s1">'intersection_passing/*'</span>
 <a id="__codelineno-26-3" name="__codelineno-26-3" href="#__codelineno-26-3"></a>
 <a id="__codelineno-26-4" name="__codelineno-26-4" href="#__codelineno-26-4"></a><span class="c1"># Resume from the 4th scenario</span>
@@ -4221,7 +4226,7 @@ the <code>carla_driver</code> entity:</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 14, 2026 14:00:12 UTC"><span class="timeago" datetime="2026-10-14T14:00:12+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 14, 2026 14:00:12 UTC">2026-10-14</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 15, 2026 07:52:49 UTC"><span class="timeago" datetime="2026-10-15T07:52:49+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 15, 2026 07:52:49 UTC">2026-10-15</span>
   </span>
 
     
