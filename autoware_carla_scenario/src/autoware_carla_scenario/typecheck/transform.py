@@ -53,7 +53,10 @@ which :func:`transform_source_lines` maps back onto the handler):
   the right-hand side as an expression and refuses it.  An annotation spells
   the callable out.
 * ``raise X from None`` becomes ``raise X``: Codon 0.19 cannot type the
-  ``None`` cause.
+  ``None`` cause.  A builtin exception class raised as it is
+  (``raise NotImplementedError``) becomes an instance of it
+  (``raise NotImplementedError()``), as Python makes it: Codon 0.19 crashes
+  on the class.
 * The ``()`` default of a dropped ``Sequence[X]`` / ``Collection[X]`` /
   ``tuple[X, ...]`` parameter becomes ``List[X]()``, its tuple display
   default ``List[X]([...])``, and the ``None``
@@ -768,6 +771,12 @@ def _names_any(annotation: ast.AST) -> bool:
     )
 
 
+def _is_builtin_exception(name: str) -> bool:
+    """Whether *name* is a builtin exception class (``ValueError``)."""
+    value = getattr(builtins, name, None)
+    return isinstance(value, type) and issubclass(value, BaseException)
+
+
 def _builtin_generic(node: ast.AST) -> str | None:
     """The builtin a generic's base names: ``list`` for ``list`` or ``List``."""
     name = _dotted(node)
@@ -1298,6 +1307,11 @@ class _Rewriter(ast.NodeVisitor):
             # `raise X from None`, which Codon 0.19 cannot type: `raise X`.
             _, end = self.edits.node_span(node.exc)
             self.edits.replace(end, self.edits.node_span(node)[1], "")
+        if isinstance(node.exc, ast.Name) and _is_builtin_exception(node.exc.id):
+            # `raise NotImplementedError`, a class, which Python instantiates
+            # and Codon 0.19 crashes on: `raise NotImplementedError()`.
+            start, end = self.edits.node_span(node.exc)
+            self.edits.replace(start, end, f"{node.exc.id}()")
         self.generic_visit(node)
 
     def visit_Call(self, node: ast.Call) -> None:

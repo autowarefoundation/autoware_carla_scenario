@@ -24,6 +24,11 @@ converts it): ``config_cls(**scenario_dict)`` leaves a mapping it does not
 convert a ``dict``, and so does the driver, so Codon refuses the value at its
 ``scenario.<key>`` line instead of passing code that reads the field's
 attributes.
+
+After that, the driver calls the function appended to each of the scenario's
+own modules (:func:`render_module_checks`), which calls every function and
+method of the module and assigns each class-level default, so what the
+calls above do not reach is compiled too.
 """
 
 from __future__ import annotations
@@ -37,7 +42,13 @@ import typing
 from dataclasses import dataclass, field
 from typing import Any
 
-__all__ = ["DRIVER_MODULE", "Driver", "render_driver", "render_odd_driver"]
+__all__ = [
+    "DRIVER_MODULE",
+    "Driver",
+    "render_driver",
+    "render_module_checks",
+    "render_odd_driver",
+]
 
 #: File name of the generated program in the check workspace.
 DRIVER_MODULE = "_acs_check_main.py"
@@ -50,6 +61,9 @@ class Driver:
     source: str
     #: Driver line number -> the ``scenario.<key>`` whose value is on it.
     config_lines: dict[int, str] = field(default_factory=dict)
+    #: What the driver's own calls are, as a warning names them: a function
+    #: the appended calls leave out is compiled only where these reach it.
+    reaches: str = "the scenario's constructor, setup() and is_done()"
 
 
 class _Imports:
@@ -226,6 +240,24 @@ def render_driver(
     return Driver("\n".join(lines) + "\n", config_lines)
 
 
+def render_module_checks(modules: list[str]) -> str:
+    """The lines that run each of *modules*' appended calls, after the driver's.
+
+    Each of the scenario's own modules ends with the library check's
+    function (:func:`.library_driver.render_library_checks`), which calls
+    every function and method of the module, so that Codon compiles what
+    the driver's own calls do not reach.  These lines go after the driver's
+    program, so no line of it moves (:attr:`Driver.config_lines`).
+    """
+    from .library_driver import LIBRARY_CHECK  # noqa: PLC0415 - imports this module
+
+    lines = ["", ""]
+    for i, module in enumerate(modules):
+        lines.append(f"from {module} import {LIBRARY_CHECK} as _acs_module_check_{i}")
+        lines.append(f"_acs_module_check_{i}()")
+    return "\n".join(lines) + "\n"
+
+
 def render_odd_driver(module: str, function: str) -> Driver:
     """The program that checks an ODD: call its builder, keep an ODD."""
     lines = [
@@ -239,4 +271,4 @@ def render_odd_driver(module: str, function: str) -> Driver:
         "",
         "_acs_check_odd()",
     ]
-    return Driver("\n".join(lines) + "\n")
+    return Driver("\n".join(lines) + "\n", reaches="the ODD's builder")

@@ -691,6 +691,70 @@ def test_a_class_level_default_is_assigned_to_a_typed_local() -> None:
     assert "from autoware_carla_scenario._tc import _acs_value, _expect_bool" in lines
 
 
+def test_a_generic_function_and_one_returning_any_are_problems() -> None:
+    # `_acs_value(list[T])` does not compile: a TypeVar parameter is a
+    # problem.  A function returning `Any` builds what Codon cannot express
+    # (`get_details() -> dict[str, Any]`): left out with `skip_any_returns`,
+    # which the scenario check passes for want of UNCALLED (#192).
+    source = textwrap.dedent(
+        """
+        from typing import Any, TypeVar
+
+        T = TypeVar("T")
+
+
+        def first(xs: list[T]) -> T:
+            return xs[0]
+
+
+        class Probe:
+            def get_details(self) -> dict[str, Any]:
+                return {}
+
+            @property
+            def raw(self) -> "Any":
+                return 0
+
+            def speed(self) -> float:
+                return 0.0
+        """
+    )
+    tree = ast.parse(source)
+    checks = render_library_checks(tree)
+    assert [line for line, _ in checks.problems] == [7]
+    assert "parameter `xs` is annotated with a TypeVar" in checks.problems[0][1]
+    assert "first(" not in checks.source
+    assert "_acs_value(Probe).get_details()" in checks.source
+
+    checks = render_library_checks(tree, skip_any_returns=True)
+    assert [line for line, _ in checks.problems] == [7, 12, 16]
+    assert "Probe.get_details: returns `dict[str, Any]`" in checks.problems[1][1]
+    assert "Probe.raw: returns `Any`" in checks.problems[2][1]
+    assert "get_details" not in checks.source
+    assert ".raw" not in checks.source
+    assert "_acs_value(Probe).speed()" in checks.source
+
+
+def test_each_appended_line_names_the_line_it_compiles() -> None:
+    # The scenario check reports an error on an appended line at the line of
+    # what it compiles (#192): a function's `def`, a class-level default.
+    source = _CLASS_DEFAULTS_RENDERED
+    checks = render_library_checks(ast.parse(source))
+    module = source.splitlines()
+    assert set(checks.lines) == set(checks.labels)
+    for n, label in checks.labels.items():
+        line = module[checks.lines[n] - 1]
+        if label.startswith("class-level default of "):
+            member = label.rsplit(".", 1)[1]
+            assert line.lstrip().startswith(member), (label, line)
+        else:
+            owner, _, name = label.split("(", 1)[0].rpartition(".")
+            # A dataclass's generated constructor is at its `class` line.
+            assert f"def {name}(" in line or (
+                name == "__init__" and f"class {owner}" in line
+            ), (label, line)
+
+
 def test_protected_functions_and_methods_are_called_too() -> None:
     # A `_` function or method is a hook a subclass or another module uses
     # (BaseScenario._setup_ego_spawn): Codon compiles its body only when
