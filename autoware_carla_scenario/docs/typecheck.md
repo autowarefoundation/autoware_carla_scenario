@@ -174,9 +174,27 @@ carla` (the import the runtime uses) resolves to it, so a scenario is checked
 against the whole typed CARLA API.
 typesafe_carla's Python-API compatibility shortcuts (such as calling a
 `Vehicle` method on a plain `Actor`) compile, as they do outside strict mode.
-Nothing in the model runs; `test_typecheck_model.py` keeps every declaration
-in step with the Python definition of the same name (parameter names, order,
-defaults, keyword-only parameters, methods, enum members).
+Nothing in the model runs; `test_typecheck_model.py` keeps each declaration
+it compares in step with the Python definition of the same name (parameter
+names, order, defaults, keyword-only parameters, methods, enum members): every
+name `__init__.codon` exports, the names the checked modules import from the
+model (`_BOUNDARY`), and every name of the model modules that stand for one
+framework module each (`_MODULE_MODELS`), which must declare exactly the names
+compared, beside model-only helpers named `_acs_*`. `metrics.codon` is one of
+those: it declares the whole of `metrics.__all__`, and the test also compares
+its keys and each built-in metric of `BUILT_IN_METRICS` (title, unit, text,
+aggregation) by value, and `Metric`'s field types and defaults and its
+`__new__`'s parameters. Only a metric's `read` differs: Python's is a private
+function of the module, which no scenario can import, and the model's a stub
+(`_acs_unread`), since nothing in the model is read. `Metric()` takes any
+`read` a world can be passed to that returns a `float` or an `Optional[float]`
+-- a function returning `float`, a lambda -- as Python's does, and stores the
+stub: a Codon
+`Callable` field takes a function of its exact type only, and Codon 0.19
+crashes on any other.
+`measures.codon` is not among them yet: `test_measures.py` compares its keys
+and the other string and float constants by value, but not its classes and
+functions.
 
 A scenario that imports a module with no model (lanelet2's `matching`, say,
 or a framework module outside the public API) is refused with a message
@@ -426,7 +444,8 @@ the `scenario_bridge` node's command and Python root beside it
 (`autoware_stack.bridge_node`) and the one that runs a workspace in its dev
 container with Docker (`autoware_stack.docker`, over a model of
 `autoware_stack.devcontainer`, which reads JSON and YAML), the Autoware
-bridge interface and its fake, the trajectory model, the measures, the ODD
+bridge interface and its fake, the trajectory model, the measures and the
+metrics, the ODD
 unit names (`odd.unit_names`), the placement of a road user so a scenario
 measure reads a given value (`placement`), the planning of a scenario's route on the
 Lanelet2 map that the ODD's route check starts from (`odd.route_plan`), the CARLA-only helpers, the traffic-light
