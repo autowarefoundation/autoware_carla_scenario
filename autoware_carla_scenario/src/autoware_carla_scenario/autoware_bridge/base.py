@@ -253,6 +253,16 @@ class AutowareBridge(ABC):
         Must be non-blocking so it can be polled once per world tick.
         """
 
+    def take_turn_indicators(self) -> Optional[int]:
+        """The newest turn-indicator command the stack reported since the last call.
+
+        An ``autoware_vehicle_msgs/TurnIndicatorsCommand`` value
+        (``ReportTurnIndicators``), or ``None`` when none arrived; the ego lights
+        its indicators from it.  A bridge whose stack reports none returns
+        ``None``.  Must be non-blocking, as :meth:`is_ready`.
+        """
+        return None
+
     @property
     def client_connected(self) -> bool:
         """Whether the interface node has reached this bridge yet.

@@ -11,7 +11,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import logging
-from typing import Optional
+import threading
+import time
+from typing import Callable, Optional
 
 from .._proto import autoware_bridge_pb2 as pb2
 from .._proto import autoware_bridge_pb2_grpc as pb2_grpc
@@ -19,7 +21,7 @@ import grpc
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["ScenarioBridgeClient", "Mission"]
+__all__ = ["ScenarioBridgeClient", "Mission", "TurnIndicatorForwarder"]
 
 
 @dataclass(frozen=True)
@@ -104,8 +106,89 @@ class ScenarioBridgeClient:
             pb2.ReportReadinessRequest(ready=ready), timeout=timeout
         )
 
+    def report_turn_indicators(
+        self, command: int, timeout: Optional[float] = None
+    ) -> None:
+        """Push Autoware's turn-indicator command to the scenario framework.
+
+        Args:
+            command: An ``autoware_vehicle_msgs/TurnIndicatorsCommand`` value.
+            timeout: Per-RPC timeout in seconds.
+
+        Raises:
+            grpc.RpcError: If the server cannot be reached.
+        """
+        self._stub.ReportTurnIndicators(
+            pb2.ReportTurnIndicatorsRequest(command=command), timeout=timeout
+        )
+
     def close(self) -> None:
         """Close the channel.  Idempotent; a no-op for an injected channel."""
         if self._owns_channel and self._channel is not None:
             self._channel.close()
             self._channel = None  # type: ignore[assignment]
+
+
+class TurnIndicatorForwarder:
+    """Forwards Autoware's turn-indicator command to the scenario.
+
+    Autoware publishes ``TurnIndicatorsCommand`` every control cycle.  A change is
+    reported at once; the command in force is reported again every
+    ``resend_s``, so a scenario that started over -- a retried attempt, a fresh
+    ego, a bridge restarted with nothing kept -- learns it without waiting for
+    Autoware to change its mind.  ``NO_COMMAND`` is not forwarded.
+
+    One report at a time: a message arriving while one is in flight is skipped,
+    not queued behind it, so a server that stops answering holds one executor
+    thread, not one per message.
+
+    Args:
+        client: The bridge client to report through.
+        timeout: Per-RPC timeout in seconds.
+        resend_s: Seconds after which an unchanged command is reported again.
+        clock: Monotonic seconds; tests substitute their own.
+    """
+
+    #: ``TurnIndicatorsCommand.NO_COMMAND``.
+    NO_COMMAND = 0
+
+    def __init__(
+        self,
+        client: ScenarioBridgeClient,
+        timeout: Optional[float],
+        *,
+        resend_s: float = 1.0,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self._client = client
+        self._timeout = timeout
+        self._resend_s = resend_s
+        self._clock = clock
+        self._sent: Optional[int] = None
+        self._sent_at = 0.0
+        self._lock = threading.Lock()
+
+    def observe(self, command: int) -> Optional[bool]:
+        """Take one published command.
+
+        Returns:
+            ``True`` if it was reported as a change, ``False`` if reported again
+            unchanged, ``None`` if nothing was sent.
+
+        Raises:
+            grpc.RpcError: If reporting it failed; a later message retries.
+        """
+        if command == self.NO_COMMAND:
+            return None
+        if not self._lock.acquire(blocking=False):
+            return None
+        try:
+            now = self._clock()
+            changed = command != self._sent
+            if not changed and now - self._sent_at < self._resend_s:
+                return None
+            self._client.report_turn_indicators(command, timeout=self._timeout)
+            self._sent, self._sent_at = command, now
+            return changed
+        finally:
+            self._lock.release()

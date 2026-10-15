@@ -13,6 +13,8 @@ from autoware_carla_scenario import (
     TurnIndicatorState,
 )
 from autoware_carla_scenario.utils.turn_indicator import (
+    autoware_report,
+    from_autoware_command,
     turn_indicator_state,
     with_turn_indicators,
 )
@@ -126,3 +128,18 @@ def test_the_editor_offers_every_state() -> None:
     assert [o.value for o in _TURN_INDICATOR_STATES] == [
         m.name for m in TurnIndicatorState
     ]
+
+
+def test_autoware_s_command_values_name_the_states() -> None:
+    assert from_autoware_command(0) is None  # NO_COMMAND
+    assert [from_autoware_command(v) for v in (1, 2, 3)] == [
+        TurnIndicatorState.OFF,
+        TurnIndicatorState.LEFT,
+        TurnIndicatorState.RIGHT,
+    ]
+    with pytest.raises(ValueError, match="TurnIndicatorsCommand"):
+        from_autoware_command(4)
+
+
+def test_the_report_has_no_hazard() -> None:
+    assert [autoware_report(s) for s in TurnIndicatorState] == [1, 2, 3, 1]

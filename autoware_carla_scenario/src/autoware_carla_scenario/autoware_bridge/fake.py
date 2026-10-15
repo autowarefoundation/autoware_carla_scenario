@@ -36,6 +36,8 @@ class FakeAutowareBridge(AutowareBridge):
     configured_waypoints: List[BridgePose] = field(default_factory=list)
     #: Whether :meth:`close` has been called.
     closed: bool = False
+    #: The turn-indicator command :meth:`take_turn_indicators` hands over next.
+    turn_indicators: Optional[int] = None
 
     _ready_polls: int = 0
 
@@ -57,6 +59,15 @@ class FakeAutowareBridge(AutowareBridge):
         ready = self._ready_polls >= self.ready_after
         self._ready_polls += 1
         return ready
+
+    def report_turn_indicators(self, command: int) -> None:
+        """Queue *command* as if the stack had just reported it."""
+        self.turn_indicators = command
+
+    def take_turn_indicators(self) -> Optional[int]:
+        command = self.turn_indicators
+        self.turn_indicators = None
+        return command
 
     @property
     def client_connected(self) -> bool:

@@ -46,6 +46,8 @@ __all__ = [
     "Time",
     "Trajectory",
     "TrajectoryPoint",
+    "TurnIndicatorsCommand",
+    "TurnIndicatorsReport",
     "Twist",
     "TwistWithCovariance",
     "Vector3",
@@ -221,6 +223,22 @@ class SteeringReport(
 ):
     stamp: Time = field(default_factory=Time)
     steering_tire_angle: float32 = 0.0
+
+
+@dataclass
+class TurnIndicatorsCommand(
+    IdlStruct, typename="autoware_vehicle_msgs::msg::dds_::TurnIndicatorsCommand_"
+):
+    stamp: Time = field(default_factory=Time)
+    command: uint8 = 0
+
+
+@dataclass
+class TurnIndicatorsReport(
+    IdlStruct, typename="autoware_vehicle_msgs::msg::dds_::TurnIndicatorsReport_"
+):
+    stamp: Time = field(default_factory=Time)
+    report: uint8 = 0
 
 
 @dataclass

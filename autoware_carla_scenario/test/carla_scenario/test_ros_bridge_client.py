@@ -9,6 +9,7 @@ from concurrent import futures
 
 from autoware_carla_scenario.autoware_bridge.ros_bridge.client import (
     ScenarioBridgeClient,
+    TurnIndicatorForwarder,
 )
 from autoware_carla_scenario.autoware_bridge._proto import autoware_bridge_pb2 as pb2
 from autoware_carla_scenario.autoware_bridge._proto import (
@@ -24,6 +25,7 @@ class _StubServer(pb2_grpc.AutowareBridgeServicer):
     def __init__(self):
         self.mission = None  # (initial_pose, goal) or None
         self.reported = []
+        self.turn_indicators = []
 
     def GetMission(self, request, context):  # noqa: N802 - gRPC signature
         if self.mission is None:
@@ -34,6 +36,10 @@ class _StubServer(pb2_grpc.AutowareBridgeServicer):
     def ReportReadiness(self, request, context):  # noqa: N802 - gRPC signature
         self.reported.append(request.ready)
         return pb2.ReportReadinessResponse()
+
+    def ReportTurnIndicators(self, request, context):  # noqa: N802 - gRPC signature
+        self.turn_indicators.append(request.command)
+        return pb2.ReportTurnIndicatorsResponse()
 
 
 @pytest.fixture
@@ -88,3 +94,54 @@ def test_close_is_a_no_op_for_injected_channel(server):
     client = _client(server)
     client.close()  # must not raise
     client.close()
+
+
+class _Clock:
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+def test_turn_indicators_are_forwarded_when_they_change(server):
+    forwarder = TurnIndicatorForwarder(_client(server), 5.0, clock=_Clock())
+    # Autoware publishes every control cycle; only the changes go over.
+    reported = [forwarder.observe(command) for command in (0, 2, 2, 2, 0, 1, 1, 3)]
+    assert server.turn_indicators == [2, 1, 3]
+    assert reported == [None, True, None, None, None, True, None, True]
+
+
+def test_the_command_in_force_is_sent_again_now_and_then(server):
+    """So a scenario that started over (a retried attempt) learns it."""
+    clock = _Clock()
+    forwarder = TurnIndicatorForwarder(_client(server), 5.0, resend_s=1.0, clock=clock)
+    forwarder.observe(2)
+    clock.now = 0.5
+    assert forwarder.observe(2) is None
+    clock.now = 1.0
+    assert forwarder.observe(2) is False  # reported again, unchanged
+    assert server.turn_indicators == [2, 2]
+
+
+def test_a_failed_report_is_sent_again(server):
+    channel = grpc.insecure_channel("localhost:1")  # nobody there
+    forwarder = TurnIndicatorForwarder(
+        ScenarioBridgeClient(channel=channel), 0.2, clock=_Clock()
+    )
+    with pytest.raises(grpc.RpcError):
+        forwarder.observe(2)
+    # Not recorded as sent: a working client gets it with the next message.
+    forwarder._client = _client(server)  # noqa: SLF001
+    assert forwarder.observe(2) is True
+    assert server.turn_indicators == [2]
+
+
+def test_a_message_during_a_report_in_flight_is_skipped(server):
+    forwarder = TurnIndicatorForwarder(_client(server), 5.0, clock=_Clock())
+    forwarder._lock.acquire()  # noqa: SLF001 - a report in flight
+    try:
+        assert forwarder.observe(2) is None
+    finally:
+        forwarder._lock.release()  # noqa: SLF001
+    assert server.turn_indicators == []

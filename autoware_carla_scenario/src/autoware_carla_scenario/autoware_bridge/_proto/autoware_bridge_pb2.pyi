@@ -65,3 +65,13 @@ class ReportReadinessRequest(_message.Message):
 class ReportReadinessResponse(_message.Message):
     __slots__ = ()
     def __init__(self) -> None: ...
+
+class ReportTurnIndicatorsRequest(_message.Message):
+    __slots__ = ("command",)
+    COMMAND_FIELD_NUMBER: _ClassVar[int]
+    command: int
+    def __init__(self, command: _Optional[int] = ...) -> None: ...
+
+class ReportTurnIndicatorsResponse(_message.Message):
+    __slots__ = ()
+    def __init__(self) -> None: ...

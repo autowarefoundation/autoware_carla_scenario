@@ -33,6 +33,11 @@ class AutowareBridgeStub(object):
                 request_serializer=autoware__bridge_dot_v0_dot_autoware__bridge__pb2.ReportReadinessRequest.SerializeToString,
                 response_deserializer=autoware__bridge_dot_v0_dot_autoware__bridge__pb2.ReportReadinessResponse.FromString,
                 )
+        self.ReportTurnIndicators = channel.unary_unary(
+                '/autoware_carla_scenario.autoware_bridge.v0.AutowareBridge/ReportTurnIndicators',
+                request_serializer=autoware__bridge_dot_v0_dot_autoware__bridge__pb2.ReportTurnIndicatorsRequest.SerializeToString,
+                response_deserializer=autoware__bridge_dot_v0_dot_autoware__bridge__pb2.ReportTurnIndicatorsResponse.FromString,
+                )
 
 
 class AutowareBridgeServicer(object):
@@ -60,6 +65,16 @@ class AutowareBridgeServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def ReportTurnIndicators(self, request, context):
+        """Push the turn indicators Autoware commands, each time the command changes.
+        The interface node drives the ego but need not light its indicators, which
+        the framework's scenarios read off the CARLA actor; the framework lights
+        them from this. A client that never calls it leaves them to the scenario.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_AutowareBridgeServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -72,6 +87,11 @@ def add_AutowareBridgeServicer_to_server(servicer, server):
                     servicer.ReportReadiness,
                     request_deserializer=autoware__bridge_dot_v0_dot_autoware__bridge__pb2.ReportReadinessRequest.FromString,
                     response_serializer=autoware__bridge_dot_v0_dot_autoware__bridge__pb2.ReportReadinessResponse.SerializeToString,
+            ),
+            'ReportTurnIndicators': grpc.unary_unary_rpc_method_handler(
+                    servicer.ReportTurnIndicators,
+                    request_deserializer=autoware__bridge_dot_v0_dot_autoware__bridge__pb2.ReportTurnIndicatorsRequest.FromString,
+                    response_serializer=autoware__bridge_dot_v0_dot_autoware__bridge__pb2.ReportTurnIndicatorsResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -118,5 +138,22 @@ class AutowareBridge(object):
         return grpc.experimental.unary_unary(request, target, '/autoware_carla_scenario.autoware_bridge.v0.AutowareBridge/ReportReadiness',
             autoware__bridge_dot_v0_dot_autoware__bridge__pb2.ReportReadinessRequest.SerializeToString,
             autoware__bridge_dot_v0_dot_autoware__bridge__pb2.ReportReadinessResponse.FromString,
+            options, channel_credentials,
+            insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
+
+    @staticmethod
+    def ReportTurnIndicators(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(request, target, '/autoware_carla_scenario.autoware_bridge.v0.AutowareBridge/ReportTurnIndicators',
+            autoware__bridge_dot_v0_dot_autoware__bridge__pb2.ReportTurnIndicatorsRequest.SerializeToString,
+            autoware__bridge_dot_v0_dot_autoware__bridge__pb2.ReportTurnIndicatorsResponse.FromString,
             options, channel_credentials,
             insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
