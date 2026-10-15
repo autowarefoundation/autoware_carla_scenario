@@ -141,7 +141,7 @@ class VehicleEntity(BackendDriven):
 
     def destroy(self) -> None:
         """Destroy the vehicle actor and release resources."""
+        self.forget_lane_change()
         if self._vehicle is not None:
             self._vehicle.destroy()
             self._vehicle = None
-        self.forget_lane_change()

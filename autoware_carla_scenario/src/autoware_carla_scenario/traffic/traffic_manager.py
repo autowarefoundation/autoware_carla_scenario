@@ -186,6 +186,10 @@ class TrafficManagerBackend(TrafficBackend):
         and safe to call after a failed :meth:`prepare`, because teardown runs
         whatever happened during the run.
         """
+        # First: nothing below may keep a finished run's map on its vehicles.
+        for entity in self._lane_changed:
+            entity.forget_lane_change()
+        self._lane_changed = []
         for actor in self._background.values():
             try:
                 actor.destroy()
@@ -195,9 +199,6 @@ class TrafficManagerBackend(TrafficBackend):
         self._background_count = 0
         self._started = False
         self._released = set()
-        for entity in self._lane_changed:
-            entity.forget_lane_change()
-        self._lane_changed = []
         if self._closed or self._client is None:
             return
         self._closed = True
