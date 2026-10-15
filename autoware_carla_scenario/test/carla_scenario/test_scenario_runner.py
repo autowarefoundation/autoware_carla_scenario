@@ -539,10 +539,10 @@ class _SharedServer:
     asked for is counted (``get_map()`` builds the whole road network).
     """
 
-    def __init__(self, maps: tuple[str, ...], current: str) -> None:
+    def __init__(self, maps: tuple[str, ...], current: str, episode: int = 1) -> None:
         self.maps = maps
         self.current = current
-        self.episode = 1
+        self.episode = episode
         self.loads: list[str] = []
         self.map_reads = 0
 
@@ -717,3 +717,32 @@ class TestTheBatchMap:
 
         assert server.loads == ["Odaiba_generated"] * 4
         assert server.map_reads == 0
+
+    def test_a_negative_episode_id_is_an_id(self, caplog):
+        """The id is a random 64-bit number, which typesafe-carla hands over
+        signed: a negative one is the same episode for all that, not an
+        unknown one to load the map again for."""
+        server = _SharedServer(
+            ("Odaiba_generated",), "Town10HD_Opt", episode=-1240847540305438359
+        )
+        runner = _runner_on(server)
+        runner.load_map_by_name("Odaiba_generated")
+
+        with caplog.at_level("WARNING", logger="autoware_carla_scenario"):
+            for case in range(3):
+                _set_up_once(runner)
+                runner.reset_world(f"Case{case}")
+
+        assert server.loads == ["Odaiba_generated"] * 4
+        assert not [r for r in caplog.records if r.levelname == "WARNING"]
+
+    def test_an_unknown_episode_is_never_the_batch_one(self):
+        from autoware_carla_scenario.world_reset import episode_of, same_episode
+
+        world = MagicMock()
+        type(world).id = property(lambda self: (_ for _ in ()).throw(RuntimeError()))
+
+        assert episode_of(world) is None
+        assert not same_episode(None, None)
+        assert not same_episode(None, 7)
+        assert same_episode(-7, -7)

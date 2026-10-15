@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Optional
+
 import typesafe_carla.carla as carla
 
 
@@ -47,15 +49,29 @@ def reload_current_map(client: carla.Client) -> carla.World:
     return reload_map(client, str(client.get_world().get_map().name))
 
 
-def episode_of(world: carla.World) -> int:
-    """Return the id of the episode *world* belongs to, or ``-1`` if unknown.
+def episode_of(world: carla.World) -> Optional[int]:
+    """Return the id of the episode *world* belongs to, or ``None`` if unknown.
 
     Every load of a world -- by this client or by any other on the same
     server -- starts a new episode, so a changed id is how a client sees that
     the world was replaced behind its back.  Reading it costs nothing: the
     client keeps it, unlike ``get_map()``, which builds the whole road network.
+
+    The id is a random 64-bit number, and a client that hands it over signed
+    (typesafe-carla 0.8.3 and earlier did) gives a negative one about every
+    other load: any number is an id, so only ``None`` says there is none.
     """
     try:
         return int(world.id)
     except Exception:
-        return -1
+        return None
+
+
+def same_episode(seen: Optional[int], loaded: Optional[int]) -> bool:
+    """Whether two ids from :func:`episode_of` name one episode, known to both."""
+    if seen is None or loaded is None:
+        return False
+    # Annotated, so Codon unwraps the Optionals (docs/typecheck.md).
+    seen_id: int = seen
+    loaded_id: int = loaded
+    return seen_id == loaded_id

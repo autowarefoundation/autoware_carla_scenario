@@ -36,7 +36,7 @@ from .scenario_base import BaseScenario
 from .server import CarlaServerManager
 from .traffic.base import TrafficBackend, TrafficContext
 from .traffic.driven import BackendDriven
-from .world_reset import episode_of, reload_current_map, short_map_name
+from .world_reset import episode_of, reload_current_map, same_episode, short_map_name
 from .traffic.config import TrafficManagerBackendConfig
 from .traffic.traffic_manager import TrafficManagerBackend
 from .trajectory_recorder import TrajectoryRecorder
@@ -422,8 +422,8 @@ class ScenarioRunner:
     _batch_map: str
     #: The OpenDRIVE load_map_by_overwriting_xodr() installed for it, if any.
     _batch_xodr: Optional[Path]
-    #: The episode this runner last loaded _batch_map into, or -1.
-    _batch_episode: int
+    #: The episode this runner last loaded _batch_map into, if it knows it.
+    _batch_episode: Optional[int]
 
     def __init__(
         self,
@@ -490,7 +490,7 @@ class ScenarioRunner:
         self._world = None
         self._batch_map = ""
         self._batch_xodr = None
-        self._batch_episode = -1
+        self._batch_episode = None
 
     @property
     def traffic_backend(self) -> TrafficBackend:
@@ -764,7 +764,7 @@ class ScenarioRunner:
             return held
         world = self._client.get_world()
         episode = episode_of(world)
-        if episode >= 0 and episode == self._batch_episode:
+        if same_episode(episode, self._batch_episode):
             self._world = world
             return world
         logger.warning(
