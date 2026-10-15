@@ -85,6 +85,31 @@ class _RecordingRunner:
         pass
 
 
+class _SecondCaseRaises:
+    """A runner whose run of one scenario (``failing``) raises *error* on
+    every attempt; it records which scenarios it ran, by position, and when
+    it reloaded the world."""
+
+    def __init__(self, error: BaseException) -> None:
+        self.error = error
+        self.failing: BaseScenario | None = None
+        self.order: list[int] = []
+        self.ran: list[int] = []
+        self.events: list[str] = []
+
+    def run_scenario(self, scenario: BaseScenario, **_: object) -> ScenarioResult:
+        if id(scenario) not in self.order:
+            self.order.append(id(scenario))
+        self.ran.append(self.order.index(id(scenario)))
+        self.events.append("run")
+        if scenario is self.failing:
+            raise self.error
+        return ScenarioResult(passed=True, message="ok", elapsed_seconds=1.0)
+
+    def reset_world(self) -> None:
+        self.events.append("reset")
+
+
 def _make_queue_with_mock_runner() -> tuple[ScenarioQueue, MagicMock]:
     """Return a ScenarioQueue whose internal runner is a MagicMock.
 
@@ -350,6 +375,88 @@ class TestScenarioQueueUnit:
 
         assert len(queue) == 0
         assert queue._timeouts == {} and queue._cases == {}
+
+    @staticmethod
+    def _queue_whose_second_case_cannot_run(
+        error: BaseException, *, retries: int = 1, cases: int = 3
+    ) -> tuple[ScenarioQueue, "_SecondCaseRaises", list[BaseScenario]]:
+        queue = ScenarioQueue(server=MagicMock(), cooldown_max_retries=retries)
+        runner = _SecondCaseRaises(error)
+        queue._runner = runner  # type: ignore[assignment]
+        scenarios: list[BaseScenario] = [
+            _NullScenario(_make_ego_config()) for _ in range(cases)
+        ]
+        for scenario in scenarios:
+            queue.add(scenario)
+        runner.failing = scenarios[1]
+        return queue, runner, scenarios
+
+    @pytest.mark.parametrize("release", [False, True])
+    def test_a_run_that_continues_on_error_records_the_case_and_goes_on(
+        self, release: bool
+    ) -> None:
+        """A case that raises on every attempt is a failed result naming the
+        error; the world is reloaded and the next case runs."""
+        queue, runner, scenarios = self._queue_whose_second_case_cannot_run(
+            RuntimeError("ground_projection returned no hit at (1.0, 2.0)")
+        )
+
+        results = queue.run_all(release=release, continue_on_error=True)
+
+        assert len(results) == 3
+        assert results[0].passed and results[2].passed
+        assert not results[1].passed
+        assert results[1].message == (
+            "Errored after 2 attempt(s): RuntimeError: "
+            "ground_projection returned no hit at (1.0, 2.0)"
+        )
+        # Both attempts of the second case, then the third case.
+        assert runner.ran == [0, 1, 1, 2]
+        assert queue.errored_indices() == [1]
+        # Reloaded after the errored case, which never reached its own reload.
+        assert runner.events == ["run", "run", "run", "reset", "run"]
+        if not release:
+            assert queue.result_for(scenarios[1]) is results[1]
+
+    def test_an_errored_last_case_leaves_the_world_to_the_next_run(self) -> None:
+        queue, runner, _ = self._queue_whose_second_case_cannot_run(
+            RuntimeError("no"), retries=0, cases=2
+        )
+
+        results = queue.run_all(continue_on_error=True)
+
+        assert [r.passed for r in results] == [True, False]
+        assert queue.errored_indices() == [1]
+        assert runner.events == ["run", "run"]
+        assert queue._world_left_as_is
+
+    def test_a_run_forgets_the_errors_of_the_last(self) -> None:
+        queue, runner, _ = self._queue_whose_second_case_cannot_run(
+            RuntimeError("no"), retries=0
+        )
+        queue.run_all(continue_on_error=True)
+        runner.failing = None
+
+        queue.run_all(continue_on_error=True)
+
+        assert queue.errored_indices() == []
+
+    def test_a_run_ends_at_a_case_that_raises_by_default(self) -> None:
+        queue, runner, _ = self._queue_whose_second_case_cannot_run(RuntimeError("no"))
+
+        with pytest.raises(RuntimeError, match="failed after 2 attempt"):
+            queue.run_all()
+
+        assert runner.ran == [0, 1, 1]
+
+    def test_an_interrupt_ends_a_run_that_continues_on_error(self) -> None:
+        queue, runner, _ = self._queue_whose_second_case_cannot_run(KeyboardInterrupt())
+
+        with pytest.raises(KeyboardInterrupt):
+            queue.run_all(continue_on_error=True)
+
+        # Not retried, and the third case never ran.
+        assert runner.ran == [0, 1]
 
     def test_a_run_that_does_not_release_keeps_its_scenarios(self) -> None:
         queue = ScenarioQueue(server=MagicMock())
