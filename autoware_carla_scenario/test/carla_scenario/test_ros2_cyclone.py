@@ -8,6 +8,8 @@ the ``ros2`` extra (``cyclonedds``) is not installed.
 
 from __future__ import annotations
 
+import dataclasses
+
 import os
 import time
 from typing import Any, Callable, Dict, List, TypeVar, cast
@@ -247,6 +249,49 @@ def test_commands_from_ros_2_style_writers_are_taken(loopback: None) -> None:
             100_000,
             200_000,
         ]
+    finally:
+        transport.close()
+
+
+def test_turn_indicators_go_both_ways_as_autoware_s_messages(loopback: None) -> None:
+    domain = _domain()
+    transport = CycloneRos2Transport(_config(domain))
+    transport.open()
+    try:
+        peer = DomainParticipant(domain)
+        command = DataWriter(
+            peer,
+            Topic(
+                peer,
+                "rt/control/command/turn_indicators_cmd",
+                msg.TurnIndicatorsCommand,
+            ),
+            qos=_qos(1),
+        )
+        report = DataReader(
+            peer,
+            Topic(
+                peer,
+                "rt/vehicle/status/turn_indicators_status",
+                msg.TurnIndicatorsReport,
+            ),
+            qos=_qos(4),
+        )
+
+        def publish_and_poll() -> List[int]:
+            command.write(msg.TurnIndicatorsCommand(command=2))
+            taken = transport.poll_turn_indicators()
+            return [] if taken is None else [taken]
+
+        assert _until(publish_and_poll)[0] == 2
+
+        def publish_and_take() -> List[msg.TurnIndicatorsReport]:
+            transport.publish_state(
+                dataclasses.replace(_state(1_000_000), turn_indicators=3)
+            )
+            return list(report.take(4))
+
+        assert _until(publish_and_take)[0].report == 3
     finally:
         transport.close()
 

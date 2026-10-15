@@ -49,6 +49,7 @@ from ..autoware_bridge.base import AutowareBridgeConfig
 from ..constants import EGO_ROLE_NAME
 from ..coordinate.poses import CarlaWorldPose
 from ..coordinate.transform import to_map_frame
+from ..utils.turn_indicator import show_autoware_command
 from .externally_driven import ExternallyDrivenEgo
 
 logger = logging.getLogger(__name__)
@@ -649,11 +650,40 @@ class BridgedEgoEntity(ExternallyDrivenEgo):
         self._handshake.start(actor, type(self).__name__)
 
     def on_tick(self, world: "carla.World", elapsed: float) -> None:
-        """Poll the stack's readiness; end the run if the stack fails."""
+        """Poll the stack's readiness and turn indicators; end the run if it fails."""
         reason = self._handshake.poll()
         if reason is not None:
             known: str = reason
             self._terminate(known)
+        self._show_turn_indicators()
+
+    def _show_turn_indicators(self) -> None:
+        """Light the ego's indicators as the stack last commanded, if it did.
+
+        The interface node drives the ego but need not light its indicators,
+        which scenarios read off the actor (``TurnIndicatorCondition``).
+        """
+        # The actor first: a command taken with no ego to show it on is lost
+        # until the stack reports it again.
+        if self.actor is None:
+            return
+        actor: "carla.Actor" = self.actor
+        command = self._handshake.bridge.take_turn_indicators()
+        if command is None:
+            return
+        value: int = command
+        try:
+            changed = show_autoware_command(actor, value)
+        except ValueError:
+            logger.warning(
+                "%s reported turn-indicator command %d, which is none of "
+                "TurnIndicatorsCommand's values; ignored",
+                self.stack_name,
+                value,
+            )
+            return
+        if changed:
+            logger.info("%s turn indicators: command %d", self.stack_name, value)
 
     def on_scenario_end(self, world: "carla.World") -> None:
         """Stop this scenario's stack, then close the bridge.  Never raises."""

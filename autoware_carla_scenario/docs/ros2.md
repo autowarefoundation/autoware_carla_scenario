@@ -76,6 +76,7 @@ CARLA's `/clock` carries, which is what nodes with `use_sim_time` read.
 | `steering_status_topic` (`/vehicle/status/steering_status`) | `autoware_vehicle_msgs/SteeringReport` | front tyre angle, positive to the left |
 | `speed_topic` (`/vehicle/speed`) | `std_msgs/Float64` | ground speed, m/s |
 | `clock_topic` (off) | `rosgraph_msgs/Clock` | for a CARLA server built without ROS 2 |
+| `turn_indicators_report_topic` (`/vehicle/status/turn_indicators_status`) | `autoware_vehicle_msgs/TurnIndicatorsReport` | the indicators the ego shows (hazard, both lit, reports as off, as the report has no hazard) |
 
 `null` leaves a topic unpublished. The pose is in the right-handed local frame --
 CARLA's world with `y` flipped, as CARLA's own ROS 2 interface publishes it -- with
@@ -121,6 +122,12 @@ ros2:
 | `trajectory` | `topic`: `autoware_planning_msgs/Trajectory` | the framework's trajectory follower (pure pursuit + speed PI through the powertrain model), as for an [external driver policy](driver_interface.md) |
 | `control` | `topic`: `autoware_control_msgs/Control` | CARLA's Ackermann controller; Autoware's steering (positive left) is negated into CARLA's (positive right) |
 | `steer_accel` | `steering_topic`, `acceleration_topic`: `std_msgs/Float64` | CARLA's Ackermann controller, as VisionPilot's `carla_control_publisher` hands it: target speed `speed + acceleration * speed_horizon_s` |
+
+The turn indicators are not a source: whichever source drives, the newest
+`autoware_vehicle_msgs/TurnIndicatorsCommand` on `turn_indicators_command_topic`
+(`/control/command/turn_indicators_cmd`; `null` turns it off) lights the ego's
+indicators, leaving its other lights as they are, until another changes them.
+`NO_COMMAND` changes nothing.
 
 A `steer_accel` command is complete once a fresh value has arrived on both topics, and
 each value is used once, so a node that publishes one of each per cycle drives once per

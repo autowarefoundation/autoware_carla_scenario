@@ -13,6 +13,9 @@ initiates, the two RPCs are direction-inverted from a "framework pushes" model:
   initialized, routed, engaged, and driving.  The value is latched so
   :meth:`is_ready` can be polled once per world tick by
   :class:`~autoware_carla_scenario.entity.autoware_entity.AutowareEgoEntity`.
+* ``ReportTurnIndicators`` - the client pushes Autoware's turn-indicator command
+  when it changes; :meth:`take_turn_indicators` hands the newest to the entity,
+  which lights the ego's indicators.
 
 The framework never imports ROS 2 / rclpy: all ROS 2 / Autoware AD API I/O lives
 on the client, inside the interface node.  This class only serves the mission and
@@ -79,6 +82,10 @@ class _AutowareBridgeServicer(pb2_grpc.AutowareBridgeServicer):
         self._bridge._record_readiness(bool(request.ready))
         return pb2.ReportReadinessResponse()
 
+    def ReportTurnIndicators(self, request, context):  # noqa: N802, ANN001 - gRPC signature
+        self._bridge._record_turn_indicators(int(request.command))
+        return pb2.ReportTurnIndicatorsResponse()
+
 
 class GrpcAutowareBridgeServer(AutowareBridge):
     """Hosts the ``AutowareBridge`` gRPC server for the interface-node client.
@@ -118,6 +125,8 @@ class GrpcAutowareBridgeServer(AutowareBridge):
         ] = None
         self._ready: bool = False
         self._contacted: bool = False
+        #: The newest turn-indicator command not yet taken.
+        self._turn_indicators: Optional[int] = None
         self._closed: bool = False
         self._max_workers = max_workers
         self._server: Optional[grpc.Server] = None
@@ -152,6 +161,7 @@ class GrpcAutowareBridgeServer(AutowareBridge):
             self._mission = None
             self._ready = False
             self._contacted = False
+            self._turn_indicators = None
         self._closed = False
         self._port = None
         self._server = self._new_server()
@@ -239,6 +249,12 @@ class GrpcAutowareBridgeServer(AutowareBridge):
         if ready:
             logger.info("Autoware reported ready via ReportReadiness")
 
+    def _record_turn_indicators(self, command: int) -> None:
+        """Keep the newest turn-indicator command for the tick loop to take."""
+        with self._lock:
+            self._contacted = True
+            self._turn_indicators = command
+
     # ------------------------------------------------------------------
     # AutowareBridge contract (driven by the entity / tick loop)
     # ------------------------------------------------------------------
@@ -263,6 +279,12 @@ class GrpcAutowareBridgeServer(AutowareBridge):
     def is_ready(self) -> bool:
         with self._lock:
             return self._ready
+
+    def take_turn_indicators(self) -> Optional[int]:
+        with self._lock:
+            command = self._turn_indicators
+            self._turn_indicators = None
+        return command
 
     def close(self) -> None:
         if self._closed:
