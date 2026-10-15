@@ -1287,6 +1287,97 @@ def test_a_metric_read_that_returns_no_number_is_refused(tmp_path: Path) -> None
     ), result.format()
 
 
+_MEASURES_SETUP = """
+from autoware_carla_scenario.measures import (
+    BUILT_IN_MEASURES,
+    VEHICLE_AHEAD_GAP_M,
+    Bumpers,
+    Measure,
+    check_measure_key,
+    measure_version,
+    measured_scenario,
+    read_measure,
+    set_measured_scenario,
+)
+gap: Measure = BUILT_IN_MEASURES[VEHICLE_AHEAD_GAP_M]
+for key, measure in BUILT_IN_MEASURES.items():
+    logger.info("%s %s [%s] %d", key, measure.text, measure.unit, measure.version)
+check_measure_key(gap.key, "setup")
+if measured_scenario() is None:
+    set_measured_scenario(self)
+logger.info("%d", measure_version(gap.key))
+logger.info("%s", str(read_measure(VEHICLE_AHEAD_GAP_M, self.world)))
+logger.info("%s", str(gap.read(self.world)))
+set_measured_scenario(None)
+bumpers = Bumpers(front=2.0, rear=1)
+logger.info("%f", bumpers.front + bumpers.rear)
+"""
+
+
+def test_a_scenario_may_use_the_measures_model(tmp_path: Path) -> None:
+    # Every name of measures.__all__ is in the model (#206).
+    scenario, config, _ = _write_case(tmp_path, _MEASURES_SETUP)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+@pytest.mark.parametrize(
+    ("wrong", "message"),
+    [
+        # Measure and Bumpers are frozen dataclasses, @tuples in the model.
+        ('gap.unit = "km"', "cannot modify tuple attributes"),
+        ("bumpers.front = 3.0", "cannot modify tuple attributes"),
+        # A Metric has an aggregation; a Measure does not.
+        ('logger.info("%s", gap.aggregation)', "aggregation"),
+        # The measured scenario is a BaseScenario or None.
+        ('set_measured_scenario("me")', "BaseScenario"),
+    ],
+    ids=["frozen-measure", "frozen-bumpers", "metric-attribute", "not-a-scenario"],
+)
+def test_a_misused_measure_is_refused_at_its_line(
+    tmp_path: Path, wrong: str, message: str
+) -> None:
+    scenario, config, path = _write_case(tmp_path, _MEASURES_SETUP + wrong + "\n")
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert message in error.message, error.format()
+    assert error.path == str(path)
+    assert error.line == _line_of(path, wrong)
+
+
+@pytest.mark.parametrize(
+    "build",
+    [
+        'Measure("mine", read_optional)',
+        'Measure(key="mine", read=read_float, unit="m", version=2)',
+        'Measure("mine", lambda world: 1.0, "m", "Mine")',
+    ],
+    ids=["optional", "float-keywords", "lambda"],
+)
+def test_a_scenario_may_build_its_own_measure(tmp_path: Path, build: str) -> None:
+    # Python's Measure takes any callable of a world that returns a float, as
+    # Metric does (#203); the model's __new__ takes the same.
+    setup = (
+        "from autoware_carla_scenario.measures import Measure\n"
+        f"mine: Measure = {build}\n"
+        'logger.info("%s %d %s", mine.key, mine.version, str(mine.read(self.world)))\n'
+    )
+    scenario, config, _ = _write_case(tmp_path, setup, extra=_OWN_METRIC_READERS)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_a_measure_read_that_returns_no_number_is_refused(tmp_path: Path) -> None:
+    wrong = 'mine = Measure("mine", read_text)'
+    setup = "from autoware_carla_scenario.measures import Measure\n" + wrong + "\n"
+    scenario, config, path = _write_case(tmp_path, setup, extra=_OWN_METRIC_READERS)
+    result = typecheck_scenario(scenario, config)
+    assert not result.ok, result.format()
+    assert any(
+        d.path == str(path) and d.line == _line_of(path, wrong)
+        for d in result.diagnostics
+    ), result.format()
+
+
 def test_a_scenario_may_read_the_pose_to_map_frame_returns(tmp_path: Path) -> None:
     scenario, config, _ = _write_case(
         tmp_path,

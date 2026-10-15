@@ -180,21 +180,24 @@ names, order, defaults, keyword-only parameters, methods, enum members): every
 name `__init__.codon` exports, the names the checked modules import from the
 model (`_BOUNDARY`), and every name of the model modules that stand for one
 framework module each (`_MODULE_MODELS`), which must declare exactly the names
-compared, beside model-only helpers named `_acs_*`. `metrics.codon` is one of
-those: it declares the whole of `metrics.__all__`, and the test also compares
-its keys and each built-in metric of `BUILT_IN_METRICS` (title, unit, text,
-aggregation) by value, and `Metric`'s field types and defaults and its
-`__new__`'s parameters. Only a metric's `read` differs: Python's is a private
-function of the module, which no scenario can import, and the model's a stub
-(`_acs_unread`), since nothing in the model is read. `Metric()` takes any
-`read` a world can be passed to that returns a `float` or an `Optional[float]`
--- a function returning `float`, a lambda -- as Python's does, and stores the
-stub: a Codon
+compared, beside model-only helpers named `_acs_*`. `metrics.codon` and
+`measures.codon` are two of those: each declares the whole of its module's
+`__all__`, and the test also compares by value their constants (the keys,
+`VEHICLE_AHEAD_VERSION`, the distances and speeds the vehicle-ahead measures
+read with), each built-in entry of `BUILT_IN_METRICS` (title, unit, text,
+aggregation) and of `BUILT_IN_MEASURES` (unit, text, version), the field types
+and defaults of `Metric`, `Measure` and `Bumpers` (frozen dataclasses, so
+`@tuple`s: assigning to a field fails the check, as it fails the run), and
+the parameters of `Metric`'s and `Measure`'s `__new__`. Only a built-in's
+`read` differs: Python's is a private function of the module, which no
+scenario can import, and the model's a stub (`_acs_unread`), since nothing in
+the model is read. `Metric()` and `Measure()` take any `read` a world can be
+passed to that returns a `float` or an `Optional[float]` -- a function
+returning `float`, a lambda -- as Python's do, and store the stub: a Codon
 `Callable` field takes a function of its exact type only, and Codon 0.19
-crashes on any other.
-`measures.codon` is not among them yet: `test_measures.py` compares its keys
-and the other string and float constants by value, but not its classes and
-functions.
+crashes on any other. `set_measured_scenario()` takes a scenario of any
+`BaseScenario` subclass or `None`, which Python annotates
+`Optional[BaseScenario]`: Codon's `Optional` takes no subclass.
 
 A scenario that imports a module with no model (lanelet2's `matching`, say,
 or a framework module outside the public API) is refused with a message
