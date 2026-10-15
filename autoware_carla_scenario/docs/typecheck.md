@@ -1707,6 +1707,10 @@ What Codon 0.19 needs that Python does not, beyond
   `AutowareEgoEntity` overrides it and Codon 0.19 calls an overridden method
   through a dispatch thunk, which takes no keyword argument. The check calls
   each override through its class.
+  Codon never compiles the `else` copy, so `test_typecheck_else_branch.py`
+  guards it: wherever the then branch calls a method through its class and
+  the `else` branch calls it through an instance, both must pass the same
+  arguments, the receiver aside (#193).
 - **A name the model lacks at the boundary**: when a checked module imports a
   name of a modelled package that the model does not declare
   (`trajectory/__init__.py` re-exports `ResolvedTrajectory`), declare it in
