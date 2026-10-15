@@ -1424,7 +1424,9 @@ def _extract_resume_from(argv: list[str]) -> tuple[int, list[str]]:
 
 def main() -> None:
     """CLI entry point: detect glob patterns and dispatch accordingly."""
-    # First, before anything starts a thread (see _cap_malloc_arenas).
+    # First thing in main(), before the run starts its own threads (see
+    # _cap_malloc_arenas). Threads the imports start have not allocated yet,
+    # so they hold no arenas: glibc ignores a cap set once it has more.
     _cap_malloc_arenas()
     # Discover external scenario packages (entry-point plugins) before we touch
     # the config search path or the scenario registry, so their scenarios and

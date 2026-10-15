@@ -25,7 +25,7 @@ from .conditions import EntityExistenceCondition, ScenarioResult, TimeoutConditi
 from .conditions.base import BaseCondition, ConditionStatus, find_actor_by_role_name
 from .constants import DEFAULT_TM_PORT, EGO_ROLE_NAME, FIXED_DELTA_SECONDS
 from .maps.opendrive import map_asset_env_var
-from .coordinate.map_manager import MapManager, run_carla_map
+from .coordinate.map_manager import run_carla_map
 from .coordinate.poses import CarlaWorldPose
 from .coverage.collector import CoverageCollector, prepare_measures
 from .measures import set_measured_scenario
@@ -36,7 +36,7 @@ from .scenario_base import BaseScenario
 from .server import CarlaServerManager
 from .traffic.base import TrafficBackend, TrafficContext
 from .traffic.driven import BackendDriven
-from .world_reset import episode_of, reload_current_map, reload_map, short_map_name
+from .world_reset import episode_of, reload_current_map, short_map_name
 from .traffic.config import TrafficManagerBackendConfig
 from .traffic.traffic_manager import TrafficManagerBackend
 from .trajectory_recorder import TrajectoryRecorder
@@ -897,7 +897,7 @@ class ScenarioRunner:
                 # installed an OpenDRIVE) of its own on this server meanwhile.
                 self._load_batch_map()
             else:
-                self._reload_run_map()
+                reload_current_map(self._client)
             # After reload, get the fresh world and tick it once so that
             # CARLA fully initialises the new world state.
             fresh = self._client.get_world()
@@ -921,22 +921,6 @@ class ScenarioRunner:
                     scenario_name,
                     exc_info=True,
                 )
-
-    def _reload_run_map(self) -> None:
-        """Load the map the runs are on again, for a runner that loaded none.
-
-        The one the MapManager holds, by its name, when it holds one: that is
-        the map the queue built it on, and the one every lookup of the run
-        reads.  Otherwise the server's current map, whose name costs a whole
-        ``get_map()`` -- the road network and all -- to read.
-        """
-        held: Optional[carla.Map] = MapManager.get_instance().carla_map
-        if held is not None:
-            # Annotated, so Codon unwraps the Optional (docs/typecheck.md).
-            run_map: carla.Map = held
-            reload_map(self._client, str(run_map.name))
-        else:
-            reload_current_map(self._client)
 
     def run_scenario(
         self,

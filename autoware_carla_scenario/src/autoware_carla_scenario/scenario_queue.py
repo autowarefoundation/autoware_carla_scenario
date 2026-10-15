@@ -479,8 +479,11 @@ class ScenarioQueue:
         # The runner passes it on to the traffic backend, which is how a backend
         # with a road-network format of its own derives one from the map in play.
         self._runner.xodr_path = xodr_path
+        # Always: the runs read the map the MapManager holds (run_carla_map),
+        # so one an earlier queue of this process left there would stand in
+        # for this queue's world.
+        MapManager.reset()
         if xodr_path is not None and self._lanelet2_path is not None:
-            MapManager.reset()
             MapManager.get_instance().initialize(
                 xodr_path=xodr_path,
                 lanelet2_path=self._lanelet2_path,

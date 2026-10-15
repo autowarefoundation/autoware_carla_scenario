@@ -139,6 +139,21 @@ def _make_queue_with_mock_runner() -> tuple[ScenarioQueue, MagicMock]:
 
 
 class TestScenarioQueueUnit:
+    def test_start_drops_the_map_an_earlier_queue_left(self) -> None:
+        """A queue with no Lanelet2 map builds no MapManager map, and must not
+        run on the one an earlier queue of this process left there: the runs
+        read that map (run_carla_map) for snaps, spawns and the map's name."""
+        from autoware_carla_scenario.coordinate.map_manager import MapManager
+
+        found = MapManager._instance
+        try:
+            MapManager.reset()
+            MapManager.get_instance()._carla_map = MagicMock(name="Odaiba map")
+            _make_queue_with_mock_runner()  # map_name only: no Lanelet2 map
+            assert MapManager.get_instance().carla_map is None
+        finally:
+            MapManager._instance = found
+
     def test_empty_queue_len_is_zero(self) -> None:
         queue = ScenarioQueue()
         assert len(queue) == 0

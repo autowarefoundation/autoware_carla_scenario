@@ -120,22 +120,6 @@ class TestWithAHeldMap:
 
         assert _map_name_of(_world()) == "Carla/Maps/Odaiba"
 
-    def test_a_runner_that_loaded_no_map_reloads_the_held_one(
-        self, held_map: MagicMock
-    ) -> None:
-        from autoware_carla_scenario import ScenarioRunner
-
-        with patch("autoware_carla_scenario.scenario_runner.carla.Client"):
-            runner = ScenarioRunner(MagicMock())
-        client = MagicMock()
-        client.get_world.return_value = _world()
-        runner._client = client
-
-        runner.reset_world("case")
-
-        client.load_world.assert_called_once_with("Odaiba")
-        client.reload_world.assert_not_called()
-
     def test_the_trajectory_names_the_held_map(
         self, held_map: MagicMock, tmp_path: Path
     ) -> None:
@@ -199,9 +183,11 @@ class TestWithAHeldMap:
 
         road_height.assert_called_once_with(held_map)
 
-    def test_the_z_offset_reads_the_map_built_for_it(self) -> None:
+    def test_the_z_offset_reads_the_map_built_for_it(
+        self, no_map_manager: None
+    ) -> None:
         """MapManager builds the map once, and the z offset reads that one."""
-        manager = MapManager()
+        manager = MapManager()  # the singleton: no_map_manager puts the old one back
         manager._lanelet_map = MagicMock()
         manager._mgrs_offset = (0.0, 0.0)
         manager._carla_map = _held_map()
