@@ -135,7 +135,8 @@ A scenario is ordinary typed Python. Codon is stricter than Python in a few
 places, and the checker smooths over most of them (it rewrites `X | None` into
 `Optional[X]`, drops `@dataclass` and resolves `field(...)` defaults, accepts
 keyword-only parameters, required ones after a default included, gives a list of different conditions the type
-`list[BaseCondition]`, and drops a parameter or return annotation naming a
+`list[BaseCondition]`, checks a `tuple[X, ...]` return annotation as a
+`List[X]`, and drops a parameter or return annotation naming a
 class the module defines further down, which Codon cannot name yet). What a
 scenario has to do itself:
 
@@ -261,8 +262,8 @@ To check one more module:
 
 ### What is checked of the framework
 
-Every module now has an entry other than `"not yet checked (#45)"`. 163 of
-the package's 240 modules (68%; about 37,600 of 68,200 lines) are `CHECKED`:
+Every module now has an entry other than `"not yet checked (#45)"`. 165 of
+the package's 242 modules (68%; about 40,000 of 71,100 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the conversions between
 Lanelet2, OpenDRIVE and CARLA world poses (`coordinate.transform`), the stop
 lines read off a Lanelet2 map (`utils.stop_line`, `coordinate.stop_line`)
@@ -317,7 +318,7 @@ driver's configs and client interface, trajectory follower and observations
 `driver.geometry`), and the `autoware_bridge`, `autoware_stack`, `entity`,
 `driver`, `maps` and `coverage` packages themselves, whose `__init__` re-exports what is not checked
 through models of it (see *A class a checked package only re-exports*
-below). 89
+below). 90
 functions and methods of those modules are `UNCALLED` (13 of them
 protected helpers, see *What is compiled* below): most of them a
 condition's `get_details()` or a backend's `describe()`, what takes a traffic
@@ -555,6 +556,71 @@ changes at those 9 defaults alone, and 1 by the call):
   (`NpcVehicleConfig.spawn_lanelet_id: int = MISSING`, "'str' does not
   match expected type 'int'"), which the call now passes, as above.
 
+**So are class-level defaults** (#190). On a class with a constructor, its
+own or a base's, Codon makes a class-level `x: T = v` a field and drops `v`:
+no call compiles it, and `BackendDriven._tm_port: int = "x"`,
+`BaseScenario.STABILIZE_TICKS: int = "a"` and `AutowareEgoEntity.stack_name:
+str = 1` passed the check. The check's function now assigns each such default
+to a local of its type, which compiles the value against the annotation:
+
+```python
+    _acs_cls_default_10: int = DEFAULT_TM_PORT
+    _acs_cls_default_13: bool = _expect_bool(True)
+```
+
+Each local is named after its line in the function, and an error is reported
+at it, labelled with the member (`<library check: class-level default of
+BackendDriven._tm_port>: error: 'int' does not match expected type 'str'`;
+Codon names the two types the other way round in an annotated assignment). A
+`bool` default goes through `_expect_bool()` (`_tc.codon`): Codon converts
+any value assigned to a `bool` local with its `__bool__`, so `ready: bool =
+"x"` would compile, and a call converts nothing. A default written without
+an annotation, overriding one a base declares (`REISSUES_BY_DEFAULT = True`
+on `FollowTrajectoryAction`, whose base declares `REISSUES_BY_DEFAULT:
+ClassVar[bool] = False`), is checked against the base's annotation, a
+`ClassVar[T]`'s `T`; the base is found by name among the classes of its
+module and the other checked modules, depth first. Left out:
+
+- the defaults of a dataclass, compiled by the constructor call that leaves
+  them out (above), and the members of an enum, which are its values;
+- a `ClassVar`, which Codon keeps as a class variable, with its value;
+- every default of a class that has no `__init__`, its own or a base's, and
+  that its module's top level constructs with no argument (`_CACHE =
+  _Cache()` in `measures`): Codon's generated constructor takes each field
+  with its default, and that call compiles them already (an error is
+  reported at the call);
+- a default without an annotation that no base declares (a base outside the
+  checked modules), a dunder (`__slots__`), and one over a bare `ClassVar`;
+- an annotation Codon cannot express or naming a `TypeVar`, and a value or
+  annotation naming anything else the class body binds (`TWICE: float =
+  LIMIT * 2`; a member unpacked, `LOW, HIGH = 0.0, 1.0`; a method; a nested
+  class), which at the function's scope names something else, or nothing.
+
+That is 22 defaults, at the time of writing: 20 annotated ones, in 10
+classes (`BaseScenario`, the five ego entities, `TurnAction`,
+`CollisionCondition`, `DrivenEntity` and `BackendDriven`), and the 2
+unannotated overrides of `BaseAction.REISSUES_BY_DEFAULT`
+(`FollowTrajectoryAction`, `_BackendAction`). Of the 34 non-`ClassVar`
+class-level defaults outside dataclasses and enums, the other 14 are those
+of `measures`' `_Cache`, `_Lines` and `_FrameMemo`, which the module
+constructs; the 7 `ClassVar`s are left out. None failed when it came in.
+
+**So are the values a function returns as a `tuple[X, ...]`** (#191). Codon's
+tuples have a fixed length, and the transform dropped such a return
+annotation, so nothing checked what the function returns:
+`signals.registry.registered_signal_controllers()` returning `1` passed the
+check. A class-level `tuple[X, ...]` is a `List[X]`, and `tuple(x)` of a list
+is one, so the transform now writes the return annotation as `List[X]`
+(`Optional[List[X]]`, `dict[str, List[X]]` inside another type), and the
+error is reported at the `return`. It stays dropped when it names an abstract
+collection (a parameter's is dropped, so the function may return it as it
+got it), a class defined further down the module or a `TypeVar`, and so does
+a `Union`, `Any` or `Callable` return (a `Callable` return kept fails for a
+nested function). That is 10 return annotations, in 6 modules, at the time
+of writing: `actions.routing`, `maps.resolver`, `route.model`,
+`signals.registry`, 3 in `ros2.config` and 3 in `signals.controller`
+(one of them `dict[str, tuple[int, ...]]`). None failed when it came in.
+
 **Protected functions and methods are called too** (#175). A `_` method is
 often a hook a subclass or another module uses: six example scenarios call
 `BaseScenario._setup_ego_spawn()`, and the model's `BaseScenario` is what a
@@ -736,6 +802,18 @@ What Codon 0.19 needs that Python does not, beyond
   passes (mypy, in pre-commit, reports it).
 - **Declare attributes** on any class in a hierarchy (exceptions included)
   and on a class with `__slots__`, at class level (`_value: str`).
+- **A class-level default is compiled as written** (#190): the library check
+  assigns it to a local of its annotation in its own function, which the
+  transform does not rewrite. So a default the transform would rewrite in a
+  dataclass (a tuple display or `()` of a `tuple[X, ...]` member,
+  `frozenset()`) is reported: assign such a value in `__init__` instead. A
+  default naming another member of the class
+  (`TWICE: float = LIMIT * 2`), or anything else its body binds, is not checked, as at the function's scope
+  the name is not the member; neither is a `None` default, which Codon
+  makes an `Optional` of any annotation (`x: float = None` compiles). An
+  override without an annotation (`REISSUES_BY_DEFAULT = True`) is checked
+  against its base's annotation only when the base is a class of its module
+  or of a checked one.
 - **`hasattr()` instead of `getattr(x, name, default)`**: Codon decides
   `hasattr` when it compiles, so the branch for a type without the attribute
   is never compiled.
@@ -1514,9 +1592,9 @@ What Codon 0.19 needs that Python does not, beyond
   lists (above), but a tuple built otherwise (a display grown in a loop,
   `a + (b,)`) is not, and turning the source's tuple into a list changes what
   the class does (a frozen dataclass's hash, its equality with a tuple). A
-  function that only *returns* one compiles: the check drops the
-  `tuple[X, ...]` return annotation
-  (`signals.registry.registered_signal_controllers()`).
+  function that returns one is checked as returning a `List[X]` (#191):
+  return `tuple(x)` of a list (`signals.registry.registered_signal_controllers()`),
+  not a tuple display, which is a fixed-length Codon tuple, nor `()`.
 - **No `**` of a dict in a call** (`f(**extra)` with `extra` a `dict`):
   Codon unpacks only a named tuple into keyword arguments. Write one call
   per set of keywords (`RoutingAction` passes `waypoints=` only when there

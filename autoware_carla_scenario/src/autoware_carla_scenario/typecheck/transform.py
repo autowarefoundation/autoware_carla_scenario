@@ -68,8 +68,10 @@ which :func:`transform_source_lines` maps back onto the handler):
   str]``) becomes an empty one of the concrete type (``Dict[str, str]()``).
 * A class-level ``tuple[X, ...]`` becomes ``List[X]``, and ``tuple(x)``
   becomes ``_acs_tuple(x)``, a list unless *x* is a tuple: Codon's tuples
-  have a fixed length.  ``callable(x)``, which Codon 0.19 lacks, becomes
-  ``_acs_callable(x)``.
+  have a fixed length.  So does a return annotation ``tuple[X, ...]``
+  (``Optional[tuple[X, ...]]`` an ``Optional[List[X]]``), so the value
+  returned is checked; a parameter's is dropped.  ``callable(x)``, which
+  Codon 0.19 lacks, becomes ``_acs_callable(x)``.
 * ``object.__setattr__(obj, "name", value)`` (a frozen dataclass setting a
   field) becomes ``obj.name = (value)``; a ``field(init=False)`` without a
   default gets an empty value of its type (``List[float]()``), since Codon's
@@ -369,6 +371,24 @@ def _annotation_names(node: ast.AST) -> set[str]:
         elif isinstance(sub, ast.Constant) and isinstance(sub.value, str):
             out |= _annotation_names(sub)
     return out
+
+
+def _names_abstract_collection(node: ast.AST) -> bool:
+    """Whether an annotation names an abstract collection (``Sequence``)."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        try:
+            node = ast.parse(node.value, mode="eval").body
+        except SyntaxError:
+            return False
+    for sub in ast.walk(node):
+        if isinstance(sub, (ast.Name, ast.Attribute)):
+            name = (_dotted(sub) or "").removeprefix("typing.")
+            if name in _ABSTRACT_GENERICS:
+                return True
+        elif isinstance(sub, ast.Constant) and isinstance(sub.value, str):
+            if _names_abstract_collection(sub):
+                return True
+    return False
 
 
 def _is_none(node: ast.AST) -> bool:
@@ -811,17 +831,44 @@ class _Rewriter(ast.NodeVisitor):
             return None  # a TypeVar, which types for mypy only
         converted = codon_annotation(node, class_level=class_level)
         if converted is not None:
-            start, end = self.edits.node_span(node)
-            if self.edits.text(start, end) != converted:
-                # An annotation broken over lines keeps its line breaks inside
-                # its brackets: the rest of its statement may follow it
-                # (`x: Optional[\n    T\n] = None`).
-                lost = self.edits.text(start, end).count("\n")
-                text = converted
-                if lost and text.endswith("]"):
-                    text = text[:-1] + "\n" * lost + "]"
-                self.edits.replace(start, end, text)
+            self._write_annotation(node, converted)
         return converted
+
+    def _write_annotation(self, node: ast.AST, converted: str) -> None:
+        start, end = self.edits.node_span(node)
+        if self.edits.text(start, end) != converted:
+            # An annotation broken over lines keeps its line breaks inside
+            # its brackets: the rest of its statement may follow it
+            # (`x: Optional[\n    T\n] = None`).
+            lost = self.edits.text(start, end).count("\n")
+            text = converted
+            if lost and text.endswith("]"):
+                text = text[:-1] + "\n" * lost + "]"
+            self.edits.replace(start, end, text)
+
+    def _list_return(self, node: ast.AST) -> str | None:
+        """The ``List[X]`` a ``tuple[X, ...]`` return annotation is checked as.
+
+        Codon's tuples have a fixed length, so the annotation would be
+        dropped, and with it the check of what the function returns (#191).
+        A class-level ``tuple[X, ...]`` is a ``List[X]``, and ``tuple(x)`` a
+        list, so the function returns one: its annotation becomes the
+        class-level spelling, ``List[X]`` (``Optional[List[X]]``,
+        ``dict[str, List[X]]``).  ``None`` for any other annotation, and for
+        one naming an abstract collection (dropped from a signature, a caller
+        may pass a tuple for it), a class defined further down or a
+        ``TypeVar``; a ``Union``, ``Any`` or ``Callable`` is dropped at any
+        level.
+        """
+        if codon_annotation(node) is not None:
+            return None  # kept as it is
+        if _annotation_names(node) & (self._later_classes | self._type_vars):
+            return None
+        if _names_abstract_collection(node):
+            return None
+        # What is left that only the class-level spelling keeps is a
+        # variable-length tuple: abstract collections are the only other.
+        return codon_annotation(node, class_level=True)
 
     def _rewrite_arguments(self, args: ast.arguments, *, skip_first: bool) -> None:
         every = [*args.posonlyargs, *args.args, *args.kwonlyargs]
@@ -968,6 +1015,10 @@ class _Rewriter(ast.NodeVisitor):
 
     def _rewrite_returns(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
         if node.returns is None:
+            return
+        listed = self._list_return(node.returns)
+        if listed is not None:
+            self._write_annotation(node.returns, listed)
             return
         if self._rewrite_annotation(node.returns, class_level=False) is None:
             ann_start, ann_end = self.edits.node_span(node.returns)

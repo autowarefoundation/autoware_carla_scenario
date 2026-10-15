@@ -343,6 +343,59 @@ def test_a_variable_length_tuple_of_a_union_attribute_is_a_list_of_the_union() -
     assert _annotation("tuple[A | Any, ...]", class_level=True) is None
 
 
+def test_a_variable_length_tuple_return_is_checked_as_a_list() -> None:
+    # Dropped, the annotation checked nothing the function returns (#191):
+    # it is a List[X], as a class-level tuple[X, ...] is and `tuple(x)`
+    # returns.  A parameter's is still dropped (a caller may pass a tuple).
+    out = _transform(
+        """
+        def ids(xs: tuple[int, ...]) -> tuple[int, ...]:
+            return tuple(xs)
+        def names() -> "Optional[Tuple[str, ...]]":
+            return None
+        def phases() -> "dict[str, tuple[Phase, ...]]":
+            return {}
+        def poses(
+            n: int,
+        ) -> tuple[
+            Pose, ...
+        ]:
+            return tuple([])
+        def seen() -> tuple[Sequence[int], ...]:
+            return ()
+        def later() -> tuple[Later, ...]:
+            return ()
+        def generic() -> tuple[T, ...]:
+            return ()
+        def either() -> Union[tuple[int, ...], str]:
+            return ""
+        def call() -> Callable[[], tuple[int, ...]]:
+            return call
+        def pair() -> tuple[int, str]:
+            return (1, "a")
+        T = TypeVar("T")
+        class Later:
+            pass
+        """
+    )
+    lines = out.splitlines()
+    assert lines[1] == "def ids(xs) -> List[int]:"
+    assert lines[2] == "    return _acs_tuple(xs)"
+    assert lines[3] == "def names() -> Optional[List[str]]:"
+    assert lines[5] == "def phases() -> dict[str, List[Phase]]:"
+    # An annotation over several lines keeps its line breaks.
+    assert lines[7:12] == ["def poses(", "    n: int,", ") -> List[Pose", "", "]:"]
+    # An abstract collection, a class defined further down, a TypeVar, a
+    # Union and a Callable stay dropped.
+    assert lines[13] == "def seen():"
+    assert lines[15] == "def later():"
+    assert lines[17] == "def generic():"
+    assert lines[19] == "def either():"
+    assert lines[21] == "def call():"
+    # A fixed-length tuple is Codon's tuple, as before.
+    assert lines[23] == "def pair() -> tuple[int, str]:"
+
+
 def test_a_file_object_is_the_typing_shims_io() -> None:
     # typing.IO[AnyStr], what Path.open() returns: the typing shim's IO[T],
     # with bytes read as str.
