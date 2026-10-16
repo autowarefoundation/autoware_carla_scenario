@@ -62,6 +62,8 @@ __all__ = [
     "RouteError",
     "RouteLanelet",
     "combine_route_coverage",
+    "lanelet_buckets",
+    "lanelet_readings",
     "plan_route",
     "plan_route_coverage",
 ]
@@ -291,6 +293,39 @@ def _bucket(attribute: OddAttribute, value: Any) -> Optional[str]:
         return item.bucket_of(value)
     except (TypeError, ValueError):
         return value_label(value)
+
+
+def lanelet_readings(
+    odd: OddDefinition, lanelet: Any, lanelet_map: Any, routing_graph: Any
+) -> dict[str, tuple[str, Any]]:
+    """``(bucket, value)`` of every attribute the map decides on *lanelet*,
+    by name.
+
+    An attribute the map leaves open there (:data:`UNDECIDED_BUCKET`), or
+    says nothing of (:data:`MISSING_BUCKET`), is left out, as is one that is
+    not covered (no buckets).
+    """
+    decided = set(_map_attributes(odd))
+    values = _lanelet_values(odd, lanelet, lanelet_map, routing_graph)
+    found: dict[str, tuple[str, Any]] = {}
+    for attribute in odd.attributes:
+        if attribute.name not in decided:
+            continue
+        value = values.get(attribute.name, _OPEN)
+        bucket = _bucket(attribute, value)
+        if bucket is None or bucket in (UNDECIDED_BUCKET, MISSING_BUCKET):
+            continue
+        found[attribute.name] = (bucket, value)
+    return found
+
+
+def lanelet_buckets(
+    odd: OddDefinition, lanelet: Any, lanelet_map: Any, routing_graph: Any
+) -> dict[str, str]:
+    """The bucket of every attribute the map decides on *lanelet*, by name
+    (:func:`lanelet_readings` without the values)."""
+    readings = lanelet_readings(odd, lanelet, lanelet_map, routing_graph)
+    return {name: bucket for name, (bucket, _value) in readings.items()}
 
 
 def _route_of(scenario_or_route: Any) -> Union[PlannedRoute, list[int]]:

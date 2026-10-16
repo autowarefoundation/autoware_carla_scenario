@@ -100,6 +100,20 @@ class TrafficLightComplianceConfig:
     #: the required standstill time.
     merging_time_seconds: float = 0.5
 
+    #: Where the ego starts, as
+    #: :data:`~autoware_carla_scenario.measures.STOP_LINE_DISTANCE_M` reads it:
+    #: metres from its front bumper to the stop line ahead, along its lane.
+    #: The ego is moved along the lane its spawn pose is on to read it
+    #: (:func:`~autoware_carla_scenario.place_at_stop_line_distance`).
+    #: ``None`` leaves the spawn pose as it is.
+    stop_line_distance_m: float | None = None
+
+    #: The fail-safe timeout counted from the green light instead:
+    #: ``light_switch_delay_seconds`` plus this, in seconds, in place of
+    #: ``timeout_seconds``, so a sweep that draws the delay keeps the time
+    #: the ego has to pull away.  ``None`` uses ``timeout_seconds``.
+    timeout_after_green_seconds: float | None = None
+
 
 @dataclass
 class LaneChangeConfig:

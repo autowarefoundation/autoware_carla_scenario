@@ -27,6 +27,10 @@ spawned (:func:`vehicle_bumpers`)::
         npc_bumpers=vehicle_bumpers(world, cfg.npc_vehicle_type),
     )
 
+:func:`place_at_stop_line_distance` places the ego itself the same way, so
+:data:`~autoware_carla_scenario.measures.STOP_LINE_DISTANCE_M` reads a given
+distance to the stop line ahead.
+
 A control that writes such a parameter declares ``target: measure``
 (:mod:`autoware_carla_scenario.odd.sampler`, docs/odd.md, "Controls").
 """
@@ -40,20 +44,36 @@ import typesafe_carla.carla as carla
 from .constants import BUMPER_PROBE_ROLE_NAME
 from .coordinate.poses import Lanelet2Pose
 from .coordinate.transform import lanelet_length, to_carla_world
+from .coordinate.map_manager import MapManager
 from .measures import (
+    AHEAD_RANGE_M,
+    STOP_LINE_DISTANCE_M,
     VEHICLE_AHEAD_GAP_M,
     Bumpers,
     bumpers_of_box,
+    stop_line_distance_between,
+    stop_line_lane,
     vehicle_ahead_gap_between,
 )
 
-__all__ = ["place_at_vehicle_ahead_gap", "solve_along", "vehicle_bumpers"]
+__all__ = [
+    "place_at_stop_line_distance",
+    "place_at_vehicle_ahead_gap",
+    "solve_along",
+    "vehicle_bumpers",
+]
 
 #: How far apart :func:`solve_along` reads the measure, in metres of ``s``,
 #: before it narrows a crossing down.
 SCAN_STEP_M = 0.5
 #: How close to the target :func:`solve_along` settles, in the measure's unit.
 TOLERANCE = 1e-3
+#: How far either side of where the lane's length puts it
+#: :func:`place_at_stop_line_distance` looks for the ego's place, in metres.
+_STOP_LINE_SEARCH_M = 5.0
+#: How far into its own lanelet :func:`place_at_stop_line_distance` looks at a
+#: spawn the measure places on the lanelet next to it, in metres.
+_NUDGE_M = 0.5
 #: The fewest metres of ``s`` :func:`solve_along` narrows a crossing to.
 _MIN_INTERVAL_M = 1e-7
 
@@ -295,3 +315,130 @@ def place_at_vehicle_ahead_gap(
         what=f"{VEHICLE_AHEAD_GAP_M} on lanelet {lanelet_id} (length {length:.1f} m)",
     )
     return Lanelet2Pose(lanelet_id=lanelet_id, s=s)
+
+
+def _lanelets_before(lanelet_id: int, reach_m: float) -> list[int]:
+    """The lanelets before *lanelet_id*, nearest first, until *reach_m*
+    metres of them: the first of the routing graph's ``previous`` of each,
+    by the lowest id, so the same map always gives the same lane."""
+    mm = MapManager.get_instance()
+    layer = mm.lanelet_map.laneletLayer
+    graph = mm.routing_graph
+    behind: list[int] = []
+    current_id = lanelet_id
+    walked = 0.0
+    while walked < reach_m:
+        before = sorted(int(ll.id) for ll in graph.previous(layer[current_id]))
+        if not before or before[0] in behind or before[0] == lanelet_id:
+            break
+        current_id = before[0]
+        behind.append(current_id)
+        walked += lanelet_length(current_id)
+    return behind
+
+
+def _pose_on(
+    lane: list[int], starts: list[float], lengths: list[float], u: float
+) -> Lanelet2Pose:
+    """The pose *u* metres along *lane*, whose lanelets start at *starts*."""
+    i = len(lane) - 1
+    while i > 0 and u < starts[i]:
+        i -= 1
+    return Lanelet2Pose(lanelet_id=lane[i], s=min(max(u - starts[i], 0.0), lengths[i]))
+
+
+def place_at_stop_line_distance(
+    spawn: Lanelet2Pose, distance_m: float, *, ego_bumpers: Bumpers
+) -> Lanelet2Pose:
+    """The pose, on the lane through *spawn*, at which an ego with
+    *ego_bumpers* is *distance_m* before the stop line ahead.
+
+    "Before" is what :data:`~autoware_carla_scenario.measures.STOP_LINE_DISTANCE_M`
+    reads, by the same code
+    (:func:`~autoware_carla_scenario.measures.stop_line_distance_between`):
+    along the ego's lane from its front bumper.  The ego is moved along the
+    lane *spawn* is on: on towards the stop line the measure reads from
+    *spawn*, along the branch it is on where the lane forks
+    (:func:`~autoware_carla_scenario.measures.stop_line_lane`), or back onto
+    the lanelets before *spawn*'s, up to
+    :data:`~autoware_carla_scenario.measures.AHEAD_RANGE_M`.  So *spawn* need
+    only be somewhere within that range before the stop line.
+
+    Raises:
+        ValueError: When no point of that lane is *distance_m* before a stop
+            line, saying what distances it does reach.
+    """
+    ahead: list[int] = []
+    # Where the spawn lanelet meets the next one, or a branch overlaps its
+    # sibling, the lane the measure finds may start on the other lanelet: the
+    # spawn is looked at a little way into its own lanelet too.
+    length = lanelet_length(spawn.lanelet_id)
+    for s in (spawn.s, min(spawn.s + _NUDGE_M, length), max(spawn.s - _NUDGE_M, 0.0)):
+        at = to_carla_world(Lanelet2Pose(lanelet_id=spawn.lanelet_id, s=s))
+        ahead = stop_line_lane(
+            carla.Transform(
+                carla.Location(x=at.x, y=at.y, z=at.z), carla.Rotation(yaw=at.yaw)
+            ),
+            ego_bumpers,
+        )
+        if spawn.lanelet_id in ahead:
+            break
+    if not ahead:
+        raise ValueError(
+            f"{STOP_LINE_DISTANCE_M}: no stop line within {AHEAD_RANGE_M:g} m "
+            f"ahead of lanelet {spawn.lanelet_id} at s={spawn.s:.2f}"
+        )
+    if spawn.lanelet_id not in ahead:
+        raise ValueError(
+            f"{STOP_LINE_DISTANCE_M}: the stop line ahead of lanelet "
+            f"{spawn.lanelet_id} at s={spawn.s:.2f} is read along lanelets "
+            f"{ahead}, a lane the spawn's lanelet is not on"
+        )
+    # The lane the measure reads the stop line along -- its branch, where the
+    # lane forks -- from the spawn's lanelet, and the lane back from that.
+    ahead = ahead[ahead.index(spawn.lanelet_id) :]
+    lane = [*reversed(_lanelets_before(spawn.lanelet_id, AHEAD_RANGE_M)), *ahead]
+    lengths = [lanelet_length(lanelet_id) for lanelet_id in lane]
+    starts: list[float] = []
+    total = 0.0
+    for length in lengths:
+        starts.append(total)
+        total += length
+
+    def read_at(u: float) -> Optional[float]:
+        at = to_carla_world(_pose_on(lane, starts, lengths, u))
+        ego = carla.Transform(
+            carla.Location(x=at.x, y=at.y, z=at.z), carla.Rotation(yaw=at.yaw)
+        )
+        return stop_line_distance_between(ego, ego_bumpers)
+
+    # The stop line is the one ahead of *spawn*; along the lane the distance
+    # falls metre for metre, so the answer is near where that says, and is
+    # looked for only there -- not before a stop line further back.
+    u_spawn = starts[lane.index(spawn.lanelet_id)] + spawn.s
+    gap = read_at(u_spawn)
+    if gap is None:
+        raise ValueError(
+            f"{STOP_LINE_DISTANCE_M}: no stop line within {AHEAD_RANGE_M:g} m "
+            f"ahead of lanelet {spawn.lanelet_id} at s={spawn.s:.2f}"
+        )
+    guess = u_spawn + gap - distance_m
+    low = max(0.0, guess - _STOP_LINE_SEARCH_M)
+    high = min(total, guess + _STOP_LINE_SEARCH_M)
+    if high < low:
+        raise ValueError(
+            f"{STOP_LINE_DISTANCE_M} cannot read {distance_m:g}: the lane back "
+            f"from lanelet {spawn.lanelet_id} (lanelets {lane}) reaches only "
+            f"{u_spawn + gap:.1f} m before the stop line"
+        )
+    u = solve_along(
+        read_at,
+        distance_m,
+        low,
+        high,
+        what=(
+            f"{STOP_LINE_DISTANCE_M} on the lane through lanelet "
+            f"{spawn.lanelet_id} (lanelets {lane})"
+        ),
+    )
+    return _pose_on(lane, starts, lengths, u)

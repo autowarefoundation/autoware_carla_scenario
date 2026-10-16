@@ -46,7 +46,10 @@ from .coverage import SamplingEvent
 from .odd import (OddAttribute, OddCondition, OddDefinition, OddModule, all_of, any_of,
                   default_odd, module_holds, register_odd)
 from .measures import Bumpers
-from .placement import place_at_vehicle_ahead_gap, solve_along, vehicle_bumpers
+from .placement import (
+    place_at_stop_line_distance, place_at_vehicle_ahead_gap, solve_along,
+    vehicle_bumpers,
+)
 from .scenario_base import BaseScenario, EgoConfig
 from .scenario_config import (DriverCameraSpec, DriverConfig, DriverControlSpec, DriverLidarSpec,
                               EgoVehicleConfig, EntityConfig, MapConfig, NpcVehicleConfig,

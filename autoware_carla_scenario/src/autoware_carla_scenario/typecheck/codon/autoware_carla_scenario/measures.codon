@@ -25,6 +25,7 @@ VEHICLE_AHEAD_GAP_M: str = "vehicle_ahead_gap_m"
 VEHICLE_AHEAD_RELATIVE_SPEED_KPH: str = "vehicle_ahead_relative_speed_kph"
 CROSSING_PEDESTRIAN_GAP_M: str = "crossing_pedestrian_gap_m"
 CROSSING_PEDESTRIAN_SPEED_MS: str = "crossing_pedestrian_speed_ms"
+STOP_LINE_DISTANCE_M: str = "stop_line_distance_m"
 
 VEHICLE_AHEAD_VERSION: int = 2
 ALONG_LANE: str = "along_lane"
@@ -106,6 +107,14 @@ BUILT_IN_MEASURES: Dict[str, Measure] = {
         "m/s",
         "That pedestrian's speed",
     ),
+    STOP_LINE_DISTANCE_M: Measure(
+        STOP_LINE_DISTANCE_M,
+        _acs_unread,
+        "m",
+        "Along the ego's lane on the Lanelet2 map, from its front bumper "
+        "to the nearest stop line ahead (a traffic light's, a traffic "
+        "sign's or a road marking's)",
+    ),
 }
 
 
@@ -136,6 +145,15 @@ def vehicle_ahead_definitions() -> Dict[str, int]:
 def vehicle_ahead_gap_between(ego: carla.Transform, ego_bumpers: Bumpers,
                               other: carla.Transform,
                               other_bumpers: Bumpers) -> Optional[float]:
+    raise NotImplementedError()
+
+
+def stop_line_distance_between(ego: carla.Transform,
+                               ego_bumpers: Bumpers) -> Optional[float]:
+    raise NotImplementedError()
+
+
+def stop_line_lane(ego: carla.Transform, ego_bumpers: Bumpers) -> List[int]:
     raise NotImplementedError()
 
 

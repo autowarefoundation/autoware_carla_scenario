@@ -1111,3 +1111,198 @@ def test_a_run_reads_its_case_back_from_the_override() -> None:
     assert run_case is not None
     assert run_case[0] == drawn and run_case[1] == space
     assert _odd_case(_compose_config("cut_in/left", [])) is None
+
+
+# ---------------------------------------------------------------------------
+# The road a case is on: the attributes the map decides
+# ---------------------------------------------------------------------------
+
+
+def _road_odd() -> OddDefinition:
+    return OddDefinition(
+        "road",
+        [
+            OddAttribute("scenery.junction", lambda world: None, values=[True, False]),
+            OddAttribute(
+                "scenery.speed_limit",
+                lambda world: None,
+                unit="km/h",
+                buckets=[0, 30, 60, 90],
+            ),
+            # What a run sets, so there is something to draw without a map.
+            OddAttribute("environment.rain", rain, values=INTENSITY_LEVELS),
+        ],
+    )
+
+
+#: The value a lanelet reads, by its bucket, in the road tests.
+_VALUES: dict[str, Any] = {
+    "true": True,
+    "false": False,
+    "[0, 30)": 20.0,
+    "[30, 60)": 50.0,
+}
+
+
+def _on_road(monkeypatch, buckets: list[dict[str, str]]) -> None:
+    from autoware_carla_scenario.sweeper import expand as expand_module
+
+    monkeypatch.setattr(
+        expand_module,
+        "_expand_lanelets",
+        lambda sweep, lanelet_map: [
+            [f"ego.spawn_lanelet_id={i + 1}"] for i in range(len(buckets))
+        ],
+    )
+    readings = [
+        {name: (label, _VALUES[label]) for name, label in b.items()} for b in buckets
+    ]
+    monkeypatch.setattr(
+        expand_module,
+        "_case_readings",
+        lambda cases, definition, lanelet_map: readings,
+    )
+
+
+def _recorded(case: list[str]) -> Any:
+    from autoware_carla_scenario.odd.sampler import ODD_CASE_KEY, decode_case
+
+    encoded = next(o for o in case if o.startswith(f"++{ODD_CASE_KEY}="))
+    sample, _space = decode_case(encoded.split("=", 1)[1])
+    return sample
+
+
+def _drawn(case: list[str]) -> dict[str, str]:
+    return _recorded(case).buckets
+
+
+def test_each_case_goes_on_a_lanelet_in_the_buckets_drawn(monkeypatch) -> None:
+    buckets = [
+        {"scenery.junction": "true", "scenery.speed_limit": "[30, 60)"},
+        {"scenery.junction": "false", "scenery.speed_limit": "[30, 60)"},
+        {"scenery.junction": "false", "scenery.speed_limit": "[0, 30)"},
+    ]
+    _on_road(monkeypatch, buckets)
+    sweep = {
+        "constraints": {"ego.spawn_lanelet_id": [{}]},
+        "odd_sample": {"count": 12, "seed": 3},
+    }
+
+    cases = expand_sweep(sweep, object(), (), odd=_road_odd())
+
+    by_lanelet = {f"ego.spawn_lanelet_id={i + 1}": b for i, b in enumerate(buckets)}
+    for case in cases:
+        drawn = _drawn(case)
+        on = by_lanelet[case[0]]
+        assert drawn["scenery.junction"] == on["scenery.junction"]
+        assert drawn["scenery.speed_limit"] == on["scenery.speed_limit"]
+        # The knobs' own setting is no override of the run.
+        assert not any(o.startswith("_odd_map.") for o in case)
+    # Only the buckets some lanelet is in are drawn, and every one of them.
+    assert {_drawn(c)["scenery.speed_limit"] for c in cases} == {"[0, 30)", "[30, 60)"}
+    assert {_drawn(c)["scenery.junction"] for c in cases} == {"true", "false"}
+
+
+def test_without_a_map_the_cases_are_taken_in_turn(monkeypatch) -> None:
+    _on_road(monkeypatch, [{"scenery.junction": "true"}, {"scenery.junction": "false"}])
+    sweep = {
+        "constraints": {"ego.spawn_lanelet_id": [{}]},
+        "odd_sample": {"count": 4, "seed": 3},
+    }
+
+    cases = expand_sweep(sweep, None, (), odd=_road_odd())
+
+    assert [c[0] for c in cases] == [
+        "ego.spawn_lanelet_id=1",
+        "ego.spawn_lanelet_id=2",
+    ] * 2
+
+
+def test_a_knob_the_sweep_gives_is_not_replaced_by_the_map(monkeypatch) -> None:
+    from autoware_carla_scenario.sweeper.expand import _map_knobs
+
+    knobs = _map_knobs(
+        _road_odd(),
+        [{"scenery.junction": "true", "scenery.speed_limit": "[30, 60)"}],
+        {"scenery.junction": {"key": "x"}},
+    )
+
+    assert set(knobs) == {"scenery.speed_limit"}
+    assert knobs["scenery.speed_limit"]["values"] == {"[30, 60)": [30.0, 60.0]}
+
+
+def test_a_case_records_its_lanelet_s_values_not_the_draw(monkeypatch) -> None:
+    _on_road(
+        monkeypatch,
+        [
+            {"scenery.junction": "true", "scenery.speed_limit": "[30, 60)"},
+            {"scenery.junction": "false", "scenery.speed_limit": "[0, 30)"},
+        ],
+    )
+    sweep = {
+        "constraints": {"ego.spawn_lanelet_id": [{}]},
+        "odd_sample": {"count": 8, "seed": 5},
+    }
+
+    for case in expand_sweep(sweep, object(), (), odd=_road_odd()):
+        recorded = _recorded(case)
+        expected = 50.0 if case[0] == "ego.spawn_lanelet_id=1" else 20.0
+        assert recorded.values["scenery.speed_limit"] == pytest.approx(expected)
+        assert not any(o.startswith("_odd_map.") for o in recorded.overrides)
+
+
+def test_cases_in_the_same_buckets_are_run_in_turn(monkeypatch) -> None:
+    # One junction lanelet and three that are not: every draw that is not in
+    # a junction goes on one of the three, the least run first.
+    _on_road(
+        monkeypatch,
+        [{"scenery.junction": "true"}] + [{"scenery.junction": "false"}] * 3,
+    )
+    sweep = {
+        "constraints": {"ego.spawn_lanelet_id": [{}]},
+        "odd_sample": {"count": 12, "seed": 2},
+    }
+
+    cases = expand_sweep(sweep, object(), (), odd=_road_odd())
+
+    off = Counter(c[0] for c in cases if _drawn(c)["scenery.junction"] == "false")
+    assert set(off) == {f"ego.spawn_lanelet_id={i}" for i in (2, 3, 4)}
+    assert max(off.values()) - min(off.values()) <= 1
+
+
+def test_too_few_fitting_draws_go_on_the_nearest_case(caplog) -> None:
+    from autoware_carla_scenario.sweeper.expand import _on_some_case
+
+    def sample(junction: str, limit: str) -> Any:
+        return SimpleNamespace(
+            buckets={"scenery.junction": junction, "scenery.speed_limit": limit}
+        )
+
+    fits, misfit = sample("true", "[30, 60)"), sample("true", "[0, 30)")
+    sampler = SimpleNamespace(sample=lambda count: [misfit, fits] + [misfit] * 38)
+    buckets = [{"scenery.junction": "true", "scenery.speed_limit": "[30, 60)"}]
+
+    chosen = _on_some_case(
+        sampler, 2, buckets, ["scenery.junction", "scenery.speed_limit"]
+    )
+
+    assert chosen == [fits, misfit]
+    assert "Only 1 of 40" in caplog.text
+
+
+def test_a_derived_attribute_gets_no_knob_of_its_own() -> None:
+    from autoware_carla_scenario.sweeper.expand import _map_knobs
+
+    odd = _road_odd()
+    derived = SimpleNamespace(
+        name="scenery.junction", derived=True, item=odd.attributes[0].item
+    )
+    definition = SimpleNamespace(attributes=[derived, *odd.attributes[1:]])
+
+    knobs = _map_knobs(
+        definition,
+        [{"scenery.junction": "true", "scenery.speed_limit": "[30, 60)"}],
+        {},
+    )
+
+    assert set(knobs) == {"scenery.speed_limit"}

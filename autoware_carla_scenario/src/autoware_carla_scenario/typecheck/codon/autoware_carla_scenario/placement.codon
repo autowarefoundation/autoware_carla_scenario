@@ -41,3 +41,10 @@ def place_at_vehicle_ahead_gap(ego: carla.Transform, lanelet_id: int,
     _required_bumpers(ego_bumpers, "place_at_vehicle_ahead_gap(): ego_bumpers")
     _required_bumpers(npc_bumpers, "place_at_vehicle_ahead_gap(): npc_bumpers")
     raise NotImplementedError()
+
+
+def place_at_stop_line_distance(spawn: Lanelet2Pose, distance_m: float, *_kw,
+                                ego_bumpers = _Required()) -> Lanelet2Pose:
+    _keyword_only(_kw, "place_at_stop_line_distance(): ego_bumpers")
+    _required_bumpers(ego_bumpers, "place_at_stop_line_distance(): ego_bumpers")
+    raise NotImplementedError()
