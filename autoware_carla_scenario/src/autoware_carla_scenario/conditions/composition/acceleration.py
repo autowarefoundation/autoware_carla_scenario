@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any, Optional, Union
 
 from ...entity_role import EntityRole
 from ...kinematics import AbsoluteAcceleration
-from ..base import ScenarioResult, find_actor_in_list
+from ..base import ScenarioResult, find_actor_by_role_name
 from ..comparison import ComparisonRule, ScalarComparisonRule
 from .base import CompositionCondition, entity_axes
 
@@ -119,7 +119,7 @@ class AccelerationCondition(CompositionCondition):
     def _check(self, world: "carla.World", elapsed: float) -> Optional[ScenarioResult]:
         """Return a pass result once the acceleration satisfies the rule."""
         assert self._entity_name is not None
-        entity = find_actor_in_list(world.get_actors(), self._entity_name)
+        entity = find_actor_by_role_name(world, self._entity_name)
         if entity is None:
             return None
 

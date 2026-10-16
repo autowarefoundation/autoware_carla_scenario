@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any, Optional, Union
 
 from ...entity_role import EntityRole
 from ...utils.turn_indicator import TurnIndicatorState, is_vehicle, turn_indicators_of
-from ..base import ScenarioResult, find_actor_in_list
+from ..base import ScenarioResult, find_actor_by_role_name
 from .base import CompositionCondition
 
 if TYPE_CHECKING:
@@ -59,7 +59,7 @@ class TurnIndicatorCondition(CompositionCondition):
             match, ``None`` otherwise.
         """
         assert self._entity_name is not None
-        entity = find_actor_in_list(world.get_actors(), self._entity_name)
+        entity = find_actor_by_role_name(world, self._entity_name)
         if entity is None or not is_vehicle(entity):
             return None
         if turn_indicators_of(entity) != self._state:

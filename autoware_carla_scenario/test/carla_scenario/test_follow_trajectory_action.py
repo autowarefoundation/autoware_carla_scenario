@@ -9,6 +9,7 @@ decisions -- where it puts the vehicle, when, and when it says it is done.
 
 from __future__ import annotations
 
+import itertools
 import math
 from collections.abc import Iterator
 from types import SimpleNamespace
@@ -47,6 +48,9 @@ from ._vehicle_physics import mkz_physics, mkz_powertrain
 
 _DT = 0.05
 
+#: Actor ids, unique within the test session as CARLA's are within an episode.
+_ACTOR_IDS = itertools.count(1)
+
 
 def _at(time: Optional[float]) -> Optional[TrajectoryTimeCondition]:
     """A vertex's time, as the condition it departs on (``None``: no time)."""
@@ -64,6 +68,8 @@ class _Actor:
         speed: float = 0.0,
         type_id: str = "vehicle.lincoln.mkz",
     ) -> None:
+        self.id = next(_ACTOR_IDS)
+        self.is_alive = True
         self.type_id = type_id
         self.attributes = {"role_name": "npc1"}
         self.bounding_box = SimpleNamespace(extent=SimpleNamespace(x=2.4, y=1.0, z=0.9))
