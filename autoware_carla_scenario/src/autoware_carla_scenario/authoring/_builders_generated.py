@@ -39,6 +39,7 @@ __all__ = [
     "build_lane_change_settled_condition",
     "build_waypoint_condition",
     "build_entity_lane_of_condition",
+    "build_off_road_fraction_condition",
     "build_entity_lane_position_condition",
     "build_entity_road_position_condition",
     "build_route_progress_condition",
@@ -235,6 +236,22 @@ def build_entity_lane_of_condition(
         entity_name=str(params["entity"]),
         position=position,
         lane=str(params["lane"]),
+        label=compiled.label,
+    )
+
+
+def build_off_road_fraction_condition(
+    compiled: "CompiledCondition",
+    children: "list[BaseCondition]",
+    ctx: "BuildContext",
+) -> "BaseCondition":
+    """Build an :class:`OffRoadFractionCondition`."""
+    from ..conditions import OffRoadFractionCondition  # noqa: PLC0415
+
+    params = compiled.params
+    return OffRoadFractionCondition(
+        fraction=params["fraction"],
+        entity_name=(str(params["entity"]) if params["entity"] is not None else None),
         label=compiled.label,
     )
 
