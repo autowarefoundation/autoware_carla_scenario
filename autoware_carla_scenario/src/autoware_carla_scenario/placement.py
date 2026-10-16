@@ -178,6 +178,22 @@ _PROBE_HEIGHT_M = 500.0
 _BUMPERS: dict[str, Bumpers] = {}
 
 
+def _destroy_probe(world: carla.World, probe: carla.Actor) -> None:
+    """Destroy *probe*, ticking the world once first if CARLA does not know
+    it yet (:func:`vehicle_bumpers`)."""
+    if probe.destroy():
+        return
+    if world.get_settings().synchronous_mode:
+        world.tick()
+    else:
+        world.wait_for_tick()
+    if not probe.destroy():
+        raise RuntimeError(
+            f"vehicle_bumpers(): the probe vehicle {probe.id} could not be "
+            "destroyed; it is left in the world until the next run clears it"
+        )
+
+
 def vehicle_bumpers(world: carla.World, vehicle_type: str) -> Bumpers:
     """The bumpers of a vehicle of blueprint *vehicle_type*, before one is
     spawned where it will drive.
@@ -188,10 +204,19 @@ def vehicle_bumpers(world: carla.World, vehicle_type: str) -> Bumpers:
     read as it is: its bounding box taken as is, scaled or modded as that
     actor may be, not the blueprint's stock one.  Otherwise one is spawned
     high above the map (tried at :data:`_PROBE_HEIGHT_M`, then twice and
-    three times as high), read and destroyed straight away, before the world
-    is ticked again; the vehicle-ahead measures do not count it, by its role
-    name (:data:`~autoware_carla_scenario.constants.BUMPER_PROBE_ROLE_NAME`)
-    or by its height.
+    three times as high), read and destroyed straight away; the
+    vehicle-ahead measures do not count it, by its role name
+    (:data:`~autoware_carla_scenario.constants.BUMPER_PROBE_ROLE_NAME`) or by
+    its height.  An actor the world has not ticked since it was spawned is
+    one CARLA's client does not know yet, and ``destroy()`` does nothing to it
+    ("attempting to destroy an actor that is already dead"): the probe would
+    stay, falling from on high, for every vehicle loop of the run to find;
+    once the TrafficManager is given it, the next synchronous tick never
+    returns.  So when ``destroy()`` says it did nothing, the world is ticked
+    once (waited for, off synchronous mode) and the probe destroyed then.  In
+    synchronous mode that tick is this client's, whoever else ticks the world:
+    call it where the caller owns the ticking, as a scenario's ``setup()``
+    does.
     The result is remembered by blueprint id for the rest of the process.
     Placing a vehicle for a bumper-to-bumper gap needs its size where it is
     placed, and this way it is placed once, where the gap reads right, rather
@@ -200,6 +225,8 @@ def vehicle_bumpers(world: carla.World, vehicle_type: str) -> Bumpers:
     Raises:
         ValueError: When the blueprint is not a vehicle CARLA has, or no
             vehicle of it can be spawned to measure.
+        RuntimeError: When the probe cannot be destroyed even after a tick;
+            it is then left in the world.
     """
     if vehicle_type in _BUMPERS:
         return _BUMPERS[vehicle_type]
@@ -227,8 +254,15 @@ def vehicle_bumpers(world: carla.World, vehicle_type: str) -> Bumpers:
         spawned: carla.Actor = actor
         try:
             bumpers = bumpers_of_box(spawned.bounding_box)
-        finally:
-            spawned.destroy()
+        except Exception:
+            # The error being raised is the one to report; the probe is
+            # destroyed as far as it can be.
+            try:
+                _destroy_probe(world, spawned)
+            except Exception:
+                pass
+            raise
+        _destroy_probe(world, spawned)
         _BUMPERS[vehicle_type] = bumpers
         return bumpers
     raise ValueError(

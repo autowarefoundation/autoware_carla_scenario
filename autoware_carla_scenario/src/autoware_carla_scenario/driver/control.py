@@ -57,7 +57,12 @@ class ControlConfig:
     """Lookahead distance per unit speed, in seconds."""
 
     min_lookahead_m: float = 4.0
-    """Lower bound on the lookahead distance."""
+    """Lower bound on the lookahead distance.
+
+    Also the least distance pure pursuit divides by: a plan shorter than this
+    is pursued at its farthest point, and a point a few decimetres away, a few
+    centimetres off the axis, would otherwise ask for full lock.
+    """
 
     max_lookahead_m: float = 20.0
     """Upper bound on the lookahead distance."""
@@ -148,13 +153,19 @@ class ControlConfig:
     """Below this speed the vehicle counts as standing, for :attr:`throttle_deadband`."""
 
     stop_distance_m: float = 0.5
-    """A plan travelling less than this over its whole horizon is a request to stand
+    """A plan none of whose points is this far from the vehicle is a request to stand
     still, and the vehicle is held on the brake.
 
     Decided by distance, not by the target speed, as Autoware's longitudinal
     controller decides its stop state: a plan pulling away from a standstill asks
     for almost no speed in its first second yet goes metres over its horizon, and
     holding the vehicle there would keep it on the line for good.
+
+    Read as how far the plan reaches, not how long its path is: a learned
+    policy's plan to stand still jitters by a few centimetres from point to
+    point, and over 80 points that adds up to over a metre of path while the
+    plan never leaves the vehicle's spot.  Tracked, such a plan has the vehicle
+    pursue a point a few decimetres away at full lock and creep round it.
     """
 
     stop_brake: float = 0.6
@@ -328,7 +339,7 @@ class TrajectoryFollower:
         plan_in_rig = plan_in_local.transform(pose_local_to_rig.inverse())
         points = plan_in_rig.positions
 
-        if _travel_m(points) < self._config.stop_distance_m:
+        if _reach_m(points) < self._config.stop_distance_m:
             return self._hold_still()
         lookahead = float(
             np.clip(
@@ -395,7 +406,11 @@ class TrajectoryFollower:
         yaw_rate_rps: Optional[float],
     ) -> float:
         """Return the normalised steering command for *target*, rate limited."""
-        distance = max(float(np.linalg.norm(target[:2])), _EPSILON)
+        # A target nearer than the least lookahead (a short plan's end) is pursued
+        # as if it were that far: its direction alone, not its nearness, sets the turn.
+        distance = max(
+            float(np.linalg.norm(target[:2])), self._config.min_lookahead_m, _EPSILON
+        )
         alpha = math.atan2(float(target[1]), float(target[0]))
         curvature = 2.0 * math.sin(alpha) / distance
         angle = math.atan(self._config.wheelbase_m * curvature)
@@ -527,8 +542,8 @@ def _reference(
     return speed, acceleration, float(np.interp(now_s, times_s, arc)) - along
 
 
-def _travel_m(points: np.ndarray[tuple[int, int], np.dtype[np.float64]]) -> float:
-    """How far a plan's ``(N, 3)`` points travel, end to end along the path."""
-    if len(points) < 2:
+def _reach_m(points: np.ndarray[tuple[int, int], np.dtype[np.float64]]) -> float:
+    """How far a plan's ``(N, 3)`` rig-frame points get from the vehicle."""
+    if len(points) == 0:
         return 0.0
-    return float(np.linalg.norm(np.diff(points[:, :2], axis=0), axis=1).sum())
+    return float(np.linalg.norm(points[:, :2], axis=1).max())

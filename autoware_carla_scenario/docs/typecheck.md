@@ -1437,7 +1437,7 @@ What Codon 0.19 needs that Python does not, beyond
   translate; numpy's shape-typed array does (see *An array is typed by its
   shape* below). A bare `np.ndarray` parameter compiles while only its
   callers reach it, but the check has no value of it to call with
-  ("cannot typecheck '_travel_m(_acs_value(np.ndarray))'"): the protected
+  ("cannot typecheck '_reach_m(_acs_value(np.ndarray))'"): the protected
   geometry helpers of `coordinate.transform` and `driver.control` take
   `np.ndarray[tuple[int, int], np.dtype[np.float64]]` and their points
   `np.ndarray[tuple[int], np.dtype[np.float64]]`.
