@@ -10,14 +10,16 @@ class RouteMatch:
     # tuple[RouteSegmentMatch, ...]), which have no Codon type, and a scenario
     # reads the running route (scenario_route()) rather than building one.
     # The constructor takes Python's parameters all the same, so a call
-    # Python refuses is refused here too.
+    # Python refuses is refused here too. Codon builds a class without fields
+    # with no arguments as well, unless an __init__ of none says otherwise:
+    # the first one does, and the constructor declared after it wins every
+    # call it takes (docs/typecheck.md).
+    def __init__(self):
+        compile_error("RouteMatch(): no constructor takes these arguments "
+                      "(required: lanelet_ids, start_s, end_s, segments)")
+
     def __init__(self, lanelet_ids, start_s, end_s, segments, index = 0):
         pass
-
-    # A class without fields is built with no arguments too, unless an
-    # __init__ of no arguments says otherwise.
-    def __init__(self):
-        compile_error("RouteMatch() takes lanelet_ids, start_s, end_s and segments")
 
     def anchor_s(self, anchor: Optional[str]) -> float:
         raise NotImplementedError()
@@ -26,6 +28,11 @@ class RouteMatch:
 class RouteFrame:
     # Generic: the scenario check builds none (the checked route.active
     # builds the checked RouteFrame, of lanelet2's model).
+    # No fields: Codon would build one with no arguments too (docs/typecheck.md).
+    def __init__(self):
+        compile_error("RouteFrame(): no constructor takes these arguments "
+                      "(required: match, lanelet_map, routing_graph)")
+
     def __init__(self, match, lanelet_map, routing_graph):
         pass
 

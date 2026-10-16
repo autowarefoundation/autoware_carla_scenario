@@ -1602,6 +1602,96 @@ def test_a_scenario_may_use_the_carla_driver_interface_model_and_nothing_beyond_
     ("setup", "needle", "message"),
     [
         (
+            'self.register_fail_condition(TimeoutCondition("10"))\n',
+            'TimeoutCondition("10")',
+            "TimeoutCondition(): no constructor takes these arguments "
+            "(required: keyword label)",
+        ),
+        (
+            'self.register_fail_condition(SpeedCondition("npc1"))\n',
+            'SpeedCondition("npc1")',
+            "SpeedCondition(): no constructor takes these arguments",
+        ),
+        (
+            'self.register_pre_tick(TurnAction("npc1"))\n',
+            'TurnAction("npc1")',
+            "TurnAction(): no constructor takes these arguments "
+            "(required: entity_name, direction)",
+        ),
+        (
+            "from autoware_carla_scenario import VehicleEntity\nVehicleEntity()\n",
+            "VehicleEntity()",
+            "VehicleEntity(): no constructor takes these arguments (required: config)",
+        ),
+        (
+            "from autoware_carla_scenario import PedestrianEntity\nPedestrianEntity()\n",
+            "PedestrianEntity()",
+            "PedestrianEntity(): no constructor takes these arguments "
+            "(required: config)",
+        ),
+    ],
+    ids=[
+        "timeout-str-alone",
+        "condition-label-alone",
+        "action-label-alone",
+        "vehicle-entity-no-arguments",
+        "pedestrian-entity-no-arguments",
+    ],
+)
+def test_what_codon_builds_by_the_fields_alone_is_refused_at_its_line(
+    tmp_path: Path, setup: str, needle: str, message: str
+) -> None:
+    # Codon builds a class by its fields too, by position: a class without
+    # fields with no arguments (#225), a condition or an action by the label
+    # it inherits alone (#236). Python refuses both, and the model's
+    # __init__ of as many arguments, a compile_error, refuses them too.
+    scenario, config, path = _write_case(tmp_path, setup)
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert message in error.message, error.format()
+    assert error.path == str(path)
+    assert error.line == _line_of(path, needle)
+
+
+def test_what_the_constructors_take_still_compiles(tmp_path: Path) -> None:
+    # The look-alikes of the calls refused above: the constructor is declared
+    # after the refusing __init__, so it wins every call it takes.
+    setup = """
+        from autoware_carla_scenario import (
+            AlwaysTrueCondition,
+            PedestrianEntity,
+            PedestrianEntityConfig,
+            SpawnPointIndex,
+            SpawnTransform,
+            VehicleEntity,
+            VehicleEntityConfig,
+        )
+        self.register_fail_condition(TimeoutCondition(label="timeout"))
+        self.register_fail_condition(TimeoutCondition(10, label="int_timeout"))
+        self.register_fail_condition(TimeoutCondition(10.0, label="float_timeout"))
+        self.register_pass_condition(AlwaysTrueCondition())
+        self.register_pass_condition(TrajectoryTimeCondition(3.0))
+        self.register_fail_condition(
+            SpeedCondition("npc1", 1.0, ComparisonRule.LESS_THAN, label="slow")
+        )
+        self.register_pass_condition(
+            AndCondition([ElapsedTimeCondition(1.0, label="elapsed")])
+        )
+        self.register_pre_tick(TurnAction("npc1", TurnDirection.LEFT))
+        npc = VehicleEntity(VehicleEntityConfig("npc1", SpawnPointIndex(0)))
+        walker = PedestrianEntity(
+            PedestrianEntityConfig("walker1", SpawnTransform(carla.Transform()))
+        )
+        logger.info("%s %s", npc.role_name, walker.role_name)
+        """
+    scenario, config, _ = _write_case(tmp_path, setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+@pytest.mark.parametrize(
+    ("setup", "needle", "message"),
+    [
+        (
             "from autoware_carla_scenario.autoware_bridge.grpc_server import "
             "GrpcAutowareBridgeServer\nGrpcAutowareBridgeServer()\n",
             "GrpcAutowareBridgeServer()",
