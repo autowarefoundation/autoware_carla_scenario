@@ -1,0 +1,19 @@
+# Model of autoware_carla_scenario.maps.z_offset_cache (docs/typecheck.md), which
+# imports hashlib and json: what MapManager.initialize uses of it, with the
+# signatures of the Python module. *compute* is any callable returning a float.
+
+from pathlib import Path
+
+from .._tc import _keyword_only
+
+
+def z_offset_key(lanelet2_path: Path, xodr_path: Path, carla_map_name: str,
+                 projection: str = "") -> str:
+    raise NotImplementedError()
+
+
+def cached_z_offset(lanelet2_path: Path, xodr_path: Path, carla_map_name: str,
+                    compute, *_kw, projection: str = "",
+                    root: Optional[Path] = None) -> float:
+    _keyword_only(_kw, "cached_z_offset(): projection and root")
+    return float(compute())
