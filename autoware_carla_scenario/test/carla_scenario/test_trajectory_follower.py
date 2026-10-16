@@ -352,6 +352,46 @@ def test_stationary_plan_holds_the_vehicle() -> None:
     assert command.brake == pytest.approx(config.stop_brake)
 
 
+def test_a_jittering_plan_to_stand_still_holds_the_vehicle() -> None:
+    """A learned policy's plan to stand still: 80 points jittering by centimetres.
+
+    Its path adds up to over a metre while no point gets 0.4 m from the vehicle.
+    Measured by path length it was tracked, and the follower pursued its farthest
+    point, a few decimetres away and a few centimetres to the right, at full lock
+    while the dead band crept the car round it.
+    """
+    config = ControlConfig()
+    plan = Trajectory.empty()
+    for index in range(80):
+        x = 0.15 + 0.1 * math.sin(1.7 * index)
+        y = -0.04 + 0.03 * math.cos(2.3 * index)
+        plan.append((index + 1) * _STEP_US, Pose.from_xyz_yaw(x, y, 0.0, 0.0))
+    points = plan.positions
+    path_m = sum(math.dist(a[:2], b[:2]) for a, b in zip(points, points[1:]))
+    assert path_m > 1.0  # what the old, path-length test read as a plan to move
+    command = _follower(config).step(plan, Pose.identity(), 0.2, _DT_S)
+    assert command.throttle == pytest.approx(0.0)
+    assert command.steer == pytest.approx(0.0)
+    assert command.brake == pytest.approx(config.stop_brake)
+
+
+def test_a_short_plan_is_pursued_as_if_at_the_least_lookahead() -> None:
+    """A plan ending 1.5 m ahead and 5 cm to the right turns as one 4 m long would.
+
+    Pure pursuit's curvature grows as its target nears: divided by 1.5 m rather
+    than 4 m, this one would steer about twice as hard, and a few decimetres away
+    it reaches full lock.
+    """
+    config = ControlConfig(min_lookahead_m=4.0, max_steer_rate=100.0)
+    short = _plan([(0.1 * i, -0.05 * i / 15) for i in range(16)], speed_mps=0.5)
+    long = _plan([(0.4 * i, -0.4 * 0.05 / 1.5 * i) for i in range(11)], speed_mps=0.5)
+    short_steer = _follower(config).step(short, Pose.identity(), 0.2, _DT_S).steer
+    long_steer = _follower(config).step(long, Pose.identity(), 0.2, _DT_S).steer
+    assert short_steer > 0.0  # to the right
+    # The long plan's target is 4.002 m away, a hair past the lookahead.
+    assert short_steer == pytest.approx(long_steer, rel=1e-2)
+
+
 def test_empty_plan_brakes_and_resets() -> None:
     config = ControlConfig()
     follower = _follower(config)
