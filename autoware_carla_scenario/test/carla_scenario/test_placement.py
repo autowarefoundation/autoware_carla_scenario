@@ -215,9 +215,15 @@ class _Probe:
             location=SimpleNamespace(x=0.1), extent=SimpleNamespace(x=2.4)
         )
         self.destroyed = False
+        #: Whether the world has ticked since it was spawned: CARLA's client
+        #: destroys nothing it does not know yet.
+        self.known = True
 
-    def destroy(self) -> None:
+    def destroy(self) -> bool:
+        if not self.known:
+            return False
         self.destroyed = True
+        return True
 
 
 class _Blueprint:
@@ -240,11 +246,35 @@ class _Library:
 class _ProbeWorld:
     """A world that spawns the probe after *refusals* refusals."""
 
-    def __init__(self, refusals: int = 0, actors: list[Any] | None = None) -> None:
+    def __init__(
+        self,
+        refusals: int = 0,
+        actors: list[Any] | None = None,
+        *,
+        synchronous: bool = True,
+        known: bool = True,
+    ) -> None:
         self.refusals = refusals
         self.actors = actors or []
         self.heights: list[float] = []
         self.probes: list[_Probe] = []
+        self.synchronous = synchronous
+        self.known = known
+        self.ticks: list[str] = []
+
+    def get_settings(self) -> Any:
+        return SimpleNamespace(synchronous_mode=self.synchronous)
+
+    def _ticked(self, how: str) -> None:
+        self.ticks.append(how)
+        for probe in self.probes:
+            probe.known = True
+
+    def tick(self) -> None:
+        self._ticked("tick")
+
+    def wait_for_tick(self) -> None:
+        self._ticked("wait_for_tick")
 
     def get_blueprint_library(self) -> _Library:
         return _Library()
@@ -258,6 +288,7 @@ class _ProbeWorld:
         if len(self.heights) <= self.refusals:
             return None
         probe = _Probe(7)
+        probe.known = self.known
         self.probes.append(probe)
         return probe
 
@@ -283,6 +314,34 @@ def test_the_bumpers_are_measured_once_per_blueprint() -> None:
     assert first == again
     assert (first.front, first.rear) == pytest.approx((2.5, 2.3))
     assert world.heights == [500.0]
+    assert [p.destroyed for p in world.probes] == [True]
+
+
+@pytest.mark.usefixtures("_no_bumpers_known")
+@pytest.mark.parametrize(
+    ("synchronous", "tick"), [(True, "tick"), (False, "wait_for_tick")]
+)
+def test_a_probe_the_client_does_not_know_yet_is_destroyed_after_a_tick(
+    synchronous: bool, tick: str
+) -> None:
+    """Destroyed before the world has ticked, the probe outlived its destroy():
+    it fell from on high for the whole run, and the TrafficManager given it
+    stalled the next synchronous tick until the process ran out of memory."""
+    world: Any = _ProbeWorld(synchronous=synchronous, known=False)
+
+    vehicle_bumpers(world, "vehicle.lincoln.mkz")
+
+    assert world.ticks == [tick]
+    assert [p.destroyed for p in world.probes] == [True]
+
+
+@pytest.mark.usefixtures("_no_bumpers_known")
+def test_a_known_probe_is_destroyed_without_a_tick() -> None:
+    world: Any = _ProbeWorld()
+
+    vehicle_bumpers(world, "vehicle.lincoln.mkz")
+
+    assert world.ticks == []
     assert [p.destroyed for p in world.probes] == [True]
 
 
