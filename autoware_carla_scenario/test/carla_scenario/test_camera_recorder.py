@@ -8,6 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Callable, Optional
 
+import numpy as np
 import pytest
 
 from autoware_carla_scenario import camera_recorder
@@ -137,3 +138,32 @@ def test_a_failed_ffmpeg_logs_its_decoded_error_output(
     assert record.getMessage() == (
         "ffmpeg exited with code 1: \ufffdbroken" + "x" * 493
     )
+
+
+def test_draw_caption_marks_only_the_bottom_of_the_frame() -> None:
+    image = np.full((72, 128, 3), 128, dtype=np.uint8)
+    camera_recorder.draw_caption(image, "Warm-up")
+    changed = (image != 128).any(axis=2)
+    assert changed[48:].any()  # the caption, along the bottom
+    assert not changed[:24].any()  # the top is left as it was
+
+
+def test_a_captioned_frame_is_written_with_its_caption(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    process = _Process(0, b"")
+    recorder, sensor, _pipeline = _recorder(tmp_path, monkeypatch, process)
+    assert sensor.listener is not None
+    gray = bytes([128, 128, 128, 255]) * (72 * 128)
+    sensor.listener(SimpleNamespace(raw_data=gray, height=72, width=128))
+    assert recorder.write_frame("Warm-up") is True
+    written = np.frombuffer(process.stdin.getvalue(), dtype=np.uint8)
+    assert written.size == 72 * 128 * 3
+    assert (written != 128).any()
+
+    # Without a caption, the frame goes out as it came.
+    sensor.listener(SimpleNamespace(raw_data=gray, height=72, width=128))
+    assert recorder.write_frame() is True
+    plain = np.frombuffer(process.stdin.getvalue(), dtype=np.uint8)[written.size :]
+    assert (plain == 128).all()
+    recorder.stop()
