@@ -35,6 +35,7 @@ from typing import (
 )
 
 from ..constants import FIXED_DELTA_SECONDS
+from ..debug_markers import DebugMarkers, plan_polyline
 from ..coordinate.map_manager import run_carla_map
 from ..driver.base import BaseEgoDriverClient, DriverClientConfig, EgoObservation
 from ..driver.control import ControlConfig, TrajectoryFollower
@@ -658,6 +659,12 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
             gear=int(actor.get_control().gear),
         )
         actor.apply_control(command.to_carla_control())
+
+    def debug_markers(self) -> DebugMarkers:
+        """The policy's current plan, as a line along the road."""
+        markers = DebugMarkers()
+        markers.add_polyline(plan_polyline(self._plan))
+        return markers
 
     def debug_state(self) -> Dict[str, float]:
         """Return a snapshot of the loop's state, for logging and tests."""

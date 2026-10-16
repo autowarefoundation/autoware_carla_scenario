@@ -33,6 +33,7 @@ import threading
 from typing import TYPE_CHECKING, List, Optional, Tuple
 
 from ..constants import FIXED_DELTA_SECONDS, US_PER_S
+from ..debug_markers import DebugMarkers, plan_polyline
 from ..driver.base import EgoObservation
 from ..driver.control import ControlConfig, TrajectoryFollower, VehicleCommand
 from ..driver.geometry import Trajectory
@@ -133,6 +134,8 @@ class Ros2EgoEntity(ExternallyDrivenEgo):
     _publishing: threading.Lock
     #: The trajectory command last tracked and its timed plan.
     _planned: Optional[Tuple[TrajectoryCommand, Trajectory]]
+    #: Whether the last tick tracked that plan, rather than another command.
+    _tracking: bool
 
     def __init__(
         self,
@@ -154,6 +157,7 @@ class Ros2EgoEntity(ExternallyDrivenEgo):
         self._cameras = []
         self._publishing = threading.Lock()
         self._planned = None
+        self._tracking = False
 
     # ------------------------------------------------------------------
     # Properties
@@ -369,6 +373,7 @@ class Ros2EgoEntity(ExternallyDrivenEgo):
         selection: Optional[Selection],
         observation: EgoObservation,
     ) -> None:
+        self._tracking = False
         if selection is None or (
             not selection.fresh and self._config.on_stale == "brake"
         ):
@@ -390,6 +395,7 @@ class Ros2EgoEntity(ExternallyDrivenEgo):
                 gear=int(actor.get_control().gear),
             )
             actor.apply_control(vehicle_command.to_carla_control())
+            self._tracking = True
             return
         if isinstance(command, SteerAccelCommand):
             steer_accel: SteerAccelCommand = command
@@ -422,6 +428,15 @@ class Ros2EgoEntity(ExternallyDrivenEgo):
                 jerk=float(jerk_mps3),
             )
         )
+
+    def debug_markers(self) -> DebugMarkers:
+        """The trajectory being tracked, as a line along the road; none while
+        another kind of command drives."""
+        markers = DebugMarkers()
+        planned = self._planned
+        if self._tracking and planned is not None:
+            markers.add_polyline(plan_polyline(planned[1]))
+        return markers
 
     def _plan(self, command: TrajectoryCommand, received_us: int) -> Trajectory:
         """The timed plan of *command*, built once while it is the one tracked."""

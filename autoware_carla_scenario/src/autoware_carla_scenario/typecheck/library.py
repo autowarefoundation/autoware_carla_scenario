@@ -128,6 +128,7 @@ CHECKED: tuple[str, ...] = (
     "autoware_carla_scenario.coordinate.traffic_light",
     "autoware_carla_scenario.coordinate.transform",
     "autoware_carla_scenario.coverage",
+    "autoware_carla_scenario.debug_markers",
     "autoware_carla_scenario.driver",
     "autoware_carla_scenario.driver.base",
     "autoware_carla_scenario.driver.control",

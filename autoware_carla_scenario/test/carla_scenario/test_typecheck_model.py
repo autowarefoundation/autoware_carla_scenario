@@ -34,6 +34,7 @@ from autoware_carla_scenario import (
     conditions,
     constants,
     coordinate,
+    debug_markers,
     environment,
     measures,
     metrics,
@@ -451,6 +452,8 @@ def _literal_types(value: Any) -> Any:
 _MODULE_MODELS: dict[str, tuple[Any, tuple[str, ...]]] = {
     "_bridge_pose": (bridge_base, ("BridgePose", "Quaternion", "Vector3")),
     "carla_install": (carla_install, ("installed_executable",)),
+    # What an ego entity a scenario defines returns from debug_markers().
+    "debug_markers": (debug_markers, ("DebugMarkers", "DebugPolyline")),
     "trajectory_recorder": (trajectory_recorder, ("TrajectoryRecorder",)),
     # What scenario_runner's _record_run reads of the unchecked environment.
     "environment": (environment, ("RunEnvironment", "capture")),

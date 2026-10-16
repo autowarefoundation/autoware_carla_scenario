@@ -1132,3 +1132,18 @@ def test_run_refuses_an_unknown_bridge_setting() -> None:
         build_ego_entity(
             _composed(["ego.entity=carla_driver", "driver.bridge={adress:'x'}"])
         )
+
+
+def test_the_plan_is_shown_as_the_ego_s_debug_markers() -> None:
+    entity, _ = _entity()
+    world = _world_with_route()
+    entity.on_scenario_start(world)
+    assert not entity.debug_markers()
+
+    entity.on_tick(world, _TICK_S)
+
+    markers = entity.debug_markers()
+    assert len(markers) == 1
+    # The fake policy plans 0.8 m steps straight along +x.
+    xs = [x for x, _, _ in markers.polylines[0].points]
+    assert xs == pytest.approx([0.8, 1.6, 2.4, 3.2])
