@@ -520,6 +520,8 @@ probes:
   once is read from the cache without the network; a tag or a branch is
   fetched on every load, to learn which commit it names now. Pin a commit for
   runs that must be reproducible.
+- Quote a `rev` that YAML would read as a number: a commit id of digits
+  and one `e` (`rev: '1630255e36'`), or of digits only.
 - Fetching needs `git`, which the scenario image does not have. A run there
   can still read a source pinned to a full commit id, from a cache filled
   beforehand (`scenario-odd show urban.yaml` with the same cache directory)
