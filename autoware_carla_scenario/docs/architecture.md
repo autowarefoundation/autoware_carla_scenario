@@ -324,6 +324,13 @@ graph LR
 
 #### Debug markers
 
+The video shows two things the camera alone would not: what the ego planned and where it actually went.
+
+| Line | Colour | Where it comes from |
+|------|--------|---------------------|
+| The planner's output | Green, a dot at each point | `EgoVehicle.debug_markers()`, recorded during the run |
+| The path the ego drove | Orange, growing behind the car | The replayed ego itself (`DrivenPathDrawer`), for every kind of ego |
+
 The ego entity can show what the world does not: `EgoVehicle.debug_markers()` returns the shapes it wants drawn on the current tick (`DebugMarkers`, polylines in CARLA world coordinates, from `autoware_carla_scenario.debug_markers`). The base class shows nothing; the entities that follow a trajectory show it as a green line with a dot at each point:
 
 | Entity | What it shows |
@@ -335,6 +342,8 @@ The recording keeps no debug drawing, and the entity is gone by the time the vid
 
 1. **During execution**: after every tick of the recording that the ego is ticked on (the wait for the ego to be ready, then the scenario), the runner asks the ego for its markers and keeps them in a `DebugMarkerLog`, by the frame of the recording. Only a run that renders a video (a spectator is configured) keeps them.
 2. **During replay**: before each tick, the runner draws the markers of the frame that tick shows with CARLA's debug helper (`world.debug`), for one and a half ticks of simulated time: long enough to be in that frame, gone before the next one. The RGB camera sees them like any other geometry.
+
+The driven path needs nothing from the run: the replay moves the ego exactly as it moved, so after each replay tick the runner extends the path to where the replayed ego now is. A segment is added each time the ego has moved half a metre, drawn once to last until the end of the video; a jump of more than 10 m in one tick (the ego placed somewhere else) starts a new piece of path.
 
 An entity of your own shows more by overriding `debug_markers()`:
 

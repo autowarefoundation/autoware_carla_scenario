@@ -1,4 +1,4 @@
-"""Debug markers an ego entity shows in the scenario's video.
+"""Debug markers in the scenario's video: the ego's plan and the path it drove.
 
 An ego entity knows things the world does not show: the trajectory its
 planner is following, for one.  :meth:`EgoVehicle.debug_markers
@@ -12,6 +12,10 @@ recording keeps no debug drawings: the entity is gone by then, too.  So the
 runner keeps each tick's markers in a :class:`DebugMarkerLog`, by the frame of
 the recording they belong to, and the replay draws a frame's markers just
 before the tick that shows it.
+
+The path the ego actually drove needs no entity: the replay moves the ego as
+it moved, and a :class:`DrivenPathDrawer` traces it behind the car as the
+replay goes, beside the plan it was following.
 """
 
 from __future__ import annotations
@@ -19,16 +23,20 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
+import math
+
 import typesafe_carla.carla as carla
 
 if TYPE_CHECKING:
     from .driver.geometry import Trajectory
 
 __all__ = [
+    "DRIVEN_PATH_COLOR",
     "TRAJECTORY_COLOR",
     "DebugMarkerLog",
     "DebugMarkers",
     "DebugPolyline",
+    "DrivenPathDrawer",
     "draw_debug_markers",
     "plan_polyline",
 ]
@@ -40,6 +48,9 @@ WorldPoint = Tuple[float, float, float]
 
 #: The colour a planned trajectory is drawn in.
 TRAJECTORY_COLOR: RGB = (0, 255, 0)
+
+#: The colour the path the ego drove is drawn in.
+DRIVEN_PATH_COLOR: RGB = (255, 128, 0)
 
 #: How far above its points a trajectory is drawn, metres: a plan lies on the
 #: road surface, where a line would sink into the asphalt.
@@ -193,3 +204,81 @@ class DebugMarkerLog:
 
     def __len__(self) -> int:
         return len(self._frames)
+
+
+class DrivenPathDrawer:
+    """Traces the path a vehicle drives, one segment at a time.
+
+    Fed the vehicle's location after every tick, it draws a segment from the
+    last point it drew to there once the vehicle has moved *step_m*, so a
+    vehicle standing still adds nothing, and a long run stays a few segments
+    per metre.  A segment is drawn once, to last as long as it is given: the
+    rest of the video.  A jump longer than *max_jump_m* in one tick -- the
+    vehicle placed somewhere else -- starts a new piece of path rather than
+    drawing a line across the map.
+
+    Args:
+        color: The path's colour.
+        thickness: The line's thickness, metres.
+        step_m: How far the vehicle moves between two points of the path.
+        max_jump_m: The longest a vehicle is taken to drive in one tick.
+    """
+
+    _color: RGB
+    _thickness: float
+    _step_m: float
+    _max_jump_m: float
+    _last: Optional[WorldPoint]
+    _segments: int
+
+    def __init__(
+        self,
+        color: RGB = DRIVEN_PATH_COLOR,
+        thickness: float = 0.1,
+        step_m: float = 0.5,
+        max_jump_m: float = 10.0,
+    ) -> None:
+        self._color = color
+        self._thickness = thickness
+        self._step_m = step_m
+        self._max_jump_m = max_jump_m
+        self._last = None
+        self._segments = 0
+
+    @property
+    def segments(self) -> int:
+        """How many segments have been drawn."""
+        return self._segments
+
+    def update(
+        self, world: "carla.World", location: "carla.Location", life_time: float
+    ) -> None:
+        """Extend the path to *location*, drawing for *life_time* seconds."""
+        point: WorldPoint = (
+            float(location.x),
+            float(location.y),
+            float(location.z) + _TRAJECTORY_LIFT_M,
+        )
+        last = self._last
+        if last is None:
+            self._last = point
+            return
+        distance = math.sqrt(
+            (point[0] - last[0]) ** 2
+            + (point[1] - last[1]) ** 2
+            + (point[2] - last[2]) ** 2
+        )
+        if distance > self._max_jump_m:
+            self._last = point
+            return
+        if distance < self._step_m:
+            return
+        world.debug.draw_line(
+            _location(last),
+            _location(point),
+            thickness=self._thickness,
+            color=_color(self._color),
+            life_time=life_time,
+        )
+        self._segments += 1
+        self._last = point

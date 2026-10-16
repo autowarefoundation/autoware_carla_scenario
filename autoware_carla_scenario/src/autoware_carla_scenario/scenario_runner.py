@@ -24,7 +24,7 @@ from .entity.registry import (
 from .conditions import EntityExistenceCondition, ScenarioResult, TimeoutCondition
 from .conditions.base import BaseCondition, ConditionStatus, find_actor_by_role_name
 from .constants import DEFAULT_TM_PORT, EGO_ROLE_NAME, FIXED_DELTA_SECONDS
-from .debug_markers import DebugMarkerLog, draw_debug_markers
+from .debug_markers import DebugMarkerLog, DrivenPathDrawer, draw_debug_markers
 from .maps.opendrive import map_asset_env_var
 from .coordinate.map_manager import run_carla_map
 from .coordinate.poses import CarlaWorldPose
@@ -834,7 +834,8 @@ class ScenarioRunner:
         the recording starts with carry :data:`WARMUP_CAPTION` along the bottom.
         The ego's debug markers (:meth:`EgoVehicle.debug_markers`), which the
         recording does not keep, are drawn from *debug_log* into the frames
-        they were recorded on.
+        they were recorded on, and the path the ego drives is traced behind it
+        (:class:`DrivenPathDrawer`).
 
         Args:
             log_path: Path to the CARLA ``.log`` recording file.
@@ -899,6 +900,8 @@ class ScenarioRunner:
             # followed by a synchronous frame write so no frames are lost to
             # async delivery delays.
             remaining = max(warmup_ticks + tick_count - 1, 0)
+            driven_path = DrivenPathDrawer()
+            driven_path.update(world, ego.get_location(), 0.0)
             for index in range(remaining):
                 # The first tick above showed the recording's frame 1, so this
                 # one shows frame index + 2; its markers go in before the tick
@@ -907,6 +910,13 @@ class ScenarioRunner:
                 if markers is not None:
                     draw_debug_markers(world, markers, _DEBUG_MARKER_LIFE_TIME)
                 world.tick()
+                # The path so far stays to the end of the video: each segment
+                # is drawn once, to last the ticks still to come.
+                driven_path.update(
+                    world,
+                    ego.get_location(),
+                    (remaining - index) * FIXED_DELTA_SECONDS + _DEBUG_MARKER_LIFE_TIME,
+                )
                 # Frame index + 1 of the recording; the first warmup_ticks are
                 # the warm-up.
                 if index + 1 < warmup_ticks:

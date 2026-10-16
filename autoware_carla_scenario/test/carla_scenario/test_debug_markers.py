@@ -12,10 +12,12 @@ import pytest
 from autoware_carla_scenario import ScenarioRunner
 from autoware_carla_scenario.constants import FIXED_DELTA_SECONDS
 from autoware_carla_scenario.debug_markers import (
+    DRIVEN_PATH_COLOR,
     TRAJECTORY_COLOR,
     DebugMarkerLog,
     DebugMarkers,
     DebugPolyline,
+    DrivenPathDrawer,
     draw_debug_markers,
     plan_polyline,
 )
@@ -204,20 +206,19 @@ def test_the_markers_last_one_frame_of_the_replay() -> None:
     assert FIXED_DELTA_SECONDS < _DEBUG_MARKER_LIFE_TIME < 2 * FIXED_DELTA_SECONDS
 
 
-def test_the_replay_draws_each_frame_s_markers_before_the_tick_that_shows_it(
-    tmp_path: Path,
-) -> None:
+def _replay(
+    tmp_path: Path, log: DebugMarkerLog, ego_x_per_tick: float = 0.0
+) -> _DrawingWorld:
+    """Render a recording of 1 warm-up and 3 scenario ticks; the drawn world."""
     with patch("autoware_carla_scenario.scenario_runner.carla.Client"):
         runner = ScenarioRunner(MagicMock())
     world = _DrawingWorld()
     runner._client = MagicMock()  # noqa: SLF001
     runner._client.get_world.return_value = world  # noqa: SLF001
-
-    log = DebugMarkerLog()
-    log.start(0)
-    # Frame 1 is the tick that spawns the replayed actors, before the camera.
-    log.record(1, _markers((1.0, 0.0, 0.0), (1.0, 1.0, 0.0)))
-    log.record(3, _markers((3.0, 0.0, 0.0), (3.0, 1.0, 0.0)))
+    ego = MagicMock()
+    ego.get_location.side_effect = lambda: SimpleNamespace(
+        x=ego_x_per_tick * world.frame, y=0.0, z=0.0
+    )
 
     recorder = MagicMock()
     recorder.write_frame.side_effect = lambda *a: world.events.append(
@@ -227,7 +228,7 @@ def test_the_replay_draws_each_frame_s_markers_before_the_tick_that_shows_it(
         patch("autoware_carla_scenario.scenario_runner._destroy_all_dynamic_actors"),
         patch(
             "autoware_carla_scenario.scenario_runner.find_actor_by_role_name",
-            return_value=MagicMock(),
+            return_value=ego,
         ),
         patch(
             "autoware_carla_scenario.scenario_runner.CameraRecorder",
@@ -243,6 +244,20 @@ def test_the_replay_draws_each_frame_s_markers_before_the_tick_that_shows_it(
             scenario_name="S",
             debug_log=log,
         )
+    return world
+
+
+def test_the_replay_draws_each_frame_s_markers_before_the_tick_that_shows_it(
+    tmp_path: Path,
+) -> None:
+    log = DebugMarkerLog()
+    log.start(0)
+    # Frame 1 is the tick that spawns the replayed actors, before the camera.
+    log.record(1, _markers((1.0, 0.0, 0.0), (1.0, 1.0, 0.0)))
+    log.record(3, _markers((3.0, 0.0, 0.0), (3.0, 1.0, 0.0)))
+
+    # An ego standing still traces no path.
+    world = _replay(tmp_path, log)
 
     lines = [
         (e[0], e[1][0].x) if e[0] == "line" else e
@@ -258,3 +273,85 @@ def test_the_replay_draws_each_frame_s_markers_before_the_tick_that_shows_it(
     ]
     line = next(e for e in world.events if e[0] == "line")
     assert line[2]["life_time"] == pytest.approx(_DEBUG_MARKER_LIFE_TIME)
+
+
+def test_the_replay_traces_the_path_the_ego_drove_to_the_end_of_the_video(
+    tmp_path: Path,
+) -> None:
+    world = _replay(tmp_path, DebugMarkerLog(), ego_x_per_tick=2.0)
+
+    segments = [(e[1][0].x, e[1][1].x, e[2]) for e in world.events if e[0] == "line"]
+    # One segment per tick after the first, from where the ego was to where
+    # it is, each lasting the ticks still to come.
+    assert [(begin, end) for begin, end, _ in segments] == [
+        (2.0, 4.0),
+        (4.0, 6.0),
+        (6.0, 8.0),
+    ]
+    life_times = [kwargs["life_time"] for _, _, kwargs in segments]
+    assert life_times == pytest.approx(
+        [
+            (3 - index) * FIXED_DELTA_SECONDS + _DEBUG_MARKER_LIFE_TIME
+            for index in range(3)
+        ]
+    )
+    color = segments[0][2]["color"]
+    assert (color.r, color.g, color.b) == DRIVEN_PATH_COLOR
+
+
+# ---------------------------------------------------------------------------
+# The driven path
+# ---------------------------------------------------------------------------
+
+
+def _at(x: float, y: float = 0.0) -> SimpleNamespace:
+    return SimpleNamespace(x=x, y=y, z=0.0)
+
+
+def test_the_driven_path_starts_at_the_first_location_it_is_given() -> None:
+    world = _DrawingWorld()
+    path = DrivenPathDrawer()
+
+    path.update(world, _at(0.0), 1.0)  # type: ignore[arg-type]
+
+    assert path.segments == 0
+    assert world.events == []
+
+
+def test_a_vehicle_standing_still_adds_no_segment() -> None:
+    world = _DrawingWorld()
+    path = DrivenPathDrawer(step_m=0.5)
+
+    for x in (0.0, 0.1, 0.2, 0.3):
+        path.update(world, _at(x), 1.0)  # type: ignore[arg-type]
+
+    assert path.segments == 0
+
+
+def test_the_path_is_drawn_once_the_vehicle_has_moved_a_step() -> None:
+    world = _DrawingWorld()
+    path = DrivenPathDrawer(step_m=0.5)
+
+    for x in (0.0, 0.3, 0.6, 0.9, 1.2):
+        path.update(world, _at(x), 4.0)  # type: ignore[arg-type]
+
+    lines = [e for e in world.events if e[0] == "line"]
+    # carla.Location holds float32.
+    assert [(round(e[1][0].x, 5), round(e[1][1].x, 5)) for e in lines] == [
+        (0.0, 0.6),
+        (0.6, 1.2),
+    ]
+    assert all(e[2]["life_time"] == 4.0 for e in lines)
+    # Drawn a little above the road, as the plan is.
+    assert all(e[1][0].z > 0.0 for e in lines)
+
+
+def test_a_vehicle_placed_elsewhere_starts_a_new_piece_of_path() -> None:
+    world = _DrawingWorld()
+    path = DrivenPathDrawer(step_m=0.5, max_jump_m=10.0)
+
+    for x in (0.0, 1.0, 100.0, 101.0):
+        path.update(world, _at(x), 1.0)  # type: ignore[arg-type]
+
+    lines = [e for e in world.events if e[0] == "line"]
+    assert [(e[1][0].x, e[1][1].x) for e in lines] == [(0.0, 1.0), (100.0, 101.0)]
