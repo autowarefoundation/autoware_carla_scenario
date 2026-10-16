@@ -6,6 +6,10 @@ from pathlib import Path
 
 import typesafe_carla.carla as carla
 
+# The actors recorded and the roles of the ego, as Python's.
+RECORDED_KINDS = ("vehicle.", "walker.")
+EGO_ROLES = ("ego", "hero")
+
 
 class TrajectoryRecorder:
     path: Path

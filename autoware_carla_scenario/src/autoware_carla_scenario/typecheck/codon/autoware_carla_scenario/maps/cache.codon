@@ -9,7 +9,11 @@ from pathlib import Path
 from .._map_source import MapSource
 from .._tc import _keyword_only
 
+# The module's constants, as Python's.
+CACHE_ROOT_ENV = "AUTOWARE_CARLA_SCENARIO_MAP_CACHE"
+AUTOWARE_DATA_DIR_ENV = "AUTOWARE_DATA_DIR"
 DERIVED_SUBDIR = ".derived"
+TIP_SUFFIX = ".tip.json"
 
 
 class MapCacheError(Static[RuntimeError]):

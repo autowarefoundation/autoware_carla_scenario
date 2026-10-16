@@ -19,6 +19,15 @@ from .entity import (EgoConfig, EgoVehicle, VehicleEntity, PedestrianEntity,
                      _expect_optional_ego_vehicle, _expect_optional_lanelet2_poses)
 
 
+# A frozen dataclass in Python, so @tuple here: an assignment to a field fails
+# the check as it fails the run.
+@tuple
+class SpectatorCameraConfig:
+    offset_back: float
+    offset_up: float
+    pitch: float
+
+
 def _expect_action_or_callback(cb):
     """A Union[BaseAction, Callable[[carla.World], None]] argument."""
     if hasattr(cb, "_acs_action"):

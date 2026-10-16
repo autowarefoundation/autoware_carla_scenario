@@ -5,6 +5,10 @@
 # records with its outcome.  A scenario never builds a RunEnvironment:
 # capture() returns it.
 
+# The suffixes of the files a run's environment is written to, as Python's.
+ENVIRONMENT_SUFFIX = "_environment.json"
+LOCK_SUFFIX = "_requirements.lock"
+
 
 class RunEnvironment:
     _unused: int
