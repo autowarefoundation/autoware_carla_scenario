@@ -12,6 +12,8 @@ from .actions import (BaseAction, EnvironmentAction, FollowTrajectoryAction,
                       TrafficSignalControllerAction, TurnAction, TurnIndicatorAction,
                       WalkStraightAction,
                       TrafficSourceAction, TrafficSinkAction)
+from ._bridge_pose import BridgePose
+from .autoware_bridge.grpc_server import GrpcAutowareBridgeServer
 from .conditions import (AccelerationCondition, AccelerationDirection, AlwaysTrueCondition,
                          AndCondition, BaseCondition, CollisionCondition, CollisionTargetType,
                          ComparisonRule, DistanceCoordinateSystem, ElapsedTimeCondition,
@@ -31,20 +33,21 @@ from .conditions import (AccelerationCondition, AccelerationDirection, AlwaysTru
                          WaypointCheckType, WaypointCondition, find_actor_by_role_name)
 from .constants import EGO_ROLE_NAME
 from .coordinate import (CarlaWorldPose, CoordinateFrame, FrameMismatchError,
-                         GroundProjectionConfig, Lanelet2Pose, OpenDrivePose,
-                         find_nearest_traffic_light, frame_of, get_stop_line_poses,
-                         get_stop_line_poses_with_following,
+                         GroundProjectionConfig, Lanelet2Pose, MapManager, OpenDrivePose,
+                         find_nearest_traffic_light, frame_of, get_stop_line_linestrings,
+                         get_stop_line_poses, get_stop_line_poses_with_following,
                          lanelet2_traffic_light_id_to_opendrive_controller_id,
                          lanelets_ahead, snap_to_carla_road, to_carla_location, to_carla_world, to_lanelet2,
-                         to_opendrive)
-from .entity import (EgoVehicle, PedestrianEntity, PedestrianEntityConfig, SpawnLocation,
+                         to_map_frame, to_opendrive)
+from .driver.egodriver_client import EgoDriverGrpcClient
+from .entity import (CarlaDriverEntity, EgoVehicle, PedestrianEntity, PedestrianEntityConfig, SpawnLocation,
                      SpawnPointIndex, SpawnTransform, VehicleEntity, VehicleEntityConfig)
 from .entity_role import EntityRole
 from .kinematics import (AbsoluteAcceleration, AbsoluteVelocity, FrenetAcceleration,
                          FrenetVelocity, RelativeAcceleration, RelativeVelocity, Vector3)
 from .coverage import SamplingEvent
 from .odd import (OddAttribute, OddCondition, OddDefinition, OddModule, all_of, any_of,
-                  default_odd, module_holds, register_odd)
+                  default_odd, module_holds, register_odd, resolve_odd)
 from .measures import Bumpers
 from .placement import (
     place_at_stop_line_distance, place_at_vehicle_ahead_gap, solve_along,
@@ -54,7 +57,7 @@ from .scenario_base import BaseScenario, EgoConfig
 from .scenario_config import (DriverCameraSpec, DriverConfig, DriverControlSpec, DriverLidarSpec,
                               EgoVehicleConfig, EntityConfig, MapConfig, NpcVehicleConfig,
                               ServerConfig, SweepConfig)
-from .traffic import LaneChangeDirection, TurnDirection
+from .traffic import LaneChangeDirection, TrafficContext, TurnDirection, register_backend
 from .trajectory import (MapPose, ReferenceContext, RelativeLanePose, RouteCrossingPose,
                          RouteCrosswalkPose, RouteLanePose, RouteOppositePose,
                          RouteRoadsidePose, Trajectory, TrajectoryFollowingMode,

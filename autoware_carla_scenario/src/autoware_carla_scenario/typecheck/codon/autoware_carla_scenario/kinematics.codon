@@ -2,7 +2,11 @@
 
 import typesafe_carla.carla as carla
 
-from .coordinate import CoordinateFrame
+from .coordinate import CoordinateFrame, FrameMismatchError, frame_of
+
+
+def normalize_angle_deg(angle: float) -> float:
+    return (angle + 180.0) % 360.0 - 180.0
 
 
 class Vector3:

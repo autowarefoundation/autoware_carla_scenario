@@ -3,6 +3,7 @@
 import typesafe_carla.carla as carla
 
 from ._tc import _keyword_only, _expect_float, _expect_optional_float, _expect_optional_bool
+from .action_state import ActionState
 from .conditions import BaseCondition, TurnIndicatorState, _expect_optional_condition
 from .coordinate import (Lanelet2Pose, CarlaWorldPose, GroundProjectionConfig,
                          _expect_optional_ground_projection)
@@ -17,16 +18,6 @@ class TickTiming:
     value: str
     PRE_TICK: ClassVar[TickTiming] = TickTiming("pre_tick")
     POST_TICK: ClassVar[TickTiming] = TickTiming("post_tick")
-
-
-@tuple
-class ActionState:
-    value: str
-    STANDBY: ClassVar[ActionState] = ActionState("standbyState")
-    START_TRANSITION: ClassVar[ActionState] = ActionState("startTransition")
-    RUNNING: ClassVar[ActionState] = ActionState("runningState")
-    END_TRANSITION: ClassVar[ActionState] = ActionState("endTransition")
-    COMPLETE: ClassVar[ActionState] = ActionState("completeState")
 
 
 @tuple

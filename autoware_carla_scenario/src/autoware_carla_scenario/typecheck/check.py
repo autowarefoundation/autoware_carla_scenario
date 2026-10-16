@@ -66,6 +66,7 @@ from .library import (
     UNCALLED,
     package_modules,
 )
+from .not_modelled import NOT_MODELLED
 from .library_driver import (
     render_library_checks,
     render_library_driver,
@@ -188,6 +189,113 @@ def _model_modules() -> frozenset[str]:
         if p.stem != "__init__"
     )
     return frozenset(names)
+
+
+def _model_file(module: str) -> Path:
+    """The model file of *module*, one of :func:`_model_modules`."""
+    root = model_dir() / _PACKAGE
+    parts = module.split(".")[1:]
+    if not parts:
+        return root / "__init__.codon"
+    return root.joinpath(*parts[:-1], f"{parts[-1]}.codon")
+
+
+@lru_cache(maxsize=None)
+def _model_names(module: str) -> frozenset[str]:
+    """The names model module *module* declares: what it defines or imports."""
+    names: set[str] = set()
+    for node in ast.parse(_model_file(module).read_text()).body:
+        if isinstance(node, (ast.ClassDef, ast.FunctionDef)):
+            names.add(node.name)
+        elif isinstance(node, (ast.Assign, ast.AnnAssign)):
+            targets = [node.target] if isinstance(node, ast.AnnAssign) else node.targets
+            names.update(t.id for t in targets if isinstance(t, ast.Name))
+        elif isinstance(node, ast.ImportFrom):
+            names.update(alias.asname or alias.name for alias in node.names)
+    return frozenset(names)
+
+
+def _not_modelled(module: str, names: list[str]) -> list[str]:
+    """Why ``from module import names`` fails the check: each name the model of
+    *module* leaves out on purpose (:data:`.not_modelled.NOT_MODELLED`)."""
+    reasons = NOT_MODELLED.get(module, {})
+    return [
+        f"{module}.{name} is not part of the Codon model, on purpose: "
+        f"{reasons[name]}"
+        for name in names
+        if name in reasons
+    ]
+
+
+def _python_attribute(module: str, name: str) -> tuple[bool, Any]:
+    """(found, value) of *name* in Python's *module*."""
+    try:
+        found = importlib.import_module(module)
+        return hasattr(found, name), getattr(found, name, None)
+    except Exception:  # a module that does not import: not one to suggest
+        return False, None
+
+
+def _unmodelled_module(module: str, names: list[str]) -> str:
+    """Why ``from module import names`` fails the check, *module* being one of
+    the package's modules the model does not have: where else the model
+    declares each name as Python exports it, if anywhere.
+
+    A module of the model is suggested only when its Python module has the
+    same object under that name, so the suggested import runs too (#237).
+    """
+    message = f"{module} is not part of the Codon model"
+    wanted = [n for n in names if n != "*"]
+    if not wanted:
+        return message
+    modelled = _model_modules()
+    parts = module.split(".")
+    ancestors = [
+        ".".join(parts[:end])
+        for end in range(len(parts) - 1, 0, -1)
+        if ".".join(parts[:end]) in modelled
+    ]
+    candidates = [*ancestors, *sorted(modelled - set(ancestors))]
+    found: dict[str, str] = {}
+    reasons: list[str] = []
+    for name in wanted:
+        has, value = _python_attribute(module, name)
+        for candidate in candidates:
+            if name not in _model_names(candidate) or name in NOT_MODELLED.get(
+                candidate, {}
+            ):
+                continue
+            there, other = _python_attribute(candidate, name)
+            if there and (not has or other is value):
+                found[name] = candidate
+                break
+        else:
+            reasons += [
+                f"{candidate}.{name} is left out on purpose: "
+                f"{NOT_MODELLED[candidate][name]}"
+                for candidate in candidates
+                if name in NOT_MODELLED.get(candidate, {})
+            ][:1]
+    missing = [n for n in wanted if n not in found]
+    if not missing:
+        by_module: dict[str, list[str]] = {}
+        for name in wanted:
+            by_module.setdefault(found[name], []).append(name)
+        where = "; ".join(
+            f"import {', '.join(each)} from {candidate}"
+            for candidate, each in by_module.items()
+        )
+        return f"{message}; {where} instead"
+    it = "it" if len(missing) == 1 else "them"
+    tail = (
+        f", and no module of the model declares {', '.join(missing)} as Python "
+        f"exports {it}"
+    )
+    tail += "".join(f"; {reason}" for reason in reasons)
+    tail += "".join(
+        f"; import {name} from {candidate}" for name, candidate in found.items()
+    )
+    return message + tail
 
 
 @lru_cache(maxsize=1)
@@ -470,6 +578,12 @@ def _collect(roots: list[str], tc: Toolchain, codon_path: Path) -> _Sources:
         for imported, names, lineno in _imports(tree, name, is_package):
             top = imported.split(".")[0]
             if imported in modeled:
+                # A name the model leaves out on purpose: said with the
+                # reason, rather than as Codon's "cannot import name" (#237).
+                out.problems += [
+                    Diagnostic(message, str(path), lineno)
+                    for message in _not_modelled(imported, names)
+                ]
                 # The model may declare what Python's module lacks (a
                 # model-only helper module, a name the model needs for
                 # itself): an import Python runs must find it there too (#214).
@@ -493,7 +607,7 @@ def _collect(roots: list[str], tc: Toolchain, codon_path: Path) -> _Sources:
             if top in stdlib and top != _PACKAGE:
                 continue
             if top == _PACKAGE:
-                what = f"{imported} is not part of the Codon model; import from {_PACKAGE} instead"
+                what = _unmodelled_module(imported, names)
             else:
                 what = f"{imported} has no Codon model, so a scenario importing it cannot be checked"
             out.problems.append(Diagnostic(what, str(path), lineno))

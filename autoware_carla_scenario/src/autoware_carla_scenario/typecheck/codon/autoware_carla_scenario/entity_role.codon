@@ -1,5 +1,7 @@
 # Model of autoware_carla_scenario.entity_role (docs/typecheck.md).
 
+import typesafe_carla.carla as carla
+
 
 class EntityRole:
     _value: str
@@ -78,3 +80,24 @@ def _expect_optional_role(role) -> Optional[EntityRole]:
         return _expect_role(unwrap(role))
     else:
         return _expect_role(role)
+
+
+def find_actor_in_list(actors, role_name) -> Optional[carla.Actor]:
+    # Union[carla.ActorList, list[carla.Actor]] in Python: a Union parameter
+    # crashes Codon 0.19, so it is generic and its type is checked here.
+    if isinstance(actors, carla.ActorList):
+        pass
+    elif isinstance(actors, List[carla.Actor]):
+        pass
+    else:
+        compile_error("find_actor_in_list(): actors is a carla.ActorList or a list of carla.Actor")
+    # str(), as in Python: a checked module's EntityRole (the library check)
+    # is not the model's, and both name a role the same way.
+    name: str = str(role_name)
+    raise NotImplementedError()
+
+
+def find_actor_in_world(world: carla.World, role_name) -> Optional[carla.Actor]:
+    # str(), as find_actor_in_list: a role of either EntityRole names it.
+    name: str = str(role_name)
+    raise NotImplementedError()

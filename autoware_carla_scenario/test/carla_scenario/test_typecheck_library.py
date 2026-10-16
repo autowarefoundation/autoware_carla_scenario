@@ -76,6 +76,30 @@ def test_every_excluded_module_has_a_reason() -> None:
     assert all(reason.strip() for reason in EXCLUDED.values())
 
 
+_DOCS = Path(__file__).resolve().parents[2] / "docs" / "typecheck.md"
+
+
+def test_the_docs_count_the_checked_modules_and_the_uncalled_functions() -> None:
+    # docs/typecheck.md's "What is checked of the framework" counts what this
+    # manifest lists; computed here, so they cannot drift again (#240).
+    text = " ".join(_DOCS.read_text(encoding="utf-8").split())
+    modules = len(package_modules())
+    percent = round(100 * len(CHECKED) / modules)
+    assert (
+        f"{len(CHECKED)} of the package's {modules} modules ({percent}%;" in text
+    ), "update the module counts in docs/typecheck.md"
+    protected = [
+        name
+        for name in UNCALLED
+        if name.rsplit(".", 1)[-1].startswith("_")
+        and not name.rsplit(".", 1)[-1].startswith("__")
+    ]
+    assert (
+        f"{len(UNCALLED)} functions and methods of those modules are `UNCALLED` "
+        f"({len(protected)} of them protected helpers" in text
+    ), "update the UNCALLED counts in docs/typecheck.md"
+
+
 def test_every_uncalled_function_is_one_of_a_checked_module() -> None:
     modules = package_modules()
     for name, reason in UNCALLED.items():

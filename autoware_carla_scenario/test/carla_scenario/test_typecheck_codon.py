@@ -1996,6 +1996,220 @@ def test_a_scenario_may_read_the_pose_to_map_frame_returns(tmp_path: Path) -> No
 
 
 # ---------------------------------------------------------------------------
+# Public names the model declares, and those it leaves out on purpose (#237)
+# ---------------------------------------------------------------------------
+
+_PUBLIC_NAMES_SETUP = """
+from autoware_carla_scenario import (
+    BaseAction,
+    BridgePose,
+    CarlaDriverEntity,
+    EgoDriverGrpcClient,
+    GrpcAutowareBridgeServer,
+    LaneChangeAction,
+    MapManager,
+    TrafficContext,
+    get_stop_line_linestrings,
+    register_backend,
+    resolve_odd,
+    to_map_frame,
+)
+from autoware_carla_scenario.action_state import ActionState
+from autoware_carla_scenario.conditions import (
+    ActionStateCondition,
+    LaneChangeSettledCondition,
+    compare,
+    find_actor_in_list,
+)
+from autoware_carla_scenario.coordinate import AnyPose
+from autoware_carla_scenario.debug_markers import DRIVEN_PATH_COLOR, TRAJECTORY_COLOR
+from autoware_carla_scenario.entity_role import find_actor_in_list as find_actor
+from autoware_carla_scenario.entity_role import find_actor_in_world
+from autoware_carla_scenario.environment import ENVIRONMENT_SUFFIX, LOCK_SUFFIX
+from autoware_carla_scenario.kinematics import (
+    CoordinateFrame,
+    FrameMismatchError,
+    frame_of,
+    normalize_angle_deg,
+)
+from autoware_carla_scenario.maps.cache import (
+    AUTOWARE_DATA_DIR_ENV,
+    CACHE_ROOT_ENV,
+    TIP_SUFFIX,
+)
+from autoware_carla_scenario.scenario_base import SpectatorCameraConfig
+from autoware_carla_scenario.trajectory_recorder import EGO_ROLES, RECORDED_KINDS
+turn = TurnAction(EGO_ROLE_NAME, TurnDirection.LEFT, timing=TickTiming.PRE_TICK)
+self.register_pre_tick(turn)
+# Actions of different classes, item by item: Codon types a dict display by
+# its first item (docs/typecheck.md).
+lane_change = LaneChangeAction(EGO_ROLE_NAME, LaneChangeDirection.LEFT)
+actions: dict[str, BaseAction] = {}
+actions["turn"] = turn
+actions["lane_change"] = lane_change
+self.register_pass_condition(
+    ActionStateCondition("turn", ActionState.COMPLETE, actions, label="turned")
+)
+self.register_fail_condition(
+    ActionStateCondition("turn", "runningState", {"turn": turn})
+)
+# Looked up on every check, so the mapping may be empty when it is built.
+self.register_fail_condition(ActionStateCondition("a", "completeState", {}, label="done"))
+self.register_fail_condition(LaneChangeSettledCondition(EGO_ROLE_NAME, label="settled"))
+self.register_fail_condition(LaneChangeSettledCondition("npc1"))
+heading = normalize_angle_deg(370.0)
+if compare(heading, ComparisonRule.LESS_THAN, 15.0, tolerance=0.5):
+    logger.info("%f", heading)
+pose: AnyPose = Lanelet2Pose(460, 1.0)
+if frame_of(pose) == CoordinateFrame.LANELET2:
+    logger.info("lanelet2")
+try:
+    logger.info("%f", to_map_frame(Lanelet2Pose(460, 1.0)).position.x)
+except FrameMismatchError as exc:
+    logger.info("%s", str(exc))
+camera = SpectatorCameraConfig(8.0, 3.0, -15.0)
+logger.info("%f %f %f", camera.offset_back, camera.offset_up, camera.pitch)
+actor = find_actor_in_list(self.world.get_actors(), EGO_ROLE_NAME)
+if actor is not None:
+    logger.info("%s", actor.type_id)
+listed: list[carla.Actor] = []
+ego = find_actor_in_world(self.world, EGO_ROLE_NAME)
+if ego is not None:
+    logger.info("%s", ego.type_id)
+other = find_actor(listed, "npc1")
+if other is not None:
+    logger.info("%s", other.type_id)
+logger.info("%d", len(get_stop_line_linestrings(460)))
+logger.info("%s %s %s", ENVIRONMENT_SUFFIX, LOCK_SUFFIX, TIP_SUFFIX)
+logger.info("%s %s", CACHE_ROOT_ENV, AUTOWARE_DATA_DIR_ENV)
+logger.info("%s %s", EGO_ROLES[0], RECORDED_KINDS[1])
+logger.info("%d %d", TRAJECTORY_COLOR[1], DRIVEN_PATH_COLOR[0])
+"""
+
+
+def test_the_public_names_the_model_now_declares_compile(tmp_path: Path) -> None:
+    # Each was refused (`cannot import name`, or no import path at all for
+    # ActionState) though Python exports it (#237); each is used as Python's
+    # signature allows.
+    scenario, config, _ = _write_case(
+        tmp_path, _PUBLIC_NAMES_SETUP + textwrap.dedent(_VALID_SETUP)
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+@pytest.mark.parametrize(
+    ("setup", "needle", "message"),
+    [
+        (
+            'ActionStateCondition("turn", 1, {"turn": turn})\n',
+            "ActionStateCondition(",
+            "expected an ActionState or a str",
+        ),
+        (
+            'ActionStateCondition("turn", ActionState.COMPLETE, {"turn": 1})\n',
+            "ActionStateCondition(",
+            "_acs_action",
+        ),
+        (
+            'ActionStateCondition("turn", "completeState", {"turn": turn}, "done")\n',
+            "ActionStateCondition(",
+            "ActionStateCondition(): label is keyword-only",
+        ),
+        (
+            "LaneChangeSettledCondition(3)\n",
+            "LaneChangeSettledCondition(3)",
+            "expected an EntityRole or a str",
+        ),
+        (
+            "compare(1.0, 2.0, 3.0)\n",
+            "compare(1.0",
+            "",
+        ),
+    ],
+    ids=[
+        "state-int",
+        "actions-not-actions",
+        "label-by-position",
+        "settled-int",
+        "compare-rule",
+    ],
+)
+def test_a_misused_new_public_name_is_refused_at_its_line(
+    tmp_path: Path, setup: str, needle: str, message: str
+) -> None:
+    # What Python's signatures refuse, the model refuses too.
+    imports = (
+        "from autoware_carla_scenario.action_state import ActionState\n"
+        "from autoware_carla_scenario.conditions import (\n"
+        "    ActionStateCondition, LaneChangeSettledCondition, compare,\n"
+        ")\n"
+        "turn = TurnAction(EGO_ROLE_NAME, TurnDirection.LEFT)\n"
+    )
+    scenario, config, path = _write_case(tmp_path, imports + setup)
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert message in error.message, error.format()
+    assert error.path == str(path)
+    assert error.line == _line_of(path, needle)
+
+
+@pytest.mark.parametrize(
+    ("setup", "needle", "message"),
+    [
+        (
+            "from autoware_carla_scenario.route import parse_route_search\n",
+            "parse_route_search",
+            "autoware_carla_scenario.route.parse_route_search is not part of the "
+            "Codon model, on purpose: the route search",
+        ),
+        (
+            "from autoware_carla_scenario import ScenarioRunner\n",
+            "ScenarioRunner",
+            "autoware_carla_scenario.ScenarioRunner is not part of the Codon "
+            "model, on purpose: the runner",
+        ),
+        (
+            "from autoware_carla_scenario.actions.base import ActionState\n",
+            "actions.base",
+            "autoware_carla_scenario.actions.base is not part of the Codon model; "
+            "import ActionState from autoware_carla_scenario.action_state instead",
+        ),
+        (
+            "from autoware_carla_scenario.conditions.comparison import compare\n",
+            "conditions.comparison",
+            "autoware_carla_scenario.conditions.comparison is not part of the "
+            "Codon model; import compare from autoware_carla_scenario.conditions "
+            "instead",
+        ),
+        (
+            "from autoware_carla_scenario.registry import get_scenario_registry\n",
+            "registry",
+            "autoware_carla_scenario.registry is not part of the Codon model, and "
+            "no module of the model declares get_scenario_registry as Python "
+            "exports it; autoware_carla_scenario.get_scenario_registry is left "
+            "out on purpose: the scenario registry",
+        ),
+    ],
+    ids=["route-search", "runner", "action-state", "compare", "registry"],
+)
+def test_an_import_of_what_the_model_leaves_out_says_why(
+    tmp_path: Path, setup: str, needle: str, message: str
+) -> None:
+    # Refused before compiling, with the reason (NOT_MODELLED) or the module
+    # of the model that declares the name as Python exports it, never a
+    # module Python cannot import it from (#237).
+    scenario, config, path = _write_case(
+        tmp_path, setup + textwrap.dedent(_VALID_SETUP)
+    )
+    result = typecheck_scenario(scenario, config)
+    error = _only_error(result)
+    assert len(result.diagnostics) == 1, result.format()
+    assert message in error.message, error.format()
+    assert error.path == str(path)
+    assert error.line == _line_of(path, needle)
+
+
+# ---------------------------------------------------------------------------
 # The runner's step
 # ---------------------------------------------------------------------------
 

@@ -1,0 +1,15 @@
+# Model of autoware_carla_scenario.action_state (docs/typecheck.md): the
+# lifecycle state of an action, which ActionStateCondition takes and
+# BaseAction.state returns. Kept out of actions.codon as Python keeps it out
+# of the actions package: conditions.codon names it, and actions.codon
+# imports conditions.codon.
+
+
+@tuple
+class ActionState:
+    value: str
+    STANDBY: ClassVar[ActionState] = ActionState("standbyState")
+    START_TRANSITION: ClassVar[ActionState] = ActionState("startTransition")
+    RUNNING: ClassVar[ActionState] = ActionState("runningState")
+    END_TRANSITION: ClassVar[ActionState] = ActionState("endTransition")
+    COMPLETE: ClassVar[ActionState] = ActionState("completeState")

@@ -215,10 +215,25 @@ What `test_typecheck_model.py` compares, model by model:
   `to_map_frame`, `MapManager`, `map_origin`, `resolve_projector`,
   `_parse_geo_reference`, and pyxodr's `RoadNetwork` and lxml's element
   (below).
-- **`conditions.codon`**: beside its exports, `beside_lane_id`,
-  `find_actor_in_list` and `ConditionStatus`, all but its `details` (a
-  `dict[str, Any]`, which Codon cannot express: `_OMITTED_PARAMETERS`), and
-  no other name.
+- **`conditions.codon`**: beside its exports, `ActionStateCondition`,
+  `LaneChangeSettledCondition`, `compare`, `beside_lane_id`, and
+  `ConditionStatus`, all but its `details` (a `dict[str, Any]`, which Codon
+  cannot express: `_OMITTED_PARAMETERS`), and no other name it defines
+  (`find_actor_in_list` it imports from `entity_role.codon`, as Python's
+  `conditions.base` does). `ActionStateCondition`'s `state` is an
+  `ActionState` or its OpenSCENARIO name, and its `actions` any dict of
+  action ids to actions: `actions.codon` imports `conditions.codon`, so an
+  action is checked by what `BaseAction` declares.
+- **`entity_role.codon`**: beside `EntityRole`, `find_actor_in_list` (a
+  `carla.ActorList` or a list of actors, as Python's) and
+  `find_actor_in_world`.
+- **`kinematics.codon`**: beside its exports, `normalize_angle_deg`, and
+  `frame_of` and `FrameMismatchError` as `coordinate.codon` declares them.
+- **`scenario_base.codon`**: beside its exports, `SpectatorCameraConfig` (a
+  frozen dataclass, so a `@tuple`).
+- **`coordinate.codon`**: `AnyPose`, the Union alias, by its members' names,
+  in order, for a scenario's own annotations (no model function takes it: a
+  Union parameter crashes Codon 0.19, so each is generic or overloaded).
 - **`constants.codon`**: every constant, by value (`EGO_ROLE_NAME` as
   `EntityRole.ego()`), and no name `constants.py` lacks.
 - **`route.codon`**: every name it declares -- `parse_anchor`,
@@ -243,12 +258,26 @@ What `test_typecheck_model.py` compares, model by model:
 - **`coverage.codon`, `entity.codon`, `odd.codon`**: the names the checked
   modules import (`_BOUNDARY`), `COVERAGE_SCHEMA` and `CoverGroup` by value.
 - **The models of one framework module each** (`_MODULE_MODELS`):
-  `_bridge_pose`, `carla_install`, `trajectory_recorder`, `environment`,
-  `autoware_bridge/grpc_server`, `autoware_stack/launcher`,
-  `autoware_stack/devcontainer` (and its values), `driver/egodriver_client`,
-  `_map_source`, `maps/cache`, `ui/models`, `_ros2`, `metrics`, `measures` and
+  `_bridge_pose`, `action_state`, `carla_install`, `debug_markers`,
+  `trajectory_recorder`, `environment`, `autoware_bridge/grpc_server`,
+  `autoware_stack/launcher`, `autoware_stack/devcontainer` (and its values),
+  `driver/egodriver_client`, `_map_source`, `maps/cache`,
+  `maps/z_offset_cache`, `ui/models`, `_ros2`, `metrics`, `measures` and
   `utils/traffic_light`, each declaring exactly the names compared;
   `ros2/cyclone` where cyclonedds is installed.
+- **Every public name of a modelled module**: each name a module the model
+  has exports in Python (its `__all__`, or the public names it defines when
+  it has none) is declared by the model or listed, with the reason, in
+  `typecheck/not_modelled.py` (`NOT_MODELLED`), and a name listed there must
+  be neither declared nor gone from Python. Each declared one is compared as
+  above, re-exports included (`kinematics.frame_of`). `OddSample` and
+  `OddCase` differ on purpose (`_DIFFERING`): an opaque, unbuildable stand-in
+  for openodd's sample, and the `@tuple` of the pair Python's alias names.
+- **Every model file**: each `.codon` of the package's model is in one of
+  the tables above or exempt with the reason (`_UNCOMPARED_MODEL_FILES`: the
+  model's helpers, the modules `coordinate.codon` and `entity.codon`
+  re-export, and the `__init__` of a checked subpackage, which models
+  nothing), so a model file no test compares fails the suite.
 - **Third-party models**: carla_driver_interface's geometry, python-dotenv's
   `load_dotenv`, ffmpeg-python's streams, pyxodr's `RoadNetwork` and lxml's
   element.
@@ -294,7 +323,18 @@ constructor Codon generates is its own.
 
 A scenario that imports a module with no model (lanelet2's `matching`, say,
 or a framework module outside the public API) is refused with a message
-naming the module. Third-party packages the framework reads are modelled as
+naming the module. For a framework module, the message says where the model
+declares the names imported as Python exports them, and only where Python's
+module has the same object, so the import it suggests runs too; a name the
+model leaves out on purpose is refused with its reason, whichever module it
+is imported from (#237):
+
+```text
+scenario.py:3: error: autoware_carla_scenario.actions.base is not part of the Codon model; import ActionState from autoware_carla_scenario.action_state instead
+scenario.py:4: error: autoware_carla_scenario.route.parse_route_search is not part of the Codon model, on purpose: the route search, parsed from a document's YAML ...
+```
+
+Third-party packages the framework reads are modelled as
 far as it reads them (lanelet2, pyxodr, carla_driver_interface, python-dotenv,
 ffmpeg-python; see *Making a module compile*), and a scenario may use what
 those models declare.
@@ -351,7 +391,8 @@ scenario has to do itself:
   (`ego_config`, `ego_entity`, `world`, `_ground_projection`, ...).
   An import from a modelled framework module must also work in Python
   (#214): the model declares a few names the Python module does not have
-  (`coordinate.RoadNetwork`, `entity.EgoConfig`, `actions.ActionState`) and
+  (`coordinate.RoadNetwork`, `entity.EgoConfig`, `actions.ActionState`:
+  import it from `autoware_carla_scenario.action_state`, as Python does) and
   model-only helper modules (`autoware_carla_scenario._tc`, `_lists`), and
   an import of one inside a function would compile and raise `ImportError`
   when the function first runs. So the check imports each modelled module
@@ -384,6 +425,17 @@ scenario has to do itself:
 - **Pass numbers of the declared type.** An `int` is accepted for a `float`,
   but not inside a container: a `list[float]` parameter wants `[1.0, 2.0]`.
   YAML values are converted for you.
+- **Build a dict of different actions item by item.** Codon types a dict
+  display by its first item, so `{"turn": turn, "lane_change": lc}` (a
+  `TurnAction` and a `LaneChangeAction`) does not compile, annotated or not;
+  unlike a list display, the check does not rewrite it. Build the
+  `ActionStateCondition`'s `actions` one item at a time instead:
+
+  ```python
+  actions: dict[str, BaseAction] = {}
+  actions["turn"] = turn
+  actions["lane_change"] = lc
+  ```
 - **Convert nested mappings in the config.** The runner passes a YAML mapping
   to the config class as a `dict`, so a field annotated with a dataclass
   (`goal: Goal`) holds one at run time unless the config's `__post_init__`
@@ -557,8 +609,8 @@ To check one more module:
 
 ### What is checked of the framework
 
-Every module now has an entry other than `"not yet checked (#45)"`. 168 of
-the package's 245 modules (69%; about 40,800 of 72,400 lines) are `CHECKED`:
+Every module now has an entry other than `"not yet checked (#45)"`. 169 of
+the package's 247 modules (68%; about 41,600 of 73,700 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the conversions between
 Lanelet2, OpenDRIVE and CARLA world poses (`coordinate.transform`), the stop
 lines read off a Lanelet2 map (`utils.stop_line`, `coordinate.stop_line`)
@@ -596,7 +648,8 @@ of `maps.catalogue`, the `map` config's paths of `maps.config` and the
 OpenDRIVE taken from CARLA by `maps.opendrive`), what an exported scenario
 package pins the framework to and how it runs `uv` (`authoring.framework_pin`,
 `authoring.uv_tool`), the CARLA server manager (`server`) and the camera
-recorder that writes a run's video (`camera_recorder`), the Autoware
+recorder that writes a run's video (`camera_recorder`), the markers an ego
+entity hands the runner to draw and their replay (`debug_markers`), the Autoware
 launcher that runs a stack as a process group (`autoware_stack.launcher`),
 the `scenario_bridge` node's command and Python root beside it
 (`autoware_stack.bridge_node`) and the one that runs a workspace in its dev
@@ -614,7 +667,7 @@ driver's configs and client interface, trajectory follower and observations
 `driver.geometry`), and the `autoware_bridge`, `autoware_stack`, `entity`,
 `driver`, `maps` and `coverage` packages themselves, whose `__init__` re-exports what is not checked
 through models of it (see *A class a checked package only re-exports*
-below). 88
+below). 89
 functions and methods of those modules are `UNCALLED` (19 of them
 protected helpers, see *What is compiled* below): most of them a
 condition's `get_details()` or a backend's `describe()`, what takes a traffic
