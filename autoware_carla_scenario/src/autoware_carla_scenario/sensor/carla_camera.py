@@ -294,17 +294,28 @@ class CarlaCameraSensor(CameraSensorBase):
     def _on_sensor_data(self, data: Union["carla.Image", "carla.SensorData"]) -> None:
         """The sensor's listener: queues the frame for :meth:`get_image`.
 
-        It runs on a CARLA thread, and blocks while the queue is full.  CARLA's
+        It runs on a CARLA thread, which delivers every sensor's data, so it must
+        never block: when the queue is full it drops the oldest frame.  Once the
+        policy stops calling :meth:`get_image` (a finished scenario), a blocking
+        ``put`` would hang that thread for good, and no sensor attached after it,
+        such as the replay's :class:`CameraRecorder`, would get a frame.  CARLA's
         Python API, and typesafe_carla's CPython package, call it with the
         ``carla.Image`` itself.  typesafe_carla's Codon library calls it with
         the ``carla.SensorData``, which ``as_image()`` turns into the image; the
         static check sees that branch, and Python, whose ``Image`` has no
         ``as_image``, never takes it.
         """
-        if hasattr(data, "as_image"):
-            self._frame_queue.put(data.as_image())
-        else:
-            self._frame_queue.put(data)
+        image = data.as_image() if hasattr(data, "as_image") else data
+        # Never block CARLA's delivery thread: drop the oldest frame when full.
+        while True:
+            try:
+                self._frame_queue.put_nowait(image)
+                return
+            except queue.Full:
+                try:
+                    self._frame_queue.get_nowait()
+                except queue.Empty:
+                    pass
 
     def destroy(self) -> None:
         """Stop and destroy the CARLA sensor actor."""
