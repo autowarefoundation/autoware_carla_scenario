@@ -11,6 +11,7 @@ from __future__ import annotations
 import ast
 import inspect
 import queue
+import threading
 from types import SimpleNamespace
 
 import numpy as np
@@ -175,3 +176,22 @@ def test_the_listener_queues_the_frame_it_is_handed() -> None:
     data = SimpleNamespace(as_image=lambda: frame)
     sensor._on_sensor_data(data)  # type: ignore[arg-type]
     assert sensor._frame_queue.get_nowait() is frame
+
+
+def test_the_listener_drops_the_oldest_frame_instead_of_blocking() -> None:
+    """Nothing drains the queue once a scenario ends; a blocking put would hang
+    CARLA's delivery thread, and the replay's recorder would get no frames."""
+    sensor = _sensor()
+
+    def deliver() -> None:
+        for value in (1, 2, 3, 4):
+            sensor._on_sensor_data(_frame(value))  # type: ignore[arg-type]
+
+    delivery = threading.Thread(target=deliver, daemon=True)
+    delivery.start()
+    delivery.join(timeout=5.0)
+    assert not delivery.is_alive(), "the listener blocked on a full queue"
+    image = sensor.get_image()
+    assert image is not None
+    assert int(image[0, 0, 0]) == 4
+    assert sensor._frame_queue.empty()
