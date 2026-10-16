@@ -96,6 +96,8 @@ def repos(tmp_path: Path) -> tuple[Path, Path]:
 
 
 def _binding(tmp_path: Path, taxonomy: Path, modules: Path, rev: str) -> Path:
+    # *rev* quoted: an abbreviated commit of digits and one ``e``, such as
+    # ``1630255e36``, is a number to YAML unquoted.
     binding = tmp_path / "calm.yaml"
     binding.write_text(
         "openodd:\n"
@@ -103,7 +105,7 @@ def _binding(tmp_path: Path, taxonomy: Path, modules: Path, rev: str) -> Path:
         "    rev: v1\n"
         "    path: taxonomy.yml\n"
         f"  - git: {modules}\n"
-        f"    rev: {rev}\n"
+        f"    rev: '{rev}'\n"
         "    path: odd/calm.yml\n"
         "probes:\n"
         f"  wind_speed: {{probe: '{__name__}:wind_mps', unit: m/s}}\n"
@@ -159,6 +161,15 @@ class TestGitSources:
         odd = load_odd_binding(_binding(tmp_path, taxonomy, modules, first[:10]))
         assert odd.sources[1]["commit"] == first
         assert not _inside(odd, 15.0)
+
+    def test_a_revision_that_reads_as_a_number_is_taken_quoted(
+        self, tmp_path: Path, repos: tuple[Path, Path]
+    ) -> None:
+        taxonomy, modules = repos
+        _git(modules, "branch", "1e5")
+        odd = load_odd_binding(_binding(tmp_path, taxonomy, modules, "1e5"))
+        assert odd.sources[1]["rev"] == "1e5"
+        assert odd.sources[1]["commit"] == _head(modules)
 
     def test_a_commit_checked_out_once_needs_no_network(
         self, tmp_path: Path, repos: tuple[Path, Path]

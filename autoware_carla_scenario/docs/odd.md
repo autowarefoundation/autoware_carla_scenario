@@ -496,10 +496,10 @@ revision:
 # urban.yaml
 openodd:
   - git: https://example.com/odd/taxonomy.git
-    rev: v1.2.0                    # a tag, a branch, or a commit
+    rev: 'v1.2.0'                  # a tag, a branch, or a commit
     path: taxonomy.yml             # a list for several files
   - git: git@example.com:odd/modules.git
-    rev: 3f2a9c1e0b7d4a6c8e5f1a2b3c4d5e6f7a8b9c0d
+    rev: '3f2a9c1e0b7d4a6c8e5f1a2b3c4d5e6f7a8b9c0d'
     path: odd/urban.yml
   - local_overrides.yml            # relative to this file
 probes:
@@ -520,6 +520,9 @@ probes:
   once is read from the cache without the network; a tag or a branch is
   fetched on every load, to learn which commit it names now. Pin a commit for
   runs that must be reproducible.
+- Quote `rev`: unquoted, a commit id of digits and one `e` (`1630255e36`)
+  or a long one of digits only is read as a number, and looked for as one
+  (`1.630255e+36`).
 - Fetching needs `git`, which the scenario image does not have. A run there
   can still read a source pinned to a full commit id, from a cache filled
   beforehand (`scenario-odd show urban.yaml` with the same cache directory)
