@@ -492,6 +492,25 @@
   
   
     <li class="md-tabs__item">
+      <a href="../trajectory_log/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Trajectory Log
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
       <a href="../logical_scenarios/" class="md-tabs__link">
         
   
@@ -1271,6 +1290,33 @@
     
   
     Trajectories and Recorded-Scene Replay
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../trajectory_log/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Trajectory Log
   
 
     
@@ -3374,24 +3420,25 @@ cycles normally and the scenario just waits forever.</p>
 <a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>│       └── HH-MM-SS/
 <a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>│           ├── ScenarioName_result.json
 <a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>│           ├── ScenarioName_coverage.json  # Coverage hits (docs/coverage.md)
-<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>│           ├── ScenarioName.log        # CARLA native recording
-<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a>│           ├── ScenarioName.mp4        # Rendered video
-<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a>│           ├── batch_results.json      # Batch summary (batch mode only)
-<a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a>│           └── .hydra/
-<a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a>│               └── overrides.yaml      # Hydra CLI overrides
-<a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a>│
-<a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a>└── multirun/                         # Sweep / multi-scenario runs
-<a id="__codelineno-3-14" name="__codelineno-3-14" href="#__codelineno-3-14"></a>    └── YYYY-MM-DD/
-<a id="__codelineno-3-15" name="__codelineno-3-15" href="#__codelineno-3-15"></a>        └── HH-MM-SS/
-<a id="__codelineno-3-16" name="__codelineno-3-16" href="#__codelineno-3-16"></a>            ├── 0/                    # Job index 0
-<a id="__codelineno-3-17" name="__codelineno-3-17" href="#__codelineno-3-17"></a>            │   ├── ScenarioName_result.json
-<a id="__codelineno-3-18" name="__codelineno-3-18" href="#__codelineno-3-18"></a>            │   ├── ScenarioName.mp4
-<a id="__codelineno-3-19" name="__codelineno-3-19" href="#__codelineno-3-19"></a>            │   ├── raw_output.log    # Subprocess stdout/stderr
-<a id="__codelineno-3-20" name="__codelineno-3-20" href="#__codelineno-3-20"></a>            │   └── .hydra/
-<a id="__codelineno-3-21" name="__codelineno-3-21" href="#__codelineno-3-21"></a>            │       └── overrides.yaml
-<a id="__codelineno-3-22" name="__codelineno-3-22" href="#__codelineno-3-22"></a>            ├── 1/                    # Job index 1
-<a id="__codelineno-3-23" name="__codelineno-3-23" href="#__codelineno-3-23"></a>            │   └── ...
-<a id="__codelineno-3-24" name="__codelineno-3-24" href="#__codelineno-3-24"></a>            └── N/
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>│           ├── ScenarioName.trajectory.jsonl  # Actor motion (docs/trajectory_log.md)
+<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a>│           ├── ScenarioName.log        # CARLA native recording
+<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a>│           ├── ScenarioName.mp4        # Rendered video
+<a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a>│           ├── batch_results.json      # Batch summary (batch mode only)
+<a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a>│           └── .hydra/
+<a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a>│               └── overrides.yaml      # Hydra CLI overrides
+<a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a>│
+<a id="__codelineno-3-14" name="__codelineno-3-14" href="#__codelineno-3-14"></a>└── multirun/                         # Sweep / multi-scenario runs
+<a id="__codelineno-3-15" name="__codelineno-3-15" href="#__codelineno-3-15"></a>    └── YYYY-MM-DD/
+<a id="__codelineno-3-16" name="__codelineno-3-16" href="#__codelineno-3-16"></a>        └── HH-MM-SS/
+<a id="__codelineno-3-17" name="__codelineno-3-17" href="#__codelineno-3-17"></a>            ├── 0/                    # Job index 0
+<a id="__codelineno-3-18" name="__codelineno-3-18" href="#__codelineno-3-18"></a>            │   ├── ScenarioName_result.json
+<a id="__codelineno-3-19" name="__codelineno-3-19" href="#__codelineno-3-19"></a>            │   ├── ScenarioName.mp4
+<a id="__codelineno-3-20" name="__codelineno-3-20" href="#__codelineno-3-20"></a>            │   ├── raw_output.log    # Subprocess stdout/stderr
+<a id="__codelineno-3-21" name="__codelineno-3-21" href="#__codelineno-3-21"></a>            │   └── .hydra/
+<a id="__codelineno-3-22" name="__codelineno-3-22" href="#__codelineno-3-22"></a>            │       └── overrides.yaml
+<a id="__codelineno-3-23" name="__codelineno-3-23" href="#__codelineno-3-23"></a>            ├── 1/                    # Job index 1
+<a id="__codelineno-3-24" name="__codelineno-3-24" href="#__codelineno-3-24"></a>            │   └── ...
+<a id="__codelineno-3-25" name="__codelineno-3-25" href="#__codelineno-3-25"></a>            └── N/
 </code></pre></div>
 <p><strong>Session types:</strong></p>
 <table>
@@ -3891,7 +3938,7 @@ CARLA map name using the <code>_map_name_to_env_var()</code> function:</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 16, 2026 11:35:54 UTC"><span class="timeago" datetime="2026-10-16T11:35:54+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 16, 2026 11:35:54 UTC">2026-10-16</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 16, 2026 19:38:34 UTC"><span class="timeago" datetime="2026-10-16T19:38:34+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 16, 2026 19:38:34 UTC">2026-10-16</span>
   </span>
 
     
