@@ -533,14 +533,16 @@ class _Renderer:
                 k.endswith(".deleter") for k in kinds
             ):
                 continue
+            # An abstract override, or one that only raises, returns no
+            # value: Codon types its result None whatever it is annotated
+            # with, so it is compiled but not checked as a hook.
+            hook = None if _never_returns(method, kinds) else (name, method.name)
             if kinds & _PROPERTIES:
                 if self._returns_any(method, where):
                     continue
                 self._realize_optional_return(method, where)
                 self.emit(
-                    self.hooked(
-                        f"_acs_value({name}).{method.name}", (name, method.name)
-                    ),
+                    self.hooked(f"_acs_value({name}).{method.name}", hook),
                     where,
                     method.lineno,
                 )
@@ -559,7 +561,7 @@ class _Renderer:
                     drop_first=True,
                     owner=name,
                     receiver=f"_acs_value({name})",
-                    hook=(name, method.name),
+                    hook=hook,
                 )
             else:
                 self.calls(
@@ -569,7 +571,7 @@ class _Renderer:
                     drop_first=True,
                     owner=name,
                     class_head=f"{name}.{method.name}",
-                    hook=(name, method.name),
+                    hook=hook,
                 )
 
     def _setter(
@@ -970,6 +972,27 @@ def _is_dataclass(node: ast.ClassDef) -> bool:
         {_dotted(d.func if isinstance(d, ast.Call) else d) for d in node.decorator_list}
         & _DATACLASS
     )
+
+
+def _never_returns(
+    func: ast.FunctionDef | ast.AsyncFunctionDef, decorators: set[str]
+) -> bool:
+    """Whether *func* is abstract, or never returns: no ``return`` in its own
+    body, which ends with a ``raise`` (``raise NotImplementedError()``)."""
+    if any(d.split(".")[-1] == "abstractmethod" for d in decorators):
+        return True
+    if not func.body or not isinstance(func.body[-1], ast.Raise):
+        return False
+    pending: list[ast.AST] = list(func.body)
+    while pending:
+        node = pending.pop()
+        if isinstance(node, ast.Return):
+            return False
+        if not isinstance(
+            node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
+        ):
+            pending.extend(ast.iter_child_nodes(node))
+    return True
 
 
 def _is_dunder(name: str) -> bool:

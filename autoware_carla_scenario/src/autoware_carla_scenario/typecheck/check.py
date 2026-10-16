@@ -71,7 +71,7 @@ from .library import (
     UNCALLED,
     package_modules,
 )
-from .none_check import find_none_misuses
+from .none_check import NoneCheckSkipped, run_none_check
 from .library_driver import (
     render_library_checks,
     render_library_driver,
@@ -993,13 +993,22 @@ def _with_none_misuses(
     Codon unwraps an ``Optional`` implicitly, so the compile accepts a value
     that may be ``None`` used where it may not be; mypy's strict Optional
     does not (:mod:`.none_check`).  Its findings come after Codon's errors.
-    Without mypy (or a verdict from it) the result stays as it is.
+    Without a verdict from mypy (not installed, out of time, crashed) the
+    result keeps Codon's verdict, with a warning saying so.
     """
     if result.crashed:
         return result
-    findings = find_none_misuses(
-        sorted(m.path for m in sources.modules.values()), timeout
-    )
+    try:
+        findings = run_none_check(
+            sorted(m.path for m in sources.modules.values()), timeout
+        )
+    except NoneCheckSkipped as exc:
+        warning = Diagnostic(
+            f"the None check did not run ({exc}), so an Optional used without "
+            "a test for None is not reported",
+            severity="warning",
+        )
+        return dataclasses.replace(result, warnings=[*result.warnings, warning])
     if not findings:
         return result
     diagnostics = [

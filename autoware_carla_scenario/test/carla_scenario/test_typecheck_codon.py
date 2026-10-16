@@ -997,6 +997,9 @@ _VALID_HOOKS = """
     def check(self) -> str:
         return "not a hook of BaseScenario"
 
+    def create_ego(self) -> EgoVehicle:
+        raise NotImplementedError("only raises: Codon types its result None")
+
 
 class Result(ScenarioResult):
     pass

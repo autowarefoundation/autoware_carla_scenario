@@ -898,6 +898,45 @@ def test_the_scenario_check_binds_each_method_result_as_a_hook() -> None:
     assert "_acs_value(Gap).__eq__(_acs_value(Gap))" in lines
 
 
+def test_an_abstract_or_raising_method_is_called_but_not_bound_as_a_hook() -> None:
+    # Such a method returns no value, which Codon types None whatever its
+    # annotation says, so binding it as a hook refused a valid override.
+    source = textwrap.dedent(
+        """
+        from abc import abstractmethod
+
+
+        class Base(BaseScenario):
+            @abstractmethod
+            def is_done(self) -> bool:
+                ...
+
+            def create_ego(self) -> EgoVehicle:
+                raise NotImplementedError()
+
+            @property
+            def ego_requires_goal(self) -> bool:
+                raise NotImplementedError()
+
+            def measure(self, key: str) -> float:
+                if key:
+                    return 1.0
+                raise KeyError(key)
+        """
+    )
+    hooked = render_library_checks(
+        ast.parse(source), skip_any_returns=True, hook_returns=True
+    )
+    lines = [line.strip() for line in hooked.source.splitlines()]
+    assert "_acs_value(Base).is_done()" in lines
+    assert "_acs_value(Base).create_ego()" in lines
+    assert "_acs_value(Base).ego_requires_goal" in lines
+    assert [line for line in lines if "_acs_hook_return(" in line] == [
+        '_acs_hook_return(Base, "measure", '
+        "_acs_value(Base).measure(_acs_value(str)))",
+    ]
+
+
 def test_a_generic_function_and_one_returning_any_are_problems() -> None:
     # `_acs_value(list[T])` does not compile: a TypeVar parameter is a
     # problem.  A function returning `Any` builds what Codon cannot express

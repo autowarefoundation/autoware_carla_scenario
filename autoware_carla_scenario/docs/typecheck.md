@@ -157,7 +157,10 @@ scenario.py:62: error: BaseScenario.is_done() returns bool, and this override re
 ```
 
 A method of a class deriving from none of them, or one its base does not
-declare (a helper of the scenario), is not checked this way. The program
+declare (a helper of the scenario), is not checked this way, and neither is
+an abstract one (`@abstractmethod`) or one that only raises
+(`raise NotImplementedError()`): it returns no value, which Codon types
+`None` whatever its annotation says. The program
 also checks what the scenario's own `setup()` and `is_done()` return, after
 the module checks, for one the appended calls leave out.
 
@@ -167,11 +170,16 @@ needed, so `cfg.min_speed_kmh / 3.6` of a `float | None` field compiled, and
 raised `TypeError` in Python when the field was `None`. After the compile,
 the checker runs mypy (a dependency of the framework) over the scenario's own
 modules, following imports silently, checking the bodies of unannotated
-functions too, and with no configuration file of the package's, and keeps only what it reports of a value that may be `None` used
-where it may not be: an attribute of it, an operator, an argument, an
-assignment, a return, an index (mypy's `union-attr`, `operator`, `arg-type`,
+functions too, and with no configuration file of the package's (so the
+verdict does not depend on how strict the package's own mypy settings are),
+and keeps only what it reports of a value that may be `None` used where it
+may not be: an attribute of it, an operator, an argument, an assignment, a
+return, an index (mypy's `union-attr`, `operator`, `arg-type`,
 `assignment`, `return-value`, `index` and `call-overload`, each naming
-`None`). Each fails the check at its line, after Codon's errors:
+`None`). An assignment that only declares is not one: a `None` default for
+a non-Optional annotation (`speed: float = None`), or a value assigned to an
+attribute mypy inferred as `None` from its first assignment. Each finding
+fails the check at its line, after Codon's errors:
 
 ```text
 scenario.py:67:28: error: Unsupported operand types for / ("None" and "float"): Codon unwraps an Optional implicitly, so test the value for None before this use, or Python fails here when it is None (mypy: operator)
@@ -180,8 +188,16 @@ scenario.py:67:28: error: Unsupported operand types for / ("None" and "float"): 
 
 Narrow the value first, as mypy reads it: `if x is not None:`, `assert x is
 not None`, an early `return` when it is `None`, or a default (`x or 0.0`).
-mypy keeps a cache in `~/.cache/autoware_carla_scenario/mypy`, so only the
-first check reads the framework (about ten seconds).
+mypy keeps a cache in `~/.cache/autoware_carla_scenario/mypy` (under
+`$XDG_CACHE_HOME` when it is set), so only the first check reads the
+framework (about ten seconds); where that directory cannot be written, as in
+a container with a read-only home, mypy runs without a cache. When mypy
+gives no verdict (it ran out of time or crashed), the check keeps Codon's
+verdict and says so in a warning:
+
+```text
+warning: the None check did not run (mypy did not finish within 600s), so an Optional used without a test for None is not reported
+```
 
 The error is reported at the scenario file's own line. One in a function's
 body is at that line, with the call that reached it in the trace:
@@ -572,6 +588,10 @@ The known gaps:
   one of `Any`, `object`, `Callable[..., R]` or a `TypeVar`, or a return
   annotation naming `Any`) is compiled only where `setup()` and `is_done()`
   reach it, with a warning ([*What is checked*](#what-is-checked)).
+- **A hook a class takes from a mixin listed before its framework base**
+  (`class Gap(CheckMixin, BaseCondition)`, with `check()` defined in
+  `CheckMixin`) is compiled as the mixin's own method, not checked against
+  the hook's return type: define the override in the class itself.
 - **A `None` default** is not checked against its annotation:
   `speed: float = None` is an `Optional[float]` to Codon (mypy, in the
   scenario package's own pre-commit, reports it; the None check reports only
