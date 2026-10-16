@@ -170,6 +170,9 @@ def test_it_writes_the_world_actors_and_each_tick(tmp_path: Path) -> None:
     assert second["actors"][0][7] == 10.0
     # Only the light states that changed since the last written tick.
     assert second["lights"] == {"9": "Green"}
+    # orjson writes what the stdlib wrote before it, byte for byte.
+    for line in recorder.path.read_text().splitlines():
+        assert line == json.dumps(json.loads(line), separators=(",", ":"))
 
 
 class _UnnamedLight(_Light):
@@ -258,7 +261,7 @@ def test_an_error_stops_recording_without_raising(tmp_path: Path) -> None:
 
 
 class _FailingFile:
-    def write(self, text: str) -> int:
+    def write(self, data: bytes) -> int:
         raise OSError("No space left on device")
 
     def close(self) -> None:
