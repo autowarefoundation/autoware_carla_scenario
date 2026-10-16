@@ -26,8 +26,12 @@ first-frame pose at its initial speed:
 The policy is asked to plan all the while, and sees the road and the traffic
 it would have come through, but its plans are not applied.  The traffic lights
 are frozen meanwhile, so the run-up spends none of their phases, and thawed on
-arrival.  The runner's init-phase brakes spare what the run-up carries
-(``carried_actor_ids``).
+arrival -- only those the run-up froze: a light already frozen, by the scenario
+(a ``TrafficSignalAction`` holding it red, say) or a signal controller, stays
+frozen.  Which lights are frozen is read with ``is_frozen()``, which reports the
+last tick's snapshot, so the run-up must start on a world ticked since anything
+froze a light; the runner ticks once after the init actions for that.  The
+runner's init-phase brakes spare what the run-up carries (``carried_actor_ids``).
 """
 
 from __future__ import annotations
@@ -410,6 +414,11 @@ class PolicyWarmup:
 
     @staticmethod
     def _freeze_lights(world: "carla.World") -> List["carla.Actor"]:
+        """Freeze the lights that run, and return them: the ones to thaw on arrival.
+
+        ``is_frozen()`` reads the last tick's snapshot: a light frozen since then
+        reads as running and would be taken over, and thawed on arrival.
+        """
         frozen = []
         for light in world.get_actors().filter("traffic.traffic_light*"):
             if not light.is_frozen():

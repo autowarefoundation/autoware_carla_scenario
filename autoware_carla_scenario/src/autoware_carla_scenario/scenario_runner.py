@@ -685,6 +685,23 @@ class ScenarioRunner:
         for actor in world.get_actors().filter("vehicle.*"):
             release_vehicle(actor)
 
+    def _run_init(self, world: "carla.World", scenario: "BaseScenario") -> None:
+        """Run the scenario's init actions, then tick once so the world shows them.
+
+        A client reads an actor's state -- a light's ``is_frozen()`` and
+        ``get_state()``, an actor's transform -- from the snapshot of the last
+        tick, so what an init action changed reads as it was until the world
+        ticks.  An ego started on the same tick would take the world as it was:
+        the policy run-up (``warmup_s``) read every light the scenario had just
+        frozen as running, froze it as its own, and thawed it on arrival, so
+        CARLA's cycle took over lights the scenario holds red.  The tick holds
+        every vehicle still, like the ones before it.
+        """
+        scenario.run_init(world)
+        self._hold_vehicles_still(world)
+        self._pace_tick()
+        world.tick()
+
     def _warn_if_route_leaves_odd(
         self, scenario_name: str, scenario: "BaseScenario"
     ) -> None:
@@ -1309,7 +1326,7 @@ class ScenarioRunner:
             # run starts from, and handing an ego that plans its own route the
             # mission it needs before the wait below asks whether it is ready.
             logger.info("[%s] === Init actions ===", scenario_name)
-            scenario.run_init(world)
+            self._run_init(world, scenario)
 
             # Let the ego entity bring up whatever it needs now that the actor
             # exists and physics have settled (e.g. sensors and an external

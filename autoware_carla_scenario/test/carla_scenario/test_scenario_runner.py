@@ -341,6 +341,136 @@ class TestInitPhaseOrdering:
         assert order == ["init", "on_scenario_start"]
 
 
+class _SnapshotLight:
+    """A traffic light whose ``is_frozen()`` reads as CARLA's client reads it.
+
+    ``freeze()`` reaches the server at once, but ``is_frozen()`` answers from
+    the snapshot the last tick sent, so a freeze reads only after a tick.  Only
+    the freeze is modelled; ``set_state()`` is accepted and ignored.
+    """
+
+    type_id = "traffic.traffic_light"
+
+    def __init__(self) -> None:
+        self.frozen = False  # on the server
+        self._seen = False  # in the client's snapshot
+
+    def set_state(self, state: object) -> None:
+        del state
+
+    def freeze(self, frozen: bool) -> None:
+        self.frozen = frozen
+
+    def is_frozen(self) -> bool:
+        return self._seen
+
+    def snapshot(self) -> None:
+        self._seen = self.frozen
+
+
+class _SnapshotWorld:
+    """A world of traffic lights whose tick refreshes what the client reads."""
+
+    def __init__(self, lights: list[_SnapshotLight]) -> None:
+        self.lights = lights
+        self.ticks = 0
+
+    def get_actors(self) -> "_LightList":
+        return _LightList(self.lights)
+
+    def tick(self) -> int:
+        self.ticks += 1
+        for light in self.lights:
+            light.snapshot()
+        return self.ticks
+
+
+class _LightList:
+    def __init__(self, lights: list[_SnapshotLight]) -> None:
+        self._lights = lights
+
+    def filter(self, pattern: str) -> list:
+        return list(self._lights) if pattern.startswith("traffic.traffic_light") else []
+
+
+class TestTheEgoStartsOnTheInitPhasesWorld:
+    """The runner ticks after the init actions, before the ego is started.
+
+    A client reads ``is_frozen()`` from the last tick, so an ego started on
+    the init actions' own tick reads every light they froze as running.  The
+    policy run-up then froze those lights as its own and thawed them on
+    arrival: CARLA's cycle turned the scenario's red lights yellow mid-run.
+    """
+
+    _LIGHTS = 3
+
+    def _start(self, runner: ScenarioRunner, tmp_path) -> tuple[list[str], list]:
+        """Run a scenario up to ``ego.on_scenario_start``, through run_scenario.
+
+        Returns what happened, in order (``init``, ``tick``, ``start``), and the
+        lights the policy run-up, started there, would take over as its own.
+        """
+        from autoware_carla_scenario.entity._policy_warmup import PolicyWarmup
+
+        world = _SnapshotWorld([_SnapshotLight() for _ in range(self._LIGHTS)])
+        calls: list[str] = []
+        taken: list = []
+
+        def tick(*_a, **_k) -> int:
+            calls.append("tick")
+            return _SnapshotWorld.tick(world)
+
+        def run_init(w) -> None:
+            # What TrafficSignalAction(Red, ALL) does: freeze every light.
+            for light in w.get_actors().filter("traffic.traffic_light*"):
+                light.freeze(True)
+            calls.append("init")
+
+        def on_scenario_start(w) -> None:
+            calls.append("start")
+            # What CarlaDriverEntity does there with warmup_s > 0.
+            taken.extend(PolicyWarmup._freeze_lights(w))
+            raise _Stop
+
+        world_mock = MagicMock()
+        world_mock.get_actors.side_effect = world.get_actors
+        world_mock.tick.side_effect = tick
+        runner.output_dir = tmp_path
+        runner._world = world_mock
+        runner._pace_tick = lambda: None  # type: ignore[method-assign]
+
+        scenario = MagicMock()
+        scenario.STABILIZE_TICKS = 2
+        scenario.run_init.side_effect = run_init
+        ego = scenario.create_ego.return_value
+        ego.spawn.return_value.id = 1
+        ego.on_scenario_start.side_effect = on_scenario_start
+
+        with patch("autoware_carla_scenario.scenario_runner.prepare_measures"):
+            with pytest.raises(_Stop):
+                runner.run_scenario(scenario, reset_world=False)
+        return calls, taken
+
+    def test_the_world_ticks_between_the_init_actions_and_the_egos_start(
+        self, tmp_path
+    ):
+        calls, _ = self._start(_make_runner(None), tmp_path)
+        assert calls[calls.index("init") :] == ["init", "tick", "start"]
+
+    def test_the_run_up_takes_over_no_light_the_init_phase_froze(self, tmp_path):
+        _, taken = self._start(_make_runner(None), tmp_path)
+        assert taken == []
+
+    def test_without_that_tick_the_run_up_takes_them_all_over(self, tmp_path):
+        """The fault the tick prevents, through the same run: an ego started on
+        the init actions' own tick reads their lights as running."""
+        runner = _make_runner(None)
+        runner._run_init = lambda w, s: s.run_init(w)  # type: ignore[method-assign]
+        calls, taken = self._start(runner, tmp_path)
+        assert calls[calls.index("init") :] == ["init", "start"]
+        assert len(taken) == self._LIGHTS
+
+
 class TestNothingMovesDuringInit:
     """The clock ticks through init, but no vehicle does anything with it.
 
