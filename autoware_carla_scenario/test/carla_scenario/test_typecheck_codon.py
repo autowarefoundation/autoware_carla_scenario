@@ -1227,6 +1227,44 @@ def test_python_finds_a_submodule_imported_by_name() -> None:
     assert _missing_at_run_time(f"{package}.coordinate", ["RoadNetwork"]) != []
 
 
+def test_a_lazy_name_that_fails_to_import_is_left_to_the_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A module's __getattr__ (the package's lazy imports) may raise more than
+    # AttributeError, an optional dependency missing: not the check's to report.
+    import types
+
+    from autoware_carla_scenario.typecheck.check import _missing_at_run_time
+
+    def lazy(name: str) -> object:
+        raise ImportError(f"no optional dependency for {name}")
+
+    module = types.ModuleType("acs_typecheck_lazy_case")
+    module.__getattr__ = lazy  # type: ignore[method-assign]
+    monkeypatch.setitem(sys.modules, module.__name__, module)
+    assert _missing_at_run_time(module.__name__, ["Thing"]) == []
+
+
+def test_a_failing_hint_never_hides_codons_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The hints on what to declare (#218) are added after Codon failed; if
+    # they fail themselves, Codon's own errors are still reported.
+    from autoware_carla_scenario.typecheck import check
+
+    def broken(*_args: object) -> list[Any]:
+        raise RuntimeError("unexpected Codon output")
+
+    monkeypatch.setattr(check, "_uninferred_attributes", broken)
+    scenario, config, path = _write_case(
+        tmp_path, "self.register_fail_condition(TimeoutCondition(10.0))\n"
+    )
+    result = typecheck_scenario(scenario, config)
+    error = _only_error(result)
+    assert "label is a required keyword argument" in error.message, result.format()
+    assert error.path == str(path)
+
+
 _ABSTRACT_CONDITION = """
 
 class GapCondition(BaseCondition):

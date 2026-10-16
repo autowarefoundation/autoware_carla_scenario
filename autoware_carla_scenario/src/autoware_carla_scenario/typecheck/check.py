@@ -419,6 +419,12 @@ def _missing_at_run_time(module: str, names: list[str]) -> list[str]:
     except Exception:  # not this check's to report
         return []
 
+    def attribute(name: str) -> bool:
+        try:
+            return hasattr(found, name)
+        except Exception:  # a lazy attribute that fails to import: the run's to report
+            return True
+
     def submodule(name: str) -> bool:
         if not hasattr(found, "__path__"):
             return False
@@ -431,7 +437,7 @@ def _missing_at_run_time(module: str, names: list[str]) -> list[str]:
         f"{module} has no {name} in Python, whatever its Codon model declares: "
         f"`from {module} import {name}` raises ImportError when the scenario runs"
         for name in names
-        if name != "*" and not hasattr(found, name) and not submodule(name)
+        if name != "*" and not attribute(name) and not submodule(name)
     ]
 
 
@@ -1068,7 +1074,11 @@ def _compile(
             return None
         output = proc.stdout + proc.stderr
         diagnostics = _parse_output(output, ws)
-        diagnostics += _uninferred_attributes(diagnostics, sources)
+        if proc.returncode != 0:
+            try:
+                diagnostics += _uninferred_attributes(diagnostics, sources)
+            except Exception:  # only a hint: never lose Codon's own errors to it
+                pass
     seconds = time.monotonic() - started
     crashed = proc.returncode != 0 and (
         proc.returncode < 0
