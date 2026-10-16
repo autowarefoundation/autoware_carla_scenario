@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "urn:autoware-carla-scenario:schema:trajectory",
   "title": "TrajectoryRecord",
-  "description": "One line of a run's `{stem}.trajectory.jsonl`, written by `autoware_carla_scenario.trajectory_recorder.TrajectoryRecorder`. Every line is one of the four records below, told apart by `type`. Positions and rotations are in CARLA's left-handed world frame (x east, y south, z up), in metres and degrees, rounded to 3 decimals. The order of a file: one `world`, then one `traffic_light` per light, then `tick` lines, each preceded by an `actor` line for every vehicle or walker it shows for the first time. Described in docs/trajectory_log.md.",
+  "description": "One line of a run's `{stem}.trajectory.jsonl`, written by `autoware_carla_scenario.trajectory_recorder.TrajectoryRecorder`: one of four records, told apart by `type`. Units, frames and the order of a file: docs/trajectory_log.md.",
   "oneOf": [
     { "$ref": "#/definitions/WorldRecord" },
     { "$ref": "#/definitions/TrafficLightRecord" },

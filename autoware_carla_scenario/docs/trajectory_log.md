@@ -6,13 +6,12 @@ once per `world.tick()`. `TrajectoryRecorder`
 (`autoware_carla_scenario/trajectory_recorder.py`) writes it, and the carla-hub
 run report replays it.
 
-Its format is published as a JSON Schema,
-`autoware_carla_scenario/schemas/trajectory.schema.json` in the package.
-The schema ships in the wheel, and Python can locate it as
-`autoware_carla_scenario.trajectory_recorder.SCHEMA_PATH`. It describes one line
-and is the contract for readers in any language. The recorder's tests check
-every line it writes against the schema, so the schema and the recorder cannot
-drift apart.
+Its format is published as a JSON Schema of one line, the contract for readers
+in any language: `trajectory_recorder.schema.json`, next to the recorder in the
+package and in the wheel. From Python, find it with
+`importlib.resources.files("autoware_carla_scenario") /
+"trajectory_recorder.schema.json"`, which needs no CARLA client. Code that
+already imports the recorder can use `trajectory_recorder.SCHEMA_PATH`.
 
 ## Records
 
@@ -41,14 +40,18 @@ generated types keep them as tuples where the target language has them.
 ## Frames, units and time
 
 - Positions and rotations are in CARLA's left-handed world frame (x east,
-  y south, z up). Positions are in metres, angles in degrees, and velocities
+  y south, z up; see [Coordinate frames](driver_interface.md#coordinate-frames)). Positions are in metres, angles in degrees, and velocities
   are world-frame m/s. Every float is rounded to 3 decimals.
 - `t` is simulated time since the scenario clock started, the time pass/fail
   conditions see. It is not wall time. Warm-up ticks are not recorded.
 - Ticks are 20 Hz (`FIXED_DELTA_SECONDS`).
 
-To move a pose into the Lanelet2 / Autoware `map` frame, use the map's MGRS
-offset `(ox, oy)` and elevation offset `z_offset` (`coordinate/transform.py`):
+To move a pose into the Lanelet2 / Autoware `map` frame from Python, build a
+`CarlaWorldPose` and call `coordinate.transform.to_map_frame` (see
+[Coordinate transforms](api.md#coordinate-transforms-autoware_carla_scenariocoordinate)).
+In other languages, apply the same conversion with the map's MGRS offset
+`(ox, oy)` and elevation offset `z_offset` (`MapManager.mgrs_offset` and
+`MapManager.z_offset`):
 
 ```
 x_map   =  x + ox
@@ -92,9 +95,9 @@ Generate types from the schema with the generator for your language:
 | C++, Go, Rust, C#, ... | [quicktype](https://github.com/glideapps/quicktype) | Merges the four records into one type with optional fields; tuples become arrays |
 
 ```bash
-npx json-schema-to-typescript -i trajectory.schema.json -o trajectory.d.ts
+npx json-schema-to-typescript -i trajectory_recorder.schema.json -o trajectory.d.ts
 uvx --from datamodel-code-generator datamodel-codegen \
-  --input trajectory.schema.json --input-file-type jsonschema \
+  --input trajectory_recorder.schema.json --input-file-type jsonschema \
   --output-model-type pydantic_v2.BaseModel --output trajectory_log.py
 ```
 
@@ -104,9 +107,10 @@ Any JSON Schema draft-07 validator checks a file line by line, for example
 ```python
 import json
 import jsonschema
-from autoware_carla_scenario.trajectory_recorder import SCHEMA_PATH
+from importlib.resources import files
 
-validator = jsonschema.Draft7Validator(json.loads(SCHEMA_PATH.read_text()))
+schema = files("autoware_carla_scenario") / "trajectory_recorder.schema.json"
+validator = jsonschema.Draft7Validator(json.loads(schema.read_text()))
 with open("CutInScenario.trajectory.jsonl") as f:
     for line in f:
         validator.validate(json.loads(line))
@@ -118,5 +122,6 @@ more widely. quicktype, for one, cannot read 2020-12 tuples (`prefixItems`).
 ## Changing the format
 
 A change to a record in `trajectory_recorder.py` needs the same change in the
-schema. The schema forbids fields it does not list (`additionalProperties:
-false`), so the recorder tests fail until the schema has the change.
+schema. The recorder's tests check every line they record against the schema,
+which forbids fields it does not list (`additionalProperties: false`), so they
+fail until the schema has the change.
