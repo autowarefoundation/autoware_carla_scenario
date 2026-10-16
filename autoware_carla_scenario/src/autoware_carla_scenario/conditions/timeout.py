@@ -20,7 +20,8 @@ class TimeoutCondition(BaseCondition):
     ``ScenarioRunner`` registers one of these as a default fail condition on
     every scenario that registers no timeout of its own; see
     ``timeout_seconds`` there.  A scenario that registers one (bare, or inside
-    an :class:`OrCondition`) runs for as long as it says, not the default.
+    an :class:`OrCondition` or a :class:`StickyCondition`) runs for as long as
+    it says, and the run's default timeout does not apply to it.
     """
 
     # Declared for the static check (docs/typecheck.md).

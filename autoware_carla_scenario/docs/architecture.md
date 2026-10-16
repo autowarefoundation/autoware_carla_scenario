@@ -253,15 +253,33 @@ author wrote. It is registered as a default `TimeoutCondition` on every
 scenario that registers no timeout of its own, so a scenario given sixty
 seconds is given sixty of *its own* however fast the host runs.
 
-A scenario that registers a `TimeoutCondition` fail condition (bare, or as a
-child of an `OrCondition`) has said how long it runs, and the runner adds no
-default to cut it short: a red light whose drawn red phase is 13.4 s, given
-seven seconds after the green, runs for 20.4 s even when the run's default is
-twelve. A timeout under an `AndCondition` or a `NotCondition` does not count —
-it fires only on some other state of the world, so it does not bound the run.
-A `DeclarativeScenario` registers its document's `timeout_seconds` (or the
-Hydra override of it) itself, so a `timeout` node in the document adds to that
-limit rather than replacing it.
+A scenario that registers a timeout of its own has said how long it runs, and
+the runner adds no default to cut it short: a red light whose drawn red phase
+is 13.4 s, given seven seconds after the green, runs for 20.4 s even when the
+run's default is twelve. Exactly these fail conditions count as its own:
+
+- a bare `TimeoutCondition`;
+- an `OrCondition` with a child that counts (an OR fires as soon as any child
+  does);
+- a `StickyCondition` whose child counts (it hands on the child's failure as it
+  comes; it latches only a pass).
+
+A timeout under an `AndCondition` or a `NotCondition` does not count — it fires
+only on some other state of the world, so it does not bound the run — and
+neither does one under a `PersistentCondition`, which resets on every failure
+its child reports and so never fires around a timeout.
+
+The run's default — `ScenarioRunner(timeout_seconds=...)`,
+`run_scenario(timeout_seconds=...)`, `ScenarioQueue.add(timeout_seconds=...)`,
+and with them a `scenario.timeout_seconds=` override — therefore does not apply
+to a scenario with a timeout of its own. A hand-written scenario that builds its
+timeout from `cfg.timeout_seconds` still follows the override, since that is
+the same key; one that builds it from another (`traffic_light_compliance` with
+`timeout_after_green_seconds` set) does not. A `DeclarativeScenario` always has
+one: it registers its document's `timeout_seconds` (or the Hydra override of
+it) itself, so a `timeout` node in the document is a second limit beside it,
+and whichever fires first fails the run. A sweep keeps the wall-clock
+`sweep.job_timeout_seconds` guard over every job either way.
 
 Wall-clock protection against a **stuck** simulator lives outside the scenario
 clock, where it belongs:
@@ -947,9 +965,13 @@ pass[0](all_roads_visited)         ← AndCondition (top-level)
 └── StickyCondition(road_8)
     └── EntityLanePositionCondition
 
-fail[0](default_timeout)           ← TimeoutCondition
-fail[1](ego_existence)             ← EntityExistenceCondition
+fail[0](ego_existence)             ← EntityExistenceCondition
+fail[1](default_timeout)           ← TimeoutCondition
 ```
+
+The scenario's own fail conditions come first, then the runner's
+`ego_existence`, then `default_timeout` — which is absent when the scenario
+registered a timeout of its own.
 
 The `_build_condition_tree()` function in `scanner.py` recursively parses:
 

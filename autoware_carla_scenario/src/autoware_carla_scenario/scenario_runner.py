@@ -25,6 +25,7 @@ from .conditions import (
     EntityExistenceCondition,
     OrCondition,
     ScenarioResult,
+    StickyCondition,
     TimeoutCondition,
 )
 from .conditions.base import BaseCondition, ConditionStatus, find_actor_by_role_name
@@ -66,17 +67,26 @@ _DEBUG_MARKER_LIFE_TIME: float = 1.5 * FIXED_DELTA_SECONDS
 def _bounds_the_run(condition: BaseCondition) -> bool:
     """Whether *condition*, as a fail condition, ends the run by a timeout.
 
-    A bare :class:`TimeoutCondition` does, and so does an
-    :class:`OrCondition` with one among its children: an OR fires as soon as
-    any child does, so the timeout inside it fails the run on time all the
-    same.  Every other composite is left out on purpose -- an AND or a NOT
-    holding a timeout fires only on some *other* state of the world, which is
-    a condition on the timeout, not a limit on the run.
+    Exactly these count:
+
+    - a bare :class:`TimeoutCondition`;
+    - an :class:`OrCondition` with a child that counts -- an OR fires as soon
+      as any child does;
+    - a :class:`StickyCondition` whose child counts -- it hands on the
+      child's failure as it comes (it latches only a *pass*).
+
+    Nothing else does, on purpose.  An AND or a NOT holding a timeout fires
+    only on some *other* state of the world, which is a condition on the
+    timeout, not a limit on the run; a :class:`PersistentCondition` resets on
+    every failure its child reports, so around a timeout it never fires at
+    all.
     """
     if isinstance(condition, TimeoutCondition):
         return True
     if isinstance(condition, OrCondition):
         return any(_bounds_the_run(child) for child in condition._conditions)
+    if isinstance(condition, StickyCondition):
+        return _bounds_the_run(condition._condition)
     return False
 
 
@@ -89,7 +99,20 @@ def _register_default_timeout(
     runs -- a red light that turns green after a drawn delay needs that delay
     and then some, however short the run's default is -- so the default would
     only cut it short.  A scenario that registers none is given the default,
-    so that no run goes on forever.
+    so that no run goes on forever.  What counts as a timeout of its own is
+    :func:`_bounds_the_run`.
+
+    So the runner's ``timeout_seconds``, ``run_scenario(timeout_seconds=...)``
+    and ``ScenarioQueue.add(timeout_seconds=...)`` -- the run's
+    ``scenario.timeout_seconds`` -- do not apply to a scenario with a timeout
+    of its own (a :class:`~autoware_carla_scenario.declarative.DeclarativeScenario`
+    always has one: its document's).  A sweep still has the wall-clock
+    ``sweep.job_timeout_seconds`` guard over every job.
+
+    Registered after ``ego_existence``, as the last fail condition: on a tick
+    where several fire, the result names the first.  On a retry of the same
+    scenario object, the default the first attempt registered is still there
+    and counts as the scenario's own, so it is not added twice.
 
     Returns:
         Whether the default was registered.
@@ -529,7 +552,9 @@ class ScenarioRunner:
                 in **simulated** seconds -- the same clock every other
                 duration is on, so a scenario given sixty seconds is given
                 sixty of its own however fast the host runs.  A scenario with
-                its own timeout keeps it, longer or shorter than this one.
+                its own timeout keeps it, longer or shorter than this one, and
+                this one does not apply to it (see
+                ``_register_default_timeout`` for what counts).
             output_dir: Directory where CARLA recording logs are saved.
             max_tick_rate_hz: Upper bound on how fast the tick loop steps the
                 world, or *None* to step as fast as the server allows.  Slow
@@ -1079,7 +1104,9 @@ class ScenarioRunner:
             timeout_seconds: The default timeout for this scenario; the
                 runner's ``timeout_seconds`` when ``None``.  Not registered
                 when the scenario's setup registers a ``TimeoutCondition`` of
-                its own (bare, or inside an ``OrCondition``).
+                its own (bare, or inside an ``OrCondition`` or a
+                ``StickyCondition``): such a scenario runs to its own limit,
+                whatever is passed here.
             case: The case drawn from the ODD that the scenario runs, and the
                 space it was drawn in: recorded in the coverage file with the
                 run's outcome, so that the merged report can assess its
