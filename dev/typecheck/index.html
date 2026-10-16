@@ -2312,8 +2312,8 @@ method of a checked module.</p>
 <li>Run <code>uv run pytest autoware_carla_scenario/test/carla_scenario/test_typecheck_library.py</code>.</li>
 </ol>
 <h3 id="what-is-checked-of-the-framework">What is checked of the framework<a class="headerlink" href="#what-is-checked-of-the-framework" title="Permanent link">&para;</a></h3>
-<p>Every module now has an entry other than <code>"not yet checked (#45)"</code>. 165 of
-the package's 242 modules (68%; about 40,000 of 71,100 lines) are <code>CHECKED</code>:
+<p>Every module now has an entry other than <code>"not yet checked (#45)"</code>. 168 of
+the package's 245 modules (69%; about 40,800 of 72,400 lines) are <code>CHECKED</code>:
 the kinematics, the coordinate frames and poses, the conversions between
 Lanelet2, OpenDRIVE and CARLA world poses (<code>coordinate.transform</code>), the stop
 lines read off a Lanelet2 map (<code>utils.stop_line</code>, <code>coordinate.stop_line</code>)
@@ -2369,8 +2369,8 @@ driver's configs and client interface, trajectory follower and observations
 <code>driver.geometry</code>), and the <code>autoware_bridge</code>, <code>autoware_stack</code>, <code>entity</code>,
 <code>driver</code>, <code>maps</code> and <code>coverage</code> packages themselves, whose <code>__init__</code> re-exports what is not checked
 through models of it (see <em>A class a checked package only re-exports</em>
-below). 89
-functions and methods of those modules are <code>UNCALLED</code> (13 of them
+below). 88
+functions and methods of those modules are <code>UNCALLED</code> (19 of them
 protected helpers, see <em>What is compiled</em> below): most of them a
 condition's <code>get_details()</code> or a backend's <code>describe()</code>, what takes a traffic
 backend's options node (<code>Mapping[str, Any]</code>), what reads a route search, a
@@ -2715,7 +2715,11 @@ level, so <code>ego_requires_goal</code> still reads it). The error is reported 
 line, through the call that leaves the defaults out (<code>&lt;library check:
 BaseScenario.__init__(ego_config: EgoConfig), with the default of</code>spawn_pose<code>,</code>ground_projection<code>,</code>random_seed<code>,</code>ego_type<code>,</code>ego_entity<code>&gt;</code>). A parameter Codon cannot express with no default is a
 problem as before, and so is a defaulted one that call would still pass (one
-before a <code>*args: T</code>, which is given one <code>T</code>).</p>
+before a <code>*args: T</code>, which is given one <code>T</code>). <code>ConditionStatus.__init__</code>
+(its <code>details: dict[str, Any]</code>) and <code>TrafficConfig.__init__</code> (a backend's
+options, <code>dict[str, Any]</code>) are compiled the same way, with no <code>UNCALLED</code>
+entry, so a wrong default of one of their other parameters is reported
+(#217).</p>
 <p><strong>Property setters are called too</strong> (#200). Codon compiles an <code>@x.setter</code>
 only where something assigns the property, so an error injected into the
 setter of <code>ScenarioRunner.xodr_path</code> passed a run of <code>scenario_runner</code> alone:
@@ -3063,8 +3067,10 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   <code>typing.Any</code> imports, and every annotation naming it is dropped.
   <code>typing.TYPE_CHECKING</code> is a compile-time true, so Codon compiles only the
   first branch of <code>if TYPE_CHECKING: ... else: ...</code>, and the check reports
-  no import in the <code>else</code> branch: <code>scenario_queue</code> imports tqdm there, at
-  module level, and waits without the progress bar in the first branch. The <code>logging</code> shim's
+  no import in the <code>else</code> branch, nor in the body of <code>if not TYPE_CHECKING:</code>
+  (the same branch, written the other way round): <code>scenario_queue</code> imports
+  tqdm in an <code>else</code> branch, at module level, and waits without the progress
+  bar in the first branch. The <code>logging</code> shim's
   methods take <code>exc_info</code> as a <code>bool</code>.</li>
 <li><strong>pyxodr's road network is the model's</strong>: <code>codon/pyxodr/</code> names the
   <code>RoadNetwork</code>, <code>Road</code>, <code>LaneSection</code> and <code>Lane</code> that <code>coordinate.codon</code>
@@ -3913,7 +3919,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 15, 2026 22:07:10 UTC"><span class="timeago" datetime="2026-10-15T22:07:10+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 15, 2026 22:07:10 UTC">2026-10-15</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 16, 2026 00:36:08 UTC"><span class="timeago" datetime="2026-10-16T00:36:08+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 16, 2026 00:36:08 UTC">2026-10-16</span>
   </span>
 
     
