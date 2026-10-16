@@ -336,6 +336,28 @@ def test_a_probe_the_client_does_not_know_yet_is_destroyed_after_a_tick(
 
 
 @pytest.mark.usefixtures("_no_bumpers_known")
+def test_a_probe_that_cannot_be_destroyed_is_reported() -> None:
+    world: Any = _ProbeWorld(known=False)
+    world._ticked = lambda how: world.ticks.append(how)  # stays unknown
+
+    with pytest.raises(RuntimeError, match="could not be destroyed"):
+        vehicle_bumpers(world, "vehicle.lincoln.mkz")
+
+
+@pytest.mark.usefixtures("_no_bumpers_known")
+def test_a_failed_read_is_the_error_reported(monkeypatch: pytest.MonkeyPatch) -> None:
+    def broken(box: Any) -> Any:
+        raise KeyError("no extent")
+
+    monkeypatch.setattr(placement, "bumpers_of_box", broken)
+    world: Any = _ProbeWorld(known=False)
+    world._ticked = lambda how: world.ticks.append(how)  # destroy fails too
+
+    with pytest.raises(KeyError, match="no extent"):
+        vehicle_bumpers(world, "vehicle.lincoln.mkz")
+
+
+@pytest.mark.usefixtures("_no_bumpers_known")
 def test_a_known_probe_is_destroyed_without_a_tick() -> None:
     world: Any = _ProbeWorld()
 
