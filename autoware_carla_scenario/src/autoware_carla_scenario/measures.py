@@ -133,6 +133,7 @@ __all__ = [
     "read_measure",
     "set_measured_scenario",
     "stop_line_distance_between",
+    "stop_line_lane",
     "vehicle_ahead_definition",
     "vehicle_ahead_definitions",
     "vehicle_ahead_gap_between",
@@ -1329,25 +1330,26 @@ def _crossing_pedestrian(world: "carla.World") -> Optional[_Around]:
 
 
 class _StopLines:
-    """``s`` of every stop line on the last lane frame asked about, sorted."""
+    """``(s, lanelet)`` of every stop line on the last lane frame asked
+    about, sorted by ``s``."""
 
     frame: Optional[_LaneFrame] = None
-    at: list[float] = []
+    at: list[tuple[float, int]] = []
 
 
 _STOP_LINES = _StopLines()
 
 
-def _stop_lines_on(frame: _LaneFrame) -> list[float]:
-    """``s`` of the stop lines on *frame*'s lanelets, each at its middle;
-    worked out once per frame."""
+def _stop_lines_on(frame: _LaneFrame) -> list[tuple[float, int]]:
+    """``(s, lanelet)`` of the stop lines on *frame*'s lanelets, each at its
+    middle; worked out once per frame."""
     if _STOP_LINES.frame is frame:
         return _STOP_LINES.at
     mm = MapManager.get_instance()
     layer = mm.lanelet_map.laneletLayer
     offset_x, offset_y = mm.mgrs_offset
     seen: set[int] = set()
-    found: list[float] = []
+    found: list[tuple[float, int]] = []
     for lanelet_id in frame.start:
         for element in layer[lanelet_id].regulatoryElements:
             for line in regulatory_element_stop_lines(element, seen):
@@ -1357,22 +1359,43 @@ def _stop_lines_on(frame: _LaneFrame) -> list[float]:
                 x = sum(float(p.x) for p in points) / len(points) - offset_x
                 y = -(sum(float(p.y) for p in points) / len(points) - offset_y)
                 s, _yaw = frame.project(lanelet_id, x, y)
-                found.append(s)
+                found.append((s, lanelet_id))
     found.sort()
     _STOP_LINES.frame, _STOP_LINES.at = frame, found
     return found
 
 
-def _stop_line_ahead(ego: _Vehicle) -> Optional[float]:
+def _stop_line_and_lane(ego: _Vehicle) -> Optional[tuple[float, list[int]]]:
+    """The gap to the stop line ahead, and the lanelets of the lane from the
+    ego's to the one the stop line is on (that branch, where the lane forks)."""
     frame = _lane_frame(ego)
     if frame is None:
         return None
     on_lane = _EgoOnLane(frame, ego)
-    for s in _stop_lines_on(frame):
+    for s, lanelet_id in _stop_lines_on(frame):
         gap = s - on_lane.front
-        if gap >= 0.0:
-            return gap if gap <= AHEAD_RANGE_M else None
+        if gap < 0.0:
+            continue
+        if gap > AHEAD_RANGE_M:
+            return None
+        lane = [lanelet_id]
+        while lane[-1] != frame.ego_lanelet and lane[-1] in frame.parent:
+            lane.append(frame.parent[lane[-1]])
+        return gap, lane[::-1]
     return None
+
+
+def _stop_line_ahead(ego: _Vehicle) -> Optional[float]:
+    found = _stop_line_and_lane(ego)
+    return None if found is None else found[0]
+
+
+def stop_line_lane(ego: "carla.Transform", ego_bumpers: Bumpers) -> list[int]:
+    """The lanelets from the one an ego at *ego* is on to the one the stop
+    line :data:`STOP_LINE_DISTANCE_M` reads is on, in driving order: the
+    branch it is on where the lane forks.  Empty when it reads nothing."""
+    found = _stop_line_and_lane(_placed(ego, ego_bumpers))
+    return [] if found is None else found[1]
 
 
 def stop_line_distance_between(

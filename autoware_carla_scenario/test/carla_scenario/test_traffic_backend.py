@@ -41,8 +41,9 @@ from autoware_carla_scenario.traffic.traffic_manager import TrafficManagerBacken
 
 
 class _Actor:
-    def __init__(self, actor_id: int) -> None:
+    def __init__(self, actor_id: int, role_name: str = "") -> None:
         self.id = actor_id
+        self.attributes = {"role_name": role_name} if role_name else {}
         self.autopilot: List[Tuple[bool, int]] = []
 
     def set_autopilot(self, enabled: bool, port: int) -> None:
@@ -186,6 +187,17 @@ class TestTrafficManagerStart:
         world = _World([_Actor(1)])
         TrafficManagerBackend(client=_Client()).start(world)
         assert world.get_actors().filters == ["vehicle.*"]
+
+    def test_the_bumper_probe_is_nobody_s_to_drive(self) -> None:
+        """vehicle_bumpers() destroys its probe before the next tick, but the
+        client lists it until then: autopiloted, it stalls the next tick."""
+        from autoware_carla_scenario.constants import BUMPER_PROBE_ROLE_NAME
+
+        probe, npc = _Actor(1, str(BUMPER_PROBE_ROLE_NAME)), _Actor(2, "npc1")
+        backend = TrafficManagerBackend(client=_Client())
+        backend.start(_World([probe, npc]))
+        assert probe.autopilot == []
+        assert npc.autopilot == [(True, backend.port)]
 
     def test_a_named_actor_is_left_alone(self) -> None:
         """One authority per vehicle: an ego under external control is skipped.

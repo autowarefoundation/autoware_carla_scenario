@@ -124,6 +124,21 @@ def test_placement_reads_back_as_the_measure(road: LaneMap, distance: float) -> 
     assert pose.lanelet_id == expected
 
 
+def test_a_spawn_on_a_lanelet_before_the_stop_line_s_is_placed_on_to_it(
+    road: LaneMap,
+) -> None:
+    # 87.4 m before the stop line, on the lanelet before its lanelet.
+    spawn = Lanelet2Pose(lanelet_id=road.id("ego", 0), s=60.0)
+
+    pose = place_at_stop_line_distance(spawn, 10.0, ego_bumpers=_EGO)
+
+    assert pose.lanelet_id == road.id("ego", 1)
+    assert pose.s == pytest.approx(37.4, abs=0.01)
+    assert _measured(to_carla_world(pose).to_carla_transform()) == pytest.approx(
+        10.0, abs=0.01
+    )
+
+
 def test_placement_says_what_it_cannot_reach(road: LaneMap) -> None:
     spawn = Lanelet2Pose(lanelet_id=road.id("ego", 1), s=37.4)
     with pytest.raises(ValueError, match=f"{STOP_LINE_DISTANCE_M} cannot read 200"):

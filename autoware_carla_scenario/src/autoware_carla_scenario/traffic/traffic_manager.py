@@ -25,6 +25,7 @@ from ..coordinate.map_manager import run_carla_map
 from ..kinematics.angle import normalize_angle_deg
 from .base import (
     DrivenEntity,
+    is_bumper_probe,
     LaneChangeDirection,
     TrafficBackend,
     TrafficContext,
@@ -167,7 +168,7 @@ class TrafficManagerBackend(TrafficBackend):
         skip = set(skip_actor_ids)
         enabled = 0
         for actor in world.get_actors().filter("vehicle.*"):
-            if actor.id in skip or actor.id in self._released:
+            if actor.id in skip or actor.id in self._released or is_bumper_probe(actor):
                 continue
             actor.set_autopilot(True, self.port)
             enabled += 1

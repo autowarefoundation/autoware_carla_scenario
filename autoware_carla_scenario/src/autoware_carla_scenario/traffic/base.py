@@ -47,12 +47,30 @@ from typing import (
     runtime_checkable,
 )
 
+from ..constants import BUMPER_PROBE_ROLE_NAME
 from .context import TrafficContext
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
 
 logger = logging.getLogger(__name__)
+
+
+def is_bumper_probe(actor: "carla.Actor") -> bool:
+    """Whether *actor* is the vehicle
+    :func:`~autoware_carla_scenario.placement.vehicle_bumpers` spawns to
+    measure a blueprint, which no traffic backend may drive.
+
+    It is destroyed straight away, but the client lists it until the world
+    is next ticked: handed to the TrafficManager in that gap, a destroyed
+    vehicle stalls the next synchronous ``World.tick()`` for good, the
+    client allocating all the while until the process runs out of memory.
+    """
+    attributes = actor.attributes
+    return "role_name" in attributes and attributes["role_name"] == str(
+        BUMPER_PROBE_ROLE_NAME
+    )
+
 
 __all__ = [
     "LaneChangeDirection",
@@ -500,7 +518,7 @@ class NullTrafficBackend(TrafficBackend):
         undriven = [
             actor
             for actor in world.get_actors().filter("vehicle.*")
-            if actor.id not in skip
+            if actor.id not in skip and not is_bumper_probe(actor)
         ]
         if undriven:
             logger.warning(

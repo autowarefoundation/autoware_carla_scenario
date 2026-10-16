@@ -52,6 +52,7 @@ from .measures import (
     Bumpers,
     bumpers_of_box,
     stop_line_distance_between,
+    stop_line_lane,
     vehicle_ahead_gap_between,
 )
 
@@ -279,11 +280,10 @@ def place_at_vehicle_ahead_gap(
     return Lanelet2Pose(lanelet_id=lanelet_id, s=s)
 
 
-def _lane_through(lanelet_id: int, reach_m: float) -> list[int]:
-    """*lanelet_id* with the lanelets before it and after it, in driving
-    order, each way until *reach_m* metres of them: the first of the
-    routing graph's ``previous`` and ``following`` of each, by the lowest
-    id, so the same map always gives the same lane."""
+def _lanelets_before(lanelet_id: int, reach_m: float) -> list[int]:
+    """The lanelets before *lanelet_id*, nearest first, until *reach_m*
+    metres of them: the first of the routing graph's ``previous`` of each,
+    by the lowest id, so the same map always gives the same lane."""
     mm = MapManager.get_instance()
     layer = mm.lanelet_map.laneletLayer
     graph = mm.routing_graph
@@ -297,17 +297,7 @@ def _lane_through(lanelet_id: int, reach_m: float) -> list[int]:
         current_id = before[0]
         behind.append(current_id)
         walked += lanelet_length(current_id)
-    ahead: list[int] = []
-    current_id = lanelet_id
-    walked = lanelet_length(lanelet_id)
-    while walked < reach_m:
-        after = sorted(int(ll.id) for ll in graph.following(layer[current_id]))
-        if not after or after[0] in ahead or after[0] == lanelet_id:
-            break
-        current_id = after[0]
-        ahead.append(current_id)
-        walked += lanelet_length(current_id)
-    return [*reversed(behind), lanelet_id, *ahead]
+    return behind
 
 
 def _pose_on(
@@ -330,16 +320,33 @@ def place_at_stop_line_distance(
     reads, by the same code
     (:func:`~autoware_carla_scenario.measures.stop_line_distance_between`):
     along the ego's lane from its front bumper.  The ego is moved along the
-    lane *spawn* is on -- back onto the lanelets before its lanelet, or on
-    onto those after it, :data:`~autoware_carla_scenario.measures.AHEAD_RANGE_M`
-    each way -- to the first place, from the back, that reads *distance_m*:
-    so *spawn* need only be somewhere on the lane leading to the stop line.
+    lane *spawn* is on: on towards the stop line the measure reads from
+    *spawn*, along the branch it is on where the lane forks
+    (:func:`~autoware_carla_scenario.measures.stop_line_lane`), or back onto
+    the lanelets before *spawn*'s, up to
+    :data:`~autoware_carla_scenario.measures.AHEAD_RANGE_M`.  So *spawn* need
+    only be somewhere within that range before the stop line.
 
     Raises:
         ValueError: When no point of that lane is *distance_m* before a stop
             line, saying what distances it does reach.
     """
-    lane = _lane_through(spawn.lanelet_id, AHEAD_RANGE_M)
+    at = to_carla_world(spawn)
+    ahead = stop_line_lane(
+        carla.Transform(
+            carla.Location(x=at.x, y=at.y, z=at.z), carla.Rotation(yaw=at.yaw)
+        ),
+        ego_bumpers,
+    )
+    if spawn.lanelet_id not in ahead:
+        raise ValueError(
+            f"{STOP_LINE_DISTANCE_M}: no stop line within {AHEAD_RANGE_M:g} m "
+            f"ahead of lanelet {spawn.lanelet_id} at s={spawn.s:.2f}"
+        )
+    # The lane the measure reads the stop line along -- its branch, where the
+    # lane forks -- from the spawn's lanelet, and the lane back from that.
+    ahead = ahead[ahead.index(spawn.lanelet_id) :]
+    lane = [*reversed(_lanelets_before(spawn.lanelet_id, AHEAD_RANGE_M)), *ahead]
     lengths = [lanelet_length(lanelet_id) for lanelet_id in lane]
     starts: list[float] = []
     total = 0.0
@@ -358,20 +365,20 @@ def place_at_stop_line_distance(
     # falls metre for metre, so the answer is near where that says, and is
     # looked for only there -- not before a stop line further back.
     u_spawn = starts[lane.index(spawn.lanelet_id)] + spawn.s
-    ahead = read_at(u_spawn)
-    if ahead is None:
+    gap = read_at(u_spawn)
+    if gap is None:
         raise ValueError(
             f"{STOP_LINE_DISTANCE_M}: no stop line within {AHEAD_RANGE_M:g} m "
             f"ahead of lanelet {spawn.lanelet_id} at s={spawn.s:.2f}"
         )
-    guess = u_spawn + ahead - distance_m
+    guess = u_spawn + gap - distance_m
     low = max(0.0, guess - _STOP_LINE_SEARCH_M)
     high = min(total, guess + _STOP_LINE_SEARCH_M)
     if high < low:
         raise ValueError(
-            f"{STOP_LINE_DISTANCE_M} cannot read {distance_m:g}: the lane through "
-            f"lanelet {spawn.lanelet_id} (lanelets {lane}) starts "
-            f"{u_spawn + ahead:.1f} m before the stop line"
+            f"{STOP_LINE_DISTANCE_M} cannot read {distance_m:g}: the lane back "
+            f"from lanelet {spawn.lanelet_id} (lanelets {lane}) reaches only "
+            f"{u_spawn + gap:.1f} m before the stop line"
         )
     u = solve_along(
         read_at,

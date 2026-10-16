@@ -153,6 +153,10 @@ def stop_line_distance_between(ego: carla.Transform,
     raise NotImplementedError()
 
 
+def stop_line_lane(ego: carla.Transform, ego_bumpers: Bumpers) -> List[int]:
+    raise NotImplementedError()
+
+
 def prepare_vehicle_ahead() -> None:
     raise NotImplementedError()
 
