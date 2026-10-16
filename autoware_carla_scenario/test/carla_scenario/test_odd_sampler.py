@@ -1111,3 +1111,103 @@ def test_a_run_reads_its_case_back_from_the_override() -> None:
     assert run_case is not None
     assert run_case[0] == drawn and run_case[1] == space
     assert _odd_case(_compose_config("cut_in/left", [])) is None
+
+
+# ---------------------------------------------------------------------------
+# The road a case is on: the attributes the map decides
+# ---------------------------------------------------------------------------
+
+
+def _road_odd() -> OddDefinition:
+    return OddDefinition(
+        "road",
+        [
+            OddAttribute("scenery.junction", lambda world: None, values=[True, False]),
+            OddAttribute(
+                "scenery.speed_limit",
+                lambda world: None,
+                unit="km/h",
+                buckets=[0, 30, 60, 90],
+            ),
+            # What a run sets, so there is something to draw without a map.
+            OddAttribute("environment.rain", rain, values=INTENSITY_LEVELS),
+        ],
+    )
+
+
+def _on_road(monkeypatch, buckets: list[dict[str, str]]) -> None:
+    from autoware_carla_scenario.sweeper import expand as expand_module
+
+    monkeypatch.setattr(
+        expand_module,
+        "_expand_lanelets",
+        lambda sweep, lanelet_map: [
+            [f"ego.spawn_lanelet_id={i + 1}"] for i in range(len(buckets))
+        ],
+    )
+    monkeypatch.setattr(
+        expand_module, "_case_buckets", lambda cases, definition, lanelet_map: buckets
+    )
+
+
+def _drawn(case: list[str]) -> dict[str, str]:
+    from autoware_carla_scenario.odd.sampler import ODD_CASE_KEY, decode_case
+
+    encoded = next(o for o in case if o.startswith(f"++{ODD_CASE_KEY}="))
+    sample, _space = decode_case(encoded.split("=", 1)[1])
+    return sample.buckets
+
+
+def test_each_case_goes_on_a_lanelet_in_the_buckets_drawn(monkeypatch) -> None:
+    buckets = [
+        {"scenery.junction": "true", "scenery.speed_limit": "[30, 60)"},
+        {"scenery.junction": "false", "scenery.speed_limit": "[30, 60)"},
+        {"scenery.junction": "false", "scenery.speed_limit": "[0, 30)"},
+    ]
+    _on_road(monkeypatch, buckets)
+    sweep = {
+        "constraints": {"ego.spawn_lanelet_id": [{}]},
+        "odd_sample": {"count": 12, "seed": 3},
+    }
+
+    cases = expand_sweep(sweep, object(), (), odd=_road_odd())
+
+    by_lanelet = {f"ego.spawn_lanelet_id={i + 1}": b for i, b in enumerate(buckets)}
+    for case in cases:
+        drawn = _drawn(case)
+        on = by_lanelet[case[0]]
+        assert drawn["scenery.junction"] == on["scenery.junction"]
+        assert drawn["scenery.speed_limit"] == on["scenery.speed_limit"]
+        # The knobs' own setting is no override of the run.
+        assert not any(o.startswith("_odd_map.") for o in case)
+    # Only the buckets some lanelet is in are drawn, and every one of them.
+    assert {_drawn(c)["scenery.speed_limit"] for c in cases} == {"[0, 30)", "[30, 60)"}
+    assert {_drawn(c)["scenery.junction"] for c in cases} == {"true", "false"}
+
+
+def test_without_a_map_the_cases_are_taken_in_turn(monkeypatch) -> None:
+    _on_road(monkeypatch, [{"scenery.junction": "true"}, {"scenery.junction": "false"}])
+    sweep = {
+        "constraints": {"ego.spawn_lanelet_id": [{}]},
+        "odd_sample": {"count": 4, "seed": 3},
+    }
+
+    cases = expand_sweep(sweep, None, (), odd=_road_odd())
+
+    assert [c[0] for c in cases] == [
+        "ego.spawn_lanelet_id=1",
+        "ego.spawn_lanelet_id=2",
+    ] * 2
+
+
+def test_a_knob_the_sweep_gives_is_not_replaced_by_the_map(monkeypatch) -> None:
+    from autoware_carla_scenario.sweeper.expand import _map_knobs
+
+    knobs = _map_knobs(
+        _road_odd(),
+        [{"scenery.junction": "true", "scenery.speed_limit": "[30, 60)"}],
+        {"scenery.junction": {"key": "x"}},
+    )
+
+    assert set(knobs) == {"scenery.speed_limit"}
+    assert knobs["scenery.speed_limit"]["values"] == {"[30, 60)": [30.0, 60.0]}

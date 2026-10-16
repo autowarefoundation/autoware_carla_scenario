@@ -177,6 +177,7 @@ if TYPE_CHECKING:
     )
     from .measures import Bumpers as Bumpers
     from .placement import (
+        place_at_stop_line_distance as place_at_stop_line_distance,
         place_at_vehicle_ahead_gap as place_at_vehicle_ahead_gap,
         solve_along as solve_along,
         vehicle_bumpers as vehicle_bumpers,
@@ -420,6 +421,7 @@ __all__ = [
     "lanelets_ahead",
     # Placing road users for a measure
     "Bumpers",
+    "place_at_stop_line_distance",
     "place_at_vehicle_ahead_gap",
     "solve_along",
     "vehicle_bumpers",
@@ -599,6 +601,7 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "to_map_frame": (".coordinate", "to_map_frame"),
     "to_opendrive": (".coordinate", "to_opendrive"),
     "Bumpers": (".measures", "Bumpers"),
+    "place_at_stop_line_distance": (".placement", "place_at_stop_line_distance"),
     "place_at_vehicle_ahead_gap": (".placement", "place_at_vehicle_ahead_gap"),
     "solve_along": (".placement", "solve_along"),
     "vehicle_bumpers": (".placement", "vehicle_bumpers"),

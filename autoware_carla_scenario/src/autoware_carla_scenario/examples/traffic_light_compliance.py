@@ -11,6 +11,13 @@ This scenario verifies traffic light compliance by:
    and pulls away after the green phase (3.5 s onward), reaching
    ``departure_speed_kmh`` (``moving_speed_kmh`` when unset).
 
+The scenario's controls can set where the ego starts and how long the light
+stays red: ``stop_line_distance_m`` places the ego that far before the stop
+line ahead, as :data:`~autoware_carla_scenario.measures.STOP_LINE_DISTANCE_M`
+reads it, and the red phase is its own measure,
+:data:`RED_LIGHT_DURATION_S`, ``light_switch_delay_seconds`` as the run holds
+it.
+
 The pass condition combines :class:`~autoware_carla_scenario.ElapsedTimeCondition`
 and :class:`~autoware_carla_scenario.SpeedCondition` via
 :class:`~autoware_carla_scenario.AndCondition` and
@@ -46,11 +53,17 @@ from autoware_carla_scenario import (
     TimeoutCondition,
     TrafficLightTarget,
     TrafficSignalAction,
+    place_at_stop_line_distance,
+    vehicle_bumpers,
 )
 
 from .configs import TrafficLightComplianceConfig
 
 logger = logging.getLogger(__name__)
+
+#: Seconds every light is held red from the run's start before it turns green:
+#: this scenario's own measure (``light_switch_delay_seconds``).
+RED_LIGHT_DURATION_S = "red_light_duration_s"
 
 
 class TrafficLightComplianceScenario(BaseScenario):
@@ -89,7 +102,28 @@ class TrafficLightComplianceScenario(BaseScenario):
         cfg = self._config
 
         # --- Compute ego spawn from Lanelet2Pose ---
+        spawn = self._spawn_pose
+        if cfg.stop_line_distance_m is not None and spawn is not None:
+            self._spawn_pose = place_at_stop_line_distance(
+                spawn,
+                cfg.stop_line_distance_m,
+                ego_bumpers=vehicle_bumpers(self.world, self.ego_config.vehicle_type),
+            )
+            logger.info(
+                "Ego %.2f m before the stop line: lanelet %d at s=%.2f",
+                cfg.stop_line_distance_m,
+                self._spawn_pose.lanelet_id,
+                self._spawn_pose.s,
+            )
         self._setup_ego_spawn()
+
+        delay = cfg.light_switch_delay_seconds
+        self.register_measure(
+            RED_LIGHT_DURATION_S,
+            lambda world: delay,
+            unit="s",
+            text="Seconds every light is held red from the start before it turns green",
+        )
 
         # --- Set all traffic lights to RED ---
         self.register_init(
@@ -179,8 +213,13 @@ class TrafficLightComplianceScenario(BaseScenario):
         )
 
         # --- Fail-safe timeout ---
+        timeout = (
+            cfg.timeout_seconds
+            if cfg.timeout_after_green_seconds is None
+            else cfg.light_switch_delay_seconds + cfg.timeout_after_green_seconds
+        )
         self.register_fail_condition(
-            TimeoutCondition(cfg.timeout_seconds, label="scenario_timeout")
+            TimeoutCondition(timeout, label="scenario_timeout")
         )
 
     def is_done(self) -> bool:

@@ -26,6 +26,14 @@ drawn case also carries itself, encoded (``++odd_case=...``), for its run to
 record with its outcome; with ``odd_sample.flaky``, part of the cases are
 chosen where the earlier runs left the outcome unsure.
 
+Where the sweep has cases of its own (constraints or a route search), the
+ODD's attributes the Lanelet2 map decides -- in a junction or not, how many
+lanes, the speed limit: the road the case is on -- are drawn too, among the
+buckets the cases' lanelets reach, and each drawn case takes a case on a
+lanelet in the buckets drawn (:func:`_choose_cases`).  So the sampler's
+strategy -- uniform, or what coverage left uncovered first -- picks the road
+as it picks the settings.
+
 ``sweep.case_index`` keeps one case of the expansion, the N-th (0-based):
 ``++sweep.case_index=0`` runs every scenario of a batch on its first case, as
 ``scenario-expand`` lists them.
@@ -115,7 +123,14 @@ def expand_sweep(
     else:
         raise ValueError("sweep.constraints is empty; nothing to expand.")
     if odd_sample and base_cases:
-        base_cases = _with_odd_samples(base_cases, odd_sample, odd, controls, drawn)
+        base_cases = _with_odd_samples(
+            base_cases,
+            odd_sample,
+            odd,
+            controls,
+            drawn,
+            lanelet_map=lanelet_map if base_cases != [[]] else None,
+        )
     case_index = sweep.get("case_index")
     if case_index is not None:
         index = int(case_index)
@@ -128,27 +143,191 @@ def expand_sweep(
     return [[*case, *arguments] for case in base_cases]
 
 
+#: The setting a knob of a map-decided attribute writes: none a run reads.
+#: It is taken off each drawn case once the case's road is chosen.
+_MAP_KNOB_PREFIX = "_odd_map."
+
+
+def _case_lanelet(case: Sequence[str]) -> int | None:
+    """The lanelet a base case is on: its first ``*lanelet_id`` override (the
+    constraints' pick, or the route's spawn)."""
+    for item in case:
+        key, _, value = item.lstrip("+").partition("=")
+        if key.endswith("lanelet_id"):
+            try:
+                return int(value)
+            except ValueError:
+                return None
+    return None
+
+
+def _case_buckets(
+    base_cases: list[list[str]], definition: Any, lanelet_map: Any
+) -> list[dict[str, str]]:
+    """Each base case's bucket of every attribute the map decides on its
+    lanelet (:func:`~autoware_carla_scenario.odd.route.lanelet_buckets`)."""
+    from ..odd.route import lanelet_buckets  # noqa: PLC0415
+
+    graph = create_routing_graph(lanelet_map)
+    found: list[dict[str, str]] = []
+    for case in base_cases:
+        lanelet_id = _case_lanelet(case)
+        if lanelet_id is None:
+            found.append({})
+            continue
+        try:
+            lanelet = lanelet_map.laneletLayer[lanelet_id]
+        except Exception:  # noqa: BLE001 - a lanelet the map lacks decides nothing
+            found.append({})
+            continue
+        found.append(lanelet_buckets(definition, lanelet, lanelet_map, graph))
+    return found
+
+
+def _map_knobs(
+    definition: Any, buckets: list[dict[str, str]], given: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Knobs for the attributes the map decides, keyed by attribute: each
+    reaches the buckets the base cases' lanelets are in, and writes
+    :data:`_MAP_KNOB_PREFIX` ``+ name``.  Not for an attribute the sweep
+    already has a knob for (*given*)."""
+    knobs: dict[str, Any] = {}
+    for attribute in definition.attributes:
+        name = attribute.name
+        if name in given:
+            continue
+        reached = sorted({b[name] for b in buckets if name in b})
+        item = attribute.item
+        if not reached or item is None:
+            continue
+        key = _MAP_KNOB_PREFIX + name
+        if not item.numeric:
+            knobs[name] = {"key": key, "values": {label: label for label in reached}}
+            continue
+        # A numeric bucket is drawn inside its own interval: the knob reaches
+        # those of the reached buckets, and only them.
+        edges = item.edges
+        ranges: dict[str, list[float]] = {}
+        for index, label in enumerate(item.labels):
+            if label in reached and index + 1 < len(edges):
+                ranges[label] = [edges[index], edges[index + 1]]
+        if not ranges:
+            continue
+        low = min(r[0] for r in ranges.values())
+        high = max(r[1] for r in ranges.values())
+        knobs[name] = {"key": key, "values": ranges, "range": [low, high]}
+    return knobs
+
+
+#: How many cases :func:`_on_some_case` draws for each it keeps, at most.
+_DRAWS_PER_CASE = 20
+
+
+def _fits(sample: Any, buckets: dict[str, str], attributes: Sequence[str]) -> bool:
+    return all(
+        buckets.get(a) == sample.buckets[a] for a in attributes if a in sample.buckets
+    )
+
+
+def _on_some_case(
+    sampler: Any, wanted: int, buckets: list[dict[str, str]], attributes: Sequence[str]
+) -> list[Any]:
+    """*wanted* cases from *sampler* whose buckets for the map's *attributes*
+    some base case is in, all of them.
+
+    Each attribute's knob reaches only buckets some case is in, but not every
+    combination of them is on one lanelet -- no junction where the limit is
+    30, say -- and the knobs draw each attribute on its own.  So more are
+    drawn (:data:`_DRAWS_PER_CASE` for each kept, in the sampler's order) and
+    those on no case are passed over; if too few are left, the rest are the
+    first passed over, put on the case nearest them (:func:`_choose_cases`).
+    """
+    drawn = sampler.sample(wanted * _DRAWS_PER_CASE)
+    kept = [s for s in drawn if any(_fits(s, b, attributes) for b in buckets)]
+    if len(kept) >= wanted:
+        return kept[:wanted]
+    passed = [s for s in drawn if s not in kept]
+    logger.warning(
+        "Only %d of %d drawn case(s) fit a lanelet of the sweep in every "
+        "bucket the map decides; %d go on the nearest one",
+        len(kept),
+        len(drawn),
+        wanted - len(kept),
+    )
+    return kept + passed[: wanted - len(kept)]
+
+
+def _choose_cases(
+    samples: Sequence[Any],
+    base_cases: list[list[str]],
+    buckets: list[dict[str, str]],
+    attributes: Sequence[str],
+) -> tuple[list[list[str]], int]:
+    """The base case for each drawn sample: one on a lanelet in every bucket
+    the sample drew for *attributes*, else in as many of them as any; among
+    those, each in turn.  Returns the cases and how many matched fully."""
+    chosen: list[list[str]] = []
+    turns: dict[tuple[int, ...], int] = {}
+    full = 0
+    for sample in samples:
+        wanted = {a: sample.buckets[a] for a in attributes if a in sample.buckets}
+        scores = [
+            sum(1 for a, label in wanted.items() if b.get(a) == label) for b in buckets
+        ]
+        best = max(scores) if scores else 0
+        candidates = tuple(i for i, score in enumerate(scores) if score == best)
+        if best == len(wanted):
+            full += 1
+        turn = turns.get(candidates, 0)
+        turns[candidates] = turn + 1
+        chosen.append(base_cases[candidates[turn % len(candidates)]])
+    return chosen, full
+
+
 def _with_odd_samples(
     base_cases: list[list[str]],
     odd_sample: Mapping[Any, Any],
     odd: Any,
     controls: Mapping[str, Any] | None = None,
     drawn: OddDraws | None = None,
+    *,
+    lanelet_map: Any = None,
 ) -> list[list[str]]:
     """``odd_sample.count`` cases (one per base case by default), each a base
-    case -- a lanelet or a route match -- and settings drawn from the ODD."""
+    case -- a lanelet or a route match -- and settings drawn from the ODD.
+
+    With *lanelet_map*, the attributes the map decides are drawn as well and
+    each case is put on a base case in the buckets drawn (the module
+    docstring); without it, the base cases are taken in turn."""
     from openodd import ParameterSpace  # noqa: PLC0415
 
+    from ..odd.registry import resolve_odd  # noqa: PLC0415
     from ..odd.sampler import ODD_CASE_KEY, encode_case, search_from_config  # noqa: PLC0415
 
+    raw = {str(k): v for k, v in odd_sample.items()}
+    buckets: list[dict[str, str]] = []
+    map_attributes: list[str] = []
+    if lanelet_map is not None:
+        definition = resolve_odd(raw.get("odd") or odd)
+        buckets = _case_buckets(base_cases, definition, lanelet_map)
+        given = dict(raw.get("knobs") or {})
+        map_knobs = _map_knobs(definition, buckets, given)
+        if map_knobs:
+            raw["knobs"] = {**map_knobs, **given}
+            map_attributes = list(map_knobs)
     sampler, search, count = search_from_config(
-        {str(k): v for k, v in odd_sample.items()},
+        raw,
         odd=odd,
         controls=controls,
         drawn=drawn,
     )
     wanted = len(base_cases) if count is None else count
-    samples = search.sample(wanted) if search is not None else sampler.sample(wanted)
+    if search is not None:
+        samples = search.sample(wanted)
+    elif map_attributes:
+        samples = _on_some_case(sampler, wanted, buckets, map_attributes)
+    else:
+        samples = sampler.sample(wanted)
     space = search.space if search is not None else ParameterSpace.of(sampler)
     if drawn is not None:
         drawn.add(sampler.odd, samples)
@@ -169,14 +348,26 @@ def _with_odd_samples(
             explored,
             len(search.model),
         )
+    if map_attributes:
+        cases, full = _choose_cases(samples, base_cases, buckets, map_attributes)
+        logger.info(
+            "Put them on the road drawn (%s): %d of %d on a lanelet in every "
+            "bucket drawn, among %d base case(s)",
+            ", ".join(map_attributes),
+            full,
+            len(samples),
+            len(base_cases),
+        )
+    else:
+        cases = [base_cases[i % len(base_cases)] for i in range(len(samples))]
     # Each run gets its case, to record with its outcome in its coverage file.
     return [
         [
-            *base_cases[i % len(base_cases)],
-            *sample.overrides,
+            *case,
+            *(o for o in sample.overrides if not o.startswith(_MAP_KNOB_PREFIX)),
             f"++{ODD_CASE_KEY}={encode_case(sample, space)}",
         ]
-        for i, sample in enumerate(samples)
+        for case, sample in zip(cases, samples)
     ]
 
 

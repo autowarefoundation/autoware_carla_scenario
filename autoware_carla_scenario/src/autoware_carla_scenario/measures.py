@@ -67,6 +67,16 @@ heading.  Which definition read the gap is recorded
 lead's velocity along the lane's tangent at its rear bumper, less the ego's
 along the tangent at its front bumper.
 
+The stop line ahead
+------------------
+:data:`STOP_LINE_DISTANCE_M` is read along the same lane: ``s`` of the
+nearest stop line ahead -- a traffic light's, a traffic sign's or a road
+marking's, as a ``stop_line_offset`` binding finds them
+(:func:`~autoware_carla_scenario.utils.stop_line.regulatory_element_stop_lines`),
+on any lanelet of the lane -- less ``s`` of the ego's front bumper, up to
+:data:`AHEAD_RANGE_M`.  A stop line is placed on the lane at its middle.
+Nothing is read without a lane to read along.
+
 These are version 2 of the vehicle-ahead measures (:attr:`Measure.version`);
 version 1 was centre to centre along the ego's heading, a vehicle counted
 within three half-lanes of the ego's centre line.  Coverage keeps the two
@@ -87,6 +97,7 @@ from .constants import BUMPER_PROBE_ROLE_NAME, EGO_ROLE_NAME
 from .coordinate.map_manager import MapManager
 from .entity_role import find_actor_in_list
 from .metrics import is_metric
+from .utils.stop_line import regulatory_element_stop_lines
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
@@ -108,6 +119,7 @@ __all__ = [
     "PEDESTRIAN_LATERAL_M",
     "PEDESTRIAN_MOVING_MS",
     "PROBE_ROLE",
+    "STOP_LINE_DISTANCE_M",
     "VEHICLE_AHEAD_GAP_M",
     "VEHICLE_AHEAD_RELATIVE_SPEED_KPH",
     "VEHICLE_AHEAD_VERSION",
@@ -120,6 +132,7 @@ __all__ = [
     "prepare_vehicle_ahead",
     "read_measure",
     "set_measured_scenario",
+    "stop_line_distance_between",
     "vehicle_ahead_definition",
     "vehicle_ahead_definitions",
     "vehicle_ahead_gap_between",
@@ -136,6 +149,9 @@ VEHICLE_AHEAD_RELATIVE_SPEED_KPH = "vehicle_ahead_relative_speed_kph"
 CROSSING_PEDESTRIAN_GAP_M = "crossing_pedestrian_gap_m"
 #: That pedestrian's speed, in m/s.
 CROSSING_PEDESTRIAN_SPEED_MS = "crossing_pedestrian_speed_ms"
+#: Metres along the ego's lane from its front bumper to the nearest stop line
+#: ahead.
+STOP_LINE_DISTANCE_M = "stop_line_distance_m"
 
 #: The version of the vehicle-ahead measures' definition (the module
 #: docstring): 2, bumper to bumper along the ego's lane on the map.
@@ -1308,6 +1324,73 @@ def _crossing_pedestrian(world: "carla.World") -> Optional[_Around]:
 
 
 # ---------------------------------------------------------------------------
+# The stop line ahead
+# ---------------------------------------------------------------------------
+
+
+class _StopLines:
+    """``s`` of every stop line on the last lane frame asked about, sorted."""
+
+    frame: Optional[_LaneFrame] = None
+    at: list[float] = []
+
+
+_STOP_LINES = _StopLines()
+
+
+def _stop_lines_on(frame: _LaneFrame) -> list[float]:
+    """``s`` of the stop lines on *frame*'s lanelets, each at its middle;
+    worked out once per frame."""
+    if _STOP_LINES.frame is frame:
+        return _STOP_LINES.at
+    mm = MapManager.get_instance()
+    layer = mm.lanelet_map.laneletLayer
+    offset_x, offset_y = mm.mgrs_offset
+    seen: set[int] = set()
+    found: list[float] = []
+    for lanelet_id in frame.start:
+        for element in layer[lanelet_id].regulatoryElements:
+            for line in regulatory_element_stop_lines(element, seen):
+                points = list(line)
+                if not points:
+                    continue
+                x = sum(float(p.x) for p in points) / len(points) - offset_x
+                y = -(sum(float(p.y) for p in points) / len(points) - offset_y)
+                s, _yaw = frame.project(lanelet_id, x, y)
+                found.append(s)
+    found.sort()
+    _STOP_LINES.frame, _STOP_LINES.at = frame, found
+    return found
+
+
+def _stop_line_ahead(ego: _Vehicle) -> Optional[float]:
+    frame = _lane_frame(ego)
+    if frame is None:
+        return None
+    on_lane = _EgoOnLane(frame, ego)
+    for s in _stop_lines_on(frame):
+        gap = s - on_lane.front
+        if gap >= 0.0:
+            return gap if gap <= AHEAD_RANGE_M else None
+    return None
+
+
+def stop_line_distance_between(
+    ego: "carla.Transform", ego_bumpers: Bumpers
+) -> Optional[float]:
+    """What :data:`STOP_LINE_DISTANCE_M` reads for an ego at *ego* with
+    *ego_bumpers*: along its lane, from its front bumper to the nearest stop
+    line ahead (the module docstring).
+
+    ``None`` with no lane to read along, or no stop line within
+    :data:`AHEAD_RANGE_M`.  The built-in measure reads the ego with this same
+    code, so an ego placed where this reads *v* is measured at *v*
+    (:func:`~autoware_carla_scenario.placement.place_at_stop_line_distance`).
+    """
+    return _stop_line_ahead(_placed(ego, ego_bumpers))
+
+
+# ---------------------------------------------------------------------------
 # The built-in measures
 # ---------------------------------------------------------------------------
 
@@ -1340,6 +1423,13 @@ def _crossing_pedestrian_speed_ms(world: "carla.World") -> Optional[float]:
     if pedestrian is None:
         return None
     return pedestrian.speed
+
+
+def _stop_line_distance_m(world: "carla.World") -> Optional[float]:
+    ego_actor = find_actor_in_list(list(world.get_actors()), EGO_ROLE_NAME)
+    if ego_actor is None:
+        return None
+    return _stop_line_ahead(_moving(ego_actor))
 
 
 #: The measures every scenario has, by key.
@@ -1377,6 +1467,14 @@ BUILT_IN_MEASURES: dict[str, Measure] = {
             _crossing_pedestrian_speed_ms,
             "m/s",
             "That pedestrian's speed",
+        ),
+        Measure(
+            STOP_LINE_DISTANCE_M,
+            _stop_line_distance_m,
+            "m",
+            "Along the ego's lane on the Lanelet2 map, from its front bumper "
+            "to the nearest stop line ahead (a traffic light's, a traffic "
+            "sign's or a road marking's)",
         ),
     )
 }

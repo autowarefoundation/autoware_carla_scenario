@@ -231,7 +231,8 @@ The probes whose value the map alone decides (`speed_limit_kph`,
 `lanelet_speed_limit_kph`, `lanelet_location`, `lanelet_subtype`,
 `in_junction`, `lane_count`) can also read it off a lanelet, which is how a
 planned route is checked before a run
-([Checking a planned route](#checking-a-planned-route)).
+([Checking a planned route](#checking-a-planned-route)) and how a sweep picks
+the road a drawn case is on ([The road a case is on](#the-road-a-case-is-on)).
 
 Import them from `autoware_carla_scenario.odd` itself
 (`from autoware_carla_scenario.odd import rain`). The Codon model that checks
@@ -251,6 +252,7 @@ generically around the ego:
 | `vehicle_ahead_relative_speed_kph` | km/h | 2 | That vehicle's speed along the ego's lane less the ego's |
 | `crossing_pedestrian_gap_m` | m | How far ahead the nearest pedestrian ahead that is moving was when it set off, held while it crosses |
 | `crossing_pedestrian_speed_ms` | m/s | That pedestrian's speed |
+| `stop_line_distance_m` | m | 1 | Along the ego's lane, from its front bumper to the nearest stop line ahead -- a traffic light's, a traffic sign's or a road marking's, as a `stop_line_offset` binding finds them -- up to `AHEAD_RANGE_M`; nothing without a lane to read along |
 
 The pedestrian measures read in the ego's frame: ahead along its heading,
 within `PEDESTRIAN_LATERAL_M` of its centre line.
@@ -909,11 +911,43 @@ The example scenarios declare these:
 | `pedestrian_dart_out` | `crossing_pedestrian_gap_m` | `trigger_distance_m`, 8-30 m |
 | `pedestrian_dart_out` | `crossing_pedestrian_speed_ms` | `walk_speed_ms`, 0.8-3 m/s |
 
+`traffic_light_compliance` declares none, but has what a control needs:
+`stop_line_distance_m` (`target: measure`: the ego is moved along the lane its
+spawn pose is on until `stop_line_distance_m` reads it,
+`place_at_stop_line_distance`), and its own measure `red_light_duration_s`,
+the seconds every light is held red (`light_switch_delay_seconds`, a raw
+setting). With the delay drawn, `timeout_after_green_seconds` counts the
+fail-safe timeout from the green light instead of from the start.
+
 `sweep.odd_sample.knobs` takes the same fields keyed by the ODD's attributes,
 and replaces anything above, attribute by attribute, for that sweep. It is for
 the command line -- one sweep against one ODD -- not for a scenario's config,
 which would then name the ODD's taxonomy: a scenario says `controls`. Controls set where a run starts;
 the measures read what it then drives, which is what coverage counts.
+
+### The road a case is on
+
+A sweep with cases of its own -- constraints, or a route search -- draws the
+attributes the Lanelet2 map decides as well: whether the case is in a
+junction, how many lanes, the speed limit, the location and road type
+tags. Each is read off every case's lanelet (its first
+`*lanelet_id` override: the constraints' pick, or the route's spawn) with the
+probe's lanelet form, and gets a knob that reaches the buckets those lanelets
+are in. The knobs write no setting a run reads (`_odd_map.*`, taken off
+again); instead each drawn case is put on a case whose lanelet is in every
+bucket drawn, the cases in turn among those that are.
+
+Not every combination of buckets is on one lanelet -- no junction where the
+limit is 30, say -- and each knob draws its attribute on its own, so 20
+cases are drawn for each one kept and those no lanelet fits are passed over.
+If too few fit, the rest go on the lanelet in most of their buckets, with a
+warning. So `strategy: coverage` aims at the road as at everything else: the
+buckets of junction, lane count or speed limit that earlier runs left uncovered
+come first, as far as the sweep's cases reach them.
+
+A sweep that gives an attribute a knob itself (`odd_sample.knobs`) keeps it.
+The flaky search (`odd_sample.flaky`) draws its cases as it chooses them, none
+passed over; each goes on the lanelet in most of its buckets.
 
 ### How a case is drawn
 
