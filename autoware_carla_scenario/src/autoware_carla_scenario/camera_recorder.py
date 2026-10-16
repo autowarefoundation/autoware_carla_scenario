@@ -34,6 +34,30 @@ DEFAULT_FPS: float = 20.0
 _FRAME_TIMEOUT: float = 1.0
 
 
+def draw_caption(
+    image_bgr: np.ndarray[tuple[int, int, int], np.dtype[np.uint8]], text: str
+) -> None:
+    """Draw *text* centred along the bottom of *image_bgr*, in place.
+
+    White on a black outline, sized to the image's height, so it reads on any
+    background.
+    """
+    import cv2  # noqa: PLC0415
+
+    height, width = image_bgr.shape[:2]
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    scale = height / 720.0
+    thickness = max(1, round(2 * scale))
+    (text_width, _), baseline = cv2.getTextSize(text, font, scale, thickness)
+    origin = ((width - text_width) // 2, height - baseline - round(24 * scale))
+    cv2.putText(
+        image_bgr, text, origin, font, scale, (0, 0, 0), thickness * 3, cv2.LINE_AA
+    )
+    cv2.putText(
+        image_bgr, text, origin, font, scale, (255, 255, 255), thickness, cv2.LINE_AA
+    )
+
+
 class CameraRecorder:
     """Attach an RGB camera sensor to a CARLA actor and record video to MP4.
 
@@ -144,10 +168,14 @@ class CameraRecorder:
         else:
             self._frame_queue.put(data)
 
-    def write_frame(self) -> bool:
+    def write_frame(self, caption: str = "") -> bool:
         """Pull one frame from the sensor queue and write it to ffmpeg.
 
         Call this once after each ``world.tick()``.
+
+        Args:
+            caption: Text drawn along the frame's bottom (:func:`draw_caption`);
+                none when empty.
 
         Returns:
             ``True`` if a frame was written, ``False`` on timeout or if
@@ -167,6 +195,12 @@ class CameraRecorder:
             array = np.frombuffer(image.raw_data, dtype=np.uint8)
         array = array.reshape((image.height, image.width, 4))  # BGRA
         bgr = np.ascontiguousarray(array[:, :, :3])
+        if caption:
+            if TYPE_CHECKING:
+                # draw_caption draws with cv2, which is outside the static check.
+                pass
+            else:
+                draw_caption(bgr, caption)
 
         if self._process is not None and self._process.stdin is not None:
             try:

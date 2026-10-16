@@ -47,6 +47,9 @@ logger = logging.getLogger(__name__)
 #: Log ego OpenDRIVE position every N ticks (~1 s at 20 Hz).
 _CONDITION_LOG_INTERVAL: int = 20
 
+#: The caption along the bottom of the replay video's warm-up frames.
+WARMUP_CAPTION: str = "Warm-up"
+
 
 def _map_name_of(world: "carla.World") -> str:
     """Return the loaded map's name, or an empty string if CARLA will not say.
@@ -789,6 +792,7 @@ class ScenarioRunner:
         mp4_path: Path,
         spectator_config: "SpectatorCameraConfig",
         tick_count: int,
+        warmup_ticks: int,
         scenario_name: str,
     ) -> None:
         """Replay a CARLA recording and render video with an attached RGB camera.
@@ -796,13 +800,16 @@ class ScenarioRunner:
         The ``.log`` file produced by the native CARLA recorder is replayed in
         synchronous mode.  An RGB camera sensor is attached to the ego vehicle
         at the same offset as the spectator camera, and the captured frames are
-        written to an MP4 file via :class:`CameraRecorder`.
+        written to an MP4 file via :class:`CameraRecorder`.  The warm-up frames
+        the recording starts with carry :data:`WARMUP_CAPTION` along the bottom.
 
         Args:
             log_path: Path to the CARLA ``.log`` recording file.
             mp4_path: Destination path for the rendered ``.mp4`` video.
             spectator_config: Camera offset / pitch matching the spectator.
             tick_count: Number of ticks recorded during the scenario.
+            warmup_ticks: Number of ticks recorded before the scenario's first,
+                during the warm-up.
             scenario_name: Scenario class name (used for logging).
         """
         world = self._client.get_world()
@@ -852,14 +859,20 @@ class ScenarioRunner:
                 pitch=spectator_config.pitch,
             )
 
-            # Tick through the remaining replay frames.  We already consumed
-            # one tick above for actor spawn, so replay (tick_count - 1) more.
-            # Each tick is followed by a synchronous frame write so no
-            # frames are lost to async delivery delays.
-            remaining = max(tick_count - 1, 0)
-            for _ in range(remaining):
+            # Tick through the remaining replay frames: the warm-up, then the
+            # scenario.  We already consumed one tick above for actor spawn, so
+            # replay (warmup_ticks + tick_count - 1) more.  Each tick is
+            # followed by a synchronous frame write so no frames are lost to
+            # async delivery delays.
+            remaining = max(warmup_ticks + tick_count - 1, 0)
+            for index in range(remaining):
                 world.tick()
-                camera_recorder.write_frame()
+                # Frame index + 1 of the recording; the first warmup_ticks are
+                # the warm-up.
+                if index + 1 < warmup_ticks:
+                    camera_recorder.write_frame(WARMUP_CAPTION)
+                else:
+                    camera_recorder.write_frame()
 
             logger.info("[%s] Video rendered to %s", scenario_name, mp4_path)
 
@@ -1017,6 +1030,10 @@ class ScenarioRunner:
         world.apply_settings(settings)
 
         recording_started = False
+        # The world frame the recording starts at, and how many frames of it
+        # are the warm-up before the scenario's first tick.
+        recording_start_frame = 0
+        warmup_ticks = 0
         trajectory = TrajectoryRecorder(
             self.output_dir / f"{file_stem}.trajectory.jsonl"
         )
@@ -1106,6 +1123,25 @@ class ScenarioRunner:
                 EntityExistenceCondition(EGO_ROLE_NAME, label="ego_existence")
             )
 
+            # Start the native CARLA recorder now that the ego exists, so the
+            # replay video shows the warm-up below too (captioned as such).
+            output_path = self.output_dir / f"{file_stem}.log"
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                self._client.start_recorder(str(output_path))
+            except RuntimeError as error:
+                # CARLA 0.10 (UE5) can refuse start_recorder; a missing replay
+                # log must not fail an otherwise healthy scenario run.
+                logger.warning(
+                    "[%s] CARLA recorder unavailable (%s); continuing without a replay log",
+                    scenario_name,
+                    error,
+                )
+            else:
+                recording_started = True
+                recording_start_frame = int(world.get_snapshot().frame)
+                logger.info("[%s] Recording to %s", scenario_name, output_path)
+
             # Warm-up ticks: let physics and TrafficManager stabilise
             # before the main loop begins.
             for _ in range(scenario.STABILIZE_TICKS):
@@ -1162,22 +1198,13 @@ class ScenarioRunner:
 
             _set_warmup_done(True)
 
-            # Start native CARLA recorder
-            output_path = self.output_dir / f"{file_stem}.log"
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            try:
-                self._client.start_recorder(str(output_path))
-            except RuntimeError as error:
-                # CARLA 0.10 (UE5) can refuse start_recorder; a missing replay
-                # log must not fail an otherwise healthy scenario run.
-                logger.warning(
-                    "[%s] CARLA recorder unavailable (%s); continuing without a replay log",
+            if recording_started:
+                warmup_ticks = int(world.get_snapshot().frame) - recording_start_frame
+                logger.info(
+                    "[%s] Warm-up took %d tick(s) of the recording",
                     scenario_name,
-                    error,
+                    warmup_ticks,
                 )
-            else:
-                recording_started = True
-                logger.info("[%s] Recording to %s", scenario_name, output_path)
 
             # Register default timeout fail condition
             scenario.register_fail_condition(
@@ -1447,6 +1474,7 @@ class ScenarioRunner:
                 mp4_path=mp4_path,
                 spectator_config=scenario._spectator_camera_config,
                 tick_count=tick_count,
+                warmup_ticks=warmup_ticks,
                 scenario_name=scenario_name,
             )
 
