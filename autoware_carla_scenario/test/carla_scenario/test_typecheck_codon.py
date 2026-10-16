@@ -1131,6 +1131,346 @@ def test_a_module_without_a_codon_model_is_named(tmp_path: Path) -> None:
     assert error.path == str(path)
 
 
+@pytest.mark.parametrize(
+    ("setup", "needle", "message"),
+    [
+        (
+            "from autoware_carla_scenario.actions import ActionState\n",
+            "import ActionState",
+            "autoware_carla_scenario.actions has no ActionState in Python",
+        ),
+        (
+            "from autoware_carla_scenario.coordinate import Lanelet2Pose as P, RoadNetwork\n",
+            "RoadNetwork",
+            "autoware_carla_scenario.coordinate has no RoadNetwork in Python",
+        ),
+        (
+            "from autoware_carla_scenario.coverage import prepare_measures\n",
+            "prepare_measures",
+            "autoware_carla_scenario.coverage has no prepare_measures in Python",
+        ),
+        (
+            "from autoware_carla_scenario.entity import EgoConfig as E\n",
+            "import EgoConfig",
+            "autoware_carla_scenario.entity has no EgoConfig in Python",
+        ),
+        (
+            "from autoware_carla_scenario import _lists\n",
+            "import _lists",
+            "autoware_carla_scenario has no _lists in Python",
+        ),
+        (
+            "import autoware_carla_scenario._tc\n",
+            "_tc",
+            "autoware_carla_scenario._tc is a module of the Codon model only",
+        ),
+        (
+            "from autoware_carla_scenario._lists import _acs_list\n",
+            "_lists import",
+            "autoware_carla_scenario._lists is a module of the Codon model only",
+        ),
+    ],
+    ids=[
+        "actions-ActionState",
+        "coordinate-RoadNetwork",
+        "coverage-prepare_measures",
+        "entity-EgoConfig",
+        "package-_lists",
+        "module-_tc",
+        "module-_lists",
+    ],
+)
+def test_an_import_python_cannot_run_is_refused_at_its_line(
+    tmp_path: Path, setup: str, needle: str, message: str
+) -> None:
+    # The model declares these, Python's package lacks them (#214): an import
+    # inside a function is first run when the scenario runs, so the check
+    # must refuse it; at the top of a module, Python refuses it on import.
+    scenario, config, path = _write_case(
+        tmp_path, setup + textwrap.dedent(_VALID_SETUP)
+    )
+    result = typecheck_scenario(scenario, config)
+    error = _only_error(result)
+    assert len(result.diagnostics) == 1, result.format()
+    assert message in error.message, error.format()
+    assert "ImportError" in error.message or "fails when" in error.message
+    assert error.path == str(path)
+    assert error.line == _line_of(path, needle)
+
+
+def test_an_import_python_can_run_or_never_runs_compiles(tmp_path: Path) -> None:
+    # Names both have, and what only `if TYPE_CHECKING:` imports (Python
+    # never runs it), in a function.
+    setup = """
+from typing import TYPE_CHECKING
+from autoware_carla_scenario.actions import TurnIndicatorAction as Indicator
+from autoware_carla_scenario.coordinate import Lanelet2Pose as Pose
+if TYPE_CHECKING:
+    from autoware_carla_scenario.coordinate import RoadNetwork
+pose: Pose = Pose(460, 1.0)
+indicators: list[Indicator] = []
+logger.info("%s %d", str(pose.lanelet_id), len(indicators))
+"""
+    scenario, config, _ = _write_case(tmp_path, setup + textwrap.dedent(_VALID_SETUP))
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_python_finds_a_submodule_imported_by_name() -> None:
+    # `from package import submodule` works in Python whether or not the
+    # package has imported the submodule yet.
+    from autoware_carla_scenario.typecheck.check import _missing_at_run_time
+
+    package = "autoware_carla_scenario"
+    assert _missing_at_run_time(package, ["coordinate", "BaseScenario", "*"]) == []
+    assert _missing_at_run_time(f"{package}.utils", ["traffic_light"]) == []
+    assert _missing_at_run_time(f"{package}.coordinate", ["RoadNetwork"]) != []
+
+
+def test_a_lazy_name_that_fails_to_import_is_left_to_the_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A module's __getattr__ (the package's lazy imports) may raise more than
+    # AttributeError, an optional dependency missing: not the check's to report.
+    import types
+
+    from autoware_carla_scenario.typecheck.check import _missing_at_run_time
+
+    def lazy(name: str) -> object:
+        raise ImportError(f"no optional dependency for {name}")
+
+    module = types.ModuleType("acs_typecheck_lazy_case")
+    module.__getattr__ = lazy  # type: ignore[method-assign]
+    monkeypatch.setitem(sys.modules, module.__name__, module)
+    assert _missing_at_run_time(module.__name__, ["Thing"]) == []
+
+
+def test_a_failing_hint_never_hides_codons_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The hints on what to declare (#218) are added after Codon failed; if
+    # they fail themselves, Codon's own errors are still reported.
+    from autoware_carla_scenario.typecheck import check
+
+    def broken(*_args: object) -> list[Any]:
+        raise RuntimeError("unexpected Codon output")
+
+    monkeypatch.setattr(check, "_uninferred_attributes", broken)
+    scenario, config, path = _write_case(
+        tmp_path, "self.register_fail_condition(TimeoutCondition(10.0))\n"
+    )
+    result = typecheck_scenario(scenario, config)
+    error = _only_error(result)
+    assert "label is a required keyword argument" in error.message, result.format()
+    assert error.path == str(path)
+
+
+_ABSTRACT_CONDITION = """
+
+class GapCondition(BaseCondition):
+    def __init__(self) -> None:
+        super().__init__("gap")
+
+    def _check(self, world: carla.World, elapsed: float) -> ScenarioResult | None:
+        return None
+"""
+
+_ABSTRACT_ACTION = """
+
+class HonkAction(BaseAction):
+    def __init__(self) -> None:
+        super().__init__("honk")
+
+    def _execute(self, world: carla.World) -> None:
+        pass
+"""
+
+
+@pytest.mark.parametrize(
+    ("setup", "extra", "header", "cls", "missing", "where"),
+    [
+        (
+            "",
+            "",
+            _HEADER.replace("def is_done(self)", "def is_finished(self)"),
+            "CaseScenario",
+            "is_done",
+            "by the runner",
+        ),
+        (
+            "self.register_fail_condition(GapCondition())\n",
+            _ABSTRACT_CONDITION,
+            _HEADER,
+            "GapCondition",
+            "check",
+            "GapCondition()",
+        ),
+        (
+            "self.register_pre_tick(HonkAction())\n",
+            _ABSTRACT_ACTION,
+            _HEADER.replace("    AndCondition,", "    AndCondition,\n    BaseAction,"),
+            "HonkAction",
+            "execute",
+            "HonkAction()",
+        ),
+    ],
+    ids=["scenario-is_done", "condition-check", "action-execute"],
+)
+def test_a_class_built_with_an_abstract_method_undefined_is_refused(
+    tmp_path: Path,
+    setup: str,
+    extra: str,
+    header: str,
+    cls: str,
+    missing: str,
+    where: str,
+) -> None:
+    # Codon drops @abstractmethod and the model gives these methods bodies,
+    # so only Python can tell (#215): building one raises TypeError.
+    scenario, config, path = _write_case(tmp_path, setup, extra, header=header)
+    result = typecheck_scenario(scenario, config)
+    error = _only_error(result)
+    assert len(result.diagnostics) == 1, result.format()
+    assert f"{cls} is built" in error.message, error.format()
+    assert f"leaves abstract {missing} undefined" in error.message
+    assert error.path == str(path)
+    assert error.line == _line_of(path, f"class {cls}(")
+    if where != "by the runner":
+        where = f"at scenario.py:{_line_of(path, where)}"
+    assert f"({where})" in error.message
+
+
+def test_an_abstract_base_never_built_compiles(tmp_path: Path) -> None:
+    # A base of the scenario's own conditions may stay abstract: only what
+    # is built must define every abstract method.
+    extra = """
+
+class _GapBase(BaseCondition):
+    @abstractmethod
+    def limit(self) -> float:
+        raise NotImplementedError
+
+    def check(self, world: carla.World, elapsed: float) -> ScenarioResult | None:
+        if elapsed < self.limit():
+            return None
+        return ScenarioResult(passed=True, message="gap", elapsed_seconds=elapsed)
+
+
+class GapCondition(_GapBase):
+    def __init__(self) -> None:
+        super().__init__("gap")
+
+    def limit(self) -> float:
+        return 3.0
+"""
+    header = _HEADER.replace(
+        "import logging\n", "import logging\nfrom abc import abstractmethod\n"
+    )
+    setup = "self.register_pass_condition(GapCondition())\n"
+    scenario, config, _ = _write_case(tmp_path, setup, extra, header=header)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+_TRACKER = """
+
+class GapTracker:
+    {declarations}
+    def __init__(self, limit: float = 5.0) -> None:
+        self._samples = []
+        self.limit = limit
+
+    def add(self, value: float) -> None:
+        self._samples.append(value)
+
+    def too_close(self) -> bool:
+        return any(s < self.limit for s in self._samples)
+
+
+class Greeter:
+    def __init__(self) -> None:
+        self.greeting = "hello"
+
+    def greet(self, name: str) -> str:
+        return "hello " + name
+"""
+
+
+def test_an_undeclared_attribute_of_an_annotated_helper_is_refused(
+    tmp_path: Path,
+) -> None:
+    # A class with a class-level annotation has only the attributes it
+    # declares (#218): name the one it does not, with the hint.
+    extra = _TRACKER.format(declarations="limit: float\n")
+    setup = "GapTracker().add(1.0)\n"
+    scenario, config, path = _write_case(tmp_path, setup, extra)
+    result = typecheck_scenario(scenario, config)
+    error = _only_error(result)
+    assert len(result.diagnostics) == 1, result.format()
+    assert "GapTracker._samples is assigned without a type" in error.message
+    assert "`_samples: list[...]`" in error.message
+    assert error.line == _line_of(path, "self._samples = []")
+
+
+def test_a_helper_whose_attributes_codon_cannot_infer_is_named(tmp_path: Path) -> None:
+    # A class that declares nothing has its attributes inferred from its
+    # __init__; where Codon cannot (an empty list), its error names the
+    # attribute holding the helper, and the check names what to declare.
+    extra = _TRACKER.format(declarations="") + (
+        "\n\nclass Holder:\n"
+        "    _tracker: GapTracker\n\n"
+        "    def __init__(self) -> None:\n"
+        "        self._tracker = GapTracker()\n"
+    )
+    setup = "Holder()._tracker.add(1.0)\n"
+    scenario, config, path = _write_case(tmp_path, setup, extra)
+    result = typecheck_scenario(scenario, config)
+    assert not result.ok, result.format()
+    hints = [d for d in result.diagnostics if "is assigned without a type" in d.message]
+    assert {(d.message.split(" ")[0], d.line) for d in hints} >= {
+        ("GapTracker._samples", _line_of(path, "self._samples = []")),
+    }, result.format()
+
+
+def test_a_helper_method_reading_an_inferred_attribute_is_named(
+    tmp_path: Path,
+) -> None:
+    # The scenario check calls each method on a value it does not build with
+    # __init__, so an attribute Codon would infer from it has no type there
+    # (`self: Counter[NoneType]`): the check names what to declare.
+    extra = """
+
+class Counter:
+    def __init__(self) -> None:
+        self.count = 0
+
+    def get(self) -> int:
+        return self.count
+"""
+    setup = 'logger.info("%d", Counter().get())\n'
+    scenario, config, path = _write_case(tmp_path, setup, extra)
+    result = typecheck_scenario(scenario, config)
+    assert not result.ok, result.format()
+    hints = [d for d in result.diagnostics if "is assigned without a type" in d.message]
+    assert [(d.message.split(" ")[0], d.line) for d in hints] == [
+        ("Counter.count", _line_of(path, "self.count = 0"))
+    ], result.format()
+    assert "`count: int`" in hints[0].message
+
+
+def test_declared_and_inferable_helpers_compile(tmp_path: Path) -> None:
+    # Every attribute declared, or none declared and each inferable
+    # (Greeter, whose methods read none).
+    extra = _TRACKER.format(declarations="_samples: list[float]\n    limit: float\n")
+    setup = (
+        "tracker = GapTracker()\ntracker.add(1.0)\n"
+        'logger.info("%s %s", tracker.too_close(), Greeter().greet("ego"))\n'
+    )
+    scenario, config, _ = _write_case(tmp_path, setup, extra)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
 def test_a_scenario_may_use_the_pathlib_shim_and_nothing_beyond_it(
     tmp_path: Path,
 ) -> None:

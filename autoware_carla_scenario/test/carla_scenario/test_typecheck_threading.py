@@ -149,6 +149,9 @@ def _run_in_cpython(source: str) -> list[type[BaseException]]:
     exec(compile(textwrap.dedent(source), "<threads>", "exec"), namespace)
     hook = threading.excepthook
     threading.excepthook = lambda args: raised.append(args.exc_type)
+    # Join only the threads *source* starts: one an earlier test left running
+    # (a gRPC server's, an executor's) may never let a join return (#228).
+    before = set(threading.enumerate())
     try:
         namespace["Worker"]().run("a")
     except (TypeError, AssertionError, AttributeError) as exc:
@@ -156,7 +159,7 @@ def _run_in_cpython(source: str) -> list[type[BaseException]]:
     finally:
         threading.excepthook = hook
     for thread in threading.enumerate():
-        if thread is not threading.current_thread():
+        if thread not in before:
             thread.join(timeout=5.0)
     return raised
 
