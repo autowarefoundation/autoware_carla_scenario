@@ -250,8 +250,18 @@ synchronous mode exists to provide.
 
 That holds for `ScenarioRunner.timeout_seconds` as much as for a condition an
 author wrote. It is registered as a default `TimeoutCondition` on every
-scenario, so a scenario given sixty seconds is given sixty of *its own*
-however fast the host runs.
+scenario that registers no timeout of its own, so a scenario given sixty
+seconds is given sixty of *its own* however fast the host runs.
+
+A scenario that registers a `TimeoutCondition` fail condition (bare, or as a
+child of an `OrCondition`) has said how long it runs, and the runner adds no
+default to cut it short: a red light whose drawn red phase is 13.4 s, given
+seven seconds after the green, runs for 20.4 s even when the run's default is
+twelve. A timeout under an `AndCondition` or a `NotCondition` does not count —
+it fires only on some other state of the world, so it does not bound the run.
+A `DeclarativeScenario` registers its document's `timeout_seconds` (or the
+Hydra override of it) itself, so a `timeout` node in the document adds to that
+limit rather than replacing it.
 
 Wall-clock protection against a **stuck** simulator lives outside the scenario
 clock, where it belongs:

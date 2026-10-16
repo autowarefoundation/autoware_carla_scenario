@@ -749,3 +749,130 @@ class TestTheBatchMap:
         assert not same_episode(None, None)
         assert not same_episode(None, 7)
         assert same_episode(-7, -7)
+
+
+def _never(label: str):
+    """A condition that never fires: the other half of a composite."""
+    from autoware_carla_scenario import BaseCondition
+
+    class _Never(BaseCondition):
+        def check(self, world, elapsed):
+            return None
+
+    return _Never(label=label)
+
+
+class TestTheDefaultTimeout:
+    """The runner's timeout is a default: a scenario's own timeout replaces it.
+
+    A red light whose drawn red phase is 13.4 s, with seven seconds allowed
+    after the green, has to run for 20.4 s; a run whose default is twelve
+    used to fail it before the light ever turned green.
+    """
+
+    @staticmethod
+    def _scenario(*fail_conditions):
+        import typesafe_carla.carla as carla
+
+        from autoware_carla_scenario import BaseScenario, EgoConfig, SpawnTransform
+
+        class _Scenario(BaseScenario):
+            def setup(self) -> None:
+                for condition in fail_conditions:
+                    self.register_fail_condition(condition)
+
+            def is_done(self) -> bool:
+                return True
+
+        scenario = _Scenario(
+            EgoConfig(
+                spawn_location=SpawnTransform(
+                    carla.Transform(carla.Location(x=0, y=0, z=0))
+                )
+            )
+        )
+        scenario.setup()
+        return scenario
+
+    @staticmethod
+    def _timeouts(scenario) -> list[tuple[str, float]]:
+        from autoware_carla_scenario import TimeoutCondition
+
+        return [
+            (c.label, c.timeout_seconds)
+            for c in scenario._fail_conditions
+            if isinstance(c, TimeoutCondition)
+        ]
+
+    def test_a_scenario_without_a_timeout_gets_the_default(self):
+        from autoware_carla_scenario.scenario_runner import _register_default_timeout
+
+        scenario = self._scenario()
+        assert _register_default_timeout(scenario, 12.0, "S") is True
+        assert self._timeouts(scenario) == [("default_timeout", 12.0)]
+
+    def test_a_scenario_with_its_own_timeout_keeps_it_alone(self):
+        from autoware_carla_scenario import TimeoutCondition
+        from autoware_carla_scenario.scenario_runner import _register_default_timeout
+
+        scenario = self._scenario(
+            TimeoutCondition(13.4 + 7.0, label="scenario_timeout")
+        )
+        assert _register_default_timeout(scenario, 12.0, "S") is False
+        assert self._timeouts(scenario) == [("scenario_timeout", 20.4)]
+
+    def test_a_shorter_own_timeout_is_kept_too(self):
+        from autoware_carla_scenario import TimeoutCondition
+        from autoware_carla_scenario.scenario_runner import _register_default_timeout
+
+        scenario = self._scenario(TimeoutCondition(5.0, label="scenario_timeout"))
+        assert _register_default_timeout(scenario, 60.0, "S") is False
+        assert self._timeouts(scenario) == [("scenario_timeout", 5.0)]
+
+    def test_a_timeout_inside_an_or_counts(self):
+        from autoware_carla_scenario import OrCondition, TimeoutCondition
+        from autoware_carla_scenario.scenario_runner import _register_default_timeout
+
+        scenario = self._scenario(
+            OrCondition(
+                [
+                    _never("other"),
+                    TimeoutCondition(20.0, label="scenario_timeout"),
+                ]
+            )
+        )
+        assert _register_default_timeout(scenario, 12.0, "S") is False
+        assert scenario._fail_conditions[-1].label != "default_timeout"
+
+    @pytest.mark.parametrize("wrapper", ["and", "not"])
+    def test_a_timeout_that_does_not_bound_the_run_does_not_count(self, wrapper):
+        from autoware_carla_scenario import (
+            AndCondition,
+            NotCondition,
+            TimeoutCondition,
+        )
+        from autoware_carla_scenario.scenario_runner import _register_default_timeout
+
+        timeout = TimeoutCondition(20.0, label="t")
+        condition = (
+            AndCondition([_never("other"), timeout])
+            if wrapper == "and"
+            else NotCondition(timeout)
+        )
+        scenario = self._scenario(condition)
+        assert _register_default_timeout(scenario, 12.0, "S") is True
+        assert scenario._fail_conditions[-1].label == "default_timeout"
+
+    def test_the_tick_loop_fails_at_the_scenarios_own_limit(self):
+        """End to end on the conditions: 12 s passes, 20.4 s does not."""
+        from autoware_carla_scenario import TimeoutCondition
+        from autoware_carla_scenario.scenario_runner import _register_default_timeout
+
+        scenario = self._scenario(TimeoutCondition(20.4, label="scenario_timeout"))
+        _register_default_timeout(scenario, 12.0, "S")
+        world = MagicMock()
+        fired = lambda t: [  # noqa: E731
+            c.label for c in scenario._fail_conditions if c.check(world, t) is not None
+        ]
+        assert fired(12.0) == []
+        assert fired(20.4) == ["scenario_timeout"]
