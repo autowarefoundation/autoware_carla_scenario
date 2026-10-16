@@ -1660,6 +1660,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#the-road-a-case-is-on" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The road a case is on
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#how-a-case-is-drawn" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2172,6 +2183,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#the-road-a-case-is-on" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The road a case is on
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#how-a-case-is-drawn" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2565,7 +2587,8 @@ make it a bound too, refer to it from a root, or name it in <code>roots</code>.<
 <code>lanelet_speed_limit_kph</code>, <code>lanelet_location</code>, <code>lanelet_subtype</code>,
 <code>in_junction</code>, <code>lane_count</code>) can also read it off a lanelet, which is how a
 planned route is checked before a run
-(<a href="#checking-a-planned-route">Checking a planned route</a>).</p>
+(<a href="#checking-a-planned-route">Checking a planned route</a>) and how a sweep picks
+the road a drawn case is on (<a href="#the-road-a-case-is-on">The road a case is on</a>).</p>
 <p>Import them from <code>autoware_carla_scenario.odd</code> itself
 (<code>from autoware_carla_scenario.odd import rain</code>). The Codon model that checks
 an ODD has no <code>probes</code> submodule.</p>
@@ -2608,6 +2631,12 @@ generically around the ego:</p>
 <td>m/s</td>
 <td>That pedestrian's speed</td>
 <td></td>
+</tr>
+<tr>
+<td><code>stop_line_distance_m</code></td>
+<td>m</td>
+<td>1</td>
+<td>Along the ego's lane, from its front bumper to the nearest stop line ahead -- a traffic light's, a traffic sign's or a road marking's, as a <code>stop_line_offset</code> binding finds them -- up to <code>AHEAD_RANGE_M</code>, on any branch of the lane where it forks (the measure does not know the route); nothing without a lane to read along</td>
 </tr>
 </tbody>
 </table>
@@ -3393,11 +3422,42 @@ the last word over the config.</p>
 </tr>
 </tbody>
 </table>
+<p><code>traffic_light_compliance</code> declares none, but has what a control needs:
+<code>stop_line_distance_m</code> (<code>target: measure</code>: the ego is moved along the lane its
+spawn pose is on until <code>stop_line_distance_m</code> reads it,
+<code>place_at_stop_line_distance</code>), and its own measure <code>red_light_duration_s</code>,
+the seconds every light is held red (<code>light_switch_delay_seconds</code>, a raw
+setting). With the delay drawn, <code>timeout_after_green_seconds</code> counts the
+fail-safe timeout from the green light instead of from the start.</p>
 <p><code>sweep.odd_sample.knobs</code> takes the same fields keyed by the ODD's attributes,
 and replaces anything above, attribute by attribute, for that sweep. It is for
 the command line -- one sweep against one ODD -- not for a scenario's config,
 which would then name the ODD's taxonomy: a scenario says <code>controls</code>. Controls set where a run starts;
 the measures read what it then drives, which is what coverage counts.</p>
+<h3 id="the-road-a-case-is-on">The road a case is on<a class="headerlink" href="#the-road-a-case-is-on" title="Permanent link">&para;</a></h3>
+<p>A sweep with cases of its own -- constraints, or a route search -- draws the
+attributes the Lanelet2 map decides as well: whether the case is in a
+junction, how many lanes, the speed limit, the location and road type
+tags. Each is read off every case's lanelet (its first
+<code>*lanelet_id</code> override: the constraints' pick, or the route's spawn) with the
+probe's lanelet form, and gets a knob that reaches the buckets those lanelets
+are in. The knobs write no setting a run reads (<code>_odd_map.*</code>, taken off
+again); instead each drawn case is put on a case whose lanelet is in every
+bucket drawn, the one run least so far among those that are. So a lanelet
+case may run more than once, or not at all, even without a <code>count</code>: the
+buckets decide, not the list of cases. Each run records its case
+(<code>++odd_case</code>) with its own lanelet's buckets and values, not the ones
+drawn.</p>
+<p>Not every combination of buckets is on one lanelet -- no junction where the
+limit is 30, say -- and each knob draws its attribute on its own, so 20
+cases are drawn for each one kept and those no lanelet fits are passed over.
+If too few fit, the rest go on the lanelet in most of their buckets, with a
+warning. So <code>strategy: coverage</code> aims at the road as at everything else: the
+buckets of junction, lane count or speed limit that earlier runs left uncovered
+come first, as far as the sweep's cases reach them.</p>
+<p>A sweep that gives an attribute a knob itself (<code>odd_sample.knobs</code>) keeps it.
+The flaky search (<code>odd_sample.flaky</code>) draws its cases as it chooses them, none
+passed over; each goes on the lanelet in most of its buckets.</p>
 <h3 id="how-a-case-is-drawn">How a case is drawn<a class="headerlink" href="#how-a-case-is-drawn" title="Permanent link">&para;</a></h3>
 <ol>
 <li>Each knob's attribute gets one of its buckets, leaving out the buckets
@@ -3662,7 +3722,7 @@ target.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 15, 2026 16:29:55 UTC"><span class="timeago" datetime="2026-10-15T16:29:55+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 15, 2026 16:29:55 UTC">2026-10-15</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 16, 2026 10:58:32 UTC"><span class="timeago" datetime="2026-10-16T10:58:32+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 16, 2026 10:58:32 UTC">2026-10-16</span>
   </span>
 
     
