@@ -177,11 +177,12 @@ typesafe_carla's Python-API compatibility shortcuts (such as calling a
 Nothing in the model runs; `test_typecheck_model.py` keeps each declaration
 it compares in step with the Python definition of the same name (parameter
 names, order, defaults, keyword-only parameters, methods, enum members): every
-name `__init__.codon` exports, the names the checked modules import from the
-model (`_BOUNDARY`), and every name of the model modules that stand for one
-framework module each (`_MODULE_MODELS`), which must declare exactly the names
-compared, beside model-only helpers named `_acs_*`. `metrics.codon` and
-`measures.codon` are two of those: each declares the whole of its module's
+name `__init__.codon` exports, the names the checked modules or a scenario
+import from the model beside those (`_BOUNDARY`), and every name of the model
+modules that stand for one framework module each (`_MODULE_MODELS`), which
+must declare exactly the names compared, beside model-only helpers named
+`_acs_*` (the list below). `metrics.codon` and `measures.codon` are two of
+those: each declares the whole of its module's
 `__all__`, and the test also compares by value their constants (the keys,
 `VEHICLE_AHEAD_VERSION`, the distances and speeds the vehicle-ahead measures
 read with), each built-in entry of `BUILT_IN_METRICS` (title, unit, text,
@@ -202,6 +203,62 @@ do, and refuse any other return type (a `str`, say) at the line that passes
 function of its exact type only, and Codon 0.19 crashes on any other. `set_measured_scenario()` takes a scenario of any
 `BaseScenario` subclass or `None`, which Python annotates
 `Optional[BaseScenario]`: Codon's `Optional` takes no subclass.
+
+What `test_typecheck_model.py` compares, model by model:
+
+- **Every name `__init__.codon` exports**, with the object of the same name
+  in the package.
+- **`coordinate.codon`**: beside its exports, `lanelet_length`, `on_lanelet`,
+  `project_onto_road`, `project_onto_lanelet`, `get_stop_line_linestrings`,
+  `get_stop_line_linestrings_with_following`,
+  `find_traffic_lights_for_lanelet2_id`, `get_signal_ids_for_controller`,
+  `to_map_frame`, `MapManager`, `map_origin`, `resolve_projector`,
+  `_parse_geo_reference`, and pyxodr's `RoadNetwork` and lxml's element
+  (below).
+- **`conditions.codon`**: beside its exports, `beside_lane_id`,
+  `find_actor_in_list` and `ConditionStatus`, all but its `details` (a
+  `dict[str, Any]`, which Codon cannot express: `_OMITTED_PARAMETERS`), and
+  no other name.
+- **`constants.codon`**: every constant, by value (`EGO_ROLE_NAME` as
+  `EntityRole.ego()`), and no name `constants.py` lacks.
+- **`route.codon`**: every name it declares -- `parse_anchor`,
+  `scenario_route`, `scenario_route_frame`, `RouteFrame`, `RouteMatch`, and
+  `APPROACHES`, `CROSSWALK_LEGS` and `SIDES` by value. `RouteMatch`'s
+  constructor is generic: Python's is a frozen dataclass of variadic tuples
+  (`tuple[int, ...]`), which Codon cannot express, but the model's takes the
+  same parameters, and an overload of none is a `compile_error` (Codon builds
+  a class without fields with no arguments otherwise), so a call Python
+  refuses fails the check too.
+- **`trajectory.codon`**: beside its exports, `ResolvedTrajectory`,
+  `TrajectorySample` and the `TrajectoryPosition` Union, by its members'
+  names, in order, and no other name.
+- **`traffic.codon`**: every name it declares -- `TurnDirection`,
+  `LaneChangeDirection`, `TrafficContext` and traffic.registry's functions
+  and `TRAFFIC_BACKEND_ENTRY_POINT_GROUP` (by value). `TrafficBackendFactory`
+  differs on purpose (`_DIFFERING`): a `Callable` alias in Python of a mapping
+  of any values (Hydra's options), which Codon has no type for, and an empty
+  class in the model, there only so the checked `traffic` package's re-export
+  resolves; a test checks that it stays empty.
+- **`utils/traffic_light.codon`**: its three functions, and no other name.
+- **`coverage.codon`, `entity.codon`, `odd.codon`**: the names the checked
+  modules import (`_BOUNDARY`), `COVERAGE_SCHEMA` and `CoverGroup` by value.
+- **The models of one framework module each** (`_MODULE_MODELS`):
+  `_bridge_pose`, `carla_install`, `trajectory_recorder`, `environment`,
+  `autoware_bridge/grpc_server`, `autoware_stack/launcher`,
+  `autoware_stack/devcontainer` (and its values), `driver/egodriver_client`,
+  `_map_source`, `maps/cache`, `ui/models`, `_ros2`, `metrics`, `measures` and
+  `utils/traffic_light`, each declaring exactly the names compared;
+  `ros2/cyclone` where cyclonedds is installed.
+- **Third-party models**: carla_driver_interface's geometry, python-dotenv's
+  `load_dotenv`, ffmpeg-python's streams, pyxodr's `RoadNetwork` and lxml's
+  element.
+
+A constant whose model value is a literal (a `str`, `int`, `float` or a tuple
+of them) is compared by its value and type (a tuple's items' too: `1` is no
+`1.0` or `True`) wherever it is compared, and a `Literal` alias
+(`ui.models.Status`) as the type of its values. Any other constant fails the
+comparison unless a test of its own compares it (`EGO_ROLE_NAME`,
+`BUILT_IN_METRICS`, `BUILT_IN_MEASURES`).
 
 A scenario that imports a module with no model (lanelet2's `matching`, say,
 or a framework module outside the public API) is refused with a message
