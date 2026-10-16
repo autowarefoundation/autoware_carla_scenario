@@ -2006,6 +2006,116 @@ def test_an_import_in_the_first_branch_of_type_checking_is_reported(
     assert "tqdm has no Codon model" in result.diagnostics[0].message
 
 
+_NOT_TYPE_CHECKING_IMPORT = """
+from __future__ import annotations
+
+import time
+from typing import TYPE_CHECKING
+
+if not TYPE_CHECKING:
+    from tqdm import tqdm
+
+
+def wait(steps: int) -> None:
+    if not TYPE_CHECKING:
+        import json  # noqa: PLC0415
+
+        for _ in tqdm(range(steps), desc=json.dumps("wait")):
+            time.sleep(0.1)
+    else:
+        for _ in range(steps):
+            time.sleep(0.1)
+"""
+
+
+def test_the_body_of_not_type_checking_is_run_time_only() -> None:
+    # `if not TYPE_CHECKING:` is the `else` branch of `if TYPE_CHECKING:`
+    # written the other way round: Codon compiles its `else`, not its body.
+    tree = ast.parse(_NOT_TYPE_CHECKING_IMPORT)
+    skipped = {
+        node.names[0].name
+        for node in check._run_time_only_nodes(tree)
+        if isinstance(node, (ast.Import, ast.ImportFrom))
+    }
+    assert skipped == {"tqdm", "json"}
+    compiled = {
+        id(node)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "sleep"
+    }
+    run_time_only = {id(node) for node in check._run_time_only_nodes(tree)}
+    # The loop of the body is run-time-only; the one of the `else` is compiled.
+    assert len(compiled - run_time_only) == 1
+
+
+@pytest.mark.parametrize(
+    ("source", "run_time_only"),
+    [
+        # An `elif not TYPE_CHECKING:` is an `if` of its own.
+        (
+            "if x:\n    import b\nelif not TYPE_CHECKING:\n    import a\n"
+            "else:\n    import b2\n",
+            {"a"},
+        ),
+        ("if not (TYPE_CHECKING):\n    import a\nelse:\n    import b\n", {"a"}),
+        (
+            "import typing\nif not typing.TYPE_CHECKING:\n    import a\n"
+            "else:\n    import b\n",
+            {"a"},
+        ),
+        (
+            "if not TYPE_CHECKING:\n    if x:\n        import a\n    else:\n"
+            "        import a2\nelse:\n    if not TYPE_CHECKING:\n"
+            "        import a3\n    import b\n",
+            {"a", "a2", "a3"},
+        ),
+        # What the check cannot read as TYPE_CHECKING alone hides nothing.
+        ("if TYPE_CHECKING or x:\n    import b\nelse:\n    import b2\n", set()),
+        ("if not TYPE_CHECKING and x:\n    import b\nelse:\n    import b2\n", set()),
+        ("if not not TYPE_CHECKING:\n    import b\nelse:\n    import b2\n", set()),
+        (
+            "import typing as t\nif not t.TYPE_CHECKING:\n    import b\n"
+            "else:\n    import b2\n",
+            set(),
+        ),
+    ],
+)
+def test_only_code_codon_never_compiles_is_run_time_only(
+    source: str, run_time_only: set[str]
+) -> None:
+    # Reading check-time code as run-time-only would hide its imports: where
+    # the check cannot tell, it reports.
+    skipped = {
+        node.names[0].name
+        for node in check._run_time_only_nodes(ast.parse(source))
+        if isinstance(node, ast.Import)
+    }
+    assert skipped == run_time_only
+
+
+@needs_codon
+def test_an_import_in_the_body_of_not_type_checking_is_not_compiled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    result = _check_case(_NOT_TYPE_CHECKING_IMPORT, tmp_path, monkeypatch)
+    assert result.ok, result.format()
+
+
+def test_an_import_in_the_else_branch_of_not_type_checking_is_reported(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    swapped = _NOT_TYPE_CHECKING_IMPORT.replace(
+        "if not TYPE_CHECKING:\n    from tqdm import tqdm",
+        "if not TYPE_CHECKING:\n    pass\nelse:\n    from tqdm import tqdm",
+    )
+    assert swapped != _NOT_TYPE_CHECKING_IMPORT
+    result = _check_case(swapped, tmp_path, monkeypatch)
+    assert not result.ok
+    assert "tqdm has no Codon model" in result.diagnostics[0].message
+
+
 # ---------------------------------------------------------------------------
 # What the traffic backends need (#79)
 # ---------------------------------------------------------------------------

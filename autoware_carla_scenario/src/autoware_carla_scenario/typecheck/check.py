@@ -1044,19 +1044,32 @@ def _library_files(
     return files
 
 
-def _type_checking_else_nodes(tree: ast.Module) -> Iterator[ast.AST]:
-    """Every node of the ``else`` branch of each ``if TYPE_CHECKING:``.
+def _run_time_only_nodes(tree: ast.Module) -> Iterator[ast.AST]:
+    """Every node of the code only Python runs: the ``else`` branch of each
+    ``if TYPE_CHECKING:`` and the body of each ``if not TYPE_CHECKING:``.
 
     Codon reads ``TYPE_CHECKING`` as a compile-time true (the ``typing``
-    shim), so it compiles only the first branch.
+    shim), so it compiles only the branch taken when it is true.
     """
     for node in ast.walk(tree):
-        if isinstance(node, ast.If) and _dotted_name(node.test) in (
-            "TYPE_CHECKING",
-            "typing.TYPE_CHECKING",
+        if not isinstance(node, ast.If):
+            continue
+        if _is_type_checking(node.test):
+            run_time_only = node.orelse
+        elif (
+            isinstance(node.test, ast.UnaryOp)
+            and isinstance(node.test.op, ast.Not)
+            and _is_type_checking(node.test.operand)
         ):
-            for stmt in node.orelse:
-                yield from ast.walk(stmt)
+            run_time_only = node.body
+        else:
+            continue
+        for stmt in run_time_only:
+            yield from ast.walk(stmt)
+
+
+def _is_type_checking(node: ast.expr) -> bool:
+    return _dotted_name(node) in ("TYPE_CHECKING", "typing.TYPE_CHECKING")
 
 
 def _dotted_name(node: ast.expr) -> str | None:
@@ -1078,9 +1091,9 @@ def _library_imports(sources: _Sources, tc: Toolchain, codon_path: Path) -> None
             for function in uncalled_nodes(module.tree, _uncalled(name))
             for node in ast.walk(function)
         }
-        # Nor one in the `else` branch of `if TYPE_CHECKING:`, a compile-time
-        # true there (the typing shim).
-        skipped |= {id(node) for node in _type_checking_else_nodes(module.tree)}
+        # Nor one in the `else` branch of `if TYPE_CHECKING:` or the body of
+        # `if not TYPE_CHECKING:`, a compile-time true there (the typing shim).
+        skipped |= {id(node) for node in _run_time_only_nodes(module.tree)}
         for imported, _names, lineno in _imports(
             module.tree, name, module.is_package, skip=skipped
         ):

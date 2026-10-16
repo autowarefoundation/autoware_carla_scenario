@@ -417,8 +417,8 @@ To check one more module:
 
 ### What is checked of the framework
 
-Every module now has an entry other than `"not yet checked (#45)"`. 165 of
-the package's 242 modules (68%; about 40,000 of 71,100 lines) are `CHECKED`:
+Every module now has an entry other than `"not yet checked (#45)"`. 168 of
+the package's 245 modules (69%; about 40,800 of 72,400 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the conversions between
 Lanelet2, OpenDRIVE and CARLA world poses (`coordinate.transform`), the stop
 lines read off a Lanelet2 map (`utils.stop_line`, `coordinate.stop_line`)
@@ -474,8 +474,8 @@ driver's configs and client interface, trajectory follower and observations
 `driver.geometry`), and the `autoware_bridge`, `autoware_stack`, `entity`,
 `driver`, `maps` and `coverage` packages themselves, whose `__init__` re-exports what is not checked
 through models of it (see *A class a checked package only re-exports*
-below). 89
-functions and methods of those modules are `UNCALLED` (13 of them
+below). 88
+functions and methods of those modules are `UNCALLED` (19 of them
 protected helpers, see *What is compiled* below): most of them a
 condition's `get_details()` or a backend's `describe()`, what takes a traffic
 backend's options node (`Mapping[str, Any]`), what reads a route search, a
@@ -848,7 +848,11 @@ BaseScenario.__init__(ego_config: EgoConfig), with the default of
 `spawn_pose`, `ground_projection`, `random_seed`, `ego_type`,
 `ego_entity`>`). A parameter Codon cannot express with no default is a
 problem as before, and so is a defaulted one that call would still pass (one
-before a `*args: T`, which is given one `T`).
+before a `*args: T`, which is given one `T`). `ConditionStatus.__init__`
+(its `details: dict[str, Any]`) and `TrafficConfig.__init__` (a backend's
+options, `dict[str, Any]`) are compiled the same way, with no `UNCALLED`
+entry, so a wrong default of one of their other parameters is reported
+(#217).
 
 **Property setters are called too** (#200). Codon compiles an `@x.setter`
 only where something assigns the property, so an error injected into the
@@ -1211,8 +1215,10 @@ What Codon 0.19 needs that Python does not, beyond
   `typing.Any` imports, and every annotation naming it is dropped.
   `typing.TYPE_CHECKING` is a compile-time true, so Codon compiles only the
   first branch of `if TYPE_CHECKING: ... else: ...`, and the check reports
-  no import in the `else` branch: `scenario_queue` imports tqdm there, at
-  module level, and waits without the progress bar in the first branch. The `logging` shim's
+  no import in the `else` branch, nor in the body of `if not TYPE_CHECKING:`
+  (the same branch, written the other way round): `scenario_queue` imports
+  tqdm in an `else` branch, at module level, and waits without the progress
+  bar in the first branch. The `logging` shim's
   methods take `exc_info` as a `bool`.
 - **pyxodr's road network is the model's**: `codon/pyxodr/` names the
   `RoadNetwork`, `Road`, `LaneSection` and `Lane` that `coordinate.codon`
