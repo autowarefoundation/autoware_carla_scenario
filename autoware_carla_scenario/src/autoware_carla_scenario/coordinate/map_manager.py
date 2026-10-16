@@ -215,7 +215,21 @@ class MapManager:
         # Compute vertical offset: Lanelet2 z (MGRS absolute elevation) minus
         # XODR z (elevation relative to geoReference origin).  This is constant
         # across the map and lets us convert z between the two systems.
-        self._z_offset = self._compute_z_offset(carla_world)
+        # Read off every spawn point with a CARLA world, some 40 s on a large
+        # map: remembered per map content (maps.z_offset_cache).
+        held = self._carla_map
+        if carla_world is None or held is None:
+            self._z_offset = self._compute_z_offset(carla_world)
+        else:
+            from ..maps.z_offset_cache import cached_z_offset  # noqa: PLC0415
+
+            self._z_offset = cached_z_offset(
+                lanelet2_path,
+                xodr_path,
+                str(held.name),
+                lambda: self._compute_z_offset(carla_world),
+                projection=f"{projector_type} {lat!r} {lon!r} {alt!r}",
+            )
 
     # ------------------------------------------------------------------
     # Properties
