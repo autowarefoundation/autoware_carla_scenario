@@ -316,7 +316,9 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
         assert self._map is not None  # noqa: S101 - fetched when the session opened
         if self._config.warmup_s > 0.0:
             # The ego leaves for its run-up before the first tick: its spawn
-            # pose is where it arrives, not where its history begins.
+            # pose is where it arrives, not where its history begins.  Built on a
+            # world ticked since anything froze a light: it reads is_frozen()
+            # from the last tick, and would take over and thaw a newer freeze.
             self._warmup = PolicyWarmup(
                 world,
                 actor,
