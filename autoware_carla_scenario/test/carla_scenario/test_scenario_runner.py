@@ -515,8 +515,10 @@ def test_what_the_odds_measures_read_is_built_before_the_first_tick(
     scenario = MagicMock()
     scenario.setup.side_effect = lambda: calls.append("setup")
 
-    def prepare(odd: object) -> None:
+    def prepare(odd: object, measured: object) -> None:
         assert odd is runner.odd
+        # The scenario, whose replacements of the built-in measures need none.
+        assert measured is scenario
         calls.append("prepare")
         raise _Stop  # enough: what follows is the ego, then the ticks
 

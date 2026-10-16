@@ -316,9 +316,10 @@ moved 2 m or turned 5°); a vehicle is placed by
 the lane's own lanelets, not by searching the map; and a projection reads
 only the stretch of a centreline near the point. The Lanelet2 routing graph
 the lane is read from -- some 25 s to build on Town04_Opt -- is built in the
-run's setup whenever the ODD maps a vehicle-ahead measure
-(`prepare_measures`), with every lanelet's bounding box, not on the first
-tick. A failed reading reads nothing and is warned of once a run.
+run's setup whenever the ODD maps a vehicle-ahead measure that the
+scenario reads with the built-in one -- not for one it replaced with
+`register_measure` (`prepare_measures`) -- with every lanelet's bounding box,
+not on the first tick. A failed reading reads nothing and is warned of once a run.
 
 #### Measure versions
 

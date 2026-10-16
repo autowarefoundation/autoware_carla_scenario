@@ -1095,8 +1095,9 @@ class ScenarioRunner:
             self._warn_if_route_leaves_odd(scenario_name, scenario)
             # What the ODD's measures read is built now, not on the first tick
             # that reads them: the vehicle-ahead measures' routing graph takes
-            # tens of seconds on a large map.
-            prepare_measures(self.odd)
+            # tens of seconds on a large map.  Not for a measure the scenario
+            # replaced, which reads what its own reader reads.
+            prepare_measures(self.odd, scenario)
             logger.info("[%s] Spawning ego vehicle ...", scenario_name)
             if TYPE_CHECKING:
                 # EgoVehicle.spawn() takes the model's EgoConfig (entity.ego
