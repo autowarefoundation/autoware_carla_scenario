@@ -256,6 +256,13 @@ NOT_MODELLED: dict[str, dict[str, str]] = {
             _TRAFFIC_PROTOCOL,
         ),
     },
+    f"{_PACKAGE}.trajectory_recorder": {
+        "SCHEMA_PATH": (
+            "the path of the JSON Schema beside the Python module "
+            "(`Path(__file__)`), a value the model, compiled elsewhere, has "
+            "no counterpart of; it is for the log's readers, not a scenario"
+        ),
+    },
     f"{_PACKAGE}.ui.models": _each(
         "ConditionNode ScenarioResultView SessionItem SessionSummary", _UI
     ),

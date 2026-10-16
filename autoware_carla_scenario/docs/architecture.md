@@ -837,6 +837,7 @@ base_path/
 │       └── HH-MM-SS/
 │           ├── ScenarioName_result.json
 │           ├── ScenarioName_coverage.json  # Coverage hits (docs/coverage.md)
+│           ├── ScenarioName.trajectory.jsonl  # Actor motion (docs/trajectory_log.md)
 │           ├── ScenarioName.log        # CARLA native recording
 │           ├── ScenarioName.mp4        # Rendered video
 │           ├── batch_results.json      # Batch summary (batch mode only)
