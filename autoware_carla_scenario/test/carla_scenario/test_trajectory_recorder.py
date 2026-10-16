@@ -7,9 +7,11 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import jsonschema
+import pytest
 import typesafe_carla.carla as carla
 
-from autoware_carla_scenario.trajectory_recorder import TrajectoryRecorder
+from autoware_carla_scenario.trajectory_recorder import SCHEMA_PATH, TrajectoryRecorder
 
 
 def _vec(x: float = 0.0, y: float = 0.0, z: float = 0.0) -> SimpleNamespace:
@@ -104,6 +106,12 @@ def _lines(path: Path) -> list[dict]:
     return [json.loads(line) for line in path.read_text().splitlines()]
 
 
+def _validator() -> jsonschema.Draft7Validator:
+    schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
+    jsonschema.Draft7Validator.check_schema(schema)
+    return jsonschema.Draft7Validator(schema)
+
+
 def test_it_writes_the_world_actors_and_each_tick(tmp_path: Path) -> None:
     world = _World()
     recorder = TrajectoryRecorder(tmp_path / "out" / "s.trajectory.jsonl")
@@ -140,6 +148,72 @@ def test_it_writes_the_world_actors_and_each_tick(tmp_path: Path) -> None:
     assert second["actors"][0][7] == 10.0
     # Only the light states that changed since the last written tick.
     assert second["lights"] == {"9": "Green"}
+    # Every line is what the published schema describes.
+    validator = _validator()
+    for record in records:
+        validator.validate(record)
+
+
+class _BoxedLight(_Light):
+    def get_light_boxes(self) -> list:
+        return [
+            SimpleNamespace(
+                location=_vec(10.0, 20.0, 5.0),
+                extent=_vec(0.2, 0.3, 0.6),
+                rotation=_rot(180.0),
+            )
+        ]
+
+    def get_stop_waypoints(self) -> list:
+        return [
+            SimpleNamespace(
+                transform=SimpleNamespace(
+                    location=_vec(5.0, 18.0, 0.0), rotation=_rot(-90.0)
+                )
+            )
+        ]
+
+
+def test_a_light_s_boxes_and_stop_lines_follow_the_schema(tmp_path: Path) -> None:
+    world = _World()
+    world.light = _BoxedLight(9)
+    recorder = TrajectoryRecorder(tmp_path / "s.trajectory.jsonl")
+    recorder.start(world)
+    world.snapshot = [_ActorSnapshot(1, 0.0, 0.0)]
+    recorder.record(world, 0.0)
+    recorder.close()
+
+    records = _lines(recorder.path)
+    assert records[1]["boxes"] == [[10.0, 20.0, 5.0, 0.2, 0.3, 0.6, 180.0]]
+    assert records[1]["stops"] == [[5.0, 18.0, 0.0, -90.0]]
+    validator = _validator()
+    for record in records:
+        validator.validate(record)
+
+
+_TICK = {
+    "type": "tick",
+    "frame": 101,
+    "t": 0.05,
+    "actors": [[1, 0.0, 1.0, 0.0, 0.0, 0.0, 90.0, 0.0, 0.0, 0.0]],
+    "control": {"1": [0.5, 0.0, 0.0, 1]},
+}
+
+
+@pytest.mark.parametrize(
+    "record",
+    [
+        {**_TICK, "type": "frame"},  # an unknown record type
+        {**_TICK, "actors": [[1, 0.0, 1.0, 0.0, 0.0, 0.0, 90.0, 0.0, 0.0]]},  # short
+        {**_TICK, "lights": {"9": "Blue"}},  # no such light state
+        {**_TICK, "control": {"ego": [0.5, 0.0, 0.0, 1]}},  # a key that is no id
+        {**_TICK, "accel": [0.0, 0.0, 0.0]},  # a field the format does not have
+        {**_TICK, "frame": 2**53},  # an integer a double cannot hold exactly
+        {**_TICK, "frame": -1},  # LibCarla's frame is unsigned
+    ],
+)
+def test_the_schema_rejects_lines_the_recorder_does_not_write(record: dict) -> None:
+    assert not _validator().is_valid(record)
 
 
 def test_ticks_without_vehicles_are_not_written(tmp_path: Path) -> None:
