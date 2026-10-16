@@ -6,6 +6,19 @@
 
 
 class RouteMatch:
+    # Generic: Python's fields are variadic tuples (tuple[int, ...],
+    # tuple[RouteSegmentMatch, ...]), which have no Codon type, and a scenario
+    # reads the running route (scenario_route()) rather than building one.
+    # The constructor takes Python's parameters all the same, so a call
+    # Python refuses is refused here too.
+    def __init__(self, lanelet_ids, start_s, end_s, segments, index = 0):
+        pass
+
+    # A class without fields is built with no arguments too, unless an
+    # __init__ of no arguments says otherwise.
+    def __init__(self):
+        compile_error("RouteMatch() takes lanelet_ids, start_s, end_s and segments")
+
     def anchor_s(self, anchor: Optional[str]) -> float:
         raise NotImplementedError()
 

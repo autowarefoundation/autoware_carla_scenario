@@ -80,14 +80,11 @@ _OMITTED_PARAMETERS: dict[str, set[str]] = {
     "ConditionStatus": {"details"},
 }
 
-#: Model classes declared without Python's constructor, and why: their
-#: methods are still compared, and the model must declare no fields.
-_CONSTRUCTOR_NOT_MODELLED: dict[str, str] = {
-    # A frozen dataclass of variadic tuples (tuple[int, ...],
-    # tuple[RouteSegmentMatch, ...]), which Codon cannot express. A scenario
-    # reads the running route (scenario_route()) and never builds one, so the
-    # model declares what is read of it.
-    "RouteMatch": "its fields are variadic tuples",
+#: Model constants that are no literal, each compared by a test of its own.
+_CONSTANTS_COMPARED_ON_THEIR_OWN = {
+    "BUILT_IN_MEASURES",  # test_the_measures_model_holds_python_s_values
+    "BUILT_IN_METRICS",  # test_the_metrics_model_holds_python_s_values
+    "EGO_ROLE_NAME",  # test_the_constants_model_holds_python_s_values
 }
 
 #: (kind, name, has default): kind is "pos", "kw", "*args" or "**kwargs".
@@ -359,18 +356,15 @@ def _assert_declared_as_in_python(
         return
 
     methods = _methods(node)
-    if name in _CONSTRUCTOR_NOT_MODELLED:
-        assert "__init__" not in methods and not _model_fields(node), name
+    if "__init__" in methods:
+        model_init = _model_params(methods["__init__"], drop_first=True)
     else:
-        if "__init__" in methods:
-            model_init = _model_params(methods["__init__"], drop_first=True)
-        else:
-            model_init = _model_fields(node)
-        omitted = _OMITTED_PARAMETERS.get(name, set())
-        python_init = [
-            p for p in _python_params(python, drop_first=False) if p[1] not in omitted
-        ]
-        assert model_init == python_init, f"{name}(): the model's parameters differ"
+        model_init = _model_fields(node)
+    omitted = _OMITTED_PARAMETERS.get(name, set())
+    python_init = [
+        p for p in _python_params(python, drop_first=False) if p[1] not in omitted
+    ]
+    assert model_init == python_init, f"{name}(): the model's parameters differ"
 
     if dataclasses.is_dataclass(python) and "__init__" not in methods:
         python_fields = {f.name for f in dataclasses.fields(python)}
@@ -418,9 +412,17 @@ def _assert_constant_as_in_python(
 ) -> None:
     """A model constant holds Python's value: a literal (str, int, float, a
     tuple of them) by its value and type, a Union alias by its members' names,
-    in order. One built from a class (EGO_ROLE_NAME) is compared on its own."""
+    in order, a Literal alias as the type of its values. The few that are none
+    of these are compared on their own (_CONSTANTS_COMPARED_ON_THEIR_OWN)."""
     value = node.value
     assert value is not None, f"{name} has no value in the model"
+    if name in _CONSTANTS_COMPARED_ON_THEIR_OWN:
+        return
+    if typing.get_origin(python) is typing.Literal:
+        # A Literal alias (ui.models.Status): the type of its values.
+        types = {type(v).__name__ for v in typing.get_args(python)}
+        assert [ast.unparse(value)] == sorted(types), f"{name}: a Literal alias"
+        return
     if typing.get_origin(python) is typing.Union:
         assert isinstance(value, ast.Subscript), f"{name} is a Union in Python"
         assert ast.unparse(value.value) == "Union", name
@@ -429,12 +431,17 @@ def _assert_constant_as_in_python(
             _union_member_name(m) for m in typing.get_args(python)
         ], f"{name}: the model's Union members differ"
         return
-    try:
-        literal = ast.literal_eval(value)
-    except ValueError:
-        return  # built from a class: its type is the class it is built from
-    assert type(literal) is type(python), f"{name}: a {type(python).__name__}"
+    literal = ast.literal_eval(value)  # a ValueError: no literal
+    assert _literal_types(literal) == _literal_types(python), f"{name}: its type"
     assert literal == python, f"{name}: the model's value differs"
+
+
+def _literal_types(value: Any) -> Any:
+    """*value*'s type, a tuple's being its items' (bool is no int, int no
+    float)."""
+    if isinstance(value, tuple):
+        return tuple(_literal_types(v) for v in value)
+    return type(value)
 
 
 #: Model modules of one framework module each, which the library check
@@ -724,19 +731,27 @@ _DIFFERING: dict[str, tuple[str, str]] = {
 
 
 def _own_names(module: str) -> set[str]:
-    """The public names *module*'s model defines itself (not imports)."""
+    """The public names *module*'s model defines itself (not imports). Any
+    other top-level statement (an `if`, a `try`, an unpacking) fails, so that
+    no name it would define goes uncompared."""
     names: set[str] = set()
     for node in _parse(_MODEL / f"{module}.codon").body:
         if isinstance(node, (ast.ClassDef, ast.FunctionDef)):
             names.add(node.name)
-        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
-            names.add(node.target.id)
-        elif isinstance(node, ast.Assign):
-            names.update(t.id for t in node.targets if isinstance(t, ast.Name))
+        elif isinstance(node, (ast.AnnAssign, ast.Assign)):
+            targets = [node.target] if isinstance(node, ast.AnnAssign) else node.targets
+            assert all(isinstance(t, ast.Name) for t in targets), ast.unparse(node)
+            names.update(t.id for t in targets if isinstance(t, ast.Name))
+        else:
+            assert isinstance(
+                node, (ast.Import, ast.ImportFrom, ast.Expr, ast.Pass)
+            ), f"{module}.codon: {ast.unparse(node)}"
     return {n for n in names if not n.startswith("_")}
 
 
-@pytest.mark.parametrize("module", ["constants", "route", "traffic"])
+@pytest.mark.parametrize(
+    "module", ["conditions", "constants", "route", "traffic", "trajectory"]
+)
 def test_a_model_declares_only_the_compared_names(module: str) -> None:
     # Every public name the model defines is compared: an export, a boundary
     # name or one of _DIFFERING. A name Python lacks would pass a scenario's
@@ -763,6 +778,26 @@ def test_the_constants_model_holds_python_s_values() -> None:
     assert ast.unparse(node.annotation) == "EntityRole"
     assert ast.unparse(node.value) == "EntityRole.ego()"
     assert constants.EGO_ROLE_NAME == acs.EntityRole.ego()
+
+
+def test_the_route_match_model_cannot_be_built_without_arguments() -> None:
+    # The model's RouteMatch has no fields (its constructor, compared with
+    # Python's, is generic), and Codon builds a class without fields with no
+    # arguments unless an __init__ of none, a compile error, says otherwise.
+    node = _definitions("route")["RouteMatch"][0]
+    assert isinstance(node, ast.ClassDef) and not _model_fields(node)
+    inits = [
+        stmt
+        for stmt in node.body
+        if isinstance(stmt, ast.FunctionDef) and stmt.name == "__init__"
+    ]
+    assert [_model_params(i, drop_first=True) for i in inits][1:] == [[]]
+    body = inits[1].body
+    assert len(body) == 1 and isinstance(body[0], ast.Expr)
+    assert isinstance(body[0].value, ast.Call)
+    assert ast.unparse(body[0].value.func) == "compile_error"
+    with pytest.raises(TypeError):
+        route_model.RouteMatch()  # type: ignore[call-arg]
 
 
 def test_the_traffic_backend_factory_model_is_a_stand_in() -> None:
