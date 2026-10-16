@@ -7,7 +7,7 @@
 import typesafe_carla.carla as carla
 
 from ._tc import (_keyword_only, _expect_float, _expect_optional_str, _Required,
-                  _required_str)
+                  _required_str, _acs_expect_return)
 from .coordinate import (Lanelet2Pose, OpenDrivePose, CarlaWorldPose, _expect_pose,
                          _expect_optional_pose, _expect_pose_list)
 from .entity_role import EntityRole, _expect_role, _expect_optional_role
@@ -148,6 +148,13 @@ class BaseCondition:
         """Marks a condition for _acs_list (lists.codon)."""
         return 0
 
+    @staticmethod
+    def _acs_hook_returns(name: Literal[str], r):
+        """The return type of each method an override of which the scenario
+        check checks (_acs_hook_return in _tc.codon, #238)."""
+        if name == "check":
+            _acs_expect_return(r, Optional[ScenarioResult], "BaseCondition.check() returns Optional[ScenarioResult]")
+
     def check(self, world: carla.World, elapsed: float) -> Optional[ScenarioResult]:
         raise NotImplementedError()
 
@@ -167,8 +174,10 @@ def _expect_optional_condition(condition) -> Optional[BaseCondition]:
 
 
 def _expect_condition(condition: BaseCondition) -> BaseCondition:
-    # Checked once here, so a condition subclass reaches check() typed.
-    condition.check(carla.Client().get_world(), 0.0)
+    # Checked once here, so a condition subclass reaches check() typed, and
+    # its result is what the framework reads (#238): BaseCondition wraps
+    # check() and reads `result.passed` of anything but None.
+    BaseCondition._acs_hook_returns("check", condition.check(carla.Client().get_world(), 0.0))
     return condition
 
 

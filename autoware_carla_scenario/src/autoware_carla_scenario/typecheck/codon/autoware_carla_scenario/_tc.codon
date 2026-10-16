@@ -64,6 +64,57 @@ class _acs_Returning:
         return _acs_value(R)
 
 
+def _acs_takes(value: T, T: type):
+    """A typed parameter, which takes a T or a subclass of it (an upcast)."""
+    pass
+
+
+def _acs_expect_return(r, T: type, hook: Literal[str]):
+    """The result *r* of an override of the framework's *hook* is a T (#238).
+
+    Strict, unlike an annotated assignment (Codon 0.19 converts any value
+    with `__bool__` in `done: bool = x`) or a typed parameter (which unwraps
+    an Optional implicitly): *r* must be a T itself, a subclass of the class
+    T, an int for a float or a bool for an int, as Python's typing allows.
+    An Optional[U] takes a U, an Optional of one, or None (an override that
+    never returns a value); any other T takes no Optional.
+    """
+    if isinstance(r, T):
+        pass
+    elif isinstance(T, Optional):
+        if isinstance(r, NoneType):
+            pass
+        elif isinstance(r, Optional[NoneType]):
+            pass
+        elif isinstance(r, Optional):
+            _acs_expect_return(unwrap(r), T.T, hook)
+        else:
+            _acs_expect_return(r, T.T, hook)
+    elif isinstance(r, Optional):
+        compile_error(hook + ", and this override returns an Optional, which may be None")
+    elif isinstance(T, float) and isinstance(r, int):
+        pass
+    elif isinstance(T, int) and isinstance(r, bool):
+        pass
+    elif static.has_rtti(T) and static.has_rtti(type(r)):
+        # Two classes of a hierarchy: a subclass of T is upcast, and any
+        # other class is refused with the types named.
+        _acs_takes(r, T)
+    else:
+        compile_error(hook + ", and this override returns another type")
+
+
+def _acs_hook_return(C: type, name: Literal[str], r):
+    """What the scenario check appends for each call of a method *name* of a
+    class C of the scenario's modules (typecheck/library_driver.py): the
+    result *r* checked against the return type of the framework's method C
+    overrides, when C derives from a model class that declares its hooks
+    (`_acs_hook_returns`). Nothing is checked for a class that does not, or
+    for a name that is no hook of its base."""
+    if hasattr(C, "_acs_hook_returns"):
+        C._acs_hook_returns(name, r)
+
+
 def _keyword_only(extra, where: Literal[str]):
     if static.len(extra) > 0:
         compile_error(where + " is keyword-only")

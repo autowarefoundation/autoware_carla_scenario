@@ -839,6 +839,65 @@ def test_a_class_level_default_is_assigned_to_a_typed_local() -> None:
     assert "from autoware_carla_scenario._tc import _acs_value, _expect_bool" in lines
 
 
+def test_the_scenario_check_binds_each_method_result_as_a_hook() -> None:
+    # With `hook_returns` (the scenario check, #238), each call of a method
+    # or a property passes its result to the model's `_acs_hook_return`,
+    # which checks it against the framework method it overrides; a function,
+    # a static method, the constructor and a dunder are no hooks.
+    source = textwrap.dedent(
+        """
+        import typesafe_carla.carla as carla
+
+
+        def helper(x: float) -> float:
+            return x
+
+
+        class Gap(BaseCondition):
+            def __init__(self, label: str) -> None:
+                super().__init__(label)
+
+            def check(self, world: carla.World, elapsed: float = 0.0) -> bool:
+                return True
+
+            def renamed(self, world: carla.World, *, scale: float = 1.0) -> bool:
+                return True
+
+            @property
+            def ready(self) -> bool:
+                return True
+
+            @staticmethod
+            def build() -> int:
+                return 0
+
+            def __eq__(self, other: object) -> bool:
+                return True
+        """
+    )
+    tree = ast.parse(source)
+    plain = render_library_checks(tree, skip_any_returns=True)
+    assert "_acs_hook_return" not in plain.source
+    hooked = render_library_checks(tree, skip_any_returns=True, hook_returns=True)
+    lines = [line.strip() for line in hooked.source.splitlines()]
+    assert "from autoware_carla_scenario._tc import _acs_hook_return" in lines
+    assert [line for line in lines if "_acs_hook_return(" in line] == [
+        '_acs_hook_return(Gap, "check", '
+        "_acs_value(Gap).check(_acs_value(carla.World), _acs_value(float)))",
+        '_acs_hook_return(Gap, "check", '
+        "Gap.check(_acs_value(Gap), _acs_value(carla.World)))",
+        '_acs_hook_return(Gap, "renamed", '
+        "Gap.renamed(_acs_value(Gap), _acs_value(carla.World), "
+        "scale=_acs_value(float)))",
+        '_acs_hook_return(Gap, "renamed", '
+        "Gap.renamed(_acs_value(Gap), _acs_value(carla.World)))",
+        '_acs_hook_return(Gap, "ready", _acs_value(Gap).ready)',
+    ]
+    assert "helper(_acs_value(float))" in lines
+    assert "Gap.build()" in lines
+    assert "_acs_value(Gap).__eq__(_acs_value(Gap))" in lines
+
+
 def test_a_generic_function_and_one_returning_any_are_problems() -> None:
     # `_acs_value(list[T])` does not compile: a TypeVar parameter is a
     # problem.  A function returning `Any` builds what Codon cannot express

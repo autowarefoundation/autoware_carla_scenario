@@ -28,7 +28,9 @@ attributes.
 After that, the driver calls the function appended to each of the scenario's
 own modules (:func:`render_module_checks`), which calls every function and
 method of the module and assigns each class-level default, so what the
-calls above do not reach is compiled too.
+calls above do not reach is compiled too.  Last, it checks what the
+scenario's ``setup()`` and ``is_done()`` return, strictly: ``None`` and a
+``bool`` (#238).
 """
 
 from __future__ import annotations
@@ -50,6 +52,8 @@ __all__ = [
     "render_odd_driver",
 ]
 
+#: The driver's function checking the results of the scenario's hooks.
+HOOK_CHECK = "_acs_check_scenario_hooks"
 #: File name of the generated program in the check workspace.
 DRIVER_MODULE = "_acs_check_main.py"
 
@@ -64,6 +68,8 @@ class Driver:
     #: What the driver's own calls are, as a warning names them: a function
     #: the appended calls leave out is compiled only where these reach it.
     reaches: str = "the scenario's constructor, setup() and is_done()"
+    #: What runs after the module checks (:func:`render_module_checks`).
+    trailer: str = ""
 
 
 class _Imports:
@@ -218,7 +224,20 @@ def render_driver(
         "    )",
         "    _acs_expect_scenario(scenario)",
         "    scenario.setup()",
-        "    done: bool = scenario.is_done()",
+        "    scenario.is_done()",
+        "",
+        "",
+        # The hooks' results, checked strictly (#238): `done: bool =
+        # scenario.is_done()` passed `is_done() -> str`, as Codon converts
+        # any value with __bool__ in an annotated assignment.  Called in the
+        # trailer, after the module checks, which report an override's
+        # result at its own `def` line first.
+        f"def {HOOK_CHECK}():",
+        f"    scenario = _acs_value({scenario_name})",
+        *(
+            f'    BaseScenario._acs_hook_returns("{hook}", scenario.{hook}())'
+            for hook in ("setup", "is_done")
+        ),
         "",
         "",
         "_acs_check_scenario()",
@@ -227,6 +246,7 @@ def render_driver(
         "import typesafe_carla.carla as carla",
         "from autoware_carla_scenario import (BaseScenario, EgoConfig, GroundProjectionConfig,",
         "                                     Lanelet2Pose, SpawnTransform)",
+        "from autoware_carla_scenario._tc import _acs_value",
         *imports.lines,
         "",
         "",
@@ -237,7 +257,7 @@ def render_driver(
         lines.append(line)
         config_lines[len(lines)] = f"scenario.{key}"
     lines += tail
-    return Driver("\n".join(lines) + "\n", config_lines)
+    return Driver("\n".join(lines) + "\n", config_lines, trailer=f"{HOOK_CHECK}()\n")
 
 
 def render_module_checks(modules: list[str]) -> str:
