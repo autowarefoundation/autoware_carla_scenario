@@ -31,6 +31,9 @@ from pyxodr.road_objects.road import Road as PyxodrRoad
 import autoware_carla_scenario as acs
 from autoware_carla_scenario import (
     carla_install,
+    conditions,
+    constants,
+    coordinate,
     environment,
     measures,
     metrics,
@@ -55,13 +58,16 @@ from autoware_carla_scenario.maps import source as maps_source
 from autoware_carla_scenario.odd import probes as odd_probes
 from autoware_carla_scenario.odd import registry as odd_registry
 from autoware_carla_scenario.odd import route as odd_route
+from autoware_carla_scenario.route import active as route_active
 from autoware_carla_scenario.route import frame as route_frame
+from autoware_carla_scenario.route import model as route_model
 from autoware_carla_scenario.sweeper import constraints as sweeper_constraints
 from autoware_carla_scenario.traffic import context as traffic_context
 from autoware_carla_scenario.traffic import registry as traffic_registry
 from autoware_carla_scenario.trajectory import model as trajectory_model
 from autoware_carla_scenario.typecheck import model_dir
 from autoware_carla_scenario.ui import models as ui_models
+from autoware_carla_scenario.utils import traffic_light as utils_traffic_light
 from carla_driver_interface import geometry as cdi_geometry
 
 _MODEL = model_dir() / "autoware_carla_scenario"
@@ -70,6 +76,18 @@ _MODEL = model_dir() / "autoware_carla_scenario"
 #: free-form mapping (dict[str, Any]), which has no Codon type.
 _OMITTED_PARAMETERS: dict[str, set[str]] = {
     "SweepConfig": {"constraints", "bindings", "odd_sample"},
+    # A condition's details (scenario_runner fills them, outside the check).
+    "ConditionStatus": {"details"},
+}
+
+#: Model classes declared without Python's constructor, and why: their
+#: methods are still compared, and the model must declare no fields.
+_CONSTRUCTOR_NOT_MODELLED: dict[str, str] = {
+    # A frozen dataclass of variadic tuples (tuple[int, ...],
+    # tuple[RouteSegmentMatch, ...]), which Codon cannot express. A scenario
+    # reads the running route (scenario_route()) and never builds one, so the
+    # model declares what is read of it.
+    "RouteMatch": "its fields are variadic tuples",
 }
 
 #: (kind, name, has default): kind is "pos", "kw", "*args" or "**kwargs".
@@ -204,8 +222,9 @@ def test_an_exported_name_is_declared_as_in_python(name: str) -> None:
 
 
 #: Names the model declares for the modules the library check compiles
-#: (typecheck/library.py), though the package does not export them: name ->
-#: (model module, the Python object).
+#: (typecheck/library.py), or that a scenario imports from a submodule,
+#: though the package does not export them: name -> (model module, the
+#: Python object).
 _BOUNDARY: dict[str, tuple[str, Any]] = {
     "CarlaDriverEntity": ("entity", carla_driver_entity.CarlaDriverEntity),
     "CoverItem": ("coverage", coverage_items.CoverItem),
@@ -237,6 +256,50 @@ _BOUNDARY: dict[str, tuple[str, Any]] = {
         )
     },
     "ResolvedTrajectory": ("trajectory", trajectory_model.ResolvedTrajectory),
+    # A Union alias: its members compared by name, in order.
+    "TrajectoryPosition": ("trajectory", trajectory_model.TrajectoryPosition),
+    # What a scenario imports of coordinate beside the package's exports.
+    **{
+        name: ("coordinate", getattr(coordinate, name))
+        for name in (
+            "find_traffic_lights_for_lanelet2_id",
+            "get_signal_ids_for_controller",
+            "get_stop_line_linestrings",
+            "get_stop_line_linestrings_with_following",
+            "lanelet_length",
+            "on_lanelet",
+            "project_onto_lanelet",
+            "project_onto_road",
+        )
+    },
+    # What a scenario imports of conditions beside the package's exports.
+    **{
+        name: ("conditions", getattr(conditions, name))
+        for name in ("ConditionStatus", "beside_lane_id", "find_actor_in_list")
+    },
+    # Every constant of constants.codon (EGO_ROLE_NAME is exported), each
+    # compared by value.
+    **{
+        name: ("constants", getattr(constants, name))
+        for name in (
+            "BUMPER_PROBE_ROLE_NAME",
+            "DEFAULT_TM_PORT",
+            "FIXED_DELTA_SECONDS",
+            "LANE_CHANGE_CENTER_TOLERANCE_M",
+            "LANE_CHANGE_HEADING_TOLERANCE_DEG",
+            "US_PER_S",
+        )
+    },
+    # Everything route.codon declares: the running route, its frame, the
+    # anchors, and the values (compared by value) the route poses check.
+    "RouteMatch": ("route", route_model.RouteMatch),
+    "parse_anchor": ("route", route_model.parse_anchor),
+    "scenario_route": ("route", route_active.scenario_route),
+    "scenario_route_frame": ("route", route_active.scenario_route_frame),
+    **{
+        name: ("route", getattr(route_model, name))
+        for name in ("APPROACHES", "CROSSWALK_LEGS", "SIDES")
+    },
     "RouteFrame": ("route", route_frame.RouteFrame),
     "TrajectorySample": ("trajectory", trajectory_model.TrajectorySample),
     "to_map_frame": ("coordinate", coordinate_transform.to_map_frame),
@@ -271,8 +334,12 @@ def _assert_declared_as_in_python(
             assert _model_params(overload, drop_first=False) == expected, name
         return
 
+    if isinstance(node, (ast.Assign, ast.AnnAssign)):
+        _assert_constant_as_in_python(name, node, python)
+        return
+
     if not isinstance(node, ast.ClassDef):
-        return  # a constant (EGO_ROLE_NAME): its type is the class it is built from
+        return
 
     if typing.get_origin(python) is typing.Union:
         # A Union alias (SpawnLocation): the base class of its members here.
@@ -292,15 +359,18 @@ def _assert_declared_as_in_python(
         return
 
     methods = _methods(node)
-    if "__init__" in methods:
-        model_init = _model_params(methods["__init__"], drop_first=True)
+    if name in _CONSTRUCTOR_NOT_MODELLED:
+        assert "__init__" not in methods and not _model_fields(node), name
     else:
-        model_init = _model_fields(node)
-    omitted = _OMITTED_PARAMETERS.get(name, set())
-    python_init = [
-        p for p in _python_params(python, drop_first=False) if p[1] not in omitted
-    ]
-    assert model_init == python_init, f"{name}(): the model's parameters differ"
+        if "__init__" in methods:
+            model_init = _model_params(methods["__init__"], drop_first=True)
+        else:
+            model_init = _model_fields(node)
+        omitted = _OMITTED_PARAMETERS.get(name, set())
+        python_init = [
+            p for p in _python_params(python, drop_first=False) if p[1] not in omitted
+        ]
+        assert model_init == python_init, f"{name}(): the model's parameters differ"
 
     if dataclasses.is_dataclass(python) and "__init__" not in methods:
         python_fields = {f.name for f in dataclasses.fields(python)}
@@ -334,6 +404,37 @@ def _assert_declared_as_in_python(
         assert _model_params(method, drop_first=True) == _python_params(
             getattr(python, method_name), drop_first=True
         ), f"{name}.{method_name}(): the model's parameters differ"
+
+
+def _union_member_name(member: Any) -> str:
+    # A member Python names as a string (a forward reference) by that string.
+    if isinstance(member, typing.ForwardRef):
+        return member.__forward_arg__
+    return str(member.__name__)
+
+
+def _assert_constant_as_in_python(
+    name: str, node: ast.Assign | ast.AnnAssign, python: Any
+) -> None:
+    """A model constant holds Python's value: a literal (str, int, float, a
+    tuple of them) by its value and type, a Union alias by its members' names,
+    in order. One built from a class (EGO_ROLE_NAME) is compared on its own."""
+    value = node.value
+    assert value is not None, f"{name} has no value in the model"
+    if typing.get_origin(python) is typing.Union:
+        assert isinstance(value, ast.Subscript), f"{name} is a Union in Python"
+        assert ast.unparse(value.value) == "Union", name
+        members = value.slice.elts if isinstance(value.slice, ast.Tuple) else []
+        assert [ast.unparse(m) for m in members] == [
+            _union_member_name(m) for m in typing.get_args(python)
+        ], f"{name}: the model's Union members differ"
+        return
+    try:
+        literal = ast.literal_eval(value)
+    except ValueError:
+        return  # built from a class: its type is the class it is built from
+    assert type(literal) is type(python), f"{name}: a {type(python).__name__}"
+    assert literal == python, f"{name}: the model's value differs"
 
 
 #: Model modules of one framework module each, which the library check
@@ -387,6 +488,16 @@ _MODULE_MODELS: dict[str, tuple[Any, tuple[str, ...]]] = {
     # What a scenario or a Python ODD imports of the checked measures: every
     # name of its __all__, the values compared below.
     "measures": (measures, tuple(measures.__all__)),
+    # The model of one module of the checked utils package, which the scenario
+    # check resolves (typecheck/check.py).
+    "utils/traffic_light": (
+        utils_traffic_light,
+        (
+            "get_signal_ids_for_controller",
+            "lanelet2_traffic_light_id_to_opendrive_controller_id",
+            "traffic_light_state_name",
+        ),
+    ),
 }
 
 #: Classes the model declares only so a checked package can re-export them:
@@ -595,6 +706,74 @@ def test_the_measures_model_holds_python_s_values() -> None:
     )
     _assert_frozen_fields("measures", measures.Measure)
     _assert_frozen_fields("measures", measures.Bumpers)
+
+
+#: Names a model declares as Python cannot, compared by a test of their own:
+#: name -> (model module, why).
+_DIFFERING: dict[str, tuple[str, str]] = {
+    "TrafficBackendFactory": (
+        "traffic",
+        "a Callable alias in Python, of a mapping of any values (Hydra's "
+        "options) to the checked TrafficBackend: Codon has no type for the "
+        "mapping, and the model cannot import the checked traffic.base, so "
+        "the model declares an empty class, only so the checked traffic "
+        "package's re-export resolves; nothing annotates with it "
+        "(register_backend's factory is untyped)",
+    ),
+}
+
+
+def _own_names(module: str) -> set[str]:
+    """The public names *module*'s model defines itself (not imports)."""
+    names: set[str] = set()
+    for node in _parse(_MODEL / f"{module}.codon").body:
+        if isinstance(node, (ast.ClassDef, ast.FunctionDef)):
+            names.add(node.name)
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            names.add(node.target.id)
+        elif isinstance(node, ast.Assign):
+            names.update(t.id for t in node.targets if isinstance(t, ast.Name))
+    return {n for n in names if not n.startswith("_")}
+
+
+@pytest.mark.parametrize("module", ["constants", "route", "traffic"])
+def test_a_model_declares_only_the_compared_names(module: str) -> None:
+    # Every public name the model defines is compared: an export, a boundary
+    # name or one of _DIFFERING. A name Python lacks would pass a scenario's
+    # check and fail its run.
+    compared = {
+        *(n for n, m in _EXPORTS.items() if m == module),
+        *(n for n, (m, _python) in _BOUNDARY.items() if m == module),
+        *(n for n, (m, _why) in _DIFFERING.items() if m == module),
+    }
+    assert sorted(_own_names(module)) == sorted(compared), module
+
+
+def test_the_constants_model_holds_python_s_values() -> None:
+    # Every constant of constants.py is in the model, with its value: the
+    # literals through _BOUNDARY, EGO_ROLE_NAME (built from EntityRole) here.
+    python = {
+        name
+        for name, value in vars(constants).items()
+        if name.isupper() and not inspect.ismodule(value)
+    }
+    assert _own_names("constants") == python
+    node = _definitions("constants")["EGO_ROLE_NAME"][0]
+    assert isinstance(node, ast.AnnAssign) and node.value is not None
+    assert ast.unparse(node.annotation) == "EntityRole"
+    assert ast.unparse(node.value) == "EntityRole.ego()"
+    assert constants.EGO_ROLE_NAME == acs.EntityRole.ego()
+
+
+def test_the_traffic_backend_factory_model_is_a_stand_in() -> None:
+    # Python's is a Callable alias, the model's an empty class (_DIFFERING):
+    # neither declares anything a scenario could call or build differently.
+    assert typing.get_origin(traffic_registry.TrafficBackendFactory) is (
+        typing.get_origin(typing.Callable)
+    )
+    node = _definitions("traffic")["TrafficBackendFactory"][0]
+    assert isinstance(node, ast.ClassDef)
+    assert not node.bases and [ast.unparse(s) for s in node.body] == ["pass"]
 
 
 def test_the_comparison_rules_spelled_out_for_codon_are_the_enum_s_members() -> None:
