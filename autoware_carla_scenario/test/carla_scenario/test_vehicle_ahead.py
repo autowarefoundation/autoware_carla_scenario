@@ -833,6 +833,34 @@ def test_the_routing_graph_is_built_before_the_run(straight_road: LaneMap) -> No
     }
 
 
+def test_no_routing_graph_for_measures_the_scenario_replaced(
+    straight_road: LaneMap,
+) -> None:
+    """A scenario that replaced the vehicle-ahead measures reads its own: the
+    routing graph is not built for them before the run."""
+    from autoware_carla_scenario.coordinate.map_manager import MapManager
+    from autoware_carla_scenario.coverage.collector import prepare_measures
+    from autoware_carla_scenario.measures import Measure
+    from autoware_carla_scenario.odd import default_odd
+
+    def replaced(*keys: str) -> SimpleNamespace:
+        own = dict(BUILT_IN_MEASURES)
+        for key in keys:
+            own[key] = Measure(key, lambda world: None, own[key].unit)
+        return SimpleNamespace(measures=own)
+
+    manager = MapManager.get_instance()
+    manager._routing_graph = None
+    prepare_measures(
+        default_odd(), replaced(VEHICLE_AHEAD_GAP_M, VEHICLE_AHEAD_RELATIVE_SPEED_KPH)
+    )
+    assert manager._routing_graph is None
+
+    # One of them still the built-in one: that one reads the graph.
+    prepare_measures(default_odd(), replaced(VEHICLE_AHEAD_GAP_M))
+    assert manager._routing_graph is not None
+
+
 def test_without_a_map_there_is_nothing_to_prepare(no_map: None) -> None:
     from autoware_carla_scenario.measures import prepare_vehicle_ahead
 

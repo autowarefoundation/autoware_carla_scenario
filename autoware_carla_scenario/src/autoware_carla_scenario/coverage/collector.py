@@ -143,18 +143,28 @@ def current_measure_coverage(coverage: Any, odd: Any) -> Any:
     return SimpleNamespace(entries=entries)
 
 
-def prepare_measures(odd: Any) -> None:
+def prepare_measures(odd: Any, scenario: Any = None) -> None:
     """Build what the measures *odd* maps read before the run's first tick:
     the routing graph, for the vehicle-ahead measures
-    (:func:`~autoware_carla_scenario.measures.prepare_vehicle_ahead`)."""
+    (:func:`~autoware_carla_scenario.measures.prepare_vehicle_ahead`).
+
+    Only for a key *scenario* reads with the built-in measure: one it replaced
+    (``register_measure``) reads what its own reader reads, and the routing
+    graph -- tens of seconds on a large map -- is then not built up front
+    for nothing.  Without a *scenario*, every key *odd* maps counts."""
     from ..measures import (  # noqa: PLC0415
+        BUILT_IN_MEASURES,
         VEHICLE_AHEAD_GAP_M,
         VEHICLE_AHEAD_RELATIVE_SPEED_KPH,
         prepare_vehicle_ahead,
     )
 
     keys = set(_measured_items(odd).values()) if odd is not None else set()
-    if keys & {VEHICLE_AHEAD_GAP_M, VEHICLE_AHEAD_RELATIVE_SPEED_KPH}:
+    keys &= {VEHICLE_AHEAD_GAP_M, VEHICLE_AHEAD_RELATIVE_SPEED_KPH}
+    if scenario is not None:
+        measures = scenario.measures
+        keys = {key for key in keys if measures.get(key) is BUILT_IN_MEASURES[key]}
+    if keys:
         prepare_vehicle_ahead()
 
 

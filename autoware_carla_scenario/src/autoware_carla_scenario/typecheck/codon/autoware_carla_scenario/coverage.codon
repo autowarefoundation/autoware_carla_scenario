@@ -151,5 +151,5 @@ def merge_coverage(documents) -> CoverageReport:
     raise NotImplementedError()
 
 
-def prepare_measures(odd) -> None:
+def prepare_measures(odd, scenario = None) -> None:
     raise NotImplementedError()
