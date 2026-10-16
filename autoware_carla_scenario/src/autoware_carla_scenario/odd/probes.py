@@ -37,7 +37,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable, Optional
 
-from ..entity_role import find_actor_in_list
+from ..entity_role import find_actor_in_world
 from ..constants import EGO_ROLE_NAME
 from ..kinematics import Vector3
 from .model import UNDECIDED
@@ -180,7 +180,7 @@ def _ego(world: "carla.World") -> Any:
     ego = _RUN.ego
     if ego is None or not getattr(ego, "is_alive", True):
         try:
-            _RUN.ego = find_actor_in_list(world.get_actors(), EGO_ROLE_NAME)
+            _RUN.ego = find_actor_in_world(world, EGO_ROLE_NAME)
         except Exception:
             _RUN.ego = None
     return _RUN.ego

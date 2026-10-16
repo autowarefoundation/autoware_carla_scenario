@@ -12,6 +12,7 @@ from ..entity_role import EntityRole, _role_name
 # Re-exported: it lives in entity_role, below this package, so a module that
 # finds an actor by role need not import the conditions (and CARLA) for it.
 from ..entity_role import find_actor_in_list as find_actor_in_list
+from ..entity_role import find_actor_in_world
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
@@ -66,7 +67,9 @@ def find_actor_by_role_name(
     Returns:
         The matching actor, or ``None`` if no actor with that role name exists.
     """
-    return find_actor_in_list(world.get_actors(), role_name)
+    # By id once found: a scan of world.get_actors() walks every actor on the
+    # map, and conditions look their entities up every tick.
+    return find_actor_in_world(world, role_name)
 
 
 @dataclass

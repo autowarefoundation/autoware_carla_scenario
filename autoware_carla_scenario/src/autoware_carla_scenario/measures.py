@@ -95,7 +95,7 @@ import lanelet2.geometry
 
 from .constants import BUMPER_PROBE_ROLE_NAME, EGO_ROLE_NAME
 from .coordinate.map_manager import MapManager
-from .entity_role import find_actor_in_list
+from .entity_role import find_actor_in_world
 from .metrics import is_metric
 from .utils.stop_line import regulatory_element_stop_lines
 
@@ -333,9 +333,13 @@ def _around(world: "carla.World") -> Optional[list[_Around]]:
         return _CACHE.around
     found: Optional[list[_Around]]
     try:
-        actors = list(world.get_actors())
-        ego = find_actor_in_list(actors, EGO_ROLE_NAME)
-        found = None if ego is None else _pedestrians_around(ego, actors)
+        # The ego by id, and only the walkers: not every actor on the map.
+        ego = find_actor_in_world(world, EGO_ROLE_NAME)
+        found = (
+            None
+            if ego is None
+            else _pedestrians_around(ego, list(world.get_actors().filter("walker.*")))
+        )
     except Exception:
         found = None
     _CACHE.at, _CACHE.around = at, found
@@ -1255,9 +1259,10 @@ def _vehicle_ahead(world: "carla.World") -> Optional[_Lead]:
         return _CACHE.lead
     lead: Optional[_Lead] = None
     try:
-        actors = list(world.get_actors())
-        ego_actor = find_actor_in_list(actors, EGO_ROLE_NAME)
+        # The ego by id, and only the vehicles: not every actor on the map.
+        ego_actor = find_actor_in_world(world, EGO_ROLE_NAME)
         if ego_actor is not None:
+            actors = list(world.get_actors().filter("vehicle.*"))
             ego = _moving(ego_actor)
             ego_z = float(ego_actor.get_location().z)
             reach = AHEAD_RANGE_M + 2 * _REACH_MARGIN_M
@@ -1449,7 +1454,7 @@ def _crossing_pedestrian_speed_ms(world: "carla.World") -> Optional[float]:
 
 
 def _stop_line_distance_m(world: "carla.World") -> Optional[float]:
-    ego_actor = find_actor_in_list(list(world.get_actors()), EGO_ROLE_NAME)
+    ego_actor = find_actor_in_world(world, EGO_ROLE_NAME)
     if ego_actor is None:
         return None
     return _stop_line_ahead(_moving(ego_actor))

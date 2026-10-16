@@ -35,6 +35,8 @@ from autoware_carla_scenario.entity.externally_driven import ExternallyDrivenEgo
 from autoware_carla_scenario.entity.ros2_entity import Ros2EgoEntity
 from autoware_carla_scenario.traffic.driven import BackendDriven
 
+from ._fake_world import ActorsById
+
 if TYPE_CHECKING:
     from autoware_carla_scenario.authoring.models import ScenarioDocument
 
@@ -61,7 +63,7 @@ class _RecordingVehicle:
         self.commanded.append(speed_kmh)
 
 
-class _FakeWorld:
+class _FakeWorld(ActorsById):
     """A world that knows how long a tick took and which actors are in it."""
 
     def __init__(

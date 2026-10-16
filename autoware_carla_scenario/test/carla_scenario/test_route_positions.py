@@ -53,6 +53,7 @@ from autoware_carla_scenario.route.search import find_route_matches
 from autoware_carla_scenario.trajectory.resolve import resolve_trajectory
 
 from . import _route_maps as rm
+from ._fake_world import ActorsById
 from .test_follow_trajectory_action import _Actor, _Entity, _run, _World
 
 _STRAIGHT = {
@@ -320,7 +321,7 @@ class _Ego(_Actor):
         self.x, self.y = x, -y
 
 
-class _RouteWorld(_World):
+class _RouteWorld(ActorsById, _World):
     def __init__(self, *actors: Any) -> None:
         self.actors = list(actors)
 

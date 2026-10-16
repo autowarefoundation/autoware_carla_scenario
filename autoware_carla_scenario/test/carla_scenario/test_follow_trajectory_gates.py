@@ -45,6 +45,7 @@ from autoware_carla_scenario.conditions.base import ScenarioResult
 from autoware_carla_scenario.entity.pedestrian_entity import _UE5_WALKER_SPEED_SCALE
 from autoware_carla_scenario.entity.registry import register_entity, unregister_entity
 
+from ._fake_world import ActorsById
 from .test_follow_trajectory_action import _DT, _Actor, _Entity, _line, _run, _World
 
 
@@ -735,7 +736,7 @@ class _Located(_Actor):
         return carla.Location(x=self.x, y=self.y, z=self.z)
 
 
-class _ActorsWorld(_World):
+class _ActorsWorld(ActorsById, _World):
     def __init__(self, actors: list[Any]) -> None:
         self._actors = actors
 

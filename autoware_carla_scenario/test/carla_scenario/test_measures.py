@@ -30,6 +30,8 @@ from autoware_carla_scenario.odd import (
     scenario_measure,
 )
 
+from ._fake_world import ActorsById, FakeActorList
+
 
 class _Vec(SimpleNamespace):
     pass
@@ -48,6 +50,7 @@ class _Placed:
         role: str = "",
     ) -> None:
         self.id = actor_id
+        self.is_alive = True
         self.type_id = type_id
         self.attributes = {"role_name": role}
         self._at = _Vec(x=at[0], y=at[1], z=0.0)
@@ -66,7 +69,7 @@ class _Placed:
         )
 
 
-class _World:
+class _World(ActorsById):
     def __init__(self, actors: list[_Placed], frame: int = 1) -> None:
         self._actors = actors
         self.frame = frame
@@ -74,8 +77,8 @@ class _World:
     def get_snapshot(self) -> Any:
         return SimpleNamespace(frame=self.frame)
 
-    def get_actors(self) -> list[_Placed]:
-        return self._actors
+    def get_actors(self) -> FakeActorList:
+        return FakeActorList(self._actors)
 
 
 _FRAMES = iter(range(1, 1_000_000))

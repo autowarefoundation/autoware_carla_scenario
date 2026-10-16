@@ -31,6 +31,7 @@ from autoware_carla_scenario.measures import (
 )
 
 from . import _lane_maps
+from ._fake_world import ActorsById, FakeActorList
 from ._lane_maps import LaneMap, bend, build_road, no_map, straight
 
 __all__ = ["no_map"]
@@ -59,6 +60,7 @@ class _Actor:
         type_id: str = "vehicle.test",
     ) -> None:
         self.id = actor_id
+        self.is_alive = True
         self.type_id = type_id
         self.attributes = {"role_name": role}
         self._location = SimpleNamespace(x=x, y=y, z=0.0)
@@ -86,7 +88,7 @@ class _Actor:
 _FRAMES = iter(range(1, 10_000_000))
 
 
-class _World:
+class _World(ActorsById):
     def __init__(self, actors: list[_Actor]) -> None:
         self._actors = actors
         self._frame = next(_FRAMES)
@@ -94,8 +96,8 @@ class _World:
     def get_snapshot(self) -> Any:
         return SimpleNamespace(frame=self._frame)
 
-    def get_actors(self) -> list[_Actor]:
-        return self._actors
+    def get_actors(self) -> FakeActorList:
+        return FakeActorList(self._actors)
 
 
 def _on(built: LaneMap, lane: str, segment: int, s: float, t: float = 0.0) -> Any:
@@ -843,7 +845,7 @@ def test_a_failed_reading_is_warned_of_once(
     straight_road: LaneMap, caplog: pytest.LogCaptureFixture
 ) -> None:
     class _Broken(_World):
-        def get_actors(self) -> list[_Actor]:
+        def get_actors(self) -> FakeActorList:
             raise RuntimeError("the server went away")
 
     with caplog.at_level("WARNING", logger="autoware_carla_scenario.measures"):
