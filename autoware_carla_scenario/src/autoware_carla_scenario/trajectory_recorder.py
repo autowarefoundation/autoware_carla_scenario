@@ -25,6 +25,9 @@ One JSON object per line, in CARLA's (left-handed) frame, metres/degrees:
   since the last written tick (all of them in the first).  Ticks without any
   vehicle/walker are not written.
 
+:data:`SCHEMA_PATH` is the JSON Schema of a line, the format's contract for
+readers in any language (docs/trajectory_log.md).
+
 Lines are encoded with orjson (stdlib ``json``'s output, faster; non-ASCII
 text is written as UTF-8 rather than escaped) and the file is unbuffered,
 so each line reaches the OS in one write and a killed run loses at most the
@@ -47,6 +50,8 @@ from .utils.traffic_light import traffic_light_state_name
 
 logger = logging.getLogger(__name__)
 
+#: The JSON Schema (draft-07) every line of the file conforms to.
+SCHEMA_PATH = Path(__file__).resolve().parent / "trajectory_recorder.schema.json"
 #: Actor type prefixes whose motion is recorded.
 RECORDED_KINDS = ("vehicle.", "walker.")
 #: ``role_name`` values whose control inputs are recorded.
@@ -254,4 +259,4 @@ class TrajectoryRecorder:
         self._emit(record)
 
 
-__all__ = ["EGO_ROLES", "RECORDED_KINDS", "TrajectoryRecorder"]
+__all__ = ["EGO_ROLES", "RECORDED_KINDS", "SCHEMA_PATH", "TrajectoryRecorder"]
