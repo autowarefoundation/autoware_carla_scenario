@@ -313,7 +313,9 @@ def test_the_tracked_trajectory_is_shown_as_the_ego_s_debug_markers() -> None:
     _tick(entity, clock)
 
     markers = entity.debug_markers()
-    assert len(markers) == 1
+    assert len(markers.polylines) == 1
+    _tick(entity, clock)
+    assert entity.debug_markers() is markers
     # In CARLA's world, y flipped back from the local frame.
     assert [(x, y) for x, y, _ in markers.polylines[0].points] == pytest.approx(
         [(8.6, -2.0), (9.1, -2.0), (9.6, -2.0), (10.1, -2.0)]

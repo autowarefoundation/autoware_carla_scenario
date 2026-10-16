@@ -24,8 +24,5 @@ class DebugMarkers:
         if len(polyline.points) > 0:
             self.polylines.append(polyline)
 
-    def __len__(self) -> int:
-        return len(self.polylines)
-
     def __bool__(self) -> bool:
         return len(self.polylines) > 0

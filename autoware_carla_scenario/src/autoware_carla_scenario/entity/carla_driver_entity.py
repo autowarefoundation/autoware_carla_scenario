@@ -35,7 +35,7 @@ from typing import (
 )
 
 from ..constants import FIXED_DELTA_SECONDS
-from ..debug_markers import DebugMarkers, plan_polyline
+from ..debug_markers import DebugMarkers, plan_markers
 from ..coordinate.map_manager import run_carla_map
 from ..driver.base import BaseEgoDriverClient, DriverClientConfig, EgoObservation
 from ..driver.control import ControlConfig, TrajectoryFollower
@@ -160,6 +160,8 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
         self._lidars: List[Tuple[str, "CarlaLidarSensor", Pose]] = []
         self._world: Optional["carla.World"] = None
         self._plan: Trajectory = Trajectory.empty()
+        #: The plan as debug markers, built once per plan.
+        self._plan_markers: DebugMarkers = DebugMarkers()
         self._sim_time_us: int = 0
         self._last_policy_time_us: Optional[int] = None
         #: Every tick's ego state since the last policy step, sent as one egomotion
@@ -562,6 +564,7 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
             self._renderer_data(observation),
         )
         self._plan = outcome.trajectory
+        self._plan_markers = plan_markers(self._plan)
         self._drive_count += 1
         self._last_policy_time_us = self._sim_time_us
         if outcome.debug_scalars and self._drive_count % _DEBUG_LOG_INTERVAL == 0:
@@ -662,9 +665,7 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
 
     def debug_markers(self) -> DebugMarkers:
         """The policy's current plan, as a line along the road."""
-        markers = DebugMarkers()
-        markers.add_polyline(plan_polyline(self._plan))
-        return markers
+        return self._plan_markers
 
     def debug_state(self) -> Dict[str, float]:
         """Return a snapshot of the loop's state, for logging and tests."""

@@ -23,8 +23,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
-import math
-
 import typesafe_carla.carla as carla
 
 if TYPE_CHECKING:
@@ -38,7 +36,7 @@ __all__ = [
     "DebugPolyline",
     "DrivenPathDrawer",
     "draw_debug_markers",
-    "plan_polyline",
+    "plan_markers",
 ]
 
 #: An RGB colour, each channel 0-255.
@@ -88,25 +86,19 @@ class DebugMarkers:
         if polyline.points:
             self.polylines.append(polyline)
 
-    def __len__(self) -> int:
-        return len(self.polylines)
-
     def __bool__(self) -> bool:
         return len(self.polylines) > 0
 
 
-def plan_polyline(
-    plan: "Trajectory",
-    *,
-    color: RGB = TRAJECTORY_COLOR,
-    thickness: float = 0.1,
-    point_size: float = 0.1,
-) -> DebugPolyline:
-    """The polyline of a driver's *plan*, given in the right-handed local frame.
+def plan_markers(plan: "Trajectory") -> DebugMarkers:
+    """A driver's *plan*, given in the right-handed local frame, as markers.
 
     The local frame is CARLA's world with ``y`` flipped
     (:mod:`autoware_carla_scenario.driver.observation`), so flipping it back
-    puts the plan in the world.  It is drawn a little above the road.
+    puts the plan in the world.  It is drawn a little above the road, with a
+    dot at each point.  An entity builds these once per plan and hands out the
+    same object until the plan changes: :class:`DebugMarkerLog` then holds one
+    per plan rather than one per tick, and the replay draws it once.
     """
     points: List[WorldPoint] = []
     for pose in plan.poses:
@@ -118,7 +110,9 @@ def plan_polyline(
                 float(position[2]) + _TRAJECTORY_LIFT_M,
             )
         )
-    return DebugPolyline(points, color, thickness, point_size)
+    markers = DebugMarkers()
+    markers.add_polyline(DebugPolyline(points, TRAJECTORY_COLOR, 0.1, 0.1))
+    return markers
 
 
 def _location(point: WorldPoint) -> "carla.Location":
@@ -167,43 +161,59 @@ class DebugMarkerLog:
 
     Frame ``k`` is the ``k``-th tick after :meth:`start`, which is called when
     the recorder starts: the frame the replay's ``k``-th tick shows.  Frames
-    without markers are not kept, and nothing is before :meth:`start`.
+    without markers are not kept, and nothing is outside :meth:`start` and
+    :meth:`stop`.
     """
 
+    #: The world's frame the log's frame ``0`` is; ``-1`` while not recording.
     _start_frame: int
-    _active: bool
     _frames: Dict[int, DebugMarkers]
 
     def __init__(self) -> None:
-        self._start_frame = 0
-        self._active = False
+        self._start_frame = -1
         self._frames = {}
 
     @property
     def active(self) -> bool:
         """Whether :meth:`record` keeps what it is given."""
-        return self._active
+        return self._start_frame >= 0
 
     def start(self, frame: int) -> None:
         """Start a log whose frame ``0`` is the world's frame *frame*."""
         self._start_frame = frame
-        self._active = True
         self._frames = {}
+
+    def stop(self) -> None:
+        """Keep nothing more; what is kept stays."""
+        self._start_frame = -1
 
     def record(self, frame: int, markers: DebugMarkers) -> None:
         """Keep *markers* as the world's frame *frame*'s.
 
-        Nothing is kept before :meth:`start`, or when there are no markers.
+        Nothing is kept while the log is not active, or when there are no
+        markers.
         """
-        if self._active and markers:
+        if self.active and markers:
             self._frames[frame - self._start_frame] = markers
 
     def at(self, frame: int) -> Optional[DebugMarkers]:
         """Recorded frame *frame*'s markers, or ``None`` when it has none."""
         return self._frames.get(frame)
 
-    def __len__(self) -> int:
-        return len(self._frames)
+    def span(self, frame: int) -> int:
+        """How many frames from *frame* on hold the very markers it holds.
+
+        An entity hands out one object per plan (:func:`plan_markers`), so a
+        plan the policy keeps for several ticks is drawn once, to last them
+        all.  ``0`` when *frame* has none.
+        """
+        markers = self._frames.get(frame)
+        if markers is None:
+            return 0
+        count = 1
+        while self._frames.get(frame + count) is markers:
+            count += 1
+        return count
 
 
 class DrivenPathDrawer:
@@ -218,67 +228,37 @@ class DrivenPathDrawer:
     drawing a line across the map.
 
     Args:
-        color: The path's colour.
-        thickness: The line's thickness, metres.
         step_m: How far the vehicle moves between two points of the path.
         max_jump_m: The longest a vehicle is taken to drive in one tick.
     """
 
-    _color: RGB
-    _thickness: float
     _step_m: float
     _max_jump_m: float
-    _last: Optional[WorldPoint]
-    _segments: int
+    _color: "carla.Color"
+    _last: Optional["carla.Location"]
 
-    def __init__(
-        self,
-        color: RGB = DRIVEN_PATH_COLOR,
-        thickness: float = 0.1,
-        step_m: float = 0.5,
-        max_jump_m: float = 10.0,
-    ) -> None:
-        self._color = color
-        self._thickness = thickness
+    def __init__(self, step_m: float = 0.5, max_jump_m: float = 10.0) -> None:
         self._step_m = step_m
         self._max_jump_m = max_jump_m
+        self._color = _color(DRIVEN_PATH_COLOR)
         self._last = None
-        self._segments = 0
-
-    @property
-    def segments(self) -> int:
-        """How many segments have been drawn."""
-        return self._segments
 
     def update(
         self, world: "carla.World", location: "carla.Location", life_time: float
     ) -> None:
         """Extend the path to *location*, drawing for *life_time* seconds."""
-        point: WorldPoint = (
-            float(location.x),
-            float(location.y),
-            float(location.z) + _TRAJECTORY_LIFT_M,
-        )
+        here = carla.Location(location.x, location.y, location.z + _TRAJECTORY_LIFT_M)
         last = self._last
         if last is None:
-            self._last = point
+            self._last = here
             return
-        distance = math.sqrt(
-            (point[0] - last[0]) ** 2
-            + (point[1] - last[1]) ** 2
-            + (point[2] - last[2]) ** 2
-        )
+        distance = here.distance(last)
         if distance > self._max_jump_m:
-            self._last = point
+            self._last = here
             return
         if distance < self._step_m:
             return
         world.debug.draw_line(
-            _location(last),
-            _location(point),
-            thickness=self._thickness,
-            color=_color(self._color),
-            life_time=life_time,
+            last, here, thickness=0.1, color=self._color, life_time=life_time
         )
-        self._segments += 1
-        self._last = point
+        self._last = here

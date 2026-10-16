@@ -341,7 +341,7 @@ The ego entity can show what the world does not: `EgoVehicle.debug_markers()` re
 The recording keeps no debug drawing, and the entity is gone by the time the video is rendered, so the markers take the same two passes:
 
 1. **During execution**: after every tick of the recording that the ego is ticked on (the wait for the ego to be ready, then the scenario), the runner asks the ego for its markers and keeps them in a `DebugMarkerLog`, by the frame of the recording. Only a run that renders a video (a spectator is configured) keeps them.
-2. **During replay**: before each tick, the runner draws the markers of the frame that tick shows with CARLA's debug helper (`world.debug`), for one and a half ticks of simulated time: long enough to be in that frame, gone before the next one. The RGB camera sees them like any other geometry.
+2. **During replay**: before each tick, the runner draws the markers of the frame that tick shows with CARLA's debug helper (`world.debug`), for one and a half ticks of simulated time: long enough to be in that frame, gone before the next one. An entity hands out the same `DebugMarkers` object until its plan changes (`plan_markers()` builds one per plan), so the log holds one per plan rather than one per tick, and the replay draws a plan once, to last every frame that holds it. The RGB camera sees them like any other geometry.
 
 The driven path needs nothing from the run: the replay moves the ego exactly as it moved, so after each replay tick the runner extends the path to where the replayed ego now is. A segment is added each time the ego has moved half a metre, drawn once to last until the end of the video; a jump of more than 10 m in one tick (the ego placed somewhere else) starts a new piece of path.
 

@@ -51,9 +51,10 @@ _CONDITION_LOG_INTERVAL: int = 20
 #: The caption along the bottom of the replay video's warm-up frames.
 WARMUP_CAPTION: str = "Warm-up"
 
-#: How long the replay's debug markers last, simulated seconds.  More than one
-#: tick, or the tick that is to show them removes them before the frame is
-#: rendered; less than two, or they linger into the next frame beside its own.
+#: How long debug markers drawn for one frame of the replay last, simulated
+#: seconds (each further frame that holds the same ones adds a tick).  More
+#: than one tick, or the tick that is to show them removes them before the
+#: frame is rendered; less than two, or they linger into the next frame.
 _DEBUG_MARKER_LIFE_TIME: float = 1.5 * FIXED_DELTA_SECONDS
 
 
@@ -362,15 +363,19 @@ def _record_debug_markers(
 ) -> None:
     """Keep what *ego* wants drawn on the frame the world has just ticked to.
 
-    A failure is logged rather than raised: the video's markers must never
-    fail the run they illustrate.
+    An ego whose markers fail is warned about once, and the log stops there:
+    the video's markers must never fail the run they illustrate.
     """
     if not debug_log.active:
         return
     try:
         debug_log.record(int(world.get_snapshot().frame), ego.debug_markers())
     except Exception:  # noqa: BLE001 - must never fail the run
-        logger.debug("The ego's debug markers were not recorded", exc_info=True)
+        logger.warning(
+            "The ego's debug markers failed; the video goes without the rest",
+            exc_info=True,
+        )
+        debug_log.stop()
 
 
 class _ScenarioClock:
@@ -646,7 +651,7 @@ class ScenarioRunner:
         world: "carla.World",
         ego: "EgoVehicle",
         scenario_name: str,
-        debug_log: Optional[DebugMarkerLog] = None,
+        debug_log: DebugMarkerLog,
     ) -> None:
         """Tick the world until the ego is ready to be judged.
 
@@ -673,8 +678,7 @@ class ScenarioRunner:
             self._pace_tick()
             world.tick()
             ego.on_tick(world, 0.0)
-            if debug_log is not None:
-                _record_debug_markers(world, ego, debug_log)
+            _record_debug_markers(world, ego, debug_log)
             waited_ticks += 1
         logger.info(
             "[%s] Ego %s after %d tick(s)",
@@ -902,13 +906,25 @@ class ScenarioRunner:
             remaining = max(warmup_ticks + tick_count - 1, 0)
             driven_path = DrivenPathDrawer()
             driven_path.update(world, ego.get_location(), 0.0)
+            # The first frame past the markers last drawn, which last until then.
+            drawn_until = 0
             for index in range(remaining):
                 # The first tick above showed the recording's frame 1, so this
-                # one shows frame index + 2; its markers go in before the tick
-                # renders it.
-                markers = debug_log.at(index + 2)
-                if markers is not None:
-                    draw_debug_markers(world, markers, _DEBUG_MARKER_LIFE_TIME)
+                # one shows frame index + 2.  The first warmup_ticks frames are
+                # the warm-up.
+                frame = index + 2
+                # Markers go in before the tick that renders them, drawn once
+                # for every frame on that holds the same ones.
+                if frame >= drawn_until:
+                    span = debug_log.span(frame)
+                    markers = debug_log.at(frame)
+                    if markers is not None:
+                        draw_debug_markers(
+                            world,
+                            markers,
+                            (span - 1) * FIXED_DELTA_SECONDS + _DEBUG_MARKER_LIFE_TIME,
+                        )
+                        drawn_until = frame + span
                 world.tick()
                 # The path so far stays to the end of the video: each segment
                 # is drawn once, to last the ticks still to come.
@@ -917,9 +933,7 @@ class ScenarioRunner:
                     ego.get_location(),
                     (remaining - index) * FIXED_DELTA_SECONDS + _DEBUG_MARKER_LIFE_TIME,
                 )
-                # Frame index + 1 of the recording; the first warmup_ticks are
-                # the warm-up.
-                if index + 1 < warmup_ticks:
+                if frame <= warmup_ticks:
                     camera_recorder.write_frame(WARMUP_CAPTION)
                 else:
                     camera_recorder.write_frame()

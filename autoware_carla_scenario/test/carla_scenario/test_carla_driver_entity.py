@@ -1143,7 +1143,9 @@ def test_the_plan_is_shown_as_the_ego_s_debug_markers() -> None:
     entity.on_tick(world, _TICK_S)
 
     markers = entity.debug_markers()
-    assert len(markers) == 1
+    assert len(markers.polylines) == 1
     # The fake policy plans 0.8 m steps straight along +x.
     xs = [x for x, _, _ in markers.polylines[0].points]
     assert xs == pytest.approx([0.8, 1.6, 2.4, 3.2])
+    # Until the policy plans again, the same markers: one per plan, not tick.
+    assert entity.debug_markers() is markers

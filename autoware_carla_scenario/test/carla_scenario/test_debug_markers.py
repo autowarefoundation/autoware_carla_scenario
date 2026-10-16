@@ -19,7 +19,7 @@ from autoware_carla_scenario.debug_markers import (
     DebugPolyline,
     DrivenPathDrawer,
     draw_debug_markers,
-    plan_polyline,
+    plan_markers,
 )
 from autoware_carla_scenario.driver.geometry import Pose, Trajectory
 from autoware_carla_scenario.entity.ego import EgoVehicle
@@ -73,7 +73,7 @@ def test_a_plan_is_drawn_in_carla_s_world_a_little_above_the_road() -> None:
     plan.append(0, Pose.from_xyz_yaw(1.0, 2.0, 3.0, 0.0))
     plan.append(100_000, Pose.from_xyz_yaw(4.0, -5.0, 3.0, 0.0))
 
-    polyline = plan_polyline(plan)
+    (polyline,) = plan_markers(plan).polylines
 
     # The local frame is CARLA's with y flipped.
     assert [(x, y) for x, y, _ in polyline.points] == [(1.0, -2.0), (4.0, 5.0)]
@@ -82,11 +82,10 @@ def test_a_plan_is_drawn_in_carla_s_world_a_little_above_the_road() -> None:
 
 
 def test_a_polyline_without_points_is_not_drawn() -> None:
-    markers = DebugMarkers()
-    markers.add_polyline(plan_polyline(Trajectory.empty()))
+    markers = plan_markers(Trajectory.empty())
 
     assert not markers
-    assert len(markers) == 0
+    assert markers.polylines == []
 
 
 def test_a_polyline_is_drawn_segment_by_segment_with_a_dot_at_each_vertex() -> None:
@@ -139,7 +138,7 @@ def test_the_log_keeps_nothing_before_it_starts() -> None:
     log.record(5, _markers((0.0, 0.0, 0.0)))
 
     assert not log.active
-    assert len(log) == 0
+    assert log.at(5) is None
 
 
 def test_the_log_counts_frames_from_its_start() -> None:
@@ -159,8 +158,36 @@ def test_the_log_keeps_no_frame_without_markers() -> None:
 
     log.record(1, DebugMarkers())
 
-    assert len(log) == 0
     assert log.at(1) is None
+
+
+def test_the_log_keeps_nothing_once_stopped() -> None:
+    log = DebugMarkerLog()
+    log.start(0)
+    kept = _markers((0.0, 0.0, 0.0))
+    log.record(1, kept)
+
+    log.stop()
+    log.record(2, _markers((1.0, 0.0, 0.0)))
+
+    assert not log.active
+    assert log.at(1) is kept
+    assert log.at(2) is None
+
+
+def test_the_span_counts_the_frames_holding_the_very_same_markers() -> None:
+    log = DebugMarkerLog()
+    log.start(0)
+    plan = _markers((0.0, 0.0, 0.0))
+    other = _markers((0.0, 0.0, 0.0))
+    for frame in (1, 2, 3):
+        log.record(frame, plan)
+    log.record(4, other)
+
+    assert log.span(1) == 3
+    assert log.span(2) == 2
+    assert log.span(4) == 1
+    assert log.span(5) == 0
 
 
 # ---------------------------------------------------------------------------
@@ -199,7 +226,9 @@ def test_an_ego_whose_markers_fail_does_not_fail_the_run() -> None:
         log,
     )
 
-    assert len(log) == 0
+    # The log stops there, rather than failing every tick after.
+    assert not log.active
+    assert log.at(0) is None
 
 
 def test_the_markers_last_one_frame_of_the_replay() -> None:
@@ -275,6 +304,24 @@ def test_the_replay_draws_each_frame_s_markers_before_the_tick_that_shows_it(
     assert line[2]["life_time"] == pytest.approx(_DEBUG_MARKER_LIFE_TIME)
 
 
+def test_markers_held_for_several_frames_are_drawn_once_to_last_them_all(
+    tmp_path: Path,
+) -> None:
+    log = DebugMarkerLog()
+    log.start(0)
+    plan = _markers((1.0, 0.0, 0.0), (1.0, 1.0, 0.0))
+    for frame in (2, 3, 4):
+        log.record(frame, plan)
+
+    world = _replay(tmp_path, log)
+
+    lines = [e for e in world.events if e[0] == "line"]
+    assert len(lines) == 1
+    assert lines[0][2]["life_time"] == pytest.approx(
+        2 * FIXED_DELTA_SECONDS + _DEBUG_MARKER_LIFE_TIME
+    )
+
+
 def test_the_replay_traces_the_path_the_ego_drove_to_the_end_of_the_video(
     tmp_path: Path,
 ) -> None:
@@ -314,7 +361,6 @@ def test_the_driven_path_starts_at_the_first_location_it_is_given() -> None:
 
     path.update(world, _at(0.0), 1.0)  # type: ignore[arg-type]
 
-    assert path.segments == 0
     assert world.events == []
 
 
@@ -325,7 +371,7 @@ def test_a_vehicle_standing_still_adds_no_segment() -> None:
     for x in (0.0, 0.1, 0.2, 0.3):
         path.update(world, _at(x), 1.0)  # type: ignore[arg-type]
 
-    assert path.segments == 0
+    assert world.events == []
 
 
 def test_the_path_is_drawn_once_the_vehicle_has_moved_a_step() -> None:
