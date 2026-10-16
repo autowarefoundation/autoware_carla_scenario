@@ -30,10 +30,12 @@ from __future__ import annotations
 import ast
 import hashlib
 import importlib.util
+import inspect
 import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 from dataclasses import dataclass, field
@@ -373,6 +375,66 @@ def _linked(codon_path: Path) -> frozenset[str]:
     return frozenset(p.name.split(".")[0] for p in codon_path.iterdir())
 
 
+def _check_time_only_nodes(tree: ast.Module) -> Iterator[ast.AST]:
+    """Every node of the code only Codon reads: the body of each ``if
+    TYPE_CHECKING:`` and the ``else`` branch of each ``if not TYPE_CHECKING:``
+    (the counterpart of :func:`_run_time_only_nodes`)."""
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.If):
+            continue
+        if _is_type_checking(node.test):
+            check_time_only = node.body
+        elif (
+            isinstance(node.test, ast.UnaryOp)
+            and isinstance(node.test.op, ast.Not)
+            and _is_type_checking(node.test.operand)
+        ):
+            check_time_only = node.orelse
+        else:
+            continue
+        for stmt in check_time_only:
+            yield from ast.walk(stmt)
+
+
+def _missing_at_run_time(module: str, names: list[str]) -> list[str]:
+    """Why ``from module import names`` (or ``import module``) fails in Python.
+
+    *module* is one the model has: the check passes an import of it whatever
+    Python's module holds, so a model-only module (``_tc``) or a name the
+    model declares beyond Python's (#214) would pass and raise ``ImportError``
+    when the scenario runs, where an import inside a function is first run.
+    An import that fails for another reason (a missing dependency) is left
+    to the run.
+    """
+    try:
+        found = importlib.import_module(module)
+    except ModuleNotFoundError as exc:
+        missing = exc.name or ""
+        if module == missing or module.startswith(missing + "."):
+            return [
+                f"{module} is a module of the Codon model only: the package "
+                "has no such module, so importing it fails when the scenario runs"
+            ]
+        return []
+    except Exception:  # not this check's to report
+        return []
+
+    def submodule(name: str) -> bool:
+        if not hasattr(found, "__path__"):
+            return False
+        try:
+            return importlib.util.find_spec(f"{module}.{name}") is not None
+        except (ImportError, ValueError):
+            return False
+
+    return [
+        f"{module} has no {name} in Python, whatever its Codon model declares: "
+        f"`from {module} import {name}` raises ImportError when the scenario runs"
+        for name in names
+        if name != "*" and not hasattr(found, name) and not submodule(name)
+    ]
+
+
 def _collect(roots: list[str], tc: Toolchain, codon_path: Path) -> _Sources:
     stdlib = _codon_stdlib(tc)
     modeled = _model_modules()
@@ -391,9 +453,27 @@ def _collect(roots: list[str], tc: Toolchain, codon_path: Path) -> _Sources:
         text = path.read_text(encoding="utf-8")
         tree = ast.parse(text)
         out.modules[name] = _Module(path, is_package, text, tree)
+        # What only Codon reads (`if TYPE_CHECKING:`) Python never imports.
+        check_time = {id(node) for node in _check_time_only_nodes(tree)}
+        run_time = {
+            (imported, lineno)
+            for imported, _names, lineno in _imports(
+                tree, name, is_package, skip=check_time
+            )
+        }
         for imported, names, lineno in _imports(tree, name, is_package):
             top = imported.split(".")[0]
-            if imported in modeled or top in shims:
+            if imported in modeled:
+                # The model may declare what Python's module lacks (a
+                # model-only helper module, a name the model needs for
+                # itself): an import Python runs must find it there too (#214).
+                if (imported, lineno) in run_time:
+                    out.problems += [
+                        Diagnostic(message, str(path), lineno)
+                        for message in _missing_at_run_time(imported, names)
+                    ]
+                continue
+            if top in shims:
                 continue
             if any(imported == p or imported.startswith(p + ".") for p in prefixes):
                 submodules = [
@@ -539,6 +619,83 @@ def _build_workspace(
         driver.source + render_module_checks(sorted(sources.modules))
     )
     return ws, problems
+
+
+_UNINFERRED = re.compile(
+    r"type of attribute '(?P<attr>\w+)' of object '(?P<cls>\w+)' cannot be inferred"
+)
+
+
+def _uninferred_attributes(
+    diagnostics: list[Diagnostic], sources: _Sources
+) -> list[Diagnostic]:
+    """What to declare when Codon could not type an attribute (#218).
+
+    A class that declares no attribute at class level has its attributes
+    typed from what its ``__init__`` assigns, which Codon cannot always do:
+    not an empty list, and not where the scenario check calls a method on a
+    value it did not build with ``__init__`` (``self: Counter[NoneType]``).
+    Its error is then Codon's own, at a line of the class, or naming the
+    attribute of the class holding one (``type of attribute '_tracker' of
+    object 'GapCondition' cannot be inferred``), not the class that could not
+    be typed.  For each such class, name each attribute it assigns without
+    declaring it, at its line, with the type to declare.
+    """
+    classes = {
+        node.name: (name, node)
+        for name, module in sources.modules.items()
+        for node in module.tree.body
+        if isinstance(node, ast.ClassDef)
+    }
+
+    def undeclaring(cls: str) -> bool:
+        node = classes[cls][1]
+        return not any(isinstance(stmt, ast.AnnAssign) for stmt in node.body)
+
+    suspects: list[str] = []
+    for diagnostic in diagnostics:
+        for cls, (name, node) in classes.items():
+            if (
+                diagnostic.path == str(sources.modules[name].path)
+                and diagnostic.line is not None
+                and node.lineno <= diagnostic.line <= (node.end_lineno or node.lineno)
+                and undeclaring(cls)
+                and cls not in suspects
+            ):
+                suspects.append(cls)
+        found = _UNINFERRED.search(diagnostic.message)
+        if found is None or found["cls"] not in classes:
+            continue
+        holder = classes[found["cls"]][1]
+        named = {found["cls"]}
+        for stmt in holder.body:
+            if (
+                isinstance(stmt, ast.AnnAssign)
+                and isinstance(stmt.target, ast.Name)
+                and stmt.target.id == found["attr"]
+            ):
+                named |= {
+                    n.id for n in ast.walk(stmt.annotation) if isinstance(n, ast.Name)
+                }
+                named |= {
+                    n.value.split(".")[-1]
+                    for n in ast.walk(stmt.annotation)
+                    if isinstance(n, ast.Constant) and isinstance(n.value, str)
+                }
+        suspects += sorted(
+            n for n in named if n in classes and undeclaring(n) and n not in suspects
+        )
+    declared = _declarations(sources)
+    out: list[Diagnostic] = []
+    for cls in suspects:
+        name, _node = classes[cls]
+        module = sources.modules[name]
+        out += [
+            Diagnostic(attr.message(), str(module.path), attr.lineno)
+            for attr in undeclared_attributes(module.tree, declared, also={cls})
+            if attr.class_name == cls
+        ]
+    return out
 
 
 def _original_line(origin: list[int] | None, line: int) -> int:
@@ -709,7 +866,70 @@ def typecheck_scenario(
         toolchain,
         timeout,
         what="scenario",
+        refuse=lambda sources: _abstract_classes_built(sources, scenario_cls),
     )
+
+
+def _abstract_classes_built(sources: _Sources, scenario_cls: type) -> list[Diagnostic]:
+    """Each class of the scenario's modules that is built but still abstract (#215).
+
+    Codon has no ``@abstractmethod``, and the model gives ``is_done()``,
+    ``check()`` and ``execute()`` bodies (its built-in conditions and actions
+    inherit them), so a scenario, condition or action that leaves one
+    undefined compiles, and Python refuses to build it.  Python says which
+    classes are abstract (:func:`inspect.isabstract`); a class counts as built
+    when it is the scenario class, which the runner builds, or when the
+    scenario's modules call it by name (``GapCondition(...)``,
+    ``conditions.GapCondition(...)``).  A class only derived from, such as an
+    abstract base of the scenario's own conditions, is never called, so it
+    may stay abstract.
+    """
+    calls: dict[str, tuple[Path, int]] = {}
+    for module in sources.modules.values():
+        for node in ast.walk(module.tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            called = (
+                func.id
+                if isinstance(func, ast.Name)
+                else func.attr
+                if isinstance(func, ast.Attribute)
+                else None
+            )
+            if called is not None:
+                calls.setdefault(called, (module.path, node.lineno))
+    problems: list[Diagnostic] = []
+    for name, module in sorted(sources.modules.items()):
+        loaded = sys.modules.get(name)
+        if loaded is None:
+            continue  # imported nowhere yet, so none of its classes is built yet
+        for node in module.tree.body:
+            if not isinstance(node, ast.ClassDef):
+                continue
+            cls = getattr(loaded, node.name, None)
+            if not (inspect.isclass(cls) and inspect.isabstract(cls)):
+                continue
+            if cls is scenario_cls:
+                where = "by the runner"
+            elif node.name in calls:
+                path, line = calls[node.name]
+                where = f"at {path.name}:{line}"
+            else:
+                continue
+            missing = sorted(getattr(cls, "__abstractmethods__", ()))
+            them = "them" if len(missing) > 1 else "it"
+            problems.append(
+                Diagnostic(
+                    f"{node.name} is built ({where}) but leaves abstract "
+                    f"{', '.join(missing)} undefined: define {them} in "
+                    f"{node.name}, or Python refuses to build it (TypeError: "
+                    "Can't instantiate abstract class)",
+                    str(module.path),
+                    node.lineno,
+                )
+            )
+    return problems
 
 
 def _typecheck(
@@ -720,8 +940,13 @@ def _typecheck(
     timeout: float,
     *,
     what: str,
+    refuse: Callable[[_Sources], list[Diagnostic]] | None = None,
 ) -> TypeCheckResult:
-    """Compile the modules *roots* with the driver *driver()* renders, cached."""
+    """Compile the modules *roots* with the driver *driver()* renders, cached.
+
+    *refuse* names what Python already knows is wrong with the collected
+    modules; any of it fails the check before Codon runs.
+    """
     if toolchain is None:
         try:
             toolchain = find_supported_codon()
@@ -736,6 +961,8 @@ def _typecheck(
             name, ok=True, skipped=f"the {what} has no source file to compile"
         )
     sources = _collect(roots, toolchain, codon_path)
+    if refuse is not None:
+        sources.problems += refuse(sources)
     rendered = driver()
     key = _cache_key(toolchain, codon_path, sources, rendered.source)
     if key not in _CACHE:
@@ -841,6 +1068,7 @@ def _compile(
             return None
         output = proc.stdout + proc.stderr
         diagnostics = _parse_output(output, ws)
+        diagnostics += _uninferred_attributes(diagnostics, sources)
     seconds = time.monotonic() - started
     crashed = proc.returncode != 0 and (
         proc.returncode < 0
@@ -1129,7 +1357,11 @@ def _build_library_workspace(
     declared = _declarations(sources)
     for file in files:
         module = sources.modules[file.module]
-        for attr in undeclared_attributes(module.tree, declared):
+        # What Codon never compiles needs no declaration (an __init__ the
+        # check leaves uncalled, LaneletRegion's).
+        for attr in undeclared_attributes(
+            module.tree, declared, uncalled=_uncalled(file.module)
+        ):
             problems.append(Diagnostic(attr.message(), str(module.path), attr.lineno))
         dest = root / file.rel
         dest.parent.mkdir(parents=True, exist_ok=True)

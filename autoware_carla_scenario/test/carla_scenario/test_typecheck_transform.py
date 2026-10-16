@@ -861,6 +861,55 @@ def test_a_class_outside_any_hierarchy_may_infer_its_attributes() -> None:
     assert undeclared_attributes(ast.parse(source), {}) == []
 
 
+def test_a_class_with_a_class_level_annotation_declares_every_attribute() -> None:
+    # Codon infers a plain class's attributes only while it declares none
+    # (#218); its methods do not count as declarations.
+    source = textwrap.dedent(
+        """
+        class Tracker:
+            limit: float
+            def __init__(self, limit: float):
+                self.limit = limit
+                self._samples = []
+        class Methods:
+            def __init__(self):
+                self.x = 1
+            def x_twice(self) -> int:
+                return 2 * self.x
+        class Constant:
+            LIMIT = 3.0
+            def __init__(self):
+                self.y = 1.0
+        """
+    )
+    found = undeclared_attributes(ast.parse(source), {})
+    assert [(f.class_name, f.name, f.suggested_type) for f in found] == [
+        ("Tracker", "_samples", "list[...]")
+    ]
+
+
+def test_a_class_named_in_also_is_checked_whatever_it_declares() -> None:
+    source = "class Helper:\n    def __init__(self):\n        self.x = []\n"
+    found = undeclared_attributes(ast.parse(source), {}, also={"Helper"})
+    assert [(f.class_name, f.name, f.lineno) for f in found] == [("Helper", "x", 3)]
+
+
+def test_a_method_codon_never_compiles_needs_no_declaration() -> None:
+    # The library check leaves some methods uncalled (library.UNCALLED).
+    source = textwrap.dedent(
+        """
+        class Region:
+            _ids: list[int]
+            def __init__(self, specs):
+                self._specs = list(specs)
+            def reset(self) -> None:
+                self._count = 0
+        """
+    )
+    found = undeclared_attributes(ast.parse(source), {}, uncalled={"Region.__init__"})
+    assert [f.name for f in found] == ["_count"]
+
+
 def test_a_declaration_on_a_base_in_the_same_module_counts() -> None:
     source = textwrap.dedent(
         """

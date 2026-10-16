@@ -2017,16 +2017,24 @@ def _suggest_type(value: ast.AST | None) -> str | None:
 def undeclared_attributes(
     tree: ast.Module,
     declared_elsewhere: dict[str, set[str]],
+    *,
+    also: Collection[str] = (),
+    uncalled: Collection[str] = (),
 ) -> list[UndeclaredAttribute]:
     """Attributes assigned on ``self`` that a class of *tree* does not declare.
 
-    Only classes in an inheritance hierarchy are checked: with a base class
-    (other than ``object``) or with a subclass in *tree*.  A name counts as
+    Only classes in an inheritance hierarchy are checked, with a base class
+    (other than ``object``) or with a subclass in *tree*, and classes with a
+    class-level annotation (#218): Codon types a plain class's attributes
+    from its ``__init__`` only while it declares none, and once it declares
+    one, an attribute it does not declare is not there.  A name counts as
     declared when the class, a base class in *tree*, or a base class named in
     *declared_elsewhere* (class name -> declared names; the Codon model's
     classes, and classes of other checked modules) declares it.  A base
     imported under another name (``from .base import Base as Parent``) is
-    looked up by the name it is defined with.
+    looked up by the name it is defined with.  The classes named in *also*
+    are checked whatever they declare, and the methods *uncalled* names
+    (``Class.method``, which Codon never compiles) are not read.
     """
     classes = class_declarations(tree)
     subclassed = {b.rsplit(".", 1)[-1] for bases, _ in classes.values() for b in bases}
@@ -2054,12 +2062,23 @@ def undeclared_attributes(
         if not isinstance(node, ast.ClassDef):
             continue
         bases, _ = classes[node.name]
-        if not [b for b in bases if b != "object"] and node.name not in subclassed:
+        annotated = any(
+            isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name)
+            for stmt in node.body
+        )
+        if (
+            not [b for b in bases if b != "object"]
+            and node.name not in subclassed
+            and not annotated
+            and node.name not in also
+        ):
             continue
         names = declared(node.name)
         reported: set[str] = set()
         for method in node.body:
             if not isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            if f"{node.name}.{method.name}" in uncalled:
                 continue
             for stmt in ast.walk(method):
                 targets: list[tuple[ast.AST, ast.AST | None, str | None]] = []

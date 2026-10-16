@@ -234,9 +234,60 @@ scenario has to do itself:
   A bare annotation is ignored by Python, so this changes nothing when the
   scenario runs; Codon needs it to type an attribute of a subclass. The check
   names each undeclared attribute and suggests its type.
+
+  **Declare them in every class of the scenario's modules**, helper classes
+  included (#218). The check refuses an undeclared attribute of a class with
+  a base, a subclass, or at least one class-level annotation: once a class
+  declares one attribute, Codon gives it only those it declares. A plain
+  class that declares none has its attributes inferred from its `__init__`,
+  which Codon cannot always do: not for `self._samples = []` (a list of
+  nothing yet), and not in a method the scenario check calls on its own
+  ([*What is checked*](#what-is-checked)), on a value its `__init__` did not
+  build (`'int' does not match expected type 'NoneType'`, during the
+  realization of `get(self: Counter[NoneType])`). Codon's error is then at
+  a line of the helper, or names the attribute holding the helper, not the
+  helper (`type of attribute '_tracker' of object 'GapCondition' cannot be
+  inferred`), so the check adds, for that helper, each attribute it assigns
+  without declaring it, at its line, with the type to declare:
+
+  ```text
+  scenario.py:34: error: GapTracker._samples is assigned without a type: declare it in the class body, e.g. `_samples: list[...]` ...
+  ```
 - **Use only the public API** from `autoware_carla_scenario` and its listed
   subpackages, and the `BaseScenario` attributes meant for subclasses
   (`ego_config`, `ego_entity`, `world`, `_ground_projection`, ...).
+  An import from a modelled framework module must also work in Python
+  (#214): the model declares a few names the Python module does not have
+  (`coordinate.RoadNetwork`, `entity.EgoConfig`, `actions.ActionState`) and
+  model-only helper modules (`autoware_carla_scenario._tc`, `_lists`), and
+  an import of one inside a function would compile and raise `ImportError`
+  when the function first runs. So the check imports each modelled module
+  a scenario imports from, in Python, and refuses each name it lacks, as an
+  attribute and as a submodule, at the import's line:
+
+  ```text
+  scenario.py:118: error: autoware_carla_scenario.coordinate has no RoadNetwork in Python, whatever its Codon model declares: `from autoware_carla_scenario.coordinate import RoadNetwork` raises ImportError when the scenario runs
+  ```
+
+  An import under `if TYPE_CHECKING:` is exempt: Python never runs it.
+- **Define every abstract method of what you build** (#215). Codon has no
+  `@abstractmethod`, and the model gives `BaseScenario.is_done()`,
+  `BaseCondition.check()` and `BaseAction.execute()` bodies (its built-in
+  conditions and actions inherit them), so a scenario whose `is_done` was
+  renamed, or a condition that defines only `_check`, compiles, and Python
+  refuses to build it (`TypeError: Can't instantiate abstract class`). The
+  check asks Python (`inspect.isabstract`) about each class of the
+  scenario's modules that is built, the scenario class (the runner builds
+  it) or a class the modules call by name (`GapCondition(...)`), and
+  refuses one still abstract at its `class` line:
+
+  ```text
+  scenario.py:46: error: GapCondition is built (at scenario.py:99) but leaves abstract check undefined: define it in GapCondition, or Python refuses to build it (TypeError: Can't instantiate abstract class)
+  ```
+
+  A class only derived from, such as an abstract base of the scenario's own
+  conditions with an `@abstractmethod` of its own, is never called and may
+  stay abstract.
 - **Pass numbers of the declared type.** An `int` is accepted for a `float`,
   but not inside a container: a `list[float]` parameter wants `[1.0, 2.0]`.
   YAML values are converted for you.
