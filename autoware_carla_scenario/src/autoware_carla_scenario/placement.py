@@ -71,6 +71,9 @@ TOLERANCE = 1e-3
 #: How far either side of where the lane's length puts it
 #: :func:`place_at_stop_line_distance` looks for the ego's place, in metres.
 _STOP_LINE_SEARCH_M = 5.0
+#: How far into its own lanelet :func:`place_at_stop_line_distance` looks at a
+#: spawn the measure places on the lanelet next to it, in metres.
+_NUDGE_M = 0.5
 #: The fewest metres of ``s`` :func:`solve_along` narrows a crossing to.
 _MIN_INTERVAL_M = 1e-7
 
@@ -331,17 +334,31 @@ def place_at_stop_line_distance(
         ValueError: When no point of that lane is *distance_m* before a stop
             line, saying what distances it does reach.
     """
-    at = to_carla_world(spawn)
-    ahead = stop_line_lane(
-        carla.Transform(
-            carla.Location(x=at.x, y=at.y, z=at.z), carla.Rotation(yaw=at.yaw)
-        ),
-        ego_bumpers,
-    )
-    if spawn.lanelet_id not in ahead:
+    ahead: list[int] = []
+    # Where the spawn lanelet meets the next one, or a branch overlaps its
+    # sibling, the lane the measure finds may start on the other lanelet: the
+    # spawn is looked at a little way into its own lanelet too.
+    length = lanelet_length(spawn.lanelet_id)
+    for s in (spawn.s, min(spawn.s + _NUDGE_M, length), max(spawn.s - _NUDGE_M, 0.0)):
+        at = to_carla_world(Lanelet2Pose(lanelet_id=spawn.lanelet_id, s=s))
+        ahead = stop_line_lane(
+            carla.Transform(
+                carla.Location(x=at.x, y=at.y, z=at.z), carla.Rotation(yaw=at.yaw)
+            ),
+            ego_bumpers,
+        )
+        if spawn.lanelet_id in ahead:
+            break
+    if not ahead:
         raise ValueError(
             f"{STOP_LINE_DISTANCE_M}: no stop line within {AHEAD_RANGE_M:g} m "
             f"ahead of lanelet {spawn.lanelet_id} at s={spawn.s:.2f}"
+        )
+    if spawn.lanelet_id not in ahead:
+        raise ValueError(
+            f"{STOP_LINE_DISTANCE_M}: the stop line ahead of lanelet "
+            f"{spawn.lanelet_id} at s={spawn.s:.2f} is read along lanelets "
+            f"{ahead}, a lane the spawn's lanelet is not on"
         )
     # The lane the measure reads the stop line along -- its branch, where the
     # lane forks -- from the spawn's lanelet, and the lane back from that.

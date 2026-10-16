@@ -361,9 +361,11 @@ def _with_odd_samples(
     space = search.space if search is not None else ParameterSpace.of(sampler)
     if map_attributes:
         indices, full = _choose_cases(samples, buckets, map_attributes)
+        # Every attribute the map decides is the lanelet's, a derived one too
+        # (it has no knob, but it was derived from the buckets drawn).
+        decided = sorted({*map_attributes, *(n for r in readings for n in r)})
         samples = [
-            _as_run(sample, readings[i], map_attributes)
-            for sample, i in zip(samples, indices)
+            _as_run(sample, readings[i], decided) for sample, i in zip(samples, indices)
         ]
         cases = [base_cases[i] for i in indices]
     else:

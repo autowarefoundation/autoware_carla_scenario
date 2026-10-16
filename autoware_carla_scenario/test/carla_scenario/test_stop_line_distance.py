@@ -139,6 +139,18 @@ def test_a_spawn_on_a_lanelet_before_the_stop_line_s_is_placed_on_to_it(
     )
 
 
+def test_a_spawn_at_the_end_of_its_lanelet_is_placed(road: LaneMap) -> None:
+    # The end of lanelet 0 is the start of lanelet 1: the measure may read the
+    # stop line along a lane that starts on either.
+    spawn = Lanelet2Pose(lanelet_id=road.id("ego", 0), s=100.0)
+
+    pose = place_at_stop_line_distance(spawn, 10.0, ego_bumpers=_EGO)
+
+    assert _measured(to_carla_world(pose).to_carla_transform()) == pytest.approx(
+        10.0, abs=0.01
+    )
+
+
 def test_placement_says_what_it_cannot_reach(road: LaneMap) -> None:
     spawn = Lanelet2Pose(lanelet_id=road.id("ego", 1), s=37.4)
     with pytest.raises(ValueError, match=f"{STOP_LINE_DISTANCE_M} cannot read 200"):

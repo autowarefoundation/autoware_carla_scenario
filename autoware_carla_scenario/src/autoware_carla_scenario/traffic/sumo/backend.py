@@ -59,7 +59,6 @@ from ..base import (
     TrafficBackendUnavailable,
     TrafficContext,
     TurnDirection,
-    is_bumper_probe,
 )
 from ..config import TrafficManagerBackendConfig
 from ..traffic_manager import TrafficManagerBackend
@@ -314,8 +313,6 @@ class SumoTrafficBackend(TrafficBackend):
             if getattr(entity, "actor", None) is not None
         }
         for actor in world.get_actors().filter("vehicle.*"):
-            if is_bumper_probe(actor):
-                continue
             entity = by_actor.get(actor.id)
             sumo_id = self._sumo_id(actor, entity)
             if not self._add_vehicle(sumo_id, actor):
