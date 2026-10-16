@@ -62,6 +62,10 @@ class VehicleEntityConfig:
 
 
 class VehicleEntity:
+    # No fields: Codon would build one with no arguments too (docs/typecheck.md).
+    def __init__(self):
+        compile_error("VehicleEntity(): no constructor takes these arguments (required: config)")
+
     def __init__(self, config: VehicleEntityConfig):
         pass
 

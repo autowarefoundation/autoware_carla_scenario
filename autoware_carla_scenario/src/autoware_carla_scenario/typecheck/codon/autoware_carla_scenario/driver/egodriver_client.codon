@@ -8,6 +8,11 @@
 
 
 class EgoDriverGrpcClient:
+    # No fields: Codon would build one with no arguments too (docs/typecheck.md).
+    def __init__(self):
+        compile_error("EgoDriverGrpcClient(): no constructor takes these arguments "
+                      "(required: config)")
+
     def __init__(self, config, channel=None):
         compile_error("EgoDriverGrpcClient is not modelled: the static check "
                       "cannot build one (typecheck/codon/autoware_carla_scenario/"
