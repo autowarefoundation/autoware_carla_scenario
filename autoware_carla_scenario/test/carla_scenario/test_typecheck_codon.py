@@ -1658,6 +1658,10 @@ def read_float(world: carla.World) -> float:
     return 1.0
 
 
+def read_int(world: carla.World) -> int:
+    return 1
+
+
 def read_text(world: carla.World) -> str:
     return "far"
 """
@@ -1669,8 +1673,10 @@ def read_text(world: carla.World) -> str:
         'Metric("mine", read_optional)',
         'Metric(key="mine", read=read_float, unit="m", aggregation="min")',
         'Metric("mine", lambda world: 1.0, "Mine")',
+        'Metric("mine", lambda world: None)',
+        'Metric("mine", read_int)',
     ],
-    ids=["optional", "float-keywords", "lambda"],
+    ids=["optional", "float-keywords", "lambda", "none-lambda", "int"],
 )
 def test_a_scenario_may_build_its_own_metric(tmp_path: Path, build: str) -> None:
     # Python's Metric takes any callable of a world that returns a float; a
@@ -1761,8 +1767,10 @@ def test_a_misused_measure_is_refused_at_its_line(
         'Measure("mine", read_optional)',
         'Measure(key="mine", read=read_float, unit="m", version=2)',
         'Measure("mine", lambda world: 1.0, "m", "Mine")',
+        'Measure("mine", lambda world: None)',
+        'Measure("mine", read_int)',
     ],
-    ids=["optional", "float-keywords", "lambda"],
+    ids=["optional", "float-keywords", "lambda", "none-lambda", "int"],
 )
 def test_a_scenario_may_build_its_own_measure(tmp_path: Path, build: str) -> None:
     # Python's Measure takes any callable of a world that returns a float, as
@@ -1785,6 +1793,65 @@ def test_a_measure_read_that_returns_no_number_is_refused(tmp_path: Path) -> Non
     assert not result.ok, result.format()
     assert any(
         d.path == str(path) and d.line == _line_of(path, wrong)
+        for d in result.diagnostics
+    ), result.format()
+
+
+#: A method of the case scenario (it follows setup() in the class body).
+_GAP_METHOD = """
+    def _read_gap(self, world: carla.World) -> float | None:
+        return 1.0
+"""
+
+
+@pytest.mark.parametrize(
+    "read",
+    [
+        "read_optional",
+        "read_float",
+        "read_int",
+        "lambda world: 1.0",
+        "lambda world: None",
+        "self._read_gap",
+    ],
+    ids=["optional", "float", "int", "lambda", "none-lambda", "bound-method"],
+)
+def test_a_scenario_may_register_a_measure_read_as_python_does(
+    tmp_path: Path, read: str
+) -> None:
+    # register_measure() checks *read* as Measure and Metric do (#216): a
+    # float, an int or None, or an Optional of one. A bound method is the
+    # reader odd.md's "Scenario measures" shows.
+    setup = f'self.register_measure("mine", {read}, unit="m")\n'
+    scenario, config, _ = _write_case(
+        tmp_path, setup, extra=_GAP_METHOD + _OWN_METRIC_READERS
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+@pytest.mark.parametrize(
+    "wrong",
+    [
+        'self.register_measure("mine", lambda world: "x")',
+        'self.register_measure("mine", read_text)',
+    ],
+    ids=["str-lambda", "str-function"],
+)
+def test_a_registered_measure_read_that_returns_no_number_is_refused(
+    tmp_path: Path, wrong: str
+) -> None:
+    # The model checked *read* as a cover expression, which takes any return
+    # type, so a reader of a str passed the check (#216).
+    scenario, config, path = _write_case(
+        tmp_path, wrong + "\n", extra=_OWN_METRIC_READERS
+    )
+    result = typecheck_scenario(scenario, config)
+    assert not result.ok, result.format()
+    assert any(
+        d.path == str(path)
+        and d.line == _line_of(path, wrong)
+        and "expected a float (or an int)" in d.message
         for d in result.diagnostics
     ), result.format()
 

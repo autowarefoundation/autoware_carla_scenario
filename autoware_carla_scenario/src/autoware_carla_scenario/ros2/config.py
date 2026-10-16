@@ -239,6 +239,11 @@ class Ros2EgoConfig:
         speed_topic: ``std_msgs/msg/Float64``, the ground speed in m/s.
         clock_topic: ``rosgraph_msgs/msg/Clock``, for a CARLA server built
             without ROS 2, whose own ``/clock`` is then missing.
+        turn_indicators_command_topic: ``autoware_vehicle_msgs/msg/TurnIndicatorsCommand``
+            the ego's turn indicators are lit from, whichever source drives;
+            ``None`` leaves them to the scenario.
+        turn_indicators_report_topic: ``autoware_vehicle_msgs/msg/TurnIndicatorsReport``
+            of the indicators the ego shows, as a vehicle interface reports them.
         rear_axle_offset_m: Offset from the actor origin back to ``base_link``;
             ``None`` derives it from the wheel physics.
         on_stale: One of :data:`ON_STALE_ACTIONS`.
@@ -254,6 +259,12 @@ class Ros2EgoConfig:
     steering_status_topic: Optional[str] = "/vehicle/status/steering_status"
     speed_topic: Optional[str] = "/vehicle/speed"
     clock_topic: Optional[str] = None
+    turn_indicators_command_topic: Optional[str] = (
+        "/control/command/turn_indicators_cmd"
+    )
+    turn_indicators_report_topic: Optional[str] = (
+        "/vehicle/status/turn_indicators_status"
+    )
     rear_axle_offset_m: Optional[float] = None
     on_stale: str = "hold"
     sources: Tuple[CommandSourceConfig, ...] = field(default_factory=_default_sources)

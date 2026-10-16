@@ -191,11 +191,15 @@ and defaults of `Metric`, `Measure` and `Bumpers` (frozen dataclasses, so
 the parameters of `Metric`'s and `Measure`'s `__new__`. Only a built-in's
 `read` differs: Python's is a private function of the module, which no
 scenario can import, and the model's a stub (`_acs_unread`), since nothing in
-the model is read. `Metric()` and `Measure()` take any `read` a world can be
-passed to that returns a `float` or an `Optional[float]` -- a function
-returning `float`, a lambda -- as Python's do, and store the stub: a Codon
-`Callable` field takes a function of its exact type only, and Codon 0.19
-crashes on any other. `set_measured_scenario()` takes a scenario of any
+the model is read. `Metric()`, `Measure()` and
+`BaseScenario.register_measure()` take any `read` a world can be passed to
+that returns a `float`, an `int`, `None`, or an `Optional` of a `float` or an
+`int` -- a function returning `float`, `lambda world: None` -- as Python's
+do, and refuse any other return type (a `str`, say) at the line that passes
+`read`, with "expected a float (or an int)". The three share that check
+(`_reader.codon`, outside `measures.codon`, which imports `scenario_base`).
+`Metric()` and `Measure()` store the stub: a Codon `Callable` field takes a
+function of its exact type only, and Codon 0.19 crashes on any other. `set_measured_scenario()` takes a scenario of any
 `BaseScenario` subclass or `None`, which Python annotates
 `Optional[BaseScenario]`: Codon's `Optional` takes no subclass.
 
@@ -465,7 +469,7 @@ To check one more module:
 ### What is checked of the framework
 
 Every module now has an entry other than `"not yet checked (#45)"`. 168 of
-the package's 245 modules (69%; about 40,500 of 71,900 lines) are `CHECKED`:
+the package's 245 modules (69%; about 40,800 of 72,400 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the conversions between
 Lanelet2, OpenDRIVE and CARLA world poses (`coordinate.transform`), the stop
 lines read off a Lanelet2 map (`utils.stop_line`, `coordinate.stop_line`)

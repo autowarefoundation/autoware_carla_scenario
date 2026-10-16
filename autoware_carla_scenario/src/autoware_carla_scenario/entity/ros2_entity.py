@@ -49,6 +49,11 @@ from ..ros2.config import Ros2EgoConfig
 from ..ros2.transport import CameraFrame, Ros2EgoTransport
 from ..sensor.carla_camera import CarlaCameraSensor, CarlaCameraSensorConfig
 from ..utils.powertrain import ChaosPowertrain
+from ..utils.turn_indicator import (
+    autoware_report,
+    show_autoware_command,
+    turn_indicators_of,
+)
 from .externally_driven import ExternallyDrivenEgo
 
 if TYPE_CHECKING:
@@ -121,6 +126,7 @@ class Ros2EgoEntity(ExternallyDrivenEgo):
     _open: bool
     _active: Optional[str]
     _active_fresh: bool
+    _turn_command: Optional[int]
     _cameras: List[CarlaCameraSensor]
     #: Held while a frame is published, so that :meth:`on_scenario_end` cannot
     #: close the transport under a sensor thread.
@@ -143,6 +149,8 @@ class Ros2EgoEntity(ExternallyDrivenEgo):
         self._open = False
         self._active = None
         self._active_fresh = False
+        #: The last ``TurnIndicatorsCommand`` value applied; ``None`` before any.
+        self._turn_command: Optional[int] = None
         self._cameras = []
         self._publishing = threading.Lock()
         self._planned = None
@@ -192,6 +200,7 @@ class Ros2EgoEntity(ExternallyDrivenEgo):
             self._transport = _cyclone_transport(self._config)
         self._transport.open()
         self._open = True
+        self._turn_command = None
         self._transport.publish_state(self._state(world, actor)[0])
         if TYPE_CHECKING:
             # The cameras' listener (ros2.camera) is outside the static check.
@@ -211,6 +220,8 @@ class Ros2EgoEntity(ExternallyDrivenEgo):
         transport = self._transport
         if actor is None or transport is None or not self._open:
             return
+        # Before the state: the report it carries is then this tick's command.
+        self._show_turn_indicators(actor, transport.poll_turn_indicators())
         state, observation = self._state(world, actor)
         transport.publish_state(state)
         for source_name, command in transport.poll():
@@ -218,6 +229,30 @@ class Ros2EgoEntity(ExternallyDrivenEgo):
         selection = self._arbiter.select(state.stamp_us)
         self._note_selection(selection)
         self._apply(actor, selection, observation)
+
+    def _show_turn_indicators(
+        self, actor: "carla.Actor", command: Optional[int]
+    ) -> None:
+        """Light the ego's indicators when Autoware's ``TurnIndicatorsCommand`` changes.
+
+        Autoware publishes it every cycle; applied only on a change, it leaves the
+        indicators a scenario set (``TurnIndicatorAction``) until Autoware asks
+        for others, and costs no light-state read the rest of the time.
+        """
+        if command is None or command == self._turn_command:
+            return
+        value: int = command
+        self._turn_command = value
+        try:
+            changed = show_autoware_command(actor, value)
+        except ValueError:
+            logger.warning(
+                "TurnIndicatorsCommand %d is none of the message's values; ignored",
+                value,
+            )
+            return
+        if changed:
+            logger.info("Turn indicators: command %d", value)
 
     def on_scenario_end(self, world: "carla.World") -> None:
         """Leave the DDS domain.
@@ -293,6 +328,12 @@ class Ros2EgoEntity(ExternallyDrivenEgo):
                 _steering_tire_angle(actor)
                 if self._config.steering_status_topic
                 else 0.0
+            ),
+            # One more, likewise.
+            turn_indicators=(
+                autoware_report(turn_indicators_of(actor))
+                if self._config.turn_indicators_report_topic
+                else 1
             ),
         )
         return state, observation
