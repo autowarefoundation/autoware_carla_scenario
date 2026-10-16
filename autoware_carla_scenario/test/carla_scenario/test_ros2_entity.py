@@ -297,6 +297,37 @@ def test_the_plan_of_a_trajectory_is_built_once() -> None:
     assert entity._planned is planned
 
 
+def test_the_tracked_trajectory_is_shown_as_the_ego_s_debug_markers() -> None:
+    entity, transport, _, clock = _started()
+    assert not entity.debug_markers()
+    command = TrajectoryCommand(
+        stamp_us=0,
+        points=tuple(
+            TrajectoryCommandPoint(
+                100_000 * i, Pose.from_xyz_yaw(8.6 + 0.5 * i, 2.0, 0.0, 0.0), 5.0
+            )
+            for i in range(4)
+        ),
+    )
+    transport.deliver("planner", command)
+    _tick(entity, clock)
+
+    markers = entity.debug_markers()
+    assert len(markers.polylines) == 1
+    _tick(entity, clock)
+    assert entity.debug_markers() is markers
+    # In CARLA's world, y flipped back from the local frame.
+    assert [(x, y) for x, y, _ in markers.polylines[0].points] == pytest.approx(
+        [(8.6, -2.0), (9.1, -2.0), (9.6, -2.0), (10.1, -2.0)]
+    )
+
+    # Once another kind of command drives, there is no trajectory to show.
+    transport.deliver("si", ControlCommand(0.0, 3.0, -3.0))
+    _tick(entity, clock)
+    assert entity.active_source == "si"
+    assert not entity.debug_markers()
+
+
 # ---------------------------------------------------------------------------
 # Published cameras
 # ---------------------------------------------------------------------------

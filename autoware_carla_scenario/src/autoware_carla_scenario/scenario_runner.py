@@ -24,6 +24,7 @@ from .entity.registry import (
 from .conditions import EntityExistenceCondition, ScenarioResult, TimeoutCondition
 from .conditions.base import BaseCondition, ConditionStatus, find_actor_by_role_name
 from .constants import DEFAULT_TM_PORT, EGO_ROLE_NAME, FIXED_DELTA_SECONDS
+from .debug_markers import DebugMarkerLog, DrivenPathDrawer, draw_debug_markers
 from .maps.opendrive import map_asset_env_var
 from .coordinate.map_manager import run_carla_map
 from .coordinate.poses import CarlaWorldPose
@@ -49,6 +50,12 @@ _CONDITION_LOG_INTERVAL: int = 20
 
 #: The caption along the bottom of the replay video's warm-up frames.
 WARMUP_CAPTION: str = "Warm-up"
+
+#: How long debug markers drawn for one frame of the replay last, simulated
+#: seconds (each further frame that holds the same ones adds a tick).  More
+#: than one tick, or the tick that is to show them removes them before the
+#: frame is rendered; less than two, or they linger into the next frame.
+_DEBUG_MARKER_LIFE_TIME: float = 1.5 * FIXED_DELTA_SECONDS
 
 
 def _map_name_of(world: "carla.World") -> str:
@@ -351,6 +358,26 @@ def _destroy_all_dynamic_actors(
         logger.info("[%s] Destroyed %d leftover actor(s)", scenario_name, destroyed)
 
 
+def _record_debug_markers(
+    world: "carla.World", ego: "EgoVehicle", debug_log: DebugMarkerLog
+) -> None:
+    """Keep what *ego* wants drawn on the frame the world has just ticked to.
+
+    An ego whose markers fail is warned about once, and the log stops there:
+    the video's markers must never fail the run they illustrate.
+    """
+    if not debug_log.active:
+        return
+    try:
+        debug_log.record(int(world.get_snapshot().frame), ego.debug_markers())
+    except Exception:  # noqa: BLE001 - must never fail the run
+        logger.warning(
+            "The ego's debug markers failed; the video goes without the rest",
+            exc_info=True,
+        )
+        debug_log.stop()
+
+
 class _ScenarioClock:
     """The run's clock: simulated seconds since it began.
 
@@ -620,7 +647,11 @@ class ScenarioRunner:
             )
 
     def _wait_for_ego(
-        self, world: "carla.World", ego: "EgoVehicle", scenario_name: str
+        self,
+        world: "carla.World",
+        ego: "EgoVehicle",
+        scenario_name: str,
+        debug_log: DebugMarkerLog,
     ) -> None:
         """Tick the world until the ego is ready to be judged.
 
@@ -635,7 +666,8 @@ class ScenarioRunner:
         Returns as soon as the entity reports readiness, or when it gives up
         waiting: the tick loop reads ``termination_requested`` and ends the run.
         Entities that are ready with their actor (the default) return here
-        immediately.
+        immediately.  What the ego wants drawn on each tick it waits goes into
+        *debug_log*, for the warm-up frames of the video.
         """
         if ego.is_initialized:
             return
@@ -646,6 +678,7 @@ class ScenarioRunner:
             self._pace_tick()
             world.tick()
             ego.on_tick(world, 0.0)
+            _record_debug_markers(world, ego, debug_log)
             waited_ticks += 1
         logger.info(
             "[%s] Ego %s after %d tick(s)",
@@ -794,6 +827,7 @@ class ScenarioRunner:
         tick_count: int,
         warmup_ticks: int,
         scenario_name: str,
+        debug_log: DebugMarkerLog,
     ) -> None:
         """Replay a CARLA recording and render video with an attached RGB camera.
 
@@ -802,6 +836,10 @@ class ScenarioRunner:
         at the same offset as the spectator camera, and the captured frames are
         written to an MP4 file via :class:`CameraRecorder`.  The warm-up frames
         the recording starts with carry :data:`WARMUP_CAPTION` along the bottom.
+        The ego's debug markers (:meth:`EgoVehicle.debug_markers`), which the
+        recording does not keep, are drawn from *debug_log* into the frames
+        they were recorded on, and the path the ego drives is traced behind it
+        (:class:`DrivenPathDrawer`).
 
         Args:
             log_path: Path to the CARLA ``.log`` recording file.
@@ -811,6 +849,7 @@ class ScenarioRunner:
             warmup_ticks: Number of ticks recorded before the scenario's first,
                 during the warm-up.
             scenario_name: Scenario class name (used for logging).
+            debug_log: The ego's debug markers, by frame of the recording.
         """
         world = self._client.get_world()
 
@@ -865,11 +904,36 @@ class ScenarioRunner:
             # followed by a synchronous frame write so no frames are lost to
             # async delivery delays.
             remaining = max(warmup_ticks + tick_count - 1, 0)
+            driven_path = DrivenPathDrawer()
+            driven_path.update(world, ego.get_location(), 0.0)
+            # The first frame past the markers last drawn, which last until then.
+            drawn_until = 0
             for index in range(remaining):
-                world.tick()
-                # Frame index + 1 of the recording; the first warmup_ticks are
+                # The first tick above showed the recording's frame 1, so this
+                # one shows frame index + 2.  The first warmup_ticks frames are
                 # the warm-up.
-                if index + 1 < warmup_ticks:
+                frame = index + 2
+                # Markers go in before the tick that renders them, drawn once
+                # for every frame on that holds the same ones.
+                if frame >= drawn_until:
+                    span = debug_log.span(frame)
+                    markers = debug_log.at(frame)
+                    if markers is not None:
+                        draw_debug_markers(
+                            world,
+                            markers,
+                            (span - 1) * FIXED_DELTA_SECONDS + _DEBUG_MARKER_LIFE_TIME,
+                        )
+                        drawn_until = frame + span
+                world.tick()
+                # The path so far stays to the end of the video: each segment
+                # is drawn once, to last the ticks still to come.
+                driven_path.update(
+                    world,
+                    ego.get_location(),
+                    (remaining - index) * FIXED_DELTA_SECONDS + _DEBUG_MARKER_LIFE_TIME,
+                )
+                if frame <= warmup_ticks:
                     camera_recorder.write_frame(WARMUP_CAPTION)
                 else:
                     camera_recorder.write_frame()
@@ -1037,6 +1101,9 @@ class ScenarioRunner:
         trajectory = TrajectoryRecorder(
             self.output_dir / f"{file_stem}.trajectory.jsonl"
         )
+        # What the ego wants drawn on each frame of the recording, for the
+        # video rendered from it: the recording itself keeps no debug drawing.
+        debug_log = DebugMarkerLog()
         tick_count = 0
         result: Optional[ScenarioResult] = None
         coverage: Optional[CoverageCollector] = None
@@ -1140,6 +1207,9 @@ class ScenarioRunner:
             else:
                 recording_started = True
                 recording_start_frame = int(world.get_snapshot().frame)
+                if scenario._spectator_camera_config is not None:
+                    # Only a run that renders a video draws the markers.
+                    debug_log.start(recording_start_frame)
                 logger.info("[%s] Recording to %s", scenario_name, output_path)
 
             # Warm-up ticks: let physics and TrafficManager stabilise
@@ -1165,7 +1235,7 @@ class ScenarioRunner:
             ego.set_initial_speeds(scenario.initial_speeds_mps(ego_actor))
             ego.on_scenario_start(world)
 
-            self._wait_for_ego(world, ego, scenario_name)
+            self._wait_for_ego(world, ego, scenario_name, debug_log)
 
             # The init phase is over: the ego is ready and the clock is about to
             # start, so the brakes that held everything still come off before
@@ -1271,6 +1341,7 @@ class ScenarioRunner:
                 # Give the ego entity a chance to drive itself before the
                 # scenario's own post-tick hooks observe the new state.
                 ego.on_tick(world, elapsed)
+                _record_debug_markers(world, ego, debug_log)
 
                 # Then the traffic, which reacts to where the ego now is.
                 # See TrafficBackend.tick for what a backend does with this.
@@ -1476,6 +1547,7 @@ class ScenarioRunner:
                 tick_count=tick_count,
                 warmup_ticks=warmup_ticks,
                 scenario_name=scenario_name,
+                debug_log=debug_log,
             )
 
         if reset_world:

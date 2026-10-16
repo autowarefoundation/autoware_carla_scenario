@@ -1,0 +1,28 @@
+# Model of autoware_carla_scenario.debug_markers (docs/typecheck.md): what an
+# ego entity a scenario defines returns from EgoVehicle.debug_markers(). The
+# library check compiles the checked source instead.
+#
+# DebugPolyline is a frozen dataclass in Python, so @tuple here: an assignment
+# to a field fails the check as it fails the run.
+
+
+@tuple
+class DebugPolyline:
+    points: List[Tuple[float, float, float]]
+    color: Tuple[int, int, int] = (0, 255, 0)
+    thickness: float = 0.1
+    point_size: float = 0.0
+
+
+class DebugMarkers:
+    polylines: List[DebugPolyline]
+
+    def __init__(self):
+        self.polylines = List[DebugPolyline]()
+
+    def add_polyline(self, polyline: DebugPolyline) -> None:
+        if len(polyline.points) > 0:
+            self.polylines.append(polyline)
+
+    def __bool__(self) -> bool:
+        return len(self.polylines) > 0

@@ -11,6 +11,7 @@ if TYPE_CHECKING:
     from ..scenario_base import EgoConfig
 
 from ..constants import EGO_ROLE_NAME
+from ..debug_markers import DebugMarkers
 from ._spawn import spawn_vehicle_actor
 from ..traffic.driven import BackendDriven
 
@@ -192,6 +193,16 @@ class EgoVehicle(BackendDriven):
             world: The CARLA world instance.
             elapsed: Simulated seconds since the run began.
         """
+
+    def debug_markers(self) -> DebugMarkers:
+        """What this entity wants drawn in the video on the current tick.
+
+        :class:`ScenarioRunner` asks after every tick of the recording (the
+        warm-up's and the scenario's) and draws the answer into that frame of
+        the video (:mod:`autoware_carla_scenario.debug_markers`).  Nothing
+        here; an entity that follows a plan of its own shows it.
+        """
+        return DebugMarkers()
 
     def on_scenario_end(self, world: "carla.World") -> None:
         """Called during teardown, before the actor is destroyed.
