@@ -333,7 +333,8 @@ is imported from (#237):
 scenario.py:3: error: autoware_carla_scenario.actions.base is not part of the Codon model; import ActionState from autoware_carla_scenario.action_state instead
 scenario.py:4: error: autoware_carla_scenario.route.parse_route_search is not part of the Codon model, on purpose: the route search, parsed from a document's YAML ...
 ```
- Third-party packages the framework reads are modelled as
+
+Third-party packages the framework reads are modelled as
 far as it reads them (lanelet2, pyxodr, carla_driver_interface, python-dotenv,
 ffmpeg-python; see *Making a module compile*), and a scenario may use what
 those models declare.
@@ -424,6 +425,17 @@ scenario has to do itself:
 - **Pass numbers of the declared type.** An `int` is accepted for a `float`,
   but not inside a container: a `list[float]` parameter wants `[1.0, 2.0]`.
   YAML values are converted for you.
+- **Build a dict of different actions item by item.** Codon types a dict
+  display by its first item, so `{"turn": turn, "lane_change": lc}` (a
+  `TurnAction` and a `LaneChangeAction`) does not compile, annotated or not;
+  unlike a list display, the check does not rewrite it. Build the
+  `ActionStateCondition`'s `actions` one item at a time instead:
+
+  ```python
+  actions: dict[str, BaseAction] = {}
+  actions["turn"] = turn
+  actions["lane_change"] = lc
+  ```
 - **Convert nested mappings in the config.** The runner passes a YAML mapping
   to the config class as a `dict`, so a field annotated with a dataclass
   (`goal: Goal`) holds one at run time unless the config's `__post_init__`

@@ -2006,6 +2006,7 @@ from autoware_carla_scenario import (
     CarlaDriverEntity,
     EgoDriverGrpcClient,
     GrpcAutowareBridgeServer,
+    LaneChangeAction,
     MapManager,
     TrafficContext,
     get_stop_line_linestrings,
@@ -2040,11 +2041,18 @@ from autoware_carla_scenario.scenario_base import SpectatorCameraConfig
 from autoware_carla_scenario.trajectory_recorder import EGO_ROLES, RECORDED_KINDS
 turn = TurnAction(EGO_ROLE_NAME, TurnDirection.LEFT, timing=TickTiming.PRE_TICK)
 self.register_pre_tick(turn)
-actions = {"turn": turn}
+# Actions of different classes, item by item: Codon types a dict display by
+# its first item (docs/typecheck.md).
+lane_change = LaneChangeAction(EGO_ROLE_NAME, LaneChangeDirection.LEFT)
+actions: dict[str, BaseAction] = {}
+actions["turn"] = turn
+actions["lane_change"] = lane_change
 self.register_pass_condition(
     ActionStateCondition("turn", ActionState.COMPLETE, actions, label="turned")
 )
-self.register_fail_condition(ActionStateCondition("turn", "runningState", actions))
+self.register_fail_condition(
+    ActionStateCondition("turn", "runningState", {"turn": turn})
+)
 # Looked up on every check, so the mapping may be empty when it is built.
 self.register_fail_condition(ActionStateCondition("a", "completeState", {}, label="done"))
 self.register_fail_condition(LaneChangeSettledCondition(EGO_ROLE_NAME, label="settled"))
