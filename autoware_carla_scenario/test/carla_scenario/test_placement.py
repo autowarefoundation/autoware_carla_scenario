@@ -30,6 +30,7 @@ from autoware_carla_scenario.placement import (
 )
 
 from . import _lane_maps
+from ._fake_world import ActorsById, FakeActorList
 from ._lane_maps import LaneMap, bend, build_road, straight
 
 _DATA = Path(__file__).resolve().parents[3] / "data"
@@ -418,6 +419,7 @@ class _Actor:
         self, actor_id: int, role: str, transform: Any, bumpers: Bumpers
     ) -> None:
         self.id = actor_id
+        self.is_alive = True
         self.type_id = "vehicle.test"
         self.attributes = {"role_name": role}
         self._transform = transform
@@ -436,15 +438,15 @@ class _Actor:
         return SimpleNamespace(x=0.0, y=0.0, z=0.0)
 
 
-class _World:
+class _World(ActorsById):
     def __init__(self, actors: list[_Actor]) -> None:
         self._actors = actors
 
     def get_snapshot(self) -> Any:
         return SimpleNamespace(frame=id(self))
 
-    def get_actors(self) -> list[_Actor]:
-        return self._actors
+    def get_actors(self) -> FakeActorList:
+        return FakeActorList(self._actors)
 
 
 def _cut_in_npc_transform(monkeypatch, **config: Any) -> tuple[Any, Any]:

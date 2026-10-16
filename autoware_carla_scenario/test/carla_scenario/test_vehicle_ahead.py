@@ -31,6 +31,7 @@ from autoware_carla_scenario.measures import (
 )
 
 from . import _lane_maps
+from ._fake_world import ActorsById, FakeActorList
 from ._lane_maps import LaneMap, bend, build_road, no_map, straight
 
 __all__ = ["no_map"]
@@ -59,6 +60,7 @@ class _Actor:
         type_id: str = "vehicle.test",
     ) -> None:
         self.id = actor_id
+        self.is_alive = True
         self.type_id = type_id
         self.attributes = {"role_name": role}
         self._location = SimpleNamespace(x=x, y=y, z=0.0)
@@ -86,7 +88,7 @@ class _Actor:
 _FRAMES = iter(range(1, 10_000_000))
 
 
-class _World:
+class _World(ActorsById):
     def __init__(self, actors: list[_Actor]) -> None:
         self._actors = actors
         self._frame = next(_FRAMES)
@@ -94,8 +96,8 @@ class _World:
     def get_snapshot(self) -> Any:
         return SimpleNamespace(frame=self._frame)
 
-    def get_actors(self) -> list[_Actor]:
-        return self._actors
+    def get_actors(self) -> FakeActorList:
+        return FakeActorList(self._actors)
 
 
 def _on(built: LaneMap, lane: str, segment: int, s: float, t: float = 0.0) -> Any:
@@ -833,6 +835,34 @@ def test_the_routing_graph_is_built_before_the_run(straight_road: LaneMap) -> No
     }
 
 
+def test_no_routing_graph_for_measures_the_scenario_replaced(
+    straight_road: LaneMap,
+) -> None:
+    """A scenario that replaced the vehicle-ahead measures reads its own: the
+    routing graph is not built for them before the run."""
+    from autoware_carla_scenario.coordinate.map_manager import MapManager
+    from autoware_carla_scenario.coverage.collector import prepare_measures
+    from autoware_carla_scenario.measures import Measure
+    from autoware_carla_scenario.odd import default_odd
+
+    def replaced(*keys: str) -> SimpleNamespace:
+        own = dict(BUILT_IN_MEASURES)
+        for key in keys:
+            own[key] = Measure(key, lambda world: None, own[key].unit)
+        return SimpleNamespace(measures=own)
+
+    manager = MapManager.get_instance()
+    manager._routing_graph = None
+    prepare_measures(
+        default_odd(), replaced(VEHICLE_AHEAD_GAP_M, VEHICLE_AHEAD_RELATIVE_SPEED_KPH)
+    )
+    assert manager._routing_graph is None
+
+    # One of them still the built-in one: that one reads the graph.
+    prepare_measures(default_odd(), replaced(VEHICLE_AHEAD_GAP_M))
+    assert manager._routing_graph is not None
+
+
 def test_without_a_map_there_is_nothing_to_prepare(no_map: None) -> None:
     from autoware_carla_scenario.measures import prepare_vehicle_ahead
 
@@ -843,7 +873,7 @@ def test_a_failed_reading_is_warned_of_once(
     straight_road: LaneMap, caplog: pytest.LogCaptureFixture
 ) -> None:
     class _Broken(_World):
-        def get_actors(self) -> list[_Actor]:
+        def get_actors(self) -> FakeActorList:
             raise RuntimeError("the server went away")
 
     with caplog.at_level("WARNING", logger="autoware_carla_scenario.measures"):

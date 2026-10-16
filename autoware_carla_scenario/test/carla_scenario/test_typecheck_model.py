@@ -17,6 +17,7 @@ from __future__ import annotations
 import ast
 import dataclasses
 import enum
+import functools
 import importlib
 import importlib.util
 import inspect
@@ -125,8 +126,13 @@ def _exports() -> dict[str, str]:
     return out
 
 
+@functools.cache
 def _definitions(module: str, root: Path = _MODEL) -> dict[str, list[ast.stmt]]:
-    """Top-level definitions of a model module (a function may be overloaded)."""
+    """Top-level definitions of a model module (a function may be overloaded).
+
+    Cached: every module re-reads the modules it imports, and the tests read
+    the same few modules for each of their names. Treat the result as
+    read-only."""
     out: dict[str, list[ast.stmt]] = {}
     for node in _parse(root / f"{module}.codon").body:
         if isinstance(node, (ast.ClassDef, ast.FunctionDef)):
@@ -210,8 +216,58 @@ def _methods(cls: ast.ClassDef) -> dict[str, ast.FunctionDef]:
     out: dict[str, ast.FunctionDef] = {}
     for stmt in cls.body:
         if isinstance(stmt, ast.FunctionDef):
-            out.setdefault(stmt.name, stmt)  # a property's getter, not its setter
+            if stmt.name == "__init__":
+                # The constructor is the last __init__: one refusing what
+                # Codon would build otherwise comes ahead of it (_inits).
+                out[stmt.name] = stmt
+            else:
+                out.setdefault(stmt.name, stmt)  # a property's getter, not its setter
     return out
+
+
+def _inits(cls: ast.ClassDef) -> list[ast.FunctionDef]:
+    return [
+        stmt
+        for stmt in cls.body
+        if isinstance(stmt, ast.FunctionDef) and stmt.name == "__init__"
+    ]
+
+
+def _is_compile_error(fn: ast.FunctionDef) -> bool:
+    """*fn*'s body is a compile_error() call and nothing else."""
+    body = fn.body
+    if (
+        body
+        and isinstance(body[0], ast.Expr)
+        and isinstance(body[0].value, ast.Constant)
+    ):
+        body = body[1:]  # its docstring
+    return (
+        len(body) == 1
+        and isinstance(body[0], ast.Expr)
+        and isinstance(body[0].value, ast.Call)
+        and ast.unparse(body[0].value.func) == "compile_error"
+    )
+
+
+def _refusing_init(cls: ast.ClassDef, arity: int) -> ast.FunctionDef | None:
+    """The __init__ of *arity* positional parameters (self aside) that is a
+    compile_error and comes ahead of the constructor, or None. Codon tries a
+    class's overloads from the last declared, so the constructor wins every
+    call it takes, and this one only refuses what Codon would build else."""
+    inits = _inits(cls)
+    for init in inits[:-1]:
+        args = init.args
+        if (
+            _is_compile_error(init)
+            and len(args.posonlyargs) + len(args.args) == arity + 1
+            and not args.defaults
+            and args.vararg is None
+            and not args.kwonlyargs
+            and args.kwarg is None
+        ):
+            return init
+    return None
 
 
 def _decorators(fn: ast.FunctionDef) -> set[str]:
@@ -305,6 +361,7 @@ _BOUNDARY: dict[str, tuple[str, Any]] = {
     },
     # Defined by entity_role, as in Python; conditions re-exports it.
     "find_actor_in_list": ("entity_role", entity_role.find_actor_in_list),
+    "find_actor_in_world": ("entity_role", entity_role.find_actor_in_world),
     # What a scenario imports of kinematics beside the package's exports.
     "normalize_angle_deg": ("kinematics", kinematics.normalize_angle_deg),
     # A Union alias, for a scenario's own annotations: its members by name.
@@ -848,24 +905,116 @@ def test_the_constants_model_holds_python_s_values() -> None:
     assert constants.EGO_ROLE_NAME == acs.EntityRole.ego()
 
 
-def test_the_route_match_model_cannot_be_built_without_arguments() -> None:
-    # The model's RouteMatch has no fields (its constructor, compared with
-    # Python's, is generic), and Codon builds a class without fields with no
-    # arguments unless an __init__ of none, a compile error, says otherwise.
-    node = _definitions("route")["RouteMatch"][0]
-    assert isinstance(node, ast.ClassDef) and not _model_fields(node)
-    inits = [
-        stmt
-        for stmt in node.body
-        if isinstance(stmt, ast.FunctionDef) and stmt.name == "__init__"
+#: Every class the tests above compare with Python: name -> (model module,
+#: the Python class).
+_COMPARED_CLASSES: dict[str, tuple[str, Any]] = {
+    name: (module, python)
+    for name, module, python in [
+        *((n, m, getattr(acs, n)) for n, m in _EXPORTS.items()),
+        *((n, m, p) for n, (m, p) in _BOUNDARY.items()),
+        *((n, m, getattr(_MODULE_MODELS[m][0], n)) for m, n in _MODULE_MODEL_NAMES),
     ]
-    assert [_model_params(i, drop_first=True) for i in inits][1:] == [[]]
-    body = inits[1].body
-    assert len(body) == 1 and isinstance(body[0], ast.Expr)
-    assert isinstance(body[0].value, ast.Call)
-    assert ast.unparse(body[0].value.func) == "compile_error"
-    with pytest.raises(TypeError):
-        route_model.RouteMatch()  # type: ignore[call-arg]
+    if inspect.isclass(python) and not issubclass(python, enum.Enum)
+}
+
+
+def _all_fields(module: str, cls: ast.ClassDef) -> list[str] | None:
+    """The fields Codon gives *cls*, its bases' first; None for a base the
+    model does not declare (an exception's `Static[...]`)."""
+    out: list[str] = []
+    for base in cls.bases:
+        definitions = _definitions(module).get(ast.unparse(base), [])
+        if not definitions or not isinstance(definitions[0], ast.ClassDef):
+            return None
+        fields = _all_fields(module, definitions[0])
+        if fields is None:
+            return None
+        out += fields
+    return out + [p[1] for p in _model_fields(cls)]
+
+
+def _requires_an_argument(python: Any) -> bool:
+    try:
+        inspect.signature(python).bind()
+    except TypeError:
+        return True
+    return False
+
+
+def _model_class(name: str) -> ast.ClassDef:
+    module, _python = _COMPARED_CLASSES[name]
+    node = _definitions(module)[name][0]
+    assert isinstance(node, ast.ClassDef), name
+    return node
+
+
+#: The classes without fields whose Python constructor requires an argument.
+_FIELDLESS_WITH_REQUIRED = sorted(
+    name
+    for name, (module, python) in _COMPARED_CLASSES.items()
+    if _inits(_model_class(name))
+    and _all_fields(module, _model_class(name)) == []
+    and _requires_an_argument(python)
+)
+
+
+def test_the_fieldless_classes_requiring_an_argument_are_found() -> None:
+    # The classes #225 found (RouteMatch, #224, before them): an empty list
+    # would let the test below pass for nothing.
+    assert set(_FIELDLESS_WITH_REQUIRED) >= {
+        "CoverageCollector",
+        "CoverageReport",
+        "EgoDriverGrpcClient",
+        "PedestrianEntity",
+        "RouteFrame",
+        "RouteMatch",
+        "Ros2EgoTransport",
+        "VehicleEntity",
+    }
+    assert {"TimeoutCondition", "TurnAction"} <= set(_LABELLED)
+    assert len(_LABELLED) > 30
+
+
+@pytest.mark.parametrize("name", _FIELDLESS_WITH_REQUIRED)
+def test_a_class_without_fields_cannot_be_built_with_no_arguments(name: str) -> None:
+    # Codon builds a class without fields with no arguments, whatever its
+    # __init__ takes (#225), unless an __init__ of none, a compile_error,
+    # says otherwise. Python's constructor requires an argument, so the
+    # model declares that one, ahead of the constructor.
+    assert _refusing_init(_model_class(name), 0) is not None, name
+
+
+def test_the_cyclone_transport_model_cannot_be_built_with_no_arguments() -> None:
+    # ros2.cyclone is compared only where cyclonedds is installed (below);
+    # its model needs the same __init__ as any class without fields.
+    node = _definitions("ros2/cyclone")["CycloneRos2Transport"][0]
+    assert isinstance(node, ast.ClassDef)
+    assert [ast.unparse(b) for b in node.bases] == ["Ros2EgoTransport"]
+    assert not _model_fields(node)
+    base = _definitions("_ros2")["Ros2EgoTransport"][0]
+    assert isinstance(base, ast.ClassDef)
+    assert _all_fields("_ros2", base) == []
+    assert _refusing_init(node, 0) is not None
+
+
+#: The model's conditions and actions: each derives from a base with one
+#: field, its label.
+_LABELLED = sorted(
+    name
+    for name, (module, _python) in _COMPARED_CLASSES.items()
+    if module in ("conditions", "actions")
+    and _model_class(name).bases
+    and _all_fields(module, _model_class(name)) == ["label"]
+)
+
+
+@pytest.mark.parametrize("name", _LABELLED)
+def test_a_condition_or_action_cannot_be_built_by_its_label_alone(name: str) -> None:
+    # Codon builds a class by its fields too, by position: a condition or an
+    # action by the label it inherits alone (`TimeoutCondition("10")`
+    # passed, #236), unless an __init__ of one argument, a compile_error,
+    # says otherwise. Each declares that one, ahead of its constructor.
+    assert _refusing_init(_model_class(name), 1) is not None, name
 
 
 def test_the_traffic_backend_factory_model_is_a_stand_in() -> None:

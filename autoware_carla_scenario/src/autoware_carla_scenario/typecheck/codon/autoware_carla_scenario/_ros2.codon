@@ -26,6 +26,11 @@ class Ros2EgoConfig:
 
 
 class Ros2EgoTransport:
+    # No fields: Codon would build one with no arguments too (docs/typecheck.md).
+    def __init__(self):
+        compile_error("Ros2EgoTransport(): no constructor takes these arguments "
+                      "(required: config)")
+
     def __init__(self, config):
         compile_error("Ros2EgoTransport is not modelled: the static check of a "
                       "scenario cannot build one (typecheck/codon/"

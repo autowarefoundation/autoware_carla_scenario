@@ -12,5 +12,10 @@ from .._ros2 import Ros2EgoConfig, Ros2EgoTransport
 
 
 class CycloneRos2Transport(Ros2EgoTransport):
+    # No fields: Codon would build one with no arguments too (docs/typecheck.md).
+    def __init__(self):
+        compile_error("CycloneRos2Transport(): no constructor takes these arguments "
+                      "(required: config)")
+
     def __init__(self, config: Ros2EgoConfig):
         super().__init__(config)

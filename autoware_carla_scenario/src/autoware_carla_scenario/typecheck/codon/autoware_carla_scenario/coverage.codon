@@ -101,6 +101,11 @@ class CrossItem:
 # generator are openodd's types, which are not declared, so passing one fails
 # the check.
 class CoverageCollector:
+    # No fields: Codon would build one with no arguments too (docs/typecheck.md).
+    def __init__(self):
+        compile_error("CoverageCollector(): no constructor takes these arguments "
+                      "(required: items)")
+
     def __init__(self, items: List[CoverItem], crosses: Optional[List[CrossItem]] = None,
                  odd = None, *_kw, backend = None, generator = None):
         _keyword_only(_kw, "CoverageCollector(): backend and generator")
@@ -141,6 +146,10 @@ class CoverageCollector:
 # constructor is a compile error, so a scenario cannot build one; nothing of it
 # is declared but its constructor, as Python's.
 class CoverageReport:
+    # No fields: Codon would build one with no arguments too (docs/typecheck.md).
+    def __init__(self):
+        compile_error("CoverageReport(): no constructor takes these arguments (required: core)")
+
     def __init__(self, core):
         compile_error("CoverageReport is not modelled: the static check cannot "
                       "build one (typecheck/codon/autoware_carla_scenario/coverage.codon)")
@@ -151,5 +160,5 @@ def merge_coverage(documents) -> CoverageReport:
     raise NotImplementedError()
 
 
-def prepare_measures(odd) -> None:
+def prepare_measures(odd, scenario = None) -> None:
     raise NotImplementedError()

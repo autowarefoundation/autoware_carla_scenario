@@ -47,6 +47,8 @@ from autoware_carla_scenario.odd.registry import odd_builder
 from autoware_carla_scenario.odd.units import UnitError, convert
 from autoware_carla_scenario.typecheck import model_dir
 
+from ._fake_world import ActorsById, FakeActorList
+
 
 def _attr(name: str = "x", **kw: Any) -> OddAttribute:
     return OddAttribute(name, lambda world: world.values.get(name), **kw)
@@ -422,6 +424,7 @@ class _Actor:
         speed_limit: float = 0.0,
     ) -> None:
         self.id = actor_id
+        self.is_alive = True
         self.type_id = type_id
         self.attributes = {"role_name": role}
         self._at = _Vec(x=at[0], y=at[1], z=0.0)
@@ -457,7 +460,7 @@ class _Lane:
         return self._right
 
 
-class _OddWorld:
+class _OddWorld(ActorsById):
     def __init__(self, actors: list[_Actor], waypoint: Any, weather: Any) -> None:
         self._actors = actors
         self._waypoint = waypoint
@@ -468,8 +471,8 @@ class _OddWorld:
     def get_snapshot(self) -> Any:
         return SimpleNamespace(frame=self.frame)
 
-    def get_actors(self) -> list[_Actor]:
-        return self._actors
+    def get_actors(self) -> FakeActorList:
+        return FakeActorList(self._actors)
 
     def get_map(self) -> Any:
         self.map_fetches += 1

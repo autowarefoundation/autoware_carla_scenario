@@ -27,6 +27,10 @@ class TrafficLightTarget:
 
 
 class BaseAction:
+    # Codon also builds a class by its fields, by position: a subclass with
+    # its inherited label alone (`TurnAction("npc1")`). Each subclass declares
+    # an __init__ of one argument that refuses this, ahead of its
+    # constructor, which wins every call it takes (docs/typecheck.md).
     label: str
     REISSUES_BY_DEFAULT: ClassVar[bool] = False
 
@@ -95,6 +99,9 @@ def _expect_lanelet2_poses(poses) -> List[Lanelet2Pose]:
 
 
 class EnvironmentAction(BaseAction):
+    def __init__(self, label):
+        compile_error("EnvironmentAction(): no constructor takes these arguments")
+
     def __init__(self, cloudiness = None, precipitation = None, precipitation_deposits = None,
                  wetness = None, wind_intensity = None, fog_density = None, fog_distance = None,
                  sun_altitude_angle = None, sun_azimuth_angle = None, condition = None,
@@ -120,6 +127,10 @@ class EnvironmentAction(BaseAction):
 
 
 class LaneChangeAction(BaseAction):
+    def __init__(self, label):
+        compile_error("LaneChangeAction(): no constructor takes these arguments "
+                      "(required: entity_name, direction)")
+
     def __init__(self, entity_name, direction: LaneChangeDirection, condition = None,
                  timing: TickTiming = TickTiming("pre_tick"), *_kw, label: str = "lane_change",
                  once: bool = True, until = None):
@@ -129,6 +140,10 @@ class LaneChangeAction(BaseAction):
 
 
 class TurnIndicatorAction(BaseAction):
+    def __init__(self, label):
+        compile_error("TurnIndicatorAction(): no constructor takes these arguments "
+                      "(required: entity_name, state)")
+
     def __init__(self, entity_name, state: TurnIndicatorState, condition = None,
                  timing: TickTiming = TickTiming("pre_tick"), *_kw,
                  label: str = "turn_indicator", once: bool = True):
@@ -138,6 +153,10 @@ class TurnIndicatorAction(BaseAction):
 
 
 class RoutingAction(BaseAction):
+    def __init__(self, label):
+        compile_error("RoutingAction(): no constructor takes these arguments "
+                      "(required: entity_name, goal)")
+
     def __init__(self, entity_name, goal: Lanelet2Pose, condition = None,
                  timing: TickTiming = TickTiming("pre_tick"), *_kw, label: str = "routing",
                  once: bool = True, initial_pose: Optional[CarlaWorldPose] = None,
@@ -158,6 +177,10 @@ class RoutingAction(BaseAction):
 
 
 class FollowTrajectoryAction(BaseAction):
+    def __init__(self, label):
+        compile_error("FollowTrajectoryAction(): no constructor takes these arguments "
+                      "(required: entity_name, trajectory)")
+
     def __init__(self, entity_name, trajectory: Trajectory, time_reference = None,
                  following_mode: TrajectoryFollowingMode = TrajectoryFollowingMode("position"),
                  initial_distance_offset: float = 0.0, condition = None,
@@ -186,6 +209,10 @@ class FollowTrajectoryAction(BaseAction):
 
 
 class SetSpeedAction(BaseAction):
+    def __init__(self, label):
+        compile_error("SetSpeedAction(): no constructor takes these arguments "
+                      "(required: entity_name, target_speed_kmh)")
+
     def __init__(self, entity_name, target_speed_kmh: float, rate_kmh_s = None, condition = None,
                  timing: TickTiming = TickTiming("pre_tick"), *_kw, label: str = "set_speed",
                  once: bool = True, until = None, reissue = None):
@@ -196,6 +223,10 @@ class SetSpeedAction(BaseAction):
 
 
 class TrafficSignalAction(BaseAction):
+    def __init__(self, label):
+        compile_error("TrafficSignalAction(): no constructor takes these arguments "
+                      "(required: state)")
+
     def __init__(self, state: int, lanelet2_traffic_light_ids = None, condition = None,
                  timing: TickTiming = TickTiming("pre_tick"), *_kw,
                  label: str = "traffic_signal", once: bool = True, freeze: bool = True):
@@ -205,6 +236,10 @@ class TrafficSignalAction(BaseAction):
 
 
 class TrafficSignalControllerAction(BaseAction):
+    def __init__(self, label):
+        compile_error("TrafficSignalControllerAction(): no constructor takes these arguments "
+                      "(required: controller, phase)")
+
     def __init__(self, controller: str, phase: str, condition = None,
                  timing: TickTiming = TickTiming("pre_tick"), *_kw,
                  label: str = "traffic_signal_controller", once: bool = True):
@@ -213,6 +248,10 @@ class TrafficSignalControllerAction(BaseAction):
 
 
 class TurnAction(BaseAction):
+    def __init__(self, label):
+        compile_error("TurnAction(): no constructor takes these arguments "
+                      "(required: entity_name, direction)")
+
     def __init__(self, entity_name, direction: TurnDirection, condition = None,
                  timing: TickTiming = TickTiming("pre_tick"), *_kw, label: str = "turn_signal",
                  once: bool = True, search_distance: float = 200.0, waypoint_step: float = 2.0,
@@ -223,6 +262,10 @@ class TurnAction(BaseAction):
 
 
 class TrafficSourceAction(BaseAction):
+    def __init__(self, label):
+        compile_error("TrafficSourceAction(): no constructor takes these arguments "
+                      "(required: constraints)")
+
     def __init__(self, constraints, *_kw, initial_vehicles: int = 0,
                  vehicles_per_minute: float = 0.0, max_vehicles = None,
                  speed_kmh: float = 30.0, min_gap_m: float = 15.0, blueprint = None,
@@ -234,6 +277,10 @@ class TrafficSourceAction(BaseAction):
 
 
 class TrafficSinkAction(BaseAction):
+    def __init__(self, label):
+        compile_error("TrafficSinkAction(): no constructor takes these arguments "
+                      "(required: constraints)")
+
     def __init__(self, constraints, *_kw, label: str = "traffic_sink", condition = None,
                  timing: TickTiming = TickTiming("pre_tick"), once: bool = True,
                  until = None, reissue = None):
@@ -242,6 +289,10 @@ class TrafficSinkAction(BaseAction):
 
 
 class WalkStraightAction(BaseAction):
+    def __init__(self, label):
+        compile_error("WalkStraightAction(): no constructor takes these arguments "
+                      "(required: entity_name)")
+
     def __init__(self, entity_name, speed_ms: float = 1.4, condition = None,
                  timing: TickTiming = TickTiming("pre_tick"), *_kw, label: str = "walk_straight",
                  once: bool = True):

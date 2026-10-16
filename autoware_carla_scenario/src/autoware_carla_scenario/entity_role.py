@@ -123,3 +123,45 @@ def find_actor_in_list(
         (a for a in actors if _role_name(a) == name),
         None,
     )
+
+
+#: The id of the actor last found for a role name, by ``(world id, role
+#: name)``. ``world.id`` is CARLA's episode id, which a map load or a world
+#: reload changes, so an entry never outlives the world it was found in.
+_ACTOR_IDS: dict[tuple[int, str], int] = {}
+
+
+def find_actor_in_world(
+    world: "carla.World", role_name: Union["EntityRole", str]
+) -> Optional["carla.Actor"]:
+    """Find a single actor of *world* by its ``role_name``.
+
+    The same answer as ``find_actor_in_list(world.get_actors(), role_name)``,
+    without walking every actor on the map each time: the id found for a role
+    name is remembered, and a later call looks that one actor up by id
+    (``world.get_actor()``, served from the client's actor cache). The entry
+    is used only while that actor is alive and still has this role name;
+    otherwise the world is scanned again.
+
+    Args:
+        world: The CARLA world instance.
+        role_name: The ``role_name`` attribute value to search for.
+            Accepts both :class:`EntityRole` and plain ``str``.
+
+    Returns:
+        The matching actor, or ``None`` if no actor with that role name exists.
+    """
+    name = str(role_name)
+    key = (world.id, name)
+    if key in _ACTOR_IDS:
+        # get_actor() can still return an actor destroyed in this episode
+        # (with is_alive False): LibCarla clears its actor cache only when an
+        # episode starts.
+        cached = world.get_actor(_ACTOR_IDS[key])
+        if cached is not None and cached.is_alive and _role_name(cached) == name:
+            return cached
+        del _ACTOR_IDS[key]
+    actor = find_actor_in_list(world.get_actors(), name)
+    if actor is not None:
+        _ACTOR_IDS[key] = actor.id
+    return actor

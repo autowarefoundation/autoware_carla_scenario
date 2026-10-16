@@ -224,6 +224,9 @@ What `test_typecheck_model.py` compares, model by model:
   `ActionState` or its OpenSCENARIO name, and its `actions` any dict of
   action ids to actions: `actions.codon` imports `conditions.codon`, so an
   action is checked by what `BaseAction` declares.
+- **`entity_role.codon`**: beside `EntityRole`, `find_actor_in_list` (a
+  `carla.ActorList` or a list of actors, as Python's) and
+  `find_actor_in_world`.
 - **`kinematics.codon`**: beside its exports, `normalize_angle_deg`, and
   `frame_of` and `FrameMismatchError` as `coordinate.codon` declares them.
 - **`scenario_base.codon`**: beside its exports, `SpectatorCameraConfig` (a
@@ -239,8 +242,8 @@ What `test_typecheck_model.py` compares, model by model:
   constructor is generic: Python's is a frozen dataclass of variadic tuples
   (`tuple[int, ...]`), which Codon cannot express, but the model's takes the
   same parameters, and an overload of none is a `compile_error` (Codon builds
-  a class without fields with no arguments otherwise), so a call Python
-  refuses fails the check too.
+  a class without fields with no arguments otherwise; see *What Codon builds
+  by the fields* below), so a call Python refuses fails the check too.
 - **`trajectory.codon`**: beside its exports, `ResolvedTrajectory`,
   `TrajectorySample` and the `TrajectoryPosition` Union, by its members'
   names, in order, and no other name.
@@ -285,6 +288,38 @@ of them) is compared by its value and type (a tuple's items' too: `1` is no
 (`ui.models.Status`) as the type of its values. Any other constant fails the
 comparison unless a test of its own compares it (`EGO_ROLE_NAME`,
 `BUILT_IN_METRICS`, `BUILT_IN_MEASURES`).
+
+**What Codon builds by the fields.** Codon 0.19 gives every class a
+constructor of its fields, its bases' first, by position, beside the
+`__init__` it declares: a class without fields is built with no arguments
+(`VehicleEntity()`, #225), and a condition or an action with the label it
+inherits alone (`TimeoutCondition("10")`, `TurnAction("npc1")`, #236), where
+Python refuses both. Codon tries the `__init__` overloads a class declares
+from the last one up, and the one it generates only after them, so the model
+declares, ahead of the constructor, an `__init__` of as many arguments whose
+body is a `compile_error`:
+
+```python
+class TimeoutCondition(BaseCondition):
+    def __init__(self, label):
+        compile_error("TimeoutCondition(): no constructor takes these arguments "
+                      "(required: keyword label)")
+
+    def __init__(self, timeout_seconds: float = 60.0, *_kw, label = _Required()):
+        ...
+```
+
+The constructor, declared last, still wins every call it takes
+(`TimeoutCondition(label="t")`, `TimeoutCondition(10.0, label="t")`); the
+refusing overload only takes what would reach Codon's own.
+`test_typecheck_model.py` compares the last `__init__` with Python's, and
+checks that every compared class without fields whose Python constructor
+requires an argument declares the refusing overload of none (`RouteMatch`,
+`RouteFrame`, `VehicleEntity`, `PedestrianEntity`, `CoverageCollector`,
+`CoverageReport`, `EgoDriverGrpcClient`, `Ros2EgoTransport`,
+`CycloneRos2Transport`), and every condition and action the refusing overload
+of one. A class whose `__init__` takes its fields by position needs none: the
+constructor Codon generates is its own.
 
 A scenario that imports a module with no model (lanelet2's `matching`, say,
 or a framework module outside the public API) is refused with a message
@@ -563,7 +598,7 @@ To check one more module:
 ### What is checked of the framework
 
 Every module now has an entry other than `"not yet checked (#45)"`. 169 of
-the package's 247 modules (68%; about 41,600 of 73,600 lines) are `CHECKED`:
+the package's 247 modules (68%; about 41,600 of 73,700 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the conversions between
 Lanelet2, OpenDRIVE and CARLA world poses (`coordinate.transform`), the stop
 lines read off a Lanelet2 map (`utils.stop_line`, `coordinate.stop_line`)

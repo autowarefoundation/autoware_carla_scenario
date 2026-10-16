@@ -126,3 +126,111 @@ class TestEntityRoleStringConversion:
     def test_repr(self) -> None:
         assert repr(EntityRole.npc(1)) == "EntityRole('npc1')"
         assert repr(EntityRole.ego()) == "EntityRole('Ego')"
+
+
+class _FakeActor:
+    def __init__(self, actor_id: int, role_name: str | None) -> None:
+        self.id = actor_id
+        self.attributes = {} if role_name is None else {"role_name": role_name}
+        self.is_alive = True
+
+
+class _FakeWorld:
+    """A world that counts full scans (``get_actors()``) and id lookups."""
+
+    def __init__(self, world_id: int, actors: list[_FakeActor]) -> None:
+        self.id = world_id
+        self.actors = actors
+        self.scans = 0
+        self.lookups = 0
+        # LibCarla's get_actor() serves destroyed actors from its cache too.
+        self.known: dict[int, _FakeActor] = {a.id: a for a in actors}
+
+    def get_actors(self) -> list[_FakeActor]:
+        self.scans += 1
+        for actor in self.actors:
+            self.known[actor.id] = actor
+        return list(self.actors)
+
+    def get_actor(self, actor_id: int) -> _FakeActor | None:
+        self.lookups += 1
+        return self.known.get(actor_id)
+
+    def destroy(self, actor: _FakeActor) -> None:
+        actor.is_alive = False
+        self.actors.remove(actor)
+
+
+@pytest.fixture
+def clean_cache():
+    from autoware_carla_scenario import entity_role
+
+    entity_role._ACTOR_IDS.clear()
+    yield entity_role
+    entity_role._ACTOR_IDS.clear()
+
+
+class TestFindActorInWorld:
+    """find_actor_in_world() scans once, then looks the actor up by id."""
+
+    def test_scans_once_then_looks_up_by_id(self, clean_cache) -> None:
+        ego = _FakeActor(7, "Ego")
+        world = _FakeWorld(1, [_FakeActor(3, None), _FakeActor(5, "npc1"), ego])
+        for _ in range(5):
+            assert clean_cache.find_actor_in_world(world, EntityRole.ego()) is ego
+        assert world.scans == 1
+        assert world.lookups == 4
+
+    def test_absent_role_is_none_and_not_cached(self, clean_cache) -> None:
+        world = _FakeWorld(1, [_FakeActor(5, "npc1")])
+        assert clean_cache.find_actor_in_world(world, "Ego") is None
+        assert clean_cache.find_actor_in_world(world, "Ego") is None
+        assert world.scans == 2
+        assert clean_cache._ACTOR_IDS == {}
+
+    def test_destroyed_actor_is_never_returned(self, clean_cache) -> None:
+        ego = _FakeActor(7, "Ego")
+        world = _FakeWorld(1, [ego])
+        assert clean_cache.find_actor_in_world(world, "Ego") is ego
+        world.destroy(ego)
+        assert clean_cache.find_actor_in_world(world, "Ego") is None
+
+    def test_respawned_actor_is_found_again(self, clean_cache) -> None:
+        old = _FakeActor(7, "Ego")
+        world = _FakeWorld(1, [old])
+        assert clean_cache.find_actor_in_world(world, "Ego") is old
+        world.destroy(old)
+        new = _FakeActor(9, "Ego")
+        world.actors.append(new)
+        assert clean_cache.find_actor_in_world(world, "Ego") is new
+        assert clean_cache.find_actor_in_world(world, "Ego") is new
+        assert world.scans == 2
+
+    def test_actor_without_that_role_any_more_rescans(self, clean_cache) -> None:
+        actor = _FakeActor(7, "npc1")
+        world = _FakeWorld(1, [actor])
+        assert clean_cache.find_actor_in_world(world, "npc1") is actor
+        actor.attributes = {"role_name": "npc2"}
+        assert clean_cache.find_actor_in_world(world, "npc1") is None
+
+    def test_cache_is_per_world(self, clean_cache) -> None:
+        # Actor ids start over in a new episode: an id found in one world
+        # must not be trusted in another.
+        first = _FakeWorld(1, [_FakeActor(7, "Ego")])
+        second_ego = _FakeActor(9, "Ego")
+        second = _FakeWorld(2, [_FakeActor(7, "npc1"), second_ego])
+        clean_cache.find_actor_in_world(first, "Ego")
+        assert clean_cache.find_actor_in_world(second, "Ego") is second_ego
+        assert second.lookups == 0
+
+    def test_matches_a_full_scan(self, clean_cache) -> None:
+        from autoware_carla_scenario.conditions.base import (
+            find_actor_by_role_name,
+            find_actor_in_list,
+        )
+
+        actors = [_FakeActor(i, f"npc{i}" if i % 2 else None) for i in range(1, 9)]
+        world = _FakeWorld(1, actors)
+        for name in ("npc1", "npc3", "npc4", "Ego", "npc7", "npc3"):
+            expected = find_actor_in_list(list(actors), name)
+            assert find_actor_by_role_name(world, name) is expected

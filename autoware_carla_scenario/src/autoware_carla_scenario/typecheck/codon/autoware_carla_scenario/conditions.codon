@@ -141,6 +141,10 @@ class ScenarioResult:
 
 
 class BaseCondition:
+    # Codon also builds a class by its fields, by position: a subclass with
+    # its inherited label alone (`TimeoutCondition("10")`, #236). Each
+    # subclass declares an __init__ of one argument that refuses this, ahead
+    # of its constructor, which wins every call it takes (docs/typecheck.md).
     label: str
 
     def __init__(self, label: str):
@@ -219,6 +223,10 @@ def _expect_actions(actions) -> int:
 
 
 class ActionStateCondition(BaseCondition):
+    def __init__(self, label):
+        compile_error("ActionStateCondition(): no constructor takes these arguments "
+                      "(required: action_id, state, actions)")
+
     def __init__(self, action_id: str, state, actions, *_kw, label: str = "action_state"):
         _keyword_only(_kw, "ActionStateCondition(): label")
         _expect_action_state(state)
@@ -227,6 +235,10 @@ class ActionStateCondition(BaseCondition):
 
 
 class LaneChangeSettledCondition(BaseCondition):
+    def __init__(self, label):
+        compile_error("LaneChangeSettledCondition(): no constructor takes these arguments "
+                      "(required: entity_name)")
+
     def __init__(self, entity_name, *_kw, label: str = "lane_change_settled"):
         _keyword_only(_kw, "LaneChangeSettledCondition(): label")
         _expect_role(entity_name)
@@ -234,12 +246,19 @@ class LaneChangeSettledCondition(BaseCondition):
 
 
 class AlwaysTrueCondition(BaseCondition):
+    def __init__(self, label):
+        compile_error("AlwaysTrueCondition(): no constructor takes these arguments")
+
     def __init__(self, *_kw, label: str = "always_true"):
         _keyword_only(_kw, "AlwaysTrueCondition(): label")
         super().__init__(label)
 
 
 class AndCondition(BaseCondition):
+    def __init__(self, label):
+        compile_error("AndCondition(): no constructor takes these arguments "
+                      "(required: conditions)")
+
     def __init__(self, conditions, *_kw, label: Optional[str] = None):
         _keyword_only(_kw, "AndCondition(): label")
         _expect_conditions(conditions)
@@ -247,6 +266,9 @@ class AndCondition(BaseCondition):
 
 
 class OrCondition(BaseCondition):
+    def __init__(self, label):
+        compile_error("OrCondition(): no constructor takes these arguments (required: conditions)")
+
     def __init__(self, conditions, *_kw, label: Optional[str] = None):
         _keyword_only(_kw, "OrCondition(): label")
         _expect_conditions(conditions)
@@ -254,6 +276,9 @@ class OrCondition(BaseCondition):
 
 
 class NotCondition(BaseCondition):
+    def __init__(self, label):
+        compile_error("NotCondition(): no constructor takes these arguments (required: condition)")
+
     def __init__(self, condition: BaseCondition, *_kw, label: Optional[str] = None,
                  holds_when_pending: bool = False):
         _keyword_only(_kw, "NotCondition(): label and holds_when_pending")
@@ -262,6 +287,10 @@ class NotCondition(BaseCondition):
 
 
 class StickyCondition(BaseCondition):
+    def __init__(self, label):
+        compile_error("StickyCondition(): no constructor takes these arguments "
+                      "(required: condition)")
+
     def __init__(self, condition: BaseCondition, *_kw, label: Optional[str] = None):
         _keyword_only(_kw, "StickyCondition(): label")
         _expect_condition(condition)
@@ -269,6 +298,10 @@ class StickyCondition(BaseCondition):
 
 
 class PersistentCondition(BaseCondition):
+    def __init__(self, label):
+        compile_error("PersistentCondition(): no constructor takes these arguments "
+                      "(required: condition, duration)")
+
     def __init__(self, condition: BaseCondition, duration: float, *_kw,
                  label: Optional[str] = None):
         _keyword_only(_kw, "PersistentCondition(): label")
@@ -277,6 +310,10 @@ class PersistentCondition(BaseCondition):
 
 
 class ElapsedTimeCondition(BaseCondition):
+    def __init__(self, label):
+        compile_error("ElapsedTimeCondition(): no constructor takes these arguments "
+                      "(required: duration_seconds, keyword label)")
+
     def __init__(self, duration_seconds: float,
                  rule: ComparisonRule = ComparisonRule(4),  # GREATER_THAN_OR_EQUAL
                  tolerance: float = 1e-06, *_kw, label = _Required()):
@@ -289,6 +326,10 @@ class ElapsedTimeCondition(BaseCondition):
 
 
 class MetricCondition(BaseCondition):
+    def __init__(self, label):
+        compile_error("MetricCondition(): no constructor takes these arguments "
+                      "(required: metric, keyword label)")
+
     def __init__(self, metric: str,
                  rule: ComparisonRule = ComparisonRule(4),  # GREATER_THAN_OR_EQUAL
                  value: float = 1.0, tolerance: float = 1e-06, *_kw,
@@ -302,6 +343,10 @@ class MetricCondition(BaseCondition):
 
 
 class TrajectoryTimeCondition(BaseCondition):
+    def __init__(self, label):
+        compile_error("TrajectoryTimeCondition(): no constructor takes these arguments "
+                      "(required: time)")
+
     def __init__(self, time: float, *_kw, label: str = "trajectory_time"):
         _keyword_only(_kw, "TrajectoryTimeCondition(): label")
         super().__init__(label)
@@ -312,12 +357,20 @@ class TrajectoryTimeCondition(BaseCondition):
 
 
 class TimeoutCondition(BaseCondition):
+    def __init__(self, label):
+        compile_error("TimeoutCondition(): no constructor takes these arguments "
+                      "(required: keyword label)")
+
     def __init__(self, timeout_seconds: float = 60.0, *_kw, label = _Required()):
         _keyword_only(_kw, "TimeoutCondition(): label")
         super().__init__(_required_str(label, "TimeoutCondition(): label"))
 
 
 class CollisionCondition(BaseCondition):
+    def __init__(self, label):
+        compile_error("CollisionCondition(): no constructor takes these arguments "
+                      "(required: keyword label)")
+
     def __init__(self, min_impulse: float = 0.0, target = None,
                  target_type: CollisionTargetType = CollisionTargetType(""),  # ANY
                  *_kw, label = _Required()):
@@ -327,6 +380,10 @@ class CollisionCondition(BaseCondition):
 
 
 class EntityExistenceCondition(BaseCondition):
+    def __init__(self, label):
+        compile_error("EntityExistenceCondition(): no constructor takes these arguments "
+                      "(required: entity_name, keyword label)")
+
     def __init__(self, entity_name, *_kw, label = _Required()):
         _keyword_only(_kw, "EntityExistenceCondition(): label")
         _expect_role(entity_name)
@@ -334,6 +391,10 @@ class EntityExistenceCondition(BaseCondition):
 
 
 class TrafficSignalCondition(BaseCondition):
+    def __init__(self, label):
+        compile_error("TrafficSignalCondition(): no constructor takes these arguments "
+                      "(required: lanelet2_regulatory_element_id, expected_state, keyword label)")
+
     def __init__(self, lanelet2_regulatory_element_id: int, expected_state: int, *_kw,
                  label = _Required()):
         _keyword_only(_kw, "TrafficSignalCondition(): label")
@@ -341,12 +402,20 @@ class TrafficSignalCondition(BaseCondition):
 
 
 class TrafficSignalControllerCondition(BaseCondition):
+    def __init__(self, label):
+        compile_error("TrafficSignalControllerCondition(): no constructor takes these arguments "
+                      "(required: controller, phase, keyword label)")
+
     def __init__(self, controller: str, phase: str, *_kw, label = _Required()):
         _keyword_only(_kw, "TrafficSignalControllerCondition(): label")
         super().__init__(_required_str(label, "TrafficSignalControllerCondition(): label"))
 
 
 class AccelerationCondition(BaseCondition):
+    def __init__(self, label):
+        compile_error("AccelerationCondition(): no constructor takes these arguments "
+                      "(required: entity_name, value, keyword label)")
+
     def __init__(self, entity_name, value: float,
                  rule: ComparisonRule = ComparisonRule(2),  # LESS_THAN
                  direction: AccelerationDirection = AccelerationDirection(3),  # MAGNITUDE
@@ -357,6 +426,10 @@ class AccelerationCondition(BaseCondition):
 
 
 class SpeedCondition(BaseCondition):
+    def __init__(self, label):
+        compile_error("SpeedCondition(): no constructor takes these arguments "
+                      "(required: entity_name, value, rule, keyword label)")
+
     def __init__(self, entity_name, value: float, rule: ComparisonRule,
                  direction: SpeedDirection = SpeedDirection(3),  # MAGNITUDE
                  coordinate_system: SpeedCoordinateSystem = SpeedCoordinateSystem(1),  # WORLD
@@ -368,6 +441,10 @@ class SpeedCondition(BaseCondition):
 
 
 class TurnIndicatorCondition(BaseCondition):
+    def __init__(self, label):
+        compile_error("TurnIndicatorCondition(): no constructor takes these arguments "
+                      "(required: entity_name, state, keyword label)")
+
     def __init__(self, entity_name, state: TurnIndicatorState, *_kw, label = _Required()):
         _keyword_only(_kw, "TurnIndicatorCondition(): label")
         _expect_role(entity_name)
@@ -375,6 +452,10 @@ class TurnIndicatorCondition(BaseCondition):
 
 
 class RouteProgressCondition(BaseCondition):
+    def __init__(self, label):
+        compile_error("RouteProgressCondition(): no constructor takes these arguments "
+                      "(required: keyword label)")
+
     def __init__(self, entity_name = None, value = 0.0,
                  rule: ComparisonRule = ComparisonRule(4),  # GREATER_THAN_OR_EQUAL
                  anchor = None, tolerance: float = 1e-06, *_kw, label = _Required()):
@@ -390,6 +471,10 @@ class RouteProgressCondition(BaseCondition):
 
 
 class RelativeSpeedCondition(BaseCondition):
+    def __init__(self, label):
+        compile_error("RelativeSpeedCondition(): no constructor takes these arguments "
+                      "(required: entity_name, reference_entity_name, value, keyword label)")
+
     def __init__(self, entity_name, reference_entity_name, value: float,
                  rule: ComparisonRule = ComparisonRule(2),  # LESS_THAN
                  direction: SpeedDirection = SpeedDirection(3),  # MAGNITUDE
@@ -401,6 +486,10 @@ class RelativeSpeedCondition(BaseCondition):
 
 
 class StandstillCondition(BaseCondition):
+    def __init__(self, label):
+        compile_error("StandstillCondition(): no constructor takes these arguments "
+                      "(required: entity_name, duration, keyword label)")
+
     def __init__(self, entity_name, duration: float, speed_threshold: float = 0.1, *_kw,
                  label = _Required()):
         _keyword_only(_kw, "StandstillCondition(): label")
@@ -409,6 +498,10 @@ class StandstillCondition(BaseCondition):
 
 
 class EntityDistanceCondition(BaseCondition):
+    def __init__(self, label):
+        compile_error("EntityDistanceCondition(): no constructor takes these arguments "
+                      "(required: source, target, value, keyword label)")
+
     def __init__(self, source, target, value: float,
                  rule: ComparisonRule = ComparisonRule(2),  # LESS_THAN
                  vertical: bool = False,
@@ -423,6 +516,10 @@ class EntityDistanceCondition(BaseCondition):
 
 
 class EntityPositionDistanceCondition(BaseCondition):
+    def __init__(self, label):
+        compile_error("EntityPositionDistanceCondition(): no constructor takes these arguments "
+                      "(required: entity_name, position, value, keyword label)")
+
     def __init__(self, entity_name, position, value: float,
                  rule: ComparisonRule = ComparisonRule(2),  # LESS_THAN
                  vertical: bool = False, tolerance: float = 1e-06, *_kw, label = _Required()):
@@ -433,6 +530,10 @@ class EntityPositionDistanceCondition(BaseCondition):
 
 
 class EntityLanePositionCondition(BaseCondition):
+    def __init__(self, label):
+        compile_error("EntityLanePositionCondition(): no constructor takes these arguments "
+                      "(required: entity_name, position, keyword label)")
+
     def __init__(self, entity_name, position,
                  rules: Optional[List[ScalarComparisonRule]] = None, *_kw, label = _Required()):
         _keyword_only(_kw, "EntityLanePositionCondition(): label")
@@ -457,6 +558,10 @@ def beside_lane_id(lane_id: int, side: str) -> int:
 
 
 class EntityLaneOfCondition(EntityLanePositionCondition):
+    def __init__(self, label):
+        compile_error("EntityLaneOfCondition(): no constructor takes these arguments "
+                      "(required: entity_name, position, keyword label)")
+
     def __init__(self, entity_name, position, lane: str = "same", *_kw, label = _Required()):
         _keyword_only(_kw, "EntityLaneOfCondition(): label")
         if lane != "same" and lane != "left" and lane != "right" and lane != "any":
@@ -466,6 +571,10 @@ class EntityLaneOfCondition(EntityLanePositionCondition):
 
 
 class TemporaryStopCondition(BaseCondition):
+    def __init__(self, label):
+        compile_error("TemporaryStopCondition(): no constructor takes these arguments "
+                      "(required: entity_name, stop_positions, keyword label)")
+
     def __init__(self, entity_name, stop_positions, s_margin: float = 5.0,
                  speed_threshold: float = 0.1, stop_duration: float = 1.0, *_kw, label = _Required()):
         _keyword_only(_kw, "TemporaryStopCondition(): label")
@@ -475,6 +584,10 @@ class TemporaryStopCondition(BaseCondition):
 
 
 class TimeHeadwayCondition(BaseCondition):
+    def __init__(self, label):
+        compile_error("TimeHeadwayCondition(): no constructor takes these arguments "
+                      "(required: source, target, value, keyword label)")
+
     def __init__(self, source, target, value: float,
                  rule: ComparisonRule = ComparisonRule(2),  # LESS_THAN
                  tolerance: float = 1e-06,
@@ -487,6 +600,10 @@ class TimeHeadwayCondition(BaseCondition):
 
 
 class TimeToCollisionCondition(BaseCondition):
+    def __init__(self, label):
+        compile_error("TimeToCollisionCondition(): no constructor takes these arguments "
+                      "(required: source, keyword label)")
+
     def __init__(self, source, target = None, value: float = 4.0,
                  rule: ComparisonRule = ComparisonRule(2),  # LESS_THAN
                  position = None, edge_to_edge: bool = False, tolerance: float = 1e-06,
@@ -500,6 +617,10 @@ class TimeToCollisionCondition(BaseCondition):
 
 
 class WaypointCondition(BaseCondition):
+    def __init__(self, label):
+        compile_error("WaypointCondition(): no constructor takes these arguments "
+                      "(required: entity_name, distance, keyword label)")
+
     def __init__(self, entity_name, distance: float,
                  check_type: WaypointCheckType = WaypointCheckType(1),  # IS_EMPTY
                  *_kw, label = _Required()):
