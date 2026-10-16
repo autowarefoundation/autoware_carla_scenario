@@ -341,6 +341,135 @@ class TestInitPhaseOrdering:
         assert order == ["init", "on_scenario_start"]
 
 
+class _SnapshotLight:
+    """A traffic light read, as CARLA's client reads it, from the last tick.
+
+    ``freeze()`` reaches the server at once, but ``is_frozen()`` answers from
+    the snapshot the last tick sent, so a freeze reads only after a tick.
+    """
+
+    type_id = "traffic.traffic_light"
+
+    def __init__(self) -> None:
+        self.frozen = False  # on the server
+        self._seen = False  # in the client's snapshot
+
+    def set_state(self, state: object) -> None:
+        del state
+
+    def freeze(self, frozen: bool) -> None:
+        self.frozen = frozen
+
+    def is_frozen(self) -> bool:
+        return self._seen
+
+    def snapshot(self) -> None:
+        self._seen = self.frozen
+
+
+class _SnapshotWorld:
+    """A world of traffic lights whose tick refreshes what the client reads."""
+
+    def __init__(self, lights: list[_SnapshotLight]) -> None:
+        self.lights = lights
+        self.ticks = 0
+
+    def get_actors(self) -> "_LightList":
+        return _LightList(self.lights)
+
+    def tick(self) -> int:
+        self.ticks += 1
+        for light in self.lights:
+            light.snapshot()
+        return self.ticks
+
+
+class _LightList:
+    def __init__(self, lights: list[_SnapshotLight]) -> None:
+        self._lights = lights
+
+    def filter(self, pattern: str) -> list:
+        return list(self._lights) if pattern.startswith("traffic.traffic_light") else []
+
+
+class TestTheEgoStartsOnTheInitPhasesWorld:
+    """The runner ticks after the init actions, before the ego is started.
+
+    A client reads an actor's state from the last tick, so an ego started on
+    the init actions' own tick reads the world as it was before them.  The
+    policy run-up took every light a ``TrafficSignalAction`` had just frozen
+    red for running, froze it as its own, and thawed it on arrival: CARLA's
+    cycle then turned the scenario's red lights yellow mid-run.
+    """
+
+    @staticmethod
+    def _scenario():
+        import typesafe_carla.carla as carla
+
+        from autoware_carla_scenario import BaseScenario, EgoConfig, SpawnTransform
+        from autoware_carla_scenario.actions.traffic_signal import (
+            TrafficLightTarget,
+            TrafficSignalAction,
+        )
+
+        class _Scenario(BaseScenario):
+            def setup(self) -> None:
+                self.register_init(
+                    TrafficSignalAction(
+                        state=MagicMock(name="Red"),
+                        lanelet2_traffic_light_ids=TrafficLightTarget.ALL,
+                    )
+                )
+
+            def is_done(self) -> bool:
+                return True
+
+        scenario = _Scenario(
+            EgoConfig(
+                spawn_location=SpawnTransform(
+                    carla.Transform(carla.Location(x=0, y=0, z=0))
+                )
+            )
+        )
+        scenario.setup()
+        return scenario
+
+    @staticmethod
+    def _runner() -> ScenarioRunner:
+        runner = ScenarioRunner.__new__(ScenarioRunner)
+        runner._pace_tick = lambda: None  # type: ignore[method-assign]
+        return runner
+
+    def test_the_init_phase_ends_on_a_tick(self):
+        world = _SnapshotWorld([_SnapshotLight()])
+        self._runner()._run_init(world, self._scenario())  # type: ignore[arg-type]
+        assert world.ticks == 1
+        assert world.lights[0].is_frozen()
+
+    def test_the_run_up_leaves_the_scenarios_frozen_lights_frozen(self):
+        from autoware_carla_scenario.entity._policy_warmup import PolicyWarmup
+
+        world = _SnapshotWorld([_SnapshotLight(), _SnapshotLight()])
+        self._runner()._run_init(world, self._scenario())  # type: ignore[arg-type]
+
+        taken = PolicyWarmup._freeze_lights(world)  # type: ignore[arg-type]
+
+        assert taken == []
+        assert all(light.frozen for light in world.lights)
+
+    def test_without_the_tick_the_run_up_would_thaw_them(self):
+        """The fault the tick prevents, on the same fakes: the lights read as running."""
+        from autoware_carla_scenario.entity._policy_warmup import PolicyWarmup
+
+        world = _SnapshotWorld([_SnapshotLight(), _SnapshotLight()])
+        self._scenario().run_init(world)  # type: ignore[arg-type]
+
+        for light in PolicyWarmup._freeze_lights(world):  # type: ignore[arg-type]
+            light.freeze(False)  # what restore() does on arrival
+
+        assert not any(light.frozen for light in world.lights)
+
+
 class TestNothingMovesDuringInit:
     """The clock ticks through init, but no vehicle does anything with it.
 
