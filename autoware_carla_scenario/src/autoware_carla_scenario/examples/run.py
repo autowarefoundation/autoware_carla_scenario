@@ -23,7 +23,10 @@ Usage examples::
     # Select a different map
     uv run scenario scenario=intersection_passing/straight map=nishishinjuku
 
-    # Override individual parameters
+    # Override individual parameters (scenario.timeout_seconds is the run's
+    # default timeout and whatever the scenario's own reads it; it does not
+    # cap a scenario whose own timeout comes from another key, e.g.
+    # traffic_light_compliance with timeout_after_green_seconds set)
     uv run scenario scenario=intersection_passing/straight scenario.timeout_seconds=15.0
 
     # Override server connection

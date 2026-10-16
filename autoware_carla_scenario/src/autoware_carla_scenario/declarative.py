@@ -25,6 +25,7 @@ from .authoring.compiler import BuildContext, CompiledScenario, compile_document
 from .authoring.models import Entity, ScenarioDocument
 from .authoring.persistence import load_document
 from .actions.base import TickTiming
+from .conditions import TimeoutCondition
 from .signals import (
     build_controllers,
     clear_signal_controllers,
@@ -224,7 +225,11 @@ class DeclarativeScenario(BaseScenario):
 
     @property
     def timeout_seconds(self) -> float:
-        """Effective timeout: the Hydra override when set, else the document's."""
+        """Effective timeout: the Hydra override when set, else the document's.
+
+        :meth:`setup` registers it as a fail condition, so it bounds the run
+        whatever timeout the runner would otherwise default to.
+        """
         if self._config.timeout_seconds is not None:
             return float(self._config.timeout_seconds)
         return float(self._document.timeout_seconds)
@@ -416,6 +421,13 @@ class DeclarativeScenario(BaseScenario):
             self.register_pass_condition(instantiate_condition(compiled_condition, ctx))
         for compiled_condition in self._compiled.fail_conditions:
             self.register_fail_condition(instantiate_condition(compiled_condition, ctx))
+        # The document's own timeout, registered here rather than left to the
+        # runner's default: a document with a ``timeout`` node of its own
+        # would otherwise lose it, since the runner adds no default to a
+        # scenario that already has a timeout.
+        self.register_fail_condition(
+            TimeoutCondition(self.timeout_seconds, label="document_timeout")
+        )
 
         logger.info(
             "DeclarativeScenario '%s': %d action(s), %d pass / %d fail condition(s)",

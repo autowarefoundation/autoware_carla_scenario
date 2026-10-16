@@ -144,7 +144,8 @@ class ScenarioQueue:
             host: CARLA RPC host.
             port: CARLA RPC port.
             tm_port: CARLA TrafficManager port.
-            timeout_seconds: Default per-scenario timeout.
+            timeout_seconds: Default per-scenario timeout, for a scenario
+                that registers no timeout of its own.
             output_dir: Directory for MP4 recordings.
             server_extra_args: Extra CLI arguments for CarlaUnreal.sh (only used
                 when the queue creates its own server).
@@ -230,8 +231,10 @@ class ScenarioQueue:
 
         Args:
             scenario: A :class:`BaseScenario` instance to enqueue.
-            timeout_seconds: This scenario's timeout; the queue's
-                ``timeout_seconds`` when ``None``.
+            timeout_seconds: This scenario's default timeout; the queue's
+                ``timeout_seconds`` when ``None``.  Like every default
+                timeout, it does not apply to a scenario that registers a
+                timeout of its own (a ``DeclarativeScenario`` always does).
             case: The case drawn from the ODD it runs, and the space it was
                 drawn in, to record in its coverage file
                 (:meth:`ScenarioRunner.run_scenario`).
