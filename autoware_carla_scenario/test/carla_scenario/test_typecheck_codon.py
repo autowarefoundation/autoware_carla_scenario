@@ -3119,6 +3119,286 @@ def test_an_optional_codon_cannot_generate_is_named_at_the_class(
 
 
 # ---------------------------------------------------------------------------
+# An empty sequence (#264), and the members the model declares (#265)
+# ---------------------------------------------------------------------------
+
+_SEQUENCE_HEADER = _HEADER.replace(
+    "from .configs import CaseConfig",
+    """from autoware_carla_scenario import (
+    BridgePose,
+    EgoVehicle,
+    MapManager,
+    OrCondition,
+    RoutingAction,
+    TrafficSignalAction,
+    TrafficSourceAction,
+    VehicleEntity,
+)
+from autoware_carla_scenario.odd import OddDefinition, OddModule, all_of, any_of
+from autoware_carla_scenario.route import scenario_route, scenario_route_frame
+
+from .configs import CaseConfig""",
+)
+
+_GOAL = "Lanelet2Pose(lanelet_id=1, s=0.0)"
+
+
+@pytest.mark.parametrize(
+    "setup",
+    [
+        # RoutingAction's own default, `waypoints=()`.
+        f"self.register_pre_tick(RoutingAction(EGO_ROLE_NAME, {_GOAL}))\n",
+        f"self.register_pre_tick(RoutingAction(EGO_ROLE_NAME, {_GOAL}, waypoints=[]))\n",
+        "self.waypoint_poses = []\n",
+        f"""
+        ego = self.ego_entity
+        if ego is not None:
+            ego.route_to(self.world, {_GOAL}, waypoints=[])
+            ego.route_to(self.world, {_GOAL}, waypoints=[Lanelet2Pose(lanelet_id=2, s=0.0)],
+                         ground_projection=GroundProjectionConfig())
+        """,
+        # Every other Sequence[X] the model checks the elements of.
+        """
+        self.derive_goal_from_route(())
+        self.derive_waypoints_from_route([])
+        self.register_pre_tick(TrafficSignalAction(0, ()))
+        self.register_fail_condition(OrCondition((), label="never"))
+        self.register_fail_condition(AndCondition([], label="none"))
+        self.register_fail_condition(TemporaryStopCondition(EGO_ROLE_NAME, [], label="stops"))
+        logger.info("%d", len(Trajectory("none", []).vertices))
+        self.register_cover("speed", lambda world: 1.0, buckets=[])
+        odd = OddDefinition("empty", [], [], roots=[])
+        module = OddModule("m", include_and=[], labels=())
+        logger.info("%s %s %s", odd.name, module.name, str(all_of([]) is any_of(())))
+        """,
+    ],
+    ids=[
+        "routing-default",
+        "routing-empty-list",
+        "waypoint-poses",
+        "route-to",
+        "others",
+    ],
+)
+def test_an_empty_sequence_compiles(tmp_path: Path, setup: str) -> None:
+    # An empty display has no element type in Codon (`[]` is a
+    # List[NoneType], `()` a Tuple of no items), and each was refused where
+    # Python takes a Sequence[X], RoutingAction's own default first (#264).
+    scenario, config, _ = _write_case(
+        tmp_path,
+        "self._setup_ego_spawn()\n" + textwrap.dedent(setup) + _TIMEOUT_SETUP,
+        header=_SEQUENCE_HEADER,
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+@pytest.mark.parametrize(
+    ("setup", "message"),
+    [
+        (
+            f"ego.route_to(self.world, {_GOAL}, waypoints=[460, 265])\n",
+            "'int' does not match expected type 'Lanelet2Pose'",
+        ),
+        (
+            f"ego.route_to(self.world, {_GOAL}, ground_projection=5)\n",
+            "expected a GroundProjectionConfig or None",
+        ),
+        (
+            f"self.register_pre_tick(RoutingAction(EGO_ROLE_NAME, {_GOAL}, waypoints=[None]))\n",
+            "'NoneType' does not match expected type 'Lanelet2Pose'",
+        ),
+        (
+            'self.derive_goal_from_route(["460"])\n',
+            "expected a sequence of ints",
+        ),
+    ],
+    ids=["route-to-ints", "route-to-projection", "a-list-of-none", "route-of-str"],
+)
+def test_a_sequence_of_another_type_is_refused_at_its_line(
+    tmp_path: Path, setup: str, message: str
+) -> None:
+    # route_to() checked neither argument (#264); an empty display is
+    # accepted, a display of something else still is not.
+    scenario, config, path = _write_case(
+        tmp_path,
+        "ego = self.ego_entity\nif ego is not None:\n    " + setup + _TIMEOUT_SETUP,
+        header=_SEQUENCE_HEADER,
+    )
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert message in error.message, error.format()
+    assert error.path == str(path)
+    assert error.line == _line_of(path, setup.split("(")[0].strip())
+
+
+_MEMBERS_SETUP = """
+self._setup_ego_spawn()
+routing = RoutingAction(EGO_ROLE_NAME, Lanelet2Pose(lanelet_id=1, s=0.0))
+for waypoint in routing.waypoints:
+    logger.info("%d", waypoint.lanelet_id)
+self.register_pre_tick(routing)
+measures = self.measures
+for key in sorted(measures):
+    logger.info("%s %s", key, measures[key].unit)
+origin = MapManager.get_instance().geo_origin
+pose = BridgePose.from_yaw(1.0, 2.0, 0.0, 0.5)
+turned = BridgePose.from_rpy(1.0, 2.0, 0.0, 0.0, 0.0, 0.5)
+logger.info("%f", origin[0] + pose.position.x + turned.position.y)
+if TrajectoryTimeCondition.IS_TRAJECTORY_TIME:
+    logger.info("a trajectory's clock")
+route = scenario_route()
+if route is not None:
+    frame = scenario_route_frame()
+    lanelet_id, along = frame.locate(route.length / 2.0)
+    x, y, heading = frame.point(frame.length)
+    logger.info("%d %f %f %f %f %d", lanelet_id, along, x, y, heading, frame.lanelet_at(0.0).id)
+"""
+
+_MEMBERS_EXTRA = """
+
+    def _drive(self, npc: VehicleEntity, world: carla.World, source: TrafficSourceAction) -> None:
+        npc.set_desired_speed(world, 20.0)
+        npc.change_lane(world, LaneChangeDirection.LEFT)
+        if npc.lane_change_finished(world):
+            npc.forget_lane_change()
+        npc.turn_at_junction(world, TurnDirection.LEFT)
+        npc.turn_at_junction(world, TurnDirection.RIGHT, search_distance=50.0)
+        npc.release_from_traffic(world)
+        npc.set_client(self.client, tm_port=8000)
+        logger.info("%d", source.spawned)
+        ego = self.ego_entity
+        if ego is not None:
+            ego.set_desired_speed(world, 10.0)
+            ego.change_lane(world, LaneChangeDirection.RIGHT)
+"""
+
+
+def test_the_members_the_model_now_declares_compile(tmp_path: Path) -> None:
+    # Each was refused with Codon's bare "has no attribute" though Python
+    # defines it (#265): BaseScenario.measures, RoutingAction.waypoints,
+    # the manoeuvres VehicleEntity and EgoVehicle inherit from BackendDriven.
+    scenario, config, _ = _write_case(
+        tmp_path,
+        _MEMBERS_SETUP + _TIMEOUT_SETUP,
+        _MEMBERS_EXTRA,
+        header=_SEQUENCE_HEADER,
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+_OWN_EGO = """
+
+
+class Ego(EgoVehicle):
+    def set_desired_speed(self, world: carla.World, speed_kmh: float) -> None:
+        pass
+
+    def lane_change_finished(self, world: carla.World) -> {returns}:
+        return {value}
+"""
+
+
+@pytest.mark.parametrize(
+    ("returns", "value", "message"),
+    [
+        ("bool", "True", None),
+        ("str", '"yes"', "EgoVehicle.lane_change_finished() returns bool"),
+    ],
+    ids=["bool", "str"],
+)
+def test_an_ego_s_own_manoeuvre_is_checked_as_a_hook(
+    tmp_path: Path, returns: str, value: str, message: str | None
+) -> None:
+    # A manoeuvre the model now declares on EgoVehicle is a hook of it: an
+    # override compiles, and one returning another type is refused (#238).
+    scenario, config, path = _write_case(
+        tmp_path,
+        "self._setup_ego_spawn()\n" + _TIMEOUT_SETUP,
+        _OWN_EGO.format(returns=returns, value=value),
+        header=_SEQUENCE_HEADER,
+    )
+    result = typecheck_scenario(scenario, config)
+    if message is None:
+        assert result.ok, result.format()
+        return
+    error = _only_error(result)
+    assert message in error.message, error.format()
+    assert error.path == str(path)
+    assert error.line == _line_of(path, "def lane_change_finished")
+
+
+_OWN_TURN = """
+{caller}
+
+class Npc(VehicleEntity):
+    def turn_at_junction(self, world: carla.World, direction: TurnDirection, **kwargs) -> None:
+        pass
+"""
+
+_TURN_CALLER = """
+    def _drive(self, npc: VehicleEntity, world: carla.World) -> None:
+        npc.turn_at_junction(world, TurnDirection.LEFT)
+"""
+
+
+@pytest.mark.parametrize("calls", [False, True], ids=["defined", "called"])
+def test_an_own_turn_at_junction_compiles_until_it_is_called(
+    tmp_path: Path, calls: bool
+) -> None:
+    # The limitation docs/typecheck.md states: an override of
+    # turn_at_junction(**kwargs) compiles, but Codon 0.19's dispatch thunk
+    # cannot call it. Declaring the method on the base (#265) must not make
+    # a scenario that only defines it fail; a Codon that lifts the limit
+    # fails the second case, and the docs need the change.
+    scenario, config, path = _write_case(
+        tmp_path,
+        "self._setup_ego_spawn()\n" + _TIMEOUT_SETUP,
+        _OWN_TURN.format(caller=_TURN_CALLER if calls else ""),
+        header=_SEQUENCE_HEADER,
+    )
+    result = typecheck_scenario(scenario, config)
+    if not calls:
+        assert result.ok, result.format()
+        return
+    error = _only_error(result)
+    assert "cannot typecheck" in error.message, error.format()
+    assert error.line == _line_of(path, "npc.turn_at_junction(")
+
+
+@pytest.mark.parametrize(
+    ("setup", "needle", "message"),
+    [
+        (
+            "backend = self.traffic_backend\n",
+            "self.traffic_backend",
+            "BaseScenario.traffic_backend is not part of the Codon model, on "
+            "purpose: takes or returns the run's TrafficBackend",
+        ),
+        (
+            'logger.info("%d", len(TimeoutCondition(1.0, label="t").get_details()))\n',
+            "get_details()",
+            "BaseCondition.get_details is not part of the Codon model, on purpose",
+        ),
+    ],
+    ids=["traffic-backend", "condition-details"],
+)
+def test_a_member_the_model_leaves_out_says_why(
+    tmp_path: Path, setup: str, needle: str, message: str
+) -> None:
+    # Codon's "has no attribute", with the reason NOT_MODELLED_MEMBERS gives
+    # (#265), as an import of a name left out is refused with its reason.
+    scenario, config, path = _write_case(
+        tmp_path, "self._setup_ego_spawn()\n" + setup + _TIMEOUT_SETUP
+    )
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "object has no attribute" in error.message, error.format()
+    assert message in error.message, error.format()
+    assert error.path == str(path)
+    assert error.line == _line_of(path, needle)
+
+
+# ---------------------------------------------------------------------------
 # The runner's step
 # ---------------------------------------------------------------------------
 

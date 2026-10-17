@@ -381,7 +381,9 @@ that returns a `float`, an `int`, `None`, or an `Optional` of a `float` or an
 `int` -- a function returning `float`, `lambda world: None` -- as Python's
 do, and refuse any other return type (a `str`, say) at the line that passes
 `read`, with "expected a float (or an int)". The three share that check
-(`_reader.codon`, outside `measures.codon`, which imports `scenario_base`).
+(`_reader.codon`, outside `measures.codon`, which imports `scenario_base`),
+and `Measure` is defined there too, so `BaseScenario.measures` can return a
+`Dict[str, Measure]`; `measures.codon` re-exports it.
 `Metric()` and `Measure()` store the stub: a Codon `Callable` field takes a
 function of its exact type only, and Codon 0.19 crashes on any other. `set_measured_scenario()` takes a scenario of any
 `BaseScenario` subclass or `None`, which Python annotates
@@ -456,6 +458,32 @@ What `test_typecheck_model.py` compares, model by model:
   above, re-exports included (`kinematics.frame_of`). `OddSample` and
   `OddCase` differ on purpose (`_DIFFERING`): an opaque, unbuildable stand-in
   for openodd's sample, and the `@tuple` of the pair Python's alias names.
+- **Every public member of a compared class** (#265): the comparisons above
+  check that what a model class declares exists in Python; this checks the
+  converse. For every class they compare (enums aside), each public method,
+  property and class attribute the package's Python defines on the class or
+  a package class it derives from (`VehicleEntity.set_desired_speed()` is
+  `BackendDriven`'s) is declared by the model class or one of its model
+  bases, or listed, with the reason, in `NOT_MODELLED_MEMBERS`
+  (`typecheck/not_modelled.py`), under the class or the Python base that
+  defines it (`BaseCondition.get_details` for every condition). A listed
+  member must still be public in Python and absent from the model. A
+  dataclass's fields are compared as its constructor's parameters, and an
+  attribute Python only annotates (set on the instance) is no member of the
+  class. The scenario check adds the reason to Codon's error:
+
+  ```text
+  scenario.py:68:19: error: 'CaseScenario' object has no attribute 'traffic_backend': BaseScenario.traffic_backend is not part of the Codon model, on purpose: takes or returns the run's TrafficBackend, ...
+  ```
+
+  Left out are what returns or takes a value Codon has no type for (a
+  `dict[str, Any]`: a condition's `get_details()` and `to_summary_dict()`,
+  `to_dict()`, `describe()`, `RouteMatch.to_config()` and `from_config()`),
+  the run's traffic backend (`set_traffic_backend()`, `traffic_backend`),
+  `RouteMatch.junction()` and `junctions` (a `RouteSegmentMatch`), and the
+  members of the classes the model declares for the library check alone
+  (`CarlaDriverEntity`, the egodriver and bridge servers, the ROS 2
+  transport, the map cache's `MapSource`, `RunEnvironment`).
 - **Every model file**: each `.codon` of the package's model is in one of
   the tables above or exempt with the reason (`_UNCOMPARED_MODEL_FILES`: the
   model's helpers, the modules `coordinate.codon` and `entity.codon`
@@ -650,6 +678,30 @@ scenario has to do itself:
 - **Pass numbers of the declared type.** An `int` is accepted for a `float`,
   but not inside a container: a `list[float]` parameter wants `[1.0, 2.0]`.
   YAML values are converted for you.
+- **An empty `[]` or `()` is any sequence** (#264). Codon gives an empty
+  display no element type (`[]` is a `List[NoneType]`, `()` a tuple of no
+  items), so the model takes one wherever Python takes a `Sequence[X]`
+  (`RoutingAction(EGO_ROLE_NAME, goal)`, whose `waypoints` default to `()`,
+  `waypoints=[]`, `self.waypoint_poses = []`, `derive_goal_from_route(())`,
+  `AndCondition([], ...)`, an ODD's `all_of([])`) through `_acs_sequence`
+  (`_tc.codon`), and checks the elements of any other: `waypoints=[460, 265]`
+  and `waypoints=[None]` are refused, in `EgoVehicle.route_to()` too.
+- **Call a manoeuvre your own entity class overrides with every argument, by
+  position.** `VehicleEntity` and `EgoVehicle` declare the manoeuvres they
+  take from `traffic.driven.BackendDriven` (`set_desired_speed()`,
+  `change_lane()`, `lane_change_finished()`, `turn_at_junction()`,
+  `release_from_traffic()`, ...), and an `EgoVehicle` subclass's override of
+  one is checked as a hook. Codon 0.19 calls a method a subclass overrides
+  through a dispatch thunk, which takes no keyword argument, fills in no
+  default (`set_client(client)` needs its `tm_port` then), and cannot call
+  `turn_at_junction(world, direction, **kwargs)` at all: once a class of the
+  scenario overrides it, a call of it does not compile ("cannot
+  typecheck"), on the subclass as on its base; turn with a `TurnAction`
+  instead. A class that only defines the override, and never calls it,
+  compiles. (Declaring Python's `**kwargs` as `TurnAction`'s three keywords
+  would not help: the thunk fills in none of their defaults, so even
+  `turn_at_junction(world, direction)` would fail, and a backend's own
+  keywords would be refused.)
 - **A dict of different actions (or conditions) is a dict of their base.**
   Codon types a dict display by its first item, so the check rewrites one
   whose values are not evidently of one type, as it does a list display:
@@ -1085,7 +1137,14 @@ for), so each is counted once, in the first group that fits it:
   `CarlaCameraSensor`'s listen callback.
 
 The scenario check is not limited by this: it compiles every scenario against
-the model, which declares the whole public API.
+the model. The model does not declare the whole public API: what
+`test_typecheck_model.py` guarantees is that every public name of a modelled
+module, and every public method, property and class attribute of a class the
+model declares, is either declared or listed with the reason it is left out
+in `typecheck/not_modelled.py` (`NOT_MODELLED`, `NOT_MODELLED_MEMBERS`), and
+the check refuses a use of a listed one with that reason (#249, #265).
+Attributes a class only annotates (set on the instance) are outside that
+guarantee.
 
 ### What is compiled
 

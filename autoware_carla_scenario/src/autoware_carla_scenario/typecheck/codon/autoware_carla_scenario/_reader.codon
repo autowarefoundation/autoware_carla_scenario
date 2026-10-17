@@ -2,7 +2,8 @@
 # Measure (measures) and Metric (metrics): each takes a
 # Callable[[carla.World], Optional[float]], which Python takes as any callable
 # of a world returning a float, an int or None. It lives here, not in
-# measures.codon, because measures imports scenario_base.
+# measures.codon, because measures imports scenario_base; so does Measure,
+# which measures.codon re-exports and BaseScenario.measures returns (#265).
 
 import typesafe_carla.carla as carla
 
@@ -15,3 +16,30 @@ def _expect_reader(read):
     float, an int or an Optional of one of them; anything else is refused at
     the line that passes *read* ("expected a float (or an int)")."""
     _expect_optional_float(read(carla.Client().get_world()))
+
+
+def _acs_unread(world: carla.World) -> Optional[float]:
+    raise NotImplementedError()
+
+
+# A frozen dataclass in Python, so @tuple here: an assignment to a field fails
+# the check as it fails the run.
+@tuple
+class Measure:
+    key: str
+    read: Callable[[carla.World], Optional[float]]
+    unit: str = ""
+    text: str = ""
+    version: int = 1
+
+    # Python takes any callable of a world that returns a float or None: a
+    # function returning `float`, a lambda. Codon 0.19 crashes on one whose
+    # type is not the field's exactly ("Codon compiler crashed", no line), so
+    # *read* is called with a world here (_expect_reader), refused at its line
+    # when it returns anything but a float, an int or None, and the field
+    # holds the stub: nothing in the model reads.
+    def __new__(key: str, read, unit: str = "", text: str = "",
+                version: int = 1) -> Measure:
+        _expect_reader(read)
+        unread = Callable[[carla.World], Optional[float]](_acs_unread)
+        return __internal__.tuple_cast_unsafe((key, unread, unit, text, version), Measure)

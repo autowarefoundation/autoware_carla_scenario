@@ -206,10 +206,29 @@ def _expect_int(x) -> int:
         compile_error("expected an int")
 
 
+def _acs_sequence(xs, T: type):
+    """A Sequence[T] argument, to iterate: an empty display, `[]` or `()`,
+    as an empty List[T], and any other sequence as it is (#264).
+
+    An empty display has no element type in Codon (`[]` is a
+    List[NoneType], `()` a Tuple of no items, which iterates as an int), so
+    a check that types each element (`p: Lanelet2Pose = x`) refuses it,
+    where Python takes it as a Sequence[T]. A list of Nones (`[None]`) is a
+    List[Optional[NoneType]], and stays itself: its elements are checked,
+    and refused.
+    """
+    if isinstance(xs, List[NoneType]):
+        return List[T]()
+    elif isinstance(xs, Tuple) and static.len(xs) == 0:
+        return List[T]()
+    else:
+        return xs
+
+
 def _expect_int_sequence(xs) -> List[int]:
-    """A Sequence[int]: a list or a tuple of ints."""
+    """A Sequence[int]: a list or a tuple of ints, or an empty one."""
     out = List[int]()
-    for x in xs:
+    for x in _acs_sequence(xs, int):
         if isinstance(x, int):
             out.append(x)
         else:

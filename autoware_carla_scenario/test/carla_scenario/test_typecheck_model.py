@@ -88,7 +88,11 @@ from autoware_carla_scenario.typecheck.check import (
     _unmodelled_module,
 )
 from autoware_carla_scenario.typecheck.library import package_modules
-from autoware_carla_scenario.typecheck.not_modelled import NOT_MODELLED
+from autoware_carla_scenario.typecheck.not_modelled import (
+    NOT_MODELLED,
+    NOT_MODELLED_MEMBERS,
+    not_modelled_member,
+)
 from autoware_carla_scenario.ui import models as ui_models
 from autoware_carla_scenario.utils import traffic_light as utils_traffic_light
 from carla_driver_interface import geometry as cdi_geometry
@@ -1757,6 +1761,179 @@ def test_a_re_exported_public_name_is_declared_as_in_python(
 
 
 # ---------------------------------------------------------------------------
+# Every public member of a compared class is modelled or listed (#265)
+# ---------------------------------------------------------------------------
+
+
+#: The optional dependencies a compared module may import: where one is not
+#: installed (cyclonedds has no wheel for every Python and arch CI runs), the
+#: module's classes are left out of the member check, as
+#: test_the_cyclone_model_is_the_transport_ros2_entity_builds leaves them out.
+_OPTIONAL_DEPENDENCIES = frozenset({"cyclonedds"})
+
+
+def _optional_import(module: str) -> Any:
+    """*module*, or None when it imports an optional dependency that is not
+    installed. Any other ImportError (a moved name) still fails collection."""
+    try:
+        return importlib.import_module(module)
+    except ModuleNotFoundError as exc:
+        if (exc.name or "").split(".")[0] in _OPTIONAL_DEPENDENCIES:
+            _UNIMPORTABLE.update(n for m, n in _DECLARED_PUBLIC_NAMES if m == module)
+            return None
+        raise
+
+
+#: The compared classes left out because their module's optional dependency
+#: is not installed: their NOT_MODELLED_MEMBERS entries excuse nothing here.
+_UNIMPORTABLE: set[str] = set()
+
+
+def _compared_classes() -> dict[str, tuple[str, type]]:
+    """Every class the tests above compare with its model class, by name:
+    (model module, the Python class). Enums (compared by their members) and
+    Union aliases are not classes the model declares members of."""
+    candidates: list[tuple[str, str, Any]] = [
+        *((name, module, getattr(acs, name)) for name, module in _EXPORTS.items()),
+        *((name, module, python) for name, (module, python) in _BOUNDARY.items()),
+        *(
+            (name, module, getattr(python_module, name))
+            for module, (python_module, names) in _MODULE_MODELS.items()
+            for name in names
+        ),
+        *(
+            (name, _model_stem(module), getattr(python_module, name))
+            for module, name in _DECLARED_PUBLIC_NAMES
+            if (python_module := _optional_import(module)) is not None
+        ),
+    ]
+    out: dict[str, tuple[str, type]] = {}
+    for name, module, python in candidates:
+        if not inspect.isclass(python) or issubclass(python, enum.Enum):
+            continue
+        node = _definitions(module).get(name, [None])[0]
+        if isinstance(node, ast.ClassDef):
+            out.setdefault(name, (module, python))
+    return out
+
+
+_MEMBER_CLASSES = _compared_classes()
+
+
+def _model_members(cls: ast.ClassDef) -> set[str]:
+    """What the model class declares, its model bases' included: methods,
+    properties, fields and class attributes."""
+    out: set[str] = set()
+    for stmt in cls.body:
+        if isinstance(stmt, ast.FunctionDef):
+            out.add(stmt.name)
+        elif isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name):
+            out.add(stmt.target.id)
+        elif isinstance(stmt, ast.Assign):
+            out |= {t.id for t in stmt.targets if isinstance(t, ast.Name)}
+    for base in cls.bases:
+        node, _static = _base_class(cls, base)
+        if node.name not in _CODON_EXCEPTIONS:
+            out |= _model_members(node)
+    return out
+
+
+def _python_members(python: type) -> set[str]:
+    """The public methods, properties and class attributes the package's
+    Python defines on *python* or a package class it derives from. A
+    dataclass's fields are compared as its constructor's parameters, and an
+    attribute only annotated (set on the instance) is no member of the class."""
+    out: set[str] = set()
+    for klass in python.__mro__:
+        if not klass.__module__.startswith("autoware_carla_scenario"):
+            continue
+        fields = (
+            {f.name for f in dataclasses.fields(klass)}
+            if dataclasses.is_dataclass(klass)
+            else set()
+        )
+        out |= {n for n in vars(klass) if not n.startswith("_") and n not in fields}
+    return out
+
+
+def _unmodelled_members(name: str) -> set[str]:
+    module, python = _MEMBER_CLASSES[name]
+    node = _definitions(module)[name][0]
+    assert isinstance(node, ast.ClassDef)
+    return _python_members(python) - _model_members(node)
+
+
+def test_the_member_comparison_reads_every_kind_of_compared_class() -> None:
+    # The classes of each table above, a class the model declares by name
+    # only among them.
+    assert {"BaseScenario", "EgoVehicle", "VehicleEntity", "RoutingAction"} <= set(
+        _MEMBER_CLASSES
+    )
+    assert {"MapManager", "RouteFrame", "CarlaDriverEntity", "Measure"} <= set(
+        _MEMBER_CLASSES
+    )
+    assert "TickTiming" not in _MEMBER_CLASSES  # an enum: compared by its members
+    # Inherited members count: set_desired_speed is BackendDriven's in Python.
+    assert "set_desired_speed" in _python_members(acs.VehicleEntity)
+    assert "measures" in _python_members(acs.BaseScenario)
+    # A dataclass field is a parameter, compared with the constructor.
+    assert "lanelet_id" not in _python_members(acs.Lanelet2Pose)
+
+
+@pytest.mark.parametrize("name", sorted(_MEMBER_CLASSES))
+def test_a_public_member_is_modelled_or_listed_as_not_modelled(name: str) -> None:
+    # The converse of _assert_declared_as_in_python, which checks that what
+    # the model declares exists in Python: a member Python has and the model
+    # lacks fails a correct scenario with Codon's bare "has no attribute"
+    # (BaseScenario.measures, VehicleEntity.set_desired_speed), unless
+    # NOT_MODELLED_MEMBERS says why.
+    _module, python = _MEMBER_CLASSES[name]
+    missing = sorted(
+        m for m in _unmodelled_members(name) if not_modelled_member(python, m) is None
+    )
+    assert not missing, (
+        f"{name}: public in Python, neither modelled nor in "
+        f"NOT_MODELLED_MEMBERS: {missing}"
+    )
+
+
+def test_a_listed_member_is_still_public_and_unmodelled() -> None:
+    # Each entry of NOT_MODELLED_MEMBERS excuses a member some compared class
+    # has in Python and lacks in the model: one that is modelled now, or no
+    # longer public, is stale.
+    used: set[tuple[str, str]] = set()
+    for name, (_module, python) in _MEMBER_CLASSES.items():
+        for member in _unmodelled_members(name):
+            excused = not_modelled_member(python, member)
+            if excused is not None:
+                used.add((excused[0], member))
+        node = _definitions(_MEMBER_CLASSES[name][0])[name][0]
+        assert isinstance(node, ast.ClassDef)
+        modelled_and_listed = sorted(
+            m
+            for m in _python_members(python) & _model_members(node)
+            if not_modelled_member(python, m) is not None
+        )
+        assert (
+            not modelled_and_listed
+        ), f"{name}: modelled, and in NOT_MODELLED_MEMBERS: {modelled_and_listed}"
+    listed = {
+        (owner, member)
+        for owner, members in NOT_MODELLED_MEMBERS.items()
+        for member in members
+    }
+    stale = sorted(
+        (owner, member) for owner, member in listed - used if owner not in _UNIMPORTABLE
+    )
+    assert not stale, f"in NOT_MODELLED_MEMBERS, but excusing nothing: {stale}"
+    assert all(
+        reason
+        for members in NOT_MODELLED_MEMBERS.values()
+        for reason in members.values()
+    ), "a reason for each member"
+
+
+# ---------------------------------------------------------------------------
 # Every model file is compared with Python, or exempt with the reason (#240)
 # ---------------------------------------------------------------------------
 
@@ -1765,7 +1942,8 @@ def test_a_re_exported_public_name_is_declared_as_in_python(
 _UNCOMPARED_MODEL_FILES: dict[str, str] = {
     "_tc": "helpers of the model (Codon's missing typing), no Python module",
     "_lists": "helpers of the model (lists of conditions and actions), no Python module",
-    "_reader": "helpers of the model (a measure's reader), no Python module",
+    "_reader": "helpers of the model (a measure's reader), no Python module; "
+    "and Measure, which measures.codon re-exports: compared through that re-export",
     "_exceptions": "helpers of the model (the exceptions Codon 0.19 lacks), no Python module",
     "_poses": "shared by coordinate.codon, which re-exports it: compared through those re-exports",
     "_vehicle_entity": "shared by entity.codon, which re-exports it: compared through those re-exports",

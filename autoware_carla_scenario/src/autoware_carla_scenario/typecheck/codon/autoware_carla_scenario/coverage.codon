@@ -14,7 +14,7 @@ from pathlib import Path
 
 import typesafe_carla.carla as carla
 
-from ._tc import _expect_float, _expect_optional_float, _keyword_only
+from ._tc import _expect_float, _expect_optional_float, _keyword_only, _acs_sequence
 from .conditions import BaseCondition, _expect_condition
 
 
@@ -66,13 +66,13 @@ def _expect_optional_range(r):
 
 
 def _expect_optional_edges(edges):
-    """An Optional[Sequence[float]] argument."""
+    """An Optional[Sequence[float]] argument (an empty one too, #264)."""
     if isinstance(edges, None):
         pass
     elif isinstance(edges, Optional[NoneType]):
         pass
     else:
-        for edge in edges:
+        for edge in _acs_sequence(edges, float):
             _expect_float(edge)
 
 

@@ -3,11 +3,11 @@
 import typesafe_carla.carla as carla
 
 from ._tc import (_keyword_only, _expect_float, _expect_optional_float, _expect_optional_bool,
-                  _acs_expect_return)
+                  _acs_expect_return, _acs_sequence)
 from .action_state import ActionState
 from .conditions import BaseCondition, TurnIndicatorState, _expect_optional_condition
 from .coordinate import (Lanelet2Pose, CarlaWorldPose, GroundProjectionConfig,
-                         _expect_optional_ground_projection)
+                         _expect_lanelet2_poses, _expect_optional_ground_projection)
 from .entity_role import EntityRole, _expect_role
 from .traffic import TurnDirection, LaneChangeDirection
 from .trajectory import (Trajectory, TrajectoryFollowingMode, TrajectoryTiming,
@@ -104,17 +104,9 @@ def _expect_traffic_light_ids(ids):
     elif isinstance(ids, TrafficLightTarget):
         pass
     else:
-        for i in ids:
+        for i in _acs_sequence(ids, int):
             if not isinstance(i, int):
                 compile_error("expected lanelet2 traffic light ids (ints), TrafficLightTarget.ALL or None")
-
-
-def _expect_lanelet2_poses(poses) -> List[Lanelet2Pose]:
-    """A Sequence[Lanelet2Pose] argument."""
-    out = List[Lanelet2Pose]()
-    for pose in poses:
-        out.append(pose)
-    return out
 
 
 class EnvironmentAction(BaseAction):
@@ -192,6 +184,12 @@ class RoutingAction(BaseAction):
 
     @property
     def entity_name(self) -> EntityRole:
+        raise NotImplementedError()
+
+    # tuple[Lanelet2Pose, ...] in Python: a List here, as a class-level
+    # variadic tuple is (_acs_tuple, _tc.codon).
+    @property
+    def waypoints(self) -> List[Lanelet2Pose]:
         raise NotImplementedError()
 
 
@@ -293,6 +291,10 @@ class TrafficSourceAction(BaseAction):
                  until = None, reissue = None):
         _keyword_only(_kw, "TrafficSourceAction(): everything after the constraints")
         super().__init__(label, condition, timing, once=once, until=until, reissue=reissue)
+
+    @property
+    def spawned(self) -> int:
+        raise NotImplementedError()
 
 
 class TrafficSinkAction(BaseAction):
