@@ -212,14 +212,14 @@ def _ring(range_m: float, n: int = 2000) -> np.ndarray:
 
 def test_clear_weather_and_no_gain_leave_a_sweep_untouched() -> None:
     raw = _ring(50.0)
-    assert apply_weather(raw, LidarWeather(), 1.0, 0) is raw
-    assert apply_weather(raw, LidarWeather(precipitation=100.0), 0.0, 0) is raw
+    assert apply_weather(raw, LidarWeather(), 1.0, 0, 0) is raw
+    assert apply_weather(raw, LidarWeather(precipitation=100.0), 0.0, 0, 0) is raw
 
 
 def test_fog_thins_far_returns_first_and_dims_them() -> None:
     fog = LidarWeather(fog_density=100.0)
-    near = apply_weather(_ring(5.0), fog, 1.0, 0)
-    far = apply_weather(_ring(40.0), fog, 1.0, 0)
+    near = apply_weather(_ring(5.0), fog, 1.0, 0, 0)
+    far = apply_weather(_ring(40.0), fog, 1.0, 0, 0)
     assert len(far) < len(near) < 2000
     far_ranges = np.linalg.norm(far[:, :3], axis=1)
     survivors = far[far_ranges > 30.0]
@@ -231,13 +231,13 @@ def test_fog_thins_far_returns_first_and_dims_them() -> None:
 def test_fog_only_scatters_beyond_where_it_starts() -> None:
     raw = _ring(20.0)
     sweep = apply_weather(
-        raw, LidarWeather(fog_density=100.0, fog_distance=30.0), 1.0, 0
+        raw, LidarWeather(fog_density=100.0, fog_distance=30.0), 1.0, 0, 0
     )
     np.testing.assert_allclose(sweep, raw)
 
 
 def test_rain_moves_returns_along_their_rays() -> None:
-    sweep = apply_weather(_ring(80.0), LidarWeather(precipitation=100.0), 1.0, 0)
+    sweep = apply_weather(_ring(80.0), LidarWeather(precipitation=100.0), 1.0, 0, 0)
     ranges = np.linalg.norm(sweep[:, :3], axis=1)
     kept = ranges[ranges > 60.0]
     assert 0.0 < float(np.std(kept)) < 2.0
@@ -246,14 +246,16 @@ def test_rain_moves_returns_along_their_rays() -> None:
 
 def test_weather_noise_scales_the_effect() -> None:
     fog = LidarWeather(fog_density=50.0)
-    mild = apply_weather(_ring(40.0), fog, 0.5, 0)
-    strong = apply_weather(_ring(40.0), fog, 2.0, 0)
+    mild = apply_weather(_ring(40.0), fog, 0.5, 0, 0)
+    strong = apply_weather(_ring(40.0), fog, 2.0, 0, 0)
     assert len(strong) < len(mild)
 
 
-def test_lidar_config_rejects_negative_weather_noise() -> None:
+def test_lidar_config_rejects_negative_weather_noise_and_seed() -> None:
     with pytest.raises(ValueError, match="weather_noise"):
         DriverLidarConfig(weather_noise=-1.0)
+    with pytest.raises(ValueError, match="noise_seed"):
+        DriverLidarConfig(noise_seed=-1)
 
 
 def _attached(lidar: CarlaLidarSensor, weather: SimpleNamespace) -> None:

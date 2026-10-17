@@ -11,11 +11,8 @@ million points a second that is most of what a tick costs.  A LiDAR read once a
 policy step is therefore swept once a policy step (``sweep_interval_s``), not on
 the ticks between, whose sweeps nobody would read.
 
-CARLA casts the rays through clear air whatever the weather, so the sweep a
-caller is handed has the world's rain and fog put on it here
-(:mod:`.lidar_weather`), from the weather as it is when the sweep is taken:
-the ODD's ``rain`` and ``fog`` knobs, or an ``EnvironmentAction`` mid-run, set
-the LiDAR's noise along with what the cameras see.
+The sweep a caller is handed carries the world's rain and fog as they are when
+it is taken (:mod:`.lidar_weather`).
 """
 
 from __future__ import annotations
@@ -50,12 +47,6 @@ _SWEEP_TIMEOUT: float = 1.0
 #: ``interval / margin`` sweeps -- a sweep a tick early, which
 #: :meth:`CarlaLidarSensor.latest_sweep` takes as the newest it has.
 _SENSOR_TICK_MARGIN_S: float = 1e-6
-
-#: The weather noise of a sweep is seeded ``noise_seed * stride + frame``, kept a
-#: non-negative 63-bit integer: no two seeds share a sweep's noise within a run
-#: shorter than the stride's frames.
-_NOISE_SEED_STRIDE: int = 1_000_003
-_SEED_MASK: int = (1 << 63) - 1
 
 
 @dataclass(frozen=True)
@@ -99,8 +90,8 @@ class CarlaLidarSensorConfig:
             raise ValueError("LiDAR range_m and points_per_second must be positive")
         if self.lower_fov_deg >= self.upper_fov_deg:
             raise ValueError("LiDAR lower_fov_deg must be below upper_fov_deg")
-        if self.weather_noise < 0.0:
-            raise ValueError("LiDAR weather_noise must not be negative")
+        if self.weather_noise < 0.0 or self.noise_seed < 0:
+            raise ValueError("LiDAR weather_noise and noise_seed must not be negative")
 
 
 class CarlaLidarSensor:
@@ -126,8 +117,8 @@ class CarlaLidarSensor:
     _newest: Optional[Tuple[int, np.ndarray[tuple[int, int], np.dtype[np.float32]]]]
     #: The world whose weather the sweeps are degraded by, once attached.
     _world: Optional["carla.World"]
-    #: :attr:`_newest` with the weather on it, put on once per sweep.
-    _weathered: Optional[Tuple[int, np.ndarray[tuple[int, int], np.dtype[np.float32]]]]
+    #: The frame of the sweep the weather was last put on (in :attr:`_newest`).
+    _weathered_frame: int
 
     def __init__(
         self,
@@ -146,7 +137,7 @@ class CarlaLidarSensor:
         self._interval_ticks = ticks
         self._newest = None
         self._world = None
-        self._weathered = None
+        self._weathered_frame = -1
 
     @property
     def sweep_interval_ticks(self) -> int:
@@ -286,26 +277,28 @@ class CarlaLidarSensor:
     def _weathered_sweep(
         self, sweep: Tuple[int, np.ndarray[tuple[int, int], np.dtype[np.float32]]]
     ) -> Tuple[int, np.ndarray[tuple[int, int], np.dtype[np.float32]]]:
-        """*sweep* with the weather on it; the same noise each time it is asked for."""
-        weathered = self._weathered
-        if weathered is not None and weathered[0] == sweep[0]:
-            return weathered
+        """*sweep* (:attr:`_newest`) with the weather on it, put on once."""
+        if self._weathered_frame == sweep[0]:
+            return sweep
+        self._weathered_frame = sweep[0]
         weather = self._weather()
         if weather is None:
-            self._weathered = sweep
             return sweep
-        # Seeded by the sweep's frame: a run repeats its noise however often,
-        # and from whichever tick, its sweeps are asked for.
-        seed = (self._config.noise_seed * _NOISE_SEED_STRIDE + sweep[0]) & _SEED_MASK
         result = (
             sweep[0],
-            apply_weather(sweep[1], weather, self._config.weather_noise, seed),
+            apply_weather(
+                sweep[1],
+                weather,
+                self._config.weather_noise,
+                self._config.noise_seed,
+                sweep[0],
+            ),
         )
-        self._weathered = result
+        self._newest = result
         return result
 
     def _weather(self) -> Optional[LidarWeather]:
-        """The world's rain and fog now; ``None`` when there is none to put on."""
+        """The world's rain and fog now; ``None`` when no noise is to be put on."""
         world = self._world
         if world is None or self._config.weather_noise <= 0.0:
             return None
@@ -314,14 +307,11 @@ class CarlaLidarSensor:
         except Exception:  # noqa: BLE001 - a lost reading costs the noise, not the sweep
             logger.exception("failed to read the weather for the LiDAR noise")
             return None
-        reading = LidarWeather(
+        return LidarWeather(
             precipitation=float(weather.precipitation),
             fog_density=float(weather.fog_density),
             fog_distance=float(weather.fog_distance),
         )
-        if reading.clear:
-            return None
-        return reading
 
     def _due(self, frame: int) -> bool:
         """Whether a sweep newer than the newest one is due by *frame*."""

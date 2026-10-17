@@ -78,58 +78,67 @@ def apply_weather(
     weather: LidarWeather,
     gain: float,
     seed: int,
+    frame: int,
 ) -> np.ndarray[tuple[int, int], np.dtype[np.float32]]:
     """*raw* (``[N, 4]`` x, y, z, intensity, in the sensor frame) as seen through *weather*.
 
     A new array: fewer points (lost to attenuation), the rest moved along their
     rays, some returned early.  *raw* itself when *gain* is 0 or the weather
-    clear.  The noise is drawn from a generator seeded with *seed*
-    (non-negative).
+    clear.  The noise is drawn from a generator seeded with *seed* and the
+    sweep's *frame* (both non-negative), so a sweep's noise repeats.
     """
-    if gain <= 0.0 or weather.clear or raw.shape[0] == 0:
+    count = raw.shape[0]
+    if gain <= 0.0 or weather.clear or count == 0:
         return raw
     rain = _fraction(weather.precipitation, gain)
     fog = _fraction(weather.fog_density, gain)
     fog_start = max(weather.fog_distance, 0.0)
-    rng = np.random.default_rng(seed)
+    rng = np.random.default_rng([seed, frame])
 
-    xyz = raw[:, :3].astype(np.float64)
-    intensity = raw[:, 3].astype(np.float64)
-    count = raw.shape[0]
-    ranges = np.sqrt(np.sum(xyz * xyz, axis=1))
-    in_fog = np.maximum(ranges - fog_start, 0.0)
+    xyz = raw[:, :3]
+    ranges = np.sqrt(np.sum(xyz * xyz, axis=1)).astype(np.float64)
+    extinction = ranges * (rain * _RAIN_EXTINCTION_PER_M)
+    sigma = ranges * (rain * _RAIN_RANGE_NOISE)
+    if fog > 0.0:
+        in_fog = np.maximum(ranges - fog_start, 0.0)
+        extinction = extinction + in_fog * (fog * _FOG_EXTINCTION_PER_M)
+        sigma = sigma + in_fog * (fog * _FOG_RANGE_NOISE)
+    transmittance = np.exp(extinction * -2.0)
 
-    transmittance = np.exp(
-        -2.0
-        * (
-            rain * _RAIN_EXTINCTION_PER_M * ranges
-            + fog * _FOG_EXTINCTION_PER_M * in_fog
-        )
-    )
-    sigma = rain * _RAIN_RANGE_NOISE * ranges + fog * _FOG_RANGE_NOISE * in_fog
-    noisy = np.maximum(ranges + rng.standard_normal(count) * sigma, 0.0)
-    out_intensity = intensity * transmittance
-
-    # A rain drop can stop a beam anywhere; fog only where it is drawn.
+    # A rain drop can stop a beam anywhere; fog only where it is drawn.  Only
+    # the few beams drawn early get an early range.
     p_rain = rain * _RAIN_EARLY_RETURN
-    p_fog = fog * _FOG_EARLY_RETURN
+    p_early = p_rain + fog * _FOG_EARLY_RETURN
     draw = rng.random(count)
-    early_rain = draw < p_rain
-    early_fog = (draw >= p_rain) & (draw < p_rain + p_fog)
+    candidates = np.flatnonzero(draw < p_early)
     early_at = (
-        np.where(early_fog, fog_start, 0.0)
+        np.where(draw[candidates] >= p_rain, fog_start, 0.0)
         + _EARLY_RETURN_MIN_M
-        + rng.exponential(_EARLY_RETURN_MEAN_M, count)
+        + rng.exponential(_EARLY_RETURN_MEAN_M, candidates.shape[0])
     )
-    early = (early_rain | early_fog) & (early_at < ranges)
-    noisy = np.where(early, early_at, noisy)
-    out_intensity = np.where(
-        early, intensity * rng.random(count) * _EARLY_RETURN_INTENSITY, out_intensity
-    )
+    hit = early_at < ranges[candidates]
+    early = np.zeros(count, dtype=np.bool_)
+    early[candidates[hit]] = True
+    early_range = np.zeros(count, dtype=np.float64)
+    early_range[candidates[hit]] = early_at[hit]
 
-    keep = early | (rng.random(count) < transmittance)
-    scale = np.where(ranges > 0.0, noisy / np.maximum(ranges, 1e-9), 1.0)
-    out = np.empty((count, 4), dtype=np.float32)
-    out[:, :3] = (xyz * scale[:, None]).astype(np.float32)
-    out[:, 3] = out_intensity.astype(np.float32)
-    return out[keep]
+    kept = np.flatnonzero(early | (rng.random(count) < transmittance))
+    kept_early = early[kept]
+    kept_ranges = ranges[kept]
+    noisy = np.where(
+        kept_early,
+        early_range[kept],
+        np.maximum(kept_ranges + rng.standard_normal(kept.shape[0]) * sigma[kept], 0.0),
+    )
+    intensity_scale = np.where(
+        kept_early,
+        rng.random(kept.shape[0]) * _EARLY_RETURN_INTENSITY,
+        transmittance[kept],
+    )
+    # A return at the sensor itself has neither noise nor an early range: it
+    # stays at the origin whatever the divisor.
+    scale = noisy / np.maximum(kept_ranges, 1e-9)
+    out = raw[kept]
+    out[:, :3] = (out[:, :3] * scale[:, None]).astype(np.float32)
+    out[:, 3] = (out[:, 3] * intensity_scale).astype(np.float32)
+    return out
