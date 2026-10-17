@@ -7,7 +7,10 @@ from __future__ import annotations
 
 import ast
 import os
+import shutil
+from collections.abc import Callable
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -18,6 +21,8 @@ from autoware_carla_scenario.typecheck.check import (
     TypeCheckResult,
     _cache_key,
     _cached,
+    _distributions_digest,
+    _package_digest,
     _Module,
     _Sources,
     _store,
@@ -86,6 +91,131 @@ def test_the_key_of_a_program_does_not_depend_on_where_its_modules_are(
 
     assert key("/run1") == key("/run2")
     assert key("/run1") != key("/run1", "x = 2\n")
+
+
+@pytest.fixture
+def key(monkeypatch: pytest.MonkeyPatch) -> Callable[..., str]:
+    """The key of one program, with a fixed compiler and model (#268)."""
+    monkeypatch.setattr(check, "_toolchain_digest", lambda tc: "tc")
+    monkeypatch.setattr(check, "_framework_digest", lambda codon_path: "fw")
+
+    def key(directory: str = "/run1", problem: str | None = None) -> str:
+        sources = _sources(directory)
+        if problem is not None:
+            sources.problems.append(Diagnostic(problem, f"{directory}/scenario.py", 2))
+        driver = f"__file__: str = '{directory}/scenario.py'\n"
+        return _cache_key(None, Path("/codon"), sources, driver)  # type: ignore[arg-type]
+
+    return key
+
+
+def test_a_change_to_the_frameworks_python_alone_is_another_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, key: Callable[..., str]
+) -> None:
+    """#268: mypy reads the framework's Python, so a verdict on a scenario
+    calling ``lanelet_length`` is stale once it may return None, though
+    the model is unchanged."""
+    package = Path(check.__file__).resolve().parent.parent
+    copy = tmp_path / package.name
+    shutil.copytree(package, copy, ignore=shutil.ignore_patterns("__pycache__"))
+    monkeypatch.setattr(check, "__file__", str(copy / "typecheck" / "check.py"))
+
+    def digest() -> str:
+        _package_digest.cache_clear()
+        return key()
+
+    try:
+        before = digest()
+        assert digest() == before
+        transform = copy / "coordinate" / "transform.py"
+        text = transform.read_text(encoding="utf-8")
+        old = "def lanelet_length(lanelet_id: int) -> float:"
+        assert old in text
+        transform.write_text(
+            text.replace(
+                old, 'def lanelet_length(lanelet_id: int) -> "Optional[float]":'
+            ),
+            encoding="utf-8",
+        )
+        after = digest()
+        assert after != before
+        # A stub, which mypy reads in place of its module, counts too.
+        (stub,) = copy.rglob("autoware_bridge_pb2.pyi")
+        stub.write_text(stub.read_text(encoding="utf-8") + "\nx: int\n")
+        assert digest() != after
+    finally:
+        _package_digest.cache_clear()
+
+
+def test_another_mypy_is_another_key(
+    monkeypatch: pytest.MonkeyPatch, key: Callable[..., str]
+) -> None:
+    monkeypatch.setattr(check, "_mypy_version", lambda: "1.19.0")
+    before = key()
+    monkeypatch.setattr(check, "_mypy_version", lambda: "1.20.0")
+    assert key() != before
+    monkeypatch.setattr(check, "_mypy_version", lambda: "")  # not installed
+    assert len({before, key()}) == 2
+
+
+def test_another_installed_distribution_is_another_key(
+    monkeypatch: pytest.MonkeyPatch, key: Callable[..., str]
+) -> None:
+    """mypy follows a scenario's imports into the installed distributions
+    (numpy, lanelet2, typesafe_carla), whose types decide what may be None;
+    the framework's own version is not one of them (a release alone keeps
+    the verdicts)."""
+
+    def installed(**versions: str) -> str:
+        dists = [
+            SimpleNamespace(metadata={"Name": name}, version=version)
+            for name, version in versions.items()
+        ]
+        monkeypatch.setattr(check.importlib.metadata, "distributions", lambda: dists)
+        _distributions_digest.cache_clear()
+        return key()
+
+    try:
+        before = installed(numpy="2.2.0", autoware_carla_scenario="14.2.1")
+        assert installed(numpy="2.2.0", autoware_carla_scenario="14.2.2") == before
+        assert installed(numpy="2.3.0", autoware_carla_scenario="14.2.1") != before
+        assert (
+            installed(
+                numpy="2.2.0", lanelet2="1.0", **{"autoware-carla-scenario": "14.2.1"}
+            )
+            != before
+        )
+    finally:
+        _distributions_digest.cache_clear()
+
+
+def test_another_python_is_another_key(
+    monkeypatch: pytest.MonkeyPatch, key: Callable[..., str]
+) -> None:
+    before = key()
+    with monkeypatch.context() as patch:
+        patch.setattr(check, "sys", SimpleNamespace(version_info=(3, 99, 0)))
+        other = key()
+    assert other != before
+    assert key() == before
+
+
+def test_what_python_found_wrong_is_in_the_key(key: Callable[..., str]) -> None:
+    """#268: a hit returns before the compile reads ``sources.problems``."""
+    assert key() != key(problem="foo is missing")
+    assert key(problem="foo is missing") != key(problem="bar is missing")
+    # Where the modules are still does not matter.
+    assert key("/run1", "foo is missing") == key("/run2", "foo is missing")
+
+
+def test_a_stale_verdict_is_not_returned_once_python_finds_a_problem(
+    cache_dir: Path, key: Callable[..., str]
+) -> None:
+    ok = TypeCheckResult("pkg.MyScenario", ok=True)
+    _store(key(), ok, _sources("/run1"))
+    check._CACHE.clear()
+    assert _cached(key(), _sources("/run1")) == ok
+    assert _cached(key(problem="foo is missing"), _sources("/run1")) is None
 
 
 def test_a_read_entry_has_its_times_touched(cache_dir: Path) -> None:

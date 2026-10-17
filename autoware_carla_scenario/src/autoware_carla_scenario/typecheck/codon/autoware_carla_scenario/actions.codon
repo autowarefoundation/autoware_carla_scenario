@@ -320,3 +320,8 @@ class WalkStraightAction(BaseAction):
         _keyword_only(_kw, "WalkStraightAction(): label and once")
         _expect_role(entity_name)
         super().__init__(label, condition, timing, once=once)
+
+
+# As conditions.codon builds a BaseCondition: so `Optional[BaseAction]` None
+# compiles in a program that builds no action (#263).
+BaseAction("")

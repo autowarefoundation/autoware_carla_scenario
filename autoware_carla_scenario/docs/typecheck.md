@@ -67,9 +67,20 @@ A process compiles a program once and keeps the verdict for as long as it
 runs. Set `AUTOWARE_CARLA_SCENARIO_TYPECHECK_CACHE` to a directory to keep
 them beyond that, one file per program: a later process with the same
 inputs reads the verdict instead of compiling. The key covers everything the
-compile reads: the scenario's (or the framework's) modules, the generated
-driver, the model, typesafe_carla's Codon library, the checker, and the
-compiler's version and standard library. A crash is never kept, and an entry
+verdict depends on. For the compile, that is the scenario's (or the
+framework's) modules, the generated driver, the model, typesafe_carla's Codon
+library, and the compiler's version and standard library. For the None
+check, it is every Python source and stub of the framework, the checker
+included (mypy reads them for the types of what a scenario calls), the name
+and version of every other installed distribution (mypy follows a
+scenario's imports into numpy, lanelet2 or typesafe_carla), the mypy
+version, and the Python version. And it includes what the checks made in
+Python found before the compile: an import the framework's Python lacks, or
+an abstract class that is built. These digests are taken once a process
+(about 100 ms). What the key leaves out: the source of another distribution
+installed editable (only its version is read), and environment variables
+mypy reads, such as `MYPYPATH`; clear the directory after changing either.
+A crash is never kept, and an entry
 that cannot be read counts as a miss. A verdict read from the directory has
 its file's times touched, so the directory can be pruned by access time.
 
@@ -650,6 +661,28 @@ scenario has to do itself:
   `setup()` and an action's `execute()` ([*What is checked*](#what-is-checked)).
 - **Test an `Optional` for `None` before using it**: a `float | None` config
   field, `goal_pose`, `find_actor_by_role_name(...)`.
+- **Build an object of a class you hold in an `Optional`, when the class has
+  subclasses and nothing else builds one.** Codon 0.19 checks
+  `x: X | None = None` (or a parameter defaulting to `None`) of such a
+  class, then generates code that LLVM refuses ("LLVM: error: value doesn't
+  match function result type 'ptr'"), when the program builds no `X` nor
+  any subclass of it, or defines a subclass after Codon compiled `X` (#263).
+  The model builds its own such classes once, after their subclasses:
+  `BaseCondition`, `BaseAction` and lanelet2's `ConstLanelet`,
+  `ConstLineString2d`, `ConstLineString3d`, `ConstPoint3d` and
+  `RegulatoryElement` (the others are built by the scenario check anyway).
+  So a scenario that builds actions but no condition compiles, though each
+  action's `condition = None` is an `Optional[BaseCondition]`, whether it
+  registers the actions or keeps them in a `list` or `dict` of `BaseAction`.
+  A class of your own, or your subclass of a framework class that nothing
+  builds (`class MyResult(ScenarioResult)`), can still meet it; the check
+  then names the class and what to do, at the `class` line of it or of its
+  subclass, and keeps no verdict, as for any crash:
+
+  ```text
+  scenario.py:73: error: Codon 0.19 generated code it cannot compile for autoware_carla_scenario.conditions.ScenarioResult, a class with subclasses: a bug of Codon's rather than an error of the program (#263). It does so for an Optional of such a class (`x: ScenarioResult | None = None`, a parameter that defaults to None) when the program builds no object of the class or of a subclass, or defines a subclass after Codon compiled the class. Build a MyResult where setup() reaches it, or hold the value without Optional
+      LLVM: error: '%obj' defined with type 'ptr' but expected '{ ptr, ptr }'
+  ```
 
 Annotations Codon cannot express (`Union` of two types, `Any`, `Callable`,
 `Sequence`, `type[...]`) are dropped from parameters, which become generic:
@@ -856,7 +889,7 @@ To check one more module:
 ### What is checked of the framework
 
 Every module now has an entry other than `"not yet checked (#45)"`. 170 of
-the package's 249 modules (68%; about 41,900 of 74,300 lines) are `CHECKED`:
+the package's 249 modules (68%; about 43,800 of 76,200 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the conversions between
 Lanelet2, OpenDRIVE and CARLA world poses (`coordinate.transform`), the stop
 lines read off a Lanelet2 map (`utils.stop_line`, `coordinate.stop_line`)
@@ -948,13 +981,13 @@ a `TrajectoryVertex` call's arguments, each of any type (`Any`), walks or
 binds a sweeper constraint of any kind, builds a condition's status (its
 details), or takes the list a plain tick callback goes into
 (`BaseScenario._register_tick()`, a `List[Callable[[carla.World], None]]`,
-which the check has no value of). The 77 `EXCLUDED` modules fall in
-four groups. Many fit more than one (about 55 import what Codon cannot
-compile, 28 build on an excluded module and 20 hold values Codon has no type
+which the check has no value of). The 79 `EXCLUDED` modules fall in
+four groups. Many fit more than one (about 57 import what Codon cannot
+compile, 28 build on an excluded module and 21 hold values Codon has no type
 for), so each is counted once, in the first group that fits it:
 
-- **55 import what Codon cannot compile**: pyxodr,
-  pydantic, grpc, omegaconf and hydra, yaml, openodd (a Rust extension),
+- **57 import what Codon cannot compile**: pyxodr,
+  pydantic, pickle, lxml, grpc, omegaconf and hydra, yaml, openodd (a Rust extension),
   cyclonedds (`ros2.cyclone` and `ros2.messages`, the ROS 2 ego's DDS
   transport and its message types), or
   a standard module Codon lacks (`json`, `inspect`, `tempfile`, `importlib`
@@ -962,7 +995,8 @@ for), so each is counted once, in the first group that fits it:
   `subprocess`, `importlib.metadata` or `urllib.parse` than their shims
   declare), at module level or inside a function the check calls. This is
   the tooling around a run (the editor, the UI, authoring, the sweeper's
-  expansion, Hydra sweeper and map loader, the map cache, the Autoware
+  expansion, Hydra sweeper and map loader, the map caches (the map
+  repositories, the Lanelet2 z offset and the pyxodr road network), the Autoware
   stack's dev container, the
   record of a run's environment), the ODD and coverage modules that wrap
   openodd, and the rest of what reads Lanelet2. A reason names `pathlib`
@@ -988,8 +1022,14 @@ for), so each is counted once, in the first group that fits it:
   `CarlaCameraSensor`'s listen callback.
 
 The scenario check is not limited by this: it compiles every scenario against
-the model, which declares the public API, every name and member of it or the
-reason it leaves one out (`typecheck/not_modelled.py`).
+the model. The model does not declare the whole public API: what
+`test_typecheck_model.py` guarantees is that every public name of a modelled
+module, and every public method, property and class attribute of a class the
+model declares, is either declared or listed with the reason it is left out
+in `typecheck/not_modelled.py` (`NOT_MODELLED`, `NOT_MODELLED_MEMBERS`), and
+the check refuses a use of a listed one with that reason (#249, #265).
+Attributes a class only annotates (set on the instance) are outside that
+guarantee.
 
 ### What is compiled
 

@@ -34,6 +34,7 @@ from __future__ import annotations
 import ast
 import dataclasses
 import hashlib
+import importlib.metadata
 import importlib.util
 import inspect
 import json
@@ -116,6 +117,14 @@ _LOCATION = re.compile(
 )
 _ERROR = re.compile(r"error: ?(?P<message>.*)$")
 _CRASH_MARKERS = ("Assert failed", "Segmentation fault", "Aborted")
+#: Codon 0.19's code generation refusing the IR it generated itself: a bug of
+#: Codon's, no error of the program (#263).
+_LLVM_ERROR = "LLVM: error:"
+#: The class an LLVM error's frame names, as in
+#: ``(__internal__.opt_ref_new_rtti:0[,std.pkg.module.Cls.0])``.
+_LLVM_CLASS = re.compile(
+    r"\(__internal__\.\w+:\d+\[.*?(?P<cls>[A-Za-z_][\w.]*)\.\d+\]+\)"
+)
 #: Where an error in the generated driver is reported: the scenario does not
 #: build the way the runner builds it (its constructor, setup() or is_done()).
 _DRIVER_LABEL = "<the scenario as register_scenario() builds it>"
@@ -1086,13 +1095,69 @@ def _tree_digest(digest: Any, paths: list[Path]) -> None:
 
 @lru_cache(maxsize=4)
 def _framework_digest(codon_path: Path) -> str:
-    """The inputs that do not change while the process runs: the CARLA
-    library, the model and the checker itself."""
+    """The Codon inputs that do not change while the process runs: the CARLA
+    library and the model."""
     library = (codon_path / _LIBRARY).resolve()
     digest = hashlib.sha256(str(library).encode())
     _tree_digest(digest, list(library.rglob("*.codon")))
     _tree_digest(digest, list(model_dir().rglob("*.codon")))
-    _tree_digest(digest, list(Path(__file__).parent.glob("*.py")))
+    return digest.hexdigest()
+
+
+@lru_cache(maxsize=1)
+def _package_digest() -> str:
+    """The framework's Python, the checker's included: every ``*.py`` (and
+    ``*.pyi``, which mypy prefers) of the package, by its path in the package
+    and its text.
+
+    mypy reads it for the types of what a scenario calls (the None check), and
+    the checks Python makes before the compile import it (``sources.problems``).
+    It cannot change while the process runs: Python has already imported it.
+    """
+    root = Path(__file__).resolve().parent.parent
+    digest = hashlib.sha256()
+    for path in sorted([*root.rglob("*.py"), *root.rglob("*.pyi")]):
+        digest.update(path.relative_to(root).as_posix().encode() + b"\0")
+        digest.update(path.read_bytes() + b"\0")
+    return digest.hexdigest()
+
+
+@lru_cache(maxsize=1)
+def _mypy_version() -> str:
+    """The version of the mypy the None check runs (``python -m mypy``, this
+    interpreter's), or ``""`` without one."""
+    try:
+        return importlib.metadata.version("mypy")
+    except importlib.metadata.PackageNotFoundError:
+        return ""
+
+
+@lru_cache(maxsize=1)
+def _distributions_digest() -> str:
+    """The name and version of every distribution installed beside the
+    framework (its own aside, which :func:`_package_digest` covers by its
+    text): mypy follows a scenario's imports into them (numpy, lanelet2,
+    typesafe_carla's CPython package), and their types decide what may be
+    None. A version is all that is read of one, so an editable install's
+    edits are not seen."""
+    own = _PACKAGE.replace("_", "-")
+    names = set()
+    for dist in importlib.metadata.distributions():
+        name = re.sub(r"[-_.]+", "-", dist.metadata["Name"] or "").lower()
+        if name != own:
+            names.add(f"{name}=={dist.version}")
+    return hashlib.sha256("\n".join(sorted(names)).encode()).hexdigest()
+
+
+def _python_digest() -> str:
+    """What the verdict depends on beyond the compile (#268): the framework's
+    Python, the mypy that reads it, the distributions it follows imports
+    into, and the Python (its typeshed, and what the checks made in Python
+    find) that runs both."""
+    digest = hashlib.sha256(_package_digest().encode())
+    digest.update(f"\0mypy {_mypy_version()}".encode())
+    digest.update(f"\0dists {_distributions_digest()}".encode())
+    digest.update(f"\0python {sys.version_info[0]}.{sys.version_info[1]}".encode())
     return digest.hexdigest()
 
 
@@ -1115,12 +1180,20 @@ def _cache_key(
 ) -> str:
     digest = hashlib.sha256(_toolchain_digest(tc).encode())
     digest.update(_framework_digest(codon_path).encode())
+    digest.update(_python_digest().encode())
     for name, module in sorted(sources.modules.items()):
         digest.update(name.encode())
         digest.update(module.text.encode())
     # The driver names each module's file (its `__file__`); a verdict names it
     # by its marker (_relocated), so the same program elsewhere is a hit.
     markers = _module_markers(sources)
+    # What Python found wrong before the compile (an import the framework's
+    # Python lacks, an abstract class built) is the verdict when there is
+    # any, and a hit returns before _compile reads it (#268).
+    problems = _relocated(
+        TypeCheckResult("", ok=False, diagnostics=list(sources.problems)), markers
+    ).diagnostics
+    digest.update(json.dumps([dataclasses.asdict(d) for d in problems]).encode())
     for path in sorted(markers, key=len, reverse=True):
         driver_source = driver_source.replace(path, markers[path])
     digest.update(driver_source.encode())
@@ -1419,9 +1492,13 @@ def _compile(
             except Exception:  # only a hint: never lose Codon's own errors to it
                 pass
     seconds = time.monotonic() - started
+    codegen = proc.returncode != 0 and _LLVM_ERROR in output
+    if codegen:
+        diagnostics = [_codegen_crash(output, sources)]
     crashed = proc.returncode != 0 and (
         proc.returncode < 0
         or proc.returncode > 128
+        or codegen
         or any(m in output for m in _CRASH_MARKERS)
     )
     if proc.returncode != 0 and not diagnostics:
@@ -1437,6 +1514,66 @@ def _compile(
         crashed=crashed,
         output=output,
         seconds=seconds,
+    )
+
+
+def _codegen_crash(output: str, sources: _Sources) -> Diagnostic:
+    """Codon 0.19's code generation failing, as what to change (#263).
+
+    Codon checked the program, then generated LLVM IR that LLVM refuses: a
+    bug of Codon's. Every case seen is an ``Optional`` of a class with
+    subclasses, which Codon lowers as one of them before it knows of the
+    other. Named by the class the error's frame names, at the ``class`` line
+    of that class or of a subclass of it in the checked modules.
+    """
+    text = _ANSI.sub("", output)
+    llvm = next(
+        (line.strip() for line in text.splitlines() if _LLVM_ERROR in line),
+        _LLVM_ERROR,
+    )
+    llvm = llvm[llvm.index(_LLVM_ERROR) :]
+    found = _LLVM_CLASS.search(text)
+    if found is None:
+        return Diagnostic(
+            "Codon 0.19 generated code it cannot compile, a bug of Codon's "
+            "rather than an error of the program (#263); the cases seen are an "
+            "Optional of a class with subclasses (`x: X | None = None`) where "
+            "no object of the class or of a subclass is built: build one where "
+            "setup() reaches it, or hold the value without Optional",
+            trace=(llvm,),
+        )
+    qualified = found["cls"].removeprefix("std.")
+    cls = qualified.rpartition(".")[2]
+    path: str | None = None
+    line: int | None = None
+    sub: str | None = None
+    for module in sources.modules.values():
+        for node in ast.walk(module.tree):
+            if not isinstance(node, ast.ClassDef):
+                continue
+            bases = {
+                b.id if isinstance(b, ast.Name) else b.attr
+                for b in node.bases
+                if isinstance(b, (ast.Name, ast.Attribute))
+            }
+            if node.name == cls or cls in bases:
+                path, line = str(module.path), node.lineno
+                sub = node.name if node.name != cls else None
+                break
+        if path is not None:
+            break
+    build = f"a {sub}" if sub is not None else f"a {cls} (or one of its subclasses)"
+    return Diagnostic(
+        f"Codon 0.19 generated code it cannot compile for {qualified}, a class "
+        "with subclasses: a bug of Codon's rather than an error of the program "
+        "(#263). It does so for an Optional of such a class "
+        f"(`x: {cls} | None = None`, a parameter that defaults to None) when "
+        "the program builds no object of the class or of a subclass, or "
+        "defines a subclass after Codon compiled the class. Build "
+        f"{build} where setup() reaches it, or hold the value without Optional",
+        path,
+        line,
+        trace=(llvm,),
     )
 
 
