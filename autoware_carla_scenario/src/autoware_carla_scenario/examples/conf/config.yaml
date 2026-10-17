@@ -21,6 +21,14 @@ odd: default
 # type-check (docs/typecheck.md): auto (when Codon is installed), required, off.
 typecheck: auto
 
+# The video rendered from each run's recording ({Scenario}.mp4): its size in
+# pixels, even numbers both. The replay renders and encodes every frame at this
+# size, so a smaller one (video.width=960 video.height=540) makes a sweep's
+# videos faster to render.
+video:
+  width: 1920
+  height: 1080
+
 server:
   host: localhost
   port: 2000

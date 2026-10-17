@@ -63,6 +63,10 @@ from autoware_carla_scenario import (
     TrafficSourceAction,
 )
 from autoware_carla_scenario.autoware_stack.launcher import AutowareLauncher
+from autoware_carla_scenario.camera_recorder import (
+    DEFAULT_IMAGE_HEIGHT,
+    DEFAULT_IMAGE_WIDTH,
+)
 from autoware_carla_scenario.conditions import ScenarioResult
 from autoware_carla_scenario.constants import DEFAULT_TM_PORT
 from autoware_carla_scenario.maps import resolve_map_paths
@@ -634,11 +638,14 @@ def run_scenario_with_queue(
     odd: str | None = None,
     autoware_launcher: AutowareLauncher | None = None,
     case: OddCase | None = None,
+    video_size: tuple[int, int] = (DEFAULT_IMAGE_WIDTH, DEFAULT_IMAGE_HEIGHT),
 ) -> ScenarioResult:
     """Run a single pre-built scenario using :class:`ScenarioQueue`.
 
     *case* is the case drawn from the ODD that it runs, recorded with its
     outcome in its coverage file (:meth:`ScenarioRunner.run_scenario`).
+    *video_size* is the width and height of the video rendered from the run's
+    recording.
 
     This is the extracted orchestration logic that was previously embedded
     inside :func:`run_scenario`.  Downstream projects can use this to execute
@@ -668,6 +675,8 @@ def run_scenario_with_queue(
         traffic_backend=traffic_backend,
         odd=odd,
         autoware_launcher=autoware_launcher,
+        video_width=video_size[0],
+        video_height=video_size[1],
     )
     queue.add(scenario, case=case)
     with queue:
@@ -678,6 +687,15 @@ def run_scenario_with_queue(
 def _optional_float(value: object) -> float | None:
     """Read an optional numeric config value that may be absent or null."""
     return None if value is None else float(value)  # type: ignore[arg-type]
+
+
+def _video_size(cfg: DictConfig) -> tuple[int, int]:
+    """The size of the video rendered from each run's recording (``video``)."""
+    video = cfg.get("video") or {}
+    return (
+        int(video.get("width", DEFAULT_IMAGE_WIDTH)),
+        int(video.get("height", DEFAULT_IMAGE_HEIGHT)),
+    )
 
 
 def _odd_case(cfg: DictConfig) -> OddCase | None:
@@ -1105,6 +1123,8 @@ def run_batch(
         traffic_backend=build_traffic_backend(first_cfg),
         odd=_odd_spec(first_cfg),
         autoware_launcher=build_autoware_launcher(first_cfg),
+        video_width=_video_size(first_cfg)[0],
+        video_height=_video_size(first_cfg)[1],
     )
 
     for cfg, scenario in zip(configs, scenarios):
@@ -1356,6 +1376,7 @@ def run_scenario(
         odd=_odd_spec(cfg),
         autoware_launcher=build_autoware_launcher(cfg),
         case=_odd_case(cfg),
+        video_size=_video_size(cfg),
     )
 
     status = "PASSED" if result.passed else "FAILED"

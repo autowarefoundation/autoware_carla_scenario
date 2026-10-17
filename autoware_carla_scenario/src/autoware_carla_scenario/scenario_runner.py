@@ -14,7 +14,12 @@ import typesafe_carla.carla as carla
 if TYPE_CHECKING:
     from .scenario_base import SpectatorCameraConfig
 
-from .camera_recorder import CameraRecorder
+from .camera_recorder import (
+    DEFAULT_IMAGE_HEIGHT,
+    DEFAULT_IMAGE_WIDTH,
+    CameraRecorder,
+    check_video_size,
+)
 from .entity.ego import EgoVehicle
 from .entity.registry import (
     clear_entities,
@@ -62,6 +67,13 @@ WARMUP_CAPTION: str = "Warm-up"
 #: than one tick, or the tick that is to show them removes them before the
 #: frame is rendered; less than two, or they linger into the next frame.
 _DEBUG_MARKER_LIFE_TIME: float = 1.5 * FIXED_DELTA_SECONDS
+
+#: How many ticks of the replay may run ahead of the frames taken from the
+#: camera.  A frame reaches the client some milliseconds after the tick that
+#: rendered it returned; taking it only after the next tick or two overlaps
+#: that delivery with them instead of waiting for it.  The frames still go
+#: into the video one per tick, in order.
+_REPLAY_FRAMES_IN_FLIGHT: int = 2
 
 
 def _bounds_the_run(condition: BaseCondition) -> bool:
@@ -527,6 +539,9 @@ class ScenarioRunner:
     _batch_xodr: Optional[Path]
     #: The episode this runner last loaded _batch_map into, if it knows it.
     _batch_episode: Optional[int]
+    #: The size, in pixels, of the video rendered from each run's recording.
+    video_width: int
+    video_height: int
 
     def __init__(
         self,
@@ -539,6 +554,8 @@ class ScenarioRunner:
         max_tick_rate_hz: Optional[float] = None,
         traffic_backend: Optional[TrafficBackend] = None,
         odd: Optional[OddDefinition] = None,
+        video_width: int = DEFAULT_IMAGE_WIDTH,
+        video_height: int = DEFAULT_IMAGE_HEIGHT,
     ) -> None:
         """Initialize the scenario runner.
 
@@ -568,7 +585,18 @@ class ScenarioRunner:
             odd: The ODD every run is measured against: its attributes are
                 the ODD coverage, its modules say which ticks were outside it
                 (docs/odd.md).  *None* selects the built-in ``default`` ODD.
+            video_width: Width, in pixels, of the video rendered from each
+                run's recording.  The replay renders and encodes every frame
+                at this size, so a smaller one renders the video faster.
+            video_height: Its height, in pixels.  Both are even
+                (:func:`check_video_size`).
+
+        Raises:
+            ValueError: when the video size is not positive and even.
         """
+        check_video_size(video_width, video_height)
+        self.video_width = video_width
+        self.video_height = video_height
         self.odd = resolve_odd(odd)
         self.timeout_seconds = timeout_seconds
         self.output_dir = output_dir
@@ -990,18 +1018,24 @@ class ScenarioRunner:
                 offset_back=spectator_config.offset_back,
                 offset_up=spectator_config.offset_up,
                 pitch=spectator_config.pitch,
+                image_width=self.video_width,
+                image_height=self.video_height,
             )
 
             # Tick through the remaining replay frames: the warm-up, then the
             # scenario.  We already consumed one tick above for actor spawn, so
-            # replay (warmup_ticks + tick_count - 1) more.  Each tick is
-            # followed by a synchronous frame write so no frames are lost to
-            # async delivery delays.
+            # replay (warmup_ticks + tick_count - 1) more.  Each tick renders
+            # one frame, which is taken from the camera in order, at most
+            # _REPLAY_FRAMES_IN_FLIGHT ticks later, and every frame is taken
+            # before the recorder stops, so none is lost to delivery delays.
             remaining = max(warmup_ticks + tick_count - 1, 0)
             driven_path = DrivenPathDrawer()
             driven_path.update(world, ego.get_location(), 0.0)
             # The first frame past the markers last drawn, which last until then.
             drawn_until = 0
+            # The caption of each frame ticked, and how many were taken.
+            captions: list[str] = []
+            taken = 0
             for index in range(remaining):
                 # The first tick above showed the recording's frame 1, so this
                 # one shows frame index + 2.  The first warmup_ticks frames are
@@ -1027,10 +1061,13 @@ class ScenarioRunner:
                     ego.get_location(),
                     (remaining - index) * FIXED_DELTA_SECONDS + _DEBUG_MARKER_LIFE_TIME,
                 )
-                if frame <= warmup_ticks:
-                    camera_recorder.write_frame(WARMUP_CAPTION)
-                else:
-                    camera_recorder.write_frame()
+                captions.append(WARMUP_CAPTION if frame <= warmup_ticks else "")
+                while len(captions) - taken > _REPLAY_FRAMES_IN_FLIGHT:
+                    camera_recorder.write_frame(captions[taken])
+                    taken += 1
+            while taken < len(captions):
+                camera_recorder.write_frame(captions[taken])
+                taken += 1
 
             logger.info("[%s] Video rendered to %s", scenario_name, mp4_path)
 
