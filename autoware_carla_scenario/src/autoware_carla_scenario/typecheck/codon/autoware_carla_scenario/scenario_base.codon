@@ -51,6 +51,10 @@ class BaseScenario:
     DEFAULT_RANDOM_SEED: ClassVar[int] = 0
     STABILIZE_TICKS: ClassVar[int] = 5
 
+    # Codon would build it by its fields' names too (docs/typecheck.md, #244).
+    def __init__(self, ego_config, ego_entity, random_seed, _spawn_pose, _ground_projection):
+        compile_error("BaseScenario(): no constructor takes these arguments (required: ego_config)")
+
     def __init__(self, ego_config: EgoConfig, *_kw, spawn_pose: Optional[Lanelet2Pose] = None,
                  ground_projection = None, random_seed: int = 0, ego_type = None,
                  ego_entity = None):

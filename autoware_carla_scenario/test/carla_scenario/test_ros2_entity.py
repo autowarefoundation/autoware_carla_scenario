@@ -15,7 +15,10 @@ from unittest.mock import MagicMock
 import pytest
 
 from autoware_carla_scenario.driver.geometry import Pose
-from autoware_carla_scenario.entity.ros2_entity import Ros2EgoEntity
+from autoware_carla_scenario.entity.ros2_entity import (
+    Ros2EgoEntity,
+    plan_from_trajectory,
+)
 from autoware_carla_scenario.ros2 import (
     CommandSourceConfig,
     Ros2CameraConfig,
@@ -268,14 +271,59 @@ def test_a_trajectory_is_tracked_by_the_framework_follower() -> None:
         )
         for i in range(30)
     ]
-    transport.deliver("planner", TrajectoryCommand(stamp_us=0, points=tuple(points)))
+    command = TrajectoryCommand(stamp_us=0, points=tuple(points))
+    transport.deliver("planner", command)
     _tick(entity, clock)
     assert entity.active_source == "planner"
+    # Autoware's controller departs from STOPPED a tick after the plan comes, and
+    # its first DRIVE command rises from STOPPED's brake.
+    for _ in range(2):
+        transport.deliver("planner", command)
+        _tick(entity, clock)
     control = _last_control(actor)
     assert control.throttle > 0.0
     assert control.brake == pytest.approx(0.0)
     assert abs(control.steer) < 0.05
     actor.apply_ackermann_control.assert_not_called()
+
+
+def _untimed(velocities: List[float]) -> TrajectoryCommand:
+    """Straight ahead from the ego, a metre a point, ``time_from_start`` all zero."""
+    return TrajectoryCommand(
+        stamp_us=0,
+        points=tuple(
+            TrajectoryCommandPoint(0, Pose.from_xyz_yaw(8.6 + i, 2.0, 0.0, 0.0), v)
+            for i, v in enumerate(velocities)
+        ),
+    )
+
+
+def test_an_untimed_trajectory_keeps_its_stop_for_autowares_controller() -> None:
+    """Timed from its speeds, a trajectory is not cut where it stops: the stop is
+    what Autoware's controller brakes for, 5 m on.  (The time_indexed follower,
+    which reads the plan in time, still has it cut there.)"""
+    entity, transport, actor, clock = _started(actor=_actor(speed_mps=5.0))
+    command = _untimed([3.0] * 5 + [0.0] * 5)
+    transport.deliver("planner", command)
+    _tick(entity, clock)
+    planned = entity._planned
+    assert planned is not None and len(planned[1]) == 10
+    assert entity._follower.stop_distance_m == pytest.approx(5.0)
+    assert len(plan_from_trajectory(command, 0)) == 6
+
+
+def test_a_single_point_trajectory_leaves_the_last_one_tracked() -> None:
+    """Autoware's setTrajectory ignores a trajectory of fewer than two points."""
+    entity, transport, actor, clock = _started(actor=_actor(speed_mps=5.0))
+    transport.deliver("planner", _untimed([5.0] * 30))
+    _tick(entity, clock)
+    last = entity._follower._last_plan
+    assert last is not None and len(last) == 30
+    transport.deliver("planner", _untimed([0.0]))
+    _tick(entity, clock)
+    assert entity._follower._last_plan is last
+    control = _last_control(actor)
+    assert control.brake == pytest.approx(0.0)
 
 
 def test_the_plan_of_a_trajectory_is_built_once() -> None:

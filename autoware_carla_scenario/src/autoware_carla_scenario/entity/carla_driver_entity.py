@@ -287,6 +287,9 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
         self._follower.powertrain = ChaosPowertrain.from_physics_control(
             actor.get_physics_control()
         )
+        # A new session: nothing of a previous run's plans or control state.
+        self._follower.reset()
+        self._plan = Trajectory.empty()
 
         # CARLA rebuilds the map object on every ``get_map()`` call, so the run's
         # one is taken (the MapManager's, when it holds one) and reused for the

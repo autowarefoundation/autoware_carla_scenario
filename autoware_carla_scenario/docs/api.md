@@ -160,7 +160,7 @@ Connects the ego to a driving policy served over alpasim's
 | `BaseEgoDriverClient` | Transport-agnostic client interface: session lifecycle, observation submission, `drive`. |
 | `EgoDriverGrpcClient` | gRPC implementation against the vendored alpasim protos. |
 | `DriverClientConfig`, `DriverCameraConfig` | Connection settings, policy cadence, and the camera rig streamed to the policy. |
-| `ControlConfig`, `TrajectoryFollower`, `VehicleCommand` | Pure-pursuit + PID tracking that turns a plan into `carla.VehicleControl`. |
+| `ControlConfig`, `TrajectoryFollower`, `VehicleCommand` | Pure pursuit plus a port of Autoware's `autoware_pid_longitudinal_controller` (or the `time_indexed` tracker), turning a plan into `carla.VehicleControl`. |
 | `Pose`, `Trajectory` | Rigid-transform primitives with protobuf conversions (right-handed frame). |
 | `EgoObservation`, `DriveOutcome` | The state sent to the policy and the plan it returns. |
 | `RendererDataBuilder` | Collects CARLA ground truth (governing traffic light, other vehicles, speed limit) into the `renderer_data` extension payload. |

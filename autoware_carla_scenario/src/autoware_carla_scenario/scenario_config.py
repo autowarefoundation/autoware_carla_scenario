@@ -277,9 +277,10 @@ class DriverControlSpec:
     """Gains for the controller that tracks the policy's plan.
 
     Mirrors :class:`~autoware_carla_scenario.driver.control.ControlConfig`; see that
-    class for the meaning of each field.  ``max_steer_angle_deg`` and
-    ``yaw_rate_trim_limit_deg`` are expressed in degrees here for readability and
-    converted on the way in.
+    class for the meaning of each field (the ``pid`` longitudinal controller's carry
+    the names of Autoware's ``autoware_pid_longitudinal_controller`` parameters).
+    ``max_steer_angle_deg`` and ``yaw_rate_trim_limit_deg`` are expressed in degrees
+    here for readability and converted on the way in.
     """
 
     lookahead_gain_s: float = 0.6
@@ -292,15 +293,77 @@ class DriverControlSpec:
     yaw_rate_ki: float = 3.0
     yaw_rate_trim_limit_deg: float = 25.0
     yaw_rate_min_speed_mps: float = 1.0
+    longitudinal_controller: str = "pid"
+    velocity_smoothing_window: int = 8
+    stopping_threshold: float = 0.3
+    delay_compensation_time: float = 0.17
+    enable_smooth_stop: bool = True
+    enable_overshoot_emergency: bool = True
+    enable_keep_stopped_until_steer_convergence: bool = True
+    drive_state_stop_dist: float = 0.5
+    drive_state_offset_stop_dist: float = 1.0
+    stopping_state_stop_dist: float = 0.5
+    stopped_state_entry_duration_time: float = 0.1
+    stopped_state_entry_vel: float = 0.01
+    stopped_state_entry_acc: float = 0.1
+    emergency_state_overshoot_stop_dist: float = 1.5
+    kp: float = 1.0
+    ki: float = 0.1
+    kd: float = 0.0
+    max_out: float = 1.0
+    min_out: float = -1.0
+    max_p_effort: float = 1.0
+    min_p_effort: float = -1.0
+    max_i_effort: float = 0.3
+    min_i_effort: float = -0.3
+    max_d_effort: float = 0.0
+    min_d_effort: float = 0.0
+    lpf_vel_error_gain: float = 0.9
+    enable_integration_at_low_speed: bool = False
+    current_vel_threshold_pid_integration: float = 0.5
+    time_threshold_before_pid_integration: float = 2.0
+    ff_scale_min: float = 0.5
+    ff_scale_max: float = 2.0
+    enable_velocity_lookahead_feedback: bool = True
+    velocity_lookahead_time: float = 1.0
+    velocity_lookahead_blend_weight: float = 0.5
+    enable_brake_keeping_before_stop: bool = False
+    brake_keeping_acc: float = -0.2
+    smooth_stop_max_strong_acc: float = -0.5
+    smooth_stop_min_strong_acc: float = -0.8
+    smooth_stop_weak_acc: float = -0.3
+    smooth_stop_weak_stop_acc: float = -0.8
+    smooth_stop_strong_stop_acc: float = -3.4
+    smooth_stop_max_fast_vel: float = 0.5
+    smooth_stop_min_running_vel: float = 0.01
+    smooth_stop_min_running_acc: float = 0.01
+    smooth_stop_weak_stop_time: float = 0.8
+    smooth_stop_weak_stop_dist: float = -0.3
+    smooth_stop_strong_stop_dist: float = -0.5
+    stopped_vel: float = 0.0
+    stopped_acc: float = -3.4
+    emergency_vel: float = 0.0
+    emergency_acc: float = -5.0
+    emergency_jerk: float = -3.0
+    lpf_acc_error_gain: float = 0.98
+    acc_feedback_gain: float = 0.0
+    max_acc: float = 3.0
+    min_acc: float = -5.0
+    max_jerk: float = 2.0
+    min_jerk: float = -5.0
+    max_acc_cmd_diff: float = 50.0
+    ego_nearest_dist_threshold: float = 3.0
+    ego_nearest_yaw_threshold: float = 1.046
+    accel_lowpass_gain: float = 0.9
     speed_kp: float = 1.0
     speed_ki: float = 0.1
     integral_limit: float = 3.0
     position_gain: float = 0.5
     max_position_correction_mps: float = 6.0
     speed_preview_s: float = 1.0
-    throttle_deadband: float = 0.25
-    standstill_speed_mps: float = 0.5
     stop_distance_m: float = 0.5
+    throttle_deadband: float = 0.0
+    standstill_speed_mps: float = 0.5
     stop_brake: float = 0.6
 
 

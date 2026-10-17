@@ -92,8 +92,9 @@ class FollowTrajectoryAction(BaseAction):
     tick, with the velocity the trajectory implies: a kinematic replay that
     reproduces a recording exactly, whatever the vehicle could actually do.
     ``FOLLOW`` drives it there with the pure-pursuit and speed controller the
-    driver interface uses (:class:`~autoware_carla_scenario.driver.control.TrajectoryFollower`),
-    so the motion is the vehicle's own.  A pedestrian is walked towards the
+    driver interface uses (:class:`~autoware_carla_scenario.driver.control.TrajectoryFollower`,
+    by default with its ``time_indexed`` longitudinal controller, which tracks
+    the trajectory's clock), so the motion is the vehicle's own.  A pedestrian is walked towards the
     path in ``FOLLOW`` mode.
 
     **Who drives.**  For the length of the run the action is the entity's only
@@ -163,7 +164,10 @@ class FollowTrajectoryAction(BaseAction):
         until: Overrides what ends the run; defaults to reaching the end of
             the trajectory as above.
         control_config: Gains for ``FOLLOW`` mode; ``None`` uses the
-            controller's defaults.
+            controller's defaults with the ``time_indexed`` longitudinal
+            controller, which keeps the vehicle where the trajectory's clock
+            has it (the ego's default, Autoware's ``pid``, follows a plan's
+            speeds wherever the vehicle is on it).
         speed: The speed (m/s) the entity goes at where no vertex time paces
             it: without a time reference, and on a gated trajectory's segments
             that end at no time (or a time already past).  ``None`` (default)
@@ -534,11 +538,31 @@ class FollowTrajectoryAction(BaseAction):
         if self._following_mode is TrajectoryFollowingMode.FOLLOW and not _is_walker(
             actor
         ):
-            from ..driver.control import TrajectoryFollower  # noqa: PLC0415
+            from ..driver.control import (  # noqa: PLC0415
+                ControlConfig,
+                TrajectoryFollower,
+            )
             from ..utils.powertrain import ChaosPowertrain  # noqa: PLC0415
 
+            config = self._control_config
+            if config is None:
+                # A timed trajectory is a clock to keep, not a plan's speeds.
+                # Its crawling pull-aways need the MKZ's 0.25 throttle floor.
+                config = ControlConfig(
+                    longitudinal_controller="time_indexed", throttle_deadband=0.25
+                )
+            elif config.longitudinal_controller != "time_indexed":
+                logger.warning(
+                    "FollowTrajectoryAction: '%s' follows %r with the %s longitudinal "
+                    "controller, which follows the plan's speeds, not the "
+                    "trajectory's clock; longitudinal_controller='time_indexed' "
+                    "keeps its timing",
+                    self._entity_name,
+                    self._trajectory.name,
+                    config.longitudinal_controller,
+                )
             self._follower = TrajectoryFollower(
-                self._control_config,
+                config,
                 ChaosPowertrain.from_physics_control(
                     _as_vehicle(actor).get_physics_control()
                 ),

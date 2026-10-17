@@ -145,6 +145,7 @@ def trajectory_from_message(message: msg.Trajectory) -> TrajectoryCommand:
             time_from_start_us=_microseconds(point.time_from_start),
             pose=_pose(point.pose),
             velocity_mps=float(point.longitudinal_velocity_mps),
+            acceleration_mps2=float(point.acceleration_mps2),
         )
         for point in cast(List[msg.TrajectoryPoint], message.points)
     )

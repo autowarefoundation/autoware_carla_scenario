@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Iterator
+
+import pytest
 
 
 # git exports the variables that locate a repository (`git rev-parse
@@ -28,3 +31,19 @@ for _var in (
     "GIT_WORK_TREE",
 ):
     os.environ.pop(_var, None)
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _map_cache(tmp_path_factory: pytest.TempPathFactory) -> Iterator[None]:
+    """Keep what the suite derives from maps out of the user's own map cache.
+
+    One directory for every xdist worker of a run (the parent of the workers'
+    base temporary directories), so the road network one worker builds is the
+    one the others load; entries are written atomically.
+    """
+    from autoware_carla_scenario.maps.cache import CACHE_ROOT_ENV  # noqa: PLC0415
+
+    root = tmp_path_factory.getbasetemp().parent / "map_cache"
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setenv(CACHE_ROOT_ENV, str(root))
+        yield

@@ -6,6 +6,10 @@ import typesafe_carla.carla as carla
 class EntityRole:
     _value: str
 
+    # Codon would build it by its fields' names too (docs/typecheck.md, #244).
+    def __init__(self, _value):
+        compile_error("EntityRole(): no constructor takes these arguments (required: value)")
+
     def __init__(self, value: str):
         self._value = value
 
