@@ -560,17 +560,27 @@ scenario has to do itself:
 - **Pass numbers of the declared type.** An `int` is accepted for a `float`,
   but not inside a container: a `list[float]` parameter wants `[1.0, 2.0]`.
   YAML values are converted for you.
-- **Build a dict of different actions item by item.** Codon types a dict
-  display by its first item, so `{"turn": turn, "lane_change": lc}` (a
-  `TurnAction` and a `LaneChangeAction`) does not compile, annotated or not;
-  unlike a list display, the check does not rewrite it. Build the
-  `ActionStateCondition`'s `actions` one item at a time instead:
+- **A dict of different actions (or conditions) is a dict of their base.**
+  Codon types a dict display by its first item, so the check rewrites one
+  whose values are not evidently of one type, as it does a list display:
+  `{"turn": turn, "lane_change": lc}` (a `TurnAction` and a
+  `LaneChangeAction`) becomes `{"turn": _acs_base(turn), "lane_change":
+  _acs_base(lc)}`, which makes each action a `BaseAction` (each condition a
+  `BaseCondition`): a `dict[str, BaseAction]` as in Python, which passes as
+  `ActionStateCondition`'s `actions`. Assigned to an annotated variable,
+  `actions: dict[str, BaseAction] = {...}`, it becomes a dict of the
+  annotated type (`_acs_dict_into`, when the key and value types are plain
+  names). A value of another type is still refused at the display's line:
 
-  ```python
-  actions: dict[str, BaseAction] = {}
-  actions["turn"] = turn
-  actions["lane_change"] = lc
+  ```text
+  scenario.py:73: error: 'int' does not match expected type 'BaseAction'
   ```
+
+  Any other value is left to Codon's display, which types it as before
+  (`{"a": 1, "b": speed}` is a `dict[str, float]`, a value with `None` is
+  optional). Values evidently of one type (all literals, all calls of the
+  same name, all members of one enum) are left as written. Building the dict
+  one item at a time into a `dict[str, BaseAction]` stays valid.
 - **Convert nested mappings in the config.** The runner passes a YAML mapping
   to the config class as a `dict`, so a field annotated with a dataclass
   (`goal: Goal`) holds one at run time unless the config's `__post_init__`
@@ -1348,8 +1358,9 @@ from the model's. The two are different types that never meet:
   (`scenario_base` is checked, and imports `BaseCondition` from
   `conditions.base` for that);
   `_acs_list` gives a list display of checked conditions the type of its
-  first element, so a display mixing two checked condition classes waits for
-  the same.
+  first element (`_acs_base` leaves a checked condition in a dict display as
+  it is), so a display mixing two checked condition classes waits for the
+  same.
 
 `BaseCondition.__init_subclass__`, which wraps every subclass's `check()` to
 record its last result for the UI, is in `UNCALLED`: the check sees each

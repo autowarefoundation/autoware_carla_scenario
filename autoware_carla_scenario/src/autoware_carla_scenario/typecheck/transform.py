@@ -35,6 +35,16 @@ which :func:`transform_source_lines` maps back onto the handler):
   ``[ElapsedTimeCondition(...), SpeedCondition(...)]``, becomes
   ``_acs_list(...)``: Codon types a display by its first element, and
   ``_acs_list`` makes it a list of conditions (or actions) as in Python.
+* A dict display of two or more items whose values are not evidently of
+  one type (all literals, all calls of the same name, all attributes of the
+  same class), e.g. ``{"turn": turn, "lc": lc}``, becomes
+  ``{"turn": _acs_base(turn), "lc": _acs_base(lc)}``: Codon types a display
+  by its first item, and ``_acs_base`` makes each condition (or action) a
+  ``BaseCondition`` (``BaseAction``), so the display is a dict of them as in
+  Python; other values are left to Codon's display.  Assigned to an
+  annotated ``x: dict[K, V]`` (``K`` and ``V`` plain names), such a display,
+  of one item or more, becomes ``_acs_dict_into(Dict[K, V](), (k1, v1),
+  ...)``, a dict of the annotated type.
 * An ``Enum`` class derives from the ``enum`` shim's ``Enum[T]`` (``T`` the
   type of its values: ``str`` for ``class C(str, Enum)``, ``int`` for
   ``auto()``), and each member ``RED = "red"`` becomes the class variable
@@ -148,7 +158,8 @@ MISSING_BUILTIN_EXCEPTIONS = (
 #: First lines of every transformed module; reported line numbers are shifted
 #: back by as many.
 PRELUDE = (
-    "from autoware_carla_scenario._lists import _acs_list\n"
+    "from autoware_carla_scenario._lists import _acs_list, _acs_base, "
+    "_acs_dict_into\n"
     "from autoware_carla_scenario._tc import _Required as _acs_Required, "
     "_acs_Returning, _acs_callable, _acs_tuple\n"
     "from autoware_carla_scenario._exceptions import "
@@ -202,6 +213,19 @@ _ABSTRACT_GENERICS = {
 #: Python's immutable set, which Codon 0.19 lacks: checked as a ``Set`` (the
 #: check only types it; nothing compiled is run, so nothing can mutate it).
 _FROZENSET_NAMES = {"frozenset", "FrozenSet", "typing.FrozenSet"}
+#: Annotations of a mapping whose dict display is built with
+#: ``_acs_dict_into`` as the annotated type.
+_DICT_ANNOTATIONS = {
+    "dict",
+    "Dict",
+    "typing.Dict",
+    "Mapping",
+    "MutableMapping",
+    "typing.Mapping",
+    "typing.MutableMapping",
+    "collections.abc.Mapping",
+    "collections.abc.MutableMapping",
+}
 #: numpy's array class, which Codon's numpy has as ``ndarray[dtype, ndim]``.
 _NDARRAY_NAMES = {"np.ndarray", "numpy.ndarray"}
 _DTYPE_NAMES = {"np.dtype", "numpy.dtype"}
@@ -1339,6 +1363,20 @@ class _Rewriter(ast.NodeVisitor):
             else:
                 self.edits.replace(*self.edits.node_span(value), default)
             value = None  # replaced as a whole
+        typed = (
+            self._dict_annotation_type(node.annotation)
+            if isinstance(value, ast.Dict)
+            and not class_level
+            and _mixed_dict(value, least=1)
+            else None
+        )
+        if typed is not None:
+            # `x: dict[str, BaseAction] = {...}`: a dict of the annotated
+            # type, which a display of the first value's type would not be.
+            assert isinstance(value, ast.Dict)
+            self._rewrite_dict(value, f"_acs_dict_into({typed}(), ")
+            self.generic_visit(value)
+            value = None
         converted = self._rewrite_annotation(node.annotation, class_level=class_level)
         if converted is None and node.value is not None and not class_level:
             self.edits.replace(
@@ -1482,6 +1520,81 @@ class _Rewriter(ast.NodeVisitor):
         for child in ast.iter_child_nodes(node):
             self._unquote_alias_members(child)
 
+    def visit_Dict(self, node: ast.Dict) -> None:
+        if _mixed_dict(node):
+            # `{"turn": turn, "lc": lc}`: `{"turn": _acs_base(turn), ...}`.
+            # Each edit starts before the value it wraps (after its key),
+            # so an edit inside the value, at its first character, still
+            # applies; the display stays Codon's.
+            for key, value in zip(node.keys, node.values):
+                if not isinstance(value, _BASE_VALUES):
+                    continue
+                assert key is not None
+                key_end = self.edits.node_span(key)[1]
+                value_start, value_end = self.edits.node_span(value)
+                self.edits.replace(
+                    key_end,
+                    value_start,
+                    self.edits.text(key_end, value_start) + "_acs_base(",
+                )
+                self.edits.replace(value_end, value_end, ")")
+        self.generic_visit(node)
+
+    def _dict_annotation_type(self, annotation: ast.AST) -> str | None:
+        """``Dict[K, V]`` for a ``dict[K, V]`` / ``Mapping[K, V]`` annotation.
+
+        Only of two plain names Codon can type with (not ``Any``, a
+        ``TypeVar``, or a class defined further down); ``None`` otherwise.
+        """
+        if not (
+            isinstance(annotation, ast.Subscript)
+            and _dotted(annotation.value) in _DICT_ANNOTATIONS
+            and isinstance(annotation.slice, ast.Tuple)
+            and len(annotation.slice.elts) == 2
+        ):
+            return None
+        names = []
+        for element in annotation.slice.elts:
+            if (
+                not isinstance(element, ast.Name)
+                or element.id in _UNEXPRESSIBLE
+                or element.id in _CONCRETE_GENERICS | _ABSTRACT_GENERICS
+                or element.id in self._type_vars
+                or element.id in self._later_classes
+            ):
+                return None
+            names.append("str" if element.id in _BYTES_NAMES else element.id)
+        return f"Dict[{names[0]}, {names[1]}]"
+
+    def _rewrite_dict(self, node: ast.Dict, opening: str) -> None:
+        """``{k1: v1, k2: v2}``: ``<opening>(k1, v1), (k2, v2))``.
+
+        Each item becomes a ``(key, value)`` tuple; the text between the
+        items (commas, line breaks, comments, a parenthesised key's
+        brackets) is kept, so every item stays on its line.  No edit starts
+        where a key or a value starts, so an edit inside one still applies.
+        """
+        edits = self.edits
+        start, end = edits.node_span(node)
+        previous = start + 1  # after the `{`
+        for i, (key, value) in enumerate(zip(node.keys, node.values)):
+            assert key is not None
+            key_start, key_end = edits.node_span(key)
+            value_start, value_end = edits.node_span(value)
+            if i == 0:
+                edits.replace(
+                    start, key_start, opening + edits.text(previous, key_start) + "("
+                )
+            else:
+                edits.replace(
+                    previous, key_start, ")" + edits.text(previous, key_start) + "("
+                )
+            edits.replace(
+                key_end, value_start, _colon_to_comma(edits.text(key_end, value_start))
+            )
+            previous = value_end
+        edits.replace(previous, end, ")" + edits.text(previous, end - 1) + ")")
+
     def visit_List(self, node: ast.List) -> None:
         if (
             isinstance(node.ctx, ast.Load)
@@ -1493,6 +1606,60 @@ class _Rewriter(ast.NodeVisitor):
             self.edits.replace(start, start + 1, "_acs_list(")
             self.edits.replace(end - 1, end, ")")
         self.generic_visit(node)
+
+
+#: The dict display values ``_acs_base`` wraps: those that may be a
+#: condition or an action (not a literal, whose type Codon's display may
+#: still promote or make optional).
+_BASE_VALUES = (ast.Name, ast.Attribute, ast.Call, ast.Subscript, ast.IfExp)
+
+
+def _mixed_dict(node: ast.Dict, least: int = 2) -> bool:
+    """Whether the dict display *node* may mix classes, for ``_acs_base``.
+
+    At least *least* items, no ``**`` unpacking, and values that are not all
+    of one evident type (:func:`_evident_values`), which are left to Codon:
+    it types them as Python does.
+    """
+    if len(node.values) < least or any(key is None for key in node.keys):
+        return False
+    return not _evident_values(node.values)
+
+
+def _evident_values(values: list[ast.expr]) -> bool:
+    """Whether *values* are evidently of one type.
+
+    All literals, all f-strings, all calls of the same name
+    (``Foo(1)``, ``Foo(2)``), or all attributes of the same class
+    (``Direction.LEFT``, ``Direction.RIGHT``).
+    """
+    if all(isinstance(v, ast.Constant) for v in values):
+        return True
+    if all(isinstance(v, ast.JoinedStr) for v in values):
+        return True
+    if all(isinstance(v, ast.Call) for v in values):
+        callees = {_dotted(v.func) for v in values}  # type: ignore[attr-defined]
+        return len(callees) == 1 and None not in callees
+    if all(isinstance(v, ast.Attribute) for v in values):
+        bases = {_dotted(v.value) for v in values}  # type: ignore[attr-defined]
+        base = bases.pop() if len(bases) == 1 else None
+        return base is not None and base.rsplit(".", 1)[-1][:1].isupper()
+    return False
+
+
+def _colon_to_comma(text: str) -> str:
+    """The text between a dict key and its value, its ``:`` a ``,``.
+
+    Only brackets, blanks and comments surround the colon; a comment may
+    hold a colon of its own.
+    """
+    lines = text.split("\n")
+    for i, line in enumerate(lines):
+        code, hash_, comment = line.partition("#")
+        if ":" in code:
+            lines[i] = code.replace(":", ",", 1) + hash_ + comment
+            return "\n".join(lines)
+    raise ValueError(f"no colon between a dict key and its value: {text!r}")
 
 
 def _splittable(handler: ast.ExceptHandler) -> bool:
