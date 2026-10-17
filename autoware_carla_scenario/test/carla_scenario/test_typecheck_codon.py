@@ -1432,6 +1432,39 @@ def test_a_config_value_of_the_wrong_type_is_reported_at_its_key(
     assert error.path == "scenario.timeout_secs"
 
 
+def test_cases_that_differ_only_in_their_values_compile_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A sweep's cases are one program to Codon when only their values
+    differ (Driver.shape): the first case's verdict, a failure too, is every
+    such case's."""
+    from autoware_carla_scenario.typecheck import check
+
+    monkeypatch.delenv(check.CACHE_DIR_ENV, raising=False)
+    monkeypatch.setattr(check, "_CACHE", {})
+    compiled: list[str] = []
+    compile_ = check._compile
+
+    def counted(name: str, sources: Any, driver: Any, *args: Any) -> Any:
+        compiled.append(driver.source)
+        return compile_(name, sources, driver, *args)
+
+    monkeypatch.setattr(check, "_compile", counted)
+    scenario, config, _ = _write_case(tmp_path, _VALID_SETUP)
+    first = typecheck_scenario(scenario, config, {"min_speed_kmh": 5, "name": "a"})
+    assert first.ok, first.format()
+    second = typecheck_scenario(scenario, config, {"min_speed_kmh": 9, "name": "b"})
+    assert second is first
+    assert len(compiled) == 1
+
+    for value in ("fast", "slow"):
+        error = _only_error(
+            typecheck_scenario(scenario, config, {"timeout_seconds": value})
+        )
+        assert error.path == "scenario.timeout_seconds"
+    assert len(compiled) == 2
+
+
 _NESTED_CONFIG = """
 from dataclasses import dataclass, field
 
