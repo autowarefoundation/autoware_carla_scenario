@@ -262,7 +262,7 @@ What `test_typecheck_model.py` compares, model by model:
   `trajectory_recorder`, `environment`, `autoware_bridge/grpc_server`,
   `autoware_stack/launcher`, `autoware_stack/devcontainer` (and its values),
   `driver/egodriver_client`, `_map_source`, `maps/cache`,
-  `maps/z_offset_cache`, `ui/models`, `_ros2`, `metrics`, `measures` and
+  `maps/z_offset_cache`, `maps/road_network_cache`, `ui/models`, `_ros2`, `metrics`, `measures` and
   `utils/traffic_light`, each declaring exactly the names compared;
   `ros2/cyclone` where cyclonedds is installed.
 - **Every public name of a modelled module**: each name a module the model
@@ -610,7 +610,7 @@ To check one more module:
 ### What is checked of the framework
 
 Every module now has an entry other than `"not yet checked (#45)"`. 170 of
-the package's 248 modules (69%; about 41,900 of 74,000 lines) are `CHECKED`:
+the package's 249 modules (68%; about 41,900 of 74,300 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the conversions between
 Lanelet2, OpenDRIVE and CARLA world poses (`coordinate.transform`), the stop
 lines read off a Lanelet2 map (`utils.stop_line`, `coordinate.stop_line`)

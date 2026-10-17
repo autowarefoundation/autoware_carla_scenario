@@ -67,6 +67,7 @@ from autoware_carla_scenario.driver import egodriver_client
 from autoware_carla_scenario.entity import carla_driver_entity
 from autoware_carla_scenario.maps import cache as maps_cache
 from autoware_carla_scenario.maps import source as maps_source
+from autoware_carla_scenario.maps import road_network_cache as maps_road_network_cache
 from autoware_carla_scenario.maps import z_offset_cache as maps_z_offset_cache
 from autoware_carla_scenario.odd import probes as odd_probes
 from autoware_carla_scenario.odd import registry as odd_registry
@@ -598,6 +599,12 @@ _MODULE_MODELS: dict[str, tuple[Any, tuple[str, ...]]] = {
     # What the checked coordinate.map_manager (MapManager.initialize) uses of
     # the unchecked z_offset_cache (json, contextlib).
     "maps/z_offset_cache": (maps_z_offset_cache, ("cached_z_offset", "z_offset_key")),
+    # What the checked coordinate.map_manager (MapManager.initialize and
+    # road_network) uses of the unchecked road_network_cache (pickle, lxml).
+    "maps/road_network_cache": (
+        maps_road_network_cache,
+        ("load_roads", "open_road_network"),
+    ),
     # A pydantic model: its fields by keyword only, as Python's signature.
     "ui/models": (ui_models, ("RunProgress", "Status")),
     # The base and config of ros2/cyclone.codon's CycloneRos2Transport, shared
