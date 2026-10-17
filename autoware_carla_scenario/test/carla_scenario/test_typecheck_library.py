@@ -39,6 +39,7 @@ from autoware_carla_scenario.typecheck.library import (
     package_modules,
 )
 from autoware_carla_scenario.typecheck.library_driver import (
+    call_sites,
     render_library_checks,
     render_library_driver,
     workspace_module,
@@ -1332,6 +1333,78 @@ def test_an_uncalled_function_is_left_out() -> None:
     assert "    Vector.zero()" in calls
     # generic() is not called, so its parameters are no problem.
     assert checks.problems == []
+
+
+_VARIADIC = """
+def opts(**kw: float) -> float:
+    return kw["speed"]
+
+
+def pair(*xs: float) -> float:
+    return xs[0] + xs[1]
+
+
+def unused(**kw: float) -> float:
+    return kw["speed"]
+
+
+def unused_get(**kw: float) -> float:
+    return kw.get("speed", 1.0)
+
+
+def unused_args(*xs: float) -> float:
+    return xs[0]
+
+
+def recursive(*xs: float) -> float:
+    return recursive(*xs[1:]) if len(xs) > 1 else 0.0
+
+
+class Tuner:
+    def __init__(self, **gains: float) -> None:
+        self.p = gains["p"]
+
+    def scale(self, *xs: float) -> float:
+        return xs[0] * xs[1]
+
+
+def setup() -> None:
+    print(opts(speed=2.0), pair(1.0, 2.0), Tuner(p=1.0).scale(1.0, 2.0))
+    gains: dict[str, float] = {}
+    gains.update(p=1.0)
+
+
+def update(**kw: float) -> float:
+    return kw.get("p", 1.0)
+"""
+
+
+def test_a_variadic_function_its_module_calls_is_left_to_those_calls() -> None:
+    # The appended calls pass a `**kwargs` no keyword and a `*args: T` one T:
+    # Codon would refuse kw["speed"] and xs[1] for what every caller passes
+    # (#266), so a function the scenario calls is compiled through its calls.
+    tree = ast.parse(_VARIADIC)
+    checks = render_library_checks(tree, callers=call_sites([tree]))
+    calls = checks.source.splitlines()
+    for called in ("opts(", "pair(", "Tuner(", "Tuner.scale("):
+        assert not [c for c in calls if c.lstrip().startswith(called)], called
+    # One nobody calls is still called, a call of its own not counting...
+    assert "    unused_get()" in calls
+    assert "    unused_args(_acs_value(float))" in calls
+    assert "    recursive(_acs_value(float))" in calls
+    # ...and so is one whose body does not read what its **kwargs holds: a
+    # call is known by its name only, and gains.update() is dict's, not the
+    # helper's, which nothing would compile if it were left to it.
+    assert "    update()" in calls
+    # ...unless it reads its **kwargs by key: no call without one compiles.
+    assert not [c for c in calls if c.lstrip().startswith("unused(")]
+    [(line, message)] = checks.problems
+    assert line == 10
+    assert message.startswith("unused: reads `**kw` by key"), message
+    # The library check, which has no callers, calls them all as before.
+    plain = render_library_checks(tree).source.splitlines()
+    assert "    opts()" in plain
+    assert "    pair(_acs_value(float))" in plain
 
 
 def test_an_uncalled_name_belongs_to_the_longest_checked_module() -> None:

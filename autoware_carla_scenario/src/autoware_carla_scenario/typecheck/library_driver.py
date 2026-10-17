@@ -55,6 +55,16 @@ with types Codon can express is given a value of Codon's ``Callable`` type
 (:func:`callable_annotation`); one with a union among its argument types,
 which Codon 0.19 crashes on, a callable of as many arguments, of any type,
 returning an ``R`` (:func:`union_callable_annotation`).
+
+In the scenario check, a function with a ``**kwargs`` or a typed ``*args``
+that the scenario's own code calls is not called again (#266): the calls
+give a ``*args: T`` one ``T`` and a ``**kwargs`` no keyword at all, and Codon
+types each from the call (a ``Tuple[T]``, an empty ``NamedTuple``), so a
+body reading ``args[1]`` or ``kw["speed"]`` would be refused for an argument
+its callers pass.  Its callers compile it with what they pass.  One nobody
+calls is still called, unless it reads its ``**kwargs`` by key, which no
+call without a keyword compiles: that is reported as a function the check
+cannot call (:func:`call_sites`).
 """
 
 from __future__ import annotations
@@ -83,6 +93,7 @@ from .transform import (
 __all__ = [
     "LIBRARY_CHECK",
     "LibraryChecks",
+    "call_sites",
     "callable_annotation",
     "render_library_checks",
     "union_callable_annotation",
@@ -154,6 +165,77 @@ def _called_vararg(vararg: ast.arg | None) -> ast.arg | None:
     return vararg
 
 
+def call_sites(trees: Collection[ast.Module]) -> dict[str, set[str]]:
+    """Who calls what in the modules *trees*: a callee's name -> its callers.
+
+    A call is known by the name it calls (``opts`` of ``opts(...)``, ``scale``
+    of ``self.scale(...)`` or ``helpers.scale(...)``, the class of a
+    construction).  A caller is the function or method holding the call, as
+    the appended calls name it (``f``, ``Class.method``), the class whose
+    body holds it (``Class``), or ``""`` for the module's top level.
+    """
+    sites: dict[str, set[str]] = {}
+
+    def visit(node: ast.AST, caller: str) -> None:
+        for child in ast.iter_child_nodes(node):
+            inner = caller
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                if not caller:
+                    inner = child.name
+                elif "." not in caller and isinstance(node, ast.ClassDef):
+                    inner = f"{caller}.{child.name}"
+            elif isinstance(child, ast.ClassDef) and not caller:
+                inner = child.name
+            elif isinstance(child, ast.Call):
+                callee = child.func
+                if isinstance(callee, ast.Name):
+                    sites.setdefault(callee.id, set()).add(caller)
+                elif isinstance(callee, ast.Attribute):
+                    sites.setdefault(callee.attr, set()).add(caller)
+            visit(child, inner)
+
+    for tree in trees:
+        visit(tree, "")
+    return sites
+
+
+def _subscripts(func: ast.FunctionDef | ast.AsyncFunctionDef, name: str) -> bool:
+    """Whether the body of *func* subscripts its parameter *name* (``kw["x"]``)."""
+    return any(
+        isinstance(node, ast.Subscript)
+        and isinstance(node.value, ast.Name)
+        and node.value.id == name
+        for stmt in func.body
+        for node in ast.walk(stmt)
+    )
+
+
+def _reads_variadic(func: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    """Whether the body of *func* depends on what its ``**kwargs`` or typed
+    ``*args`` holds, which the appended call (no keyword, one value) does not
+    give: ``kw["x"]``, ``xs[1]``, ``a, b = xs``, ``g(*xs)``, ``g(**kw)``."""
+    names = {a.arg for a in (func.args.kwarg, _called_vararg(func.args.vararg)) if a}
+
+    def named(node: ast.AST) -> bool:
+        return isinstance(node, ast.Name) and node.id in names
+
+    for stmt in func.body:
+        for node in ast.walk(stmt):
+            if isinstance(node, ast.Subscript) and named(node.value):
+                return True
+            if isinstance(node, ast.Starred) and named(node.value):
+                return True
+            if isinstance(node, ast.keyword) and node.arg is None and named(node.value):
+                return True
+            if (
+                isinstance(node, ast.Assign)
+                and named(node.value)
+                and any(isinstance(t, (ast.Tuple, ast.List)) for t in node.targets)
+            ):
+                return True
+    return False
+
+
 class _Renderer:
     def __init__(
         self,
@@ -161,11 +243,16 @@ class _Renderer:
         classes: Mapping[str, ast.ClassDef] | None = None,
         *,
         constructed: Collection[str] = (),
+        callers: Mapping[str, Collection[str]] | None = None,
         type_vars: Collection[str] = (),
         skip_any_returns: bool = False,
         hook_returns: bool = False,
     ) -> None:
         self.uncalled = set(uncalled)
+        #: Who calls what in the scenario's modules (:func:`call_sites`), so
+        #: a function with a ``**kwargs`` or ``*args`` they call is compiled
+        #: through their calls only (#266); ``None`` in the library check.
+        self.callers = callers
         #: Check the result of each method call against the return type of
         #: the framework hook it overrides (the scenario check, #238).
         self.hook_returns = hook_returns
@@ -328,7 +415,7 @@ class _Renderer:
         the body is compiled with the default (#199).  One the call would
         still pass (a defaulted parameter before a ``*args: T``) is a problem.
         """
-        if self._returns_any(func, where):
+        if self._returns_any(func, where) or self._compiled_by_callers(func, where):
             return
         args = func.args
         positional = [*args.posonlyargs, *args.args][1 if drop_first else 0 :]
@@ -375,6 +462,48 @@ class _Renderer:
             receiver=receiver if class_head is None else f"_acs_value({owner})",
             hook=hook,
         )
+
+    def _compiled_by_callers(
+        self, func: ast.FunctionDef | ast.AsyncFunctionDef, where: str
+    ) -> bool:
+        """Whether *func* is left to its callers' calls (the scenario check, #266).
+
+        A function with a ``**kwargs``, or a ``*args`` the calls give one
+        value, whose body reads what they hold (:func:`_reads_variadic`), and
+        that some other function, class or the module's top level calls:
+        Codon types ``kwargs`` and ``args`` from each call (a ``NamedTuple``
+        of the keywords passed, a ``Tuple`` of the values), and the calls
+        appended here pass no keyword and one value, so ``kw["speed"]`` or
+        ``args[1]`` would be refused for what every caller passes.  One whose
+        body does not read them is called here as before: a call is known by
+        its name only (``d.update(...)`` names a helper ``update`` too), so
+        leaving it to calls that may be another's would leave it uncompiled.
+        One nobody calls is called here, unless it subscripts its
+        ``**kwargs``: then it is a problem, a function the check cannot call.
+        """
+        if self.callers is None:
+            return False
+        args = func.args
+        if args.kwarg is None and _called_vararg(args.vararg) is None:
+            return False
+        if not _reads_variadic(func):
+            return False
+        name = where.rsplit(".", 1)[-1]
+        if name == "__init__":
+            name = where.rsplit(".", 1)[0]
+        if any(caller != where for caller in self.callers.get(name, ())):
+            return True
+        if args.kwarg is not None and _subscripts(func, args.kwarg.arg):
+            self.problems.append(
+                (
+                    func.lineno,
+                    f"{where}: reads `**{args.kwarg.arg}` by key, and nothing in "
+                    "the scenario calls it: the check has no keyword to call it "
+                    "with",
+                )
+            )
+            return True
+        return False
 
     def _realize_optional_return(
         self, func: ast.FunctionDef | ast.AsyncFunctionDef, where: str
@@ -1082,6 +1211,7 @@ def render_library_checks(
     *,
     skip_any_returns: bool = False,
     hook_returns: bool = False,
+    callers: Mapping[str, Collection[str]] | None = None,
 ) -> LibraryChecks:
     """The function to append to the module *tree* is the source of.
 
@@ -1095,7 +1225,9 @@ def render_library_checks(
     annotated with one of the module's ``TypeVar``s is a problem either way.
     With *hook_returns* (the scenario check), the result of each method call
     is checked against the framework hook the method overrides
-    (:meth:`_Renderer.hooked`).
+    (:meth:`_Renderer.hooked`).  *callers* (the scenario check) are who calls
+    what in all the modules checked (:func:`call_sites`): a function with a
+    ``**kwargs`` or ``*args`` one of them calls is left to their calls (#266).
     """
     own = {n.name: n for n in tree.body if isinstance(n, ast.ClassDef)}
     constructed = {
@@ -1119,6 +1251,7 @@ def render_library_checks(
         uncalled,
         {**(classes or {}), **own},
         constructed=constructed,
+        callers=callers,
         type_vars=type_vars,
         skip_any_returns=skip_any_returns,
         hook_returns=hook_returns,

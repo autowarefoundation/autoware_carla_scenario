@@ -1145,6 +1145,135 @@ def test_an_optional_tested_for_none_compiles(tmp_path: Path) -> None:
     assert result.ok, result.format()
 
 
+_CARLA_OPTIONALS = """
+
+    def _lane_yaw(self, location: carla.Location) -> float:
+        wp = self.world.get_map().get_waypoint(location, project_to_road=False)
+        return wp.transform.rotation.yaw
+
+    def _actor_x(self, actor_id: int) -> float:
+        return self.world.get_actors().find(actor_id).get_location().x
+"""
+
+
+def test_an_optional_carla_result_used_without_a_none_test_is_refused(
+    tmp_path: Path,
+) -> None:
+    # typesafe_carla's CPython package has no type information, so mypy read
+    # all of CARLA as Any and these passed both halves of the check (#267).
+    scenario, config, path = _write_case(tmp_path, _TIMEOUT_SETUP, _CARLA_OPTIONALS)
+    result = typecheck_scenario(scenario, config)
+    assert not result.ok, result.format()
+    assert [(d.line, d.message.split(":")[0]) for d in result.diagnostics] == [
+        (
+            _line_of(path, "return wp.transform"),
+            'Item "None" of "Waypoint | None" has no attribute "transform"',
+        ),
+        (
+            _line_of(path, ".find(actor_id)"),
+            'Item "None" of "Actor | None" has no attribute "get_location"',
+        ),
+    ], result.format()
+    assert all("test the value for None" in d.message for d in result.diagnostics)
+
+
+def test_a_type_error_mentioning_none_is_not_called_optional_misuse(
+    tmp_path: Path,
+) -> None:
+    # A reader returning a str for one that returns a float: Codon's error.
+    # mypy's message names None ("str | None"), but the value is never None,
+    # so it is not reported again as an Optional to test (#267).
+    extra = """
+
+    def _lane_name(self, world: carla.World) -> Optional[str]:
+        return "left"
+"""
+    setup = _TIMEOUT_SETUP + 'self.register_measure("lane", self._lane_name, unit="")\n'
+    header = _HEADER.replace(
+        "import logging", "import logging\nfrom typing import Optional"
+    )
+    scenario, config, _ = _write_case(tmp_path, setup, extra, header=header)
+    result = typecheck_scenario(scenario, config)
+    error = _only_error(result)
+    assert "expected a float" in error.message, result.format()
+    assert not [d for d in result.diagnostics if "None" in d.message], result.format()
+
+
+_VARIADIC_HELPERS = """
+
+
+def opts(**kw: float) -> float:
+    return kw["speed"]
+
+
+def pair(*xs: float) -> float:
+    return xs[0] + xs[1]
+
+
+def unused(**kw: float) -> float:
+    return kw["speed"]
+
+
+def unused_args(*xs: float) -> str:
+    return xs[0].upper()
+"""
+
+
+def test_a_variadic_helper_the_scenario_calls_is_compiled_through_its_calls(
+    tmp_path: Path,
+) -> None:
+    # The appended calls pass a **kwargs no keyword and a *args one value, so
+    # kw["speed"] and xs[1] were refused for what setup() passes (#266).
+    setup = _TIMEOUT_SETUP + 'logger.info("%f %f", opts(speed=2.0), pair(1.0, 2.0))\n'
+    helpers = _VARIADIC_HELPERS.split("\n\ndef unused(")[0] + "\n"
+    scenario, config, _ = _write_case(tmp_path, setup, helpers)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+    assert not result.warnings, result.format()
+
+    # One nobody calls: still called, so its error is found, unless it reads
+    # its **kwargs by key, which is then left out with a warning.
+    scenario, config, path = _write_case(tmp_path, setup, _VARIADIC_HELPERS)
+    result = typecheck_scenario(scenario, config)
+    error = _only_error(result)
+    assert "'float' object has no attribute 'upper'" in error.message
+    assert error.line == _line_of(path, "xs[0].upper()")
+    [warning] = result.warnings
+    assert warning.line == _line_of(path, "def unused(")
+    assert "reads `**kw` by key" in warning.message, warning.format()
+
+
+@pytest.mark.parametrize(
+    ("helper", "call", "hint"),
+    [
+        (
+            "def scaled(base: float, **factors: float) -> float:\n"
+            "    out = base\n"
+            "    for _name, f in factors.items():\n"
+            "        out *= f\n"
+            "    return out\n",
+            "scaled(2.0, a=1.5)",
+            'kw.get("name", default)',
+        ),
+        (
+            "def mean(*values: float) -> float:\n"
+            "    return sum(values) / len(values) if values else 0.0\n",
+            "mean(1.0, 2.0)",
+            "len(args) > 0",
+        ),
+    ],
+    ids=["kwargs-items", "args-truth"],
+)
+def test_codons_limits_on_kwargs_and_args_say_what_to_write(
+    tmp_path: Path, helper: str, call: str, hint: str
+) -> None:
+    # Valid Python Codon refuses: **kwargs is a NamedTuple, *args a Tuple (#266).
+    setup = _TIMEOUT_SETUP + f'logger.info("%f", {call})\n'
+    scenario, config, _ = _write_case(tmp_path, setup, "\n\n" + helper)
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert hint in error.message, error.format()
+
+
 _PARENT_HEADER = _HEADER.replace(
     "class CaseScenario(BaseScenario):", "class CaseParent(BaseScenario):"
 )

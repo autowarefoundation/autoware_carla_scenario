@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from autoware_carla_scenario.typecheck import none_check
+from autoware_carla_scenario.typecheck import carla_stubs, none_check
 from autoware_carla_scenario.typecheck.none_check import (
     NoneCheckSkipped,
     find_none_misuses,
@@ -187,3 +187,254 @@ def test_no_verdict_from_mypy_says_why(
     monkeypatch.setattr(none_check, "mypy_available", lambda: False)
     with pytest.raises(NoneCheckSkipped, match="not installed"):
         run_none_check([module])
+
+
+@pytest.mark.parametrize(
+    ("code", "message", "misuse"),
+    [
+        ("union-attr", 'Item "None" of "Pose | None" has no attribute "x"', True),
+        (
+            "operator",
+            'Unsupported operand types for / ("None" and "float")',
+            True,
+        ),
+        (
+            "arg-type",
+            'Argument 1 to "half" has incompatible type "float | None"; '
+            'expected "float"',
+            True,
+        ),
+        (
+            "assignment",
+            'Incompatible types in assignment (expression has type "float | None", '
+            'variable has type "float")',
+            True,
+        ),
+        (
+            # An item assigned: d["k"] = maybe().
+            "assignment",
+            'Incompatible types in assignment (expression has type "float | None", '
+            'target has type "float")',
+            True,
+        ),
+        (
+            "return-value",
+            'Incompatible return value type (got "Optional[int]", expected "int")',
+            True,
+        ),
+        ("index", 'Value of type "list[int] | None" is not indexable', True),
+        (
+            "call-overload",
+            'No overload variant of "round" matches argument type "float | None"',
+            True,
+        ),
+        # None only inside another type, or in the type expected (#267).
+        (
+            "arg-type",
+            'Argument 2 to "register_measure" of "BaseScenario" has incompatible '
+            'type "Callable[[Any], str | None]"; expected '
+            '"Callable[[Any], float | None]"',
+            False,
+        ),
+        (
+            "arg-type",
+            'Argument 1 to "f" has incompatible type "str | None"; '
+            'expected "float | None"',
+            False,
+        ),
+        (
+            "arg-type",
+            'Argument "role" to "f" has incompatible type "int"; '
+            'expected "EntityRole | str | None"',
+            False,
+        ),
+        (
+            "assignment",
+            'Incompatible types in assignment (expression has type "list[float]", '
+            'variable has type "list[float | None]")',
+            False,
+        ),
+        (
+            "return-value",
+            'Incompatible return value type (got "dict[str, None]", '
+            'expected "dict[str, int]")',
+            False,
+        ),
+        ("attr-defined", '"None" has no attribute "x"', False),
+    ],
+)
+def test_only_none_as_the_offending_type_is_a_misuse(
+    code: str, message: str, misuse: bool
+) -> None:
+    assert none_check.is_none_misuse(code, message) is misuse
+
+
+_MENTIONS = """
+from __future__ import annotations
+
+from typing import Callable, Optional
+
+
+def register(read: Callable[[int], float | None]) -> None:
+    pass
+
+
+def name(world: int) -> Optional[str]:
+    return "left"
+
+
+def labelled(label: str | None = None) -> None:
+    pass
+
+
+def mentions() -> None:
+    register(name)
+    labelled(3)
+    x: list[float | None] = [1.0]
+    y: list[float] = [1.0]
+    x = y
+
+
+def misuse() -> float:
+    return name(1) + 1.0
+
+
+def reading() -> float | None:
+    return None
+
+
+def item(speeds: dict[str, float]) -> None:
+    speeds["ego"] = reading()
+"""
+
+
+def test_an_error_merely_mentioning_none_is_no_misuse(tmp_path: Path) -> None:
+    # A str where a float is expected, an int for an Optional[str], a list
+    # invariant in its items: mypy's messages name None, the value used is
+    # never None (#267).
+    package = tmp_path / "acs_none_mentions"
+    package.mkdir()
+    (package / "__init__.py").write_text("")
+    module = package / "probe.py"
+    module.write_text(textwrap.dedent(_MENTIONS))
+
+    findings = find_none_misuses([module])
+
+    assert findings is not None
+    lines = module.read_text().splitlines()
+    assert [lines[f.line - 1].strip() for f in findings] == [
+        "return name(1) + 1.0",
+        'speeds["ego"] = reading()',
+    ], findings
+
+
+_CARLA = """
+from __future__ import annotations
+
+import typesafe_carla.carla as carla
+
+
+def lane_yaw(world: carla.World, location: carla.Location) -> float:
+    wp = world.get_map().get_waypoint(location, project_to_road=False)
+    return wp.transform.rotation.yaw
+
+
+def actor_x(world: carla.World, actor_id: int) -> float:
+    return world.get_actors().find(actor_id).get_location().x
+
+
+def parent_id(actor: carla.Actor) -> int:
+    return actor.parent.id
+
+
+def projected(world: carla.World, location: carla.Location, flag: bool) -> float:
+    # Projected onto the road (the default), it is None only on a map with
+    # no driving lane at all: not a misuse; a flag mypy cannot read is one.
+    m = world.get_map()
+    x = m.get_waypoint(location).transform.location.x
+    x += m.get_waypoint(location, True, carla.LaneType.Driving).s
+    return x + m.get_waypoint(location, project_to_road=flag).s
+
+
+def guarded(world: carla.World, location: carla.Location) -> float:
+    wp = world.get_map().get_waypoint(location)
+    if wp is None:
+        return 0.0
+    loc = wp.transform.location + carla.Location(x=1.0)
+    for actor in world.get_actors():
+        loc.x += actor.get_location().x
+    vehicles = world.get_actors().filter("vehicle.*")
+    settings = world.get_settings()
+    settings.synchronous_mode = True
+    world.set_weather(carla.WeatherParameters.ClearNoon)
+    state = carla.TrafficLightState.Red
+    return loc.x + vehicles[0].get_velocity().length() + float(state == state)
+"""
+
+
+def _carla_module(tmp_path: Path, name: str) -> Path:
+    package = tmp_path / name
+    package.mkdir()
+    (package / "__init__.py").write_text("")
+    module = package / "probe.py"
+    module.write_text(textwrap.dedent(_CARLA))
+    return module
+
+
+def test_an_optional_carla_result_used_unguarded_is_a_misuse(tmp_path: Path) -> None:
+    # typesafe_carla's CPython package has no type information: the check
+    # gives mypy stubs of its Codon library, so a CARLA call that returns an
+    # Optional returns one to mypy too, and nothing else is reported (#267).
+    module = _carla_module(tmp_path, "acs_none_carla")
+
+    findings = find_none_misuses([module])
+
+    assert findings is not None
+    lines = module.read_text().splitlines()
+    assert [(lines[f.line - 1].strip(), f.message) for f in findings] == [
+        (
+            "return wp.transform.rotation.yaw",
+            'Item "None" of "Waypoint | None" has no attribute "transform"',
+        ),
+        (
+            "return world.get_actors().find(actor_id).get_location().x",
+            'Item "None" of "Actor | None" has no attribute "get_location"',
+        ),
+        (
+            "return actor.parent.id",
+            'Item "None" of "Actor | None" has no attribute "id"',
+        ),
+        (
+            "return x + m.get_waypoint(location, project_to_road=flag).s",
+            'Item "None" of "Waypoint | None" has no attribute "s"',
+        ),
+    ]
+
+
+def test_the_carla_stubs_are_written_where_the_cache_cannot_be(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    blocker = tmp_path / "a-file"
+    blocker.write_text("")
+    monkeypatch.setenv("XDG_CACHE_HOME", str(blocker / "cache"))
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    assert carla_stubs.carla_stub_root(scratch) == scratch
+    stub = scratch / "typesafe_carla" / "carla" / "__init__.pyi"
+    assert "def get_actor(self, *args: Any, **kwargs: Any) -> Optional[Actor]" in (
+        stub.read_text()
+    )
+    module = _carla_module(tmp_path, "acs_none_carla_uncached")
+    assert len(run_none_check([module])) == 4
+
+
+def test_without_typesafe_carlas_library_the_check_runs_untyped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def missing() -> Path:
+        raise RuntimeError("typesafe_carla Codon sources not found")
+
+    monkeypatch.setattr(carla_stubs, "_library_dir", missing)
+    assert carla_stubs.carla_stub_root(tmp_path) is None
+    module = _carla_module(tmp_path, "acs_none_carla_untyped")
+    assert run_none_check([module]) == []

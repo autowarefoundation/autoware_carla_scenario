@@ -216,8 +216,17 @@ verdict does not depend on how strict the package's own mypy settings are),
 and keeps only what it reports of a value that may be `None` used where it
 may not be: an attribute of it, an operator, an argument, an assignment, a
 return, an index (mypy's `union-attr`, `operator`, `arg-type`,
-`assignment`, `return-value`, `index` and `call-overload`, each naming
-`None`). An assignment that only declares is not one: a `None` default for
+`assignment`, `return-value`, `index` and `call-overload`), each only where
+`None` is the offending type (#267): the `None` item of a union an attribute
+is missing on (`Item "None" of "Waypoint | None"`), an operand, the value
+indexed or an argument that is `None` or a union holding it, or a value whose
+type holds `None` given where the type expected does not (`incompatible type
+"float | None"; expected "float"`). A message that only mentions `None`
+inside another type or in the type expected is not one: a reader returning
+`Optional[str]` given to `register_measure()`, which takes one returning
+`Optional[float]`, is a `str` for a `float`, Codon's error to report, and a
+`list[float]` for a `list[float | None]` is mypy's invariance, which Codon
+accepts. An assignment that only declares is not one either: a `None` default for
 a non-Optional annotation (`speed: float = None`), or a value assigned to an
 attribute mypy inferred as `None` from its first assignment. Each finding
 fails the check at its line, after Codon's errors:
@@ -226,6 +235,39 @@ fails the check at its line, after Codon's errors:
 scenario.py:67:28: error: Unsupported operand types for / ("None" and "float"): Codon unwraps an Optional implicitly, so test the value for None before this use, or Python fails here when it is None (mypy: operator)
     Left operand is of type "float | None"
 ```
+
+**The CARLA API's `Optional` results are checked too** (#267).
+typesafe_carla's CPython package is a prebuilt extension with no `.pyi` and
+no `py.typed`, so mypy alone reads `typesafe_carla.carla` as `Any`. The
+checker gives mypy stubs of it instead, written from typesafe_carla's own
+inventory of its Codon library (`typesafe_carla.pycarla.Inventory`, which the
+CPython package is generated from; `typecheck/carla_stubs.py`) and put on
+`MYPYPATH`: every public class with its bases, and every method and property
+with the return type the library declares. So `Map.get_waypoint()`,
+`ActorList.find()`, `World.get_actor()`, `World.try_spawn_actor()`,
+`Actor.parent`, `Vehicle.get_traffic_light()`, `Waypoint.get_left_lane()`,
+`Sensor.poll()` and the library's other `Optional` results are `Optional` to
+mypy, and a use without a test for `None` is refused like a `float | None`
+config field:
+
+```text
+scenario.py:76:16: error: Item "None" of "Waypoint | None" has no attribute "transform": Codon unwraps an Optional implicitly, so test the value for None before this use, or Python fails here when it is None (mypy: union-attr)
+```
+
+`get_waypoint()` is the one exception to the library's declarations: it
+returns `None` when no lane of `lane_type` matches, and projected onto the
+road (`project_to_road=True`, its default) that is only on a map with no
+such lane at all, so the stubs give that call a `Waypoint` (the framework
+uses it unguarded too). With `project_to_road=False`, or a flag mypy cannot
+read as `True`, it is `Optional`. The stubs type only what the None check needs: parameters are
+`*args: Any, **kwargs: Any` (the arguments are Codon's to check), and a
+return type mypy cannot be given (a pointer, a type parameter, overloads
+returning different types), an enumeration, `carla.command` and any name not
+written are `Any`, so they add no error of their own. They are written once
+per library, under `~/.cache/autoware_carla_scenario/carla-stubs/` (named by
+a digest of the library's Codon sources), or into a temporary directory where
+that cannot be written; where typesafe_carla's library cannot be read, mypy
+runs with CARLA untyped, as before.
 
 Narrow the value first, as mypy reads it: `if x is not None:`, `assert x is
 not None`, an early `return` when it is `None`, or a default (`x or 0.0`).
@@ -265,6 +307,28 @@ build (the library check lists the framework's own as uncalled):
 ```text
 my_scenario.py:40: warning: MyScenario._scaled: parameter `x` has no annotation; the check does not call it on its own, so it is compiled only where the scenario's constructor, setup() and is_done() reach it
 ```
+
+**A helper with a `**kwargs` or a `*args` that the scenario calls is
+compiled through those calls** (#266). The appended calls give a `*args: T`
+one `T` and a `**kwargs` no keyword at all, and Codon types each from the
+call: a `Tuple[T]`, an empty `NamedTuple`. So `def opts(**kw: float)` reading
+`kw["speed"]` was refused (`'NamedTuple' object has no attribute 'speed'`,
+reached by `<scenario check: opts()>`) although `setup()` calls
+`opts(speed=2.0)`, and `xs[1]` of a `*xs: float` likewise. Such a function
+whose body reads what they hold (`kw["speed"]`, `xs[1]`, `a, b = xs`,
+`g(*xs)`, `g(**kw)`) and that a function, a class body or the module's top
+level of the scenario's modules calls (by its name: `opts(...)`, `self.scale(...)`,
+`helpers.opts(...)`, `Tuner(...)` for its `__init__`; its own recursive call
+does not count) is not called again: its callers' calls compile it with what
+they pass. One whose body does not read them (`kw.get("speed", 1.0)`,
+`sum(xs)`) is called as before: a call is known by its name only, so a
+`gains.update(p=1.0)` would otherwise leave a helper `update` to a call of
+dict's, and nothing would compile it. One nobody calls is still called, so
+an error in it is found,
+unless it subscripts its `**kwargs`, which no call without a keyword
+compiles: that is left out with the warning above (`MyScenario._opts: reads
+`**kw` by key, and nothing in the scenario calls it: the check has no keyword
+to call it with`).
 
 A warning does not fail the check (`result.ok` stays true; they are in
 `result.warnings`), and `scenario-check` and the runner print them. Annotate
@@ -681,7 +745,25 @@ scenario has to do itself:
   `check()`, a `dict[int, float]` from `initial_speeds_mps()`, `None` from
   `setup()` and an action's `execute()` ([*What is checked*](#what-is-checked)).
 - **Test an `Optional` for `None` before using it**: a `float | None` config
-  field, `goal_pose`, `find_actor_by_role_name(...)`.
+  field, `goal_pose`, `find_actor_by_role_name(...)`, and CARLA's `Optional`
+  results (`get_waypoint(...)`, `get_actors().find(...)`,
+  `world.get_actor(...)`, `actor.parent`).
+- **Read `**kwargs` by name with `kw.get()`, and test `*args` with `len()`**
+  (#266). Codon makes `**kwargs` a `NamedTuple` of the keywords passed, not
+  a dict, and `*args` a `Tuple`. Valid Python it refuses, with what to write
+  instead in the message:
+
+  | Python | Codon's error | Write instead |
+  | --- | --- | --- |
+  | `for k, v in kw.items():` (`.keys()`, `.values()`, `for k in kw`, `len(kw)`) | `'NamedTuple[a=float]' object has no attribute 'items'` | `kw.get("a", default)` for each name, or keyword parameters (`def f(*, a: float = 1.0)`) |
+  | `if args:` / `x if args else y` | `'Tuple[float,float]' object has no attribute '__bool__'` | `if len(args) > 0:` |
+
+  `kw["speed"]` and `"speed" in kw` compile for a keyword the call passes;
+  `kw.get("speed", 1.0)` compiles whether it does or not. A helper taking
+  `**kwargs` or `*args` that the scenario calls and that reads them by key
+  or position is compiled through its callers' calls, so it is checked with
+  the keywords and values they pass
+  ([*What is checked*](#what-is-checked)).
 - **Build an object of a class you hold in an `Optional`, when the class has
   subclasses and nothing else builds one.** Codon 0.19 checks
   `x: X | None = None` (or a parameter defaulting to `None`) of such a
@@ -790,10 +872,22 @@ The known gaps:
 - **An `Optional` unwrapped implicitly, where mypy cannot see it.** Codon
   unwraps an `Optional[T]` wherever a `T` is needed (arithmetic, an
   attribute, an argument), and mypy's pass (#239,
-  [*What is checked*](#what-is-checked)) catches what mypy can type. It does
-  not see a value mypy reads as `Any`: one from a package with no type
-  information (an import it cannot follow, which it ignores), or the result
-  of a function with no return annotation.
+  [*What is checked*](#what-is-checked)) catches what mypy can type,
+  CARLA's results included (from stubs of typesafe_carla's Codon library,
+  #267). It does not see a value mypy reads as `Any`: one from a package
+  with no type information (an import it cannot follow, which it ignores,
+  such as `lanelet2`), a CARLA result whose type the stubs leave `Any` (an
+  enumeration, `carla.command`, a pointer, a method whose overloads return
+  different types), or the result of a function with no return annotation.
+  Neither does it check the arguments of a CARLA call: an `Optional` passed
+  to one is Codon's to unwrap (`world.get_actor(maybe_id)` compiles).
+- **A helper with `**kwargs` or `*args` that nothing calls and that reads
+  `**kwargs` by key** is not compiled, with a warning: the check has no
+  keyword to call it with (#266). One the scenario calls that reads them is
+  compiled only with the keywords and the number of values its callers
+  pass, and, as a call is known by its name only, not at all when the only
+  calls of its name are another's (`d.update(...)` for a helper `update`)
+  or are in a function the check does not compile.
 - **A value converted by an annotated assignment.** Codon 0.19 converts any
   value with `__bool__` in an annotated assignment: `done: bool = "no"`
   compiles, and is `True`. The check binds hook results strictly (#238) and
