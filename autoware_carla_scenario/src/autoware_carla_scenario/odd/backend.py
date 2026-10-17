@@ -88,7 +88,10 @@ BUILT_IN_PROBES: Mapping[str, tuple[Callable[[Any], Any], str]] = _BuiltInProbes
 #: Knobs for the built-in probes a run can set, through the ``environment``
 #: config (:class:`~autoware_carla_scenario.EnvironmentAction`).  The ranges
 #: are the probes' own levels (:func:`~.probes.intensity_level`,
-#: :func:`~.probes.illumination_level`), read backwards.
+#: :func:`~.probes.illumination_level`), read backwards.  The rain and fog
+#: knobs set the LiDARs' noise as well: CARLA's ray-cast LiDAR ignores the
+#: weather, so each sweep has the world's precipitation and fog density put on
+#: it (:mod:`autoware_carla_scenario.sensor.lidar_weather`).
 DEFAULT_KNOBS: dict[Callable[..., Any], OddKnob] = {
     # environment.rain rather than environment.precipitation: precipitation
     # alone barely shows in a camera image, so a "heavy rain" case would look

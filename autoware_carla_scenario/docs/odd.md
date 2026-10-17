@@ -903,6 +903,14 @@ whose default 0.001 leaves even `fog_density=100` a faint haze on the horizon.
 Start it with `-ExecCmds="carla.Weather.FogDensityScale 0.01"` for fog a
 camera sees.
 
+The LiDARs see the rain and fog too. CARLA's ray-cast LiDAR casts through
+clear air whatever the weather, so each `driver.lidars` sweep has the world's
+`precipitation` and `fog_density` put on it when it is taken: far returns
+thinned out and dimmed, the rest jittered along their rays, and early returns
+off the drops and the fog close to the sensor ([LiDAR](driver_interface.md#lidar)).
+The `rain` and `fog` knobs therefore set the LiDAR noise along with what the
+cameras see; each LiDAR's `weather_noise` scales it (0 turns it off).
+
 A scenario that sets the weather itself (its own `EnvironmentAction`) has
 the last word over the config.
 

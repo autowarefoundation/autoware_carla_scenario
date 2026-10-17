@@ -72,6 +72,8 @@ class DriverLidarSpec:
     upper_fov_deg: float = 15.0
     lower_fov_deg: float = -25.0
     dropoff_general_rate: float = 0.0
+    weather_noise: float = 1.0
+    noise_seed: int = 0
     position_x: float = 0.0
     position_y: float = 0.0
     position_z: float = 2.0
