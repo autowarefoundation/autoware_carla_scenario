@@ -211,6 +211,13 @@ def test_no_verdict_from_mypy_says_why(
             True,
         ),
         (
+            # An item assigned: d["k"] = maybe().
+            "assignment",
+            'Incompatible types in assignment (expression has type "float | None", '
+            'target has type "float")',
+            True,
+        ),
+        (
             "return-value",
             'Incompatible return value type (got "Optional[int]", expected "int")',
             True,
@@ -290,6 +297,14 @@ def mentions() -> None:
 
 def misuse() -> float:
     return name(1) + 1.0
+
+
+def reading() -> float | None:
+    return None
+
+
+def item(speeds: dict[str, float]) -> None:
+    speeds["ego"] = reading()
 """
 
 
@@ -308,7 +323,8 @@ def test_an_error_merely_mentioning_none_is_no_misuse(tmp_path: Path) -> None:
     assert findings is not None
     lines = module.read_text().splitlines()
     assert [lines[f.line - 1].strip() for f in findings] == [
-        "return name(1) + 1.0"
+        "return name(1) + 1.0",
+        'speeds["ego"] = reading()',
     ], findings
 
 
@@ -329,6 +345,15 @@ def actor_x(world: carla.World, actor_id: int) -> float:
 
 def parent_id(actor: carla.Actor) -> int:
     return actor.parent.id
+
+
+def projected(world: carla.World, location: carla.Location, flag: bool) -> float:
+    # Projected onto the road (the default), it is None only on a map with
+    # no driving lane at all: not a misuse; a flag mypy cannot read is one.
+    m = world.get_map()
+    x = m.get_waypoint(location).transform.location.x
+    x += m.get_waypoint(location, True, carla.LaneType.Driving).s
+    return x + m.get_waypoint(location, project_to_road=flag).s
 
 
 def guarded(world: carla.World, location: carla.Location) -> float:
@@ -379,6 +404,10 @@ def test_an_optional_carla_result_used_unguarded_is_a_misuse(tmp_path: Path) -> 
             "return actor.parent.id",
             'Item "None" of "Actor | None" has no attribute "id"',
         ),
+        (
+            "return x + m.get_waypoint(location, project_to_road=flag).s",
+            'Item "None" of "Waypoint | None" has no attribute "s"',
+        ),
     ]
 
 
@@ -392,12 +421,11 @@ def test_the_carla_stubs_are_written_where_the_cache_cannot_be(
     scratch.mkdir()
     assert carla_stubs.carla_stub_root(scratch) == scratch
     stub = scratch / "typesafe_carla" / "carla" / "__init__.pyi"
-    assert (
-        "def get_waypoint(self, *args: Any, **kwargs: Any) -> Optional[Waypoint]"
-        in (stub.read_text())
+    assert "def get_actor(self, *args: Any, **kwargs: Any) -> Optional[Actor]" in (
+        stub.read_text()
     )
     module = _carla_module(tmp_path, "acs_none_carla_uncached")
-    assert len(run_none_check([module])) == 3
+    assert len(run_none_check([module])) == 4
 
 
 def test_without_typesafe_carlas_library_the_check_runs_untyped(

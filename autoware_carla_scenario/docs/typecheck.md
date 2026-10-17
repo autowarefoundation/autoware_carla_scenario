@@ -254,9 +254,12 @@ config field:
 scenario.py:76:16: error: Item "None" of "Waypoint | None" has no attribute "transform": Codon unwraps an Optional implicitly, so test the value for None before this use, or Python fails here when it is None (mypy: union-attr)
 ```
 
-`get_waypoint()` returns `None` when no lane of `lane_type` matches, with
-`project_to_road=True` too, as the library declares; the framework tests
-every result. The stubs type only what the None check needs: parameters are
+`get_waypoint()` is the one exception to the library's declarations: it
+returns `None` when no lane of `lane_type` matches, and projected onto the
+road (`project_to_road=True`, its default) that is only on a map with no
+such lane at all, so the stubs give that call a `Waypoint` (the framework
+uses it unguarded too). With `project_to_road=False`, or a flag mypy cannot
+read as `True`, it is `Optional`. The stubs type only what the None check needs: parameters are
 `*args: Any, **kwargs: Any` (the arguments are Codon's to check), and a
 return type mypy cannot be given (a pointer, a type parameter, overloads
 returning different types), an enumeration, `carla.command` and any name not
@@ -312,11 +315,16 @@ call: a `Tuple[T]`, an empty `NamedTuple`. So `def opts(**kw: float)` reading
 `kw["speed"]` was refused (`'NamedTuple' object has no attribute 'speed'`,
 reached by `<scenario check: opts()>`) although `setup()` calls
 `opts(speed=2.0)`, and `xs[1]` of a `*xs: float` likewise. Such a function
-that a function, a class body or the module's top level of the scenario's
-modules calls (by its name: `opts(...)`, `self.scale(...)`,
+whose body reads what they hold (`kw["speed"]`, `xs[1]`, `a, b = xs`,
+`g(*xs)`, `g(**kw)`) and that a function, a class body or the module's top
+level of the scenario's modules calls (by its name: `opts(...)`, `self.scale(...)`,
 `helpers.opts(...)`, `Tuner(...)` for its `__init__`; its own recursive call
 does not count) is not called again: its callers' calls compile it with what
-they pass. One nobody calls is still called, so an error in it is found,
+they pass. One whose body does not read them (`kw.get("speed", 1.0)`,
+`sum(xs)`) is called as before: a call is known by its name only, so a
+`gains.update(p=1.0)` would otherwise leave a helper `update` to a call of
+dict's, and nothing would compile it. One nobody calls is still called, so
+an error in it is found,
 unless it subscripts its `**kwargs`, which no call without a keyword
 compiles: that is left out with the warning above (`MyScenario._opts: reads
 `**kw` by key, and nothing in the scenario calls it: the check has no keyword
@@ -700,8 +708,9 @@ scenario has to do itself:
 
   `kw["speed"]` and `"speed" in kw` compile for a keyword the call passes;
   `kw.get("speed", 1.0)` compiles whether it does or not. A helper taking
-  `**kwargs` or `*args` that the scenario calls is compiled through its
-  callers' calls, so it is checked with the keywords and values they pass
+  `**kwargs` or `*args` that the scenario calls and that reads them by key
+  or position is compiled through its callers' calls, so it is checked with
+  the keywords and values they pass
   ([*What is checked*](#what-is-checked)).
 - **Build an object of a class you hold in an `Optional`, when the class has
   subclasses and nothing else builds one.** Codon 0.19 checks
@@ -822,8 +831,11 @@ The known gaps:
   to one is Codon's to unwrap (`world.get_actor(maybe_id)` compiles).
 - **A helper with `**kwargs` or `*args` that nothing calls and that reads
   `**kwargs` by key** is not compiled, with a warning: the check has no
-  keyword to call it with (#266). One the scenario calls is compiled only
-  with the keywords and the number of values its callers pass.
+  keyword to call it with (#266). One the scenario calls that reads them is
+  compiled only with the keywords and the number of values its callers
+  pass, and, as a call is known by its name only, not at all when the only
+  calls of its name are another's (`d.update(...)` for a helper `update`)
+  or are in a function the check does not compile.
 - **A value converted by an annotated assignment.** Codon 0.19 converts any
   value with `__bool__` in an annotated assignment: `done: bool = "no"`
   compiles, and is `True`. The check binds hook results strictly (#238) and

@@ -210,6 +210,32 @@ def _subscripts(func: ast.FunctionDef | ast.AsyncFunctionDef, name: str) -> bool
     )
 
 
+def _reads_variadic(func: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    """Whether the body of *func* depends on what its ``**kwargs`` or typed
+    ``*args`` holds, which the appended call (no keyword, one value) does not
+    give: ``kw["x"]``, ``xs[1]``, ``a, b = xs``, ``g(*xs)``, ``g(**kw)``."""
+    names = {a.arg for a in (func.args.kwarg, _called_vararg(func.args.vararg)) if a}
+
+    def named(node: ast.AST) -> bool:
+        return isinstance(node, ast.Name) and node.id in names
+
+    for stmt in func.body:
+        for node in ast.walk(stmt):
+            if isinstance(node, ast.Subscript) and named(node.value):
+                return True
+            if isinstance(node, ast.Starred) and named(node.value):
+                return True
+            if isinstance(node, ast.keyword) and node.arg is None and named(node.value):
+                return True
+            if (
+                isinstance(node, ast.Assign)
+                and named(node.value)
+                and any(isinstance(t, (ast.Tuple, ast.List)) for t in node.targets)
+            ):
+                return True
+    return False
+
+
 class _Renderer:
     def __init__(
         self,
@@ -443,18 +469,24 @@ class _Renderer:
         """Whether *func* is left to its callers' calls (the scenario check, #266).
 
         A function with a ``**kwargs``, or a ``*args`` the calls give one
-        value, that some other function, class or the module's top level
-        calls: Codon types ``kwargs`` and ``args`` from each call (a
-        ``NamedTuple`` of the keywords passed, a ``Tuple`` of the values),
-        and the calls appended here pass no keyword and one value, so
-        ``kw["speed"]`` or ``args[1]`` would be refused for what every caller
-        passes.  One nobody calls is called here, unless it subscripts its
+        value, whose body reads what they hold (:func:`_reads_variadic`), and
+        that some other function, class or the module's top level calls:
+        Codon types ``kwargs`` and ``args`` from each call (a ``NamedTuple``
+        of the keywords passed, a ``Tuple`` of the values), and the calls
+        appended here pass no keyword and one value, so ``kw["speed"]`` or
+        ``args[1]`` would be refused for what every caller passes.  One whose
+        body does not read them is called here as before: a call is known by
+        its name only (``d.update(...)`` names a helper ``update`` too), so
+        leaving it to calls that may be another's would leave it uncompiled.
+        One nobody calls is called here, unless it subscripts its
         ``**kwargs``: then it is a problem, a function the check cannot call.
         """
         if self.callers is None:
             return False
         args = func.args
         if args.kwarg is None and _called_vararg(args.vararg) is None:
+            return False
+        if not _reads_variadic(func):
             return False
         name = where.rsplit(".", 1)[-1]
         if name == "__init__":

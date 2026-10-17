@@ -1370,6 +1370,12 @@ class Tuner:
 
 def setup() -> None:
     print(opts(speed=2.0), pair(1.0, 2.0), Tuner(p=1.0).scale(1.0, 2.0))
+    gains: dict[str, float] = {}
+    gains.update(p=1.0)
+
+
+def update(**kw: float) -> float:
+    return kw.get("p", 1.0)
 """
 
 
@@ -1386,6 +1392,10 @@ def test_a_variadic_function_its_module_calls_is_left_to_those_calls() -> None:
     assert "    unused_get()" in calls
     assert "    unused_args(_acs_value(float))" in calls
     assert "    recursive(_acs_value(float))" in calls
+    # ...and so is one whose body does not read what its **kwargs holds: a
+    # call is known by its name only, and gains.update() is dict's, not the
+    # helper's, which nothing would compile if it were left to it.
+    assert "    update()" in calls
     # ...unless it reads its **kwargs by key: no call without one compiles.
     assert not [c for c in calls if c.lstrip().startswith("unused(")]
     [(line, message)] = checks.problems

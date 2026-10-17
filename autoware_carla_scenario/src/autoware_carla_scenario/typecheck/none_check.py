@@ -83,11 +83,13 @@ _DECLARATION = re.compile(
 
 #: A value of type A where B is expected: ``Argument 1 to "f" has
 #: incompatible type "A"; expected "B"``, ``(expression has type "A",
-#: variable has type "B")``, ``(got "A", expected "B")``, ``Invalid index
-#: type "A" for "C"; expected type "B"``.
+#: variable has type "B")``, ``(expression has type "A", target has type
+#: "B")`` (an item assigned, ``d["k"] = a``), ``(got "A", expected "B")``,
+#: ``Invalid index type "A" for "C"; expected type "B"``.
 _EXPECTED = re.compile(
     r'(?:incompatible type|expression has type|got|Invalid index type) "(?P<actual>.*?)"'
-    r'(?: for ".*?")?[;,] (?:expected|variable has type|expected type) "(?P<expected>.*?)"'
+    r'(?: for ".*?")?[;,] (?:expected|variable has type|target has type|expected type) '
+    r'"(?P<expected>.*?)"'
 )
 #: ``Item "None" of "X | None" has no attribute "y"`` (``union-attr``).
 _NONE_ITEM = re.compile(r'\bItem "None" of "')
