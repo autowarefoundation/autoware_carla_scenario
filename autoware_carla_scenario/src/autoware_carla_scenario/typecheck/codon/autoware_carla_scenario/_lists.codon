@@ -26,21 +26,25 @@ def _acs_list(*items):
         return out
 
 
-# _acs_dict: what the checker puts in place of a dict display whose values may
-# mix classes, e.g. `{"turn": turn, "lc": lc}`, as `_acs_dict(("turn", turn),
-# ("lc", lc))`: the dict display counterpart of _acs_list. A display whose
-# first value is a condition (or an action) is a Dict[K, BaseCondition]
-# (Dict[K, BaseAction]), K the type of its first key, and any other display
-# keeps the types of its first item, as Codon's would.
+# _acs_base: what the checker puts around each value of a dict display whose
+# values may mix classes, e.g. `{"turn": turn, "lc": lc}`, as
+# `{"turn": _acs_base(turn), "lc": _acs_base(lc)}`: the dict display
+# counterpart of _acs_list. A condition (or an action) is a BaseCondition
+# (BaseAction), so a display of different ones is a Dict[K, BaseCondition]
+# (Dict[K, BaseAction]) as in Python; any other value is returned as it is,
+# and the display stays Codon's, typed as it was (an int and a float, a value
+# and None).
 
 
-def _acs_dict(*items):
-    if hasattr(items[0][1], "_acs_condition"):
-        return _acs_dict_into(Dict[type(items[0][0]), BaseCondition](), *items)
-    elif hasattr(items[0][1], "_acs_action"):
-        return _acs_dict_into(Dict[type(items[0][0]), BaseAction](), *items)
+def _acs_base(x):
+    if hasattr(x, "_acs_condition"):
+        base: BaseCondition = x
+        return base
+    elif hasattr(x, "_acs_action"):
+        base: BaseAction = x
+        return base
     else:
-        return _acs_dict_into(Dict[type(items[0][0]), type(items[0][1])](), *items)
+        return x
 
 
 # _acs_dict_into: an annotated dict display, `x: dict[str, BaseAction] =
@@ -55,8 +59,8 @@ def _acs_dict_into(out, *items):
     return out
 
 
-# Last, not first: every module the checker rewrites imports _acs_list (and _acs_dict), and in
-# the library check some of them are imported by the model these import
+# Last, not first: every module the checker rewrites imports these, and in the
+# library check some of them are imported by the model these import
 # (typecheck/library.py, REPLACED_MODELS). Codon resolves an import cycle with
 # the names already defined, so these have to be defined by then.
 from .actions import BaseAction

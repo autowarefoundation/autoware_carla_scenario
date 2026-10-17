@@ -38,12 +38,13 @@ which :func:`transform_source_lines` maps back onto the handler):
 * A dict display of two or more items whose values are not evidently of
   one type (all literals, all calls of the same name, all attributes of the
   same class), e.g. ``{"turn": turn, "lc": lc}``, becomes
-  ``_acs_dict((k1, v1), (k2, v2))``: Codon types a display by its first
-  item, and ``_acs_dict`` makes it a dict of conditions (or actions) as in
-  Python.  Assigned to an annotated ``x: dict[K, V]`` (``K`` and ``V``
-  plain names), such a display, of one item or more, becomes
-  ``_acs_dict_into(Dict[K, V](), (k1, v1), ...)``, a dict of the annotated
-  type.
+  ``{"turn": _acs_base(turn), "lc": _acs_base(lc)}``: Codon types a display
+  by its first item, and ``_acs_base`` makes each condition (or action) a
+  ``BaseCondition`` (``BaseAction``), so the display is a dict of them as in
+  Python; other values are left to Codon's display.  Assigned to an
+  annotated ``x: dict[K, V]`` (``K`` and ``V`` plain names), such a display,
+  of one item or more, becomes ``_acs_dict_into(Dict[K, V](), (k1, v1),
+  ...)``, a dict of the annotated type.
 * An ``Enum`` class derives from the ``enum`` shim's ``Enum[T]`` (``T`` the
   type of its values: ``str`` for ``class C(str, Enum)``, ``int`` for
   ``auto()``), and each member ``RED = "red"`` becomes the class variable
@@ -157,7 +158,7 @@ MISSING_BUILTIN_EXCEPTIONS = (
 #: First lines of every transformed module; reported line numbers are shifted
 #: back by as many.
 PRELUDE = (
-    "from autoware_carla_scenario._lists import _acs_list, _acs_dict, "
+    "from autoware_carla_scenario._lists import _acs_list, _acs_base, "
     "_acs_dict_into\n"
     "from autoware_carla_scenario._tc import _Required as _acs_Required, "
     "_acs_Returning, _acs_callable, _acs_tuple\n"
@@ -212,7 +213,6 @@ _ABSTRACT_GENERICS = {
 #: Python's immutable set, which Codon 0.19 lacks: checked as a ``Set`` (the
 #: check only types it; nothing compiled is run, so nothing can mutate it).
 _FROZENSET_NAMES = {"frozenset", "FrozenSet", "typing.FrozenSet"}
-#: numpy's array class, which Codon's numpy has as ``ndarray[dtype, ndim]``.
 #: Annotations of a mapping whose dict display is built with
 #: ``_acs_dict_into`` as the annotated type.
 _DICT_ANNOTATIONS = {
@@ -226,6 +226,7 @@ _DICT_ANNOTATIONS = {
     "collections.abc.Mapping",
     "collections.abc.MutableMapping",
 }
+#: numpy's array class, which Codon's numpy has as ``ndarray[dtype, ndim]``.
 _NDARRAY_NAMES = {"np.ndarray", "numpy.ndarray"}
 _DTYPE_NAMES = {"np.dtype", "numpy.dtype"}
 _UNEXPRESSIBLE = {"Any", "object", "Callable", "type", "Type", "Literal", "Final"}
@@ -1521,7 +1522,22 @@ class _Rewriter(ast.NodeVisitor):
 
     def visit_Dict(self, node: ast.Dict) -> None:
         if _mixed_dict(node):
-            self._rewrite_dict(node, "_acs_dict(")
+            # `{"turn": turn, "lc": lc}`: `{"turn": _acs_base(turn), ...}`.
+            # Each edit starts before the value it wraps (after its key),
+            # so an edit inside the value, at its first character, still
+            # applies; the display stays Codon's.
+            for key, value in zip(node.keys, node.values):
+                if not isinstance(value, _BASE_VALUES):
+                    continue
+                assert key is not None
+                key_end = self.edits.node_span(key)[1]
+                value_start, value_end = self.edits.node_span(value)
+                self.edits.replace(
+                    key_end,
+                    value_start,
+                    self.edits.text(key_end, value_start) + "_acs_base(",
+                )
+                self.edits.replace(value_end, value_end, ")")
         self.generic_visit(node)
 
     def _dict_annotation_type(self, annotation: ast.AST) -> str | None:
@@ -1592,8 +1608,14 @@ class _Rewriter(ast.NodeVisitor):
         self.generic_visit(node)
 
 
+#: The dict display values ``_acs_base`` wraps: those that may be a
+#: condition or an action (not a literal, whose type Codon's display may
+#: still promote or make optional).
+_BASE_VALUES = (ast.Name, ast.Attribute, ast.Call, ast.Subscript, ast.IfExp)
+
+
 def _mixed_dict(node: ast.Dict, least: int = 2) -> bool:
-    """Whether the dict display *node* may mix classes, for ``_acs_dict``.
+    """Whether the dict display *node* may mix classes, for ``_acs_base``.
 
     At least *least* items, no ``**`` unpacking, and values that are not all
     of one evident type (:func:`_evident_values`), which are left to Codon:

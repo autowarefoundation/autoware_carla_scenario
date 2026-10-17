@@ -2710,6 +2710,28 @@ def test_a_dict_display_mixing_an_action_and_a_non_action_is_refused(
 
 
 @pytest.mark.parametrize(
+    "setup",
+    [
+        'speeds = {"a": 1, "b": cfg.timeout_seconds}\nv: float = speeds["b"]\n',
+        'limits = {"a": None, "b": cfg.timeout_seconds}\n',
+        'limits = {"a": cfg.timeout_seconds, "b": None}\n',
+        'names = {"a": cfg.name, "b": None}\n',
+        'limits: dict[str, float | None] = {"a": 1.0, "b": cfg.min_speed_kmh}\n',
+    ],
+    ids=["int-then-float", "none-first", "none-last", "str-none", "optional"],
+)
+def test_a_dict_display_codon_typed_before_still_compiles(
+    tmp_path: Path, setup: str
+) -> None:
+    # The rewrite only makes a condition (or an action) its base class: an int
+    # and a float, or a value and None, stay Codon's display to type, which
+    # promotes the int and makes the value optional (#250).
+    scenario, config, _ = _write_case(tmp_path, setup + 'logger.info("ok")\n')
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+@pytest.mark.parametrize(
     ("setup", "needle", "message"),
     [
         (

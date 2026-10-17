@@ -549,9 +549,9 @@ scenario has to do itself:
   Codon types a dict display by its first item, so the check rewrites one
   whose values are not evidently of one type, as it does a list display:
   `{"turn": turn, "lane_change": lc}` (a `TurnAction` and a
-  `LaneChangeAction`) becomes `_acs_dict(("turn", turn), ("lane_change",
-  lc))`, a `dict[str, BaseAction]` as in Python (a display that starts with
-  a condition, a `dict[..., BaseCondition]`), and passes as
+  `LaneChangeAction`) becomes `{"turn": _acs_base(turn), "lane_change":
+  _acs_base(lc)}`, which makes each action a `BaseAction` (each condition a
+  `BaseCondition`): a `dict[str, BaseAction]` as in Python, which passes as
   `ActionStateCondition`'s `actions`. Assigned to an annotated variable,
   `actions: dict[str, BaseAction] = {...}`, it becomes a dict of the
   annotated type (`_acs_dict_into`, when the key and value types are plain
@@ -561,8 +561,9 @@ scenario has to do itself:
   scenario.py:73: error: 'int' does not match expected type 'BaseAction'
   ```
 
-  A display of any other values keeps the types of its first item, as
-  Codon's does. Values evidently of one type (all literals, all calls of the
+  Any other value is left to Codon's display, which types it as before
+  (`{"a": 1, "b": speed}` is a `dict[str, float]`, a value with `None` is
+  optional). Values evidently of one type (all literals, all calls of the
   same name, all members of one enum) are left as written. Building the dict
   one item at a time into a `dict[str, BaseAction]` stays valid.
 - **Convert nested mappings in the config.** The runner passes a YAML mapping
@@ -1341,9 +1342,10 @@ from the model's. The two are different types that never meet:
   unchecked action) cannot do so until that module is checked too
   (`scenario_base` is checked, and imports `BaseCondition` from
   `conditions.base` for that);
-  `_acs_list` (and `_acs_dict`) gives a list (dict) display of checked
-  conditions the type of its first element, so a display mixing two checked
-  condition classes waits for the same.
+  `_acs_list` gives a list display of checked conditions the type of its
+  first element (`_acs_base` leaves a checked condition in a dict display as
+  it is), so a display mixing two checked condition classes waits for the
+  same.
 
 `BaseCondition.__init_subclass__`, which wraps every subclass's `check()` to
 record its last result for the UI, is in `UNCALLED`: the check sees each
