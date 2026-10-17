@@ -390,6 +390,21 @@ class EntityExistenceCondition(BaseCondition):
         super().__init__(_required_str(label, "EntityExistenceCondition(): label"))
 
 
+class OffRoadFractionCondition(BaseCondition):
+    def __init__(self, label):
+        compile_error("OffRoadFractionCondition(): no constructor takes these arguments "
+                      "(required: fraction, keyword label)")
+
+    def __init__(self, fraction: float, entity_name = None, *_kw, label = _Required()):
+        _keyword_only(_kw, "OffRoadFractionCondition(): label")
+        _expect_optional_role(entity_name)
+        super().__init__(_required_str(label, "OffRoadFractionCondition(): label"))
+
+    @property
+    def off_road_fraction(self) -> Optional[float]:
+        raise NotImplementedError()
+
+
 class TrafficSignalCondition(BaseCondition):
     def __init__(self, label):
         compile_error("TrafficSignalCondition(): no constructor takes these arguments "

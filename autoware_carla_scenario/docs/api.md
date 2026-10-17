@@ -96,6 +96,7 @@ All conditions inherit from `BaseCondition` and return a
 | `MetricCondition(metric, rule, value, tolerance, *, label)` | A built-in metric -- how the ego drives -- against a threshold; usually a fail condition. See [Metrics](metrics.md). |
 | `EntityDistanceCondition`, `TimeToCollisionCondition` | Relative conditions between two entities: separation, and time to collision along the line joining them. |
 | `CollisionCondition`, `EntityExistenceCondition` | Safety checks. |
+| `OffRoadFractionCondition(fraction, entity_name=None, *, label)` | Fails once at least `fraction` (in `(0, 1]`) of the sample points of a 5 x 3 grid over an entity's (default: the ego's) bounding box -- edges and corners included, not an area -- are on no driving lane. The pass/fail counterpart of the `offroad` metric, with a tolerance. See [Metrics](metrics.md#off-the-road-as-a-fail-condition). |
 | `TrafficSignalCondition` | Traffic-light state check. |
 | `RouteProgressCondition` | An entity's (default: the ego's) distance along the scenario's route, from an anchor (`junction:0:entry`, ...), compared with a rule; robust to lane changes. See [Logical Scenarios from Routes](logical_scenarios.md). |
 | `ComparisonRule`, `ScalarComparisonRule`, `compare` | Numeric comparison primitives. `compare(actual, rule, value, tolerance)` is the underlying helper. |
