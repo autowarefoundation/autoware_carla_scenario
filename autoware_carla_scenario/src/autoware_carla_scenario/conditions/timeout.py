@@ -17,8 +17,11 @@ class TimeoutCondition(BaseCondition):
     part of what the scenario says -- "this manoeuvre should be over within N
     seconds" -- and so has to mean the same thing on every host.
 
-    ``ScenarioRunner`` registers one of these on every scenario as a default
-    fail condition; see ``timeout_seconds`` there.
+    ``ScenarioRunner`` registers one of these as a default fail condition on
+    every scenario that registers no timeout of its own; see
+    ``timeout_seconds`` there.  A scenario that registers one (bare, or inside
+    an :class:`OrCondition` or a :class:`StickyCondition`) runs for as long as
+    it says, and the run's default timeout does not apply to it.
     """
 
     # Declared for the static check (docs/typecheck.md).

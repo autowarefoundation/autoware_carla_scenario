@@ -84,7 +84,10 @@ class TrafficLightComplianceConfig:
     #: Delay (seconds) before switching traffic lights from red to green.
     light_switch_delay_seconds: float = 3.0
 
-    #: Fail-safe timeout in seconds.
+    #: Fail-safe timeout in seconds: the scenario's own timeout, so the run's
+    #: default timeout is not added on top of it.  Ignored when
+    #: ``timeout_after_green_seconds`` is set -- a ``scenario.timeout_seconds=``
+    #: override then no longer caps the run.
     timeout_seconds: float = 5.0
 
     #: Speed threshold (km/h) considered "moving": reaching it while the
@@ -112,6 +115,13 @@ class TrafficLightComplianceConfig:
     #: ``light_switch_delay_seconds`` plus this, in seconds, in place of
     #: ``timeout_seconds``, so a sweep that draws the delay keeps the time
     #: the ego has to pull away.  ``None`` uses ``timeout_seconds``.
+    #:
+    #: When set, the run lasts until this limit however short
+    #: ``timeout_seconds`` is: the scenario registers its own timeout, so
+    #: ``ScenarioRunner`` adds no default, and neither ``timeout_seconds`` (a
+    #: ``scenario.timeout_seconds=`` override included) nor a
+    #: ``run_scenario``/``ScenarioQueue.add`` timeout caps it.  A sweep's
+    #: ``sweep.job_timeout_seconds`` still guards each job on the wall clock.
     timeout_after_green_seconds: float | None = None
 
 

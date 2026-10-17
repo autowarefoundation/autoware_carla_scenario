@@ -1,8 +1,10 @@
 # Model of autoware_carla_scenario.coordinate (docs/typecheck.md).
 #
-# AnyPose (Union[Lanelet2Pose, OpenDrivePose, CarlaWorldPose]) is not a type
-# here: a function taking it is overloaded per pose type, as the Python
-# functions are with typing.overload, or generic and checked by _expect_pose.
+# AnyPose (Union[Lanelet2Pose, OpenDrivePose, CarlaWorldPose]) is declared as
+# Python's alias, for a scenario's own annotations, but no function here takes
+# it (a Union parameter crashes Codon 0.19): a function taking a pose is
+# overloaded per pose type, as the Python functions are with typing.overload,
+# or generic and checked by _expect_pose, which takes an AnyPose too.
 
 import internal.static as static
 import numpy
@@ -19,6 +21,8 @@ from ._poses import (CarlaWorldPose, CoordinateFrame, FrameMismatchError, Lanele
                      OpenDrivePose)
 from ._ground_projection import GroundProjectionConfig
 from ._bridge_pose import BridgePose
+
+AnyPose = Union[Lanelet2Pose, OpenDrivePose, CarlaWorldPose]
 
 
 def _expect_pose(pose):

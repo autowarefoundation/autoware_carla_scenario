@@ -341,6 +341,136 @@ class TestInitPhaseOrdering:
         assert order == ["init", "on_scenario_start"]
 
 
+class _SnapshotLight:
+    """A traffic light whose ``is_frozen()`` reads as CARLA's client reads it.
+
+    ``freeze()`` reaches the server at once, but ``is_frozen()`` answers from
+    the snapshot the last tick sent, so a freeze reads only after a tick.  Only
+    the freeze is modelled; ``set_state()`` is accepted and ignored.
+    """
+
+    type_id = "traffic.traffic_light"
+
+    def __init__(self) -> None:
+        self.frozen = False  # on the server
+        self._seen = False  # in the client's snapshot
+
+    def set_state(self, state: object) -> None:
+        del state
+
+    def freeze(self, frozen: bool) -> None:
+        self.frozen = frozen
+
+    def is_frozen(self) -> bool:
+        return self._seen
+
+    def snapshot(self) -> None:
+        self._seen = self.frozen
+
+
+class _SnapshotWorld:
+    """A world of traffic lights whose tick refreshes what the client reads."""
+
+    def __init__(self, lights: list[_SnapshotLight]) -> None:
+        self.lights = lights
+        self.ticks = 0
+
+    def get_actors(self) -> "_LightList":
+        return _LightList(self.lights)
+
+    def tick(self) -> int:
+        self.ticks += 1
+        for light in self.lights:
+            light.snapshot()
+        return self.ticks
+
+
+class _LightList:
+    def __init__(self, lights: list[_SnapshotLight]) -> None:
+        self._lights = lights
+
+    def filter(self, pattern: str) -> list:
+        return list(self._lights) if pattern.startswith("traffic.traffic_light") else []
+
+
+class TestTheEgoStartsOnTheInitPhasesWorld:
+    """The runner ticks after the init actions, before the ego is started.
+
+    A client reads ``is_frozen()`` from the last tick, so an ego started on
+    the init actions' own tick reads every light they froze as running.  The
+    policy run-up then froze those lights as its own and thawed them on
+    arrival: CARLA's cycle turned the scenario's red lights yellow mid-run.
+    """
+
+    _LIGHTS = 3
+
+    def _start(self, runner: ScenarioRunner, tmp_path) -> tuple[list[str], list]:
+        """Run a scenario up to ``ego.on_scenario_start``, through run_scenario.
+
+        Returns what happened, in order (``init``, ``tick``, ``start``), and the
+        lights the policy run-up, started there, would take over as its own.
+        """
+        from autoware_carla_scenario.entity._policy_warmup import PolicyWarmup
+
+        world = _SnapshotWorld([_SnapshotLight() for _ in range(self._LIGHTS)])
+        calls: list[str] = []
+        taken: list = []
+
+        def tick(*_a, **_k) -> int:
+            calls.append("tick")
+            return _SnapshotWorld.tick(world)
+
+        def run_init(w) -> None:
+            # What TrafficSignalAction(Red, ALL) does: freeze every light.
+            for light in w.get_actors().filter("traffic.traffic_light*"):
+                light.freeze(True)
+            calls.append("init")
+
+        def on_scenario_start(w) -> None:
+            calls.append("start")
+            # What CarlaDriverEntity does there with warmup_s > 0.
+            taken.extend(PolicyWarmup._freeze_lights(w))
+            raise _Stop
+
+        world_mock = MagicMock()
+        world_mock.get_actors.side_effect = world.get_actors
+        world_mock.tick.side_effect = tick
+        runner.output_dir = tmp_path
+        runner._world = world_mock
+        runner._pace_tick = lambda: None  # type: ignore[method-assign]
+
+        scenario = MagicMock()
+        scenario.STABILIZE_TICKS = 2
+        scenario.run_init.side_effect = run_init
+        ego = scenario.create_ego.return_value
+        ego.spawn.return_value.id = 1
+        ego.on_scenario_start.side_effect = on_scenario_start
+
+        with patch("autoware_carla_scenario.scenario_runner.prepare_measures"):
+            with pytest.raises(_Stop):
+                runner.run_scenario(scenario, reset_world=False)
+        return calls, taken
+
+    def test_the_world_ticks_between_the_init_actions_and_the_egos_start(
+        self, tmp_path
+    ):
+        calls, _ = self._start(_make_runner(None), tmp_path)
+        assert calls[calls.index("init") :] == ["init", "tick", "start"]
+
+    def test_the_run_up_takes_over_no_light_the_init_phase_froze(self, tmp_path):
+        _, taken = self._start(_make_runner(None), tmp_path)
+        assert taken == []
+
+    def test_without_that_tick_the_run_up_takes_them_all_over(self, tmp_path):
+        """The fault the tick prevents, through the same run: an ego started on
+        the init actions' own tick reads their lights as running."""
+        runner = _make_runner(None)
+        runner._run_init = lambda w, s: s.run_init(w)  # type: ignore[method-assign]
+        calls, taken = self._start(runner, tmp_path)
+        assert calls[calls.index("init") :] == ["init", "start"]
+        assert len(taken) == self._LIGHTS
+
+
 class TestNothingMovesDuringInit:
     """The clock ticks through init, but no vehicle does anything with it.
 
@@ -749,3 +879,224 @@ class TestTheBatchMap:
         assert not same_episode(None, None)
         assert not same_episode(None, 7)
         assert same_episode(-7, -7)
+
+
+def _never(label: str):
+    """A condition that never fires: the other half of a composite."""
+    from autoware_carla_scenario import BaseCondition
+
+    class _Never(BaseCondition):
+        def check(self, world, elapsed):
+            return None
+
+    return _Never(label=label)
+
+
+class TestTheDefaultTimeout:
+    """The runner's timeout is a default: a scenario's own timeout replaces it.
+
+    A red light whose drawn red phase is 13.4 s, with seven seconds allowed
+    after the green, has to run for 20.4 s; a run whose default is twelve
+    used to fail it before the light ever turned green.
+    """
+
+    @staticmethod
+    def _scenario(*fail_conditions):
+        import typesafe_carla.carla as carla
+
+        from autoware_carla_scenario import BaseScenario, EgoConfig, SpawnTransform
+
+        class _Scenario(BaseScenario):
+            def setup(self) -> None:
+                for condition in fail_conditions:
+                    self.register_fail_condition(condition)
+
+            def is_done(self) -> bool:
+                return True
+
+        scenario = _Scenario(
+            EgoConfig(
+                spawn_location=SpawnTransform(
+                    carla.Transform(carla.Location(x=0, y=0, z=0))
+                )
+            )
+        )
+        scenario.setup()
+        return scenario
+
+    @staticmethod
+    def _timeouts(scenario) -> list[tuple[str, float]]:
+        from autoware_carla_scenario import TimeoutCondition
+
+        return [
+            (c.label, c.timeout_seconds)
+            for c in scenario._fail_conditions
+            if isinstance(c, TimeoutCondition)
+        ]
+
+    def test_a_scenario_without_a_timeout_gets_the_default(self):
+        from autoware_carla_scenario.scenario_runner import _register_default_timeout
+
+        scenario = self._scenario()
+        assert _register_default_timeout(scenario, 12.0, "S") is True
+        assert self._timeouts(scenario) == [("default_timeout", 12.0)]
+
+    def test_a_scenario_with_its_own_timeout_keeps_it_alone(self):
+        from autoware_carla_scenario import TimeoutCondition
+        from autoware_carla_scenario.scenario_runner import _register_default_timeout
+
+        scenario = self._scenario(
+            TimeoutCondition(13.4 + 7.0, label="scenario_timeout")
+        )
+        assert _register_default_timeout(scenario, 12.0, "S") is False
+        assert self._timeouts(scenario) == [("scenario_timeout", 20.4)]
+
+    def test_a_shorter_own_timeout_is_kept_too(self):
+        from autoware_carla_scenario import TimeoutCondition
+        from autoware_carla_scenario.scenario_runner import _register_default_timeout
+
+        scenario = self._scenario(TimeoutCondition(5.0, label="scenario_timeout"))
+        assert _register_default_timeout(scenario, 60.0, "S") is False
+        assert self._timeouts(scenario) == [("scenario_timeout", 5.0)]
+
+    def test_a_timeout_inside_an_or_counts(self):
+        from autoware_carla_scenario import OrCondition, TimeoutCondition
+        from autoware_carla_scenario.scenario_runner import _register_default_timeout
+
+        scenario = self._scenario(
+            OrCondition(
+                [
+                    _never("other"),
+                    TimeoutCondition(20.0, label="scenario_timeout"),
+                ]
+            )
+        )
+        assert _register_default_timeout(scenario, 12.0, "S") is False
+        assert scenario._fail_conditions[-1].label != "default_timeout"
+
+    def test_a_timeout_inside_a_sticky_counts(self):
+        from autoware_carla_scenario import StickyCondition, TimeoutCondition
+        from autoware_carla_scenario.scenario_runner import _register_default_timeout
+
+        sticky = StickyCondition(TimeoutCondition(20.0, label="scenario_timeout"))
+        scenario = self._scenario(sticky)
+        assert _register_default_timeout(scenario, 12.0, "S") is False
+        assert scenario._fail_conditions == [sticky]
+        # And it does fail the run when the timeout does.
+        assert sticky.check(MagicMock(), 20.0) is not None
+
+    @pytest.mark.parametrize("wrapper", ["and", "not", "persistent"])
+    def test_a_timeout_that_does_not_bound_the_run_does_not_count(self, wrapper):
+        from autoware_carla_scenario import (
+            AndCondition,
+            NotCondition,
+            PersistentCondition,
+            TimeoutCondition,
+        )
+        from autoware_carla_scenario.scenario_runner import _register_default_timeout
+
+        timeout = TimeoutCondition(20.0, label="t")
+        condition = {
+            "and": lambda: AndCondition([_never("other"), timeout]),
+            "not": lambda: NotCondition(timeout),
+            "persistent": lambda: PersistentCondition(timeout, duration=0.1),
+        }[wrapper]()
+        scenario = self._scenario(condition)
+        assert _register_default_timeout(scenario, 12.0, "S") is True
+        assert scenario._fail_conditions[-1].label == "default_timeout"
+
+    def test_a_persistent_timeout_never_fires(self):
+        """Why a PersistentCondition does not count: it resets on a failure."""
+        from autoware_carla_scenario import PersistentCondition, TimeoutCondition
+
+        persistent = PersistentCondition(TimeoutCondition(1.0, label="t"), duration=0.1)
+        assert all(persistent.check(MagicMock(), t) is None for t in (0.5, 1.0, 99.0))
+
+    def test_the_registered_conditions_fire_at_the_scenarios_own_limit(self):
+        """What is left registered fails at 20.4 s, and not at 12 s."""
+        from autoware_carla_scenario import TimeoutCondition
+        from autoware_carla_scenario.scenario_runner import _register_default_timeout
+
+        scenario = self._scenario(TimeoutCondition(20.4, label="scenario_timeout"))
+        _register_default_timeout(scenario, 12.0, "S")
+        world = MagicMock()
+
+        def fired(elapsed: float) -> list[str]:
+            return [
+                c.label
+                for c in scenario._fail_conditions
+                if c.check(world, elapsed) is not None
+            ]
+
+        assert fired(12.0) == []
+        assert fired(20.4) == ["scenario_timeout"]
+
+
+class TestRunScenarioRegistersTheDefaultTimeout:
+    """The wiring in ``run_scenario``: after setup and ``ego_existence``.
+
+    The run is stopped where the clock would start, right after the default
+    timeout is (or is not) registered.
+    """
+
+    @staticmethod
+    def _run(tmp_path, scenario, timeout_seconds: float) -> None:
+        runner = _make_runner(None)
+        runner.output_dir = tmp_path
+        runner._world = MagicMock()
+        with (
+            patch("autoware_carla_scenario.scenario_runner.prepare_measures"),
+            patch(
+                "autoware_carla_scenario.scenario_runner._ScenarioClock",
+                side_effect=_Stop,
+            ),
+            pytest.raises(_Stop),
+        ):
+            runner.run_scenario(
+                scenario, timeout_seconds=timeout_seconds, reset_world=False
+            )
+
+    @staticmethod
+    def _scenario(*own):
+        """A stand-in scenario whose fail conditions are a real list."""
+        scenario = MagicMock()
+        scenario.STABILIZE_TICKS = 0
+        scenario._fail_conditions = []
+        scenario.register_fail_condition.side_effect = scenario._fail_conditions.append
+        scenario.setup.side_effect = lambda: [
+            scenario.register_fail_condition(c) for c in own
+        ]
+        ego = _FakeEgo(ready_after=0)
+        ego.set_traffic_backend = MagicMock()  # type: ignore[attr-defined]
+        ego.spawn = MagicMock()  # type: ignore[attr-defined]
+        ego.set_initial_speeds = MagicMock()  # type: ignore[attr-defined]
+        ego.on_scenario_start = MagicMock()  # type: ignore[attr-defined]
+        ego.on_scenario_end = MagicMock()  # type: ignore[attr-defined]
+        ego.destroy = MagicMock()  # type: ignore[attr-defined]
+        ego.use_autopilot = True  # type: ignore[attr-defined]
+        scenario.create_ego.return_value = ego
+        return scenario
+
+    @staticmethod
+    def _labels(scenario) -> list[str]:
+        return [c.label for c in scenario._fail_conditions]
+
+    def test_the_default_comes_after_setup_and_ego_existence(self, tmp_path):
+        scenario = self._scenario(_never("own"))
+        self._run(tmp_path, scenario, 12.0)
+        assert self._labels(scenario) == ["own", "ego_existence", "default_timeout"]
+        assert scenario._fail_conditions[-1].timeout_seconds == 12.0
+
+    def test_no_default_for_a_scenario_with_its_own(self, tmp_path):
+        from autoware_carla_scenario import TimeoutCondition
+
+        scenario = self._scenario(TimeoutCondition(20.4, label="scenario_timeout"))
+        self._run(tmp_path, scenario, 12.0)
+        assert self._labels(scenario) == ["scenario_timeout", "ego_existence"]
+
+    def test_a_retry_does_not_add_a_second_default(self, tmp_path):
+        """setup() runs again on the same object; the first default stays."""
+        scenario = self._scenario()
+        self._run(tmp_path, scenario, 12.0)
+        self._run(tmp_path, scenario, 12.0)
+        assert self._labels(scenario).count("default_timeout") == 1

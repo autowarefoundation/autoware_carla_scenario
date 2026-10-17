@@ -512,3 +512,53 @@ class TestSignalControllersStart:
         assert [
             s.lanelet2_regulatory_element_id for s in controller.phases[0].states
         ] == [1001, 1003]
+
+
+class TestTheDocumentTimeoutIsTheScenariosOwn:
+    """Setup registers the document's timeout, not the runner.
+
+    The runner adds no default timeout to a scenario that registers one of its
+    own.  A document whose assertions hold a ``timeout`` node would then lose
+    its document-level timeout -- and the ``scenario.timeout_seconds``
+    override with it -- unless the scenario registers that one itself.
+    """
+
+    @staticmethod
+    def _set_up(config: DeclarativeScenarioConfig | None = None) -> Any:
+        from autoware_carla_scenario.authoring.starter import _condition
+        from autoware_carla_scenario.coordinate import OpenDrivePose
+
+        document = new_document()
+        # The starter's lane check reads the map; the clock does not.
+        document.assertions.pass_conditions = [_condition("elapsed_time")]
+        # The node allows longer than the document, so only the document's
+        # own timeout can explain a shorter limit.
+        for node in document.assertions.fail_conditions:
+            if node.type == "timeout":
+                node.params["timeout_seconds"] = 60.0
+        scenario = _scenario(document, config=config)
+        scenario._prepare_route = lambda: None  # type: ignore[method-assign]
+        scenario._setup_ego_spawn = lambda: OpenDrivePose(  # type: ignore[method-assign]
+            road_id="1", lane_id=-1, s=0.0
+        )
+        scenario._spawn_npcs = lambda: None  # type: ignore[method-assign]
+        scenario.setup()
+        return scenario
+
+    @staticmethod
+    def _timeouts(scenario: Any) -> list[tuple[str, float]]:
+        return [
+            (c.label, c.timeout_seconds)
+            for c in scenario._fail_conditions
+            if isinstance(c, TimeoutCondition)
+        ]
+
+    def test_the_document_timeout_is_registered_beside_the_node(self) -> None:
+        timeouts = self._timeouts(self._set_up())
+        assert ("document_timeout", 30.0) in timeouts
+        assert 60.0 in [seconds for _, seconds in timeouts]
+
+    def test_the_hydra_override_is_what_gets_registered(self) -> None:
+        config = DeclarativeScenarioConfig(name="cut_in", timeout_seconds=7.5)
+        timeouts = self._timeouts(self._set_up(config))
+        assert ("document_timeout", 7.5) in timeouts

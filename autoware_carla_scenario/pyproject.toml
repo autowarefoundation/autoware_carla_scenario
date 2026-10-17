@@ -1,6 +1,6 @@
 [project]
 name = "autoware-carla-scenario"
-version = "12.10.3"
+version = "12.11.4"
 description = "CARLA scenario testing framework for Autoware"
 readme = "README.md"
 license = "Apache-2.0"
@@ -83,6 +83,10 @@ dependencies = [
     # 4.25 through 7.x loads. The 4.x runtime itself cannot load on Python 3.14,
     # so the range has to reach past it; the ceiling is the newest major tested.
     "protobuf>=4.25.0,<8",
+    # Serialises the trajectory log (trajectory_recorder.py) on every tick: a
+    # Rust JSON encoder, several times faster than the stdlib's, writing the
+    # same floats byte for byte.
+    "orjson>=3.13.0",
 ]
 
 [project.urls]

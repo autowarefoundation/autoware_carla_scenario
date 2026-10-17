@@ -21,7 +21,13 @@ from .entity.registry import (
     register_entity,
     register_vehicle_entity,
 )
-from .conditions import EntityExistenceCondition, ScenarioResult, TimeoutCondition
+from .conditions import (
+    EntityExistenceCondition,
+    OrCondition,
+    ScenarioResult,
+    StickyCondition,
+    TimeoutCondition,
+)
 from .conditions.base import BaseCondition, ConditionStatus, find_actor_by_role_name
 from .constants import DEFAULT_TM_PORT, EGO_ROLE_NAME, FIXED_DELTA_SECONDS
 from .debug_markers import DebugMarkerLog, DrivenPathDrawer, draw_debug_markers
@@ -56,6 +62,73 @@ WARMUP_CAPTION: str = "Warm-up"
 #: than one tick, or the tick that is to show them removes them before the
 #: frame is rendered; less than two, or they linger into the next frame.
 _DEBUG_MARKER_LIFE_TIME: float = 1.5 * FIXED_DELTA_SECONDS
+
+
+def _bounds_the_run(condition: BaseCondition) -> bool:
+    """Whether *condition*, as a fail condition, ends the run by a timeout.
+
+    Exactly these count:
+
+    - a bare :class:`TimeoutCondition`;
+    - an :class:`OrCondition` with a child that counts -- an OR fires as soon
+      as any child does;
+    - a :class:`StickyCondition` whose child counts -- it hands on the
+      child's failure as it comes (it latches only a *pass*).
+
+    Nothing else does, on purpose.  An AND or a NOT holding a timeout fires
+    only on some *other* state of the world, which is a condition on the
+    timeout, not a limit on the run; a :class:`PersistentCondition` resets on
+    every failure its child reports, so around a timeout it never fires at
+    all.
+    """
+    if isinstance(condition, TimeoutCondition):
+        return True
+    if isinstance(condition, OrCondition):
+        return any(_bounds_the_run(child) for child in condition._conditions)
+    if isinstance(condition, StickyCondition):
+        return _bounds_the_run(condition._condition)
+    return False
+
+
+def _register_default_timeout(
+    scenario: BaseScenario, timeout_seconds: float, scenario_name: str
+) -> bool:
+    """Give *scenario* the runner's default timeout, unless it has its own.
+
+    A scenario that registers a timeout fail condition has said how long it
+    runs -- a red light that turns green after a drawn delay needs that delay
+    and then some, however short the run's default is -- so the default would
+    only cut it short.  A scenario that registers none is given the default,
+    so that no run goes on forever.  What counts as a timeout of its own is
+    :func:`_bounds_the_run`.
+
+    So the runner's ``timeout_seconds``, ``run_scenario(timeout_seconds=...)``
+    and ``ScenarioQueue.add(timeout_seconds=...)`` -- the run's
+    ``scenario.timeout_seconds`` -- do not apply to a scenario with a timeout
+    of its own (a :class:`~autoware_carla_scenario.declarative.DeclarativeScenario`
+    always has one: its document's).  A sweep still has the wall-clock
+    ``sweep.job_timeout_seconds`` guard over every job.
+
+    Registered after ``ego_existence``, as the last fail condition: on a tick
+    where several fire, the result names the first.  On a retry of the same
+    scenario object, the default the first attempt registered is still there
+    and counts as the scenario's own, so it is not added twice.
+
+    Returns:
+        Whether the default was registered.
+    """
+    if any(_bounds_the_run(c) for c in scenario._fail_conditions):
+        logger.info(
+            "[%s] Scenario registers its own timeout; the default of %.1fs "
+            "is not added",
+            scenario_name,
+            timeout_seconds,
+        )
+        return False
+    scenario.register_fail_condition(
+        TimeoutCondition(timeout_seconds, label="default_timeout")
+    )
+    return True
 
 
 def _map_name_of(world: "carla.World") -> str:
@@ -475,9 +548,13 @@ class ScenarioRunner:
             port: CARLA server RPC port.
             tm_port: CARLA TrafficManager port.
             timeout_seconds: Default ``TimeoutCondition`` registered on every
-                scenario, in **simulated** seconds -- the same clock every
-                other duration is on, so a scenario given sixty seconds is
-                given sixty of its own however fast the host runs.
+                scenario that registers no timeout fail condition of its own,
+                in **simulated** seconds -- the same clock every other
+                duration is on, so a scenario given sixty seconds is given
+                sixty of its own however fast the host runs.  A scenario with
+                its own timeout keeps it, longer or shorter than this one, and
+                this one does not apply to it (see
+                ``_register_default_timeout`` for what counts).
             output_dir: Directory where CARLA recording logs are saved.
             max_tick_rate_hz: Upper bound on how fast the tick loop steps the
                 world, or *None* to step as fast as the server allows.  Slow
@@ -607,6 +684,23 @@ class ScenarioRunner:
 
         for actor in world.get_actors().filter("vehicle.*"):
             release_vehicle(actor)
+
+    def _run_init(self, world: "carla.World", scenario: "BaseScenario") -> None:
+        """Run the scenario's init actions, then tick once so the world shows them.
+
+        A client reads an actor's state -- a light's ``is_frozen()`` and
+        ``get_state()``, an actor's transform -- from the snapshot of the last
+        tick, so what an init action changed reads as it was until the world
+        ticks.  An ego started on the same tick would take the world as it was:
+        the policy run-up (``warmup_s``) read every light the scenario had just
+        frozen as running, froze it as its own, and thawed it on arrival, so
+        CARLA's cycle took over lights the scenario holds red.  The tick holds
+        every vehicle still, like the ones before it.
+        """
+        scenario.run_init(world)
+        self._hold_vehicles_still(world)
+        self._pace_tick()
+        world.tick()
 
     def _warn_if_route_leaves_odd(
         self, scenario_name: str, scenario: "BaseScenario"
@@ -1016,7 +1110,8 @@ class ScenarioRunner:
         3. Call ``scenario.setup(world)``
         4. Spawn the ego vehicle
         5. Start the CARLA native recorder
-        6. Register the default timeout fail condition
+        6. Register the default timeout fail condition, unless the scenario
+           registered a timeout of its own
         7. Run the tick loop
         8. Stop the recorder and destroy the ego vehicle
         9. Close the traffic backend and restore the world
@@ -1024,7 +1119,11 @@ class ScenarioRunner:
         Args:
             scenario: The scenario to run.
             timeout_seconds: The default timeout for this scenario; the
-                runner's ``timeout_seconds`` when ``None``.
+                runner's ``timeout_seconds`` when ``None``.  Not registered
+                when the scenario's setup registers a ``TimeoutCondition`` of
+                its own (bare, or inside an ``OrCondition`` or a
+                ``StickyCondition``): such a scenario runs to its own limit,
+                whatever is passed here.
             case: The case drawn from the ODD that the scenario runs, and the
                 space it was drawn in: recorded in the coverage file with the
                 run's outcome, so that the merged report can assess its
@@ -1227,7 +1326,7 @@ class ScenarioRunner:
             # run starts from, and handing an ego that plans its own route the
             # mission it needs before the wait below asks whether it is ready.
             logger.info("[%s] === Init actions ===", scenario_name)
-            scenario.run_init(world)
+            self._run_init(world, scenario)
 
             # Let the ego entity bring up whatever it needs now that the actor
             # exists and physics have settled (e.g. sensors and an external
@@ -1277,10 +1376,8 @@ class ScenarioRunner:
                     warmup_ticks,
                 )
 
-            # Register default timeout fail condition
-            scenario.register_fail_condition(
-                TimeoutCondition(timeout_seconds, label="default_timeout")
-            )
+            # The default timeout, unless the scenario registered its own.
+            _register_default_timeout(scenario, timeout_seconds, scenario_name)
 
             logger.info("[%s] === Tick loop start ===", scenario_name)
             # The clock starts here, after the ego is ready: an entity that

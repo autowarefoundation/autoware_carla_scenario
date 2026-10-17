@@ -25,18 +25,24 @@ One JSON object per line, in CARLA's (left-handed) frame, metres/degrees:
   since the last written tick (all of them in the first).  Ticks without any
   vehicle/walker are not written.
 
-The file is line-buffered, so a killed run loses at most the tick being written.
+:data:`SCHEMA_PATH` is the JSON Schema of a line, the format's contract for
+readers in any language (docs/trajectory_log.md).
+
+Lines are encoded with orjson (stdlib ``json``'s output, faster; non-ASCII
+text is written as UTF-8 rather than escaped) and the file is unbuffered,
+so each line reaches the OS in one write and a killed run loses at most the
+tick being written.
 Recording is best effort: an error here is logged once and recording stops, it
 never fails the scenario.
 """
 
 from __future__ import annotations
 
-import json
 import logging
 from pathlib import Path
 from typing import IO, Any
 
+import orjson
 import typesafe_carla.carla as carla
 
 from .coordinate.map_manager import run_carla_map
@@ -44,6 +50,8 @@ from .utils.traffic_light import traffic_light_state_name
 
 logger = logging.getLogger(__name__)
 
+#: The JSON Schema (draft-07) every line of the file conforms to.
+SCHEMA_PATH = Path(__file__).resolve().parent / "trajectory_recorder.schema.json"
 #: Actor type prefixes whose motion is recorded.
 RECORDED_KINDS = ("vehicle.", "walker.")
 #: ``role_name`` values whose control inputs are recorded.
@@ -106,7 +114,7 @@ class TrajectoryRecorder:
 
     def __init__(self, path: Path) -> None:
         self.path = path
-        self._out: IO[str] | None = None
+        self._out: IO[bytes] | None = None
         self._known: dict[int, Any] = {}  # actor id -> actor, or None if not recorded
         self._egos: dict[int, Any] = {}
         self._lights: list[Any] = []
@@ -120,7 +128,7 @@ class TrajectoryRecorder:
         """Open the file and write the world and its traffic lights."""
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
-            self._out = self.path.open("w", buffering=1, encoding="utf-8")
+            self._out = self.path.open("wb", buffering=0)
             # The run's map, not a fresh get_map(): only its name is wanted,
             # and CARLA builds the whole road network for one.
             self._emit(
@@ -159,7 +167,7 @@ class TrajectoryRecorder:
 
     def _emit(self, record: dict[str, Any]) -> None:
         assert self._out is not None
-        self._out.write(json.dumps(record, separators=(",", ":")) + "\n")
+        self._out.write(orjson.dumps(record, option=orjson.OPT_APPEND_NEWLINE))
 
     def _fail(self, what: str) -> None:
         logger.warning("Trajectory recording %s (%s)", what, self.path, exc_info=True)
@@ -251,4 +259,4 @@ class TrajectoryRecorder:
         self._emit(record)
 
 
-__all__ = ["EGO_ROLES", "RECORDED_KINDS", "TrajectoryRecorder"]
+__all__ = ["EGO_ROLES", "RECORDED_KINDS", "SCHEMA_PATH", "TrajectoryRecorder"]

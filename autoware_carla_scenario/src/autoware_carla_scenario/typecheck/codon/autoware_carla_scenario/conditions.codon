@@ -6,11 +6,12 @@
 
 import typesafe_carla.carla as carla
 
+from .action_state import ActionState
 from ._tc import (_keyword_only, _expect_float, _expect_optional_str, _Required,
                   _required_str, _acs_expect_return)
 from .coordinate import (Lanelet2Pose, OpenDrivePose, CarlaWorldPose, _expect_pose,
                          _expect_optional_pose, _expect_pose_list)
-from .entity_role import EntityRole, _expect_role, _expect_optional_role
+from .entity_role import EntityRole, _expect_role, _expect_optional_role, find_actor_in_list
 
 
 @tuple
@@ -83,6 +84,11 @@ class CollisionTargetType:
 class WaypointCheckType:
     value: int
     IS_EMPTY: ClassVar[WaypointCheckType] = WaypointCheckType(1)
+
+
+def compare(actual: float, rule: ComparisonRule, value: float,
+            tolerance: float = 1e-06) -> bool:
+    raise NotImplementedError()
 
 
 class ScalarComparisonRule:
@@ -198,11 +204,54 @@ def find_actor_by_role_name(world: carla.World, role_name) -> Optional[carla.Act
     raise NotImplementedError()
 
 
-def find_actor_in_list(actors: List[carla.Actor], role_name) -> Optional[carla.Actor]:
-    # str(), as in Python: a checked module's EntityRole (the library check)
-    # is not the model's, and both name a role the same way.
-    name: str = str(role_name)
-    raise NotImplementedError()
+def _expect_action_state(state) -> ActionState:
+    """A Union[ActionState, str] argument: a state, or its OpenSCENARIO name."""
+    if isinstance(state, ActionState):
+        return state
+    elif isinstance(state, str):
+        return ActionState(state)
+    else:
+        compile_error("expected an ActionState or a str (its OpenSCENARIO name)")
+
+
+def _expect_actions(actions) -> int:
+    """A Mapping[str, BaseAction] argument, any dict of action ids to actions.
+    actions.codon imports this module, so BaseAction cannot be named here: an
+    action is what BaseAction declares, its _acs_action marker and its state."""
+    if isinstance(actions, Dict[NoneType, NoneType]):
+        # `{}`: Codon types an empty literal's keys and values as NoneType.
+        return 0
+    n = 0
+    for key in actions:
+        action_id: str = key
+        action = actions[key]
+        action._acs_action()
+        state: ActionState = action.state
+        n += 1
+    return n
+
+
+class ActionStateCondition(BaseCondition):
+    def __init__(self, label):
+        compile_error("ActionStateCondition(): no constructor takes these arguments "
+                      "(required: action_id, state, actions)")
+
+    def __init__(self, action_id: str, state, actions, *_kw, label: str = "action_state"):
+        _keyword_only(_kw, "ActionStateCondition(): label")
+        _expect_action_state(state)
+        _expect_actions(actions)
+        super().__init__(label)
+
+
+class LaneChangeSettledCondition(BaseCondition):
+    def __init__(self, label):
+        compile_error("LaneChangeSettledCondition(): no constructor takes these arguments "
+                      "(required: entity_name)")
+
+    def __init__(self, entity_name, *_kw, label: str = "lane_change_settled"):
+        _keyword_only(_kw, "LaneChangeSettledCondition(): label")
+        _expect_role(entity_name)
+        super().__init__(label)
 
 
 class AlwaysTrueCondition(BaseCondition):

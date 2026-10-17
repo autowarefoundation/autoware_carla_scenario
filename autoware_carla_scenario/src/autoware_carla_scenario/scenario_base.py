@@ -645,7 +645,10 @@ class BaseScenario(ABC):
 
         Called by :class:`ScenarioRunner` after the ego is spawned and the
         warm-up ticks are done, and before the ego is asked to start.  Plain
-        callbacks run first, then actions, each in registration order.
+        callbacks run first, then actions, each in registration order.  The
+        runner ticks the world once more before it starts the ego, so the ego
+        reads a world that shows what the init phase set: a client sees an
+        actor's state (a light frozen, an actor moved) only from the next tick.
         """
         for cb in self._init_callbacks:
             cb(world)

@@ -7,7 +7,9 @@ the model as Python syntax -- it is written to parse as Python -- and compare
 every class and function ``autoware_carla_scenario/__init__.codon`` exports
 with the object of the same name: its parameters (names, order, which are
 keyword-only, which have defaults), the methods and properties it declares,
-its enum members.  They need no Codon.
+its enum members.  Every public name of a modelled module is declared or
+listed, with the reason, in ``typecheck/not_modelled.py`` (#237), and every
+model file is compared or exempt with the reason (#240).  They need no Codon.
 """
 
 from __future__ import annotations
@@ -16,7 +18,10 @@ import ast
 import dataclasses
 import enum
 import functools
+import importlib
+import importlib.util
 import inspect
+import re
 import typing
 from pathlib import Path
 from typing import Any
@@ -31,15 +36,20 @@ from pyxodr.road_objects.road import Road as PyxodrRoad
 
 import autoware_carla_scenario as acs
 from autoware_carla_scenario import (
+    action_state,
     carla_install,
     conditions,
     constants,
     coordinate,
     debug_markers,
+    entity_role,
     environment,
+    kinematics,
     measures,
     metrics,
+    odd,
     ros2,
+    scenario_base,
     trajectory_recorder,
 )
 from autoware_carla_scenario.autoware_bridge import base as bridge_base
@@ -57,6 +67,7 @@ from autoware_carla_scenario.driver import egodriver_client
 from autoware_carla_scenario.entity import carla_driver_entity
 from autoware_carla_scenario.maps import cache as maps_cache
 from autoware_carla_scenario.maps import source as maps_source
+from autoware_carla_scenario.maps import z_offset_cache as maps_z_offset_cache
 from autoware_carla_scenario.odd import probes as odd_probes
 from autoware_carla_scenario.odd import registry as odd_registry
 from autoware_carla_scenario.odd import route as odd_route
@@ -68,6 +79,14 @@ from autoware_carla_scenario.traffic import context as traffic_context
 from autoware_carla_scenario.traffic import registry as traffic_registry
 from autoware_carla_scenario.trajectory import model as trajectory_model
 from autoware_carla_scenario.typecheck import model_dir
+from autoware_carla_scenario.typecheck.check import (
+    _model_module,
+    _model_modules,
+    _model_names,
+    _unmodelled_module,
+)
+from autoware_carla_scenario.typecheck.library import package_modules
+from autoware_carla_scenario.typecheck.not_modelled import NOT_MODELLED
 from autoware_carla_scenario.ui import models as ui_models
 from autoware_carla_scenario.utils import traffic_light as utils_traffic_light
 from carla_driver_interface import geometry as cdi_geometry
@@ -103,7 +122,7 @@ def _exports() -> dict[str, str]:
     for node in _parse(_MODEL / "__init__.codon").body:
         if isinstance(node, ast.ImportFrom) and node.level == 1 and node.module:
             for alias in node.names:
-                out[alias.asname or alias.name] = node.module
+                out[alias.asname or alias.name] = node.module.replace(".", "/")
     return out
 
 
@@ -124,9 +143,12 @@ def _definitions(module: str, root: Path = _MODEL) -> dict[str, list[ast.stmt]]:
                 if isinstance(target, ast.Name):
                     out.setdefault(target.id, []).append(node)
         elif isinstance(node, ast.ImportFrom) and node.level == 1 and node.module:
+            # A module beside it (`.coordinate`) or in a package beside it
+            # (`.autoware_bridge.grpc_server`).
+            source = (Path(module).parent / node.module.replace(".", "/")).as_posix()
             for alias in node.names:
                 out.setdefault(alias.asname or alias.name, []).extend(
-                    _definitions(node.module, root).get(alias.name, [])
+                    _definitions(source, root).get(alias.name, [])
                 )
     return out
 
@@ -329,8 +351,23 @@ _BOUNDARY: dict[str, tuple[str, Any]] = {
     # What a scenario imports of conditions beside the package's exports.
     **{
         name: ("conditions", getattr(conditions, name))
-        for name in ("ConditionStatus", "beside_lane_id", "find_actor_in_list")
+        for name in (
+            "ActionStateCondition",
+            "ConditionStatus",
+            "LaneChangeSettledCondition",
+            "beside_lane_id",
+            "compare",
+        )
     },
+    # Defined by entity_role, as in Python; conditions re-exports it.
+    "find_actor_in_list": ("entity_role", entity_role.find_actor_in_list),
+    "find_actor_in_world": ("entity_role", entity_role.find_actor_in_world),
+    # What a scenario imports of kinematics beside the package's exports.
+    "normalize_angle_deg": ("kinematics", kinematics.normalize_angle_deg),
+    # A Union alias, for a scenario's own annotations: its members by name.
+    "AnyPose": ("coordinate", coordinate.AnyPose),
+    # A frozen dataclass a scenario reads off follow_with_spectator().
+    "SpectatorCameraConfig": ("scenario_base", scenario_base.SpectatorCameraConfig),
     # Every constant of constants.codon (EGO_ROLE_NAME is exported), each
     # compared by value.
     **{
@@ -507,12 +544,24 @@ def _literal_types(value: Any) -> Any:
 #: declares, every one compared with the Python object below.
 _MODULE_MODELS: dict[str, tuple[Any, tuple[str, ...]]] = {
     "_bridge_pose": (bridge_base, ("BridgePose", "Quaternion", "Vector3")),
+    # What ActionStateCondition takes and BaseAction.state returns; the model
+    # of actions imports it from here, as Python's actions.base does.
+    "action_state": (action_state, ("ActionState",)),
     "carla_install": (carla_install, ("installed_executable",)),
     # What an ego entity a scenario defines returns from debug_markers().
-    "debug_markers": (debug_markers, ("DebugMarkers", "DebugPolyline")),
-    "trajectory_recorder": (trajectory_recorder, ("TrajectoryRecorder",)),
+    "debug_markers": (
+        debug_markers,
+        ("DRIVEN_PATH_COLOR", "DebugMarkers", "DebugPolyline", "TRAJECTORY_COLOR"),
+    ),
+    "trajectory_recorder": (
+        trajectory_recorder,
+        ("EGO_ROLES", "RECORDED_KINDS", "TrajectoryRecorder"),
+    ),
     # What scenario_runner's _record_run reads of the unchecked environment.
-    "environment": (environment, ("RunEnvironment", "capture")),
+    "environment": (
+        environment,
+        ("ENVIRONMENT_SUFFIX", "LOCK_SUFFIX", "RunEnvironment", "capture"),
+    ),
     "autoware_bridge/grpc_server": (bridge_grpc_server, ("GrpcAutowareBridgeServer",)),
     "autoware_stack/launcher": (
         stack_launcher,
@@ -535,14 +584,20 @@ _MODULE_MODELS: dict[str, tuple[Any, tuple[str, ...]]] = {
     "maps/cache": (
         maps_cache,
         (
+            "AUTOWARE_DATA_DIR_ENV",
+            "CACHE_ROOT_ENV",
             "CachedRepo",
             "DERIVED_SUBDIR",
             "GitMapCache",
             "MapCacheError",
             "is_lfs_pointer",
             "map_root",
+            "TIP_SUFFIX",
         ),
     ),
+    # What the checked coordinate.map_manager (MapManager.initialize) uses of
+    # the unchecked z_offset_cache (json, contextlib).
+    "maps/z_offset_cache": (maps_z_offset_cache, ("cached_z_offset", "z_offset_key")),
     # A pydantic model: its fields by keyword only, as Python's signature.
     "ui/models": (ui_models, ("RunProgress", "Status")),
     # The base and config of ros2/cyclone.codon's CycloneRos2Transport, shared
@@ -786,6 +841,17 @@ _DIFFERING: dict[str, tuple[str, str]] = {
         "package's re-export resolves; nothing annotates with it "
         "(register_backend's factory is untyped)",
     ),
+    "OddSample": (
+        "odd",
+        "openodd's sample (a Rust extension), which the checked "
+        "scenario_runner only hands on: the model declares an opaque class "
+        "whose constructor is a compile error, as openodd's sampler draws it",
+    ),
+    "OddCase": (
+        "odd",
+        "a `tuple[OddSample, ParameterSpace]` alias in Python: a @tuple class "
+        "of the two fields here, Codon having no tuple alias a class can name",
+    ),
 }
 
 
@@ -960,6 +1026,29 @@ def test_the_traffic_backend_factory_model_is_a_stand_in() -> None:
     node = _definitions("traffic")["TrafficBackendFactory"][0]
     assert isinstance(node, ast.ClassDef)
     assert not node.bases and [ast.unparse(s) for s in node.body] == ["pass"]
+
+
+def test_the_odd_case_models_are_stand_ins() -> None:
+    # OddSample and OddCase (_DIFFERING): an opaque, unbuildable class for
+    # openodd's sample, and the pair Python's alias names, in order.
+    sample = _definitions("odd")["OddSample"][0]
+    assert isinstance(sample, ast.ClassDef)
+    init = _methods(sample)["__init__"]
+    assert _model_params(init, drop_first=True) == []
+    calls = [s.value for s in init.body if isinstance(s, ast.Expr)]
+    assert [ast.unparse(c.func) for c in calls if isinstance(c, ast.Call)] == [
+        "compile_error"
+    ]
+    case = _definitions("odd")["OddCase"][0]
+    assert isinstance(case, ast.ClassDef)
+    assert [ast.unparse(d) for d in case.decorator_list] == ["tuple"]
+    fields = [
+        ast.unparse(stmt.annotation)
+        for stmt in case.body
+        if isinstance(stmt, ast.AnnAssign)
+    ]
+    assert typing.get_origin(odd.OddCase) is tuple
+    assert fields == [t.__name__ for t in typing.get_args(odd.OddCase)]
 
 
 def test_the_comparison_rules_spelled_out_for_codon_are_the_enum_s_members() -> None:
@@ -1163,6 +1252,225 @@ def test_the_ffmpeg_model_returns_the_packages_streams() -> None:
     assert type(output.overwrite_output()) is ffmpeg.nodes.OutputStream
     assert not hasattr(source, "overwrite_output")
     assert not hasattr(source, "run_async")
+
+
+# ---------------------------------------------------------------------------
+# What Python exports, the model declares or leaves out on purpose (#237)
+# ---------------------------------------------------------------------------
+
+
+def _model_stem(module: str) -> str:
+    """The model file of *module* relative to _MODEL, without its suffix."""
+    parts = module.split(".")[1:]
+    return "/".join(parts) if parts else "__init__"
+
+
+#: Every model module the scenario check resolves an import of a Python
+#: module against (check._model_modules()): the helpers (`_tc`, `_poses`, ...)
+#: have no Python module, so no scenario imports them.
+_MODELLED_MODULES = sorted(
+    module
+    for module in _model_modules()
+    if importlib.util.find_spec(module) is not None
+)
+
+
+def _python_public_names(module: str) -> list[str]:
+    """What *module* exports in Python: its ``__all__``, else the public names
+    it defines. Read from its source where it cannot be imported (a missing
+    optional dependency: ros2.cyclone's cyclonedds)."""
+    try:
+        python = importlib.import_module(module)
+    except ImportError:
+        python = None
+    if python is not None and hasattr(python, "__all__"):
+        return list(python.__all__)
+    spec = importlib.util.find_spec(module)
+    assert spec is not None and spec.origin is not None, module
+    names: list[str] = []
+    for node in _parse(Path(spec.origin)).body:
+        if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+            names.append(node.name)
+        elif isinstance(node, (ast.AnnAssign, ast.Assign)):
+            targets = [node.target] if isinstance(node, ast.AnnAssign) else node.targets
+            for target in targets:
+                if isinstance(target, ast.Name) and target.id == "__all__":
+                    return list(ast.literal_eval(node.value))  # type: ignore[arg-type]
+                if isinstance(target, ast.Name):
+                    names.append(target.id)
+    return [name for name in names if not name.startswith("_")]
+
+
+def test_the_modelled_modules_are_the_public_ones() -> None:
+    # The packages the scenario check reads, and the modules of the library
+    # check's boundary, are all here: a model file without a Python module
+    # is a helper (`_` prefix), and none of those is listed.
+    assert "autoware_carla_scenario" in _MODELLED_MODULES
+    assert "autoware_carla_scenario.action_state" in _MODELLED_MODULES
+    assert "autoware_carla_scenario.conditions" in _MODELLED_MODULES
+    assert "autoware_carla_scenario.maps.z_offset_cache" in _MODELLED_MODULES
+    assert not [m for m in _MODELLED_MODULES if m.rsplit(".", 1)[-1].startswith("_")]
+    assert set(NOT_MODELLED) <= set(_MODELLED_MODULES)
+
+
+@pytest.mark.parametrize("module", _MODELLED_MODULES)
+def test_a_public_name_is_modelled_or_listed_as_not_modelled(module: str) -> None:
+    # A name Python exports that the model lacks fails a correct scenario's
+    # check (`cannot import name`), unless the check says why (NOT_MODELLED).
+    # And a name listed there must still be one: public in Python and absent
+    # from the model.
+    public = set(_python_public_names(module))
+    undeclared = public - _model_names(module)
+    listed = set(NOT_MODELLED.get(module, {}))
+    assert not sorted(
+        undeclared - listed
+    ), f"{module}: public in Python, neither modelled nor in NOT_MODELLED"
+    assert not sorted(
+        listed - undeclared
+    ), f"{module}: in NOT_MODELLED, but modelled or not public in Python"
+    assert all(NOT_MODELLED.get(module, {}).values()), "a reason for each name"
+
+
+#: Modules of a modelled package the model has no module for
+#: (conditions.comparison, actions.base): the check refuses an import of one,
+#: and says where else the model declares the names.
+_UNMODELLED_SUBMODULES = sorted(
+    module
+    for module in package_modules()
+    if module not in _model_modules()
+    and (_model_module(module) or "autoware_carla_scenario")
+    != "autoware_carla_scenario"
+)
+
+_SUGGESTION = re.compile(r"import (?P<names>[\w, ]+) from (?P<module>[\w.]+)")
+
+
+@pytest.mark.parametrize("module", _UNMODELLED_SUBMODULES)
+def test_the_advice_for_an_unmodelled_module_runs_in_python(module: str) -> None:
+    # "import X from M instead" is given only where Python's M has the same
+    # X: the advice "import from autoware_carla_scenario instead" named a
+    # package without ActionState (#237).
+    try:
+        python = importlib.import_module(module)
+    except ImportError as exc:
+        pytest.skip(f"{module}: {exc}")
+    names = [n for n in _python_public_names(module) if hasattr(python, n)]
+    message = _unmodelled_module(module, names)
+    assert message.startswith(f"{module} is not part of the Codon model"), message
+    for match in _SUGGESTION.finditer(message):
+        target = importlib.import_module(match["module"])
+        for name in match["names"].split(", "):
+            assert getattr(target, name) is getattr(python, name), (name, message)
+            assert name in _model_names(match["module"]), (name, message)
+    suggested = {
+        name
+        for match in _SUGGESTION.finditer(message)
+        for name in match["names"].split(", ")
+    }
+    # Every name is suggested somewhere, or said to be missing from the model.
+    for name in names:
+        assert name in suggested or name in message, (name, message)
+
+
+#: Public names the model declares that are compared by a test of their own
+#: rather than by _assert_declared_as_in_python: name -> the test.
+_COMPARED_APART = {
+    "AutowareLauncher": "test_the_launcher_model_is_the_protocol_s_methods",
+    "TrafficBackendFactory": "test_the_traffic_backend_factory_model_is_a_stand_in",
+}
+
+
+def _already_compared(module: str, name: str) -> bool:
+    stem = _model_stem(module)
+    return (
+        (stem == "__init__" and name in _EXPORTS)
+        or (name in _BOUNDARY and _BOUNDARY[name][0] == stem)
+        or name in _MODULE_MODELS.get(stem, (None, ()))[1]
+        or name in _COMPARED_APART
+        or (name in _DIFFERING and _DIFFERING[name][0] == stem)
+    )
+
+
+_DECLARED_PUBLIC_NAMES = [
+    (module, name)
+    for module in _MODELLED_MODULES
+    for name in sorted(set(_python_public_names(module)) & _model_names(module))
+    if not _already_compared(module, name)
+]
+
+
+@pytest.mark.parametrize(("module", "name"), _DECLARED_PUBLIC_NAMES)
+def test_a_re_exported_public_name_is_declared_as_in_python(
+    module: str, name: str
+) -> None:
+    # A public name a module re-exports (kinematics' frame_of, conditions'
+    # find_actor_in_list) is compared where it is imported too, so the
+    # comparisons above extend to every name a scenario can import.
+    try:
+        python = importlib.import_module(module)
+    except ImportError as exc:
+        pytest.skip(f"{module}: {exc}")
+    _assert_declared_as_in_python(
+        name, _model_stem(module), inspect.unwrap(getattr(python, name))
+    )
+
+
+# ---------------------------------------------------------------------------
+# Every model file is compared with Python, or exempt with the reason (#240)
+# ---------------------------------------------------------------------------
+
+#: Model files (relative to _MODEL, without the suffix) that no table above
+#: compares, each with the reason.
+_UNCOMPARED_MODEL_FILES: dict[str, str] = {
+    "_tc": "helpers of the model (Codon's missing typing), no Python module",
+    "_lists": "helpers of the model (lists of conditions and actions), no Python module",
+    "_reader": "helpers of the model (a measure's reader), no Python module",
+    "_exceptions": "helpers of the model (the exceptions Codon 0.19 lacks), no Python module",
+    "_poses": "shared by coordinate.codon, which re-exports it: compared through those re-exports",
+    "_vehicle_entity": "shared by entity.codon, which re-exports it: compared through those re-exports",
+    "_ground_projection": "shared by coordinate.codon, which re-exports it: compared through those re-exports",
+    "ros2/cyclone": "compared by test_the_cyclone_model_is_the_transport_ros2_entity_builds, where cyclonedds is installed",
+    **{
+        f"{package}/__init__": "a checked package's __init__: models nothing, so a scenario finds none of its names"
+        for package in (
+            "autoware_bridge",
+            "autoware_stack",
+            "driver",
+            "maps",
+            "ros2",
+            "ui",
+            "utils",
+        )
+    },
+}
+
+
+def _compared_model_files() -> set[str]:
+    return {
+        "__init__",  # _EXPORTS is what it imports
+        *_EXPORTS.values(),
+        *(module for module, _python in _BOUNDARY.values()),
+        *_MODULE_MODELS,
+        *(module for module, _why in _DIFFERING.values()),
+    }
+
+
+def test_every_model_file_is_compared_or_exempt() -> None:
+    # A model file no test compares drifts from Python unnoticed: what the
+    # library check compiles against it would be checked against a stale
+    # signature (maps/z_offset_cache.codon, #240).
+    files = {
+        path.relative_to(_MODEL).with_suffix("").as_posix()
+        for path in _MODEL.rglob("*.codon")
+    }
+    compared = _compared_model_files()
+    assert not sorted(
+        files - compared - set(_UNCOMPARED_MODEL_FILES)
+    ), "model files no test compares with Python: add them to a table or exempt them"
+    assert not sorted(set(_UNCOMPARED_MODEL_FILES) - files), "exempt, but no such file"
+    assert not sorted(
+        set(_UNCOMPARED_MODEL_FILES) & compared
+    ), "exempt, but compared: drop the exemption"
 
 
 def test_every_model_file_parses_as_python() -> None:
