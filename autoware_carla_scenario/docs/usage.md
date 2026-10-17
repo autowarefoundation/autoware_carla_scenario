@@ -395,16 +395,21 @@ Tests that the ego vehicle correctly stops at a red light and proceeds after gre
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `scenario.light_switch_delay_seconds` | float | `5.0` | Delay before switching red to green |
-| `scenario.merging_time_seconds` | float | `3.0` | Margin subtracted from red phase duration |
 | `scenario.timeout_seconds` | float | `8.0` | Maximum scenario duration |
-| `scenario.moving_speed_kmh` | float | `1.0` | Speed (km/h) that counts as moving while the light is red, which fails the run |
+| `scenario.stop_zone_min_m` | float | `0.0` | Near end of the stop zone: metres before the stop line (`stop_line_distance_m`) |
+| `scenario.stop_zone_max_m` | float | `3.0` | Far end of the stop zone; standing still farther back until the green fails the run |
+| `scenario.stop_line_tolerance_m` | float | `0.0` | How far the front bumper may pass the stop line on red before the run fails for running the red |
+| `scenario.standstill_seconds` | float | `0.5` | How long the ego has to stand still (0.1 m/s or less) in the stop zone for it to count as stopped |
 | `scenario.departure_speed_kmh` | float | `10.0` | Speed (km/h) the ego must reach after green to pass; `null` uses `moving_speed_kmh` |
+| `scenario.moving_speed_kmh` | float | `1.0` | The departure speed when `departure_speed_kmh` is `null`; no longer judges the red phase |
+| `scenario.merging_time_seconds` | float | `0.5` | Deprecated and unused; kept so configs that set it still load |
 
 **Behavior:**
 - Sets all traffic lights to RED initially
 - Registers a TrafficSignalAction to switch to GREEN after `light_switch_delay_seconds`
-- Pass conditions: ego is at standstill during red AND reaches `departure_speed_kmh` during green
-- Uses StickyCondition + AndCondition for combined checks
+- Fails as soon as the ego's front bumper crosses the stop line while the light is red
+- At the green, fails unless the ego has stood still with its front bumper in the stop zone (`stop_zone_min_m`-`stop_zone_max_m` before the stop line), saying whether it stopped short of the zone or had not stopped
+- Pass conditions: ego stood still in the stop zone before the green AND reaches `departure_speed_kmh` during green
 
 #### Temporary Stop
 

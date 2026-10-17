@@ -2,10 +2,15 @@
 scenario:
   name: traffic_light_compliance
   light_switch_delay_seconds: 5.0
-  merging_time_seconds: 3.0
   timeout_seconds: 8.0
-  # Reaching it while the light is red fails the run.
-  moving_speed_kmh: 1.0
+  # Before the green the ego has to stand still (for standstill_seconds) with
+  # its front bumper in the stop zone: 0-3 m before the stop line.  Crossing
+  # the line on red fails the run at once; so does standing short of the zone,
+  # or still rolling towards it, at the green.
+  stop_zone_min_m: 0.0
+  stop_zone_max_m: 3.0
+  stop_line_tolerance_m: 0.0
+  standstill_seconds: 0.5
   # Reaching it once the light is green passes it: a real pull-away, not a creep.
   departure_speed_kmh: 10.0
 

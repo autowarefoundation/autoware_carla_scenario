@@ -921,7 +921,11 @@ spawn pose is on until `stop_line_distance_m` reads it,
 `place_at_stop_line_distance`), and its own measure `red_light_duration_s`,
 the seconds every light is held red (`light_switch_delay_seconds`, a raw
 setting). With the delay drawn, `timeout_after_green_seconds` counts the
-fail-safe timeout from the green light instead of from the start.
+fail-safe timeout from the green light instead of from the start. A drawn
+distance does not decide the verdict by itself: the run is judged by where
+the ego stops against that same line -- not past it on red, standing in the
+stop zone (`stop_zone_min_m`-`stop_zone_max_m` before it) by the green -- so
+an ego started far back may roll up to the line on red.
 
 `sweep.odd_sample.knobs` takes the same fields keyed by the ODD's attributes,
 and replaces anything above, attribute by attribute, for that sweep. It is for
