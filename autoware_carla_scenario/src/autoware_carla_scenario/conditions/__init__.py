@@ -39,6 +39,7 @@ from .elapsed_time import ElapsedTimeCondition
 from .metric import MetricCondition
 from .entity_existence import EntityExistenceCondition
 from .not_condition import NotCondition
+from .off_road_fraction import OffRoadFractionCondition
 from .or_condition import OrCondition
 from .persistent import PersistentCondition
 from .route_progress import RouteProgressCondition
@@ -72,6 +73,7 @@ __all__ = [
     "beside_lane_id",
     "EntityPositionDistanceCondition",
     "NotCondition",
+    "OffRoadFractionCondition",
     "OrCondition",
     "PersistentCondition",
     "RelativeDistanceType",

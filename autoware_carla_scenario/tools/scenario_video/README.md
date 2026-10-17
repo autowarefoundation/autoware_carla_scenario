@@ -29,9 +29,10 @@ is the one the caption on the scenario's docs page names.
 
 Two cases are recorded with an override, said in their captions:
 
-- `traffic_light_compliance`: `scenario.moving_speed_kmh=15`, so the run ends
-  once the ego is visibly pulling away on green rather than at the first
-  1 km/h.
+- `traffic_light_compliance`: `scenario.moving_speed_kmh=15`, recorded when it
+  was also the departure speed, so the run ends once the ego is visibly
+  pulling away on green rather than at the first 1 km/h. The shipped config
+  now sets `departure_speed_kmh` itself, which takes its place.
 - `lane_change_fail_*`: `scenario.timeout_seconds=8`, since the refusal passes
   on its timeout and 1.5 s shows nothing.
 

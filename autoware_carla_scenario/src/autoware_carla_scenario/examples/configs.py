@@ -90,8 +90,9 @@ class TrafficLightComplianceConfig:
     #: override then no longer caps the run.
     timeout_seconds: float = 5.0
 
-    #: Speed threshold (km/h) considered "moving": reaching it while the
-    #: light is red fails the run.
+    #: Speed (km/h) the ego must reach after green when
+    #: ``departure_speed_kmh`` is unset.  Moving on red no longer fails a run
+    #: by itself: crossing the stop line does (``stop_zone_min_m``).
     moving_speed_kmh: float = 1.0
 
     #: Speed (km/h) the ego must reach after the light turns green for the run
@@ -99,9 +100,36 @@ class TrafficLightComplianceConfig:
     #: which passes a mere creep; set it higher to require a real departure.
     departure_speed_kmh: float | None = None
 
-    #: Margin (seconds) subtracted from the red phase duration when computing
-    #: the required standstill time.
+    #: Deprecated and unused: the run no longer fails on the ego moving on red
+    #: after this many seconds, but on its front bumper crossing the stop line.
+    #: Kept so a config that sets it still loads.
     merging_time_seconds: float = 0.5
+
+    #: The stop zone: where the ego's front bumper has to stand still before
+    #: the light turns green, as metres before the stop line
+    #: (:data:`~autoware_carla_scenario.measures.STOP_LINE_DISTANCE_M`), from
+    #: ``stop_zone_min_m`` to ``stop_zone_max_m``.  Standing still farther
+    #: back until the green fails the run.
+    stop_zone_min_m: float = 0.0
+
+    #: The far end of the stop zone (``stop_zone_min_m``).
+    stop_zone_max_m: float = 3.0
+
+    #: How far (metres) the front bumper may pass the stop line while the
+    #: light is red before the run fails for running the red.  Up to this far
+    #: past it counts as at the line (0 m) for the stop zone.
+    stop_line_tolerance_m: float = 0.0
+
+    #: Seconds the ego has to stand still (at ``standstill_speed_mps`` or
+    #: less, as :class:`~autoware_carla_scenario.StandstillCondition` counts
+    #: it) in the stop zone before the green for it to count as stopped there.
+    #: Once it has, it may move again (short of crossing the line on red).
+    standstill_seconds: float = 0.5
+
+    #: The speed (m/s) at or below which the ego stands still
+    #: (:class:`~autoware_carla_scenario.StandstillCondition`'s
+    #: ``speed_threshold``).
+    standstill_speed_mps: float = 0.1
 
     #: Where the ego starts, as
     #: :data:`~autoware_carla_scenario.measures.STOP_LINE_DISTANCE_M` reads it:

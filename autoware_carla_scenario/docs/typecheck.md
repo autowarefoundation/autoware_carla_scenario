@@ -262,7 +262,7 @@ What `test_typecheck_model.py` compares, model by model:
   `trajectory_recorder`, `environment`, `autoware_bridge/grpc_server`,
   `autoware_stack/launcher`, `autoware_stack/devcontainer` (and its values),
   `driver/egodriver_client`, `_map_source`, `maps/cache`,
-  `maps/z_offset_cache`, `ui/models`, `_ros2`, `metrics`, `measures` and
+  `maps/z_offset_cache`, `maps/road_network_cache`, `ui/models`, `_ros2`, `metrics`, `measures` and
   `utils/traffic_light`, each declaring exactly the names compared;
   `ros2/cyclone` where cyclonedds is installed.
 - **Every public name of a modelled module**: each name a module the model
@@ -651,8 +651,8 @@ To check one more module:
 
 ### What is checked of the framework
 
-Every module now has an entry other than `"not yet checked (#45)"`. 169 of
-the package's 247 modules (68%; about 41,600 of 73,700 lines) are `CHECKED`:
+Every module now has an entry other than `"not yet checked (#45)"`. 170 of
+the package's 249 modules (68%; about 41,900 of 74,300 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the conversions between
 Lanelet2, OpenDRIVE and CARLA world poses (`coordinate.transform`), the stop
 lines read off a Lanelet2 map (`utils.stop_line`, `coordinate.stop_line`)
@@ -709,7 +709,7 @@ driver's configs and client interface, trajectory follower and observations
 `driver.geometry`), and the `autoware_bridge`, `autoware_stack`, `entity`,
 `driver`, `maps` and `coverage` packages themselves, whose `__init__` re-exports what is not checked
 through models of it (see *A class a checked package only re-exports*
-below). 89
+below). 90
 functions and methods of those modules are `UNCALLED` (19 of them
 protected helpers, see *What is compiled* below): most of them a
 condition's `get_details()` or a backend's `describe()`, what takes a traffic
