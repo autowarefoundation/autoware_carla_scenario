@@ -38,6 +38,7 @@ import importlib.metadata
 import importlib.util
 import inspect
 import json
+import logging
 import os
 import re
 import shutil
@@ -104,6 +105,8 @@ __all__ = [
 
 #: Seconds a single compile may take.
 DEFAULT_TIMEOUT_SECONDS = 600.0
+
+logger = logging.getLogger(__name__)
 
 _PACKAGE = "autoware_carla_scenario"
 #: typesafe_carla's Codon library, in its CODON_PATH directory.
@@ -984,6 +987,9 @@ def _parse_output(output: str, ws: _Workspace) -> list[Diagnostic]:
 
 
 _CACHE: dict[str, TypeCheckResult] = {}
+#: The case (:attr:`Driver.case`) each verdict of :data:`_CACHE` was made
+#: for, so that another case of the same shape names it when it reuses it.
+_CHECKED_FOR: dict[str, dict[str, str]] = {}
 
 #: A directory to keep verdicts in beyond the process, one file per cache key:
 #: the test suite's xdist workers share it, and CI restores it from one run to
@@ -1332,10 +1338,29 @@ def _typecheck(
     if refuse is not None:
         sources.problems += refuse(sources)
     rendered = driver()
-    key = _cache_key(toolchain, codon_path, sources, rendered.source + rendered.trailer)
+    # Keyed by the driver's shape, each config value replaced by its type
+    # (Driver.shape): Codon types the program statically, so a sweep's cases
+    # that differ only in their values are one program, compiled once.
+    key = _cache_key(
+        toolchain,
+        codon_path,
+        sources,
+        (rendered.shape or rendered.source) + rendered.trailer,
+    )
     cached = _cached(key, sources)
     if cached is not None:
+        checked_for = _CHECKED_FOR.setdefault(key, rendered.case)
+        changed = [k for k, v in rendered.case.items() if checked_for.get(k) != v]
+        if changed:
+            logger.info(
+                "%s: reusing the static check made for %s for %s: the config "
+                "has the same types, so it is the same program to Codon",
+                name,
+                ", ".join(f"{k}={checked_for.get(k)}" for k in changed),
+                ", ".join(f"{k}={rendered.case[k]}" for k in changed),
+            )
         return cached
+    _CHECKED_FOR[key] = rendered.case
     result = _compile(name, sources, rendered, toolchain, codon_path, timeout)
     if result is None:  # timed out: no verdict worth keeping
         return _timed_out(name, timeout)

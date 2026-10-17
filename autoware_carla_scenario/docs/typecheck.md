@@ -64,22 +64,37 @@ how it is constructed.
 ### Keeping verdicts between runs
 
 A process compiles a program once and keeps the verdict for as long as it
-runs. Set `AUTOWARE_CARLA_SCENARIO_TYPECHECK_CACHE` to a directory to keep
-them beyond that, one file per program: a later process with the same
-inputs reads the verdict instead of compiling. The key covers everything the
-verdict depends on. For the compile, that is the scenario's (or the
-framework's) modules, the generated driver, the model, typesafe_carla's Codon
-library, and the compiler's version and standard library. For the None
-check, it is every Python source and stub of the framework, the checker
-included (mypy reads them for the types of what a scenario calls), the name
-and version of every other installed distribution (mypy follows a
-scenario's imports into numpy, lanelet2 or typesafe_carla), the mypy
-version, and the Python version. And it includes what the checks made in
-Python found before the compile: an import the framework's Python lacks, or
-an abstract class that is built. These digests are taken once a process
-(about 100 ms). What the key leaves out: the source of another distribution
-installed editable (only its version is read), and environment variables
-mypy reads, such as `MYPYPATH`; clear the directory after changing either.
+runs. The program is keyed by its shape: the driver with each config value
+replaced by its type (a bool, a float, an int, a string, an enum's class),
+since Codon types it statically and reads no value at compile time. The
+cases of a sweep that differ only in their values are therefore one program,
+compiled for the first case and reused, verdict and diagnostics, for the
+others (logged as "reusing the static check made for the config with the
+same types"); a failure refuses each of them. What changes the shape
+compiles again: another key or order of keys, a value of another type (an
+int where the first case had a float in a field not typed `float`, `None`
+where it had a value), another length of a list, a mapping the config
+converts in one case and not in another. A value whose literal Codon could
+refuse on its own (an int beyond 64 bits, a string with an escape) is kept
+as it is.
+
+Set `AUTOWARE_CARLA_SCENARIO_TYPECHECK_CACHE` to a directory to keep the
+verdicts beyond the process, one file per program: a later process with the
+same inputs reads the verdict instead of compiling. The key covers
+everything the verdict depends on. For the compile, that is the scenario's
+(or the framework's) modules, the generated driver's shape, the model,
+typesafe_carla's Codon library, and the compiler's version and standard
+library. For the None check, it is every Python source and stub of the
+framework, the checker included (mypy reads them for the types of what a
+scenario calls), the name and version of every other installed distribution
+(mypy follows a scenario's imports into numpy, lanelet2 or typesafe_carla),
+the mypy version, and the Python version. And it includes what the checks
+made in Python found before the compile: an import the framework's Python
+lacks, or an abstract class that is built. These digests are taken once a
+process (about 100 ms). What the key leaves out: the source of another
+distribution installed editable (only its version is read), and environment
+variables mypy reads, such as `MYPYPATH`; clear the directory after changing
+either.
 A crash is never kept, and an entry
 that cannot be read counts as a miss. A verdict read from the directory has
 its file's times touched, so the directory can be pruned by access time.

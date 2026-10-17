@@ -508,6 +508,20 @@ class TestScenarioQueueUnit:
 
         mock_server.stop.assert_not_called()
 
+    def test_the_runner_renders_videos_at_the_queue_s_size(self) -> None:
+        with patch("autoware_carla_scenario.scenario_queue.ScenarioRunner") as runner:
+            queue = ScenarioQueue(server=MagicMock(), video_width=960, video_height=540)
+            queue.start()
+            queue.stop()
+        assert runner.call_args.kwargs["video_width"] == 960
+        assert runner.call_args.kwargs["video_height"] == 540
+
+    def test_a_video_size_that_cannot_be_encoded_is_refused_up_front(self) -> None:
+        mock_server = MagicMock()
+        with pytest.raises(ValueError, match="positive and even"):
+            ScenarioQueue(server=mock_server, video_width=961, video_height=540)
+        mock_server.start.assert_not_called()
+
     def test_context_manager_calls_start_and_stop(self) -> None:
         with (
             patch(
