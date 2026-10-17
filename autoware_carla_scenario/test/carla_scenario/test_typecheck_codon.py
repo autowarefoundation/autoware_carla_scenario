@@ -1629,6 +1629,60 @@ def test_a_scenario_may_use_the_carla_driver_interface_model_and_nothing_beyond_
             "PedestrianEntity(): no constructor takes these arguments "
             "(required: config)",
         ),
+        (
+            "from autoware_carla_scenario.debug_markers import DebugMarkers\n"
+            "markers = DebugMarkers([])\n",
+            "DebugMarkers([])",
+            "DebugMarkers(): no constructor takes these arguments (it takes none)",
+        ),
+        (
+            "from autoware_carla_scenario.coverage import CoverItem\n"
+            'item = CoverItem("speed")\n',
+            'CoverItem("speed")',
+            "CoverItem(): no constructor takes these arguments "
+            "(required: name, expression)",
+        ),
+        (
+            "from autoware_carla_scenario.coverage import CoverItem\n"
+            'item = CoverItem(name="speed")\n',
+            'CoverItem(name="speed")',
+            "CoverItem(): no constructor takes these arguments "
+            "(required: name, expression)",
+        ),
+        (
+            "from autoware_carla_scenario.odd import OddCondition\n"
+            "condition = OddCondition(0)\n",
+            "OddCondition(0)",
+            "OddCondition(): no constructor takes these arguments (it takes none)",
+        ),
+        (
+            "from autoware_carla_scenario.odd import RouteCoverage, RouteLanelet\n"
+            "lanelets: list[RouteLanelet] = []\n"
+            'coverage = RouteCoverage("odd", "route", lanelets, ["speed"])\n',
+            'RouteCoverage("odd", "route", lanelets, ["speed"])',
+            "RouteCoverage: plan_route_coverage() builds it",
+        ),
+        (
+            "from autoware_carla_scenario.ui.models import RunProgress\n"
+            'progress = RunProgress(1, 2, "case", "running")\n',
+            'RunProgress(1, 2, "case", "running")',
+            "RunProgress(): its fields are keyword-only",
+        ),
+        (
+            "from autoware_carla_scenario import FrameMismatchError\n"
+            'error = FrameMismatchError("lanelet2")\n',
+            'FrameMismatchError("lanelet2")',
+            "FrameMismatchError(): no constructor takes these arguments "
+            "(required: frame_a, frame_b, operation)",
+        ),
+        (
+            "from autoware_carla_scenario.autoware_stack.devcontainer import "
+            "DevContainerError\n"
+            'error = DevContainerError("DevContainerError", "no image")\n',
+            'DevContainerError("DevContainerError", "no image")',
+            "DevContainerError(): no constructor takes these arguments "
+            "(required: message)",
+        ),
     ],
     ids=[
         "timeout-str-alone",
@@ -1636,6 +1690,14 @@ def test_a_scenario_may_use_the_carla_driver_interface_model_and_nothing_beyond_
         "action-label-alone",
         "vehicle-entity-no-arguments",
         "pedestrian-entity-no-arguments",
+        "debug-markers-by-field",
+        "cover-item-by-field",
+        "cover-item-by-field-name",
+        "odd-condition-by-field",
+        "route-coverage-by-fields",
+        "run-progress-by-position",
+        "frame-mismatch-by-exception-constructor",
+        "devcontainer-error-by-exception-constructor",
     ],
 )
 def test_what_codon_builds_by_the_fields_alone_is_refused_at_its_line(
@@ -1643,8 +1705,10 @@ def test_what_codon_builds_by_the_fields_alone_is_refused_at_its_line(
 ) -> None:
     # Codon builds a class by its fields too, by position: a class without
     # fields with no arguments (#225), a condition or an action by the label
-    # it inherits alone (#236). Python refuses both, and the model's
-    # __init__ of as many arguments, a compile_error, refuses them too.
+    # it inherits alone (#236), any class whose constructor Python's fields
+    # differ from by them (#244), and an exception by Exception's
+    # constructor (#244). Python refuses each, and the model's __init__ of
+    # as many arguments, a compile_error, refuses them too.
     scenario, config, path = _write_case(tmp_path, setup)
     error = _only_error(typecheck_scenario(scenario, config))
     assert message in error.message, error.format()
@@ -1682,6 +1746,31 @@ def test_what_the_constructors_take_still_compiles(tmp_path: Path) -> None:
             PedestrianEntityConfig("walker1", SpawnTransform(carla.Transform()))
         )
         logger.info("%s %s", npc.role_name, walker.role_name)
+        from autoware_carla_scenario import CoordinateFrame, FrameMismatchError
+        from autoware_carla_scenario.autoware_stack.devcontainer import (
+            DevContainerError,
+        )
+        from autoware_carla_scenario.coverage import CoverItem
+        from autoware_carla_scenario.debug_markers import DebugMarkers
+        from autoware_carla_scenario.maps.cache import MapCacheError
+        from autoware_carla_scenario.odd import OddCondition
+        from autoware_carla_scenario.ui.models import RunProgress
+        markers = DebugMarkers()
+        item = CoverItem("speed", lambda world: 1.0)
+        odd_condition = OddCondition()
+        progress = RunProgress(current=1, total=2, scenario_name="case", status="running")
+        error = FrameMismatchError(
+            CoordinateFrame.LANELET2, CoordinateFrame.OPENDRIVE, "distance"
+        )
+        logger.info(
+            "%s %s %d %s %s %s",
+            str(bool(markers)),
+            item.name,
+            progress.current,
+            str(error),
+            str(DevContainerError("no image")),
+            str(MapCacheError("no map")),
+        )
         """
     scenario, config, _ = _write_case(tmp_path, setup)
     result = typecheck_scenario(scenario, config)

@@ -23,6 +23,10 @@ TRAFFIC_DENSITY_LEVELS: List[str] = ["none", "low", "medium", "high"]
 class OddCondition:
     _unused: int
 
+    # Codon would build it by its fields too (docs/typecheck.md, #244).
+    def __init__(self, _unused):
+        compile_error("OddCondition(): no constructor takes these arguments (it takes none)")
+
     def __init__(self):
         self._unused = 0
 
@@ -239,6 +243,10 @@ class RouteCoverage:
     name: str
     lanelets: List[RouteLanelet]
     map_attributes: List[str]
+
+    # Codon would build it by its fields too (docs/typecheck.md, #244).
+    def __init__(self, odd, name, lanelets, map_attributes):
+        compile_error("RouteCoverage: plan_route_coverage() builds it")
 
     def __init__(self, odd: str, name: str, lanelets: List[RouteLanelet],
                  expected_m: Dict[str, Dict[str, float]], map_attributes: List[str]):

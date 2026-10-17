@@ -21,6 +21,10 @@ class DebugPolyline:
 class DebugMarkers:
     polylines: List[DebugPolyline]
 
+    # Codon would build it by its fields too (docs/typecheck.md, #244).
+    def __init__(self, polylines):
+        compile_error("DebugMarkers(): no constructor takes these arguments (it takes none)")
+
     def __init__(self):
         self.polylines = List[DebugPolyline]()
 
