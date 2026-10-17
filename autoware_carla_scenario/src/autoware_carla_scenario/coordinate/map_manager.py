@@ -202,8 +202,11 @@ class MapManager:
         fwd = projector.forward(lanelet2.core.GPSPoint(lat, lon, alt))
         self._mgrs_offset = (fwd.x, fwd.y)
 
-        # Load OpenDRIVE road network (pyxodr takes a file path, not content)
-        self._road_network = RoadNetwork(str(xodr_path))
+        # Parse the OpenDRIVE road network; its roads are built on first use,
+        # remembered per map content (maps.road_network_cache).
+        from ..maps.road_network_cache import open_road_network  # noqa: PLC0415
+
+        self._road_network = open_road_network(xodr_path)
 
         # Build carla.Map for waypoint-based road/lane lookups (optional).
         # First, so the z offset below reads its spawn points off this map
@@ -274,13 +277,19 @@ class MapManager:
 
     @property
     def road_network(self) -> RoadNetwork:
-        """The loaded pyxodr.RoadNetwork instance (roads are pre-loaded)."""
+        """The loaded pyxodr.RoadNetwork instance, its roads built on first use.
+
+        Building them takes some 15 s on a large map (3,890 roads): they are
+        remembered per map content (maps.road_network_cache).
+        """
         if self._road_network is None:
             raise RuntimeError(
                 "MapManager is not initialized. Call initialize() first."
             )
         if len(self._road_network.road_ids_to_object) == 0:
-            self._road_network.get_roads()
+            from ..maps.road_network_cache import load_roads  # noqa: PLC0415
+
+            load_roads(self._road_network)
         return self._road_network
 
     @property
@@ -471,15 +480,13 @@ class MapManager:
         xodr_x = ref_pt.x - self._mgrs_offset[0]
         xodr_y = ref_pt.y - self._mgrs_offset[1]
 
-        assert self._road_network is not None
-        if len(self._road_network.road_ids_to_object) == 0:
-            self._road_network.get_roads()
+        road_network = self.road_network
 
         best_z = 0.0
         best_dist = float("inf")
         query = np.array([xodr_x, xodr_y])
 
-        for road in self._road_network.road_ids_to_object.values():
+        for road in road_network.road_ids_to_object.values():
             ref_line = road.reference_line  # shape (N, 2)
             if len(ref_line) < 2:
                 continue

@@ -1,0 +1,18 @@
+# Model of autoware_carla_scenario.maps.road_network_cache (docs/typecheck.md),
+# which imports pickle, lxml and weakref: what MapManager uses of it, with the
+# signatures of the Python module. Its RoadNetwork is coordinate.codon's, the
+# one MapManager holds.
+
+from pathlib import Path
+
+from ..coordinate import RoadNetwork
+from .._tc import _keyword_only
+
+
+def open_road_network(xodr_path: Path) -> RoadNetwork:
+    return RoadNetwork(str(xodr_path))
+
+
+def load_roads(network: RoadNetwork, *_kw, root: Optional[Path] = None) -> None:
+    _keyword_only(_kw, "load_roads(): root")
+    network.get_roads()
