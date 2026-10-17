@@ -299,6 +299,20 @@ Controls ground projection (ray casting) and spawn retry behavior:
 |-----------|------|---------|-------------|
 | `traffic_manager.port` | int | `8100` | CARLA Traffic Manager RPC port |
 
+#### Video Configuration
+
+The video rendered from each run's recording (`{ScenarioName}.mp4`) is replayed
+and encoded at this size. Both are even (H.264 in yuv420p halves the chroma):
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `video.width` | int | `1920` | Video width in pixels |
+| `video.height` | int | `1080` | Video height in pixels |
+
+Every frame of the video is rendered by CARLA during the replay and encoded,
+so a sweep that does not need full HD renders its videos faster at a smaller
+size, e.g. `video.width=960 video.height=540`.
+
 #### Map Configuration
 
 | Parameter | Type | Default | Description |

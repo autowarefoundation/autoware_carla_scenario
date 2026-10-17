@@ -108,9 +108,10 @@ def test_a_frame_the_sensor_hands_over_is_written_as_bgr(
     assert sensor.listener is not None
     sensor.listener(SimpleNamespace(raw_data=bgra, height=1, width=2))
     assert recorder.write_frame() is True
-    assert process.stdin.getvalue() == bytes([1, 2, 3, 4, 5, 6])
 
+    # The writer thread writes it; stop() waits for every frame handed over.
     recorder.stop()
+    assert process.stdin.getvalue() == bytes([1, 2, 3, 4, 5, 6])
     assert sensor.stopped and sensor.destroyed
 
 
@@ -157,13 +158,68 @@ def test_a_captioned_frame_is_written_with_its_caption(
     gray = bytes([128, 128, 128, 255]) * (72 * 128)
     sensor.listener(SimpleNamespace(raw_data=gray, height=72, width=128))
     assert recorder.write_frame("Warm-up") is True
-    written = np.frombuffer(process.stdin.getvalue(), dtype=np.uint8)
-    assert written.size == 72 * 128 * 3
-    assert (written != 128).any()
-
     # Without a caption, the frame goes out as it came.
     sensor.listener(SimpleNamespace(raw_data=gray, height=72, width=128))
     assert recorder.write_frame() is True
-    plain = np.frombuffer(process.stdin.getvalue(), dtype=np.uint8)[written.size :]
-    assert (plain == 128).all()
     recorder.stop()
+
+    size = 72 * 128 * 3
+    written = np.frombuffer(process.stdin.getvalue(), dtype=np.uint8)
+    assert written.size == 2 * size
+    assert (written[:size] != 128).any()
+    assert (written[size:] == 128).all()
+
+
+def test_every_frame_handed_over_is_written_in_order_before_stop_returns(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    process = _Process(0, b"")
+    recorder, sensor, _pipeline = _recorder(tmp_path, monkeypatch, process)
+    assert sensor.listener is not None
+    count = 50
+    for value in range(count):
+        sensor.listener(
+            SimpleNamespace(raw_data=bytes([value, 0, 0, 255]) * 2, height=1, width=2)
+        )
+        assert recorder.write_frame() is True
+    recorder.stop()
+
+    written = np.frombuffer(process.stdin.getvalue(), dtype=np.uint8)
+    assert list(written[::6]) == list(range(count))
+    assert recorder._frame_count == count  # noqa: SLF001
+
+
+class _BrokenStdin(io.BytesIO):
+    def write(self, data: Any) -> int:
+        raise BrokenPipeError
+
+
+def test_a_broken_pipe_drops_the_rest_and_stop_still_waits_for_ffmpeg(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    process = _Process(1, b"gone")
+    process.stdin = _BrokenStdin()
+    recorder, sensor, _pipeline = _recorder(tmp_path, monkeypatch, process)
+    assert sensor.listener is not None
+    with caplog.at_level(logging.WARNING, logger=camera_recorder.__name__):
+        # More frames than the writer's queue holds: write_frame() must not
+        # wait on a writer that stopped writing.
+        for _ in range(3 * camera_recorder._PENDING_FRAMES):  # noqa: SLF001
+            sensor.listener(SimpleNamespace(raw_data=bytes(8), height=1, width=2))
+            recorder.write_frame()
+        recorder.stop()
+    messages = [r.getMessage() for r in caplog.records]
+    assert messages.count("CameraRecorder: ffmpeg pipe broken") == 1
+    assert "ffmpeg exited with code 1: gone" in messages
+    assert recorder._frame_count == 0  # noqa: SLF001
+    # Nor is a frame handed over once the recorder stopped.
+    sensor.listener(SimpleNamespace(raw_data=bytes(8), height=1, width=2))
+    assert recorder.write_frame() is False
+
+
+@pytest.mark.parametrize("size", [(0, 1080), (1920, -2), (961, 540), (960, 541)])
+def test_a_video_size_libx264_cannot_encode_is_refused(
+    size: tuple[int, int],
+) -> None:
+    with pytest.raises(ValueError, match="positive and even"):
+        camera_recorder.check_video_size(*size)
