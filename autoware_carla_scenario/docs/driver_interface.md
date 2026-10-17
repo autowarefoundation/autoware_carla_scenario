@@ -36,7 +36,7 @@ flowchart LR
         SR["ScenarioRunner<br/>owns the world and the tick loop"]
         CDE["CarlaDriverEntity"]
         CAM["CarlaCameraSensor(s)"]
-        TF["TrajectoryFollower<br/>pure pursuit + yaw-rate trim + speed PI<br/>through the powertrain model"]
+        TF["TrajectoryFollower<br/>pure pursuit + yaw-rate trim<br/>Autoware's PID longitudinal controller<br/>through the powertrain model"]
         SR -->|on_tick| CDE
         CAM -->|frames| CDE
         CDE --> TF
@@ -126,9 +126,70 @@ driver:
     max_steer_angle_deg: 56.0   # CARLA 0.10: angle = 56 deg * steer**2
     steer_exponent: 2.0
     yaw_rate_ki: 3.0            # integral trim on the measured yaw rate
-    speed_kp: 1.0               # plan tracked in time: plan acceleration + speed PI, in m/s²,
-                                # turned into pedals by the ego's Chaos powertrain model
+    longitudinal_controller: pid  # Autoware's autoware_pid_longitudinal_controller
+    delay_compensation_time: 0.17 # ... and any of its parameters, by name
+    throttle_deadband: 0.0      # vehicle interface: least throttle to pull away
 ```
+
+### How the plan is tracked
+
+`TrajectoryFollower` (`driver/control.py`) does what Autoware's control stack does
+behind an end-to-end planner:
+
+- **Speeds on the plan.** A plan is poses and times. The speeds Autoware's controller
+  reads off a trajectory are put on it as `autoware_tensorrt_e2e` puts them on its own
+  (`autoware_diffusion_planner`'s `get_trajectory_from_poses`): each point's speed is
+  its distance from the previous point -- the first point's from where the ego was as
+  the plan arrived -- over the plan's time step; then a forward moving average over
+  `velocity_smoothing_window` (8) points, the tail keeping the last average. While the
+  ego moves, the first average to fall below `stopping_threshold` (0.3 m/s) stops the
+  plan there. Each point's acceleration is the change of speed to the next.
+- **Longitudinal.** A port of `autoware_pid_longitudinal_controller` with the defaults
+  of its `param.yaml`, under its parameter names. The plan is read spatially: the
+  stop distance is the arc length from the ego to the plan's first zero-speed point
+  (or its end). STOPPED departs once that is over `drive_state_stop_dist` (0.5 m),
+  DRIVE stops through STOPPING (smooth stop) once it is under
+  `stopping_state_stop_dist`, STOPPED holds `stopped_acc`, and an overshoot of
+  `emergency_state_overshoot_stop_dist` brakes at `emergency_acc` (EMERGENCY). DRIVE
+  follows the speed at the point the ego will be at after `delay_compensation_time`,
+  with Autoware's velocity lookahead feedback (or, with
+  `enable_velocity_lookahead_feedback: false`, its PID and feedforward), within the
+  acceleration and jerk limits.
+- **Lateral.** Pure pursuit on the plan's points, with an integral trim on the
+  measured yaw rate.
+- **Vehicle interface.** The asked acceleration becomes pedals through the ego's
+  powertrain model, read from its CARLA physics control, as Autoware's
+  `raw_vehicle_cmd_converter` does with its accel and brake maps. The model lets a
+  standing car move at any throttle while CARLA 0.10's MKZ needs 0.25;
+  `throttle_deadband` can floor a standing car's throttle, but the `pid` controller
+  needs no floor (its jerk-limited pull-away gets there in a few tenths of a
+  second), so it is 0 by default.
+
+What differs from Autoware, because CARLA or the plan has no counterpart:
+
+- The plan carries no pitch, so there is no slope compensation; CARLA's towns are
+  flat where the scenarios drive.
+- The follower has no steering angle feedback: the steering counts as converged, so
+  `enable_keep_stopped_until_steer_convergence` holds only the first tick of a
+  departure, as Autoware's first check does.
+- The ego is always under Autoware's control (AUTONOMOUS), and always in drive:
+  the manual-driving transitions and reverse gear are left out.
+- The ego's acceleration is estimated from its speed with
+  `autoware_twist2accel`'s low-pass gain (`accel_lowpass_gain`, 0.9).
+- The filters run per control step, at the simulation's 20 Hz rather than
+  Autoware's 33 Hz.
+- A plan's times come from its timestamps rather than the node's fixed 0.1 s, and
+  the smoothing window is capped at one less than the plan's points; a 0.1 s plan
+  gets Autoware's numbers.
+
+A plan that dwells on the ego's spot -- the first eight speeds averaging to zero --
+stops at its first point, and the ego stays STOPPED until a plan's stop point is
+more than 0.5 m away, as Autoware's would. `longitudinal_controller: time_indexed`
+selects the tracker this framework had before: the plan read on its own clock, a PI
+on the speed it has the ego at *now* and a pull towards where it has it (`speed_kp`,
+`speed_ki`, `integral_limit`, `position_gain`, `max_position_correction_mps`,
+`speed_preview_s`, `stop_distance_m`); `FollowTrajectoryAction` drives timed
+trajectories with it. Those keys are ignored, with a warning, for `pid`.
 
 ### Warming up a policy
 

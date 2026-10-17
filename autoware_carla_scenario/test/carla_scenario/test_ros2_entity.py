@@ -268,9 +268,15 @@ def test_a_trajectory_is_tracked_by_the_framework_follower() -> None:
         )
         for i in range(30)
     ]
-    transport.deliver("planner", TrajectoryCommand(stamp_us=0, points=tuple(points)))
+    command = TrajectoryCommand(stamp_us=0, points=tuple(points))
+    transport.deliver("planner", command)
     _tick(entity, clock)
     assert entity.active_source == "planner"
+    # Autoware's controller departs from STOPPED a tick after the plan comes, and
+    # its first DRIVE command rises from STOPPED's brake.
+    for _ in range(2):
+        transport.deliver("planner", command)
+        _tick(entity, clock)
     control = _last_control(actor)
     assert control.throttle > 0.0
     assert control.brake == pytest.approx(0.0)

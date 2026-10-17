@@ -1,15 +1,22 @@
-"""Unit tests for the pure-pursuit + speed PI trajectory follower."""
+"""Unit tests for the trajectory follower: pure pursuit, and the longitudinal
+controllers (Autoware's pid, and time_indexed)."""
 
 from __future__ import annotations
 
 import math
 
+import numpy as np
 import pytest
 
 from autoware_carla_scenario.driver.control import (
+    DRIVE,
+    EMERGENCY,
+    STOPPED,
+    STOPPING,
     ControlConfig,
     TrajectoryFollower,
     VehicleCommand,
+    plan_velocities,
     steer_angle,
     steer_command,
 )
@@ -200,12 +207,19 @@ def test_yaw_rate_trim_is_held_at_a_standstill() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Longitudinal control
+# Longitudinal control, time_indexed: the plan tracked on its own clock
 # ---------------------------------------------------------------------------
+
+_TIMED = ControlConfig(longitudinal_controller="time_indexed", throttle_deadband=0.25)
+
+
+def _timed(config: ControlConfig | None = None) -> TrajectoryFollower:
+    """A follower with the time_indexed longitudinal controller, driving an MKZ."""
+    return TrajectoryFollower(_TIMED if config is None else config, mkz_powertrain())
 
 
 def test_below_target_speed_opens_the_throttle() -> None:
-    follower = _follower()
+    follower = _timed()
     command = follower.step(_straight(speed_mps=10.0), Pose.identity(), 1.0, _DT_S)
     assert command.throttle > 0.0
     assert command.brake == pytest.approx(0.0)
@@ -213,7 +227,7 @@ def test_below_target_speed_opens_the_throttle() -> None:
 
 
 def test_above_target_speed_brakes() -> None:
-    follower = _follower()
+    follower = _timed()
     command = follower.step(_straight(speed_mps=2.0), Pose.identity(), 15.0, _DT_S)
     assert command.brake > 0.0
     assert command.throttle == CREEP_THROTTLE
@@ -231,7 +245,7 @@ def test_a_plan_pulling_away_from_a_standstill_is_not_a_stop() -> None:
         plan.append(
             index * _STEP_US, Pose.from_xyz_yaw(0.5 * 0.4 * t_s * t_s, 0.0, 0.0, 0.0)
         )
-    command = _follower().step(plan, Pose.identity(), 0.0, _DT_S)
+    command = _timed().step(plan, Pose.identity(), 0.0, _DT_S)
     assert command.target_speed_mps < 0.1
     assert command.throttle > 0.0 and command.brake == pytest.approx(0.0)
 
@@ -248,27 +262,25 @@ def test_a_plan_that_crawls_then_goes_is_driven_not_held() -> None:
         plan.append(
             index * _STEP_US, Pose.from_xyz_yaw(8.4 * (t_s / 6.0) ** 3, 0.0, 0.0, 0.0)
         )
-    command = _follower().step(plan, Pose.identity(), 0.0, _DT_S)
+    command = _timed().step(plan, Pose.identity(), 0.0, _DT_S)
     assert command.target_speed_mps < 0.2
     assert command.throttle > 0.0 and command.brake == pytest.approx(0.0)
 
 
 def test_any_throttle_starts_past_the_dead_band() -> None:
     """A gentle pull-away must still command a throttle that moves the car."""
-    config = ControlConfig(throttle_deadband=0.2)
-    command = _follower(config).step(
-        _straight(speed_mps=0.1), Pose.identity(), 0.0, _DT_S
+    config = ControlConfig(
+        longitudinal_controller="time_indexed", throttle_deadband=0.2
     )
+    command = _timed(config).step(_straight(speed_mps=0.1), Pose.identity(), 0.0, _DT_S)
     assert 0.2 <= command.throttle < 0.4
-    full = _follower(config).step(
-        _straight(speed_mps=30.0), Pose.identity(), 0.0, _DT_S
-    )
+    full = _timed(config).step(_straight(speed_mps=30.0), Pose.identity(), 0.0, _DT_S)
     assert full.throttle == pytest.approx(1.0)
 
 
 def test_a_rolling_car_gets_no_dead_band_offset() -> None:
     """Rolling, a small correction is a small throttle: the offset is for pull-aways."""
-    command = _follower().step(_straight(speed_mps=8.4), Pose.identity(), 8.33, _DT_S)
+    command = _timed().step(_straight(speed_mps=8.4), Pose.identity(), 8.33, _DT_S)
     assert 0.0 < command.throttle < 0.1
 
 
@@ -284,15 +296,15 @@ def _accelerating(speed_mps: float, acceleration_mps2: float) -> Trajectory:
 
 def test_the_plans_acceleration_is_fed_forward() -> None:
     """On the plan's speed, the pedals are the ones that settle at its acceleration."""
-    command = _follower().step(_accelerating(8.0, 1.0), Pose.identity(), 8.0, _DT_S)
+    command = _timed().step(_accelerating(8.0, 1.0), Pose.identity(), 8.0, _DT_S)
     assert _asked(command, 8.0) == pytest.approx(1.0, abs=0.05)
 
 
 def test_the_gear_the_vehicle_is_in_sets_the_throttle() -> None:
     """The same push takes more throttle in second than in first."""
     plan = _accelerating(8.0, 1.0)
-    first = _follower().step(plan, Pose.identity(), 8.0, _DT_S, gear=1)
-    second = _follower().step(plan, Pose.identity(), 8.0, _DT_S, gear=2)
+    first = _timed().step(plan, Pose.identity(), 8.0, _DT_S, gear=1)
+    second = _timed().step(plan, Pose.identity(), 8.0, _DT_S, gear=2)
     assert second.throttle > first.throttle
 
 
@@ -303,7 +315,7 @@ def test_a_follower_without_a_powertrain_refuses_to_drive() -> None:
 
 def test_a_plan_easing_off_brakes_gently() -> None:
     """A plan slowing at 2 m/s² asks for a part of the brake, not all of it."""
-    command = _follower().step(_accelerating(8.0, -2.0), Pose.identity(), 8.0, _DT_S)
+    command = _timed().step(_accelerating(8.0, -2.0), Pose.identity(), 8.0, _DT_S)
     assert 0.0 < command.brake < 0.5
 
 
@@ -311,18 +323,18 @@ def test_a_vehicle_behind_the_plan_catches_up() -> None:
     """Where the plan has the vehicle now is read on the plan's clock: 2 m short
     of it, the vehicle aims faster than the plan."""
     plan = _straight(speed_mps=8.0)
-    command = _follower().step(
+    command = _timed().step(
         plan, Pose.identity(), 8.0, _DT_S, now_us=plan.timestamps_us[0] + 250_000
     )
     assert command.target_speed_mps == pytest.approx(
-        8.0 + ControlConfig().position_gain * 2.0, abs=0.05
+        8.0 + _TIMED.position_gain * 2.0, abs=0.05
     )
     assert command.throttle > 0.0
 
 
 def test_a_car_braked_to_a_stop_pulls_away_when_the_plan_goes() -> None:
     """The integral wound up braking does not hold the car once it stands."""
-    follower = _follower()
+    follower = _timed()
     for _ in range(40):
         follower.step(_straight(speed_mps=2.0), Pose.identity(), 8.0, _DT_S)
     command = follower.step(_accelerating(0.0, 0.5), Pose.identity(), 0.0, _DT_S)
@@ -336,14 +348,14 @@ def test_a_plan_stopping_within_the_preview_brakes_early() -> None:
     plan.append(
         plan.timestamps_us[-1] + 2_000_000, Pose.from_xyz_yaw(1.5, 0.0, 0.0, 0.0)
     )
-    command = _follower().step(plan, Pose.identity(), 5.0, _DT_S)
+    command = _timed().step(plan, Pose.identity(), 5.0, _DT_S)
     assert command.brake > 0.0
 
 
 def test_stationary_plan_holds_the_vehicle() -> None:
     """A plan that does not advance is a request to stand still."""
-    config = ControlConfig()
-    follower = _follower(config)
+    config = _TIMED
+    follower = _timed(config)
     plan = Trajectory.empty()
     for index in range(5):
         plan.append(index * _STEP_US, Pose.from_xyz_yaw(0.0, 0.0, 0.0, 0.0))
@@ -360,7 +372,7 @@ def test_a_jittering_plan_to_stand_still_holds_the_vehicle() -> None:
     point, a few decimetres away and a few centimetres to the right, at full lock
     while the dead band crept the car round it.
     """
-    config = ControlConfig()
+    config = _TIMED
     plan = Trajectory.empty()
     for index in range(80):
         x = 0.15 + 0.1 * math.sin(1.7 * index)
@@ -369,7 +381,7 @@ def test_a_jittering_plan_to_stand_still_holds_the_vehicle() -> None:
     points = plan.positions
     path_m = sum(math.dist(a[:2], b[:2]) for a, b in zip(points, points[1:]))
     assert path_m > 1.0  # what the old, path-length test read as a plan to move
-    command = _follower(config).step(plan, Pose.identity(), 0.2, _DT_S)
+    command = _timed(config).step(plan, Pose.identity(), 0.2, _DT_S)
     assert command.throttle == pytest.approx(0.0)
     assert command.steer == pytest.approx(0.0)
     assert command.brake == pytest.approx(config.stop_brake)
@@ -385,16 +397,16 @@ def test_a_short_plan_is_pursued_as_if_at_the_least_lookahead() -> None:
     config = ControlConfig(min_lookahead_m=4.0, max_steer_rate=100.0)
     short = _plan([(0.1 * i, -0.05 * i / 15) for i in range(16)], speed_mps=0.5)
     long = _plan([(0.4 * i, -0.4 * 0.05 / 1.5 * i) for i in range(11)], speed_mps=0.5)
-    short_steer = _follower(config).step(short, Pose.identity(), 0.2, _DT_S).steer
-    long_steer = _follower(config).step(long, Pose.identity(), 0.2, _DT_S).steer
+    short_steer = _timed(config).step(short, Pose.identity(), 0.2, _DT_S).steer
+    long_steer = _timed(config).step(long, Pose.identity(), 0.2, _DT_S).steer
     assert short_steer > 0.0  # to the right
     # The long plan's target is 4.002 m away, a hair past the lookahead.
     assert short_steer == pytest.approx(long_steer, rel=1e-2)
 
 
 def test_empty_plan_brakes_and_resets() -> None:
-    config = ControlConfig()
-    follower = _follower(config)
+    config = _TIMED
+    follower = _timed(config)
     follower.step(_straight(), Pose.identity(), 1.0, _DT_S)
     command = follower.step(Trajectory.empty(), Pose.identity(), 5.0, _DT_S)
     assert command.brake == pytest.approx(config.stop_brake)
@@ -404,12 +416,13 @@ def test_empty_plan_brakes_and_resets() -> None:
 def test_integral_term_is_clamped() -> None:
     """Sustained error must not wind the integral term past its limit."""
     config = ControlConfig(
+        longitudinal_controller="time_indexed",
         speed_kp=0.0,
         speed_ki=1.0,
         integral_limit=0.5,
         throttle_deadband=0.0,
     )
-    follower = _follower(config)
+    follower = _timed(config)
     plan = _straight(speed_mps=10.0)
     for _ in range(200):
         command = follower.step(plan, Pose.identity(), 0.0, _DT_S)
@@ -417,14 +430,294 @@ def test_integral_term_is_clamped() -> None:
 
 
 def test_reset_clears_controller_state() -> None:
-    config = ControlConfig(speed_kp=0.0, speed_ki=1.0, throttle_deadband=0.0)
-    follower = _follower(config)
+    config = ControlConfig(
+        longitudinal_controller="time_indexed",
+        speed_kp=0.0,
+        speed_ki=1.0,
+        throttle_deadband=0.0,
+    )
+    follower = _timed(config)
     plan = _straight(speed_mps=10.0)
     for _ in range(10):
         follower.step(plan, Pose.identity(), 0.0, _DT_S)
     follower.reset()
     command = follower.step(plan, Pose.identity(), 0.0, _DT_S)
     assert _asked(command, 0.0) == pytest.approx(1.0 * 10.0 * _DT_S, abs=1e-6)
+
+
+# ---------------------------------------------------------------------------
+# Longitudinal control, pid: Autoware's autoware_pid_longitudinal_controller
+# ---------------------------------------------------------------------------
+
+
+def _timed_plan(xs, *, step_us: int = _STEP_US, first_us: int = _STEP_US) -> Trajectory:
+    """A straight local-frame plan through *xs*, a point every *step_us*, the first
+    *first_us* after now (0) -- as a policy stamps its plan from the time it plans."""
+    plan = Trajectory.empty()
+    for index, x in enumerate(xs):
+        plan.append(first_us + index * step_us, Pose.from_xyz_yaw(x, 0.0, 0.0, 0.0))
+    return plan
+
+
+def _run(
+    follower: TrajectoryFollower,
+    plan: Trajectory,
+    speed_mps: float,
+    ticks: int,
+    *,
+    x_m: float = 0.0,
+    velocities: list[float] | None = None,
+) -> VehicleCommand:
+    """Track *plan* for *ticks* ticks from *x_m* at a speed held at *speed_mps*."""
+    command = VehicleCommand()
+    for _ in range(ticks):
+        command = follower.step(
+            plan,
+            Pose.from_xyz_yaw(x_m, 0.0, 0.0, 0.0),
+            speed_mps,
+            _DT_S,
+            plan_velocities_mps=velocities,
+        )
+    return command
+
+
+def _accelerating_from_rest(
+    acceleration_mps2: float, seconds: float = 8.0
+) -> Trajectory:
+    count = int(round(seconds / 0.1))
+    return _timed_plan(
+        [0.5 * acceleration_mps2 * ((index + 1) * 0.1) ** 2 for index in range(count)]
+    )
+
+
+def test_speeds_are_put_on_the_plan_as_autowares_e2e_node_puts_them() -> None:
+    """get_trajectory_from_poses on a known pose list, by hand.
+
+    Raw speeds, distance per 0.1 s from the base: 10, 10, 10, 1, 1.  A forward
+    average over 2 points: 10, 10, 5.5, 1, then the tail keeps the last average, 1.
+    Accelerations: the change to the next point over 0.1 s, the last 0.
+    """
+    positions = np.array([[x, 0.0, 0.0] for x in (1.0, 2.0, 3.0, 3.1, 3.2)])
+    stamps = [100_000 * (index + 1) for index in range(5)]
+    base = np.zeros(3)
+    velocities, accelerations, pose_index = plan_velocities(
+        positions, stamps, base, 2, False, 3.0
+    )
+    assert velocities == pytest.approx([10.0, 10.0, 5.5, 1.0, 1.0])
+    assert accelerations == pytest.approx([0.0, -45.0, -45.0, 0.0, 0.0])
+    assert pose_index == [0, 1, 2, 3, 4]
+
+    # The vehicle moving as the plan was made: the average falling below 3 m/s
+    # (at the fourth point) stops the plan on the point before it.
+    velocities, accelerations, pose_index = plan_velocities(
+        positions, stamps, base, 2, True, 3.0
+    )
+    assert velocities == pytest.approx([10.0, 10.0, 5.5, 0.0, 0.0])
+    assert accelerations == pytest.approx([0.0, -45.0, -55.0, 0.0, 0.0])
+    assert pose_index == [0, 1, 2, 2, 2]
+
+
+def test_speeds_follow_the_plans_own_step() -> None:
+    """A plan stamped every 0.2 s goes half as fast over the same poses, and the
+    window is capped at one less than the plan's points."""
+    positions = np.array([[x, 0.0, 0.0] for x in (1.0, 2.0, 3.0)])
+    velocities, _, _ = plan_velocities(
+        positions, [200_000, 400_000, 600_000], np.zeros(3), 8, False, 0.3
+    )
+    assert velocities == pytest.approx([5.0, 5.0, 5.0])
+
+
+def test_autowares_default_window_on_a_policy_plan() -> None:
+    """Eight-point average of a 0.1 s plan, as the node computes it."""
+    xs = [0.02 * (index + 1) ** 2 for index in range(20)]
+    positions = np.array([[x, 0.0, 0.0] for x in xs])
+    stamps = [100_000 * (index + 1) for index in range(20)]
+    velocities, accelerations, _ = plan_velocities(
+        positions, stamps, np.zeros(3), 8, False, 0.3
+    )
+    raw = [(xs[0] - 0.0) / 0.1] + [(b - a) / 0.1 for a, b in zip(xs, xs[1:])]
+    expected = [sum(raw[i : i + 8]) / 8 for i in range(13)]
+    expected += [expected[-1]] * 7
+    assert velocities == pytest.approx(expected)
+    assert accelerations[:-1] == pytest.approx(
+        [(b - a) / 0.1 for a, b in zip(expected, expected[1:])]
+    )
+    assert accelerations[-1] == 0.0
+
+
+def test_a_plan_that_dwells_then_goes_keeps_the_vehicle_stopped() -> None:
+    """A plan standing on the vehicle's spot for 2.7 s, then pulling away (4.9 m at
+    6 s): its first eight speeds average to zero, so it stops at its first point,
+    and STOPPED departs only once the stop point is 0.5 m away."""
+    follower = _follower()
+    dwell = [0.0] * 27
+    go = [4.9 * ((index + 1) / 33.0) ** 2 for index in range(33)]
+    command = _run(follower, _timed_plan(dwell + go), 0.0, 20)
+    assert follower.control_state == STOPPED
+    assert follower.stop_distance_m == pytest.approx(0.0, abs=1e-6)
+    assert command.throttle == pytest.approx(CREEP_THROTTLE)
+    assert command.brake > 0.3
+    assert _asked(command, 0.0) == pytest.approx(0.0)  # held
+
+
+def test_a_plan_whose_stop_point_is_far_enough_departs() -> None:
+    """Pulling away at 0.5 m/s² for 8 s: no zero speed, so the stop point is the
+    plan's end, 16 m on.  STOPPED keeps the first tick (Autoware's steering check)
+    and departs on the second."""
+    follower = _follower()
+    plan = _accelerating_from_rest(0.5)
+    first = _run(follower, plan, 0.0, 1)
+    assert follower.control_state == STOPPED
+    assert first.brake > 0.0
+    assert follower.stop_distance_m == pytest.approx(16.0, abs=0.1)
+    _run(follower, plan, 0.0, 1)
+    assert follower.control_state == DRIVE
+    # The first DRIVE output rises from STOPPED's brake by max_acc_cmd_diff.
+    third = _run(follower, plan, 0.0, 1)
+    assert third.acceleration_mps2 > 0.0
+    assert third.throttle > 0.0 and third.brake == pytest.approx(0.0)
+
+
+def test_a_stop_point_nearer_than_half_a_metre_does_not_depart() -> None:
+    """A plan that goes 0.4 m and stops: STOPPED holds."""
+    follower = _follower()
+    xs = [min(0.4, 0.05 * (index + 1)) for index in range(40)]
+    _run(follower, _timed_plan(xs), 0.0, 10)
+    assert follower.control_state == STOPPED
+
+
+def _plan_to_stop(
+    x_m: float, speed_mps: float, stop_m: float, now_us: int
+) -> Trajectory:
+    """A policy's plan from *x_m* at *speed_mps*: braking evenly onto *stop_m*, then
+    standing there; standing where it is once (nearly) stopped."""
+    remaining = stop_m - x_m
+    deceleration, stop_s = 0.0, 0.0
+    if speed_mps > 0.05 and remaining > 0.01:
+        deceleration = speed_mps * speed_mps / (2.0 * remaining)
+        stop_s = speed_mps / deceleration
+    xs = []
+    for index in range(80):
+        t_s = min((index + 1) * 0.1, stop_s)
+        xs.append(x_m + speed_mps * t_s - 0.5 * deceleration * t_s * t_s)
+    return _timed_plan(xs, first_us=now_us + _STEP_US)
+
+
+def test_the_vehicle_stops_at_the_plans_stop_point() -> None:
+    """From 6 m/s, plans braking evenly onto a stop 12 m on, made every 0.1 s from
+    where the vehicle is: DRIVE, STOPPING once the stop point is within 0.5 m, then
+    STOPPED, at rest short of the stop -- by the metre the e2e node's forward
+    average and force stop take off the plan.  The vehicle answers through the
+    MKZ's powertrain model, its pedals settling at once."""
+    powertrain = mkz_powertrain()
+    follower = TrajectoryFollower(ControlConfig(), powertrain)
+    stop_m = 12.0
+    x_m, speed, states = 0.0, 6.0, []
+    plan = Trajectory.empty()
+    for tick in range(300):
+        if tick % 2 == 0:
+            plan = _plan_to_stop(x_m, speed, stop_m, tick * 50_000)
+        command = follower.step(
+            plan, Pose.from_xyz_yaw(x_m, 0.0, 0.0, 0.0), speed, _DT_S
+        )
+        states.append(follower.control_state)
+        gear = powertrain.gear_for(speed)
+        acceleration = powertrain.acceleration(
+            speed, command.throttle, command.brake, gear
+        )
+        speed = max(0.0, speed + acceleration * _DT_S)
+        x_m += speed * _DT_S
+    assert states[0] == STOPPED
+    assert states.index(DRIVE) < states.index(STOPPING)
+    assert states[-1] == STOPPED
+    assert speed == 0.0
+    assert stop_m - 1.5 < x_m <= stop_m
+    assert command.brake == pytest.approx(
+        powertrain.pedals(ControlConfig().stopped_acc, 0.0, 1)[1]
+    )
+
+
+def test_overshooting_the_stop_point_is_an_emergency() -> None:
+    """In DRIVE, a plan standing 2 m and more behind the vehicle (past the 1.5 m
+    overshoot) brakes at the emergency deceleration, reached at the emergency jerk."""
+    follower = _follower()
+    _run(follower, _accelerating_from_rest(0.5), 0.0, 2)
+    assert follower.control_state == DRIVE
+    behind = _timed_plan([-6.0 + 0.5 * index for index in range(9)])
+    command = _run(follower, behind, 3.0, 1, velocities=[0.0] * 9)
+    assert follower.control_state == EMERGENCY
+    assert follower.stop_distance_m == pytest.approx(-6.0)
+    assert command.acceleration_mps2 < 0.0
+    command = _run(follower, behind, 3.0, 60, velocities=[0.0] * 9)
+    assert command.acceleration_mps2 == pytest.approx(-5.0)
+
+
+def test_drive_tracks_the_plans_speed_through_the_lookahead_feedback() -> None:
+    """At the plan's speed and acceleration, Autoware's default feedback asks for
+    half the plan's acceleration plus half the (filtered) gap a second ahead."""
+    follower = _follower()
+    plan = _timed_plan([0.1 * (index + 1) * 8.0 for index in range(80)])
+    command = _run(follower, plan, 8.0, 2)
+    assert follower.control_state == DRIVE
+    assert command.target_speed_mps == pytest.approx(8.0)
+    command = _run(follower, plan, 8.0, 40)
+    assert command.acceleration_mps2 == pytest.approx(0.0, abs=1e-6)
+    slower = _run(follower, plan, 6.0, 60)
+    # Gap 2 m/s closed over 1 s, weighted 0.5: 1 m/s², under the 2 m/s³ jerk limit.
+    assert slower.acceleration_mps2 == pytest.approx(1.0, abs=0.02)
+    assert slower.throttle > 0.0
+
+
+def test_the_acceleration_is_jerk_limited() -> None:
+    """Departing, the asked acceleration rises from zero by at most max_jerk (2 m/s³)."""
+    follower = _follower()
+    plan = _timed_plan([0.1 * (index + 1) * 10.0 for index in range(80)])
+    _run(follower, plan, 0.0, 1)
+    for tick in range(1, 11):
+        command = _run(follower, plan, 0.0, 1)
+        assert follower.control_state == DRIVE
+        assert command.acceleration_mps2 <= 2.0 * _DT_S * tick + 1e-9
+    assert command.acceleration_mps2 == pytest.approx(2.0 * _DT_S * 10)
+
+
+def test_the_plans_own_speeds_are_used_when_given() -> None:
+    """An Autoware trajectory's speeds, not ones from its poses: here zero, a stop
+    at its first point."""
+    follower = _follower()
+    plan = _timed_plan([0.2 + index for index in range(20)])
+    _run(follower, plan, 0.0, 5, velocities=[0.0] * 20)
+    assert follower.control_state == STOPPED
+    _run(follower, plan, 0.0, 5)
+    assert follower.control_state == DRIVE
+
+
+def test_a_single_point_plan_holds_the_vehicle() -> None:
+    """Autoware's controller ignores a trajectory of fewer than two points."""
+    plan = _timed_plan([3.0])
+    command = _follower().step(plan, Pose.identity(), 0.0, _DT_S)
+    assert command.brake == pytest.approx(ControlConfig().stop_brake)
+
+
+def test_an_unknown_longitudinal_controller_is_refused() -> None:
+    with pytest.raises(ValueError, match="longitudinal_controller"):
+        ControlConfig.from_mapping({"longitudinal_controller": "mpc"})
+    with pytest.raises(ValueError, match="longitudinal_controller"):
+        TrajectoryFollower(ControlConfig(longitudinal_controller="mpc"))
+
+
+def test_a_time_indexed_gain_on_the_pid_controller_is_warned_about(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level("WARNING"):
+        ControlConfig.from_mapping({"speed_kp": 2.0})
+    assert any("speed_kp" in record.getMessage() for record in caplog.records)
+    caplog.clear()
+    with caplog.at_level("WARNING"):
+        ControlConfig.from_mapping({"speed_kp": 1.0, "kp": 2.0})
+        ControlConfig.from_mapping(
+            {"longitudinal_controller": "time_indexed", "speed_kp": 2.0}
+        )
+    assert not caplog.records
 
 
 # ---------------------------------------------------------------------------

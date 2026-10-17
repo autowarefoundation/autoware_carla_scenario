@@ -143,7 +143,9 @@ be made then: they depend on where the reference entity is.
   whatever the vehicle could actually do.
 - **`FOLLOW`** drives the vehicle there with the pure-pursuit and speed
   controller of the [external driver interface](driver_interface.md)
-  (`TrajectoryFollower`, on the vehicle's own powertrain model). The motion is
+  (`TrajectoryFollower`, on the vehicle's own powertrain model), by default with
+  its `time_indexed` longitudinal controller, which keeps the vehicle where the
+  trajectory's clock has it. The motion is
   the vehicle's own, so it can lag or cut a corner. A pedestrian is walked
   towards the path.
 

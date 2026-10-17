@@ -9,7 +9,7 @@ applies its command:
 * a planned trajectory is tracked by the framework's own
   :class:`~autoware_carla_scenario.driver.control.TrajectoryFollower`, as
   :class:`~autoware_carla_scenario.entity.carla_driver_entity.CarlaDriverEntity`
-  tracks a policy's plan;
+  tracks a policy's plan, on the speeds the trajectory carries;
 * a steering/acceleration pair or an Autoware control command goes to CARLA's
   Ackermann controller, as VisionPilot's ``carla_control_publisher`` hands it over
   ``/carla/hero/ackermann_control_cmd``.
@@ -393,6 +393,10 @@ class Ros2EgoEntity(ExternallyDrivenEgo):
                 yaw_rate_rps=float(observation.angular_velocity[2]),
                 now_us=observation.timestamp_us,
                 gear=int(actor.get_control().gear),
+                # The trajectory's own speeds, as Autoware's controller reads them.
+                plan_velocities_mps=[
+                    float(point.velocity_mps) for point in trajectory.points
+                ],
             )
             actor.apply_control(vehicle_command.to_carla_control())
             self._tracking = True
