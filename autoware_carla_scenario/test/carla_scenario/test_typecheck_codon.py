@@ -2850,10 +2850,14 @@ def test_an_optional_of_every_model_class_with_subclasses_compiles(
     tmp_path: Path,
 ) -> None:
     # The model's own classes with subclasses, each held as an Optional None
-    # in a program that builds nothing (#263). VehicleEntityConfig is left
-    # out: the scenario check builds an EgoConfig, its subclass, for every
-    # scenario, and building one in the model ahead of EgoConfig would make
-    # the subclass the crash.
+    # in a program that builds nothing (#263), with every subclass imported:
+    # Codon crashes only once a subclass is defined, and some live in another
+    # module (AutowareTrafficLight, MGRSProjector). VehicleEntityConfig is
+    # left out: the scenario check builds an EgoConfig, its subclass, for
+    # every scenario, and building one in the model ahead of EgoConfig would
+    # make the subclass the crash. So is Ros2EgoTransport: the scenario check
+    # has no ROS 2 transport (_ros2.codon), and its constructors are
+    # compile_errors, so the model cannot build one.
     from autoware_carla_scenario.typecheck.check import (
         _base_workspace,
         find_supported_codon,
@@ -2865,7 +2869,7 @@ def test_an_optional_of_every_model_class_with_subclasses_compiles(
     )
 
     defined: dict[str, str] = {}
-    bases: set[str] = set()
+    subclasses: dict[str, list[tuple[str, str]]] = {}
     for path in sorted(model_dir().rglob("*.codon")):
         parts = list(path.relative_to(model_dir()).with_suffix("").parts)
         if parts[-1] == "__init__":
@@ -2873,15 +2877,24 @@ def test_an_optional_of_every_model_class_with_subclasses_compiles(
         for node in ast.parse(path.read_text()).body:
             if isinstance(node, ast.ClassDef) and not node.decorator_list:
                 defined.setdefault(node.name, ".".join(parts))
-                bases |= {b.id for b in node.bases if isinstance(b, ast.Name)}
+                for base in node.bases:
+                    if isinstance(base, ast.Name):
+                        subclasses.setdefault(base.id, []).append(
+                            (".".join(parts), node.name)
+                        )
     classes = sorted(
         (defined[name], name)
-        for name in bases - {"VehicleEntityConfig"}
+        for name in subclasses.keys() - {"VehicleEntityConfig", "Ros2EgoTransport"}
         if name in defined
     )
     assert ("autoware_carla_scenario.conditions", "BaseCondition") in classes
     assert ("autoware_carla_scenario.actions", "BaseAction") in classes
+    assert ("lanelet2.core", "TrafficLight") in classes
     program = [f"from {m} import {n} as _C{i}" for i, (m, n) in enumerate(classes)]
+    program += [
+        f"from {m} import {n} as _S{i}"
+        for i, (m, n) in enumerate(s for _, c in classes for s in subclasses[c])
+    ]
     for i in range(len(classes)):
         program += [f"_x{i}: Optional[_C{i}] = None", f"print(_x{i} is None)"]
     toolchain = find_supported_codon()
