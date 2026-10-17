@@ -25,6 +25,12 @@ convert a ``dict``, and so does the driver, so Codon refuses the value at its
 ``scenario.<key>`` line instead of passing code that reads the field's
 attributes.
 
+Codon types the program statically, so the values of a sweep's cases do not
+change the verdict, only their types do: :attr:`Driver.shape` is the program
+with each value replaced by its type, and the check's key
+(:func:`~.check._cache_key`), so a sweep compiles once per shape of its
+config, not once per case.
+
 After that, the driver calls the function appended to each of the scenario's
 own modules (:func:`render_module_checks`), which calls every function and
 method of the module and assigns each class-level default, so what the
@@ -70,11 +76,21 @@ class Driver:
     reaches: str = "the scenario's constructor, setup() and is_done()"
     #: What runs after the module checks (:func:`render_module_checks`).
     trailer: str = ""
+    #: :attr:`source` with each config value replaced by its type, as
+    #: :func:`render_driver` renders it in a shape (:class:`_Imports`): what
+    #: the verdict depends on, so what the check is keyed by.  Empty when
+    #: the program builds no values: the key is :attr:`source` itself.
+    shape: str = ""
+    #: The config values the program builds, each key's ``repr()``: what
+    #: tells one case of a sweep from another in a log.
+    case: dict[str, str] = field(default_factory=dict)
 
 
 class _Imports:
-    def __init__(self) -> None:
+    def __init__(self, *, shape: bool = False) -> None:
         self.lines: list[str] = []
+        #: Render each value as a token of its type (:func:`_literal`).
+        self.shape = shape
 
     def name(self, cls: type) -> str:
         """The name *cls* is imported as in the driver."""
@@ -100,6 +116,39 @@ def _at(actual: Any, key: Any) -> Any:
         return _UNKNOWN
 
 
+#: The ints a Codon literal holds (``int`` is 64-bit): one beyond is an error.
+_INT_MIN, _INT_MAX = -(2**63), 2**63 - 1
+
+
+def _literal(value: Any, rendered: str, imports: _Imports) -> str:
+    """*rendered*, or in a shape (:attr:`_Imports.shape`), the type of *value*.
+
+    Only a value whose rendering is a literal Codon accepts whatever the value
+    is turns into its type: a bool, a float (``float("nan")`` too), an int
+    that fits in 64 bits and a printable ASCII string.  Codon types the
+    program statically and reads no value at compile time, so another such
+    value of the same type is the same program to it.  Anything else (an int
+    too large, a string with escapes, a ``repr()`` of some other object) is
+    kept as it is, so a value that could change the verdict changes the key.
+    """
+    if not imports.shape:
+        return rendered
+    if isinstance(value, bool):
+        return "<bool>"
+    if isinstance(value, float):
+        return "<float>"
+    if isinstance(value, int) and _INT_MIN <= value <= _INT_MAX:
+        return "<int>"
+    if (
+        isinstance(value, str)
+        and value.isascii()
+        and value.isprintable()
+        and "\\" not in rendered
+    ):
+        return "<str>"
+    return rendered
+
+
 def _render(value: Any, hint: Any, imports: _Imports, actual: Any = _UNKNOWN) -> str:
     """*value* as a Codon expression of the type *hint* names (Any: its own).
 
@@ -111,21 +160,23 @@ def _render(value: Any, hint: Any, imports: _Imports, actual: Any = _UNKNOWN) ->
         rest = [a for a in args if a is not type(None)]
         return _render(value, rest[0] if len(rest) == 1 else Any, imports, actual)
     if isinstance(value, enum.Enum):
-        return f"{imports.name(type(value))}.{value.name}"
+        cls = imports.name(type(value))
+        return f"<{cls}>" if imports.shape else f"{cls}.{value.name}"
     if value is None:
         return "None"
     if isinstance(value, bool):
-        return repr(value)
+        return _literal(value, repr(value), imports)
     if hint is float and isinstance(value, int):
         value = float(value)
     if isinstance(value, float):
         if math.isnan(value):
-            return 'float("nan")'
+            return _literal(value, 'float("nan")', imports)
         if math.isinf(value):
-            return 'float("inf")' if value > 0 else 'float("-inf")'
-        return repr(value)
+            inf = 'float("inf")' if value > 0 else 'float("-inf")'
+            return _literal(value, inf, imports)
+        return _literal(value, repr(value), imports)
     if isinstance(value, (int, str)):
-        return repr(value)
+        return _literal(value, repr(value), imports)
     if isinstance(value, dict):
         if (
             isinstance(hint, type)
@@ -205,15 +256,20 @@ def render_driver(
         if by_assignment
         else f"    config = {config_name}(",
     ]
-    config_args: list[tuple[str, str]] = []
+    # The same program with each value a token of its type: the key.
+    shape_imports = _Imports(shape=True)
+    config_args: list[tuple[str, str, str]] = []
     for key, value in scenario_dict.items():
-        rendered = _render(value, hints.get(key, Any), imports, _at(built, key))
-        line = (
+        line, shaped = (
             f"    config.{key} = {rendered}"
             if by_assignment
             else f"        {key}={rendered},"
+            for rendered in (
+                _render(value, hints.get(key, Any), imports_, _at(built, key))
+                for imports_ in (imports, shape_imports)
+            )
         )
-        config_args.append((key, line))
+        config_args.append((key, line, shaped))
     tail = [
         *([] if by_assignment else ["    )"]),
         f"    scenario = {scenario_name}(",
@@ -252,12 +308,27 @@ def render_driver(
         "",
     ]
     lines = head + body
+    # Rendering a value imports the same classes (its enum, its dataclass)
+    # whatever the value is, so the shape keeps the program's imports.
+    shape = head + body
     config_lines: dict[int, str] = {}
-    for key, line in config_args:
+    for key, line, shaped in config_args:
         lines.append(line)
+        shape.append(shaped)
         config_lines[len(lines)] = f"scenario.{key}"
     lines += tail
-    return Driver("\n".join(lines) + "\n", config_lines, trailer=f"{HOOK_CHECK}()\n")
+    shape += tail
+    return Driver(
+        "\n".join(lines) + "\n",
+        config_lines,
+        trailer=f"{HOOK_CHECK}()\n",
+        shape="\n".join(shape) + "\n",
+        case={key: _abbreviated(repr(value)) for key, value in scenario_dict.items()},
+    )
+
+
+def _abbreviated(text: str, limit: int = 80) -> str:
+    return text if len(text) <= limit else text[: limit - 3] + "..."
 
 
 def render_module_checks(modules: list[str]) -> str:
