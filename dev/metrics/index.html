@@ -1496,6 +1496,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Watching a metric">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#off-the-road-as-a-fail-condition" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Off the road as a fail condition
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
     </ul>
@@ -1686,6 +1703,23 @@
       
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label="Watching a metric">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#off-the-road-as-a-fail-condition" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Off the road as a fail condition
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -1909,6 +1943,32 @@ to pass only while it does not. In the <a href="../scenario_editor/">Scenario Ed
 is the <strong>Metric</strong> card, under World.</p>
 <p>To read a metric yourself -- in a probe, a test, a recorder --
 <code>read_metric(key, world)</code> returns its value in the frame, or <code>None</code>.</p>
+<h3 id="off-the-road-as-a-fail-condition">Off the road as a fail condition<a class="headerlink" href="#off-the-road-as-a-fail-condition" title="Permanent link">&para;</a></h3>
+<p><code>offroad</code> is a measurement, and a strict one: it reads <code>1</code> as soon as any one
+corner of the ego's box is on no driving lane. A corner over a gap between
+lanes at a junction entry, or a small offset between the OpenDRIVE lanes and
+where the vehicle drives, counts though the vehicle is in its lane, so
+<code>MetricCondition(OFFROAD, ...)</code> fails such runs. To judge a run by how much of
+the box is off instead, use <code>OffRoadFractionCondition(fraction, entity_name,
+*, label)</code>, a condition rather than a metric:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario</span><span class="w"> </span><span class="kn">import</span> <span class="n">OffRoadFractionCondition</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="bp">self</span><span class="o">.</span><span class="n">register_fail_condition</span><span class="p">(</span><span class="n">OffRoadFractionCondition</span><span class="p">(</span><span class="mf">0.3</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">"offroad"</span><span class="p">))</span>
+</code></pre></div>
+<p>Every tick it samples a 5 x 3 grid of points over the entity's bounding box
+(the ego's unless <code>entity_name</code> names another): 5 evenly spaced along its
+length and 3 across its width, the box's edges and corners included. A point
+is off when <code>get_waypoint(point, project_to_road=False,
+lane_type=carla.LaneType.Driving)</code> finds no lane there, asked at the height of
+the entity, so that where roads cross at different heights the lane is the one
+it is on. It fails once at least <code>fraction</code> (in <code>(0, 1]</code>) of the 15 points are
+off. The fraction is of points, not of area: one corner off is 1/15, the
+front edge 3/15, one long side 5/15. <code>fraction=1/15</code> fails on any one point,
+the way the metric does on a corner; <code>0.3</code> fails at 5 points, so it tolerates
+a corner or the front edge over a lane gap and fails once a whole long side
+of the box is off.
+In the <a href="../scenario_editor/">Scenario Editor</a> it is the <strong>Off the road</strong> card,
+under Entity.</p>
 <p>A scenario or a Python ODD may import any name of
 <code>autoware_carla_scenario.metrics</code> -- the keys, <code>Metric</code>, <code>BUILT_IN_METRICS</code>,
 <code>is_metric()</code> and <code>read_metric()</code> -- and is checked against them like any
@@ -1938,7 +1998,7 @@ refuses one that returns anything but a <code>float</code> or an <code>Optional[
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 15, 2026 12:19:36 UTC"><span class="timeago" datetime="2026-10-15T12:19:36+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 15, 2026 12:19:36 UTC">2026-10-15</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 17, 2026 00:17:15 UTC"><span class="timeago" datetime="2026-10-17T00:17:15+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 17, 2026 00:17:15 UTC">2026-10-17</span>
   </span>
 
     
