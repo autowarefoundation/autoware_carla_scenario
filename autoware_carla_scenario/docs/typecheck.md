@@ -70,12 +70,17 @@ inputs reads the verdict instead of compiling. The key covers everything the
 verdict depends on. For the compile, that is the scenario's (or the
 framework's) modules, the generated driver, the model, typesafe_carla's Codon
 library, and the compiler's version and standard library. For the None
-check, it is every Python source of the framework, the checker included
-(mypy reads them for the types of what a scenario calls), the mypy version,
-and the Python version. And it includes what the checks made in Python
-found before the compile: an import the framework's Python lacks, or an
-abstract class that is built. A digest of the framework's Python is taken
-once a process (about 30 ms). A crash is never kept, and an entry
+check, it is every Python source and stub of the framework, the checker
+included (mypy reads them for the types of what a scenario calls), the name
+and version of every other installed distribution (mypy follows a
+scenario's imports into numpy, lanelet2 or typesafe_carla), the mypy
+version, and the Python version. And it includes what the checks made in
+Python found before the compile: an import the framework's Python lacks, or
+an abstract class that is built. These digests are taken once a process
+(about 100 ms). What the key leaves out: the source of another distribution
+installed editable (only its version is read), and environment variables
+mypy reads, such as `MYPYPATH`; clear the directory after changing either.
+A crash is never kept, and an entry
 that cannot be read counts as a miss. A verdict read from the directory has
 its file's times touched, so the directory can be pruned by access time.
 

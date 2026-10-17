@@ -1051,8 +1051,9 @@ def _framework_digest(codon_path: Path) -> str:
 
 @lru_cache(maxsize=1)
 def _package_digest() -> str:
-    """The framework's Python, the checker's included: every ``*.py`` of the
-    package, by its path in the package and its text.
+    """The framework's Python, the checker's included: every ``*.py`` (and
+    ``*.pyi``, which mypy prefers) of the package, by its path in the package
+    and its text.
 
     mypy reads it for the types of what a scenario calls (the None check), and
     the checks Python makes before the compile import it (``sources.problems``).
@@ -1060,7 +1061,7 @@ def _package_digest() -> str:
     """
     root = Path(__file__).resolve().parent.parent
     digest = hashlib.sha256()
-    for path in sorted(root.rglob("*.py")):
+    for path in sorted([*root.rglob("*.py"), *root.rglob("*.pyi")]):
         digest.update(path.relative_to(root).as_posix().encode() + b"\0")
         digest.update(path.read_bytes() + b"\0")
     return digest.hexdigest()
@@ -1076,12 +1077,31 @@ def _mypy_version() -> str:
         return ""
 
 
+@lru_cache(maxsize=1)
+def _distributions_digest() -> str:
+    """The name and version of every distribution installed beside the
+    framework (its own aside, which :func:`_package_digest` covers by its
+    text): mypy follows a scenario's imports into them (numpy, lanelet2,
+    typesafe_carla's CPython package), and their types decide what may be
+    None. A version is all that is read of one, so an editable install's
+    edits are not seen."""
+    own = _PACKAGE.replace("_", "-")
+    names = set()
+    for dist in importlib.metadata.distributions():
+        name = re.sub(r"[-_.]+", "-", dist.metadata["Name"] or "").lower()
+        if name != own:
+            names.add(f"{name}=={dist.version}")
+    return hashlib.sha256("\n".join(sorted(names)).encode()).hexdigest()
+
+
 def _python_digest() -> str:
     """What the verdict depends on beyond the compile (#268): the framework's
-    Python, the mypy that reads it, and the Python (its typeshed, and what
-    the checks made in Python find) that runs both."""
+    Python, the mypy that reads it, the distributions it follows imports
+    into, and the Python (its typeshed, and what the checks made in Python
+    find) that runs both."""
     digest = hashlib.sha256(_package_digest().encode())
     digest.update(f"\0mypy {_mypy_version()}".encode())
+    digest.update(f"\0dists {_distributions_digest()}".encode())
     digest.update(f"\0python {sys.version_info[0]}.{sys.version_info[1]}".encode())
     return digest.hexdigest()
 

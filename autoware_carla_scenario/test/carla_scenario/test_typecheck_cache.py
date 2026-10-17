@@ -21,6 +21,7 @@ from autoware_carla_scenario.typecheck.check import (
     TypeCheckResult,
     _cache_key,
     _cached,
+    _distributions_digest,
     _package_digest,
     _Module,
     _Sources,
@@ -136,7 +137,12 @@ def test_a_change_to_the_frameworks_python_alone_is_another_key(
             ),
             encoding="utf-8",
         )
-        assert digest() != before
+        after = digest()
+        assert after != before
+        # A stub, which mypy reads in place of its module, counts too.
+        (stub,) = copy.rglob("autoware_bridge_pb2.pyi")
+        stub.write_text(stub.read_text(encoding="utf-8") + "\nx: int\n")
+        assert digest() != after
     finally:
         _package_digest.cache_clear()
 
@@ -150,6 +156,37 @@ def test_another_mypy_is_another_key(
     assert key() != before
     monkeypatch.setattr(check, "_mypy_version", lambda: "")  # not installed
     assert len({before, key()}) == 2
+
+
+def test_another_installed_distribution_is_another_key(
+    monkeypatch: pytest.MonkeyPatch, key: Callable[..., str]
+) -> None:
+    """mypy follows a scenario's imports into the installed distributions
+    (numpy, lanelet2, typesafe_carla), whose types decide what may be None;
+    the framework's own version is not one of them (a release alone keeps
+    the verdicts)."""
+
+    def installed(**versions: str) -> str:
+        dists = [
+            SimpleNamespace(metadata={"Name": name}, version=version)
+            for name, version in versions.items()
+        ]
+        monkeypatch.setattr(check.importlib.metadata, "distributions", lambda: dists)
+        _distributions_digest.cache_clear()
+        return key()
+
+    try:
+        before = installed(numpy="2.2.0", autoware_carla_scenario="14.2.1")
+        assert installed(numpy="2.2.0", autoware_carla_scenario="14.2.2") == before
+        assert installed(numpy="2.3.0", autoware_carla_scenario="14.2.1") != before
+        assert (
+            installed(
+                numpy="2.2.0", lanelet2="1.0", **{"autoware-carla-scenario": "14.2.1"}
+            )
+            != before
+        )
+    finally:
+        _distributions_digest.cache_clear()
 
 
 def test_another_python_is_another_key(
