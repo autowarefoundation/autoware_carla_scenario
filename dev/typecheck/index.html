@@ -2257,14 +2257,21 @@ of them) is compared by its value and type (a tuple's items' too: <code>1</code>
 comparison unless a test of its own compares it (<code>EGO_ROLE_NAME</code>,
 <code>BUILT_IN_METRICS</code>, <code>BUILT_IN_MEASURES</code>).</p>
 <p><strong>What Codon builds by the fields.</strong> Codon 0.19 gives every class a
-constructor of its fields, its bases' first, by position, beside the
-<code>__init__</code> it declares: a class without fields is built with no arguments
-(<code>VehicleEntity()</code>, #225), and a condition or an action with the label it
-inherits alone (<code>TimeoutCondition("10")</code>, <code>TurnAction("npc1")</code>, #236), where
-Python refuses both. Codon tries the <code>__init__</code> overloads a class declares
-from the last one up, and the one it generates only after them, so the model
-declares, ahead of the constructor, an <code>__init__</code> of as many arguments whose
-body is a <code>compile_error</code>:</p>
+constructor of its fields, its bases' first, by position or by name, beside
+the <code>__init__</code> it declares: a class without fields is built with no arguments
+(<code>VehicleEntity()</code>, #225), a condition or an action with the label it
+inherits alone (<code>TimeoutCondition("10")</code>, <code>TurnAction("npc1")</code>, #236), and
+any class by fields its constructor does not take (<code>DebugMarkers([])</code>,
+<code>CoverItem("speed")</code>, <code>RunProgress(1, 2, "case", "running")</code>, #244), where
+Python refuses each. A class that derives from one of Codon's exceptions
+(<code>Static[Exception]</code>) also takes its bases' constructors, and its fields
+start with <code>BaseException</code>'s eight: <code>FrameMismatchError("x")</code> passed by
+<code>Exception(typename, msg="")</code> (#244). A class that derives from a model class
+plainly does not take its base's <code>__init__</code>.</p>
+<p>Codon tries the <code>__init__</code> overloads a class declares from the last one up,
+and those it generates or inherits only after them, so the model declares,
+ahead of the constructor, an <code>__init__</code> of as many arguments whose body is a
+<code>compile_error</code>:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="k">class</span><span class="w"> </span><span class="nc">TimeoutCondition</span><span class="p">(</span><span class="n">BaseCondition</span><span class="p">):</span>
 <a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">label</span><span class="p">):</span>
 <a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>        <span class="n">compile_error</span><span class="p">(</span><span class="s2">"TimeoutCondition(): no constructor takes these arguments "</span>
@@ -2275,14 +2282,64 @@ body is a <code>compile_error</code>:</p>
 </code></pre></div>
 <p>The constructor, declared last, still wins every call it takes
 (<code>TimeoutCondition(label="t")</code>, <code>TimeoutCondition(10.0, label="t")</code>); the
-refusing overload only takes what would reach Codon's own.
-<code>test_typecheck_model.py</code> compares the last <code>__init__</code> with Python's, and
-checks that every compared class without fields whose Python constructor
-requires an argument declares the refusing overload of none (<code>RouteMatch</code>,
-<code>RouteFrame</code>, <code>VehicleEntity</code>, <code>PedestrianEntity</code>, <code>CoverageCollector</code>,
-<code>CoverageReport</code>, <code>EgoDriverGrpcClient</code>, <code>Ros2EgoTransport</code>,
-<code>CycloneRos2Transport</code>), and every condition and action the refusing overload
-of one. A class whose <code>__init__</code> takes its fields by position needs none: the
+refusing overload only takes what would reach Codon's own. The one of as many
+arguments as the class has fields takes the fields' names, so a call by them
+(<code>CoverItem(name="speed")</code>) is refused too.</p>
+<p><code>test_typecheck_model.py</code> compares the last <code>__init__</code> with Python's and
+finds the overloads needed. For every compared class that declares an
+<code>__init__</code>, it counts each number of positional arguments the constructor
+Codon generates (the fields, <code>_codon_fields</code>) or an exception base's
+(<code>_inherited_inits</code>, Codon's own read from <code>_CODON_EXCEPTIONS</code>, which a test
+compares with Codon's standard library) would take, and asks Python whether
+its constructor binds as many placeholders (<code>inspect.signature().bind</code>).
+Where Python refuses and the model's constructor does not take them either,
+the model declares the refusing overload of that many; where the model's
+constructor takes them through <code>*_kw</code>, its <code>_keyword_only(_kw, ...)</code> refuses
+them (<code>OddModule</code>, <code>OddAttribute</code>, <code>BaseScenario</code>). The classes it finds:</p>
+<table>
+<thead>
+<tr>
+<th>Arguments</th>
+<th>Classes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>none</td>
+<td><code>RouteMatch</code>, <code>RouteFrame</code>, <code>VehicleEntity</code>, <code>PedestrianEntity</code>, <code>CoverageCollector</code>, <code>CoverageReport</code>, <code>EgoDriverGrpcClient</code>, <code>Ros2EgoTransport</code> (and <code>CycloneRos2Transport</code>, compared apart)</td>
+</tr>
+<tr>
+<td>the label</td>
+<td>the conditions and actions whose constructor Python refuses one argument (<code>SpeedCondition</code>, <code>TurnAction</code>)</td>
+</tr>
+<tr>
+<td>the fields</td>
+<td><code>DebugMarkers</code>, <code>CoverItem</code>, <code>OddCondition</code> (one), <code>RouteCoverage</code>, <code>RunProgress</code> (four)</td>
+</tr>
+<tr>
+<td>an exception's</td>
+<td><code>FrameMismatchError</code> (one, two, ten), <code>DevContainerError</code>, <code>MapCacheError</code> (none, two, eight)</td>
+</tr>
+</tbody>
+</table>
+<p>Every condition and action declares the overload of one, its label, even
+where Python takes one argument by position: a call the constructor refuses
+by its type (<code>TimeoutCondition("10")</code>) would still reach the one Codon
+generates.</p>
+<p>Those constructors take their parameters by keyword too, and a call by
+keyword Python refuses passes where no guard takes those names: an
+exception's base parameters (<code>DevContainerError(typename="x")</code>,
+<code>FrameMismatchError("x", message="y")</code>), or a class's field names
+(<code>OddAttribute(name="speed", unit="m", text="t")</code>, <code>EntityRole(_value="x")</code>).
+So the test also enumerates every call, by position and by keyword, the
+constructor Codon generates or an exception base's would bind, and requires,
+for each one Python and the model's constructor refuse, a refusing overload
+that binds it too: an <code>__init__</code> of the fields' names (<code>OddAttribute</code>,
+<code>OddDefinition</code>, <code>EntityRole</code>, <code>TrajectoryVertex</code>, <code>EgoConfig</code>,
+<code>BaseScenario</code>, <code>RunEnvironment</code>), and of <code>typename</code> and
+<code>typename, message</code> (<code>DevContainerError</code>, <code>MapCacheError</code>;
+<code>FrameMismatchError</code> takes one positional <code>typename</code> already). A class
+whose <code>__init__</code> takes its fields by position and by name needs none: the
 constructor Codon generates is its own.</p>
 <p>A scenario that imports a module with no model (lanelet2's <code>matching</code>, say,
 or a framework module outside the public API) is refused with a message
@@ -4139,7 +4196,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 17, 2026 03:43:27 UTC"><span class="timeago" datetime="2026-10-17T03:43:27+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 17, 2026 03:43:27 UTC">2026-10-17</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 17, 2026 04:58:48 UTC"><span class="timeago" datetime="2026-10-17T04:58:48+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 17, 2026 04:58:48 UTC">2026-10-17</span>
   </span>
 
     
