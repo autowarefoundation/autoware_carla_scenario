@@ -41,6 +41,10 @@ _FRAME_TIMEOUT: float = 1.0
 #: frame is 8 MB).
 _PENDING_FRAMES: int = 4
 
+#: Seconds stop() waits for the writer to write what it was handed before it
+#: takes ffmpeg for stuck (alive, but no longer reading) and kills it.
+_STOP_TIMEOUT: float = 30.0
+
 
 def check_video_size(width: int, height: int) -> None:
     """Refuse a video size the recorder cannot encode.
@@ -117,6 +121,8 @@ class CameraRecorder:
     _writer: Optional[threading.Thread]
     #: Whether ffmpeg stopped taking frames: the writer drops the rest.
     _pipe_failed: bool
+    #: Frames taken from the camera but not written, after a failure.
+    _dropped: int
     _sensor: Optional[carla.Actor]
     _process: Optional[subprocess.Popen[bytes]]
 
@@ -142,6 +148,8 @@ class CameraRecorder:
         self._pending = queue.Queue(maxsize=_PENDING_FRAMES)
         self._writer = None
         self._pipe_failed = False
+        self._dropped = 0
+        self._process = None
 
         # Set up the RGB camera blueprint
         bp_lib = world.get_blueprint_library()
@@ -158,7 +166,28 @@ class CameraRecorder:
         )
         self._sensor = world.spawn_actor(camera_bp, transform, attach_to=actor)
 
-        # Start ffmpeg process via ffmpeg-python for H.264 streaming encoding.
+        try:
+            self._start_ffmpeg(output_path, image_width, image_height, fps)
+            # Enqueue frames instead of processing them in the callback thread.
+            self._sensor.listen(self._on_sensor_data)
+        except Exception:
+            # Leave neither the camera nor ffmpeg behind.
+            self._discard()
+            raise
+        self._writer = threading.Thread(target=self._write_loop, daemon=True)
+        self._writer.start()
+        logger.info(
+            "CameraRecorder started: %dx%d @ %.0f fps -> %s",
+            image_width,
+            image_height,
+            fps,
+            output_path,
+        )
+
+    def _start_ffmpeg(
+        self, output_path: Path, image_width: int, image_height: int, fps: float
+    ) -> None:
+        """Start ffmpeg via ffmpeg-python for H.264 streaming encoding."""
         output_path.parent.mkdir(parents=True, exist_ok=True)
         self._process = (
             ffmpeg.input(
@@ -182,18 +211,22 @@ class CameraRecorder:
             .overwrite_output()
             .run_async(pipe_stdin=True, pipe_stderr=True)
         )
-        self._writer = threading.Thread(target=self._write_loop, daemon=True)
-        self._writer.start()
 
-        # Enqueue frames instead of processing them in the callback thread.
-        self._sensor.listen(self._on_sensor_data)
-        logger.info(
-            "CameraRecorder started: %dx%d @ %.0f fps -> %s",
-            image_width,
-            image_height,
-            fps,
-            output_path,
-        )
+    def _discard(self) -> None:
+        """Destroy the camera and kill ffmpeg, for a constructor that failed."""
+        sensor = self._sensor
+        self._sensor = None
+        if sensor is not None:
+            try:
+                sensor.stop()
+                sensor.destroy()
+            except Exception:
+                logger.warning("CameraRecorder: destroying the camera failed")
+        process = self._process
+        self._process = None
+        if process is not None:
+            process.kill()
+            process.wait()
 
     def _on_sensor_data(self, data: Union["carla.Image", "carla.SensorData"]) -> None:
         """The sensor's listener: queues the frame for :meth:`write_frame`.
@@ -233,6 +266,7 @@ class CameraRecorder:
             logger.debug("CameraRecorder: frame queue timeout")
             return False
         if self._pipe_failed or self._writer is None:
+            self._dropped += 1
             return False
         self._pending.put((image, caption))
         return True
@@ -248,6 +282,7 @@ class CameraRecorder:
             if item is None:
                 return
             if self._pipe_failed:
+                self._dropped += 1
                 continue
             image, caption = item
             try:
@@ -255,9 +290,11 @@ class CameraRecorder:
             except BrokenPipeError:
                 logger.warning("CameraRecorder: ffmpeg pipe broken")
                 self._pipe_failed = True
+                self._dropped += 1
             except Exception:
                 logger.warning("CameraRecorder: writing a frame failed", exc_info=True)
                 self._pipe_failed = True
+                self._dropped += 1
 
     def _write(self, image: "carla.Image", caption: str) -> None:
         """Convert *image* from BGRA to BGR, caption it and pipe it to ffmpeg."""
@@ -279,6 +316,7 @@ class CameraRecorder:
         process = self._process
         if process is None or process.stdin is None:
             self._pipe_failed = True
+            self._dropped += 1
             return
         process.stdin.write(bgr.data)
         self._frame_count += 1
@@ -287,7 +325,9 @@ class CameraRecorder:
         """Stop the sensor, finalise the ffmpeg process, and destroy the sensor actor.
 
         Every frame :meth:`write_frame` handed over is written before ffmpeg's
-        input is closed.
+        input is closed.  An ffmpeg that is alive but stopped reading for
+        :data:`_STOP_TIMEOUT` seconds is killed, which ends the write it
+        blocks; frames that were not written are logged as an error.
         """
         if self._sensor is not None:
             self._sensor.stop()
@@ -295,8 +335,18 @@ class CameraRecorder:
             self._sensor = None
 
         if self._writer is not None:
-            self._pending.put(None)
-            self._writer.join()
+            writer: threading.Thread = self._writer
+            self._finish_writer(writer)
+            if writer.is_alive():
+                logger.error(
+                    "CameraRecorder: ffmpeg stopped reading frames for %.0f s: "
+                    "killing it",
+                    _STOP_TIMEOUT,
+                )
+                self._pipe_failed = True
+                if self._process is not None:
+                    self._process.kill()
+                self._finish_writer(writer)
             self._writer = None
 
         if self._process is not None:
@@ -322,8 +372,22 @@ class CameraRecorder:
                 )
             self._process = None
 
+        if self._dropped > 0:
+            logger.error(
+                "CameraRecorder: %d frame(s) were not written: %s is incomplete",
+                self._dropped,
+                self._output_path,
+            )
         logger.info(
             "CameraRecorder stopped: %d frames written to %s",
             self._frame_count,
             self._output_path,
         )
+
+    def _finish_writer(self, writer: threading.Thread) -> None:
+        """Tell *writer* to finish, and wait up to :data:`_STOP_TIMEOUT` for it."""
+        try:
+            self._pending.put(None, timeout=_STOP_TIMEOUT)
+        except queue.Full:
+            return  # stuck on a write: the caller kills ffmpeg and asks again
+        writer.join(timeout=_STOP_TIMEOUT)
