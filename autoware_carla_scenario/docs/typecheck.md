@@ -61,6 +61,21 @@ registered with `register_scenario_builder()` (a custom builder, such as the
 packages the Scenario Editor exports) is not checked: only its builder knows
 how it is constructed.
 
+### Keeping verdicts between runs
+
+A process compiles a program once and keeps the verdict for as long as it
+runs. Set `AUTOWARE_CARLA_SCENARIO_TYPECHECK_CACHE` to a directory to keep
+them beyond that, one file per program: a later process with the same
+inputs reads the verdict instead of compiling. The key covers everything the
+compile reads: the scenario's (or the framework's) modules, the generated
+driver, the model, typesafe_carla's Codon library, the checker, and the
+compiler's version and standard library. A crash is never kept, and an entry
+that cannot be read counts as a miss. A verdict read from the directory has
+its file's times touched, so the directory can be pruned by access time.
+
+The test suite shares such a directory between its xdist workers. CI keeps
+one from run to run, so a run compiles only the programs whose inputs changed.
+
 ### Installing Codon and typesafe_carla
 
 The check needs typesafe_carla (the `typesafe-carla` package, from PyPI) and

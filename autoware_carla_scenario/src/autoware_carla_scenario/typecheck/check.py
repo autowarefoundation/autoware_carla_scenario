@@ -36,6 +36,7 @@ import dataclasses
 import hashlib
 import importlib.util
 import inspect
+import json
 import os
 import re
 import shutil
@@ -928,6 +929,108 @@ def _parse_output(output: str, ws: _Workspace) -> list[Diagnostic]:
 
 _CACHE: dict[str, TypeCheckResult] = {}
 
+#: A directory to keep verdicts in beyond the process, one file per cache key:
+#: the test suite's xdist workers share it, and CI restores it from one run to
+#: the next. Unset, a verdict lives as long as the process.
+CACHE_DIR_ENV = "AUTOWARE_CARLA_SCENARIO_TYPECHECK_CACHE"
+
+
+def _relocated(result: TypeCheckResult, paths: Mapping[str, str]) -> TypeCheckResult:
+    """*result* with each string in *paths* in its text replaced by its value."""
+    order = sorted(paths, key=len, reverse=True)
+
+    def text(value: str) -> str:
+        for old in order:
+            value = value.replace(old, paths[old])
+        return value
+
+    def diagnostic(d: Diagnostic) -> Diagnostic:
+        return dataclasses.replace(
+            d,
+            message=text(d.message),
+            path=None if d.path is None else text(d.path),
+            trace=tuple(text(t) for t in d.trace),
+        )
+
+    return dataclasses.replace(
+        result,
+        diagnostics=[diagnostic(d) for d in result.diagnostics],
+        output=text(result.output),
+        warnings=[diagnostic(d) for d in result.warnings],
+    )
+
+
+def _module_markers(sources: _Sources) -> dict[str, str]:
+    """Each module's file, and what stands for it in a verdict kept on disk.
+
+    The key has each module's name and text, not its file: the same scenario
+    in another directory (another run's ``tmp_path``) is the same program.
+    """
+    return {str(m.path): f"\0module:{name}\0" for name, m in sources.modules.items()}
+
+
+def _cache_file(key: str) -> Path | None:
+    root = os.environ.get(CACHE_DIR_ENV)
+    return Path(root) / f"{key}.json" if root else None
+
+
+def _cached(key: str, sources: _Sources) -> TypeCheckResult | None:
+    """The verdict kept under *key*, in this process or in ``$CACHE_DIR_ENV``.
+
+    One read from the directory names the files of *sources*.
+
+    An entry that cannot be read is a miss. One that is read has its times
+    touched, so that a cache pruned by access time keeps it.
+    """
+    if key in _CACHE:
+        return _CACHE[key]
+    path = _cache_file(key)
+    if path is None:
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+
+        def diagnostic(d: dict[str, Any]) -> Diagnostic:
+            return Diagnostic(**{**d, "trace": tuple(d["trace"])})
+
+        result = TypeCheckResult(
+            **{
+                **data,
+                "diagnostics": [diagnostic(d) for d in data["diagnostics"]],
+                "warnings": [diagnostic(d) for d in data["warnings"]],
+            }
+        )
+        os.utime(path)
+    except (OSError, ValueError, TypeError, KeyError):
+        return None
+    markers = _module_markers(sources)
+    result = _relocated(result, {marker: path for path, marker in markers.items()})
+    _CACHE[key] = result
+    return result
+
+
+def _store(key: str, result: TypeCheckResult, sources: _Sources) -> TypeCheckResult:
+    """Keep *result* under *key*; in ``$CACHE_DIR_ENV`` too unless Codon crashed.
+
+    A crash says nothing about the program (Codon may have run out of memory),
+    so it is not worth keeping for another run. The file is written whole or
+    not at all: workers that compile the same program race harmlessly.
+    """
+    _CACHE[key] = result
+    path = _cache_file(key)
+    if path is None or result.crashed:
+        return result
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
+        with os.fdopen(fd, "w", encoding="utf-8") as out:
+            kept = _relocated(result, _module_markers(sources))
+            json.dump(dataclasses.asdict(kept), out)
+        os.replace(tmp, path)
+    except OSError:
+        pass
+    return result
+
 
 def _tree_digest(digest: Any, paths: list[Path]) -> None:
     for path in sorted(paths):
@@ -946,14 +1049,33 @@ def _framework_digest(codon_path: Path) -> str:
     return digest.hexdigest()
 
 
+@lru_cache(maxsize=4)
+def _toolchain_digest(tc: Toolchain) -> str:
+    """The compiler itself: its version and its standard library.
+
+    The path alone names the same file across an upgrade, which a verdict kept
+    beyond the process (``$CACHE_DIR_ENV``) would outlive.
+    """
+    digest = hashlib.sha256(str(tc.executable).encode())
+    digest.update(tc.version().encode())
+    for directory in tc.library_dirs():
+        _tree_digest(digest, list(directory.rglob("*.codon")))
+    return digest.hexdigest()
+
+
 def _cache_key(
     tc: Toolchain, codon_path: Path, sources: _Sources, driver_source: str
 ) -> str:
-    digest = hashlib.sha256(str(tc.executable).encode())
+    digest = hashlib.sha256(_toolchain_digest(tc).encode())
     digest.update(_framework_digest(codon_path).encode())
     for name, module in sorted(sources.modules.items()):
         digest.update(name.encode())
         digest.update(module.text.encode())
+    # The driver names each module's file (its `__file__`); a verdict names it
+    # by its marker (_relocated), so the same program elsewhere is a hit.
+    markers = _module_markers(sources)
+    for path in sorted(markers, key=len, reverse=True):
+        driver_source = driver_source.replace(path, markers[path])
     digest.update(driver_source.encode())
     return digest.hexdigest()
 
@@ -1091,12 +1213,19 @@ def _typecheck(
         sources.problems += refuse(sources)
     rendered = driver()
     key = _cache_key(toolchain, codon_path, sources, rendered.source + rendered.trailer)
-    if key not in _CACHE:
-        result = _compile(name, sources, rendered, toolchain, codon_path, timeout)
-        if result is None:  # timed out: no verdict worth keeping
-            return _timed_out(name, timeout)
-        _CACHE[key] = _with_none_misuses(result, sources, timeout)
-    return _CACHE[key]
+    cached = _cached(key, sources)
+    if cached is not None:
+        return cached
+    result = _compile(name, sources, rendered, toolchain, codon_path, timeout)
+    if result is None:  # timed out: no verdict worth keeping
+        return _timed_out(name, timeout)
+    checked = _with_none_misuses(result, sources, timeout)
+    if len(checked.warnings) > len(result.warnings):
+        # The None check did not run (mypy missing, out of time): a verdict
+        # for this process only, so the next run checks it again.
+        _CACHE[key] = checked
+        return checked
+    return _store(key, checked, sources)
 
 
 def _with_none_misuses(
@@ -1672,19 +1801,20 @@ def typecheck_library(
         sources,
         driver.source + "".join(f.text for f in files),
     )
-    if key not in _CACHE:
-        result = _compile(
-            title,
-            sources,
-            driver,
-            toolchain,
-            codon_path,
-            timeout,
-            build=lambda root: _build_library_workspace(
-                root, sources, files, driver, codon_path
-            ),
-        )
-        if result is None:
-            return _timed_out(title, timeout)
-        _CACHE[key] = result
-    return _CACHE[key]
+    cached = _cached(key, sources)
+    if cached is not None:
+        return cached
+    result = _compile(
+        title,
+        sources,
+        driver,
+        toolchain,
+        codon_path,
+        timeout,
+        build=lambda root: _build_library_workspace(
+            root, sources, files, driver, codon_path
+        ),
+    )
+    if result is None:
+        return _timed_out(title, timeout)
+    return _store(key, result, sources)
