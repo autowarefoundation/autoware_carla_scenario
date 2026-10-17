@@ -1295,6 +1295,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#how-the-plan-is-tracked" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How the plan is tracked
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#warming-up-a-policy" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1879,6 +1890,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#how-the-plan-is-tracked" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How the plan is tracked
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#warming-up-a-policy" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2106,7 +2128,7 @@ separate process serving <code>egodriver.EgodriverService</code>.</p>
         SR["ScenarioRunner&lt;br/&gt;owns the world and the tick loop"]
         CDE["CarlaDriverEntity"]
         CAM["CarlaCameraSensor(s)"]
-        TF["TrajectoryFollower&lt;br/&gt;pure pursuit + yaw-rate trim + speed PI&lt;br/&gt;through the powertrain model"]
+        TF["TrajectoryFollower&lt;br/&gt;pure pursuit + yaw-rate trim&lt;br/&gt;Autoware's PID longitudinal controller&lt;br/&gt;through the powertrain model"]
         SR --&gt;|on_tick| CDE
         CAM --&gt;|frames| CDE
         CDE --&gt; TF
@@ -2178,9 +2200,82 @@ and sweeps all behave exactly as they do for a TrafficManager-driven ego.</p>
 <a id="__codelineno-3-27" name="__codelineno-3-27" href="#__codelineno-3-27"></a><span class="w">    </span><span class="nt">max_steer_angle_deg</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">56.0</span><span class="w">   </span><span class="c1"># CARLA 0.10: angle = 56 deg * steer**2</span>
 <a id="__codelineno-3-28" name="__codelineno-3-28" href="#__codelineno-3-28"></a><span class="w">    </span><span class="nt">steer_exponent</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">2.0</span>
 <a id="__codelineno-3-29" name="__codelineno-3-29" href="#__codelineno-3-29"></a><span class="w">    </span><span class="nt">yaw_rate_ki</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">3.0</span><span class="w">            </span><span class="c1"># integral trim on the measured yaw rate</span>
-<a id="__codelineno-3-30" name="__codelineno-3-30" href="#__codelineno-3-30"></a><span class="w">    </span><span class="nt">speed_kp</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1.0</span><span class="w">               </span><span class="c1"># plan tracked in time: plan acceleration + speed PI, in m/s²,</span>
-<a id="__codelineno-3-31" name="__codelineno-3-31" href="#__codelineno-3-31"></a><span class="w">                                </span><span class="c1"># turned into pedals by the ego's Chaos powertrain model</span>
+<a id="__codelineno-3-30" name="__codelineno-3-30" href="#__codelineno-3-30"></a><span class="w">    </span><span class="nt">longitudinal_controller</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">pid</span><span class="w">  </span><span class="c1"># Autoware's autoware_pid_longitudinal_controller</span>
+<a id="__codelineno-3-31" name="__codelineno-3-31" href="#__codelineno-3-31"></a><span class="w">    </span><span class="nt">delay_compensation_time</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.17</span><span class="w"> </span><span class="c1"># ... and any of its parameters, by name</span>
+<a id="__codelineno-3-32" name="__codelineno-3-32" href="#__codelineno-3-32"></a><span class="w">    </span><span class="nt">throttle_deadband</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.0</span><span class="w">      </span><span class="c1"># vehicle interface: least throttle to pull away</span>
 </code></pre></div>
+<h3 id="how-the-plan-is-tracked">How the plan is tracked<a class="headerlink" href="#how-the-plan-is-tracked" title="Permanent link">&para;</a></h3>
+<p><code>TrajectoryFollower</code> (<code>driver/control.py</code>) does what Autoware's control stack does
+behind an end-to-end planner:</p>
+<ul>
+<li><strong>Speeds on the plan.</strong> A plan is poses and times. The speeds Autoware's controller
+  reads off a trajectory are put on it as <code>autoware_tensorrt_e2e</code> puts them on its own
+  (<code>autoware_diffusion_planner</code>'s <code>get_trajectory_from_poses</code>): each point's speed is
+  its distance from the previous point -- the first point's from where the ego was as
+  the plan arrived -- over the plan's time step; then a forward moving average over
+  <code>velocity_smoothing_window</code> (8) points, the tail keeping the last average. While the
+  ego moves, the first average to fall below <code>stopping_threshold</code> (0.3 m/s) stops the
+  plan there. Each point's acceleration is the change of speed to the next.</li>
+<li><strong>Longitudinal.</strong> A port of <code>autoware_pid_longitudinal_controller</code> with the defaults
+  of its <code>param.yaml</code>, under its parameter names. The plan is read spatially: the
+  stop distance is the arc length from the ego to the plan's first zero-speed point
+  (or its end). STOPPED departs once that is over <code>drive_state_stop_dist</code> (0.5 m),
+  DRIVE stops through STOPPING (smooth stop) once it is under
+  <code>stopping_state_stop_dist</code>, STOPPED holds <code>stopped_acc</code>, and an overshoot of
+  <code>emergency_state_overshoot_stop_dist</code> brakes at <code>emergency_acc</code> (EMERGENCY). DRIVE
+  follows the speed at the point the ego will be at after <code>delay_compensation_time</code>,
+  with Autoware's velocity lookahead feedback (or, with
+  <code>enable_velocity_lookahead_feedback: false</code>, its PID and feedforward), within the
+  acceleration and jerk limits.</li>
+<li><strong>Lateral.</strong> Pure pursuit on the plan's points, with an integral trim on the
+  measured yaw rate.</li>
+<li><strong>Vehicle interface.</strong> The asked acceleration becomes pedals through the ego's
+  powertrain model, read from its CARLA physics control, as Autoware's
+  <code>raw_vehicle_cmd_converter</code> does with its accel and brake maps. The model lets a
+  standing car move at any throttle while CARLA 0.10's MKZ needs 0.25;
+  <code>throttle_deadband</code> can floor a standing car's throttle, but the <code>pid</code> controller
+  needs no floor (its jerk-limited pull-away gets there in a few tenths of a
+  second), so it is 0 by default.</li>
+</ul>
+<p>What differs from Autoware, because CARLA or the plan has no counterpart:</p>
+<ul>
+<li>The plan carries no pitch, so there is no slope compensation; CARLA's towns are
+  flat where the scenarios drive.</li>
+<li>The follower has no steering angle feedback: the steering counts as converged, so
+  <code>enable_keep_stopped_until_steer_convergence</code> holds only the first tick of a
+  departure, as Autoware's first check does.</li>
+<li>The ego is always under Autoware's control (AUTONOMOUS), and always in drive:
+  the manual-driving transitions and reverse gear are left out.</li>
+<li>The ego's acceleration is estimated from its speed with
+  <code>autoware_twist2accel</code>'s low-pass gain (<code>accel_lowpass_gain</code>, 0.9).</li>
+<li>The filters run per control step, at the simulation's 20 Hz rather than
+  Autoware's 33 Hz.</li>
+<li>A plan's times come from its timestamps rather than the node's fixed 0.1 s, and
+  the smoothing window is capped at one less than the plan's points; a 0.1 s plan
+  gets Autoware's numbers. carla-driver-interface leads each plan with the ego's
+  pose at the planning time; that anchor is the base the first speed is measured
+  from (the node's ego position), not a point of the tracked trajectory. A plan
+  without one is measured from where the ego is as it arrives. Either is latched
+  with the plan.</li>
+<li>A plan of fewer than two points is ignored and the last one tracked on, as
+  Autoware's <code>setTrajectory</code> does.</li>
+<li>A follower taken over on a moving ego (the warm-up's hand-off, a spawn at
+  speed, a new ROS 2 command source) starts in DRIVE rather than STOPPED, which
+  would brake for a tick.</li>
+<li>The smooth stop fits the speed history of the delay's control steps: 3 at
+  0.05 s, where Autoware keeps 5.</li>
+</ul>
+<p>A ROS 2 <code>autoware_planning_msgs/Trajectory</code> is tracked on its own
+<code>longitudinal_velocity_mps</code> and <code>acceleration_mps2</code>, every point kept (a stop
+included) even when its <code>time_from_start</code> is not set.</p>
+<p>A plan that dwells on the ego's spot -- the first eight speeds averaging to zero --
+stops at its first point, and the ego stays STOPPED until a plan's stop point is
+more than 0.5 m away, as Autoware's would. <code>longitudinal_controller: time_indexed</code>
+selects the tracker this framework had before: the plan read on its own clock, a PI
+on the speed it has the ego at <em>now</em> and a pull towards where it has it (<code>speed_kp</code>,
+<code>speed_ki</code>, <code>integral_limit</code>, <code>position_gain</code>, <code>max_position_correction_mps</code>,
+<code>speed_preview_s</code>, <code>stop_distance_m</code>); <code>FollowTrajectoryAction</code> drives timed
+trajectories with it. Those keys are ignored, with a warning, for <code>pid</code>.</p>
 <h3 id="warming-up-a-policy">Warming up a policy<a class="headerlink" href="#warming-up-a-policy" title="Permanent link">&para;</a></h3>
 <p>A policy that reads a history -- past LiDAR maps, the ego's past poses -- has
 none at the first step and plans as if the ego had stood still: an ego spawned
@@ -2554,7 +2649,7 @@ See <code>carla_driver_interface/proto/README.md</code> for the full provenance.
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 16, 2026 21:59:41 UTC"><span class="timeago" datetime="2026-10-16T21:59:41+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 16, 2026 21:59:41 UTC">2026-10-16</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 17, 2026 04:26:35 UTC"><span class="timeago" datetime="2026-10-17T04:26:35+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 17, 2026 04:26:35 UTC">2026-10-17</span>
   </span>
 
     
