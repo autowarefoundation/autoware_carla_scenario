@@ -6,6 +6,13 @@ on:
   pull_request:
     branches: [ master, main, develop ]
 
+# A new push to a pull request makes its running CI moot: cancel it rather than
+# let it hold runners that the organisation's other runs are queued behind.
+# Pushes to a branch are never cancelled -- each commit on master keeps its run.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   test:
     # The whole supported range (`requires-python`). The floor is 3.10 because
@@ -30,8 +37,12 @@ jobs:
     # The slow tests are the 'slow-tests' job below: four of them build a
     # ~160 MB wheelhouse over the network and take longer than the other 1600
     # put together, which is not something to do three times over.
+    # worksteal: the Codon compiles take ~10 s a test, and with the default
+    # 'load' scheduling the last of them ran one after another on a single
+    # worker while the others sat idle. An idle worker now takes over another
+    # worker's queue.
     - name: Run tests
-      run: uv run pytest -v --tb=short -n auto -o addopts= -m "not slow"
+      run: uv run pytest -v --tb=short -n auto --dist worksteal -o addopts= -m "not slow"
 
   slow-tests:
     # What the fast matrix leaves out: a real export, a real wheelhouse, and a
@@ -83,7 +94,7 @@ jobs:
         run-precommit: "false"
 
     - name: Run tests
-      run: uv run pytest -v --tb=short -n auto -o addopts= -m "not slow"
+      run: uv run pytest -v --tb=short -n auto --dist worksteal -o addopts= -m "not slow"
 
     - name: Run the slow tests
       run: uv run pytest -v --tb=short -o addopts= -m slow
@@ -108,6 +119,11 @@ jobs:
 
   lint-and-format:
     runs-on: ubuntu-latest
+    env:
+      # The pytest hook runs the whole fast suite again (for a contributor's
+      # commit); here the test jobs already do, and it made this the slowest
+      # job of the run.
+      SKIP: pytest-carla
     steps:
     - uses: actions/checkout@v4
 
@@ -142,6 +158,9 @@ jobs:
           run-precommit: "false"
 
       - name: Run pre-commit auto-fix
+        env:
+          # Fixes nothing; see lint-and-format.
+          SKIP: pytest-carla
         run: uv run pre-commit run --all-files || true
 
       - name: Commit and push if changes were made
