@@ -9,7 +9,12 @@ compiles, and keeps only what mypy reports of a value that may be ``None``
 used where it may not be: an attribute of it (``union-attr``), an operator
 (``operator``), an argument (``arg-type``), an assignment (``assignment``),
 a return (``return-value``), an index (``index``) or an overloaded call
-(``call-overload``), each message naming ``None``.  Every other mypy error
+(``call-overload``), each only where ``None`` is the offending type
+(:func:`is_none_misuse`): an operand or an item that is ``None`` or a union
+holding it, or a value whose type holds ``None`` where the type expected
+does not.  A message that merely mentions ``None`` (``"Callable[[Any], str |
+None]"; expected "Callable[[Any], float | None]"``, a ``str`` for a
+``float``) is not one (#267).  Every other mypy error
 is Codon's to report, or no business of the check's, and so is an
 ``assignment`` that only declares: a ``None`` default or value for a
 non-Optional annotation (``speed: float = None``, which Codon reads as an
@@ -20,7 +25,11 @@ non-Optional annotation (``speed: float = None``, which Codon reads as an
 mypy runs as its own process (``python -m mypy``), with no configuration file
 (the scenario package's own mypy settings do not apply), following imports
 silently: it reads the framework and the scenario package's other modules for
-their types and reports only in the modules given.  The bodies of functions
+their types and reports only in the modules given.  typesafe_carla's CPython
+package has no type information, so mypy is given stubs of it written from
+typesafe_carla's Codon library (:mod:`.carla_stubs`, on ``MYPYPATH``): a
+CARLA call returning an ``Optional`` (``Map.get_waypoint``, ``ActorList.find``)
+returns one to mypy too (#267).  The bodies of functions
 without annotations are checked too (``--check-untyped-defs``).  Its cache is kept in the
 user's cache directory, so only the first check reads the framework; where
 that cannot be written (a read-only home in a container), mypy runs without
@@ -42,7 +51,15 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-__all__ = ["NoneCheckSkipped", "NoneFinding", "find_none_misuses", "run_none_check"]
+from .carla_stubs import carla_stub_root
+
+__all__ = [
+    "NoneCheckSkipped",
+    "NoneFinding",
+    "find_none_misuses",
+    "is_none_misuse",
+    "run_none_check",
+]
 
 #: The mypy error codes of a value that may be None used where it may not.
 NONE_CODES = frozenset(
@@ -64,10 +81,82 @@ _DECLARATION = re.compile(
     r'\((?:expression|default) has type "None",|variable has type "None"\)'
 )
 
+#: A value of type A where B is expected: ``Argument 1 to "f" has
+#: incompatible type "A"; expected "B"``, ``(expression has type "A",
+#: variable has type "B")``, ``(got "A", expected "B")``, ``Invalid index
+#: type "A" for "C"; expected type "B"``.
+_EXPECTED = re.compile(
+    r'(?:incompatible type|expression has type|got|Invalid index type) "(?P<actual>.*?)"'
+    r'(?: for ".*?")?[;,] (?:expected|variable has type|expected type) "(?P<expected>.*?)"'
+)
+#: ``Item "None" of "X | None" has no attribute "y"`` (``union-attr``).
+_NONE_ITEM = re.compile(r'\bItem "None" of "')
+_QUOTED = re.compile(r'"(.*?)"')
+
 _LINE = re.compile(
     r"^(?P<path>.+?):(?P<line>\d+):(?:(?P<col>\d+):)? "
     r"(?P<severity>error|note): (?P<message>.*?)(?:  \[(?P<code>[a-z-]+)\])?$"
 )
+
+
+def _members(type_text: str) -> list[str]:
+    """The members of the union mypy spells *type_text*, at its top level.
+
+    ``"float | None"`` -> ``["float", "None"]``; ``"Optional[X]"`` and
+    ``"Union[X, None]"`` likewise; ``"Callable[[Any], str | None]"`` is one
+    member, the ``None`` inside it being another type's.
+    """
+    text = type_text.strip()
+    for head in ("Optional[", "Union["):
+        if text.startswith(head) and text.endswith("]"):
+            inner = _split(text[len(head) : -1], ",")
+            return [*inner, "None"] if head == "Optional[" else inner
+    return _split(text, "|")
+
+
+def _split(text: str, separator: str) -> list[str]:
+    parts: list[str] = []
+    depth = 0
+    start = 0
+    for i, char in enumerate(text):
+        if char in "[(":
+            depth += 1
+        elif char in "])":
+            depth -= 1
+        elif char == separator and depth == 0:
+            parts.append(text[start:i].strip())
+            start = i + 1
+    parts.append(text[start:].strip())
+    return [p for p in parts if p]
+
+
+def _holds_none(type_text: str) -> bool:
+    """Whether the type mypy spells *type_text* is ``None`` or a union holding it."""
+    return "None" in _members(type_text)
+
+
+def is_none_misuse(code: str, message: str) -> bool:
+    """Whether mypy's error *message* (of *code*) is of a value that may be None.
+
+    It is when ``None`` is the offending type: the item of a union the
+    attribute is missing on (``Item "None" of "X | None"``); the type given
+    where another is expected holding ``None`` and the type expected not
+    (``incompatible type "float | None"; expected "float"``); or, for an
+    operator, an index or an overloaded call, an operand, the value indexed
+    or an argument being ``None`` or a union holding it.  A message that
+    only mentions ``None`` inside another type, or in the type expected, is
+    not.
+    """
+    if code not in NONE_CODES:
+        return False
+    if code == "union-attr":
+        return _NONE_ITEM.search(message) is not None
+    expected = _EXPECTED.search(message)
+    if expected is not None:
+        return _holds_none(expected["actual"]) and not _holds_none(expected["expected"])
+    if code in ("operator", "index", "call-overload"):
+        return any(_holds_none(t) for t in _QUOTED.findall(message))
+    return False
 
 
 @dataclass(frozen=True)
@@ -99,6 +188,17 @@ def _cache_dir() -> str:
     except (OSError, RuntimeError):  # RuntimeError: no home directory
         return os.devnull
     return str(path)
+
+
+def _environment(stubs: Path | None) -> dict[str, str]:
+    """mypy's environment: the CARLA stubs (:mod:`.carla_stubs`) first on
+    ``MYPYPATH``, where they could be written."""
+    env = dict(os.environ)
+    if stubs is not None:
+        env["MYPYPATH"] = os.pathsep.join(
+            p for p in (str(stubs), env.get("MYPYPATH", "")) if p
+        )
+    return env
 
 
 def mypy_available() -> bool:
@@ -180,13 +280,15 @@ def run_none_check(paths: list[Path], timeout: float = 600.0) -> list[NoneFindin
         *(str(p) for p in paths),
     ]
     try:
-        proc = subprocess.run(
-            command,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            check=False,
-        )
+        with tempfile.TemporaryDirectory(prefix="acs-carla-stubs-") as scratch:
+            proc = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                check=False,
+                env=_environment(carla_stub_root(Path(scratch))),
+            )
     except subprocess.TimeoutExpired:
         raise NoneCheckSkipped(f"mypy did not finish within {timeout:.0f}s") from None
     except OSError as exc:
@@ -220,7 +322,7 @@ def run_none_check(paths: list[Path], timeout: float = 600.0) -> list[NoneFindin
             continue
         current = None
         code = match["code"] or ""
-        if code not in NONE_CODES or "None" not in match["message"]:
+        if not is_none_misuse(code, match["message"]):
             continue
         if code == "assignment" and _DECLARATION.search(match["message"]):
             continue

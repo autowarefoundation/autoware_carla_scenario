@@ -76,6 +76,7 @@ from .library import (
 from .none_check import NoneCheckSkipped, run_none_check
 from .not_modelled import NOT_MODELLED
 from .library_driver import (
+    call_sites,
     render_library_checks,
     render_library_driver,
     uncalled_nodes,
@@ -707,6 +708,8 @@ def _build_workspace(
     cannot express or naming a ``TypeVar``), or one returning ``Any``
     (``get_details() -> dict[str, Any]``), is left out of them with a
     warning: the driver still compiles it where it reaches it, as before.
+    A function with a ``**kwargs`` or ``*args`` the modules call is compiled
+    through those calls only (:func:`.library_driver.call_sites`, #266).
     """
     ws = _base_workspace(root, driver, codon_path)
     ws.appended_label = _SCENARIO_CHECK_LABEL
@@ -719,6 +722,7 @@ def _build_workspace(
         if isinstance(node, ast.ClassDef)
     }
     init_classes = _init_classes(classes)
+    callers = call_sites([module.tree for module in sources.modules.values()])
     for name, module in sorted(sources.modules.items()):
         rel = Path(*name.split("."))
         rel = rel / "__init__.py" if module.is_package else rel.with_suffix(".py")
@@ -728,7 +732,11 @@ def _build_workspace(
         dest.parent.mkdir(parents=True, exist_ok=True)
         text, origin = transform_source_lines(module.text, init_classes=init_classes)
         checks = render_library_checks(
-            module.tree, classes=classes, skip_any_returns=True, hook_returns=True
+            module.tree,
+            classes=classes,
+            skip_any_returns=True,
+            hook_returns=True,
+            callers=callers,
         )
         for line, message in checks.problems:
             ws.warnings.append(
@@ -755,6 +763,39 @@ def _build_workspace(
         driver.source + render_module_checks(sorted(sources.modules)) + driver.trailer
     )
     return ws, problems
+
+
+#: Codon's refusals of valid Python on a ``**kwargs`` or ``*args`` (#266),
+#: and what to write instead.
+_VARIADIC_LIMITS = (
+    (
+        re.compile(r"^'NamedTuple(?:\[[^']*\])?' object has no attribute '"),
+        "Codon makes **kwargs a NamedTuple of the keywords passed, not a dict: "
+        'read one with kw.get("name", default) or declare it as a keyword '
+        "parameter, and do not iterate it or call .items(), .keys(), "
+        ".values() or len() on it",
+    ),
+    (
+        re.compile(r"^'Tuple\[[^']*\]' object has no attribute '__bool__'"),
+        "Codon makes *args a Tuple, which has no truth value: test "
+        "len(args) > 0 instead of the tuple itself",
+    ),
+)
+
+
+def _variadic_hints(diagnostics: list[Diagnostic]) -> list[Diagnostic]:
+    """*diagnostics*, each refusal of a Codon limit on ``**kwargs`` or
+    ``*args`` saying why and what to write instead (#266)."""
+    out = []
+    for diagnostic in diagnostics:
+        for pattern, hint in _VARIADIC_LIMITS:
+            if pattern.search(diagnostic.message):
+                diagnostic = dataclasses.replace(
+                    diagnostic, message=f"{diagnostic.message}: {hint}"
+                )
+                break
+        out.append(diagnostic)
+    return out
 
 
 _UNINFERRED = re.compile(
@@ -1438,7 +1479,7 @@ def _compile(
         except subprocess.TimeoutExpired:
             return None
         output = proc.stdout + proc.stderr
-        diagnostics = _parse_output(output, ws)
+        diagnostics = _variadic_hints(_parse_output(output, ws))
         if proc.returncode != 0:
             try:
                 diagnostics += _uninferred_attributes(diagnostics, sources)
