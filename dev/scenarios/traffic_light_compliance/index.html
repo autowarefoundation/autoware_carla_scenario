@@ -1760,8 +1760,10 @@
 
 <h1 id="traffic-light-compliance">Traffic Light Compliance<a class="headerlink" href="#traffic-light-compliance" title="Permanent link">&para;</a></h1>
 <p>The ego starts at a standstill 10 m short of a signalised stop line with every
-light red. It has to stay put while the light is red, and pull away once it
-turns green 5 s in -- on every lane that leads into a signalised junction.</p>
+light red. It has to drive up to the line and stop with its front bumper in the
+stop zone, 0-3 m before it, without crossing it while the light is red; then
+pull away once it turns green 5 s in -- on every lane that leads into a
+signalised junction.</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="c1"># Every case on the map, one run each</span>
 <a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>--multirun<span class="w"> </span>hydra/sweeper<span class="o">=</span>lanelet_constraint<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">    </span><span class="nv">scenario</span><span class="o">=</span>traffic_light_compliance/traffic_light_compliance<span class="w"> </span><span class="nv">map</span><span class="o">=</span>&lt;map&gt;
@@ -1791,14 +1793,38 @@ turns green 5 s in -- on every lane that leads into a signalised junction.</p>
 </tr>
 <tr>
 <td><strong>Pass</strong></td>
-<td>Both have happened: the ego stood still for 2 s, <em>and</em> after 5.5 s it was moving at 10 km/h or more.</td>
+<td>Both have happened: before the green the ego stood still (0.1 m/s or slower) for 0.5 s with its front bumper 0-3 m before the stop line (the stop zone), <em>and</em> after 5.5 s it was moving at 10 km/h or more.</td>
 </tr>
 <tr>
 <td><strong>Fail</strong></td>
-<td>The ego moves at 1 km/h or more between 3 s and 4.9 s, while the light is still red -- or 8 s pass.</td>
+<td>Its front bumper crosses the stop line while the light is red ("ran the red"); or at the green it has not stood still in the stop zone -- standing farther back ("stopped N m before the stop line, outside the stop zone"), stopped in the zone too late ("stopped in the stop zone … only X s before the green: less than standstill_seconds") or still rolling towards the line ("had not stopped by the green: still moving"); or 8 s pass.</td>
 </tr>
 </tbody>
 </table>
+<p>Distances are the <code>stop_line_distance_m</code> measure's: along the ego's lane, from
+its front bumper to the stop line ahead. That measure reads only stop lines
+ahead, so the scenario keeps the line the ego started before and carries it on
+the ego's own travel once the reading jumps away -- to the next line, or to
+nothing -- and a crossing is a negative distance however the measure then
+reads. The run's result details carry where the ego stopped
+(<code>stopped_at_stop_line_distance_m</code>) or when and how far it crossed
+(<code>crossed_at_seconds</code>, <code>crossed_by_m</code>).</p>
+<p>Where the measure's reading jumps <em>beyond</em> the line the ego had while that
+line is still at least 0.5 m ahead -- the other branch's line where the lane
+forks, the line of the lane it changed out of -- the reading is the ego's own
+line and is taken; so is a reading that jumps nearer (a lane whose line is
+staggered nearer). A front bumper up to <code>stop_line_tolerance_m</code> past the line
+has not crossed it, and counts as at the line (0 m) for the stop zone.</p>
+<p>Approaching the line while the light is red is not a failure: an ego that
+starts 30 m back may roll up to the zone and stop there. One that starts inside
+the zone has to stay there. Having stood still in the zone is latched: if the
+ego then rolls back, or creeps on without crossing the line, before the green,
+it still passes.</p>
+<p>The light turns green before the world steps from 5 s, so the step that ends at
+5 s still ran under red (a crossing on it runs the red), and the verdict at the
+green is given on the first step driven under green, from where the ego was on
+the last red one: a standstill that only completes on the green step does not
+count.</p>
 <h2 id="parameters">Parameters<a class="headerlink" href="#parameters" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -1813,12 +1839,20 @@ turns green 5 s in -- on every lane that leads into a signalised junction.</p>
 <td>5.0 s</td>
 </tr>
 <tr>
-<td>Must have stood still for</td>
-<td>2.0 s (5.0 s minus the 3.0 s it may take to settle)</td>
+<td>Stop zone</td>
+<td>0-3 m before the stop line (<code>stop_zone_min_m</code>, <code>stop_zone_max_m</code>)</td>
 </tr>
 <tr>
-<td>Counts as moving on red from</td>
-<td>1 km/h</td>
+<td>May pass the stop line on red by</td>
+<td>0 m (<code>stop_line_tolerance_m</code>)</td>
+</tr>
+<tr>
+<td>Must have stood still in the stop zone for</td>
+<td>0.5 s (<code>standstill_seconds</code>)</td>
+</tr>
+<tr>
+<td>Counts as standing still at</td>
+<td>0.1 m/s or less (<code>standstill_speed_mps</code>)</td>
 </tr>
 <tr>
 <td>Counts as pulling away on green from</td>
@@ -1846,7 +1880,7 @@ TrafficManager moves the ego onto another lane in the junction.</p>
 <h2 id="result">Result<a class="headerlink" href="#result" title="Permanent link">&para;</a></h2>
 <video controls muted playsinline width="100%" src="../media/traffic_light_compliance.mp4"></video>
 
-<p><em>Town10HD_Opt, the first case: the search matched lanelet 719, where the ego starts. Result: PASSED. Recorded with <code>scenario.moving_speed_kmh=15</code>, from before the green check had a threshold of its own (<code>departure_speed_kmh</code>); that run also let the ego move at up to 15 km/h on red.</em></p>
+<p><em>Town10HD_Opt, the first case: the search matched lanelet 719, where the ego starts. Result: PASSED. Recorded with <code>scenario.moving_speed_kmh=15</code>, from before the green check had a threshold of its own (<code>departure_speed_kmh</code>); that run was judged by an earlier rule, under which moving on red at 1 km/h or more (15 km/h with that override) failed the run.</em></p>
 
 
 
@@ -1869,7 +1903,7 @@ TrafficManager moves the ego onto another lane in the junction.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 14, 2026 14:00:12 UTC"><span class="timeago" datetime="2026-10-14T14:00:12+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 14, 2026 14:00:12 UTC">2026-10-14</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 17, 2026 03:38:17 UTC"><span class="timeago" datetime="2026-10-17T03:38:17+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 17, 2026 03:38:17 UTC">2026-10-17</span>
   </span>
 
     

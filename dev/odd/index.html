@@ -3478,7 +3478,11 @@ spawn pose is on until <code>stop_line_distance_m</code> reads it,
 <code>place_at_stop_line_distance</code>), and its own measure <code>red_light_duration_s</code>,
 the seconds every light is held red (<code>light_switch_delay_seconds</code>, a raw
 setting). With the delay drawn, <code>timeout_after_green_seconds</code> counts the
-fail-safe timeout from the green light instead of from the start.</p>
+fail-safe timeout from the green light instead of from the start. A drawn
+distance does not decide the verdict by itself: the run is judged by where
+the ego stops against that same line -- not past it on red, standing in the
+stop zone (<code>stop_zone_min_m</code>-<code>stop_zone_max_m</code> before it) by the green -- so
+an ego started far back may roll up to the line on red.</p>
 <p><code>sweep.odd_sample.knobs</code> takes the same fields keyed by the ODD's attributes,
 and replaces anything above, attribute by attribute, for that sweep. It is for
 the command line -- one sweep against one ODD -- not for a scenario's config,
@@ -3772,7 +3776,7 @@ target.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 16, 2026 23:34:51 UTC"><span class="timeago" datetime="2026-10-16T23:34:51+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 16, 2026 23:34:51 UTC">2026-10-16</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 17, 2026 03:38:17 UTC"><span class="timeago" datetime="2026-10-17T03:38:17+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 17, 2026 03:38:17 UTC">2026-10-17</span>
   </span>
 
     
