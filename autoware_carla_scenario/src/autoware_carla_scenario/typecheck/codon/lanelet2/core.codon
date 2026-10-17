@@ -283,3 +283,13 @@ class LaneletMap:
     @property
     def laneletLayer(self) -> LaneletLayer:
         raise NotImplementedError()
+
+
+# Each class with a subclass here, built once, so that its Optional compiles
+# (`stop: Optional[ConstLineString3d] = None`) in a program that builds none:
+# Codon 0.19 crashes on it otherwise (conditions.codon, #263).
+ConstPoint3d()
+ConstLineString2d()
+ConstLineString3d()
+RegulatoryElement()
+ConstLanelet()
