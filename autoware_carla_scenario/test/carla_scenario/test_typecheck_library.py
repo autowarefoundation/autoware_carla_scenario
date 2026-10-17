@@ -9,6 +9,7 @@ aarch64).
 from __future__ import annotations
 
 import ast
+import re
 import textwrap
 from pathlib import Path
 from types import SimpleNamespace
@@ -98,6 +99,17 @@ def test_the_docs_count_the_checked_modules_and_the_uncalled_functions() -> None
         f"{len(UNCALLED)} functions and methods of those modules are `UNCALLED` "
         f"({len(protected)} of them protected helpers" in text
     ), "update the UNCALLED counts in docs/typecheck.md"
+    # The breakdown of EXCLUDED: its total, and its groups adding up to it (#269).
+    total = f"The {len(EXCLUDED)} `EXCLUDED` modules fall in"
+    assert total in text, "update the EXCLUDED count in docs/typecheck.md"
+    breakdown = text[
+        text.index(total) : text.index("The scenario check is not limited")
+    ]
+    groups = [int(n) for n in re.findall(r"- \*\*(\d+) ", breakdown)]
+    assert len(groups) == 4 and sum(groups) == len(EXCLUDED), (
+        f"the EXCLUDED groups in docs/typecheck.md add up to {sum(groups)}, "
+        f"not {len(EXCLUDED)}"
+    )
 
 
 def test_every_uncalled_function_is_one_of_a_checked_module() -> None:

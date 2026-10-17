@@ -34,6 +34,7 @@ from __future__ import annotations
 import ast
 import dataclasses
 import hashlib
+import importlib.metadata
 import importlib.util
 import inspect
 import json
@@ -1047,13 +1048,69 @@ def _tree_digest(digest: Any, paths: list[Path]) -> None:
 
 @lru_cache(maxsize=4)
 def _framework_digest(codon_path: Path) -> str:
-    """The inputs that do not change while the process runs: the CARLA
-    library, the model and the checker itself."""
+    """The Codon inputs that do not change while the process runs: the CARLA
+    library and the model."""
     library = (codon_path / _LIBRARY).resolve()
     digest = hashlib.sha256(str(library).encode())
     _tree_digest(digest, list(library.rglob("*.codon")))
     _tree_digest(digest, list(model_dir().rglob("*.codon")))
-    _tree_digest(digest, list(Path(__file__).parent.glob("*.py")))
+    return digest.hexdigest()
+
+
+@lru_cache(maxsize=1)
+def _package_digest() -> str:
+    """The framework's Python, the checker's included: every ``*.py`` (and
+    ``*.pyi``, which mypy prefers) of the package, by its path in the package
+    and its text.
+
+    mypy reads it for the types of what a scenario calls (the None check), and
+    the checks Python makes before the compile import it (``sources.problems``).
+    It cannot change while the process runs: Python has already imported it.
+    """
+    root = Path(__file__).resolve().parent.parent
+    digest = hashlib.sha256()
+    for path in sorted([*root.rglob("*.py"), *root.rglob("*.pyi")]):
+        digest.update(path.relative_to(root).as_posix().encode() + b"\0")
+        digest.update(path.read_bytes() + b"\0")
+    return digest.hexdigest()
+
+
+@lru_cache(maxsize=1)
+def _mypy_version() -> str:
+    """The version of the mypy the None check runs (``python -m mypy``, this
+    interpreter's), or ``""`` without one."""
+    try:
+        return importlib.metadata.version("mypy")
+    except importlib.metadata.PackageNotFoundError:
+        return ""
+
+
+@lru_cache(maxsize=1)
+def _distributions_digest() -> str:
+    """The name and version of every distribution installed beside the
+    framework (its own aside, which :func:`_package_digest` covers by its
+    text): mypy follows a scenario's imports into them (numpy, lanelet2,
+    typesafe_carla's CPython package), and their types decide what may be
+    None. A version is all that is read of one, so an editable install's
+    edits are not seen."""
+    own = _PACKAGE.replace("_", "-")
+    names = set()
+    for dist in importlib.metadata.distributions():
+        name = re.sub(r"[-_.]+", "-", dist.metadata["Name"] or "").lower()
+        if name != own:
+            names.add(f"{name}=={dist.version}")
+    return hashlib.sha256("\n".join(sorted(names)).encode()).hexdigest()
+
+
+def _python_digest() -> str:
+    """What the verdict depends on beyond the compile (#268): the framework's
+    Python, the mypy that reads it, the distributions it follows imports
+    into, and the Python (its typeshed, and what the checks made in Python
+    find) that runs both."""
+    digest = hashlib.sha256(_package_digest().encode())
+    digest.update(f"\0mypy {_mypy_version()}".encode())
+    digest.update(f"\0dists {_distributions_digest()}".encode())
+    digest.update(f"\0python {sys.version_info[0]}.{sys.version_info[1]}".encode())
     return digest.hexdigest()
 
 
@@ -1076,12 +1133,20 @@ def _cache_key(
 ) -> str:
     digest = hashlib.sha256(_toolchain_digest(tc).encode())
     digest.update(_framework_digest(codon_path).encode())
+    digest.update(_python_digest().encode())
     for name, module in sorted(sources.modules.items()):
         digest.update(name.encode())
         digest.update(module.text.encode())
     # The driver names each module's file (its `__file__`); a verdict names it
     # by its marker (_relocated), so the same program elsewhere is a hit.
     markers = _module_markers(sources)
+    # What Python found wrong before the compile (an import the framework's
+    # Python lacks, an abstract class built) is the verdict when there is
+    # any, and a hit returns before _compile reads it (#268).
+    problems = _relocated(
+        TypeCheckResult("", ok=False, diagnostics=list(sources.problems)), markers
+    ).diagnostics
+    digest.update(json.dumps([dataclasses.asdict(d) for d in problems]).encode())
     for path in sorted(markers, key=len, reverse=True):
         driver_source = driver_source.replace(path, markers[path])
     digest.update(driver_source.encode())
