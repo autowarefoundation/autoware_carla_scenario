@@ -28,6 +28,14 @@ class MapCacheError(Static[RuntimeError]):
     def __init__(self, typename, message, func, file, line, col, python_type, cause):
         compile_error("MapCacheError(): no constructor takes these arguments (required: message)")
 
+    # Codon would build it by BaseException's and its bases' constructors by
+    # keyword too (docs/typecheck.md, #244).
+    def __init__(self, typename):
+        compile_error("MapCacheError(): no constructor takes these arguments (required: message)")
+
+    def __init__(self, typename, message):
+        compile_error("MapCacheError(): no constructor takes these arguments (required: message)")
+
     def __init__(self, message: str):
         super().__init__(message)
 

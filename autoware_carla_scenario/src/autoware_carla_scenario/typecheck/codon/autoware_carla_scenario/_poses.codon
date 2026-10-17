@@ -32,6 +32,11 @@ class FrameMismatchError(Static[Exception]):
         compile_error("FrameMismatchError(): no constructor takes these arguments "
                       "(required: frame_a, frame_b, operation)")
 
+    # Codon would build it by BaseException's and its bases' constructors by
+    # keyword too (docs/typecheck.md, #244).
+    def __init__(self, typename, message):
+        compile_error("FrameMismatchError(): no constructor takes these arguments (required: frame_a, frame_b, operation)")
+
     def __init__(self, frame_a: CoordinateFrame, frame_b: CoordinateFrame, operation: str):
         super().__init__("FrameMismatchError", operation)
         self.frame_a = frame_a

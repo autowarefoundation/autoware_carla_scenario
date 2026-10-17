@@ -62,6 +62,10 @@ class OddAttribute:
     unit: str
     text: str
 
+    # Codon would build it by its fields' names too (docs/typecheck.md, #244).
+    def __init__(self, name, unit, text):
+        compile_error("OddAttribute(): no constructor takes these arguments (required: name, probe)")
+
     def __init__(self, name: str, probe, *_kw, unit: str = "", range = None,
                  every = None, buckets = None, values = None, text: str = "",
                  target = 1.0, cover_by: str = "hits", min_stay = None):
@@ -175,6 +179,10 @@ class OddDefinition:
     name: str
     modules: List[OddModule]
     text: str
+
+    # Codon would build it by its fields' names too (docs/typecheck.md, #244).
+    def __init__(self, name, modules, text):
+        compile_error("OddDefinition(): no constructor takes these arguments (required: name, attributes)")
 
     def __init__(self, name: str, attributes, modules = None, *_kw,
                  roots = None, text: str = ""):

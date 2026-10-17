@@ -345,8 +345,23 @@ them (`OddModule`, `OddAttribute`, `BaseScenario`). The classes it finds:
 Every condition and action declares the overload of one, its label, even
 where Python takes one argument by position: a call the constructor refuses
 by its type (`TimeoutCondition("10")`) would still reach the one Codon
-generates. A class whose `__init__` takes its fields by position needs none:
-the constructor Codon generates is its own.
+generates.
+
+Those constructors take their parameters by keyword too, and a call by
+keyword Python refuses passes where no guard takes those names: an
+exception's base parameters (`DevContainerError(typename="x")`,
+`FrameMismatchError("x", message="y")`), or a class's field names
+(`OddAttribute(name="speed", unit="m", text="t")`, `EntityRole(_value="x")`).
+So the test also enumerates every call, by position and by keyword, the
+constructor Codon generates or an exception base's would bind, and requires,
+for each one Python and the model's constructor refuse, a refusing overload
+that binds it too: an `__init__` of the fields' names (`OddAttribute`,
+`OddDefinition`, `EntityRole`, `TrajectoryVertex`, `EgoConfig`,
+`BaseScenario`, `RunEnvironment`), and of `typename` and
+`typename, message` (`DevContainerError`, `MapCacheError`;
+`FrameMismatchError` takes one positional `typename` already). A class
+whose `__init__` takes its fields by position and by name needs none: the
+constructor Codon generates is its own.
 
 A scenario that imports a module with no model (lanelet2's `matching`, say,
 or a framework module outside the public API) is refused with a message

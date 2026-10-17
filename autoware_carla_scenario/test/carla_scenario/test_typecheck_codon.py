@@ -1683,6 +1683,34 @@ def test_a_scenario_may_use_the_carla_driver_interface_model_and_nothing_beyond_
             "DevContainerError(): no constructor takes these arguments "
             "(required: message)",
         ),
+        (
+            "from autoware_carla_scenario.autoware_stack.devcontainer import "
+            "DevContainerError\n"
+            'error = DevContainerError(typename="no image")\n',
+            'DevContainerError(typename="no image")',
+            "DevContainerError(): no constructor takes these arguments "
+            "(required: message)",
+        ),
+        (
+            "from autoware_carla_scenario import FrameMismatchError\n"
+            'error = FrameMismatchError("lanelet2", message="add")\n',
+            'FrameMismatchError("lanelet2", message="add")',
+            "FrameMismatchError(): no constructor takes these arguments "
+            "(required: frame_a, frame_b, operation)",
+        ),
+        (
+            "from autoware_carla_scenario.odd import OddAttribute\n"
+            'attribute = OddAttribute(name="speed", unit="m", text="t")\n',
+            'OddAttribute(name="speed", unit="m", text="t")',
+            "OddAttribute(): no constructor takes these arguments "
+            "(required: name, probe)",
+        ),
+        (
+            "from autoware_carla_scenario import EntityRole\n"
+            'role = EntityRole(_value="npc1")\n',
+            'EntityRole(_value="npc1")',
+            "EntityRole(): no constructor takes these arguments (required: value)",
+        ),
     ],
     ids=[
         "timeout-str-alone",
@@ -1698,6 +1726,10 @@ def test_a_scenario_may_use_the_carla_driver_interface_model_and_nothing_beyond_
         "run-progress-by-position",
         "frame-mismatch-by-exception-constructor",
         "devcontainer-error-by-exception-constructor",
+        "devcontainer-error-by-exception-keyword",
+        "frame-mismatch-by-base-exception-keyword",
+        "odd-attribute-by-field-names",
+        "entity-role-by-field-name",
     ],
 )
 def test_what_codon_builds_by_the_fields_alone_is_refused_at_its_line(
@@ -1707,8 +1739,9 @@ def test_what_codon_builds_by_the_fields_alone_is_refused_at_its_line(
     # fields with no arguments (#225), a condition or an action by the label
     # it inherits alone (#236), any class whose constructor Python's fields
     # differ from by them (#244), and an exception by Exception's
-    # constructor (#244). Python refuses each, and the model's __init__ of
-    # as many arguments, a compile_error, refuses them too.
+    # constructor (#244), by position or by keyword. Python refuses each, and
+    # the model's __init__ of those parameters, a compile_error, refuses them
+    # too.
     scenario, config, path = _write_case(tmp_path, setup)
     error = _only_error(typecheck_scenario(scenario, config))
     assert message in error.message, error.format()

@@ -21,6 +21,7 @@ import functools
 import importlib
 import importlib.util
 import inspect
+import itertools
 import re
 import typing
 from pathlib import Path
@@ -1208,6 +1209,103 @@ def test_codon_cannot_build_a_class_by_what_python_refuses(name: str) -> None:
         if arity == len(fields):
             names = [a.arg for a in [*guard.args.posonlyargs, *guard.args.args][1:]]
             assert names == fields, f"{name}: the guard of {arity} takes its fields"
+
+
+#: A call: how many positional arguments, and the names passed by keyword.
+_Shape = tuple[int, tuple[str, ...]]
+
+
+def _call_shapes(signature: inspect.Signature) -> list[_Shape]:
+    """Every call *signature* (positional-or-keyword parameters) binds."""
+    params = list(signature.parameters.values())
+    empty = inspect.Parameter.empty
+    out: list[_Shape] = []
+    for count in range(len(params) + 1):
+        rest = params[count:]
+        required = tuple(p.name for p in rest if p.default is empty)
+        optional = [p.name for p in rest if p.default is not empty]
+        for k in range(len(optional) + 1):
+            for chosen in itertools.combinations(optional, k):
+                out.append((count, required + chosen))
+    return out
+
+
+def _binds(signature: inspect.Signature, shape: _Shape) -> bool:
+    count, names = shape
+    try:
+        signature.bind(*([None] * count), **dict.fromkeys(names))
+    except TypeError:
+        return False
+    return True
+
+
+def _shapes_only_codon_takes(name: str) -> list[_Shape]:
+    """The calls, by position or by keyword, that Python's constructor of
+    *name* refuses, its model's constructor does not take, and the
+    constructor Codon generates of the fields or an __init__ of a
+    `Static[...]` base would: _arities_only_codon_takes, keywords included
+    (`DevContainerError(typename="x")` took Exception's, #244's review)."""
+    _module, python = _COMPARED_CLASSES[name]
+    node = _model_class(name)
+    inits = _inits(node)
+    if not inits:
+        return []
+    own = _model_signature(inits[-1])
+    fallbacks = [_fields_signature(_codon_fields(node))]
+    fallbacks += [_model_signature(i) for i in _inherited_inits(node)]
+    expected = inspect.signature(python)
+    out: list[_Shape] = []
+    for fallback in fallbacks:
+        for shape in _call_shapes(fallback):
+            if shape in out or _binds(expected, shape):
+                continue
+            if _binds(own, shape):
+                # Only through `*_kw`: _arities_only_codon_takes checks it
+                # refuses them.
+                continue
+            out.append(shape)
+    return out
+
+
+def test_the_calls_codon_builds_by_keyword_are_found() -> None:
+    # The keyword calls #244's review found passing the check: the rule
+    # below would pass for nothing if the detector found none of them.
+    found = {
+        name: _shapes_only_codon_takes(name)
+        for name in ("DevContainerError", "FrameMismatchError", "MapCacheError")
+    }
+    for name in found:
+        assert (1, ("message",)) in found[name], name
+        assert (0, ("typename", "message")) in found[name], name
+    assert (0, ("typename",)) in found["DevContainerError"]
+    assert (0, ("typename",)) in found["MapCacheError"]
+    assert (0, ("name",)) in _shapes_only_codon_takes("CoverItem")
+    assert (0, ("current", "total", "scenario_name", "status")) not in (
+        _shapes_only_codon_takes("RunProgress")
+    )
+
+
+@pytest.mark.parametrize(
+    "name", sorted(n for n in _COMPARED_CLASSES if _shapes_only_codon_takes(n))
+)
+def test_codon_cannot_build_a_class_by_keywords_python_refuses(name: str) -> None:
+    # Beside the positional rule above: the constructor Codon generates and
+    # an exception base's take their parameters' names too, so a call by
+    # keyword Python refuses (`DevContainerError(typename="x")`,
+    # `FrameMismatchError("x", message="y")`) needs an __init__, a
+    # compile_error, ahead of the constructor, that takes the same names.
+    node = _model_class(name)
+    guards = [_model_signature(i) for i in _inits(node)[:-1] if _is_compile_error(i)]
+    missing = [
+        f"{count} positional{''.join(f', {n}=' for n in names)}"
+        for count, names in _shapes_only_codon_takes(name)
+        if not any(_binds(g, (count, names)) for g in guards)
+    ]
+    assert not missing, (
+        f"{name}: Codon builds it by calls Python refuses ({'; '.join(missing)});"
+        " declare an __init__ of those parameter names, a compile_error, ahead of"
+        " the constructor"
+    )
 
 
 @pytest.mark.parametrize("name", _LABELLED)

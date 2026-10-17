@@ -155,6 +155,10 @@ def _expect_trajectory_position(position):
 class TrajectoryVertex:
     advance: Optional[BaseCondition]
 
+    # Codon would build it by its fields' names too (docs/typecheck.md, #244).
+    def __init__(self, advance):
+        compile_error("TrajectoryVertex(): no constructor takes these arguments (required: position)")
+
     def __init__(self, position, advance = None):
         _expect_trajectory_position(position)
         self.advance = _expect_optional_condition(advance)

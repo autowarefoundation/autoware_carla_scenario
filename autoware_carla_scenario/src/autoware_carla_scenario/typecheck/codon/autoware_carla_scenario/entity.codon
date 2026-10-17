@@ -37,6 +37,12 @@ class EgoConfig(VehicleEntityConfig):
     goal_pose: Optional[Lanelet2Pose]
     waypoint_poses: List[Lanelet2Pose]
 
+    # Codon would build it by its fields' names too (docs/typecheck.md, #244).
+    def __init__(self, role_name, spawn_location, vehicle_type, initial_speed_kmh,
+                 spawn_retry_max_count, spawn_retry_t_step, spawn_retry_z_step, od_pose,
+                 ground_projection, goal_pose, waypoint_poses):
+        compile_error("EgoConfig(): no constructor takes these arguments (required: spawn_location)")
+
     def __init__(self, spawn_location: SpawnLocation, vehicle_type: str = "vehicle.mini.cooper",
                  initial_speed_kmh: float = 0.0, spawn_retry_max_count: int = 0,
                  spawn_retry_t_step: float = 0.1, spawn_retry_z_step: float = 0.5, *_kw,
