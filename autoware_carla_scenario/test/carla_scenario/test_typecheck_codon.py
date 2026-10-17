@@ -6,8 +6,11 @@ dependency on Linux x86_64 and aarch64).
 
 from __future__ import annotations
 
+import ast
 import importlib
+import os
 import re
+import subprocess
 import sys
 import textwrap
 from pathlib import Path
@@ -2785,6 +2788,159 @@ def test_an_import_of_what_the_model_leaves_out_says_why(
     assert message in error.message, error.format()
     assert error.path == str(path)
     assert error.line == _line_of(path, needle)
+
+
+# ---------------------------------------------------------------------------
+# An Optional of a class with subclasses (#263)
+# ---------------------------------------------------------------------------
+
+_NO_CONDITION_IMPORTS = """
+from autoware_carla_scenario import BaseAction
+ind = TurnIndicatorAction(EGO_ROLE_NAME, TurnIndicatorState.LEFT)
+"""
+
+
+@pytest.mark.parametrize(
+    "setup",
+    [
+        """
+        actions: dict[str, BaseAction] = {}
+        actions["i"] = ind
+        for key in actions:
+            logger.info("%s %s", key, str(actions[key].done))
+        """,
+        """
+        actions: list[BaseAction] = []
+        actions.append(ind)
+        for action in actions:
+            logger.info("%s", action.label)
+        """,
+        """
+        logger.info("%s", str(ind.done))
+        """,
+        """
+        self.register_pre_tick(ind)
+        action: BaseAction = ind
+        logger.info("%s", str(action.done))
+        """,
+        """
+        pending: BaseAction | None = None
+        if pending is None:
+            logger.info("none")
+        """,
+    ],
+    ids=["dict", "list", "action", "registered", "optional-action"],
+)
+def test_actions_compile_in_a_scenario_that_builds_no_condition(
+    tmp_path: Path, setup: str
+) -> None:
+    # Each crashed Codon 0.19's code generation ("LLVM: error: value doesn't
+    # match function result type 'ptr'", in opt_ref_new_rtti of BaseCondition)
+    # while no condition was built: an action's `condition = None` is an
+    # Optional[BaseCondition] None, and registering the actions made no
+    # difference. The model builds a BaseCondition and a BaseAction once.
+    scenario, config, _ = _write_case(
+        tmp_path, _NO_CONDITION_IMPORTS + textwrap.dedent(setup)
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_an_optional_of_every_model_class_with_subclasses_compiles(
+    tmp_path: Path,
+) -> None:
+    # The model's own classes with subclasses, each held as an Optional None
+    # in a program that builds nothing (#263). VehicleEntityConfig is left
+    # out: the scenario check builds an EgoConfig, its subclass, for every
+    # scenario, and building one in the model ahead of EgoConfig would make
+    # the subclass the crash.
+    from autoware_carla_scenario.typecheck.check import (
+        _base_workspace,
+        find_supported_codon,
+        model_dir,
+    )
+    from autoware_carla_scenario.typecheck.toolchain import (
+        codon_environment,
+        codon_path_dir,
+    )
+
+    defined: dict[str, str] = {}
+    bases: set[str] = set()
+    for path in sorted(model_dir().rglob("*.codon")):
+        parts = list(path.relative_to(model_dir()).with_suffix("").parts)
+        if parts[-1] == "__init__":
+            parts.pop()
+        for node in ast.parse(path.read_text()).body:
+            if isinstance(node, ast.ClassDef) and not node.decorator_list:
+                defined.setdefault(node.name, ".".join(parts))
+                bases |= {b.id for b in node.bases if isinstance(b, ast.Name)}
+    classes = sorted(
+        (defined[name], name)
+        for name in bases - {"VehicleEntityConfig"}
+        if name in defined
+    )
+    assert ("autoware_carla_scenario.conditions", "BaseCondition") in classes
+    assert ("autoware_carla_scenario.actions", "BaseAction") in classes
+    program = [f"from {m} import {n} as _C{i}" for i, (m, n) in enumerate(classes)]
+    for i in range(len(classes)):
+        program += [f"_x{i}: Optional[_C{i}] = None", f"print(_x{i} is None)"]
+    toolchain = find_supported_codon()
+    _base_workspace(tmp_path, None, codon_path_dir())
+    (tmp_path / "acs_optionals.py").write_text("\n".join(program) + "\n")
+    proc = subprocess.run(  # noqa: S603 - a fixed compiler invocation
+        [
+            str(toolchain.executable),
+            "build",
+            "-llvm",
+            "-o",
+            os.devnull,
+            "acs_optionals.py",
+        ],
+        cwd=tmp_path,
+        env=codon_environment(toolchain, tmp_path),
+        capture_output=True,
+        text=True,
+        timeout=600,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+
+
+_UNBUILT_RESULT = """
+
+
+class MyResult(ScenarioResult):
+    pass
+"""
+
+
+def test_an_optional_codon_cannot_generate_is_named_at_the_class(
+    tmp_path: Path,
+) -> None:
+    # A subclass of ScenarioResult nothing builds, defined after the model
+    # compiled ScenarioResult: Codon 0.19 checks `ScenarioResult | None`,
+    # then generates IR that LLVM refuses. The check names the class and the
+    # workaround at the subclass's line, never Codon's bare LLVM error, and
+    # keeps no verdict of it (a crash).
+    setup = 'result: ScenarioResult | None = None\nif result is None:\n    logger.info("none")\n'
+    scenario, config, path = _write_case(tmp_path, setup, _UNBUILT_RESULT)
+    result = typecheck_scenario(scenario, config)
+    error = _only_error(result)
+    assert result.crashed, result.format()
+    assert (
+        "Codon 0.19 generated code it cannot compile for "
+        "autoware_carla_scenario.conditions.ScenarioResult" in error.message
+    ), error.format()
+    assert "Build a MyResult where setup() reaches it" in error.message
+    assert error.path == str(path), error.format()
+    assert error.line == _line_of(path, "class MyResult"), error.format()
+    assert error.trace and error.trace[0].startswith("LLVM: error:"), error.format()
+
+    # The workaround compiles.
+    built = setup + 'logger.info("%s", MyResult(True, "", 0.0).message)\n'
+    scenario, config, _ = _write_case(tmp_path, built, _UNBUILT_RESULT)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
 
 
 # ---------------------------------------------------------------------------

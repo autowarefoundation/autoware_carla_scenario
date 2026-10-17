@@ -604,6 +604,28 @@ scenario has to do itself:
   `setup()` and an action's `execute()` ([*What is checked*](#what-is-checked)).
 - **Test an `Optional` for `None` before using it**: a `float | None` config
   field, `goal_pose`, `find_actor_by_role_name(...)`.
+- **Build an object of a class you hold in an `Optional`, when the class has
+  subclasses and nothing else builds one.** Codon 0.19 checks
+  `x: X | None = None` (or a parameter defaulting to `None`) of such a
+  class, then generates code that LLVM refuses ("LLVM: error: value doesn't
+  match function result type 'ptr'"), when the program builds no `X` nor
+  any subclass of it, or defines a subclass after Codon compiled `X` (#263).
+  The model builds its own such classes once, after their subclasses:
+  `BaseCondition`, `BaseAction` and lanelet2's `ConstLanelet`,
+  `ConstLineString2d`, `ConstLineString3d`, `ConstPoint3d` and
+  `RegulatoryElement` (the others are built by the scenario check anyway).
+  So a scenario that builds actions but no condition compiles, though each
+  action's `condition = None` is an `Optional[BaseCondition]`, whether it
+  registers the actions or keeps them in a `list` or `dict` of `BaseAction`.
+  A class of your own, or your subclass of a framework class that nothing
+  builds (`class MyResult(ScenarioResult)`), can still meet it; the check
+  then names the class and what to do, at the `class` line of it or of its
+  subclass, and keeps no verdict, as for any crash:
+
+  ```text
+  scenario.py:73: error: Codon 0.19 generated code it cannot compile for autoware_carla_scenario.conditions.ScenarioResult, a class with subclasses: a bug of Codon's rather than an error of the program (#263). It does so for an Optional of such a class (`x: ScenarioResult | None = None`, a parameter that defaults to None) when the program builds no object of the class or of a subclass, or defines a subclass after Codon compiled the class. Build a MyResult where setup() reaches it, or hold the value without Optional
+      LLVM: error: '%obj' defined with type 'ptr' but expected '{ ptr, ptr }'
+  ```
 
 Annotations Codon cannot express (`Union` of two types, `Any`, `Callable`,
 `Sequence`, `type[...]`) are dropped from parameters, which become generic:

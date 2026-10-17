@@ -651,3 +651,17 @@ class WaypointCondition(BaseCondition):
         _keyword_only(_kw, "WaypointCondition(): label")
         _expect_role(entity_name)
         super().__init__(_required_str(label, "WaypointCondition(): label"))
+
+
+
+# Codon 0.19 lowers a class with subclasses to a plain pointer until an object
+# of it (or of a subclass) is built, while its Optional is already the pair a
+# class with subclasses needs: `Optional[BaseCondition]` None crashes its code
+# generation ("LLVM: error: value doesn't match function result type 'ptr'",
+# in opt_ref_new_rtti) in a program that builds no condition, and an action's
+# `condition = None` is one (_expect_optional_condition, #263). Built here,
+# once, whatever the scenario builds; the check never runs the program. Only
+# after its subclasses: a class built before its first subclass is defined is
+# lowered without them, the same crash the other way round, so the model
+# builds no class a scenario may be the first to derive from.
+BaseCondition("")
