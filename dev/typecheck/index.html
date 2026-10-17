@@ -2550,15 +2550,24 @@ scenario has to do itself:</p>
 - <strong>Pass numbers of the declared type.</strong> An <code>int</code> is accepted for a <code>float</code>,
   but not inside a container: a <code>list[float]</code> parameter wants <code>[1.0, 2.0]</code>.
   YAML values are converted for you.
-- <strong>Build a dict of different actions item by item.</strong> Codon types a dict
-  display by its first item, so <code>{"turn": turn, "lane_change": lc}</code> (a
-  <code>TurnAction</code> and a <code>LaneChangeAction</code>) does not compile, annotated or not;
-  unlike a list display, the check does not rewrite it. Build the
-  <code>ActionStateCondition</code>'s <code>actions</code> one item at a time instead:</p>
-<p><div class="highlight"><pre><span></span><code><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a><span class="n">actions</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">BaseAction</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
-<a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a><span class="n">actions</span><span class="p">[</span><span class="s2">"turn"</span><span class="p">]</span> <span class="o">=</span> <span class="n">turn</span>
-<a id="__codelineno-17-3" name="__codelineno-17-3" href="#__codelineno-17-3"></a><span class="n">actions</span><span class="p">[</span><span class="s2">"lane_change"</span><span class="p">]</span> <span class="o">=</span> <span class="n">lc</span>
+- <strong>A dict of different actions (or conditions) is a dict of their base.</strong>
+  Codon types a dict display by its first item, so the check rewrites one
+  whose values are not evidently of one type, as it does a list display:
+  <code>{"turn": turn, "lane_change": lc}</code> (a <code>TurnAction</code> and a
+  <code>LaneChangeAction</code>) becomes <code>{"turn": _acs_base(turn), "lane_change":
+  _acs_base(lc)}</code>, which makes each action a <code>BaseAction</code> (each condition a
+  <code>BaseCondition</code>): a <code>dict[str, BaseAction]</code> as in Python, which passes as
+  <code>ActionStateCondition</code>'s <code>actions</code>. Assigned to an annotated variable,
+  <code>actions: dict[str, BaseAction] = {...}</code>, it becomes a dict of the
+  annotated type (<code>_acs_dict_into</code>, when the key and value types are plain
+  names). A value of another type is still refused at the display's line:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a>scenario.py:73: error: 'int' does not match expected type 'BaseAction'
 </code></pre></div>
+<p>Any other value is left to Codon's display, which types it as before
+  (<code>{"a": 1, "b": speed}</code> is a <code>dict[str, float]</code>, a value with <code>None</code> is
+  optional). Values evidently of one type (all literals, all calls of the
+  same name, all members of one enum) are left as written. Building the dict
+  one item at a time into a <code>dict[str, BaseAction]</code> stays valid.
 - <strong>Convert nested mappings in the config.</strong> The runner passes a YAML mapping
   to the config class as a <code>dict</code>, so a field annotated with a dataclass
   (<code>goal: Goal</code>) holds one at run time unless the config's <code>__post_init__</code>
@@ -3272,8 +3281,9 @@ from the model's. The two are different types that never meet:</p>
   (<code>scenario_base</code> is checked, and imports <code>BaseCondition</code> from
   <code>conditions.base</code> for that);
   <code>_acs_list</code> gives a list display of checked conditions the type of its
-  first element, so a display mixing two checked condition classes waits for
-  the same.</li>
+  first element (<code>_acs_base</code> leaves a checked condition in a dict display as
+  it is), so a display mixing two checked condition classes waits for the
+  same.</li>
 </ul>
 <p><code>BaseCondition.__init_subclass__</code>, which wraps every subclass's <code>check()</code> to
 record its last result for the UI, is in <code>UNCALLED</code>: the check sees each
@@ -4371,7 +4381,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 17, 2026 11:06:20 UTC"><span class="timeago" datetime="2026-10-17T11:06:20+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 17, 2026 11:06:20 UTC">2026-10-17</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 17, 2026 11:26:38 UTC"><span class="timeago" datetime="2026-10-17T11:26:38+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 17, 2026 11:26:38 UTC">2026-10-17</span>
   </span>
 
     
