@@ -47,3 +47,20 @@ def _map_cache(tmp_path_factory: pytest.TempPathFactory) -> Iterator[None]:
     with pytest.MonkeyPatch.context() as patch:
         patch.setenv(CACHE_ROOT_ENV, str(root))
         yield
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _typecheck_cache(tmp_path_factory: pytest.TempPathFactory) -> Iterator[None]:
+    """Share the Codon verdicts between the xdist workers of a run.
+
+    A directory already given (CI restores one from its previous runs) is kept.
+    """
+    from autoware_carla_scenario.typecheck.check import CACHE_DIR_ENV  # noqa: PLC0415
+
+    if os.environ.get(CACHE_DIR_ENV):
+        yield
+        return
+    root = tmp_path_factory.getbasetemp().parent / "typecheck_cache"
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setenv(CACHE_DIR_ENV, str(root))
+        yield

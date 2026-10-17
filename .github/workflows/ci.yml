@@ -30,8 +30,30 @@ jobs:
     # The slow tests are the 'slow-tests' job below: four of them build a
     # ~160 MB wheelhouse over the network and take longer than the other 1600
     # put together, which is not something to do three times over.
+    # The Codon compiles are nine tenths of the fast suite (~13 s each, some
+    # 260 of them). Their verdicts are keyed by everything the compile reads
+    # (typecheck/check.py's _cache_key), so a run keeps the previous run's and
+    # compiles only what changed. Pull requests restore master's.
+    - name: Restore the Codon check verdicts
+      uses: actions/cache@v4
+      with:
+        path: ${{ runner.temp }}/typecheck-cache
+        key: typecheck-${{ runner.arch }}-${{ matrix.python-version }}-${{ github.sha }}
+        restore-keys: typecheck-${{ runner.arch }}-${{ matrix.python-version }}-
+
     - name: Run tests
-      run: uv run pytest -v --tb=short -n auto -o addopts= -m "not slow"
+      env:
+        AUTOWARE_CARLA_SCENARIO_TYPECHECK_CACHE: ${{ runner.temp }}/typecheck-cache
+      run: |
+        touch "${RUNNER_TEMP}/typecheck-started"
+        uv run pytest -v --tb=short -n auto -o addopts= -m "not slow"
+
+    # A verdict this run did not read or write is for sources that no longer
+    # exist: drop it rather than carry it into every later cache.
+    - name: Prune the Codon check verdicts this run did not use
+      run: |
+        find "${RUNNER_TEMP}/typecheck-cache" -type f \
+          ! -newer "${RUNNER_TEMP}/typecheck-started" -delete 2>/dev/null || true
 
   slow-tests:
     # What the fast matrix leaves out: a real export, a real wheelhouse, and a
@@ -82,8 +104,30 @@ jobs:
         install-dev-deps: "true"
         run-precommit: "false"
 
+    # The Codon compiles are nine tenths of the fast suite (~13 s each, some
+    # 260 of them). Their verdicts are keyed by everything the compile reads
+    # (typecheck/check.py's _cache_key), so a run keeps the previous run's and
+    # compiles only what changed. Pull requests restore master's.
+    - name: Restore the Codon check verdicts
+      uses: actions/cache@v4
+      with:
+        path: ${{ runner.temp }}/typecheck-cache
+        key: typecheck-${{ runner.arch }}-${{ matrix.python-version }}-${{ github.sha }}
+        restore-keys: typecheck-${{ runner.arch }}-${{ matrix.python-version }}-
+
     - name: Run tests
-      run: uv run pytest -v --tb=short -n auto -o addopts= -m "not slow"
+      env:
+        AUTOWARE_CARLA_SCENARIO_TYPECHECK_CACHE: ${{ runner.temp }}/typecheck-cache
+      run: |
+        touch "${RUNNER_TEMP}/typecheck-started"
+        uv run pytest -v --tb=short -n auto -o addopts= -m "not slow"
+
+    # A verdict this run did not read or write is for sources that no longer
+    # exist: drop it rather than carry it into every later cache.
+    - name: Prune the Codon check verdicts this run did not use
+      run: |
+        find "${RUNNER_TEMP}/typecheck-cache" -type f \
+          ! -newer "${RUNNER_TEMP}/typecheck-started" -delete 2>/dev/null || true
 
     - name: Run the slow tests
       run: uv run pytest -v --tb=short -o addopts= -m slow
