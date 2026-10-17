@@ -2230,7 +2230,7 @@ function of its exact type only, and Codon 0.19 crashes on any other. <code>set_
   <code>trajectory_recorder</code>, <code>environment</code>, <code>autoware_bridge/grpc_server</code>,
   <code>autoware_stack/launcher</code>, <code>autoware_stack/devcontainer</code> (and its values),
   <code>driver/egodriver_client</code>, <code>_map_source</code>, <code>maps/cache</code>,
-  <code>maps/z_offset_cache</code>, <code>ui/models</code>, <code>_ros2</code>, <code>metrics</code>, <code>measures</code> and
+  <code>maps/z_offset_cache</code>, <code>maps/road_network_cache</code>, <code>ui/models</code>, <code>_ros2</code>, <code>metrics</code>, <code>measures</code> and
   <code>utils/traffic_light</code>, each declaring exactly the names compared;
   <code>ros2/cyclone</code> where cyclonedds is installed.</li>
 <li><strong>Every public name of a modelled module</strong>: each name a module the model
@@ -2532,7 +2532,7 @@ method of a checked module.</p>
 </ol>
 <h3 id="what-is-checked-of-the-framework">What is checked of the framework<a class="headerlink" href="#what-is-checked-of-the-framework" title="Permanent link">&para;</a></h3>
 <p>Every module now has an entry other than <code>"not yet checked (#45)"</code>. 170 of
-the package's 248 modules (69%; about 41,900 of 74,000 lines) are <code>CHECKED</code>:
+the package's 249 modules (68%; about 41,900 of 74,300 lines) are <code>CHECKED</code>:
 the kinematics, the coordinate frames and poses, the conversions between
 Lanelet2, OpenDRIVE and CARLA world poses (<code>coordinate.transform</code>), the stop
 lines read off a Lanelet2 map (<code>utils.stop_line</code>, <code>coordinate.stop_line</code>)
@@ -4139,7 +4139,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 17, 2026 02:30:31 UTC"><span class="timeago" datetime="2026-10-17T02:30:31+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 17, 2026 02:30:31 UTC">2026-10-17</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 17, 2026 03:43:27 UTC"><span class="timeago" datetime="2026-10-17T03:43:27+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 17, 2026 03:43:27 UTC">2026-10-17</span>
   </span>
 
     
