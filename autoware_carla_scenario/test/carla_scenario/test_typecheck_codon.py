@@ -3199,6 +3199,44 @@ def test_an_ego_s_own_manoeuvre_is_checked_as_a_hook(
     assert error.line == _line_of(path, "def lane_change_finished")
 
 
+_OWN_TURN = """
+{caller}
+
+class Npc(VehicleEntity):
+    def turn_at_junction(self, world: carla.World, direction: TurnDirection, **kwargs) -> None:
+        pass
+"""
+
+_TURN_CALLER = """
+    def _drive(self, npc: VehicleEntity, world: carla.World) -> None:
+        npc.turn_at_junction(world, TurnDirection.LEFT)
+"""
+
+
+@pytest.mark.parametrize("calls", [False, True], ids=["defined", "called"])
+def test_an_own_turn_at_junction_compiles_until_it_is_called(
+    tmp_path: Path, calls: bool
+) -> None:
+    # The limitation docs/typecheck.md states: an override of
+    # turn_at_junction(**kwargs) compiles, but Codon 0.19's dispatch thunk
+    # cannot call it. Declaring the method on the base (#265) must not make
+    # a scenario that only defines it fail; a Codon that lifts the limit
+    # fails the second case, and the docs need the change.
+    scenario, config, path = _write_case(
+        tmp_path,
+        "self._setup_ego_spawn()\n" + _TIMEOUT_SETUP,
+        _OWN_TURN.format(caller=_TURN_CALLER if calls else ""),
+        header=_SEQUENCE_HEADER,
+    )
+    result = typecheck_scenario(scenario, config)
+    if not calls:
+        assert result.ok, result.format()
+        return
+    error = _only_error(result)
+    assert "cannot typecheck" in error.message, error.format()
+    assert error.line == _line_of(path, "npc.turn_at_junction(")
+
+
 @pytest.mark.parametrize(
     ("setup", "needle", "message"),
     [

@@ -622,16 +622,22 @@ scenario has to do itself:
   `AndCondition([], ...)`, an ODD's `all_of([])`) through `_acs_sequence`
   (`_tc.codon`), and checks the elements of any other: `waypoints=[460, 265]`
   and `waypoints=[None]` are refused, in `EgoVehicle.route_to()` too.
-- **Call a manoeuvre your own entity class overrides with its arguments by
+- **Call a manoeuvre your own entity class overrides with every argument, by
   position.** `VehicleEntity` and `EgoVehicle` declare the manoeuvres they
   take from `traffic.driven.BackendDriven` (`set_desired_speed()`,
   `change_lane()`, `lane_change_finished()`, `turn_at_junction()`,
   `release_from_traffic()`, ...), and an `EgoVehicle` subclass's override of
   one is checked as a hook. Codon 0.19 calls a method a subclass overrides
-  through a dispatch thunk, which takes no keyword argument and cannot call
+  through a dispatch thunk, which takes no keyword argument, fills in no
+  default (`set_client(client)` needs its `tm_port` then), and cannot call
   `turn_at_junction(world, direction, **kwargs)` at all: once a class of the
-  scenario overrides it, `ego.turn_at_junction(...)` does not compile
-  ("cannot typecheck"); turn with a `TurnAction` instead.
+  scenario overrides it, a call of it does not compile ("cannot
+  typecheck"), on the subclass as on its base; turn with a `TurnAction`
+  instead. A class that only defines the override, and never calls it,
+  compiles. (Declaring Python's `**kwargs` as `TurnAction`'s three keywords
+  would not help: the thunk fills in none of their defaults, so even
+  `turn_at_junction(world, direction)` would fail, and a backend's own
+  keywords would be refused.)
 - **A dict of different actions (or conditions) is a dict of their base.**
   Codon types a dict display by its first item, so the check rewrites one
   whose values are not evidently of one type, as it does a list display:
