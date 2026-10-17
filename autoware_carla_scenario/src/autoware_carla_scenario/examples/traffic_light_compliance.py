@@ -79,26 +79,48 @@ logger = logging.getLogger(__name__)
 #: this scenario's own measure (``light_switch_delay_seconds``).
 RED_LIGHT_DURATION_S = "red_light_duration_s"
 
-#: How far (metres) a reading of the stop-line distance may stray from where
-#: the ego's own travel since the last one puts the line and still be the same
-#: line.  Past the line the measure reads the next one ahead, or nothing: a
-#: jump far larger than a tick's travel and the lane's curve account for.
+#: How far (metres) a reading of the stop-line distance may lie beyond where
+#: the ego's own travel since the last reading puts the line and still be the
+#: same line.  Past the line the measure reads the next one ahead, or nothing:
+#: a jump far larger than a tick's travel and the lane's curve account for.
 SAME_LINE_M = 1.0
+
+#: How far (metres) before the line the ego's travel must still put it for a
+#: reading that jumps beyond it to be taken as the ego's line instead: the
+#: line it had was not on its lane after all (the other branch of a fork, the
+#: lane it changed out of), since the measure reads the nearest line ahead.
+#: Closer than this, the jump is taken as the line passed: the ego's travel
+#: is off by millimetres a tick, not by this much.
+PASSED_MARGIN_M = 0.5
 
 
 class StopLineWatch:
-    """Where the ego's front bumper is against the stop line it started
-    before, tick by tick: signed metres before it, negative once past it.
+    """Where the ego's front bumper is against the stop line ahead of it,
+    tick by tick: signed metres before it, negative once past it.
 
     :data:`~autoware_carla_scenario.measures.STOP_LINE_DISTANCE_M` reads only
     stop lines *ahead*, so past the line it reads the next one, or nothing.
-    The watch keeps the line it first read: each tick it moves the line closer
-    by how far the front bumper travelled along the ego's heading, and takes
-    the measure's reading in its place only while the two agree
-    (:data:`SAME_LINE_M`) and the travel has not taken it past the line.
-    Otherwise -- the line passed, or the lane lost -- the line is carried on
-    the ego's travel alone, so a crossing reads as a negative distance however
-    the measure reads then.
+    The watch keeps the line it reads and, each tick, moves it closer by how
+    far the front bumper travelled along the ego's heading (*carried*).  It
+    takes the measure's reading in its place when the reading is
+
+    * no farther than the carried line (within :data:`SAME_LINE_M`): the same
+      line, or a nearer one the ego's lane now leads to (a lane change onto a
+      lane whose line is staggered nearer); or
+    * farther, while the carried line is still :data:`PASSED_MARGIN_M` or
+      more ahead: the ego has not reached the line it had, so that line is
+      not on its lane (the other branch where the lane forks) and the reading
+      is the ego's line.
+
+    Otherwise -- the reading gone, or jumping beyond a line the ego has
+    reached -- the line is carried on the ego's travel alone, and a crossing
+    reads as a negative distance however the measure reads then.
+
+    A tick counts as red when it began before the green: the light is switched
+    before the world steps (a pre-tick action at ``elapsed >= red_until``) and
+    conditions read the world after, so the tick that ends at ``red_until``
+    still ran under red, and the first that ran under green ends one step
+    later.
 
     The pass and fail conditions share one watch; it updates once per
     ``elapsed``, whichever of them asks first, so it has to be asked every
@@ -110,28 +132,42 @@ class StopLineWatch:
         stop_zone_min_m: The stop zone's near end, metres before the line.
         stop_zone_max_m: Its far end.
         tolerance_m: How far past the line the front bumper may be before it
-            counts as crossed.
+            counts as crossed; that far past it counts as at the line (0 m).
         standstill_seconds: How long the ego has to stand still to count as
             stopped (:class:`~autoware_carla_scenario.StandstillCondition`).
+        standstill_speed_mps: The speed (m/s) at or below which it stands
+            still.
     """
 
     red_until: float
     stop_zone_min_m: float
     stop_zone_max_m: float
     tolerance_m: float
+    standstill_seconds: float
+    standstill_speed_mps: float
     #: Signed metres from the front bumper to the stop line; ``None`` until
     #: the ego is found with a stop line ahead of it.
     distance: Optional[float]
-    #: When the front bumper first crossed the line, and how far past it was.
+    #: When the front bumper first crossed the line, how far past it was, and
+    #: whether that tick ran under red.
     crossed_at: Optional[float]
     crossed_by_m: float
-    #: When the ego first counted as stopped in the stop zone before the
-    #: green, and where.
+    crossed_on_red: bool
+    #: When the ego first counted as stopped in the stop zone on red, and
+    #: where.  Latched: what it does after that, short of crossing the line on
+    #: red, does not undo it.
     stopped_in_zone_at: Optional[float]
     stopped_at_m: float
     #: Whether the ego counted as standing still at the last update.
     standing: bool
+    #: When the first tick that ran under green ended; ``None`` before it.
+    green_seen_at: Optional[float]
+    #: The last red tick: the distance, and for how long the ego had been at
+    #: ``standstill_speed_mps`` or slower (``None``: moving).
+    red_end_distance: Optional[float]
+    red_end_still_for: Optional[float]
     _standstill: StandstillCondition
+    _still_since: Optional[float]
     _at: float
     _has_front: bool
     _front_x: float
@@ -144,6 +180,7 @@ class StopLineWatch:
         stop_zone_max_m: float,
         tolerance_m: float,
         standstill_seconds: float,
+        standstill_speed_mps: float = 0.1,
     ) -> None:
         if stop_zone_min_m > stop_zone_max_m:
             raise ValueError(
@@ -156,17 +193,25 @@ class StopLineWatch:
         self.stop_zone_min_m = stop_zone_min_m
         self.stop_zone_max_m = stop_zone_max_m
         self.tolerance_m = tolerance_m
+        self.standstill_seconds = standstill_seconds
+        self.standstill_speed_mps = standstill_speed_mps
         self.distance = None
         self.crossed_at = None
         self.crossed_by_m = 0.0
+        self.crossed_on_red = False
         self.stopped_in_zone_at = None
         self.stopped_at_m = 0.0
         self.standing = False
+        self.green_seen_at = None
+        self.red_end_distance = None
+        self.red_end_still_for = None
         self._standstill = StandstillCondition(
             entity_name=EGO_ROLE_NAME,
             duration=standstill_seconds,
+            speed_threshold=standstill_speed_mps,
             label="ego_standstill",
         )
+        self._still_since = None
         self._at = -math.inf
         self._has_front = False
         self._front_x = 0.0
@@ -174,18 +219,34 @@ class StopLineWatch:
 
     def in_zone(self, distance: float) -> bool:
         """Whether a front bumper *distance* metres before the line is in the
-        stop zone."""
-        return self.stop_zone_min_m <= distance <= self.stop_zone_max_m
+        stop zone; up to ``tolerance_m`` past the line counts as at it."""
+        at = distance
+        if -self.tolerance_m <= distance < 0.0:
+            at = 0.0
+        return self.stop_zone_min_m <= at <= self.stop_zone_max_m
 
     def update(self, world: carla.World, elapsed: float) -> None:
         """Read the ego at *elapsed*; once per ``elapsed``."""
         if elapsed <= self._at:
             return
+        # The tick that ended now began at the last update: red if that was
+        # before the green (TrafficSignalAction's ElapsedTimeCondition).
+        on_red = self._at < self.red_until
         self._at = elapsed
+        if not on_red and self.green_seen_at is None:
+            self.green_seen_at = elapsed
         self.standing = self._standstill.check(world, elapsed) is not None
         ego = find_actor_by_role_name(world, EGO_ROLE_NAME)
         if ego is None:
             return
+        velocity = ego.get_velocity()
+        speed = math.sqrt(
+            float(velocity.x) ** 2 + float(velocity.y) ** 2 + float(velocity.z) ** 2
+        )
+        if speed > self.standstill_speed_mps:
+            self._still_since = None
+        elif self._still_since is None:
+            self._still_since = elapsed
         transform = ego.get_transform()
         bumpers = bumpers_of(ego)
         yaw = math.radians(float(transform.rotation.yaw))
@@ -196,20 +257,27 @@ class StopLineWatch:
         self._track(reading, front_x, front_y, forward_x, forward_y)
         self._front_x, self._front_y, self._has_front = front_x, front_y, True
         distance = self.distance
-        if distance is None:
-            return
-        if self.crossed_at is None and distance < -self.tolerance_m:
-            self.crossed_at = elapsed
-            self.crossed_by_m = -distance
-        if (
-            self.stopped_in_zone_at is None
-            and elapsed < self.red_until
-            and self.crossed_at is None
-            and self.standing
-            and self.in_zone(distance)
-        ):
-            self.stopped_in_zone_at = elapsed
-            self.stopped_at_m = distance
+        if distance is not None:
+            if self.crossed_at is None and distance < -self.tolerance_m:
+                self.crossed_at = elapsed
+                self.crossed_by_m = -distance
+                self.crossed_on_red = on_red
+            if (
+                self.stopped_in_zone_at is None
+                and on_red
+                and self.crossed_at is None
+                and self.standing
+                and self.in_zone(distance)
+            ):
+                self.stopped_in_zone_at = elapsed
+                self.stopped_at_m = distance
+        if on_red:
+            self.red_end_distance = distance
+            still_since = self._still_since
+            if still_since is None:
+                self.red_end_still_for = None
+            else:
+                self.red_end_still_for = elapsed - still_since
 
     def _track(
         self,
@@ -228,16 +296,50 @@ class StopLineWatch:
             front_y - self._front_y
         ) * forward_y
         carried = last - travelled
-        # Once the ego's travel has taken it past the line, a reading is of a
-        # line further on, however close: the measure reads none behind.
-        if (
-            reading is not None
-            and carried >= 0.0
-            and abs(reading - carried) <= SAME_LINE_M
-        ):
+        adopt = False
+        if reading is not None and carried >= 0.0:
+            if reading <= carried + SAME_LINE_M:
+                # The same line, or a nearer one: the measure never reads a
+                # line behind the front bumper.
+                adopt = True
+            elif carried >= PASSED_MARGIN_M:
+                # Beyond a line the ego has not reached: that line was not on
+                # its lane.
+                adopt = True
+        if adopt:
             self.distance = reading
         else:
             self.distance = carried
+
+    def green_verdict(self) -> str:
+        """Why the ego fails at the green, not having stood still in the stop
+        zone, from the last tick that ran under red."""
+        zone = f"{self.stop_zone_min_m:.1f}-{self.stop_zone_max_m:.1f} m"
+        distance = self.red_end_distance
+        still_for = self.red_end_still_for
+        if distance is None:
+            return "Ego had not stopped by the green: no stop line was read ahead of it"
+        if still_for is None:
+            return (
+                f"Ego had not stopped by the green: still moving "
+                f"{distance:.2f} m before the stop line (stop zone {zone})"
+            )
+        if self.in_zone(distance):
+            return (
+                f"Ego stopped in the stop zone, {distance:.2f} m before the "
+                f"stop line, only {still_for:.2f}s before the green: less than "
+                f"standstill_seconds ({self.standstill_seconds:.2f}s)"
+            )
+        if distance < 0.0:
+            return (
+                f"Ego stopped {-distance:.2f} m past the stop line (within "
+                f"stop_line_tolerance_m), outside the stop zone ({zone} before "
+                f"it), until the green"
+            )
+        return (
+            f"Ego stopped {distance:.2f} m before the stop line, outside the "
+            f"stop zone ({zone} before it), until the green"
+        )
 
     def details(self) -> dict[str, Optional[float]]:
         """What the watch has seen, for the conditions' details: where the
@@ -258,6 +360,8 @@ class StopLineWatch:
         found["crossed_by_m"] = None
         if self.crossed_at is not None:
             found["crossed_by_m"] = self.crossed_by_m
+        found["red_end_stop_line_distance_m"] = self.red_end_distance
+        found["red_end_standing_still_seconds"] = self.red_end_still_for
         return found
 
 
@@ -294,10 +398,11 @@ class RedLightViolationCondition(BaseCondition):
     """Fail when the ego runs the red, or has not stopped in the stop zone by
     the green (:class:`StopLineWatch`).
 
-    * While the light is red: the front bumper crossed the stop line.
-    * At the green, not having stood still in the stop zone: standing still
-      short of it, or still on its way (or no stop line read at all), each
-      with a message of its own.
+    * On a tick that ran under red: the front bumper crossed the stop line.
+    * On the first tick that ran under green, not having stood still in the
+      stop zone: standing still short of it, stopped in it too briefly, or
+      still on its way (or no stop line read at all), each with a message of
+      its own (:meth:`StopLineWatch.green_verdict`).
     """
 
     _watch: StopLineWatch
@@ -313,7 +418,7 @@ class RedLightViolationCondition(BaseCondition):
         watch = self._watch
         watch.update(world, elapsed)
         crossed_at = watch.crossed_at
-        if crossed_at is not None and crossed_at < watch.red_until:
+        if crossed_at is not None and watch.crossed_on_red:
             return ScenarioResult(
                 passed=False,
                 message=(
@@ -323,23 +428,11 @@ class RedLightViolationCondition(BaseCondition):
                 ),
                 elapsed_seconds=elapsed,
             )
-        if elapsed < watch.red_until or watch.stopped_in_zone_at is not None:
+        if watch.green_seen_at is None or watch.stopped_in_zone_at is not None:
             return None
-        zone = f"{watch.stop_zone_min_m:.1f}-{watch.stop_zone_max_m:.1f} m"
-        distance = watch.distance
-        message = "Ego had not stopped by the green: no stop line was read ahead of it"
-        if distance is not None:
-            if watch.standing:
-                message = (
-                    f"Ego stopped {distance:.2f} m before the stop line, "
-                    f"outside the stop zone ({zone} before it), until the green"
-                )
-            else:
-                message = (
-                    f"Ego had not stopped by the green: still moving "
-                    f"{distance:.2f} m before the stop line (stop zone {zone})"
-                )
-        return ScenarioResult(passed=False, message=message, elapsed_seconds=elapsed)
+        return ScenarioResult(
+            passed=False, message=watch.green_verdict(), elapsed_seconds=elapsed
+        )
 
 
 class TrafficLightComplianceScenario(BaseScenario):
@@ -429,6 +522,7 @@ class TrafficLightComplianceScenario(BaseScenario):
             stop_zone_max_m=cfg.stop_zone_max_m,
             tolerance_m=cfg.stop_line_tolerance_m,
             standstill_seconds=cfg.standstill_seconds,
+            standstill_speed_mps=cfg.standstill_speed_mps,
         )
 
         # 1) The ego stood still in the stop zone before the green.  First in

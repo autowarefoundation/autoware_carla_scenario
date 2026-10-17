@@ -116,13 +116,20 @@ class TrafficLightComplianceConfig:
     stop_zone_max_m: float = 3.0
 
     #: How far (metres) the front bumper may pass the stop line while the
-    #: light is red before the run fails for running the red.
+    #: light is red before the run fails for running the red.  Up to this far
+    #: past it counts as at the line (0 m) for the stop zone.
     stop_line_tolerance_m: float = 0.0
 
-    #: Seconds the ego has to stand still (at 0.1 m/s or less, as
-    #: :class:`~autoware_carla_scenario.StandstillCondition` counts it) in the
-    #: stop zone before the green for it to count as stopped there.
+    #: Seconds the ego has to stand still (at ``standstill_speed_mps`` or
+    #: less, as :class:`~autoware_carla_scenario.StandstillCondition` counts
+    #: it) in the stop zone before the green for it to count as stopped there.
+    #: Once it has, it may move again (short of crossing the line on red).
     standstill_seconds: float = 0.5
+
+    #: The speed (m/s) at or below which the ego stands still
+    #: (:class:`~autoware_carla_scenario.StandstillCondition`'s
+    #: ``speed_threshold``).
+    standstill_speed_mps: float = 0.1
 
     #: Where the ego starts, as
     #: :data:`~autoware_carla_scenario.measures.STOP_LINE_DISTANCE_M` reads it:
