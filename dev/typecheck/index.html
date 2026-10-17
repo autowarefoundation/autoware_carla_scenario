@@ -1527,6 +1527,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#keeping-verdicts-between-runs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Keeping verdicts between runs
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#installing-codon-and-typesafe_carla" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1841,6 +1852,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#keeping-verdicts-between-runs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Keeping verdicts between runs
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#installing-codon-and-typesafe_carla" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2074,6 +2096,18 @@ the same check in its own tests, with no simulator:</p>
 registered with <code>register_scenario_builder()</code> (a custom builder, such as the
 packages the Scenario Editor exports) is not checked: only its builder knows
 how it is constructed.</p>
+<h3 id="keeping-verdicts-between-runs">Keeping verdicts between runs<a class="headerlink" href="#keeping-verdicts-between-runs" title="Permanent link">&para;</a></h3>
+<p>A process compiles a program once and keeps the verdict for as long as it
+runs. Set <code>AUTOWARE_CARLA_SCENARIO_TYPECHECK_CACHE</code> to a directory to keep
+them beyond that, one file per program: a later process with the same
+inputs reads the verdict instead of compiling. The key covers everything the
+compile reads: the scenario's (or the framework's) modules, the generated
+driver, the model, typesafe_carla's Codon library, the checker, and the
+compiler's version and standard library. A crash is never kept, and an entry
+that cannot be read counts as a miss. A verdict read from the directory has
+its file's times touched, so the directory can be pruned by access time.</p>
+<p>The test suite shares such a directory between its xdist workers. CI keeps
+one from run to run, so a run compiles only the programs whose inputs changed.</p>
 <h3 id="installing-codon-and-typesafe_carla">Installing Codon and typesafe_carla<a class="headerlink" href="#installing-codon-and-typesafe_carla" title="Permanent link">&para;</a></h3>
 <p>The check needs typesafe_carla (the <code>typesafe-carla</code> package, from PyPI) and
 the Codon compiler it pins (<code>typesafe-carla-toolchain</code>, 0.19, which
@@ -4337,7 +4371,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 17, 2026 07:09:52 UTC"><span class="timeago" datetime="2026-10-17T07:09:52+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 17, 2026 07:09:52 UTC">2026-10-17</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 17, 2026 11:06:20 UTC"><span class="timeago" datetime="2026-10-17T11:06:20+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 17, 2026 11:06:20 UTC">2026-10-17</span>
   </span>
 
     
