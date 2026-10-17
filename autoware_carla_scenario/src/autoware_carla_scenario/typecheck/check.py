@@ -75,7 +75,7 @@ from .library import (
     package_modules,
 )
 from .none_check import NoneCheckSkipped, run_none_check
-from .not_modelled import NOT_MODELLED
+from .not_modelled import NOT_MODELLED, not_modelled_member
 from .library_driver import (
     render_library_checks,
     render_library_driver,
@@ -837,6 +837,53 @@ def _uninferred_attributes(
     return out
 
 
+_NO_ATTRIBUTE = re.compile(r"'(?P<cls>\w+)' object has no attribute '(?P<attr>\w+)'")
+
+
+def _python_class(name: str, sources: _Sources) -> type | None:
+    """The Python class Codon calls *name*: one of the checked modules' (a
+    scenario's own subclass), else one a modelled module defines."""
+    for module in [*sources.modules, *sorted(_model_modules())]:
+        try:
+            found = getattr(importlib.import_module(module), name, None)
+        except Exception:  # noqa: BLE001 - only a hint: a module that does not import
+            continue
+        if isinstance(found, type):
+            return found
+    return None
+
+
+def _with_member_reasons(
+    diagnostics: list[Diagnostic], sources: _Sources
+) -> list[Diagnostic]:
+    """*diagnostics*, each of Codon's ``'X' object has no attribute 'm'``
+    naming a member the model leaves out on purpose given its reason
+    (:data:`.not_modelled.NOT_MODELLED_MEMBERS`, #265), as an import of a
+    name the model leaves out is (#237)."""
+    out: list[Diagnostic] = []
+    for diagnostic in diagnostics:
+        found = _NO_ATTRIBUTE.search(diagnostic.message)
+        cls = _python_class(found["cls"], sources) if found is not None else None
+        listed = None
+        if found is not None and cls is not None:
+            member = found["attr"]
+            listed = not_modelled_member(cls, member)
+        if listed is None:
+            out.append(diagnostic)
+            continue
+        owner, reason = listed
+        out.append(
+            dataclasses.replace(
+                diagnostic,
+                message=(
+                    f"{diagnostic.message}: {owner}.{member} is not part of "
+                    f"the Codon model, on purpose: {reason}"
+                ),
+            )
+        )
+    return out
+
+
 def _original_line(origin: list[int] | None, line: int) -> int:
     """The line of the original file that *line* of its rewrite comes from."""
     line -= _PRELUDE_LINES
@@ -1463,7 +1510,7 @@ def _compile(
         except subprocess.TimeoutExpired:
             return None
         output = proc.stdout + proc.stderr
-        diagnostics = _parse_output(output, ws)
+        diagnostics = _with_member_reasons(_parse_output(output, ws), sources)
         if proc.returncode != 0:
             try:
                 diagnostics += _uninferred_attributes(diagnostics, sources)

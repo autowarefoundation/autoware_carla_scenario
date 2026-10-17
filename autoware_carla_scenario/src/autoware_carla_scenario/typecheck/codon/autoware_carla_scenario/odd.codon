@@ -10,7 +10,8 @@ import typesafe_carla.carla as carla
 import lanelet2.core
 import lanelet2.routing
 
-from ._tc import _keyword_only, _expect_float, _expect_int_sequence, _expect_optional_float
+from ._tc import (_keyword_only, _expect_float, _expect_int_sequence, _expect_optional_float,
+                  _acs_sequence)
 from .coverage import _expect_cover_expression, _expect_optional_range, _expect_optional_edges
 
 
@@ -37,10 +38,8 @@ def _expect_optional_conditions(conditions):
         pass
     elif isinstance(conditions, Optional[NoneType]):
         pass
-    elif isinstance(conditions, List[NoneType]):
-        pass
     else:
-        for condition in conditions:
+        for condition in _acs_sequence(conditions, OddCondition):
             c: OddCondition = condition
 
 
@@ -50,10 +49,8 @@ def _expect_optional_labels(labels):
         pass
     elif isinstance(labels, Optional[NoneType]):
         pass
-    elif isinstance(labels, List[NoneType]):
-        pass
     else:
-        for label in labels:
+        for label in _acs_sequence(labels, str):
             s: str = label
 
 
@@ -114,8 +111,9 @@ class OddAttribute:
 
 
 def _expect_conditions(conditions):
-    """A Sequence[OddCondition] argument (a list or a tuple)."""
-    for condition in conditions:
+    """A Sequence[OddCondition] argument (a list or a tuple, an empty one too,
+    #264)."""
+    for condition in _acs_sequence(conditions, OddCondition):
         c: OddCondition = condition
 
 
@@ -168,10 +166,8 @@ def _expect_optional_modules(modules):
         pass
     elif isinstance(modules, Optional[NoneType]):
         pass
-    elif isinstance(modules, List[NoneType]):
-        pass
     else:
-        for module in modules:
+        for module in _acs_sequence(modules, OddModule):
             m: OddModule = module
 
 
@@ -187,15 +183,14 @@ class OddDefinition:
     def __init__(self, name: str, attributes, modules = None, *_kw,
                  roots = None, text: str = ""):
         _keyword_only(_kw, "OddDefinition(): roots and text")
-        for attribute in attributes:
+        for attribute in _acs_sequence(attributes, OddAttribute):
             a: OddAttribute = attribute
         _expect_optional_modules(modules)
         _expect_optional_labels(roots)
         self.name = name
         self.modules = List[OddModule]()
-        if not (isinstance(modules, None) or isinstance(modules, Optional[NoneType])
-                or isinstance(modules, List[NoneType])):
-            for module in modules:
+        if not (isinstance(modules, None) or isinstance(modules, Optional[NoneType])):
+            for module in _acs_sequence(modules, OddModule):
                 self.modules.append(module)
         self.text = text
 
@@ -268,7 +263,26 @@ class RouteCoverage:
     def outside_m(self) -> float:
         raise NotImplementedError()
 
+    @property
+    def inside_m(self) -> float:
+        raise NotImplementedError()
+
+    @property
+    def undecided_m(self) -> float:
+        raise NotImplementedError()
+
+    @property
+    def leaves_odd(self) -> bool:
+        raise NotImplementedError()
+
+    @property
+    def lanelet_ids(self) -> List[int]:
+        raise NotImplementedError()
+
     def outside(self) -> List[RouteLanelet]:
+        raise NotImplementedError()
+
+    def undecided(self) -> List[RouteLanelet]:
         raise NotImplementedError()
 
 

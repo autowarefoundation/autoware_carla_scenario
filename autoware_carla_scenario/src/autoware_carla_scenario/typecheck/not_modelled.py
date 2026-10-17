@@ -8,11 +8,18 @@ reason, by module: :func:`.check.typecheck_scenario` refuses an import of one
 with that reason before compiling, and ``test_typecheck_model.py`` fails when
 a public name is neither declared by the model nor listed here, or when a
 name listed here is declared by the model or no longer public in Python.
+
+The same holds for the public methods, properties and class attributes of
+the classes the model declares (#265): :data:`NOT_MODELLED_MEMBERS` lists,
+with the reason, each one the model's class leaves out, and the check adds
+that reason to Codon's "object has no attribute" error.
 """
 
 from __future__ import annotations
 
-__all__ = ["NOT_MODELLED"]
+from typing import Optional
+
+__all__ = ["NOT_MODELLED", "NOT_MODELLED_MEMBERS", "not_modelled_member"]
 
 _PACKAGE = "autoware_carla_scenario"
 
@@ -267,3 +274,144 @@ NOT_MODELLED: dict[str, dict[str, str]] = {
         "ConditionNode ScenarioResultView SessionItem SessionSummary", _UI
     ),
 }
+
+
+# ---------------------------------------------------------------------------
+# Members of the classes the model declares (#265)
+# ---------------------------------------------------------------------------
+
+_AS_DICT = (
+    "returns a `dict[str, Any]` (what the runner writes to a result or a log "
+    "as JSON), which Codon has no type for; a scenario reads the typed "
+    "fields and properties instead"
+)
+_FROM_MAPPING = (
+    "builds one from a `Mapping[str, Any]` (a document's YAML or a run's "
+    "config), which Codon has no type for; the runner does, not a scenario"
+)
+_CONDITION_DETAILS = (
+    "a condition's details for the runner's report, a `dict[str, Any]`, which "
+    "Codon has no type for; a scenario reads a condition through check() and "
+    "the properties of each condition"
+)
+_SET_TRAFFIC_BACKEND = (
+    "takes or returns the run's TrafficBackend, which is not modelled (see "
+    "autoware_carla_scenario.TrafficBackend): the runner injects the backend "
+    "the run selected; a scenario drives traffic through its actions and its "
+    "entities' manoeuvres (set_desired_speed(), change_lane(), ...), which are "
+    "modelled"
+)
+_ROUTE_SEGMENTS = (
+    "returns a RouteSegmentMatch, a frozen dataclass of variadic tuples, "
+    "which Codon has no type for (see autoware_carla_scenario.route); a "
+    "scenario reads a junction's lanelets with "
+    "scenario_route_frame().junction_way()"
+)
+_BY_NAME = (
+    "the model declares the class by name only, so the checked package's "
+    "re-export resolves, and a scenario cannot build one (its constructor is "
+    "a compile error): the runner builds it from the run's config; the "
+    "library check compiles it from its source"
+)
+_ROS2_TRANSPORT = (
+    "the ROS 2 transport the checked ros2_entity drives (cyclonedds), which "
+    "the library check compiles from its source; a scenario has no ROS 2 "
+    "transport to build"
+)
+_MAP_CACHE = (
+    "the map cache's own (the checked maps.resolver's), which the library "
+    "check compiles from its source; a scenario's maps are the run's, loaded "
+    "before setup()"
+)
+_RUN_ENVIRONMENT = (
+    "the runner's record of the run's environment (json, `dict[str, Any]`); "
+    "environment.codon models what the runner's _record_run reads"
+)
+
+
+def _members(names: str, reason: str) -> dict[str, str]:
+    return {name: reason for name in names.split()}
+
+
+#: Python class name -> public member -> why the model's class does not
+#: declare it.  A member of a class is listed under that class or any class
+#: of the package it derives from in Python (`BaseCondition` lists
+#: `get_details` for every condition), so a key need not be a modelled class
+#: itself (`BackendDriven`).
+NOT_MODELLED_MEMBERS: dict[str, dict[str, str]] = {
+    "BackendDriven": {"set_traffic_backend": _SET_TRAFFIC_BACKEND},
+    "BaseCondition": _members("get_details to_summary_dict", _CONDITION_DETAILS),
+    "BaseScenario": _members(
+        "set_traffic_backend traffic_backend", _SET_TRAFFIC_BACKEND
+    ),
+    "CarlaDriverEntity": _members(
+        "actor attaches_to_existing_actor carried_actor_ids change_lane client "
+        "config debug_markers debug_state destroy drive_count forget_lane_change "
+        "handshake is_initialized lane_change_finished on_scenario_end "
+        "on_scenario_start on_tick release_from_traffic requires_goal route_to "
+        "set_client set_desired_speed set_initial_speeds set_traffic_backend "
+        "spawn stack_name termination_reason termination_requested "
+        "turn_at_junction turn_indicator use_autopilot",
+        _BY_NAME,
+    ),
+    "ConditionStatus": {"to_dict": _AS_DICT},
+    "CoverageCollector": {"to_dict": _AS_DICT},
+    "CycloneRos2Transport": _members(
+        "close open poll poll_turn_indicators publish_image publish_state",
+        _ROS2_TRANSPORT,
+    ),
+    "EgoDriverGrpcClient": _members(
+        "camera_sensor_configs close_session config drive session_uuid "
+        "start_session submit_egomotion_observation submit_image_observation "
+        "submit_recording_ground_truth submit_route",
+        _BY_NAME,
+    ),
+    "GitMapCache": _members("entry_dir remember_tip tip_file", _MAP_CACHE),
+    "GrpcAutowareBridgeServer": _members(
+        "client_address client_connected close config configure is_ready port "
+        "start take_turn_indicators",
+        _BY_NAME,
+    ),
+    "MapSource": _members(
+        "at directory name parse pinned repo_name uri with_path", _MAP_CACHE
+    ),
+    "Ros2EgoConfig": {"from_mapping": _FROM_MAPPING},
+    "Ros2EgoTransport": _members(
+        "close open poll poll_turn_indicators publish_image publish_state",
+        _ROS2_TRANSPORT,
+    ),
+    "RouteCoverage": {"describe": _AS_DICT},
+    "RouteLanelet": {"describe": _AS_DICT},
+    "RouteMatch": {
+        "from_config": _FROM_MAPPING,
+        "junction": _ROUTE_SEGMENTS,
+        "junctions": _ROUTE_SEGMENTS,
+        "to_config": _AS_DICT,
+    },
+    "RunEnvironment": _members(
+        "lock pins scenario_package summary to_dict", _RUN_ENVIRONMENT
+    ),
+    "RunProgress": {
+        "model_config": (
+            "pydantic's configuration of the model (a `dict`), no field of it; "
+            "ui/models.codon models the fields"
+        )
+    },
+    "ScalarComparisonRule": {"to_dict": _AS_DICT},
+    "ScenarioResult": {"to_dict": _AS_DICT},
+    "TrafficSinkAction": {"set_traffic_backend": _SET_TRAFFIC_BACKEND},
+    "TrafficSourceAction": {"set_traffic_backend": _SET_TRAFFIC_BACKEND},
+}
+
+
+def not_modelled_member(cls: type, member: str) -> Optional[tuple[str, str]]:
+    """``(owner, reason)`` when *member* of Python class *cls* is listed in
+    :data:`NOT_MODELLED_MEMBERS`, under *cls* or a class of the package it
+    derives from (*owner*); ``None`` otherwise."""
+    for klass in getattr(cls, "__mro__", ()):
+        if not getattr(klass, "__module__", "").startswith(_PACKAGE):
+            continue
+        reason = NOT_MODELLED_MEMBERS.get(klass.__name__, {}).get(member)
+        if reason is not None:
+            return klass.__name__, reason
+    return None
