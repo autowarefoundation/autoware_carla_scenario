@@ -1,5 +1,5 @@
 version = 1
-revision = 5
+revision = 3
 requires-python = ">=3.10, <3.15"
 resolution-markers = [
     "python_full_version >= '3.13' and sys_platform == 'emscripten'",
@@ -241,7 +241,7 @@ requires-dist = [
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "roadgen", marker = "extra == 'map'", specifier = ">=0.18.0" },
     { name = "roadgen", marker = "extra == 'sumo'", specifier = ">=0.16.0" },
-    { name = "simple-lanelet2", specifier = ">=1.1.2" },
+    { name = "simple-lanelet2", specifier = ">=1.2.3" },
     { name = "sumolib", marker = "extra == 'sumo'", specifier = ">=1.23" },
     { name = "tomli", marker = "python_full_version < '3.11'", specifier = ">=1.1.0" },
     { name = "tqdm", specifier = ">=4.67.1" },
@@ -4071,12 +4071,13 @@ wheels = [
 
 [[package]]
 name = "simple-lanelet2"
-version = "1.1.2"
+version = "1.2.3"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/44/ac/d8a43a57c14bc04f351d57db22bc0edeaea2102db40c6e3ecf0d13afa36c/simple_lanelet2-1.1.2.tar.gz", hash = "sha256:cdf42fd3da3ac2ca891e437288d7c1ecf18614e50e998c69298250e80ffdc27c", size = 226595, upload-time = "2026-08-10T01:44:08.844Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/f2/2b/695c3abed7fba8fc7f9774accefe4b173ad1536136ce899640564286dc68/simple_lanelet2-1.2.3.tar.gz", hash = "sha256:aff48641f53be90f84ddc92bc9858d805accd8ae4be5701ecaa2feb4d70a9846", size = 316782, upload-time = "2026-10-17T02:56:55.145Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/d1/b3/6226b91b4d206e8f8ace94421c9640972d7c6d77ad3f464f86e3af710ee8/simple_lanelet2-1.1.2-cp39-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:886736864309e540f969d2e65cf3cd7e8148bbd8f7cbeeb548390d0695e8ca69", size = 924723, upload-time = "2026-08-10T01:44:05.655Z" },
-    { url = "https://files.pythonhosted.org/packages/9f/26/8f191731c655e7c6d148f78a41472e801483305ab933d60504da5e7f28a4/simple_lanelet2-1.1.2-cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:413028cde3193861f163b1375ea639368678f5e226f4c689810b99259412a796", size = 953260, upload-time = "2026-08-10T01:44:07.398Z" },
+    { url = "https://files.pythonhosted.org/packages/a4/91/ff4a125ecedd589dc14e981557574441e23a4112c7d7b2f82633a6967fbb/simple_lanelet2-1.2.3-cp39-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:258bc0ff051cc183b67c231c2e5a845d5eb0581b2d82f50d0fd4f138f47d2d8b", size = 962429, upload-time = "2026-10-17T02:56:50.378Z" },
+    { url = "https://files.pythonhosted.org/packages/54/ea/84c06943faecbe9cd5c4b42863ac3e9c6cd47925dfcf2c1c43dca92adcd8/simple_lanelet2-1.2.3-cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:a5b19fbd34d413d850f2d2b6a17cd6e30e75a8dd8a7e837cbf40bebe59d156dc", size = 991664, upload-time = "2026-10-17T02:56:52.016Z" },
+    { url = "https://files.pythonhosted.org/packages/30/d4/88ecfd3c989fabe65276bd720c721c9c8c658d1775ac9d8282921deb796e/simple_lanelet2-1.2.3-cp39-abi3-win_amd64.whl", hash = "sha256:c923fd020023356eb9a4778115fb485030a6d481199ab1a603719494e461de55", size = 979873, upload-time = "2026-10-17T02:56:53.75Z" },
 ]
 
 [[package]]

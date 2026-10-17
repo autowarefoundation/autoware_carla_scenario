@@ -222,7 +222,7 @@ If pre-commit hooks fail:
 
 ## Dependencies
 
-- **simple-lanelet2** (>=1.1.2) - Provides `lanelet2` and
+- **simple-lanelet2** (>=1.2.3) - Provides `lanelet2` and
   `autoware_lanelet2_extension_python` as a single prebuilt wheel
 - **typesafe-carla** (>=0.8.1) - The CARLA client (CARLA UE5 only; Linux
   x86_64 and aarch64), imported as `import typesafe_carla.carla as carla`. Its PyPI wheel

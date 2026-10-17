@@ -46,7 +46,7 @@ dependencies = [
     "python-dotenv>=1.2.2",
     # `lanelet2` and `autoware_lanelet2_extension_python` are provided by
     # simple-lanelet2.
-    "simple-lanelet2>=1.1.2",
+    "simple-lanelet2>=1.2.3",
     "tqdm>=4.67.1",
     "hydra-core>=1.3.2",
     "omegaconf>=2.3.0",
