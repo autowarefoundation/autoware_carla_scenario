@@ -6,9 +6,11 @@
 
 import typesafe_carla.carla as carla
 
-from ._reader import _expect_reader
+# Measure from beside the reader check, not from measures, which imports this
+# module (_reader.codon).
+from ._reader import Measure, _expect_reader
 from ._tc import (_keyword_only, _expect_float, _expect_int_sequence, _expect_optional_float,
-                  _acs_expect_return)
+                  _acs_expect_return, _acs_sequence)
 from .actions import BaseAction, _expect_action
 from .conditions import BaseCondition, _expect_condition
 from .constants import DEFAULT_TM_PORT
@@ -165,6 +167,10 @@ class BaseScenario:
     def measure(self, key: str, world: carla.World) -> Optional[float]:
         raise NotImplementedError()
 
+    @property
+    def measures(self) -> Dict[str, Measure]:
+        raise NotImplementedError()
+
     def register_cover(self, name: str, expression, *_kw, unit: str = "", range = None,
                        every = None, buckets = None, values = None, ignore = None,
                        event = SamplingEvent("end"), text: str = "", target = 1.0,
@@ -185,7 +191,7 @@ class BaseScenario:
         _keyword_only(_kw, "BaseScenario.register_cross(): text, target, cover_by and min_stay")
         _expect_float(target)
         _expect_optional_float(min_stay)
-        for item in items:
+        for item in _acs_sequence(items, str):
             n: str = item
         raise NotImplementedError()
 
@@ -261,6 +267,8 @@ class BaseScenario:
             _acs_expect_return(r, NoneType, "BaseScenario.register_measure() returns None")
         elif name == "measure":
             _acs_expect_return(r, Optional[float], "BaseScenario.measure() returns Optional[float]")
+        elif name == "measures":
+            _acs_expect_return(r, Dict[str, Measure], "BaseScenario.measures returns Dict[str, Measure]")
         elif name == "register_cover":
             _acs_expect_return(r, NoneType, "BaseScenario.register_cover() returns None")
         elif name == "register_cross":

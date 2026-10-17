@@ -8,7 +8,7 @@ import typesafe_carla.carla as carla
 
 from .action_state import ActionState
 from ._tc import (_keyword_only, _expect_float, _expect_optional_str, _Required,
-                  _required_str, _acs_expect_return)
+                  _required_str, _acs_expect_return, _acs_sequence)
 from .coordinate import (Lanelet2Pose, OpenDrivePose, CarlaWorldPose, _expect_pose,
                          _expect_optional_pose, _expect_pose_list)
 from .entity_role import EntityRole, _expect_role, _expect_optional_role, find_actor_in_list
@@ -188,9 +188,10 @@ def _expect_condition(condition: BaseCondition) -> BaseCondition:
 
 
 def _expect_conditions(conditions) -> List[BaseCondition]:
-    """A Sequence[BaseCondition] argument: a list or tuple of any conditions."""
+    """A Sequence[BaseCondition] argument: a list or tuple of any conditions,
+    or an empty one (#264)."""
     out = List[BaseCondition]()
-    for condition in conditions:
+    for condition in _acs_sequence(conditions, BaseCondition):
         out.append(_expect_condition(condition))
     return out
 
@@ -352,6 +353,9 @@ class MetricCondition(BaseCondition):
 
 
 class TrajectoryTimeCondition(BaseCondition):
+    # What tells the runner a condition reads the trajectory's clock.
+    IS_TRAJECTORY_TIME: ClassVar[bool] = True
+
     def __init__(self, label):
         compile_error("TrajectoryTimeCondition(): no constructor takes these arguments "
                       "(required: time)")

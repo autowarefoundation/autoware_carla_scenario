@@ -16,7 +16,7 @@ import lanelet2.io
 import lanelet2.projection
 import lanelet2.routing
 
-from ._tc import _keyword_only
+from ._tc import _keyword_only, _acs_sequence
 from ._poses import (CarlaWorldPose, CoordinateFrame, FrameMismatchError, Lanelet2Pose,
                      OpenDrivePose)
 from ._ground_projection import GroundProjectionConfig
@@ -50,9 +50,9 @@ def _expect_pose(pose):
 
 
 def _expect_pose_list(poses) -> int:
-    """A Sequence[AnyPose] argument: a list or a tuple of poses."""
+    """A Sequence[AnyPose] argument: a list or a tuple of poses, or an empty one."""
     n = 0
-    for pose in poses:
+    for pose in _acs_sequence(poses, Lanelet2Pose):
         _expect_pose(pose)
         n += 1
     return n
@@ -76,6 +76,15 @@ def _expect_pose_or_location(pose):
         pass
     else:
         _expect_pose(pose)
+
+
+def _expect_lanelet2_poses(poses) -> List[Lanelet2Pose]:
+    """A Sequence[Lanelet2Pose] argument: a list or a tuple of Lanelet2 poses,
+    or an empty one (RoutingAction's default `()`, #264)."""
+    out = List[Lanelet2Pose]()
+    for pose in _acs_sequence(poses, Lanelet2Pose):
+        out.append(pose)
+    return out
 
 
 def _expect_optional_ground_projection(gp) -> Optional[GroundProjectionConfig]:
@@ -341,6 +350,11 @@ class MapManager:
 
     @property
     def mgrs_offset(self) -> Tuple[float, float]:
+        raise NotImplementedError()
+
+    # The (lat, lon, alt) origin of the OpenDRIVE map's geoReference.
+    @property
+    def geo_origin(self) -> Tuple[float, float, float]:
         raise NotImplementedError()
 
     @property

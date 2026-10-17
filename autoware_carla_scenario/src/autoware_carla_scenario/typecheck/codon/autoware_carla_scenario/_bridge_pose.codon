@@ -30,3 +30,13 @@ class BridgePose:
 
     def moved_forward(self, distance: float) -> BridgePose:
         raise NotImplementedError()
+
+    # Classmethods in Python: bound, they take the same.
+    @staticmethod
+    def from_rpy(x: float, y: float, z: float, roll: float, pitch: float,
+                 yaw: float) -> BridgePose:
+        raise NotImplementedError()
+
+    @staticmethod
+    def from_yaw(x: float, y: float, z: float, yaw: float) -> BridgePose:
+        raise NotImplementedError()

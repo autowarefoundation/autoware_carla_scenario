@@ -7,30 +7,29 @@
 import typesafe_carla.carla as carla
 
 from ._tc import _keyword_only, _acs_expect_return
-from .constants import EGO_ROLE_NAME
+from .constants import DEFAULT_TM_PORT, EGO_ROLE_NAME
 from .debug_markers import DebugMarkers
 from .coordinate import (Lanelet2Pose, OpenDrivePose, CarlaWorldPose, GroundProjectionConfig,
-                         _expect_optional_ground_projection)
+                         _expect_lanelet2_poses, _expect_optional_ground_projection)
+from .traffic import LaneChangeDirection, TurnDirection
 from ._vehicle_entity import (SpawnLocation, SpawnPointIndex, SpawnTransform, VehicleEntity,
                               VehicleEntityConfig)
 from .entity_role import _expect_role_name
 
 
 def _expect_optional_lanelet2_poses(poses) -> List[Lanelet2Pose]:
-    """An Optional[Sequence[Lanelet2Pose]] argument."""
-    out = List[Lanelet2Pose]()
+    """An Optional[Sequence[Lanelet2Pose]] argument: None, or a sequence of
+    Lanelet2 poses, an empty one too (`waypoint_poses = []`, #264)."""
     if isinstance(poses, None):
-        pass
+        return List[Lanelet2Pose]()
     elif isinstance(poses, Optional[NoneType]):
-        pass
+        return List[Lanelet2Pose]()
     elif isinstance(poses, Optional):
         if poses is not None:
-            for pose in unwrap(poses):
-                out.append(pose)
+            return _expect_lanelet2_poses(unwrap(poses))
+        return List[Lanelet2Pose]()
     else:
-        for pose in poses:
-            out.append(pose)
-    return out
+        return _expect_lanelet2_poses(poses)
 
 
 class EgoConfig(VehicleEntityConfig):
@@ -126,6 +125,20 @@ class EgoVehicle:
             _acs_expect_return(r, Optional[str], "EgoVehicle.termination_reason returns Optional[str]")
         elif name == "route_to":
             _acs_expect_return(r, NoneType, "EgoVehicle.route_to() returns None")
+        elif name == "set_client":
+            _acs_expect_return(r, NoneType, "EgoVehicle.set_client() returns None")
+        elif name == "change_lane":
+            _acs_expect_return(r, NoneType, "EgoVehicle.change_lane() returns None")
+        elif name == "lane_change_finished":
+            _acs_expect_return(r, bool, "EgoVehicle.lane_change_finished() returns bool")
+        elif name == "set_desired_speed":
+            _acs_expect_return(r, NoneType, "EgoVehicle.set_desired_speed() returns None")
+        elif name == "turn_at_junction":
+            _acs_expect_return(r, NoneType, "EgoVehicle.turn_at_junction() returns None")
+        elif name == "release_from_traffic":
+            _acs_expect_return(r, NoneType, "EgoVehicle.release_from_traffic() returns None")
+        elif name == "forget_lane_change":
+            _acs_expect_return(r, NoneType, "EgoVehicle.forget_lane_change() returns None")
         elif name == "spawn":
             _acs_expect_return(r, carla.Actor, "EgoVehicle.spawn() returns carla.Actor")
         elif name == "on_scenario_start":
@@ -166,6 +179,34 @@ class EgoVehicle:
                  initial_pose: Optional[CarlaWorldPose] = None, ground_projection = None,
                  waypoints = ()) -> None:
         _keyword_only(_kw, "EgoVehicle.route_to(): initial_pose, ground_projection and waypoints")
+        # Sequence[Lanelet2Pose] and Optional[GroundProjectionConfig], as
+        # RoutingAction checks them (#264).
+        _expect_optional_ground_projection(ground_projection)
+        _expect_lanelet2_poses(waypoints)
+        raise NotImplementedError()
+
+    # The manoeuvres of traffic.driven.BackendDriven, which EgoVehicle mixes
+    # in: each is handed to the traffic backend that drives the ego (#265).
+    # set_traffic_backend() is the runner's (typecheck/not_modelled.py).
+    def set_client(self, client: carla.Client, tm_port: int = DEFAULT_TM_PORT) -> None:
+        raise NotImplementedError()
+
+    def change_lane(self, world: carla.World, direction: LaneChangeDirection) -> None:
+        raise NotImplementedError()
+
+    def lane_change_finished(self, world: carla.World) -> bool:
+        raise NotImplementedError()
+
+    def set_desired_speed(self, world: carla.World, speed_kmh: float) -> None:
+        raise NotImplementedError()
+
+    def turn_at_junction(self, world: carla.World, direction: TurnDirection, **kwargs) -> None:
+        raise NotImplementedError()
+
+    def release_from_traffic(self, world: carla.World) -> None:
+        raise NotImplementedError()
+
+    def forget_lane_change(self) -> None:
         raise NotImplementedError()
 
     def spawn(self, world: carla.World, config: EgoConfig) -> carla.Actor:

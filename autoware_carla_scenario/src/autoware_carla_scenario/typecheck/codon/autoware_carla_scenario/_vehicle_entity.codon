@@ -9,7 +9,9 @@
 
 import typesafe_carla.carla as carla
 
+from .constants import DEFAULT_TM_PORT
 from .coordinate import OpenDrivePose, GroundProjectionConfig, _expect_optional_ground_projection
+from .traffic import LaneChangeDirection, TurnDirection
 from .entity_role import _expect_role_name
 
 
@@ -89,4 +91,28 @@ class VehicleEntity:
         raise NotImplementedError()
 
     def destroy(self) -> None:
+        raise NotImplementedError()
+
+    # The manoeuvres of traffic.driven.BackendDriven, which VehicleEntity
+    # mixes in: each is handed to the traffic backend that drives the vehicle
+    # (#265). set_traffic_backend() is the runner's (typecheck/not_modelled.py).
+    def set_client(self, client: carla.Client, tm_port: int = DEFAULT_TM_PORT) -> None:
+        raise NotImplementedError()
+
+    def change_lane(self, world: carla.World, direction: LaneChangeDirection) -> None:
+        raise NotImplementedError()
+
+    def lane_change_finished(self, world: carla.World) -> bool:
+        raise NotImplementedError()
+
+    def set_desired_speed(self, world: carla.World, speed_kmh: float) -> None:
+        raise NotImplementedError()
+
+    def turn_at_junction(self, world: carla.World, direction: TurnDirection, **kwargs) -> None:
+        raise NotImplementedError()
+
+    def release_from_traffic(self, world: carla.World) -> None:
+        raise NotImplementedError()
+
+    def forget_lane_change(self) -> None:
         raise NotImplementedError()

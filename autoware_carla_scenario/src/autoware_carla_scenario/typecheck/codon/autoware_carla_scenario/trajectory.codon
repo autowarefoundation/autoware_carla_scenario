@@ -6,7 +6,7 @@
 # which is all the model needs -- it is compiled, never run.
 
 from ._tc import (_expect_float, _expect_int, _expect_optional_float,
-                  _expect_optional_str, _expect_str)
+                  _expect_optional_str, _expect_str, _acs_sequence)
 from .conditions import BaseCondition, _expect_condition, _expect_optional_condition
 from .coordinate import CarlaWorldPose, Lanelet2Pose, OpenDrivePose
 from .entity_role import EntityRole, _expect_optional_role_name
@@ -179,7 +179,7 @@ class Trajectory:
 
     def __init__(self, name: str, vertices, closed: bool = False):
         self.vertices = List[TrajectoryVertex]()
-        for vertex in vertices:
+        for vertex in _acs_sequence(vertices, TrajectoryVertex):
             self.vertices.append(_expect_vertex(vertex))
         self.name = name
         self.closed = closed

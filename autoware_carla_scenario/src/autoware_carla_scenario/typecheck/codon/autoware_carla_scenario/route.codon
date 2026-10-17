@@ -4,6 +4,8 @@
 # the checked modules that import the package read of it, the scenario's
 # route and its frame.
 
+import lanelet2.core
+
 
 class RouteMatch:
     # Generic: Python's fields are variadic tuples (tuple[int, ...],
@@ -24,6 +26,10 @@ class RouteMatch:
     def anchor_s(self, anchor: Optional[str]) -> float:
         raise NotImplementedError()
 
+    @property
+    def length(self) -> float:
+        raise NotImplementedError()
+
 
 class RouteFrame:
     # Generic: the scenario check builds none (the checked route.active
@@ -40,6 +46,24 @@ class RouteFrame:
         raise NotImplementedError()
 
     def height(self, s: float) -> float:
+        raise NotImplementedError()
+
+    @property
+    def length(self) -> float:
+        raise NotImplementedError()
+
+    def locate(self, s: float) -> Tuple[int, float]:
+        raise NotImplementedError()
+
+    def point(self, s: float) -> Tuple[float, float, float]:
+        raise NotImplementedError()
+
+    def lanelet_at(self, s: float) -> lanelet2.core.Lanelet:
+        raise NotImplementedError()
+
+    def junction_way(self, index: int) -> Tuple[List[lanelet2.core.ConstLanelet],
+                                                Optional[lanelet2.core.ConstLanelet],
+                                                Optional[lanelet2.core.ConstLanelet]]:
         raise NotImplementedError()
 
 
