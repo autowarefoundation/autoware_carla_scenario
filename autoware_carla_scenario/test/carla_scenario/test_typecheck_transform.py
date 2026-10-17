@@ -258,6 +258,96 @@ def test_a_list_of_calls_or_names_becomes_an_acs_list() -> None:
     assert "x = _acs_list(f(), g())" in transform_source("x = [f(), g()]\n")
 
 
+def test_a_dict_display_of_mixed_values_becomes_an_acs_dict() -> None:
+    # Codon types a dict display by its first item (#250).
+    out = _transform(
+        """
+        a = ActionStateCondition("lc", s, {"turn": turn, "lc": lc}, label="x")
+        b = {"t": TimeoutCondition(1.0, label="t"), "s": SpeedCondition(x, label="s")}
+        c = {"a": {"b": p, "c": q}, "d": [r, s]}
+        """
+    )
+    assert (
+        'a = ActionStateCondition("lc", s, _acs_dict(("turn", turn), ("lc", lc)), label="x")'
+        in out
+    )
+    assert (
+        'b = _acs_dict(("t", TimeoutCondition(1.0, label="t")), '
+        '("s", SpeedCondition(x, label="s")))' in out
+    )
+    assert (
+        'c = _acs_dict(("a", _acs_dict(("b", p), ("c", q))), ("d", _acs_list(r, s)))'
+        in out
+    )
+
+
+def test_an_evidently_homogeneous_dict_display_is_left_as_written() -> None:
+    # Codon types these as Python does; the library's compile stays as it was.
+    source = textwrap.dedent(
+        """
+        a = {"a": 1, "b": 2}
+        b = {"a": Foo(1), "b": Foo(2)}
+        c = {"a": f"{p}", "b": f"{q}"}
+        d = {"l": Direction.LEFT, "r": Direction.RIGHT}
+        e = {**base, "b": c}
+        f = {"a": p}
+        g = {}
+        h = {k: v for k, v in items}
+        i: dict[str, int] = {"a": 1, "b": 2}
+        """
+    )
+    out = transform_source(source)
+    assert out == PRELUDE + source
+    # Attributes of an instance are not members of one class.
+    assert "_acs_dict(" in transform_source('x = {"a": self.a, "b": self.b}\n')
+
+
+def test_an_annotated_dict_display_is_built_as_the_annotated_type() -> None:
+    out = _transform(
+        """
+        def setup(self) -> None:
+            actions: dict[str, BaseAction] = {"turn": turn, "lc": lc}
+            one: Dict[str, BaseAction] = {"turn": turn}
+            loose: dict[str, Any] = {"turn": turn, "lc": lc}
+            nested: dict[str, list[int]] = {"a": p, "b": q}
+        """
+    )
+    assert (
+        "actions: dict[str, BaseAction] = "
+        '_acs_dict_into(Dict[str, BaseAction](), ("turn", turn), ("lc", lc))' in out
+    )
+    assert (
+        'one: Dict[str, BaseAction] = _acs_dict_into(Dict[str, BaseAction](), ("turn", turn))'
+        in out
+    )
+    # A type Codon cannot name: the display's own rewrite.
+    assert 'loose = _acs_dict(("turn", turn), ("lc", lc))' in out
+    assert '_acs_dict(("a", p), ("b", q))' in out
+
+
+def test_a_dict_display_keeps_its_lines_and_comments() -> None:
+    source = textwrap.dedent(
+        """
+        x = {
+            # first: the turn
+            ("turn"): turn,  # a: comment
+            "lc"
+            :
+            (lc),
+        }
+        y = 1
+        """
+    )
+    out = transform_source(source)[len(PRELUDE) :]
+    assert out.count("\n") == source.count("\n")
+    assert out.splitlines()[-1] == "y = 1"
+    assert "# first: the turn" in out
+    assert "# a: comment" in out
+    tree = ast.parse(out)
+    call = tree.body[0].value  # type: ignore[attr-defined]
+    assert ast.unparse(call) == "_acs_dict(('turn', turn), ('lc', lc))"
+
+
 def test_a_frozenset_is_checked_as_a_set() -> None:
     # Codon 0.19 has no frozenset; the check only types it, so a set will do.
     out = _transform(

@@ -2515,8 +2515,8 @@ from autoware_carla_scenario.scenario_base import SpectatorCameraConfig
 from autoware_carla_scenario.trajectory_recorder import EGO_ROLES, RECORDED_KINDS
 turn = TurnAction(EGO_ROLE_NAME, TurnDirection.LEFT, timing=TickTiming.PRE_TICK)
 self.register_pre_tick(turn)
-# Actions of different classes, item by item: Codon types a dict display by
-# its first item (docs/typecheck.md).
+# Actions of different classes, item by item: still valid now that a display
+# of them compiles too (test_a_dict_display_of_different_classes_compiles).
 lane_change = LaneChangeAction(EGO_ROLE_NAME, LaneChangeDirection.LEFT)
 actions: dict[str, BaseAction] = {}
 actions["turn"] = turn
@@ -2625,6 +2625,88 @@ def test_a_misused_new_public_name_is_refused_at_its_line(
     assert message in error.message, error.format()
     assert error.path == str(path)
     assert error.line == _line_of(path, needle)
+
+
+# ---------------------------------------------------------------------------
+# Dict displays whose values mix classes (#250)
+# ---------------------------------------------------------------------------
+
+_MIXED_DICT_IMPORTS = """
+from autoware_carla_scenario import BaseAction, LaneChangeAction
+from autoware_carla_scenario.action_state import ActionState
+from autoware_carla_scenario.conditions import ActionStateCondition
+turn = TurnAction(EGO_ROLE_NAME, TurnDirection.LEFT)
+lc = LaneChangeAction(EGO_ROLE_NAME, LaneChangeDirection.LEFT)
+"""
+
+
+@pytest.mark.parametrize(
+    "setup",
+    [
+        """
+        self.register_pass_condition(
+            ActionStateCondition(
+                "lc", ActionState.COMPLETE, {"turn": turn, "lc": lc}, label="changed"
+            )
+        )
+        """,
+        """
+        actions: dict[str, BaseAction] = {"turn": turn, "lc": lc}
+        self.register_fail_condition(
+            ActionStateCondition("turn", ActionState.COMPLETE, actions, label="turned")
+        )
+        """,
+        """
+        conditions = {
+            "timeout": TimeoutCondition(10.0, label="t"),
+            "slow": SpeedCondition(
+                EGO_ROLE_NAME, 1.0, ComparisonRule.LESS_THAN, label="slow"
+            ),
+        }
+        for condition in conditions.values():
+            self.register_fail_condition(condition)
+        """,
+    ],
+    ids=["argument", "annotated", "conditions"],
+)
+def test_a_dict_display_of_different_classes_compiles(
+    tmp_path: Path, setup: str
+) -> None:
+    # Codon types a dict display by its first item: each of these was refused
+    # (`'LaneChangeAction' does not match expected type 'TurnAction'`) until
+    # the check rewrote the display (_acs_dict, _acs_dict_into).
+    setup = _MIXED_DICT_IMPORTS + textwrap.dedent(setup)
+    scenario, config, _ = _write_case(tmp_path, setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+@pytest.mark.parametrize(
+    ("setup", "needle"),
+    [
+        (
+            'ActionStateCondition("turn", ActionState.COMPLETE, {"turn": turn, "n": 1})\n',
+            "ActionStateCondition(",
+        ),
+        (
+            'actions: dict[str, BaseAction] = {"turn": turn, "n": 1}\n',
+            "actions: dict",
+        ),
+    ],
+    ids=["argument", "annotated"],
+)
+def test_a_dict_display_mixing_an_action_and_a_non_action_is_refused(
+    tmp_path: Path, setup: str, needle: str
+) -> None:
+    # The rewritten display is still a dict of actions: a value that is no
+    # action is refused at the display's line, as Python's signature would.
+    scenario, config, path = _write_case(tmp_path, _MIXED_DICT_IMPORTS + setup)
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert (
+        "'int' does not match expected type 'BaseAction'" in error.message
+    ), error.format()
+    assert error.path == str(path), error.format()
+    assert error.line == _line_of(path, needle), error.format()
 
 
 @pytest.mark.parametrize(

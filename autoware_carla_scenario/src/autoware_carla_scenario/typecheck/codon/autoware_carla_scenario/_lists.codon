@@ -26,9 +26,38 @@ def _acs_list(*items):
         return out
 
 
-# Last, not first: every module the checker rewrites imports _acs_list, and in
+# _acs_dict: what the checker puts in place of a dict display whose values may
+# mix classes, e.g. `{"turn": turn, "lc": lc}`, as `_acs_dict(("turn", turn),
+# ("lc", lc))`: the dict display counterpart of _acs_list. A display whose
+# first value is a condition (or an action) is a Dict[K, BaseCondition]
+# (Dict[K, BaseAction]), K the type of its first key, and any other display
+# keeps the types of its first item, as Codon's would.
+
+
+def _acs_dict(*items):
+    if hasattr(items[0][1], "_acs_condition"):
+        return _acs_dict_into(Dict[type(items[0][0]), BaseCondition](), *items)
+    elif hasattr(items[0][1], "_acs_action"):
+        return _acs_dict_into(Dict[type(items[0][0]), BaseAction](), *items)
+    else:
+        return _acs_dict_into(Dict[type(items[0][0]), type(items[0][1])](), *items)
+
+
+# _acs_dict_into: an annotated dict display, `x: dict[str, BaseAction] =
+# {...}`, as `_acs_dict_into(Dict[str, BaseAction](), ("a", a), ...)`: each
+# item goes into the dict of the annotated type, which refuses one that is
+# not of it.
+
+
+def _acs_dict_into(out, *items):
+    for item in items:
+        out[item[0]] = item[1]
+    return out
+
+
+# Last, not first: every module the checker rewrites imports _acs_list (and _acs_dict), and in
 # the library check some of them are imported by the model these import
 # (typecheck/library.py, REPLACED_MODELS). Codon resolves an import cycle with
-# the names already defined, so _acs_list has to be defined by then.
+# the names already defined, so these have to be defined by then.
 from .actions import BaseAction
 from .conditions import BaseCondition
