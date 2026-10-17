@@ -1765,6 +1765,30 @@ def test_a_re_exported_public_name_is_declared_as_in_python(
 # ---------------------------------------------------------------------------
 
 
+#: The optional dependencies a compared module may import: where one is not
+#: installed (cyclonedds has no wheel for every Python and arch CI runs), the
+#: module's classes are left out of the member check, as
+#: test_the_cyclone_model_is_the_transport_ros2_entity_builds leaves them out.
+_OPTIONAL_DEPENDENCIES = frozenset({"cyclonedds"})
+
+
+def _optional_import(module: str) -> Any:
+    """*module*, or None when it imports an optional dependency that is not
+    installed. Any other ImportError (a moved name) still fails collection."""
+    try:
+        return importlib.import_module(module)
+    except ModuleNotFoundError as exc:
+        if (exc.name or "").split(".")[0] in _OPTIONAL_DEPENDENCIES:
+            _UNIMPORTABLE.update(n for m, n in _DECLARED_PUBLIC_NAMES if m == module)
+            return None
+        raise
+
+
+#: The compared classes left out because their module's optional dependency
+#: is not installed: their NOT_MODELLED_MEMBERS entries excuse nothing here.
+_UNIMPORTABLE: set[str] = set()
+
+
 def _compared_classes() -> dict[str, tuple[str, type]]:
     """Every class the tests above compare with its model class, by name:
     (model module, the Python class). Enums (compared by their members) and
@@ -1778,8 +1802,9 @@ def _compared_classes() -> dict[str, tuple[str, type]]:
             for name in names
         ),
         *(
-            (name, _model_stem(module), getattr(importlib.import_module(module), name))
+            (name, _model_stem(module), getattr(python_module, name))
             for module, name in _DECLARED_PUBLIC_NAMES
+            if (python_module := _optional_import(module)) is not None
         ),
     ]
     out: dict[str, tuple[str, type]] = {}
@@ -1897,7 +1922,9 @@ def test_a_listed_member_is_still_public_and_unmodelled() -> None:
         for owner, members in NOT_MODELLED_MEMBERS.items()
         for member in members
     }
-    stale = sorted(listed - used)
+    stale = sorted(
+        (owner, member) for owner, member in listed - used if owner not in _UNIMPORTABLE
+    )
     assert not stale, f"in NOT_MODELLED_MEMBERS, but excusing nothing: {stale}"
     assert all(
         reason
