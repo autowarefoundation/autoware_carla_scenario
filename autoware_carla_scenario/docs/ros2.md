@@ -119,7 +119,7 @@ ros2:
 
 | `kind` | Topics | Applied by |
 | --- | --- | --- |
-| `trajectory` | `topic`: `autoware_planning_msgs/Trajectory` | the framework's trajectory follower (pure pursuit + speed PI through the powertrain model), as for an [external driver policy](driver_interface.md) |
+| `trajectory` | `topic`: `autoware_planning_msgs/Trajectory` | the framework's trajectory follower (pure pursuit + Autoware's PID longitudinal controller on the trajectory's own speeds, through the powertrain model), as for an [external driver policy](driver_interface.md) |
 | `control` | `topic`: `autoware_control_msgs/Control` | CARLA's Ackermann controller; Autoware's steering (positive left) is negated into CARLA's (positive right) |
 | `steer_accel` | `steering_topic`, `acceleration_topic`: `std_msgs/Float64` | CARLA's Ackermann controller, as VisionPilot's `carla_control_publisher` hands it: target speed `speed + acceleration * speed_horizon_s` |
 

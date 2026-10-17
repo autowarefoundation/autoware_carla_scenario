@@ -52,7 +52,9 @@ def test_shipped_yaml_builds_control_gains() -> None:
     assert control.max_steer_angle_rad == pytest.approx(math.radians(56.0))
     assert control.steer_exponent == pytest.approx(2.0)
     assert control.yaw_rate_ki == pytest.approx(3.0)
-    assert control.speed_kp == pytest.approx(1.0)
+    assert control.longitudinal_controller == "pid"
+    assert control.delay_compensation_time == pytest.approx(0.17)
+    assert control.stopped_acc == pytest.approx(-3.4)
 
 
 def test_shipped_policy_timestep_is_a_multiple_of_the_tick() -> None:
@@ -191,4 +193,8 @@ def test_vision_pilot_preset_keeps_the_other_driver_defaults() -> None:
     preset, default = _composed(["driver=vision_pilot"]).driver, _composed([]).driver
     for key in ("address", "route_horizon_m", "send_renderer_data", "image_quality"):
         assert preset[key] == default[key]
-    assert preset.control.speed_kp == default.control.speed_kp
+    assert (
+        preset.control.longitudinal_controller
+        == default.control.longitudinal_controller
+    )
+    assert preset.control.stopped_acc == default.control.stopped_acc

@@ -94,11 +94,13 @@ class TrajectoryCommandPoint:
         time_from_start_us: When the ego should be here, after the plan's stamp.
         pose: Where, in the right-handed local frame.
         velocity_mps: Longitudinal speed at this point.
+        acceleration_mps2: Longitudinal acceleration at this point.
     """
 
     time_from_start_us: int
     pose: Pose
     velocity_mps: float
+    acceleration_mps2: float = 0.0
 
 
 @dataclass(frozen=True)

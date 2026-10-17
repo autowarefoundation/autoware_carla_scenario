@@ -9,7 +9,7 @@ applies its command:
 * a planned trajectory is tracked by the framework's own
   :class:`~autoware_carla_scenario.driver.control.TrajectoryFollower`, as
   :class:`~autoware_carla_scenario.entity.carla_driver_entity.CarlaDriverEntity`
-  tracks a policy's plan;
+  tracks a policy's plan, on the speeds the trajectory carries;
 * a steering/acceleration pair or an Autoware control command goes to CARLA's
   Ackermann controller, as VisionPilot's ``carla_control_publisher`` hands it over
   ``/carla/hero/ackermann_control_cmd``.
@@ -69,7 +69,9 @@ __all__ = ["Ros2EgoEntity", "plan_from_trajectory"]
 _MIN_TIMING_SPEED_MPS: float = 0.1
 
 
-def plan_from_trajectory(command: TrajectoryCommand, anchor_us: int) -> Trajectory:
+def plan_from_trajectory(
+    command: TrajectoryCommand, anchor_us: int, truncate: bool = True
+) -> Trajectory:
     """Return *command* as a timed plan in the local frame.
 
     Each point is stamped ``anchor_us + time_from_start``.  A trajectory whose
@@ -80,6 +82,11 @@ def plan_from_trajectory(command: TrajectoryCommand, anchor_us: int) -> Trajecto
     Args:
         command: The received trajectory.
         anchor_us: The simulation time its first point belongs to.
+        truncate: Timed from its speeds, end the plan where they fall below
+            0.1 m/s, which it does not reach (for a follower that reads the
+            plan in time).  ``False`` keeps every point, a stopped segment taking
+            its length at 0.1 m/s and at least a microsecond, for a follower
+            that reads the trajectory's own speeds -- which then keeps its stop.
     """
     points = command.points
     offsets = [point.time_from_start_us for point in points]
@@ -95,9 +102,11 @@ def plan_from_trajectory(command: TrajectoryCommand, anchor_us: int) -> Trajecto
             )
             speed = 0.5 * (previous.velocity_mps + point.velocity_mps)
             if speed < _MIN_TIMING_SPEED_MPS:
-                # The plan stops here: whatever follows is not reached.
-                break
-            offsets.append(offsets[-1] + int(round(length / speed * US_PER_S)))
+                if truncate:
+                    # The plan stops here: whatever follows is not reached.
+                    break
+                speed = _MIN_TIMING_SPEED_MPS
+            offsets.append(offsets[-1] + max(int(round(length / speed * US_PER_S)), 1))
     plan = Trajectory.empty()
     for point, offset in zip(points, offsets):
         plan.append(anchor_us + offset, point.pose)
@@ -393,6 +402,14 @@ class Ros2EgoEntity(ExternallyDrivenEgo):
                 yaw_rate_rps=float(observation.angular_velocity[2]),
                 now_us=observation.timestamp_us,
                 gear=int(actor.get_control().gear),
+                # The trajectory's own speeds and accelerations, as Autoware's
+                # controller reads them.
+                plan_velocities_mps=[
+                    float(point.velocity_mps) for point in trajectory.points
+                ],
+                plan_accelerations_mps2=[
+                    float(point.acceleration_mps2) for point in trajectory.points
+                ],
             )
             actor.apply_control(vehicle_command.to_carla_control())
             self._tracking = True
@@ -441,7 +458,12 @@ class Ros2EgoEntity(ExternallyDrivenEgo):
         """The timed plan of *command*, built once while it is the one tracked."""
         if self._planned is None or self._planned[0] is not command:
             anchor_us = command.stamp_us if command.stamp_us > 0 else received_us
-            plan = plan_from_trajectory(command, anchor_us)
+            plan = plan_from_trajectory(
+                command,
+                anchor_us,
+                truncate=self._follower.config.longitudinal_controller
+                == "time_indexed",
+            )
             self._planned = (command, plan, plan_markers(plan))
         return self._planned[1]
 
