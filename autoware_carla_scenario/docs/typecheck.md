@@ -91,7 +91,7 @@ config = MyScenarioConfig()          # then one line per YAML value:
 config.timeout_seconds = 10.0        #   scenario.timeout_seconds
 scenario = MyScenario(ego, config=config, spawn_pose=..., ground_projection=...)
 scenario.setup()
-done: bool = scenario.is_done()
+scenario.is_done()
 ```
 
 Codon checks a function only when something calls it. The program checks
@@ -120,6 +120,84 @@ a hook override the runner calls later (`initial_speeds_mps()`), in a
 module-level function, in a class-level default, or in the config class's
 methods. Each call passes a value of each parameter's annotated type, and a
 defaulted parameter's default is compiled by one more call that leaves it out.
+
+**The result of a hook override is checked against the framework's type**
+(#238). Codon compiles an override against its own annotation only, and the
+framework code that calls it is a stub of the model, so `check() -> bool`,
+`initial_speeds_mps() -> list[float]` or `is_done() -> str` compiled, and
+failed or misbehaved when the scenario ran. So each appended call of a method
+passes its result to the model, which checks it strictly against the return
+type of the method it overrides, when the class derives from `BaseScenario`,
+`BaseCondition`, `BaseAction` or `EgoVehicle` (directly, or through a built-in
+condition or another class of the scenario's modules):
+
+```python
+    _acs_hook_return(MyScenario, "is_done", _acs_value(MyScenario).is_done())
+    _acs_hook_return(GapCondition, "check",
+                     _acs_value(GapCondition).check(_acs_value(carla.World), _acs_value(float)))
+```
+
+Every method and property each of the four classes declares is such a hook,
+with the return type the model declares for it (`test_typecheck_model.py`
+keeps the two in step): `setup()` returns `None`, `is_done()` a `bool`,
+`initial_speeds_mps()` a `Dict[int, float]`, `check()` an
+`Optional[ScenarioResult]`, `execute()` `None`, `debug_markers()` a
+`DebugMarkers`, and so on. The check is strict where an annotated assignment
+is not (Codon 0.19 converts any value with `__bool__` in `done: bool = x`):
+an override must return the type itself or what Python's typing takes for
+it -- a subclass of a class, an `int` for a `float`, a `bool` for an `int`,
+and, for an `Optional[X]`, an `X`, an `Optional` of one, or only `None` (a
+condition that never decides). A `str`, an `int` or an `Optional[bool]` for a
+`bool` is refused, at the override's `def` line:
+
+```text
+scenario.py:62: error: BaseScenario.is_done() returns bool, and this override returns another type
+    reached by <scenario check: MyScenario.is_done()>
+    during the realization of _acs_expect_return(r: str, T: bool, ...) [scenario_base.codon:230]
+```
+
+A method of a class deriving from none of them, or one its base does not
+declare (a helper of the scenario), is not checked this way, and neither is
+an abstract one (`@abstractmethod`) or one that only raises
+(`raise NotImplementedError()`): it returns no value, which Codon types
+`None` whatever its annotation says. The program
+also checks what the scenario's own `setup()` and `is_done()` return, after
+the module checks, for one the appended calls leave out.
+
+**Then mypy checks that an `Optional` is tested for `None` before it is
+used** (#239). Codon unwraps an `Optional[T]` implicitly wherever a `T` is
+needed, so `cfg.min_speed_kmh / 3.6` of a `float | None` field compiled, and
+raised `TypeError` in Python when the field was `None`. After the compile,
+the checker runs mypy (a dependency of the framework) over the scenario's own
+modules, following imports silently, checking the bodies of unannotated
+functions too, and with no configuration file of the package's (so the
+verdict does not depend on how strict the package's own mypy settings are),
+and keeps only what it reports of a value that may be `None` used where it
+may not be: an attribute of it, an operator, an argument, an assignment, a
+return, an index (mypy's `union-attr`, `operator`, `arg-type`,
+`assignment`, `return-value`, `index` and `call-overload`, each naming
+`None`). An assignment that only declares is not one: a `None` default for
+a non-Optional annotation (`speed: float = None`), or a value assigned to an
+attribute mypy inferred as `None` from its first assignment. Each finding
+fails the check at its line, after Codon's errors:
+
+```text
+scenario.py:67:28: error: Unsupported operand types for / ("None" and "float"): Codon unwraps an Optional implicitly, so test the value for None before this use, or Python fails here when it is None (mypy: operator)
+    Left operand is of type "float | None"
+```
+
+Narrow the value first, as mypy reads it: `if x is not None:`, `assert x is
+not None`, an early `return` when it is `None`, or a default (`x or 0.0`).
+mypy keeps a cache in `~/.cache/autoware_carla_scenario/mypy` (under
+`$XDG_CACHE_HOME` when it is set), so only the first check reads the
+framework (about ten seconds); where that directory cannot be written, as in
+a container with a read-only home, mypy runs without a cache. When mypy
+gives no verdict (it ran out of time or crashed), the check keeps Codon's
+verdict and says so in a warning:
+
+```text
+warning: the None check did not run (mypy did not finish within 600s), so an Optional used without a test for None is not reported
+```
 
 The error is reported at the scenario file's own line. One in a function's
 body is at that line, with the call that reached it in the trace:
@@ -495,6 +573,12 @@ scenario has to do itself:
   line; so is one returning `Any`, with the warning at its `def`.
 - **Give each class-level default a value of its annotated type**
   (`RETRIES: int = 3`): it is compiled against the annotation.
+- **Return what the framework reads from a hook you override**: a `bool`
+  from `is_done()`, a `ScenarioResult` or `None` from a condition's
+  `check()`, a `dict[int, float]` from `initial_speeds_mps()`, `None` from
+  `setup()` and an action's `execute()` ([*What is checked*](#what-is-checked)).
+- **Test an `Optional` for `None` before using it**: a `float | None` config
+  field, `goal_pose`, `find_actor_by_role_name(...)`.
 
 Annotations Codon cannot express (`Union` of two types, `Any`, `Callable`,
 `Sequence`, `type[...]`) are dropped from parameters, which become generic:
@@ -570,6 +654,55 @@ Two things Python does that Codon 0.19 does not are filled in for you:
 
   compiles as written, and so does a local `found: Optional[carla.Actor] =
   None` returned at the end.
+
+## What the check does not catch
+
+The check compiles the scenario and never runs it, so it says nothing of
+what a value is at run time (a division by zero, a missing key, an actor
+that is not spawned yet), and it accepts some code that fails in Python.
+The known gaps:
+
+- **An `Optional` unwrapped implicitly, where mypy cannot see it.** Codon
+  unwraps an `Optional[T]` wherever a `T` is needed (arithmetic, an
+  attribute, an argument), and mypy's pass (#239,
+  [*What is checked*](#what-is-checked)) catches what mypy can type. It does
+  not see a value mypy reads as `Any`: one from a package with no type
+  information (an import it cannot follow, which it ignores), or the result
+  of a function with no return annotation.
+- **A value converted by an annotated assignment.** Codon 0.19 converts any
+  value with `__bool__` in an annotated assignment: `done: bool = "no"`
+  compiles, and is `True`. The check binds hook results strictly (#238) and
+  class-level `bool` defaults through `_expect_bool` (#190), but an annotated
+  local of the scenario's own code is converted as written. A local
+  `x: bool = some_str` is no `bool` in Python.
+- **An `int` where a `float` is expected** is accepted, in a call and a hook
+  result alike, as Python's typing takes it; not inside a container
+  (`[1, 2]` for a `list[float]` is refused).
+- **A function the check cannot call** (a parameter with no annotation, or
+  one of `Any`, `object`, `Callable[..., R]` or a `TypeVar`, or a return
+  annotation naming `Any`) is compiled only where `setup()` and `is_done()`
+  reach it, with a warning ([*What is checked*](#what-is-checked)).
+- **A hook a class takes from a mixin listed before its framework base**
+  (`class Gap(CheckMixin, BaseCondition)`, with `check()` defined in
+  `CheckMixin`) is compiled as the mixin's own method, not checked against
+  the hook's return type: define the override in the class itself.
+- **A `None` default** is not checked against its annotation:
+  `speed: float = None` is an `Optional[float]` to Codon (mypy, in the
+  scenario package's own pre-commit, reports it; the None check reports only
+  its uses).
+- **What only a tuple does**: a `tuple[X, ...]` is checked as a `List[X]`,
+  so its hash, its equality with another tuple and its immutability are not
+  checked.
+- **`bytes` is read as `str`**: `path.read_bytes() + "text"` compiles, and
+  CPython refuses it.
+- **An enum member looked up by value** (`ActionState("completeState")`) is
+  typed, but not resolved to the member; looking a member up by name and
+  iterating over the enum are not modelled.
+- **typesafe_carla's Python-API compatibility shortcuts** (a `Vehicle`
+  method called on a plain `Actor`) compile, as they do outside its strict
+  mode.
+- **A scenario registered with `register_scenario_builder()`** is not
+  checked at all: only its builder knows how it is built.
 
 ## Checking the framework itself
 

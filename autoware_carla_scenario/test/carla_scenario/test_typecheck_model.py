@@ -1883,3 +1883,62 @@ def test_the_lxml_model_is_the_element_pyxodr_holds() -> None:
         assert hasattr(road.road_xml, name), name
     for name in _methods(attributes):
         assert hasattr(road.road_xml.attrib, name), name
+
+
+@pytest.mark.parametrize(
+    ("module", "name"),
+    [
+        ("scenario_base", "BaseScenario"),
+        ("conditions", "BaseCondition"),
+        ("actions", "BaseAction"),
+        ("entity", "EgoVehicle"),
+    ],
+)
+def test_a_base_class_checks_every_override_against_its_return_type(
+    module: str, name: str
+) -> None:
+    # The scenario check binds the result of each method a class of the
+    # scenario's modules overrides through `_acs_hook_returns` (#238): one
+    # branch per method of the model class, with the method's own return
+    # annotation (None for none), and a message naming both.
+    cls = _definitions(module)[name][0]
+    assert isinstance(cls, ast.ClassDef)
+    expected: dict[str, tuple[str, str]] = {}
+    for stmt in cls.body:
+        if not isinstance(stmt, ast.FunctionDef) or stmt.name.startswith(
+            ("__", "_acs_")
+        ):
+            continue
+        decorators = _decorators(stmt)
+        if any(d.endswith(".setter") for d in decorators):
+            continue
+        returns = "None" if stmt.returns is None else ast.unparse(stmt.returns)
+        shown = f"{name}.{stmt.name}" + ("" if "property" in decorators else "()")
+        expected.setdefault(
+            stmt.name,
+            (
+                "NoneType" if returns == "None" else returns,
+                f"{shown} returns {returns}",
+            ),
+        )
+    hooks = [
+        s
+        for s in cls.body
+        if isinstance(s, ast.FunctionDef) and s.name == "_acs_hook_returns"
+    ]
+    assert len(hooks) == 1, f"{name} declares no _acs_hook_returns"
+    declared: dict[str, tuple[str, str]] = {}
+    for node in ast.walk(hooks[0]):
+        if isinstance(node, ast.If):
+            test = node.test
+            assert isinstance(test, ast.Compare) and isinstance(
+                test.comparators[0], ast.Constant
+            )
+            call = node.body[0]
+            assert isinstance(call, ast.Expr) and isinstance(call.value, ast.Call)
+            _, type_, message = call.value.args
+            hook, text = test.comparators[0].value, message
+            assert isinstance(hook, str)
+            assert isinstance(text, ast.Constant) and isinstance(text.value, str)
+            declared[hook] = (ast.unparse(type_), text.value)
+    assert declared == expected

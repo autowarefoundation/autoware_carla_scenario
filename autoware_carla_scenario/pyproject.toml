@@ -43,6 +43,10 @@ dependencies = [
     "opencv-python-headless>=4.8",
     "numpy>=1.21",
     "pytest>=9.0.1",
+    # The static check's None check (typecheck/none_check.py, #239): Codon
+    # unwraps an Optional implicitly, so mypy's strict Optional reports a
+    # value that may be None used where it may not be.
+    "mypy>=1.19.0",
     "python-dotenv>=1.2.2",
     # `lanelet2` and `autoware_lanelet2_extension_python` are provided by
     # simple-lanelet2.
