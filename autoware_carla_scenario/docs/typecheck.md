@@ -290,14 +290,22 @@ comparison unless a test of its own compares it (`EGO_ROLE_NAME`,
 `BUILT_IN_METRICS`, `BUILT_IN_MEASURES`).
 
 **What Codon builds by the fields.** Codon 0.19 gives every class a
-constructor of its fields, its bases' first, by position, beside the
-`__init__` it declares: a class without fields is built with no arguments
-(`VehicleEntity()`, #225), and a condition or an action with the label it
-inherits alone (`TimeoutCondition("10")`, `TurnAction("npc1")`, #236), where
-Python refuses both. Codon tries the `__init__` overloads a class declares
-from the last one up, and the one it generates only after them, so the model
-declares, ahead of the constructor, an `__init__` of as many arguments whose
-body is a `compile_error`:
+constructor of its fields, its bases' first, by position or by name, beside
+the `__init__` it declares: a class without fields is built with no arguments
+(`VehicleEntity()`, #225), a condition or an action with the label it
+inherits alone (`TimeoutCondition("10")`, `TurnAction("npc1")`, #236), and
+any class by fields its constructor does not take (`DebugMarkers([])`,
+`CoverItem("speed")`, `RunProgress(1, 2, "case", "running")`, #244), where
+Python refuses each. A class that derives from one of Codon's exceptions
+(`Static[Exception]`) also takes its bases' constructors, and its fields
+start with `BaseException`'s eight: `FrameMismatchError("x")` passed by
+`Exception(typename, msg="")` (#244). A class that derives from a model class
+plainly does not take its base's `__init__`.
+
+Codon tries the `__init__` overloads a class declares from the last one up,
+and those it generates or inherits only after them, so the model declares,
+ahead of the constructor, an `__init__` of as many arguments whose body is a
+`compile_error`:
 
 ```python
 class TimeoutCondition(BaseCondition):
@@ -311,14 +319,48 @@ class TimeoutCondition(BaseCondition):
 
 The constructor, declared last, still wins every call it takes
 (`TimeoutCondition(label="t")`, `TimeoutCondition(10.0, label="t")`); the
-refusing overload only takes what would reach Codon's own.
-`test_typecheck_model.py` compares the last `__init__` with Python's, and
-checks that every compared class without fields whose Python constructor
-requires an argument declares the refusing overload of none (`RouteMatch`,
-`RouteFrame`, `VehicleEntity`, `PedestrianEntity`, `CoverageCollector`,
-`CoverageReport`, `EgoDriverGrpcClient`, `Ros2EgoTransport`,
-`CycloneRos2Transport`), and every condition and action the refusing overload
-of one. A class whose `__init__` takes its fields by position needs none: the
+refusing overload only takes what would reach Codon's own. The one of as many
+arguments as the class has fields takes the fields' names, so a call by them
+(`CoverItem(name="speed")`) is refused too.
+
+`test_typecheck_model.py` compares the last `__init__` with Python's and
+finds the overloads needed. For every compared class that declares an
+`__init__`, it counts each number of positional arguments the constructor
+Codon generates (the fields, `_codon_fields`) or an exception base's
+(`_inherited_inits`, Codon's own read from `_CODON_EXCEPTIONS`, which a test
+compares with Codon's standard library) would take, and asks Python whether
+its constructor binds as many placeholders (`inspect.signature().bind`).
+Where Python refuses and the model's constructor does not take them either,
+the model declares the refusing overload of that many; where the model's
+constructor takes them through `*_kw`, its `_keyword_only(_kw, ...)` refuses
+them (`OddModule`, `OddAttribute`, `BaseScenario`). The classes it finds:
+
+| Arguments | Classes |
+|---|---|
+| none | `RouteMatch`, `RouteFrame`, `VehicleEntity`, `PedestrianEntity`, `CoverageCollector`, `CoverageReport`, `EgoDriverGrpcClient`, `Ros2EgoTransport` (and `CycloneRos2Transport`, compared apart) |
+| the label | the conditions and actions whose constructor Python refuses one argument (`SpeedCondition`, `TurnAction`) |
+| the fields | `DebugMarkers`, `CoverItem`, `OddCondition` (one), `RouteCoverage`, `RunProgress` (four) |
+| an exception's | `FrameMismatchError` (one, two, ten), `DevContainerError`, `MapCacheError` (none, two, eight) |
+
+Every condition and action declares the overload of one, its label, even
+where Python takes one argument by position: a call the constructor refuses
+by its type (`TimeoutCondition("10")`) would still reach the one Codon
+generates.
+
+Those constructors take their parameters by keyword too, and a call by
+keyword Python refuses passes where no guard takes those names: an
+exception's base parameters (`DevContainerError(typename="x")`,
+`FrameMismatchError("x", message="y")`), or a class's field names
+(`OddAttribute(name="speed", unit="m", text="t")`, `EntityRole(_value="x")`).
+So the test also enumerates every call, by position and by keyword, the
+constructor Codon generates or an exception base's would bind, and requires,
+for each one Python and the model's constructor refuse, a refusing overload
+that binds it too: an `__init__` of the fields' names (`OddAttribute`,
+`OddDefinition`, `EntityRole`, `TrajectoryVertex`, `EgoConfig`,
+`BaseScenario`, `RunEnvironment`), and of `typename` and
+`typename, message` (`DevContainerError`, `MapCacheError`;
+`FrameMismatchError` takes one positional `typename` already). A class
+whose `__init__` takes its fields by position and by name needs none: the
 constructor Codon generates is its own.
 
 A scenario that imports a module with no model (lanelet2's `matching`, say,

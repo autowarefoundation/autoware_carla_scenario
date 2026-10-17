@@ -21,6 +21,7 @@ import functools
 import importlib
 import importlib.util
 import inspect
+import itertools
 import re
 import typing
 from pathlib import Path
@@ -79,7 +80,7 @@ from autoware_carla_scenario.sweeper import constraints as sweeper_constraints
 from autoware_carla_scenario.traffic import context as traffic_context
 from autoware_carla_scenario.traffic import registry as traffic_registry
 from autoware_carla_scenario.trajectory import model as trajectory_model
-from autoware_carla_scenario.typecheck import model_dir
+from autoware_carla_scenario.typecheck import available_toolchain, model_dir
 from autoware_carla_scenario.typecheck.check import (
     _model_module,
     _model_modules,
@@ -127,6 +128,11 @@ def _exports() -> dict[str, str]:
     return out
 
 
+#: The model module that defines a class (`id` of its node, which the cache of
+#: _definitions keeps alive), to look its bases up where it names them.
+_ORIGIN: dict[int, tuple[str, Path]] = {}
+
+
 @functools.cache
 def _definitions(module: str, root: Path = _MODEL) -> dict[str, list[ast.stmt]]:
     """Top-level definitions of a model module (a function may be overloaded).
@@ -138,6 +144,8 @@ def _definitions(module: str, root: Path = _MODEL) -> dict[str, list[ast.stmt]]:
     for node in _parse(root / f"{module}.codon").body:
         if isinstance(node, (ast.ClassDef, ast.FunctionDef)):
             out.setdefault(node.name, []).append(node)
+            if isinstance(node, ast.ClassDef):
+                _ORIGIN[id(node)] = (module, root)
         elif isinstance(node, (ast.AnnAssign, ast.Assign)):
             targets = [node.target] if isinstance(node, ast.AnnAssign) else node.targets
             for target in targets:
@@ -925,27 +933,39 @@ _COMPARED_CLASSES: dict[str, tuple[str, Any]] = {
 }
 
 
-def _all_fields(module: str, cls: ast.ClassDef) -> list[str] | None:
-    """The fields Codon gives *cls*, its bases' first; None for a base the
-    model does not declare (an exception's `Static[...]`)."""
-    out: list[str] = []
-    for base in cls.bases:
-        definitions = _definitions(module).get(ast.unparse(base), [])
-        if not definitions or not isinstance(definitions[0], ast.ClassDef):
-            return None
-        fields = _all_fields(module, definitions[0])
-        if fields is None:
-            return None
-        out += fields
-    return out + [p[1] for p in _model_fields(cls)]
+#: What the model's exceptions derive from (`Static[Exception]`, ...): Codon
+#: 0.19's own exception classes, as its standard library declares them
+#: (stdlib/internal/types/error.codon), reduced to their fields and
+#: constructors. test_the_codon_exceptions_are_declared_as_in_codon compares
+#: them with the standard library where Codon is installed.
+_CODON_EXCEPTIONS_SOURCE = """
+class BaseException:
+    typename: str
+    message: str
+    func: str
+    file: str
+    line: int
+    col: int
+    python_type: cobj
+    cause: Optional[BaseException]
 
+    def __init__(self, typename: str, message: str = ""): ...
 
-def _requires_an_argument(python: Any) -> bool:
-    try:
-        inspect.signature(python).bind()
-    except TypeError:
-        return True
-    return False
+class Exception(Static[BaseException]):
+    def __init__(self, typename: str, msg: str = ""): ...
+
+class ValueError(Static[Exception]):
+    def __init__(self, message: str = ""): ...
+
+class RuntimeError(Static[Exception]):
+    def __init__(self, typename: str, message: str = ""): ...
+    def __init__(self, message: str = ""): ...
+"""
+_CODON_EXCEPTIONS: dict[str, ast.ClassDef] = {
+    node.name: node
+    for node in ast.parse(_CODON_EXCEPTIONS_SOURCE).body
+    if isinstance(node, ast.ClassDef)
+}
 
 
 def _model_class(name: str) -> ast.ClassDef:
@@ -955,20 +975,183 @@ def _model_class(name: str) -> ast.ClassDef:
     return node
 
 
-#: The classes without fields whose Python constructor requires an argument.
-_FIELDLESS_WITH_REQUIRED = sorted(
+def _base_class(cls: ast.ClassDef, base: ast.expr) -> tuple[ast.ClassDef, bool]:
+    """The class *base* names, where *cls* is defined, and whether *cls*
+    derives from it by `Static[...]`, as from one of Codon's exceptions."""
+    text = ast.unparse(base)
+    static = text.startswith("Static[") and text.endswith("]")
+    name = text[len("Static[") : -1] if static else text
+    if id(cls) in _ORIGIN:
+        module, root = _ORIGIN[id(cls)]
+        definitions = _definitions(module, root).get(name, [])
+        for node in _parse(root / f"{module}.codon").body:
+            # An import from a parent package (`from .._ros2 import ...`),
+            # which _definitions leaves out.
+            if isinstance(node, ast.ImportFrom) and node.level > 1 and node.module:
+                source = Path(module).parents[node.level - 1]
+                for alias in node.names:
+                    if (alias.asname or alias.name) == name:
+                        definitions = _definitions(
+                            (source / node.module.replace(".", "/")).as_posix(), root
+                        ).get(alias.name, [])
+        if definitions and isinstance(definitions[0], ast.ClassDef):
+            return definitions[0], static
+    assert name in _CODON_EXCEPTIONS, f"{cls.name}: base {text} is not declared"
+    return _CODON_EXCEPTIONS[name], static
+
+
+def _codon_fields(cls: ast.ClassDef) -> list[tuple[str, bool]]:
+    """The fields Codon gives *cls*, its bases' first: (name, has default)."""
+    out: list[tuple[str, bool]] = []
+    for base in cls.bases:
+        out += _codon_fields(_base_class(cls, base)[0])
+    return out + [(p[1], p[2]) for p in _model_fields(cls)]
+
+
+def _inherited_inits(cls: ast.ClassDef) -> list[ast.FunctionDef]:
+    """The __init__s of the bases *cls* derives from by `Static[...]`: Codon
+    tries them after the class's own (a `FrameMismatchError("x")` took
+    Exception's), but not those of a base it derives from plainly."""
+    out: list[ast.FunctionDef] = []
+    for base in cls.bases:
+        node, static = _base_class(cls, base)
+        if static:
+            out += [i for i in _inits(node) if not _is_compile_error(i)]
+            out += _inherited_inits(node)
+    return out
+
+
+def _model_signature(fn: ast.FunctionDef) -> inspect.Signature:
+    """*fn*'s parameters but self, as a call binds them in Codon: a
+    `_Required()` default is a default too (the body refuses it)."""
+    args = fn.args
+    positional = [*args.posonlyargs, *args.args][1:]
+    defaults = [False] * (len(positional) - len(args.defaults)) + [True] * len(
+        args.defaults
+    )
+    empty = inspect.Parameter.empty
+    params = [
+        inspect.Parameter(
+            a.arg, inspect.Parameter.POSITIONAL_OR_KEYWORD, default=None if d else empty
+        )
+        for a, d in zip(positional, defaults)
+    ]
+    if args.vararg is not None:
+        params.append(
+            inspect.Parameter(args.vararg.arg, inspect.Parameter.VAR_POSITIONAL)
+        )
+    params += [
+        inspect.Parameter(
+            a.arg, inspect.Parameter.KEYWORD_ONLY, default=empty if d is None else None
+        )
+        for a, d in zip(args.kwonlyargs, args.kw_defaults)
+    ]
+    return inspect.Signature(params)
+
+
+def _fields_signature(fields: list[tuple[str, bool]]) -> inspect.Signature:
+    """The constructor Codon generates: the fields, by position or name."""
+    empty = inspect.Parameter.empty
+    return inspect.Signature(
+        [
+            inspect.Parameter(
+                n, inspect.Parameter.POSITIONAL_OR_KEYWORD, default=None if d else empty
+            )
+            for n, d in fields
+        ]
+    )
+
+
+def _takes(signature: inspect.Signature, arity: int) -> bool:
+    """*signature* binds *arity* positional arguments."""
+    try:
+        signature.bind(*([None] * arity))
+    except TypeError:
+        return False
+    return True
+
+
+def _positional_count(signature: inspect.Signature) -> int:
+    return sum(
+        p.kind is inspect.Parameter.POSITIONAL_OR_KEYWORD
+        for p in signature.parameters.values()
+    )
+
+
+def _refuses_extra_positionals(fn: ast.FunctionDef) -> bool:
+    """*fn* refuses what its `*_kw` takes (`_keyword_only(_kw, ...)`), or
+    every call (its body is a compile_error)."""
+    return _is_compile_error(fn) or any(
+        isinstance(node, ast.Call)
+        and ast.unparse(node.func) == "_keyword_only"
+        and node.args
+        and ast.unparse(node.args[0]) == "_kw"
+        for node in ast.walk(fn)
+    )
+
+
+def _arities_only_codon_takes(name: str) -> list[int]:
+    """The numbers of positional arguments Python's constructor of *name*
+    refuses, its model's constructor does not take, and Codon would still
+    build it by: with the constructor it generates of the fields (#225,
+    #236, #244), or an __init__ of a `Static[...]` base (an exception's).
+
+    Codon tries a class's own __init__s from the last declared and those two
+    after them, so each arity found needs an __init__ of as many arguments,
+    a compile_error, ahead of the constructor (_refusing_init)."""
+    _module, python = _COMPARED_CLASSES[name]
+    node = _model_class(name)
+    inits = _inits(node)
+    if not inits:
+        return []  # the generated constructor is its own, compared with Python's
+    own = _model_signature(inits[-1])
+    fallbacks = [_fields_signature(_codon_fields(node))]
+    fallbacks += [_model_signature(i) for i in _inherited_inits(node)]
+    expected = inspect.signature(python)
+    out: list[int] = []
+    for arity in range(max(_positional_count(f) for f in fallbacks) + 1):
+        if _takes(expected, arity):
+            continue
+        if _takes(own, arity):
+            # Only through `*_kw`, the model's parameters being Python's.
+            assert _refuses_extra_positionals(inits[-1]), (
+                f"{name}(): the constructor takes {arity} positional "
+                "arguments, which Python refuses, and does not refuse them"
+            )
+            continue
+        if any(_takes(f, arity) for f in fallbacks):
+            out.append(arity)
+    return out
+
+
+#: The compared classes Codon would build by a number of positional arguments
+#: Python refuses: name -> those numbers.
+_ARITIES_ONLY_CODON_TAKES: dict[str, list[int]] = {
+    name: arities
+    for name in sorted(_COMPARED_CLASSES)
+    if (arities := _arities_only_codon_takes(name))
+}
+
+#: The conditions and actions: each derives from a base with one field, its
+#: label, and Python's constructor takes no label by position.
+_LABELLED = sorted(
     name
-    for name, (module, python) in _COMPARED_CLASSES.items()
-    if _inits(_model_class(name))
-    and _all_fields(module, _model_class(name)) == []
-    and _requires_an_argument(python)
+    for name, (module, _python) in _COMPARED_CLASSES.items()
+    if module in ("conditions", "actions")
+    and _model_class(name).bases
+    and [n for n, _ in _codon_fields(_model_class(name))] == ["label"]
 )
 
 
-def test_the_fieldless_classes_requiring_an_argument_are_found() -> None:
-    # The classes #225 found (RouteMatch, #224, before them): an empty list
-    # would let the test below pass for nothing.
-    assert set(_FIELDLESS_WITH_REQUIRED) >= {
+def test_the_classes_codon_builds_by_other_arities_are_found() -> None:
+    # What #225, #236 and #244 found: the rule would pass for nothing if the
+    # detector found nothing. A class without fields (RouteMatch, #224, and
+    # those of #225) by no argument; a condition or an action by its label;
+    # DebugMarkers, CoverItem, OddCondition, RouteCoverage and RunProgress by
+    # their fields; the exceptions by Exception's constructor and their
+    # fields (BaseException's eight first).
+    found = _ARITIES_ONLY_CODON_TAKES
+    for name in (
         "CoverageCollector",
         "CoverageReport",
         "EgoDriverGrpcClient",
@@ -977,18 +1160,192 @@ def test_the_fieldless_classes_requiring_an_argument_are_found() -> None:
         "RouteMatch",
         "Ros2EgoTransport",
         "VehicleEntity",
-    }
-    assert {"TimeoutCondition", "TurnAction"} <= set(_LABELLED)
+    ):
+        assert found.get(name) == [0], name
+    # A condition or an action whose label Python takes by no position;
+    # every one of them declares the guard of one all the same (below).
     assert len(_LABELLED) > 30
+    assert {"SpeedCondition", "TurnAction"} <= set(found)
+    for name in _LABELLED:
+        assert found.get(name, [1]) == [1], name
+    assert {
+        name: found.get(name)
+        for name in (
+            "CoverItem",
+            "DebugMarkers",
+            "DevContainerError",
+            "FrameMismatchError",
+            "MapCacheError",
+            "OddCondition",
+            "RouteCoverage",
+            "RunProgress",
+        )
+    } == {
+        "CoverItem": [1],
+        "DebugMarkers": [1],
+        "DevContainerError": [0, 2, 8],
+        "FrameMismatchError": [1, 2, 10],
+        "MapCacheError": [0, 2, 8],
+        "OddCondition": [1],
+        "RouteCoverage": [4],
+        "RunProgress": [4],
+    }
+    # Their `*_kw` refuses what the fields would take (#244's review).
+    for name in ("BaseScenario", "OddAttribute", "OddModule"):
+        assert name not in found, name
 
 
-@pytest.mark.parametrize("name", _FIELDLESS_WITH_REQUIRED)
-def test_a_class_without_fields_cannot_be_built_with_no_arguments(name: str) -> None:
-    # Codon builds a class without fields with no arguments, whatever its
-    # __init__ takes (#225), unless an __init__ of none, a compile_error,
-    # says otherwise. Python's constructor requires an argument, so the
-    # model declares that one, ahead of the constructor.
-    assert _refusing_init(_model_class(name), 0) is not None, name
+@pytest.mark.parametrize("name", sorted(_ARITIES_ONLY_CODON_TAKES))
+def test_codon_cannot_build_a_class_by_what_python_refuses(name: str) -> None:
+    # Codon builds a class by its fields too, by position or by name (#225,
+    # #236, #244), and an exception by Exception's constructor, after the
+    # __init__s the class declares. Where Python refuses as many positional
+    # arguments, the model declares an __init__ of that many, a
+    # compile_error, ahead of the constructor; the one of the fields' arity
+    # takes their names, so a call by the fields' names is refused too.
+    node = _model_class(name)
+    fields = [n for n, _ in _codon_fields(node)]
+    for arity in _ARITIES_ONLY_CODON_TAKES[name]:
+        guard = _refusing_init(node, arity)
+        assert guard is not None, (
+            f"{name}: Codon builds it with {arity} positional argument"
+            f"{'s' * (arity != 1)}, which "
+            f"Python refuses; declare `def __init__(self{', ...' * bool(arity)})`"
+            " of as many, a compile_error, ahead of the constructor"
+        )
+        if arity == len(fields):
+            names = [a.arg for a in [*guard.args.posonlyargs, *guard.args.args][1:]]
+            assert names == fields, f"{name}: the guard of {arity} takes its fields"
+
+
+#: A call: how many positional arguments, and the names passed by keyword.
+_Shape = tuple[int, tuple[str, ...]]
+
+
+def _call_shapes(signature: inspect.Signature) -> list[_Shape]:
+    """Every call *signature* (positional-or-keyword parameters) binds."""
+    params = list(signature.parameters.values())
+    empty = inspect.Parameter.empty
+    out: list[_Shape] = []
+    for count in range(len(params) + 1):
+        rest = params[count:]
+        required = tuple(p.name for p in rest if p.default is empty)
+        optional = [p.name for p in rest if p.default is not empty]
+        for k in range(len(optional) + 1):
+            for chosen in itertools.combinations(optional, k):
+                out.append((count, required + chosen))
+    return out
+
+
+def _binds(signature: inspect.Signature, shape: _Shape) -> bool:
+    count, names = shape
+    try:
+        signature.bind(*([None] * count), **dict.fromkeys(names))
+    except TypeError:
+        return False
+    return True
+
+
+def _shapes_only_codon_takes(name: str) -> list[_Shape]:
+    """The calls, by position or by keyword, that Python's constructor of
+    *name* refuses, its model's constructor does not take, and the
+    constructor Codon generates of the fields or an __init__ of a
+    `Static[...]` base would: _arities_only_codon_takes, keywords included
+    (`DevContainerError(typename="x")` took Exception's, #244's review)."""
+    _module, python = _COMPARED_CLASSES[name]
+    node = _model_class(name)
+    inits = _inits(node)
+    if not inits:
+        return []
+    own = _model_signature(inits[-1])
+    fallbacks = [_fields_signature(_codon_fields(node))]
+    fallbacks += [_model_signature(i) for i in _inherited_inits(node)]
+    expected = inspect.signature(python)
+    out: list[_Shape] = []
+    for fallback in fallbacks:
+        for shape in _call_shapes(fallback):
+            if shape in out or _binds(expected, shape):
+                continue
+            if _binds(own, shape):
+                # Only through `*_kw`: _arities_only_codon_takes checks it
+                # refuses them.
+                continue
+            out.append(shape)
+    return out
+
+
+def test_the_calls_codon_builds_by_keyword_are_found() -> None:
+    # The keyword calls #244's review found passing the check: the rule
+    # below would pass for nothing if the detector found none of them.
+    found = {
+        name: _shapes_only_codon_takes(name)
+        for name in ("DevContainerError", "FrameMismatchError", "MapCacheError")
+    }
+    for name in found:
+        assert (1, ("message",)) in found[name], name
+        assert (0, ("typename", "message")) in found[name], name
+    assert (0, ("typename",)) in found["DevContainerError"]
+    assert (0, ("typename",)) in found["MapCacheError"]
+    assert (0, ("name",)) in _shapes_only_codon_takes("CoverItem")
+    assert (0, ("current", "total", "scenario_name", "status")) not in (
+        _shapes_only_codon_takes("RunProgress")
+    )
+
+
+@pytest.mark.parametrize(
+    "name", sorted(n for n in _COMPARED_CLASSES if _shapes_only_codon_takes(n))
+)
+def test_codon_cannot_build_a_class_by_keywords_python_refuses(name: str) -> None:
+    # Beside the positional rule above: the constructor Codon generates and
+    # an exception base's take their parameters' names too, so a call by
+    # keyword Python refuses (`DevContainerError(typename="x")`,
+    # `FrameMismatchError("x", message="y")`) needs an __init__, a
+    # compile_error, ahead of the constructor, that takes the same names.
+    node = _model_class(name)
+    guards = [_model_signature(i) for i in _inits(node)[:-1] if _is_compile_error(i)]
+    missing = [
+        f"{count} positional{''.join(f', {n}=' for n in names)}"
+        for count, names in _shapes_only_codon_takes(name)
+        if not any(_binds(g, (count, names)) for g in guards)
+    ]
+    assert not missing, (
+        f"{name}: Codon builds it by calls Python refuses ({'; '.join(missing)});"
+        " declare an __init__ of those parameter names, a compile_error, ahead of"
+        " the constructor"
+    )
+
+
+@pytest.mark.parametrize("name", _LABELLED)
+def test_a_condition_or_action_cannot_be_built_by_its_label_alone(name: str) -> None:
+    # Beside the rule above: where Python takes one positional argument
+    # (`TimeoutCondition(10)`), a call the constructor refuses by its type
+    # still reaches the one Codon generates of the label it inherits
+    # (`TimeoutCondition("10")` passed, #236). Each condition and action
+    # declares the guard of one argument, ahead of its constructor.
+    guard = _refusing_init(_model_class(name), 1)
+    assert guard is not None, name
+    assert [a.arg for a in guard.args.args[1:]] == ["label"], name
+
+
+def test_the_codon_exceptions_are_declared_as_in_codon() -> None:
+    # _CODON_EXCEPTIONS is Codon's standard library, as far as the model's
+    # exceptions derive from it.
+    toolchain = available_toolchain()
+    if toolchain is None:
+        pytest.skip("no Codon compiler")
+    path = toolchain.codon_dir / "lib/codon/stdlib/internal/types/error.codon"
+    stdlib = {
+        node.name: node for node in _parse(path).body if isinstance(node, ast.ClassDef)
+    }
+    for name, node in _CODON_EXCEPTIONS.items():
+        codon = stdlib[name]
+        assert [ast.unparse(b) for b in codon.bases] == [
+            ast.unparse(b) for b in node.bases
+        ], name
+        assert _model_fields(codon) == _model_fields(node), name
+        assert [_model_params(i, drop_first=True) for i in _inits(codon)] == [
+            _model_params(i, drop_first=True) for i in _inits(node)
+        ], name
 
 
 def test_the_cyclone_transport_model_cannot_be_built_with_no_arguments() -> None:
@@ -997,31 +1354,8 @@ def test_the_cyclone_transport_model_cannot_be_built_with_no_arguments() -> None
     node = _definitions("ros2/cyclone")["CycloneRos2Transport"][0]
     assert isinstance(node, ast.ClassDef)
     assert [ast.unparse(b) for b in node.bases] == ["Ros2EgoTransport"]
-    assert not _model_fields(node)
-    base = _definitions("_ros2")["Ros2EgoTransport"][0]
-    assert isinstance(base, ast.ClassDef)
-    assert _all_fields("_ros2", base) == []
+    assert _codon_fields(node) == []
     assert _refusing_init(node, 0) is not None
-
-
-#: The model's conditions and actions: each derives from a base with one
-#: field, its label.
-_LABELLED = sorted(
-    name
-    for name, (module, _python) in _COMPARED_CLASSES.items()
-    if module in ("conditions", "actions")
-    and _model_class(name).bases
-    and _all_fields(module, _model_class(name)) == ["label"]
-)
-
-
-@pytest.mark.parametrize("name", _LABELLED)
-def test_a_condition_or_action_cannot_be_built_by_its_label_alone(name: str) -> None:
-    # Codon builds a class by its fields too, by position: a condition or an
-    # action by the label it inherits alone (`TimeoutCondition("10")`
-    # passed, #236), unless an __init__ of one argument, a compile_error,
-    # says otherwise. Each declares that one, ahead of its constructor.
-    assert _refusing_init(_model_class(name), 1) is not None, name
 
 
 def test_the_traffic_backend_factory_model_is_a_stand_in() -> None:

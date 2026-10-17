@@ -17,6 +17,25 @@ TIP_SUFFIX = ".tip.json"
 
 
 class MapCacheError(Static[RuntimeError]):
+    # Codon would build it by RuntimeError's constructors and Exception's, and by
+    # BaseException's eight fields (docs/typecheck.md, #244).
+    def __init__(self):
+        compile_error("MapCacheError(): no constructor takes these arguments (required: message)")
+
+    def __init__(self, typename, msg):
+        compile_error("MapCacheError(): no constructor takes these arguments (required: message)")
+
+    def __init__(self, typename, message, func, file, line, col, python_type, cause):
+        compile_error("MapCacheError(): no constructor takes these arguments (required: message)")
+
+    # Codon would build it by BaseException's and its bases' constructors by
+    # keyword too (docs/typecheck.md, #244).
+    def __init__(self, typename):
+        compile_error("MapCacheError(): no constructor takes these arguments (required: message)")
+
+    def __init__(self, typename, message):
+        compile_error("MapCacheError(): no constructor takes these arguments (required: message)")
+
     def __init__(self, message: str):
         super().__init__(message)
 

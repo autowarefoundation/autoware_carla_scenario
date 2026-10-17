@@ -13,6 +13,10 @@ LOCK_SUFFIX = "_requirements.lock"
 class RunEnvironment:
     _unused: int
 
+    # Codon would build it by its fields' names too (docs/typecheck.md, #244).
+    def __init__(self, _unused):
+        compile_error("RunEnvironment: capture() builds it")
+
     def __init__(self, packages):
         compile_error("RunEnvironment: capture() builds it")
 
