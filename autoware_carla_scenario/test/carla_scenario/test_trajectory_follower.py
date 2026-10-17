@@ -404,7 +404,7 @@ def test_a_short_plan_is_pursued_as_if_at_the_least_lookahead() -> None:
     assert short_steer == pytest.approx(long_steer, rel=1e-2)
 
 
-def test_empty_plan_brakes_and_resets() -> None:
+def test_empty_plan_brakes_and_resets_time_indexed() -> None:
     config = _TIMED
     follower = _timed(config)
     follower.step(_straight(), Pose.identity(), 1.0, _DT_S)
@@ -501,7 +501,7 @@ def test_speeds_are_put_on_the_plan_as_autowares_e2e_node_puts_them() -> None:
     stamps = [100_000 * (index + 1) for index in range(5)]
     base = np.zeros(3)
     velocities, accelerations, pose_index = plan_velocities(
-        positions, stamps, base, 2, False, 3.0
+        positions, stamps, base, 0, 2, False, 3.0
     )
     assert velocities == pytest.approx([10.0, 10.0, 5.5, 1.0, 1.0])
     assert accelerations == pytest.approx([0.0, -45.0, -45.0, 0.0, 0.0])
@@ -510,7 +510,7 @@ def test_speeds_are_put_on_the_plan_as_autowares_e2e_node_puts_them() -> None:
     # The vehicle moving as the plan was made: the average falling below 3 m/s
     # (at the fourth point) stops the plan on the point before it.
     velocities, accelerations, pose_index = plan_velocities(
-        positions, stamps, base, 2, True, 3.0
+        positions, stamps, base, 0, 2, True, 3.0
     )
     assert velocities == pytest.approx([10.0, 10.0, 5.5, 0.0, 0.0])
     assert accelerations == pytest.approx([0.0, -45.0, -55.0, 0.0, 0.0])
@@ -522,7 +522,7 @@ def test_speeds_follow_the_plans_own_step() -> None:
     window is capped at one less than the plan's points."""
     positions = np.array([[x, 0.0, 0.0] for x in (1.0, 2.0, 3.0)])
     velocities, _, _ = plan_velocities(
-        positions, [200_000, 400_000, 600_000], np.zeros(3), 8, False, 0.3
+        positions, [200_000, 400_000, 600_000], np.zeros(3), 0, 8, False, 0.3
     )
     assert velocities == pytest.approx([5.0, 5.0, 5.0])
 
@@ -533,7 +533,7 @@ def test_autowares_default_window_on_a_policy_plan() -> None:
     positions = np.array([[x, 0.0, 0.0] for x in xs])
     stamps = [100_000 * (index + 1) for index in range(20)]
     velocities, accelerations, _ = plan_velocities(
-        positions, stamps, np.zeros(3), 8, False, 0.3
+        positions, stamps, np.zeros(3), 0, 8, False, 0.3
     )
     raw = [(xs[0] - 0.0) / 0.1] + [(b - a) / 0.1 for a, b in zip(xs, xs[1:])]
     expected = [sum(raw[i : i + 8]) / 8 for i in range(13)]
@@ -627,8 +627,8 @@ def test_the_vehicle_stops_at_the_plans_stop_point() -> None:
         )
         speed = max(0.0, speed + acceleration * _DT_S)
         x_m += speed * _DT_S
-    assert states[0] == STOPPED
-    assert states.index(DRIVE) < states.index(STOPPING)
+    assert states[0] == DRIVE  # taken over moving
+    assert STOPPING in states
     assert states[-1] == STOPPED
     assert speed == 0.0
     assert stop_m - 1.5 < x_m <= stop_m
@@ -692,10 +692,94 @@ def test_the_plans_own_speeds_are_used_when_given() -> None:
 
 
 def test_a_single_point_plan_holds_the_vehicle() -> None:
-    """Autoware's controller ignores a trajectory of fewer than two points."""
+    """Autoware's controller ignores a trajectory of fewer than two points: with
+    none before it, there is nothing to track."""
     plan = _timed_plan([3.0])
     command = _follower().step(plan, Pose.identity(), 0.0, _DT_S)
     assert command.brake == pytest.approx(ControlConfig().stop_brake)
+
+
+def test_a_plan_too_short_is_ignored_and_the_last_one_tracked() -> None:
+    """setTrajectory keeps the last trajectory when it is handed a short (or
+    empty) one: the controller's state carries on, not reset to a hold."""
+    follower = _follower()
+    plan = _timed_plan([0.1 * (index + 1) * 8.0 for index in range(80)])
+    _run(follower, plan, 8.0, 3)
+    assert follower.control_state == DRIVE
+    for short in (_timed_plan([3.0]), Trajectory.empty()):
+        command = _run(follower, short, 8.0, 1)
+        assert follower.control_state == DRIVE
+        assert command.target_speed_mps == pytest.approx(8.0)
+        assert command.brake == pytest.approx(0.0)
+
+
+def test_an_anchor_point_at_the_planning_time_is_the_plans_base() -> None:
+    """carla-driver-interface leads a plan with the ego's pose at the planning
+    time; the policy's poses follow every 0.1 s.  The anchor is where the speeds
+    are measured from, not a point of the trajectory: no speed of zero at the
+    plan's start, and Autoware's numbers for the poses after it."""
+    now_us = 5_000_000
+    xs = [0.5 * (index + 1) for index in range(20)]  # 5 m/s
+    plan = Trajectory.empty()
+    plan.append(now_us, Pose.from_xyz_yaw(0.0, 0.0, 0.0, 0.0))
+    for index, x in enumerate(xs):
+        plan.append(
+            now_us + (index + 1) * _STEP_US, Pose.from_xyz_yaw(x, 0.0, 0.0, 0.0)
+        )
+    follower = _follower()
+    follower.step(plan, Pose.identity(), 5.0, _DT_S, now_us=now_us)
+    assert len(follower._velocities) == 20  # noqa: SLF001
+    assert follower._velocities == pytest.approx([5.0] * 20)  # noqa: SLF001
+    assert follower._pose_index[0] == 1  # noqa: SLF001
+    # Without the anchor taken as such, its own speed would read zero.
+    unanchored = _follower()
+    unanchored.step(plan, Pose.identity(), 5.0, _DT_S)
+    assert unanchored._velocities[0] < 5.0  # noqa: SLF001
+
+
+def test_the_plans_base_is_latched_with_the_plan() -> None:
+    """A 10 Hz plan tracked over two 20 Hz ticks keeps the speeds put on it from
+    where the vehicle was as it came, though the vehicle has moved on since."""
+    follower = _follower()
+    plan = _timed_plan([0.1 * (index + 1) * 8.0 for index in range(80)])
+    follower.step(plan, Pose.identity(), 8.0, _DT_S, now_us=0)
+    speeds = list(follower._velocities)  # noqa: SLF001
+    follower.step(
+        plan, Pose.from_xyz_yaw(0.4, 0.0, 0.0, 0.0), 8.0, _DT_S, now_us=50_000
+    )
+    assert follower._velocities == speeds  # noqa: SLF001
+    assert speeds[0] == pytest.approx(8.0)
+
+
+def test_a_moving_vehicle_taken_over_starts_in_drive() -> None:
+    """A follower started (or reset) on a moving vehicle -- the run-up's hand-off,
+    a spawn at speed, a new command source -- drives on: no STOPPED brake pulse."""
+    follower = _follower()
+    plan = _timed_plan([0.1 * (index + 1) * 8.0 for index in range(80)])
+    command = _run(follower, plan, 8.0, 1)
+    assert follower.control_state == DRIVE
+    assert command.brake == pytest.approx(0.0)
+    follower.reset()
+    command = _run(follower, plan, 8.0, 1)
+    assert follower.control_state == DRIVE
+    assert command.brake == pytest.approx(0.0)
+    # Standing, it starts STOPPED, as Autoware's does.
+    standing = _follower()
+    _run(standing, plan, 0.0, 1)
+    assert standing.control_state == STOPPED
+
+
+def test_stopping_departs_again_once_the_stop_point_moves_away() -> None:
+    """STOPPING returns to DRIVE once the stop point is farther than
+    drive_state_stop_dist + drive_state_offset_stop_dist (1.5 m)."""
+    follower = _follower()
+    xs = [0.1 * (index + 1) for index in range(40)]
+    stopping = [2.0 if x < 0.3 - 1e-9 else 0.0 for x in xs]
+    _run(follower, _timed_plan(xs), 2.0, 1, velocities=stopping)
+    assert follower.control_state == STOPPING
+    assert follower.stop_distance_m == pytest.approx(0.3)
+    _run(follower, _timed_plan(xs), 2.0, 1, velocities=[2.0] * 40)
+    assert follower.control_state == DRIVE
 
 
 def test_an_unknown_longitudinal_controller_is_refused() -> None:

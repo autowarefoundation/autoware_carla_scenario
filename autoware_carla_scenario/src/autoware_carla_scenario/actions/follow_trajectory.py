@@ -551,6 +551,16 @@ class FollowTrajectoryAction(BaseAction):
                 config = ControlConfig(
                     longitudinal_controller="time_indexed", throttle_deadband=0.25
                 )
+            elif config.longitudinal_controller != "time_indexed":
+                logger.warning(
+                    "FollowTrajectoryAction: '%s' follows %r with the %s longitudinal "
+                    "controller, which follows the plan's speeds, not the "
+                    "trajectory's clock; longitudinal_controller='time_indexed' "
+                    "keeps its timing",
+                    self._entity_name,
+                    self._trajectory.name,
+                    config.longitudinal_controller,
+                )
             self._follower = TrajectoryFollower(
                 config,
                 ChaosPowertrain.from_physics_control(

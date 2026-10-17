@@ -180,7 +180,22 @@ What differs from Autoware, because CARLA or the plan has no counterpart:
   Autoware's 33 Hz.
 - A plan's times come from its timestamps rather than the node's fixed 0.1 s, and
   the smoothing window is capped at one less than the plan's points; a 0.1 s plan
-  gets Autoware's numbers.
+  gets Autoware's numbers. carla-driver-interface leads each plan with the ego's
+  pose at the planning time; that anchor is the base the first speed is measured
+  from (the node's ego position), not a point of the tracked trajectory. A plan
+  without one is measured from where the ego is as it arrives. Either is latched
+  with the plan.
+- A plan of fewer than two points is ignored and the last one tracked on, as
+  Autoware's `setTrajectory` does.
+- A follower taken over on a moving ego (the warm-up's hand-off, a spawn at
+  speed, a new ROS 2 command source) starts in DRIVE rather than STOPPED, which
+  would brake for a tick.
+- The smooth stop fits the speed history of the delay's control steps: 3 at
+  0.05 s, where Autoware keeps 5.
+
+A ROS 2 `autoware_planning_msgs/Trajectory` is tracked on its own
+`longitudinal_velocity_mps` and `acceleration_mps2`, every point kept (a stop
+included) even when its `time_from_start` is not set.
 
 A plan that dwells on the ego's spot -- the first eight speeds averaging to zero --
 stops at its first point, and the ego stays STOPPED until a plan's stop point is

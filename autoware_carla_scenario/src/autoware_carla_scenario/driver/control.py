@@ -87,7 +87,7 @@ CONTROL_STATE_NAMES: Tuple[str, str, str, str] = (
 
 #: ``autoware::motion_utils::searchZeroVelocityIndex``'s threshold, m/s.
 _ZERO_VELOCITY: float = 1e-3
-#: ``removeOverlapPoints``' threshold, m, per coordinate.
+#: ``removeOverlapPoints``' threshold, m, per coordinate (x and y: Autoware's is 2D).
 _OVERLAP: float = 1e-8
 #: ``getControlData``'s least distance worth compensating the delay for, m.
 _MIN_RUNNING_DISTANCE: float = 0.01
@@ -556,6 +556,7 @@ def plan_velocities(
     positions: np.ndarray[tuple[int, int], np.dtype[np.float64]],
     timestamps_us: List[int],
     base: np.ndarray[tuple[int], np.dtype[np.float64]],
+    base_time_us: int,
     velocity_smoothing_window: int,
     enable_force_stop: bool,
     stopping_threshold: float,
@@ -574,14 +575,15 @@ def plan_velocities(
     zero.
 
     Autoware's node spaces its points 0.1 s apart and the first 0.1 s after the plan's
-    stamp; here the times come from *timestamps_us*, the first point taken one plan
-    step (the first two points' spacing) after *base*, so a plan stamped every 0.1 s
-    gets Autoware's numbers.  Distances are in 3D, as the node's.
+    stamp; here the times come from *timestamps_us* and *base_time_us*, so a plan
+    stamped every 0.1 s from its stamp gets Autoware's numbers.  Distances are in
+    3D, as the node's.
 
     Args:
-        positions: The plan's ``(N, 3)`` positions, ``N >= 2``.
+        positions: The plan's ``(N, 3)`` positions, ``N >= 1``.
         timestamps_us: Their times.
         base: Where the vehicle was as the plan was made, in the same frame.
+        base_time_us: When it was there: the plan's stamp.
         velocity_smoothing_window: Points per average; capped at ``N - 1``.
         enable_force_stop: Whether a falling speed stops the plan (the node enables
             it while the vehicle moves).
@@ -593,17 +595,15 @@ def plan_velocities(
         or a stopped point's).
 
     Raises:
-        ValueError: If the plan has fewer than two points.
+        ValueError: If the plan has no point.
     """
     count = int(positions.shape[0])
-    if count < 2:
-        raise ValueError("a plan needs at least two points to have speeds")
+    if count < 1:
+        raise ValueError("a plan needs a point to have speeds")
     steps: List[float] = [0.0] * count
-    for index in range(1, count):
-        steps[index] = max(
-            (timestamps_us[index] - timestamps_us[index - 1]) * 1e-6, _EPSILON
-        )
-    steps[0] = steps[1]
+    for index in range(count):
+        previous_us = base_time_us if index == 0 else timestamps_us[index - 1]
+        steps[index] = max((timestamps_us[index] - previous_us) * 1e-6, _EPSILON)
 
     velocities: List[float] = [0.0] * count
     previous_x = float(base[0])
@@ -652,19 +652,30 @@ def plan_velocities(
     return velocities, accelerations, pose_index
 
 
-def _given_velocities(
-    given: List[float], timestamps_us: List[int]
-) -> Tuple[List[float], List[float], List[int]]:
-    """A plan's own speeds (an Autoware trajectory's), with accelerations between them."""
-    count = len(timestamps_us)
-    velocities: List[float] = []
+def _padded(values: List[float], count: int) -> List[float]:
+    """*values*, cut or padded with its last (or zero) to *count*."""
+    padded: List[float] = []
     for index in range(count):
-        if index < len(given):
-            velocities.append(float(given[index]))
-        elif velocities:
-            velocities.append(velocities[-1])
+        if index < len(values):
+            padded.append(float(values[index]))
+        elif padded:
+            padded.append(padded[-1])
         else:
-            velocities.append(0.0)
+            padded.append(0.0)
+    return padded
+
+
+def _given_velocities(
+    given: List[float],
+    given_accelerations: Optional[List[float]],
+    timestamps_us: List[int],
+) -> Tuple[List[float], List[float], List[int]]:
+    """A plan's own speeds and accelerations (an Autoware trajectory's); without
+    accelerations, the change of speed over time to the next point."""
+    count = len(timestamps_us)
+    velocities = _padded(given, count)
+    if given_accelerations is not None:
+        return velocities, _padded(given_accelerations, count), list(range(count))
     accelerations: List[float] = [0.0] * count
     for index in range(count - 1):
         step = max((timestamps_us[index + 1] - timestamps_us[index]) * 1e-6, _EPSILON)
@@ -713,16 +724,17 @@ def _first_nearest_index(
 ) -> int:
     """``findFirstNearestIndexWithSoftConstraints``: the nearest point of the first run
     of points within the distance and heading thresholds; failing that, within the
-    distance alone; failing that, the nearest."""
+    distance alone; failing that, within the heading alone; failing that, the
+    nearest."""
     squared_threshold = dist_threshold * dist_threshold
-    for use_yaw in (True, False):
+    for use_dist, use_yaw in ((True, True), (True, False), (False, True)):
         within = False
         best = math.inf
         found = 0
         for index in range(len(points)):
             point = points[index]
             squared = (point.x - x) ** 2 + (point.y - y) ** 2
-            off = squared > squared_threshold or (
+            off = (use_dist and squared > squared_threshold) or (
                 use_yaw and abs(_normalize_angle(point.yaw - yaw)) > yaw_threshold
             )
             if off:
@@ -752,11 +764,7 @@ def _offset_to_segment(points: List[_Point], segment: int, x: float, y: float) -
     front = points[segment]
     for index in range(segment + 1, len(points)):
         back = points[index]
-        if (
-            abs(back.x - front.x) < _OVERLAP
-            and abs(back.y - front.y) < _OVERLAP
-            and abs(back.z - front.z) < _OVERLAP
-        ):
+        if abs(back.x - front.x) < _OVERLAP and abs(back.y - front.y) < _OVERLAP:
             continue
         dx = back.x - front.x
         dy = back.y - front.y
@@ -826,11 +834,7 @@ def _remove_overlap(points: List[_Point]) -> List[_Point]:
     for point in points:
         if kept:
             last = kept[-1]
-            if (
-                abs(last.x - point.x) < _OVERLAP
-                and abs(last.y - point.y) < _OVERLAP
-                and abs(last.z - point.z) < _OVERLAP
-            ):
+            if abs(last.x - point.x) < _OVERLAP and abs(last.y - point.y) < _OVERLAP:
                 continue
         kept.append(point)
     return kept
@@ -955,6 +959,11 @@ class TrajectoryFollower:
     _velocities: List[float]
     _accelerations: List[float]
     _pose_index: List[int]
+    # The last plan taken, tracked on while a plan is not (setTrajectory).
+    _last_plan: Optional[Trajectory]
+    _last_given: Optional[List[float]]
+    _last_given_accelerations: Optional[List[float]]
+    _started: bool
 
     def __init__(
         self,
@@ -1022,6 +1031,10 @@ class TrajectoryFollower:
         self._velocities = []
         self._accelerations = []
         self._pose_index = []
+        self._last_plan = None
+        self._last_given = None
+        self._last_given_accelerations = None
+        self._started = False
 
     # ------------------------------------------------------------------
     # Control
@@ -1037,6 +1050,7 @@ class TrajectoryFollower:
         now_us: Optional[int] = None,
         gear: int = 0,
         plan_velocities_mps: Optional[List[float]] = None,
+        plan_accelerations_mps2: Optional[List[float]] = None,
     ) -> VehicleCommand:
         """Return the command that tracks *plan_in_local* from the current pose.
 
@@ -1047,21 +1061,27 @@ class TrajectoryFollower:
             dt_s: Time since the previous call, in seconds.
             yaw_rate_rps: The ego's measured yaw rate, positive to the left.  ``None``
                 steers on pure pursuit alone.
-            now_us: The current time, on the plan's clock (``time_indexed`` only).
-                ``None`` takes the plan's first instant as now.
+            now_us: The current time, on the plan's clock.  ``time_indexed``: ``None``
+                takes the plan's first instant as now.  ``pid``: when the plan
+                arrived, which tells a leading anchor point at the planning time
+                from a planned point.
             gear: The gear the vehicle is in, as ``carla.VehicleControl.gear``
                 reports it (``0``, neutral, is taken as the first gear a throttle
                 selects).
             plan_velocities_mps: The plan's own speeds, one per point (``pid``
                 only), as an Autoware trajectory carries them.  ``None`` puts speeds
                 on the plan from its poses and times (:func:`plan_velocities`).
+            plan_accelerations_mps2: With *plan_velocities_mps*, the plan's own
+                accelerations; ``None`` takes the change of speed between points.
 
         Raises:
             RuntimeError: If no :attr:`powertrain` has been set.
 
         Returns:
-            The actuation command.  An empty plan -- or, ``pid``, one of a single
-            point, which Autoware's controller ignores -- yields a full stop.
+            The actuation command.  ``time_indexed``: an empty plan yields a full
+            stop.  ``pid``: a plan of fewer than two points is ignored, as
+            Autoware's ``setTrajectory`` ignores it, and the last plan is tracked
+            on; with none yet, a full stop.
         """
         if self._config.longitudinal_controller == "time_indexed":
             return self._step_time_indexed(
@@ -1073,11 +1093,34 @@ class TrajectoryFollower:
                 now_us,
                 gear,
             )
-        if len(plan_in_local) < 2:
-            return self._hold_still()
-        self._refresh_profile(
-            plan_in_local, pose_local_to_rig, current_speed_mps, plan_velocities_mps
-        )
+        given = plan_velocities_mps
+        given_accelerations = plan_accelerations_mps2
+        if self._refresh_profile(
+            plan_in_local,
+            pose_local_to_rig,
+            current_speed_mps,
+            now_us,
+            given,
+            given_accelerations,
+        ):
+            self._last_plan = plan_in_local
+            self._last_given = given
+            self._last_given_accelerations = given_accelerations
+        else:
+            last = self._last_plan
+            if last is None:
+                return self._hold_still()
+            plan_in_local = last
+            given = self._last_given
+            given_accelerations = self._last_given_accelerations
+            self._refresh_profile(
+                plan_in_local,
+                pose_local_to_rig,
+                current_speed_mps,
+                now_us,
+                given,
+                given_accelerations,
+            )
         plan_in_rig = plan_in_local.transform(pose_local_to_rig.inverse())
         points = plan_in_rig.positions
         target = self._lookahead_point(points, self._lookahead_m(current_speed_mps))
@@ -1218,16 +1261,27 @@ class TrajectoryFollower:
         plan_in_local: Trajectory,
         pose_local_to_rig: Pose,
         current_speed_mps: float,
+        now_us: Optional[int],
         given: Optional[List[float]],
-    ) -> None:
-        """Put speeds on a plan the follower has not seen yet.
+        given_accelerations: Optional[List[float]],
+    ) -> bool:
+        """Put speeds on a plan the follower has not seen yet; whether it is one
+        Autoware's controller takes (two points or more, its anchor aside).
 
-        The plan is taken as made where the vehicle is when it first sees it, as a
-        policy step and the control tick that follows it share the tick.
+        A plan led by a point stamped at or before now -- carla-driver-interface
+        leads its plan with the ego's pose at the planning time -- has that point
+        as its base, where the vehicle was as the plan was made, and the controller
+        tracks the points after it, as the e2e node's trajectory starts a step
+        after its stamp.  Otherwise the vehicle's pose as the follower first sees
+        the plan is its base, at *now_us*.  Either is latched with the plan.  A
+        plan that is not taken leaves the last one's speeds in place.
         """
+        count = len(plan_in_local)
+        if count == 0:
+            return False
         first = plan_in_local.positions[0]
         key = (
-            len(plan_in_local),
+            count,
             int(plan_in_local.timestamps_us[0]),
             int(plan_in_local.timestamps_us[-1]),
             float(first[0]),
@@ -1235,26 +1289,44 @@ class TrajectoryFollower:
         )
         # A plan's own speeds are taken as given every time: nothing to keep.
         if given is None and self._has_profile and self._profile_key == key:
-            return
-        self._has_profile = given is None
-        self._profile_key = key
+            return True
         stamps = [int(stamp) for stamp in plan_in_local.timestamps_us]
+        start = 0
+        if given is None and now_us is not None and stamps[0] <= now_us:
+            start = 1
+        if count - start < 2:
+            return False
         if given is not None:
-            velocities, accelerations, pose_index = _given_velocities(given, stamps)
+            velocities, accelerations, pose_index = _given_velocities(
+                given, given_accelerations, stamps
+            )
         else:
             config = self._config
-            velocities, accelerations, pose_index = plan_velocities(
-                plan_in_local.positions,
-                stamps,
-                pose_local_to_rig.position,
+            if start == 1:
+                base = plan_in_local.positions[0]
+                base_time_us = stamps[0]
+            else:
+                base = pose_local_to_rig.position
+                base_time_us = stamps[0] - (stamps[1] - stamps[0])
+                if now_us is not None and now_us < stamps[0]:
+                    base_time_us = now_us
+            velocities, accelerations, relative = plan_velocities(
+                plan_in_local.positions[start:],
+                stamps[start:],
+                base,
+                base_time_us,
                 config.velocity_smoothing_window,
                 # The node's ``ego.odometry.twist.twist.linear.x > epsilon``.
                 current_speed_mps > _DOUBLE_EPSILON,
                 config.stopping_threshold,
             )
+            pose_index = [index + start for index in relative]
+        self._has_profile = given is None
+        self._profile_key = key
         self._velocities = velocities
         self._accelerations = accelerations
         self._pose_index = pose_index
+        return True
 
     def _rig_points(self, plan_in_rig: Trajectory) -> List[_Point]:
         """The plan in the rig frame, with its speeds."""
@@ -1291,6 +1363,13 @@ class TrajectoryFollower:
         config = self._config
         dt = max(dt_s, _EPSILON)
         self._now_s += dt
+        if not self._started:
+            # Autoware's controller starts STOPPED, with the vehicle standing; one
+            # taken over moving (a run-up, a spawn at speed, a new command
+            # source) starts in DRIVE, or STOPPED's brake would pulse for a tick.
+            self._started = True
+            if abs(speed_mps) > config.stopped_state_entry_vel:
+                self._state = DRIVE
         current_acc = self._estimate_acceleration(speed_mps, dt)
         dist_threshold = config.ego_nearest_dist_threshold
         yaw_threshold = config.ego_nearest_yaw_threshold
@@ -1308,14 +1387,9 @@ class TrajectoryFollower:
         target = nearest
         if running_distance > _MIN_RUNNING_DISTANCE:
             trajectory = _remove_overlap(trajectory)
-            nearest_index = _first_nearest_index(
-                trajectory,
-                nearest.x,
-                nearest.y,
-                nearest.yaw,
-                dist_threshold,
-                yaw_threshold,
-            )
+            # Autoware walks from the index the nearest point was inserted at,
+            # before the overlaps were removed.
+            nearest_index = min(segment + 1, len(trajectory) - 1)
             pose = _pose_after_distance(trajectory, nearest_index, running_distance)
             target_segment = _first_nearest_segment(
                 trajectory, pose.x, pose.y, pose.yaw, dist_threshold, yaw_threshold
@@ -1339,7 +1413,9 @@ class TrajectoryFollower:
             trajectory, target_index, speed_mps, current_acc, stop_dist, dt
         )
 
-        # createCtrlCmdMsg: the speed history the smooth stop fits.
+        # createCtrlCmdMsg: the speed history the smooth stop fits, as many entries
+        # as control steps in the delay: 3 at the simulation's 0.05 s step, where
+        # Autoware's 0.03 s control period keeps 5.
         self._vel_history.append((self._now_s, speed_mps))
         kept = max(int(config.delay_compensation_time / dt), 0)
         while len(self._vel_history) > kept:
