@@ -103,6 +103,37 @@ is the **Metric** card, under World.
 To read a metric yourself -- in a probe, a test, a recorder --
 `read_metric(key, world)` returns its value in the frame, or `None`.
 
+### Off the road as a fail condition
+
+`offroad` is a measurement, and a strict one: it reads `1` as soon as any one
+corner of the ego's box is on no driving lane. A corner over a gap between
+lanes at a junction entry, or a small offset between the OpenDRIVE lanes and
+where the vehicle drives, counts though the vehicle is in its lane, so
+`MetricCondition(OFFROAD, ...)` fails such runs. To judge a run by how much of
+the box is off instead, use `OffRoadFractionCondition(fraction, entity_name,
+*, label)`, a condition rather than a metric:
+
+```python
+from autoware_carla_scenario import OffRoadFractionCondition
+
+self.register_fail_condition(OffRoadFractionCondition(0.3, label="offroad"))
+```
+
+Every tick it samples a 5 x 3 grid of points over the entity's bounding box
+(the ego's unless `entity_name` names another): 5 evenly spaced along its
+length and 3 across its width, the box's edges and corners included. A point
+is off when `get_waypoint(point, project_to_road=False,
+lane_type=carla.LaneType.Driving)` finds no lane there, asked at the height of
+the entity, so that where roads cross at different heights the lane is the one
+it is on. It fails once at least `fraction` (in `(0, 1]`) of the 15 points are
+off. The fraction is of points, not of area: one corner off is 1/15, the
+front edge 3/15, one long side 5/15. `fraction=1/15` fails on any one point,
+the way the metric does on a corner; `0.3` fails at 5 points, so it tolerates
+a corner or the front edge over a lane gap and fails once a whole long side
+of the box is off.
+In the [Scenario Editor](scenario_editor.md) it is the **Off the road** card,
+under Entity.
+
 A scenario or a Python ODD may import any name of
 `autoware_carla_scenario.metrics` -- the keys, `Metric`, `BUILT_IN_METRICS`,
 `is_metric()` and `read_metric()` -- and is checked against them like any

@@ -416,6 +416,7 @@ classDiagram
     class ElapsedTimeCondition
     class CollisionCondition
     class EntityExistenceCondition
+    class OffRoadFractionCondition
     class TrafficSignalCondition
     class TrafficSignalControllerCondition
 
@@ -442,6 +443,7 @@ classDiagram
     BaseCondition <|-- ElapsedTimeCondition
     BaseCondition <|-- CollisionCondition
     BaseCondition <|-- EntityExistenceCondition
+    BaseCondition <|-- OffRoadFractionCondition
     BaseCondition <|-- TrafficSignalCondition
     BaseCondition <|-- TrafficSignalControllerCondition
     BaseCondition <|-- EntityLanePositionCondition
@@ -470,7 +472,7 @@ classDiagram
 | Category | Conditions | Description |
 |----------|-----------|-------------|
 | **Temporal** | `TimeoutCondition`, `ElapsedTimeCondition` | Time-based triggers |
-| **Safety** | `CollisionCondition`, `EntityExistenceCondition` | Collision detection — with anything, or with a named entity or class of object — and actor alive checks |
+| **Safety** | `CollisionCondition`, `EntityExistenceCondition`, `OffRoadFractionCondition` | Collision detection — with anything, or with a named entity or class of object — actor alive checks, and leaving the driving lanes by more than a tolerance |
 | **Position** | `EntityLanePositionCondition`, `WaypointCondition` | Road/lane position, waypoint crossing |
 | **Relative** | `EntityDistanceCondition`, `EntityPositionDistanceCondition`, `TimeToCollisionCondition`, `TimeHeadwayCondition`, `RelativeSpeedCondition` | Gap to another entity or to a place on the map, time to collision, following headway and speed difference |
 | **Motion** | `SpeedCondition`, `AccelerationCondition`, `StandstillCondition`, `TemporaryStopCondition` | Speed and acceleration thresholds, standstill detection, stop-and-go |

@@ -2553,6 +2553,44 @@ register_condition_spec(
 
 register_condition_spec(
     ConditionSpec(
+        type_id="off_road_fraction",
+        title="Off the road",
+        category="Entity",
+        builder="build_off_road_fraction_condition",
+        target="..conditions:OffRoadFractionCondition",
+        argmap=(("entity", "entity_name"),),
+        visual=ConditionVisual(
+            metric="Off the road",
+            subject="entity",
+            value="fraction",
+            value_label="of the box",
+        ),
+        fields=(
+            _entity_field("entity", "Subject", required=False),
+            FieldSpec(
+                name="fraction",
+                label="Fraction",
+                kind="number",
+                default=0.3,
+                help=(
+                    "Of the 15 points of a 5 x 3 grid over the bounding box, "
+                    "edges and corners included (not of its area), in (0, 1]: "
+                    "1/15 fails on any one point, 1 only when the whole box is "
+                    "off."
+                ),
+            ),
+        ),
+        description=(
+            "Enough of an entity's box (the ego's when none is named) is on no "
+            "driving lane.  The pass/fail counterpart of the offroad metric, "
+            "which fires on a single corner -- a corner over a lane gap at a "
+            "junction entry included.  Usually a fail condition."
+        ),
+    )
+)
+
+register_condition_spec(
+    ConditionSpec(
         type_id="lane_ends",
         title="Lane ends ahead",
         category="Entity",
