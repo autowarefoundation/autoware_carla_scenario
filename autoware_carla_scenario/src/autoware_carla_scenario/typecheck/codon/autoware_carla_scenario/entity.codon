@@ -6,7 +6,7 @@
 
 import typesafe_carla.carla as carla
 
-from ._tc import _keyword_only
+from ._tc import _keyword_only, _acs_expect_return
 from .constants import EGO_ROLE_NAME
 from .debug_markers import DebugMarkers
 from .coordinate import (Lanelet2Pose, OpenDrivePose, CarlaWorldPose, GroundProjectionConfig,
@@ -36,6 +36,12 @@ def _expect_optional_lanelet2_poses(poses) -> List[Lanelet2Pose]:
 class EgoConfig(VehicleEntityConfig):
     goal_pose: Optional[Lanelet2Pose]
     waypoint_poses: List[Lanelet2Pose]
+
+    # Codon would build it by its fields' names too (docs/typecheck.md, #244).
+    def __init__(self, role_name, spawn_location, vehicle_type, initial_speed_kmh,
+                 spawn_retry_max_count, spawn_retry_t_step, spawn_retry_z_step, od_pose,
+                 ground_projection, goal_pose, waypoint_poses):
+        compile_error("EgoConfig(): no constructor takes these arguments (required: spawn_location)")
 
     def __init__(self, spawn_location: SpawnLocation, vehicle_type: str = "vehicle.mini.cooper",
                  initial_speed_kmh: float = 0.0, spawn_retry_max_count: int = 0,
@@ -101,6 +107,37 @@ class EgoVehicle:
 
     def _acs_ego_vehicle(self) -> int:
         return 0
+
+    @staticmethod
+    def _acs_hook_returns(name: Literal[str], r):
+        """The return type of each method an override of which the scenario
+        check checks (_acs_hook_return in _tc.codon, #238)."""
+        if name == "actor":
+            _acs_expect_return(r, Optional[carla.Actor], "EgoVehicle.actor returns Optional[carla.Actor]")
+        elif name == "is_initialized":
+            _acs_expect_return(r, bool, "EgoVehicle.is_initialized returns bool")
+        elif name == "carried_actor_ids":
+            _acs_expect_return(r, Set[int], "EgoVehicle.carried_actor_ids returns Set[int]")
+        elif name == "set_initial_speeds":
+            _acs_expect_return(r, NoneType, "EgoVehicle.set_initial_speeds() returns None")
+        elif name == "termination_requested":
+            _acs_expect_return(r, bool, "EgoVehicle.termination_requested returns bool")
+        elif name == "termination_reason":
+            _acs_expect_return(r, Optional[str], "EgoVehicle.termination_reason returns Optional[str]")
+        elif name == "route_to":
+            _acs_expect_return(r, NoneType, "EgoVehicle.route_to() returns None")
+        elif name == "spawn":
+            _acs_expect_return(r, carla.Actor, "EgoVehicle.spawn() returns carla.Actor")
+        elif name == "on_scenario_start":
+            _acs_expect_return(r, NoneType, "EgoVehicle.on_scenario_start() returns None")
+        elif name == "on_tick":
+            _acs_expect_return(r, NoneType, "EgoVehicle.on_tick() returns None")
+        elif name == "debug_markers":
+            _acs_expect_return(r, DebugMarkers, "EgoVehicle.debug_markers() returns DebugMarkers")
+        elif name == "on_scenario_end":
+            _acs_expect_return(r, NoneType, "EgoVehicle.on_scenario_end() returns None")
+        elif name == "destroy":
+            _acs_expect_return(r, NoneType, "EgoVehicle.destroy() returns None")
 
     @property
     def actor(self) -> Optional[carla.Actor]:

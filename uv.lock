@@ -168,7 +168,7 @@ wheels = [
 
 [[package]]
 name = "autoware-carla-scenario"
-version = "14.0.0"
+version = "14.1.0"
 source = { editable = "autoware_carla_scenario" }
 dependencies = [
     { name = "carla-driver-interface" },
@@ -177,6 +177,7 @@ dependencies = [
     { name = "grpcio" },
     { name = "hydra-core" },
     { name = "jinja2" },
+    { name = "mypy" },
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
     { name = "numpy", version = "2.5.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
@@ -226,6 +227,7 @@ requires-dist = [
     { name = "hydra-core", specifier = ">=1.3.2" },
     { name = "jinja2", specifier = ">=3.1.0" },
     { name = "libsumo", marker = "extra == 'sumo'", specifier = ">=1.23" },
+    { name = "mypy", specifier = ">=1.19.0" },
     { name = "numpy", specifier = ">=1.21" },
     { name = "omegaconf", specifier = ">=2.3.0" },
     { name = "opencv-python-headless", specifier = ">=4.8" },

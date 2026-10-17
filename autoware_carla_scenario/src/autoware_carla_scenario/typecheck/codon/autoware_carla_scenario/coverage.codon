@@ -79,6 +79,11 @@ def _expect_optional_edges(edges):
 class CoverItem:
     name: str
 
+    # Codon would build it by its fields too (docs/typecheck.md, #244).
+    def __init__(self, name):
+        compile_error("CoverItem(): no constructor takes these arguments "
+                      "(required: name, expression)")
+
     def __init__(self, name: str, expression, unit: str = "", range = None, every = None,
                  buckets = None, values = None, ignore = None, event = SamplingEvent("end"),
                  text: str = "", target = 1.0, group = None, cover_by: str = "hits",

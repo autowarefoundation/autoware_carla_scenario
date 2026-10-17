@@ -990,6 +990,11 @@ def test_the_driver_renders_the_yaml_values_with_the_config_types() -> None:
     }
     assert f"from {__name__} import _Npc" in lines
     assert "    scenario.setup()" in lines
+    # The hooks' results, checked strictly after the module checks (#238):
+    # `done: bool = scenario.is_done()` converted a str with __bool__.
+    assert not [line for line in lines if "done: bool" in line]
+    assert '    BaseScenario._acs_hook_returns("is_done", scenario.is_done())' in lines
+    assert driver.trailer == "_acs_check_scenario_hooks()\n"
 
 
 def test_a_mapping_the_config_does_not_convert_stays_a_dict() -> None:

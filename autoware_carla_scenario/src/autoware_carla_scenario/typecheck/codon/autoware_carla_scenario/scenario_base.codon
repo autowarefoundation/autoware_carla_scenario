@@ -7,7 +7,8 @@
 import typesafe_carla.carla as carla
 
 from ._reader import _expect_reader
-from ._tc import _keyword_only, _expect_float, _expect_int_sequence, _expect_optional_float
+from ._tc import (_keyword_only, _expect_float, _expect_int_sequence, _expect_optional_float,
+                  _acs_expect_return)
 from .actions import BaseAction, _expect_action
 from .conditions import BaseCondition, _expect_condition
 from .constants import DEFAULT_TM_PORT
@@ -49,6 +50,10 @@ class BaseScenario:
     _ground_projection: GroundProjectionConfig
     DEFAULT_RANDOM_SEED: ClassVar[int] = 0
     STABILIZE_TICKS: ClassVar[int] = 5
+
+    # Codon would build it by its fields' names too (docs/typecheck.md, #244).
+    def __init__(self, ego_config, ego_entity, random_seed, _spawn_pose, _ground_projection):
+        compile_error("BaseScenario(): no constructor takes these arguments (required: ego_config)")
 
     def __init__(self, ego_config: EgoConfig, *_kw, spawn_pose: Optional[Lanelet2Pose] = None,
                  ground_projection = None, random_seed: int = 0, ego_type = None,
@@ -201,3 +206,70 @@ class BaseScenario:
 
     def set_initial_speed(self, ego_actor: carla.Actor) -> None:
         raise NotImplementedError()
+
+    @staticmethod
+    def _acs_hook_returns(name: Literal[str], r):
+        """The return type of each method an override of which the scenario
+        check checks (_acs_hook_return in _tc.codon, #238)."""
+        if name == "goal_pose":
+            _acs_expect_return(r, Optional[Lanelet2Pose], "BaseScenario.goal_pose returns Optional[Lanelet2Pose]")
+        elif name == "waypoint_poses":
+            _acs_expect_return(r, List[Lanelet2Pose], "BaseScenario.waypoint_poses returns List[Lanelet2Pose]")
+        elif name == "create_ego":
+            _acs_expect_return(r, EgoVehicle, "BaseScenario.create_ego() returns EgoVehicle")
+        elif name == "set_client":
+            _acs_expect_return(r, NoneType, "BaseScenario.set_client() returns None")
+        elif name == "client":
+            _acs_expect_return(r, carla.Client, "BaseScenario.client returns carla.Client")
+        elif name == "tm_port":
+            _acs_expect_return(r, int, "BaseScenario.tm_port returns int")
+        elif name == "world":
+            _acs_expect_return(r, carla.World, "BaseScenario.world returns carla.World")
+        elif name == "_setup_ego_spawn":
+            _acs_expect_return(r, OpenDrivePose, "BaseScenario._setup_ego_spawn() returns OpenDrivePose")
+        elif name == "ego_requires_goal":
+            _acs_expect_return(r, bool, "BaseScenario.ego_requires_goal returns bool")
+        elif name == "require_goal":
+            _acs_expect_return(r, Optional[Lanelet2Pose], "BaseScenario.require_goal() returns Optional[Lanelet2Pose]")
+        elif name == "derive_goal_from_route":
+            _acs_expect_return(r, NoneType, "BaseScenario.derive_goal_from_route() returns None")
+        elif name == "derive_waypoints_from_route":
+            _acs_expect_return(r, NoneType, "BaseScenario.derive_waypoints_from_route() returns None")
+        elif name == "register_route_to_goal":
+            _acs_expect_return(r, NoneType, "BaseScenario.register_route_to_goal() returns None")
+        elif name == "setup":
+            _acs_expect_return(r, NoneType, "BaseScenario.setup() returns None")
+        elif name == "is_done":
+            _acs_expect_return(r, bool, "BaseScenario.is_done() returns bool")
+        elif name == "register_init":
+            _acs_expect_return(r, NoneType, "BaseScenario.register_init() returns None")
+        elif name == "run_init":
+            _acs_expect_return(r, NoneType, "BaseScenario.run_init() returns None")
+        elif name == "register_pre_tick":
+            _acs_expect_return(r, NoneType, "BaseScenario.register_pre_tick() returns None")
+        elif name == "register_post_tick":
+            _acs_expect_return(r, NoneType, "BaseScenario.register_post_tick() returns None")
+        elif name == "register_entity":
+            _acs_expect_return(r, NoneType, "BaseScenario.register_entity() returns None")
+        elif name == "register_pedestrian":
+            _acs_expect_return(r, NoneType, "BaseScenario.register_pedestrian() returns None")
+        elif name == "register_pass_condition":
+            _acs_expect_return(r, NoneType, "BaseScenario.register_pass_condition() returns None")
+        elif name == "register_fail_condition":
+            _acs_expect_return(r, NoneType, "BaseScenario.register_fail_condition() returns None")
+        elif name == "register_measure":
+            _acs_expect_return(r, NoneType, "BaseScenario.register_measure() returns None")
+        elif name == "measure":
+            _acs_expect_return(r, Optional[float], "BaseScenario.measure() returns Optional[float]")
+        elif name == "register_cover":
+            _acs_expect_return(r, NoneType, "BaseScenario.register_cover() returns None")
+        elif name == "register_cross":
+            _acs_expect_return(r, NoneType, "BaseScenario.register_cross() returns None")
+        elif name == "follow_with_spectator":
+            _acs_expect_return(r, NoneType, "BaseScenario.follow_with_spectator() returns None")
+        elif name == "log_actor_position":
+            _acs_expect_return(r, NoneType, "BaseScenario.log_actor_position() returns None")
+        elif name == "initial_speeds_mps":
+            _acs_expect_return(r, Dict[int, float], "BaseScenario.initial_speeds_mps() returns Dict[int, float]")
+        elif name == "set_initial_speed":
+            _acs_expect_return(r, NoneType, "BaseScenario.set_initial_speed() returns None")

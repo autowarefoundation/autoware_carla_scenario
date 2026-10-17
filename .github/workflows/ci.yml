@@ -6,6 +6,13 @@ on:
   pull_request:
     branches: [ master, main, develop ]
 
+# A new push to a pull request makes its running CI moot: cancel it rather than
+# let it hold runners that the organisation's other runs are queued behind.
+# Pushes to a branch are never cancelled -- each commit on master keeps its run.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   test:
     # The whole supported range (`requires-python`). The floor is 3.10 because
@@ -41,12 +48,16 @@ jobs:
         key: typecheck-${{ runner.arch }}-${{ matrix.python-version }}-${{ github.sha }}
         restore-keys: typecheck-${{ runner.arch }}-${{ matrix.python-version }}-
 
+    # worksteal: the Codon compiles take ~10 s a test, and with the default
+    # 'load' scheduling the last of them ran one after another on a single
+    # worker while the others sat idle. An idle worker now takes over another
+    # worker's queue.
     - name: Run tests
       env:
         AUTOWARE_CARLA_SCENARIO_TYPECHECK_CACHE: ${{ runner.temp }}/typecheck-cache
       run: |
         touch "${RUNNER_TEMP}/typecheck-started"
-        uv run pytest -v --tb=short -n auto -o addopts= -m "not slow"
+        uv run pytest -v --tb=short -n auto --dist worksteal -o addopts= -m "not slow"
 
     # A verdict this run did not read or write is for sources that no longer
     # exist: drop it rather than carry it into every later cache.
@@ -120,7 +131,7 @@ jobs:
         AUTOWARE_CARLA_SCENARIO_TYPECHECK_CACHE: ${{ runner.temp }}/typecheck-cache
       run: |
         touch "${RUNNER_TEMP}/typecheck-started"
-        uv run pytest -v --tb=short -n auto -o addopts= -m "not slow"
+        uv run pytest -v --tb=short -n auto --dist worksteal -o addopts= -m "not slow"
 
     # A verdict this run did not read or write is for sources that no longer
     # exist: drop it rather than carry it into every later cache.
@@ -152,6 +163,11 @@ jobs:
 
   lint-and-format:
     runs-on: ubuntu-latest
+    env:
+      # The pytest hook runs the whole fast suite again (for a contributor's
+      # commit); here the test jobs already do, and it made this the slowest
+      # job of the run.
+      SKIP: pytest-carla
     steps:
     - uses: actions/checkout@v4
 
@@ -186,6 +202,9 @@ jobs:
           run-precommit: "false"
 
       - name: Run pre-commit auto-fix
+        env:
+          # Fixes nothing; see lint-and-format.
+          SKIP: pytest-carla
         run: uv run pre-commit run --all-files || true
 
       - name: Commit and push if changes were made

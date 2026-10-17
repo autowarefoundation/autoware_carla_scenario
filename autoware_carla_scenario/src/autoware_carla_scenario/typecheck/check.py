@@ -18,7 +18,11 @@ library check's calls appended (:func:`.library_driver.render_library_checks`),
 which the driver runs, so every function, method and class-level default in
 it is compiled, whether ``setup()`` reaches it or not; one the check cannot
 call (a parameter without an annotation it can call with, or a return
-annotation naming ``Any``) is left to what reaches it, with a warning.
+annotation naming ``Any``) is left to what reaches it, with a warning.  The
+result of each method overriding a framework hook is checked against the
+hook's return type (#238), and, after the compile, mypy reports each value
+that may be ``None`` used where it may not be, which Codon unwraps
+implicitly (:mod:`.none_check`, #239).
 
 :func:`typecheck_library` compiles the framework's own modules instead (those
 :mod:`.library` lists as checked), each with calls to every function and method,
@@ -68,6 +72,7 @@ from .library import (
     UNCALLED,
     package_modules,
 )
+from .none_check import NoneCheckSkipped, run_none_check
 from .not_modelled import NOT_MODELLED
 from .library_driver import (
     render_library_checks,
@@ -714,7 +719,7 @@ def _build_workspace(
         dest.parent.mkdir(parents=True, exist_ok=True)
         text, origin = transform_source_lines(module.text, init_classes=init_classes)
         checks = render_library_checks(
-            module.tree, classes=classes, skip_any_returns=True
+            module.tree, classes=classes, skip_any_returns=True, hook_returns=True
         )
         for line, message in checks.problems:
             ws.warnings.append(
@@ -738,7 +743,7 @@ def _build_workspace(
                 init_codon.write_text("")
             parent = parent.parent
     (root / DRIVER_MODULE).write_text(
-        driver.source + render_module_checks(sorted(sources.modules))
+        driver.source + render_module_checks(sorted(sources.modules)) + driver.trailer
     )
     return ws, problems
 
@@ -1207,14 +1212,63 @@ def _typecheck(
     if refuse is not None:
         sources.problems += refuse(sources)
     rendered = driver()
-    key = _cache_key(toolchain, codon_path, sources, rendered.source)
+    key = _cache_key(toolchain, codon_path, sources, rendered.source + rendered.trailer)
     cached = _cached(key, sources)
     if cached is not None:
         return cached
     result = _compile(name, sources, rendered, toolchain, codon_path, timeout)
     if result is None:  # timed out: no verdict worth keeping
         return _timed_out(name, timeout)
-    return _store(key, result, sources)
+    checked = _with_none_misuses(result, sources, timeout)
+    if len(checked.warnings) > len(result.warnings):
+        # The None check did not run (mypy missing, out of time): a verdict
+        # for this process only, so the next run checks it again.
+        _CACHE[key] = checked
+        return checked
+    return _store(key, checked, sources)
+
+
+def _with_none_misuses(
+    result: TypeCheckResult, sources: _Sources, timeout: float
+) -> TypeCheckResult:
+    """*result*, failed by each ``None`` misused in the modules (#239).
+
+    Codon unwraps an ``Optional`` implicitly, so the compile accepts a value
+    that may be ``None`` used where it may not be; mypy's strict Optional
+    does not (:mod:`.none_check`).  Its findings come after Codon's errors.
+    Without a verdict from mypy (not installed, out of time, crashed) the
+    result keeps Codon's verdict, with a warning saying so.
+    """
+    if result.crashed:
+        return result
+    try:
+        findings = run_none_check(
+            sorted(m.path for m in sources.modules.values()), timeout
+        )
+    except NoneCheckSkipped as exc:
+        warning = Diagnostic(
+            f"the None check did not run ({exc}), so an Optional used without "
+            "a test for None is not reported",
+            severity="warning",
+        )
+        return dataclasses.replace(result, warnings=[*result.warnings, warning])
+    if not findings:
+        return result
+    diagnostics = [
+        Diagnostic(
+            f"{f.message}: Codon unwraps an Optional implicitly, so test the "
+            f"value for None before this use, or Python fails here when it is "
+            f"None (mypy: {f.code})",
+            f.path,
+            f.line,
+            f.column,
+            f.notes,
+        )
+        for f in findings
+    ]
+    return dataclasses.replace(
+        result, ok=False, diagnostics=[*result.diagnostics, *diagnostics]
+    )
 
 
 def typecheck_odd(

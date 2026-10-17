@@ -790,6 +790,358 @@ def test_code_setup_does_not_reach_is_checked_at_its_line(
     assert any(label in frame for frame in error.trace), error.format()
 
 
+_HOOK_HEADER = _HEADER.replace(
+    "    AndCondition,", "    AndCondition,\n    BaseAction,\n    EgoVehicle,"
+)
+
+_TIMEOUT_SETUP = (
+    'self.register_fail_condition(TimeoutCondition(cfg.timeout_seconds, label="t"))\n'
+)
+
+_ALWAYS_BOOL = """
+
+class Always(BaseCondition):
+    def check(self, world: carla.World, elapsed: float) -> bool:
+        return True
+"""
+
+
+def _scenario_method(signature: str, body: str) -> str:
+    return f"\n    def {signature}:\n        {body}\n"
+
+
+@pytest.mark.parametrize(
+    ("setup", "extra", "header", "needle", "hook"),
+    [
+        (
+            _TIMEOUT_SETUP + 'self.register_pass_condition(Always(label="always"))\n',
+            _ALWAYS_BOOL,
+            _HOOK_HEADER,
+            "def check(self, world: carla.World, elapsed: float) -> bool:",
+            "BaseCondition.check() returns Optional[ScenarioResult]",
+        ),
+        (
+            _TIMEOUT_SETUP,
+            _ALWAYS_BOOL,  # never registered: the module check reaches it
+            _HOOK_HEADER,
+            "def check(self, world: carla.World, elapsed: float) -> bool:",
+            "BaseCondition.check() returns Optional[ScenarioResult]",
+        ),
+        (
+            _TIMEOUT_SETUP,
+            """
+
+class Status(BaseCondition):
+    def check(self, world: carla.World, elapsed: float) -> ConditionStatus:
+        return ConditionStatus("s", True, "")
+""",
+            _HOOK_HEADER.replace(
+                "from .configs import CaseConfig",
+                "from autoware_carla_scenario.conditions import ConditionStatus\n\n"
+                "from .configs import CaseConfig",
+            ),
+            "def check(self, world: carla.World, elapsed: float) -> ConditionStatus:",
+            "BaseCondition.check() returns Optional[ScenarioResult]",
+        ),
+        (
+            _TIMEOUT_SETUP,
+            """
+
+class LongTimeout(TimeoutCondition):
+    def check(self, world: carla.World, elapsed: float) -> str:
+        return "late"
+""",
+            _HOOK_HEADER,
+            "def check(self, world: carla.World, elapsed: float) -> str:",
+            "BaseCondition.check() returns Optional[ScenarioResult]",
+        ),
+        (
+            _TIMEOUT_SETUP,
+            _scenario_method(
+                "initial_speeds_mps(self, ego_actor: carla.Actor | None) -> list[float]",
+                "return [3.0]",
+            ),
+            _HOOK_HEADER,
+            "def initial_speeds_mps(",
+            "BaseScenario.initial_speeds_mps() returns Dict[int, float]",
+        ),
+        (
+            _TIMEOUT_SETUP,
+            _scenario_method(
+                "initial_speeds_mps(self, ego_actor: carla.Actor | None) -> dict[int, int]",
+                "return {1: 3}",
+            ),
+            _HOOK_HEADER,
+            "def initial_speeds_mps(",
+            "BaseScenario.initial_speeds_mps() returns Dict[int, float]",
+        ),
+        (
+            _TIMEOUT_SETUP,
+            "",
+            _HOOK_HEADER.replace(
+                "def is_done(self) -> bool:\n        return False",
+                'def is_done(self) -> str:\n        return "no"',
+            ),
+            "def is_done(self)",
+            "BaseScenario.is_done() returns bool",
+        ),
+        (
+            _TIMEOUT_SETUP,
+            "",
+            _HOOK_HEADER.replace(
+                "def is_done(self) -> bool:\n        return False",
+                "def is_done(self) -> int:\n        return 0",
+            ),
+            "def is_done(self)",
+            "BaseScenario.is_done() returns bool",
+        ),
+        (
+            _TIMEOUT_SETUP,
+            "",
+            _HOOK_HEADER.replace(
+                "def is_done(self) -> bool:\n        return False",
+                "def is_done(self) -> bool | None:\n        return False",
+            ),
+            "def is_done(self)",
+            "this override returns an Optional",
+        ),
+        (
+            _TIMEOUT_SETUP + "return 1\n",
+            "",
+            _HOOK_HEADER.replace("def setup(self) -> None:", "def setup(self) -> int:"),
+            "def setup(self)",
+            "BaseScenario.setup() returns None",
+        ),
+        (
+            _TIMEOUT_SETUP,
+            "\n    @property\n    def ego_requires_goal(self) -> str:\n"
+            '        return "yes"\n',
+            _HOOK_HEADER,
+            "def ego_requires_goal(self)",
+            "BaseScenario.ego_requires_goal returns bool",
+        ),
+        (
+            _TIMEOUT_SETUP,
+            """
+
+class Honk(BaseAction):
+    def __init__(self) -> None:
+        super().__init__("honk")
+
+    def execute(self, world: carla.World) -> bool:
+        return True
+""",
+            _HOOK_HEADER,
+            "def execute(self, world: carla.World) -> bool:",
+            "BaseAction.execute() returns None",
+        ),
+        (
+            _TIMEOUT_SETUP,
+            """
+
+class Ego(EgoVehicle):
+    def debug_markers(self) -> list[str]:
+        return []
+""",
+            _HOOK_HEADER,
+            "def debug_markers(self)",
+            "EgoVehicle.debug_markers() returns DebugMarkers",
+        ),
+    ],
+    ids=[
+        "check-bool-registered",
+        "check-bool-unregistered",
+        "check-condition-status",
+        "check-str-of-a-built-in-condition",
+        "initial-speeds-list",
+        "initial-speeds-dict-of-int",
+        "is-done-str",
+        "is-done-int",
+        "is-done-optional",
+        "setup-int",
+        "property-str",
+        "action-execute-bool",
+        "ego-debug-markers-list",
+    ],
+)
+def test_a_hook_override_returning_another_type_is_refused_at_its_def(
+    tmp_path: Path, setup: str, extra: str, header: str, needle: str, hook: str
+) -> None:
+    # Codon compiled each override against its own annotation only, and the
+    # framework's callers are model stubs, so these passed (#238): the
+    # result of each override is now checked strictly against the type the
+    # framework reads, with no conversion (`done: bool = "no"` compiles).
+    scenario, config, path = _write_case(tmp_path, setup, extra, header=header)
+    result = typecheck_scenario(scenario, config)
+    error = _only_error(result)
+    assert hook in error.message, error.format()
+    assert error.path == str(path)
+    assert error.line == _line_of(path, needle)
+
+
+_VALID_HOOKS = """
+
+    def initial_speeds_mps(self, ego_actor: carla.Actor | None) -> dict[int, float]:
+        return {} if ego_actor is None else {ego_actor.id: 3.0}
+
+    def require_goal(self) -> Lanelet2Pose:
+        return Lanelet2Pose(1, 0.0)
+
+    @property
+    def ego_requires_goal(self) -> bool:
+        return False
+
+    def measure(self, key: str, world: carla.World) -> float:
+        return 1.0
+
+    def check(self) -> str:
+        return "not a hook of BaseScenario"
+
+    def create_ego(self) -> EgoVehicle:
+        raise NotImplementedError("only raises: Codon types its result None")
+
+
+class Result(ScenarioResult):
+    pass
+
+
+class NeverCondition(BaseCondition):
+    def check(self, world: carla.World, elapsed: float) -> None:
+        return None
+
+
+class AfterCondition(BaseCondition):
+    def check(self, world: carla.World, elapsed: float) -> ScenarioResult:
+        return ScenarioResult(passed=elapsed > 1.0, message="", elapsed_seconds=elapsed)
+
+
+class MaybeCondition(BaseCondition):
+    def check(self, world: carla.World, elapsed: float) -> ScenarioResult | None:
+        if elapsed < 1.0:
+            return None
+        return ScenarioResult(passed=True, message="", elapsed_seconds=elapsed)
+
+
+class OwnResultCondition(BaseCondition):
+    def check(self, world: carla.World, elapsed: float) -> Result:
+        return Result(passed=True, message="", elapsed_seconds=elapsed)
+
+
+class Honk(BaseAction):
+    def __init__(self) -> None:
+        super().__init__("honk")
+
+    def execute(self, world: carla.World) -> None:
+        pass
+
+
+class Tracker:
+    def is_done(self) -> str:
+        return "not a hook: Tracker derives from no framework class"
+
+    def check(self, world: carla.World, elapsed: float) -> bool:
+        return True
+"""
+
+
+def test_hook_overrides_returning_the_framework_type_compile(tmp_path: Path) -> None:
+    # The look-alikes of the refused cases: what Python's typing takes for
+    # the hook's type (a ScenarioResult or None where Optional[ScenarioResult]
+    # is read, a subclass of it, a bool), and methods that override no hook.
+    header = _HOOK_HEADER.replace(
+        "def is_done(self) -> bool:\n        return False",
+        "def is_done(self) -> bool:\n        return self._config.timeout_seconds < 0.0",
+    )
+    setup = (
+        _TIMEOUT_SETUP
+        + 'self.register_pass_condition(AfterCondition(label="after"))\n'
+        + 'self.register_pass_condition(MaybeCondition(label="maybe"))\n'
+        + 'self.register_pass_condition(OwnResultCondition(label="own"))\n'
+        + 'self.register_fail_condition(NeverCondition(label="never"))\n'
+        + "self.register_pre_tick(Honk())\n"
+    )
+    scenario, config, _ = _write_case(tmp_path, setup, _VALID_HOOKS, header=header)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+_NONE_HEADER = _HEADER.replace(
+    "    snap_to_carla_road,", "    find_actor_by_role_name,\n    snap_to_carla_road,"
+)
+
+
+@pytest.mark.parametrize(
+    ("setup", "needle", "message"),
+    [
+        (
+            "threshold: float = cfg.min_speed_kmh / 3.6\n"
+            'logger.info("threshold %f", threshold)\n',
+            "cfg.min_speed_kmh / 3.6",
+            'Unsupported operand types for / ("None" and "float")',
+        ),
+        (
+            'logger.info("goal %d", self.goal_pose.lanelet_id)\n',
+            "self.goal_pose.lanelet_id",
+            'Item "None" of "Lanelet2Pose | None" has no attribute "lanelet_id"',
+        ),
+        (
+            'npc = find_actor_by_role_name(self.world, "npc")\n'
+            'logger.info("npc at %f", npc.get_location().x)\n',
+            "npc.get_location()",
+            'Item "None"',
+        ),
+        (
+            "self.register_fail_condition(\n"
+            '    TimeoutCondition(cfg.min_speed_kmh, label="t")\n'
+            ")\n",
+            "TimeoutCondition(cfg.min_speed_kmh",
+            '"float | None"; expected "float"',
+        ),
+    ],
+    ids=["operator", "attribute", "actor-attribute", "argument"],
+)
+def test_an_optional_used_without_a_none_test_is_refused(
+    tmp_path: Path, setup: str, needle: str, message: str
+) -> None:
+    # Codon unwraps an Optional implicitly, so these compiled and failed in
+    # Python on None (#239); mypy's strict Optional reports each.
+    scenario, config, path = _write_case(
+        tmp_path, _TIMEOUT_SETUP + setup, header=_NONE_HEADER
+    )
+    result = typecheck_scenario(scenario, config)
+    error = _only_error(result)
+    assert len(result.diagnostics) == 1, result.format()
+    assert message in error.message, error.format()
+    assert "test the value for None" in error.message
+    assert error.path == str(path)
+    assert error.line == _line_of(path, needle)
+
+
+def test_an_optional_tested_for_none_compiles(tmp_path: Path) -> None:
+    # The look-alikes: narrowed by `is not None`, by an assert, by an early
+    # return, or given a default with `or`.
+    setup = (
+        _TIMEOUT_SETUP
+        + "if cfg.min_speed_kmh is not None:\n"
+        + '    logger.info("threshold %f", cfg.min_speed_kmh / 3.6)\n'
+        + "goal = self.goal_pose\n"
+        + "assert goal is not None\n"
+        + 'logger.info("goal %d", goal.lanelet_id)\n'
+        + 'logger.info("speed %f", (cfg.min_speed_kmh or 0.0) / 3.6)\n'
+    )
+    extra = """
+
+    def _npc_x(self) -> float:
+        npc = find_actor_by_role_name(self.world, "npc")
+        if npc is None:
+            return 0.0
+        return npc.get_location().x
+"""
+    scenario, config, _ = _write_case(tmp_path, setup, extra, header=_NONE_HEADER)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
 _PARENT_HEADER = _HEADER.replace(
     "class CaseScenario(BaseScenario):", "class CaseParent(BaseScenario):"
 )
@@ -1629,6 +1981,88 @@ def test_a_scenario_may_use_the_carla_driver_interface_model_and_nothing_beyond_
             "PedestrianEntity(): no constructor takes these arguments "
             "(required: config)",
         ),
+        (
+            "from autoware_carla_scenario.debug_markers import DebugMarkers\n"
+            "markers = DebugMarkers([])\n",
+            "DebugMarkers([])",
+            "DebugMarkers(): no constructor takes these arguments (it takes none)",
+        ),
+        (
+            "from autoware_carla_scenario.coverage import CoverItem\n"
+            'item = CoverItem("speed")\n',
+            'CoverItem("speed")',
+            "CoverItem(): no constructor takes these arguments "
+            "(required: name, expression)",
+        ),
+        (
+            "from autoware_carla_scenario.coverage import CoverItem\n"
+            'item = CoverItem(name="speed")\n',
+            'CoverItem(name="speed")',
+            "CoverItem(): no constructor takes these arguments "
+            "(required: name, expression)",
+        ),
+        (
+            "from autoware_carla_scenario.odd import OddCondition\n"
+            "condition = OddCondition(0)\n",
+            "OddCondition(0)",
+            "OddCondition(): no constructor takes these arguments (it takes none)",
+        ),
+        (
+            "from autoware_carla_scenario.odd import RouteCoverage, RouteLanelet\n"
+            "lanelets: list[RouteLanelet] = []\n"
+            'coverage = RouteCoverage("odd", "route", lanelets, ["speed"])\n',
+            'RouteCoverage("odd", "route", lanelets, ["speed"])',
+            "RouteCoverage: plan_route_coverage() builds it",
+        ),
+        (
+            "from autoware_carla_scenario.ui.models import RunProgress\n"
+            'progress = RunProgress(1, 2, "case", "running")\n',
+            'RunProgress(1, 2, "case", "running")',
+            "RunProgress(): its fields are keyword-only",
+        ),
+        (
+            "from autoware_carla_scenario import FrameMismatchError\n"
+            'error = FrameMismatchError("lanelet2")\n',
+            'FrameMismatchError("lanelet2")',
+            "FrameMismatchError(): no constructor takes these arguments "
+            "(required: frame_a, frame_b, operation)",
+        ),
+        (
+            "from autoware_carla_scenario.autoware_stack.devcontainer import "
+            "DevContainerError\n"
+            'error = DevContainerError("DevContainerError", "no image")\n',
+            'DevContainerError("DevContainerError", "no image")',
+            "DevContainerError(): no constructor takes these arguments "
+            "(required: message)",
+        ),
+        (
+            "from autoware_carla_scenario.autoware_stack.devcontainer import "
+            "DevContainerError\n"
+            'error = DevContainerError(typename="no image")\n',
+            'DevContainerError(typename="no image")',
+            "DevContainerError(): no constructor takes these arguments "
+            "(required: message)",
+        ),
+        (
+            "from autoware_carla_scenario import FrameMismatchError\n"
+            'error = FrameMismatchError("lanelet2", message="add")\n',
+            'FrameMismatchError("lanelet2", message="add")',
+            "FrameMismatchError(): no constructor takes these arguments "
+            "(required: frame_a, frame_b, operation)",
+        ),
+        (
+            "from autoware_carla_scenario.odd import OddAttribute\n"
+            'attribute = OddAttribute(name="speed", unit="m", text="t")\n',
+            'OddAttribute(name="speed", unit="m", text="t")',
+            "OddAttribute(): no constructor takes these arguments "
+            "(required: name, probe)",
+        ),
+        (
+            "from autoware_carla_scenario import EntityRole\n"
+            'role = EntityRole(_value="npc1")\n',
+            'EntityRole(_value="npc1")',
+            "EntityRole(): no constructor takes these arguments (required: value)",
+        ),
     ],
     ids=[
         "timeout-str-alone",
@@ -1636,6 +2070,18 @@ def test_a_scenario_may_use_the_carla_driver_interface_model_and_nothing_beyond_
         "action-label-alone",
         "vehicle-entity-no-arguments",
         "pedestrian-entity-no-arguments",
+        "debug-markers-by-field",
+        "cover-item-by-field",
+        "cover-item-by-field-name",
+        "odd-condition-by-field",
+        "route-coverage-by-fields",
+        "run-progress-by-position",
+        "frame-mismatch-by-exception-constructor",
+        "devcontainer-error-by-exception-constructor",
+        "devcontainer-error-by-exception-keyword",
+        "frame-mismatch-by-base-exception-keyword",
+        "odd-attribute-by-field-names",
+        "entity-role-by-field-name",
     ],
 )
 def test_what_codon_builds_by_the_fields_alone_is_refused_at_its_line(
@@ -1643,8 +2089,11 @@ def test_what_codon_builds_by_the_fields_alone_is_refused_at_its_line(
 ) -> None:
     # Codon builds a class by its fields too, by position: a class without
     # fields with no arguments (#225), a condition or an action by the label
-    # it inherits alone (#236). Python refuses both, and the model's
-    # __init__ of as many arguments, a compile_error, refuses them too.
+    # it inherits alone (#236), any class whose constructor Python's fields
+    # differ from by them (#244), and an exception by Exception's
+    # constructor (#244), by position or by keyword. Python refuses each, and
+    # the model's __init__ of those parameters, a compile_error, refuses them
+    # too.
     scenario, config, path = _write_case(tmp_path, setup)
     error = _only_error(typecheck_scenario(scenario, config))
     assert message in error.message, error.format()
@@ -1682,6 +2131,31 @@ def test_what_the_constructors_take_still_compiles(tmp_path: Path) -> None:
             PedestrianEntityConfig("walker1", SpawnTransform(carla.Transform()))
         )
         logger.info("%s %s", npc.role_name, walker.role_name)
+        from autoware_carla_scenario import CoordinateFrame, FrameMismatchError
+        from autoware_carla_scenario.autoware_stack.devcontainer import (
+            DevContainerError,
+        )
+        from autoware_carla_scenario.coverage import CoverItem
+        from autoware_carla_scenario.debug_markers import DebugMarkers
+        from autoware_carla_scenario.maps.cache import MapCacheError
+        from autoware_carla_scenario.odd import OddCondition
+        from autoware_carla_scenario.ui.models import RunProgress
+        markers = DebugMarkers()
+        item = CoverItem("speed", lambda world: 1.0)
+        odd_condition = OddCondition()
+        progress = RunProgress(current=1, total=2, scenario_name="case", status="running")
+        error = FrameMismatchError(
+            CoordinateFrame.LANELET2, CoordinateFrame.OPENDRIVE, "distance"
+        )
+        logger.info(
+            "%s %s %d %s %s %s",
+            str(bool(markers)),
+            item.name,
+            progress.current,
+            str(error),
+            str(DevContainerError("no image")),
+            str(MapCacheError("no map")),
+        )
         """
     scenario, config, _ = _write_case(tmp_path, setup)
     result = typecheck_scenario(scenario, config)

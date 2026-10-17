@@ -93,6 +93,8 @@ __all__ = [
 
 #: The function appended to every checked module.
 LIBRARY_CHECK = "_acs_library_check"
+#: The model's check of a hook override's result (``_tc.codon``, #238).
+HOOK_RETURN = "_acs_hook_return"
 #: The prefix of the local a class-level default is assigned to.
 CLASS_DEFAULT = "_acs_cls_default"
 #: Where the checked modules live in the check's workspace.
@@ -161,8 +163,12 @@ class _Renderer:
         constructed: Collection[str] = (),
         type_vars: Collection[str] = (),
         skip_any_returns: bool = False,
+        hook_returns: bool = False,
     ) -> None:
         self.uncalled = set(uncalled)
+        #: Check the result of each method call against the return type of
+        #: the framework hook it overrides (the scenario check, #238).
+        self.hook_returns = hook_returns
         #: Leave out a function whose return annotation names ``Any``, as a
         #: problem (the scenario check, which has no ``UNCALLED``).
         self.skip_any_returns = skip_any_returns
@@ -180,6 +186,11 @@ class _Renderer:
             "",
             "",
             "from autoware_carla_scenario._tc import _acs_value, _expect_bool",
+            *(
+                [f"from autoware_carla_scenario._tc import {HOOK_RETURN}"]
+                if hook_returns
+                else []
+            ),
             "",
             "",
             f"def {LIBRARY_CHECK}():",
@@ -187,6 +198,26 @@ class _Renderer:
         self.labels: dict[int, str] = {}
         self.problems: list[tuple[int, str]] = []
         self.origins: dict[int, int] = {}
+
+    def hooked(self, call: str, hook: tuple[str, str] | None) -> str:
+        """*call*, its result checked as a hook's when *hook* is a method.
+
+        *hook* is the (class, method) the call is of.  With
+        :attr:`hook_returns`, the call becomes ``_acs_hook_return(Class,
+        "method", call)`` (the model's ``_tc.codon``), which checks the
+        result strictly against the return type of the framework method
+        *method* overrides, when *Class* derives from a model class
+        declaring its hooks (``BaseScenario``, ``BaseCondition``,
+        ``BaseAction``, ``EgoVehicle``): Codon compiles an override against
+        its own annotation only, and the framework's callers are model
+        stubs, so ``check() -> bool`` or ``is_done() -> str`` passed (#238).
+        """
+        if not self.hook_returns or hook is None:
+            return call
+        owner, method = hook
+        if _is_dunder(method) or method.startswith("_acs_"):
+            return call
+        return f'{HOOK_RETURN}({owner}, "{method}", {call})'
 
     def emit(self, text: str, label: str, line: int) -> None:
         """Append the statement *text*, for what *label* names at *line*."""
@@ -280,8 +311,12 @@ class _Renderer:
         owner: str | None = None,
         receiver: str | None = None,
         class_head: str | None = None,
+        hook: tuple[str, str] | None = None,
     ) -> None:
         """Emit the calls of *func*, and one leaving its defaults out.
+
+        *hook* is the (class, method) a method's calls are of, whose results
+        :meth:`hooked` checks.
 
         *class_head* (``Class.method``) is what a method called on a value
         (*head*, ``_acs_value(Class).method``) is called through to leave its
@@ -329,6 +364,7 @@ class _Renderer:
                 [typed[a.arg] for a in every],
                 receiver=receiver,
                 line=func.lineno,
+                hook=hook,
             )
         self._defaults_call(
             func,
@@ -337,6 +373,7 @@ class _Renderer:
             positional,
             head=class_head or head,
             receiver=receiver if class_head is None else f"_acs_value({owner})",
+            hook=hook,
         )
 
     def _realize_optional_return(
@@ -397,6 +434,7 @@ class _Renderer:
         *,
         head: str,
         receiver: str | None,
+        hook: tuple[str, str] | None = None,
     ) -> None:
         """One call more, leaving out every argument that has a default.
 
@@ -421,7 +459,7 @@ class _Renderer:
             f"{a.arg}: {typed[a.arg][0]}" for a in [*passed_positional, *passed_keyword]
         )
         self.emit(
-            f"{head}({', '.join(values)})",
+            self.hooked(f"{head}({', '.join(values)})", hook),
             f"{where}({signature}), with the default of "
             + ", ".join(f"`{name}`" for name in left_out),
             func.lineno,
@@ -437,6 +475,7 @@ class _Renderer:
         *,
         receiver: str | None = None,
         line: int,
+        hook: tuple[str, str] | None = None,
     ) -> None:
         for combo in _combinations(choices):
             values = [receiver] if receiver is not None else []
@@ -448,7 +487,11 @@ class _Renderer:
             signature = ", ".join(
                 f"{a.arg}: {t}" for a, t in zip([*positional, *keyword], combo)
             )
-            self.emit(f"{head}({', '.join(values)})", f"{where}({signature})", line)
+            self.emit(
+                self.hooked(f"{head}({', '.join(values)})", hook),
+                f"{where}({signature})",
+                line,
+            )
 
     def function(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
         if node.name not in self.uncalled:
@@ -490,11 +533,19 @@ class _Renderer:
                 k.endswith(".deleter") for k in kinds
             ):
                 continue
+            # An abstract override, or one that only raises, returns no
+            # value: Codon types its result None whatever it is annotated
+            # with, so it is compiled but not checked as a hook.
+            hook = None if _never_returns(method, kinds) else (name, method.name)
             if kinds & _PROPERTIES:
                 if self._returns_any(method, where):
                     continue
                 self._realize_optional_return(method, where)
-                self.emit(f"_acs_value({name}).{method.name}", where, method.lineno)
+                self.emit(
+                    self.hooked(f"_acs_value({name}).{method.name}", hook),
+                    where,
+                    method.lineno,
+                )
             elif "staticmethod" in kinds:
                 self.calls(method, f"{name}.{method.name}", where, drop_first=False)
             elif "classmethod" in kinds:
@@ -510,6 +561,7 @@ class _Renderer:
                     drop_first=True,
                     owner=name,
                     receiver=f"_acs_value({name})",
+                    hook=hook,
                 )
             else:
                 self.calls(
@@ -519,6 +571,7 @@ class _Renderer:
                     drop_first=True,
                     owner=name,
                     class_head=f"{name}.{method.name}",
+                    hook=hook,
                 )
 
     def _setter(
@@ -921,6 +974,27 @@ def _is_dataclass(node: ast.ClassDef) -> bool:
     )
 
 
+def _never_returns(
+    func: ast.FunctionDef | ast.AsyncFunctionDef, decorators: set[str]
+) -> bool:
+    """Whether *func* is abstract, or never returns: no ``return`` in its own
+    body, which ends with a ``raise`` (``raise NotImplementedError()``)."""
+    if any(d.split(".")[-1] == "abstractmethod" for d in decorators):
+        return True
+    if not func.body or not isinstance(func.body[-1], ast.Raise):
+        return False
+    pending: list[ast.AST] = list(func.body)
+    while pending:
+        node = pending.pop()
+        if isinstance(node, ast.Return):
+            return False
+        if not isinstance(
+            node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
+        ):
+            pending.extend(ast.iter_child_nodes(node))
+    return True
+
+
 def _is_dunder(name: str) -> bool:
     return name.startswith("__") and name.endswith("__")
 
@@ -1007,6 +1081,7 @@ def render_library_checks(
     classes: Mapping[str, ast.ClassDef] | None = None,
     *,
     skip_any_returns: bool = False,
+    hook_returns: bool = False,
 ) -> LibraryChecks:
     """The function to append to the module *tree* is the source of.
 
@@ -1018,6 +1093,9 @@ def render_library_checks(
     scenario check, which has no ``UNCALLED``), a function whose return
     annotation names ``Any`` is left out, as a problem.  A parameter
     annotated with one of the module's ``TypeVar``s is a problem either way.
+    With *hook_returns* (the scenario check), the result of each method call
+    is checked against the framework hook the method overrides
+    (:meth:`_Renderer.hooked`).
     """
     own = {n.name: n for n in tree.body if isinstance(n, ast.ClassDef)}
     constructed = {
@@ -1043,6 +1121,7 @@ def render_library_checks(
         constructed=constructed,
         type_vars=type_vars,
         skip_any_returns=skip_any_returns,
+        hook_returns=hook_returns,
     )
     for node in tree.body:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
