@@ -89,6 +89,7 @@ from autoware_carla_scenario.typecheck.library import package_modules
 from autoware_carla_scenario.typecheck.not_modelled import (
     NOT_MODELLED,
     NOT_MODELLED_MEMBERS,
+    defines_members,
     not_modelled_member,
 )
 from autoware_carla_scenario.ui import models as ui_models
@@ -479,8 +480,17 @@ def _assert_declared_as_in_python(
     for attr in _class_vars(node):
         assert hasattr(python, attr), f"{name}.{attr} is in the model only"
 
+    fields = (
+        {f.name for f in dataclasses.fields(python)}
+        if dataclasses.is_dataclass(python)
+        else set()
+    )
     for method_name, method in methods.items():
         if method_name.startswith("__") or method_name.startswith("_acs_"):
+            continue
+        if method_name in fields and "property" in _decorators(method):
+            # A dataclass field read as a property (RouteMatch.lanelet_ids,
+            # #298): a field would change the constructor Codon generates.
             continue
         assert hasattr(
             python, method_name
@@ -1149,8 +1159,8 @@ def test_the_classes_codon_builds_by_other_arities_are_found() -> None:
     # What #225, #236 and #244 found: the rule would pass for nothing if the
     # detector found nothing. A class without fields (RouteMatch, #224, and
     # those of #225) by no argument; a condition or an action by its label;
-    # DebugMarkers, CoverItem, OddCondition, RouteCoverage and RunProgress by
-    # their fields; the exceptions by Exception's constructor and their
+    # DebugMarkers, CoverItem, OddCondition and RunProgress by their fields
+    # (RouteCoverage's are Python's since #298); the exceptions by Exception's constructor and their
     # fields (BaseException's eight first).
     found = _ARITIES_ONLY_CODON_TAKES
     for name in (
@@ -1179,7 +1189,6 @@ def test_the_classes_codon_builds_by_other_arities_are_found() -> None:
             "FrameMismatchError",
             "MapCacheError",
             "OddCondition",
-            "RouteCoverage",
             "RunProgress",
         )
     } == {
@@ -1189,12 +1198,14 @@ def test_the_classes_codon_builds_by_other_arities_are_found() -> None:
         "FrameMismatchError": [1, 2, 10],
         "MapCacheError": [0, 2, 8],
         "OddCondition": [1],
-        "RouteCoverage": [4],
         "RunProgress": [4],
     }
     # Their `*_kw` refuses what the fields would take (#244's review).
     for name in ("BaseScenario", "OddAttribute", "OddModule"):
         assert name not in found, name
+    # Its fields are Python's, in Python's order (#298): the constructor
+    # Codon generates takes no call Python's refuses.
+    assert "RouteCoverage" not in found
 
 
 @pytest.mark.parametrize("name", sorted(_ARITIES_ONLY_CODON_TAKES))
@@ -1458,6 +1469,13 @@ def test_the_launcher_model_is_the_protocol_s_methods() -> None:
         ), f"AutowareLauncher.{method_name}(): the model's parameters differ"
 
 
+#: What a scenario reads of an unbuildable class a modelled function returns
+#: (merge_coverage() a CoverageReport, #298): the members Codon has types for.
+_READ_ON_WHAT_A_FUNCTION_RETURNS: dict[str, tuple[str, ...]] = {
+    "CoverageReport": ("group_grade", "groups", "runs", "scenarios", "to_markdown"),
+}
+
+
 @pytest.mark.parametrize("name", sorted(_UNBUILDABLE))
 def test_a_class_only_re_exported_cannot_be_built_in_a_scenario(name: str) -> None:
     node = _definitions(_UNBUILDABLE[name])[name][0]
@@ -1471,6 +1489,7 @@ def test_a_class_only_re_exported_cannot_be_built_in_a_scenario(name: str) -> No
         "prepare",
         "start",
         "stop",
+        *_READ_ON_WHAT_A_FUNCTION_RETURNS.get(name, ()),
     }, name
     body = methods["__init__"].body
     assert len(body) == 1 and isinstance(body[0], ast.Expr), name
@@ -1812,20 +1831,21 @@ def _model_members(cls: ast.ClassDef) -> set[str]:
 
 
 def _python_members(python: type) -> set[str]:
-    """The public methods, properties and class attributes the package's
-    Python defines on *python* or a package class it derives from. A
-    dataclass's fields are compared as its constructor's parameters, and an
-    attribute only annotated (set on the instance) is no member of the class."""
+    """The public methods, properties, class attributes and dataclass fields
+    that the package's Python or openodd's (whose classes the package
+    re-exports, #298) defines on *python* or a class it derives from. A
+    dataclass's field is a member too, read on the instance, beside the
+    constructor's parameter it is compared as; an attribute only annotated
+    (set on the instance by __init__) is no member of the class."""
     out: set[str] = set()
     for klass in python.__mro__:
-        if not klass.__module__.startswith("autoware_carla_scenario"):
+        if not defines_members(klass.__module__):
             continue
-        fields = (
-            {f.name for f in dataclasses.fields(klass)}
-            if dataclasses.is_dataclass(klass)
-            else set()
-        )
-        out |= {n for n in vars(klass) if not n.startswith("_") and n not in fields}
+        out |= {n for n in vars(klass) if not n.startswith("_")}
+        if dataclasses.is_dataclass(klass):
+            out |= {
+                f.name for f in dataclasses.fields(klass) if not f.name.startswith("_")
+            }
     return out
 
 
@@ -1849,8 +1869,17 @@ def test_the_member_comparison_reads_every_kind_of_compared_class() -> None:
     # Inherited members count: set_desired_speed is BackendDriven's in Python.
     assert "set_desired_speed" in _python_members(acs.VehicleEntity)
     assert "measures" in _python_members(acs.BaseScenario)
-    # A dataclass field is a parameter, compared with the constructor.
-    assert "lanelet_id" not in _python_members(acs.Lanelet2Pose)
+    # A dataclass field is a member too, read on the instance (#298), beside
+    # the constructor's parameter it is compared as.
+    assert "lanelet_id" in _python_members(acs.Lanelet2Pose)
+    assert "position" in _python_members(acs.TrajectoryVertex)
+    # openodd's classes, which the package re-exports, are compared (#298),
+    # a Rust extension's among them (OddCondition is openodd._core's).
+    assert {"OddModule", "OddCondition", "CoverItem", "CoverageReport"} <= set(
+        _MEMBER_CLASSES
+    )
+    assert "as_situation" in _python_members(acs.OddModule)
+    assert "describe" in _python_members(_MEMBER_CLASSES["OddCondition"][1])
 
 
 @pytest.mark.parametrize("name", sorted(_MEMBER_CLASSES))
@@ -1862,11 +1891,15 @@ def test_a_public_member_is_modelled_or_listed_as_not_modelled(name: str) -> Non
     # NOT_MODELLED_MEMBERS says why.
     _module, python = _MEMBER_CLASSES[name]
     missing = sorted(
-        m for m in _unmodelled_members(name) if not_modelled_member(python, m) is None
+        m
+        for m in _unmodelled_members(name)
+        if not_modelled_member(python, m, name) is None
     )
+    # Python's own name says where it comes from: an openodd upgrade adds
+    # members to openodd.model.OddModule, the package's OddModule (#298).
     assert not missing, (
-        f"{name}: public in Python, neither modelled nor in "
-        f"NOT_MODELLED_MEMBERS: {missing}"
+        f"{name} ({python.__module__}.{python.__qualname__}): public in "
+        f"Python, neither modelled nor in NOT_MODELLED_MEMBERS: {missing}"
     )
 
 
@@ -1877,7 +1910,7 @@ def test_a_listed_member_is_still_public_and_unmodelled() -> None:
     used: set[tuple[str, str]] = set()
     for name, (_module, python) in _MEMBER_CLASSES.items():
         for member in _unmodelled_members(name):
-            excused = not_modelled_member(python, member)
+            excused = not_modelled_member(python, member, name)
             if excused is not None:
                 used.add((excused[0], member))
         node = _definitions(_MEMBER_CLASSES[name][0])[name][0]
@@ -1885,7 +1918,7 @@ def test_a_listed_member_is_still_public_and_unmodelled() -> None:
         modelled_and_listed = sorted(
             m
             for m in _python_members(python) & _model_members(node)
-            if not_modelled_member(python, m) is not None
+            if not_modelled_member(python, m, name) is not None
         )
         assert (
             not modelled_and_listed

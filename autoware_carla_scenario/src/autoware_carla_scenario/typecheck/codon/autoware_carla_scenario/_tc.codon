@@ -225,6 +225,22 @@ def _acs_sequence(xs, T: type):
         return xs
 
 
+def _expect_str_sequence(xs, where: Literal[str]):
+    """A Sequence[str] of names: a list or a tuple of str, or an empty one
+    (#264). A str is refused (#299), though Python's typing takes one as a
+    Sequence[str]: the framework would read each of its characters as a
+    name (`roots="roads"` for `roots=["roads"]`)."""
+    if isinstance(xs, str):
+        compile_error(where + ": expected a sequence of names (a list or a tuple "
+                      "of str), not a str: wrap it in a list")
+    elif isinstance(xs, Optional[str]):
+        compile_error(where + ": expected a sequence of names (a list or a tuple "
+                      "of str), not a str: wrap it in a list")
+    else:
+        for x in _acs_sequence(xs, str):
+            s: str = x
+
+
 def _expect_int_sequence(xs) -> List[int]:
     """A Sequence[int]: a list or a tuple of ints, or an empty one."""
     out = List[int]()

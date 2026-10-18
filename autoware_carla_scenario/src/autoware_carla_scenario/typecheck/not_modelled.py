@@ -9,19 +9,26 @@ with that reason before compiling, and ``test_typecheck_model.py`` fails when
 a public name is neither declared by the model nor listed here, or when a
 name listed here is declared by the model or no longer public in Python.
 
-The same holds for the public methods, properties and class attributes of
-the classes the model declares (#265): :data:`NOT_MODELLED_MEMBERS` lists,
-with the reason, each one the model's class leaves out, and the check adds
-that reason to Codon's "object has no attribute" error.
+The same holds for the public methods, properties, class attributes and
+dataclass fields of the classes the model declares, openodd's that the
+package re-exports included (#265, #298): :data:`NOT_MODELLED_MEMBERS`
+lists, with the reason, each one the model's class leaves out, and the
+check adds that reason to Codon's "object has no attribute" error.
 """
 
 from __future__ import annotations
 
 from typing import Optional
 
-__all__ = ["NOT_MODELLED", "NOT_MODELLED_MEMBERS", "not_modelled_member"]
+__all__ = [
+    "NOT_MODELLED",
+    "NOT_MODELLED_MEMBERS",
+    "defines_members",
+    "not_modelled_member",
+]
 
 _PACKAGE = "autoware_carla_scenario"
+_MEMBER_MODULES = (_PACKAGE, "openodd")
 
 
 def _each(names: str, reason: str) -> dict[str, str]:
@@ -323,6 +330,54 @@ _MAP_CACHE = (
     "check compiles from its source; a scenario's maps are the run's, loaded "
     "before setup()"
 )
+_ANY_FIELD = (
+    "holds a `dict[str, Any]` (a value per ODD attribute, or per key of the "
+    "module's metadata, of any type), which Codon has no type for; a scenario "
+    "reads the typed fields instead"
+)
+_SWEEP_FIELD = (
+    "a Hydra mapping of the sweep (`dict[str, Any]`), which Codon has no type "
+    "for; the sweeper reads it, not a scenario, which is handed its case's "
+    "values through its own config"
+)
+_ROS2_CONFIG = (
+    "a field of the ROS 2 transport's config, which the runner builds from the "
+    "run's config: the model's constructor is a compile error, so a scenario "
+    "holds none to read; the library check compiles ros2.config in this "
+    "model's place"
+)
+_ROUTE_SEGMENT_FIELD = (
+    "a tuple of RouteSegmentMatch, frozen dataclasses of variadic tuples, "
+    "which Codon has no type for (see autoware_carla_scenario.route); a "
+    "scenario reads a junction's lanelets with "
+    "scenario_route_frame().junction_way()"
+)
+_CALLABLE_ANY = (
+    "a callable of `Any` (`Callable[[Any], Any]`, `Callable[[Any], bool]`), "
+    "which Codon cannot hold as a value of one type; register_cover() checks "
+    "the one a scenario passes"
+)
+_COVER_VALUES = (
+    "the bucket values (`Iterable[Any]`, a `list[Any]` once built), which "
+    "Codon has no type for; a scenario reads the buckets' labels (labels) "
+    "or edges (edges)"
+)
+_ODD_RUN_VALUES = (
+    "openodd's evaluation and sampling of an ODD over a run's values "
+    "(`Mapping[str, Any]`, `dict[str, Any]`, OddVerdict), which the runner, "
+    "the sweeper and odd.cli use; Codon has no type for the values, and an "
+    "ODD written in Python does not call them"
+)
+_ODD_ARCHIVE = (
+    "openodd's archive of an ODD loaded from files (`bytes`, its manifest "
+    "and files as `dict[str, Any]`), which odd.cli and the report write; an "
+    "ODD written in Python has none, and Codon has no type for them"
+)
+_REPORT_ROWS = (
+    "openodd's rows of a merged report (MergedEntry, CaseRun, CellFlakiness, "
+    "CellRow, OddExposure), which have no model: the report tools read them, "
+    "not a scenario or an ODD"
+)
 _RUN_ENVIRONMENT = (
     "the runner's record of the run's environment (json, `dict[str, Any]`); "
     "environment.codon models what the runner's _record_run reads"
@@ -333,11 +388,12 @@ def _members(names: str, reason: str) -> dict[str, str]:
     return {name: reason for name in names.split()}
 
 
-#: Python class name -> public member -> why the model's class does not
-#: declare it.  A member of a class is listed under that class or any class
-#: of the package it derives from in Python (`BaseCondition` lists
-#: `get_details` for every condition), so a key need not be a modelled class
-#: itself (`BackendDriven`).
+#: Python class name (the package's name of an openodd class: `OddCondition`
+#: for openodd's `Condition`) -> public member -> why the model's class does
+#: not declare it.  A member of a class is listed under that class or any
+#: class of the package or openodd it derives from in Python (`BaseCondition`
+#: lists `get_details` for every condition), so a key need not be a modelled
+#: class itself (`BackendDriven`).
 NOT_MODELLED_MEMBERS: dict[str, dict[str, str]] = {
     "BackendDriven": {"set_traffic_backend": _SET_TRAFFIC_BACKEND},
     "BaseCondition": _members("get_details to_summary_dict", _CONDITION_DETAILS),
@@ -354,8 +410,18 @@ NOT_MODELLED_MEMBERS: dict[str, dict[str, str]] = {
         "turn_at_junction turn_indicator use_autopilot",
         _BY_NAME,
     ),
-    "ConditionStatus": {"to_dict": _AS_DICT},
+    "ConditionStatus": {"details": _CONDITION_DETAILS, "to_dict": _AS_DICT},
     "CoverageCollector": {"to_dict": _AS_DICT},
+    "CoverageReport": {
+        **_members("cases cell_flakiness entries entry flaky_cells odds", _REPORT_ROWS),
+        "to_dict": _AS_DICT,
+    },
+    "CoverItem": {
+        **_members("expression ignore", _CALLABLE_ANY),
+        "describe": _AS_DICT,
+        "values": _COVER_VALUES,
+    },
+    "CrossItem": {"describe": _AS_DICT},
     "CycloneRos2Transport": _members(
         "close open poll poll_turn_indicators publish_image publish_state",
         _ROS2_TRANSPORT,
@@ -375,17 +441,34 @@ NOT_MODELLED_MEMBERS: dict[str, dict[str, str]] = {
     "MapSource": _members(
         "at directory name parse pinned repo_name uri with_path", _MAP_CACHE
     ),
-    "Ros2EgoConfig": {"from_mapping": _FROM_MAPPING},
+    "OddCondition": {"evaluate": _ODD_RUN_VALUES},
+    "OddDefinition": {
+        **_members("complete evaluate sample", _ODD_RUN_VALUES),
+        **_members("archive files manifest", _ODD_ARCHIVE),
+        "describe": _AS_DICT,
+    },
+    "OddModule": {"describe": _AS_DICT, "metadata": _ANY_FIELD},
+    "Ros2EgoConfig": {
+        **_members(
+            "cameras child_frame_id clock_topic domain_id frame_id "
+            "kinematic_state_topic on_stale rear_axle_offset_m sources "
+            "speed_topic steering_status_topic turn_indicators_command_topic "
+            "turn_indicators_report_topic",
+            _ROS2_CONFIG,
+        ),
+        "from_mapping": _FROM_MAPPING,
+    },
     "Ros2EgoTransport": _members(
         "close open poll poll_turn_indicators publish_image publish_state",
         _ROS2_TRANSPORT,
     ),
     "RouteCoverage": {"describe": _AS_DICT},
-    "RouteLanelet": {"describe": _AS_DICT},
+    "RouteLanelet": {"describe": _AS_DICT, "values": _ANY_FIELD},
     "RouteMatch": {
         "from_config": _FROM_MAPPING,
         "junction": _ROUTE_SEGMENTS,
         "junctions": _ROUTE_SEGMENTS,
+        "segments": _ROUTE_SEGMENT_FIELD,
         "to_config": _AS_DICT,
     },
     "RunEnvironment": _members(
@@ -399,19 +482,35 @@ NOT_MODELLED_MEMBERS: dict[str, dict[str, str]] = {
     },
     "ScalarComparisonRule": {"to_dict": _AS_DICT},
     "ScenarioResult": {"to_dict": _AS_DICT},
+    "SweepConfig": _members("bindings constraints odd_sample", _SWEEP_FIELD),
     "TrafficSinkAction": {"set_traffic_backend": _SET_TRAFFIC_BACKEND},
     "TrafficSourceAction": {"set_traffic_backend": _SET_TRAFFIC_BACKEND},
 }
 
 
-def not_modelled_member(cls: type, member: str) -> Optional[tuple[str, str]]:
+def defines_members(module: str) -> bool:
+    """Whether a class of *module* is one whose public members the model
+    must declare or list (#265): the package's, or openodd's, whose classes
+    the package re-exports (OddModule, CoverItem, ..., #298)."""
+    return any(module == m or module.startswith(m + ".") for m in _MEMBER_MODULES)
+
+
+def not_modelled_member(
+    cls: type, member: str, name: Optional[str] = None
+) -> Optional[tuple[str, str]]:
     """``(owner, reason)`` when *member* of Python class *cls* is listed in
-    :data:`NOT_MODELLED_MEMBERS`, under *cls* or a class of the package it
-    derives from (*owner*); ``None`` otherwise."""
+    :data:`NOT_MODELLED_MEMBERS`, under *cls* (or *name*, the name the
+    package gives it, when that differs from its own: openodd's
+    ``Condition`` is ``OddCondition``) or a class of the package or openodd
+    it derives from (*owner*); ``None`` otherwise."""
     for klass in getattr(cls, "__mro__", ()):
-        if not getattr(klass, "__module__", "").startswith(_PACKAGE):
+        if not defines_members(getattr(klass, "__module__", "")):
             continue
-        reason = NOT_MODELLED_MEMBERS.get(klass.__name__, {}).get(member)
-        if reason is not None:
-            return klass.__name__, reason
+        keys = [klass.__name__]
+        if klass is cls and name is not None and name != klass.__name__:
+            keys.insert(0, name)
+        for key in keys:
+            reason = NOT_MODELLED_MEMBERS.get(key, {}).get(member)
+            if reason is not None:
+                return key, reason
     return None
