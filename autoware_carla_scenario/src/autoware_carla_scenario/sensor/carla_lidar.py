@@ -10,6 +10,9 @@ A sweep costs the server one ray per point, every tick it is taken on: at a
 million points a second that is most of what a tick costs.  A LiDAR read once a
 policy step is therefore swept once a policy step (``sweep_interval_s``), not on
 the ticks between, whose sweeps nobody would read.
+
+The sweep a caller is handed carries the world's rain and fog as they are when
+it is taken (:mod:`.lidar_weather`).
 """
 
 from __future__ import annotations
@@ -23,6 +26,7 @@ from typing import TYPE_CHECKING, Optional, Tuple, Union
 import numpy as np
 
 from ..constants import FIXED_DELTA_SECONDS
+from .lidar_weather import CARLA_FOG_DENSITY_SCALE, LidarWeather, apply_weather
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
@@ -66,6 +70,16 @@ class CarlaLidarSensorConfig:
     #: CARLA drops this fraction of points at random by default (0.45); a policy
     #: expecting a real sensor's density wants none of that.
     dropoff_general_rate: float = 0.0
+    #: How much of the world's rain and fog the sweeps carry
+    #: (:mod:`~autoware_carla_scenario.sensor.lidar_weather`): 0 none, as CARLA
+    #: casts them; 1 the model as tuned; more exaggerates it.
+    weather_noise: float = 1.0
+    #: Seed of the weather noise, so a run repeats its sweeps.
+    noise_seed: int = 0
+    #: The server's ``carla.Weather.FogDensityScale``, which the fog is drawn
+    #: with: the LiDAR's fog follows it, to match what the cameras see.  A
+    #: scenario run sets it from ``server.fog_density_scale``.
+    fog_density_scale: float = CARLA_FOG_DENSITY_SCALE
     position_x: float = 0.0
     position_y: float = 0.0
     position_z: float = 2.0
@@ -80,6 +94,10 @@ class CarlaLidarSensorConfig:
             raise ValueError("LiDAR range_m and points_per_second must be positive")
         if self.lower_fov_deg >= self.upper_fov_deg:
             raise ValueError("LiDAR lower_fov_deg must be below upper_fov_deg")
+        if self.weather_noise < 0.0 or self.noise_seed < 0:
+            raise ValueError("LiDAR weather_noise and noise_seed must not be negative")
+        if self.fog_density_scale <= 0.0:
+            raise ValueError("LiDAR fog_density_scale must be positive")
 
 
 class CarlaLidarSensor:
@@ -103,6 +121,10 @@ class CarlaLidarSensor:
     _interval_ticks: int
     #: The newest sweep received, kept until a newer one arrives.
     _newest: Optional[Tuple[int, np.ndarray[tuple[int, int], np.dtype[np.float32]]]]
+    #: The world whose weather the sweeps are degraded by, once attached.
+    _world: Optional["carla.World"]
+    #: The frame of the sweep the weather was last put on (in :attr:`_newest`).
+    _weathered_frame: int
 
     def __init__(
         self,
@@ -120,6 +142,8 @@ class CarlaLidarSensor:
         self._sweeps = queue.Queue()
         self._interval_ticks = ticks
         self._newest = None
+        self._world = None
+        self._weathered_frame = -1
 
     @property
     def sweep_interval_ticks(self) -> int:
@@ -164,6 +188,7 @@ class CarlaLidarSensor:
             _carla.Rotation(roll=cfg.roll, pitch=cfg.pitch, yaw=cfg.yaw),
         )
         self._sensor = world.spawn_actor(blueprint, transform, attach_to=actor)
+        self._world = world
         self._sensor.listen(self._on_sensor_data)
         logger.info(
             "CarlaLidarSensor attached: %d channels, %.0f m, %d pts/s, "
@@ -210,13 +235,15 @@ class CarlaLidarSensor:
             self._sensor.stop()
             self._sensor.destroy()
             self._sensor = None
+        self._world = None
 
     def latest_sweep(
         self, frame: int
     ) -> Optional[Tuple[int, np.ndarray[tuple[int, int], np.dtype[np.float32]]]]:
         """The newest sweep as of simulator frame *frame*: ``(its frame, raw [N, 4])``.
 
-        The raw buffer is in the sensor frame.  A sweep is due on *frame* when the
+        The buffer is in the sensor frame, with the world's rain and fog on it
+        (:meth:`_weather`).  A sweep is due on *frame* when the
         newest one is a whole interval old; then this waits up to
         :data:`_SWEEP_TIMEOUT` seconds for it.  Between sweeps the newest one is
         the answer, taken on an earlier tick of the interval.  ``None`` when
@@ -242,7 +269,7 @@ class CarlaLidarSensor:
             return None
         if newest[0] != frame:
             logger.debug("LiDAR swept frame %d for frame %d", newest[0], frame)
-        return newest
+        return self._weathered_sweep(newest)
 
     def get_sweep(
         self, frame: int
@@ -252,6 +279,46 @@ class CarlaLidarSensor:
         if sweep is None:
             return None
         return sweep[1]
+
+    def _weathered_sweep(
+        self, sweep: Tuple[int, np.ndarray[tuple[int, int], np.dtype[np.float32]]]
+    ) -> Tuple[int, np.ndarray[tuple[int, int], np.dtype[np.float32]]]:
+        """*sweep* (:attr:`_newest`) with the weather on it, put on once."""
+        if self._weathered_frame == sweep[0]:
+            return sweep
+        self._weathered_frame = sweep[0]
+        weather = self._weather()
+        if weather is None:
+            return sweep
+        result = (
+            sweep[0],
+            apply_weather(
+                sweep[1],
+                weather,
+                self._config.weather_noise,
+                self._config.noise_seed,
+                sweep[0],
+            ),
+        )
+        self._newest = result
+        return result
+
+    def _weather(self) -> Optional[LidarWeather]:
+        """The world's rain and fog now; ``None`` when no noise is to be put on."""
+        world = self._world
+        if world is None or self._config.weather_noise <= 0.0:
+            return None
+        try:
+            weather = world.get_weather()
+        except Exception:  # noqa: BLE001 - a lost reading costs the noise, not the sweep
+            logger.exception("failed to read the weather for the LiDAR noise")
+            return None
+        return LidarWeather(
+            precipitation=float(weather.precipitation),
+            fog_density=float(weather.fog_density),
+            fog_distance=float(weather.fog_distance),
+            fog_density_scale=self._config.fog_density_scale,
+        )
 
     def _due(self, frame: int) -> bool:
         """Whether a sweep newer than the newest one is due by *frame*."""

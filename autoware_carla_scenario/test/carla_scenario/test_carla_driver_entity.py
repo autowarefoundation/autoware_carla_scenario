@@ -1125,6 +1125,27 @@ def test_run_gives_the_policy_ego_a_bridge_from_its_config() -> None:
     assert entity.requires_goal is True
 
 
+def test_run_draws_the_lidars_fog_with_the_servers_scale() -> None:
+    from autoware_carla_scenario.examples.run import build_ego_entity, server_extra_args
+
+    lidars = "driver.lidars=[{logical_id:top},{logical_id:rear,fog_density_scale:0.05}]"
+    cfg = _composed(
+        ["ego.entity=carla_driver", lidars, "server.fog_density_scale=0.01"]
+    )
+    entity = build_ego_entity(cfg)
+    assert isinstance(entity, CarlaDriverEntity)
+    # A LiDAR setting its own scale keeps it.
+    assert [lidar.fog_density_scale for lidar in entity.config.lidars] == [0.01, 0.05]
+    assert server_extra_args(cfg) == ["-ExecCmds=carla.Weather.FogDensityScale 0.01"]
+
+    cfg = _composed(["ego.entity=carla_driver", lidars])
+    entity = build_ego_entity(cfg)
+    assert isinstance(entity, CarlaDriverEntity)
+    # Unset: the server's own scale, and nothing passed to the server.
+    assert [lidar.fog_density_scale for lidar in entity.config.lidars] == [0.001, 0.05]
+    assert server_extra_args(cfg) is None
+
+
 def test_run_refuses_an_unknown_bridge_setting() -> None:
     from autoware_carla_scenario.examples.run import build_ego_entity
 
