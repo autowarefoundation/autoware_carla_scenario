@@ -32,7 +32,7 @@ from autoware_carla_scenario.odd import (
     probes,
     register_odd,
 )
-from autoware_carla_scenario.odd import registry as odd_registry
+import openodd
 from autoware_carla_scenario.odd.cli import main as odd_main
 from autoware_carla_scenario.odd.openodd import _missing
 from autoware_carla_scenario.odd.route import MISSING_BUCKET, UNDECIDED_BUCKET
@@ -599,7 +599,7 @@ class TestCli:
         )
         register_odd("route_test_slow_roads", _speed_odd)
         yield
-        odd_registry._REGISTRY.pop("route_test_slow_roads", None)
+        openodd.unregister_odd("route_test_slow_roads")
 
     MAP = [f"map.lanelet2_path={OSM_PATH}", f"map.xodr_path={XODR_PATH}"]
 
