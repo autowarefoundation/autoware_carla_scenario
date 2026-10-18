@@ -678,6 +678,25 @@
   
 
       
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../migration/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Migrating
+
+      </a>
+    </li>
+  
+
+      
     </ul>
   </div>
 </nav>
@@ -1867,6 +1886,33 @@
   
 
     
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../migration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Migrating
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
   </ul>
 </nav>
                   </div>
@@ -2228,11 +2274,9 @@ and sensor types described below.</p>
 </tr>
 </tbody>
 </table>
-<p><code>CameraRecorder</code> (re-exported from the top-level package, source in
-<code>autoware_carla_scenario.camera_recorder</code>) is the two-pass video
-renderer driven by the native CARLA recorder + an RGB camera sensor.
-It is used internally by <code>ScenarioRunner</code> and can also be instantiated
-directly.</p>
+<p><code>CameraRecorder</code> (the video renderer) was removed in 15.0.0 with the video
+itself: a run's trajectory log is what a run is seen from
+(<a href="../usage/#seeing-a-run">Seeing a run</a>).</p>
 <h2 id="coverage-autoware_carla_scenariocoverage">Coverage (<code>autoware_carla_scenario.coverage</code>)<a class="headerlink" href="#coverage-autoware_carla_scenariocoverage" title="Permanent link">&para;</a></h2>
 <p>See <a href="../coverage/">Coverage</a>.</p>
 <table>
@@ -2542,7 +2586,7 @@ the separate <code>scene_to_scenario_transpiler</code> package (<code>scenario-i
 </tr>
 <tr>
 <td><code>CarlaCameraSensor</code>, <code>CarlaCameraSensorConfig</code></td>
-<td>CARLA RGB camera implementation, used by the video recorder and the driver rig.</td>
+<td>CARLA RGB camera implementation, used by the driver rig.</td>
 </tr>
 </tbody>
 </table>
@@ -3138,7 +3182,7 @@ imports the other.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 17, 2026 04:26:35 UTC"><span class="timeago" datetime="2026-10-17T04:26:35+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 17, 2026 04:26:35 UTC">2026-10-17</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 18, 2026 07:44:02 UTC"><span class="timeago" datetime="2026-10-18T07:44:02+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 18, 2026 07:44:02 UTC">2026-10-18</span>
   </span>
 
     

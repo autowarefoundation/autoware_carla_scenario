@@ -678,6 +678,25 @@
   
 
       
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../migration/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Migrating
+
+      </a>
+    </li>
+  
+
+      
     </ul>
   </div>
 </nav>
@@ -1647,15 +1666,15 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#video-recording-pipeline" class="md-nav__link">
+  <a href="#recordings-of-a-run" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Video Recording Pipeline
+        Recordings of a run
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Video Recording Pipeline">
+    <nav class="md-nav" aria-label="Recordings of a run">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -1947,10 +1966,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#two-pass-video-recording" class="md-nav__link">
+  <a href="#nothing-rendered-during-a-run" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Two-Pass Video Recording
+        Nothing Rendered During a Run
       
     </span>
   </a>
@@ -2034,6 +2053,33 @@
     
   
     Development
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../migration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Migrating
   
 
     
@@ -2162,15 +2208,15 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#video-recording-pipeline" class="md-nav__link">
+  <a href="#recordings-of-a-run" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Video Recording Pipeline
+        Recordings of a run
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Video Recording Pipeline">
+    <nav class="md-nav" aria-label="Recordings of a run">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -2462,10 +2508,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#two-pass-video-recording" class="md-nav__link">
+  <a href="#nothing-rendered-during-a-run" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Two-Pass Video Recording
+        Nothing Rendered During a Run
       
     </span>
   </a>
@@ -2725,7 +2771,6 @@
             SR-&gt;&gt;W: stop_recorder()
             SR-&gt;&gt;TB: close()
             TB-&gt;&gt;TM: shut_down()
-            SR-&gt;&gt;SR: Render video from recording
             SR-&gt;&gt;W: reload_world()
         end
 
@@ -2854,49 +2899,15 @@ than assumed to be zero.</p>
 <li><strong>Server ownership</strong>: Accepts an external <code>CarlaServerManager</code> or creates and owns one internally.</li>
 <li><strong>pytest integration</strong>: <code>as_fixture()</code> generates a session-scoped pytest fixture with automatic skip when there is no CARLA to launch.</li>
 </ul>
-<h3 id="video-recording-pipeline">Video Recording Pipeline<a class="headerlink" href="#video-recording-pipeline" title="Permanent link">&para;</a></h3>
-<p>Video recording uses a two-pass approach:</p>
-<pre class="mermaid"><code>graph LR
-    subgraph Pass1["Pass 1: Native Recording (during scenario)"]
-        T1["world.tick()"] --&gt; R1["CARLA Native Recorder"]
-        R1 --&gt; L1["scenario.log file"]
-    end
-
-    subgraph Pass2["Pass 2: Video Rendering (after scenario)"]
-        L1 --&gt; RP["client.replay_file()"]
-        RP --&gt; CAM["RGB Camera Sensor&lt;br/&gt;(attached to ego)"]
-        CAM --&gt; FF["ffmpeg (H.264)"]
-        FF --&gt; MP4["scenario.mp4"]
-    end</code></pre>
+<h3 id="recordings-of-a-run">Recordings of a run<a class="headerlink" href="#recordings-of-a-run" title="Permanent link">&para;</a></h3>
+<p>A run leaves two recordings, neither of which renders anything:</p>
 <ol>
-<li><strong>During execution</strong>: CARLA's native recorder captures all actor states to a <code>.log</code> file.</li>
-<li><strong>After execution</strong>: The recording is replayed in synchronous mode. An RGB camera sensor is attached to the ego vehicle at the same offset as the spectator camera. Frames are streamed to an <code>ffmpeg</code> subprocess for H.264 encoding via <code>CameraRecorder</code>.</li>
+<li><strong>The CARLA recording</strong> (<code>{stem}.log</code>): CARLA's native recorder captures every actor's state from the moment the ego exists, warm-up included. CARLA's replayer (<code>client.replay_file()</code>) plays it back on a server running the same map.</li>
+<li><strong>The trajectory log</strong> (<code>{stem}.trajectory.jsonl</code>, <a href="../trajectory_log/">Trajectory Log</a>): written by the runner itself after every tick of the scenario, in-process -- every vehicle and pedestrian, the lights, the map the run was on, the ego's debug markers, each condition's state and the verdict. A Rerun recording made from it with the <code>autoware_carla_scenario_rerun</code> package (<code>convert</code> / <code>convert_dir</code>) is how a run is seen (<a href="../usage/#seeing-a-run">Seeing a run</a>).</li>
 </ol>
-<p><code>CameraRecorder</code> uses a frame queue (maxsize=2) to decouple sensor callbacks from the encoding thread, and writes frames synchronously after each <code>world.tick()</code> to avoid dropped frames.</p>
+<p>Releases before 15.0.0 also rendered a video from the CARLA recording after each run (<code>{stem}.mp4</code>, a replay with an RGB camera and ffmpeg); that is gone, and so is the ffmpeg it needed.</p>
 <h4 id="debug-markers">Debug markers<a class="headerlink" href="#debug-markers" title="Permanent link">&para;</a></h4>
-<p>The video shows two things the camera alone would not: what the ego planned and where it actually went.</p>
-<table>
-<thead>
-<tr>
-<th>Line</th>
-<th>Colour</th>
-<th>Where it comes from</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>The planner's output</td>
-<td>Green, a dot at each point</td>
-<td><code>EgoVehicle.debug_markers()</code>, recorded during the run</td>
-</tr>
-<tr>
-<td>The path the ego drove</td>
-<td>Orange, growing behind the car</td>
-<td>The replayed ego itself (<code>DrivenPathDrawer</code>), for every kind of ego</td>
-</tr>
-</tbody>
-</table>
-<p>The ego entity can show what the world does not: <code>EgoVehicle.debug_markers()</code> returns the shapes it wants drawn on the current tick (<code>DebugMarkers</code>, polylines in CARLA world coordinates, from <code>autoware_carla_scenario.debug_markers</code>). The base class shows nothing; the entities that follow a trajectory show it as a green line with a dot at each point:</p>
+<p>The ego entity can show what the world does not: <code>EgoVehicle.debug_markers()</code> returns what it is following on the current tick (<code>DebugMarkers</code>, polylines in CARLA world coordinates, from <code>autoware_carla_scenario.debug_markers</code>). The base class shows nothing; the entities that follow a trajectory show it, as a green line with a dot at each point:</p>
 <table>
 <thead>
 <tr>
@@ -2915,12 +2926,7 @@ than assumed to be zero.</p>
 </tr>
 </tbody>
 </table>
-<p>The recording keeps no debug drawing, and the entity is gone by the time the video is rendered, so the markers take the same two passes:</p>
-<ol>
-<li><strong>During execution</strong>: after every tick of the recording that the ego is ticked on (the wait for the ego to be ready, then the scenario), the runner asks the ego for its markers and keeps them in a <code>DebugMarkerLog</code>, by the frame of the recording. Only a run that renders a video (a spectator is configured) keeps them.</li>
-<li><strong>During replay</strong>: before each tick, the runner draws the markers of the frame that tick shows with CARLA's debug helper (<code>world.debug</code>), for one and a half ticks of simulated time: long enough to be in that frame, gone before the next one. An entity hands out the same <code>DebugMarkers</code> object until its plan changes (<code>plan_markers()</code> builds one per plan), so the log holds one per plan rather than one per tick, and the replay draws a plan once, to last every frame that holds it. The RGB camera sees them like any other geometry.</li>
-</ol>
-<p>The driven path needs nothing from the run: the replay moves the ego exactly as it moved, so after each replay tick the runner extends the path to where the replayed ego now is. A segment is added each time the ego has moved half a metre, drawn once to last until the end of the video; a jump of more than 10 m in one tick (the ego placed somewhere else) starts a new piece of path.</p>
+<p>After every tick of the scenario the runner asks the ego for its markers and writes them into the trajectory log when they change (a <code>markers</code> record). An entity hands out the same <code>DebugMarkers</code> object until its plan changes (<code>plan_markers()</code> builds one per plan), so the log holds one per plan rather than one per tick. A viewer of the run draws them beside the path the ego drove (<code>DRIVEN_PATH_COLOR</code>), which the log's ticks give.</p>
 <p>An entity of your own shows more by overriding <code>debug_markers()</code>:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario.debug_markers</span><span class="w"> </span><span class="kn">import</span> <span class="n">DebugMarkers</span><span class="p">,</span> <span class="n">DebugPolyline</span>
 <a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>
@@ -3357,8 +3363,8 @@ cycles normally and the scenario just waits forever.</p>
     ext_queue --&gt; ext_runner
     ext_runner --&gt; ext_carla
     sweep_svc --&gt; conf
-    ext_runner --&gt;|"*_result.json&lt;br/&gt;*.mp4"| outputs
-    ext_runner --&gt;|"*_result.json&lt;br/&gt;*.mp4"| multirun</code></pre>
+    ext_runner --&gt;|"*_result.json&lt;br/&gt;*.trajectory.jsonl"| outputs
+    ext_runner --&gt;|"*_result.json&lt;br/&gt;*.trajectory.jsonl"| multirun</code></pre>
 <h3 id="component-responsibilities_1">Component Responsibilities<a class="headerlink" href="#component-responsibilities_1" title="Permanent link">&para;</a></h3>
 <table>
 <thead>
@@ -3423,7 +3429,7 @@ cycles normally and the scenario just waits forever.</p>
         +condition_statuses: list[ConditionNode]
         +overrides: list[str]
         +raw_log: str
-        +video_filename: str | None
+        +trajectory_path: str | None
     }
 
     class ConditionNode {
@@ -3457,23 +3463,22 @@ cycles normally and the scenario just waits forever.</p>
 <a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>│           ├── ScenarioName_coverage.json  # Coverage hits (docs/coverage.md)
 <a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>│           ├── ScenarioName.trajectory.jsonl  # Actor motion (docs/trajectory_log.md)
 <a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a>│           ├── ScenarioName.log        # CARLA native recording
-<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a>│           ├── ScenarioName.mp4        # Rendered video
-<a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a>│           ├── batch_results.json      # Batch summary (batch mode only)
-<a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a>│           └── .hydra/
-<a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a>│               └── overrides.yaml      # Hydra CLI overrides
-<a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a>│
-<a id="__codelineno-3-14" name="__codelineno-3-14" href="#__codelineno-3-14"></a>└── multirun/                         # Sweep / multi-scenario runs
-<a id="__codelineno-3-15" name="__codelineno-3-15" href="#__codelineno-3-15"></a>    └── YYYY-MM-DD/
-<a id="__codelineno-3-16" name="__codelineno-3-16" href="#__codelineno-3-16"></a>        └── HH-MM-SS/
-<a id="__codelineno-3-17" name="__codelineno-3-17" href="#__codelineno-3-17"></a>            ├── 0/                    # Job index 0
-<a id="__codelineno-3-18" name="__codelineno-3-18" href="#__codelineno-3-18"></a>            │   ├── ScenarioName_result.json
-<a id="__codelineno-3-19" name="__codelineno-3-19" href="#__codelineno-3-19"></a>            │   ├── ScenarioName.mp4
-<a id="__codelineno-3-20" name="__codelineno-3-20" href="#__codelineno-3-20"></a>            │   ├── raw_output.log    # Subprocess stdout/stderr
-<a id="__codelineno-3-21" name="__codelineno-3-21" href="#__codelineno-3-21"></a>            │   └── .hydra/
-<a id="__codelineno-3-22" name="__codelineno-3-22" href="#__codelineno-3-22"></a>            │       └── overrides.yaml
-<a id="__codelineno-3-23" name="__codelineno-3-23" href="#__codelineno-3-23"></a>            ├── 1/                    # Job index 1
-<a id="__codelineno-3-24" name="__codelineno-3-24" href="#__codelineno-3-24"></a>            │   └── ...
-<a id="__codelineno-3-25" name="__codelineno-3-25" href="#__codelineno-3-25"></a>            └── N/
+<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a>│           ├── batch_results.json      # Batch summary (batch mode only)
+<a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a>│           └── .hydra/
+<a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a>│               └── overrides.yaml      # Hydra CLI overrides
+<a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a>│
+<a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a>└── multirun/                         # Sweep / multi-scenario runs
+<a id="__codelineno-3-14" name="__codelineno-3-14" href="#__codelineno-3-14"></a>    └── YYYY-MM-DD/
+<a id="__codelineno-3-15" name="__codelineno-3-15" href="#__codelineno-3-15"></a>        └── HH-MM-SS/
+<a id="__codelineno-3-16" name="__codelineno-3-16" href="#__codelineno-3-16"></a>            ├── 0/                    # Job index 0
+<a id="__codelineno-3-17" name="__codelineno-3-17" href="#__codelineno-3-17"></a>            │   ├── ScenarioName_result.json
+<a id="__codelineno-3-18" name="__codelineno-3-18" href="#__codelineno-3-18"></a>            │   ├── ScenarioName.trajectory.jsonl
+<a id="__codelineno-3-19" name="__codelineno-3-19" href="#__codelineno-3-19"></a>            │   ├── raw_output.log    # Subprocess stdout/stderr
+<a id="__codelineno-3-20" name="__codelineno-3-20" href="#__codelineno-3-20"></a>            │   └── .hydra/
+<a id="__codelineno-3-21" name="__codelineno-3-21" href="#__codelineno-3-21"></a>            │       └── overrides.yaml
+<a id="__codelineno-3-22" name="__codelineno-3-22" href="#__codelineno-3-22"></a>            ├── 1/                    # Job index 1
+<a id="__codelineno-3-23" name="__codelineno-3-23" href="#__codelineno-3-23"></a>            │   └── ...
+<a id="__codelineno-3-24" name="__codelineno-3-24" href="#__codelineno-3-24"></a>            └── N/
 </code></pre></div>
 <p><strong>Session types:</strong></p>
 <table>
@@ -3537,7 +3542,7 @@ cycles normally and the scenario just waits forever.</p>
             SQ-&gt;&gt;SR: run_scenario(scenario)
             SR-&gt;&gt;C: Setup, tick loop, recording, cleanup
             C--&gt;&gt;SR: ScenarioResult
-            SR-&gt;&gt;SR: Write *_result.json + *.mp4
+            SR-&gt;&gt;SR: Write *_result.json + *.trajectory.jsonl
         end
 
         S--&gt;&gt;R: exit code + stdout/stderr
@@ -3937,8 +3942,8 @@ CARLA map name using the <code>_map_name_to_env_var()</code> function:</p>
 <li>Reproducible results with fixed random seeds</li>
 <li>No frame drops during recording</li>
 </ul>
-<h3 id="two-pass-video-recording">Two-Pass Video Recording<a class="headerlink" href="#two-pass-video-recording" title="Permanent link">&para;</a></h3>
-<p>Video is not rendered during execution but replayed afterwards. This avoids the overhead of RGB camera processing during the tick loop, keeping condition evaluation timing accurate.</p>
+<h3 id="nothing-rendered-during-a-run">Nothing Rendered During a Run<a class="headerlink" href="#nothing-rendered-during-a-run" title="Permanent link">&para;</a></h3>
+<p>A run renders no camera image for itself: the tick loop does no RGB processing beyond what the ego's own sensors need, which keeps condition evaluation timing accurate. What is needed to see the run afterwards is written as data (the trajectory log) and drawn by a viewer.</p>
 <h3 id="condition-composition-pattern">Condition Composition Pattern<a class="headerlink" href="#condition-composition-pattern" title="Permanent link">&para;</a></h3>
 <p>Complex pass/fail criteria are built by composing atomic conditions:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="c1"># Example: pass when ego visits all three road segments</span>
@@ -3976,7 +3981,7 @@ CARLA map name using the <code>_map_name_to_env_var()</code> function:</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 18, 2026 07:05:25 UTC"><span class="timeago" datetime="2026-10-18T07:05:25+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 18, 2026 07:05:25 UTC">2026-10-18</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 18, 2026 07:44:02 UTC"><span class="timeago" datetime="2026-10-18T07:44:02+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 18, 2026 07:44:02 UTC">2026-10-18</span>
   </span>
 
     

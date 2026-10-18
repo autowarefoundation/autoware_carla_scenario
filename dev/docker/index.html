@@ -678,6 +678,25 @@
   
 
       
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../migration/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Migrating
+
+      </a>
+    </li>
+  
+
+      
     </ul>
   </div>
 </nav>
@@ -1774,6 +1793,33 @@
   
 
     
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../migration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Migrating
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
   </ul>
 </nav>
                   </div>
@@ -2007,7 +2053,7 @@ have to contain this framework, or even be checked out.</p>
 <td>Source trees, <code>pyproject.toml</code>, tests, docs, git history</td>
 </tr>
 <tr>
-<td><code>ffmpeg</code>, when asked for</td>
+<td></td>
 <td><code>uv</code>, wheels, build caches, a C compiler, any apt package at all</td>
 </tr>
 </tbody>
@@ -2117,10 +2163,9 @@ so two things could quietly defeat the split:</p>
 <li><strong>The layers underneath.</strong> A layer can only be reused together with its whole
   parent chain, so anything that varies has to sit <em>behind</em> the virtualenv
   rather than in front of it. The runtime stage therefore copies the four
-  layers first and only then creates the user and installs <code>ffmpeg</code>: <code>apt</code>
-  hands out whatever build it has today, and <code>useradd</code> writes the current date
-  into <code>/etc/shadow</code>, which would otherwise put a fresh digest on every layer
-  behind it. The copies use <code>COPY --link</code>, so each layer is built against an
+  layers first and only then creates the user: <code>useradd</code> writes the current
+  date into <code>/etc/shadow</code>, which would otherwise put a fresh digest on every
+  layer behind it. The copies use <code>COPY --link</code>, so each layer is built against an
   empty base and stays the same blob wherever it lands.</li>
 </ul>
 <p><code>slim-venv.py</code> runs once per layer rather than once over the virtualenv, so
@@ -2181,7 +2226,8 @@ adds to these totals):</p>
   <em>last</em> external shared-library dependency: every <code>.so</code> in the venv now needs
   nothing beyond glibc, <code>libgcc_s</code>, <code>libstdc++</code> and <code>libz</code>, all of which the
   base image already has. The runtime therefore installs no apt packages and
-  carries no apt layer unless <code>with-ffmpeg</code> is on.</li>
+  carries no apt layer (the <code>with-ffmpeg</code> input went with the video in
+  15.0.0).</li>
 <li>
 <p><strong>The <code>slim</code> pass</strong> (on by default, <code>slim: "false"</code> to disable) drops
   byte-code caches, vendored test suites, C headers, Cython sources and type
@@ -2268,10 +2314,6 @@ explaining further:</p>
 <tr>
 <td><code>framework-path</code></td>
 <td>uv workspace root supplying the framework. Defaults to the action's own checkout, which is what makes the pinned ref the framework version. Its members are read from <code>[tool.uv.workspace] members</code>, globs included.</td>
-</tr>
-<tr>
-<td><code>with-ffmpeg</code></td>
-<td>Installs ffmpeg for <code>CameraRecorder</code>. The only input that adds an apt layer.</td>
 </tr>
 <tr>
 <td><code>slim</code></td>
@@ -2390,7 +2432,7 @@ the image runs as UID 1000, which must be able to write to it.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 10, 2026 22:56:18 UTC"><span class="timeago" datetime="2026-10-10T22:56:18+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 10, 2026 22:56:18 UTC">2026-10-10</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 18, 2026 07:44:02 UTC"><span class="timeago" datetime="2026-10-18T07:44:02+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 18, 2026 07:44:02 UTC">2026-10-18</span>
   </span>
 
     
