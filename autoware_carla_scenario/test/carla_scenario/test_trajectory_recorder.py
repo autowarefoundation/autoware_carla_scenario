@@ -547,6 +547,50 @@ def test_markers_are_written_when_they_change(tmp_path) -> None:
     ]
 
 
+def test_actions_are_written_when_first_seen_and_when_their_state_changes(
+    tmp_path,
+) -> None:
+    recorder, world = _run(tmp_path)
+    world.snapshot = [_ActorSnapshot(1, 0.0, 0.0)]
+    states = [
+        "standbyState",
+        "standbyState",
+        "startTransition",
+        "runningState",
+        "runningState",
+        "endTransition",
+        "completeState",
+    ]
+    for tick, state in enumerate(states):
+        world.frame = 100 + tick
+        recorder.record(world, 0.05 * tick)
+        recorder.record_action("post_tick", 0, "cut_in", "LaneChangeAction", state)
+        recorder.record_action(
+            "pre_tick", 0, "lead_speed", "SetSpeedAction", "runningState"
+        )
+    recorder.close()
+
+    actions = [r for r in _lines(recorder.path) if r["type"] == "action"]
+    assert [(a["frame"], a["phase"], a["state"]) for a in actions] == [
+        (100, "post_tick", "standbyState"),
+        (100, "pre_tick", "runningState"),
+        (102, "post_tick", "startTransition"),
+        (103, "post_tick", "runningState"),
+        (105, "post_tick", "endTransition"),
+        (106, "post_tick", "completeState"),
+    ]
+    assert actions[2] == {
+        "type": "action",
+        "frame": 102,
+        "t": 0.1,
+        "phase": "post_tick",
+        "index": 0,
+        "label": "cut_in",
+        "action_type": "LaneChangeAction",
+        "state": "startTransition",
+    }
+
+
 def test_conditions_are_written_when_first_checked_and_when_they_change(
     tmp_path,
 ) -> None:

@@ -49,6 +49,9 @@ class TrajectoryRecorder:
     def record_condition(self, role: str, index: int, label: str, satisfied: bool) -> None:
         raise NotImplementedError()
 
+    def record_action(self, phase: str, index: int, label: str, action_type: str, state: str) -> None:
+        raise NotImplementedError()
+
     def record_result(self, result) -> None:
         raise NotImplementedError()
 
