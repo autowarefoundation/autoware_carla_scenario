@@ -963,6 +963,7 @@ class ScenarioRunner:
         timeout_seconds: float | None = None,
         case: OddCase | None = None,
         reset_world: bool = True,
+        file_stem: str | None = None,
     ) -> ScenarioResult:
         """Execute a single scenario from setup to teardown.
 
@@ -994,6 +995,11 @@ class ScenarioRunner:
             reset_world: Reload the map at the end, so the next scenario starts
                 on a clean world.  A queue's last scenario has no next one, and
                 whatever runs on the server after it loads its map anyway.
+            file_stem: The stem the run's files are named by.  ``None`` (the
+                default) names them by the scenario's class, numbered past the
+                runs already in the output directory: ``CutInScenario``, then
+                ``CutInScenario-1`` and so on.  A batch run by several processes
+                (docs/slurm.md) gives each case the name it would have had.
 
         Returns:
             The outcome of the scenario execution.
@@ -1002,7 +1008,8 @@ class ScenarioRunner:
             timeout_seconds = self.timeout_seconds
         scenario_name = type(scenario).__name__
         world = self._world_for_next_run(scenario_name)
-        file_stem = _run_file_stem(self.output_dir, scenario_name)
+        if file_stem is None:
+            file_stem = _run_file_stem(self.output_dir, scenario_name)
 
         # A batch runs several scenarios against one world, so the entities of
         # the previous one are cleared before this one registers its own -- an

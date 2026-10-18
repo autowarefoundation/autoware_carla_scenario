@@ -91,10 +91,29 @@ def capture_opendrive(world: carla.World, destination: Path) -> Path:
 
     The cheapest of the four sources: a run already has the town loaded.  It
     lives beside the other three so a run fills the same cache file the editor's
-    Fetch button does.
+    Fetch button does.  Written atomically: runs in other processes (the tasks
+    of a SLURM batch, docs/slurm.md) may capture the same map meanwhile, and
+    none of them may read half a file.
     """
+    import os  # noqa: PLC0415
+    import tempfile  # noqa: PLC0415
+
     destination.parent.mkdir(parents=True, exist_ok=True)
-    destination.write_text(str(world.get_map().to_opendrive()), encoding="utf-8")
+    # Unique in the directory, whichever host (the cache may be shared) and pid.
+    fd, name = tempfile.mkstemp(
+        prefix=f".{destination.name}.", suffix=".tmp", dir=destination.parent
+    )
+    os.close(fd)
+    try:
+        Path(name).write_text(str(world.get_map().to_opendrive()), encoding="utf-8")
+        # 0o644 (Codon has no octal literal): a cache file others read, not
+        # mkstemp's 0o600.
+        os.chmod(name, 420)
+        # A rename within the directory: another process sees the old file or
+        # the new one, never a part.
+        shutil.move(name, str(destination))
+    finally:
+        Path(name).unlink(missing_ok=True)  # gone already once moved
     return destination
 
 
