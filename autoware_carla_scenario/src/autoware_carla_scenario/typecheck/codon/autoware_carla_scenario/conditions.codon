@@ -128,13 +128,16 @@ class ScenarioResult:
     message: str
     elapsed_seconds: float
     condition_statuses: List[ConditionStatus]
+    rerun_recording: Optional[str]
 
     def __init__(self, passed: bool, message: str, elapsed_seconds: float,
-                 condition_statuses: List[ConditionStatus] = List[ConditionStatus]()):
+                 condition_statuses: List[ConditionStatus] = List[ConditionStatus](),
+                 rerun_recording: Optional[str] = None):
         self.passed = passed
         self.message = message
         self.elapsed_seconds = elapsed_seconds
         self.condition_statuses = condition_statuses
+        self.rerun_recording = rerun_recording
 
     def to_json(self, **kwargs) -> str:
         raise NotImplementedError()

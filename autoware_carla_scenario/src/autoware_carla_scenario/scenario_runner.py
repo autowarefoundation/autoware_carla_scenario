@@ -42,6 +42,7 @@ from .traffic.driven import BackendDriven
 from .world_reset import episode_of, reload_current_map, same_episode, short_map_name
 from .traffic.config import TrafficManagerBackendConfig
 from .traffic.traffic_manager import TrafficManagerBackend
+from .rerun import RerunConverter
 from .trajectory_recorder import TrajectoryRecorder
 
 logger = logging.getLogger(__name__)
@@ -521,6 +522,10 @@ class ScenarioRunner:
     map_source: Optional[str]
     lanelet2_path: Optional[Path]
     projector_type: Optional[str]
+    #: What converts each run's trajectory log into a Rerun recording once
+    #: the log is closed (``rerun.enabled``), or None for no recording.  The
+    #: queue sets it.
+    rerun: Optional[RerunConverter]
 
     def __init__(
         self,
@@ -566,6 +571,7 @@ class ScenarioRunner:
         self.map_source = None
         self.lanelet2_path = None
         self.projector_type = None
+        self.rerun = None
         self.odd = resolve_odd(odd)
         self.timeout_seconds = timeout_seconds
         self.output_dir = output_dir
@@ -1492,6 +1498,13 @@ class ScenarioRunner:
                 logger.info(
                     "[%s] Trajectory written to %s", scenario_name, trajectory.path
                 )
+                if self.rerun is not None:
+                    # Converted in the background while the next case runs;
+                    # the run waits for it at its end (rerun.py).
+                    converter: RerunConverter = self.rerun
+                    recording = converter.submit(trajectory.path, file_stem)
+                    if result is not None:
+                        result.rerun_recording = str(recording)
 
             # Close the backend so the next run starts with a fresh one --
             # for the TrafficManager that resets its InMemoryMap cache and

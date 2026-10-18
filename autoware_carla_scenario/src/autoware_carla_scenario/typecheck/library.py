@@ -429,6 +429,7 @@ EXCLUDED: dict[str, str] = {
     "autoware_carla_scenario.odd.units": "re-exports openodd's units (a Rust extension)",
     "autoware_carla_scenario.pytest_fixtures": "imports pytest, and takes the scenario's class (`Type[BaseScenario]`), which Codon cannot hold as a value",
     "autoware_carla_scenario.registry": "imports omegaconf (`DictConfig`, under `TYPE_CHECKING`) and more of importlib.metadata than its shim declares (`entry_points()`); holds scenario classes (`type[BaseScenario]`) and their config classes as values, which Codon cannot hold",
+    "autoware_carla_scenario.rerun": "imports concurrent.futures, importlib, types and argparse, and holds the converter package (imported at run time) as `Any`; rerun.codon models what scenario_runner and scenario_queue use of it",
     "autoware_carla_scenario.ros2.camera": "subclasses CarlaCameraSensor with a listener that hands each frame back to the ROS 2 ego from a CARLA sensor thread, which the check cannot type through the listen callback",
     "autoware_carla_scenario.ros2.cyclone": "imports cyclonedds (its domain participant, readers, writers, topics and QoS policies) and ros2.messages, which imports it too; ros2/cyclone.codon models the CycloneRos2Transport that entity.ros2_entity builds",
     "autoware_carla_scenario.ros2.messages": "imports cyclonedds (the IdlStruct base of every message, and the IDL field types `array[float64, 36]` and `sequence[TrajectoryPoint]`, which Codon cannot express)",

@@ -121,6 +121,19 @@ map = [
 ros2 = [
     "cyclonedds>=11.0.1; sys_platform == 'linux' and platform_machine == 'x86_64' and python_version < '3.14'",
 ]
+# A Rerun recording of each run (`rerun.enabled=true`, docs/usage.md): the
+# converter from trajectory logs to `.rrd` (hakuturu583/autoware_carla_scenario_rerun,
+# a Rust core in one abi3 wheel), which the runner hands each log to as the run
+# ends. Its minor version follows the trajectory log's format.
+rerun = [
+    "autoware-carla-scenario-rerun>=0.1,<0.2",
+]
+# The Rerun viewer the recordings are opened with (`rerun X.rrd`): the
+# converter's own `viewer` extra, which pins the Rerun minor version its
+# recordings are written with.
+viewer = [
+    "autoware-carla-scenario-rerun[viewer]>=0.1,<0.2",
+]
 
 [build-system]
 requires = ["uv_build>=0.9.7,<0.10.0"]

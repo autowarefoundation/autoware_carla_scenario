@@ -258,6 +258,14 @@ NOT_MODELLED: dict[str, dict[str, str]] = {
             _TRAFFIC_PROTOCOL,
         ),
     },
+    f"{_PACKAGE}.rerun": _each(
+        "INSTALL_HINT RECORDING_SUFFIX RerunConversion RerunUnavailableError "
+        "convert_outputs main recording_path report require_converter",
+        "makes Rerun recordings of a run's trajectory logs with the "
+        "autoware-carla-scenario-rerun package, which the runner does after a "
+        "run (rerun.enabled), not a scenario; the model declares only the "
+        "RerunConverter the checked runner hands each log to",
+    ),
     f"{_PACKAGE}.trajectory_recorder": {
         "SCHEMA_PATH": (
             "the path of the JSON Schema beside the Python module "
@@ -388,6 +396,12 @@ NOT_MODELLED_MEMBERS: dict[str, dict[str, str]] = {
         "junctions": _ROUTE_SEGMENTS,
         "to_config": _AS_DICT,
     },
+    "RerunConverter": _members(
+        "close strict wait",
+        "waits for the conversions and reports them, which the runner's "
+        "caller (examples.run) does once the runs are over, not the checked "
+        "runner, which only submits each log",
+    ),
     "RunEnvironment": _members(
         "lock pins scenario_package summary to_dict", _RUN_ENVIRONMENT
     ),

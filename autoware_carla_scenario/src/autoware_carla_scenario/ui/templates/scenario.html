@@ -129,11 +129,21 @@
   <h2 class="text-lg font-semibold text-gray-700 mb-2">Trajectory log</h2>
   <div class="bg-white rounded-lg shadow p-4 text-sm text-gray-700">
     <p class="font-mono break-all">{{ result.trajectory_path }}</p>
-    <p class="mt-2">See the run in the Rerun viewer: convert the log, which writes a
-      <code>.rrd</code> beside it, and open that with <code>rerun</code>
-      (<code>pip install 'autoware-carla-scenario-rerun[viewer]'</code>; docs/usage.md,
+    {% if result.recording_path %}
+    <h3 class="mt-3 font-semibold text-gray-700">Rerun recording</h3>
+    <p class="font-mono break-all">{{ result.recording_path }}</p>
+    <p class="mt-2">See the run in the Rerun viewer
+      (<code>pip install 'autoware-carla-scenario[viewer]'</code>; docs/usage.md,
       <em>Seeing a run</em>):</p>
-    <pre class="mt-2 bg-gray-50 p-2 rounded overflow-x-auto"><code>python -c 'from autoware_carla_scenario_rerun import convert; convert("{{ result.trajectory_path }}")'</code></pre>
+    <pre class="mt-2 bg-gray-50 p-2 rounded overflow-x-auto"><code>rerun {{ result.recording_path }}</code></pre>
+    {% else %}
+    <p class="mt-2">See the run in the Rerun viewer: make a recording of the log, which
+      writes a <code>.rrd</code> beside it, and open that with <code>rerun</code>
+      (<code>pip install 'autoware-carla-scenario[rerun,viewer]'</code>; run with
+      <code>rerun.enabled=true</code> to have it made as the run ends; docs/usage.md,
+      <em>Seeing a run</em>):</p>
+    <pre class="mt-2 bg-gray-50 p-2 rounded overflow-x-auto"><code>python -m autoware_carla_scenario.rerun {{ result.trajectory_path }}</code></pre>
+    {% endif %}
   </div>
 </div>
 {% endif %}

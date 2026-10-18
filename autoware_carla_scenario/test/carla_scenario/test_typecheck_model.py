@@ -50,6 +50,7 @@ from autoware_carla_scenario import (
     ros2,
     trajectory_recorder,
 )
+from autoware_carla_scenario import rerun as rerun_module
 from autoware_carla_scenario.autoware_bridge import base as bridge_base
 from autoware_carla_scenario.autoware_bridge import grpc_server as bridge_grpc_server
 from autoware_carla_scenario.autoware_stack import devcontainer as stack_devcontainer
@@ -566,6 +567,8 @@ _MODULE_MODELS: dict[str, tuple[Any, tuple[str, ...]]] = {
         trajectory_recorder,
         ("EGO_ROLES", "RECORDED_KINDS", "SCHEMA_VERSION", "TrajectoryRecorder"),
     ),
+    # What the checked scenario_runner and scenario_queue hold of it.
+    "rerun": (rerun_module, ("RerunConverter",)),
     # What scenario_runner's _record_run reads of the unchecked environment.
     "environment": (
         environment,

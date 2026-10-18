@@ -13,6 +13,7 @@ from .constants import DEFAULT_TM_PORT
 from .coordinate.map_manager import MapManager
 from .maps import capture_opendrive
 from .odd import OddCase, OddDefinition, resolve_odd
+from .rerun import RerunConverter
 from .scenario_base import BaseScenario
 from .server import CarlaServerManager
 from .traffic.base import TrafficBackend
@@ -76,6 +77,7 @@ class ScenarioQueue:
     _odd: OddDefinition
     _autoware_launcher: Optional["AutowareLauncher"]
     _map_source: Optional[str]
+    _rerun: Optional[RerunConverter]
     _scenarios: List[BaseScenario]
     #: id(scenario) -> its own timeout, in place of ``timeout_seconds``.
     _timeouts: dict[int, float]
@@ -113,6 +115,7 @@ class ScenarioQueue:
         odd: Union[str, OddDefinition, None] = None,
         autoware_launcher: Optional["AutowareLauncher"] = None,
         map_source: Optional[str] = None,
+        rerun: Optional[RerunConverter] = None,
     ) -> None:
         """Create a scenario queue.
 
@@ -181,6 +184,11 @@ class ScenarioQueue:
             map_source: Where the map came from (the run's ``map.source`` or
                 ``map.directory``), which each run's trajectory log names
                 beside the files it read.
+            rerun: What converts each run's trajectory log into a Rerun
+                recording as soon as the log is closed, in the background
+                (``rerun.enabled``); *None* makes no recording.  The queue
+                does not wait for it: whoever made it waits
+                (:meth:`RerunConverter.wait`) once the runs are done.
         """
         if server is not None:
             self._server = server
@@ -212,6 +220,7 @@ class ScenarioQueue:
         self._odd = resolve_odd(odd)
         self._autoware_launcher = autoware_launcher
         self._map_source = map_source
+        self._rerun = rerun
 
         self._scenarios = []
         self._timeouts = {}
@@ -490,6 +499,7 @@ class ScenarioQueue:
         self._runner.xodr_path = xodr_path
         # What each run's trajectory log names as its map.
         self._runner.map_source = self._map_source
+        self._runner.rerun = self._rerun
         self._runner.lanelet2_path = self._lanelet2_path
         self._runner.projector_type = self._projector_type
         # Always: the runs read the map the MapManager holds (run_carla_map),

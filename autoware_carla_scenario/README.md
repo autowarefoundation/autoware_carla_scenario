@@ -15,7 +15,7 @@ It is typically run against OpenDRIVE maps produced by the `convert` CLI of [`au
 - Coordinate transforms between Lanelet2, OpenDRIVE, and CARLA world frames.
 - Hydra `lanelet_constraint` sweeper plugin for parametric map-driven sweeps (resolvable without CARLA).
 - FastAPI + Uvicorn web viewer for browsing results and triggering runs.
-- A trajectory log of every run (actors, lights, map, the ego's plan, conditions, verdict; JSON Schema in the package), which the `autoware_carla_scenario_rerun` package (`convert` / `convert_dir`) turns into a Rerun recording to see the run, beside CARLA's native recording.
+- A trajectory log of every run (actors, lights, map, the ego's plan, conditions, verdict; JSON Schema in the package), which the `rerun` extra turns into a Rerun recording as the run ends (`rerun.enabled=true`), to see the run, beside CARLA's native recording.
 - `scenario-setup` downloads CARLA's nightly build, which the runner then launches by itself.
 - pytest integration via `CarlaScenarioFixture` (auto-skips when there is no CARLA to launch).
 

@@ -9,6 +9,7 @@ from typing import Any
 
 import yaml  # type: ignore[import-untyped]
 
+from ..rerun import recording_path
 from .models import ConditionNode, ScenarioResultView, SessionItem, SessionSummary
 from .runner import RAW_OUTPUT_LOG
 
@@ -472,10 +473,15 @@ def load_scenario(
 
     # The run's trajectory log, which a Rerun recording of it is made from.
     trajectory_path: str | None = None
+    # The Rerun recording made of it, if one was (rerun.enabled).
+    recording: str | None = None
     if job_dir:
         first_log = next(iter(sorted(job_dir.glob("*.trajectory.jsonl"))), None)
         if first_log is not None:
             trajectory_path = str(first_log.resolve())
+            rrd = recording_path(first_log)
+            if rrd.is_file():
+                recording = str(rrd.resolve())
 
     result = ScenarioResultView(
         passed=data.get("passed"),
@@ -485,6 +491,7 @@ def load_scenario(
         overrides=overrides,
         raw_log=raw_log,
         trajectory_path=trajectory_path,
+        recording_path=recording,
     )
     _cache[cache_key] = result
     return result

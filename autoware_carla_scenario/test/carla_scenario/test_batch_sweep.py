@@ -64,6 +64,7 @@ def batch(monkeypatch: pytest.MonkeyPatch) -> _Batch:
         output_dir: object = None,
         overrides: list[list[str]] | None = None,
         errored: object = (),
+        conversions: object = None,
     ) -> bool:
         seen.labels = names
         seen.overrides = overrides

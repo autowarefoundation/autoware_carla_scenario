@@ -54,6 +54,8 @@ class ScenarioResultView(BaseModel):
     raw_log: str = ""
     #: The run's trajectory log, to make a Rerun recording of the run from.
     trajectory_path: str | None = None
+    #: The Rerun recording made of it (``rerun.enabled``), when there is one.
+    recording_path: str | None = None
 
 
 class RunProgress(BaseModel):
