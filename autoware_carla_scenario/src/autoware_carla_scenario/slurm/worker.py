@@ -285,7 +285,9 @@ def wait_for_start_turn(lock: Path, spacing: float) -> float:
             time.sleep(waited)
         stream.seek(0)
         stream.truncate()
-        stream.write(f"{time.time():.3f}\n")
+        # Full precision: a start rounded up would make the next task wait
+        # out the rounding after a full spacing (#304).
+        stream.write(f"{time.time()!r}\n")
         stream.flush()
     return waited
 
