@@ -38,9 +38,12 @@ On the machine you run `scenario` on (a SLURM submit host):
 4. By default `scenario` follows the array (`squeue`, and the outcome each task
    records) until it ends, then prints the summary and writes
    `batch_results.json`, as a local batch does, and exits 0 when every case
-   passed. Ctrl-C cancels the batch's jobs. With `--no-wait`
+   passed. Ctrl-C cancels the batch's jobs, waits (up to 60 s) for their tasks
+   to leave the queue, and collects. With `--no-wait`
    (`launcher.wait=false`) it submits and exits, and a small job that runs once
-   the array has ended (`--dependency=afterany`) collects the batch.
+   the array has ended (`--dependency=afterany`) collects the batch; should
+   that job not be submitted, `scenario` says so, with the array's job id, and
+   exits non-zero (`scenario-slurm wait` collects the batch instead).
 
 Each task, on its node:
 
@@ -77,9 +80,12 @@ A case that has no outcome -- its task was cancelled, ran out of time, was
 killed for memory, or its node failed -- is reported as `ERROR` with a message
 saying so, and `collect` lists them. `resubmit` submits again the cases with no
 outcome and those that raised on every attempt (`ERROR`); `--failed` adds the
-ones that ran and failed, `--cases a,b` names them (labels or indices), and
-`--array-parallelism`/`--cases-per-task` change how they are spread. A case run
-again replaces its earlier files. `collect` can be run any number of times.
+ones that ran and failed, `--cases a,b` names them (labels or indices; a case
+named twice runs once), and `--array-parallelism`/`--cases-per-task` change
+how they are spread. A case run again replaces its earlier files, so
+`resubmit` refuses while a job of the batch is queued or running, or while
+`squeue` cannot tell whether one is (`--force` submits all the same).
+`collect` can be run any number of times.
 
 `sacct` is not needed: the batch is followed through `squeue` and the files the
 tasks write.
@@ -111,7 +117,8 @@ command line (`launcher.mem=12G`), or in a config.
 | `collect_job` | `true` | with `wait: false`, a job that collects once the array ends |
 | `collect_mem` | `2G` | its `--mem` |
 | `signal_grace_seconds` | `120` | `--signal=B:TERM@N` |
-| `port_base`, `port_slots` | `20000`, `1000` | where the tasks' port slots are ([Ports](#ports)) |
+| `port_base`, `port_slots` | `20000`, `1000` | where the tasks' port slots are ([Ports](#ports)); `port_slots` at least 1 |
+| `port_lock_dir` | `null` | where the slots' locks are; `null`: `/dev/shm/acs-slurm-ports-<uid>`, else `/tmp` ([Ports](#ports)) |
 
 `cases_per_task` trades a task's start -- CARLA takes about 50 s to start, and
 a driver policy about as long to load -- against how evenly the cases spread
@@ -136,9 +143,13 @@ or `launcher.python`) and its environment:
 
 A driver policy's variables belong on `env_passthrough` (a pattern:
 `launcher.env_passthrough=[...]` replaces the list) or in `launcher.env`. No
-token or credential is on the default list: the job script holding the values
-is a file in the batch's output directory. With `export: NONE`, the job has
-only what steps 2 to 4 give it.
+token or credential is on the default list, and a name with `TOKEN`,
+`SECRET`, `KEY`, `PASSWORD` or `CREDENTIAL` in it (in any case) is not
+recorded through a pattern (`AUTOWARE_*`) either -- only when
+`env_passthrough` names it exactly, or `launcher.env` sets it: the manifest
+and the job scripts holding the values are files in the batch's output
+directory (both the user's alone, mode `0600` and `0700`). With
+`export: NONE`, the job has only what steps 2 to 4 give it.
 
 A config that reads the environment (`${oc.env:ONEPLANNER_MAP_DIR}`) is
 resolved in the task too; a case whose config resolves differently there than
@@ -161,9 +172,14 @@ ports from `port_base`:
 
 The slot a task tries first is its array job id plus its task id, so the tasks
 of an array start on different slots. It takes one only when no other task
-holds it (an exclusive lock, `/tmp/autoware_carla_scenario-port-<base>.lock`,
-which goes when the task's process does) and none of its ports is bound; else
-the next. The default range, 20000-29999, is below Linux's ephemeral ports.
+holds it (an exclusive lock,
+`<lock dir>/autoware_carla_scenario-port-<base>.lock`, which goes when the
+task's process does) and none of its ports is bound; else the next. The lock
+directory must be one every job on the node sees, which `/tmp` is not where
+SLURM gives each job a private one (`job_container/tmpfs`): it is
+`/dev/shm/acs-slurm-ports-<uid>` (or `/tmp` where that cannot be made), or
+`launcher.port_lock_dir`. The default range, 20000-29999, is below Linux's
+ephemeral ports.
 
 `driver.address` is not changed: a policy the run serves itself
 (`driver.policy`) listens on a port the OS picks, and one it does not is a

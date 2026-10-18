@@ -36,15 +36,19 @@ def _layout(path: str) -> BatchLayout:
     return BatchLayout(Path(path).expanduser().resolve())
 
 
-def _active_jobs(layout: BatchLayout) -> list[str]:
-    """The batch's array jobs SLURM still lists."""
+def _active_jobs(layout: BatchLayout) -> tuple[list[str], list[str]]:
+    """The batch's array jobs SLURM still lists, and those squeue could not be
+    asked about (which may be running too)."""
     active: list[str] = []
+    unknown: list[str] = []
     for index in layout.submissions():
         job = layout.read_submission(index).get("job_id")
         states = squeue_states(str(job)) if job else {}
-        if states and any(state in ACTIVE_STATES for state in states.values()):
+        if states is None:
+            unknown.append(str(job))
+        elif any(state in ACTIVE_STATES for state in states.values()):
             active.append(str(job))
-    return active
+    return active, unknown
 
 
 def _status(layout: BatchLayout) -> int:
@@ -94,7 +98,7 @@ def _status(layout: BatchLayout) -> int:
 def _resubmit(args: argparse.Namespace) -> int:
     layout = _layout(args.batch_dir)
     manifest = layout.read_manifest()
-    active = _active_jobs(layout)
+    active, unknown = _active_jobs(layout)
     if active and not args.force:
         print(  # noqa: T201
             f"Error: job(s) {', '.join(active)} of this batch are still queued or "
@@ -103,18 +107,29 @@ def _resubmit(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 1
+    if unknown and not args.force:
+        # A task still running would have its outputs removed under it.
+        print(  # noqa: T201
+            f"Error: squeue could not tell whether job(s) {', '.join(unknown)} of "
+            "this batch are still queued or running; check with squeue, or pass "
+            "--force if they are not",
+            file=sys.stderr,
+        )
+        return 1
     if args.cases:
         labels = {str(c["label"]): int(c["index"]) for c in manifest["cases"]}
-        chosen = []
+        # A case named twice (by its label and its index, say) runs once.
+        picked: dict[int, None] = {}
         for item in args.cases.split(","):
             item = item.strip()
             if item in labels:
-                chosen.append(labels[item])
+                picked[labels[item]] = None
             elif item.isdigit() and 0 <= int(item) < len(manifest["cases"]):
-                chosen.append(int(item))
+                picked[int(item)] = None
             else:
                 print(f"Error: no case {item!r} in the batch", file=sys.stderr)  # noqa: T201
                 return 1
+        chosen = sorted(picked)
     else:
         chosen = unfinished_cases(layout, failed=args.failed)
     if not chosen:

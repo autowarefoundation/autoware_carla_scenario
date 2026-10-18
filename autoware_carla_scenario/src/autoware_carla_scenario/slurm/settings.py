@@ -22,6 +22,7 @@ from typing import Any
 __all__ = [
     "DEFAULT_ENV_PASSTHROUGH",
     "LAUNCHER_TYPES",
+    "SENSITIVE_NAME_PATTERNS",
     "SlurmSettings",
     "launcher_requested_in_argv",
     "launcher_type",
@@ -37,7 +38,9 @@ LAUNCHER_TYPES = ("local", "slurm")
 #: interpreter's and the libraries' paths, CARLA's, the framework's own, and the
 #: ones a driver policy reads (OnePlanner's ``ONEPLANNER_*``).  ``*`` matches
 #: any run of characters.  No token or credential variable is on it: the job
-#: script holding them is a file in the batch's output directory.
+#: script holding them is a file in the batch's output directory, and a name
+#: :data:`SENSITIVE_NAME_PATTERNS` matches is left out even when a pattern
+#: here matches it (:func:`snapshot_environment`).
 DEFAULT_ENV_PASSTHROUGH: tuple[str, ...] = (
     "PATH",
     "LD_LIBRARY_PATH",
@@ -55,6 +58,24 @@ DEFAULT_ENV_PASSTHROUGH: tuple[str, ...] = (
     "CUDA_PATH",
     "CUDAToolkit_ROOT",
 )
+
+
+#: Names never recorded through a pattern (case-insensitive): a secret's value
+#: would be written into the manifest and the job scripts.  A variable named
+#: exactly -- not through a ``*`` -- on ``env_passthrough``, or in
+#: ``launcher.env``, is recorded all the same.
+SENSITIVE_NAME_PATTERNS: tuple[str, ...] = (
+    "*TOKEN*",
+    "*SECRET*",
+    "*KEY*",
+    "*PASSWORD*",
+    "*CREDENTIAL*",
+)
+
+
+def _sensitive(name: str) -> bool:
+    upper = name.upper()
+    return any(fnmatch.fnmatchcase(upper, p) for p in SENSITIVE_NAME_PATTERNS)
 
 
 def launcher_type(cfg: Mapping[str, Any] | None) -> str:
@@ -105,15 +126,24 @@ def require_sbatch() -> str:
 
 
 def snapshot_environment(
-    patterns: Iterable[str], environ: Mapping[str, str] | None = None
+    patterns: Iterable[str],
+    environ: Mapping[str, str] | None = None,
+    *,
+    explicit: Iterable[str] = (),
 ) -> dict[str, str]:
-    """The variables of *environ* (``os.environ``) whose names match *patterns*."""
+    """The variables of *environ* (``os.environ``) whose names match *patterns*.
+
+    A name :data:`SENSITIVE_NAME_PATTERNS` matches is left out, unless one of
+    *patterns* is that very name or it is in *explicit* (``launcher.env``).
+    """
     env = os.environ if environ is None else environ
     patterns = tuple(patterns)
+    named = set(explicit) | {p for p in patterns if not any(c in p for c in "*?[")}
     return {
         name: value
         for name, value in sorted(env.items())
         if any(fnmatch.fnmatchcase(name, pattern) for pattern in patterns)
+        and (name in named or not _sensitive(name))
     }
 
 
@@ -173,6 +203,10 @@ class SlurmSettings:
     #: Each task's ports: a slot of ``PORT_SLOT_WIDTH`` from ``port_base``.
     port_base: int = 20000
     port_slots: int = 1000
+    #: Where the slot locks are; ``None``: a node-wide directory
+    #: (``/dev/shm/acs-slurm-ports-<uid>``, else ``/tmp``), not a job's
+    #: private ``/tmp``.
+    port_lock_dir: str | None = None
     #: Unset ``DISPLAY`` in the job, so CARLA renders off-screen.
     headless: bool = True
     #: No task of the batch starts sooner than this after another one did
@@ -206,7 +240,7 @@ class SlurmSettings:
         for key in ("partition", "account", "qos", "time", "mem", "gres"):
             if key in data:
                 options[key] = _optional_str(data[key])
-        for key in ("job_name", "python", "collect_mem"):
+        for key in ("job_name", "python", "collect_mem", "port_lock_dir"):
             if key in data:
                 options[key] = _optional_str(data[key])
         for key in ("cpus_per_task", "array_parallelism", "cases_per_task"):
@@ -235,6 +269,11 @@ class SlurmSettings:
             if key in data:
                 options[key] = int(data[key])
         settings = cls(**options)
+        if settings.port_slots < 1:
+            raise ValueError(
+                f"launcher.port_slots must be at least 1 (got {settings.port_slots}): "
+                "each task takes a slot of ports"
+            )
         if (
             settings.port_base < 1024
             or settings.port_base + (settings.port_slots * 10) > 65535

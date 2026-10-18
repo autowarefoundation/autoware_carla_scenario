@@ -51,7 +51,11 @@ RUN_FILE_SUFFIXES: tuple[str, ...] = (
 
 
 def write_json(path: Path, data: Any) -> None:
-    """Write *data* to *path* as JSON, atomically (rename over the old file)."""
+    """Write *data* to *path* as JSON, atomically (rename over the old file).
+
+    The file is the user's alone (``0600``, as ``mkstemp`` creates it): the
+    manifest holds the environment the batch was submitted with.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
     try:

@@ -20,6 +20,8 @@ again by ``scenario-slurm resubmit``.
 
 from __future__ import annotations
 
+import contextlib
+import errno
 import importlib
 import json
 import logging
@@ -30,6 +32,7 @@ import sys
 import threading
 import time
 import traceback
+from collections.abc import Iterator
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -206,18 +209,71 @@ def _raise_interrupt(signum: int, _frame: object) -> None:
     raise KeyboardInterrupt(f"signal {signal.Signals(signum).name}")
 
 
+#: The errors of a ``flock`` the file system does not support (some NFS and
+#: Lustre mounts): the start lock is then taken with an ``O_EXCL`` file.
+_NO_FLOCK_ERRNOS = frozenset(
+    {errno.ENOSYS, errno.EOPNOTSUPP, errno.ENOTSUP, errno.ENOLCK, errno.EINVAL}
+)
+
+
+@contextlib.contextmanager
+def _exclusive_file(path: Path, stale_after: float) -> Iterator[None]:
+    """Hold *path* created with ``O_EXCL``, retrying until no one else does.
+
+    A file older than *stale_after* seconds is the leftover of a task killed
+    while it held it, and is removed.
+    """
+    while True:
+        try:
+            fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+        except FileExistsError:
+            try:
+                if time.time() - path.stat().st_mtime > stale_after:
+                    path.unlink(missing_ok=True)
+                    continue
+            except FileNotFoundError:
+                continue
+            time.sleep(0.05)
+            continue
+        os.close(fd)
+        break
+    try:
+        yield
+    finally:
+        path.unlink(missing_ok=True)
+
+
+@contextlib.contextmanager
+def _start_lock(stream: Any, lock: Path, spacing: float) -> Iterator[None]:
+    """Hold *lock* (open as *stream*): a ``flock``, or where the file system
+    has none, an ``O_EXCL`` file beside it."""
+    import fcntl  # noqa: PLC0415
+
+    try:
+        fcntl.flock(stream.fileno(), fcntl.LOCK_EX)  # released when closed
+    except OSError as exc:
+        if exc.errno not in _NO_FLOCK_ERRNOS:
+            raise
+        logger.info("No flock on %s (%s): using a lock file", lock.parent, exc)
+        excl = lock.with_name(lock.name + ".excl")
+        with _exclusive_file(excl, stale_after=spacing + 60.0):
+            yield
+        return
+    yield
+
+
 def wait_for_start_turn(lock: Path, spacing: float) -> float:
     """Start no sooner than *spacing* seconds after the batch's last task did.
 
-    *lock* holds when that was; it is held (``flock``) while this waits, so
-    the tasks that start together start one after another, *spacing* apart,
-    and so do the ones started later as slots free up.  How long it waited.
+    *lock* holds when that was; it is held (``flock``, or an ``O_EXCL`` file
+    where the shared file system has no ``flock``) while this waits, so the
+    tasks that start together start one after another, *spacing* apart, and
+    so do the ones started later as slots free up.  How long it waited.
     """
-    import fcntl  # noqa: PLC0415
-
     lock.parent.mkdir(parents=True, exist_ok=True)
-    with open(lock, "a+", encoding="utf-8") as stream:
-        fcntl.flock(stream.fileno(), fcntl.LOCK_EX)  # released when closed
+    with open(lock, "a+", encoding="utf-8") as stream, _start_lock(
+        stream, lock, spacing
+    ):
         stream.seek(0)
         try:
             last = float(stream.read().strip())
@@ -323,6 +379,11 @@ def run_task(manifest_path: Path, submission_index: int, task_index: int) -> int
             settings.port_base,
             settings.port_slots,
             start=first_slot(os.environ, settings.port_slots),
+            lock_dir=(
+                Path(settings.port_lock_dir).expanduser()
+                if settings.port_lock_dir
+                else None
+            ),
         )
         port_file = layout.task_port(submission_index, task_index)
         port_file.write_text(f"{slot.rpc}\n", encoding="utf-8")

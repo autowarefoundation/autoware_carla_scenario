@@ -16,9 +16,12 @@ of :data:`PORT_SLOT_WIDTH` consecutive ports from ``launcher.port_base``:
 The slot to try first comes from the job: ``SLURM_ARRAY_JOB_ID`` plus
 ``SLURM_ARRAY_TASK_ID``, so the tasks of one array start on different slots.
 A slot is taken only when no other task holds it -- an exclusive ``flock`` on
-``/tmp/autoware_carla_scenario-port-<first port>.lock``, released when the task's
-process ends, however it ends -- and none of its ports is bound; otherwise the
-next one is tried.  The default 20000-29999 stays below Linux's ephemeral
+``<lock dir>/autoware_carla_scenario-port-<first port>.lock``, released when the
+task's process ends, however it ends -- and none of its ports is bound;
+otherwise the next one is tried.  The lock directory must be one every job on
+the node sees: not ``/tmp`` where a cluster gives each job a private one, so
+``/dev/shm/acs-slurm-ports-<uid>`` by default (:func:`default_lock_dir`), or
+``launcher.port_lock_dir``.  The default 20000-29999 stays below Linux's ephemeral
 range (32768-60999), so an outgoing connection never takes a slot's port.
 """
 
@@ -38,6 +41,7 @@ __all__ = [
     "PortSlot",
     "acquire_slot",
     "carla_processes_on_port",
+    "default_lock_dir",
     "first_slot",
     "kill_carla_on_port",
 ]
@@ -45,8 +49,24 @@ __all__ = [
 #: Ports per slot; the first six are used, the rest are spare.
 PORT_SLOT_WIDTH = 10
 
-#: Where the slot locks are (node-local, shared by every user's tasks).
+#: Where the slot locks are when no node-wide directory can be made.
 LOCK_DIR = Path("/tmp")
+
+
+def default_lock_dir(shm: Path = Path("/dev/shm")) -> Path:
+    """A node-wide directory for the slot locks: ``<shm>/acs-slurm-ports-<uid>``
+    when it can be made and written to, else :data:`LOCK_DIR`.
+
+    ``/dev/shm`` is the node's own even where SLURM gives each job a private
+    ``/tmp`` (``job_container/tmpfs``), in which two tasks would not see each
+    other's locks.
+    """
+    path = shm / f"acs-slurm-ports-{os.getuid()}"
+    try:
+        path.mkdir(mode=0o700, exist_ok=True)
+    except OSError:
+        return LOCK_DIR
+    return path if os.access(path, os.W_OK | os.X_OK) else LOCK_DIR
 
 
 @dataclass
@@ -141,13 +161,15 @@ def acquire_slot(
     slots: int,
     *,
     start: int,
-    lock_dir: Path = LOCK_DIR,
+    lock_dir: Path | None = None,
 ) -> PortSlot:
     """Take the first free slot from *start* on (wrapping round).
 
     Raises:
         RuntimeError: Every slot is held or has a port in use.
     """
+    lock_dir = default_lock_dir() if lock_dir is None else lock_dir
+    lock_dir.mkdir(parents=True, exist_ok=True)
     for offset in range(slots):
         index = (start + offset) % slots
         slot_base = base + index * PORT_SLOT_WIDTH

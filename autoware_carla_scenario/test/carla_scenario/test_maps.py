@@ -1192,3 +1192,33 @@ def test_a_captured_opendrive_replaces_the_file_whole(tmp_path: Path) -> None:
     assert capture_opendrive(world, destination) == destination  # type: ignore[arg-type]
     assert destination.read_text(encoding="utf-8") == "<OpenDRIVE/>"
     assert [p.name for p in destination.parent.iterdir()] == [destination.name]
+
+
+def test_a_captured_opendrive_takes_a_scratch_name_of_its_own(tmp_path: Path) -> None:
+    """The scratch file is unique whichever host and pid: one another process
+    left (here, in the way as a directory) is not the one written."""
+    import os
+    import stat
+    from types import SimpleNamespace
+
+    destination = tmp_path / "Town10HD_Opt.xodr"
+    (tmp_path / f".{destination.name}.{os.getpid()}.tmp").mkdir()
+    world = SimpleNamespace(
+        get_map=lambda: SimpleNamespace(to_opendrive=lambda: "<OpenDRIVE/>")
+    )
+    assert capture_opendrive(world, destination) == destination  # type: ignore[arg-type]
+    assert destination.read_text(encoding="utf-8") == "<OpenDRIVE/>"
+    assert stat.S_IMODE(destination.stat().st_mode) == 0o644
+    assert sorted(p.name for p in tmp_path.iterdir()) == sorted(
+        [destination.name, f".{destination.name}.{os.getpid()}.tmp"]
+    )
+
+    def broken() -> str:
+        raise RuntimeError("lost the server")
+
+    failing = SimpleNamespace(get_map=lambda: SimpleNamespace(to_opendrive=broken))
+    with pytest.raises(RuntimeError, match="lost the server"):
+        capture_opendrive(failing, destination)  # type: ignore[arg-type]
+    # Nothing half written is left, and the old file stands.
+    assert destination.read_text(encoding="utf-8") == "<OpenDRIVE/>"
+    assert len(list(tmp_path.iterdir())) == 2

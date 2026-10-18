@@ -735,3 +735,324 @@ def test_job_script_guard_pattern_matches_only_its_port() -> None:
     assert pattern.search("CarlaUnreal -carla-rpc-port=20000 -RenderOffScreen")
     assert pattern.search("CarlaUnreal.sh -carla-rpc-port=20000")
     assert not pattern.search("CarlaUnreal -carla-rpc-port=200001")
+
+
+# ---------------------------------------------------------------------------
+# Review fixes
+# ---------------------------------------------------------------------------
+
+
+def _batch_on_disk(tmp_path: Path, cases: int = 3) -> BatchLayout:
+    """A batch with a manifest and one submission (job 77), never run."""
+    from autoware_carla_scenario.slurm.manifest import MANIFEST_VERSION, write_json
+
+    layout = BatchLayout(tmp_path / "batch")
+    write_json(
+        layout.manifest,
+        {
+            "version": MANIFEST_VERSION,
+            "cases": [{"index": i, "label": f"s#{i + 1}"} for i in range(cases)],
+            "launcher": {},
+        },
+    )
+    write_json(
+        layout.submission(0),
+        {"index": 0, "job_id": "77", "chunks": [list(range(cases))]},
+    )
+    return layout
+
+
+def test_resubmit_refuses_when_squeue_cannot_tell_unless_forced(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from autoware_carla_scenario.slurm import cli
+
+    layout = _batch_on_disk(tmp_path)
+    monkeypatch.setattr(cli, "squeue_states", lambda _job: None)
+    assert cli.main(["resubmit", str(layout.batch_dir), "--dry-run"]) == 1
+    err = capsys.readouterr().err
+    assert "squeue could not tell" in err and "77" in err and "--force" in err
+    assert cli.main(["resubmit", str(layout.batch_dir), "--dry-run", "--force"]) == 0
+    assert "Resubmitting 3 case(s)" in capsys.readouterr().out
+    # A job squeue lists as running is refused as before; one gone is not.
+    monkeypatch.setattr(cli, "squeue_states", lambda _job: {0: "RUNNING"})
+    assert cli.main(["resubmit", str(layout.batch_dir), "--dry-run"]) == 1
+    monkeypatch.setattr(cli, "squeue_states", lambda _job: {})
+    assert cli.main(["resubmit", str(layout.batch_dir), "--dry-run"]) == 0
+
+
+def test_resubmit_runs_a_case_named_twice_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from autoware_carla_scenario.slurm import cli
+
+    layout = _batch_on_disk(tmp_path)
+    monkeypatch.setattr(cli, "squeue_states", lambda _job: {})
+    submitted: list[list[int]] = []
+
+    def submit_cases(
+        _layout: object, _manifest: object, _settings: object, chosen: list[int]
+    ) -> int:
+        submitted.append(chosen)
+        return 1
+
+    monkeypatch.setattr(cli, "submit_cases", submit_cases)
+    monkeypatch.setattr(cli, "after_submit", lambda *_: 0)
+    argv = ["resubmit", str(layout.batch_dir), "--cases", "2,s#3, 0,s#1,2"]
+    assert cli.main(argv) == 0
+    assert "Resubmitting 2 case(s): s#1, s#3" in capsys.readouterr().out
+    assert submitted == [[0, 2]]
+
+
+def test_port_locks_go_to_a_node_wide_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from autoware_carla_scenario.slurm import ports
+
+    shm = tmp_path / "shm"
+    shm.mkdir()
+    lock_dir = ports.default_lock_dir(shm)
+    assert lock_dir == shm / f"acs-slurm-ports-{os.getuid()}"
+    assert lock_dir.is_dir() and (lock_dir.stat().st_mode & 0o777) == 0o700
+    # Where /dev/shm cannot be used, /tmp.
+    assert ports.default_lock_dir(tmp_path / "missing") == ports.LOCK_DIR
+    # A slot taken without a lock directory locks there.
+    monkeypatch.setattr(ports, "default_lock_dir", lambda: lock_dir)
+    slot = acquire_slot(31500, 5, start=0)
+    try:
+        assert (lock_dir / f"autoware_carla_scenario-port-{slot.base}.lock").exists()
+    finally:
+        slot.release()
+    # launcher.port_lock_dir, and its default.
+    assert SlurmSettings().port_lock_dir is None
+    configured = SlurmSettings.from_mapping({"port_lock_dir": "/scratch/locks"})
+    assert configured.port_lock_dir == "/scratch/locks"
+    assert configured.replace(wait=False).port_lock_dir == "/scratch/locks"
+
+
+def test_the_worker_takes_its_slot_in_launcher_port_lock_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from autoware_carla_scenario.slurm import worker
+    from autoware_carla_scenario.slurm.manifest import write_json
+
+    layout = _batch_on_disk(tmp_path, cases=1)
+    manifest = layout.read_manifest()
+    manifest["launcher"] = {"port_lock_dir": str(tmp_path / "locks")}
+    manifest["cases"][0].update(scenario="x", overrides=[], stem="S")
+    write_json(layout.manifest, manifest)
+    seen: dict[str, Any] = {}
+
+    def acquire(*_args: object, lock_dir: Path | None = None, **_kw: object) -> Any:
+        seen["lock_dir"] = lock_dir
+        raise RuntimeError("stop here")
+
+    monkeypatch.setattr(worker, "acquire_slot", acquire)
+    from autoware_carla_scenario.examples import run
+
+    monkeypatch.setattr(run, "load_scenario_plugins", lambda: None)
+    monkeypatch.setattr(run, "_cap_malloc_arenas", lambda: None)
+    # run_task unsets these and takes over the signals: not this process's.
+    monkeypatch.delenv("DISPLAY", raising=False)
+    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+    import signal
+
+    handlers = {sig: signal.getsignal(sig) for sig in (signal.SIGTERM, signal.SIGUSR1)}
+    try:
+        assert worker.run_task(layout.manifest, 0, 0) == 1
+    finally:
+        for sig, handler in handlers.items():
+            signal.signal(sig, handler)
+    assert seen["lock_dir"] == tmp_path / "locks"
+    status = layout.read_task(0, 0)
+    assert status is not None and "stop here" in status["error"]
+
+
+def test_secrets_are_not_recorded_through_a_pattern() -> None:
+    env = {
+        "AUTOWARE_API_TOKEN": "t",
+        "AUTOWARE_Secret_Path": "s",
+        "CARLA_LICENSE_KEY": "k",
+        "ONEPLANNER_DB_PASSWORD": "p",
+        "ONEPLANNER_CREDENTIALS_FILE": "c",
+        "AUTOWARE_ROOT": "/aw",
+        "ONEPLANNER_ENGINE_TOKEN_OK": "explicit",
+    }
+    patterns = [*SlurmSettings().env_passthrough, "ONEPLANNER_ENGINE_TOKEN_OK"]
+    assert snapshot_environment(patterns, env) == {
+        "AUTOWARE_ROOT": "/aw",
+        # Named exactly on env_passthrough: recorded.
+        "ONEPLANNER_ENGINE_TOKEN_OK": "explicit",
+    }
+    # Set in launcher.env: recorded too.
+    assert snapshot_environment(
+        SlurmSettings().env_passthrough, env, explicit=["CARLA_LICENSE_KEY"]
+    ) == {"AUTOWARE_ROOT": "/aw", "CARLA_LICENSE_KEY": "k"}
+
+
+def test_the_manifest_and_job_scripts_are_the_users_alone(
+    fake_slurm: SimpleNamespace,
+) -> None:
+    fake_slurm.monkeypatch.setenv("AUTOWARE_API_TOKEN", "do-not-record")
+    _status, batch = _run_batch(fake_slurm, "slurm", _slurm())
+    layout = BatchLayout(batch)
+    assert (layout.manifest.stat().st_mode & 0o777) == 0o600
+    script = layout.job_script(0)
+    assert (script.stat().st_mode & 0o777) == 0o700
+    assert "AUTOWARE_API_TOKEN" not in layout.manifest.read_text()
+    assert "do-not-record" not in script.read_text()
+    assert "AUTOWARE_CARLA_SCENARIO_TYPECHECK" in layout.read_manifest()["env"]
+
+
+def test_port_slots_must_be_at_least_one() -> None:
+    for slots in (0, -3):
+        with pytest.raises(ValueError, match="port_slots must be at least 1"):
+            SlurmSettings.from_mapping({"port_slots": slots})
+    assert SlurmSettings.from_mapping({"port_slots": 1}).port_slots == 1
+
+
+def test_start_stagger_without_flock_uses_a_lock_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import errno
+    import fcntl
+    import threading
+
+    from autoware_carla_scenario.slurm.worker import wait_for_start_turn
+
+    def no_flock(*_args: object) -> None:
+        raise OSError(errno.ENOSYS, "Function not implemented")
+
+    monkeypatch.setattr(fcntl, "flock", no_flock)
+    lock = BatchLayout(tmp_path).start_lock
+    spacing = 0.3
+    started: list[float] = []
+
+    def start() -> None:
+        wait_for_start_turn(lock, spacing)
+        started.append(time.time())
+
+    threads = [threading.Thread(target=start) for _ in range(3)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    started.sort()
+    gaps = [b - a for a, b in zip(started, started[1:])]
+    assert len(gaps) == 2 and all(gap >= spacing - 0.05 for gap in gaps), gaps
+    excl = lock.with_name(lock.name + ".excl")
+    assert not excl.exists()
+    # A lock file a killed task left is stale after a while, and removed.
+    excl.write_text("")
+    old = time.time() - 3600
+    os.utime(excl, (old, old))
+    time.sleep(spacing)
+    assert wait_for_start_turn(lock, spacing) == 0.0
+    assert not excl.exists()
+
+    # Another error of flock is not swallowed.
+    def broken(*_args: object) -> None:
+        raise OSError(errno.EIO, "I/O error")
+
+    monkeypatch.setattr(fcntl, "flock", broken)
+    with pytest.raises(OSError, match="I/O error"):
+        wait_for_start_turn(lock, spacing)
+
+
+def test_a_failing_collect_job_is_reported_not_raised(
+    fake_slurm: SimpleNamespace, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from autoware_carla_scenario.slurm import submit
+
+    real = submit._run_sbatch
+
+    def sbatch(command: list[str]) -> str:
+        if any(arg.startswith("--dependency=") for arg in command):
+            raise RuntimeError("sbatch failed (1): QOSMaxSubmitJobPerUserLimit")
+        return real(command)
+
+    fake_slurm.monkeypatch.setattr(submit, "_run_sbatch", sbatch)
+    status, batch = _run_batch(fake_slurm, "slurm", _slurm(), wait=False)
+    captured = capsys.readouterr()
+    assert status == 1
+    submission = BatchLayout(batch).read_submission(0)
+    assert submission["job_id"] and submission["collect_job_id"] is None
+    assert "QOSMaxSubmitJobPerUserLimit" in submission["collect_error"]
+    assert f"SLURM job {submission['job_id']}" in captured.err
+    assert "scenario-slurm wait" in captured.err
+    assert "scenario-slurm collect" in captured.err
+    assert "Traceback" not in captured.err
+    _wait_for(lambda: _jobs_done(fake_slurm), 120, "the array")
+
+
+def test_interrupt_waits_for_the_cancelled_tasks_before_collecting(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from autoware_carla_scenario.slurm import collect, submit
+
+    layout = _batch_on_disk(tmp_path)
+    events: list[str] = []
+    polls = iter(
+        [
+            {0: "RUNNING"},  # follow's first poll, then Ctrl-C
+            {0: "RUNNING"},  # after scancel: still stopping
+            None,  # squeue hiccups
+            {0: "COMPLETING"},
+            {},  # gone
+        ]
+    )
+
+    def squeue(_job: str) -> dict[int, str] | None:
+        state = next(polls)
+        events.append(f"squeue {state}")
+        return state
+
+    sleeps = iter([KeyboardInterrupt()])
+
+    def sleep(_seconds: float) -> None:
+        interrupt = next(sleeps, None)
+        if interrupt is not None:
+            raise interrupt
+
+    monkeypatch.setattr(submit, "squeue_states", squeue)
+    monkeypatch.setattr(submit.time, "sleep", sleep)
+    monkeypatch.setattr(submit, "cancel_jobs", lambda jobs: events.append("scancel"))
+
+    def collected(_layout: object) -> int:
+        events.append("collect")
+        return 0
+
+    monkeypatch.setattr(collect, "collect", collected)
+    settings = SlurmSettings(poll_seconds=0.1)
+    assert submit.follow(layout, 0, settings) == 0
+    assert events == [
+        "squeue {0: 'RUNNING'}",
+        "scancel",
+        "squeue {0: 'RUNNING'}",
+        "squeue None",
+        "squeue {0: 'COMPLETING'}",
+        "squeue {}",
+        "collect",
+    ]
+
+
+def test_interrupt_collects_after_the_bounded_wait(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from autoware_carla_scenario.slurm import submit
+
+    clock = [0.0]
+    monkeypatch.setattr(submit.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(
+        submit.time, "sleep", lambda s: clock.__setitem__(0, clock[0] + s)
+    )
+    monkeypatch.setattr(submit, "squeue_states", lambda _job: {0: "COMPLETING"})
+    assert submit._wait_until_gone("77", 60.0, 15.0) is False
+    assert 60.0 <= clock[0] <= 61.0
+    assert "still in the queue" in capsys.readouterr().out

@@ -141,7 +141,9 @@ def submit_batch(
         # tasks build the same configs and do not check them again.
         "typechecked": True,
         "launcher": settings.to_dict(),
-        "env": snapshot_environment(settings.env_passthrough),
+        "env": snapshot_environment(
+            settings.env_passthrough, explicit=settings.env.keys()
+        ),
         "cases": [
             {
                 "index": index,
@@ -160,6 +162,7 @@ def submit_batch(
             )
         ],
     }
+    # Only the user's: it holds the recorded environment (write_json, 0600).
     write_json(layout.manifest, manifest)
     index = submit_cases(layout, manifest, settings, list(range(len(labels))))
     return after_submit(layout, index, settings)
@@ -171,6 +174,8 @@ def after_submit(layout: BatchLayout, index: int, settings: SlurmSettings) -> in
     submission = layout.read_submission(index)
     if settings.wait:
         return follow(layout, index, settings)
+    if submission.get("collect_error"):
+        return 1  # submit_cases said what failed, and how to collect
     cli = f"{shlex.quote(sys.executable)} -m {CLI_MODULE}"
     target = shlex.quote(str(layout.batch_dir))
     print(f"Submitted; not waiting (--no-wait). Job {submission['job_id']}.")  # noqa: T201
@@ -378,8 +383,12 @@ def submit_cases(
     chunks = _chunks(list(case_indices), settings.chunk_size(len(case_indices)))
     script = layout.job_script(index)
     script.parent.mkdir(parents=True, exist_ok=True)
-    script.write_text(job_script(layout, manifest, settings, index), encoding="utf-8")
-    script.chmod(0o755)
+    # Only the user's: it exports the recorded environment.  Created so, never
+    # readable by others even for a moment.
+    fd = os.open(script, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o700)
+    with os.fdopen(fd, "w", encoding="utf-8") as stream:
+        stream.write(job_script(layout, manifest, settings, index))
+    script.chmod(0o700)
     layout.logs.mkdir(parents=True, exist_ok=True)
     (layout.root / "tasks").mkdir(parents=True, exist_ok=True)
     (layout.root / "results").mkdir(parents=True, exist_ok=True)
@@ -418,7 +427,20 @@ def submit_cases(
     if not settings.wait and settings.collect_job:
         collect = _collect_command(layout, manifest, settings, submission["job_id"])
         submission["collect_sbatch"] = collect
-        submission["collect_job_id"] = _run_sbatch(collect)
+        try:
+            submission["collect_job_id"] = _run_sbatch(collect)
+        except (RuntimeError, OSError) as exc:
+            # The array runs all the same: say how to collect it by hand.
+            submission["collect_error"] = str(exc)
+            target = shlex.quote(str(layout.batch_dir))
+            print(  # noqa: T201
+                f"Error: SLURM job {submission['job_id']} (the batch's array) was "
+                f"submitted, but the job collecting it was not: {exc}\n"
+                f"  follow and collect it: scenario-slurm wait {target}\n"
+                f"  or once it ends:       scenario-slurm collect {target}",
+                file=sys.stderr,
+                flush=True,
+            )
         write_json(layout.submission(index), submission)
     return index
 
@@ -440,6 +462,11 @@ ACTIVE_STATES = frozenset(
         "STOPPED",
     }
 )
+
+#: After a Ctrl-C's ``scancel``, how long :func:`follow` waits for the tasks to
+#: leave the queue (stopping their CARLAs, recording their state) before it
+#: collects.
+CANCEL_WAIT_SECONDS = 60.0
 
 _TASK_RANGE = re.compile(r"^(\d+)_\[([^\]]*)\]$")
 
@@ -546,6 +573,7 @@ def follow(layout: BatchLayout, index: int, settings: SlurmSettings) -> int:
                 f"did not finish with: scenario-slurm resubmit {layout.batch_dir}",
                 flush=True,
             )
+            _wait_until_gone(job, CANCEL_WAIT_SECONDS, settings.poll_seconds)
         else:
             print(  # noqa: T201
                 f"\n[slurm] stopped following job {job}, which goes on. Follow it "
@@ -554,6 +582,30 @@ def follow(layout: BatchLayout, index: int, settings: SlurmSettings) -> int:
             )
             return 130
     return collect(layout)
+
+
+def _wait_until_gone(job: str, timeout: float, poll_seconds: float) -> bool:
+    """Wait, at most *timeout* s, until SLURM lists no active task of *job*:
+    collecting sooner would find the cancelled tasks' results half written.
+    Whether they left; a second Ctrl-C stops waiting."""
+    deadline = time.monotonic() + timeout
+    try:
+        while True:
+            states = squeue_states(job)
+            if states is not None and not any(
+                state in ACTIVE_STATES for state in states.values()
+            ):
+                return True
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(min(poll_seconds, 1.0))
+    except KeyboardInterrupt:
+        pass
+    print(  # noqa: T201
+        f"[slurm] job {job} is still in the queue; collecting what there is",
+        flush=True,
+    )
+    return False
 
 
 def cancel_jobs(jobs: Sequence[str]) -> bool:

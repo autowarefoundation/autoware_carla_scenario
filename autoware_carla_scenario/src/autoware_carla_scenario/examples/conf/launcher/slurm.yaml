@@ -36,7 +36,9 @@ extra_sbatch_args: []
 # submitting shell's environment. The variables `env_passthrough` matches are
 # also recorded when the batch is submitted and set again in the job, so a
 # resubmit from another shell runs with them too; `setup` runs next (module
-# load, source a venv), then `env` is set.
+# load, source a venv), then `env` is set. A name with TOKEN, SECRET, KEY,
+# PASSWORD or CREDENTIAL in it is recorded only when named exactly here or in
+# `env`, not through a `*`.
 export: ALL
 env_passthrough:
   - PATH
@@ -80,3 +82,6 @@ signal_grace_seconds: 120
 # other task holds and nothing listens on.
 port_base: 20000
 port_slots: 1000
+# Where the slots' locks are: a directory every job on a node sees. null:
+# /dev/shm/acs-slurm-ports-<uid> (else /tmp), not a job's private /tmp.
+port_lock_dir: null
