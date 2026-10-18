@@ -9,45 +9,52 @@ A run's ODD is named by a string (the ``odd`` key of the CLI config, or
 * a name registered with :func:`register_odd`, in code or by a package through
   the ``autoware_carla_scenario.odds`` entry point group (the entry point
   names a function that takes nothing and calls :func:`register_odd`, as the
-  scenario and traffic-backend groups do);
+  scenario and traffic-backend groups do), or openodd's own ``openodd.odds``
+  group;
 * a path to a ``.yaml`` / ``.yml`` file: a binding file (OpenODD files and
   the probes that measure them, :func:`~autoware_carla_scenario.odd.load_odd_binding`),
   or an OpenODD document on its own
   (:func:`~autoware_carla_scenario.odd.load_openodd`; nothing is measured);
 * ``"package.module:function"``: a builder to import and call.
+
+The registry and the reading of the string are openodd's
+(:mod:`openodd.registry`): an ODD registered here is registered there, and the
+other way round. This module adds this framework's entry point group, and
+reads files with this framework's backend.
 """
 
 from __future__ import annotations
 
-import importlib
-import logging
 from pathlib import Path
-from typing import Any, Callable, Optional, Union
+from typing import Optional, Union
+
+from openodd import registry as _registry
+from openodd.backend import import_callable
+from openodd.registry import DEFAULT_ODD as _DEFAULT_ODD
+from openodd.registry import OddBuilder, odd_names, register_odd
 
 from .model import OddDefinition
 
 __all__ = [
     "DEFAULT_ODD",
     "ENTRY_POINT_GROUP",
+    "OddBuilder",
     "default_odd",
+    "import_callable",
     "odd_builder",
     "odd_names",
     "register_odd",
     "resolve_odd",
 ]
 
-logger = logging.getLogger(__name__)
-
 #: The name of the built-in ODD.
-DEFAULT_ODD = "default"
+DEFAULT_ODD = _DEFAULT_ODD
 
-#: Entry point group a package registers ODD builders under.
+#: Entry point group a package registers ODD builders under (openodd's
+#: ``openodd.odds`` is read too).
 ENTRY_POINT_GROUP = "autoware_carla_scenario.odds"
 
-OddBuilder = Callable[[], OddDefinition]
-
-_REGISTRY: dict[str, OddBuilder] = {}
-_PLUGINS_LOADED = False
+_registry.add_entry_point_group(ENTRY_POINT_GROUP)
 
 
 def default_odd() -> OddDefinition:
@@ -65,94 +72,22 @@ def default_odd() -> OddDefinition:
 
     from .backend import CARLA_BACKEND  # noqa: PLC0415
 
-    return bundled_odd("default", backend=CARLA_BACKEND)
-
-
-def register_odd(name: str, builder: OddBuilder) -> None:
-    """Register *builder* (taking nothing, returning an ODD) under *name*."""
-    if not name:
-        raise ValueError("register_odd(): name must not be empty")
-    if name == DEFAULT_ODD:
-        raise ValueError(f"register_odd(): {DEFAULT_ODD!r} is the built-in ODD")
-    _REGISTRY[name] = builder
-
-
-def _load_plugins() -> None:
-    global _PLUGINS_LOADED
-    if _PLUGINS_LOADED:
-        return
-    _PLUGINS_LOADED = True
-    from ..registry import load_entry_point_plugins  # noqa: PLC0415
-
-    load_entry_point_plugins(ENTRY_POINT_GROUP, "ODD")
-
-
-def odd_names() -> list[str]:
-    """The names an ODD can be picked by: the built-in one and the registered ones."""
-    _load_plugins()
-    return [DEFAULT_ODD, *sorted(_REGISTRY)]
-
-
-def import_callable(spec: str) -> Callable[..., Any]:
-    """The function ``"package.module:function"`` names.
-
-    Raises:
-        ValueError: if *spec* does not name one.
-    """
-    module_name, sep, attr = spec.partition(":")
-    if not sep or not module_name or not attr:
-        raise ValueError(f"{spec!r} is not package.module:function")
-    try:
-        found = getattr(importlib.import_module(module_name), attr)
-    except (ImportError, AttributeError) as exc:
-        raise ValueError(f"cannot import {spec!r}: {exc}") from exc
-    if not callable(found):
-        raise ValueError(f"{spec!r} is not callable")
-    return found
-
-
-def _is_yaml(text: str) -> bool:
-    return text.lower().endswith((".yaml", ".yml"))
+    return bundled_odd(DEFAULT_ODD, backend=CARLA_BACKEND)
 
 
 def odd_builder(spec: Union[str, Path, OddDefinition, None]) -> Optional[OddBuilder]:
     """The Python builder *spec* names, or ``None`` for the built-in ODD or YAML."""
-    if isinstance(spec, Path) and not _is_yaml(str(spec)):
-        raise ValueError(f"{spec}: an ODD file is .yaml or .yml")
-    if spec is None or isinstance(spec, (OddDefinition, Path)):
-        return None
-    text = str(spec).strip()
-    if not text or text == DEFAULT_ODD or _is_yaml(text):
-        return None
-    _load_plugins()
-    if text in _REGISTRY:
-        return _REGISTRY[text]
-    if ":" in text:
-        return import_callable(text)
-    raise ValueError(
-        f"no ODD named {text!r}; known: {', '.join(odd_names())}, "
-        "a .yaml file, or package.module:function"
-    )
+    return _registry.odd_builder(spec)
 
 
 def resolve_odd(spec: Union[str, Path, OddDefinition, None] = None) -> OddDefinition:
-    """The ODD *spec* names (see the module docstring).
+    """The ODD *spec* names (see the module docstring), files read in CARLA.
 
     Raises:
         ValueError: if *spec* names nothing, or its builder does not return an
             :class:`OddDefinition`.
     """
-    if isinstance(spec, OddDefinition):
-        return spec
-    builder = odd_builder(spec)
-    if builder is not None:
-        odd = builder()
-        if not isinstance(odd, OddDefinition):
-            raise ValueError(f"ODD builder {spec!r} returned {type(odd).__name__}")
-        return odd
-    text = str(spec).strip() if spec is not None else ""
-    if _is_yaml(text):
-        from .openodd import load_odd_file  # noqa: PLC0415
+    from .backend import CARLA_BACKEND, sync_cache_env  # noqa: PLC0415
 
-        return load_odd_file(text)
-    return default_odd()
+    sync_cache_env()
+    return _registry.resolve_odd(spec, backend=CARLA_BACKEND)
