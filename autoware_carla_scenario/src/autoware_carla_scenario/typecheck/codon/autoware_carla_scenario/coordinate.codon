@@ -333,7 +333,8 @@ class MapManager:
 
     def initialize(self, xodr_path: Path, lanelet2_path: Path,
                    carla_world: Optional[carla.World] = None,
-                   projector_type: Optional[str] = None) -> None:
+                   projector_type: Optional[str] = None,
+                   local_projection: Optional[str] = None) -> None:
         raise NotImplementedError()
 
     @property
@@ -386,6 +387,17 @@ def map_origin(lanelet2_path: Path, xodr_path: Optional[Path] = None
 def resolve_projector(lanelet2_path: Path, origin: lanelet2.io.Origin,
                       projector_type: Optional[str] = None
                       ) -> Tuple[lanelet2.projection.Projector, str]:
+    raise NotImplementedError()
+
+
+# load_lanelet2(...): the map, the projector it was read with and the
+# reading's name (a projector's, or "local_xy"). Raises ValueError for a
+# projector_type or local_projection it does not know.
+def load_lanelet2(lanelet2_path: Path, origin: lanelet2.io.Origin,
+                  projector_type: Optional[str] = None,
+                  local_projection: Optional[str] = None
+                  ) -> Tuple[lanelet2.core.LaneletMap,
+                             lanelet2.projection.Projector, str]:
     raise NotImplementedError()
 
 

@@ -23,6 +23,7 @@ class MapConfig:
     xodr_path: Optional[str] = None
     lanelet2_path: Optional[str] = None
     projector_type: Optional[str] = None
+    local_projection: Optional[str] = None
 
 
 class EntityConfig:

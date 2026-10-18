@@ -50,6 +50,29 @@ Only the files this framework reads are pulled out of git-lfs — the `.osm`, th
 pointer file of a few hundred bytes, which is what keeps fetching a 2 MB map
 from costing 22 MB.
 
+### How a map is read
+
+`map_projector_info.yaml` names the projection the map's lat/lon is read
+with, and every loader in this framework -- the run's `MapManager`, the
+sweeper, the editor's preview, the ODD route check -- reads it the same way.
+
+A `projector_type: Local` map stores its map frame in each node's `local_x` and
+`local_y` tags (and `local_z`, when it has one), which is what Autoware's own
+loader reads. So does this framework, by default. `map.local_projection` picks
+the reading:
+
+| `map.local_projection` | A node's position |
+| --- | --- |
+| `local_xy` (default) | its `local_x`/`local_y`; a node without them falls back to its lat/lon |
+| `utm_latlon` | its lat/lon through UTM at the map origin, ignoring the local tags |
+
+The two agree only where the lat/lon were themselves derived from the local
+tags with UTM, as on the official CARLA towns. A map converted by another tool
+can differ by about 0.1 % -- 9 cm over 89 m, growing with distance from the
+origin -- so wherever both are present, a disagreement beyond 1 cm is logged as
+a warning, and the log says which reading was used. Setting `map.projector_type`
+names the projection to read lat/lon with, so it turns the local tags off.
+
 ## Where maps are cached
 
 `~/autoware_data/maps`, overridable with `AUTOWARE_DATA_DIR` (whose `maps`

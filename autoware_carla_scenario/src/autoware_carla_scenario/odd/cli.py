@@ -153,7 +153,12 @@ def _route(spec: str, items: Sequence[str], as_json: bool) -> int:
             cfg = run._compose_config(name, overrides)
             route = run.build_planned_route(cfg, name)
             paths = resolve_map_paths(cfg.map)
-            key = (paths.lanelet2_path, paths.xodr_path, paths.projector_type)
+            key = (
+                paths.lanelet2_path,
+                paths.xodr_path,
+                paths.projector_type,
+                paths.local_projection,
+            )
             if key not in maps:
                 lanelet_map = load_map(paths)
                 maps[key] = (lanelet_map, create_routing_graph(lanelet_map))

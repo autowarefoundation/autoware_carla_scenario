@@ -68,6 +68,8 @@ class MapPaths:
         resolved: The map this came from, when ``map.directory`` or
             ``map.source`` was set.
         projector_type: The projection override the config carries, if any.
+        local_projection: How the config says a ``projector_type: Local`` map
+            is read (``local_xy`` or ``utm_latlon``), if it says.
         xodr_is_derived: Whether :attr:`xodr_path` was read back out of CARLA
             rather than named by the config or shipped by the repository.
         overwrite_xodr: Whether :attr:`install_xodr` may replace the road
@@ -79,6 +81,7 @@ class MapPaths:
     xodr_path: Optional[Path] = None
     resolved: Optional[ResolvedMap] = None
     projector_type: Optional[str] = None
+    local_projection: Optional[str] = None
     xodr_is_derived: bool = False
     overwrite_xodr: bool = False
 
@@ -157,6 +160,7 @@ def resolve_map_paths(
     xodr = _setting(map_config, "xodr_path")
     name = _setting(map_config, "name") or ""
     projector_type = _setting(map_config, "projector_type")
+    local_projection = _setting(map_config, "local_projection")
 
     resolved: Optional[ResolvedMap] = None
     if directory is not None:
@@ -191,6 +195,7 @@ def resolve_map_paths(
         ),
         resolved=resolved,
         projector_type=projector_type,
+        local_projection=local_projection,
         xodr_is_derived=(
             not xodr and resolved is not None and resolved.xodr_is_derived
         ),

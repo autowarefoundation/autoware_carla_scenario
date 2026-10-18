@@ -486,6 +486,13 @@ class TestResolveMapPaths:
         assert paths.lanelet2_path == Path("a.osm")
         assert paths.install_xodr == Path("a.xodr")
 
+    def test_the_local_projection_is_carried_through(self) -> None:
+        # Every loader reads a Local map the way map.local_projection says,
+        # so it travels with the paths they all load from.
+        assert resolve_map_paths({"name": "TownA"}).local_projection is None
+        paths = resolve_map_paths({"name": "TownA", "local_projection": "utm_latlon"})
+        assert paths.local_projection == "utm_latlon"
+
     def test_a_source_supplies_the_paths_and_the_name(
         self, origin_repo: Path, cache: GitMapCache, monkeypatch: pytest.MonkeyPatch
     ) -> None:

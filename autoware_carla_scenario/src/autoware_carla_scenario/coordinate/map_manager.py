@@ -45,7 +45,7 @@ if TYPE_CHECKING:
 # ``_parse_geo_reference`` moved to `projection`, beside `map_origin`, which is
 # the only thing that consults it now.  Re-exported because it is the
 # geoReference parser this package has always offered under this name.
-from .projection import _parse_geo_reference, map_origin, resolve_projector
+from .projection import _parse_geo_reference, load_lanelet2, map_origin
 
 __all__ = ["MapManager", "_parse_geo_reference"]
 
@@ -133,6 +133,7 @@ class MapManager:
         lanelet2_path: Path,
         carla_world: Optional[carla.World] = None,
         projector_type: Optional[str] = None,
+        local_projection: Optional[str] = None,
     ) -> None:
         """Load both map files.
 
@@ -154,6 +155,11 @@ class MapManager:
             Leave it unset (the default) to take it from the map's own
             ``map_projector_info.yaml``, the file Autoware reads for the same
             purpose; ``mgrs`` is used when there is no such file.
+        local_projection:
+            How a ``projector_type: Local`` map is read -- ``"local_xy"``
+            (the default: its ``local_x``/``local_y`` tags) or
+            ``"utm_latlon"`` (its lat/lon through UTM); see
+            :func:`~.projection.load_lanelet2`.
 
         Raises
         ------
@@ -188,17 +194,18 @@ class MapManager:
         )
 
         origin = lanelet2.io.Origin(lat, lon)
-        projector, projector_type = resolve_projector(
-            lanelet2_path, origin, projector_type
+        self._lanelet_map, projector, projector_type = load_lanelet2(
+            lanelet2_path, origin, projector_type, local_projection
         )
         logger.info(
-            "Loading %s with the %s projection", lanelet2_path.name, projector_type
+            "Loaded %s with the %s projection", lanelet2_path.name, projector_type
         )
-        self._lanelet_map = lanelet2.io.load(str(lanelet2_path), projector)
 
         # Compute MGRS offset: forward-project the geoReference origin.
         # MGRSProjector returns absolute MGRS coords, while XODR stores coords
         # relative to the geoReference origin, so we need this correction.
+        # A Local map read from its local tags has its frame's origin there,
+        # which is where UtmProjector puts it too: (0, 0).
         fwd = projector.forward(lanelet2.core.GPSPoint(lat, lon, alt))
         self._mgrs_offset = (fwd.x, fwd.y)
 

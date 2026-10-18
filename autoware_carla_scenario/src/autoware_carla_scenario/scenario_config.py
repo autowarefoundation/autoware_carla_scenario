@@ -140,6 +140,12 @@ class MapConfig:
     #: Autoware reads it from too.
     projector_type: str | None = None
 
+    #: How a ``projector_type: Local`` map is read: ``local_xy`` (the default)
+    #: takes each node's ``local_x``/``local_y`` tags, which is the map frame
+    #: and what Autoware reads; ``utm_latlon`` takes its lat/lon through UTM.
+    #: A node without the tags is read from its lat/lon either way.
+    local_projection: str | None = None
+
 
 @dataclass
 class EntityConfig:
