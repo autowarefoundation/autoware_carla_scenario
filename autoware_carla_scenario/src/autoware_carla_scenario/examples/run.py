@@ -72,6 +72,7 @@ from autoware_carla_scenario.constants import DEFAULT_TM_PORT
 from autoware_carla_scenario.maps import resolve_map_paths
 from autoware_carla_scenario.odd.route import PlannedRoute, RouteError
 from autoware_carla_scenario.odd.sampler import ODD_CASE_KEY, OddCase, decode_case
+from autoware_carla_scenario.server import fog_density_scale_args
 from autoware_carla_scenario.typecheck import ScenarioTypeError
 from autoware_carla_scenario.typecheck.mode import (
     check_odd,
@@ -692,25 +693,20 @@ def _optional_float(value: object) -> float | None:
     return None if value is None else float(value)  # type: ignore[arg-type]
 
 
-def server_extra_args(cfg: DictConfig) -> list[str] | None:
-    """The arguments a server the run starts is started with, from ``server``.
+def _fog_density_scale(cfg: DictConfig) -> float | None:
+    """``server.fog_density_scale``, or *None* to keep the server's own."""
+    return _optional_float((cfg.get("server") or {}).get("fog_density_scale"))
 
-    ``server.fog_density_scale`` sets ``carla.Weather.FogDensityScale``, how
-    thick a ``fog_density`` is drawn; *None* when nothing is to be set.
-    """
-    scale = _optional_float((cfg.get("server") or {}).get("fog_density_scale"))
-    if scale is None:
-        return None
-    return [f"-ExecCmds=carla.Weather.FogDensityScale {scale:g}"]
+
+def server_extra_args(cfg: DictConfig) -> list[str]:
+    """The arguments a server the run starts is started with, from ``server``."""
+    scale = _fog_density_scale(cfg)
+    return [] if scale is None else fog_density_scale_args(scale)
 
 
 def _with_fog_density_scale(driver: dict[str, Any], cfg: DictConfig) -> dict[str, Any]:
-    """*driver* with ``server.fog_density_scale`` on every LiDAR that sets none.
-
-    The fog a LiDAR sees follows the scale the server draws it with, so the
-    LiDAR's matches the cameras' (:mod:`autoware_carla_scenario.sensor.lidar_weather`).
-    """
-    scale = _optional_float((cfg.get("server") or {}).get("fog_density_scale"))
+    """*driver* with ``server.fog_density_scale`` on every LiDAR that sets none."""
+    scale = _fog_density_scale(cfg)
     lidars = driver.get("lidars")
     if scale is None or not lidars:
         return driver

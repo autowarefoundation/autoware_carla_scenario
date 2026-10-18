@@ -22,6 +22,14 @@ load_dotenv(override=False)
 logger = logging.getLogger(__name__)
 
 
+def fog_density_scale_args(scale: float) -> List[str]:
+    """``CarlaUnreal.sh`` arguments setting ``carla.Weather.FogDensityScale``.
+
+    How thick a ``fog_density`` is drawn; pass them as *extra_args*.
+    """
+    return [f"-ExecCmds=carla.Weather.FogDensityScale {scale}"]
+
+
 class CarlaServerManager:
     """Start and stop a CARLA UE5 server process.
 
@@ -111,7 +119,6 @@ class CarlaServerManager:
         if self.reuse_if_running and self._ping():
             self._reused = True
             if self.extra_args:
-                # A running server keeps the arguments it was started with.
                 logger.warning(
                     "Reusing the CARLA server at %s:%d: it was not started with %s; "
                     "start it with them for them to apply",

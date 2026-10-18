@@ -1143,7 +1143,7 @@ def test_run_draws_the_lidars_fog_with_the_servers_scale() -> None:
     assert isinstance(entity, CarlaDriverEntity)
     # Unset: the server's own scale, and nothing passed to the server.
     assert [lidar.fog_density_scale for lidar in entity.config.lidars] == [0.001, 0.05]
-    assert server_extra_args(cfg) is None
+    assert server_extra_args(cfg) == []
 
 
 def test_run_refuses_an_unknown_bridge_setting() -> None:
