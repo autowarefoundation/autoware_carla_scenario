@@ -1184,10 +1184,10 @@ for), so each is counted once, in the first group that fits it:
   pydantic, pickle, lxml, grpc, omegaconf and hydra, yaml, openodd (a Rust extension),
   cyclonedds (`ros2.cyclone` and `ros2.messages`, the ROS 2 ego's DDS
   transport and its message types), or
-  a standard module Codon lacks (`json`, `inspect`, `tempfile`, `importlib`
+  a standard module Codon lacks (`json`, `inspect`, `importlib`
   beyond `importlib.metadata`, or more of `os`, `pathlib`, `shutil`, `signal`,
-  `subprocess`, `importlib.metadata` or `urllib.parse` than their shims
-  declare), at module level or inside a function the check calls. This is
+  `subprocess`, `tempfile`, `threading`, `dataclasses`, `importlib.metadata`
+  or `urllib.parse` than their shims declare), at module level or inside a function the check calls. This is
   the tooling around a run (the editor, the UI, authoring, the sweeper's
   expansion, Hydra sweeper and map loader, the map caches (the map
   repositories, the Lanelet2 z offset and the pyxodr road network), the Autoware
@@ -1196,7 +1196,8 @@ for), so each is counted once, in the first group that fits it:
   its worker and its manifest, and the batch summary they share), the ODD and coverage modules that wrap
   openodd, and the rest of what reads Lanelet2. A reason names `pathlib`
   only where the module uses more of it than the shim declares, and the
-  other shimmed modules likewise.
+  other shimmed modules likewise; `test_typecheck_library.py` holds every
+  reason to that.
 - **19 build on an excluded module**, and import nothing Codon lacks
   themselves: they import a module that is neither checked nor modelled, or
   names that its package's model does not declare. Among them are the
