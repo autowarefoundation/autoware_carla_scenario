@@ -4,7 +4,6 @@ server:
   port: 2000
   cooldown_seconds: 2.0
   cooldown_max_retries: 0
-  # carla.Weather.FogDensityScale: how thick a fog_density is drawn. null keeps
-  # the server's own (0.001, a faint haze); 0.01 draws fog a camera sees. A
-  # server the run starts is started with it; the LiDARs' fog follows it.
+  # carla.Weather.FogDensityScale for the server and the LiDARs' fog (0.01:
+  # fog a camera sees); null keeps the server's own 0.001.
   fog_density_scale: null

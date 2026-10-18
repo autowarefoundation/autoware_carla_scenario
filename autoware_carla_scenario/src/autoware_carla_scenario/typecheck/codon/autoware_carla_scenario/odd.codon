@@ -12,7 +12,8 @@ import lanelet2.routing
 
 from ._tc import (_keyword_only, _expect_float, _expect_int_sequence, _expect_optional_float,
                   _acs_sequence)
-from .coverage import _expect_cover_expression, _expect_optional_range, _expect_optional_edges
+from .coverage import (_expect_cover_expression, _expect_optional_range, _expect_optional_edges,
+                       _expect_optional_values)
 
 
 NEARBY_RADIUS_M: float = 50.0
@@ -73,6 +74,7 @@ class OddAttribute:
         _expect_optional_range(range)
         _expect_optional_float(every)
         _expect_optional_edges(buckets)
+        _expect_optional_values(values, "OddAttribute()")
         self.name = name
         self.unit = unit
         self.text = text

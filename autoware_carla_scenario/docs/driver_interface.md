@@ -398,7 +398,9 @@ scale that draws fog a camera sees, and CARLA's default `0.001` gives a tenth of
 `server.fog_density_scale` sets both: a server the run starts is started with
 `-ExecCmds="carla.Weather.FogDensityScale <scale>"`, and every LiDAR that sets no scale of
 its own takes it. A server already running keeps the scale it was started with (the run
-warns), so start it with the same one.
+warns), so start it with the same one. Built without the runner, pass
+`fog_density_scale_args(scale)` (`autoware_carla_scenario.server`) as the server's
+`extra_args` and the same scale to each LiDAR.
 
 ```yaml
 driver:
