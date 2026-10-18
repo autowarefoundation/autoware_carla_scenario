@@ -274,7 +274,10 @@ not None`, an early `return` when it is `None`, or a default (`x or 0.0`).
 mypy keeps a cache in `~/.cache/autoware_carla_scenario/mypy` (under
 `$XDG_CACHE_HOME` when it is set), so only the first check reads the
 framework (about ten seconds); where that directory cannot be written, as in
-a container with a read-only home, mypy runs without a cache. When mypy
+a container with a read-only home, mypy runs without a cache. A scenario
+package installed as a wheel (not editable) is checked too: mypy would take
+`site-packages` for its source root, so the check gives it the package
+through a link in a directory of its own. When mypy
 gives no verdict (it ran out of time or crashed), the check keeps Codon's
 verdict and says so in a warning:
 

@@ -35,6 +35,14 @@ user's cache directory, so only the first check reads the framework; where
 that cannot be written (a read-only home in a container), mypy runs without
 a cache.
 
+mypy takes the directory above a module's top package for a source root, and
+for an installed package (not editable) that is ``site-packages``, whose
+top-level modules (``typing_extensions.py``, ``mypy_extensions.py``) then
+shadow the library ones and stop mypy before it checks anything (#281).  So
+a module under ``site-packages`` is given to mypy through a link to its top
+package in a directory of its own (:func:`_mypy_paths`), and reported at its
+own path.
+
 When mypy gives no verdict (it is not installed, it ran out of time, it
 crashed), :func:`run_none_check` raises :class:`NoneCheckSkipped`, which the
 check reports as a warning.
@@ -236,6 +244,46 @@ def _own_path(reported: str, paths: list[Path]) -> str:
     return str(best) if shared(best) > 0 else reported
 
 
+#: The names of the directories installed packages are in.
+_SITE_DIRECTORIES = frozenset({"site-packages", "dist-packages"})
+
+
+def _source_root(path: Path) -> Path:
+    """The directory mypy takes for the source root of the module *path*: the
+    one above its top package (the last directory up with an ``__init__.py``)."""
+    root = path.parent
+    while (root / "__init__.py").is_file() and root.parent != root:
+        root = root.parent
+    return root
+
+
+def _mypy_paths(paths: list[Path], scratch: Path) -> dict[str, Path]:
+    """The path to give mypy for each module of *paths*, to the module.
+
+    A module whose source root is a ``site-packages`` directory is given
+    through a link in *scratch* to its top package (or to the module, where
+    it has none), so the source root mypy takes is *scratch*, not
+    ``site-packages`` (#281).  Any other module is given as it is, and so is
+    one the link cannot be made for.
+    """
+    given: dict[str, Path] = {}
+    for path in paths:
+        root = _source_root(path)
+        if root.name not in _SITE_DIRECTORIES:
+            given[str(path)] = path
+            continue
+        relative = path.relative_to(root)
+        link = scratch / relative.parts[0]
+        try:
+            if not link.is_symlink():
+                link.symlink_to(root / relative.parts[0])
+        except OSError:
+            given[str(path)] = path
+            continue
+        given[str(scratch / relative)] = path
+    return given
+
+
 def find_none_misuses(
     paths: list[Path], timeout: float = 600.0
 ) -> list[NoneFinding] | None:
@@ -279,12 +327,14 @@ def run_none_check(paths: list[Path], timeout: float = 600.0) -> list[NoneFindin
         "--hide-error-context",
         "--no-color-output",
         f"--cache-dir={_cache_dir()}",
-        *(str(p) for p in paths),
     ]
     try:
         with tempfile.TemporaryDirectory(prefix="acs-carla-stubs-") as scratch:
+            sources = Path(scratch) / "sources"
+            sources.mkdir()
+            given = _mypy_paths(paths, sources)
             proc = subprocess.run(
-                command,
+                [*command, *given],
                 capture_output=True,
                 text=True,
                 timeout=timeout,
@@ -329,8 +379,9 @@ def run_none_check(paths: list[Path], timeout: float = 600.0) -> list[NoneFindin
         if code == "assignment" and _DECLARATION.search(match["message"]):
             continue
         reported = match["path"]
+        own = given.get(reported)
         current = NoneFinding(
-            _own_path(reported, paths),
+            str(own) if own is not None else _own_path(reported, paths),
             int(match["line"]),
             int(match["col"]) if match["col"] else None,
             match["message"],
