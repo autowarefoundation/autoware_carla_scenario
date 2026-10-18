@@ -81,7 +81,7 @@ _ODD_RUN = (
     "for (`Mapping[str, Any]`, `dict[str, Any]`), not an ODD or a scenario"
 )
 _ODD_REGISTRY = (
-    "the ODD registry's lookup (odd.registry: importlib, entry points), which "
+    "the ODD registry's lookup (odd.registry, over openodd's: importlib, entry points), which "
     "the runner uses; an ODD written in Python registers itself with "
     "register_odd(), which is modelled"
 )

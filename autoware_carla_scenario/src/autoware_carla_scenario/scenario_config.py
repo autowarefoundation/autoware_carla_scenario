@@ -135,9 +135,11 @@ class MapConfig:
     lanelet2_path: str | None = None
 
     #: Overrides the projection the Lanelet2 map is read with -- ``mgrs``,
-    #: ``utm``, ``local_cartesian`` or ``transverse_mercator``.  Leave it unset
-    #: to take it from the map's own ``map_projector_info.yaml``, which is where
-    #: Autoware reads it from too.
+    #: ``utm``, ``local_xy``, ``local_cartesian`` or ``transverse_mercator``.
+    #: Leave it unset to take it from the map's own ``map_projector_info.yaml``,
+    #: which is where Autoware reads it from too.  A ``Local`` map is read with
+    #: ``local_xy``, from its ``local_x``/``local_y`` tags; ``utm`` reads its
+    #: lat/lon instead.
     projector_type: str | None = None
 
 

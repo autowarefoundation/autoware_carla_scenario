@@ -274,7 +274,10 @@ not None`, an early `return` when it is `None`, or a default (`x or 0.0`).
 mypy keeps a cache in `~/.cache/autoware_carla_scenario/mypy` (under
 `$XDG_CACHE_HOME` when it is set), so only the first check reads the
 framework (about ten seconds); where that directory cannot be written, as in
-a container with a read-only home, mypy runs without a cache. When mypy
+a container with a read-only home, mypy runs without a cache. A scenario
+package installed as a wheel (not editable) is checked too: mypy would take
+`site-packages` for its source root, so the check gives it the package
+through a link in a directory of its own. When mypy
 gives no verdict (it ran out of time or crashed), the check keeps Codon's
 verdict and says so in a warning:
 
@@ -388,6 +391,43 @@ and `Measure` is defined there too, so `BaseScenario.measures` can return a
 function of its exact type only, and Codon 0.19 crashes on any other. `set_measured_scenario()` takes a scenario of any
 `BaseScenario` subclass or `None`, which Python annotates
 `Optional[BaseScenario]`: Codon's `Optional` takes no subclass.
+
+An actor is checked by kind for the same reason (#278).
+`follow_with_spectator()` and `log_actor_position()` take a getter Python
+types `Callable[[], Optional[carla.Actor]]`, and `initial_speeds_mps()` an
+`Optional[carla.Actor]`. Each takes a `carla.Actor`, any subclass of it
+(`carla.Vehicle`, `carla.Walker`, `carla.Sensor`, ...), an `Optional` of
+one, or `None`. A getter returning a `carla.Vehicle` is the natural one to
+pass, because typesafe_carla keeps a vehicle's controls on `carla.Vehicle`.
+Codon 0.19 refused an `Optional[carla.Vehicle]` for an
+`Optional[carla.Actor]`, so these parameters are generic in the model. The
+model's `_expect_optional_actor` unwraps the `Optional` and upcasts a class
+of a hierarchy to `carla.Actor`, the way a hook result is checked. Anything
+else is refused at the call, the framework's `EgoVehicle` (`lambda:
+self.ego_entity`) included:
+
+```text
+scenario.py:70:9: error: BaseScenario.follow_with_spectator(): the getter must return a carla.Actor (or a subclass of it, such as carla.Vehicle), or None
+```
+
+`register_cover()`'s `values=` and `ignore=`, and `OddAttribute(values=)`,
+are checked as openodd uses them (#279). `values=` must be `None`, an
+iterable (a list, a tuple, an empty one too, a set, a str, a range) or an
+enum class, the framework's (`values=TurnDirection`) or the scenario's own.
+Nothing is iterated, because iterating an enum class is not modelled.
+`ignore=` must be `None` or a callable that takes one value of the type
+`expression` returns, unwrapped from its `Optional`, since the collector never
+passes `None`. The model calls it with such a value, so its body is compiled
+too. A wrong `ignore` was the worse gap. The collector calls it inside a
+`try`, and counts an exception as "cannot bucket ... counted as no sample",
+so a wrong `ignore` emptied the item for the whole run, with one warning
+line. What `ignore` returns is tested for truth, which Python takes of any
+value, so the result is not checked:
+
+```text
+scenario.py:68:9: error: BaseScenario.register_cover(): ignore must take one argument, a value the expression returns
+scenario.py:68:9: error: BaseScenario.register_cover(): values must be an iterable of the bucket values (a list, a tuple or an enum class), or None
+```
 
 What `test_typecheck_model.py` compares, model by model:
 
@@ -745,15 +785,16 @@ scenario has to do itself:
   field, `goal_pose`, `find_actor_by_role_name(...)`, and CARLA's `Optional`
   results (`get_waypoint(...)`, `get_actors().find(...)`,
   `world.get_actor(...)`, `actor.parent`).
-- **Read `**kwargs` by name with `kw.get()`, and test `*args` with `len()`**
-  (#266). Codon makes `**kwargs` a `NamedTuple` of the keywords passed, not
-  a dict, and `*args` a `Tuple`. Valid Python it refuses, with what to write
-  instead in the message:
+- **Read `**kwargs` by name with `kw.get()`, and test `*args`, like any
+  tuple, with `len()`** (#266). Codon makes `**kwargs` a `NamedTuple` of the
+  keywords passed, not a dict, and `*args` a `Tuple`, and gives no tuple a
+  truth value (#278). Codon refuses this valid Python, and the message says
+  what to write instead:
 
   | Python | Codon's error | Write instead |
   | --- | --- | --- |
   | `for k, v in kw.items():` (`.keys()`, `.values()`, `for k in kw`, `len(kw)`) | `'NamedTuple[a=float]' object has no attribute 'items'` | `kw.get("a", default)` for each name, or keyword parameters (`def f(*, a: float = 1.0)`) |
-  | `if args:` / `x if args else y` | `'Tuple[float,float]' object has no attribute '__bool__'` | `if len(args) > 0:` |
+  | `if args:` / `x if args else y`, or `if window:` of any tuple | `'Tuple[float,float]' object has no attribute '__bool__'` | `if len(args) > 0:` (`if len(window) > 0:`) |
 
   `kw["speed"]` and `"speed" in kw` compile for a keyword the call passes;
   `kw.get("speed", 1.0)` compiles whether it does or not. A helper taking
@@ -761,6 +802,17 @@ scenario has to do itself:
   or position is compiled through its callers' calls, so it is checked with
   the keywords and values they pass
   ([*What is checked*](#what-is-checked)).
+- **Give your own helper an `Optional` of the class it gets, not of its
+  base.** Codon 0.19 does not convert an `Optional` of a subclass to an
+  `Optional` of its base (#278). A helper `def gap(actor: carla.Actor | None)`
+  refuses an `Optional[carla.Vehicle]`, and a plain `carla.Vehicle` too, which
+  Codon wraps in an `Optional` first (`'Optional[Vehicle]' does not match
+  expected type 'Optional[Actor]'`). Python accepts both. A parameter of
+  `carla.Actor` alone takes a `carla.Vehicle`, and the framework's own
+  `Optional[carla.Actor]` parameters take either
+  ([*What is checked*](#what-is-checked)). Annotate the helper with the
+  subclass (`carla.Vehicle | None`), or test for `None` before the call and
+  pass the unwrapped value to a `carla.Actor` parameter.
 - **Build an object of a class you hold in an `Optional`, when the class has
   subclasses and nothing else builds one.** Codon 0.19 checks
   `x: X | None = None` (or a parameter defaulting to `None`) of such a
@@ -911,6 +963,12 @@ The known gaps:
   checked.
 - **`bytes` is read as `str`**: `path.read_bytes() + "text"` compiles, and
   CPython refuses it.
+- **A `values=` that only Codon iterates** (`register_cover()`,
+  `OddAttribute`, #279). Codon 0.19 cannot tell a class passed as an argument
+  from one of its objects, so an enum member passes where an enum class is
+  meant (`values=TurnDirection.LEFT`). A frozen dataclass of the framework
+  (a `@tuple`, so iterable to Codon) passes too, and so does an element type
+  `expression` never returns.
 - **An enum member looked up by value** (`ActionState("completeState")`) is
   typed, but not resolved to the member; looking a member up by name and
   iterating over the enum are not modelled.
@@ -1010,7 +1068,8 @@ the map manager that loads the Lanelet2 map and the OpenDRIVE road network
 (`coordinate.map_manager`) and the sweeper's lighter loader of the Lanelet2
 map (`sweeper.map_loader`), with the projection and origin both read a map
 with (`coordinate.projection`; not how it reads `map_projector_info.yaml`,
-whose YAML values are of any type), what places a trajectory's vertices in CARLA
+whose YAML values are of any type, nor how it moves a `Local` map's points to
+their `local_x`/`local_y` tags), what places a trajectory's vertices in CARLA
 world coordinates (`trajectory.resolve`),
 the sweeper's lanelet constraints and parameter bindings
 (`sweeper.constraints`, `sweeper.bindings`) and the route's map questions,
@@ -1057,8 +1116,8 @@ driver's configs and client interface, trajectory follower and observations
 `driver.geometry`), and the `autoware_bridge`, `autoware_stack`, `entity`,
 `driver`, `maps` and `coverage` packages themselves, whose `__init__` re-exports what is not checked
 through models of it (see *A class a checked package only re-exports*
-below). 89
-functions and methods of those modules are `UNCALLED` (19 of them
+below). 90
+functions and methods of those modules are `UNCALLED` (20 of them
 protected helpers, see *What is compiled* below): most of them a
 condition's `get_details()` or a backend's `describe()`, what takes a traffic
 backend's options node (`Mapping[str, Any]`), what reads a route search, a
@@ -1071,7 +1130,9 @@ framework pin, a dict of str and bool values (`Pin.uv_source()`), the two member
 the run-time wrapper of `TrajectoryVertex.__init__`
 (`_refusing_vertex_times`), the road-marking pattern of the stop lines, which returns a `refers`
 parameter (any of lanelet2's primitives) as a line string
-(`utils.stop_line._road_marking_stop_lines()`),
+(`utils.stop_line._road_marking_stop_lines()`), what moves a `Local` map's
+points to their `local_x`/`local_y` tags and rebuilds the map, which the
+lanelet2 model has no setters for (`coordinate.projection._read_local_tags()`),
 `signals.build_controllers()`, which reads
 the authoring package's pydantic specs, what builds the `scenario_bridge`
 node's command from its ROS parameters (`bridge_ros_args()`,

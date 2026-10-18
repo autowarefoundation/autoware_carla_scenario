@@ -328,6 +328,183 @@ def test_a_cover_event_that_is_neither_an_event_nor_a_condition_is_refused(
     assert error.line == _line_of(path, 'event="end"')
 
 
+_COVER_ARGS_HEADER = _HEADER.replace(
+    "import logging\n",
+    "import logging\nfrom enum import Enum\n"
+    "from autoware_carla_scenario.odd import OddAttribute, ego_speed_kph\n",
+    1,
+)
+
+_COVER_ARGS_EXTRA = """
+
+    def _gap(self, world: carla.World) -> float | None:
+        return None
+
+    def _is_negative(self, value: float) -> bool:
+        return value < 0.0
+
+
+class Phase(Enum):
+    APPROACH = "approach"
+    STOP = "stop"
+"""
+
+
+def test_cover_values_and_ignore_of_the_right_kind_compile(tmp_path: Path) -> None:
+    # values= takes any iterable or an enum class, and ignore= a callable of
+    # one value of what the expression returns, unwrapped from its Optional
+    # (#279).
+    setup = """
+        self.register_cover(
+            "dir", lambda w: "left", values=["left", "right"], ignore=lambda v: v == "none"
+        )
+        self.register_cover("flag", lambda w: True, values=[False, True])
+        self.register_cover("turn", lambda w: TurnDirection.LEFT, values=TurnDirection)
+        self.register_cover("phase", lambda w: Phase.STOP, values=Phase)
+        self.register_cover("lane", lambda w: 1, values=(1, 2), ignore=self._is_negative)
+        self.register_cover("none", lambda w: 1, values=[])
+        self.register_cover("gap", self._gap, buckets=[0.0, 5.0], ignore=lambda v: v < 0.0)
+        speed = OddAttribute("speed", ego_speed_kph, values=[10.0, 20.0])
+        turn = OddAttribute("turn", ego_speed_kph, values=TurnDirection)
+        logger.info("%s %s", speed.name, turn.name)
+"""
+    scenario, config, _ = _write_case(
+        tmp_path,
+        _TIMEOUT_SETUP + textwrap.dedent(setup),
+        _COVER_ARGS_EXTRA,
+        header=_COVER_ARGS_HEADER,
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+    assert not result.warnings, result.format()
+
+
+@pytest.mark.parametrize(
+    ("setup", "message"),
+    [
+        (
+            'self.register_cover("speed", lambda w: 1.0, range=(0.0, 10.0), every=1.0, '
+            "ignore=lambda: True)\n",
+            "BaseScenario.register_cover(): ignore must take one argument",
+        ),
+        (
+            'self.register_cover("speed", lambda w: 1.0, buckets=[0.0, 5.0, 10.0], '
+            'ignore="negative")\n',
+            "BaseScenario.register_cover(): ignore must be a callable",
+        ),
+        (
+            'self.register_cover("speed", lambda w: 1.0, buckets=[0.0, 5.0, 10.0], '
+            "ignore=lambda v: v.upper())\n",
+            "'float' object has no attribute 'upper'",
+        ),
+        (
+            'self.register_cover("lane", lambda w: 1, values=3)\n',
+            "BaseScenario.register_cover(): values must be an iterable",
+        ),
+        (
+            'logger.info("%s", OddAttribute("speed", ego_speed_kph, values=3).name)\n',
+            "OddAttribute(): values must be an iterable",
+        ),
+    ],
+    ids=[
+        "ignore-no-argument",
+        "ignore-str",
+        "ignore-wrong-value-type",
+        "values-int",
+        "odd-values-int",
+    ],
+)
+def test_a_wrong_cover_ignore_or_values_is_refused_at_its_line(
+    tmp_path: Path, setup: str, message: str
+) -> None:
+    # openodd's collector counts an ignore that raises as no sample, so a
+    # wrong one emptied the item for the whole run; a non-iterable values=
+    # raised in setup() (#279).
+    scenario, config, path = _write_case(
+        tmp_path, _TIMEOUT_SETUP + setup, header=_COVER_ARGS_HEADER
+    )
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert message in error.message, error.format()
+    assert error.line == _line_of(path, setup.strip().split("(")[0] + "(")
+
+
+_ACTOR_HEADER = _HEADER.replace(
+    "    _config: CaseConfig\n",
+    "    _config: CaseConfig\n    _npc: carla.Vehicle\n    _pedestrian: carla.Walker\n",
+    1,
+)
+
+_ACTOR_GETTERS = """
+
+    def _npc_or_none(self) -> carla.Vehicle | None:
+        return None
+
+    def _pedestrian_or_none(self) -> carla.Walker | None:
+        return None
+"""
+
+
+def test_an_actor_getter_of_any_actor_subclass_compiles(tmp_path: Path) -> None:
+    # Python's Callable[[], Optional[carla.Actor]] takes a getter of a
+    # Vehicle, a Walker, an Optional of one or None; Codon 0.19 converts no
+    # Optional[Vehicle] to an Optional[Actor] (#278).
+    setup = """
+        self.follow_with_spectator(lambda: self._npc)
+        self.log_actor_position(lambda: self._npc, label="npc")
+        self.follow_with_spectator(self._npc_or_none)
+        self.log_actor_position(lambda: self._pedestrian, label="pedestrian")
+        self.follow_with_spectator(self._pedestrian_or_none)
+        self.follow_with_spectator(lambda: self.world.get_actor(1))
+        self.log_actor_position(lambda: None)
+        logger.info("%s", self.initial_speeds_mps(self._npc))
+        logger.info("%s", self.initial_speeds_mps(self._npc_or_none()))
+        logger.info("%s", self.initial_speeds_mps(None))
+"""
+    scenario, config, _ = _write_case(
+        tmp_path,
+        _TIMEOUT_SETUP + textwrap.dedent(setup),
+        _ACTOR_GETTERS,
+        header=_ACTOR_HEADER,
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+    assert not result.warnings, result.format()
+
+
+@pytest.mark.parametrize(
+    ("setup", "message"),
+    [
+        (
+            "self.follow_with_spectator(lambda: self.ego_entity)\n",
+            "follow_with_spectator(): the getter must return a carla.Actor",
+        ),
+        (
+            'self.log_actor_position(lambda: 3, label="three")\n',
+            "log_actor_position(): the getter must return a carla.Actor",
+        ),
+        (
+            "self.follow_with_spectator(lambda: self.world)\n",
+            "follow_with_spectator(): the getter must return a carla.Actor",
+        ),
+        (
+            'logger.info("%s", self.initial_speeds_mps(self.world))\n',
+            "initial_speeds_mps(): ego_actor must be a carla.Actor",
+        ),
+    ],
+    ids=["ego-entity", "int", "world", "initial-speeds-world"],
+)
+def test_an_actor_getter_returning_no_actor_is_refused_at_its_line(
+    tmp_path: Path, setup: str, message: str
+) -> None:
+    # An EgoVehicle is the framework's entity, not a carla.Actor (#278).
+    scenario, config, path = _write_case(
+        tmp_path, _TIMEOUT_SETUP + setup, header=_ACTOR_HEADER
+    )
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert message in error.message, error.format()
+    assert error.line == _line_of(path, setup.strip()[:30])
+
+
 _ODD_MODULE = """
 from __future__ import annotations
 
@@ -1259,7 +1436,7 @@ def test_a_variadic_helper_the_scenario_calls_is_compiled_through_its_calls(
             "def mean(*values: float) -> float:\n"
             "    return sum(values) / len(values) if values else 0.0\n",
             "mean(1.0, 2.0)",
-            "len(args) > 0",
+            "len(t) > 0",
         ),
     ],
     ids=["kwargs-items", "args-truth"],
@@ -1272,6 +1449,18 @@ def test_codons_limits_on_kwargs_and_args_say_what_to_write(
     scenario, config, _ = _write_case(tmp_path, setup, "\n\n" + helper)
     error = _only_error(typecheck_scenario(scenario, config))
     assert hint in error.message, error.format()
+
+
+def test_a_plain_tuples_truth_is_not_told_of_args(tmp_path: Path) -> None:
+    # The refusal is Codon's for any tuple: its hint names no *args the
+    # scenario never wrote (#278).
+    setup = 'window = (1.0, 2.0)\nif window:\n    logger.info("window %s", window)\n'
+    scenario, config, path = _write_case(tmp_path, _TIMEOUT_SETUP + setup)
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "no tuple a truth value" in error.message, error.format()
+    assert "len(t) > 0" in error.message, error.format()
+    assert "len(args)" not in error.message, error.format()
+    assert error.line == _line_of(path, "if window:")
 
 
 _PARENT_HEADER = _HEADER.replace(

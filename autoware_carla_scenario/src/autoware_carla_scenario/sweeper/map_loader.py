@@ -33,7 +33,7 @@ from typing import TYPE_CHECKING, Optional
 import lanelet2.core
 import lanelet2.io
 
-from ..coordinate.projection import map_origin, resolve_projector
+from ..coordinate.projection import load_lanelet2, map_origin
 
 if TYPE_CHECKING:
     from ..maps import MapPaths
@@ -87,8 +87,9 @@ def load_lanelet2_map(
     )
 
     origin = lanelet2.io.Origin(lat, lon)
-    projector, projector_name = resolve_projector(osm_path, origin, projector_type)
-    lanelet_map = lanelet2.io.load(str(osm_path), projector)
+    lanelet_map, _projector, projector_name = load_lanelet2(
+        osm_path, origin, projector_type
+    )
 
     logger.info(
         "Loaded Lanelet2 map from %s with the %s projection (%d lanelets)",

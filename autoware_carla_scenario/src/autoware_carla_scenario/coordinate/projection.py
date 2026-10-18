@@ -23,6 +23,7 @@ projection and, when the descriptor carries one, the origin it is anchored at.
 from __future__ import annotations
 
 import logging
+import math
 import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
@@ -37,6 +38,7 @@ from autoware_lanelet2_extension_python.projection import (
     MGRSProjector,
     TransverseMercatorProjector,
 )
+import lanelet2.core
 import lanelet2.io
 import lanelet2.projection
 
@@ -47,13 +49,10 @@ PROJECTOR_INFO_FILENAME = "map_projector_info.yaml"
 
 #: Lanelet2 projector to read each Autoware ``projector_type`` with.
 #:
-#: ``Local`` maps store the map frame in the ``local_x``/``local_y`` tags and
-#: derive their lat/lon from it; ``UtmProjector`` at the map origin reproduces
-#: those metres exactly (checked against a CARLA town to the centimetre), and
-#: it is the only one of these that stays continuous across a UTM zone
-#: boundary, which is where a CARLA geoReference of (0, 0) sits.
+#: ``Local`` maps store the map frame in the ``local_x``/``local_y`` tags, and
+#: :data:`LOCAL_XY` reads it from there, as Autoware's own loader does.
 PROJECTOR_BY_AUTOWARE_TYPE = {
-    "Local": "utm",
+    "Local": "local_xy",
     "LocalCartesian": "local_cartesian",
     "LocalCartesianUTM": "local_cartesian",
     "MGRS": "mgrs",
@@ -63,6 +62,20 @@ PROJECTOR_BY_AUTOWARE_TYPE = {
 #: Used when no descriptor is found, which is what every map did before this
 #: module read one.
 DEFAULT_PROJECTOR = "mgrs"
+
+#: Reads each node at its ``local_x``/``local_y`` (and ``local_z``, when it has
+#: one), the map frame itself.  A node without them is read from its lat/lon
+#: through ``UtmProjector`` at the map origin -- what ``utm`` reads every node
+#: from, and what this reading used to be.  UTM reproduces the local tags only
+#: where the lat/lon were themselves derived from them with UTM (the official
+#: CARLA towns), but it is the only projection here that stays continuous
+#: across a UTM zone boundary, which is where a CARLA geoReference of (0, 0)
+#: sits.
+LOCAL_XY = "local_xy"
+
+#: Farther apart than this (m), a ``local_xy`` map's local tags and lat/lon
+#: are warned about: a tool that reads the other one places the map elsewhere.
+LOCAL_READINGS_TOLERANCE = 0.01
 
 
 def _projector_info(lanelet2_path: Path) -> dict[str, Any]:
@@ -265,7 +278,7 @@ def make_projector(
     """
     if projector_type == "mgrs":
         return MGRSProjector(origin)
-    if projector_type == "utm":
+    if projector_type in ("utm", LOCAL_XY):
         return lanelet2.projection.UtmProjector(origin)  # type: ignore[return-value]
     if projector_type == "local_cartesian":
         return lanelet2.projection.LocalCartesianProjector(origin)  # type: ignore[return-value]
@@ -297,3 +310,99 @@ def resolve_projector(
     else:
         name = read_projector_type(lanelet2_path) or DEFAULT_PROJECTOR
     return make_projector(name, origin), name
+
+
+def _read_local_tags(
+    lanelet_map: lanelet2.core.LaneletMap, lanelet2_path: Path
+) -> lanelet2.core.LaneletMap:
+    """Return *lanelet_map*, read from lat/lon, with its points at their local tags.
+
+    Every point carrying ``local_x``/``local_y`` moves there (``local_z`` too,
+    when it has one); one without them keeps its lat/lon reading.  How far the
+    two readings disagree is logged, as a warning beyond
+    :data:`LOCAL_READINGS_TOLERANCE`.
+
+    The map is rebuilt from its primitives once they move, so no spatial index
+    built from where they were is left to answer a search.
+    """
+    tagged = 0
+    untagged = 0
+    worst = 0.0
+    for point in lanelet_map.pointLayer:
+        attributes = point.attributes
+        if "local_x" not in attributes or "local_y" not in attributes:
+            untagged += 1
+            continue
+        tagged += 1
+        x = float(attributes["local_x"])
+        y = float(attributes["local_y"])
+        worst = max(worst, math.hypot(point.x - x, point.y - y))
+        point.x = x
+        point.y = y
+        if "local_z" in attributes:
+            point.z = float(attributes["local_z"])
+
+    if tagged == 0:
+        logger.warning(
+            "%s is a Local map, but no node carries local_x/local_y; "
+            "reading every node from its lat/lon",
+            lanelet2_path.name,
+        )
+        return lanelet_map
+    logger.info(
+        "Reading %s from local_x/local_y (%d nodes; %d without them from "
+        "their lat/lon)",
+        lanelet2_path.name,
+        tagged,
+        untagged,
+    )
+    if worst > LOCAL_READINGS_TOLERANCE:
+        logger.warning(
+            "%s: the lat/lon of its nodes and their local_x/local_y disagree "
+            "by up to %.3f m; read from local_x/local_y (projector_type utm "
+            "reads the lat/lon)",
+            lanelet2_path.name,
+            worst,
+        )
+
+    rebuilt = lanelet2.core.LaneletMap()
+    for layer in (
+        lanelet_map.pointLayer,
+        lanelet_map.lineStringLayer,
+        lanelet_map.polygonLayer,
+        lanelet_map.laneletLayer,
+        lanelet_map.areaLayer,
+        lanelet_map.regulatoryElementLayer,
+    ):
+        for element in layer:
+            rebuilt.add(element)
+    return rebuilt
+
+
+def load_lanelet2(
+    lanelet2_path: Path,
+    origin: "lanelet2.io.Origin",
+    projector_type: Optional[str] = None,
+) -> tuple[lanelet2.core.LaneletMap, lanelet2.projection.Projector, str]:
+    """Load *lanelet2_path*, anchored at *origin*; the one way this package does.
+
+    The projector is :func:`resolve_projector`'s; under :data:`LOCAL_XY` (a
+    ``projector_type: Local`` map) the points are then moved to their local
+    tags.
+
+    Returns:
+        The map, the projector its lat/lon were read with, and its name.
+
+    Raises:
+        ValueError: For a *projector_type* this module does not know.
+    """
+    path = Path(lanelet2_path)
+    projector, name = resolve_projector(path, origin, projector_type)
+    lanelet_map = lanelet2.io.load(str(path), projector)
+    if TYPE_CHECKING:
+        # _read_local_tags() moves points and rebuilds the map, which the
+        # lanelet2 model has no setters for (UNCALLED in typecheck/library.py).
+        read = lanelet_map
+    else:
+        read = _read_local_tags(lanelet_map, path) if name == LOCAL_XY else lanelet_map
+    return read, projector, name

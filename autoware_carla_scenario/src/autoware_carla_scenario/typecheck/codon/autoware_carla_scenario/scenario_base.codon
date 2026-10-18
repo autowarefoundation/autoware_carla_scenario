@@ -4,18 +4,21 @@
 # subclass that reads or writes another one of BaseScenario's attributes fails
 # the check, as it would break when the base class changes.
 
+import internal.static as static
+
 import typesafe_carla.carla as carla
 
 # Measure from beside the reader check, not from measures, which imports this
 # module (_reader.codon).
 from ._reader import Measure, _expect_reader
 from ._tc import (_keyword_only, _expect_float, _expect_int_sequence, _expect_optional_float,
-                  _acs_expect_return, _acs_sequence)
+                  _acs_expect_return, _acs_sequence, _acs_takes)
 from .actions import BaseAction, _expect_action
 from .conditions import BaseCondition, _expect_condition
 from .constants import DEFAULT_TM_PORT
 from .coverage import (SamplingEvent, _expect_sampling_event, _expect_cover_expression,
-                       _expect_optional_range, _expect_optional_edges)
+                       _expect_optional_range, _expect_optional_edges, _expect_optional_values,
+                       _expect_optional_ignore)
 from .coordinate import (Lanelet2Pose, OpenDrivePose, CarlaWorldPose, GroundProjectionConfig,
                          _expect_optional_ground_projection)
 from .entity import (EgoConfig, EgoVehicle, VehicleEntity, PedestrianEntity,
@@ -30,9 +33,40 @@ def _expect_action_or_callback(cb):
         cb(carla.Client().get_world())
 
 
-def _expect_actor_getter(actor_getter):
-    """A Callable[[], Optional[carla.Actor]] argument."""
-    actor: Optional[carla.Actor] = actor_getter()
+def _expect_actor(actor, what: Literal[str]):
+    """A carla.Actor or any subclass of it (carla.Vehicle, carla.Walker,
+    carla.Sensor, ...), checked by kind (#278): Codon 0.19's isinstance()
+    sees no subclass, so a class of a hierarchy is upcast (_acs_takes), which
+    refuses any other class with the types named, and anything else is
+    refused with *what*."""
+    if isinstance(actor, carla.Actor):
+        pass
+    elif static.has_rtti(type(actor)):
+        _acs_takes(actor, carla.Actor)
+    else:
+        compile_error(what)
+
+
+def _expect_optional_actor(actor, what: Literal[str]):
+    """An Optional[carla.Actor] argument: an actor of any subclass, an
+    Optional of one, or None. Not a parameter typed Optional[carla.Actor]
+    (or an annotated assignment), which Codon 0.19 refuses an
+    Optional[carla.Vehicle] for (#278)."""
+    if isinstance(actor, None):
+        pass
+    elif isinstance(actor, Optional[NoneType]):
+        pass
+    elif isinstance(actor, Optional):
+        _expect_actor(unwrap(actor), what)
+    else:
+        _expect_actor(actor, what)
+
+
+def _expect_actor_getter(actor_getter, where: Literal[str]):
+    """A Callable[[], Optional[carla.Actor]] argument: a getter returning
+    carla.Actor or any subclass of it, an Optional of one, or None (#278)."""
+    _expect_optional_actor(actor_getter(), where + ": the getter must return a carla.Actor "
+                           "(or a subclass of it, such as carla.Vehicle), or None")
 
 
 class BaseScenario:
@@ -173,6 +207,8 @@ class BaseScenario:
         _expect_optional_range(range)
         _expect_optional_float(every)
         _expect_optional_edges(buckets)
+        _expect_optional_values(values, "BaseScenario.register_cover()")
+        _expect_optional_ignore(ignore, expression, "BaseScenario.register_cover()")
         _expect_sampling_event(event)
         raise NotImplementedError()
 
@@ -189,16 +225,20 @@ class BaseScenario:
     def follow_with_spectator(self, actor_getter, *_kw, offset_back: float = 8.0,
                               offset_up: float = 5.0, pitch: float = -15.0) -> None:
         _keyword_only(_kw, "BaseScenario.follow_with_spectator(): offset_back, offset_up and pitch")
-        _expect_actor_getter(actor_getter)
+        _expect_actor_getter(actor_getter, "BaseScenario.follow_with_spectator()")
         raise NotImplementedError()
 
     def log_actor_position(self, actor_getter, *_kw, label: str = "actor",
                            interval_ticks: int = 20) -> None:
         _keyword_only(_kw, "BaseScenario.log_actor_position(): label and interval_ticks")
-        _expect_actor_getter(actor_getter)
+        _expect_actor_getter(actor_getter, "BaseScenario.log_actor_position()")
         raise NotImplementedError()
 
-    def initial_speeds_mps(self, ego_actor: Optional[carla.Actor]) -> Dict[int, float]:
+    # ego_actor is Optional[carla.Actor] in Python, which takes an actor of any
+    # subclass: generic here, checked by kind (#278).
+    def initial_speeds_mps(self, ego_actor) -> Dict[int, float]:
+        _expect_optional_actor(ego_actor, "BaseScenario.initial_speeds_mps(): ego_actor must be "
+                               "a carla.Actor (or a subclass of it), or None")
         raise NotImplementedError()
 
     def set_initial_speed(self, ego_actor: carla.Actor) -> None:
