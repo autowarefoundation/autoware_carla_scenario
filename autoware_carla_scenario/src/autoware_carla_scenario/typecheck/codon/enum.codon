@@ -49,6 +49,12 @@ class Enum:
     def __repr__(self) -> str:
         return "<" + self.__class__.__name__ + "." + self._name_ + ">"
 
+    def _acs_enum(self) -> int:
+        """Marks an enum, which the model's values= checks take for an
+        enum class (coverage.codon, #279): Codon 0.19 passes a class as an
+        argument as if it were one of its objects."""
+        return 0
+
 
 IntEnum = Enum
 StrEnum = Enum

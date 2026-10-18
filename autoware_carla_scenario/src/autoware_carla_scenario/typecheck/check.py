@@ -769,7 +769,7 @@ def _build_workspace(
 
 
 #: Codon's refusals of valid Python on a ``**kwargs`` or ``*args`` (#266),
-#: and what to write instead.
+#: or on any tuple's truth, and what to write instead.
 _VARIADIC_LIMITS = (
     (
         re.compile(r"^'NamedTuple(?:\[[^']*\])?' object has no attribute '"),
@@ -779,16 +779,17 @@ _VARIADIC_LIMITS = (
         ".values() or len() on it",
     ),
     (
+        # Any tuple, not only *args (#278): the message names no variable.
         re.compile(r"^'Tuple\[[^']*\]' object has no attribute '__bool__'"),
-        "Codon makes *args a Tuple, which has no truth value: test "
-        "len(args) > 0 instead of the tuple itself",
+        "Codon gives no tuple a truth value, *args included: test "
+        "len(t) > 0 instead of the tuple t itself",
     ),
 )
 
 
 def _variadic_hints(diagnostics: list[Diagnostic]) -> list[Diagnostic]:
-    """*diagnostics*, each refusal of a Codon limit on ``**kwargs`` or
-    ``*args`` saying why and what to write instead (#266)."""
+    """*diagnostics*, each refusal of a Codon limit on ``**kwargs``, on
+    ``*args`` or on a tuple saying why and what to write instead (#266)."""
     out = []
     for diagnostic in diagnostics:
         for pattern, hint in _VARIADIC_LIMITS:
