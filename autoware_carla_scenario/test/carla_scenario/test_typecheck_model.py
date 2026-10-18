@@ -70,6 +70,7 @@ from autoware_carla_scenario.maps import cache as maps_cache
 from autoware_carla_scenario.maps import source as maps_source
 from autoware_carla_scenario.maps import road_network_cache as maps_road_network_cache
 from autoware_carla_scenario.maps import z_offset_cache as maps_z_offset_cache
+from autoware_carla_scenario.odd import model as odd_model
 from autoware_carla_scenario.odd import probes as odd_probes
 from autoware_carla_scenario.odd import registry as odd_registry
 from autoware_carla_scenario.odd import route as odd_route
@@ -112,6 +113,7 @@ _CONSTANTS_COMPARED_ON_THEIR_OWN = {
     "BUILT_IN_MEASURES",  # test_the_measures_model_holds_python_s_values
     "BUILT_IN_METRICS",  # test_the_metrics_model_holds_python_s_values
     "EGO_ROLE_NAME",  # test_the_constants_model_holds_python_s_values
+    "UNDECIDED",  # test_the_undecided_model_is_openodd_s_sentinel
 }
 
 #: (kind, name, has default): kind is "pos", "kw", "*args" or "**kwargs".
@@ -1371,6 +1373,30 @@ def test_the_traffic_backend_factory_model_is_a_stand_in() -> None:
     node = _definitions("traffic")["TrafficBackendFactory"][0]
     assert isinstance(node, ast.ClassDef)
     assert not node.bases and [ast.unparse(s) for s in node.body] == ["pass"]
+
+
+def test_the_undecided_model_is_openodd_s_sentinel() -> None:
+    # openodd's UNDECIDED is the one instance of a class Python cannot build
+    # another of; odd.model names the class Undecided (openodd does not
+    # export it).  The model allocates its one instance without the
+    # constructor, which is a compile error, and writes it as Python does.
+    sentinel = _definitions("odd")["UNDECIDED"][0]
+    assert isinstance(sentinel, ast.AnnAssign) and sentinel.value is not None
+    assert ast.unparse(sentinel.annotation) == "Undecided"
+    assert ast.unparse(sentinel.value) == "Undecided.__new__()"
+    cls = _definitions("odd")["Undecided"][0]
+    assert isinstance(cls, ast.ClassDef)
+    methods = _methods(cls)
+    assert _model_params(methods["__init__"], drop_first=True) == []
+    assert "compile_error" in ast.unparse(methods["__init__"])
+    for method in ("__repr__", "__str__"):
+        returned = [n for n in ast.walk(methods[method]) if isinstance(n, ast.Return)]
+        assert [ast.literal_eval(r.value) for r in returned if r.value] == [
+            getattr(odd.UNDECIDED, method)()
+        ], method
+    assert odd_model.Undecided is type(odd.UNDECIDED)
+    with pytest.raises(TypeError):
+        odd_model.Undecided()
 
 
 def test_the_odd_case_models_are_stand_ins() -> None:

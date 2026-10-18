@@ -7,6 +7,8 @@ CARLA world (:mod:`.probes`, :mod:`.backend`).
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, Any
+
 from openodd.model import (
     INACTIVE,
     UNDECIDED,
@@ -34,3 +36,12 @@ __all__ = [
     "module_holds",
     "read_probe",
 ]
+
+#: The class of :data:`UNDECIDED`, which openodd does not export: what an
+#: annotation names for "a value only the run can tell" (a probe's
+#: ``on_lanelet``).  openodd types the sentinel as ``Any``, and so does mypy;
+#: the Codon check reads the class the odd model declares.
+if TYPE_CHECKING:
+    Undecided = Any
+else:
+    Undecided = type(UNDECIDED)
