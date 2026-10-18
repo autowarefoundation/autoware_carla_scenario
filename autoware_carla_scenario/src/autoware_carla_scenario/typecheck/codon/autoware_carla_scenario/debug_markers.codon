@@ -5,7 +5,7 @@
 # DebugPolyline is a frozen dataclass in Python, so @tuple here: an assignment
 # to a field fails the check as it fails the run.
 
-# The colours the runner draws the ego's plan and its driven path in.
+# The colours a viewer draws the ego's plan and its driven path in.
 TRAJECTORY_COLOR = (0, 255, 0)
 DRIVEN_PATH_COLOR = (255, 128, 0)
 

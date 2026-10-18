@@ -37,13 +37,6 @@ inputs:
       requires-python caps the other end at 3.14.
     required: false
     default: "3.10"
-  with-ffmpeg:
-    description: >
-      Install ffmpeg so CameraRecorder can encode MP4s. Off by default: it is
-      the largest single optional addition to the image, and the only one that
-      adds an apt layer.
-    required: false
-    default: "false"
   slim:
     description: >
       Strip the virtualenv: drop byte-code caches, vendored test suites, C
@@ -218,7 +211,6 @@ runs:
         provenance: false
         build-args: |
           PYTHON_VERSION=${{ inputs.python-version }}
-          WITH_FFMPEG=${{ inputs.with-ffmpeg }}
           SLIM=${{ inputs.slim }}
           ${{ inputs.build-args }}
         labels: ${{ inputs.labels }}

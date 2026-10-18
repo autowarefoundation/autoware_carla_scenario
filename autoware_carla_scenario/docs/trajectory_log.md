@@ -1,30 +1,57 @@
 # Trajectory Log
 
 Every run writes `{stem}.trajectory.jsonl` next to its `_result.json`: the
-vehicles, pedestrians and traffic lights of the world, one JSON object per line,
-once per `world.tick()`. `TrajectoryRecorder`
-(`autoware_carla_scenario/trajectory_recorder.py`) writes it, and the carla-hub
-run report replays it.
+vehicles, pedestrians and traffic lights of the world, once per `world.tick()`,
+and what the run made of them -- the map it ran on, the ego's plan, its
+conditions tick by tick and its verdict -- one JSON object per line.
+`TrajectoryRecorder` (`autoware_carla_scenario/trajectory_recorder.py`) writes
+it, and the carla-hub run report replays it. The file holds everything needed
+to show the run again without CARLA, the ego's plan and the path it drove
+included: the `autoware_carla_scenario_rerun` package (`convert` /
+`convert_dir`) makes a Rerun recording of it, which is how a run is seen ([Seeing a run](usage.md#seeing-a-run)).
 
 Its format is published as a JSON Schema of one line, the contract for readers
-in any language: `trajectory_recorder.schema.json`, next to the recorder in the
-package and in the wheel. From Python, find it with
-`importlib.resources.files("autoware_carla_scenario") /
-"trajectory_recorder.schema.json"`, which needs no CARLA client. Code that
-already imports the recorder can use `trajectory_recorder.SCHEMA_PATH`.
+in any language: `schemas/trajectory.schema.json` in the package and in the
+wheel (JSON Schema 2020-12, tuples as `prefixItems`). From Python, find it with
+`importlib.resources.files("autoware_carla_scenario") / "schemas" /
+"trajectory.schema.json"`, which needs no CARLA client. Code that already
+imports the recorder can use `trajectory_recorder.SCHEMA_PATH`.
+`trajectory_recorder.schema.json`, next to the recorder, is the same schema in
+draft-07 (`trajectory_recorder.DRAFT7_SCHEMA_PATH`), for the generators that
+cannot read 2020-12 tuples.
+
+## Versions
+
+The format has a version, `schema_version` in the `world` line: **2**. Version
+2 added the records `map`, `warmup`, `actor_gone`, `markers`, `condition`,
+`action` and `result`, and `schema_version` itself; a file of version 1 has no
+`schema_version` and none of those records, and still follows the schema.
+Every change keeps the records there are: a new version adds records (and
+optional fields), so a reader that skips the `type`s it does not know reads
+any later file.
 
 ## Records
 
-Each line is one of four records, told apart by `type`. A file starts with one
-`world` line, then one `traffic_light` line per light. After that come `tick`
-lines, and each tick is preceded by an `actor` line for every vehicle or walker
-appearing in it for the first time.
+Each line is one of eleven records, told apart by `type`. A file starts with one
+`world` line and one `map` line, then one `traffic_light` line per light and one
+`warmup` line. After that come the ticks: each `tick` line is preceded by an
+`actor` line for every vehicle or walker appearing in it for the first time and
+an `actor_gone` line for every one that has gone since the last, and followed
+by a `markers` line when the ego's plan changed on it, a `condition` line for
+each condition that changed and an `action` line for each action that moved on. A run that reached a verdict ends with `result`.
 
 ```json
-{"type":"world","map":"Carla/Maps/Town10HD_Opt","episode":7}
+{"type":"world","schema_version":2,"map":"Carla/Maps/Town10HD_Opt","episode":7}
+{"type":"map","name":"Town10HD_Opt","source":"git+https://huggingface.co/datasets/AutowareFoundation/carla-ue5-maps@c834d5c#autoware_maps/Town10HD_Opt","lanelet2":{"path":"/.../lanelet2_map.osm","sha256":"5d88...","bytes":1234567},"opendrive":{"path":"/.../Town10HD_Opt.xodr","sha256":"9a1f...","bytes":2345678},"projector_info":{"projector_type":"MGRS","vertical_datum":"WGS84","mgrs_grid":"54SUE"},"projector_type":null,"mgrs_offset":[81655.0,50137.5],"z_offset":0.0}
 {"type":"traffic_light","id":9,"opendrive_id":"42","location":[10.0,20.0,0.0],"boxes":[[10.0,20.0,5.0,0.2,0.3,0.6,180.0]],"stops":[[5.0,18.0,0.0,-90.0]]}
+{"type":"warmup","ticks":66,"start_frame":34,"end_frame":100}
 {"type":"actor","id":1,"type_id":"vehicle.lincoln.mkz","role":"ego","extent":[2.45,1.07,0.77],"center":[0.0,0.0,0.7]}
 {"type":"tick","frame":100,"t":0.0,"actors":[[1,0.0,1.0,0.0,0.0,0.0,90.0,0.0,0.0,0.0]],"control":{"1":[0.5,0.0,0.0,1]},"lights":{"9":"Red"}}
+{"type":"markers","frame":100,"t":0.0,"actor":1,"polylines":[{"points":[[0.0,1.0,0.3],[5.0,1.0,0.3]],"color":[0,255,0],"thickness":0.1,"point_size":0.1}]}
+{"type":"condition","frame":101,"t":0.05,"role":"pass","index":0,"label":"arrived","satisfied":false}
+{"type":"action","frame":101,"t":0.05,"phase":"post_tick","index":0,"label":"cut_in","action_type":"LaneChangeAction","state":"startTransition"}
+{"type":"actor_gone","id":3,"frame":180,"t":4.0}
+{"type":"result","passed":true,"message":"Ego reached the goal","elapsed_seconds":12.3,"conditions":[{"label":"pass[0](arrived)","role":"pass","condition_type":"ReachPositionCondition","satisfied":true,"message":"..."}]}
 ```
 
 | Record | Written | Fields |
@@ -33,6 +60,13 @@ appearing in it for the first time.
 | `traffic_light` | once per light, when recording starts | `id`, `opendrive_id`, `location` `[x,y,z]`, `boxes` `[[x,y,z,ex,ey,ez,yaw]]` (one per light head), `stops` `[[x,y,z,yaw]]` (stop-line waypoints) |
 | `actor` | before the first tick a vehicle/walker appears in | `id`, `type_id` (blueprint), `role` (`role_name`), `extent` (bounding box half size), `center` (box centre offset from the actor origin, actor frame) |
 | `tick` | after each `world.tick()` | `frame` (CARLA frame), `t` (scenario seconds), `actors` `[[id,x,y,z,roll,pitch,yaw,vx,vy,vz]]`, `control` `{id: [throttle,steer,brake,gear]}` (egos only), `lights` `{id: state}` (changes only) |
+| `map` (2) | once, after `world` | `name` (short map name), `source` (`map.source`, else `map.directory`, else null), `lanelet2` / `opendrive` (`{path, sha256, bytes}` of the file read, or null), `projector_info` (`map_projector_info.yaml` as read, or null), `projector_type` (the config's override, or null), `mgrs_offset` `[ox,oy]` and `z_offset` (the loaded Lanelet2 map's, or null) |
+| `warmup` (2) | once, before the first tick | `ticks` (frames of the CARLA recording before the scenario clock started: the warm-up), `start_frame` (the frame the recorder started at, null without a recording), `end_frame` (the frame of the first tick, t = 0) |
+| `actor_gone` (2) | before the first tick a vehicle/walker is missing from | `id`, and the `frame` and `t` of that tick |
+| `markers` (2) | after a tick on which the ego's debug markers changed | `frame`, `t`, `actor` (the ego, or null), `polylines` `[{points [[x,y,z]], color [r,g,b], thickness, point_size}]`; they hold until the next `markers` line, and none (`[]`) clears them |
+| `condition` (2) | when a condition is first checked, and when it changes | `frame`, `t`, `role` (`pass`/`fail`), `index` (in its list), `label`, `satisfied` |
+| `action` (2) | on the first tick of the loop, and when the action's state changes | `frame`, `t`, `phase` (`pre_tick`/`post_tick`), `index` (in its list), `label`, `action_type` (its class), `state` (`standbyState`, `startTransition`, `runningState`, `endTransition`, `completeState`: OpenSCENARIO's, `ActionState`) |
+| `result` (2) | last, when the run reached a verdict | `passed`, `message`, `elapsed_seconds`, `conditions` `[{label, role, condition_type, satisfied, message}]` (_result.json's, without the details) |
 
 Fixed-length arrays are tuples: the schema gives each position its meaning, and
 generated types keep them as tuples where the target language has them.
@@ -43,7 +77,9 @@ generated types keep them as tuples where the target language has them.
   y south, z up; see [Coordinate frames](driver_interface.md#coordinate-frames)). Positions are in metres, angles in degrees, and velocities
   are world-frame m/s. Every float is rounded to 3 decimals.
 - `t` is simulated time since the scenario clock started, the time pass/fail
-  conditions see. It is not wall time. Warm-up ticks are not recorded.
+  conditions see. It is not wall time. Warm-up ticks are not recorded: the
+  `warmup` line says how many there were, so a frame of the CARLA recording,
+  which starts with them, is `frame - warmup.start_frame`.
 - Ticks are 20 Hz (`FIXED_DELTA_SECONDS`).
 
 To move a pose into the Lanelet2 / Autoware `map` frame from Python, build a
@@ -61,7 +97,9 @@ yaw_map = -radians(yaw)      (pitch negated likewise; roll unchanged)
 vy_map  = -vy
 ```
 
-The file does not carry these offsets. They come from the map.
+A file of version 2 carries these offsets in its `map` line (`mgrs_offset`,
+`z_offset`), with the Lanelet2 and OpenDRIVE files the run read and their
+SHA-256, so a reader can load the very map the run was on.
 
 ## What a reader has to handle
 
@@ -70,14 +108,24 @@ The file does not carry these offsets. They come from the map.
   when none changed. Carry each light's state forward.
 - **Ticks can be missing.** A tick without any vehicle or walker is not
   written, so `frame` and `t` can skip.
-- **Actors are not marked as destroyed.** A destroyed actor stops appearing in
-  `actors`.
+- **Actors that go are marked.** A vehicle or walker that is destroyed or
+  despawned stops appearing in `actors`, and from version 2 an `actor_gone`
+  line says so before the first tick it is missing from.
+- **Markers, conditions and actions are deltas too.** A `markers` line holds
+  until the next one; a `condition` line until the next of the same `role` and
+  `index`; an `action` line until the next of the same `phase` and `index`
+  (`startTransition` and `endTransition` hold for one tick).
+  The run stops checking conditions at the first that decides it, so the last
+  tick may have no line for the ones after it.
+- **Episode ids are 64-bit.** `episode` is a random uint64, so it is often past
+  2^53: read it as an unsigned 64-bit integer (it only tells episodes apart).
 - **Map keys are strings.** `control` and `lights` are keyed by actor id as a
   decimal string (`"1"`), a JSON object key.
 - **Integers are plain JSON numbers.** Nothing is quoted: unlike the
   protobuf JSON mapping, which writes 64-bit integers as strings, the file and
-  its schema keep them numbers. The schema caps `episode` and `frame` (uint64
-  in LibCarla) at 2^53 - 1 and actor ids (uint32) at 2^32 - 1. Any reader,
+  its schema keep them numbers. The schema caps `frame` (uint64 in LibCarla)
+  at 2^53 - 1 and actor ids (uint32) at 2^32 - 1; `episode`, a random uint64,
+  is capped at 2^64 - 1 (see above). Any reader,
   including JavaScript's double-only `JSON.parse`, holds them exactly; a value
   past the cap fails validation rather than silently losing precision.
 - **Only egos have controls.** `control` carries actors whose `role` is
@@ -92,16 +140,17 @@ Generate types from the schema with the generator for your language:
 |---|---|---|
 | TypeScript | [json-schema-to-typescript](https://github.com/bcherny/json-schema-to-typescript) | A discriminated union on `type`, with tuple types |
 | Python | [datamodel-code-generator](https://github.com/koxudaxi/datamodel-code-generator) | Pydantic models; tuples become length-checked lists |
-| C++, Go, Rust, C#, ... | [quicktype](https://github.com/glideapps/quicktype) | Merges the four records into one type with optional fields; tuples become arrays |
+| Rust | [typify](https://github.com/oxidecomputer/typify) | Reads 2020-12; an enum on `type` (the schema's `discriminator`), tuples as tuples |
+| C++, Go, Rust, C#, ... | [quicktype](https://github.com/glideapps/quicktype) | Reads the draft-07 copy; merges the records into one type with optional fields; tuples become arrays |
 
 ```bash
-npx json-schema-to-typescript -i trajectory_recorder.schema.json -o trajectory.d.ts
+npx json-schema-to-typescript -i schemas/trajectory.schema.json -o trajectory.d.ts
 uvx --from datamodel-code-generator datamodel-codegen \
-  --input trajectory_recorder.schema.json --input-file-type jsonschema \
+  --input schemas/trajectory.schema.json --input-file-type jsonschema \
   --output-model-type pydantic_v2.BaseModel --output trajectory_log.py
 ```
 
-Any JSON Schema draft-07 validator checks a file line by line, for example
+Any JSON Schema 2020-12 validator checks a file line by line, for example
 `jsonschema` in Python:
 
 ```python
@@ -109,19 +158,31 @@ import json
 import jsonschema
 from importlib.resources import files
 
-schema = files("autoware_carla_scenario") / "trajectory_recorder.schema.json"
-validator = jsonschema.Draft7Validator(json.loads(schema.read_text()))
+schema = files("autoware_carla_scenario") / "schemas" / "trajectory.schema.json"
+validator = jsonschema.Draft202012Validator(json.loads(schema.read_text()))
 with open("CutInScenario.trajectory.jsonl") as f:
     for line in f:
         validator.validate(json.loads(line))
 ```
 
-The schema uses draft-07 rather than 2020-12 because code generators support it
-more widely. quicktype, for one, cannot read 2020-12 tuples (`prefixItems`).
+The top level is a `oneOf` of the records, each fixing `type` with a `const`,
+and names the field in an OpenAPI-style `discriminator` (`propertyName: type`,
+with the mapping from each `type` to its record), which validators ignore and
+generators that know it use for a tagged union. `x-schema-version` is the
+format version the schema describes. The draft-07 copy says the same with
+`definitions` and `items` arrays.
 
 ## Changing the format
 
-A change to a record in `trajectory_recorder.py` needs the same change in the
-schema. The recorder's tests check every line they record against the schema,
-which forbids fields it does not list (`additionalProperties: false`), so they
-fail until the schema has the change.
+A change to a record in `trajectory_recorder.py` needs the same change in
+`schemas/trajectory.schema.json`, and the draft-07 copy written again from it:
+
+```bash
+uv run python autoware_carla_scenario/scripts/trajectory_schema_draft7.py
+```
+
+The recorder's tests check every line they record against both schemas, which
+forbid fields they do not list (`additionalProperties: false`), and that the
+copy is the one the script writes, so they fail until both have the change. A
+change that a reader of the last version could not skip over is a new
+`schema_version` (`SCHEMA_VERSION`, and `x-schema-version` in the schema).

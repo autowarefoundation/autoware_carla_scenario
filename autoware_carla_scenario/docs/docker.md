@@ -28,7 +28,7 @@ Only installed code:
 | Present | Absent |
 | --- | --- |
 | `/opt/venv` — the framework, the scenario package, their dependencies (typesafe-carla, with its prebuilt CPython package, and its Codon toolchain among them) | Source trees, `pyproject.toml`, tests, docs, git history |
-| `ffmpeg`, when asked for | `uv`, wheels, build caches, a C compiler, any apt package at all |
+| | `uv`, wheels, build caches, a C compiler, any apt package at all |
 
 The entry point is the `scenario` CLI and the working directory is `/work`,
 where Hydra writes its run directory.
@@ -122,10 +122,9 @@ so two things could quietly defeat the split:
 - **The layers underneath.** A layer can only be reused together with its whole
   parent chain, so anything that varies has to sit *behind* the virtualenv
   rather than in front of it. The runtime stage therefore copies the four
-  layers first and only then creates the user and installs `ffmpeg`: `apt`
-  hands out whatever build it has today, and `useradd` writes the current date
-  into `/etc/shadow`, which would otherwise put a fresh digest on every layer
-  behind it. The copies use `COPY --link`, so each layer is built against an
+  layers first and only then creates the user: `useradd` writes the current
+  date into `/etc/shadow`, which would otherwise put a fresh digest on every
+  layer behind it. The copies use `COPY --link`, so each layer is built against an
   empty base and stays the same blob wherever it lands.
 
 `slim-venv.py` runs once per layer rather than once over the virtualenv, so
@@ -176,7 +175,8 @@ adds to these totals):
   *last* external shared-library dependency: every `.so` in the venv now needs
   nothing beyond glibc, `libgcc_s`, `libstdc++` and `libz`, all of which the
   base image already has. The runtime therefore installs no apt packages and
-  carries no apt layer unless `with-ffmpeg` is on.
+  carries no apt layer (the `with-ffmpeg` input went with the video in
+  15.0.0).
 - **The `slim` pass** (on by default, `slim: "false"` to disable) drops
   byte-code caches, vendored test suites, C headers, Cython sources and type
   stubs (29 MB), then runs `strip --strip-unneeded` over every bundled shared
@@ -264,7 +264,6 @@ explaining further:
 | --- | --- |
 | `scenario-package-path` | The generated package — the directory with its `pyproject.toml`. Required, and may sit outside this repository. |
 | `framework-path` | uv workspace root supplying the framework. Defaults to the action's own checkout, which is what makes the pinned ref the framework version. Its members are read from `[tool.uv.workspace] members`, globs included. |
-| `with-ffmpeg` | Installs ffmpeg for `CameraRecorder`. The only input that adds an apt layer. |
 | `slim` | Strips the virtualenv (see above). On by default. |
 | `platforms` | Target platforms. Empty (the default) builds for the runner's own: `linux/amd64` on an x86_64 runner, `linux/arm64` on an arm64 one such as `ubuntu-24.04-arm` — see [Architectures](#architectures). |
 | `cache-scope` | Cache key namespace. Defaults to one scope per image and platform, so images built in the same workflow do not evict each other — give two images the same scope to [share it](#sharing-the-build-cache) instead. A given scope is used as is, so give each platform its own. |

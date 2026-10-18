@@ -25,6 +25,12 @@ the lanelets the search matches -- the same one the video below it runs -- and
 draws every place that follows from it: an NPC on the lane beside the ego, the
 lanelet a condition watches, the ego's goal.
 
+**The video.** Each page's clip is not something a run writes (runs render no
+video since 15.0.0; see [Seeing a run](../usage.md#seeing-a-run)): it is
+recorded for these pages by `tools/scenario_video/`, a separate tool in the
+repository that films the run with a chase camera of its own, lays it beside a
+`sumo-gui` replay and encodes the result with the ffmpeg command-line tool.
+
 A lanelet in the editor is chosen one of three ways:
 
 - **Fixed** -- this lanelet.

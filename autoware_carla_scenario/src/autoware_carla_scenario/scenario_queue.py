@@ -7,11 +7,6 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Generator, List, Optional, Union
 
-from .camera_recorder import (
-    DEFAULT_IMAGE_HEIGHT,
-    DEFAULT_IMAGE_WIDTH,
-    check_video_size,
-)
 from .scenario_runner import ScenarioRunner
 from .conditions import ScenarioResult
 from .constants import DEFAULT_TM_PORT
@@ -80,8 +75,7 @@ class ScenarioQueue:
     _traffic_backend: Optional[TrafficBackend]
     _odd: OddDefinition
     _autoware_launcher: Optional["AutowareLauncher"]
-    _video_width: int
-    _video_height: int
+    _map_source: Optional[str]
     _scenarios: List[BaseScenario]
     #: id(scenario) -> its own timeout, in place of ``timeout_seconds``.
     _timeouts: dict[int, float]
@@ -118,8 +112,7 @@ class ScenarioQueue:
         traffic_backend: Optional[TrafficBackend] = None,
         odd: Union[str, OddDefinition, None] = None,
         autoware_launcher: Optional["AutowareLauncher"] = None,
-        video_width: int = DEFAULT_IMAGE_WIDTH,
-        video_height: int = DEFAULT_IMAGE_HEIGHT,
+        map_source: Optional[str] = None,
     ) -> None:
         """Create a scenario queue.
 
@@ -185,15 +178,10 @@ class ScenarioQueue:
                 CARLA server is started, and its stacks' logs go to
                 *output_dir*.  The egos are handed the same launcher; *None*
                 when Autoware is not the framework's to start.
-            video_width: Width, in pixels, of the video rendered from each
-                run's recording (:class:`ScenarioRunner`).
-            video_height: Its height, in pixels.  Both are positive and even.
-
-        Raises:
-            ValueError: when the video size is not positive and even, before
-                anything is started.
+            map_source: Where the map came from (the run's ``map.source`` or
+                ``map.directory``), which each run's trajectory log names
+                beside the files it read.
         """
-        check_video_size(video_width, video_height)
         if server is not None:
             self._server = server
             self._owns_server = False
@@ -223,8 +211,7 @@ class ScenarioQueue:
         # Resolved now, so a misspelt ODD fails before CARLA starts.
         self._odd = resolve_odd(odd)
         self._autoware_launcher = autoware_launcher
-        self._video_width = video_width
-        self._video_height = video_height
+        self._map_source = map_source
 
         self._scenarios = []
         self._timeouts = {}
@@ -478,8 +465,6 @@ class ScenarioQueue:
             max_tick_rate_hz=self._max_tick_rate_hz,
             traffic_backend=self._traffic_backend,
             odd=self._odd,
-            video_width=self._video_width,
-            video_height=self._video_height,
         )
         if self._overwrite_xodr:
             if self._xodr_path is None or self._map_name is None:
@@ -503,6 +488,10 @@ class ScenarioQueue:
         # The runner passes it on to the traffic backend, which is how a backend
         # with a road-network format of its own derives one from the map in play.
         self._runner.xodr_path = xodr_path
+        # What each run's trajectory log names as its map.
+        self._runner.map_source = self._map_source
+        self._runner.lanelet2_path = self._lanelet2_path
+        self._runner.projector_type = self._projector_type
         # Always: the runs read the map the MapManager holds (run_carla_map),
         # so one an earlier queue of this process left there would stand in
         # for this queue's world.

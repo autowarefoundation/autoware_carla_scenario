@@ -456,8 +456,6 @@ What `test_typecheck_model.py` compares, model by model:
   `find_actor_in_world`.
 - **`kinematics.codon`**: beside its exports, `normalize_angle_deg`, and
   `frame_of` and `FrameMismatchError` as `coordinate.codon` declares them.
-- **`scenario_base.codon`**: beside its exports, `SpectatorCameraConfig` (a
-  frozen dataclass, so a `@tuple`).
 - **`coordinate.codon`**: `AnyPose`, the Union alias, by its members' names,
   in order, for a scenario's own annotations (no model function takes it: a
   Union parameter crashes Codon 0.19, so each is generic or overloaded).
@@ -532,8 +530,7 @@ What `test_typecheck_model.py` compares, model by model:
   re-export, and the `__init__` of a checked subpackage, which models
   nothing), so a model file no test compares fails the suite.
 - **Third-party models**: carla_driver_interface's geometry, python-dotenv's
-  `load_dotenv`, ffmpeg-python's streams, pyxodr's `RoadNetwork` and lxml's
-  element.
+  `load_dotenv`, pyxodr's `RoadNetwork` and lxml's element.
 
 A constant whose model value is a literal (a `str`, `int`, `float` or a tuple
 of them) is compared by its value and type (a tuple's items' too: `1` is no
@@ -630,8 +627,8 @@ scenario.py:4: error: autoware_carla_scenario.route.parse_route_search is not pa
 ```
 
 Third-party packages the framework reads are modelled as
-far as it reads them (lanelet2, pyxodr, carla_driver_interface, python-dotenv,
-ffmpeg-python; see *Making a module compile*), and a scenario may use what
+far as it reads them (lanelet2, pyxodr, carla_driver_interface, python-dotenv;
+see *Making a module compile*), and a scenario may use what
 those models declare.
 
 ## Writing a scenario that type-checks
@@ -1081,8 +1078,8 @@ To check one more module:
 
 ### What is checked of the framework
 
-Every module now has an entry other than `"not yet checked (#45)"`. 171 of
-the package's 250 modules (68%; about 43,900 of 76,300 lines) are `CHECKED`:
+Every module now has an entry other than `"not yet checked (#45)"`. 170 of
+the package's 249 modules (68%; about 43,500 of 75,900 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the conversions between
 Lanelet2, OpenDRIVE and CARLA world poses (`coordinate.transform`), the stop
 lines read off a Lanelet2 map (`utils.stop_line`, `coordinate.stop_line`)
@@ -1120,9 +1117,8 @@ resolves them to files on disk (`maps.resolver`, with the repository listing
 of `maps.catalogue`, the `map` config's paths of `maps.config` and the
 OpenDRIVE taken from CARLA by `maps.opendrive`), what an exported scenario
 package pins the framework to and how it runs `uv` (`authoring.framework_pin`,
-`authoring.uv_tool`), the CARLA server manager (`server`) and the camera
-recorder that writes a run's video (`camera_recorder`), the markers an ego
-entity hands the runner to draw and their replay (`debug_markers`), the Autoware
+`authoring.uv_tool`), the CARLA server manager (`server`), the markers an ego
+entity hands the runner for the trajectory log (`debug_markers`), the Autoware
 launcher that runs a stack as a process group (`autoware_stack.launcher`),
 the `scenario_bridge` node's command and Python root beside it
 (`autoware_stack.bridge_node`) and the one that runs a workspace in its dev
@@ -1140,7 +1136,7 @@ driver's configs and client interface, trajectory follower and observations
 `driver.geometry`), and the `autoware_bridge`, `autoware_stack`, `entity`,
 `driver`, `maps` and `coverage` packages themselves, whose `__init__` re-exports what is not checked
 through models of it (see *A class a checked package only re-exports*
-below). 91
+below). 90
 functions and methods of those modules are `UNCALLED` (20 of them
 protected helpers, see *What is compiled* below): most of them a
 condition's `get_details()` or a backend's `describe()`, what takes a traffic
@@ -1802,7 +1798,7 @@ What Codon 0.19 needs that Python does not, beyond
   (`for line in process.stdout:`, after `assert process.stdout is not
   None`). A stream's `write()` takes what a binary stream takes in
   CPython, bytes (a `str`) or a buffer such as an array's `data` (a `Ptr` in
-  Codon's numpy; `camera_recorder` writes `bgr.data`), and since the check
+  Codon's numpy), and since the check
   cannot tell a text stream from a binary one, it takes either for a text
   one too, where CPython refuses a buffer. `importlib.metadata` declares
   `version(distribution_name)` and `PackageNotFoundError`, a `ModuleNotFoundError` built from the
@@ -2017,30 +2013,19 @@ What Codon 0.19 needs that Python does not, beyond
   now; a name the model lacks fails its check (`Pose.to_proto()` has no
   attribute), and so does any other module of the package (`no module named
   'carla_driver_interface.protocol'`).
-- **python-dotenv and ffmpeg-python are modelled** as far as `server` and
-  `camera_recorder` use them, with the installed packages' signatures, which
-  `test_typecheck_model.py` compares: `codon/dotenv/` declares
+- **python-dotenv is modelled** as far as `server` uses it, with the
+  installed package's signatures, which `test_typecheck_model.py` compares:
+  `codon/dotenv/` declares
   `load_dotenv(dotenv_path=None, stream=None, verbose=False, override=False,
   interpolate=True, encoding="utf-8")`, of a path that is `None`, a `str` or
   an `os.PathLike` (a stream, an `IO[str]` Codon has no type for, is not
-  taken); `codon/ffmpeg/` declares the fluent pipeline the camera recorder
-  builds: `ffmpeg.input(filename, **kwargs)` returns a `FilterableStream`
-  (`ffmpeg.nodes`), whose `output(*streams_and_filename, **kwargs)` takes
-  the file name last, as a `str` (ffmpeg-python raises a `ValueError` for a
-  `Path`), and returns an `OutputStream`, which alone has
-  `overwrite_output()` and `run_async(cmd="ffmpeg", pipe_stdin=False,
-  pipe_stdout=False, pipe_stderr=False, quiet=False,
-  overwrite_output=False)`, a `subprocess.Popen[bytes]`. An ffmpeg option is
-  any keyword of any value, as ffmpeg-python hands it to ffmpeg as text.
-  Nothing else of either package is declared (`dotenv_values()`, the
-  filters, `run()`, the module-level `ffmpeg.output()`), and a scenario may
-  use what is, as it may the shims.
+  taken). Nothing else of the package is declared (`dotenv_values()`), and
+  a scenario may use what is, as it may the shims.
 - **No `bytes`**: Codon 0.19 has none, and reads a `b"..."` literal as a
   `str`, so the check reads an annotation naming `bytes` as `str`
   (`DriveOutcome.debug_info: bytes = b""`). What a process writes is a `str`
   in the check, which has no `decode()`: decode it in the `else` branch of
-  `if TYPE_CHECKING:` and take the `str` in the first
-  (`CameraRecorder.stop()`, ffmpeg's error output).
+  `if TYPE_CHECKING:` and take the `str` in the first.
 - **`dataclasses.fields()` is not in the shim**: a function that reads a
   dataclass's fields from its class takes a free-form mapping anyway, so it
   is `UNCALLED` and imports `fields` inside it (`ControlConfig.from_mapping`).

@@ -1,6 +1,6 @@
 # Autoware CARLA Scenario
 
-A CARLA scenario testing framework for [Autoware](https://www.autoware.org/). Drives an Autoware ego vehicle through configurable scenarios in the [CARLA simulator](https://carla.org/), evaluates pass/fail conditions tick-by-tick, and produces JSON results plus replayed video.
+A CARLA scenario testing framework for [Autoware](https://www.autoware.org/). Drives an Autoware ego vehicle through configurable scenarios in the [CARLA simulator](https://carla.org/), evaluates pass/fail conditions tick-by-tick, and produces JSON results plus a trajectory log of the run.
 
 It is typically run against OpenDRIVE maps produced by the `convert` CLI of [`autoware_lanelet2_to_opendrive`](https://github.com/hakuturu583/autoware_lanelet2_to_opendrive), but does not depend on it: the Lanelet2 and OpenDRIVE maps are loaded as two independent coordinate systems, related only through CARLA world coordinates.
 
@@ -14,8 +14,8 @@ It is typically run against OpenDRIVE maps produced by the `convert` CLI of [`au
 - Pluggable traffic backends: CARLA's TrafficManager by default, `traffic=none` for an empty road, or a traffic simulator of your own through an entry point.
 - Coordinate transforms between Lanelet2, OpenDRIVE, and CARLA world frames.
 - Hydra `lanelet_constraint` sweeper plugin for parametric map-driven sweeps (resolvable without CARLA).
-- FastAPI + Uvicorn web viewer for browsing results, replaying videos, and triggering runs.
-- Two-pass video recording (CARLA native log → replayed RGB camera → ffmpeg H.264).
+- FastAPI + Uvicorn web viewer for browsing results and triggering runs.
+- A trajectory log of every run (actors, lights, map, the ego's plan, conditions, verdict; JSON Schema in the package), which the `autoware_carla_scenario_rerun` package (`convert` / `convert_dir`) turns into a Rerun recording to see the run, beside CARLA's native recording.
 - `scenario-setup` downloads CARLA's nightly build, which the runner then launches by itself.
 - pytest integration via `CarlaScenarioFixture` (auto-skips when there is no CARLA to launch).
 
@@ -32,7 +32,7 @@ The CARLA client is [typesafe_carla](https://github.com/hakuturu583/typesafe_car
 
 ## Quick usage
 
-The package provides three CLI entry points:
+The package provides these CLI entry points:
 
 | Command | Framework | Purpose |
 |---------|-----------|---------|
@@ -58,7 +58,7 @@ uv run scenario scenario=temporary_stop/temporary_stop
 uv run scenario scenario=traffic_light_compliance/traffic_light_compliance
 ```
 
-Results (JSON + optional video) are written under the configured output directory and can be inspected interactively via:
+Results (JSON and the trajectory log) are written under the configured output directory and can be inspected interactively via:
 
 ```bash
 uv run viewer

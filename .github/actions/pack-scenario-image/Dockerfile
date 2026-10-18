@@ -184,19 +184,16 @@ RUN --mount=type=tmpfs,target=/opt/venv \
 # ---------------------------------------------------------------------------
 FROM ${RUNTIME_BASE} AS runtime
 
-# ffmpeg is only invoked by CameraRecorder, and it is the largest thing that
-# can be added to this image, so it stays opt-in. With it off the runtime
-# installs no packages and carries no apt layer: after the move to
-# opencv-python-headless the venv needs nothing beyond the glibc, libgcc_s,
-# libstdc++ and libz the base image already has.
-ARG WITH_FFMPEG=false
+# The runtime installs no packages and carries no apt layer: after the move to
+# opencv-python-headless (and the video's removal, which took ffmpeg with it)
+# the venv needs nothing beyond the glibc, libgcc_s, libstdc++ and libz the
+# base image already has.
 
-# The virtualenv comes first and the two RUN layers below follow it, because a
+# The virtualenv comes first and the RUN layer below follows it, because a
 # pull can only reuse a layer whose whole parent chain it already has -- and
-# both of those layers vary in ways their inputs do not: apt hands out whatever
-# ffmpeg it has today, and `useradd` writes the current date into /etc/shadow.
-# Ahead of the virtualenv, either would put a fresh digest on all ~400 MB
-# behind it. Here, each costs only itself.
+# that layer varies in ways its inputs do not: `useradd` writes the current
+# date into /etc/shadow. Ahead of the virtualenv, it would put a fresh digest
+# on all ~400 MB behind it. Here, it costs only itself.
 #
 # --link is what makes the four layers portable between images: each is built
 # against an empty base rather than against whatever the previous instruction
@@ -205,13 +202,6 @@ COPY --link --from=venv /export/client /opt/venv
 COPY --link --from=venv /export/deps /opt/venv
 COPY --link --from=venv /export/framework /opt/venv
 COPY --link --from=venv /export/scenario /opt/venv
-
-RUN set -eu; \
-    if [ "${WITH_FFMPEG}" = "true" ]; then \
-        apt-get update; \
-        apt-get install -y --no-install-recommends ffmpeg; \
-        rm -rf /var/lib/apt/lists/*; \
-    fi
 
 # --user-group makes the matching group explicit rather than relying on
 # Debian's USERGROUPS_ENAB default, which `install -o/-g` below depends on.

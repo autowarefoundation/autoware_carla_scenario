@@ -32,11 +32,9 @@ and sensor types described below.
 | `EGO_ROLE_NAME` | `constants` | Reserved CARLA `role_name` used for the ego actor. |
 | `EntityRole` | `entity_role` | Validated `role_name` wrapper for CARLA actors. Factories: `EntityRole.ego()`, `EntityRole.npc(n)`. |
 
-`CameraRecorder` (re-exported from the top-level package, source in
-`autoware_carla_scenario.camera_recorder`) is the two-pass video
-renderer driven by the native CARLA recorder + an RGB camera sensor.
-It is used internally by `ScenarioRunner` and can also be instantiated
-directly.
+`CameraRecorder` (the video renderer) was removed in 15.0.0 with the video
+itself: a run's trajectory log is what a run is seen from
+([Seeing a run](usage.md#seeing-a-run)).
 
 ## Coverage (`autoware_carla_scenario.coverage`)
 
@@ -148,7 +146,7 @@ the separate `scene_to_scenario_transpiler` package (`scenario-import-t4`).
 | Symbol | Description |
 |--------|-------------|
 | `CameraSensorBase`, `CameraSensorConfig` | Provider-agnostic camera sensor interface. |
-| `CarlaCameraSensor`, `CarlaCameraSensorConfig` | CARLA RGB camera implementation, used by the video recorder and the driver rig. |
+| `CarlaCameraSensor`, `CarlaCameraSensorConfig` | CARLA RGB camera implementation, used by the driver rig. |
 
 ## External driver (`autoware_carla_scenario.driver`)
 

@@ -49,7 +49,6 @@ autoware_carla_scenario/
 │   │   ├── tools/                    # detect-no-3d-model CLI
 │   │   ├── ui/                       # Result viewer (FastAPI + scanner + runner + sweep resolver)
 │   │   ├── utils/                    # Stop-line / traffic-light helpers
-│   │   ├── camera_recorder.py        # Two-pass video renderer
 │   │   ├── constants.py, entity_role.py
 │   │   ├── pytest_fixtures.py        # CarlaScenarioFixture
 │   │   ├── scenario_base.py          # BaseScenario, EgoConfig

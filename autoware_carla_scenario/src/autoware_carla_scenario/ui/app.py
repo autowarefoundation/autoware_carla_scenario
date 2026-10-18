@@ -8,8 +8,8 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
+from fastapi import FastAPI, Request
+from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -119,26 +119,6 @@ async def scenario_detail(
             "page": "scenario",
         },
     )
-
-
-@app.get("/video/{session_type}/{date}/{time}/{index}/{filename}")
-async def serve_video(
-    session_type: str, date: str, time: str, index: int, filename: str
-) -> FileResponse:
-    """Serve a recorded video file from a scenario job directory."""
-    if session_type == "multirun":
-        job_dir = _base_path() / "multirun" / date / time / str(index)
-    else:
-        job_dir = _base_path() / "outputs" / date / time
-
-    video_path = (job_dir / filename).resolve()
-    if (
-        not video_path.is_relative_to(_base_path().resolve())
-        or not video_path.is_file()
-        or video_path.suffix != ".mp4"
-    ):
-        raise HTTPException(status_code=404, detail="Video not found")
-    return FileResponse(video_path, media_type="video/mp4")
 
 
 # ── API routes ───────────────────────────────────────────────────────────

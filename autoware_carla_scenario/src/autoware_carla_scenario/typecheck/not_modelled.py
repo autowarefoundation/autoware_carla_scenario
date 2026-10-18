@@ -44,8 +44,9 @@ _DRIVER = (
     "the library check compiles it from its source"
 )
 _CAMERA = (
-    "the run's video recording, which the runner sets up from the run's "
-    "config, not a scenario; the library check compiles it from its source"
+    "the camera sensors of an external driver's rig, which the ego entity "
+    "attaches from the run's `driver` config, not a scenario; the library "
+    "check compiles them from its source"
 )
 _RUNNER = (
     "the runner, which builds and runs the scenario: a scenario does not run "
@@ -99,11 +100,6 @@ _ENTITY_REGISTRY = (
     "an entity holds any kind of entity (`Any`), which Codon cannot express; "
     "a scenario spawns and finds its entities through BaseScenario"
 )
-_RUNNER_DRAWING = (
-    "the runner's drawing and replay of debug markers, which the library "
-    "check compiles from its source; debug_markers.codon models what an ego "
-    "entity a scenario defines returns from debug_markers()"
-)
 _STACK_LAUNCHER = (
     "the launcher's implementation (subprocess, process groups), which the "
     "runner drives and the library check compiles from its source; "
@@ -144,7 +140,7 @@ NOT_MODELLED: dict[str, dict[str, str]] = {
             _DRIVER,
         ),
         **_each(
-            "CameraRecorder CameraSensorBase CameraSensorConfig CarlaCameraSensor "
+            "CameraSensorBase CameraSensorConfig CarlaCameraSensor "
             "CarlaCameraSensorConfig",
             _CAMERA,
         ),
@@ -185,7 +181,6 @@ NOT_MODELLED: dict[str, dict[str, str]] = {
         _CARLA_INSTALL,
     ),
     f"{_PACKAGE}.debug_markers": {
-        **_each("DebugMarkerLog DrivenPathDrawer draw_debug_markers", _RUNNER_DRAWING),
         "plan_markers": (
             "takes carla_driver_interface's Trajectory, a driver's plan, which "
             "only the driver-backed entities hold (checked from their source); "
@@ -266,6 +261,11 @@ NOT_MODELLED: dict[str, dict[str, str]] = {
     f"{_PACKAGE}.trajectory_recorder": {
         "SCHEMA_PATH": (
             "the path of the JSON Schema beside the Python module "
+            "(`Path(__file__)`), a value the model, compiled elsewhere, has "
+            "no counterpart of; it is for the log's readers, not a scenario"
+        ),
+        "DRAFT7_SCHEMA_PATH": (
+            "the path of the schema's draft-07 copy beside the Python module "
             "(`Path(__file__)`), a value the model, compiled elsewhere, has "
             "no counterpart of; it is for the log's readers, not a scenario"
         ),

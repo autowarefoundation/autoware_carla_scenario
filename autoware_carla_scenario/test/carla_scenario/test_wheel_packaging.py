@@ -77,6 +77,7 @@ def test_framework_package_reaches_the_wheel(wheel_contents: set[str]) -> None:
     assert any(name.endswith(".yaml") for name in wheel_contents)
     # Readers in other languages are pointed at the trajectory log's schema.
     assert "autoware_carla_scenario/trajectory_recorder.schema.json" in wheel_contents
+    assert "autoware_carla_scenario/schemas/trajectory.schema.json" in wheel_contents
 
 
 def test_hydra_plugins_is_a_namespace_package() -> None:

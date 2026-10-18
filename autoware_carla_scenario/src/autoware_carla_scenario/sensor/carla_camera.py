@@ -297,8 +297,8 @@ class CarlaCameraSensor(CameraSensorBase):
         It runs on a CARLA thread, which delivers every sensor's data, so it must
         never block: when the queue is full it drops the oldest frame.  Once the
         policy stops calling :meth:`get_image` (a finished scenario), a blocking
-        ``put`` would hang that thread for good, and no sensor attached after it,
-        such as the replay's :class:`CameraRecorder`, would get a frame.  CARLA's
+        ``put`` would hang that thread for good, and no sensor attached after it
+        would get a frame.  CARLA's
         Python API, and typesafe_carla's CPython package, call it with the
         ``carla.Image`` itself.  typesafe_carla's Codon library calls it with
         the ``carla.SensorData``, which ``as_image()`` turns into the image; the

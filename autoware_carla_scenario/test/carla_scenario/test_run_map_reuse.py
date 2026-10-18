@@ -137,7 +137,12 @@ class TestWithAHeldMap:
         first = json.loads(
             (tmp_path / "run.trajectory.jsonl").read_text().splitlines()[0]
         )
-        assert first == {"type": "world", "map": "Carla/Maps/Odaiba", "episode": 7}
+        assert first == {
+            "type": "world",
+            "schema_version": 2,
+            "map": "Carla/Maps/Odaiba",
+            "episode": 7,
+        }
 
     def test_the_renderer_walks_the_held_map(self, held_map: MagicMock) -> None:
         from autoware_carla_scenario.driver.renderer import RendererDataBuilder

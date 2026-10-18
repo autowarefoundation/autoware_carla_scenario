@@ -194,7 +194,6 @@ sequenceDiagram
             SR->>W: stop_recorder()
             SR->>TB: close()
             TB->>TM: shut_down()
-            SR->>SR: Render video from recording
             SR->>W: reload_world()
         end
 
@@ -326,52 +325,25 @@ Key features:
 - **Server ownership**: Accepts an external `CarlaServerManager` or creates and owns one internally.
 - **pytest integration**: `as_fixture()` generates a session-scoped pytest fixture with automatic skip when there is no CARLA to launch.
 
-### Video Recording Pipeline
+### Recordings of a run
 
-Video recording uses a two-pass approach:
+A run leaves two recordings, neither of which renders anything:
 
-```mermaid
-graph LR
-    subgraph Pass1["Pass 1: Native Recording (during scenario)"]
-        T1["world.tick()"] --> R1["CARLA Native Recorder"]
-        R1 --> L1["scenario.log file"]
-    end
+1. **The CARLA recording** (`{stem}.log`): CARLA's native recorder captures every actor's state from the moment the ego exists, warm-up included. CARLA's replayer (`client.replay_file()`) plays it back on a server running the same map.
+2. **The trajectory log** (`{stem}.trajectory.jsonl`, [Trajectory Log](trajectory_log.md)): written by the runner itself after every tick of the scenario, in-process -- every vehicle and pedestrian, the lights, the map the run was on, the ego's debug markers, each condition's state and the verdict. A Rerun recording made from it with the `autoware_carla_scenario_rerun` package (`convert` / `convert_dir`) is how a run is seen ([Seeing a run](usage.md#seeing-a-run)).
 
-    subgraph Pass2["Pass 2: Video Rendering (after scenario)"]
-        L1 --> RP["client.replay_file()"]
-        RP --> CAM["RGB Camera Sensor<br/>(attached to ego)"]
-        CAM --> FF["ffmpeg (H.264)"]
-        FF --> MP4["scenario.mp4"]
-    end
-```
-
-1. **During execution**: CARLA's native recorder captures all actor states to a `.log` file.
-2. **After execution**: The recording is replayed in synchronous mode. An RGB camera sensor is attached to the ego vehicle at the same offset as the spectator camera. Frames are streamed to an `ffmpeg` subprocess for H.264 encoding via `CameraRecorder`.
-
-`CameraRecorder` uses a frame queue (maxsize=2) to decouple sensor callbacks from the encoding thread, and writes frames synchronously after each `world.tick()` to avoid dropped frames.
+Releases before 15.0.0 also rendered a video from the CARLA recording after each run (`{stem}.mp4`, a replay with an RGB camera and ffmpeg); that is gone, and so is the ffmpeg it needed.
 
 #### Debug markers
 
-The video shows two things the camera alone would not: what the ego planned and where it actually went.
-
-| Line | Colour | Where it comes from |
-|------|--------|---------------------|
-| The planner's output | Green, a dot at each point | `EgoVehicle.debug_markers()`, recorded during the run |
-| The path the ego drove | Orange, growing behind the car | The replayed ego itself (`DrivenPathDrawer`), for every kind of ego |
-
-The ego entity can show what the world does not: `EgoVehicle.debug_markers()` returns the shapes it wants drawn on the current tick (`DebugMarkers`, polylines in CARLA world coordinates, from `autoware_carla_scenario.debug_markers`). The base class shows nothing; the entities that follow a trajectory show it as a green line with a dot at each point:
+The ego entity can show what the world does not: `EgoVehicle.debug_markers()` returns what it is following on the current tick (`DebugMarkers`, polylines in CARLA world coordinates, from `autoware_carla_scenario.debug_markers`). The base class shows nothing; the entities that follow a trajectory show it, as a green line with a dot at each point:
 
 | Entity | What it shows |
 |--------|---------------|
 | `CarlaDriverEntity` | The driver policy's current plan |
 | `Ros2EgoEntity` | The trajectory it is tracking, while a `trajectory` command source drives |
 
-The recording keeps no debug drawing, and the entity is gone by the time the video is rendered, so the markers take the same two passes:
-
-1. **During execution**: after every tick of the recording that the ego is ticked on (the wait for the ego to be ready, then the scenario), the runner asks the ego for its markers and keeps them in a `DebugMarkerLog`, by the frame of the recording. Only a run that renders a video (a spectator is configured) keeps them.
-2. **During replay**: before each tick, the runner draws the markers of the frame that tick shows with CARLA's debug helper (`world.debug`), for one and a half ticks of simulated time: long enough to be in that frame, gone before the next one. An entity hands out the same `DebugMarkers` object until its plan changes (`plan_markers()` builds one per plan), so the log holds one per plan rather than one per tick, and the replay draws a plan once, to last every frame that holds it. The RGB camera sees them like any other geometry.
-
-The driven path needs nothing from the run: the replay moves the ego exactly as it moved, so after each replay tick the runner extends the path to where the replayed ego now is. A segment is added each time the ego has moved half a metre, drawn once to last until the end of the video; a jump of more than 10 m in one tick (the ego placed somewhere else) starts a new piece of path.
+After every tick of the scenario the runner asks the ego for its markers and writes them into the trajectory log when they change (a `markers` record). An entity hands out the same `DebugMarkers` object until its plan changes (`plan_markers()` builds one per plan), so the log holds one per plan rather than one per tick. A viewer of the run draws them beside the path the ego drove (`DRIVEN_PATH_COLOR`), which the log's ticks give.
 
 An entity of your own shows more by overriding `debug_markers()`:
 
@@ -795,8 +767,8 @@ graph TB
     ext_queue --> ext_runner
     ext_runner --> ext_carla
     sweep_svc --> conf
-    ext_runner -->|"*_result.json<br/>*.mp4"| outputs
-    ext_runner -->|"*_result.json<br/>*.mp4"| multirun
+    ext_runner -->|"*_result.json<br/>*.trajectory.jsonl"| outputs
+    ext_runner -->|"*_result.json<br/>*.trajectory.jsonl"| multirun
 ```
 
 ### Component Responsibilities
@@ -838,7 +810,7 @@ classDiagram
         +condition_statuses: list[ConditionNode]
         +overrides: list[str]
         +raw_log: str
-        +video_filename: str | None
+        +trajectory_path: str | None
     }
 
     class ConditionNode {
@@ -877,7 +849,6 @@ base_path/
 │           ├── ScenarioName_coverage.json  # Coverage hits (docs/coverage.md)
 │           ├── ScenarioName.trajectory.jsonl  # Actor motion (docs/trajectory_log.md)
 │           ├── ScenarioName.log        # CARLA native recording
-│           ├── ScenarioName.mp4        # Rendered video
 │           ├── batch_results.json      # Batch summary (batch mode only)
 │           └── .hydra/
 │               └── overrides.yaml      # Hydra CLI overrides
@@ -887,7 +858,7 @@ base_path/
         └── HH-MM-SS/
             ├── 0/                    # Job index 0
             │   ├── ScenarioName_result.json
-            │   ├── ScenarioName.mp4
+            │   ├── ScenarioName.trajectory.jsonl
             │   ├── raw_output.log    # Subprocess stdout/stderr
             │   └── .hydra/
             │       └── overrides.yaml
@@ -942,7 +913,7 @@ sequenceDiagram
             SQ->>SR: run_scenario(scenario)
             SR->>C: Setup, tick loop, recording, cleanup
             C-->>SR: ScenarioResult
-            SR->>SR: Write *_result.json + *.mp4
+            SR->>SR: Write *_result.json + *.trajectory.jsonl
         end
 
         S-->>R: exit code + stdout/stderr
@@ -1280,9 +1251,9 @@ All scenario execution uses CARLA's synchronous mode at 20 Hz. This ensures:
 - Reproducible results with fixed random seeds
 - No frame drops during recording
 
-### Two-Pass Video Recording
+### Nothing Rendered During a Run
 
-Video is not rendered during execution but replayed afterwards. This avoids the overhead of RGB camera processing during the tick loop, keeping condition evaluation timing accurate.
+A run renders no camera image for itself: the tick loop does no RGB processing beyond what the ego's own sensors need, which keeps condition evaluation timing accurate. What is needed to see the run afterwards is written as data (the trajectory log) and drawn by a viewer.
 
 ### Condition Composition Pattern
 
