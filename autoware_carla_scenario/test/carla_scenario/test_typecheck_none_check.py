@@ -315,6 +315,47 @@ def test_no_verdict_from_mypy_says_why(
             False,
         ),
         ("attr-defined", '"None" has no attribute "x"', False),
+        # An item of a list or dict display (#308).
+        (
+            "list-item",
+            'List item 2 has incompatible type "float | None"; expected "float"',
+            True,
+        ),
+        (
+            "list-item",
+            'List item 1 has incompatible type "str"; expected "int"',
+            False,
+        ),
+        (
+            "list-item",
+            'List item 0 has incompatible type "float | None"; '
+            'expected "int | None"',
+            False,
+        ),
+        (
+            "dict-item",
+            'Dict entry 0 has incompatible type "str": "float | None"; '
+            'expected "str": "float"',
+            True,
+        ),
+        (
+            "dict-item",
+            'Dict entry 0 has incompatible type "str | None": "float"; '
+            'expected "str": "float"',
+            True,
+        ),
+        (
+            "dict-item",
+            'Dict entry 1 has incompatible type "str": "str | None"; '
+            'expected "str": "float | None"',
+            False,
+        ),
+        (
+            "dict-item",
+            'Dict entry 0 has incompatible type "str": "list[float | None]"; '
+            'expected "str": "list[float]"',
+            False,
+        ),
     ],
 )
 def test_only_none_as_the_offending_type_is_a_misuse(
@@ -509,3 +550,245 @@ def test_the_checked_framework_modules_misuse_no_none(tmp_path: Path) -> None:
     assert findings == [], "\n".join(
         f"{f.path}:{f.line}:{f.column}: {f.message} [{f.code}]" for f in findings
     )
+
+
+_ITEMS = """
+from __future__ import annotations
+
+
+def maybe() -> float | None:
+    return None
+
+
+def name() -> str | None:
+    return None
+
+
+def takes(values: list[float]) -> None:
+    pass
+
+
+def misuses() -> None:
+    a: list[float] = [0.0, 10.0, maybe()]
+    takes([0.0, maybe()])
+    d: dict[str, float] = {"a": maybe()}
+    e: dict[str, float] = {name(): 1.0}
+    s: set[str] = {"x", name()}
+
+
+def fine() -> None:
+    a: list[float] = [0.0, maybe() or 0.0]
+    b: list[float | None] = [0.0, maybe()]
+    d: dict[str, float | None] = {"a": maybe()}
+    w: list[int] = [0, "not None"]
+"""
+
+
+def test_an_optional_item_of_a_display_is_a_misuse(tmp_path: Path) -> None:
+    # Codon unwraps an Optional element where the model iterates a sequence,
+    # so mypy's list-item and dict-item are the None check's too (#308); a
+    # set display's item is an argument to mypy.
+    package = tmp_path / "acs_none_items"
+    package.mkdir()
+    (package / "__init__.py").write_text("")
+    module = package / "probe.py"
+    module.write_text(textwrap.dedent(_ITEMS))
+
+    findings = find_none_misuses([module])
+
+    assert findings is not None
+    lines = module.read_text().splitlines()
+    found = [(lines[f.line - 1].strip(), f.code, f.kind) for f in findings]
+    assert found == [
+        ("a: list[float] = [0.0, 10.0, maybe()]", "list-item", none_check.NONE),
+        ("takes([0.0, maybe()])", "list-item", none_check.NONE),
+        ('d: dict[str, float] = {"a": maybe()}', "dict-item", none_check.NONE),
+        ("e: dict[str, float] = {name(): 1.0}", "dict-item", none_check.NONE),
+        ('s: set[str] = {"x", name()}', "arg-type", none_check.NONE),
+    ]
+
+
+# ---------------------------------------------------------------------------
+# A framework union used as one of its members (#309)
+# ---------------------------------------------------------------------------
+
+_POSITIONS = (
+    "CarlaWorldPose | Lanelet2Pose | OpenDrivePose | MapPose | RelativeLanePose "
+    "| RouteLanePose | RouteOppositePose | RouteCrossingPose | RouteCrosswalkPose "
+    "| RouteRoadsidePose"
+)
+
+
+@pytest.mark.parametrize(
+    ("code", "message", "misuse"),
+    [
+        (
+            "union-attr",
+            f'Item "MapPose" of "{_POSITIONS}" has no attribute "lanelet_id"',
+            True,
+        ),
+        (
+            "arg-type",
+            f'Argument 1 to "f" has incompatible type "{_POSITIONS}"; '
+            'expected "Lanelet2Pose"',
+            True,
+        ),
+        # Shortened by mypy, or qualified where a name is ambiguous.
+        (
+            "arg-type",
+            'Argument 1 to "f" has incompatible type "CarlaWorldPose | '
+            'Lanelet2Pose | ... | RouteRoadsidePose"; expected "Lanelet2Pose"',
+            True,
+        ),
+        (
+            "union-attr",
+            'Item "OpenDrivePose" of "autoware_carla_scenario.coordinate.poses.'
+            'Lanelet2Pose | OpenDrivePose" has no attribute "lanelet_id"',
+            True,
+        ),
+        (
+            "union-attr",
+            'Item "SamplingEvent" of "SamplingEvent | BaseCondition" has no '
+            'attribute "check"',
+            True,
+        ),
+        # The None check's, not this one's.
+        (
+            "union-attr",
+            f'Item "None" of "{_POSITIONS} | None" has no attribute "x"',
+            False,
+        ),
+        # A union of the scenario's own, of other types, or one class.
+        (
+            "union-attr",
+            'Item "Cat" of "Cat | Dog" has no attribute "bark"',
+            False,
+        ),
+        (
+            "arg-type",
+            'Argument 1 to "f" has incompatible type "Lanelet2Pose | int"; '
+            'expected "Lanelet2Pose"',
+            False,
+        ),
+        (
+            "arg-type",
+            'Argument 1 to "f" has incompatible type "MapPose"; '
+            'expected "Lanelet2Pose"',
+            False,
+        ),
+        # Not a use as one member.
+        ("attr-defined", '"MapPose" has no attribute "lanelet_id"', False),
+    ],
+)
+def test_only_a_framework_union_used_as_one_member_is_a_union_misuse(
+    code: str, message: str, misuse: bool
+) -> None:
+    assert none_check.is_union_misuse(code, message) is misuse
+
+
+_UNION_USES = """
+from __future__ import annotations
+
+from autoware_carla_scenario import Lanelet2Pose, MapPose, Trajectory, TrajectoryVertex
+from autoware_carla_scenario.trajectory import TrajectoryPosition
+
+
+def lanelet_of(pose: Lanelet2Pose) -> int:
+    return pose.lanelet_id
+
+
+def any_position(position: TrajectoryPosition) -> None:
+    pass
+
+
+def misuses() -> None:
+    traj = Trajectory("t", [TrajectoryVertex(MapPose(1.0, 2.0))])
+    for v in traj.vertices:
+        a = v.position.lanelet_id
+        b = lanelet_of(v.position)
+
+
+def narrowed() -> None:
+    traj = Trajectory("t", [TrajectoryVertex(MapPose(1.0, 2.0))])
+    for v in traj.vertices:
+        p = v.position
+        if isinstance(p, Lanelet2Pose):
+            lanelet_of(p)
+        any_position(v.position)
+        TrajectoryVertex(v.position, advance=v.advance)
+"""
+
+
+def test_a_framework_union_used_as_one_member_is_reported_once(
+    tmp_path: Path,
+) -> None:
+    # mypy reports the attribute once per member lacking it (nine here);
+    # the check reports it once, and the narrowed uses not at all (#309).
+    package = tmp_path / "acs_union_case"
+    package.mkdir()
+    (package / "__init__.py").write_text("")
+    module = package / "probe.py"
+    module.write_text(textwrap.dedent(_UNION_USES))
+
+    findings = find_none_misuses([module])
+
+    assert findings is not None
+    lines = module.read_text().splitlines()
+    found = [(lines[f.line - 1].strip(), f.code, f.kind) for f in findings]
+    assert found == [
+        ("a = v.position.lanelet_id", "union-attr", none_check.UNION),
+        ("b = lanelet_of(v.position)", "arg-type", none_check.UNION),
+    ]
+    attribute = findings[0].message
+    assert attribute.startswith('Items "CarlaWorldPose", "OpenDrivePose", "MapPose"')
+    assert '"Lanelet2Pose",' not in attribute.split(" of ")[0]
+    assert attribute.endswith('have no attribute "lanelet_id"')
+    assert [f.union.name if f.union else None for f in findings] == [
+        "TrajectoryPosition",
+        "TrajectoryPosition",
+    ]
+
+
+def _python_union_members(value: object) -> frozenset[str]:
+    import typing
+
+    return frozenset(
+        arg.__forward_arg__ if isinstance(arg, typing.ForwardRef) else arg.__name__
+        for arg in typing.get_args(value)
+    )
+
+
+def _python_unions(module_name: str) -> list[frozenset[str]]:
+    """The members of each Union alias of the framework's module (or package)."""
+    import importlib
+    import pkgutil
+    import typing
+
+    module = importlib.import_module(module_name)
+    modules = [module]
+    for info in pkgutil.iter_modules(getattr(module, "__path__", [])):
+        modules.append(importlib.import_module(f"{module_name}.{info.name}"))
+    return [
+        _python_union_members(value)
+        for m in modules
+        for value in vars(m).values()
+        if typing.get_origin(value) is typing.Union
+    ]
+
+
+def test_the_framework_unions_are_python_s() -> None:
+    # The unions read from the model (framework_unions) are the ones the
+    # framework's Python declares (#309): an alias, by its name, in the
+    # module the model file stands for; a property's type, by its members,
+    # among the Union aliases of that module or its package.
+    import importlib
+
+    unions = none_check.framework_unions()
+    names = {u.name for u in unions}
+    assert {"TrajectoryPosition", "AnyPose", "TrajectoryVertex.position"} <= names
+    for union in unions:
+        if "." not in union.name:
+            value = getattr(importlib.import_module(union.module), union.name)
+            assert _python_union_members(value) == union.members, union
+        else:
+            assert union.members in _python_unions(union.module), union

@@ -146,8 +146,14 @@ def _write_case(
     extra: str = "",
     config: str = _CONFIG,
     header: str = _HEADER,
+    modules: dict[str, str] | None = None,
 ) -> tuple[type, type, Path]:
-    """A scenario package in *tmp_path* whose setup() body is *setup*."""
+    """A scenario package in *tmp_path* whose setup() body is *setup*.
+
+    *modules* are more of its files, by their path in the package
+    (``helpers.py``, ``sub/helpers.py``); ``{package}`` in them and in
+    *header* is the package's name.
+    """
     global _counter
     _counter += 1
     package = f"acs_typecheck_case_{_counter}"
@@ -155,6 +161,11 @@ def _write_case(
     root.mkdir()
     (root / "__init__.py").write_text("")
     (root / "configs.py").write_text(config)
+    for relative, text in (modules or {}).items():
+        path = root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text.replace("{package}", package))
+    header = header.replace("{package}", package)
     scenario = root / "scenario.py"
     scenario.write_text(
         header + textwrap.indent(textwrap.dedent(setup), " " * 8) + extra
@@ -3876,3 +3887,208 @@ def test_scenario_check_fails_an_unknown_scenario_name(
 
     assert main(["scenario=lane_change/left", "scenario.name=no_such_scenario"]) == 1
     assert "unknown scenario name 'no_such_scenario'" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# An Optional item of a list display (#308)
+# ---------------------------------------------------------------------------
+
+_ITEM_READERS = """
+
+    def _speed(self, world: carla.World) -> float:
+        return 3.0
+
+    def _maybe_name(self) -> str | None:
+        return None
+"""
+
+
+@pytest.mark.parametrize(
+    ("setup", "needle", "message"),
+    [
+        (
+            'self.register_cover("speed", self._speed, '
+            "buckets=[0.0, 10.0, cfg.min_speed_kmh])\n",
+            "buckets=[0.0, 10.0, cfg.min_speed_kmh]",
+            'List item 2 has incompatible type "float | None"; expected "float"',
+        ),
+        (
+            'self.register_cover("speed", self._speed, range=(0.0, 100.0), every=10.0)\n'
+            'self.register_cross("c", ["speed", self._maybe_name()])\n',
+            "self.register_cross(",
+            'List item 1 has incompatible type "str | None"; expected "str"',
+        ),
+    ],
+    ids=["cover-buckets", "cross-names"],
+)
+def test_an_optional_item_of_a_list_display_is_refused(
+    tmp_path: Path, setup: str, needle: str, message: str
+) -> None:
+    # Codon unwraps the element where the model iterates the sequence, so
+    # these compiled, and Python failed on the None (#308).
+    scenario, config, path = _write_case(
+        tmp_path, _TIMEOUT_SETUP + setup, _ITEM_READERS
+    )
+    result = typecheck_scenario(scenario, config)
+    error = _only_error(result)
+    assert len(result.diagnostics) == 1, result.format()
+    assert message in error.message, error.format()
+    assert "test the value for None" in error.message
+    assert error.line == _line_of(path, needle)
+
+
+def test_an_item_with_a_default_for_none_compiles(tmp_path: Path) -> None:
+    setup = (
+        _TIMEOUT_SETUP
+        + 'self.register_cover("speed", self._speed, '
+        + "buckets=[0.0, 10.0, cfg.min_speed_kmh or 20.0])\n"
+        + 'self.register_cross("c", ["speed", self._maybe_name() or "speed"])\n'
+    )
+    scenario, config, _ = _write_case(tmp_path, setup, _ITEM_READERS)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+# ---------------------------------------------------------------------------
+# A framework union used as one of its members (#309)
+# ---------------------------------------------------------------------------
+
+_LANELET_OF = """
+
+    def _lanelet_of(self, pose: Lanelet2Pose) -> int:
+        return pose.lanelet_id
+"""
+
+
+@pytest.mark.parametrize(
+    ("use", "message"),
+    [
+        (
+            'logger.info("%d", v.position.lanelet_id)\n',
+            'of "CarlaWorldPose | Lanelet2Pose | OpenDrivePose | MapPose | '
+            "RelativeLanePose | RouteLanePose | RouteOppositePose | "
+            'RouteCrossingPose | RouteCrosswalkPose | RouteRoadsidePose" have no '
+            'attribute "lanelet_id"',
+        ),
+        (
+            'logger.info("%d", self._lanelet_of(v.position))\n',
+            'Argument 1 to "_lanelet_of" of "CaseScenario" has incompatible type',
+        ),
+    ],
+    ids=["attribute", "argument"],
+)
+def test_a_trajectory_position_used_as_one_pose_is_refused(
+    tmp_path: Path, use: str, message: str
+) -> None:
+    # Codon holds TrajectoryVertex.position as a Union and converts it to
+    # the member a use needs at run time, so these compiled, and Python
+    # raised AttributeError on the MapPose (#309).
+    setup = (
+        _TIMEOUT_SETUP
+        + 'traj = Trajectory("t", [TrajectoryVertex(MapPose(1.0, 2.0))])\n'
+        + "for v in traj.vertices:\n"
+        + "    "
+        + use
+    )
+    scenario, config, path = _write_case(tmp_path, setup, _LANELET_OF)
+    result = typecheck_scenario(scenario, config)
+    error = _only_error(result)
+    # mypy reports a missing attribute once per member lacking it: one here.
+    assert len(result.diagnostics) == 1, result.format()
+    assert message in error.message, error.format()
+    assert "(TrajectoryPosition)" in error.message, error.format()
+    assert "narrow it with isinstance first" in error.message, error.format()
+    assert error.line == _line_of(path, use.strip())
+
+
+def test_a_trajectory_position_narrowed_or_passed_on_compiles(tmp_path: Path) -> None:
+    setup = (
+        _TIMEOUT_SETUP
+        + 'traj = Trajectory("t", [TrajectoryVertex(MapPose(1.0, 2.0))])\n'
+        + "moved: list[TrajectoryVertex] = []\n"
+        + "for v in traj.vertices:\n"
+        + "    p = v.position\n"
+        + "    if isinstance(p, Lanelet2Pose):\n"
+        + '        logger.info("%d", self._lanelet_of(p) + p.lanelet_id)\n'
+        + "    moved.append(TrajectoryVertex(v.position, advance=v.advance))\n"
+    )
+    scenario, config, _ = _write_case(tmp_path, setup, _LANELET_OF)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+# ---------------------------------------------------------------------------
+# A module of the scenario's package imported as a module (#310)
+# ---------------------------------------------------------------------------
+
+_HELPERS = """
+from __future__ import annotations
+
+import typesafe_carla.carla as carla
+
+
+def speed_kph(world: carla.World) -> float | None:
+    return 3.0
+"""
+
+_HELPERS_SETUP = (
+    _TIMEOUT_SETUP
+    + 'self.register_cover("speed", helpers.speed_kph, range=(0.0, 100.0), every=10.0)\n'
+)
+
+
+@pytest.mark.parametrize(
+    ("statement", "where"),
+    [
+        ("from . import helpers", "helpers.py"),
+        ("from {package} import helpers", "helpers.py"),
+        ("import {package}.helpers as helpers", "helpers.py"),
+        ("from .sub import helpers", "sub/helpers.py"),
+        ("from . import configs as _configs, helpers", "helpers.py"),
+    ],
+    ids=["relative", "absolute", "import-as", "subpackage", "with-another"],
+)
+def test_a_module_of_the_package_imported_as_a_module_compiles(
+    tmp_path: Path, statement: str, where: str
+) -> None:
+    # Codon 0.19 resolves `from X import name` only as a name of X/__init__
+    # and `import a.b` only from the importing file's directory, so these
+    # were refused; the check rewrites them into `import helpers as helpers`
+    # (#310).
+    modules = {where: _HELPERS}
+    if where.startswith("sub/"):
+        modules["sub/__init__.py"] = ""
+    header = _HEADER.replace(
+        "from .configs import CaseConfig\n",
+        f"from .configs import CaseConfig\n{statement}\n",
+        1,
+    )
+    scenario, config, _ = _write_case(
+        tmp_path, _HELPERS_SETUP, header=header, modules=modules
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_a_module_of_the_package_imported_without_a_name_is_refused(
+    tmp_path: Path,
+) -> None:
+    # `import pkg.helpers` binds pkg, which Codon cannot resolve from inside
+    # it: refused at its line, naming the form that works.
+    header = _HEADER.replace(
+        "from .configs import CaseConfig\n",
+        "from .configs import CaseConfig\nimport {package}.helpers\n",
+        1,
+    )
+    setup = _HELPERS_SETUP.replace("helpers.speed_kph", "{package}.helpers.speed_kph")
+    scenario, config, path = _write_case(
+        tmp_path,
+        setup.replace("{package}", f"acs_typecheck_case_{_counter + 1}"),
+        header=header,
+        modules={"helpers.py": _HELPERS},
+    )
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "import the module with a name" in error.message, error.format()
+    assert ".helpers as helpers`" in error.message, error.format()
+    assert error.path == str(path)
+    assert error.line == _line_of(path, "import acs_typecheck_case_")

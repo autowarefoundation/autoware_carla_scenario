@@ -22,6 +22,7 @@ from autoware_carla_scenario.typecheck.transform import (
     classes_with_init,
     codon_annotation,
     inherited_inits,
+    relative_module_imports,
     split_tuple_excepts,
     transform_source,
     transform_source_lines,
@@ -1699,3 +1700,113 @@ def test_return_none_is_left_when_the_annotation_is_dropped() -> None:
         """
     )
     assert out.count("    return None\n") == 2
+
+
+# ---------------------------------------------------------------------------
+# A module of the scenario's package imported as a module (#310)
+# ---------------------------------------------------------------------------
+
+_OWN_MODULES = frozenset(
+    {"pkg", "pkg.configs", "pkg.helpers", "pkg.sub", "pkg.sub.mod", "pkg.scenario"}
+)
+
+
+@pytest.mark.parametrize(
+    ("written", "rewritten"),
+    [
+        ("from . import helpers", "import helpers as helpers"),
+        ("from pkg import helpers", "import helpers as helpers"),
+        ("import pkg.helpers as helpers", "import helpers as helpers"),
+        ("from . import helpers as h", "import helpers as h"),
+        ("from .sub import mod", "import sub.mod as mod"),
+        ("import pkg.sub.mod as m", "import sub.mod as m"),
+        ("from . import sub", "import sub as sub"),
+        (
+            "from . import helpers, configs as c",
+            "import helpers as helpers; import configs as c",
+        ),
+        # A name beside a module stays as written, on the same line.
+        (
+            "from pkg import helpers, VALUE",
+            "from pkg import VALUE; import helpers as helpers",
+        ),
+        ("import os, pkg.helpers as h", "import os; import helpers as h"),
+        # Names, and other packages' modules, are left alone.
+        ("from .helpers import speed_kph", "from .helpers import speed_kph"),
+        ("from . import VALUE", "from . import VALUE"),
+        ("from os import path", "from os import path"),
+        ("import os.path as p", "import os.path as p"),
+    ],
+)
+def test_an_own_module_imported_as_a_module_is_imported_from_its_directory(
+    written: str, rewritten: str
+) -> None:
+    source = f"{written}\nx = 1\n"
+    out, problems = relative_module_imports(
+        source, "pkg.scenario", False, _OWN_MODULES.__contains__
+    )
+    assert problems == []
+    assert out == f"{rewritten}\nx = 1\n"
+
+
+def test_the_rewrite_keeps_every_line_and_reaches_functions() -> None:
+    source = textwrap.dedent(
+        """\
+        from . import (
+            helpers,
+        )
+        def f() -> int:
+            from . import helpers as h
+            return h.VALUE
+        """
+    )
+    out, problems = relative_module_imports(
+        source, "pkg.scenario", False, _OWN_MODULES.__contains__
+    )
+    assert problems == []
+    lines = out.splitlines()
+    assert len(lines) == len(source.splitlines())
+    assert lines[0] == "import helpers as helpers"
+    assert lines[3:] == [
+        "def f() -> int:",
+        "    import helpers as h",
+        "    return h.VALUE",
+    ]
+
+
+def test_a_package_s_init_imports_its_modules_from_its_directory() -> None:
+    out, problems = relative_module_imports(
+        "from . import mod\n", "pkg.sub", True, _OWN_MODULES.__contains__
+    )
+    assert (out, problems) == ("import mod as mod\n", [])
+
+
+@pytest.mark.parametrize(
+    ("module", "written", "form"),
+    [
+        # Outside the importing module's package: no form Codon resolves.
+        ("pkg.sub.mod", "from .. import helpers", "`from ..helpers import name`"),
+        (
+            "pkg.sub.mod",
+            "import pkg.helpers as helpers",
+            "`from ..helpers import name`",
+        ),
+        ("pkg.sub.mod", "import pkg as p", "`from .. import name`"),
+        ("pkg.scenario", "import pkg as p", "`from . import name`"),
+        # Bound without a name: `pkg`.
+        ("pkg.scenario", "import pkg.helpers", "`import pkg.helpers as helpers`"),
+    ],
+)
+def test_an_own_module_import_codon_cannot_resolve_is_refused_with_the_working_form(
+    module: str, written: str, form: str
+) -> None:
+    source = f"x = 1\n{written}\n"
+    out, problems = relative_module_imports(
+        source, module, False, _OWN_MODULES.__contains__
+    )
+    assert out == source
+    assert len(problems) == 1, problems
+    line, message = problems[0]
+    assert line == 2
+    assert f"`{written}`" in message
+    assert form in message, message

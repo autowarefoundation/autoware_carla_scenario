@@ -112,6 +112,11 @@ which :func:`transform_source_lines` maps back onto the handler):
   given one passing everything on to the base's, with ``@extend`` after the
   module: Codon 0.19 inherits no ``__init__`` (#201).
 
+Before that, the scenario check gives each of the scenario's modules to
+:func:`relative_module_imports`, which imports a module of the scenario's
+package imported as a module (``from . import helpers``) the way Codon 0.19
+resolves it (``import helpers as helpers``), on the same line (#310).
+
 :func:`undeclared_attributes` reports what Codon additionally needs: an
 attribute a class assigns on ``self`` must be declared at class level, with
 its type, on any class in an inheritance hierarchy (Codon infers the type of
@@ -134,6 +139,7 @@ __all__ = [
     "classes_with_init",
     "inherited_inits",
     "redirect_imports",
+    "relative_module_imports",
     "split_tuple_excepts",
     "uncalled_nodes",
     "transform_source",
@@ -2124,6 +2130,131 @@ def redirect_imports(
                     failed = True
                 else:
                     pieces.append(_import_as(dest, alias.asname))
+        else:
+            continue
+        if not failed:
+            edits.replace(*edits.node_span(node), "; ".join(pieces))
+    return edits.apply(), problems
+
+
+def _relative_from(package: str, target: str) -> str:
+    """*target* as a relative module name in the package *package*
+    (``pkg.sub``, ``pkg.helpers`` -> ``..helpers``)."""
+    mine, theirs = package.split("."), target.split(".")
+    shared = 0
+    while shared < min(len(mine), len(theirs)) and mine[shared] == theirs[shared]:
+        shared += 1
+    return "." * (len(mine) - shared + 1) + ".".join(theirs[shared:])
+
+
+def relative_module_imports(
+    source: str,
+    module: str,
+    is_package: bool,
+    is_own_module: Callable[[str], bool],
+) -> tuple[str, list[tuple[int, str]]]:
+    """Import each of the scenario's own modules imported as a module the way
+    Codon 0.19 resolves it (#310).
+
+    Codon resolves ``from X import name`` only as a name ``X/__init__``
+    defines, never as the submodule ``X.name``, and an absolute ``import
+    a.b`` only relative to the importing file's directory (or as a ``.codon``
+    file of ``CODON_PATH``, which a scenario's modules are not).  So in
+    ``pkg/scenario.py`` (*module* ``pkg.scenario``) ``from . import
+    helpers``, ``from pkg import helpers`` and ``import pkg.helpers as
+    helpers`` all fail, and ``import helpers as helpers`` is the form that
+    works.  Each import of a module *is_own_module* names (one of the
+    scenario's own, ``pkg.helpers``) is rewritten into that form: the
+    module's name relative to the importing module's package (``from .sub
+    import mod`` -> ``import sub.mod as mod``).  ``from a import b, c`` that
+    imports both a module and names becomes two statements on its line, so
+    no line moves.
+
+    A module that is not inside the importing module's package (``from ..
+    import helpers`` in ``pkg/sub/scenario.py``) has no such form, and
+    neither has a module imported without a name (``import pkg.helpers``,
+    which binds ``pkg``): such an import is left as written, and reported.
+
+    Returns:
+        The rewritten source, and (line, message) for each import that could
+        not be rewritten.
+    """
+    if not source.endswith("\n"):
+        source += "\n"
+    tree = ast.parse(source)
+    edits = _Edits(source.encode().splitlines(keepends=True))
+    package = module if is_package else module.rpartition(".")[0]
+    problems: list[tuple[int, str]] = []
+
+    def form(target: str, asname: str, written: str, line: int) -> str | None:
+        if target.startswith(package + "."):
+            return f"import {target[len(package) + 1 :]} as {asname}"
+        problems.append(
+            (
+                line,
+                f"`{written}` imports the module {target} as a module, which "
+                f"Codon 0.19 resolves only inside the importing module's own "
+                f"package ({package}): import the names instead "
+                f"(`from {_relative_from(package, target)} import name`)",
+            )
+        )
+        return None
+
+    for node in ast.walk(tree):
+        pieces: list[str] = []
+        failed = False
+        if isinstance(node, ast.ImportFrom):
+            name = _absolute_module(node, module, is_package)
+            plain: list[str] = []
+            for alias in node.names:
+                target = f"{name}.{alias.name}" if name else alias.name
+                if alias.name == "*" or not is_own_module(target):
+                    plain.append(_alias(alias.name, alias.asname))
+                    continue
+                written = (
+                    f"from {'.' * node.level}{node.module or ''} import "
+                    f"{_alias(alias.name, alias.asname)}"
+                )
+                piece = form(target, alias.asname or alias.name, written, node.lineno)
+                if piece is None:
+                    failed = True
+                else:
+                    pieces.append(piece)
+            if not pieces and not failed:
+                continue
+            if plain:
+                pieces.insert(
+                    0,
+                    f"from {'.' * node.level}{node.module or ''} import "
+                    f"{', '.join(plain)}",
+                )
+        elif isinstance(node, ast.Import):
+            if not any(is_own_module(alias.name) for alias in node.names):
+                continue
+            for alias in node.names:
+                written = f"import {_alias(alias.name, alias.asname)}"
+                if not is_own_module(alias.name):
+                    pieces.append(written)
+                elif alias.asname is None and "." in alias.name:
+                    last = alias.name.rpartition(".")[2]
+                    problems.append(
+                        (
+                            node.lineno,
+                            f"`{written}` binds {alias.name.split('.')[0]}, "
+                            f"which Codon 0.19 cannot resolve from {module}: "
+                            f"import the module with a name (`import "
+                            f"{alias.name} as {last}`) or import its names",
+                        )
+                    )
+                    failed = True
+                else:
+                    piece = form(
+                        alias.name, alias.asname or alias.name, written, node.lineno
+                    )
+                    if piece is None:
+                        failed = True
+                    else:
+                        pieces.append(piece)
         else:
             continue
         if not failed:
