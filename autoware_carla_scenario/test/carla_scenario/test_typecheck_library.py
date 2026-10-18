@@ -78,6 +78,90 @@ def test_every_excluded_module_has_a_reason() -> None:
     assert all(reason.strip() for reason in EXCLUDED.values())
 
 
+def _shim(module: str) -> str | None:
+    """The source of the standard module's shim in the model, if it has one."""
+    for path in (
+        model_dir() / f"{module}.codon",
+        model_dir() / module / "__init__.codon",
+    ):
+        if path.is_file():
+            return path.read_text(encoding="utf-8")
+    return None
+
+
+def _declares(shim: str, name: str) -> bool:
+    return (
+        re.search(
+            rf"^\s*(?:def|class)\s+{re.escape(name)}\b|^{re.escape(name)}\s*[:=]",
+            shim,
+            re.MULTILINE,
+        )
+        is not None
+    )
+
+
+def _shimmed_uses(source: str) -> dict[str, set[str]]:
+    """The names a module takes from each standard module with a shim.
+
+    ``import X`` counts the ``X.name`` it reads, ``from X import name`` the
+    names; a method of a class (``Path.rename()``) is not seen.
+    """
+    tree = ast.parse(source)
+    aliases: dict[str, str] = {}
+    uses: dict[str, set[str]] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if "." not in alias.name and _shim(alias.name) is not None:
+                    aliases[alias.asname or alias.name] = alias.name
+                    uses.setdefault(alias.name, set())
+        elif (
+            isinstance(node, ast.ImportFrom)
+            and node.level == 0
+            and node.module
+            and "." not in node.module
+            and _shim(node.module) is not None
+        ):
+            uses.setdefault(node.module, set()).update(a.name for a in node.names)
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Attribute)
+            and isinstance(node.value, ast.Name)
+            and node.value.id in aliases
+        ):
+            uses[aliases[node.value.id]].add(node.attr)
+    return uses
+
+
+def test_an_excluded_reason_names_no_api_its_shim_declares() -> None:
+    # docs/typecheck.md: "A reason names `pathlib` only where the module uses
+    # more of it than the shim declares, and the other shimmed modules
+    # likewise" (#300). A reason names neither a shimmed module the module
+    # uses only what the shim declares of, nor (`os.kill()`) a name the shim
+    # declares.
+    modules = package_modules()
+    wrong = []
+    for module, reason in EXCLUDED.items():
+        for name, attr in re.findall(r"`(\w+)\.(\w+)(?:\(\))?`", reason):
+            shim = _shim(name)
+            if shim is not None and _declares(shim, attr):
+                wrong.append(f"{module}: `{name}.{attr}` is declared by its shim")
+        # "more of X than its shim declares" names X for what the shim lacks.
+        bare = re.sub(r"more of [^;]*? than (?:its|their) shims? declares?", "", reason)
+        uses = _shimmed_uses(modules[module].read_text(encoding="utf-8"))
+        for name, names in uses.items():
+            shim = _shim(name)
+            assert shim is not None
+            if all(_declares(shim, n) for n in names) and re.search(
+                rf"(?<![\w.`]){re.escape(name)}(?![\w.(`])", bare
+            ):
+                wrong.append(
+                    f"{module}: names {name}, but its shim declares all the "
+                    f"module uses of it ({', '.join(sorted(names))})"
+                )
+    assert not wrong, "\n".join(wrong)
+
+
 _DOCS = Path(__file__).resolve().parents[2] / "docs" / "typecheck.md"
 
 
