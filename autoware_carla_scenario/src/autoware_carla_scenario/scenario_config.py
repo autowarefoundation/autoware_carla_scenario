@@ -87,6 +87,13 @@ class ServerConfig:
     #: trades wall-clock time for those clients keeping up.
     max_tick_rate_hz: float | None = None
 
+    #: The server's ``carla.Weather.FogDensityScale``: how thick a
+    #: ``fog_density`` is drawn, *None* for the server's own (0.001, a faint
+    #: haze even at 100; 0.01 draws fog a camera sees).  A server the run
+    #: starts is started with it (``-ExecCmds``); one already running must
+    #: have been.  The LiDARs' fog follows it, to match the cameras'.
+    fog_density_scale: float | None = None
+
 
 @dataclass
 class MapConfig:
@@ -264,6 +271,9 @@ class DriverLidarSpec:
     upper_fov_deg: float = 15.0
     lower_fov_deg: float = -25.0
     dropoff_general_rate: float = 0.0
+    weather_noise: float = 1.0
+    noise_seed: int = 0
+    fog_density_scale: float = 0.001
     position_x: float = 0.0
     position_y: float = 0.0
     position_z: float = 2.0

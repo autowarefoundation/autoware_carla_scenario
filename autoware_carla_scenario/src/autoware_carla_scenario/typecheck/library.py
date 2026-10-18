@@ -198,6 +198,7 @@ CHECKED: tuple[str, ...] = (
     "autoware_carla_scenario.sensor.base",
     "autoware_carla_scenario.sensor.carla_camera",
     "autoware_carla_scenario.sensor.carla_lidar",
+    "autoware_carla_scenario.sensor.lidar_weather",
     "autoware_carla_scenario.odd.route_plan",
     "autoware_carla_scenario.odd.scenario_measure",
     "autoware_carla_scenario.odd.unit_names",

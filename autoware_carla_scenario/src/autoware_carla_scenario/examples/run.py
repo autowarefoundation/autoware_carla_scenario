@@ -454,7 +454,7 @@ def build_ego_entity(cfg: DictConfig) -> EgoVehicle | None:
             )
             raise ValueError(msg)
 
-        driver_dict = _to_dict(driver_cfg)
+        driver_dict = _with_fog_density_scale(_to_dict(driver_cfg), cfg)
         control = ControlConfig.from_mapping(driver_dict.get("control", {}))
         bridge_dict = driver_dict.get("bridge")
         if bridge_dict is None:
@@ -639,13 +639,15 @@ def run_scenario_with_queue(
     autoware_launcher: AutowareLauncher | None = None,
     case: OddCase | None = None,
     video_size: tuple[int, int] = (DEFAULT_IMAGE_WIDTH, DEFAULT_IMAGE_HEIGHT),
+    server_extra_args: list[str] | None = None,
 ) -> ScenarioResult:
     """Run a single pre-built scenario using :class:`ScenarioQueue`.
 
     *case* is the case drawn from the ODD that it runs, recorded with its
     outcome in its coverage file (:meth:`ScenarioRunner.run_scenario`).
     *video_size* is the width and height of the video rendered from the run's
-    recording.
+    recording.  *server_extra_args* are passed to ``CarlaUnreal.sh`` when the
+    run starts the server (:func:`server_extra_args`).
 
     This is the extracted orchestration logic that was previously embedded
     inside :func:`run_scenario`.  Downstream projects can use this to execute
@@ -677,6 +679,7 @@ def run_scenario_with_queue(
         autoware_launcher=autoware_launcher,
         video_width=video_size[0],
         video_height=video_size[1],
+        server_extra_args=server_extra_args,
     )
     queue.add(scenario, case=case)
     with queue:
@@ -687,6 +690,34 @@ def run_scenario_with_queue(
 def _optional_float(value: object) -> float | None:
     """Read an optional numeric config value that may be absent or null."""
     return None if value is None else float(value)  # type: ignore[arg-type]
+
+
+def server_extra_args(cfg: DictConfig) -> list[str] | None:
+    """The arguments a server the run starts is started with, from ``server``.
+
+    ``server.fog_density_scale`` sets ``carla.Weather.FogDensityScale``, how
+    thick a ``fog_density`` is drawn; *None* when nothing is to be set.
+    """
+    scale = _optional_float((cfg.get("server") or {}).get("fog_density_scale"))
+    if scale is None:
+        return None
+    return [f"-ExecCmds=carla.Weather.FogDensityScale {scale:g}"]
+
+
+def _with_fog_density_scale(driver: dict[str, Any], cfg: DictConfig) -> dict[str, Any]:
+    """*driver* with ``server.fog_density_scale`` on every LiDAR that sets none.
+
+    The fog a LiDAR sees follows the scale the server draws it with, so the
+    LiDAR's matches the cameras' (:mod:`autoware_carla_scenario.sensor.lidar_weather`).
+    """
+    scale = _optional_float((cfg.get("server") or {}).get("fog_density_scale"))
+    lidars = driver.get("lidars")
+    if scale is None or not lidars:
+        return driver
+    return {
+        **driver,
+        "lidars": [{"fog_density_scale": scale, **dict(lidar)} for lidar in lidars],
+    }
 
 
 def _video_size(cfg: DictConfig) -> tuple[int, int]:
@@ -1125,6 +1156,7 @@ def run_batch(
         autoware_launcher=build_autoware_launcher(first_cfg),
         video_width=_video_size(first_cfg)[0],
         video_height=_video_size(first_cfg)[1],
+        server_extra_args=server_extra_args(first_cfg),
     )
 
     for cfg, scenario in zip(configs, scenarios):
@@ -1377,6 +1409,7 @@ def run_scenario(
         autoware_launcher=build_autoware_launcher(cfg),
         case=_odd_case(cfg),
         video_size=_video_size(cfg),
+        server_extra_args=server_extra_args(cfg),
     )
 
     status = "PASSED" if result.passed else "FAILED"

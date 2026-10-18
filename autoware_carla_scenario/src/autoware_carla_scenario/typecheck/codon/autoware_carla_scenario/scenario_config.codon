@@ -13,6 +13,7 @@ class ServerConfig:
     cooldown_seconds: float = 3.0
     cooldown_max_retries: int = 0
     max_tick_rate_hz: Optional[float] = None
+    fog_density_scale: Optional[float] = None
 
 
 class MapConfig:
@@ -72,6 +73,9 @@ class DriverLidarSpec:
     upper_fov_deg: float = 15.0
     lower_fov_deg: float = -25.0
     dropoff_general_rate: float = 0.0
+    weather_noise: float = 1.0
+    noise_seed: int = 0
+    fog_density_scale: float = 0.001
     position_x: float = 0.0
     position_y: float = 0.0
     position_z: float = 2.0

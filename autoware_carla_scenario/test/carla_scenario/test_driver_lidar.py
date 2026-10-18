@@ -17,6 +17,11 @@ from autoware_carla_scenario.driver.observation import (
 from autoware_carla_scenario.driver.renderer import RendererDataBuilder
 from autoware_carla_scenario.sensor import carla_lidar
 from autoware_carla_scenario.sensor.carla_lidar import CarlaLidarSensor
+from autoware_carla_scenario.sensor.lidar_weather import (
+    FOG_REFERENCE_SCALE,
+    LidarWeather,
+    apply_weather,
+)
 
 from .test_driver_renderer import _ego, _world
 
@@ -192,6 +197,151 @@ def test_attach_sweeps_once_an_interval_still_a_revolution_a_sweep() -> None:
     assert blueprint.attributes["rotation_frequency"] == "20.0"
     # Just under the interval, so two ticks' float deltas reach it.
     assert 0.0999 < float(blueprint.attributes["sensor_tick"]) < 0.1
+
+
+# ---------------------------------------------------------------------------
+# Weather
+# ---------------------------------------------------------------------------
+
+
+def _ring(range_m: float, n: int = 2000) -> np.ndarray:
+    """*n* returns at *range_m* all around the sensor, at intensity 1."""
+    angles = np.linspace(0.0, 2.0 * np.pi, n, endpoint=False)
+    points = np.zeros((n, 4), dtype=np.float32)
+    points[:, 0] = range_m * np.cos(angles)
+    points[:, 1] = range_m * np.sin(angles)
+    points[:, 3] = 1.0
+    return points
+
+
+def test_clear_weather_and_no_gain_leave_a_sweep_untouched() -> None:
+    raw = _ring(50.0)
+    assert apply_weather(raw, LidarWeather(), 1.0, 0, 0) is raw
+    assert apply_weather(raw, LidarWeather(precipitation=100.0), 0.0, 0, 0) is raw
+
+
+def test_fog_thins_far_returns_first_and_dims_them() -> None:
+    fog = LidarWeather(fog_density=100.0, fog_density_scale=FOG_REFERENCE_SCALE)
+    near = apply_weather(_ring(5.0), fog, 1.0, 0, 0)
+    far = apply_weather(_ring(40.0), fog, 1.0, 0, 0)
+    assert len(far) < len(near) < 2000
+    far_ranges = np.linalg.norm(far[:, :3], axis=1)
+    survivors = far[far_ranges > 30.0]
+    assert survivors.size and float(survivors[:, 3].max()) < 0.01
+    # The ones that came back early lie between the sensor and the ring.
+    assert np.any(far_ranges < 30.0)
+
+
+def test_fog_only_scatters_beyond_where_it_starts() -> None:
+    raw = _ring(20.0)
+    sweep = apply_weather(
+        raw,
+        LidarWeather(
+            fog_density=100.0, fog_distance=30.0, fog_density_scale=FOG_REFERENCE_SCALE
+        ),
+        1.0,
+        0,
+        0,
+    )
+    np.testing.assert_allclose(sweep, raw)
+
+
+def test_rain_moves_returns_along_their_rays() -> None:
+    sweep = apply_weather(_ring(80.0), LidarWeather(precipitation=100.0), 1.0, 0, 0)
+    ranges = np.linalg.norm(sweep[:, :3], axis=1)
+    kept = ranges[ranges > 60.0]
+    assert 0.0 < float(np.std(kept)) < 2.0
+    assert len(sweep) < 2000
+
+
+def test_the_fog_follows_the_servers_fog_density_scale() -> None:
+    thin = apply_weather(_ring(40.0), LidarWeather(fog_density=100.0), 1.0, 0, 0)
+    thick = apply_weather(
+        _ring(40.0),
+        LidarWeather(fog_density=100.0, fog_density_scale=0.01),
+        1.0,
+        0,
+        0,
+    )
+    # CARLA's default draws a tenth of the fog the tuned scale does.
+    assert len(thick) < len(thin)
+    with pytest.raises(ValueError, match="fog_density_scale"):
+        DriverLidarConfig(fog_density_scale=0.0)
+
+
+def test_weather_noise_scales_the_effect() -> None:
+    fog = LidarWeather(fog_density=50.0)
+    mild = apply_weather(_ring(40.0), fog, 0.5, 0, 0)
+    strong = apply_weather(_ring(40.0), fog, 2.0, 0, 0)
+    assert len(strong) < len(mild)
+
+
+def test_lidar_config_rejects_negative_weather_noise_and_seed() -> None:
+    with pytest.raises(ValueError, match="weather_noise"):
+        DriverLidarConfig(weather_noise=-1.0)
+    with pytest.raises(ValueError, match="noise_seed"):
+        DriverLidarConfig(noise_seed=-1)
+
+
+def _attached(lidar: CarlaLidarSensor, weather: SimpleNamespace) -> None:
+    blueprint = SimpleNamespace(
+        set_attribute=lambda name, value: None, has_attribute=lambda name: True
+    )
+    world = SimpleNamespace(
+        get_blueprint_library=lambda: SimpleNamespace(find=lambda name: blueprint),
+        spawn_actor=lambda bp, transform, attach_to: SimpleNamespace(
+            listen=lambda cb: None
+        ),
+        get_weather=lambda: weather,
+    )
+    lidar.attach(world, SimpleNamespace(type_id="vehicle.lincoln.mkz"))
+
+
+def _ring_measurement(frame: int) -> SimpleNamespace:
+    return SimpleNamespace(frame=frame, raw_data=_ring(40.0).tobytes())
+
+
+def test_the_sensor_puts_the_worlds_weather_on_its_sweeps(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(carla_lidar, "_SWEEP_TIMEOUT", 0.05)
+    weather = SimpleNamespace(precipitation=0.0, fog_density=80.0, fog_distance=0.0)
+    lidar = CarlaLidarSensor(DriverLidarConfig())
+    _attached(lidar, weather)
+    lidar._receive(_ring_measurement(10))  # noqa: SLF001
+    first = lidar.get_sweep(10)
+    assert first is not None and len(first) < 2000
+    # Asked again for the same sweep, the same noise.
+    again = lidar.get_sweep(10)
+    assert again is not None and np.array_equal(first, again)
+    # The weather clears mid-run: the next sweep is CARLA's own.
+    weather.fog_density = 0.0
+    lidar._receive(_ring_measurement(11))  # noqa: SLF001
+    clear = lidar.get_sweep(11)
+    assert clear is not None and len(clear) == 2000
+
+
+def test_the_weather_noise_repeats_with_its_seed_and_can_be_turned_off(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(carla_lidar, "_SWEEP_TIMEOUT", 0.05)
+    weather = SimpleNamespace(precipitation=100.0, fog_density=0.0, fog_distance=0.0)
+    sweeps = []
+    for config in (
+        DriverLidarConfig(noise_seed=3),
+        DriverLidarConfig(noise_seed=3),
+        DriverLidarConfig(noise_seed=4),
+        DriverLidarConfig(weather_noise=0.0),
+    ):
+        lidar = CarlaLidarSensor(config)
+        _attached(lidar, weather)
+        lidar._receive(_ring_measurement(10))  # noqa: SLF001
+        sweep = lidar.get_sweep(10)
+        assert sweep is not None
+        sweeps.append(sweep)
+    assert np.array_equal(sweeps[0], sweeps[1])
+    assert not np.array_equal(sweeps[0], sweeps[2])
+    np.testing.assert_array_equal(sweeps[3], _ring(40.0))
 
 
 # ---------------------------------------------------------------------------
