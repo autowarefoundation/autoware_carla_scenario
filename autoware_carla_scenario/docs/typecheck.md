@@ -84,9 +84,11 @@ same inputs reads the verdict instead of compiling. The key covers
 everything the verdict depends on. For the compile, that is the scenario's
 (or the framework's) modules, the generated driver's shape, the model,
 typesafe_carla's Codon library, and the compiler's version and standard
-library. For the None check, it is every Python source and stub of the
-framework, the checker included (mypy reads them for the types of what a
-scenario calls), the name and version of every other installed distribution
+library. For the None check, which the scenario, ODD and library checks all
+run, it is every Python source and stub of the framework, the checker
+included (mypy reads them for the types of what a scenario calls, and the
+CARLA stubs are written by its `carla_stubs.py` from typesafe_carla's Codon
+library, already in the key), the name and version of every other installed distribution
 (mypy follows a scenario's imports into numpy, lanelet2 or typesafe_carla),
 the mypy version, and the Python version. And it includes what the checks
 made in Python found before the compile: an import the framework's Python
@@ -942,6 +944,24 @@ assert result.ok, result.format()
 ```
 
 `test_typecheck_library.py` makes the same check in the test suite.
+
+**The checked modules get the None check too** (#277), as a scenario's
+modules do: after the compile, mypy runs over every module the run compiled,
+with the CARLA stubs, and an `Optional` used without a test for `None` fails
+the check at its line. Codon unwraps an `Optional` in the framework as it does
+in a scenario, so the compile alone accepted `CollisionCondition` reading
+`CollisionEvent.other_actor` (`None` for a collision with map geometry) as a
+`carla.Actor`, and the sensor callback raised in Python:
+
+```text
+conditions/collision.py:158:32: error: Incompatible types in assignment (expression has type "Actor | None", variable has type "Actor"): Codon unwraps an Optional implicitly, so test the value for None before this use, or Python fails here when it is None (mypy: assignment)
+```
+
+It adds about 11 seconds to a run with mypy's cache cold, and under a second
+with it warm, to a compile of about a minute. A verdict kept between runs
+(below) holds the None check's too: the key already covers what it reads.
+`test_typecheck_none_check.py` runs the same None check over `CHECKED`
+without Codon, so a machine without a Codon compiler catches it as well.
 
 A run that names modules is a slice of the full run. With the named
 modules, it compiles from their source the `CHECKED` modules they import,

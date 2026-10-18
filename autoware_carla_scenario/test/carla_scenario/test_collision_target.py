@@ -27,7 +27,7 @@ def _other(type_id: str, role_name: str | None = None) -> MagicMock:
     return actor
 
 
-def _event(other: MagicMock, impulse: float = 100.0) -> MagicMock:
+def _event(other: MagicMock | None, impulse: float = 100.0) -> MagicMock:
     event = MagicMock()
     event.other_actor = other
     event.normal_impulse = carla.Vector3D(impulse, 0.0, 0.0)
@@ -110,6 +110,80 @@ class TestTypeTarget:
     def test_any_matches_everything(self) -> None:
         assert CollisionTargetType.ANY.matches("walker.pedestrian.0001")
         assert CollisionTargetType.ANY.matches(None)
+
+
+class TestNotAnActor:
+    """A collision with map geometry: ``other_actor`` is ``None`` (#277).
+
+    CARLA gives no actor for the other side of a collision with a wall, a
+    kerb or another part of the map that is not an actor.  Reading its
+    attributes raised inside the sensor callback, so the collision was never
+    latched and the condition silently missed it.
+    """
+
+    def test_an_untargeted_condition_counts_it(self) -> None:
+        condition = CollisionCondition(label="any")
+        condition._on_collision(_event(None))
+        result = _verdict(condition)
+        assert result is not None
+        assert not result.passed
+        assert "not an actor" in result.message
+
+    def test_the_impulse_floor_still_applies(self) -> None:
+        condition = CollisionCondition(min_impulse=50.0, label="any")
+        condition._on_collision(_event(None, impulse=10.0))
+        assert _verdict(condition) is None
+
+    def test_the_details_say_it_was_not_an_actor(self) -> None:
+        condition = CollisionCondition(label="any")
+        condition._on_collision(_event(None))
+        _verdict(condition)
+        assert condition.get_details()["other_actor_type"] == "not an actor"
+
+    def test_an_explicit_any_counts_it(self) -> None:
+        condition = CollisionCondition(target_type=CollisionTargetType.ANY, label="any")
+        condition._on_collision(_event(None))
+        assert _verdict(condition) is not None
+
+    @pytest.mark.parametrize(
+        "kwargs",
+        [
+            {"target": "npc1"},
+            {"target_type": CollisionTargetType.VEHICLE},
+            {"target_type": CollisionTargetType.PEDESTRIAN},
+            {"target_type": CollisionTargetType.STATIC},
+        ],
+        ids=["entity", "vehicle", "pedestrian", "static"],
+    )
+    def test_a_targeted_condition_ignores_it(self, kwargs: dict[str, object]) -> None:
+        """Neither the entity named nor of a type named; nor does it consume
+        the latch, so the collision the scenario is about is still seen."""
+        condition = CollisionCondition(label="targeted", **kwargs)  # type: ignore[arg-type]
+        condition._on_collision(_event(None))
+        assert _verdict(condition) is None
+
+        condition._on_collision(
+            _event(_other("static.prop.streetbarrier", role_name="npc1"))
+        )
+        wanted = kwargs.get("target_type") in (None, CollisionTargetType.STATIC)
+        assert (_verdict(condition) is not None) is wanted
+
+    def test_an_actor_collision_after_it_is_not_reported_as_one(self) -> None:
+        """The first collision is latched: the details name it, not a later one."""
+        condition = CollisionCondition(label="any")
+        condition._on_collision(_event(None))
+        condition._on_collision(_event(_other("vehicle.tesla.model3")))
+        result = _verdict(condition)
+        assert result is not None
+        assert condition.get_details()["other_actor_type"] == "not an actor"
+
+    def test_an_actor_collision_is_still_named(self) -> None:
+        condition = CollisionCondition(label="any")
+        condition._on_collision(_event(_other("vehicle.tesla.model3")))
+        result = _verdict(condition)
+        assert result is not None
+        assert "'vehicle.tesla.model3'" in result.message
+        assert condition.get_details()["other_actor_type"] == "vehicle.tesla.model3"
 
 
 class TestConstruction:

@@ -1766,6 +1766,37 @@ def test_a_default_of_the_wrong_type_is_reported(
     assert "with the default of `max_distance`" in result.format(), result.format()
 
 
+_NONE_MISUSED = """
+from __future__ import annotations
+
+from typing import Optional
+
+
+def reading(x: float) -> Optional[float]:
+    return x if x > 0.0 else None
+
+
+def halved(x: float) -> float:
+    value: float = reading(x)
+    return value / 2.0
+"""
+
+
+@needs_codon
+def test_a_none_misused_in_a_checked_module_is_reported(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Codon unwraps the Optional, so the compile accepts it; the None check
+    # the scenario check runs is run over the checked modules too (#277).
+    result = _check_case(_NONE_MISUSED, tmp_path, monkeypatch)
+    assert not result.ok
+    located = [d for d in result.diagnostics if d.path and d.path.endswith(".py")]
+    assert [(d.path, d.line) for d in located] == [
+        (str(tmp_path / "zz_library_check_case.py"), 12)
+    ], result.format()
+    assert "test the value for None" in located[0].message
+
+
 _INIT_AND_SETTER = """
 from __future__ import annotations
 

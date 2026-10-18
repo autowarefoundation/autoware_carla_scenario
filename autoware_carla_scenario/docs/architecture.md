@@ -481,6 +481,14 @@ classDiagram
 | **Stateful** | `StickyCondition`, `PersistentCondition` | Latch once satisfied / persist across ticks |
 | **Utility** | `AlwaysTrueCondition` | Unconditional trigger (default for actions) |
 
+> **A collision with map geometry is a collision.** CARLA gives no actor for
+> the other side of a collision with a wall, a kerb or another part of the map
+> that is not an actor (`CollisionEvent.other_actor` is `None`). An untargeted
+> `CollisionCondition` (no `target`, `target_type` `ANY`) fires on it, and its
+> details say `other_actor_type: "not an actor"`. A targeted one ignores it,
+> as it ignores any collision that is not the one named, and keeps waiting for
+> that one (#277).
+
 > **Distances carry a coordinate system.** `EntityDistanceCondition`,
 > `TimeHeadwayCondition` and `TimeToCollisionCondition` each take a
 > `coordinate_system`, which is OpenSCENARIO's `coordinateSystem` attribute:
