@@ -76,9 +76,9 @@ class CarlaLidarSensorConfig:
     weather_noise: float = 1.0
     #: Seed of the weather noise, so a run repeats its sweeps.
     noise_seed: int = 0
-    #: The server's ``carla.Weather.FogDensityScale``, which the fog is drawn
-    #: with: the LiDAR's fog follows it, to match what the cameras see.  A
-    #: scenario run sets it from ``server.fog_density_scale``.
+    #: The server's ``carla.Weather.FogDensityScale``, which the LiDAR's fog
+    #: follows.  A scenario run sets it from ``server.fog_density_scale``;
+    #: built by hand, match it to the server's.
     fog_density_scale: float = CARLA_FOG_DENSITY_SCALE
     position_x: float = 0.0
     position_y: float = 0.0

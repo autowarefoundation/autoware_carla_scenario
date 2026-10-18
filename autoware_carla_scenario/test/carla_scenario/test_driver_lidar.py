@@ -256,15 +256,13 @@ def test_rain_moves_returns_along_their_rays() -> None:
 
 def test_the_fog_follows_the_servers_fog_density_scale() -> None:
     thin = apply_weather(_ring(40.0), LidarWeather(fog_density=100.0), 1.0, 0, 0)
-    thick = apply_weather(
-        _ring(40.0),
-        LidarWeather(fog_density=100.0, fog_density_scale=0.01),
-        1.0,
-        0,
-        0,
-    )
+    thick_fog = LidarWeather(fog_density=100.0, fog_density_scale=0.01)
+    thick = apply_weather(_ring(40.0), thick_fog, 1.0, 0, 0)
     # CARLA's default draws a tenth of the fog the tuned scale does.
     assert len(thick) < len(thin)
+
+
+def test_lidar_config_rejects_a_non_positive_fog_density_scale() -> None:
     with pytest.raises(ValueError, match="fog_density_scale"):
         DriverLidarConfig(fog_density_scale=0.0)
 
