@@ -81,7 +81,6 @@ def batch(monkeypatch: pytest.MonkeyPatch) -> _Batch:
             lanelet2_path=None,
             name="M",
             projector_type=None,
-            local_projection=None,
         ),
     )
     monkeypatch.setattr(run, "build_traffic_backend", lambda _cfg: None)

@@ -50,7 +50,7 @@ __all__ = [
 #: one map at a time.
 _MAP_CACHE_SIZE = 2
 
-_MAP_CACHE: "OrderedDict[tuple[str, str, str, str], _LoadedMap]" = OrderedDict()
+_MAP_CACHE: "OrderedDict[tuple[str, str, str], _LoadedMap]" = OrderedDict()
 
 #: Distinct constraint trees whose matches are remembered per map.  A session
 #: writes a bounded number of them -- one per edit to a search -- and each is a
@@ -324,7 +324,7 @@ def lanelet2_source(
     return resolved if resolved.is_file() else None
 
 
-def _cache_key(paths: MapPaths) -> Optional[tuple[str, str, str, str]]:
+def _cache_key(paths: MapPaths) -> Optional[tuple[str, str, str]]:
     """Return the cache key for a resolved map, or ``None`` when it has none.
 
     Every input :func:`~autoware_carla_scenario.sweeper.map_loader.load_map`
@@ -340,7 +340,6 @@ def _cache_key(paths: MapPaths) -> Optional[tuple[str, str, str, str]]:
         str(paths.lanelet2_path),
         str(paths.xodr_path or ""),
         paths.projector_type or "",
-        paths.local_projection or "",
     )
 
 

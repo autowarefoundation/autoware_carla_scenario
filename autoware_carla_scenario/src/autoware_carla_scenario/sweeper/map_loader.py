@@ -45,7 +45,6 @@ def load_lanelet2_map(
     lanelet2_path: str | Path,
     xodr_path: str | Path | None = None,
     projector_type: str | None = None,
-    local_projection: str | None = None,
 ) -> lanelet2.core.LaneletMap:
     """Load a Lanelet2 map, anchored at the origin its map states.
 
@@ -62,9 +61,6 @@ def load_lanelet2_map(
         projector_type: Which projection to read the map with.  Leave it unset
             to take it from the map's own ``map_projector_info.yaml``, exactly
             as ``MapManager`` does.
-        local_projection: How a ``projector_type: Local`` map is read --
-            ``local_xy`` (the default) or ``utm_latlon``; see
-            :func:`~autoware_carla_scenario.coordinate.projection.load_lanelet2`.
 
     Returns:
         A ``lanelet2.core.LaneletMap`` instance.
@@ -92,7 +88,7 @@ def load_lanelet2_map(
 
     origin = lanelet2.io.Origin(lat, lon)
     lanelet_map, _projector, projector_name = load_lanelet2(
-        osm_path, origin, projector_type, local_projection
+        osm_path, origin, projector_type
     )
 
     logger.info(
@@ -110,7 +106,7 @@ def load_map(paths: "MapPaths") -> lanelet2.core.LaneletMap:
     The one way this framework turns a resolved map config into a parsed map.
     The sweeper, the sweep resolver and the editor's preview all load the same
     map for the same purpose -- deciding which lanelet a scenario means -- so
-    they ask the same way, with the same four inputs.
+    they ask the same way, with the same three inputs.
 
     Raises:
         FileNotFoundError: If *paths* names no Lanelet2 map, or it is missing.
@@ -120,9 +116,4 @@ def load_map(paths: "MapPaths") -> lanelet2.core.LaneletMap:
             "This scenario names no Lanelet2 map. Set map.source, or "
             "map.lanelet2_path, in the config."
         )
-    return load_lanelet2_map(
-        paths.lanelet2_path,
-        paths.xodr_path,
-        paths.projector_type,
-        paths.local_projection,
-    )
+    return load_lanelet2_map(paths.lanelet2_path, paths.xodr_path, paths.projector_type)

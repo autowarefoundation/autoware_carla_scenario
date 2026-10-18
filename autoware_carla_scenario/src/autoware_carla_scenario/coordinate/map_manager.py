@@ -133,7 +133,6 @@ class MapManager:
         lanelet2_path: Path,
         carla_world: Optional[carla.World] = None,
         projector_type: Optional[str] = None,
-        local_projection: Optional[str] = None,
     ) -> None:
         """Load both map files.
 
@@ -151,15 +150,11 @@ class MapManager:
             single-point fallback using the XODR reference line is used.
         projector_type:
             Which projection to read the Lanelet2 map with -- ``"mgrs"``,
-            ``"utm"``, ``"local_cartesian"`` or ``"transverse_mercator"``.
+            ``"utm"``, ``"local_xy"``, ``"local_cartesian"`` or
+            ``"transverse_mercator"``.
             Leave it unset (the default) to take it from the map's own
             ``map_projector_info.yaml``, the file Autoware reads for the same
             purpose; ``mgrs`` is used when there is no such file.
-        local_projection:
-            How a ``projector_type: Local`` map is read -- ``"local_xy"``
-            (the default: its ``local_x``/``local_y`` tags) or
-            ``"utm_latlon"`` (its lat/lon through UTM); see
-            :func:`~.projection.load_lanelet2`.
 
         Raises
         ------
@@ -195,7 +190,7 @@ class MapManager:
 
         origin = lanelet2.io.Origin(lat, lon)
         self._lanelet_map, projector, projector_type = load_lanelet2(
-            lanelet2_path, origin, projector_type, local_projection
+            lanelet2_path, origin, projector_type
         )
         logger.info(
             "Loaded %s with the %s projection", lanelet2_path.name, projector_type

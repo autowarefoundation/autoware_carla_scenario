@@ -77,7 +77,6 @@ class ScenarioQueue:
     _cooldown_max_retries: int
     _max_tick_rate_hz: Optional[float]
     _projector_type: Optional[str]
-    _local_projection: Optional[str]
     _traffic_backend: Optional[TrafficBackend]
     _odd: OddDefinition
     _autoware_launcher: Optional["AutowareLauncher"]
@@ -116,7 +115,6 @@ class ScenarioQueue:
         cooldown_max_retries: int = 0,
         max_tick_rate_hz: Optional[float] = None,
         projector_type: Optional[str] = None,
-        local_projection: Optional[str] = None,
         traffic_backend: Optional[TrafficBackend] = None,
         odd: Union[str, OddDefinition, None] = None,
         autoware_launcher: Optional["AutowareLauncher"] = None,
@@ -165,8 +163,6 @@ class ScenarioQueue:
                 next scenario connects.  0 disables the cooldown.
             projector_type: Overrides the projection the Lanelet2 map is read
                 with; the map's ``map_projector_info.yaml`` decides when unset.
-            local_projection: How a ``projector_type: Local`` map is read --
-                ``local_xy`` (the default) or ``utm_latlon``.
             max_tick_rate_hz: Upper bound on how fast the runner steps the
                 world, or *None* to step as fast as the server allows.  Cap it
                 to the rate of the slowest client reading the simulation.
@@ -223,7 +219,6 @@ class ScenarioQueue:
         self._cooldown_max_retries = cooldown_max_retries
         self._max_tick_rate_hz = max_tick_rate_hz
         self._projector_type = projector_type
-        self._local_projection = local_projection
         self._traffic_backend = traffic_backend
         # Resolved now, so a misspelt ODD fails before CARLA starts.
         self._odd = resolve_odd(odd)
@@ -518,7 +513,6 @@ class ScenarioQueue:
                 lanelet2_path=self._lanelet2_path,
                 carla_world=self._runner._world,
                 projector_type=self._projector_type,
-                local_projection=self._local_projection,
             )
 
     def _capture_opendrive(self) -> Optional[Path]:

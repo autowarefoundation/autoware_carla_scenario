@@ -539,7 +539,6 @@ def test_run_batch_gives_each_scenario_its_own_timeout(
             lanelet2_path=None,
             name="M",
             projector_type=None,
-            local_projection=None,
         ),
     )
     monkeypatch.setattr(run, "build_traffic_backend", lambda _cfg: None)
@@ -615,7 +614,6 @@ def test_a_batch_lets_go_of_each_scenario_once_it_has_run(
             lanelet2_path=None,
             name="M",
             projector_type=None,
-            local_projection=None,
         ),
     )
     monkeypatch.setattr(run, "build_traffic_backend", lambda _cfg: None)
@@ -685,7 +683,6 @@ def test_a_batch_goes_on_past_a_case_that_cannot_run(
             lanelet2_path=None,
             name="M",
             projector_type=None,
-            local_projection=None,
         ),
     )
     monkeypatch.setattr(run, "build_traffic_backend", lambda _cfg: None)

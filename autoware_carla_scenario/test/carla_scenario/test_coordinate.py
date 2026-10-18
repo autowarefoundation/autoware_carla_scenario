@@ -24,7 +24,6 @@ from autoware_carla_scenario.coordinate import (
 from autoware_carla_scenario.coordinate.map_manager import _parse_geo_reference
 from autoware_carla_scenario.coordinate.projection import (
     LOCAL_XY,
-    UTM_LATLON,
     load_lanelet2,
 )
 from autoware_carla_scenario.coordinate.projection import (
@@ -46,6 +45,7 @@ DATA_DIR = Path(__file__).parent / "data"
 _CONVERTER_TEST_DATA = Path(__file__).resolve().parents[3] / "data"
 XODR_PATH = _CONVERTER_TEST_DATA / "nishishinjuku_carla.xodr"
 OSM_PATH = _CONVERTER_TEST_DATA / "nishishinjuku.osm"
+TWO_WAY = Path(__file__).resolve().parents[1] / "data" / "two_way_street"
 
 
 # ---------------------------------------------------------------------------
@@ -121,13 +121,12 @@ class TestReadProjectorType:
         map_path.write_text("<osm/>", encoding="utf-8")
         return map_path
 
-    def test_local_maps_are_read_with_utm(self, tmp_path):
-        # A Local map's lat/lon -- what a node without local_x/local_y falls
-        # back to, and the whole map under utm_latlon -- is read through UTM at
-        # the map origin; MGRS would tear it apart at a zone boundary, which is
-        # exactly where the CARLA towns sit.
+    def test_local_maps_are_read_from_their_local_tags(self, tmp_path):
+        # local_xy, whose lat/lon fallback is UTM at the map origin; MGRS would
+        # tear it apart at a zone boundary, which is exactly where the CARLA
+        # towns sit.
         map_path = self._map_with_info(tmp_path, "projector_type: Local\n")
-        assert _read_projector_type(map_path) == "utm"
+        assert _read_projector_type(map_path) == LOCAL_XY
 
     def test_mgrs_maps_are_read_with_mgrs(self, tmp_path):
         map_path = self._map_with_info(tmp_path, "projector_type: MGRS\n")
@@ -227,20 +226,14 @@ class TestLocalProjection:
         return map_path
 
     @classmethod
-    def _tangent_plane_map(cls, tmp_path: Path, **kwargs) -> Path:
-        """A Local map whose lat/lon a projection other than UTM derived."""
+    def _tangent_plane_map(
+        cls, tmp_path: Path, projector: str = "LocalCartesianProjector", **kwargs
+    ) -> Path:
+        """A Local map whose lat/lon *projector* derived: not UTM, by default."""
         import lanelet2.projection
 
-        projector = lanelet2.projection.LocalCartesianProjector(cls._origin())
-        return cls._write_map(tmp_path, projector, **kwargs)
-
-    @classmethod
-    def _utm_map(cls, tmp_path: Path) -> Path:
-        """A Local map whose lat/lon UTM derived, as the CARLA towns' are."""
-        import lanelet2.projection
-
-        projector = lanelet2.projection.UtmProjector(cls._origin())
-        return cls._write_map(tmp_path, projector)
+        latlon = getattr(lanelet2.projection, projector)(cls._origin())
+        return cls._write_map(tmp_path, latlon, **kwargs)
 
     @classmethod
     def _offsets(cls, lanelet_map) -> dict[int, float]:
@@ -260,37 +253,29 @@ class TestLocalProjection:
         assert name == LOCAL_XY
         assert max(self._offsets(lanelet_map).values()) < 1e-6
         assert "from local_x/local_y" in caplog.text
+        # Its lat/lon did not come from UTM: the two readings disagree.
+        assert "disagree" in caplog.text
 
-    def test_lat_lon_through_utm_misplaces_a_map_projected_otherwise(
-        self, tmp_path, caplog
-    ):
+    def test_lat_lon_through_utm_misplaces_a_map_projected_otherwise(self, tmp_path):
         # What the issue found: lat/lon that did not come from UTM, read back
-        # through it, land measurably off -- and that is warned about.
+        # through it, land measurably off.
         map_path = self._tangent_plane_map(tmp_path)
-        with caplog.at_level("INFO"):
-            lanelet_map, _projector, name = load_lanelet2(
-                map_path, self._origin(), local_projection=UTM_LATLON
-            )
+        lanelet_map, _projector, name = load_lanelet2(
+            map_path, self._origin(), projector_type="utm"
+        )
         assert name == "utm"
         assert max(self._offsets(lanelet_map).values()) > 0.01
-        assert "disagree" in caplog.text
 
-    def test_the_readings_disagreeing_is_warned_about_under_local_xy(
-        self, tmp_path, caplog
+    @pytest.mark.parametrize("projector_type", [None, "utm"])
+    def test_a_carla_town_reads_the_same_either_way(
+        self, tmp_path, caplog, projector_type
     ):
-        map_path = self._tangent_plane_map(tmp_path)
-        with caplog.at_level("WARNING"):
-            load_lanelet2(map_path, self._origin())
-        assert "disagree" in caplog.text
-
-    @pytest.mark.parametrize("reading", [LOCAL_XY, UTM_LATLON])
-    def test_a_carla_town_reads_the_same_either_way(self, tmp_path, caplog, reading):
         # The official CARLA towns derive their lat/lon from local_x/local_y
         # with UTM at the origin: both readings agree, and nothing is warned.
-        map_path = self._utm_map(tmp_path)
+        map_path = self._tangent_plane_map(tmp_path, projector="UtmProjector")
         with caplog.at_level("WARNING"):
             lanelet_map, _projector, _name = load_lanelet2(
-                map_path, self._origin(), local_projection=reading
+                map_path, self._origin(), projector_type=projector_type
             )
         assert max(self._offsets(lanelet_map).values()) < 0.01
         assert "disagree" not in caplog.text
@@ -300,9 +285,9 @@ class TestLocalProjection:
         lanelet_map, _projector, _name = load_lanelet2(map_path, self._origin())
         offsets = self._offsets(lanelet_map)
         assert max(offsets[1], offsets[2], offsets[3]) < 1e-6
-        # Node 4 is where utm_latlon puts it.
+        # Node 4 is where utm puts it.
         through_utm, _projector, _name = load_lanelet2(
-            map_path, self._origin(), local_projection=UTM_LATLON
+            map_path, self._origin(), projector_type="utm"
         )
         assert offsets[4] == pytest.approx(self._offsets(through_utm)[4], abs=1e-9)
         assert offsets[4] > 0.01
@@ -321,14 +306,6 @@ class TestLocalProjection:
         )
         assert [point.id for point in lanelet_map.pointLayer.search(box)] == [4]
 
-    def test_a_forced_projector_reads_lat_lon(self, tmp_path):
-        map_path = self._tangent_plane_map(tmp_path)
-        lanelet_map, _projector, name = load_lanelet2(
-            map_path, self._origin(), projector_type="utm"
-        )
-        assert name == "utm"
-        assert max(self._offsets(lanelet_map).values()) > 0.01
-
     def test_a_map_that_is_not_local_ignores_its_local_tags(self, tmp_path):
         map_path = self._tangent_plane_map(
             tmp_path, descriptor="projector_type: TransverseMercator\n"
@@ -337,10 +314,15 @@ class TestLocalProjection:
         assert name == "transverse_mercator"
         assert max(self._offsets(lanelet_map).values()) > 1e-6
 
-    def test_an_unknown_reading_is_refused(self, tmp_path):
-        map_path = self._tangent_plane_map(tmp_path)
-        with pytest.raises(ValueError, match="local_projection"):
-            load_lanelet2(map_path, self._origin(), local_projection="mgrs")
+    def test_local_xy_can_be_asked_for(self, tmp_path):
+        map_path = self._tangent_plane_map(
+            tmp_path, descriptor="projector_type: MGRS\n"
+        )
+        lanelet_map, _projector, name = load_lanelet2(
+            map_path, self._origin(), projector_type=LOCAL_XY
+        )
+        assert name == LOCAL_XY
+        assert max(self._offsets(lanelet_map).values()) < 1e-6
 
     def test_both_loaders_read_the_two_way_street_from_its_local_tags(self):
         # roadgen derived the fixture's lat/lon on a tangent plane, 1.3 m from
@@ -348,9 +330,8 @@ class TestLocalProjection:
         # so the lanelet a sweep picks is the one the run poses a vehicle on.
         from autoware_carla_scenario.sweeper.map_loader import load_lanelet2_map
 
-        street = Path(__file__).resolve().parents[1] / "data" / "two_way_street"
-        osm = street / "lanelet2_map.osm"
-        xodr = street / "two_way_street.xodr"
+        osm = TWO_WAY / "lanelet2_map.osm"
+        xodr = TWO_WAY / "two_way_street.xodr"
         swept = load_lanelet2_map(osm, xodr).pointLayer[1001]
         assert (swept.x, swept.y) == pytest.approx((100.0, 3.5), abs=1e-6)
 
