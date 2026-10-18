@@ -404,6 +404,32 @@ def _destroy_all_dynamic_actors(
         logger.info("[%s] Destroyed %d leftover actor(s)", scenario_name, destroyed)
 
 
+def _destroy_leftovers_before_reload(world: "carla.World", scenario_name: str) -> None:
+    """Destroy what a run left in *world* through the server, before a map
+    reload would remove it.
+
+    The reload removes these actors too, but it does not release a sensor
+    that is still listening. Its stream stays open in the server and in the
+    client and keeps waking both of them. A ``CollisionCondition`` leaves such
+    a sensor in every run, because nothing destroys it. Every case then adds
+    thousands of context switches per tick to each process, and after a few
+    cases the tick loop is a fifth slower (#290). Destroying the actors
+    through the server first releases the stream. The video's replay used to
+    do that before every reload, as a side effect, which hid the leak.
+
+    Everything goes, an attached ego included, because the reload would
+    remove it anyway. A failure is logged, and the reload still runs.
+    """
+    try:
+        _destroy_all_dynamic_actors(world, scenario_name)
+    except Exception:  # noqa: BLE001 - the reload must still happen
+        logger.warning(
+            "[%s] Destroying the run's actors before the reload failed",
+            scenario_name,
+            exc_info=True,
+        )
+
+
 def _ego_markers(ego: "EgoVehicle") -> Optional[DebugMarkers]:
     """What *ego* shows on the tick the world has just ticked to (its plan),
     for the trajectory log; None when the entity fails to say."""
@@ -892,10 +918,13 @@ class ScenarioRunner:
         # This is more reliable than destroying actors individually, which
         # can fail with "failed to destroy actor" errors from the CARLA
         # server.  Flush any pending server-side operations (e.g. replayer
-        # shutdown) before reloading.
+        # shutdown) before reloading.  The run's actors are still destroyed
+        # first, on a best-effort basis: the reload alone leaves a listening
+        # sensor's stream open (_destroy_leftovers_before_reload).
         try:
             world = self._client.get_world()
             world.tick()
+            _destroy_leftovers_before_reload(world, scenario_name)
             if self._batch_map:
                 # The runs' map, not the current one, and its OpenDRIVE
                 # installed again: another client may have loaded a world (or
