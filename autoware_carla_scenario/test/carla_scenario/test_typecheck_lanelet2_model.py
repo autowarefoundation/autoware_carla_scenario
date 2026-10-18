@@ -292,6 +292,14 @@ def test_the_map_and_its_lanelets(lanelet_map: Any) -> None:
     assert isinstance("subtype" in lanelet.attributes, bool)
     assert isinstance(lanelet.attributes["subtype"], str)
     assert isinstance(len(lanelet.attributes), int)
+    # items(): a list of (key, value) pairs of strings, in key order.
+    items = lanelet.attributes.items()
+    assert isinstance(items, list) and items
+    assert all(
+        isinstance(i, tuple) and [type(x) for x in i] == [str, str] for i in items
+    )
+    assert [k for k, _v in items] == sorted(k for k, _v in items)
+    assert dict(items)["subtype"] == lanelet.attributes["subtype"]
     centerline = lanelet.centerline
     assert isinstance(centerline, core.ConstLineString3d)
     # A Lanelet's bounds are its mutable twin's; the model reads them as Const.
