@@ -389,5 +389,14 @@ def resolve_projector(lanelet2_path: Path, origin: lanelet2.io.Origin,
     raise NotImplementedError()
 
 
+# load_lanelet2(...): the map, the projector it was read with and the
+# reading's name. Raises ValueError for a projector_type it does not know.
+def load_lanelet2(lanelet2_path: Path, origin: lanelet2.io.Origin,
+                  projector_type: Optional[str] = None
+                  ) -> Tuple[lanelet2.core.LaneletMap,
+                             lanelet2.projection.Projector, str]:
+    raise NotImplementedError()
+
+
 def _parse_geo_reference(xodr_content: str) -> Tuple[float, float, float]:
     raise NotImplementedError()

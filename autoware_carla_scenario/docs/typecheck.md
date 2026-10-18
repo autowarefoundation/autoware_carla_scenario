@@ -1071,7 +1071,8 @@ the map manager that loads the Lanelet2 map and the OpenDRIVE road network
 (`coordinate.map_manager`) and the sweeper's lighter loader of the Lanelet2
 map (`sweeper.map_loader`), with the projection and origin both read a map
 with (`coordinate.projection`; not how it reads `map_projector_info.yaml`,
-whose YAML values are of any type), what places a trajectory's vertices in CARLA
+whose YAML values are of any type, nor how it moves a `Local` map's points to
+their `local_x`/`local_y` tags), what places a trajectory's vertices in CARLA
 world coordinates (`trajectory.resolve`),
 the sweeper's lanelet constraints and parameter bindings
 (`sweeper.constraints`, `sweeper.bindings`) and the route's map questions,
@@ -1119,8 +1120,8 @@ driver's configs and client interface, trajectory follower and observations
 `driver.geometry`), and the `autoware_bridge`, `autoware_stack`, `entity`,
 `driver`, `maps` and `coverage` packages themselves, whose `__init__` re-exports what is not checked
 through models of it (see *A class a checked package only re-exports*
-below). 90
-functions and methods of those modules are `UNCALLED` (19 of them
+below). 91
+functions and methods of those modules are `UNCALLED` (20 of them
 protected helpers, see *What is compiled* below): most of them a
 condition's `get_details()` or a backend's `describe()`, what takes a traffic
 backend's options node (`Mapping[str, Any]`), what reads a route search, a
@@ -1133,7 +1134,9 @@ framework pin, a dict of str and bool values (`Pin.uv_source()`), the two member
 the run-time wrapper of `TrajectoryVertex.__init__`
 (`_refusing_vertex_times`), the road-marking pattern of the stop lines, which returns a `refers`
 parameter (any of lanelet2's primitives) as a line string
-(`utils.stop_line._road_marking_stop_lines()`),
+(`utils.stop_line._road_marking_stop_lines()`), what moves a `Local` map's
+points to their `local_x`/`local_y` tags and rebuilds the map, which the
+lanelet2 model has no setters for (`coordinate.projection._read_local_tags()`),
 `signals.build_controllers()`, which reads
 the authoring package's pydantic specs, what builds the `scenario_bridge`
 node's command from its ROS parameters (`bridge_ros_args()`,
