@@ -13,3 +13,18 @@ class ActionState:
     RUNNING: ClassVar[ActionState] = ActionState("runningState")
     END_TRANSITION: ClassVar[ActionState] = ActionState("endTransition")
     COMPLETE: ClassVar[ActionState] = ActionState("completeState")
+
+    # Enum's name (#307): Codon has no Enum to give a framework enum one.
+    @property
+    def name(self) -> str:
+        if self == ActionState.STANDBY:
+            return "STANDBY"
+        if self == ActionState.START_TRANSITION:
+            return "START_TRANSITION"
+        if self == ActionState.RUNNING:
+            return "RUNNING"
+        if self == ActionState.END_TRANSITION:
+            return "END_TRANSITION"
+        if self == ActionState.COMPLETE:
+            return "COMPLETE"
+        raise ValueError("not a member of ActionState")

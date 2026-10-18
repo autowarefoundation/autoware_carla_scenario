@@ -23,6 +23,8 @@ import importlib.util
 import inspect
 import itertools
 import re
+import textwrap
+import types
 import typing
 from pathlib import Path
 from typing import Any
@@ -283,7 +285,7 @@ def _refusing_init(cls: ast.ClassDef, arity: int) -> ast.FunctionDef | None:
     return None
 
 
-def _decorators(fn: ast.FunctionDef) -> set[str]:
+def _decorators(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> set[str]:
     return {ast.unparse(d) for d in fn.decorator_list}
 
 
@@ -455,22 +457,22 @@ def _assert_declared_as_in_python(
         return
 
     assert inspect.isclass(python), f"{name} is a class in the model only"
+    methods = _methods(node)
     if issubclass(python, enum.Enum):
         assert _class_vars(node) == {
             m.name for m in python
         }, f"{name}: the model's members differ from the enum's"
-        return
-
-    methods = _methods(node)
-    if "__init__" in methods:
-        model_init = _model_params(methods["__init__"], drop_first=True)
+        _assert_enum_as_in_python(name, node, python)
     else:
-        model_init = _model_fields(node)
-    omitted = _OMITTED_PARAMETERS.get(name, set())
-    python_init = [
-        p for p in _python_params(python, drop_first=False) if p[1] not in omitted
-    ]
-    assert model_init == python_init, f"{name}(): the model's parameters differ"
+        if "__init__" in methods:
+            model_init = _model_params(methods["__init__"], drop_first=True)
+        else:
+            model_init = _model_fields(node)
+        omitted = _OMITTED_PARAMETERS.get(name, set())
+        python_init = [
+            p for p in _python_params(python, drop_first=False) if p[1] not in omitted
+        ]
+        assert model_init == python_init, f"{name}(): the model's parameters differ"
 
     if dataclasses.is_dataclass(python) and "__init__" not in methods:
         python_fields = {f.name for f in dataclasses.fields(python)}
@@ -492,13 +494,23 @@ def _assert_declared_as_in_python(
             # A dataclass field read as a property (RouteMatch.lanelet_ids,
             # #298): a field would change the constructor Codon generates.
             continue
-        assert hasattr(
-            python, method_name
-        ), f"{name}.{method_name} is in the model only"
-        python_attr = inspect.getattr_static(python, method_name)
+        try:
+            python_attr = inspect.getattr_static(python, method_name)
+        except AttributeError:
+            # An attribute Python sets on the instance (#307), read as a
+            # property: a field would change the constructor Codon generates.
+            assert method_name in _python_members(
+                python
+            ), f"{name}.{method_name} is in the model only"
+            assert "property" in _decorators(
+                method
+            ), f"{name}.{method_name}: an instance attribute, read as a property"
+            continue
         if "property" in _decorators(method):
+            # An enum's name and value are Enum's: enum.property (3.11+) or
+            # a DynamicClassAttribute (3.10), each a DynamicClassAttribute.
             assert isinstance(
-                python_attr, property
+                python_attr, (property, types.DynamicClassAttribute)
             ), f"{name}.{method_name} is a property"
             continue
         if "staticmethod" in _decorators(method):
@@ -513,6 +525,75 @@ def _assert_declared_as_in_python(
         assert _model_params(method, drop_first=True) == _python_params(
             getattr(python, method_name), drop_first=True
         ), f"{name}.{method_name}(): the model's parameters differ"
+
+
+def _enum_values(node: ast.ClassDef) -> dict[str, Any]:
+    """Member -> the value a model enum's member is built with
+    (`LESS_THAN: ClassVar[ComparisonRule] = ComparisonRule(2)`)."""
+    out: dict[str, Any] = {}
+    for stmt in node.body:
+        if (
+            isinstance(stmt, ast.AnnAssign)
+            and isinstance(stmt.target, ast.Name)
+            and "ClassVar" in ast.unparse(stmt.annotation)
+        ):
+            value = stmt.value
+            assert (
+                isinstance(value, ast.Call)
+                and ast.unparse(value.func) == node.name
+                and len(value.args) == 1
+                and not value.keywords
+            ), f"{node.name}.{stmt.target.id}: not built from its value alone"
+            out[stmt.target.id] = ast.literal_eval(value.args[0])
+    return out
+
+
+def _enum_names(node: ast.ClassDef) -> list[tuple[str, str]]:
+    """(member, the str returned for it) of a model enum's `name` property:
+    a chain of `if self == Enum.MEMBER: return "MEMBER"`, which raises for a
+    value that is no member's (#307)."""
+    getter = _methods(node).get("name")
+    assert getter is not None, f"{node.name} has no name property"
+    assert "property" in _decorators(getter), f"{node.name}.name is a property"
+    out: list[tuple[str, str]] = []
+    *chain, last = getter.body
+    for stmt in chain:
+        assert isinstance(stmt, ast.If) and not stmt.orelse, ast.unparse(stmt)
+        test, body = stmt.test, stmt.body
+        assert (
+            isinstance(test, ast.Compare)
+            and ast.unparse(test.left) == "self"
+            and isinstance(test.ops[0], ast.Eq)
+            and len(test.comparators) == 1
+            and isinstance(test.comparators[0], ast.Attribute)
+            and ast.unparse(test.comparators[0].value) == node.name
+        ), f"{node.name}.name: {ast.unparse(test)}"
+        assert (
+            len(body) == 1
+            and isinstance(body[0], ast.Return)
+            and isinstance(body[0].value, ast.Constant)
+            and isinstance(body[0].value.value, str)
+        ), f"{node.name}.name: {ast.unparse(stmt)}"
+        out.append((test.comparators[0].attr, body[0].value.value))
+    assert isinstance(last, ast.Raise), f"{node.name}.name ends with a raise"
+    return out
+
+
+def _assert_enum_as_in_python(name: str, node: ast.ClassDef, python: Any) -> None:
+    """A model enum (a `@tuple` of its value, #307) builds each member from
+    Python's value, of Python's type, and its `name` property returns each
+    member's Python name: Codon has no Enum to give a framework enum one."""
+    values = _enum_values(node)
+    for member in python:
+        assert type(values[member.name]) is type(
+            member.value
+        ), f"{name}.{member.name}: the type of its value"
+        assert (
+            values[member.name] == member.value
+        ), f"{name}.{member.name}: the model's value differs"
+    assert _enum_names(node) == [
+        (member.name, member.name) for member in python
+    ], f"{name}.name: not each member's name, in Python's order"
 
 
 def _union_member_name(member: Any) -> str:
@@ -1783,8 +1864,10 @@ _UNIMPORTABLE: set[str] = set()
 
 def _compared_classes() -> dict[str, tuple[str, type]]:
     """Every class the tests above compare with its model class, by name:
-    (model module, the Python class). Enums (compared by their members) and
-    Union aliases are not classes the model declares members of."""
+    (model module, the Python class), enums included (#307): an enum's
+    members are compared above, its `name`, `value` and its own methods and
+    properties here. Union aliases are not classes the model declares
+    members of."""
     candidates: list[tuple[str, str, Any]] = [
         *((name, module, getattr(acs, name)) for name, module in _EXPORTS.items()),
         *((name, module, python) for name, (module, python) in _BOUNDARY.items()),
@@ -1801,7 +1884,7 @@ def _compared_classes() -> dict[str, tuple[str, type]]:
     ]
     out: dict[str, tuple[str, type]] = {}
     for name, module, python in candidates:
-        if not inspect.isclass(python) or issubclass(python, enum.Enum):
+        if not inspect.isclass(python):
             continue
         node = _definitions(module).get(name, [None])[0]
         if isinstance(node, ast.ClassDef):
@@ -1831,13 +1914,17 @@ def _model_members(cls: ast.ClassDef) -> set[str]:
 
 
 def _python_members(python: type) -> set[str]:
-    """The public methods, properties, class attributes and dataclass fields
-    that the package's Python or openodd's (whose classes the package
-    re-exports, #298) defines on *python* or a class it derives from. A
-    dataclass's field is a member too, read on the instance, beside the
-    constructor's parameter it is compared as; an attribute only annotated
-    (set on the instance by __init__) is no member of the class."""
+    """The public methods, properties, class attributes, dataclass fields and
+    instance attributes that the package's Python or openodd's (whose classes
+    the package re-exports, #298) defines on *python* or a class it derives
+    from. A dataclass's field is a member too, read on the instance, beside
+    the constructor's parameter it is compared as; so is an attribute a
+    method sets on the instance (`self.timeout_seconds = ...` in __init__,
+    #307), which Python reads like any other. An enum's members are its
+    class attributes; it has Enum's `name` and `value` too (#307)."""
     out: set[str] = set()
+    if issubclass(python, enum.Enum):
+        out |= {"name", "value"}
     for klass in python.__mro__:
         if not defines_members(klass.__module__):
             continue
@@ -1846,6 +1933,51 @@ def _python_members(python: type) -> set[str]:
             out |= {
                 f.name for f in dataclasses.fields(klass) if not f.name.startswith("_")
             }
+        out |= _instance_attributes(klass)
+    return out
+
+
+def _instance_attributes(klass: type) -> set[str]:
+    """The public attributes the methods of *klass* (its own, not those of
+    the classes it derives from) set on the instance: each `self.<name> =`
+    (or `+=`, or annotated) target in the body of a method whose first
+    parameter is the instance, read from the source's AST. A static method's
+    first parameter is no instance, and a class method's sets a class
+    attribute, which vars() reads. A class with no Python source (openodd's
+    Rust extension) has none to read."""
+    try:
+        source = textwrap.dedent(inspect.getsource(klass))
+    except (OSError, TypeError):
+        return set()
+    node = ast.parse(source).body[0]
+    assert isinstance(node, ast.ClassDef) and node.name == klass.__name__, klass
+    out: set[str] = set()
+    for method in node.body:
+        if not isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if _decorators(method) & {"staticmethod", "classmethod"}:
+            continue
+        positional = [*method.args.posonlyargs, *method.args.args]
+        if not positional:
+            continue
+        instance = positional[0].arg
+        for stmt in ast.walk(method):
+            if isinstance(stmt, ast.Assign):
+                targets = stmt.targets
+            elif isinstance(stmt, (ast.AnnAssign, ast.AugAssign)):
+                targets = [stmt.target]
+            else:
+                continue
+            for target in targets:
+                for each in ast.walk(target):
+                    if (
+                        isinstance(each, ast.Attribute)
+                        and isinstance(each.ctx, ast.Store)
+                        and isinstance(each.value, ast.Name)
+                        and each.value.id == instance
+                        and not each.attr.startswith("_")
+                    ):
+                        out.add(each.attr)
     return out
 
 
@@ -1865,7 +1997,23 @@ def test_the_member_comparison_reads_every_kind_of_compared_class() -> None:
     assert {"MapManager", "RouteFrame", "CarlaDriverEntity", "Measure"} <= set(
         _MEMBER_CLASSES
     )
-    assert "TickTiming" not in _MEMBER_CLASSES  # an enum: compared by its members
+    # An enum: Enum's name and value, and its own methods and properties
+    # (#307), beside its members.
+    assert {"TickTiming", "ComparisonRule", "LaneChangeDirection"} <= set(
+        _MEMBER_CLASSES
+    )
+    assert {"name", "value", "text", "LESS_THAN"} <= _python_members(ComparisonRule)
+    assert "to_carla_bool" in _python_members(acs.LaneChangeDirection)
+    # An attribute a method sets on the instance (#307), the package's
+    # (__init__'s, and a counter execute() adds to) or openodd's.
+    assert "timeout_seconds" in _python_members(acs.TimeoutCondition)
+    assert "ego_type" in _python_members(acs.BaseScenario)
+    assert "removed" in _python_members(acs.TrafficSinkAction)
+    assert {"target", "item", "probe"} <= _python_members(acs.OddAttribute)
+    assert "attributes" in _python_members(acs.OddDefinition)
+    # A static method's first parameter is no instance: openodd's collector
+    # sets `entry.failed` in one.
+    assert "failed" not in _python_members(coverage_collector.CoverageCollector)
     # Inherited members count: set_desired_speed is BackendDriven's in Python.
     assert "set_desired_speed" in _python_members(acs.VehicleEntity)
     assert "measures" in _python_members(acs.BaseScenario)

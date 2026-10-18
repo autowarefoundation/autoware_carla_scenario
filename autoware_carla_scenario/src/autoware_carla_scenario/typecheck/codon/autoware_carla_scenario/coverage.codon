@@ -27,6 +27,17 @@ class SamplingEvent:
     END: ClassVar[SamplingEvent] = SamplingEvent("end")
     TICK: ClassVar[SamplingEvent] = SamplingEvent("tick")
 
+    # Enum's name (#307): Codon has no Enum to give a framework enum one.
+    @property
+    def name(self) -> str:
+        if self == SamplingEvent.START:
+            return "START"
+        if self == SamplingEvent.END:
+            return "END"
+        if self == SamplingEvent.TICK:
+            return "TICK"
+        raise ValueError("not a member of SamplingEvent")
+
 
 # The schema a coverage file names (openodd.collector.COVERAGE_SCHEMA).
 COVERAGE_SCHEMA: str = "openodd.coverage/1"
@@ -38,6 +49,17 @@ class CoverGroup:
     ODD: ClassVar[CoverGroup] = CoverGroup("odd")
     SITUATION: ClassVar[CoverGroup] = CoverGroup("situation")
     SCENARIO: ClassVar[CoverGroup] = CoverGroup("scenario")
+
+    # Enum's name (#307): Codon has no Enum to give a framework enum one.
+    @property
+    def name(self) -> str:
+        if self == CoverGroup.ODD:
+            return "ODD"
+        if self == CoverGroup.SITUATION:
+            return "SITUATION"
+        if self == CoverGroup.SCENARIO:
+            return "SCENARIO"
+        raise ValueError("not a member of CoverGroup")
 
 
 def _expect_sampling_event(event):
