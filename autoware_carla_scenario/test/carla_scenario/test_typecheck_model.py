@@ -26,6 +26,7 @@ import re
 import textwrap
 import types
 import typing
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -1939,12 +1940,16 @@ def _python_members(python: type) -> set[str]:
 
 def _instance_attributes(klass: type) -> set[str]:
     """The public attributes the methods of *klass* (its own, not those of
-    the classes it derives from) set on the instance: each `self.<name> =`
-    (or `+=`, or annotated) target in the body of a method whose first
-    parameter is the instance, read from the source's AST. A static method's
-    first parameter is no instance, and a class method's sets a class
-    attribute, which vars() reads. A class with no Python source (openodd's
-    Rust extension) has none to read."""
+    the classes it derives from) set on the instance: each `self.<name>`
+    stored to (`=`, `+=`, annotated, a tuple's target, a `for` or `with`
+    target) and each `setattr(self, "<name>", ...)`, in the body of a method
+    whose first parameter is the instance, read from the source's AST. A
+    static method's first parameter is no instance, and a class method's sets
+    a class attribute, which vars() reads. A class or a function nested in
+    the method that names its own `self` is another object's, and is not
+    read. A class with no Python source (openodd's Rust extension) has none
+    to read; an attribute set under a name computed at run time is not
+    found."""
     try:
         source = textwrap.dedent(inspect.getsource(klass))
     except (OSError, TypeError):
@@ -1961,24 +1966,48 @@ def _instance_attributes(klass: type) -> set[str]:
         if not positional:
             continue
         instance = positional[0].arg
-        for stmt in ast.walk(method):
-            if isinstance(stmt, ast.Assign):
-                targets = stmt.targets
-            elif isinstance(stmt, (ast.AnnAssign, ast.AugAssign)):
-                targets = [stmt.target]
+        for each in _instance_scope(method.body, instance):
+            if (
+                isinstance(each, ast.Attribute)
+                and isinstance(each.ctx, ast.Store)
+                and isinstance(each.value, ast.Name)
+                and each.value.id == instance
+            ):
+                name = each.attr
+            elif (
+                isinstance(each, ast.Call)
+                and ast.unparse(each.func) == "setattr"
+                and len(each.args) >= 2
+                and isinstance(each.args[0], ast.Name)
+                and each.args[0].id == instance
+                and isinstance(each.args[1], ast.Constant)
+                and isinstance(each.args[1].value, str)
+            ):
+                name = each.args[1].value
             else:
                 continue
-            for target in targets:
-                for each in ast.walk(target):
-                    if (
-                        isinstance(each, ast.Attribute)
-                        and isinstance(each.ctx, ast.Store)
-                        and isinstance(each.value, ast.Name)
-                        and each.value.id == instance
-                        and not each.attr.startswith("_")
-                    ):
-                        out.add(each.attr)
+            if not name.startswith("_"):
+                out.add(name)
     return out
+
+
+def _instance_scope(body: list[ast.stmt], instance: str) -> Iterator[ast.AST]:
+    """Every node of a method's *body* in which *instance* is still the
+    method's: not inside a nested class, nor inside a nested function or
+    lambda that takes a parameter of that name."""
+    stack: list[ast.AST] = list(body)
+    while stack:
+        each = stack.pop()
+        if isinstance(each, ast.ClassDef):
+            continue
+        if isinstance(each, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            args = each.args
+            params = [*args.posonlyargs, *args.args, *args.kwonlyargs]
+            params += [a for a in (args.vararg, args.kwarg) if a is not None]
+            if any(p.arg == instance for p in params):
+                continue
+        yield each
+        stack.extend(ast.iter_child_nodes(each))
 
 
 def _unmodelled_members(name: str) -> set[str]:
@@ -1986,6 +2015,53 @@ def _unmodelled_members(name: str) -> set[str]:
     node = _definitions(module)[name][0]
     assert isinstance(node, ast.ClassDef)
     return _python_members(python) - _model_members(node)
+
+
+class _SetsAttributes:
+    """What _instance_attributes() reads, and what it leaves out (#307)."""
+
+    def __init__(self, me: int) -> None:
+        self.plain = me
+        self.first, (self.second, *self.rest) = 1, (2, 3)
+        self.counter: int = 0
+        self.counter += 1
+        self.items: list[int] = []
+        self.items[0:0] = [1]  # an item stored, not an attribute
+        self._private = 0
+        setattr(self, "by_setattr", 0)
+        for self.looped in range(1):
+            pass
+
+        def helper() -> None:
+            self.in_closure = 0  # still the instance
+
+        def other(self: Any) -> None:
+            self.of_another = 0  # its own `self`
+
+        class Inner:
+            def __init__(self) -> None:
+                self.of_inner = 0
+
+        helper()
+        other(Inner())
+
+    @staticmethod
+    def build(entry: Any) -> None:
+        entry.of_an_argument = 0
+
+
+def test_instance_attributes_are_read_from_the_method_s_own_scope() -> None:
+    assert _instance_attributes(_SetsAttributes) == {
+        "plain",
+        "first",
+        "second",
+        "rest",
+        "counter",
+        "items",
+        "by_setattr",
+        "looped",
+        "in_closure",
+    }
 
 
 def test_the_member_comparison_reads_every_kind_of_compared_class() -> None:

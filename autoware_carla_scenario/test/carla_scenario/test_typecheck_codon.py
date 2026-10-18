@@ -3765,8 +3765,8 @@ def _enum_reads() -> tuple[str, str]:
     """(imports, setup): each framework enum member's name and value read,
     and the enums' own methods and properties (#307)."""
     enums = _framework_enums()
-    # Those _HEADER does not import already: Codon refuses a member read of
-    # a name imported twice.
+    # Those _HEADER does not import already: Codon 0.19 cannot resolve a
+    # name imported twice once it is used (#311).
     imports = "".join(
         f"from {module} import {name}\n"
         for name, (module, _) in enums.items()
@@ -3786,6 +3786,8 @@ _INSTANCE_READS = """
 self._setup_ego_spawn()
 timeout = TimeoutCondition(cfg.timeout_seconds, label="timeout")
 logger.info("limit %f", timeout.timeout_seconds)
+longer = LongerTimeout(5.0, label="longer")
+logger.info("longer %f", longer.timeout_seconds)
 logger.info("ego requires goal: %s", self.ego_requires_goal)
 logger.info("%s", ComparisonRule.LESS_THAN.text)
 logger.info("%s", LaneChangeDirection.LEFT.to_carla_bool())
@@ -3796,6 +3798,16 @@ first = frame.lanelets[0]
 layer = frame.map.laneletLayer
 graph = frame.graph
 logger.info("%f %d %d", frame.match.length, len(frame.lanelets), first.id)
+"""
+
+# A subclass's __init__ may assign an attribute the model reads as a
+# property (#307): the assignment declares the subclass's own attribute.
+_LONGER_TIMEOUT = """
+
+class LongerTimeout(TimeoutCondition):
+    def __init__(self, timeout_seconds: float, label: str) -> None:
+        super().__init__(timeout_seconds, label=label)
+        self.timeout_seconds = timeout_seconds * 2.0
 """
 
 
@@ -3813,7 +3825,10 @@ def test_a_scenario_reads_instance_attributes_and_enum_members(
         1,
     )
     scenario, config, _ = _write_case(
-        tmp_path, _INSTANCE_READS + enum_reads + _TIMEOUT_SETUP, header=header
+        tmp_path,
+        _INSTANCE_READS + enum_reads + _TIMEOUT_SETUP,
+        _LONGER_TIMEOUT,
+        header=header,
     )
     result = typecheck_scenario(scenario, config)
     assert result.ok, result.format()

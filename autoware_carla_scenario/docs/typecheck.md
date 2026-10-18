@@ -523,14 +523,18 @@ What `test_typecheck_model.py` compares, model by model:
   fields). A frozen dataclass's field is read-only in Python too; writing a
   `CoverItem`'s is refused, which Python allows, and a scenario, which
   registers its items with `register_cover()`, has none to write.
-  An attribute a method sets on the instance (`self.<name> = ...`, read from
-  the class's source, `__init__`'s and the others', openodd's included) is a
-  member too (#307), as Python reads it like any other: the model declares
-  it as a read-only property, since a field would change the constructor
-  Codon generates (`TimeoutCondition.timeout_seconds`,
-  `OddDefinition.attributes`, `OddAttribute.target` and `item`,
-  `TrafficSinkAction.removed`, `RouteFrame`'s `match`, `map`, `graph` and
-  `lanelets`); writing one is refused, which Python allows. An enum is
+  An attribute a method sets on the instance (`self.<name> = ...` or
+  `setattr(self, "<name>", ...)`, read from the class's source,
+  `__init__`'s and the others', openodd's included; one set under a name
+  computed at run time is not found) is a member too (#307), as Python
+  reads it like any other: the model declares it as a read-only property,
+  since a field would change the constructor Codon generates
+  (`TimeoutCondition.timeout_seconds`, `OddDefinition.attributes`,
+  `OddAttribute.target` and `item`, `TrafficSinkAction.removed`,
+  `RouteFrame`'s `match`, `map`, `graph` and `lanelets`). Writing one is
+  refused, which Python allows (`'TimeoutCondition' object has no attribute
+  'timeout_seconds'`), except in the `__init__` of a scenario's own
+  subclass, where the assignment declares the subclass's own attribute. An enum is
   compared beyond its members (#307): a model enum is a `@tuple` of its
   value, so Codon gives it no `Enum`, and it declares Enum's `name` as a
   property, a chain of `if self == Rule.MEMBER: return "MEMBER"` that
