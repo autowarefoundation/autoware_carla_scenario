@@ -163,6 +163,15 @@ class TrajectoryVertex:
         _expect_trajectory_position(position)
         self.advance = _expect_optional_condition(advance)
 
+    # Python's frozen dataclass field, read as a property (#298): a field
+    # here would change the constructor Codon generates. Any of the ten
+    # positions (TrajectoryPosition, declared below, spelled out here).
+    @property
+    def position(self) -> Union[CarlaWorldPose, Lanelet2Pose, OpenDrivePose, MapPose,
+                                RelativeLanePose, RouteLanePose, RouteOppositePose,
+                                RouteCrossingPose, RouteCrosswalkPose, RouteRoadsidePose]:
+        raise NotImplementedError()
+
     @property
     def time(self) -> Optional[float]:
         raise NotImplementedError()

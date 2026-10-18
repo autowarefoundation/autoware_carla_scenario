@@ -23,6 +23,25 @@ class RouteMatch:
     def __init__(self, lanelet_ids, start_s, end_s, segments, index = 0):
         pass
 
+    # Python's frozen dataclass fields, read as properties (#298): fields
+    # here would change the constructor Codon generates. lanelet_ids is a
+    # tuple[int, ...] in Python, checked as a List[int] (docs/typecheck.md).
+    @property
+    def lanelet_ids(self) -> List[int]:
+        raise NotImplementedError()
+
+    @property
+    def start_s(self) -> float:
+        raise NotImplementedError()
+
+    @property
+    def end_s(self) -> float:
+        raise NotImplementedError()
+
+    @property
+    def index(self) -> int:
+        raise NotImplementedError()
+
     def anchor_s(self, anchor: Optional[str]) -> float:
         raise NotImplementedError()
 

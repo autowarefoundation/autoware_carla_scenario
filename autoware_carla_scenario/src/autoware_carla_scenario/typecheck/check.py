@@ -909,7 +909,7 @@ def _with_member_reasons(
         listed = None
         if found is not None and cls is not None:
             member = found["attr"]
-            listed = not_modelled_member(cls, member)
+            listed = not_modelled_member(cls, member, found["cls"])
         if listed is None:
             out.append(diagnostic)
             continue

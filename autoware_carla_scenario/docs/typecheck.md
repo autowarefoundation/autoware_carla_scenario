@@ -501,14 +501,26 @@ What `test_typecheck_model.py` compares, model by model:
 - **Every public member of a compared class** (#265): the comparisons above
   check that what a model class declares exists in Python; this checks the
   converse. For every class they compare (enums aside), each public method,
-  property and class attribute the package's Python defines on the class or
-  a package class it derives from (`VehicleEntity.set_desired_speed()` is
-  `BackendDriven`'s) is declared by the model class or one of its model
-  bases, or listed, with the reason, in `NOT_MODELLED_MEMBERS`
-  (`typecheck/not_modelled.py`), under the class or the Python base that
-  defines it (`BaseCondition.get_details` for every condition). A listed
-  member must still be public in Python and absent from the model. A
-  dataclass's fields are compared as its constructor's parameters, and an
+  property, class attribute and dataclass field the package's Python, or
+  openodd's, defines on the class or a class it derives from
+  (`VehicleEntity.set_desired_speed()` is `BackendDriven`'s) is declared by
+  the model class or one of its model bases, or listed, with the reason, in
+  `NOT_MODELLED_MEMBERS` (`typecheck/not_modelled.py`), under the class or
+  the Python base that defines it (`BaseCondition.get_details` for every
+  condition). openodd's classes, which the package re-exports
+  (`OddAttribute`, `OddModule`, `OddDefinition`, `OddCondition`, `CoverItem`,
+  `CrossItem`, `CoverageReport`), are compared as the package's are (#298),
+  each listed under the name the package gives it (openodd's `Condition` is
+  `OddCondition`). A listed member must still be public in Python and absent
+  from the model. A dataclass's public field is a member too, beside the
+  constructor's parameter it is compared as (#298): the model declares it as
+  a field or, where a field would change the constructor Codon generates
+  (*What Codon builds by the fields*, below), as a read-only property
+  (`RouteMatch.lanelet_ids`, a `List[int]` for Python's `tuple[int, ...]`;
+  `TrajectoryVertex.position`, the union of the ten poses; `CoverItem`'s
+  fields). A frozen dataclass's field is read-only in Python too; writing a
+  `CoverItem`'s is refused, which Python allows, and a scenario, which
+  registers its items with `register_cover()`, has none to write. An
   attribute Python only annotates (set on the instance) is no member of the
   class. The scenario check adds the reason to Codon's error:
 
@@ -520,10 +532,23 @@ What `test_typecheck_model.py` compares, model by model:
   `dict[str, Any]`: a condition's `get_details()` and `to_summary_dict()`,
   `to_dict()`, `describe()`, `RouteMatch.to_config()` and `from_config()`),
   the run's traffic backend (`set_traffic_backend()`, `traffic_backend`),
-  `RouteMatch.junction()` and `junctions` (a `RouteSegmentMatch`), and the
-  members of the classes the model declares for the library check alone
-  (`CarlaDriverEntity`, the egodriver and bridge servers, the ROS 2
-  transport, the map cache's `MapSource`, `RunEnvironment`).
+  `RouteMatch.junction()`, `junctions` and `segments` (a
+  `RouteSegmentMatch`), a field of `Any` (`ConditionStatus.details`,
+  `RouteLanelet.values`, `OddModule.metadata`, `SweepConfig`'s Hydra
+  mappings, `CoverItem`'s `expression`, `ignore` and `values`), openodd's
+  evaluation, sampling and archive of an ODD (`OddDefinition.evaluate()`,
+  `sample()`, `archive()`, ..., `OddCondition.evaluate()`) and its report's
+  rows (`CoverageReport.entries`, ...), and the members of the classes the
+  model declares for the library check alone (`CarlaDriverEntity`, the
+  egodriver and bridge servers, the ROS 2 transport and its config, the map
+  cache's `MapSource`, `RunEnvironment`). An ODD's members compile as they
+  run:
+
+  ```python
+  roads = OddModule("roads", include_and=[location.is_in(["urban"])], labels=["fair"])
+  roads.as_situation(cover_by="meters", target=100.0)
+  text = roads.conditions()[0].describe() + roads.labels[0] + location.cover_by
+  ```
 - **Every model file**: each `.codon` of the package's model is in one of
   the tables above or exempt with the reason (`_UNCOMPARED_MODEL_FILES`: the
   model's helpers, the modules `coordinate.codon` and `entity.codon`
@@ -589,8 +614,12 @@ them (`OddModule`, `OddAttribute`, `BaseScenario`). The classes it finds:
 |---|---|
 | none | `RouteMatch`, `RouteFrame`, `VehicleEntity`, `PedestrianEntity`, `CoverageCollector`, `CoverageReport`, `EgoDriverGrpcClient`, `Ros2EgoTransport` (and `CycloneRos2Transport`, compared apart) |
 | the label | the conditions and actions whose constructor Python refuses one argument (`SpeedCondition`, `TurnAction`) |
-| the fields | `DebugMarkers`, `CoverItem`, `OddCondition` (one), `RouteCoverage`, `RunProgress` (four) |
+| the fields | `DebugMarkers`, `CoverItem`, `OddCondition` (one), `RunProgress` (four) |
 | an exception's | `FrameMismatchError` (one, two, ten), `DevContainerError`, `MapCacheError` (none, two, eight) |
+
+`RouteCoverage` declares Python's fields in Python's order (#298), so the
+constructor Codon generates of them takes no call Python's refuses, and the
+one it declares refuses each.
 
 Every condition and action declares the overload of one, its label, even
 where Python takes one argument by position: a call the constructor refuses
@@ -725,6 +754,22 @@ scenario has to do itself:
   `AndCondition([], ...)`, an ODD's `all_of([])`) through `_acs_sequence`
   (`_tc.codon`), and checks the elements of any other: `waypoints=[460, 265]`
   and `waypoints=[None]` are refused, in `EgoVehicle.route_to()` too.
+- **A sequence of names is a list or a tuple, not a `str`** (#299). Python's
+  typing takes a `str` as a `Sequence[str]`, and the framework then reads
+  each of its characters as a name (`roots="roads"` fails at run time with
+  "no root module ['r', 'o', 'a', 'd', 's']"). Here the check is stricter
+  than mypy, on purpose: `_expect_str_sequence` (`_tc.codon`) refuses a `str`
+  (or an `Optional[str]`) where a sequence of names is taken, the items of
+  `BaseScenario.register_cross()`, `OddModule`'s `labels` and
+  `OddDefinition`'s `roots`, and takes a list or a tuple of `str`, an empty
+  one too:
+
+  ```text
+  scenario.py:41: error: BaseScenario.register_cross(): items: expected a sequence of names (a list or a tuple of str), not a str: wrap it in a list
+  ```
+
+  `OddAttribute.is_in("urban")` still passes: it takes an `Iterable[Any]` of
+  values, and CPython takes a `str`'s characters as values.
 - **Call a manoeuvre your own entity class overrides with every argument, by
   position.** `VehicleEntity` and `EgoVehicle` declare the manoeuvres they
   take from `traffic.driven.BackendDriven` (`set_desired_speed()`,
@@ -2574,7 +2619,9 @@ What Codon 0.19 needs that Python does not, beyond
   Codon 0.19's code generation for every scenario (`LLVM: error: value
   doesn't match function result type`). `test_typecheck_model.py` compares
   each with the Python class, and checks that its constructor is the
-  `compile_error`.
+  `compile_error`. Of `CoverageReport`, which `merge_coverage()` returns, the
+  model also declares what Codon has types for (`runs`, `scenarios`,
+  `groups()`, `group_grade()`, `to_markdown()`, #298).
 - **A Protocol a scenario may take** is modelled with what is called of it:
   the library check compiles `autoware_stack.launcher` from its source, and
   for the scenario check `autoware_stack/launcher.codon` declares the `AutowareLauncher` that

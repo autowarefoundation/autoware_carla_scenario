@@ -620,6 +620,142 @@ def test_an_odd_condition_of_the_wrong_type_is_refused_at_its_line(
     assert error.line == _line_of(path, 'between("0"')
 
 
+_ODD_READS = """
+from __future__ import annotations
+
+from autoware_carla_scenario import OddAttribute, OddDefinition, OddModule, SamplingEvent
+from autoware_carla_scenario.coverage import CoverGroup
+from autoware_carla_scenario.odd import lanelet_location, speed_limit_kph
+
+
+def build() -> OddDefinition:
+    location = OddAttribute("scenery.location", lanelet_location, values=["urban", "nonurban"])
+    speed = OddAttribute(
+        "scenery.speed_limit", speed_limit_kph, unit="km/h", buckets=[0, 30, 60, 100]
+    )
+    urban = location.is_in(["urban"])
+    roads = OddModule("roads", include_and=[urban], labels=["fair"])
+    roads.as_situation(cover_by="meters", target=100.0)
+    names = urban.attributes() + urban.references() + roads.labels + location.derived_from
+    text = urban.describe() + location.cover_by + location.source[1]
+    if roads.situation and not location.derived and location.min_stay is None:
+        for condition in roads.conditions():
+            text += condition.describe()
+    item = roads.item
+    if item is not None:
+        text += item.amount + item.cover_by + item.bucket_of("holds") + item.labels[0]
+    odd = OddDefinition("urban", [location, speed], [roads], roots=["roads"])
+    names += odd.roots + odd.unmeasured()
+    names += odd.outside_buckets(location) + odd.outside_buckets("scenery.location")
+    for each in odd.cover_items():
+        if each.numeric and each.buckets is not None and each.range is None:
+            text += str(each.edges[0]) + each.unit + each.text + str(each.target)
+        text += str(each.attribute) + str(each.min_stay) + str(each.every)
+        if isinstance(each.event, SamplingEvent) and each.group == CoverGroup.ODD:
+            text += "sampled on a tick"
+    for module in odd.situations():
+        text += module.name
+    version = odd.version
+    revision = odd.revision
+    text += odd.structure_digest + str(len(odd.sources)) + str(version) + str(revision)
+    return odd
+"""
+
+
+def test_an_odd_reads_what_openodd_s_classes_hold(tmp_path: Path) -> None:
+    # openodd's classes are in the member guarantee (#298): what an ODD
+    # builder reads of a module, an attribute, a condition, the definition
+    # and its cover items compiles, as it runs in Python.
+    from autoware_carla_scenario.typecheck import typecheck_odd
+
+    module, _ = _write_odd(tmp_path, _ODD_READS)
+    module.build()
+    result = typecheck_odd(module.build)
+    assert result.ok, result.format()
+
+
+@pytest.mark.parametrize(
+    ("read", "message"),
+    [
+        (
+            "roads.describe()",
+            "OddModule.describe is not part of the Codon model, on purpose",
+        ),
+        (
+            'urban.evaluate({"scenery.location": "urban"})',
+            "OddCondition.evaluate is not part of the Codon model, on purpose",
+        ),
+    ],
+    ids=["module-describe", "condition-evaluate"],
+)
+def test_an_odd_member_the_model_leaves_out_says_why(
+    tmp_path: Path, read: str, message: str
+) -> None:
+    # openodd's Condition is the package's OddCondition: listed under the
+    # name the package gives it.
+    from autoware_carla_scenario.typecheck import typecheck_odd
+
+    source = _ODD_READS.replace(
+        "    roads.as_situation(", f"    print({read})\n    roads.as_situation(", 1
+    )
+    module, path = _write_odd(tmp_path, source)
+    error = _only_error(typecheck_odd(module.build))
+    assert "object has no attribute" in error.message, error.format()
+    assert message in error.message, error.format()
+    assert error.line == _line_of(path, read)
+
+
+@pytest.mark.parametrize(
+    ("old", "new", "needle", "where"),
+    [
+        (
+            'roots=("root",)',
+            'roots="root"',
+            "return OddDefinition(",
+            "OddDefinition(): roots",
+        ),
+        (
+            'labels=["fair"]',
+            'labels="fair"',
+            'labels="fair"',
+            "OddModule(): labels",
+        ),
+    ],
+    ids=["roots", "labels"],
+)
+def test_a_str_for_a_sequence_of_names_is_refused_in_an_odd(
+    tmp_path: Path, old: str, new: str, needle: str, where: str
+) -> None:
+    # Python's typing takes a str as a Sequence[str], and openodd reads each
+    # of its characters as a name (#299): the check refuses it at its line.
+    # _ODD_MODULE's own (a tuple, a list, an empty list) compile, as does
+    # is_in("urban"), which CPython takes.
+    from autoware_carla_scenario.typecheck import typecheck_odd
+
+    assert old in _ODD_MODULE
+    module, path = _write_odd(tmp_path, _ODD_MODULE.replace(old, new, 1))
+    error = _only_error(typecheck_odd(module.build))
+    assert (
+        f"{where}: expected a sequence of names (a list or a tuple of str), not a str"
+        in error.message
+    ), error.format()
+    assert error.path == str(path)
+    assert error.line == _line_of(path, needle)
+
+
+def test_a_str_is_values_an_attribute_is_in(tmp_path: Path) -> None:
+    # The valid look-alike of #299: OddAttribute.is_in() takes an
+    # Iterable[Any], and CPython takes a str's characters as its values.
+    from autoware_carla_scenario.typecheck import typecheck_odd
+
+    source = _ODD_MODULE.replace('location.is_in(["urban"])', 'location.is_in("urban")')
+    assert source != _ODD_MODULE
+    module, _ = _write_odd(tmp_path, source)
+    module.build()
+    result = typecheck_odd(module.build)
+    assert result.ok, result.format()
+
+
 def test_a_custom_condition_is_checked_through_its_check_method(tmp_path: Path) -> None:
     custom = """
 
@@ -2362,10 +2498,14 @@ def test_a_scenario_may_use_the_carla_driver_interface_model_and_nothing_beyond_
             "OddCondition(): no constructor takes these arguments (it takes none)",
         ),
         (
+            # Its fields are Python's since #298: Python builds it by them,
+            # the model does not (plan_route_coverage() does).
             "from autoware_carla_scenario.odd import RouteCoverage, RouteLanelet\n"
             "lanelets: list[RouteLanelet] = []\n"
-            'coverage = RouteCoverage("odd", "route", lanelets, ["speed"])\n',
-            'RouteCoverage("odd", "route", lanelets, ["speed"])',
+            "expected: dict[str, dict[str, float]] = {}\n"
+            'coverage = RouteCoverage(odd="odd", name="route", lanelets=lanelets, '
+            'expected_m=expected, map_attributes=["speed"])\n',
+            'RouteCoverage(odd="odd"',
             "RouteCoverage: plan_route_coverage() builds it",
         ),
         (
@@ -3582,6 +3722,95 @@ def test_a_member_the_model_leaves_out_says_why(
     assert message in error.message, error.format()
     assert error.path == str(path)
     assert error.line == _line_of(path, needle)
+
+
+_ROUTE_HEADER = _HEADER.replace(
+    "import logging\n",
+    "import logging\nfrom autoware_carla_scenario.route import scenario_route\n",
+    1,
+)
+
+_FIELD_READS = """
+self._setup_ego_spawn()
+path = Trajectory(
+    "p",
+    [
+        TrajectoryVertex(Lanelet2Pose(460, 1.0)),
+        TrajectoryVertex(MapPose(10.0, 2.0)),
+        TrajectoryVertex(Lanelet2Pose(460, 9.0)),
+    ],
+)
+gated = path.gated({-1: StickyCondition(ElapsedTimeCondition(2.0, label="go"))})
+position = gated.vertices[0].position
+if isinstance(position, Lanelet2Pose):
+    logger.info("starts on a lanelet")
+match = scenario_route()
+if match is not None:
+    logger.info(
+        "%d %f %f %d", match.lanelet_ids[0], match.start_s, match.end_s, match.index
+    )
+"""
+
+
+def test_a_scenario_reads_a_frozen_dataclass_s_fields(tmp_path: Path) -> None:
+    # Public dataclass fields are in the member guarantee (#298): a vertex's
+    # position (a union of ten poses) and the running route's lanelets, read
+    # as properties of the model.
+    scenario, config, _ = _write_case(
+        tmp_path, _FIELD_READS + _TIMEOUT_SETUP, header=_ROUTE_HEADER
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_a_dataclass_field_the_model_leaves_out_says_why(tmp_path: Path) -> None:
+    setup = _FIELD_READS.replace("match.lanelet_ids[0],", "len(match.segments),", 1)
+    scenario, config, path = _write_case(
+        tmp_path, setup + _TIMEOUT_SETUP, header=_ROUTE_HEADER
+    )
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "object has no attribute" in error.message, error.format()
+    assert (
+        "RouteMatch.segments is not part of the Codon model, on purpose"
+        in error.message
+    ), error.format()
+    assert error.line == _line_of(path, "match.segments")
+
+
+_CROSS_SETUP = """
+self.register_cover("speed", lambda world: 3.0, range=(0.0, 30.0), every=5.0)
+self.register_cover("gap", lambda world: 4.0, range=(0.0, 30.0), every=5.0)
+"""
+
+
+@pytest.mark.parametrize(
+    ("items", "ok"),
+    [
+        ('"speed"', False),
+        ('["speed", "gap"]', True),
+        ('("speed", "gap")', True),
+        ('("speed",)', True),
+    ],
+    ids=["str", "list", "tuple", "one-tuple"],
+)
+def test_a_str_for_the_items_of_a_cross_is_refused(
+    tmp_path: Path, items: str, ok: bool
+) -> None:
+    # register_cross() takes a Sequence[str] of cover items' names, and
+    # Python reads a str's characters as names (#299); a list or a tuple of
+    # them compiles.
+    setup = _CROSS_SETUP + f'self.register_cross("speed_x", {items})\n'
+    scenario, config, path = _write_case(tmp_path, setup + _TIMEOUT_SETUP)
+    result = typecheck_scenario(scenario, config)
+    if ok:
+        assert result.ok, result.format()
+        return
+    error = _only_error(result)
+    assert (
+        "BaseScenario.register_cross(): items: expected a sequence of names "
+        "(a list or a tuple of str), not a str: wrap it in a list"
+    ) in error.message, error.format()
+    assert error.line == _line_of(path, "register_cross(")
 
 
 # ---------------------------------------------------------------------------
