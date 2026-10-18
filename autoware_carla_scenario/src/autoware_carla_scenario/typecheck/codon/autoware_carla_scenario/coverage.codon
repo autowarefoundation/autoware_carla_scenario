@@ -12,6 +12,8 @@
 
 from pathlib import Path
 
+import internal.static as static
+
 import typesafe_carla.carla as carla
 
 from ._tc import _expect_float, _expect_optional_float, _keyword_only, _acs_sequence
@@ -74,6 +76,69 @@ def _expect_optional_edges(edges):
     else:
         for edge in _acs_sequence(edges, float):
             _expect_float(edge)
+
+
+def _expect_optional_values(values, where: Literal[str]):
+    """An Optional[Iterable[Any]] argument: the values of a cover item or an
+    ODD attribute, one bucket each (#279). Any iterable passes (a list, a
+    tuple, an empty one too, #264, a set, a dict, a str, a range), and so
+    does an enum class: the framework's are tuples here (so iterable), and a
+    scenario's carries Enum's marker (enum.codon). Nothing is iterated, as
+    iterating an enum class is not modelled. Codon 0.19 cannot tell a class
+    passed as an argument from one of its objects, so an enum member passes
+    too, and so does a frozen dataclass of the framework, a tuple here."""
+    if isinstance(values, None):
+        pass
+    elif isinstance(values, Optional[NoneType]):
+        pass
+    elif isinstance(values, Optional):
+        _expect_optional_values(unwrap(values), where)
+    elif hasattr(values, "__iter__"):
+        pass
+    elif hasattr(values, "_acs_enum"):
+        pass
+    else:
+        compile_error(where + ": values must be an iterable of the bucket values "
+                      "(a list, a tuple or an enum class), or None")
+
+
+def _acs_call_ignore(ignore, value, where: Literal[str]):
+    """*ignore* called as openodd's collector calls it: with one sampled value."""
+    if isinstance(ignore, Partial):
+        # A function, a lambda or a bound method: its signature is checked
+        # first, so a wrong one is refused with what ignore takes.
+        if not static.function.can_call(ignore, value):
+            compile_error(where + ": ignore must take one argument, a value the "
+                          "expression returns")
+    ignore(value)
+
+
+def _expect_optional_ignore(ignore, expression, where: Literal[str]):
+    """An Optional[Callable[[Any], bool]] argument, called with what
+    *expression* returns, unwrapped from its Optional: the collector calls
+    `ignore(value)` for each sample, never with None (#279). An exception it
+    raises there is logged once and the sample counted as none, so a wrong
+    *ignore* would empty the item for the whole run. What it returns is
+    tested for truth, which Python takes of any value: it is not checked."""
+    if isinstance(ignore, None):
+        pass
+    elif isinstance(ignore, Optional[NoneType]):
+        pass
+    elif isinstance(ignore, Optional):
+        _expect_optional_ignore(unwrap(ignore), expression, where)
+    elif not hasattr(ignore, "__call__"):
+        compile_error(where + ": ignore must be a callable taking a sampled value "
+                      "(Callable[[Any], bool]), or None")
+    else:
+        value = expression(carla.Client().get_world())
+        if isinstance(value, None):
+            pass
+        elif isinstance(value, Optional[NoneType]):
+            pass
+        elif isinstance(value, Optional):
+            _acs_call_ignore(ignore, unwrap(value), where)
+        else:
+            _acs_call_ignore(ignore, value, where)
 
 
 class CoverItem:
