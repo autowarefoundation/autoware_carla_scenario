@@ -2329,7 +2329,8 @@ reached (see <a href="../coverage/">Coverage</a>). The ODD's modules say which t
 <p>An ODD is written in one of two ways. Both build the same objects, so they
 are measured, judged and reported the same way:</p>
 <ul>
-<li><strong>Python</strong>: the canonical form. It is checked with Codon before it is used,
+<li><strong>Python</strong>: openodd's model (<a href="https://github.com/hakuturu583/openodd_py/blob/main/docs/python_odd.md">Writing an ODD in Python</a>),
+  with this framework's probes. It is checked with Codon before it is used,
   like a scenario (<a href="../typecheck/">Static Check</a>).</li>
 <li><strong><a href="https://www.asam.net/standards/detail/openodd/">ASAM OpenODD</a> 1.0 YAML</strong>
   (the standard's chapter 10). It is read into the same objects. A <strong>binding
@@ -2416,7 +2417,11 @@ reads "ignored" as the neutral element.</p>
 <p>Modules follow ISO 34503's "default" definition mode, as OpenODD requires.
 Whatever no module rules out is inside the ODD.</p>
 <h2 id="writing-an-odd-in-python">Writing an ODD in Python<a class="headerlink" href="#writing-an-odd-in-python" title="Permanent link">&para;</a></h2>
-<p>An ODD is a function that takes nothing and returns an <code>OddDefinition</code>:</p>
+<p>An ODD is a function that takes nothing and returns an <code>OddDefinition</code>. The
+model, the registry and the reading of a name are openodd's (its
+<a href="https://github.com/hakuturu583/openodd_py/blob/main/docs/python_odd.md">Writing an ODD in Python</a>);
+this framework re-exports them, gives them its probes, and checks the ODD
+with Codon:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotations</span>
 <a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>
 <a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="kn">import</span><span class="w"> </span><span class="nn">typesafe_carla.carla</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">carla</span>
@@ -3151,7 +3156,7 @@ monitored but not covered.</p>
 </tr>
 <tr>
 <td>a name</td>
-<td>One registered with <code>register_odd(name, builder)</code> in code, or by a package through the <code>autoware_carla_scenario.odds</code> entry point group</td>
+<td>One registered with <code>register_odd(name, builder)</code> in code, or by a package through the <code>autoware_carla_scenario.odds</code> entry point group (or openodd's <code>openodd.odds</code>)</td>
 </tr>
 <tr>
 <td><code>path/to/urban.yaml</code></td>
@@ -3167,7 +3172,9 @@ monitored but not covered.</p>
 <a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>intersection_passing/left_turn<span class="w"> </span><span class="nv">odd</span><span class="o">=</span>my_package.odds:urban_odd
 </code></pre></div>
 <p>A package that ships its ODD registers it through the
-<code>autoware_carla_scenario.odds</code> entry point group. The entry point names a
+<code>autoware_carla_scenario.odds</code> entry point group, or openodd's <code>openodd.odds</code>
+when the ODD is not CARLA's alone (both are read; <code>openodd.resolve_odd()</code>
+resolves names as <code>resolve_odd()</code> does, with files measured by its <code>backend</code>). The entry point names a
 function that takes nothing and calls <code>register_odd</code>, the convention the
 scenario and traffic-backend groups use. A private taxonomy can then plug in
 without the framework knowing it:</p>
@@ -3780,7 +3787,7 @@ target.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 18, 2026 03:52:44 UTC"><span class="timeago" datetime="2026-10-18T03:52:44+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 18, 2026 03:52:44 UTC">2026-10-18</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 18, 2026 04:41:10 UTC"><span class="timeago" datetime="2026-10-18T04:41:10+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 18, 2026 04:41:10 UTC">2026-10-18</span>
   </span>
 
     
