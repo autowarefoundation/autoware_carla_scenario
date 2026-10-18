@@ -331,8 +331,8 @@ _MAP_CACHE = (
     "before setup()"
 )
 _ANY_FIELD = (
-    "holds a `dict[str, Any]` (a value per attribute or per key of the "
-    "run's config, of any type), which Codon has no type for; a scenario "
+    "holds a `dict[str, Any]` (a value per ODD attribute, or per key of the "
+    "module's metadata, of any type), which Codon has no type for; a scenario "
     "reads the typed fields instead"
 )
 _SWEEP_FIELD = (

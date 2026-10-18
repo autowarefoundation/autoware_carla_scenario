@@ -1895,9 +1895,11 @@ def test_a_public_member_is_modelled_or_listed_as_not_modelled(name: str) -> Non
         for m in _unmodelled_members(name)
         if not_modelled_member(python, m, name) is None
     )
+    # Python's own name says where it comes from: an openodd upgrade adds
+    # members to openodd.model.OddModule, the package's OddModule (#298).
     assert not missing, (
-        f"{name}: public in Python, neither modelled nor in "
-        f"NOT_MODELLED_MEMBERS: {missing}"
+        f"{name} ({python.__module__}.{python.__qualname__}): public in "
+        f"Python, neither modelled nor in NOT_MODELLED_MEMBERS: {missing}"
     )
 
 

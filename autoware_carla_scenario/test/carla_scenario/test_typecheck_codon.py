@@ -3744,6 +3744,8 @@ gated = path.gated({-1: StickyCondition(ElapsedTimeCondition(2.0, label="go"))})
 position = gated.vertices[0].position
 if isinstance(position, Lanelet2Pose):
     logger.info("starts on a lanelet")
+# A vertex's position is a TrajectoryPosition, which a vertex takes.
+again = Trajectory("q", [TrajectoryVertex(v.position) for v in gated.vertices])
 match = scenario_route()
 if match is not None:
     logger.info(

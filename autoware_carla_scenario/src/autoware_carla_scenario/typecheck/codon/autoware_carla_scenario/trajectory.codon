@@ -145,6 +145,13 @@ def _expect_trajectory_position(position):
         pass
     elif isinstance(position, CarlaWorldPose):
         pass
+    elif isinstance(position, Union[CarlaWorldPose, Lanelet2Pose, OpenDrivePose, MapPose,
+                                    RelativeLanePose, RouteLanePose, RouteOppositePose,
+                                    RouteCrossingPose, RouteCrosswalkPose,
+                                    RouteRoadsidePose]):
+        # A vertex's own position (TrajectoryVertex.position, #298), passed
+        # on to a new vertex: any of the ten.
+        pass
     else:
         compile_error("expected a trajectory position: a MapPose, a RelativeLanePose, "
                       "a route pose (RouteLanePose, RouteOppositePose, "

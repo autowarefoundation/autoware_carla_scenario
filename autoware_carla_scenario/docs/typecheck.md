@@ -517,7 +517,8 @@ What `test_typecheck_model.py` compares, model by model:
   a field or, where a field would change the constructor Codon generates
   (*What Codon builds by the fields*, below), as a read-only property
   (`RouteMatch.lanelet_ids`, a `List[int]` for Python's `tuple[int, ...]`;
-  `TrajectoryVertex.position`, the union of the ten poses; `CoverItem`'s
+  `TrajectoryVertex.position`, the union of the ten poses, which narrows
+  with `isinstance` and passes on to a new `TrajectoryVertex`; `CoverItem`'s
   fields). A frozen dataclass's field is read-only in Python too; writing a
   `CoverItem`'s is refused, which Python allows, and a scenario, which
   registers its items with `register_cover()`, has none to write. An
