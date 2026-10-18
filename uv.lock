@@ -1,5 +1,5 @@
 version = 1
-revision = 5
+revision = 3
 requires-python = ">=3.10, <3.15"
 resolution-markers = [
     "python_full_version >= '3.13' and sys_platform == 'emscripten'",
@@ -231,7 +231,7 @@ requires-dist = [
     { name = "numpy", specifier = ">=1.21" },
     { name = "omegaconf", specifier = ">=2.3.0" },
     { name = "opencv-python-headless", specifier = ">=4.8" },
-    { name = "openodd-py", specifier = ">=0.8.0" },
+    { name = "openodd-py", git = "https://github.com/hakuturu583/openodd_py?branch=feat%2Fodd-registry" },
     { name = "orjson", specifier = ">=3.13.0" },
     { name = "packaging", specifier = ">=23.0" },
     { name = "protobuf", specifier = ">=4.25.0,<8" },
@@ -2851,15 +2851,8 @@ wheels = [
 
 [[package]]
 name = "openodd-py"
-version = "0.8.0"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/33/65/6f8c7a51bbcfbcfc2da03619b7ee91660a6236c6cee7e3a0bd2cf1ddfb0c/openodd_py-0.8.0.tar.gz", hash = "sha256:559d67c41d6aa752ec50cb5ee67d47a50ae830c01448ed8c51b63160c242157d", size = 240487, upload-time = "2026-10-13T11:36:05.125Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/fb/ea/fbe675bbec2d25e3a0ad85a72ed77ce75f85a48c05dfafcdf00a95c71eed/openodd_py-0.8.0-cp310-abi3-macosx_10_12_x86_64.macosx_11_0_arm64.macosx_10_12_universal2.whl", hash = "sha256:9bc8ee1d424c93ca36361e1390c1dd9cb76baf62c9a63fa9e1d50f665551eb77", size = 4122056, upload-time = "2026-10-13T11:35:57.316Z" },
-    { url = "https://files.pythonhosted.org/packages/28/b0/434d0db76d3d909beda1568f0543ad488e463e34e77d857e4255de0a2d8f/openodd_py-0.8.0-cp310-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:9448a06e7759d8713c3ae400952104d96d1e97cfe77d8957e072f39b07f5255c", size = 2268272, upload-time = "2026-10-13T11:35:59.449Z" },
-    { url = "https://files.pythonhosted.org/packages/4f/34/5807b82505ff36338f739bd1867fd5092b65a535b0a7709ad7976df91e59/openodd_py-0.8.0-cp310-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:bc47a6decb3e5b27d3e74bfb4a2cdccd0ce16e68b6c28526e5b1562d7957076d", size = 2323249, upload-time = "2026-10-13T11:36:01.237Z" },
-    { url = "https://files.pythonhosted.org/packages/e6/15/aa23bcd78d7af579d23c7877ac01de9e4b44a5468b477c9375e2aa8b9ed0/openodd_py-0.8.0-cp310-abi3-win_amd64.whl", hash = "sha256:d9c2e74062f184913b761ed6bcda6a98efc8b6541ee1a36e48c7f5bc6fca1bb8", size = 2035043, upload-time = "2026-10-13T11:36:03.561Z" },
-]
+version = "0.11.0"
+source = { git = "https://github.com/hakuturu583/openodd_py?branch=feat%2Fodd-registry#e7ccc617ad5b2e0b9998c36ec7f67055a14e17ae" }
 
 [[package]]
 name = "opentelemetry-api"

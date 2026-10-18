@@ -10,7 +10,8 @@ reached (see [Coverage](coverage.md)). The ODD's modules say which ticks were
 An ODD is written in one of two ways. Both build the same objects, so they
 are measured, judged and reported the same way:
 
-- **Python**: the canonical form. It is checked with Codon before it is used,
+- **Python**: openodd's model ([Writing an ODD in Python](https://github.com/hakuturu583/openodd_py/blob/main/docs/python_odd.md)),
+  with this framework's probes. It is checked with Codon before it is used,
   like a scenario ([Static Check](typecheck.md)).
 - **[ASAM OpenODD](https://www.asam.net/standards/detail/openodd/) 1.0 YAML**
   (the standard's chapter 10). It is read into the same objects. A **binding
@@ -87,7 +88,11 @@ Whatever no module rules out is inside the ODD.
 
 ## Writing an ODD in Python
 
-An ODD is a function that takes nothing and returns an `OddDefinition`:
+An ODD is a function that takes nothing and returns an `OddDefinition`. The
+model, the registry and the reading of a name are openodd's (its
+[Writing an ODD in Python](https://github.com/hakuturu583/openodd_py/blob/main/docs/python_odd.md));
+this framework re-exports them, gives them its probes, and checks the ODD
+with Codon:
 
 ```python
 from __future__ import annotations
@@ -669,7 +674,7 @@ The `odd` config key, or `ScenarioQueue(odd=...)` /
 | Value | ODD |
 |---|---|
 | `default` | The built-in one ([Coverage](coverage.md#odd-coverage)): every attribute, no modules. It is openodd's bundled `default` ODD ([its files](https://github.com/hakuturu583/openodd_py/tree/main/python/openodd/odds/default)), measured by this framework's probes, so it has a revision like any ODD read from files |
-| a name | One registered with `register_odd(name, builder)` in code, or by a package through the `autoware_carla_scenario.odds` entry point group |
+| a name | One registered with `register_odd(name, builder)` in code, or by a package through the `autoware_carla_scenario.odds` entry point group (or openodd's `openodd.odds`) |
 | `path/to/urban.yaml` | A binding file (or an OpenODD file on its own, measuring nothing) |
 | `package.module:function` | A builder to import and call |
 
@@ -679,7 +684,9 @@ uv run scenario scenario=intersection_passing/left_turn odd=my_package.odds:urba
 ```
 
 A package that ships its ODD registers it through the
-`autoware_carla_scenario.odds` entry point group. The entry point names a
+`autoware_carla_scenario.odds` entry point group, or openodd's `openodd.odds`
+when the ODD is not CARLA's alone (both are read; `openodd.resolve_odd()`
+resolves names as `resolve_odd()` does, with files measured by its `backend`). The entry point names a
 function that takes nothing and calls `register_odd`, the convention the
 scenario and traffic-backend groups use. A private taxonomy can then plug in
 without the framework knowing it:

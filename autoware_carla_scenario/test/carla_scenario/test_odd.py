@@ -10,6 +10,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from openodd import registry as openodd_registry
 
 import autoware_carla_scenario.odd as odd_pkg
 from autoware_carla_scenario.constants import EGO_ROLE_NAME
@@ -930,12 +931,12 @@ class TestRegistry:
         assert resolve_odd(odd) is odd
 
     def test_a_registered_name(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(odd_registry, "_REGISTRY", {})
+        monkeypatch.setattr(openodd_registry, "_REGISTRY", {})
         register_odd("small", small_odd)
         assert resolve_odd("small").name == "small"
         assert odd_builder("small") is small_odd
         assert "small" in odd_registry.odd_names()
-        with pytest.raises(ValueError, match="built-in"):
+        with pytest.raises(ValueError, match="bundled"):
             register_odd("default", small_odd)
 
     def test_an_unknown_name_is_refused(self) -> None:

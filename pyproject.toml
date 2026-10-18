@@ -76,3 +76,8 @@ markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "integration: marks tests requiring a running CARLA server",
 ]
+
+# TEMPORARY: openodd.registry is on hakuturu583/openodd_py#feat/odd-registry and
+# not yet released. Drop this and require openodd-py>=0.12.0 once it is.
+[tool.uv.sources]
+openodd-py = { git = "https://github.com/hakuturu583/openodd_py", branch = "feat/odd-registry" }
