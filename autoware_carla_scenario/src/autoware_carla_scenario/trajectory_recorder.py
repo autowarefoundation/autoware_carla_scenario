@@ -39,6 +39,9 @@ One JSON object per line, in CARLA's (left-handed) frame, metres/degrees
 * ``{"type": "condition", "frame", "t", "role", "index", "label",
   "satisfied"}`` -- when a pass/fail condition is first checked, and whenever
   it changes.
+* ``{"type": "action", "frame", "t", "phase", "index", "label", "action_type",
+  "state"}`` -- an action's lifecycle state (:class:`ActionState`'s value) on
+  the first tick of the loop, and whenever it changes.
 * ``{"type": "result", "passed", "message", "elapsed_seconds",
   "conditions"}`` -- last, the verdict.
 
@@ -244,6 +247,7 @@ class TrajectoryRecorder:
         self._t = 0.0
         self._markers: Any = None
         self._conditions: dict[tuple[str, int], bool] = {}
+        self._actions: dict[tuple[str, int], str] = {}
 
     @property
     def active(self) -> bool:
@@ -345,6 +349,34 @@ class TrajectoryRecorder:
                     "index": index,
                     "label": label,
                     "satisfied": bool(satisfied),
+                }
+            ),
+        )
+
+    def record_action(
+        self, phase: str, index: int, label: str, action_type: str, state: str
+    ) -> None:
+        """Write an action's lifecycle state (an :class:`ActionState` value) on
+        the tick last recorded, when it was not written before or has changed
+        since."""
+        if self._out is None:
+            return
+        key = (phase, index)
+        if self._actions.get(key) == state:
+            return
+        self._actions[key] = state
+        self._guarded(
+            "stopped",
+            lambda: self._emit(
+                {
+                    "type": "action",
+                    "frame": self._frame,
+                    "t": _r(self._t),
+                    "phase": phase,
+                    "index": index,
+                    "label": label,
+                    "action_type": action_type,
+                    "state": state,
                 }
             ),
         )

@@ -1294,6 +1294,22 @@ class ScenarioRunner:
                 for cb in scenario._post_tick_callbacks:
                     cb(world)
 
+                # Where every action is in its lifecycle after this tick: the
+                # pre-tick ones acted on the frame just recorded, the post-tick
+                # ones on what it showed.
+                for phase, actions in (
+                    ("pre_tick", scenario._pre_tick_actions),
+                    ("post_tick", scenario._post_tick_actions),
+                ):
+                    for i, action in enumerate(actions):
+                        trajectory.record_action(
+                            phase,
+                            i,
+                            action.label,
+                            type(action).__name__,
+                            action.state.value,
+                        )
+
                 # Coverage samples the world the hooks above have acted on.
                 coverage.tick(world, elapsed)
 

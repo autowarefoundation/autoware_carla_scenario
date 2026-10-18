@@ -23,8 +23,8 @@ cannot read 2020-12 tuples.
 ## Versions
 
 The format has a version, `schema_version` in the `world` line: **2**. Version
-2 added the records `map`, `warmup`, `actor_gone`, `markers`, `condition` and
-`result`, and `schema_version` itself; a file of version 1 has no
+2 added the records `map`, `warmup`, `actor_gone`, `markers`, `condition`,
+`action` and `result`, and `schema_version` itself; a file of version 1 has no
 `schema_version` and none of those records, and still follows the schema.
 Every change keeps the records there are: a new version adds records (and
 optional fields), so a reader that skips the `type`s it does not know reads
@@ -32,13 +32,13 @@ any later file.
 
 ## Records
 
-Each line is one of ten records, told apart by `type`. A file starts with one
+Each line is one of eleven records, told apart by `type`. A file starts with one
 `world` line and one `map` line, then one `traffic_light` line per light and one
 `warmup` line. After that come the ticks: each `tick` line is preceded by an
 `actor` line for every vehicle or walker appearing in it for the first time and
 an `actor_gone` line for every one that has gone since the last, and followed
-by a `markers` line when the ego's plan changed on it and a `condition` line for
-each condition that changed. A run that reached a verdict ends with `result`.
+by a `markers` line when the ego's plan changed on it, a `condition` line for
+each condition that changed and an `action` line for each action that moved on. A run that reached a verdict ends with `result`.
 
 ```json
 {"type":"world","schema_version":2,"map":"Carla/Maps/Town10HD_Opt","episode":7}
@@ -49,6 +49,7 @@ each condition that changed. A run that reached a verdict ends with `result`.
 {"type":"tick","frame":100,"t":0.0,"actors":[[1,0.0,1.0,0.0,0.0,0.0,90.0,0.0,0.0,0.0]],"control":{"1":[0.5,0.0,0.0,1]},"lights":{"9":"Red"}}
 {"type":"markers","frame":100,"t":0.0,"actor":1,"polylines":[{"points":[[0.0,1.0,0.3],[5.0,1.0,0.3]],"color":[0,255,0],"thickness":0.1,"point_size":0.1}]}
 {"type":"condition","frame":101,"t":0.05,"role":"pass","index":0,"label":"arrived","satisfied":false}
+{"type":"action","frame":101,"t":0.05,"phase":"post_tick","index":0,"label":"cut_in","action_type":"LaneChangeAction","state":"startTransition"}
 {"type":"actor_gone","id":3,"frame":180,"t":4.0}
 {"type":"result","passed":true,"message":"Ego reached the goal","elapsed_seconds":12.3,"conditions":[{"label":"pass[0](arrived)","role":"pass","condition_type":"ReachPositionCondition","satisfied":true,"message":"..."}]}
 ```
@@ -64,6 +65,7 @@ each condition that changed. A run that reached a verdict ends with `result`.
 | `actor_gone` (2) | before the first tick a vehicle/walker is missing from | `id`, and the `frame` and `t` of that tick |
 | `markers` (2) | after a tick on which the ego's debug markers changed | `frame`, `t`, `actor` (the ego, or null), `polylines` `[{points [[x,y,z]], color [r,g,b], thickness, point_size}]`; they hold until the next `markers` line, and none (`[]`) clears them |
 | `condition` (2) | when a condition is first checked, and when it changes | `frame`, `t`, `role` (`pass`/`fail`), `index` (in its list), `label`, `satisfied` |
+| `action` (2) | on the first tick of the loop, and when the action's state changes | `frame`, `t`, `phase` (`pre_tick`/`post_tick`), `index` (in its list), `label`, `action_type` (its class), `state` (`standbyState`, `startTransition`, `runningState`, `endTransition`, `completeState`: OpenSCENARIO's, `ActionState`) |
 | `result` (2) | last, when the run reached a verdict | `passed`, `message`, `elapsed_seconds`, `conditions` `[{label, role, condition_type, satisfied, message}]` (_result.json's, without the details) |
 
 Fixed-length arrays are tuples: the schema gives each position its meaning, and
@@ -109,8 +111,10 @@ SHA-256, so a reader can load the very map the run was on.
 - **Actors that go are marked.** A vehicle or walker that is destroyed or
   despawned stops appearing in `actors`, and from version 2 an `actor_gone`
   line says so before the first tick it is missing from.
-- **Markers and conditions are deltas too.** A `markers` line holds until the
-  next one; a `condition` line until the next of the same `role` and `index`.
+- **Markers, conditions and actions are deltas too.** A `markers` line holds
+  until the next one; a `condition` line until the next of the same `role` and
+  `index`; an `action` line until the next of the same `phase` and `index`
+  (`startTransition` and `endTransition` hold for one tick).
   The run stops checking conditions at the first that decides it, so the last
   tick may have no line for the ones after it.
 - **Episode ids are 64-bit.** `episode` is a random uint64, so it is often past
