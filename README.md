@@ -3,7 +3,9 @@
 A scenario-testing framework for validating [Autoware](https://www.autoware.org/)
 on the [CARLA](https://carla.org/) simulator. A Hydra-driven scenario runner
 loads an OpenDRIVE map into CARLA, drives an Autoware ego vehicle, evaluates
-pass/fail conditions, and records video/JSON results. It ships a FastAPI viewer
+pass/fail conditions, and records JSON results and a trajectory log of every
+run (seen in the Rerun viewer, through the `autoware_carla_scenario_rerun`
+package's `convert` / `convert_dir`). It ships a FastAPI viewer
 for browsing runs and a FastAPI editor for authoring scenarios and exporting
 them as reproducible packages.
 

@@ -158,7 +158,6 @@ The package's runtime dependencies (declared in `pyproject.toml`):
 - `fastapi>=0.115.0`, `uvicorn[standard]>=0.34.0`, `jinja2>=3.1.0` —
   result viewer
 - `pyyaml>=6.0`, `pydantic>=2.0.0`
-- `ffmpeg-python>=0.2.0` — H.264 encoder driver for video recording
 
 ## Troubleshooting
 

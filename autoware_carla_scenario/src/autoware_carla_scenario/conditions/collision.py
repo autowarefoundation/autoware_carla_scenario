@@ -15,6 +15,10 @@ from .base import BaseCondition, ScenarioResult
 
 __all__ = ["CollisionCondition", "CollisionTargetType"]
 
+#: What the details and the message name when the other side of the collision
+#: is not an actor (``CollisionEvent.other_actor`` is ``None``).
+_NOT_AN_ACTOR = "not an actor"
+
 
 class CollisionTargetType(enum.Enum):
     """A class of object a collision may be with.
@@ -30,7 +34,9 @@ class CollisionTargetType(enum.Enum):
             the condition meant before it could be told otherwise.
         VEHICLE: Cars, vans, motorcycles.
         PEDESTRIAN: Walkers.
-        STATIC: Street furniture, barriers, props.
+        STATIC: Street furniture, barriers, props: actors whose blueprint id
+            starts ``static.``.  Map geometry (a wall, a kerb) is no actor,
+            so it is not of this class, nor of any but ``ANY``.
     """
 
     ANY = ""
@@ -48,7 +54,7 @@ class CollisionTargetType(enum.Enum):
 
 
 class CollisionCondition(BaseCondition):
-    """Fail condition that triggers when the ego vehicle collides with any actor.
+    """Fail condition that triggers when the ego vehicle collides with anything.
 
     Uses the CARLA ``sensor.other.collision`` sensor attached to the ego vehicle
     (identified by ``role_name == EGO_ROLE_NAME``).  The sensor is attached lazily on the
@@ -62,12 +68,18 @@ class CollisionCondition(BaseCondition):
     entity, or a class of object -- narrows it to the collision the scenario is
     actually about.
 
+    A collision with something that is not an actor -- map geometry such as a
+    wall or a kerb, for which CARLA's ``CollisionEvent.other_actor`` is
+    ``None`` -- counts when the condition is not targeted, and is ignored by a
+    targeted one: it is neither the entity named nor of a type named.  Its
+    details then say ``other_actor_type: "not an actor"``.
+
     Args:
         min_impulse: Minimum collision impulse magnitude (in N·s) required to
             trigger the condition.  Collisions below this threshold are ignored.
             Defaults to ``0.0`` (all collisions trigger).
         target: ``role_name`` of the entity the ego must hit.  ``None`` (the
-            default) accepts any actor.
+            default) accepts a collision with anything.
         target_type: A class of object the ego must hit.  Defaults to
             :attr:`CollisionTargetType.ANY`.
         label: Human-readable identifier for this condition.
@@ -92,6 +104,7 @@ class CollisionCondition(BaseCondition):
     _lock: threading.Lock
     _collided: bool
     _other_type_id: Optional[str]
+    _other_is_actor: bool
     _last_attach_attempt: float
     _cached_result: Optional[ScenarioResult]
 
@@ -116,6 +129,7 @@ class CollisionCondition(BaseCondition):
         self._lock = threading.Lock()
         self._collided = False
         self._other_type_id: Optional[str] = None
+        self._other_is_actor = True
         self._last_attach_attempt: float = -math.inf
         self._cached_result: Optional[ScenarioResult] = None
 
@@ -126,12 +140,18 @@ class CollisionCondition(BaseCondition):
         if self._target_type is not CollisionTargetType.ANY:
             details["target_type"] = self._target_type.name
         if self._collided:
-            details["other_actor_type"] = self._other_type_id or "unknown"
+            details["other_actor_type"] = self._other_description()
             if self._cached_result is not None:
                 details["collision_elapsed_seconds"] = (
                     self._cached_result.elapsed_seconds
                 )
         return details
+
+    def _other_description(self) -> str:
+        """What the latched collision was with, for the details and the message."""
+        if not self._other_is_actor:
+            return _NOT_AN_ACTOR
+        return self._other_type_id or "unknown"
 
     def _wanted(self, other: "carla.Actor") -> bool:
         """Whether a collision with *other* is the one this condition is about.
@@ -154,14 +174,26 @@ class CollisionCondition(BaseCondition):
         magnitude = math.sqrt(impulse.x**2 + impulse.y**2 + impulse.z**2)
         if magnitude < self._min_impulse:
             return
-        # Annotated, so Codon unwraps its Optional (docs/typecheck.md).
-        other: "carla.Actor" = event.other_actor
-        if not self._wanted(other):
-            return
+        # None when the other side is not an actor (map geometry): only an
+        # untargeted condition is about that collision (#277).
+        other = event.other_actor
+        type_id: Optional[str] = None
+        if other is None:
+            if self._target is not None:
+                return
+            if self._target_type is not CollisionTargetType.ANY:
+                return
+        else:
+            # Annotated, so Codon unwraps its Optional (docs/typecheck.md).
+            actor: "carla.Actor" = other
+            if not self._wanted(actor):
+                return
+            type_id = actor.type_id
         with self._lock:
             if not self._collided:
                 self._collided = True
-                self._other_type_id = other.type_id
+                self._other_is_actor = other is not None
+                self._other_type_id = type_id
 
     def _on_sensor_data(
         self, data: Union["carla.CollisionEvent", "carla.SensorData"]
@@ -227,10 +259,13 @@ class CollisionCondition(BaseCondition):
 
         with self._lock:
             if self._collided:
-                other = self._other_type_id or "unknown"
+                if self._other_is_actor:
+                    other = f"'{self._other_description()}'"
+                else:
+                    other = "something that is not an actor (map geometry)"
                 self._cached_result = ScenarioResult(
                     passed=False,
-                    message=f"Ego vehicle collided with '{other}' at {elapsed:.2f}s",
+                    message=f"Ego vehicle collided with {other} at {elapsed:.2f}s",
                     elapsed_seconds=elapsed,
                 )
                 # Stop the listener — no further callbacks are needed.

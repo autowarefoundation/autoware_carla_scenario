@@ -94,7 +94,6 @@ if TYPE_CHECKING:
         TrafficSourceAction as TrafficSourceAction,
         WalkStraightAction as WalkStraightAction,
     )
-    from .camera_recorder import CameraRecorder as CameraRecorder
     from .trajectory import (
         MapPose as MapPose,
         ReferenceContext as ReferenceContext,
@@ -474,7 +473,6 @@ __all__ = [
     "TrajectoryTiming",
     "TrajectoryVertex",
     # Sensors
-    "CameraRecorder",
     "CameraSensorBase",
     "CameraSensorConfig",
     "CarlaCameraSensor",
@@ -521,7 +519,6 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "TrajectoryTiming": (".trajectory", "TrajectoryTiming"),
     "TrajectoryVertex": (".trajectory", "TrajectoryVertex"),
     # camera / sensor
-    "CameraRecorder": (".camera_recorder", "CameraRecorder"),
     "CameraSensorBase": (".sensor", "CameraSensorBase"),
     "CameraSensorConfig": (".sensor", "CameraSensorConfig"),
     "CarlaCameraSensor": (".sensor", "CarlaCameraSensor"),

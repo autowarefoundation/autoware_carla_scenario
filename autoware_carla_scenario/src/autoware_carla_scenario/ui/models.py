@@ -52,7 +52,8 @@ class ScenarioResultView(BaseModel):
     condition_statuses: list[ConditionNode]
     overrides: list[str]
     raw_log: str = ""
-    video_filename: str | None = None
+    #: The run's trajectory log, to make a Rerun recording of the run from.
+    trajectory_path: str | None = None
 
 
 class RunProgress(BaseModel):

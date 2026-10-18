@@ -8,7 +8,6 @@ import pytest
 
 from autoware_carla_scenario import ScenarioRunner
 from autoware_carla_scenario.constants import FIXED_DELTA_SECONDS
-from autoware_carla_scenario.debug_markers import DebugMarkerLog
 from autoware_carla_scenario.scenario_runner import (
     _destroy_all_dynamic_actors,
     _ScenarioClock,
@@ -275,7 +274,7 @@ class TestWaitForEgo:
     def test_an_ego_that_is_ready_is_not_waited_for(self):
         runner = _make_runner(None)
         world = MagicMock()
-        runner._wait_for_ego(world, _FakeEgo(ready_after=0), "S", DebugMarkerLog())
+        runner._wait_for_ego(world, _FakeEgo(ready_after=0), "S")
         world.tick.assert_not_called()
 
     def test_the_world_ticks_until_the_ego_is_ready(self):
@@ -284,7 +283,7 @@ class TestWaitForEgo:
         runner = _make_runner(None)
         world = MagicMock()
         ego = _FakeEgo(ready_after=3)
-        runner._wait_for_ego(world, ego, "S", DebugMarkerLog())
+        runner._wait_for_ego(world, ego, "S")
         assert world.tick.call_count == 3
         assert ego.is_initialized
 
@@ -292,7 +291,7 @@ class TestWaitForEgo:
         runner = _make_runner(None)
         world = MagicMock()
         ego = _FakeEgo(ready_after=100, gives_up_after=2)
-        runner._wait_for_ego(world, ego, "S", DebugMarkerLog())
+        runner._wait_for_ego(world, ego, "S")
         assert world.tick.call_count == 2
         assert not ego.is_initialized
 
@@ -336,7 +335,7 @@ class TestInitPhaseOrdering:
         world = MagicMock()
         scenario.run_init(world)
         ego.on_scenario_start(world)
-        _make_runner(None)._wait_for_ego(world, ego, "S", DebugMarkerLog())
+        _make_runner(None)._wait_for_ego(world, ego, "S")
 
         assert order == ["init", "on_scenario_start"]
 
@@ -499,7 +498,7 @@ class TestNothingMovesDuringInit:
         runner._pace_tick = lambda: None  # type: ignore[method-assign]
 
         ego = _FakeEgo(ready_after=3)
-        runner._wait_for_ego(world, ego, "S", DebugMarkerLog())
+        runner._wait_for_ego(world, ego, "S")
 
         assert vehicle.apply_control.call_count == 3
         held = vehicle.apply_control.call_args[0][0]
@@ -879,6 +878,77 @@ class TestTheBatchMap:
         assert not same_episode(None, None)
         assert not same_episode(None, 7)
         assert same_episode(-7, -7)
+
+
+class TestTheResetReleasesTheRunsSensors:
+    """The reset destroys the run's actors through the server, then reloads.
+
+    The reload alone does not release a sensor that is still listening. A
+    ``CollisionCondition`` leaves one in every run, and its stream keeps the
+    server and the client busy for the rest of the batch, so the tick loop
+    slows a little more with every case (#290).
+    """
+
+    @staticmethod
+    def _server(events: list, actors) -> _SharedServer:
+        server = _SharedServer(("Town10HD_Opt",), "Town10HD_Opt")
+        plain_get_world = server.get_world
+        plain_load_world = server.load_world
+
+        def get_world() -> MagicMock:
+            world = plain_get_world()
+            world.get_actors.side_effect = actors
+            return world
+
+        def load_world(name: str) -> MagicMock:
+            events.append(("load", name))
+            return plain_load_world(name)
+
+        server.get_world = get_world  # type: ignore[method-assign]
+        server.load_world = load_world  # type: ignore[method-assign]
+        return server
+
+    def test_a_listening_sensor_is_destroyed_before_the_reload(self):
+        events: list = []
+
+        class _Logged(_FakeActor):
+            def destroy(self) -> None:
+                super().destroy()
+                events.append(("destroy", self.id))
+
+        npc = _Logged(1, "npc1")
+        collision = _Logged(2, parent=npc)
+        left = [npc, collision]
+
+        def actors() -> _FakeActorList:
+            alive = [a for a in left if not a.destroyed]
+            return _FakeActorList(
+                [a for a in alive if a.parent is None],
+                [a for a in alive if a.parent is not None],
+            )
+
+        runner = _runner_on(self._server(events, actors))
+        runner.load_map_by_name("Town10HD_Opt")
+        events.clear()
+
+        runner.reset_world("Case0")
+
+        assert events == [("destroy", 1), ("destroy", 2), ("load", "Town10HD_Opt")]
+
+    def test_the_map_is_reloaded_even_when_the_destroy_fails(self, caplog):
+        def actors() -> _FakeActorList:
+            raise RuntimeError("time-out of 10000ms while waiting for the simulator")
+
+        events: list = []
+        runner = _runner_on(self._server(events, actors))
+        runner.load_map_by_name("Town10HD_Opt")
+        events.clear()
+
+        with caplog.at_level("WARNING", logger="autoware_carla_scenario"):
+            runner.reset_world("Case0")
+
+        assert events == [("load", "Town10HD_Opt")]
+        assert any("before the reload failed" in r.getMessage() for r in caplog.records)
 
 
 def _never(label: str):

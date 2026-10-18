@@ -1766,6 +1766,75 @@ def test_a_default_of_the_wrong_type_is_reported(
     assert "with the default of `max_distance`" in result.format(), result.format()
 
 
+_NONE_MISUSED = """
+from __future__ import annotations
+
+from typing import Optional
+
+
+def reading(x: float) -> Optional[float]:
+    return x if x > 0.0 else None
+
+
+def halved(x: float) -> float:
+    value: float = reading(x)
+    return value / 2.0
+"""
+
+
+@needs_codon
+def test_a_none_misused_in_a_checked_module_is_reported(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Codon unwraps the Optional, so the compile accepts it; the None check
+    # the scenario check runs is run over the checked modules too (#277).
+    result = _check_case(_NONE_MISUSED, tmp_path, monkeypatch)
+    assert not result.ok
+    located = [d for d in result.diagnostics if d.path and d.path.endswith(".py")]
+    assert [(d.path, d.line) for d in located] == [
+        (str(tmp_path / "zz_library_check_case.py"), 12)
+    ], result.format()
+    assert "test the value for None" in located[0].message
+
+
+def test_a_none_check_that_did_not_run_warns_and_is_not_kept(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Without Codon: the compile passes, mypy has no verdict.  The library
+    # check keeps Codon's verdict with a warning, and does not keep it beyond
+    # the process, so the next run gives the None check another go (#277).
+    from autoware_carla_scenario.typecheck.none_check import (  # noqa: PLC0415
+        NoneCheckSkipped,
+    )
+
+    monkeypatch.setenv(check.CACHE_DIR_ENV, str(tmp_path))
+    monkeypatch.setattr(check, "_CACHE", {})
+    monkeypatch.setattr(check, "codon_path_dir", lambda: tmp_path)
+    monkeypatch.setattr(check, "_toolchain_digest", lambda tc: "tc")
+    monkeypatch.setattr(check, "_framework_digest", lambda codon_path: "fw")
+    monkeypatch.setattr(check, "_library_imports", lambda *args: None)
+
+    def compile_(name: str, *args: object, **kwargs: object) -> TypeCheckResult:
+        return TypeCheckResult(name, ok=True)
+
+    def no_mypy(paths: object, timeout: float) -> object:
+        raise NoneCheckSkipped("mypy is not installed")
+
+    monkeypatch.setattr(check, "_compile", compile_)
+    monkeypatch.setattr(check, "run_none_check", no_mypy)
+    result = typecheck_library(
+        [f"{_PACKAGE}.kinematics.vector"],
+        toolchain=SimpleNamespace(),  # type: ignore[arg-type]
+    )
+
+    assert result.ok, result.format()
+    assert [w.message for w in result.warnings] == [
+        "the None check did not run (mypy is not installed), so an Optional "
+        "used without a test for None is not reported"
+    ]
+    assert not [p for p in tmp_path.rglob("*") if p.is_file()]
+
+
 _INIT_AND_SETTER = """
 from __future__ import annotations
 
@@ -3092,7 +3161,7 @@ def test_a_typed_star_args_is_called_with_one_value() -> None:
 
 
 # ---------------------------------------------------------------------------
-# The signal and atexit shims, a Popen's pipes, and the dotenv, ffmpeg and
+# The signal and atexit shims, a Popen's pipes, and the dotenv and
 # carla_install models (#119)
 # ---------------------------------------------------------------------------
 
@@ -3107,7 +3176,6 @@ import subprocess
 from pathlib import Path
 from typing import Any, Optional
 
-import ffmpeg
 import numpy as np
 from dotenv import load_dotenv
 
@@ -3123,11 +3191,11 @@ class Recorder:
     def start(self, size: str) -> None:
         load_dotenv(override=False)
         load_dotenv(Path(".env"), None, True)
-        self._process = (
-            ffmpeg.input("pipe:", format="rawvideo", s=size, r=20.0)
-            .output("out.mp4", vcodec="libx264", crf=23)
-            .overwrite_output()
-            .run_async(pipe_stdin=True, pipe_stderr=True)
+        self._process = subprocess.Popen(
+            ["encoder", "-s", size],
+            stdin=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            start_new_session=True,
         )
         atexit.register(self.stop)
         atexit.register(self.finish, 3, reason="exit")
@@ -3152,7 +3220,7 @@ class Recorder:
                 self._process.stdin.close()
             self._process.wait()
             if self._process.stderr is not None:
-                logged: str = self._process.stderr.read()
+                logged: bytes = self._process.stderr.read()
             os.killpg(os.getpgid(self._process.pid), signal.SIGKILL)
             atexit.unregister(self.stop)
             self._process = None
@@ -3181,7 +3249,7 @@ def _check_signals_case(
 def test_the_signal_atexit_and_pipe_shims_and_their_models_take_what_cpython_takes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    for shim in ("signal.codon", "atexit.codon", "dotenv", "ffmpeg"):
+    for shim in ("signal.codon", "atexit.codon", "dotenv", "subprocess.codon"):
         assert (model_dir() / shim).exists(), shim
     result = _check_signals_case(_PROCESS_SIGNALS, tmp_path, monkeypatch)
     assert result.ok, result.format()
@@ -3192,12 +3260,11 @@ def test_the_signal_atexit_and_pipe_shims_and_their_models_take_what_cpython_tak
     ("right", "wrong", "at"),
     [
         # Each fails in CPython 3.10 (the oldest Python the package supports)
-        # with the installed python-dotenv and ffmpeg-python: a TypeError, an
-        # AttributeError or ffmpeg-python's ValueError when it is called, but
-        # handler-arity and register-arguments, which CPython takes and fails
-        # on later, with a TypeError when the signal arrives and one it
-        # reports at exit. Codon reports a method a stream of the chain lacks,
-        # and an error inside one, at the chain's first line (`at`).
+        # with the installed python-dotenv: a TypeError or an AttributeError
+        # when it is called, but handler-arity and register-arguments, which
+        # CPython takes and fails on later, with a TypeError when the signal
+        # arrives and one it reports at exit. Codon reports an error in the
+        # Popen call at its first line (`at`).
         ("signal.SIG_IGN)", "5)", "signal.SIGINT, 5)"),
         ("signal.SIGKILL)", "signal.SIGKILLED)", None),
         ("signal.SIGTERM, self._on_signal)", "signal.SIGTERM, self.stop)", None),
@@ -3205,13 +3272,12 @@ def test_the_signal_atexit_and_pipe_shims_and_their_models_take_what_cpython_tak
         ('3, reason="exit")', '3, why="exit")', None),
         ("atexit.unregister(self.stop)", "atexit.unregister(func=self.stop)", None),
         ("load_dotenv(override=False)", "load_dotenv(overwrite=False)", None),
+        ("stdin=subprocess.PIPE,", "stdinput=subprocess.PIPE,", "subprocess.Popen("),
         (
-            '            .output("out.mp4", vcodec="libx264", crf=23)\n',
-            "",
-            "ffmpeg.input(",
+            "start_new_session=True,",
+            "start_new_session=True, shell=1, x=1,",
+            "subprocess.Popen(",
         ),
-        ('.output("out.mp4",', '.output(Path("out.mp4"),', "ffmpeg.input("),
-        ("run_async(pipe_stdin=True,", "run_async(pipe_input=True,", None),
         ("stdin.write(bgr.data)", "stdin.write(bgr.size)", None),
         ("installed_executable()", "installed_executable(True)", None),
     ],
@@ -3223,9 +3289,8 @@ def test_the_signal_atexit_and_pipe_shims_and_their_models_take_what_cpython_tak
         "register-arguments",
         "unregister-keyword",
         "dotenv-keyword",
-        "input-has-no-overwrite-output",
-        "output-file-name-str",
-        "run-async-keyword",
+        "popen-keyword",
+        "popen-unknown-keyword",
         "write-bytes-like",
         "installed-executable-arguments",
     ],

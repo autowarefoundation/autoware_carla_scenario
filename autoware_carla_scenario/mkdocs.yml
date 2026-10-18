@@ -104,6 +104,7 @@ nav:
   - Architecture: architecture.md
   - API Reference: api.md
   - Development: development.md
+  - Migrating: migration.md
 
 extra_javascript:
   - https://unpkg.com/mermaid@10/dist/mermaid.min.js

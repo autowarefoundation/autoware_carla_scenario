@@ -1,6 +1,6 @@
 [project]
 name = "autoware-carla-scenario"
-version = "14.6.0"
+version = "15.0.0"
 description = "CARLA scenario testing framework for Autoware"
 readme = "README.md"
 license = "Apache-2.0"
@@ -70,7 +70,6 @@ dependencies = [
     "packaging>=23.0",
     "tomli>=1.1.0; python_version < '3.11'",
     "pydantic>=2.0.0",
-    "ffmpeg-python>=0.2.0",
     # Speaks the alpasim `egodriver` gRPC contract to an external driver policy:
     # the contract (vendored protos, geometry, the policy-side server) is
     # hakuturu583/carla_driver_interface. A range, not a pin: a policy and a

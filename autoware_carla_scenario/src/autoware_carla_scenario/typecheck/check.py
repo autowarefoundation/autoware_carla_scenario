@@ -1406,6 +1406,20 @@ def _typecheck(
     result = _compile(name, sources, rendered, toolchain, codon_path, timeout)
     if result is None:  # timed out: no verdict worth keeping
         return _timed_out(name, timeout)
+    return _none_checked(key, result, sources, timeout)
+
+
+def _none_checked(
+    key: str, result: TypeCheckResult, sources: _Sources, timeout: float
+) -> TypeCheckResult:
+    """*result* with the None check's findings (:func:`_with_none_misuses`),
+    kept under *key*.
+
+    The key covers what the None check reads beyond the modules
+    (:func:`_python_digest`: the framework's Python, the CARLA stubs'
+    writer among it, and mypy; :func:`_framework_digest`: the CARLA library
+    the stubs are written from), so a kept verdict holds the check's too.
+    """
     checked = _with_none_misuses(result, sources, timeout)
     if len(checked.warnings) > len(result.warnings):
         # The None check did not run (mypy missing, out of time): a verdict
@@ -2006,8 +2020,13 @@ def typecheck_library(
             by default).
         timeout: Seconds the compile may take.
 
+    The modules compiled are then given the None check, as a scenario's are
+    (:func:`_with_none_misuses`): an ``Optional`` CARLA or the framework
+    returns used without a test for ``None`` fails the check (#277).
+
     Returns:
-        The result; ``result.ok`` is ``False`` when a module does not compile.
+        The result; ``result.ok`` is ``False`` when a module does not compile
+        or uses a value that may be ``None`` where it may not be.
     """
     names = sorted(CHECKED if modules is None else set(modules))
     title = f"{_PACKAGE} library ({len(names)} checked modules)"
@@ -2070,4 +2089,6 @@ def typecheck_library(
     )
     if result is None:
         return _timed_out(title, timeout)
-    return _store(key, result, sources)
+    # Codon unwraps an Optional in the framework's modules as it does in a
+    # scenario's, so they get the scenario's None check too (#277).
+    return _none_checked(key, result, sources, timeout)

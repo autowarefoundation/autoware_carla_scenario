@@ -195,12 +195,13 @@ class EgoVehicle(BackendDriven):
         """
 
     def debug_markers(self) -> DebugMarkers:
-        """What this entity wants drawn in the video on the current tick.
+        """What this entity shows on the current tick: the plan it follows.
 
-        :class:`ScenarioRunner` asks after every tick of the recording (the
-        warm-up's and the scenario's) and draws the answer into that frame of
-        the video (:mod:`autoware_carla_scenario.debug_markers`).  Nothing
-        here; an entity that follows a plan of its own shows it.
+        :class:`ScenarioRunner` asks after every tick of the scenario and
+        writes the answer into the run's trajectory log when it changes (a
+        ``markers`` record, docs/trajectory_log.md), where a viewer of the run
+        draws it (:mod:`autoware_carla_scenario.debug_markers`).  Nothing here;
+        an entity that follows a plan of its own shows it.
         """
         return DebugMarkers()
 
