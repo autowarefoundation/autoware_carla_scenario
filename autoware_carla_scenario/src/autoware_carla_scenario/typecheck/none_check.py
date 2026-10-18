@@ -276,7 +276,8 @@ def _mypy_paths(paths: list[Path], scratch: Path) -> dict[str, Path]:
         link = scratch / relative.parts[0]
         try:
             if not link.is_symlink():
-                link.symlink_to(root / relative.parts[0])
+                # Absolute: a relative target is read from the link's directory.
+                link.symlink_to((root / relative.parts[0]).absolute())
         except OSError:
             given[str(path)] = path
             continue

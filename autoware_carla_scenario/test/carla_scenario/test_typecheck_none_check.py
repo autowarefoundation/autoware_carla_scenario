@@ -106,7 +106,9 @@ def test_a_finding_mypy_replays_from_its_cache_is_at_the_module_given(
         assert {f.path for f in findings} == {str(module)}
 
 
-def test_a_module_of_an_installed_package_is_checked(tmp_path: Path) -> None:
+def test_a_module_of_an_installed_package_is_checked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     # An installed (not editable) package is under site-packages, whose
     # top-level modules mypy took for user modules shadowing the library
     # ones when the module was given by its path there, and exited with
@@ -124,15 +126,21 @@ def test_a_module_of_an_installed_package_is_checked(tmp_path: Path) -> None:
     loose = site / "acs_none_loose.py"
     loose.write_text(textwrap.dedent(_MODULE))
 
-    findings = run_none_check([module, loose])
+    # Given relative to the working directory, and checked twice: the second
+    # time mypy replays the findings from its cache, at the link the first
+    # check gave it.
+    monkeypatch.chdir(tmp_path)
+    relative = module.relative_to(tmp_path)
+    for _ in range(2):
+        findings = run_none_check([relative, loose])
 
-    assert sorted(f.path for f in findings) == sorted(
-        [str(module)] * 4 + [str(loose)] * 4
-    )
-    first = next(f for f in findings if f.path == str(module))
-    lines = module.read_text().splitlines()
-    assert lines[first.line - 1].strip() == "a = maybe() / 3.6"
-    assert first.notes == ('Left operand is of type "float | None"',)
+        assert sorted(f.path for f in findings) == sorted(
+            [str(relative)] * 4 + [str(loose)] * 4
+        )
+        first = next(f for f in findings if f.path == str(relative))
+        lines = module.read_text().splitlines()
+        assert lines[first.line - 1].strip() == "a = maybe() / 3.6"
+        assert first.notes == ('Left operand is of type "float | None"',)
 
 
 def test_no_module_gives_no_verdict() -> None:
