@@ -11,6 +11,7 @@ The package provides these CLI commands:
 | [`scenario`](#scenario-scenario-runner) | Hydra | Run autonomous driving scenario tests in CARLA |
 | `scenario-new` | argparse | Scaffold a standalone scenario package |
 | [`scenario-check`](typecheck.md) | Hydra compose | Compile scenarios with Codon without running them (the static check the runner makes before a run) |
+| [`scenario-slurm`](slurm.md#following-collecting-resubmitting) | argparse | Follow, collect, resubmit or cancel a batch run as SLURM array jobs (`launcher=slurm`) |
 | [`scenario-odd`](odd.md#checking-an-odd) | argparse | Check an ODD and show its buckets; `scenario-odd route` checks scenarios' planned routes against it on the Lanelet2 map |
 | [`detect-no-3d-model`](#detect-no-3d-model-3d-model-detection) | argparse | Detect lanelets without a matching 3D ground model in CARLA |
 | [`viewer`](#viewer-scenario-result-viewer) | FastAPI + Uvicorn | Web UI for browsing and monitoring scenario test results |
@@ -115,6 +116,15 @@ what the earlier ones left uncovered (see
 A scenario with more than one case is listed as `name#k` in the summary, and
 `batch_results.json` gives each case its `overrides`. `hydra/sweeper=...` may
 be given but is not needed: the batch is the sweeper.
+
+On a SLURM cluster, `launcher=slurm` runs a batch's cases as array jobs, several
+at once, each on a CARLA of its own, with the same outputs (off unless
+selected; see [Running a Batch on SLURM](slurm.md)):
+
+```bash
+uv run scenario --multirun 'scenario=cut_in/*' +sweep.odd_sample.count=24 \
+  launcher=slurm launcher.array_parallelism=2
+```
 
 ### Selecting a Published HD Map
 

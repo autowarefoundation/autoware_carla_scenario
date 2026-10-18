@@ -39,7 +39,7 @@ import json
 import logging
 import os
 import sys
-from collections.abc import Collection, Mapping
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -63,6 +63,7 @@ from autoware_carla_scenario import (
     TrafficSourceAction,
 )
 from autoware_carla_scenario.autoware_stack.launcher import AutowareLauncher
+from autoware_carla_scenario.batch_report import print_summary as _print_summary
 from autoware_carla_scenario.conditions import ScenarioResult
 from autoware_carla_scenario.constants import DEFAULT_TM_PORT
 from autoware_carla_scenario.maps import resolve_map_paths
@@ -910,86 +911,6 @@ def _case_labels(cases: list[BatchCase]) -> list[str]:
     return labels
 
 
-def _write_batch_result_json(
-    names: list[str],
-    results: list[ScenarioResult],
-    output_dir: Path,
-    overrides: list[list[str]] | None = None,
-    errored: Collection[int] = (),
-) -> Path:
-    """Write a machine-readable JSON summary to *output_dir* and return the path.
-
-    *overrides*, one list per result, are what each case ran with beyond the
-    command line's (its sweep case).  A case in *errored* (indices into
-    *results*) raised rather than ran, and its entry says so with
-    ``"error": true``.
-    """
-    import json  # noqa: PLC0415
-
-    output_dir.mkdir(parents=True, exist_ok=True)
-    json_path = output_dir / "batch_results.json"
-    json_results = [
-        {
-            "scenario": name,
-            **({"overrides": overrides[i]} if overrides is not None else {}),
-            **result.to_dict(),
-            **({"error": True} if i in errored else {}),
-        }
-        for i, (name, result) in enumerate(zip(names, results))
-    ]
-    json_path.write_text(
-        json.dumps(json_results, indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
-    return json_path
-
-
-def _print_summary(
-    names: list[str],
-    results: list[ScenarioResult],
-    output_dir: Path = Path("scenario_outputs"),
-    overrides: list[list[str]] | None = None,
-    errored: Collection[int] = (),
-) -> bool:
-    """Print a formatted result table and return ``True`` if all passed.
-
-    A case in *errored* (indices into *results*) raised on every attempt
-    rather than ran: it is tagged ``ERROR``, not ``FAIL``, and counts as not
-    passed.  A machine-readable JSON file is also written to *output_dir*.
-    """
-    sep = "=" * 60
-    thin = "-" * 60
-    print(f"\n{sep}")  # noqa: T201
-    print("Batch Scenario Results")  # noqa: T201
-    print(sep)  # noqa: T201
-    for index, (name, result) in enumerate(zip(names, results)):
-        tag = "ERROR" if index in errored else "PASS" if result.passed else "FAIL"
-        print(f"  [{tag}] {name} ({result.elapsed_seconds:.1f}s)")  # noqa: T201
-        if not result.passed:
-            for line in result.message.splitlines():
-                print(f"         {line}")  # noqa: T201
-        if result.condition_statuses:
-            max_label_len = max(len(cs.label) for cs in result.condition_statuses)
-            for cs in result.condition_statuses:
-                mark = "OK" if cs.satisfied else "NG"
-                padded = cs.label.ljust(max_label_len)
-                print(f"    [{mark}] {padded} : {cs.message}")  # noqa: T201
-
-    json_path = _write_batch_result_json(
-        names, results, output_dir, overrides, errored=errored
-    )
-    print(thin)  # noqa: T201
-    print(f"Result JSON: {json_path}")  # noqa: T201
-
-    passed = sum(1 for r in results if r.passed)
-    total = len(results)
-    print(thin)  # noqa: T201
-    errors = f", {len(errored)} errored" if errored else ""
-    print(f"{passed}/{total} scenarios passed{errors}")  # noqa: T201
-    print(sep)  # noqa: T201
-    return passed == total
-
-
 def _log_batch_plan(
     scenario_names: list[str],
     configs: list[DictConfig],
@@ -1059,6 +980,70 @@ def _make_batch_output_dir() -> Path:
     return output_dir.resolve()
 
 
+def _batch_queue(
+    first_cfg: DictConfig,
+    map_paths: Any,
+    output_dir: Path,
+    extra_server_args: list[str] | None = None,
+) -> ScenarioQueue:
+    """The queue a batch runs its cases in, on one CARLA, from its first config.
+
+    *map_paths* is what :func:`resolve_map_paths` gave for the batch's map;
+    *extra_server_args* are added to the server's own (a SLURM task's ports).
+    """
+    cooldown = float(first_cfg.server.get("cooldown_seconds", 0.0))
+    cooldown_max_retries = int(first_cfg.server.get("cooldown_max_retries", 0))
+    return ScenarioQueue(
+        host=first_cfg.server.host,
+        port=first_cfg.server.port,
+        tm_port=first_cfg.traffic_manager.port,
+        xodr_path=map_paths.install_xodr,
+        overwrite_xodr=map_paths.overwrite_xodr,
+        opendrive_path=map_paths.opendrive_path,
+        lanelet2_path=map_paths.lanelet2_path,
+        map_name=map_paths.name,
+        cooldown_seconds=cooldown,
+        cooldown_max_retries=cooldown_max_retries,
+        output_dir=output_dir,
+        max_tick_rate_hz=_optional_float(first_cfg.server.get("max_tick_rate_hz")),
+        projector_type=map_paths.projector_type,
+        traffic_backend=build_traffic_backend(first_cfg),
+        odd=_odd_spec(first_cfg),
+        autoware_launcher=build_autoware_launcher(first_cfg),
+        server_extra_args=[*server_extra_args(first_cfg), *(extra_server_args or [])],
+        map_source=_map_source(first_cfg),
+    )
+
+
+def _batch_launcher(configs: list[DictConfig]) -> str:
+    """``launcher.type`` the batch's configs share: ``local`` or ``slurm``.
+
+    Exits with an error when they differ, name an unknown launcher, or select
+    SLURM where there is no ``sbatch``.
+    """
+    from ..slurm.settings import launcher_type, require_sbatch  # noqa: PLC0415
+
+    try:
+        kinds = {launcher_type(cfg) for cfg in configs}
+    except ValueError as exc:
+        print(f"Error: {exc}")  # noqa: T201
+        sys.exit(1)
+    if len(kinds) > 1:
+        print(  # noqa: T201
+            "Error: batch scenarios must share launcher.type; set it on the "
+            "command line rather than in a scenario's config"
+        )
+        sys.exit(1)
+    (kind,) = kinds
+    if kind == "slurm":
+        try:
+            require_sbatch()
+        except RuntimeError as exc:
+            print(f"Error: {exc}", file=sys.stderr)  # noqa: T201
+            sys.exit(2)
+    return kind
+
+
 def run_batch(
     scenario_names: list[str],
     overrides: list[str],
@@ -1066,13 +1051,29 @@ def run_batch(
     expand: bool = False,
     resume_from: int = 0,
     build_scenario_fn: BuildScenarioFn | None = None,
+    wait: bool | None = None,
 ) -> None:
     """Compose configs, build scenarios, and run them in a single queue.
 
     With *expand* (``--multirun``) each scenario's sweep is expanded and every
     case is run; without it a scenario runs once, as configured. *resume_from*
     is the 1-based case to start at, as for the lanelet sweeper.
+
+    With ``launcher=slurm`` the cases run as SLURM array tasks instead
+    (docs/slurm.md); *wait* overrides ``launcher.wait`` (``--no-wait``).
     """
+    from ..slurm.settings import (  # noqa: PLC0415
+        launcher_requested_in_argv,
+        require_sbatch,
+    )
+
+    if launcher_requested_in_argv(overrides) == "slurm":
+        # Before the sweep is expanded, which can take a while.
+        try:
+            require_sbatch()
+        except RuntimeError as exc:
+            print(f"Error: {exc}", file=sys.stderr)  # noqa: T201
+            sys.exit(2)
     if expand:
         cases = _expand_batch(scenario_names, overrides)
     else:
@@ -1140,6 +1141,11 @@ def run_batch(
         )
         sys.exit(1)
 
+    launcher = _batch_launcher(configs)
+    if wait is not None and launcher != "slurm":
+        print("Error: --no-wait is for launcher=slurm only")  # noqa: T201
+        sys.exit(1)
+
     # Log detailed execution plan before building anything.
     _log_batch_plan(
         [name for name, _ in cases],
@@ -1165,33 +1171,35 @@ def run_batch(
 
     map_paths = resolve_map_paths(first_cfg.map)
 
-    cooldown = float(first_cfg.server.get("cooldown_seconds", 0.0))
-    cooldown_max_retries = int(first_cfg.server.get("cooldown_max_retries", 0))
-
     # Batch mode bypasses @hydra.main, so we create the output directory
     # ourselves following Hydra's timestamped convention.
     output_dir = _make_batch_output_dir()
 
-    queue = ScenarioQueue(
-        host=first_cfg.server.host,
-        port=first_cfg.server.port,
-        tm_port=first_cfg.traffic_manager.port,
-        xodr_path=map_paths.install_xodr,
-        overwrite_xodr=map_paths.overwrite_xodr,
-        opendrive_path=map_paths.opendrive_path,
-        lanelet2_path=map_paths.lanelet2_path,
-        map_name=map_paths.name,
-        cooldown_seconds=cooldown,
-        cooldown_max_retries=cooldown_max_retries,
-        output_dir=output_dir,
-        max_tick_rate_hz=_optional_float(first_cfg.server.get("max_tick_rate_hz")),
-        projector_type=map_paths.projector_type,
-        traffic_backend=build_traffic_backend(first_cfg),
-        odd=_odd_spec(first_cfg),
-        autoware_launcher=build_autoware_launcher(first_cfg),
-        server_extra_args=server_extra_args(first_cfg),
-        map_source=_map_source(first_cfg),
-    )
+    if launcher == "slurm":
+        # The cases run as SLURM array tasks, each on a CARLA of its own, and
+        # write their outputs here under the names this batch would give them
+        # (docs/slurm.md).
+        from ..slurm.submit import submit_batch  # noqa: PLC0415
+
+        scenario_classes = [type(s).__name__ for s in scenarios]
+        del scenarios
+        sys.exit(
+            submit_batch(
+                scenario_names=scenario_names,
+                cases=cases,
+                labels=labels,
+                case_overrides=case_overrides,
+                configs=configs,
+                scenario_classes=scenario_classes,
+                overrides=overrides,
+                expand=expand,
+                output_dir=output_dir,
+                build_scenario_fn=build_scenario_fn,
+                wait=wait,
+            )
+        )
+
+    queue = _batch_queue(first_cfg, map_paths, output_dir)
 
     for cfg, scenario in zip(configs, scenarios):
         # The runner's own fail-safe, each scenario's own: without it the
@@ -1534,8 +1542,18 @@ def main() -> None:
     if resume_from > 0:
         os.environ["SWEEP_RESUME_FROM"] = str(resume_from)
 
+    # --no-wait: a launcher=slurm batch is submitted, and this exits.
+    no_wait = "--no-wait" in sys.argv
+    if no_wait:
+        sys.argv = [arg for arg in sys.argv if arg != "--no-wait"]
+
+    from ..slurm.settings import launcher_requested_in_argv  # noqa: PLC0415
+
     scenario_value, remaining = _extract_scenario_override(sys.argv)
-    if scenario_value is not None and _is_glob_pattern(scenario_value):
+    # A SLURM launcher runs a batch, so a single scenario selected with it runs
+    # as one too: --multirun's cases, or the scenario once, as SLURM tasks.
+    slurm = launcher_requested_in_argv(remaining) == "slurm"
+    if scenario_value is not None and (_is_glob_pattern(scenario_value) or slurm):
         # --multirun runs every case of each scenario's sweep in the batch's
         # one queue; the sweeper it would pick is the batch itself.
         expand = _is_multirun()
@@ -1547,18 +1565,35 @@ def main() -> None:
         logging.basicConfig(
             level=logging.INFO, format="%(levelname)s %(name)s: %(message)s"
         )
-        scenario_names = _resolve_scenario_glob(scenario_value)
-        logger.info(
-            "Glob matched %d scenario(s): %s",
-            len(scenario_names),
-            scenario_names,
-        )
+        if _is_glob_pattern(scenario_value):
+            scenario_names = _resolve_scenario_glob(scenario_value)
+            logger.info(
+                "Glob matched %d scenario(s): %s",
+                len(scenario_names),
+                scenario_names,
+            )
+        else:
+            scenario_names = [scenario_value]
         try:
-            run_batch(scenario_names, remaining, expand=expand, resume_from=resume_from)
+            if no_wait:
+                run_batch(
+                    scenario_names,
+                    remaining,
+                    expand=expand,
+                    resume_from=resume_from,
+                    wait=False,
+                )
+            else:
+                run_batch(
+                    scenario_names, remaining, expand=expand, resume_from=resume_from
+                )
         except ScenarioTypeError as exc:
             print(exc, file=sys.stderr)  # noqa: T201
             sys.exit(2)
     else:
+        if no_wait:
+            print("Error: --no-wait is for launcher=slurm only")  # noqa: T201
+            sys.exit(1)
         # Single run goes through @hydra.main.  External conf dirs are added to
         # the search path by AutowareScenarioSearchPathPlugin (discovered via
         # the hydra_plugins namespace), so nothing needs threading here.
