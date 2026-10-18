@@ -90,9 +90,14 @@ def _shim(module: str) -> str | None:
 
 
 def _declares(shim: str, name: str) -> bool:
+    """Whether the shim declares ``name`` at module level.
+
+    A method (``Logger.exception()``) is not the module's function of that
+    name (``logging.exception()``).
+    """
     return (
         re.search(
-            rf"^\s*(?:def|class)\s+{re.escape(name)}\b|^{re.escape(name)}\s*[:=]",
+            rf"^(?:def|class)\s+{re.escape(name)}\b|^{re.escape(name)}\s*[:=]",
             shim,
             re.MULTILINE,
         )
@@ -147,18 +152,28 @@ def test_an_excluded_reason_names_no_api_its_shim_declares() -> None:
             if shim is not None and _declares(shim, attr):
                 wrong.append(f"{module}: `{name}.{attr}` is declared by its shim")
         # "more of X than its shim declares" names X for what the shim lacks.
-        bare = re.sub(r"more of [^;]*? than (?:its|their) shims? declares?", "", reason)
-        uses = _shimmed_uses(modules[module].read_text(encoding="utf-8"))
-        for name, names in uses.items():
-            shim = _shim(name)
-            assert shim is not None
-            if all(_declares(shim, n) for n in names) and re.search(
-                rf"(?<![\w.`]){re.escape(name)}(?![\w.(`])", bare
-            ):
-                wrong.append(
-                    f"{module}: names {name}, but its shim declares all the "
-                    f"module uses of it ({', '.join(sorted(names))})"
-                )
+        bare = re.sub(r"\bof [\w., ]+? than (?:its|their) shims? declares?", "", reason)
+        # The reason itself names the module's own imports; "slurm.manifest
+        # (json)" names those of the package module it gives them for.
+        named = [(module, re.sub(r"\([^()]*\)", "", bare))]
+        for other, imports in re.findall(
+            r"(?<![\w.])([a-z_][\w.]*) \(([^()]*)\)", bare
+        ):
+            if f"autoware_carla_scenario.{other}" in modules:
+                named.append((f"autoware_carla_scenario.{other}", imports))
+        for importer, text in named:
+            source = modules[importer].read_text(encoding="utf-8")
+            for name, names in _shimmed_uses(source).items():
+                shim = _shim(name)
+                assert shim is not None
+                if all(_declares(shim, n) for n in names) and re.search(
+                    rf"(?<![\w.`]){re.escape(name)}(?![\w.(`])", text
+                ):
+                    wrong.append(
+                        f"{module}: names {name} for {importer}, but its shim "
+                        f"declares all {importer} uses of it "
+                        f"({', '.join(sorted(names))})"
+                    )
     assert not wrong, "\n".join(wrong)
 
 
