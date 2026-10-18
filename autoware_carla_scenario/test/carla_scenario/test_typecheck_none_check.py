@@ -143,6 +143,23 @@ def test_a_module_of_an_installed_package_is_checked(
         assert first.notes == ('Left operand is of type "float | None"',)
 
 
+def test_a_link_that_cannot_be_made_gives_no_verdict(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    package = tmp_path / "site-packages" / "acs_none_unlinked"
+    package.mkdir(parents=True)
+    (package / "__init__.py").write_text("")
+    module = package / "probe.py"
+    module.write_text("x = 1\n")
+
+    def refuse(self: Path, target: Path) -> None:
+        raise PermissionError("symlinks not permitted")
+
+    monkeypatch.setattr(Path, "symlink_to", refuse)
+    with pytest.raises(NoneCheckSkipped, match="could not link .*not permitted"):
+        run_none_check([module])
+
+
 def test_no_module_gives_no_verdict() -> None:
     assert find_none_misuses([]) is None
 

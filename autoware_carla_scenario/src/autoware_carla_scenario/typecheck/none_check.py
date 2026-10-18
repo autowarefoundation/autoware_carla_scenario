@@ -263,8 +263,10 @@ def _mypy_paths(paths: list[Path], scratch: Path) -> dict[str, Path]:
     A module whose source root is a ``site-packages`` directory is given
     through a link in *scratch* to its top package (or to the module, where
     it has none), so the source root mypy takes is *scratch*, not
-    ``site-packages`` (#281).  Any other module is given as it is, and so is
-    one the link cannot be made for.
+    ``site-packages`` (#281).  Any other module is given as it is.
+
+    Raises:
+        NoneCheckSkipped: The link cannot be made.
     """
     given: dict[str, Path] = {}
     for path in paths:
@@ -278,9 +280,9 @@ def _mypy_paths(paths: list[Path], scratch: Path) -> dict[str, Path]:
             if not link.is_symlink():
                 # Absolute: a relative target is read from the link's directory.
                 link.symlink_to((root / relative.parts[0]).absolute())
-        except OSError:
-            given[str(path)] = path
-            continue
+        except OSError as exc:
+            # Given as it is, mypy would fail on the shadowed modules instead.
+            raise NoneCheckSkipped(f"could not link {path} for mypy: {exc}") from None
         given[str(scratch / relative)] = path
     return given
 
