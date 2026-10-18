@@ -1,0 +1,3 @@
+# The batch runs its cases here, one after another on one CARLA: what a run
+# that selects no launcher does (docs/slurm.md).
+type: local

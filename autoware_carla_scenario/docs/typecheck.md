@@ -1079,7 +1079,7 @@ To check one more module:
 ### What is checked of the framework
 
 Every module now has an entry other than `"not yet checked (#45)"`. 171 of
-the package's 249 modules (69%; about 44,300 of 76,500 lines) are `CHECKED`:
+the package's 258 modules (66%; about 44,400 of 79,100 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the conversions between
 Lanelet2, OpenDRIVE and CARLA world poses (`coordinate.transform`), the stop
 lines read off a Lanelet2 map (`utils.stop_line`, `coordinate.stop_line`)
@@ -1175,12 +1175,12 @@ a `TrajectoryVertex` call's arguments, each of any type (`Any`), walks or
 binds a sweeper constraint of any kind, builds a condition's status (its
 details), or takes the list a plain tick callback goes into
 (`BaseScenario._register_tick()`, a `List[Callable[[carla.World], None]]`,
-which the check has no value of). The 78 `EXCLUDED` modules fall in
-four groups. Many fit more than one (about 57 import what Codon cannot
-compile, 27 build on an excluded module and 20 hold values Codon has no type
+which the check has no value of). The 87 `EXCLUDED` modules fall in
+four groups. Many fit more than one (about 64 import what Codon cannot
+compile, 29 build on an excluded module and 20 hold values Codon has no type
 for), so each is counted once, in the first group that fits it:
 
-- **57 import what Codon cannot compile**: pyxodr,
+- **64 import what Codon cannot compile**: pyxodr,
   pydantic, pickle, lxml, grpc, omegaconf and hydra, yaml, openodd (a Rust extension),
   cyclonedds (`ros2.cyclone` and `ros2.messages`, the ROS 2 ego's DDS
   transport and its message types), or
@@ -1192,22 +1192,23 @@ for), so each is counted once, in the first group that fits it:
   expansion, Hydra sweeper and map loader, the map caches (the map
   repositories, the Lanelet2 z offset and the pyxodr road network), the Autoware
   stack's dev container, the
-  record of a run's environment), the ODD and coverage modules that wrap
+  record of a run's environment, the SLURM launcher's submitting side,
+  its worker and its manifest, and the batch summary they share), the ODD and coverage modules that wrap
   openodd, and the rest of what reads Lanelet2. A reason names `pathlib`
   only where the module uses more of it than the shim declares, and the
   other shimmed modules likewise.
-- **17 build on an excluded module**, and import nothing Codon lacks
+- **19 build on an excluded module**, and import nothing Codon lacks
   themselves: they import a module that is neither checked nor modelled, or
   names that its package's model does not declare. Among them are the
   packages that re-export one (`authoring`, `odd`, `sweeper`,
-  `examples`, `scaffold`), the
+  `examples`, `scaffold`, `slurm`), `slurm.collect`, the
   authoring compiler, builders and validator, `odd.route`, the coverage
   half of the route check (names of `odd.model` and `coverage.items` that
   the odd and coverage models do not declare, such as `OddDefinition.evaluate()`
   and `value_label()`; it also holds each lanelet's attribute values,
   `dict[str, Any]`, which it hands to openodd, and finds a probe's
   `on_lanelet` reader on any callable) and
-  `traffic.registry` (the `registry`, in its plugin loader); 4 of the 17
+  `traffic.registry` (the `registry`, in its plugin loader); 4 of the 19
   also hold values Codon has no type for.
 - **3 hold values Codon has no type for**, and nothing else keeps them out:
   `Any` (`trajectory.authoring`, `authoring.registry`'s
