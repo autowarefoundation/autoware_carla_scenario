@@ -60,9 +60,10 @@ env: {}
 python: null
 # Unset DISPLAY in the job, so CARLA renders off-screen.
 headless: true
-# The tasks that start together start this many seconds apart, so that they
-# do not fill a cache they share at once (a driver policy building or
-# checking its TensorRT engines, say); 0: all at once.
+# No task of the batch starts sooner than this after another did (the first
+# wave, the tasks started as slots free up, a resubmit's), so that two do not
+# fill a cache they share at once (a driver policy building or checking its
+# TensorRT engines, say); 0: as SLURM starts them.
 start_stagger_seconds: 0
 
 # Follow the batch until it ends and collect it (true), or submit and exit

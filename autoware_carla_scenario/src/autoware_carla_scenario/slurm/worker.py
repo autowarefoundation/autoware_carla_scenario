@@ -40,7 +40,7 @@ from .settings import SlurmSettings
 if TYPE_CHECKING:
     from omegaconf import DictConfig
 
-__all__ = ["main", "worker_overrides"]
+__all__ = ["main", "wait_for_start_turn", "worker_overrides"]
 
 logger = logging.getLogger("autoware_carla_scenario.slurm.worker")
 
@@ -206,6 +206,34 @@ def _raise_interrupt(signum: int, _frame: object) -> None:
     raise KeyboardInterrupt(f"signal {signal.Signals(signum).name}")
 
 
+def wait_for_start_turn(lock: Path, spacing: float) -> float:
+    """Start no sooner than *spacing* seconds after the batch's last task did.
+
+    *lock* holds when that was; it is held (``flock``) while this waits, so
+    the tasks that start together start one after another, *spacing* apart,
+    and so do the ones started later as slots free up.  How long it waited.
+    """
+    import fcntl  # noqa: PLC0415
+
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    with open(lock, "a+", encoding="utf-8") as stream:
+        fcntl.flock(stream.fileno(), fcntl.LOCK_EX)  # released when closed
+        stream.seek(0)
+        try:
+            last = float(stream.read().strip())
+        except ValueError:
+            last = float("-inf")
+        waited = max(0.0, last + spacing - time.time())
+        if waited > 0:
+            logger.info("Starting in %.0f s (launcher.start_stagger_seconds)", waited)
+            time.sleep(waited)
+        stream.seek(0)
+        stream.truncate()
+        stream.write(f"{time.time():.3f}\n")
+        stream.flush()
+    return waited
+
+
 def _build_fn(path: str | None) -> Any:
     if path is None:
         return None
@@ -288,11 +316,9 @@ def run_task(manifest_path: Path, submission_index: int, task_index: int) -> int
         sampler.start()
         run.load_scenario_plugins()
 
-        delay = settings.start_delay(task_index)
-        if delay > 0:
-            logger.info("Starting in %.0f s (launcher.start_stagger_seconds)", delay)
+        if settings.start_stagger_seconds > 0:
             task.update(state="waiting")
-            time.sleep(delay)
+            wait_for_start_turn(layout.start_lock, settings.start_stagger_seconds)
         slot = acquire_slot(
             settings.port_base,
             settings.port_slots,

@@ -91,10 +91,18 @@ def capture_opendrive(world: carla.World, destination: Path) -> Path:
 
     The cheapest of the four sources: a run already has the town loaded.  It
     lives beside the other three so a run fills the same cache file the editor's
-    Fetch button does.
+    Fetch button does.  Written atomically: runs in other processes (the tasks
+    of a SLURM batch, docs/slurm.md) may capture the same map meanwhile, and
+    none of them may read half a file.
     """
+    import os  # noqa: PLC0415
+
     destination.parent.mkdir(parents=True, exist_ok=True)
-    destination.write_text(str(world.get_map().to_opendrive()), encoding="utf-8")
+    scratch = destination.with_name(f".{destination.name}.{os.getpid()}.tmp")
+    scratch.write_text(str(world.get_map().to_opendrive()), encoding="utf-8")
+    # A rename within the directory: another process sees the old file or the
+    # new one, never a part.
+    shutil.move(str(scratch), str(destination))
     return destination
 
 

@@ -104,7 +104,7 @@ command line (`launcher.mem=12G`), or in a config.
 | `env` | `{}` | variables set in the job, last |
 | `python` | `null` | the interpreter the job runs; `null`: the submitting one |
 | `headless` | `true` | unset `DISPLAY` in the job, so CARLA renders off-screen |
-| `start_stagger_seconds` | `0` | the first `array_parallelism` tasks start this many seconds apart ([Shared state](#limits)) |
+| `start_stagger_seconds` | `0` | no task of the batch starts sooner than this after another did: the first wave, the tasks started as slots free up, a resubmit's ([Shared state](#limits)) |
 | `wait` | `true` | follow and collect; `false` (or `--no-wait`): submit and exit |
 | `poll_seconds` | `15` | how often `wait` asks `squeue` |
 | `cancel_on_interrupt` | `true` | Ctrl-C while waiting cancels the batch's jobs |
@@ -177,13 +177,15 @@ server someone else runs, which every task dials.
   the node has.
 - **Shared state.** The tasks share the map caches (`~/autoware_data/maps`), the
   map files a driver policy reads (`driver.map_dir`) and the batch's output
-  directory, so these must be on a file system every node sees. Map files are
-  written atomically. The OpenDRIVE a run captures from the loaded world on a
-  map's first run is not: run one case of a new map before a large batch.
+  directory, so these must be on a file system every node sees. Map files,
+  and the OpenDRIVE a run captures from the loaded world on a map's first run,
+  are written atomically, so tasks that fill a cache at once do not break it.
   A driver policy's own caches are its own: one that two processes cannot
   load at once (OnePlanner's TensorRT engines, whose identity file is written
-  under one temporary name) needs `start_stagger_seconds`, enough for one
-  task to load it before the next starts.
+  under one temporary name, so two loads at the same moment fail one case
+  with `filesystem error: cannot rename`) needs `start_stagger_seconds`,
+  enough for one task to load it before the next starts (30 s for
+  OnePlanner, which loads it once a task).
 - **ROS 2 and Autoware egos** (`ego.entity=ros2`, `ego.entity=autoware` with
   a launcher) run their stacks on DDS, whose domain the tasks would share; give
   each its own `ROS_DOMAIN_ID` (the Autoware launcher's `ros_domain_ids`), or

@@ -175,9 +175,10 @@ class SlurmSettings:
     port_slots: int = 1000
     #: Unset ``DISPLAY`` in the job, so CARLA renders off-screen.
     headless: bool = True
-    #: The tasks that start together start this many seconds apart (task t
-    #: of the first ``array_parallelism`` waits t times it), so that they do
-    #: not fill a cache they share -- a driver policy's engines -- at once.
+    #: No task of the batch starts sooner than this after another one did
+    #: (the first wave, the tasks that follow as slots free up, a resubmit's),
+    #: so that two never fill a cache they share -- a driver policy's
+    #: engines -- at once; 0: they start as SLURM starts them.
     start_stagger_seconds: float = 0.0
     #: With ``wait: false``: a job, after the array, that collects the batch.
     collect_job: bool = True
@@ -256,13 +257,6 @@ class SlurmSettings:
         """A copy with *changes* (only the ones that are not ``None``)."""
         data = {**self.to_dict(), **{k: v for k, v in changes.items() if v is not None}}
         return SlurmSettings.from_mapping(data)
-
-    def start_delay(self, task: int) -> float:
-        """How long task *task* waits before it starts (``start_stagger_seconds``)."""
-        wave = self.array_parallelism
-        if self.start_stagger_seconds <= 0 or (wave is not None and task >= wave):
-            return 0.0
-        return task * self.start_stagger_seconds
 
     def chunk_size(self, cases: int) -> int:
         """How many cases one task runs, for a batch of *cases*."""

@@ -10,6 +10,7 @@ what the launcher itself needs in ``slurm/`` beside them::
     slurm/tasks/<k>-<t>.json    task t of submission k: host, ports, progress
     slurm/results/<i>.json      case i's outcome, written as soon as it ran
     slurm/logs/                 each task's stdout and stderr
+    slurm/start.lock            when the last task started (start_stagger_seconds)
 
 Plain JSON, written atomically (a reader never sees half a file), and free of
 heavy imports: the ``scenario-slurm`` commands only read these.
@@ -111,6 +112,11 @@ class BatchLayout:
     def task_port(self, submission: int, task: int) -> Path:
         """The CARLA RPC port task *task* holds (the job's leak guard reads it)."""
         return self.root / "tasks" / f"{submission}-{task}.port"
+
+    @property
+    def start_lock(self) -> Path:
+        """When the batch's last task started (``launcher.start_stagger_seconds``)."""
+        return self.root / "start.lock"
 
     def result(self, case: int) -> Path:
         return self.root / "results" / f"{case}.json"

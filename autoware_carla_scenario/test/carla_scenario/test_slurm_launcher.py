@@ -525,11 +525,34 @@ def test_settings_chunk_the_cases() -> None:
         SlurmSettings.from_mapping({"array_parallelism": 0})
 
 
-def test_start_stagger_spaces_the_first_wave_only() -> None:
-    settings = SlurmSettings(array_parallelism=2, start_stagger_seconds=30)
-    assert [settings.start_delay(t) for t in range(4)] == [0.0, 30.0, 0.0, 0.0]
-    assert SlurmSettings(start_stagger_seconds=5).start_delay(3) == 15.0
-    assert SlurmSettings().start_delay(1) == 0.0
+def test_start_stagger_spaces_every_task_start(tmp_path: Path) -> None:
+    import threading
+
+    from autoware_carla_scenario.slurm.worker import wait_for_start_turn
+
+    lock = BatchLayout(tmp_path).start_lock
+    spacing = 0.4
+    started: list[float] = []
+
+    def start() -> None:
+        wait_for_start_turn(lock, spacing)
+        started.append(time.time())
+
+    # Three tasks that start together (a first wave)...
+    threads = [threading.Thread(target=start) for _ in range(3)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    # ...and one that starts later, once a slot frees up, right after them.
+    start()
+    started.sort()
+    gaps = [b - a for a, b in zip(started, started[1:])]
+    assert len(gaps) == 3
+    assert all(gap >= spacing - 0.05 for gap in gaps), gaps
+    # Long after the last start, a task starts at once.
+    time.sleep(spacing)
+    assert wait_for_start_turn(lock, spacing) == 0.0
 
 
 def test_sbatch_command_and_job_script(tmp_path: Path) -> None:

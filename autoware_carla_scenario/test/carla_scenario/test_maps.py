@@ -41,6 +41,7 @@ from autoware_carla_scenario.maps.cache import (
 )
 from autoware_carla_scenario.maps.opendrive import (
     OpenDriveUnavailable,
+    capture_opendrive,
     ensure_xodr,
     installed_xodr,
     map_asset_env_var,
@@ -1175,3 +1176,19 @@ class TestCacheEconomy:
         again = resolve_map(_uri(origin_repo), cache=cache)
         assert again.lanelet2_path == first.lanelet2_path
         assert again.commit == first.commit
+
+
+def test_a_captured_opendrive_replaces_the_file_whole(tmp_path: Path) -> None:
+    """Tasks of a SLURM batch capture one map at once: no half-written file."""
+    from types import SimpleNamespace
+
+    world = SimpleNamespace(
+        get_map=lambda: SimpleNamespace(to_opendrive=lambda: "<OpenDRIVE/>")
+    )
+    destination = tmp_path / "maps" / "Town10HD_Opt.xodr"
+    destination.parent.mkdir()
+    destination.write_text("<old/>", encoding="utf-8")
+
+    assert capture_opendrive(world, destination) == destination  # type: ignore[arg-type]
+    assert destination.read_text(encoding="utf-8") == "<OpenDRIVE/>"
+    assert [p.name for p in destination.parent.iterdir()] == [destination.name]
