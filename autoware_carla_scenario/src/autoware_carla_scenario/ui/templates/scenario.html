@@ -123,15 +123,15 @@
   {% endif %}
 </div>
 
-<!-- Recording Video -->
-{% if result.video_filename %}
+<!-- Seeing the run: its trajectory log, made into a Rerun recording -->
+{% if result.trajectory_path %}
 <div class="mb-6">
-  <h2 class="text-lg font-semibold text-gray-700 mb-2">Recording</h2>
-  <div class="bg-white rounded-lg shadow p-4">
-    <video controls preload="metadata" class="w-full rounded">
-      <source src="/video/{{ session_type }}/{{ date }}/{{ time }}/{{ index }}/{{ result.video_filename }}" type="video/mp4">
-      Your browser does not support the video tag.
-    </video>
+  <h2 class="text-lg font-semibold text-gray-700 mb-2">Trajectory log</h2>
+  <div class="bg-white rounded-lg shadow p-4 text-sm text-gray-700">
+    <p class="font-mono break-all">{{ result.trajectory_path }}</p>
+    <p class="mt-2">See the run in the Rerun viewer: convert the log with
+      <code>autoware-carla-scenario-rerun</code> and open the <code>.rrd</code> it writes
+      (docs/usage.md, <em>Seeing a run</em>).</p>
   </div>
 </div>
 {% endif %}

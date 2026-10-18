@@ -89,7 +89,7 @@ uv run scenario ego.entity=carla_driver driver.address=localhost:50051
 ```
 
 `ScenarioRunner` logs `Autopilot skipped for ego (id=…) — external control expected`
-when the policy has taken over. Pass and fail conditions, recording, video rendering,
+when the policy has taken over. Pass and fail conditions, recording, the trajectory log,
 and sweeps all behave exactly as they do for a TrafficManager-driven ego.
 
 ## Configuration

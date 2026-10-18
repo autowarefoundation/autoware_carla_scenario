@@ -6,8 +6,9 @@ and what the run made of them -- the map it ran on, the ego's plan, its
 conditions tick by tick and its verdict -- one JSON object per line.
 `TrajectoryRecorder` (`autoware_carla_scenario/trajectory_recorder.py`) writes
 it, and the carla-hub run report replays it. The file holds everything needed
-to show the run again without CARLA (as a Rerun recording, say): the video's
-plan and driven path included.
+to show the run again without CARLA, the ego's plan and the path it drove
+included: `autoware-carla-scenario-rerun` makes a Rerun recording of it, which
+is how a run is seen ([Seeing a run](usage.md#seeing-a-run)).
 
 Its format is published as a JSON Schema of one line, the contract for readers
 in any language: `schemas/trajectory.schema.json` in the package and in the
@@ -75,8 +76,8 @@ generated types keep them as tuples where the target language has them.
   are world-frame m/s. Every float is rounded to 3 decimals.
 - `t` is simulated time since the scenario clock started, the time pass/fail
   conditions see. It is not wall time. Warm-up ticks are not recorded: the
-  `warmup` line says how many there were, so a frame of the CARLA recording
-  (or of the video, which starts with them) is `frame - warmup.start_frame`.
+  `warmup` line says how many there were, so a frame of the CARLA recording,
+  which starts with them, is `frame - warmup.start_frame`.
 - Ticks are 20 Hz (`FIXED_DELTA_SECONDS`).
 
 To move a pose into the Lanelet2 / Autoware `map` frame from Python, build a

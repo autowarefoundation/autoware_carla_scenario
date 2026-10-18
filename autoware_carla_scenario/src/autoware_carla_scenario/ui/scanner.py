@@ -470,12 +470,12 @@ def load_scenario(
 
     raw_log = _read_raw_log(job_dir) if job_dir else ""
 
-    # Detect recorded video file in the job directory.
-    video_filename: str | None = None
+    # The run's trajectory log, which a Rerun recording of it is made from.
+    trajectory_path: str | None = None
     if job_dir:
-        first_mp4 = next(job_dir.glob("*.mp4"), None)
-        if first_mp4 is not None:
-            video_filename = first_mp4.name
+        first_log = next(iter(sorted(job_dir.glob("*.trajectory.jsonl"))), None)
+        if first_log is not None:
+            trajectory_path = str(first_log.resolve())
 
     result = ScenarioResultView(
         passed=data.get("passed"),
@@ -484,7 +484,7 @@ def load_scenario(
         condition_statuses=condition_statuses,
         overrides=overrides,
         raw_log=raw_log,
-        video_filename=video_filename,
+        trajectory_path=trajectory_path,
     )
     _cache[cache_key] = result
     return result

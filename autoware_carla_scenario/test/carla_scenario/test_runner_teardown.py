@@ -79,7 +79,6 @@ def _run(
             "autoware_carla_scenario.scenario_runner.TrajectoryRecorder",
             new=MagicMock(return_value=trajectory),
         ),
-        patch.object(ScenarioRunner, "_render_video_from_recording", MagicMock()),
     ):
         clock.return_value.simulated = 0.1
         result = runner.run_scenario(scenario, reset_world=False)

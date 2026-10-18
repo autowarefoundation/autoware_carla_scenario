@@ -63,10 +63,6 @@ from autoware_carla_scenario import (
     TrafficSourceAction,
 )
 from autoware_carla_scenario.autoware_stack.launcher import AutowareLauncher
-from autoware_carla_scenario.camera_recorder import (
-    DEFAULT_IMAGE_HEIGHT,
-    DEFAULT_IMAGE_WIDTH,
-)
 from autoware_carla_scenario.conditions import ScenarioResult
 from autoware_carla_scenario.constants import DEFAULT_TM_PORT
 from autoware_carla_scenario.maps import resolve_map_paths
@@ -639,18 +635,14 @@ def run_scenario_with_queue(
     odd: str | None = None,
     autoware_launcher: AutowareLauncher | None = None,
     case: OddCase | None = None,
-    video_size: tuple[int, int] = (DEFAULT_IMAGE_WIDTH, DEFAULT_IMAGE_HEIGHT),
     server_extra_args: list[str] | None = None,
-    video_enabled: bool = True,
     map_source: str | None = None,
 ) -> ScenarioResult:
     """Run a single pre-built scenario using :class:`ScenarioQueue`.
 
     *case* is the case drawn from the ODD that it runs, recorded with its
     outcome in its coverage file (:meth:`ScenarioRunner.run_scenario`).
-    *video_size* is the width and height of the video rendered from the run's
-    recording; *video_enabled* off renders none (the recording and a render
-    job are kept for ``scenario-render``).  *map_source* is where the map
+    *map_source* is where the map
     came from, which the run's trajectory log names.  *server_extra_args* are passed to
     ``CarlaUnreal.sh`` when the run starts the server (:func:`server_extra_args`).
 
@@ -682,10 +674,7 @@ def run_scenario_with_queue(
         traffic_backend=traffic_backend,
         odd=odd,
         autoware_launcher=autoware_launcher,
-        video_width=video_size[0],
-        video_height=video_size[1],
         server_extra_args=server_extra_args,
-        video_enabled=video_enabled,
         map_source=map_source,
     )
     queue.add(scenario, case=case)
@@ -732,19 +721,37 @@ def _map_source(cfg: DictConfig) -> str | None:
     return None
 
 
-def _video_enabled(cfg: DictConfig) -> bool:
-    """Whether each run's video is rendered (``video.enabled``, on by default)."""
-    video = cfg.get("video") or {}
-    return bool(video.get("enabled", True))
+#: What a run's ``video`` settings are now: none of them does anything.
+VIDEO_REMOVED = (
+    "video.* is set ({settings}), but autoware_carla_scenario renders no video "
+    "any more (removed in 15.0.0): it is ignored. To see a run, convert its "
+    "{{Scenario}}.trajectory.jsonl into a Rerun recording with "
+    "autoware-carla-scenario-rerun and open that in the Rerun viewer; the CARLA "
+    "recording ({{Scenario}}.log) is still written, for CARLA's replayer "
+    "(docs/usage.md#seeing-a-run)."
+)
 
 
-def _video_size(cfg: DictConfig) -> tuple[int, int]:
-    """The size of the video rendered from each run's recording (``video``)."""
-    video = cfg.get("video") or {}
-    return (
-        int(video.get("width", DEFAULT_IMAGE_WIDTH)),
-        int(video.get("height", DEFAULT_IMAGE_HEIGHT)),
+def warn_if_video_set(cfg: DictConfig) -> bool:
+    """Warn, saying what to use instead, when the config sets ``video.*``,
+    whose video is no longer rendered; whether it did."""
+    video = cfg.get("video")
+    if video is None:
+        return False
+    container = OmegaConf.to_container(video) if OmegaConf.is_config(video) else video
+    if not isinstance(container, dict):
+        return False
+    settings = {
+        str(key): value for key, value in container.items() if value is not None
+    }
+    if not settings:
+        return False
+    message = VIDEO_REMOVED.format(
+        settings=", ".join(f"video.{k}={v}" for k, v in sorted(settings.items()))
     )
+    logger.warning(message)
+    print(f"Warning: {message}", file=sys.stderr)  # noqa: T201
+    return True
 
 
 def _odd_case(cfg: DictConfig) -> OddCase | None:
@@ -1143,6 +1150,7 @@ def run_batch(
         scenarios.append(scenario)
 
     first_cfg = configs[0]
+    warn_if_video_set(first_cfg)
     # The ODD every run is measured against, checked once when it is Python.
     check_odd(_odd_spec(first_cfg), typecheck_mode(first_cfg))
 
@@ -1172,10 +1180,7 @@ def run_batch(
         traffic_backend=build_traffic_backend(first_cfg),
         odd=_odd_spec(first_cfg),
         autoware_launcher=build_autoware_launcher(first_cfg),
-        video_width=_video_size(first_cfg)[0],
-        video_height=_video_size(first_cfg)[1],
         server_extra_args=server_extra_args(first_cfg),
-        video_enabled=_video_enabled(first_cfg),
         map_source=_map_source(first_cfg),
     )
 
@@ -1393,6 +1398,7 @@ def run_scenario(
     called, so all relative paths resolve inside that directory.
     """
     logger.info("Resolved config:\n%s", OmegaConf.to_yaml(cfg))
+    warn_if_video_set(cfg)
 
     _ego, scenario = build_scenario(cfg, build_scenario_fn=build_scenario_fn)
     # The ODD the run is measured against, checked when it is Python.
@@ -1428,9 +1434,7 @@ def run_scenario(
         odd=_odd_spec(cfg),
         autoware_launcher=build_autoware_launcher(cfg),
         case=_odd_case(cfg),
-        video_size=_video_size(cfg),
         server_extra_args=server_extra_args(cfg),
-        video_enabled=_video_enabled(cfg),
         map_source=_map_source(cfg),
     )
 

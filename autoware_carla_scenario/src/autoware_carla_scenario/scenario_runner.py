@@ -11,15 +11,6 @@ from typing import TYPE_CHECKING, Collection, Optional
 
 import typesafe_carla.carla as carla
 
-if TYPE_CHECKING:
-    from .scenario_base import SpectatorCameraConfig
-
-from .camera_recorder import (
-    DEFAULT_IMAGE_HEIGHT,
-    DEFAULT_IMAGE_WIDTH,
-    CameraRecorder,
-    check_video_size,
-)
 from .entity.ego import EgoVehicle
 from .entity.registry import (
     clear_entities,
@@ -35,12 +26,7 @@ from .conditions import (
 )
 from .conditions.base import BaseCondition, ConditionStatus, find_actor_by_role_name
 from .constants import DEFAULT_TM_PORT, EGO_ROLE_NAME, FIXED_DELTA_SECONDS
-from .debug_markers import (
-    DebugMarkerLog,
-    DebugMarkers,
-    DrivenPathDrawer,
-    draw_debug_markers,
-)
+from .debug_markers import DebugMarkers
 from .maps.opendrive import map_asset_env_var
 from .coordinate.map_manager import run_carla_map
 from .coordinate.poses import CarlaWorldPose
@@ -63,22 +49,6 @@ logger = logging.getLogger(__name__)
 
 #: Log ego OpenDRIVE position every N ticks (~1 s at 20 Hz).
 _CONDITION_LOG_INTERVAL: int = 20
-
-#: The caption along the bottom of the replay video's warm-up frames.
-WARMUP_CAPTION: str = "Warm-up"
-
-#: How long debug markers drawn for one frame of the replay last, simulated
-#: seconds (each further frame that holds the same ones adds a tick).  More
-#: than one tick, or the tick that is to show them removes them before the
-#: frame is rendered; less than two, or they linger into the next frame.
-_DEBUG_MARKER_LIFE_TIME: float = 1.5 * FIXED_DELTA_SECONDS
-
-#: How many ticks of the replay may run ahead of the frames taken from the
-#: camera.  A frame reaches the client some milliseconds after the tick that
-#: rendered it returned; taking it only after the next tick or two overlaps
-#: that delivery with them instead of waiting for it.  The frames still go
-#: into the video one per tick, in order.
-_REPLAY_FRAMES_IN_FLIGHT: int = 2
 
 
 def _bounds_the_run(condition: BaseCondition) -> bool:
@@ -329,44 +299,6 @@ def _write_result(
     json_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
-def _write_render_job(
-    path: Path,
-    *,
-    log_path: Path,
-    spectator_config: "SpectatorCameraConfig",
-    tick_count: int,
-    warmup_ticks: int,
-    video_size: "tuple[int, int]",
-    debug_log: DebugMarkerLog,
-    scenario_name: str,
-) -> None:
-    """Write what rendering the run's video later takes (``video.enabled``
-    off): :func:`.video_render.write_render_job`, with json, which Codon does
-    not have, so the check (docs/typecheck.md) does not compile it.  Best
-    effort: a run's outcome matters more than its video.
-    """
-    from .video_render import write_render_job  # noqa: PLC0415
-
-    try:
-        write_render_job(
-            path,
-            log_path=log_path,
-            spectator_config=spectator_config,
-            tick_count=tick_count,
-            warmup_ticks=warmup_ticks,
-            video_size=video_size,
-            debug_log=debug_log,
-        )
-        logger.info(
-            "[%s] Video not rendered (video.enabled is off); "
-            "scenario-render %s renders it from the recording",
-            scenario_name,
-            path,
-        )
-    except Exception:  # noqa: BLE001 - must never fail the run
-        logger.warning("[%s] Could not write %s", scenario_name, path, exc_info=True)
-
-
 def _record_run(
     coverage: CoverageCollector, case: Optional[OddCase], result: ScenarioResult
 ) -> None:
@@ -423,20 +355,6 @@ def _run_file_stem(output_dir: Path, scenario_name: str) -> str:
     return stem
 
 
-def _unique_path(path: Path) -> Path:
-    """Return *path* if it does not exist, otherwise append ``_1``, ``_2``, … ."""
-    if not path.exists():
-        return path
-    stem = path.stem
-    suffix = path.suffix
-    counter = 1
-    while True:
-        candidate = path.with_name(f"{stem}_{counter}{suffix}")
-        if not candidate.exists():
-            return candidate
-        counter += 1
-
-
 def _destroy_all_dynamic_actors(
     world: "carla.World",
     scenario_name: str,
@@ -487,33 +405,12 @@ def _destroy_all_dynamic_actors(
 
 
 def _ego_markers(ego: "EgoVehicle") -> Optional[DebugMarkers]:
-    """What *ego* wants drawn on the frame the world has just ticked to, for
-    the trajectory log; None when it fails (:func:`_record_debug_markers`
-    warns about that, once, for the video)."""
+    """What *ego* shows on the tick the world has just ticked to (its plan),
+    for the trajectory log; None when the entity fails to say."""
     try:
         return ego.debug_markers()
     except Exception:  # noqa: BLE001 - must never fail the run
         return None
-
-
-def _record_debug_markers(
-    world: "carla.World", ego: "EgoVehicle", debug_log: DebugMarkerLog
-) -> None:
-    """Keep what *ego* wants drawn on the frame the world has just ticked to.
-
-    An ego whose markers fail is warned about once, and the log stops there:
-    the video's markers must never fail the run they illustrate.
-    """
-    if not debug_log.active:
-        return
-    try:
-        debug_log.record(int(world.get_snapshot().frame), ego.debug_markers())
-    except Exception:  # noqa: BLE001 - must never fail the run
-        logger.warning(
-            "The ego's debug markers failed; the video goes without the rest",
-            exc_info=True,
-        )
-        debug_log.stop()
 
 
 class _ScenarioClock:
@@ -560,137 +457,6 @@ class _ScenarioClock:
         return self._simulated_now() - self._simulated_start
 
 
-def render_video_from_recording(
-    client: carla.Client,
-    log_path: Path,
-    mp4_path: Path,
-    spectator_config: "SpectatorCameraConfig",
-    tick_count: int,
-    warmup_ticks: int,
-    scenario_name: str,
-    debug_log: DebugMarkerLog,
-    video_width: int = DEFAULT_IMAGE_WIDTH,
-    video_height: int = DEFAULT_IMAGE_HEIGHT,
-) -> bool:
-    """Replay the CARLA recording *log_path* on *client*'s server and render
-    its video to *mp4_path* (:meth:`ScenarioRunner._render_video_from_recording`,
-    which renders each run's after it, and ``scenario-render``, which renders
-    one later from what the run left).
-
-    The server runs the recording's map.  Returns whether the video was
-    rendered: a failure is logged, never raised.
-    """
-    world = client.get_world()
-
-    # Destroy any leftover actors (NPCs, sensors, etc.) so the
-    # replay starts from a completely clean state.
-    _destroy_all_dynamic_actors(world, scenario_name)
-
-    # Enable synchronous mode for controlled replay
-    settings = world.get_settings()
-    settings.synchronous_mode = True
-    settings.fixed_delta_seconds = FIXED_DELTA_SECONDS  # same as execution
-    world.apply_settings(settings)
-
-    camera_recorder: Optional[CameraRecorder] = None
-    rendered = False
-
-    try:
-        logger.info(
-            "[%s] Starting replay of %s for video rendering",
-            scenario_name,
-            log_path,
-        )
-        # replay_file(filename, start, duration, follow_id)
-        # duration=0.0 replays the entire recording.
-        client.replay_file(str(log_path), 0.0, 0.0, 0)
-
-        # Tick once so the replayer spawns actors from the first frame.
-        world.tick()
-
-        # Find the ego vehicle among replayed actors
-        ego = find_actor_by_role_name(world, EGO_ROLE_NAME)
-        if ego is None:
-            logger.warning(
-                "[%s] Could not find ego actor during replay — "
-                "skipping video render",
-                scenario_name,
-            )
-            return False
-
-        mp4_path.parent.mkdir(parents=True, exist_ok=True)
-        camera_recorder = CameraRecorder(
-            world,
-            ego,
-            mp4_path,
-            offset_back=spectator_config.offset_back,
-            offset_up=spectator_config.offset_up,
-            pitch=spectator_config.pitch,
-            image_width=video_width,
-            image_height=video_height,
-        )
-
-        # Tick through the remaining replay frames: the warm-up, then the
-        # scenario.  We already consumed one tick above for actor spawn, so
-        # replay (warmup_ticks + tick_count - 1) more.  Each tick renders
-        # one frame, which is taken from the camera in order, at most
-        # _REPLAY_FRAMES_IN_FLIGHT ticks later, and every frame is taken
-        # before the recorder stops, so none is lost to delivery delays.
-        remaining = max(warmup_ticks + tick_count - 1, 0)
-        driven_path = DrivenPathDrawer()
-        driven_path.update(world, ego.get_location(), 0.0)
-        # The first frame past the markers last drawn, which last until then.
-        drawn_until = 0
-        # The caption of each frame ticked, and how many were taken.
-        captions: list[str] = []
-        taken = 0
-        for index in range(remaining):
-            # The first tick above showed the recording's frame 1, so this
-            # one shows frame index + 2.  The first warmup_ticks frames are
-            # the warm-up.
-            frame = index + 2
-            # Markers go in before the tick that renders them, drawn once
-            # for every frame on that holds the same ones.
-            if frame >= drawn_until:
-                span = debug_log.span(frame)
-                markers = debug_log.at(frame)
-                if markers is not None:
-                    draw_debug_markers(
-                        world,
-                        markers,
-                        (span - 1) * FIXED_DELTA_SECONDS + _DEBUG_MARKER_LIFE_TIME,
-                    )
-                    drawn_until = frame + span
-            world.tick()
-            # The path so far stays to the end of the video: each segment
-            # is drawn once, to last the ticks still to come.
-            driven_path.update(
-                world,
-                ego.get_location(),
-                (remaining - index) * FIXED_DELTA_SECONDS + _DEBUG_MARKER_LIFE_TIME,
-            )
-            captions.append(WARMUP_CAPTION if frame <= warmup_ticks else "")
-            while len(captions) - taken > _REPLAY_FRAMES_IN_FLIGHT:
-                camera_recorder.write_frame(captions[taken])
-                taken += 1
-        while taken < len(captions):
-            camera_recorder.write_frame(captions[taken])
-            taken += 1
-
-        logger.info("[%s] Video rendered to %s", scenario_name, mp4_path)
-        rendered = True
-
-    except Exception:
-        logger.warning("[%s] Video rendering failed", scenario_name, exc_info=True)
-    finally:
-        if camera_recorder is not None:
-            camera_recorder.stop()
-        # Stop the replayer; leftover actors are cleaned up by the
-        # map reload at the end of run_scenario().
-        client.stop_replayer(keep_actors=False)
-    return rendered
-
-
 class ScenarioRunner:
     """Orchestrates scenario execution: map loading, tick loop, and recording.
 
@@ -723,19 +489,12 @@ class ScenarioRunner:
     _batch_xodr: Optional[Path]
     #: The episode this runner last loaded _batch_map into, if it knows it.
     _batch_episode: Optional[int]
-    #: The size, in pixels, of the video rendered from each run's recording.
-    video_width: int
-    video_height: int
     #: The map the runs are on, as the trajectory log's ``map`` record names
     #: it: where it came from (``map.source``), the Lanelet2 file read, and the
     #: projection the config overrode its own with.  The queue sets them.
     map_source: Optional[str]
     lanelet2_path: Optional[Path]
     projector_type: Optional[str]
-    #: Whether each run's video is rendered from its recording.  When not,
-    #: the recording is kept, with what scenario-render needs to render the
-    #: video later ({Scenario}.video.json).
-    video_enabled: bool
 
     def __init__(
         self,
@@ -748,9 +507,6 @@ class ScenarioRunner:
         max_tick_rate_hz: Optional[float] = None,
         traffic_backend: Optional[TrafficBackend] = None,
         odd: Optional[OddDefinition] = None,
-        video_width: int = DEFAULT_IMAGE_WIDTH,
-        video_height: int = DEFAULT_IMAGE_HEIGHT,
-        video_enabled: bool = True,
     ) -> None:
         """Initialize the scenario runner.
 
@@ -780,24 +536,7 @@ class ScenarioRunner:
             odd: The ODD every run is measured against: its attributes are
                 the ODD coverage, its modules say which ticks were outside it
                 (docs/odd.md).  *None* selects the built-in ``default`` ODD.
-            video_width: Width, in pixels, of the video rendered from each
-                run's recording.  The replay renders and encodes every frame
-                at this size, so a smaller one renders the video faster.
-            video_height: Its height, in pixels.  Both are even
-                (:func:`check_video_size`).
-            video_enabled: Render each run's video from its recording, after
-                the run.  Off, the run is over once its results are written:
-                the CARLA recording is kept, and ``{Scenario}.video.json``
-                beside it holds what ``scenario-render`` needs to render the
-                same video from it later (:mod:`.video_render`).
-
-        Raises:
-            ValueError: when the video size is not positive and even.
         """
-        check_video_size(video_width, video_height)
-        self.video_width = video_width
-        self.video_height = video_height
-        self.video_enabled = video_enabled
         self.map_source = None
         self.lanelet2_path = None
         self.projector_type = None
@@ -977,7 +716,6 @@ class ScenarioRunner:
         world: "carla.World",
         ego: "EgoVehicle",
         scenario_name: str,
-        debug_log: DebugMarkerLog,
     ) -> None:
         """Tick the world until the ego is ready to be judged.
 
@@ -992,8 +730,7 @@ class ScenarioRunner:
         Returns as soon as the entity reports readiness, or when it gives up
         waiting: the tick loop reads ``termination_requested`` and ends the run.
         Entities that are ready with their actor (the default) return here
-        immediately.  What the ego wants drawn on each tick it waits goes into
-        *debug_log*, for the warm-up frames of the video.
+        immediately.
         """
         if ego.is_initialized:
             return
@@ -1004,7 +741,6 @@ class ScenarioRunner:
             self._pace_tick()
             world.tick()
             ego.on_tick(world, 0.0)
-            _record_debug_markers(world, ego, debug_log)
             waited_ticks += 1
         logger.info(
             "[%s] Ego %s after %d tick(s)",
@@ -1140,55 +876,6 @@ class ScenarioRunner:
         reloaded = self._client.get_world()
         self._world = reloaded
         return reloaded
-
-    # ------------------------------------------------------------------
-    # Video rendering from recording
-    # ------------------------------------------------------------------
-
-    def _render_video_from_recording(
-        self,
-        log_path: Path,
-        mp4_path: Path,
-        spectator_config: "SpectatorCameraConfig",
-        tick_count: int,
-        warmup_ticks: int,
-        scenario_name: str,
-        debug_log: DebugMarkerLog,
-    ) -> None:
-        """Replay a CARLA recording and render video with an attached RGB camera.
-
-        The ``.log`` file produced by the native CARLA recorder is replayed in
-        synchronous mode.  An RGB camera sensor is attached to the ego vehicle
-        at the same offset as the spectator camera, and the captured frames are
-        written to an MP4 file via :class:`CameraRecorder`.  The warm-up frames
-        the recording starts with carry :data:`WARMUP_CAPTION` along the bottom.
-        The ego's debug markers (:meth:`EgoVehicle.debug_markers`), which the
-        recording does not keep, are drawn from *debug_log* into the frames
-        they were recorded on, and the path the ego drives is traced behind it
-        (:class:`DrivenPathDrawer`).
-
-        Args:
-            log_path: Path to the CARLA ``.log`` recording file.
-            mp4_path: Destination path for the rendered ``.mp4`` video.
-            spectator_config: Camera offset / pitch matching the spectator.
-            tick_count: Number of ticks recorded during the scenario.
-            warmup_ticks: Number of ticks recorded before the scenario's first,
-                during the warm-up.
-            scenario_name: Scenario class name (used for logging).
-            debug_log: The ego's debug markers, by frame of the recording.
-        """
-        render_video_from_recording(
-            self._client,
-            log_path,
-            mp4_path,
-            spectator_config,
-            tick_count,
-            warmup_ticks,
-            scenario_name,
-            debug_log,
-            video_width=self.video_width,
-            video_height=self.video_height,
-        )
 
     # ------------------------------------------------------------------
     # Scenario execution
@@ -1351,9 +1038,6 @@ class ScenarioRunner:
             self._xodr_path,
             self.projector_type,
         )
-        # What the ego wants drawn on each frame of the recording, for the
-        # video rendered from it: the recording itself keeps no debug drawing.
-        debug_log = DebugMarkerLog()
         tick_count = 0
         result: Optional[ScenarioResult] = None
         coverage: Optional[CoverageCollector] = None
@@ -1441,8 +1125,9 @@ class ScenarioRunner:
                 EntityExistenceCondition(EGO_ROLE_NAME, label="ego_existence")
             )
 
-            # Start the native CARLA recorder now that the ego exists, so the
-            # replay video shows the warm-up below too (captioned as such).
+            # Start the native CARLA recorder now that the ego exists, so a
+            # replay of it (CARLA's own replayer) shows the warm-up below too;
+            # the trajectory log's warmup record says how many frames that is.
             output_path = self.output_dir / f"{file_stem}.log"
             output_path.parent.mkdir(parents=True, exist_ok=True)
             try:
@@ -1458,9 +1143,6 @@ class ScenarioRunner:
             else:
                 recording_started = True
                 recording_start_frame = int(world.get_snapshot().frame)
-                if scenario._spectator_camera_config is not None:
-                    # Only a run that renders a video draws the markers.
-                    debug_log.start(recording_start_frame)
                 logger.info("[%s] Recording to %s", scenario_name, output_path)
 
             # Warm-up ticks: let physics and TrafficManager stabilise
@@ -1486,7 +1168,7 @@ class ScenarioRunner:
             ego.set_initial_speeds(scenario.initial_speeds_mps(ego_actor))
             ego.on_scenario_start(world)
 
-            self._wait_for_ego(world, ego, scenario_name, debug_log)
+            self._wait_for_ego(world, ego, scenario_name)
 
             # The init phase is over: the ego is ready and the clock is about to
             # start, so the brakes that held everything still come off before
@@ -1598,7 +1280,6 @@ class ScenarioRunner:
                 # Give the ego entity a chance to drive itself before the
                 # scenario's own post-tick hooks observe the new state.
                 ego.on_tick(world, elapsed)
-                _record_debug_markers(world, ego, debug_log)
                 trajectory.record_markers(_ego_markers(ego))
 
                 # Then the traffic, which reacts to where the ego now is.
@@ -1804,39 +1485,6 @@ class ScenarioRunner:
                 coverage.write(coverage_path, scenario_name)
                 logger.info(
                     "[%s] Coverage written to: %s", scenario_name, coverage_path
-                )
-
-        # Render video from the CARLA recording after scenario cleanup
-        if (
-            recording_started
-            and tick_count > 0
-            and scenario._spectator_camera_config is not None
-        ):
-            log_path = self.output_dir / f"{file_stem}.log"
-            if self.video_enabled:
-                mp4_path = _unique_path(self.output_dir / f"{file_stem}.mp4")
-                self._render_video_from_recording(
-                    log_path=log_path,
-                    mp4_path=mp4_path,
-                    spectator_config=scenario._spectator_camera_config,
-                    tick_count=tick_count,
-                    warmup_ticks=warmup_ticks,
-                    scenario_name=scenario_name,
-                    debug_log=debug_log,
-                )
-            elif TYPE_CHECKING:
-                # json: Codon has none (docs/typecheck.md).
-                pass
-            else:
-                _write_render_job(
-                    self.output_dir / f"{file_stem}.video.json",
-                    log_path=log_path,
-                    spectator_config=scenario._spectator_camera_config,
-                    tick_count=tick_count,
-                    warmup_ticks=warmup_ticks,
-                    video_size=(self.video_width, self.video_height),
-                    debug_log=debug_log,
-                    scenario_name=scenario_name,
                 )
 
         if reset_world:

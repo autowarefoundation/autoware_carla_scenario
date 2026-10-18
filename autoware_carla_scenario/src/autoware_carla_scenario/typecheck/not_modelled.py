@@ -99,11 +99,6 @@ _ENTITY_REGISTRY = (
     "an entity holds any kind of entity (`Any`), which Codon cannot express; "
     "a scenario spawns and finds its entities through BaseScenario"
 )
-_RUNNER_DRAWING = (
-    "the runner's drawing and replay of debug markers, which the library "
-    "check compiles from its source; debug_markers.codon models what an ego "
-    "entity a scenario defines returns from debug_markers()"
-)
 _STACK_LAUNCHER = (
     "the launcher's implementation (subprocess, process groups), which the "
     "runner drives and the library check compiles from its source; "
@@ -144,7 +139,7 @@ NOT_MODELLED: dict[str, dict[str, str]] = {
             _DRIVER,
         ),
         **_each(
-            "CameraRecorder CameraSensorBase CameraSensorConfig CarlaCameraSensor "
+            "CameraSensorBase CameraSensorConfig CarlaCameraSensor "
             "CarlaCameraSensorConfig",
             _CAMERA,
         ),
@@ -185,7 +180,6 @@ NOT_MODELLED: dict[str, dict[str, str]] = {
         _CARLA_INSTALL,
     ),
     f"{_PACKAGE}.debug_markers": {
-        **_each("DebugMarkerLog DrivenPathDrawer draw_debug_markers", _RUNNER_DRAWING),
         "plan_markers": (
             "takes carla_driver_interface's Trajectory, a driver's plan, which "
             "only the driver-backed entities hold (checked from their source); "

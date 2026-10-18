@@ -8,7 +8,6 @@ import pytest
 
 from autoware_carla_scenario import ScenarioRunner
 from autoware_carla_scenario.constants import FIXED_DELTA_SECONDS
-from autoware_carla_scenario.debug_markers import DebugMarkerLog
 from autoware_carla_scenario.scenario_runner import (
     _destroy_all_dynamic_actors,
     _ScenarioClock,
@@ -275,7 +274,7 @@ class TestWaitForEgo:
     def test_an_ego_that_is_ready_is_not_waited_for(self):
         runner = _make_runner(None)
         world = MagicMock()
-        runner._wait_for_ego(world, _FakeEgo(ready_after=0), "S", DebugMarkerLog())
+        runner._wait_for_ego(world, _FakeEgo(ready_after=0), "S")
         world.tick.assert_not_called()
 
     def test_the_world_ticks_until_the_ego_is_ready(self):
@@ -284,7 +283,7 @@ class TestWaitForEgo:
         runner = _make_runner(None)
         world = MagicMock()
         ego = _FakeEgo(ready_after=3)
-        runner._wait_for_ego(world, ego, "S", DebugMarkerLog())
+        runner._wait_for_ego(world, ego, "S")
         assert world.tick.call_count == 3
         assert ego.is_initialized
 
@@ -292,7 +291,7 @@ class TestWaitForEgo:
         runner = _make_runner(None)
         world = MagicMock()
         ego = _FakeEgo(ready_after=100, gives_up_after=2)
-        runner._wait_for_ego(world, ego, "S", DebugMarkerLog())
+        runner._wait_for_ego(world, ego, "S")
         assert world.tick.call_count == 2
         assert not ego.is_initialized
 
@@ -336,7 +335,7 @@ class TestInitPhaseOrdering:
         world = MagicMock()
         scenario.run_init(world)
         ego.on_scenario_start(world)
-        _make_runner(None)._wait_for_ego(world, ego, "S", DebugMarkerLog())
+        _make_runner(None)._wait_for_ego(world, ego, "S")
 
         assert order == ["init", "on_scenario_start"]
 
@@ -499,7 +498,7 @@ class TestNothingMovesDuringInit:
         runner._pace_tick = lambda: None  # type: ignore[method-assign]
 
         ego = _FakeEgo(ready_after=3)
-        runner._wait_for_ego(world, ego, "S", DebugMarkerLog())
+        runner._wait_for_ego(world, ego, "S")
 
         assert vehicle.apply_control.call_count == 3
         held = vehicle.apply_control.call_args[0][0]

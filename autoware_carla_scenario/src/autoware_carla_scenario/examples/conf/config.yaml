@@ -21,18 +21,16 @@ odd: default
 # type-check (docs/typecheck.md): auto (when Codon is installed), required, off.
 typecheck: auto
 
-# The video rendered from each run's recording ({Scenario}.mp4): its size in
-# pixels, even numbers both. The replay renders and encodes every frame at this
-# size, so a smaller one (video.width=960 video.height=540) makes a sweep's
-# videos faster to render.
+# Removed in 15.0.0: runs no longer render a video. To see a run, convert its
+# {Scenario}.trajectory.jsonl into a Rerun recording with
+# autoware-carla-scenario-rerun and open it in the Rerun viewer (docs/usage.md);
+# the CARLA recording ({Scenario}.log) is still written, for CARLA's replayer.
+# Declared only so that an old command line or config setting video.* is told
+# so (a warning) rather than refused by Hydra; nothing reads these.
 video:
-  # false: no video after each run, which then ends once its results are
-  # written (the replay takes about as long as the run). The CARLA recording
-  # ({Scenario}.log) is kept with a render job ({Scenario}.video.json) beside
-  # it, and `scenario-render <output dir>` renders the same videos later.
-  enabled: true
-  width: 1920
-  height: 1080
+  enabled: null
+  width: null
+  height: null
 
 server:
   host: localhost

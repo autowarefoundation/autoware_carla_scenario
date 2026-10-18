@@ -22,10 +22,11 @@ This package provides a framework for creating and running automated scenario te
 - Coordinate transforms between Lanelet2, OpenDRIVE, and CARLA world
 - Lanelet-based constraint sweeping via a Hydra `lanelet_constraint`
   sweeper plugin (also resolvable without CARLA from the viewer)
-- Web UI (FastAPI + Uvicorn) for browsing results, replaying videos,
-  and triggering runs
-- Two-pass video recording (CARLA native log + replayed RGB camera +
-  ffmpeg H.264)
+- Web UI (FastAPI + Uvicorn) for browsing results and triggering runs
+- A trajectory log of every run (actors, lights, map, plan, conditions,
+  verdict; JSON Schema published), which a Rerun recording is made from to
+  see the run ([Seeing a run](usage.md#seeing-a-run)), beside CARLA's native
+  recording
 - `scenario-setup` downloads CARLA's nightly build, which the runner then
   launches by itself
 - pytest integration via `CarlaScenarioFixture` (auto-skip when there is no

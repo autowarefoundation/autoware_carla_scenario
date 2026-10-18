@@ -294,7 +294,10 @@ can see:
 - **Pass/Fail status** and elapsed time
 - **Condition tree** — the evaluated condition expression showing exactly which
   sub-conditions were met
-- **Recording** — a video captured from CARLA during the scenario execution
+- **Trajectory log** — the path of the run's `trajectory.jsonl`, which
+  `autoware-carla-scenario-rerun` turns into a Rerun recording to watch the
+  run in the Rerun viewer ([Seeing a run](usage.md#seeing-a-run)); the
+  screenshot below predates 15.0.0, when this was a video
 
 ![Concrete scenario detail — condition tree and recording](images/concreate_scenario.png)
 
