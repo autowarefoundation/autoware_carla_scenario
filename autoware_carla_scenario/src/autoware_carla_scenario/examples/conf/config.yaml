@@ -26,6 +26,11 @@ typecheck: auto
 # size, so a smaller one (video.width=960 video.height=540) makes a sweep's
 # videos faster to render.
 video:
+  # false: no video after each run, which then ends once its results are
+  # written (the replay takes about as long as the run). The CARLA recording
+  # ({Scenario}.log) is kept with a render job ({Scenario}.video.json) beside
+  # it, and `scenario-render <output dir>` renders the same videos later.
+  enabled: true
   width: 1920
   height: 1080
 

@@ -306,12 +306,30 @@ and encoded at this size. Both are even (H.264 in yuv420p halves the chroma):
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
+| `video.enabled` | bool | `true` | Render each run's video after it |
 | `video.width` | int | `1920` | Video width in pixels |
 | `video.height` | int | `1080` | Video height in pixels |
 
 Every frame of the video is rendered by CARLA during the replay and encoded,
 so a sweep that does not need full HD renders its videos faster at a smaller
 size, e.g. `video.width=960 video.height=540`.
+
+The replay takes about as long as the run, on the same server, so the next
+run waits for it. `video.enabled=false` skips it: the run is over once its
+results are written. The CARLA recording (`{ScenarioName}.log`) is kept, and
+`{ScenarioName}.video.json` beside it holds what the video is rendered with
+(the spectator camera, the tick counts, the size and the ego's debug markers),
+so `scenario-render` renders the same video later, on any CARLA server:
+
+```bash
+uv run scenario-render outputs/2026-10-18/08-48-12        # every run in it
+uv run scenario-render outputs/.../CutInScenario-3.log    # one
+uv run scenario-render outputs/... --port 2000 --width 960 --height 540
+```
+
+It uses the server at `--host`/`--port` or launches one, as `scenario`
+does, loads each recording's map, and writes `{ScenarioName}.mp4` beside it
+(a video that is there already is skipped unless `--force`).
 
 #### Map Configuration
 
@@ -492,6 +510,7 @@ Each scenario run generates output in `outputs/YYYY-MM-DD/HH-MM-SS/`:
 | `{ScenarioName}_odd.tar.gz` | The run's ODD as the files it was read from (an ODD read from OpenODD YAML; openodd's transmission archive, named by its revision; see [Versions of an ODD](odd.md#versions-of-an-odd)) |
 | `{ScenarioName}_requirements.lock` | What the run ran with: every installed distribution pinned, in the requirements format (`pip install -r`), headed by the framework, the scenario's package, Python and the platform. A distribution from git is pinned to its commit; an editable one (a checkout) names its directory, commit and whether it had uncommitted changes |
 | `{ScenarioName}_environment.json` | The same, structured; `_result.json` carries its summary (`environment`: the framework, the scenario's package, key dependencies, and the lock's id -- the SHA-256 of what it pins -- so runs on one environment can be found by it) |
+| `{ScenarioName}.video.json` | What `scenario-render` renders the video from later (only with `video.enabled=false`) |
 | `{ScenarioName}.mp4` | Rendered video from recording (optional, if spectator is configured), with the path the ego drove and its planned trajectory, for an entity that follows one (see [Debug markers](architecture.md#debug-markers)) |
 | `batch_results.json` | Batch summary (glob/batch mode only) |
 

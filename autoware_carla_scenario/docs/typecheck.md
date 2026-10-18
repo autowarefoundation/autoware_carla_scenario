@@ -1004,7 +1004,7 @@ To check one more module:
 ### What is checked of the framework
 
 Every module now has an entry other than `"not yet checked (#45)"`. 171 of
-the package's 250 modules (68%; about 43,900 of 76,300 lines) are `CHECKED`:
+the package's 251 modules (68%; about 43,900 of 76,700 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the conversions between
 Lanelet2, OpenDRIVE and CARLA world poses (`coordinate.transform`), the stop
 lines read off a Lanelet2 map (`utils.stop_line`, `coordinate.stop_line`)
@@ -1061,8 +1061,8 @@ driver's configs and client interface, trajectory follower and observations
 `driver.geometry`), and the `autoware_bridge`, `autoware_stack`, `entity`,
 `driver`, `maps` and `coverage` packages themselves, whose `__init__` re-exports what is not checked
 through models of it (see *A class a checked package only re-exports*
-below). 90
-functions and methods of those modules are `UNCALLED` (19 of them
+below). 91
+functions and methods of those modules are `UNCALLED` (20 of them
 protected helpers, see *What is compiled* below): most of them a
 condition's `get_details()` or a backend's `describe()`, what takes a traffic
 backend's options node (`Mapping[str, Any]`), what reads a route search, a
@@ -1096,12 +1096,12 @@ a `TrajectoryVertex` call's arguments, each of any type (`Any`), walks or
 binds a sweeper constraint of any kind, builds a condition's status (its
 details), or takes the list a plain tick callback goes into
 (`BaseScenario._register_tick()`, a `List[Callable[[carla.World], None]]`,
-which the check has no value of). The 79 `EXCLUDED` modules fall in
-four groups. Many fit more than one (about 57 import what Codon cannot
+which the check has no value of). The 80 `EXCLUDED` modules fall in
+four groups. Many fit more than one (about 58 import what Codon cannot
 compile, 28 build on an excluded module and 21 hold values Codon has no type
 for), so each is counted once, in the first group that fits it:
 
-- **57 import what Codon cannot compile**: pyxodr,
+- **58 import what Codon cannot compile**: pyxodr,
   pydantic, pickle, lxml, grpc, omegaconf and hydra, yaml, openodd (a Rust extension),
   cyclonedds (`ros2.cyclone` and `ros2.messages`, the ROS 2 ego's DDS
   transport and its message types), or

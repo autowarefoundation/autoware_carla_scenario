@@ -1,20 +1,31 @@
 # Model of autoware_carla_scenario.trajectory_recorder (docs/typecheck.md),
 # which writes JSON lines of mixed value types with json: what the checked
-# scenario_runner uses of it, with the signatures of the Python class.
+# scenario_runner uses of it, with the signatures of the Python class (but
+# for the framework's types, below).
 
 from pathlib import Path
+from typing import Optional
 
 import typesafe_carla.carla as carla
 
 # The actors recorded and the roles of the ego, as Python's.
 RECORDED_KINDS = ("vehicle.", "walker.")
 EGO_ROLES = ("ego", "hero")
+# The version of the format, as Python's.
+SCHEMA_VERSION = 2
 
 
 class TrajectoryRecorder:
     path: Path
 
-    def __init__(self, path: Path):
+    def __init__(
+        self,
+        path: Path,
+        map_source: Optional[str] = None,
+        lanelet2_path: Optional[Path] = None,
+        opendrive_path: Optional[Path] = None,
+        projector_type: Optional[str] = None,
+    ):
         self.path = path
 
     @property
@@ -25,6 +36,20 @@ class TrajectoryRecorder:
         raise NotImplementedError()
 
     def record(self, world: carla.World, elapsed: float) -> None:
+        raise NotImplementedError()
+
+    def record_warmup(self, ticks: int, start_frame: int, end_frame: int) -> None:
+        raise NotImplementedError()
+
+    # The checked scenario_runner's DebugMarkers and ScenarioResult, which a
+    # model imported from elsewhere would not share: taken as they come.
+    def record_markers(self, markers) -> None:
+        raise NotImplementedError()
+
+    def record_condition(self, role: str, index: int, label: str, satisfied: bool) -> None:
+        raise NotImplementedError()
+
+    def record_result(self, result) -> None:
         raise NotImplementedError()
 
     def close(self) -> None:

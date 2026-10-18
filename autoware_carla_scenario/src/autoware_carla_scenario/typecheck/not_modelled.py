@@ -269,6 +269,11 @@ NOT_MODELLED: dict[str, dict[str, str]] = {
             "(`Path(__file__)`), a value the model, compiled elsewhere, has "
             "no counterpart of; it is for the log's readers, not a scenario"
         ),
+        "DRAFT7_SCHEMA_PATH": (
+            "the path of the schema's draft-07 copy beside the Python module "
+            "(`Path(__file__)`), a value the model, compiled elsewhere, has "
+            "no counterpart of; it is for the log's readers, not a scenario"
+        ),
     },
     f"{_PACKAGE}.ui.models": _each(
         "ConditionNode ScenarioResultView SessionItem SessionSummary", _UI

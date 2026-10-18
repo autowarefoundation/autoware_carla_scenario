@@ -568,7 +568,7 @@ _MODULE_MODELS: dict[str, tuple[Any, tuple[str, ...]]] = {
     ),
     "trajectory_recorder": (
         trajectory_recorder,
-        ("EGO_ROLES", "RECORDED_KINDS", "TrajectoryRecorder"),
+        ("EGO_ROLES", "RECORDED_KINDS", "SCHEMA_VERSION", "TrajectoryRecorder"),
     ),
     # What scenario_runner's _record_run reads of the unchecked environment.
     "environment": (

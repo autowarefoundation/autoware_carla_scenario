@@ -641,14 +641,18 @@ def run_scenario_with_queue(
     case: OddCase | None = None,
     video_size: tuple[int, int] = (DEFAULT_IMAGE_WIDTH, DEFAULT_IMAGE_HEIGHT),
     server_extra_args: list[str] | None = None,
+    video_enabled: bool = True,
+    map_source: str | None = None,
 ) -> ScenarioResult:
     """Run a single pre-built scenario using :class:`ScenarioQueue`.
 
     *case* is the case drawn from the ODD that it runs, recorded with its
     outcome in its coverage file (:meth:`ScenarioRunner.run_scenario`).
     *video_size* is the width and height of the video rendered from the run's
-    recording.  *server_extra_args* are passed to ``CarlaUnreal.sh`` when the
-    run starts the server (:func:`server_extra_args`).
+    recording; *video_enabled* off renders none (the recording and a render
+    job are kept for ``scenario-render``).  *map_source* is where the map
+    came from, which the run's trajectory log names.  *server_extra_args* are passed to
+    ``CarlaUnreal.sh`` when the run starts the server (:func:`server_extra_args`).
 
     This is the extracted orchestration logic that was previously embedded
     inside :func:`run_scenario`.  Downstream projects can use this to execute
@@ -681,6 +685,8 @@ def run_scenario_with_queue(
         video_width=video_size[0],
         video_height=video_size[1],
         server_extra_args=server_extra_args,
+        video_enabled=video_enabled,
+        map_source=map_source,
     )
     queue.add(scenario, case=case)
     with queue:
@@ -714,6 +720,22 @@ def _with_fog_density_scale(driver: dict[str, Any], cfg: DictConfig) -> dict[str
         **driver,
         "lidars": [{"fog_density_scale": scale, **dict(lidar)} for lidar in lidars],
     }
+
+
+def _map_source(cfg: DictConfig) -> str | None:
+    """Where the map came from: ``map.source``, else ``map.directory``."""
+    map_cfg = cfg.get("map") or {}
+    for key in ("source", "directory"):
+        value = map_cfg.get(key)
+        if value:
+            return str(value)
+    return None
+
+
+def _video_enabled(cfg: DictConfig) -> bool:
+    """Whether each run's video is rendered (``video.enabled``, on by default)."""
+    video = cfg.get("video") or {}
+    return bool(video.get("enabled", True))
 
 
 def _video_size(cfg: DictConfig) -> tuple[int, int]:
@@ -1153,6 +1175,8 @@ def run_batch(
         video_width=_video_size(first_cfg)[0],
         video_height=_video_size(first_cfg)[1],
         server_extra_args=server_extra_args(first_cfg),
+        video_enabled=_video_enabled(first_cfg),
+        map_source=_map_source(first_cfg),
     )
 
     for cfg, scenario in zip(configs, scenarios):
@@ -1406,6 +1430,8 @@ def run_scenario(
         case=_odd_case(cfg),
         video_size=_video_size(cfg),
         server_extra_args=server_extra_args(cfg),
+        video_enabled=_video_enabled(cfg),
+        map_source=_map_source(cfg),
     )
 
     status = "PASSED" if result.passed else "FAILED"

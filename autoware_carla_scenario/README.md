@@ -32,12 +32,13 @@ The CARLA client is [typesafe_carla](https://github.com/hakuturu583/typesafe_car
 
 ## Quick usage
 
-The package provides three CLI entry points:
+The package provides these CLI entry points:
 
 | Command | Framework | Purpose |
 |---------|-----------|---------|
 | `scenario` | Hydra | Run autonomous-driving scenario tests in CARLA |
 | `scenario-setup` | argparse | Download CARLA (the nightly build) for `scenario` to launch |
+| `scenario-render` | argparse | Render the videos of runs made with `video.enabled=false`, from their recordings |
 | `detect-no-3d-model` | argparse | Detect lanelets without a matching 3D ground model in CARLA |
 | `viewer` | FastAPI + Uvicorn | Web UI for browsing and monitoring scenario results |
 
