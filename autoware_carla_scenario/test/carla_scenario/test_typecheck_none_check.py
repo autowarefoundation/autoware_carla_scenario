@@ -440,13 +440,15 @@ def test_without_typesafe_carlas_library_the_check_runs_untyped(
     assert run_none_check([module]) == []
 
 
-def test_the_checked_framework_modules_misuse_no_none() -> None:
+def test_the_checked_framework_modules_misuse_no_none(tmp_path: Path) -> None:
     # The library check runs the None check over the modules it compiles, as
     # the scenario check does (#277); without Codon it does not run, so the
     # framework's own modules are checked here too.  A CARLA Optional read
     # without a test (CollisionEvent.other_actor) was missed by both.
     from autoware_carla_scenario.typecheck.library import CHECKED, package_modules
 
+    # Typed CARLA, or CollisionEvent.other_actor would be Any to mypy.
+    assert carla_stubs.carla_stub_root(tmp_path) is not None
     every = package_modules()
     findings = run_none_check(sorted(every[name] for name in CHECKED), timeout=1200)
 

@@ -34,7 +34,9 @@ class CollisionTargetType(enum.Enum):
             the condition meant before it could be told otherwise.
         VEHICLE: Cars, vans, motorcycles.
         PEDESTRIAN: Walkers.
-        STATIC: Street furniture, barriers, props.
+        STATIC: Street furniture, barriers, props: actors whose blueprint id
+            starts ``static.``.  Map geometry (a wall, a kerb) is no actor,
+            so it is not of this class, nor of any but ``ANY``.
     """
 
     ANY = ""
@@ -77,7 +79,7 @@ class CollisionCondition(BaseCondition):
             trigger the condition.  Collisions below this threshold are ignored.
             Defaults to ``0.0`` (all collisions trigger).
         target: ``role_name`` of the entity the ego must hit.  ``None`` (the
-            default) accepts any actor.
+            default) accepts a collision with anything.
         target_type: A class of object the ego must hit.  Defaults to
             :attr:`CollisionTargetType.ANY`.
         label: Human-readable identifier for this condition.

@@ -1797,6 +1797,44 @@ def test_a_none_misused_in_a_checked_module_is_reported(
     assert "test the value for None" in located[0].message
 
 
+def test_a_none_check_that_did_not_run_warns_and_is_not_kept(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Without Codon: the compile passes, mypy has no verdict.  The library
+    # check keeps Codon's verdict with a warning, and does not keep it beyond
+    # the process, so the next run gives the None check another go (#277).
+    from autoware_carla_scenario.typecheck.none_check import (  # noqa: PLC0415
+        NoneCheckSkipped,
+    )
+
+    monkeypatch.setenv(check.CACHE_DIR_ENV, str(tmp_path))
+    monkeypatch.setattr(check, "_CACHE", {})
+    monkeypatch.setattr(check, "codon_path_dir", lambda: tmp_path)
+    monkeypatch.setattr(check, "_toolchain_digest", lambda tc: "tc")
+    monkeypatch.setattr(check, "_framework_digest", lambda codon_path: "fw")
+    monkeypatch.setattr(check, "_library_imports", lambda *args: None)
+
+    def compile_(name: str, *args: object, **kwargs: object) -> TypeCheckResult:
+        return TypeCheckResult(name, ok=True)
+
+    def no_mypy(paths: object, timeout: float) -> object:
+        raise NoneCheckSkipped("mypy is not installed")
+
+    monkeypatch.setattr(check, "_compile", compile_)
+    monkeypatch.setattr(check, "run_none_check", no_mypy)
+    result = typecheck_library(
+        [f"{_PACKAGE}.kinematics.vector"],
+        toolchain=SimpleNamespace(),  # type: ignore[arg-type]
+    )
+
+    assert result.ok, result.format()
+    assert [w.message for w in result.warnings] == [
+        "the None check did not run (mypy is not installed), so an Optional "
+        "used without a test for None is not reported"
+    ]
+    assert not [p for p in tmp_path.rglob("*") if p.is_file()]
+
+
 _INIT_AND_SETTER = """
 from __future__ import annotations
 
