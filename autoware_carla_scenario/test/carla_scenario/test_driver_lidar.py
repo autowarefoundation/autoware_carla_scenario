@@ -17,7 +17,11 @@ from autoware_carla_scenario.driver.observation import (
 from autoware_carla_scenario.driver.renderer import RendererDataBuilder
 from autoware_carla_scenario.sensor import carla_lidar
 from autoware_carla_scenario.sensor.carla_lidar import CarlaLidarSensor
-from autoware_carla_scenario.sensor.lidar_weather import LidarWeather, apply_weather
+from autoware_carla_scenario.sensor.lidar_weather import (
+    FOG_REFERENCE_SCALE,
+    LidarWeather,
+    apply_weather,
+)
 
 from .test_driver_renderer import _ego, _world
 
@@ -217,7 +221,7 @@ def test_clear_weather_and_no_gain_leave_a_sweep_untouched() -> None:
 
 
 def test_fog_thins_far_returns_first_and_dims_them() -> None:
-    fog = LidarWeather(fog_density=100.0)
+    fog = LidarWeather(fog_density=100.0, fog_density_scale=FOG_REFERENCE_SCALE)
     near = apply_weather(_ring(5.0), fog, 1.0, 0, 0)
     far = apply_weather(_ring(40.0), fog, 1.0, 0, 0)
     assert len(far) < len(near) < 2000
@@ -231,7 +235,13 @@ def test_fog_thins_far_returns_first_and_dims_them() -> None:
 def test_fog_only_scatters_beyond_where_it_starts() -> None:
     raw = _ring(20.0)
     sweep = apply_weather(
-        raw, LidarWeather(fog_density=100.0, fog_distance=30.0), 1.0, 0, 0
+        raw,
+        LidarWeather(
+            fog_density=100.0, fog_distance=30.0, fog_density_scale=FOG_REFERENCE_SCALE
+        ),
+        1.0,
+        0,
+        0,
     )
     np.testing.assert_allclose(sweep, raw)
 
@@ -242,6 +252,21 @@ def test_rain_moves_returns_along_their_rays() -> None:
     kept = ranges[ranges > 60.0]
     assert 0.0 < float(np.std(kept)) < 2.0
     assert len(sweep) < 2000
+
+
+def test_the_fog_follows_the_servers_fog_density_scale() -> None:
+    thin = apply_weather(_ring(40.0), LidarWeather(fog_density=100.0), 1.0, 0, 0)
+    thick = apply_weather(
+        _ring(40.0),
+        LidarWeather(fog_density=100.0, fog_density_scale=0.01),
+        1.0,
+        0,
+        0,
+    )
+    # CARLA's default draws a tenth of the fog the tuned scale does.
+    assert len(thick) < len(thin)
+    with pytest.raises(ValueError, match="fog_density_scale"):
+        DriverLidarConfig(fog_density_scale=0.0)
 
 
 def test_weather_noise_scales_the_effect() -> None:

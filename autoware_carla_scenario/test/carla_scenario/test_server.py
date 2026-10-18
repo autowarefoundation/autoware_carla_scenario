@@ -52,6 +52,24 @@ def test_extra_args_are_kept_as_given_or_empty() -> None:
     assert kept == [] and kept is not empty
 
 
+def test_a_reused_server_warns_that_it_keeps_its_own_arguments(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A server already running was not started with the extra arguments."""
+    args = ["-ExecCmds=carla.Weather.FogDensityScale 0.01"]
+    manager = CarlaServerManager(extra_args=args)
+    monkeypatch.setattr(manager, "_ping", lambda: True)
+    with caplog.at_level("WARNING"):
+        manager.start()
+    assert "FogDensityScale 0.01" in caplog.text
+    caplog.clear()
+    plain = CarlaServerManager()
+    monkeypatch.setattr(plain, "_ping", lambda: True)
+    with caplog.at_level("WARNING"):
+        plain.start()
+    assert caplog.text == ""
+
+
 def test_is_alive_false_before_start() -> None:
     """is_alive() returns False when no process has been started."""
     manager = CarlaServerManager()

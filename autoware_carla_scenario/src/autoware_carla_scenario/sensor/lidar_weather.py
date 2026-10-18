@@ -19,6 +19,13 @@ ODD's ``rain`` and ``fog`` knobs, ``environment.rain`` and
 Each grows linearly with its weather intensity and is scaled by the sensor's
 ``weather_noise`` (0 turns it off, 1 is this model as tuned here).  Clear
 weather leaves a sweep untouched.
+
+How thick a ``fog_density`` looks is the server's: CARLA multiplies it by the
+console variable ``carla.Weather.FogDensityScale`` (:data:`CARLA_FOG_DENSITY_SCALE`
+unless the server was started with another).  The fog effects scale with it
+too, so the LiDAR sees the fog the cameras do: as tuned here at
+:data:`FOG_REFERENCE_SCALE`, the scale that draws fog a camera sees, and a tenth
+as thick at CARLA's default.
 """
 
 from __future__ import annotations
@@ -27,11 +34,21 @@ from dataclasses import dataclass
 
 import numpy as np
 
-__all__ = ["LidarWeather", "apply_weather"]
+__all__ = [
+    "CARLA_FOG_DENSITY_SCALE",
+    "FOG_REFERENCE_SCALE",
+    "LidarWeather",
+    "apply_weather",
+]
+
+#: ``carla.Weather.FogDensityScale`` on a server started without it.
+CARLA_FOG_DENSITY_SCALE: float = 0.001
+#: The ``carla.Weather.FogDensityScale`` the fog effects below are tuned at.
+FOG_REFERENCE_SCALE: float = 0.01
 
 #: Two-way extinction coefficients, per metre, at intensity 100.  Heavy rain
-#: keeps about a seventh of the power of a return from 100 m; thick fog, a few
-#: percent from 30 m beyond where it starts.
+#: keeps about a seventh of the power of a return from 100 m; thick fog (at
+#: :data:`FOG_REFERENCE_SCALE`), a few percent from 30 m beyond where it starts.
 _RAIN_EXTINCTION_PER_M: float = 0.01
 _FOG_EXTINCTION_PER_M: float = 0.06
 #: Standard deviation of the range error, as a fraction of the distance
@@ -57,11 +74,13 @@ class LidarWeather:
         precipitation: Rain intensity, 0-100.
         fog_density: Fog intensity, 0-100.
         fog_distance: Metres from the sensor before the fog starts.
+        fog_density_scale: The server's ``carla.Weather.FogDensityScale``.
     """
 
     precipitation: float = 0.0
     fog_density: float = 0.0
     fog_distance: float = 0.0
+    fog_density_scale: float = CARLA_FOG_DENSITY_SCALE
 
     @property
     def clear(self) -> bool:
@@ -91,7 +110,11 @@ def apply_weather(
     if gain <= 0.0 or weather.clear or count == 0:
         return raw
     rain = _fraction(weather.precipitation, gain)
-    fog = _fraction(weather.fog_density, gain)
+    fog = (
+        _fraction(weather.fog_density, gain)
+        * weather.fog_density_scale
+        / FOG_REFERENCE_SCALE
+    )
     fog_start = max(weather.fog_distance, 0.0)
     rng = np.random.default_rng([seed, frame])
 

@@ -901,11 +901,13 @@ Fog is drawn as `fog_density` alone. How thick that looks is the server's: a
 CARLA 0.10 server on the UE 5.8 engine (the `ue58-dev` tree) multiplies it by `carla.Weather.FogDensityScale`,
 whose default 0.001 leaves even `fog_density=100` a faint haze on the horizon.
 Start it with `-ExecCmds="carla.Weather.FogDensityScale 0.01"` for fog a
-camera sees.
+camera sees, or set `server.fog_density_scale=0.01`: a server the run starts
+is started with it (one already running keeps its own, and the run warns).
 
 The `rain` and `fog` knobs set the LiDAR noise as well: each `driver.lidars`
 sweep carries the world's precipitation and fog density
-([LiDAR](driver_interface.md#lidar)).
+([LiDAR](driver_interface.md#lidar)). The LiDAR's fog follows
+`server.fog_density_scale` too, so it is as thick as the cameras'.
 
 A scenario that sets the weather itself (its own `EnvironmentAction`) has
 the last word over the config.

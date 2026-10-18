@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING, Optional, Tuple, Union
 import numpy as np
 
 from ..constants import FIXED_DELTA_SECONDS
-from .lidar_weather import LidarWeather, apply_weather
+from .lidar_weather import CARLA_FOG_DENSITY_SCALE, LidarWeather, apply_weather
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
@@ -76,6 +76,10 @@ class CarlaLidarSensorConfig:
     weather_noise: float = 1.0
     #: Seed of the weather noise, so a run repeats its sweeps.
     noise_seed: int = 0
+    #: The server's ``carla.Weather.FogDensityScale``, which the fog is drawn
+    #: with: the LiDAR's fog follows it, to match what the cameras see.  A
+    #: scenario run sets it from ``server.fog_density_scale``.
+    fog_density_scale: float = CARLA_FOG_DENSITY_SCALE
     position_x: float = 0.0
     position_y: float = 0.0
     position_z: float = 2.0
@@ -92,6 +96,8 @@ class CarlaLidarSensorConfig:
             raise ValueError("LiDAR lower_fov_deg must be below upper_fov_deg")
         if self.weather_noise < 0.0 or self.noise_seed < 0:
             raise ValueError("LiDAR weather_noise and noise_seed must not be negative")
+        if self.fog_density_scale <= 0.0:
+            raise ValueError("LiDAR fog_density_scale must be positive")
 
 
 class CarlaLidarSensor:
@@ -311,6 +317,7 @@ class CarlaLidarSensor:
             precipitation=float(weather.precipitation),
             fog_density=float(weather.fog_density),
             fog_distance=float(weather.fog_distance),
+            fog_density_scale=self._config.fog_density_scale,
         )
 
     def _due(self, frame: int) -> bool:
