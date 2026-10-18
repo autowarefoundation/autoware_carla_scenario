@@ -2676,7 +2676,6 @@ from autoware_carla_scenario.maps.cache import (
     CACHE_ROOT_ENV,
     TIP_SUFFIX,
 )
-from autoware_carla_scenario.scenario_base import SpectatorCameraConfig
 from autoware_carla_scenario.trajectory_recorder import EGO_ROLES, RECORDED_KINDS
 turn = TurnAction(EGO_ROLE_NAME, TurnDirection.LEFT, timing=TickTiming.PRE_TICK)
 self.register_pre_tick(turn)
@@ -2706,8 +2705,6 @@ try:
     logger.info("%f", to_map_frame(Lanelet2Pose(460, 1.0)).position.x)
 except FrameMismatchError as exc:
     logger.info("%s", str(exc))
-camera = SpectatorCameraConfig(8.0, 3.0, -15.0)
-logger.info("%f %f %f", camera.offset_back, camera.offset_up, camera.pitch)
 actor = find_actor_in_list(self.world.get_actors(), EGO_ROLE_NAME)
 if actor is not None:
     logger.info("%s", actor.type_id)

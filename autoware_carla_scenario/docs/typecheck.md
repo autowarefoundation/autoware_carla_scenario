@@ -414,8 +414,6 @@ What `test_typecheck_model.py` compares, model by model:
   `find_actor_in_world`.
 - **`kinematics.codon`**: beside its exports, `normalize_angle_deg`, and
   `frame_of` and `FrameMismatchError` as `coordinate.codon` declares them.
-- **`scenario_base.codon`**: beside its exports, `SpectatorCameraConfig` (a
-  frozen dataclass, so a `@tuple`).
 - **`coordinate.codon`**: `AnyPose`, the Union alias, by its members' names,
   in order, for a scenario's own annotations (no model function takes it: a
   Union parameter crashes Codon 0.19, so each is generic or overloaded).

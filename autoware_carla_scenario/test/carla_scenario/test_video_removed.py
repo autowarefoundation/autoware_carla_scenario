@@ -41,8 +41,18 @@ def test_an_old_video_setting_is_accepted_and_told_it_does_nothing(
     assert warn_if_video_set(cfg)
     err = capsys.readouterr().err
     assert override.lower() in err.lower()
-    assert "autoware-carla-scenario-rerun" in err
+    assert "pip install 'autoware-carla-scenario-rerun[viewer]'" in err
+    assert "from autoware_carla_scenario_rerun import convert_dir" in err
     assert "Rerun viewer" in err
+
+
+def test_a_batch_warns_once_whichever_case_sets_it(capsys) -> None:
+    plain, setting = _shipped([]), _shipped(["video.height=540"])
+    assert warn_if_video_set(plain, setting, setting)
+    err = capsys.readouterr().err
+    assert err.count("Warning: video.* is set") == 1
+    assert "video.height=540" in err
+    assert not warn_if_video_set(plain, plain)
 
 
 def test_a_config_without_a_video_section_is_fine() -> None:

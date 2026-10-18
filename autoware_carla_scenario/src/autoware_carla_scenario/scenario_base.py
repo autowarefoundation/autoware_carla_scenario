@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -45,19 +44,6 @@ from .traffic.base import TrafficBackend
 from .traffic.driven import BackendDriven
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass(frozen=True)
-class SpectatorCameraConfig:
-    """Parameters used by :meth:`BaseScenario.follow_with_spectator`.
-
-    Stored so that :class:`ScenarioRunner` can attach an RGB camera sensor
-    at the same position for video recording.
-    """
-
-    offset_back: float
-    offset_up: float
-    pitch: float
 
 
 class EgoConfig(VehicleEntityConfig):
@@ -149,7 +135,6 @@ class BaseScenario(ABC):
     _post_tick_actions: List[BaseAction]
     _pass_conditions: List[BaseCondition]
     _fail_conditions: List[BaseCondition]
-    _spectator_camera_config: Optional[SpectatorCameraConfig]
     _cover_items: List[CoverItem]
     _cross_items: List[CrossItem]
     _measures: dict[str, Measure]
@@ -218,7 +203,6 @@ class BaseScenario(ABC):
         self._post_tick_actions = []
         self._pass_conditions = []
         self._fail_conditions = []
-        self._spectator_camera_config = None
         self._cover_items = []
         self._cross_items = []
         self._measures = dict(BUILT_IN_MEASURES)
@@ -992,9 +976,6 @@ class BaseScenario(ABC):
             offset_up: Height above the actor (metres).
             pitch: Camera pitch angle (degrees, negative = look down).
         """
-        self._spectator_camera_config = SpectatorCameraConfig(
-            offset_back=offset_back, offset_up=offset_up, pitch=pitch
-        )
 
         def _follow(world: "carla.World") -> None:
             actor = actor_getter()

@@ -330,7 +330,7 @@ Key features:
 A run leaves two recordings, neither of which renders anything:
 
 1. **The CARLA recording** (`{stem}.log`): CARLA's native recorder captures every actor's state from the moment the ego exists, warm-up included. CARLA's replayer (`client.replay_file()`) plays it back on a server running the same map.
-2. **The trajectory log** (`{stem}.trajectory.jsonl`, [Trajectory Log](trajectory_log.md)): written by the runner itself after every tick of the scenario, in-process -- every vehicle and pedestrian, the lights, the map the run was on, the ego's debug markers, each condition's state and the verdict. A Rerun recording made from it with `autoware-carla-scenario-rerun` is how a run is seen ([Seeing a run](usage.md#seeing-a-run)).
+2. **The trajectory log** (`{stem}.trajectory.jsonl`, [Trajectory Log](trajectory_log.md)): written by the runner itself after every tick of the scenario, in-process -- every vehicle and pedestrian, the lights, the map the run was on, the ego's debug markers, each condition's state and the verdict. A Rerun recording made from it with the `autoware_carla_scenario_rerun` package (`convert` / `convert_dir`) is how a run is seen ([Seeing a run](usage.md#seeing-a-run)).
 
 Releases before 15.0.0 also rendered a video from the CARLA recording after each run (`{stem}.mp4`, a replay with an RGB camera and ffmpeg); that is gone, and so is the ffmpeg it needed.
 

@@ -48,7 +48,6 @@ from autoware_carla_scenario import (
     metrics,
     odd,
     ros2,
-    scenario_base,
     trajectory_recorder,
 )
 from autoware_carla_scenario.autoware_bridge import base as bridge_base
@@ -378,7 +377,6 @@ _BOUNDARY: dict[str, tuple[str, Any]] = {
     # A Union alias, for a scenario's own annotations: its members by name.
     "AnyPose": ("coordinate", coordinate.AnyPose),
     # A frozen dataclass a scenario reads off follow_with_spectator().
-    "SpectatorCameraConfig": ("scenario_base", scenario_base.SpectatorCameraConfig),
     # Every constant of constants.codon (EGO_ROLE_NAME is exported), each
     # compared by value.
     **{

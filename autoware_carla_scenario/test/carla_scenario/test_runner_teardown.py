@@ -9,7 +9,6 @@ from unittest.mock import MagicMock, patch
 
 from autoware_carla_scenario import ScenarioRunner
 from autoware_carla_scenario.debug_markers import DebugMarkers, DebugPolyline
-from autoware_carla_scenario.scenario_base import SpectatorCameraConfig
 
 
 class _Ego:
@@ -60,7 +59,6 @@ def _run(
     runner._pace_tick = lambda: None  # type: ignore[method-assign]
     scenario = MagicMock()
     scenario.STABILIZE_TICKS = 2
-    scenario._spectator_camera_config = SpectatorCameraConfig(8.0, 5.0, -15.0)
     scenario._pass_conditions = []
     scenario._fail_conditions = []
     scenario._pre_tick_actions = []

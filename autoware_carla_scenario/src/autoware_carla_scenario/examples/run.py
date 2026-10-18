@@ -725,25 +725,33 @@ def _map_source(cfg: DictConfig) -> str | None:
 VIDEO_REMOVED = (
     "video.* is set ({settings}), but autoware_carla_scenario renders no video "
     "any more (removed in 15.0.0): it is ignored. To see a run, convert its "
-    "{{Scenario}}.trajectory.jsonl into a Rerun recording with "
-    "autoware-carla-scenario-rerun and open that in the Rerun viewer; the CARLA "
-    "recording ({{Scenario}}.log) is still written, for CARLA's replayer "
-    "(docs/usage.md#seeing-a-run)."
+    "{{Scenario}}.trajectory.jsonl into a Rerun recording and open that in the "
+    "Rerun viewer: pip install 'autoware-carla-scenario-rerun[viewer]', then "
+    "python -c 'from autoware_carla_scenario_rerun import convert_dir; "
+    'convert_dir("<output dir>")\'; the CARLA recording ({{Scenario}}.log) is '
+    "still written, for CARLA's replayer (docs/usage.md#seeing-a-run)."
 )
 
 
-def warn_if_video_set(cfg: DictConfig) -> bool:
-    """Warn, saying what to use instead, when the config sets ``video.*``,
-    whose video is no longer rendered; whether it did."""
+def _video_settings(cfg: DictConfig) -> dict[str, Any]:
+    """The ``video.*`` values *cfg* sets (none, in a config of 15.0.0 on)."""
     video = cfg.get("video")
     if video is None:
-        return False
+        return {}
     container = OmegaConf.to_container(video) if OmegaConf.is_config(video) else video
     if not isinstance(container, dict):
-        return False
-    settings = {
-        str(key): value for key, value in container.items() if value is not None
-    }
+        return {}
+    return {str(key): value for key, value in container.items() if value is not None}
+
+
+def warn_if_video_set(*cfgs: DictConfig) -> bool:
+    """Warn once, saying what to use instead, when any of *cfgs* sets
+    ``video.*``, whose video is no longer rendered; whether one did."""
+    settings: dict[str, Any] = {}
+    for cfg in cfgs:
+        settings = _video_settings(cfg)
+        if settings:
+            break
     if not settings:
         return False
     message = VIDEO_REMOVED.format(
@@ -1150,7 +1158,8 @@ def run_batch(
         scenarios.append(scenario)
 
     first_cfg = configs[0]
-    warn_if_video_set(first_cfg)
+    # Any case of the batch: a scenario's own YAML may be what sets it.
+    warn_if_video_set(*configs)
     # The ODD every run is measured against, checked once when it is Python.
     check_odd(_odd_spec(first_cfg), typecheck_mode(first_cfg))
 

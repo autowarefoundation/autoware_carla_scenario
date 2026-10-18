@@ -305,13 +305,18 @@ A run renders no video (since 15.0.0). What it leaves to look at is its
 trajectory log, `{ScenarioName}.trajectory.jsonl`: every vehicle and pedestrian
 tick by tick, the traffic lights, the map it ran on, the ego's plan (its debug
 markers), each condition's state and the verdict ([Trajectory Log](trajectory_log.md)).
-To see it, make it a [Rerun](https://rerun.io) recording with
-`autoware-carla-scenario-rerun` and open that in the Rerun viewer (0.38.x):
+To see it, make it a [Rerun](https://rerun.io) recording with the
+`autoware_carla_scenario_rerun` Python package (`convert` for one log,
+`convert_dir` for a whole run or sweep directory; each writes `X.rrd` beside
+`X.trajectory.jsonl`) and open that in the Rerun viewer:
 
 ```bash
-pip install autoware-carla-scenario-rerun "rerun-sdk==0.38.*"   # to be published on PyPI
-# Writes a .rrd from the log (its README has the options):
-autoware-carla-scenario-rerun outputs/2026-10-18/08-48-12/CutInScenario-3.trajectory.jsonl
+# The converter, with the Rerun viewer it is made for (rerun-sdk >=0.38.1,<0.39):
+pip install 'autoware-carla-scenario-rerun[viewer]'
+# Every run of a session (a sweep's directory works the same):
+python -c 'from autoware_carla_scenario_rerun import convert_dir; convert_dir("outputs/2026-10-18/08-48-12")'
+# Or one run:
+python -c 'from autoware_carla_scenario_rerun import convert; convert("outputs/2026-10-18/08-48-12/CutInScenario-3.trajectory.jsonl")'
 rerun outputs/2026-10-18/08-48-12/CutInScenario-3.rrd               # the Rerun viewer
 ```
 

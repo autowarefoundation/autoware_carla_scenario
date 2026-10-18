@@ -7,8 +7,8 @@ conditions tick by tick and its verdict -- one JSON object per line.
 `TrajectoryRecorder` (`autoware_carla_scenario/trajectory_recorder.py`) writes
 it, and the carla-hub run report replays it. The file holds everything needed
 to show the run again without CARLA, the ego's plan and the path it drove
-included: `autoware-carla-scenario-rerun` makes a Rerun recording of it, which
-is how a run is seen ([Seeing a run](usage.md#seeing-a-run)).
+included: the `autoware_carla_scenario_rerun` package (`convert` /
+`convert_dir`) makes a Rerun recording of it, which is how a run is seen ([Seeing a run](usage.md#seeing-a-run)).
 
 Its format is published as a JSON Schema of one line, the contract for readers
 in any language: `schemas/trajectory.schema.json` in the package and in the

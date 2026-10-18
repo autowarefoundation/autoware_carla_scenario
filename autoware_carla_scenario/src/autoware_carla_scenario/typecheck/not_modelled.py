@@ -44,8 +44,9 @@ _DRIVER = (
     "the library check compiles it from its source"
 )
 _CAMERA = (
-    "the run's video recording, which the runner sets up from the run's "
-    "config, not a scenario; the library check compiles it from its source"
+    "the camera sensors of an external driver's rig, which the ego entity "
+    "attaches from the run's `driver` config, not a scenario; the library "
+    "check compiles them from its source"
 )
 _RUNNER = (
     "the runner, which builds and runs the scenario: a scenario does not run "
