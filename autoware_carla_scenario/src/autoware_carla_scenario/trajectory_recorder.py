@@ -179,6 +179,20 @@ def _map_offsets() -> tuple[Optional[list[float]], Optional[float]]:
     return [_r(ox), _r(oy)], _r(z_offset)
 
 
+def _metadata(what: str, read: Any, default: Any = None) -> Any:
+    """``read()``, or *default* with a warning when it fails: the map record's
+    description of the map must not cost the run its trajectory log."""
+    try:
+        return read()
+    except Exception:  # noqa: BLE001 - best effort, like the whole log
+        logger.warning(
+            "Trajectory recording: could not read %s; the map record leaves it null",
+            what,
+            exc_info=True,
+        )
+        return default
+
+
 def _polylines(markers: Any) -> list[dict[str, Any]]:
     return [
         {
@@ -380,20 +394,40 @@ class TrajectoryRecorder:
             self._fail(what)
 
     def _emit_map(self, map_name: str) -> None:
-        mgrs_offset, z_offset = _map_offsets()
-        self._emit(
-            {
-                "type": "map",
-                "name": map_name.split("/")[-1],
-                "source": self._map_source,
-                "lanelet2": _file_ref(self._lanelet2_path),
-                "opendrive": _file_ref(self._opendrive_path),
-                "projector_info": _projector_info(self._lanelet2_path),
-                "projector_type": self._projector_type,
-                "mgrs_offset": mgrs_offset,
-                "z_offset": z_offset,
-            }
-        )
+        """Write the map record.  What it describes the map with is read from
+        files that may be missing or unreadable: a field that cannot be read
+        is null, with a warning, and the log goes on."""
+        offsets = _metadata("the map offsets", _map_offsets, (None, None))
+        record = {
+            "type": "map",
+            "name": map_name.split("/")[-1],
+            "source": self._map_source,
+            "lanelet2": _metadata(
+                "the Lanelet2 map's digest", lambda: _file_ref(self._lanelet2_path)
+            ),
+            "opendrive": _metadata(
+                "the OpenDRIVE's digest", lambda: _file_ref(self._opendrive_path)
+            ),
+            "projector_info": _metadata(
+                "map_projector_info.yaml",
+                lambda: _projector_info(self._lanelet2_path),
+            ),
+            "projector_type": self._projector_type,
+            "mgrs_offset": offsets[0],
+            "z_offset": offsets[1],
+        }
+        try:
+            self._emit(record)
+        except orjson.JSONEncodeError:
+            # A projector file holding what JSON has no type for (a YAML date).
+            logger.warning(
+                "Trajectory recording: map_projector_info.yaml of %s is not "
+                "JSON; the map record leaves it out",
+                self._lanelet2_path,
+                exc_info=True,
+            )
+            record["projector_info"] = None
+            self._emit(record)
 
     def _emit(self, record: dict[str, Any]) -> None:
         assert self._out is not None

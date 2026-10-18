@@ -626,3 +626,52 @@ def test_the_new_records_never_fail_the_run(tmp_path) -> None:
     recorder.record_condition("pass", 0, "x", True)
     recorder.record_result(MagicMock())
     recorder.record_warmup(1, 0, 1)
+
+
+def test_a_map_file_that_cannot_be_read_leaves_its_field_null(tmp_path) -> None:
+    # A Lanelet2 path that is gone by the time the run starts, an OpenDRIVE
+    # that is a directory: the log goes on, without their digests.
+    recorder = TrajectoryRecorder(
+        tmp_path / "s.trajectory.jsonl",
+        None,
+        tmp_path / "gone" / "lanelet2_map.osm",
+        tmp_path,
+        None,
+    )
+    world = _World()
+    recorder.start(world)
+    assert recorder.active
+    world.snapshot = [_ActorSnapshot(1, 0.0, 0.0)]
+    recorder.record(world, 0.0)
+    recorder.close()
+    records = _lines(recorder.path)
+    [record] = [r for r in records if r["type"] == "map"]
+    assert record["lanelet2"] is None and record["opendrive"] is None
+    assert records[-1]["type"] == "tick"
+
+
+def test_a_projector_file_json_cannot_hold_is_left_out(tmp_path) -> None:
+    osm = tmp_path / "lanelet2_map.osm"
+    osm.write_bytes(b"<osm/>")
+    # YAML reads a !!set as a Python set, which JSON has no type for.
+    (tmp_path / "map_projector_info.yaml").write_text(
+        "projector_type: MGRS\ngrids: !!set {54SUE, 54SVE}\n"
+    )
+    recorder = TrajectoryRecorder(tmp_path / "s.trajectory.jsonl", None, osm)
+    recorder.start(_World())
+    assert recorder.active
+    recorder.close()
+    [record] = [r for r in _lines(recorder.path) if r["type"] == "map"]
+    assert record["projector_info"] is None
+    assert record["lanelet2"]["bytes"] == 6
+
+
+def test_an_unparsable_projector_file_is_left_out(tmp_path) -> None:
+    osm = tmp_path / "lanelet2_map.osm"
+    osm.write_bytes(b"<osm/>")
+    (tmp_path / "map_projector_info.yaml").write_text("projector_type: [MGRS\n")
+    recorder = TrajectoryRecorder(tmp_path / "s.trajectory.jsonl", None, osm)
+    recorder.start(_World())
+    recorder.close()
+    [record] = [r for r in _lines(recorder.path) if r["type"] == "map"]
+    assert record["projector_info"] is None and record["lanelet2"] is not None

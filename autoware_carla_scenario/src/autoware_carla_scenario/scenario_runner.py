@@ -1749,8 +1749,16 @@ class ScenarioRunner:
                 )
 
             if recording_started:
-                self._client.stop_recorder()
-                logger.info("[%s] Recorder stopped", scenario_name)
+                try:
+                    self._client.stop_recorder()
+                    logger.info("[%s] Recorder stopped", scenario_name)
+                except Exception:
+                    # The trajectory log's verdict and close below still go.
+                    logger.warning(
+                        "[%s] Stopping the CARLA recorder failed",
+                        scenario_name,
+                        exc_info=True,
+                    )
             if trajectory.active:
                 if result is not None:
                     trajectory.record_result(result)
