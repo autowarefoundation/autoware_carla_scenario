@@ -70,8 +70,9 @@ uv run scenario ego.entity=carla_driver driver.policy=route_follower
 
 The policy is built once per run and served on a free local port; `driver.address`
 is not used. Every scenario of a batch opens its own session on it, so a model is
-loaded once. Over the wire nothing changes: the scenario still dials it over gRPC,
-exactly as it dials a policy in another process.
+loaded once. Over the wire nothing changes: by default the scenario still dials it
+over gRPC, exactly as it dials a policy in another process, and with
+`driver.transport=direct` it exchanges the same messages without a socket (below).
 
 To run the policy as a process of its own (another environment, a GPU host, an
 alpasim driver), leave `driver.policy` unset and start the policy first. It is a
@@ -88,6 +89,37 @@ Then run any scenario with the `carla_driver` ego entity:
 uv run scenario ego.entity=carla_driver driver.address=localhost:50051
 ```
 
+### How the run reaches the policy: `driver.transport`
+
+| `driver.transport` | `driver.policy` set (the run serves it) | `driver.policy` unset (another process) |
+| --- | --- | --- |
+| `tcp` (default) | served on a free local port and dialled there | dials `driver.address` (`host:port`) |
+| `unix` | served on a Unix socket in a directory of the run's own (`0700`, under `$TMPDIR`) | dials `driver.address`, which must name a socket (`unix:///run/policy.sock`) |
+| `direct` | no socket: the run calls the policy's servicer through `carla_driver_interface.inprocess` | refused: a policy in another process has to be dialled |
+
+```bash
+uv run scenario ego.entity=carla_driver driver.policy=route_follower driver.transport=direct
+# a policy in its own process, on a socket
+uv run carla-driver-interface serve --policy route_follower --host unix:///run/policy.sock
+uv run scenario ego.entity=carla_driver driver.transport=unix driver.address=unix:///run/policy.sock
+```
+
+Whichever it is, the policy sees the same alpasim `egodriver` messages: `direct`
+still serializes every request and response to the bytes the wire would carry and
+parses them on the other side, and its servicer is the one a server runs, with a
+context that behaves as gRPC's (an abort is a `grpc.RpcError` with the same code and
+details, the contract revision is negotiated through the same metadata). A policy
+that is an alpasim driver therefore drives the same whether it is dialled over TCP
+or called in-process; only the transport's cost goes (a sweep's megabytes are not
+copied through the loopback twice per step). The one difference is a deadline
+(`driver.timeout_s`): the policy runs on the run's own thread, so an overrun is
+reported when its call returns rather than cut short.
+
+`unix` with `driver.policy` and `direct` need carla-driver-interface 2.2 or later;
+with an older one the run stops as it sets up, naming the installed version, and
+`tcp` keeps working. Under the SLURM launcher every task serves its own policy, so
+neither uses a port of its slot ([slurm.md](slurm.md)).
+
 `ScenarioRunner` logs `Autopilot skipped for ego (id=…) — external control expected`
 when the policy has taken over. Pass and fail conditions, recording, the trajectory log,
 and sweeps all behave exactly as they do for a TrafficManager-driven ego.
@@ -100,6 +132,7 @@ The `driver` config group (`conf/driver/default.yaml`) holds the settings:
 driver:
   address: localhost:50051
   policy: null               # e.g. route_follower: served by the run itself
+  transport: tcp             # tcp | unix | direct; see "How the run reaches the policy"
   timeout_s: 60.0
   policy_timestep_s: 0.1     # must be a multiple of the 0.05 s simulation step
   image_quality: 90
