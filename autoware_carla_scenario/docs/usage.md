@@ -346,8 +346,8 @@ With `rerun.enabled=true`:
 - Each case's `{ScenarioName}_result.json` names its recording
   (`rerun_recording`), and so does its entry in a batch's
   `batch_results.json`, with `rerun_error` when the conversion failed. The
-  viewer's scenario page shows the recording in its embedded Rerun web viewer
-  ([Seeing a run in the viewer](#seeing-a-run-in-the-viewer)).
+  viewer's scenario page shows it in the embedded Rerun viewer, without
+  converting the log again ([Seeing a run in the viewer](#seeing-a-run-in-the-viewer)).
 - A Hydra sweep (`--multirun` without a glob) runs each case in a process of
   its own, and each converts its own log. So does each task of a batch run on
   SLURM (`launcher=slurm`, [Running a Batch on SLURM](slurm.md)): it converts
