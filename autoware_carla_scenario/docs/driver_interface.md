@@ -94,7 +94,7 @@ uv run scenario ego.entity=carla_driver driver.address=localhost:50051
 | `driver.transport` | `driver.policy` set (the run serves it) | `driver.policy` unset (another process) |
 | --- | --- | --- |
 | `tcp` (default) | served on a free local port and dialled there | dials `driver.address` (`host:port`) |
-| `unix` | served on a Unix socket in a directory of the run's own (`0700`, under `$TMPDIR`) | dials `driver.address`, which must name a socket (`unix:///run/policy.sock`) |
+| `unix` | served on a Unix socket in a directory of the run's own (`0700`, under `$TMPDIR`, or `/tmp`) | dials `driver.address`, which must name a socket (`unix:///run/policy.sock`) |
 | `direct` | no socket: the run calls the policy's servicer through `carla_driver_interface.inprocess` | refused: a policy in another process has to be dialled |
 
 ```bash

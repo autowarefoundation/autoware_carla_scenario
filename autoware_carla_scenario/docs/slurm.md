@@ -186,7 +186,7 @@ ephemeral ports.
 server someone else runs, which every task dials. `driver.transport` is not
 changed either: with `direct` a task calls the policy it serves without a
 socket, and with `unix` it serves it on a socket in a directory of its own
-(under the job's `$TMPDIR`), so neither needs a port of the slot and tasks
+(under `$TMPDIR`, which SLURM does not set by default, so usually `/tmp`), so neither needs a port of the slot and tasks
 sharing a node never meet; a `unix:` `driver.address` someone else serves is
 dialled by every task, as a TCP one is.
 

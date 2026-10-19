@@ -10,7 +10,7 @@ on an older one they are refused, which is tested here too.
 from __future__ import annotations
 
 import importlib.util
-import os
+import shutil
 import stat
 import sys
 import tempfile
@@ -275,7 +275,8 @@ def test_the_runs_unix_socket_is_its_own(policies: Dict[str, BaseDriver]) -> Non
     path = Path(address.removeprefix("unix://"))
     assert path.is_socket()
     assert stat.S_IMODE(path.parent.stat().st_mode) == 0o700
-    assert path.parent.parent == Path(tempfile.gettempdir())
+    # $TMPDIR, or /tmp when $TMPDIR would make the path too long for a socket.
+    assert path.parent.parent in (Path(tempfile.gettempdir()), Path("/tmp"))
     # A second run in this process (another scenario) reuses it.
     assert egodriver_client._serve_on_unix_socket("records") == address
 
@@ -298,8 +299,10 @@ def test_unix_dials_a_policy_in_another_process() -> None:
         outcome = client.drive(0, 100_000)
     finally:
         client.close_session()
-        server.stop(grace=None)
-        os.rmdir(directory)
+        # stop() unlinks the socket asynchronously: wait for it, then remove
+        # whatever is left, so the directory is never "not empty".
+        server.stop(grace=None).wait()
+        shutil.rmtree(directory, ignore_errors=True)
     assert len(outcome.trajectory.poses) == 4
     assert [s.session_uuid for s in stub.sessions] == ["session-1"]
 
