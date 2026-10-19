@@ -97,11 +97,13 @@ library, already in the key), the name and version of every other installed dist
 (mypy follows a scenario's imports into numpy, lanelet2 or typesafe_carla),
 the mypy version, and the Python version. Where a version says nothing of
 what mypy reads, the files are in it by path, size and modification time:
-the `.py`, `.pyi` and `py.typed` files of a distribution installed editable
-(but the one holding the scenario being checked, whose modules the key has
-by their text already, so an edit to one scenario of an editable package
-does not stale the others), and of each directory on `MYPYPATH` and
-`PYTHONPATH`, which mypy searches. And it includes what the checks made in
+the `.py`, `.pyi` and `py.typed` files of each distribution installed
+editable and of each directory on `MYPYPATH` and `PYTHONPATH`, which mypy
+searches (a relative entry is taken from the directory the check runs in;
+symlinked directories are followed). Of the packages being checked, whose
+modules the key has by their text already, only their stubs count there, so
+an edit to one scenario of an editable or `PYTHONPATH` package does not
+stale the verdicts on the others. And it includes what the checks made in
 Python found before the compile: an import the framework's Python lacks, or
 an abstract class that is built. These digests are taken once a process
 (about 100 ms, more with a large `PYTHONPATH` such as a ROS workspace's).

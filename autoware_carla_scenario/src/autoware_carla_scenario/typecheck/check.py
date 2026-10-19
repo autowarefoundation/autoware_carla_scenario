@@ -76,7 +76,7 @@ from .library import (
     UNCALLED,
     package_modules,
 )
-from .none_check import NoneCheckSkipped, run_none_check
+from .none_check import NoneCheckSkipped, run_none_check, search_path
 from .not_modelled import NOT_MODELLED, not_modelled_member
 from .library_driver import (
     call_sites,
@@ -1238,30 +1238,58 @@ def _python_digest() -> str:
     return digest.hexdigest()
 
 
-#: Directories of a source tree that hold none of its importable source: a
-#: virtualenv, a build's or a colcon workspace's output, bytecode.
+#: What a source tree holds at its top that is none of its importable
+#: source: a build's or a colcon workspace's output, a virtualenv. Only at
+#: the top: deeper down, ``mypkg/log/`` is a subpackage like any other.
 _NOT_SOURCE_DIRS = frozenset(
-    {"__pycache__", "build", "dist", "env", "install", "log", "node_modules", "venv"}
+    {"build", "dist", "env", "install", "log", "node_modules", "venv"}
 )
 
 
 @lru_cache(maxsize=None)
-def _source_tree_digest(root: str) -> str:
+def _source_tree_digest(root: str, own: tuple[str, ...] = ()) -> str:
     """Each ``.py``, ``.pyi`` and ``py.typed`` under *root* by its path, size
     and modification time: what mypy may read there, without reading it
-    (a ``PYTHONPATH`` entry can be a whole ROS ``site-packages``). A tree
-    that is not there is a digest of its own."""
+    (a ``PYTHONPATH`` entry can be a whole ROS ``site-packages``).
+
+    Under a directory of *own* (the top packages of the modules being
+    checked, whose ``.py`` files are in the key by their text) only stubs
+    and markers count: an edit to one scenario of a package does not stale
+    the verdicts on the others, but a ``.pyi`` mypy prefers to a module does.
+    Symlinked directories are followed (``colcon build --symlink-install``),
+    each directory once. A tree that is not there is a digest of its own.
+    """
     if not os.path.isdir(root):
         return "missing"
     digest = hashlib.sha256()
-    for directory, dirnames, filenames in os.walk(root):
+    seen: set[str] = set()
+    for directory, dirnames, filenames in os.walk(root, followlinks=True):
+        real = os.path.realpath(directory)
+        if real in seen:  # a symlink back up the tree
+            dirnames[:] = []
+            continue
+        seen.add(real)
+        top = directory == root
         dirnames[:] = sorted(
-            d for d in dirnames if not d.startswith(".") and d not in _NOT_SOURCE_DIRS
+            d
+            for d in dirnames
+            if not d.startswith(".")
+            and d != "__pycache__"
+            and not (top and d in _NOT_SOURCE_DIRS)
+            and not os.path.isfile(os.path.join(directory, d, "pyvenv.cfg"))
+        )
+        inside_own = any(
+            directory == o or directory.startswith(os.path.join(o, "")) for o in own
         )
         for filename in sorted(filenames):
-            if not filename.endswith((".py", ".pyi")) and filename != "py.typed":
+            if filename.endswith(".pyi") or filename == "py.typed":
+                pass
+            elif not filename.endswith(".py"):
                 continue
             path = os.path.join(directory, filename)
+            if inside_own or path in own:
+                if filename.endswith(".py"):
+                    continue
             try:
                 stat = os.stat(path)
             except OSError:
@@ -1293,30 +1321,41 @@ def _editable_roots() -> tuple[tuple[str, str], ...]:
     return tuple(sorted(roots))
 
 
+def _top_package(path: str) -> str:
+    """The directory of the top package holding the module *path* (the last
+    one up with an ``__init__.py``), or *path* itself for a lone module."""
+    top = path
+    directory = os.path.dirname(path)
+    while os.path.isfile(os.path.join(directory, "__init__.py")):
+        top = directory
+        parent = os.path.dirname(directory)
+        if parent == directory:
+            break
+        directory = parent
+    return top
+
+
 def _outside_digest(sources: _Sources) -> str:
     """What mypy reads that no version names: the source of each editable
     distribution, and the directories of ``MYPYPATH`` and ``PYTHONPATH``
-    (mypy searches both).
-
-    An editable distribution holding a module being checked is left out: the
-    modules of the scenario's package it reads are in the key by their text
-    already, and its other modules do not reach the verdict, so an edit to
-    one scenario of an editable scenario package does not stale the rest.
-    """
-    checked = [os.path.abspath(m.path) for m in sources.modules.values()]
+    (mypy searches both), but the ``.py`` files of the packages being
+    checked, which are in the key by their text (:func:`_source_tree_digest`)."""
+    own = tuple(
+        sorted(
+            {_top_package(os.path.abspath(m.path)) for m in sources.modules.values()}
+        )
+    )
     digest = hashlib.sha256()
-    for name, root in _editable_roots():
+    trees = [(f"editable {name}", root) for name, root in _editable_roots()]
+    trees += [
+        (variable, entry)
+        for variable in ("MYPYPATH", "PYTHONPATH")
+        for entry in search_path(variable)
+    ]
+    for label, root in trees:
         prefix = os.path.join(root, "")
-        if any(path.startswith(prefix) for path in checked):
-            continue
-        digest.update(f"\0editable {name} {_source_tree_digest(root)}".encode())
-    for variable in ("MYPYPATH", "PYTHONPATH"):
-        for entry in os.environ.get(variable, "").split(os.pathsep):
-            if entry:
-                entry = os.path.abspath(entry)
-                digest.update(
-                    f"\0{variable} {entry} {_source_tree_digest(entry)}".encode()
-                )
+        inside = tuple(o for o in own if o.startswith(prefix))
+        digest.update(f"\0{label} {root} {_source_tree_digest(root, inside)}".encode())
     return digest.hexdigest()
 
 

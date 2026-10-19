@@ -251,26 +251,95 @@ def test_an_edit_to_an_editable_distribution_is_another_key(
     assert digest() != edited
 
 
-def test_the_editable_distribution_being_checked_is_left_out(
+def test_the_package_being_checked_counts_by_its_stubs_only(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fresh_digests: None
 ) -> None:
-    """A scenario package installed editable: its modules being checked are in
-    the key by their text, and an edit to another scenario of it is not."""
+    """A scenario package installed editable: its modules are in the key by
+    their text, so an edit to another scenario of it is not -- but a stub mypy
+    prefers to a module is, and so is another package of the checkout."""
     monkeypatch.setattr(check, "_toolchain_digest", lambda tc: "tc")
     monkeypatch.setattr(check, "_framework_digest", lambda codon_path: "fw")
-    package = tmp_path / "my_scenarios"
-    _write(package / "my_scenarios" / "cut_in.py", "x = 1\n")
-    _write(package / "my_scenarios" / "merge.py", "y = 1\n")
-    _editable(monkeypatch, "my-scenarios", package)
+    checkout = tmp_path / "checkout"
+    package = checkout / "my_scenarios"
+    _write(package / "__init__.py", "")
+    cut_in = package / "cut_in.py"
+    _write(cut_in, "x = 1\n")
+    _write(package / "merge.py", "y = 1\n")
+    _write(checkout / "helpers" / "__init__.py", "")
+    _editable(monkeypatch, "my-scenarios", checkout)
+    text = cut_in.read_text(encoding="utf-8")
+    sources = _Sources(
+        {"my_scenarios.cut_in": _Module(cut_in, False, text, ast.parse(text))}
+    )
 
     def key() -> str:
         _source_tree_digest.cache_clear()
-        sources = _sources(str(package / "my_scenarios"))
         return _cache_key(None, Path("/codon"), sources, "")  # type: ignore[arg-type]
 
     before = key()
-    _write(package / "my_scenarios" / "merge.py", "y = 2\n")
+    _write(package / "merge.py", "y = 2\n")
     assert key() == before
+    _write(package / "merge.pyi", "y: int | None\n")
+    with_stub = key()
+    assert with_stub != before
+    _write(checkout / "helpers" / "__init__.py", "z = 1\n")
+    assert key() != with_stub
+
+
+def test_only_the_top_of_a_tree_is_left_out_by_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fresh_digests: None
+) -> None:
+    """``build/`` beside the package is a build's output; ``mypkg/log/`` is a
+    subpackage. A virtualenv is left out wherever it is, by its pyvenv.cfg."""
+    checkout = tmp_path / "mypkg"
+    _write(checkout / "build" / "lib" / "x.py", "")
+    _write(checkout / "mypkg" / "log" / "__init__.py", "")
+    _write(checkout / "mypkg" / "tools" / "env" / "pyvenv.cfg", "")
+
+    def digest() -> str:
+        _source_tree_digest.cache_clear()
+        return _source_tree_digest(str(checkout))
+
+    before = digest()
+    _write(checkout / "build" / "lib" / "x.py", "x = 1\n")
+    _write(checkout / "mypkg" / "tools" / "env" / "site.py", "x = 1\n")
+    assert digest() == before
+    _write(checkout / "mypkg" / "log" / "__init__.py", "x = 1\n")
+    assert digest() != before
+
+
+def test_a_symlinked_directory_is_followed(tmp_path: Path, fresh_digests: None) -> None:
+    """``colcon build --symlink-install``: the source is behind a link."""
+    source = tmp_path / "src" / "pkg"
+    _write(source / "__init__.py", "")
+    site = tmp_path / "site-packages"
+    site.mkdir()
+    (site / "pkg").symlink_to(source, target_is_directory=True)
+    (site / "loop").symlink_to(site, target_is_directory=True)  # and no loop
+
+    def digest() -> str:
+        _source_tree_digest.cache_clear()
+        return _source_tree_digest(str(site))
+
+    before = digest()
+    _write(source / "__init__.py", "x = 1\n")
+    assert digest() != before
+
+
+def test_a_relative_search_path_entry_is_the_directory_the_check_runs_from(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    key: Callable[..., str],
+    fresh_digests: None,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("MYPYPATH", "stubs")
+    stub = tmp_path / "stubs" / "helperlib.pyi"
+    _write(stub, "def get() -> int: ...\n")
+    before = key()
+    _source_tree_digest.cache_clear()
+    _write(stub, "def get() -> int | None: ...\n")
+    assert key() != before
 
 
 @pytest.mark.parametrize("variable", ["MYPYPATH", "PYTHONPATH"])
