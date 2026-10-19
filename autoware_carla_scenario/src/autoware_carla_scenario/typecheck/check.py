@@ -48,6 +48,7 @@ import tempfile
 import time
 from dataclasses import dataclass, field
 from collections.abc import Callable, Collection, Iterable, Iterator, Mapping
+from concurrent.futures import Future, ThreadPoolExecutor
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal
@@ -76,7 +77,7 @@ from .library import (
     UNCALLED,
     package_modules,
 )
-from .none_check import NoneCheckSkipped, run_none_check, search_path
+from .none_check import NoneCheckSkipped, NoneFinding, run_none_check, search_path
 from .not_modelled import NOT_MODELLED, not_modelled_member
 from .library_driver import (
     call_sites,
@@ -1554,14 +1555,36 @@ def _typecheck(
             )
         return cached
     _CHECKED_FOR[key] = rendered.case
+    none_check = _none_check_started(sources, timeout)
     result = _compile(name, sources, rendered, toolchain, codon_path, timeout)
     if result is None:  # timed out: no verdict worth keeping
         return _timed_out(name, timeout)
-    return _none_checked(key, result, sources, timeout)
+    return _none_checked(key, result, sources, none_check)
+
+
+def _none_check_started(
+    sources: _Sources, timeout: float
+) -> "Future[list[NoneFinding]]":
+    """The None check of *sources*' modules, started on a thread of its own.
+
+    mypy reads only the modules, so it runs while Codon compiles them rather
+    than after it: an uncached check takes the longer of the two, not their
+    sum. Its findings are read once the compile is done (and not at all when
+    the compile crashed or timed out).
+    """
+    executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="none-check")
+    future = executor.submit(
+        run_none_check, sorted(m.path for m in sources.modules.values()), timeout
+    )
+    executor.shutdown(wait=False)
+    return future
 
 
 def _none_checked(
-    key: str, result: TypeCheckResult, sources: _Sources, timeout: float
+    key: str,
+    result: TypeCheckResult,
+    sources: _Sources,
+    none_check: "Future[list[NoneFinding]]",
 ) -> TypeCheckResult:
     """*result* with the None check's findings (:func:`_with_none_misuses`),
     kept under *key*.
@@ -1571,7 +1594,7 @@ def _none_checked(
     writer among it, and mypy; :func:`_framework_digest`: the CARLA library
     the stubs are written from), so a kept verdict holds the check's too.
     """
-    checked = _with_none_misuses(result, sources, timeout)
+    checked = _with_none_misuses(result, none_check)
     if len(checked.warnings) > len(result.warnings):
         # The None check did not run (mypy missing, out of time): a verdict
         # for this process only, so the next run checks it again.
@@ -1581,7 +1604,7 @@ def _none_checked(
 
 
 def _with_none_misuses(
-    result: TypeCheckResult, sources: _Sources, timeout: float
+    result: TypeCheckResult, none_check: "Future[list[NoneFinding]]"
 ) -> TypeCheckResult:
     """*result*, failed by each ``None`` misused in the modules (#239).
 
@@ -1594,9 +1617,7 @@ def _with_none_misuses(
     if result.crashed:
         return result
     try:
-        findings = run_none_check(
-            sorted(m.path for m in sources.modules.values()), timeout
-        )
+        findings = none_check.result()
     except NoneCheckSkipped as exc:
         warning = Diagnostic(
             f"the None check did not run ({exc}), so an Optional used without "
@@ -2236,6 +2257,7 @@ def typecheck_library(
     cached = _cached(key, sources)
     if cached is not None:
         return cached
+    none_check = _none_check_started(sources, timeout)
     result = _compile(
         title,
         sources,
@@ -2251,4 +2273,4 @@ def typecheck_library(
         return _timed_out(title, timeout)
     # Codon unwraps an Optional in the framework's modules as it does in a
     # scenario's, so they get the scenario's None check too (#277).
-    return _none_checked(key, result, sources, timeout)
+    return _none_checked(key, result, sources, none_check)

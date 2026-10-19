@@ -30,6 +30,7 @@ __all__ = [
     "SESSION_TYPES",
     "CaseFiles",
     "batch_case_files",
+    "batch_entries",
     "case_files",
     "match_batch_stems",
     "session_dir",
@@ -197,6 +198,49 @@ def _manifest_stems(directory: Path, count: int) -> list[str | None] | None:
     return [str(c["stem"]) if c.get("stem") else None for c in ordered]
 
 
+def _slurm_entries(directory: Path) -> list[dict[str, Any]] | None:
+    """The entries a SLURM batch's summary will have, from its manifest and
+    the outcomes its tasks recorded (``slurm/results/<case>.json``), while it
+    has no ``batch_results.json`` yet. A case without an outcome yet has
+    ``passed`` ``None`` and ``pending`` true."""
+    manifest = _read_json(directory / "slurm" / "manifest.json")
+    if not isinstance(manifest, dict) or not isinstance(manifest.get("cases"), list):
+        return None
+    entries: list[dict[str, Any]] = []
+    for case in sorted(manifest["cases"], key=lambda c: int(c.get("index", 0))):
+        record = _read_json(
+            directory / "slurm" / "results" / f"{int(case['index'])}.json"
+        )
+        entry: dict[str, Any] = {
+            "scenario": case.get("label") or case.get("scenario") or "unknown",
+            "overrides": list(case.get("case_overrides") or []),
+        }
+        if isinstance(record, dict) and isinstance(record.get("result"), dict):
+            entry.update(record["result"])
+            if record.get("errored"):
+                entry["error"] = True
+        else:
+            entry.update(
+                passed=None,
+                message="No result yet (running under SLURM)",
+                elapsed_seconds=None,
+                pending=True,
+            )
+        entries.append(entry)
+    return entries
+
+
+def batch_entries(directory: Path) -> tuple[list[dict[str, Any]], bool] | None:
+    """A batch's entries: its ``batch_results.json``, or, for a SLURM batch
+    not collected yet, what its tasks have recorded so far; and whether they
+    are final (the summary). ``None`` when *directory* holds no batch."""
+    entries = _read_json(directory / "batch_results.json")
+    if isinstance(entries, list):
+        return entries, True
+    slurm = _slurm_entries(directory)
+    return (slurm, False) if slurm is not None else None
+
+
 _batch_cache: dict[str, tuple[tuple[float, ...], list[CaseFiles | None]]] = {}
 
 
@@ -223,9 +267,8 @@ def batch_case_files(directory: Path) -> list[CaseFiles | None]:
     cached = _batch_cache.get(key)
     if cached is not None and cached[0] == stamp:
         return cached[1]
-    entries = _read_json(summary)
-    if not isinstance(entries, list):
-        entries = []
+    found = batch_entries(directory)
+    entries = found[0] if found is not None else []
     stems = _manifest_stems(directory, len(entries))
     if stems is None:
         stems = match_batch_stems(directory, entries)
