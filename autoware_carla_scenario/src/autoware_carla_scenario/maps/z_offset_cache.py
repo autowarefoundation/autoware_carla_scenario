@@ -29,12 +29,29 @@ __all__ = ["cached_z_offset", "z_offset_key"]
 _METHOD_VERSION = 1
 
 
+#: Each file's digest by what it is now (``(path, device, inode, size,
+#: modification time)``): a queue re-initialises the map manager for every
+#: run, and hashing a city-sized map twice each time is most of a second.
+_DIGESTS: dict[tuple[str, int, int, int, int], str] = {}
+
+
 def _file_sha256(path: Path) -> str:
+    stat = path.stat()
+    key = (
+        str(path.resolve()),
+        stat.st_dev,
+        stat.st_ino,
+        stat.st_size,
+        stat.st_mtime_ns,
+    )
+    if key in _DIGESTS:
+        return _DIGESTS[key]
     digest = hashlib.sha256()
     with path.open("rb") as stream:
         for chunk in iter(lambda: stream.read(1 << 20), b""):
             digest.update(chunk)
-    return digest.hexdigest()
+    _DIGESTS[key] = digest.hexdigest()
+    return _DIGESTS[key]
 
 
 def z_offset_key(
