@@ -9,7 +9,7 @@ from typing import Any
 
 import yaml  # type: ignore[import-untyped]
 
-from .cases import case_files
+from .cases import batch_entries, case_files
 from .models import ConditionNode, ScenarioResultView, SessionItem, SessionSummary
 from .runner import RAW_OUTPUT_LOG
 
@@ -115,24 +115,21 @@ def _scan_outputs_session(
     session_dir: Path, date: str, time: str
 ) -> SessionSummary | None:
     """Scan a single outputs session directory (batch or single)."""
-    batch_json = session_dir / "batch_results.json"
-    if batch_json.is_file():
-        # Batch session
-        try:
-            data = json.loads(batch_json.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
+    # A batch: its summary, or a SLURM batch's cases recorded so far.
+    found = batch_entries(session_dir)
+    if found is not None:
+        entries = found[0]
+        if not entries:
             return None
-        if not isinstance(data, list) or not data:
-            return None
-        passed_count = sum(1 for item in data if item.get("passed"))
-        scenario_names = {item.get("scenario", "unknown") for item in data}
+        passed_count = sum(1 for item in entries if item.get("passed"))
+        scenario_names = {item.get("scenario", "unknown") for item in entries}
         return SessionSummary(
             date=date,
             time=time,
             session_type="batch",
             scenario_name=", ".join(sorted(scenario_names)),
             passed_count=passed_count,
-            total_count=len(data),
+            total_count=len(entries),
         )
 
     # Single run: look for *_result.json
@@ -209,6 +206,7 @@ def load_session(
         return _cache[cache_key]  # type: ignore[return-value]
 
     items: list[SessionItem] = []
+    final = True
 
     if session_type == "multirun":
         session_dir = base_path / "multirun" / date / time
@@ -260,15 +258,10 @@ def load_session(
 
     elif session_type == "batch":
         session_dir = base_path / "outputs" / date / time
-        batch_json = session_dir / "batch_results.json"
-        if not batch_json.is_file():
+        found = batch_entries(session_dir)
+        if found is None:
             return items
-        try:
-            data_list = json.loads(batch_json.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            return items
-        if not isinstance(data_list, list):
-            return items
+        data_list, final = found
         overrides = _read_overrides(session_dir)
         for i, entry in enumerate(data_list):
             items.append(
@@ -302,7 +295,9 @@ def load_session(
                     )
                 )
 
-    _cache[cache_key] = items
+    # A SLURM batch still running is read again each time.
+    if session_type != "batch" or final:
+        _cache[cache_key] = items
     return items
 
 
@@ -400,6 +395,7 @@ def load_scenario(
     data: dict[str, Any] | None = None
     overrides: list[str] = []
     job_dir: Path | None = None
+    cacheable = True
 
     if session_type == "multirun":
         job_dir = base_path / "multirun" / date / time / str(index)
@@ -412,15 +408,14 @@ def load_scenario(
 
     elif session_type == "batch":
         job_dir = base_path / "outputs" / date / time
-        batch_json = job_dir / "batch_results.json"
         overrides = _read_overrides(job_dir)
-        if batch_json.is_file():
-            try:
-                data_list = json.loads(batch_json.read_text(encoding="utf-8"))
-                if isinstance(data_list, list) and 0 <= index < len(data_list):
-                    data = data_list[index]
-            except (json.JSONDecodeError, OSError):
-                pass
+        found = batch_entries(job_dir)
+        if found is not None:
+            data_list, final = found
+            if 0 <= index < len(data_list) and not data_list[index].get("pending"):
+                data = data_list[index]
+            if not final:
+                cacheable = False
 
     elif session_type == "single":
         job_dir = base_path / "outputs" / date / time
@@ -446,7 +441,8 @@ def load_scenario(
             overrides=overrides,
             raw_log=raw_log,
         )
-        _cache[cache_key] = result
+        if cacheable:
+            _cache[cache_key] = result
         return result
 
     # Build condition tree
@@ -487,5 +483,6 @@ def load_scenario(
         raw_log=raw_log,
         trajectory_path=trajectory_path,
     )
-    _cache[cache_key] = result
+    if cacheable:
+        _cache[cache_key] = result
     return result

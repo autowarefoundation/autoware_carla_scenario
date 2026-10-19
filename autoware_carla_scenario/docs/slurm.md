@@ -90,6 +90,11 @@ how they are spread. A case run again replaces its earlier files, so
 `sacct` is not needed: the batch is followed through `squeue` and the files the
 tasks write.
 
+The result viewer does the same from its pages: its run panel submits a
+batch with `launcher=slurm`, and a SLURM batch's page shows its cases, jobs
+and tasks as they run and resubmits, collects or cancels it
+([Running through SLURM](usage.md#running-through-slurm)).
+
 ## Configuration
 
 `launcher=slurm` selects `conf/launcher/slurm.yaml`; every key can be set on the
