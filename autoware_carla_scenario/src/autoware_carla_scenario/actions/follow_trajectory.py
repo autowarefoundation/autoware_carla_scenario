@@ -28,6 +28,7 @@ from ..trajectory.model import (
     TrajectoryTiming,
 )
 from ._departures import DepartureTimeline, TimelineVertex
+from ..utils.vehicles import as_vehicle
 from .base import BaseAction, TickTiming
 
 if TYPE_CHECKING:
@@ -564,7 +565,7 @@ class FollowTrajectoryAction(BaseAction):
             self._follower = TrajectoryFollower(
                 config,
                 ChaosPowertrain.from_physics_control(
-                    _as_vehicle(actor).get_physics_control()
+                    as_vehicle(actor).get_physics_control()
                 ),
             )
 
@@ -692,7 +693,7 @@ class FollowTrajectoryAction(BaseAction):
                 import typesafe_carla.carla as carla  # noqa: PLC0415
 
                 self._follower.reset()
-                _as_vehicle(actor).apply_control(
+                as_vehicle(actor).apply_control(
                     carla.VehicleControl(throttle=0.0, brake=1.0)
                 )
                 return
@@ -708,7 +709,7 @@ class FollowTrajectoryAction(BaseAction):
         )
         velocity = actor.get_velocity()
         angular = actor.get_angular_velocity()
-        control = _as_vehicle(actor).get_control()
+        control = as_vehicle(actor).get_control()
         # A control without a gear (a test double) reads as gear 0, as
         # getattr(control, "gear", 0) did; Codon has no getattr default.
         try:
@@ -731,7 +732,7 @@ class FollowTrajectoryAction(BaseAction):
             now_us=int(round(self._elapsed * 1e6)),
             gear=int(gear),
         )
-        _as_vehicle(actor).apply_control(command.to_carla_control())
+        as_vehicle(actor).apply_control(command.to_carla_control())
 
     def _plan(self, here: float) -> "_Plan":
         """The path ahead of *here*, timed on the scenario clock, for the controller."""
@@ -1220,23 +1221,8 @@ def _is_walker(actor: "carla.Actor") -> bool:
     return str(type_id).startswith("walker.")
 
 
-def _as_vehicle(actor: "carla.Actor") -> "carla.Vehicle":
-    """*actor* as the vehicle a control or a physics control is read from.
-
-    At run time that is *actor* itself, which typesafe_carla's Python API
-    takes as it is.  Its Codon library has the controls on a ``carla.Vehicle``
-    only, which the check gets with the checked conversion: Codon reads
-    ``TYPE_CHECKING`` as a compile-time true (docs/typecheck.md), and Python
-    as false.
-    """
-    if TYPE_CHECKING:
-        return actor.as_vehicle()
-    else:
-        return actor
-
-
 def _as_walker(actor: "carla.Actor") -> "carla.Walker":
-    """*actor* as the walker a ``WalkerControl`` is applied to (:func:`_as_vehicle`)."""
+    """*actor* as the walker a ``WalkerControl`` is applied to (:func:`~autoware_carla_scenario.utils.vehicles.as_vehicle`)."""
     if TYPE_CHECKING:
         return actor.as_walker()
     else:
@@ -1346,4 +1332,4 @@ def _stop(actor: "carla.Actor", walker: bool) -> None:
         )
         return
     actor.set_target_velocity(carla.Vector3D(0.0, 0.0, 0.0))
-    _as_vehicle(actor).apply_control(carla.VehicleControl(throttle=0.0, brake=1.0))
+    as_vehicle(actor).apply_control(carla.VehicleControl(throttle=0.0, brake=1.0))

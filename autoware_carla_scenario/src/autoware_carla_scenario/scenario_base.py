@@ -22,6 +22,7 @@ if TYPE_CHECKING:
 import typesafe_carla.carla as carla
 
 from .actions import BaseAction, RoutingAction
+from .actions.environment import follow_tire_friction
 from .conditions.base import BaseCondition, find_actor_by_role_name
 from .constants import DEFAULT_TM_PORT, EGO_ROLE_NAME
 from .coverage.items import CoverItem, CrossItem, SamplingEvent
@@ -131,6 +132,7 @@ class BaseScenario(ABC):
     _init_actions: List[BaseAction]
     _pre_tick_callbacks: List[Callable[[carla.World], None]]
     _post_tick_callbacks: List[Callable[[carla.World], None]]
+    _follows_tire_friction: bool
     _pre_tick_actions: List[BaseAction]
     _post_tick_actions: List[BaseAction]
     _pass_conditions: List[BaseCondition]
@@ -199,6 +201,7 @@ class BaseScenario(ABC):
         self._init_actions = []
         self._pre_tick_callbacks = []
         self._post_tick_callbacks = []
+        self._follows_tire_friction = False
         self._pre_tick_actions = []
         self._post_tick_actions = []
         self._pass_conditions = []
@@ -581,8 +584,22 @@ class BaseScenario(ABC):
         if isinstance(cb, BaseAction):
             actions.append(cb)
             self._hand_backend_to(cb)
+            self._follow_tire_friction_of(cb)
         else:
             callbacks.append(cb)
+
+    def _follow_tire_friction_of(self, action: BaseAction) -> None:
+        """Give the vehicles spawned later the grip *action* sets, if it sets one.
+
+        An :class:`~autoware_carla_scenario.EnvironmentAction` on a wet road
+        scales the wheels of the vehicles there when it fires; background
+        traffic spawns afterwards, so the first such action registered also
+        registers :func:`~autoware_carla_scenario.actions.environment.follow_tire_friction`
+        after every tick.
+        """
+        if not self._follows_tire_friction and action.sets_tire_friction:
+            self._follows_tire_friction = True
+            self._post_tick_callbacks.append(follow_tire_friction)
 
     def _hand_backend_to(self, action: BaseAction) -> None:
         """Give *action* the run's traffic backend, if it acts through one.

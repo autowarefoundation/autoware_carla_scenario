@@ -13,6 +13,8 @@ from __future__ import annotations
 from enum import Enum, auto
 from typing import TYPE_CHECKING, Optional
 
+from .vehicles import as_vehicle
+
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
 
@@ -119,12 +121,12 @@ def is_vehicle(actor: "carla.Actor") -> bool:
 
 def turn_indicators_of(actor: "carla.Actor") -> TurnIndicatorState:
     """The turn indicators vehicle *actor* shows."""
-    return turn_indicator_state(int(_as_vehicle(actor).get_light_state()))
+    return turn_indicator_state(int(as_vehicle(actor).get_light_state()))
 
 
 def set_turn_indicators(actor: "carla.Actor", state: TurnIndicatorState) -> None:
     """Show *state* on vehicle *actor*'s turn indicators, its other lights as they are."""
-    vehicle = _as_vehicle(actor)
+    vehicle = as_vehicle(actor)
     vehicle.set_light_state(with_turn_indicators(int(vehicle.get_light_state()), state))
 
 
@@ -145,17 +147,3 @@ def show_autoware_command(actor: "carla.Actor", command: int) -> bool:
         return False
     set_turn_indicators(actor, wanted)
     return True
-
-
-def _as_vehicle(actor: "carla.Actor") -> "carla.Vehicle":
-    """*actor* as the vehicle its light state is read from and set on.
-
-    At run time that is *actor* itself, which typesafe_carla's Python API takes
-    as it is; its Codon library has the light state on a ``carla.Vehicle``
-    only, which the check gets with the checked conversion (Codon reads
-    ``TYPE_CHECKING`` as a compile-time true, docs/typecheck.md).
-    """
-    if TYPE_CHECKING:
-        return actor.as_vehicle()
-    else:
-        return actor

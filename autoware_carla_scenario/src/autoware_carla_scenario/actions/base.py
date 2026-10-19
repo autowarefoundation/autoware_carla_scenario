@@ -153,6 +153,13 @@ class BaseAction(ABC):
         return self._lifecycle
 
     @property
+    def sets_tire_friction(self) -> bool:
+        """Whether the action sets the vehicles' grip (an
+        :class:`~autoware_carla_scenario.EnvironmentAction` on a wet road):
+        a scenario registering one has the vehicles spawned later follow it."""
+        return False
+
+    @property
     def reissues_while_running(self) -> bool:
         """Whether :meth:`execute` is called again on every tick of the run.
 

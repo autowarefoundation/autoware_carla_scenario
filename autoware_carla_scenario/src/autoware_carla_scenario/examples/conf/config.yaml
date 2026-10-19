@@ -197,6 +197,13 @@ controls: {}
 # alone sets only the falling drops, which barely show. Cloudiness, standing
 # water or wetness given beside `rain` win over the ones it derives;
 # `precipitation` may not be given with it. rain=0 is a dry, clear day.
+#
+# The road's grip follows its water (EnvironmentAction, docs/odd.md): a run
+# that sets `rain`, `wetness` or `precipitation_deposits` scales every
+# vehicle's tire friction into the range that water leaves -- a wet road
+# about 0.65-0.85 of the dry grip, a flooded one 0.45-0.65 -- at
+# `tire_friction_quantile` (0-1, the middle when null; an odd_sample sweep
+# draws it per case). `tire_friction` fixes the share of the dry grip instead.
 environment:
   rain: null
   cloudiness: null
@@ -208,6 +215,8 @@ environment:
   fog_distance: null
   sun_altitude_angle: null
   sun_azimuth_angle: null
+  tire_friction: null
+  tire_friction_quantile: null
 
 entity:
   ground_projection_ray_distance_upper: 5.0
