@@ -272,7 +272,8 @@ def _mypy_paths(paths: list[Path], scratch: Path) -> dict[str, Path]:
     for path in paths:
         root = _source_root(path)
         if root.name not in _SITE_DIRECTORIES:
-            given[str(path)] = path
+            # Absolute: mypy runs in a directory of its own (run_none_check).
+            given[str(path.absolute())] = path
             continue
         relative = path.relative_to(root)
         link = scratch / relative.parts[0]
@@ -336,12 +337,18 @@ def run_none_check(paths: list[Path], timeout: float = 600.0) -> list[NoneFindin
             sources = Path(scratch) / "sources"
             sources.mkdir()
             given = _mypy_paths(paths, sources)
+            # An empty working directory: mypy searches the one it runs in,
+            # and what happens to be in the caller's would reach a verdict
+            # that check.py keeps beyond the process under a key without it.
+            cwd = Path(scratch) / "cwd"
+            cwd.mkdir()
             proc = subprocess.run(
                 [*command, *given],
                 capture_output=True,
                 text=True,
                 timeout=timeout,
                 check=False,
+                cwd=cwd,
                 env=_environment(carla_stub_root(Path(scratch))),
             )
     except subprocess.TimeoutExpired:

@@ -9,7 +9,7 @@ import ast
 import json
 import os
 import shutil
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -23,8 +23,10 @@ from autoware_carla_scenario.typecheck.check import (
     _cache_key,
     _cached,
     _distributions_digest,
+    _editable_roots,
     _package_digest,
     _Module,
+    _source_tree_digest,
     _Sources,
     _store,
     _toolchain_digest,
@@ -190,47 +192,108 @@ def test_another_installed_distribution_is_another_key(
         _distributions_digest.cache_clear()
 
 
+def _editable(monkeypatch: pytest.MonkeyPatch, name: str, checkout: Path) -> None:
+    """*checkout* as the one distribution installed, editable."""
+    direct_url = json.dumps({"url": checkout.as_uri(), "dir_info": {"editable": True}})
+    dist = SimpleNamespace(
+        metadata={"Name": name},
+        version="0.1.0",
+        read_text=lambda file: direct_url if file == "direct_url.json" else None,
+    )
+    monkeypatch.setattr(check.importlib.metadata, "distributions", lambda: [dist])
+
+
+@pytest.fixture
+def fresh_digests() -> Iterator[None]:
+    """Digests taken once a process, taken again for the test."""
+    caches = (_distributions_digest, _editable_roots, _source_tree_digest)
+    for cache in caches:
+        cache.cache_clear()
+    yield
+    for cache in caches:
+        cache.cache_clear()
+
+
+def _write(path: Path, text: str) -> None:
+    """Write *text*, with a modification time no earlier write has had."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    before = path.stat().st_mtime_ns if path.exists() else 0
+    path.write_text(text, encoding="utf-8")
+    os.utime(path, ns=(before + 10**9, before + 10**9))
+
+
 def test_an_edit_to_an_editable_distribution_is_another_key(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, key: Callable[..., str]
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    key: Callable[..., str],
+    fresh_digests: None,
 ) -> None:
     """Its version stays the same however its source changes; what is not its
     source (a virtualenv inside the checkout, bytecode) does not count."""
     checkout = tmp_path / "helpers"
-    (checkout / "helpers").mkdir(parents=True)
     module = checkout / "helpers" / "geometry.py"
-    module.write_text("def length() -> float: ...\n", encoding="utf-8")
-    direct_url = json.dumps({"url": checkout.as_uri(), "dir_info": {"editable": True}})
-    dist = SimpleNamespace(
-        metadata={"Name": "helpers"},
-        version="0.1.0",
-        read_text=lambda name: direct_url if name == "direct_url.json" else None,
-    )
-    monkeypatch.setattr(check.importlib.metadata, "distributions", lambda: [dist])
+    _write(module, "def length() -> float: ...\n")
+    _editable(monkeypatch, "helpers", checkout)
 
     def digest() -> str:
-        _distributions_digest.cache_clear()
+        _source_tree_digest.cache_clear()
         return key()
 
-    try:
-        before = digest()
-        (checkout / ".venv").mkdir()
-        (checkout / ".venv" / "site.py").write_text("x = 1\n", encoding="utf-8")
-        (checkout / "helpers" / "__pycache__").mkdir()
-        (checkout / "helpers" / "__pycache__" / "x.py").write_text("", "utf-8")
-        assert digest() == before
-        module.write_text("def length() -> float | None: ...\n", encoding="utf-8")
-        assert digest() != before
-    finally:
-        _distributions_digest.cache_clear()
+    before = digest()
+    _write(checkout / ".venv" / "site.py", "x = 1\n")
+    _write(checkout / "venv" / "site.py", "x = 1\n")
+    _write(checkout / "helpers" / "__pycache__" / "x.py", "")
+    assert digest() == before
+    _write(module, "def length() -> float | None: ...\n")
+    edited = digest()
+    assert edited != before
+    _write(checkout / "helpers" / "py.typed", "")
+    assert digest() != edited
 
 
-def test_another_mypypath_is_another_key(
-    monkeypatch: pytest.MonkeyPatch, key: Callable[..., str]
+def test_the_editable_distribution_being_checked_is_left_out(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fresh_digests: None
 ) -> None:
-    monkeypatch.delenv("MYPYPATH", raising=False)
+    """A scenario package installed editable: its modules being checked are in
+    the key by their text, and an edit to another scenario of it is not."""
+    monkeypatch.setattr(check, "_toolchain_digest", lambda tc: "tc")
+    monkeypatch.setattr(check, "_framework_digest", lambda codon_path: "fw")
+    package = tmp_path / "my_scenarios"
+    _write(package / "my_scenarios" / "cut_in.py", "x = 1\n")
+    _write(package / "my_scenarios" / "merge.py", "y = 1\n")
+    _editable(monkeypatch, "my-scenarios", package)
+
+    def key() -> str:
+        _source_tree_digest.cache_clear()
+        sources = _sources(str(package / "my_scenarios"))
+        return _cache_key(None, Path("/codon"), sources, "")  # type: ignore[arg-type]
+
     before = key()
-    monkeypatch.setenv("MYPYPATH", "/stubs")
-    assert key() != before
+    _write(package / "my_scenarios" / "merge.py", "y = 2\n")
+    assert key() == before
+
+
+@pytest.mark.parametrize("variable", ["MYPYPATH", "PYTHONPATH"])
+def test_a_directory_mypy_searches_is_in_the_key(
+    variable: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    key: Callable[..., str],
+    fresh_digests: None,
+) -> None:
+    """Which directories, and what is in them: a stub edited in place counts."""
+    monkeypatch.delenv("MYPYPATH", raising=False)
+    monkeypatch.delenv("PYTHONPATH", raising=False)
+    without = key()
+    stubs = tmp_path / "stubs"
+    stub = stubs / "openodd" / "__init__.pyi"
+    _write(stub, "def f() -> int: ...\n")
+    monkeypatch.setenv(variable, str(stubs))
+    with_stubs = key()
+    assert with_stubs != without
+    _source_tree_digest.cache_clear()
+    _write(stub, "def f() -> int | None: ...\n")
+    assert key() != with_stubs
 
 
 def test_another_python_is_another_key(
@@ -307,6 +370,50 @@ def test_unset_the_verdicts_are_kept_in_the_users_cache_directory(
     assert (tmp_path / "autoware_carla_scenario" / "typecheck" / "k.json").is_file()
     monkeypatch.setattr(check, "_CACHE", {})
     assert _cached("k", _sources("/run2")) is not None
+
+
+@pytest.mark.parametrize(
+    ("xdg", "home", "expected"),
+    [
+        ("/xdg", "/home/u", "/xdg/autoware_carla_scenario/typecheck"),
+        ("", "/home/u", "/home/u/.cache/autoware_carla_scenario/typecheck"),
+        # The XDG spec: a relative XDG_CACHE_HOME is ignored.
+        ("relative", "/home/u", "/home/u/.cache/autoware_carla_scenario/typecheck"),
+        # HOME="": Path.home() is "." -- the directory the check runs from.
+        ("", "", None),
+    ],
+)
+def test_the_default_directory(
+    xdg: str, home: str, expected: str | None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv(CACHE_DIR_ENV, raising=False)
+    monkeypatch.setenv("XDG_CACHE_HOME", xdg)
+    monkeypatch.setattr(check.Path, "home", lambda: Path(home))
+    found = check._cache_dir()
+    assert (str(found) if found is not None else None) == expected
+
+
+def test_without_a_home_directory_verdicts_stay_in_the_process(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def no_home() -> Path:
+        raise RuntimeError("Could not determine home directory.")
+
+    monkeypatch.delenv(CACHE_DIR_ENV, raising=False)
+    monkeypatch.delenv("XDG_CACHE_HOME", raising=False)
+    monkeypatch.setattr(check.Path, "home", no_home)
+    assert check._cache_dir() is None
+
+
+def test_an_unwritable_directory_keeps_verdicts_in_the_process(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    blocked = tmp_path / "file"
+    blocked.write_text("", encoding="utf-8")  # a file where the directory goes
+    monkeypatch.setenv(CACHE_DIR_ENV, str(blocked / "cache"))
+    monkeypatch.setattr(check, "_CACHE", {})
+    _store("k", _failed(), _sources("/run1"))
+    assert _cached("k", _sources("/run1")) is not None
 
 
 def test_another_compiler_at_the_same_path_is_another_key(

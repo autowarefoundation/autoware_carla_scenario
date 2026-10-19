@@ -1080,16 +1080,26 @@ def _cache_dir() -> Path | None:
     """``$CACHE_DIR_ENV``, or the user's cache directory when it is unset.
 
     ``None`` (verdicts kept for the process only) when it is set but empty,
-    or when there is no home directory to put the default in.
+    or when there is no home directory to put the default in. A relative
+    ``XDG_CACHE_HOME`` is ignored, as the XDG spec says, and so is a home
+    that is not absolute (``HOME=""``): either would put the cache in
+    whatever directory the check runs from.
     """
     configured = os.environ.get(CACHE_DIR_ENV)
     if configured is not None:
         return Path(configured) if configured else None
-    try:
-        base = os.environ.get("XDG_CACHE_HOME") or str(Path.home() / ".cache")
-    except RuntimeError:  # no home directory
-        return None
-    return Path(base) / "autoware_carla_scenario" / "typecheck"
+    xdg = os.environ.get("XDG_CACHE_HOME", "")
+    if os.path.isabs(xdg):
+        base = Path(xdg)
+    else:
+        try:
+            home = Path.home()
+        except RuntimeError:  # no home directory
+            return None
+        if not home.is_absolute():
+            return None
+        base = home / ".cache"
+    return base / "autoware_carla_scenario" / "typecheck"
 
 
 def _cache_file(key: str) -> Path | None:
@@ -1205,59 +1215,108 @@ def _distributions_digest() -> str:
     framework (its own aside, which :func:`_package_digest` covers by its
     text): mypy follows a scenario's imports into them (numpy, lanelet2,
     typesafe_carla's CPython package), and their types decide what may be
-    None. An editable install's version says nothing of its edits, so its
-    Python sources are read too (:func:`_editable_digest`)."""
+    None. An editable install's version says nothing of its edits; those
+    are :func:`_outside_digest`'s."""
     own = _PACKAGE.replace("_", "-")
     names = set()
     for dist in importlib.metadata.distributions():
         name = re.sub(r"[-_.]+", "-", dist.metadata["Name"] or "").lower()
         if name != own:
-            names.add(f"{name}=={dist.version}{_editable_digest(dist)}")
+            names.add(f"{name}=={dist.version}")
     return hashlib.sha256("\n".join(sorted(names)).encode()).hexdigest()
 
 
-#: Directories of an editable checkout that hold no source of it.
-_NOT_SOURCE_DIRS = frozenset({"__pycache__", "node_modules", "build", "dist"})
+def _python_digest() -> str:
+    """What the verdict depends on beyond the compile (#268): the framework's
+    Python, the mypy that reads it, the distributions it follows imports
+    into, and the Python (its typeshed, and what the checks made in Python
+    find) that runs both."""
+    digest = hashlib.sha256(_package_digest().encode())
+    digest.update(f"\0mypy {_mypy_version()}".encode())
+    digest.update(f"\0dists {_distributions_digest()}".encode())
+    digest.update(f"\0python {sys.version_info[0]}.{sys.version_info[1]}".encode())
+    return digest.hexdigest()
 
 
-def _editable_digest(dist: importlib.metadata.Distribution) -> str:
-    """The text of every ``.py`` and ``.pyi`` under *dist*'s directory when it
-    is installed editable (PEP 610's ``direct_url.json``), as ``@<digest>``;
-    ``""`` for any other install."""
-    try:
-        info = json.loads(dist.read_text("direct_url.json") or "{}")
-        if not info.get("dir_info", {}).get("editable"):
-            return ""
-        root = url2pathname(urlparse(info["url"]).path)
-    except (OSError, ValueError, TypeError, KeyError, AttributeError):
-        return ""
+#: Directories of a source tree that hold none of its importable source: a
+#: virtualenv, a build's or a colcon workspace's output, bytecode.
+_NOT_SOURCE_DIRS = frozenset(
+    {"__pycache__", "build", "dist", "env", "install", "log", "node_modules", "venv"}
+)
+
+
+@lru_cache(maxsize=None)
+def _source_tree_digest(root: str) -> str:
+    """Each ``.py``, ``.pyi`` and ``py.typed`` under *root* by its path, size
+    and modification time: what mypy may read there, without reading it
+    (a ``PYTHONPATH`` entry can be a whole ROS ``site-packages``). A tree
+    that is not there is a digest of its own."""
+    if not os.path.isdir(root):
+        return "missing"
     digest = hashlib.sha256()
     for directory, dirnames, filenames in os.walk(root):
         dirnames[:] = sorted(
             d for d in dirnames if not d.startswith(".") and d not in _NOT_SOURCE_DIRS
         )
         for filename in sorted(filenames):
-            if not filename.endswith((".py", ".pyi")):
+            if not filename.endswith((".py", ".pyi")) and filename != "py.typed":
                 continue
-            path = Path(directory, filename)
-            digest.update(str(path.relative_to(root)).encode())
+            path = os.path.join(directory, filename)
             try:
-                digest.update(path.read_bytes())
+                stat = os.stat(path)
             except OSError:
                 continue
-    return f"@{digest.hexdigest()}"
+            relative = os.path.relpath(path, root)
+            digest.update(f"\0{relative} {stat.st_size} {stat.st_mtime_ns}".encode())
+    return digest.hexdigest()
 
 
-def _python_digest() -> str:
-    """What the verdict depends on beyond the compile (#268): the framework's
-    Python, the mypy that reads it, the distributions it follows imports
-    into, the ``MYPYPATH`` it reads stubs from, and the Python (its typeshed,
-    and what the checks made in Python find) that runs both."""
-    digest = hashlib.sha256(_package_digest().encode())
-    digest.update(f"\0mypy {_mypy_version()}".encode())
-    digest.update(f"\0dists {_distributions_digest()}".encode())
-    digest.update(f"\0mypypath {os.environ.get('MYPYPATH', '')}".encode())
-    digest.update(f"\0python {sys.version_info[0]}.{sys.version_info[1]}".encode())
+@lru_cache(maxsize=1)
+def _editable_roots() -> tuple[tuple[str, str], ...]:
+    """``(name, directory)`` of every distribution but the framework that is
+    installed editable (PEP 610's ``direct_url.json``)."""
+    own = _PACKAGE.replace("_", "-")
+    roots = set()
+    for dist in importlib.metadata.distributions():
+        name = re.sub(r"[-_.]+", "-", dist.metadata["Name"] or "").lower()
+        if name == own:
+            continue
+        try:
+            info = json.loads(dist.read_text("direct_url.json") or "{}")
+            if not info.get("dir_info", {}).get("editable"):
+                continue
+            url = urlparse(info["url"])
+        except (OSError, ValueError, TypeError, KeyError, AttributeError):
+            continue
+        if url.scheme == "file" and url.netloc in ("", "localhost"):
+            roots.add((name, os.path.abspath(url2pathname(url.path))))
+    return tuple(sorted(roots))
+
+
+def _outside_digest(sources: _Sources) -> str:
+    """What mypy reads that no version names: the source of each editable
+    distribution, and the directories of ``MYPYPATH`` and ``PYTHONPATH``
+    (mypy searches both).
+
+    An editable distribution holding a module being checked is left out: the
+    modules of the scenario's package it reads are in the key by their text
+    already, and its other modules do not reach the verdict, so an edit to
+    one scenario of an editable scenario package does not stale the rest.
+    """
+    checked = [os.path.abspath(m.path) for m in sources.modules.values()]
+    digest = hashlib.sha256()
+    for name, root in _editable_roots():
+        prefix = os.path.join(root, "")
+        if any(path.startswith(prefix) for path in checked):
+            continue
+        digest.update(f"\0editable {name} {_source_tree_digest(root)}".encode())
+    for variable in ("MYPYPATH", "PYTHONPATH"):
+        for entry in os.environ.get(variable, "").split(os.pathsep):
+            if entry:
+                entry = os.path.abspath(entry)
+                digest.update(
+                    f"\0{variable} {entry} {_source_tree_digest(entry)}".encode()
+                )
     return digest.hexdigest()
 
 
@@ -1281,6 +1340,7 @@ def _cache_key(
     digest = hashlib.sha256(_toolchain_digest(tc).encode())
     digest.update(_framework_digest(codon_path).encode())
     digest.update(_python_digest().encode())
+    digest.update(_outside_digest(sources).encode())
     for name, module in sorted(sources.modules.items()):
         digest.update(name.encode())
         digest.update(module.text.encode())
