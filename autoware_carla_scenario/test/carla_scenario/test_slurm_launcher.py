@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import signal
 import socket
 import subprocess
 import sys
@@ -402,6 +403,10 @@ def test_scancel_stops_the_tasks_and_their_carla_and_resubmit_finishes_the_batch
     subprocess.run(["scancel", str(submission["job_id"])], check=True)
     _wait_for(lambda: _jobs_done(fake_slurm), 30, "the cancelled tasks")
     for port in ports:
+        # A worker that stops CARLA itself does so at once; one too slow for
+        # the scheduler's grace period (5 s here) is killed, and the watchdog
+        # then needs TERM, up to 5 s of grace, and KILL.  20 s covers both
+        # with room for a loaded machine.
         _wait_for(lambda p=port: carla_processes_on_port(p) == [], 20, "CARLA")
     for task in range(2):
         task_status = layout.read_task(0, task)
@@ -440,6 +445,34 @@ def test_cancel_cancels_every_job_of_the_batch(
     assert not (batch / "batch_results.json").exists()
     for carla in fake_slurm.record.glob("carla-*.json"):
         port = json.loads(carla.read_text())["port"]
+        _wait_for(lambda p=port: carla_processes_on_port(p) == [], 20, "CARLA")
+
+
+def test_a_worker_killed_before_it_stopped_carla_leaves_none_running(
+    fake_slurm: SimpleNamespace,
+) -> None:
+    """The SIGKILL after the grace period reaches the worker, not its CARLA (a
+    session of its own); a worker too slow to stop CARLA by then (#375) must
+    not leave it running."""
+    from autoware_carla_scenario.slurm import cli
+
+    fake_slurm.monkeypatch.setenv("FAKE_CASE_SECONDS", "60")
+    fake_slurm.monkeypatch.setenv("FAKE_SLURM_KILL_WAIT", "1")
+    _status, batch = _run_batch(fake_slurm, "slurm", _slurm(), wait=False)
+    records = fake_slurm.record
+    _wait_for(lambda: len(list(records.glob("carla-*.json"))) == 2, 90, "two CARLAs")
+    workers = [int(p.stem.rpartition("-")[2]) for p in records.glob("carla-*.json")]
+    ports = [json.loads(p.read_text())["port"] for p in records.glob("carla-*.json")]
+    # Stopped, the workers cannot handle the SIGTERM before the SIGKILL.
+    for worker in workers:
+        os.kill(worker, signal.SIGSTOP)
+    assert cli.main(["cancel", str(batch)]) == 0
+    _wait_for(lambda: _jobs_done(fake_slurm), 30, "the cancelled jobs")
+    for worker in workers:
+        _wait_for(
+            lambda w=worker: not Path(f"/proc/{w}").exists(), 30, "the worker's end"
+        )
+    for port in ports:
         _wait_for(lambda p=port: carla_processes_on_port(p) == [], 20, "CARLA")
 
 
@@ -688,6 +721,22 @@ def test_port_slots_are_exclusive_and_skip_ports_in_use(tmp_path: Path) -> None:
         again.release()
     finally:
         first.release()
+
+
+def test_a_kept_lock_survives_the_release_while_the_watchdog_holds_it(
+    tmp_path: Path,
+) -> None:
+    from autoware_carla_scenario.slurm.ports import CarlaWatchdog
+
+    base = 31700
+    slot = acquire_slot(base, 1, start=0, lock_dir=tmp_path)
+    watchdog = CarlaWatchdog(slot)
+    slot.release(keep_lock=True)
+    with pytest.raises(RuntimeError):
+        acquire_slot(base, 1, start=0, lock_dir=tmp_path)
+    watchdog.finish()  # no CARLA runs: it ends, and with it the lock
+    again = acquire_slot(base, 1, start=0, lock_dir=tmp_path)
+    again.release()
 
 
 def test_first_slot_differs_by_task() -> None:
