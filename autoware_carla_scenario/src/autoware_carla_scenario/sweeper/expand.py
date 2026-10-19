@@ -330,7 +330,12 @@ def _with_odd_samples(
     from openodd import ParameterSpace  # noqa: PLC0415
 
     from ..odd.registry import resolve_odd  # noqa: PLC0415
-    from ..odd.sampler import ODD_CASE_KEY, encode_case, search_from_config  # noqa: PLC0415
+    from ..odd.sampler import (  # noqa: PLC0415
+        ODD_CASE_KEY,
+        encode_case,
+        search_from_config,
+        with_tire_friction,
+    )
 
     raw = {str(k): v for k, v in odd_sample.items()}
     readings: list[dict[str, tuple[str, Any]]] = []
@@ -372,6 +377,9 @@ def _with_odd_samples(
         cases = [base_cases[i % len(base_cases)] for i in range(len(samples))]
     if drawn is not None:
         drawn.add(sampler.odd, samples)
+    if raw.get("tire_friction", True):
+        # After the draws are recorded: the grip is no attribute of the ODD.
+        samples = with_tire_friction(samples, raw.get("seed", 0))
     logger.info(
         "Drew %d case(s) from ODD %s over %s (%s)%s",
         len(samples),

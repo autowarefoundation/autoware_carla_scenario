@@ -74,6 +74,8 @@ class BaseAction:
             _acs_expect_return(r, bool, "BaseAction.done returns bool")
         elif name == "state":
             _acs_expect_return(r, ActionState, "BaseAction.state returns ActionState")
+        elif name == "sets_tire_friction":
+            _acs_expect_return(r, bool, "BaseAction.sets_tire_friction returns bool")
         elif name == "reissues_while_running":
             _acs_expect_return(r, bool, "BaseAction.reissues_while_running returns bool")
         elif name == "execute":
@@ -91,6 +93,10 @@ class BaseAction:
 
     @property
     def state(self) -> ActionState:
+        raise NotImplementedError()
+
+    @property
+    def sets_tire_friction(self) -> bool:
         raise NotImplementedError()
 
     @property
@@ -133,9 +139,11 @@ class EnvironmentAction(BaseAction):
                  wetness = None, wind_intensity = None, fog_density = None, fog_distance = None,
                  sun_altitude_angle = None, sun_azimuth_angle = None, condition = None,
                  timing: TickTiming = TickTiming("pre_tick"), *_kw, rain = None,
+                 tire_friction = None, tire_friction_quantile = None,
                  label: str = "environment",
                  once: bool = True):
-        _keyword_only(_kw, "EnvironmentAction(): rain, label and once")
+        _keyword_only(_kw, "EnvironmentAction(): rain, tire_friction, "
+                      "tire_friction_quantile, label and once")
         _expect_optional_float(cloudiness)
         _expect_optional_float(precipitation)
         _expect_optional_float(precipitation_deposits)
@@ -146,10 +154,16 @@ class EnvironmentAction(BaseAction):
         _expect_optional_float(sun_altitude_angle)
         _expect_optional_float(sun_azimuth_angle)
         _expect_optional_float(rain)
+        _expect_optional_float(tire_friction)
+        _expect_optional_float(tire_friction_quantile)
         super().__init__(label, condition, timing, once=once)
 
     @property
     def settings(self) -> Dict[str, float]:
+        raise NotImplementedError()
+
+    @property
+    def sets_tire_friction(self) -> bool:
         raise NotImplementedError()
 
 

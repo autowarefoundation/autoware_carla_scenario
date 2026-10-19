@@ -30,6 +30,14 @@ A sweep's ``knobs``, keyed by the ODD's attributes, replace them attribute by
 attribute. Attributes nothing sets are left open. See openodd's
 :mod:`openodd.sampler` for how cases are drawn.
 
+The road's grip is no attribute of an ODD but follows one: the water the
+weather drawn leaves on the road bounds it
+(:func:`~autoware_carla_scenario.actions.environment.tire_friction_range`).
+Each case is given where in that range its grip is,
+``environment.tire_friction_quantile`` (:func:`with_tire_friction`), drawn
+from the sweep's seed and the case, so the same sweep draws the same grip;
+``tire_friction: false`` in the sweep leaves it at the middle.
+
 With ``flaky`` in the sweep, openodd's :class:`~openodd.FlakySearch` draws
 part of each batch where a small change flips the outcome, learning from the
 runs in ``coverage_from`` that recorded their case and outcome. Every drawn
@@ -42,6 +50,7 @@ from __future__ import annotations
 import base64
 import dataclasses
 import json
+import random
 from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any, Optional, Union
@@ -68,6 +77,8 @@ __all__ = [
     "knobs_from_mapping",
     "sampler_from_config",
     "search_from_config",
+    "TIRE_FRICTION_KEY",
+    "with_tire_friction",
 ]
 
 #: The config key (an override a sweep adds) that carries a drawn case to its
@@ -86,8 +97,23 @@ CONTROL_TARGETS = ("setting", "measure")
 #: measure's own value, unchanged.
 _MAPPING_FIELDS = ("scale", "offset", "integer", "values")
 
-#: The fields of ``sweep.odd_sample``.
-SAMPLE_FIELDS = {"count", "seed", "strategy", "odd", "coverage_from", "knobs", "flaky"}
+#: The fields of ``sweep.odd_sample``: ``tire_friction`` (default true) says
+#: whether each case draws where its grip is in the range its weather leaves
+#: (:func:`with_tire_friction`); the rest are :func:`search_from_config`'s.
+SAMPLE_FIELDS = {
+    "count",
+    "seed",
+    "strategy",
+    "odd",
+    "coverage_from",
+    "knobs",
+    "flaky",
+    "tire_friction",
+}
+
+#: The setting a case's grip is drawn into: where in the range of grip its
+#: weather leaves it is (``EnvironmentAction``'s ``tire_friction_quantile``).
+TIRE_FRICTION_KEY = "environment.tire_friction_quantile"
 #: The fields of ``sweep.odd_sample.flaky``: :class:`~openodd.FlakySearch`'s
 #: options, and ``scenario``, the scenario whose earlier runs it learns from
 #: (every scenario's, chosen in the same space, when not given).
@@ -257,6 +283,37 @@ def search_from_config(
             search.observe_report(coverage, None if scenario is None else str(scenario))
     count = raw.get("count")
     return sampler, search, None if count is None else int(count)
+
+
+def with_tire_friction(
+    samples: Iterable[OddSample], seed: Union[int, str] = 0
+) -> list[OddSample]:
+    """*samples*, each with where its grip is in the range its weather leaves.
+
+    Each case gets ``environment.tire_friction_quantile=<q>``, *q* uniform in
+    [0, 1] and drawn from *seed* and the case itself (its index and settings),
+    so the same sweep draws the same grip.  The range is the run's: the
+    ``EnvironmentAction`` reads it off the weather it leaves
+    (:func:`~autoware_carla_scenario.actions.environment.tire_friction_range`),
+    a dry road's around its own grip, a flooded one's about half.  A case that
+    names its quantile already keeps it.
+    """
+    out: list[OddSample] = []
+    prefix = f"{TIRE_FRICTION_KEY}="
+    for sample in samples:
+        if any(o.lstrip("+").startswith(prefix) for o in sample.overrides):
+            out.append(sample)
+            continue
+        rng = random.Random(
+            f"{seed}/tire_friction/{sample.index}/{','.join(sample.overrides)}"
+        )
+        quantile = round(rng.random(), 3)
+        out.append(
+            dataclasses.replace(
+                sample, overrides=[*sample.overrides, f"{prefix}{quantile}"]
+            )
+        )
+    return out
 
 
 def encode_case(case: OddSample, space: ParameterSpace) -> str:
