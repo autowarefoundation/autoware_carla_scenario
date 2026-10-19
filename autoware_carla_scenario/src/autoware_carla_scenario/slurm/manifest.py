@@ -47,6 +47,8 @@ RUN_FILE_SUFFIXES: tuple[str, ...] = (
     "_environment.json",
     "_requirements.lock",
     ".log",
+    # The Rerun recording of the trajectory log (rerun.enabled).
+    ".rrd",
 )
 
 

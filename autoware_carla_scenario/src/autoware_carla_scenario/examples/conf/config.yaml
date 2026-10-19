@@ -24,11 +24,21 @@ odd: default
 # type-check (docs/typecheck.md): auto (when Codon is installed), required, off.
 typecheck: auto
 
-# Removed in 15.0.0: runs no longer render a video. To see a run, convert its
-# {Scenario}.trajectory.jsonl into a Rerun recording with the
-# autoware_carla_scenario_rerun package (convert / convert_dir; pip install
-# 'autoware-carla-scenario-rerun[viewer]') and open it in the Rerun viewer
-# (docs/usage.md);
+# A Rerun recording ({Scenario}.rrd) of each run, made from its
+# {Scenario}.trajectory.jsonl as soon as the run ends, in the background while
+# the next case runs (docs/usage.md#seeing-a-run). Needs the extra:
+#   pip install 'autoware-carla-scenario[rerun]'
+# and is refused before anything runs without it. Open a recording with
+# `rerun {Scenario}.rrd` (the viewer: the `viewer` extra).
+rerun:
+  enabled: false
+  # Fail the conversion of a log with a record type or a field the converter
+  # does not know, rather than skip it with a warning. Either way, a failed
+  # conversion is reported at the end of the run; it does not change a verdict.
+  strict: false
+
+# Removed in 15.0.0: runs no longer render a video. To see a run, make a Rerun
+# recording of it (rerun.enabled=true, above) and open it in the Rerun viewer;
 # the CARLA recording ({Scenario}.log) is still written, for CARLA's replayer.
 # Declared only so that an old command line or config setting video.* is told
 # so (a warning) rather than refused by Hydra; nothing reads these.

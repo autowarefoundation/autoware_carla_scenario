@@ -70,7 +70,9 @@ since Codon types it statically and reads no value at compile time. The
 cases of a sweep that differ only in their values are therefore one program,
 compiled for the first case and reused, verdict and diagnostics, for the
 others (logged as "reusing the static check made for the config with the
-same types"); a failure refuses each of them. What changes the shape
+same types"); a failure refuses each of them. `scenario-check` checks
+configs side by side, and one whose program is being compiled when it
+starts waits for that compile rather than starting its own. What changes the shape
 compiles again: another key or order of keys, a value of another type (an
 int where the first case had a float in a field not typed `float`, `None`
 where it had a value), another length of a list, a mapping the config
@@ -1267,7 +1269,7 @@ To check one more module:
 ### What is checked of the framework
 
 Every module now has an entry other than `"not yet checked (#45)"`. 171 of
-the package's 261 modules (66%; about 44,400 of 79,100 lines) are `CHECKED`:
+the package's 263 modules (65%; about 44,400 of 79,600 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the conversions between
 Lanelet2, OpenDRIVE and CARLA world poses (`coordinate.transform`), the stop
 lines read off a Lanelet2 map (`utils.stop_line`, `coordinate.stop_line`)
@@ -1363,16 +1365,17 @@ a `TrajectoryVertex` call's arguments, each of any type (`Any`), walks or
 binds a sweeper constraint of any kind, builds a condition's status (its
 details), or takes the list a plain tick callback goes into
 (`BaseScenario._register_tick()`, a `List[Callable[[carla.World], None]]`,
-which the check has no value of). The 90 `EXCLUDED` modules fall in
-four groups. Many fit more than one (about 67 import what Codon cannot
+which the check has no value of). The 92 `EXCLUDED` modules fall in
+four groups. Many fit more than one (about 69 import what Codon cannot
 compile, 29 build on an excluded module and 20 hold values Codon has no type
 for), so each is counted once, in the first group that fits it:
 
-- **67 import what Codon cannot compile**: pyxodr,
+- **69 import what Codon cannot compile**: pyxodr,
   pydantic, pickle, lxml, grpc, omegaconf and hydra, yaml, openodd (a Rust extension),
   cyclonedds (`ros2.cyclone` and `ros2.messages`, the ROS 2 ego's DDS
   transport and its message types), or
-  a standard module Codon lacks (`json`, `inspect`, `importlib`
+  a standard module Codon lacks (`json`, `inspect`, `concurrent.futures`,
+  `importlib`
   beyond `importlib.metadata`, or more of `os`, `pathlib`, `shutil`, `signal`,
   `subprocess`, `tempfile`, `threading`, `dataclasses`, `importlib.metadata`
   or `urllib.parse` than their shims declare), at module level or inside a function the check calls. This is
@@ -1381,7 +1384,8 @@ for), so each is counted once, in the first group that fits it:
   repositories, the Lanelet2 z offset and the pyxodr road network), the Autoware
   stack's dev container, the
   record of a run's environment, the SLURM launcher's submitting side,
-  its worker and its manifest, and the batch summary they share), the ODD and coverage modules that wrap
+  its worker and its manifest, the batch summary they share, and the Rerun
+  recordings of a run's logs), the ODD and coverage modules that wrap
   openodd, and the rest of what reads Lanelet2. A reason names `pathlib`
   only where the module uses more of it than the shim declares, and the
   other shimmed modules likewise; `test_typecheck_library.py` holds every

@@ -53,6 +53,11 @@ class RecordedResult:
             for s in self.data.get("condition_statuses") or []
         ]
 
+    @property
+    def rerun_recording(self) -> str | None:
+        recording = self.data.get("rerun_recording")
+        return None if recording is None else str(recording)
+
     def to_dict(self) -> dict[str, Any]:
         return dict(self.data)
 
@@ -120,6 +125,8 @@ def collect(layout: BatchLayout, *, quiet_hint: bool = False) -> int:
     results: list[RecordedResult] = []
     errored: list[int] = []
     missing: list[int] = []
+    # The cases whose Rerun recording the task failed to make (rerun.enabled).
+    rerun_errors: dict[int, str] = {}
     for position, case in enumerate(manifest["cases"]):
         index = int(case["index"])
         labels.append(str(case["label"]))
@@ -140,6 +147,8 @@ def collect(layout: BatchLayout, *, quiet_hint: bool = False) -> int:
         results.append(RecordedResult(dict(record["result"])))
         if record.get("errored"):
             errored.append(position)
+        if record.get("rerun_error"):
+            rerun_errors[position] = str(record["rerun_error"])
     overrides = (
         [list(case["case_overrides"]) for case in manifest["cases"]]
         if manifest.get("expand")
@@ -151,6 +160,7 @@ def collect(layout: BatchLayout, *, quiet_hint: bool = False) -> int:
         output_dir=Path(layout.batch_dir),
         overrides=overrides,
         errored=sorted({*errored, *missing}),
+        rerun_errors=rerun_errors,
     )
     write_json(
         layout.root / "collected.json",

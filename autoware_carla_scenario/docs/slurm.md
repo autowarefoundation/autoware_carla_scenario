@@ -59,7 +59,11 @@ Each task, on its node:
 4. records each case's outcome as soon as it has run
    (`slurm/results/<case>.json`), and its own progress in
    `slurm/tasks/<submission>-<task>.json` (host, ports, state, peak resident
-   memory);
+   memory); with `rerun.enabled=true` it also converts each case's trajectory
+   log into its Rerun recording (`{stem}.rrd`) and records whether that
+   failed, so `collect` reports the recordings as a local batch does
+   ([Seeing a run](usage.md#seeing-a-run)). The submitting process only
+   checks that the `rerun` extra is installed; the nodes need it too;
 5. stops its CARLA however it ends: at the end, on `scancel`, on the signal SLURM
    sends `launcher.signal_grace_seconds` before `launcher.time` runs out, and
    -- through the job script -- when the worker itself was killed.

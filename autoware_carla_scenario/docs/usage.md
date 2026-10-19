@@ -315,26 +315,59 @@ A run renders no video (since 15.0.0). What it leaves to look at is its
 trajectory log, `{ScenarioName}.trajectory.jsonl`: every vehicle and pedestrian
 tick by tick, the traffic lights, the map it ran on, the ego's plan (its debug
 markers), each condition's state and the verdict ([Trajectory Log](trajectory_log.md)).
-To see it, make it a [Rerun](https://rerun.io) recording with the
-`autoware_carla_scenario_rerun` Python package (`convert` for one log,
-`convert_dir` for a whole run or sweep directory; each writes `X.rrd` beside
-`X.trajectory.jsonl`) and open that in the Rerun viewer:
+To see it, make it a [Rerun](https://rerun.io) recording, `{ScenarioName}.rrd`
+beside the log, and open that in the Rerun viewer. The conversion is the
+`autoware-carla-scenario-rerun` package, installed with the `rerun` extra:
 
 ```bash
-# The converter, with the Rerun viewer it is made for (rerun-sdk >=0.38.1,<0.39):
-pip install 'autoware-carla-scenario-rerun[viewer]'
-# Every run of a session (a sweep's directory works the same):
-python -c 'from autoware_carla_scenario_rerun import convert_dir; convert_dir("outputs/2026-10-18/08-48-12")'
-# Or one run:
-python -c 'from autoware_carla_scenario_rerun import convert; convert("outputs/2026-10-18/08-48-12/CutInScenario-3.trajectory.jsonl")'
-rerun outputs/2026-10-18/08-48-12/CutInScenario-3.rrd               # the Rerun viewer
+# The converter (rerun), and the Rerun viewer its recordings are made for (viewer):
+pip install 'autoware-carla-scenario[rerun,viewer]'
+# A recording of every run, made as each run ends:
+uv run scenario scenario=cut_in/cut_in rerun.enabled=true
+uv run scenario 'scenario=cut_in/*' --multirun rerun.enabled=true
+rerun outputs/2026-10-18/08-48-12/CutInScenario-3.rrd     # the Rerun viewer
 ```
 
-The converter is a package of its own, not a dependency of this one (being
-built into the framework is a later change); it reads nothing but the log and
-the map files the log names, so it runs anywhere, without CARLA. The CARLA
-recording (`{ScenarioName}.log`) is still written: CARLA's own replayer
-(`client.replay_file()`) plays it back on a server running the same map.
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `rerun.enabled` | bool | `false` | Convert each run's trajectory log into `{ScenarioName}.rrd` as soon as the run ends |
+| `rerun.strict` | bool | `false` | Fail the conversion of a log with a record type or a field the converter does not know, rather than skip it with a warning |
+
+With `rerun.enabled=true`:
+
+- A run asking for recordings without the extra installed is refused before
+  anything starts (exit code 2), saying how to install it.
+- Each log is converted on a background thread as soon as its run ends, while
+  the next case runs (the converter releases the GIL; a log takes milliseconds).
+  A run that raised is converted too: its log is what shows what happened.
+- At the end the run waits for the last conversions and prints how they went:
+  `Rerun recordings: N/M written`, and a line per failure naming its case. A
+  failed conversion does not change any verdict or the exit code.
+- Each case's `{ScenarioName}_result.json` names its recording
+  (`rerun_recording`), and so does its entry in a batch's
+  `batch_results.json`, with `rerun_error` when the conversion failed. The
+  viewer's scenario page shows it in the embedded Rerun viewer, without
+  converting the log again ([Seeing a run in the viewer](#seeing-a-run-in-the-viewer)).
+- A Hydra sweep (`--multirun` without a glob) runs each case in a process of
+  its own, and each converts its own log. So does each task of a batch run on
+  SLURM (`launcher=slurm`, [Running a Batch on SLURM](slurm.md)): it converts
+  its own cases, and `scenario-slurm collect` reports their recordings as a
+  local batch does.
+
+A run made without it (or by a version before it) can be converted afterwards,
+the same way:
+
+```bash
+# Every run of a session (a sweep's directory works the same), or one log:
+python -m autoware_carla_scenario.rerun outputs/2026-10-18/08-48-12
+python -m autoware_carla_scenario.rerun outputs/2026-10-18/08-48-12/CutInScenario-3.trajectory.jsonl
+```
+
+or from Python, `autoware_carla_scenario.rerun.convert_outputs(path)`. The
+converter reads nothing but the log and the map files the log names, so it
+runs anywhere, without CARLA. The CARLA recording (`{ScenarioName}.log`) is
+still written: CARLA's own replayer (`client.replay_file()`) plays it back on a
+server running the same map.
 
 `video.*` settings (`video.enabled`, `video.width`, `video.height`) are
 accepted for old command lines and configs, and do nothing: a run that sets
@@ -520,6 +553,7 @@ Each scenario run generates output in `outputs/YYYY-MM-DD/HH-MM-SS/`:
 | `{ScenarioName}_requirements.lock` | What the run ran with: every installed distribution pinned, in the requirements format (`pip install -r`), headed by the framework, the scenario's package, Python and the platform. A distribution from git is pinned to its commit; an editable one (a checkout) names its directory, commit and whether it had uncommitted changes |
 | `{ScenarioName}_environment.json` | The same, structured; `_result.json` carries its summary (`environment`: the framework, the scenario's package, key dependencies, and the lock's id -- the SHA-256 of what it pins -- so runs on one environment can be found by it) |
 | `{ScenarioName}.trajectory.jsonl` | The run, tick by tick, and the map, plan, conditions and verdict ([Trajectory Log](trajectory_log.md)); make it a Rerun recording to see the run ([Seeing a run](#seeing-a-run)) |
+| `{ScenarioName}.rrd` | The Rerun recording of the trajectory log, with `rerun.enabled=true` ([Seeing a run](#seeing-a-run)) |
 | `batch_results.json` | Batch summary (glob/batch mode only) |
 
 **Result JSON format:**
@@ -706,6 +740,44 @@ The copy goes to `~/.cache/autoware_carla_scenario/viewer/rerun-web-viewer/<vers
 copy of the package (a directory), a mirror of it (a URL), or `none` for no
 embedded viewer (the page then names the recording only).
 
+### Results on the ODD
+
+A session's page links its results on the ODD
+(`/session/{type}/{date}/{time}/odd`): openodd's coverage matrix
+(`openodd.CoverageView`) of the cases' coverage files (`{stem}_coverage.json`),
+along two ODD attributes picked above it (by default the two the cases were
+drawn over that tell them apart most). Each cell holds the runs that spent
+time in it, coloured by what they did -- green passed, red failed, yellow
+flaky (both), white not sampled -- and a click on one drills into it: the
+matrix of the next two attributes inside it, and below, the cases in it, each
+linking to its page (and its run in the Rerun viewer) with its verdict, the
+buckets it was drawn in and a few metrics of how the ego drove, read off its
+trajectory log: the least gap from its box to another road user's
+(`min gap`), its hardest braking (over half a second), when it first stopped,
+how far it drove, its top and final speed, and the elapsed time. openodd's
+plot of the drawn cases (`openodd.CasePlot`) is shown too.
+
+### Comparing runs
+
+`/compare` (the navigation bar's *Compare*, or *Compare with past runs* on a
+session's page) compares two or more sessions of the same scenarios
+(`?s=batch/2026-10-18/16-09-52&s=...`), the oldest the baseline:
+
+- **Cases** are matched by what they ran -- their sweep overrides (less
+  `++odd_case`, which names a case's position), else the ODD values they
+  were drawn at -- not by their index, so a case keeps its match when a
+  sweep's order or size changes. Each is marked by how its verdict changed
+  between the first session that ran it and the last: `pass → fail` (a
+  regression, listed first and in red), `fail → pass`, flaky, the same, or
+  run by one session only. Beside it, the change of each metric (bold when
+  more than 5%), each run's verdict linking to its page, and *side by side*:
+  the first and last runs in two Rerun viewers on one page
+  (`/compare/runs?run=type/date/time/index&run=...`).
+- **ODD cells**: each session's passes and runs in each cell of the two
+  attributes picked (the buckets the cases were drawn in), red where the last
+  session passes fewer of them, green where more; and openodd's matrix of
+  each session beside the others.
+- **Pass rates** of each session.
 ### Running through SLURM
 
 The *Run Scenarios* panel's **Launcher** runs the batch here, case after case
@@ -753,6 +825,9 @@ sync the environment).
 | `/session/{type}/{date}/{time}` | Session detail — shows all scenarios in a session with pass/fail status |
 | `/session/{type}/{date}/{time}/{index}` | Scenario detail — the run in the Rerun viewer, condition tree, per-condition status |
 | `/recording/{type}/{date}/{time}/{index}.rrd` | The case's Rerun recording (made first if need be) |
+| `/session/{type}/{date}/{time}/odd` | The session's results on the ODD (`?x=`, `?y=` the attributes, `?at=attribute=bucket` the cell drilled into) |
+| `/compare` | Sessions compared (`?s=type/date/time`, two or more; `?x=`, `?y=` the cells' attributes) |
+| `/compare/runs` | Runs side by side in Rerun viewers (`?run=type/date/time/index`, up to four) |
 
 ### REST API Endpoints
 

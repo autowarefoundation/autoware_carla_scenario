@@ -192,6 +192,8 @@ class SumoTrafficBackend(TrafficBackend):
         self._physics: dict[int, dict[str, Any]] = {}
         #: Commands for this tick, sent in one batch.
         self._commands: list[Any] = []
+        #: Actor id -> the constant velocity (m/s) teleport mode last gave it.
+        self._constant_speed: dict[int, float] = {}
         #: How often a SUMO vehicle was moved to its car (physics feedback).
         self._feedback_count = 0
 
@@ -370,6 +372,8 @@ class SumoTrafficBackend(TrafficBackend):
                 self._signals_to_carla()
             self._failures = 0
         except Exception as exc:  # must not end the run
+            # What this step queued is stale by the next one: not sent with it.
+            self._commands = []
             self._failures += 1
             logger.warning("SUMO step failed (%d in a row): %s", self._failures, exc)
             if self._failures >= 20:
@@ -426,6 +430,7 @@ class SumoTrafficBackend(TrafficBackend):
             )
         self._physics = {}
         self._commands = []
+        self._constant_speed = {}
         self._feedback_count = 0
 
     def describe(self) -> dict[str, Any]:
@@ -563,6 +568,7 @@ class SumoTrafficBackend(TrafficBackend):
         actor = getattr(entity, "actor", None)
         if actor is None:
             return
+        self._constant_speed.pop(actor.id, None)
         try:
             actor.disable_constant_velocity()
         except RuntimeError:
@@ -1186,7 +1192,13 @@ class SumoTrafficBackend(TrafficBackend):
         """Put *actor* where its SUMO vehicle was at the start of this step.
 
         With SUMO's speed as a constant velocity for the tick to come (see the
-        module docstring for why not a physics-off actor).
+        module docstring for why not a physics-off actor).  The pose goes into
+        this tick's batch; the velocity, which has no batch command, is sent
+        only when it is not the one the actor already has -- it is kept in the
+        actor's own frame, so the new pose does not change it.  That holds as
+        long as only this backend turns it off (release(), close(),
+        which forget it): whatever else disables an actor's constant velocity
+        must forget its entry in _constant_speed too.
         """
         import typesafe_carla.carla as carla  # noqa: PLC0415
 
@@ -1199,21 +1211,25 @@ class SumoTrafficBackend(TrafficBackend):
         dt = self._context.fixed_delta_seconds if self._context is not None else 0.05
         yaw = math.radians(pose.heading_deg)
         now = actor.get_transform()
-        actor.set_transform(
-            carla.Transform(
-                carla.Location(
-                    pose.x - math.cos(yaw) * speed * dt,
-                    pose.y - math.sin(yaw) * speed * dt,
-                    now.location.z,
-                ),
-                carla.Rotation(
-                    pitch=now.rotation.pitch,
-                    yaw=pose.heading_deg,
-                    roll=now.rotation.roll,
-                ),
-            )
+        transform = carla.Transform(
+            carla.Location(
+                pose.x - math.cos(yaw) * speed * dt,
+                pose.y - math.sin(yaw) * speed * dt,
+                now.location.z,
+            ),
+            carla.Rotation(
+                pitch=now.rotation.pitch,
+                yaw=pose.heading_deg,
+                roll=now.rotation.roll,
+            ),
         )
-        actor.enable_constant_velocity(carla.Vector3D(speed, 0.0, 0.0))
+        if self._context is not None and self._context.client is not None:
+            self._commands.append(carla.command.ApplyTransform(actor.id, transform))
+        else:
+            actor.set_transform(transform)
+        if self._constant_speed.get(actor.id) != speed:
+            actor.enable_constant_velocity(carla.Vector3D(speed, 0.0, 0.0))
+            self._constant_speed[actor.id] = speed
 
     def _pull_driven(self) -> None:
         present = set(self._traci.vehicle.getIDList())
@@ -1257,6 +1273,7 @@ class SumoTrafficBackend(TrafficBackend):
         for sumo_id in [i for i in self._ambient if i not in wanted_set]:
             gone = self._ambient.pop(sumo_id)
             self._physics.pop(gone.id, None)
+            self._constant_speed.pop(gone.id, None)
             try:
                 gone.destroy()
             except RuntimeError:
