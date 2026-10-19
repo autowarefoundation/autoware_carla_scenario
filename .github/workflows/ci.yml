@@ -34,9 +34,9 @@ jobs:
         install-dev-deps: "true"
         run-precommit: "false"
 
-    # The slow tests are the 'slow-tests' job below: four of them build a
-    # ~160 MB wheelhouse over the network and take longer than the other 1600
-    # put together, which is not something to do three times over.
+    # The slow tests are the 'slow-tests' job below: they export a package and
+    # build a ~160 MB wheelhouse over the network, which is not something to do
+    # in every leg of this matrix.
     # The Codon compiles are nine tenths of the fast suite (~13 s each, some
     # 260 of them). Their verdicts are keyed by everything the compile reads
     # (typecheck/check.py's _cache_key), so a run keeps the previous run's and
