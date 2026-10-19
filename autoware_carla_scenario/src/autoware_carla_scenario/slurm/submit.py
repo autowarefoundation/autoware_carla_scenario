@@ -25,7 +25,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
-from .manifest import MANIFEST_VERSION, BatchLayout, sequential_stems, write_json
+from .manifest import (
+    MANIFEST_VERSION,
+    BatchLayout,
+    config_files,
+    sequential_stems,
+    write_json,
+)
 from .settings import SlurmSettings, require_sbatch, snapshot_environment
 
 if TYPE_CHECKING:
@@ -126,6 +132,8 @@ def submit_batch(
 
     layout = BatchLayout(output_dir)
     stems = sequential_stems(scenario_classes)
+    resolved = [_resolved(cfg) for cfg in configs]
+    digests: dict[str, str] = {}
     cwd = os.getcwd()
     remote: dict[str, Any] = {}
     if settings.remote_cwd is not None:
@@ -161,11 +169,16 @@ def submit_batch(
                 "case_overrides": list(own),
                 "scenario_class": scenario_class,
                 "stem": stem,
-                "config": _resolved(cfg),
+                "config": config,
+                # The files the config names, by content: a node may see them
+                # at other paths (worker._check_same_config).
+                "files": config_files(config, digests),
             }
-            for index, ((name, case), label, own, scenario_class, stem, cfg) in (
+            for index, ((name, case), label, own, scenario_class, stem, config) in (
                 enumerate(
-                    zip(cases, labels, case_overrides, scenario_classes, stems, configs)
+                    zip(
+                        cases, labels, case_overrides, scenario_classes, stems, resolved
+                    )
                 )
             )
         ],

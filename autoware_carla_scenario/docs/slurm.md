@@ -220,12 +220,22 @@ uv run scenario --multirun 'scenario=cut_in/*' +sweep.odd_sample.count=24 \
   the batch's `slurm/logs/` once it is in `remote_cwd`. The file in `/tmp`
   keeps what came before (a `remote_cwd` the node does not have) and what SLURM
   itself writes (a time limit, a cancel).
-- A config that resolves to paths (`${oc.env:...}`, a path expanded from
-  `~`) must resolve to the same on the node, or the task refuses its case
-  ([The job's environment](#the-jobs-environment)).
+- A case's config that resolves to absolute paths -- an ODD file in a
+  scenario package, a map -- resolves to the node's paths there; see below
+  for when that is still the same config.
 
 Without `remote_cwd` the batch is submitted and run exactly as before (a
 version 1 manifest).
+
+A value that is a path may differ and still be the same config. That is the
+case when it is the submitting directory's path seen from the job's working
+directory (`<cwd>/x` there, `<remote_cwd>/x` here), or when it names a file
+with the content it had where the batch was submitted: `scenario` records the
+SHA-256 of every file an absolute path in a case's config names (the
+manifest's `files`), and the task compares the file its own config names. A
+file missing on the node, or with other content, is refused, naming the key
+and both paths. This holds with or without `remote_cwd`: a package installed
+in another environment names its files at other paths too.
 
 ### Ports
 

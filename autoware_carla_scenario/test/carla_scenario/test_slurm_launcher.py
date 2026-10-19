@@ -1406,3 +1406,109 @@ def test_a_batch_submitted_from_a_mount_runs_at_the_node_s_paths(
     assert str(submit_side) not in again
     record = layout.read_result(0)
     assert record is not None and record["submission"] == 1
+
+
+def _case_with_file(path: Path, **config: Any) -> dict[str, Any]:
+    from autoware_carla_scenario.slurm.manifest import config_files
+
+    resolved = {"odd": str(path), "maps": [str(path), "x"], **config}
+    return {"label": "s#1", "config": resolved, "files": config_files(resolved)}
+
+
+def test_the_manifest_records_the_files_a_config_names(tmp_path: Path) -> None:
+    from autoware_carla_scenario.slurm.manifest import config_files, file_sha256
+
+    odd = tmp_path / "odd.yaml"
+    odd.write_text("odd: 1\n")
+    files = config_files(
+        {"odd": str(odd), "a": {"b": [1, str(odd), str(tmp_path / "gone")]}, "c": "x"}
+    )
+    assert files == {"odd": file_sha256(odd), "a.b[1]": file_sha256(odd)}
+
+
+def test_a_file_at_another_path_with_the_same_content_is_the_same_config(
+    tmp_path: Path,
+) -> None:
+    from omegaconf import OmegaConf
+
+    from autoware_carla_scenario.slurm.worker import _check_same_config
+
+    there = tmp_path / "submit" / "odd.yaml"
+    here = tmp_path / "node" / "site-packages" / "odd.yaml"
+    for path in (there, here):
+        path.parent.mkdir(parents=True)
+        path.write_text("odd: 1\n")
+    case = _case_with_file(there)
+    _check_same_config(
+        case, OmegaConf.create({"odd": str(here), "maps": [str(here), "x"]})
+    )
+
+    here.write_text("odd: 2\n")
+    with pytest.raises(RuntimeError, match=r"at odd \(.*content differs\)"):
+        _check_same_config(
+            case, OmegaConf.create({"odd": str(here), "maps": [str(there), "x"]})
+        )
+    gone = tmp_path / "node" / "gone.yaml"
+    with pytest.raises(RuntimeError) as refused:
+        _check_same_config(
+            case, OmegaConf.create({"odd": str(gone), "maps": [str(there), "x"]})
+        )
+    assert f"at odd ({there} there, {gone} here: missing on the node)" in str(
+        refused.value
+    )
+    # A string that names no file is compared as it is.
+    with pytest.raises(RuntimeError, match="at name"):
+        _check_same_config(
+            {**case, "config": {**case["config"], "name": "a"}},
+            OmegaConf.create(
+                {"odd": str(there), "maps": [str(there), "x"], "name": "b"}
+            ),
+        )
+
+
+def test_the_submitting_directory_seen_from_the_job_s_is_the_same_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from omegaconf import OmegaConf
+
+    from autoware_carla_scenario.slurm.worker import _check_same_config
+
+    node = tmp_path / "node" / "OnePlanner"
+    node.mkdir(parents=True)
+    monkeypatch.chdir(node)
+    monkeypatch.delenv("PWD", raising=False)
+    case = {"label": "s#1", "config": {"out": "/mnt/node/OnePlanner/data/x.bin"}}
+    _check_same_config(
+        case, OmegaConf.create({"out": f"{node}/data/x.bin"}), "/mnt/node/OnePlanner"
+    )
+    with pytest.raises(RuntimeError, match="at out"):
+        _check_same_config(
+            case,
+            OmegaConf.create({"out": f"{node}/data/y.bin"}),
+            "/mnt/node/OnePlanner",
+        )
+
+
+def test_a_remote_batch_collected_on_a_node_names_the_submit_host_s_path(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from autoware_carla_scenario.slurm.collect import collect
+    from autoware_carla_scenario.slurm.manifest import write_json
+
+    layout = BatchLayout(tmp_path / "node" / "outputs" / "d" / "t")
+    write_json(
+        layout.manifest,
+        {
+            "version": 2,
+            "batch_dir": "/home/alice/mnt/node/OnePlanner/outputs/d/t",
+            "batch_dir_relative": "outputs/d/t",
+            "cases": [
+                {"index": 0, "label": "s#1", "case_overrides": [], "overrides": []}
+            ],
+            "launcher": {},
+        },
+    )
+    assert collect(layout) == 1
+    out = capsys.readouterr().out
+    assert "scenario-slurm resubmit /home/alice/mnt/node/OnePlanner/outputs/d/t" in out
+    assert f"resubmit {layout.batch_dir}" not in out

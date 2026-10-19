@@ -18,6 +18,7 @@ heavy imports: the ``scenario-slurm`` commands only read these.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import tempfile
@@ -30,6 +31,9 @@ __all__ = [
     "MANIFEST_VERSIONS",
     "RUN_FILE_SUFFIXES",
     "BatchLayout",
+    "config_files",
+    "file_sha256",
+    "resubmit_target",
     "read_json",
     "sequential_stems",
     "write_json",
@@ -58,6 +62,72 @@ RUN_FILE_SUFFIXES: tuple[str, ...] = (
     # The Rerun recording of the trajectory log (rerun.enabled).
     ".rrd",
 )
+
+
+def file_sha256(path: Path) -> str:
+    """The SHA-256 of the file *path*, hex."""
+    digest = hashlib.sha256()
+    with open(path, "rb") as stream:
+        for block in iter(lambda: stream.read(1 << 20), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def config_key(prefix: str, key: Any) -> str:
+    """The name of *key* under *prefix* in a config, as the worker reports a
+    difference (``a.b``, ``a.list[2]``)."""
+    if isinstance(key, int):
+        return f"{prefix}[{key}]"
+    return f"{prefix}.{key}" if prefix else str(key)
+
+
+def config_files(
+    config: Any, cache: dict[str, str] | None = None, prefix: str = ""
+) -> dict[str, str]:
+    """Every string of the resolved *config* that is the absolute path of a
+    file here, by its key: the file's SHA-256.
+
+    A task on a node whose paths differ from this host's (another mount,
+    another home, the package installed elsewhere) resolves such a value to
+    another path; it is the same config when the file there has the same
+    content (``worker._check_same_config``).  *cache* holds the digests of
+    the paths already read, across cases.
+    """
+    cache = {} if cache is None else cache
+    found: dict[str, str] = {}
+    if isinstance(config, dict):
+        items: Any = config.items()
+    elif isinstance(config, list):
+        items = enumerate(config)
+    else:
+        if (
+            isinstance(config, str)
+            and config.startswith("/")
+            and len(config) < 4096
+            and "\n" not in config
+            and "\0" not in config
+        ):
+            if config not in cache:
+                try:
+                    path = Path(config)
+                    cache[config] = file_sha256(path) if path.is_file() else ""
+                except OSError:
+                    cache[config] = ""
+            if cache[config]:
+                found[prefix or "<root>"] = cache[config]
+        return found
+    for key, value in items:
+        found.update(config_files(value, cache, config_key(prefix, key)))
+    return found
+
+
+def resubmit_target(layout: "BatchLayout", manifest: dict[str, Any]) -> str:
+    """The batch's directory as ``scenario-slurm`` on the submit host takes
+    it: a ``remote_cwd`` batch collected on a node names the submit host's
+    path (the manifest's ``batch_dir``), not the node's."""
+    if manifest.get("batch_dir_relative") and manifest.get("batch_dir"):
+        return str(manifest["batch_dir"])
+    return str(layout.batch_dir)
 
 
 def write_json(path: Path, data: Any) -> None:
