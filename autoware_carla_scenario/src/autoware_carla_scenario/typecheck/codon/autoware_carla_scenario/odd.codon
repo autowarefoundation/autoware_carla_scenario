@@ -11,15 +11,36 @@ import lanelet2.core
 import lanelet2.routing
 
 from ._tc import (_keyword_only, _expect_float, _expect_int_sequence, _expect_optional_float,
-                  _acs_sequence)
-from .coverage import (_expect_cover_expression, _expect_optional_range, _expect_optional_edges,
-                       _expect_optional_values)
+                  _acs_sequence, _expect_str_sequence)
+from .coverage import (CoverItem, _expect_cover_expression, _expect_optional_range,
+                       _expect_optional_edges, _expect_optional_values)
 
 
 NEARBY_RADIUS_M: float = 50.0
 ILLUMINATION_LEVELS: List[str] = ["day", "low_sun", "twilight", "night"]
 INTENSITY_LEVELS: List[str] = ["none", "light", "moderate", "heavy"]
 TRAFFIC_DENSITY_LEVELS: List[str] = ["none", "low", "medium", "high"]
+
+
+# openodd's sentinel for a value only the run can tell (odd.model.UNDECIDED,
+# of a Rust extension's class, which odd.model names Undecided): one
+# instance, compared by identity, written UNDECIDED.  Python cannot build
+# another (`type(UNDECIDED)()` raises), so neither can the check: the model's
+# one is allocated without its constructor.
+class Undecided:
+    _unused: int
+
+    def __init__(self):
+        compile_error("Undecided(): UNDECIDED is openodd's only one; it is not built")
+
+    def __repr__(self) -> str:
+        return "UNDECIDED"
+
+    def __str__(self) -> str:
+        return "UNDECIDED"
+
+
+UNDECIDED: Undecided = Undecided.__new__()
 
 
 class OddCondition:
@@ -31,6 +52,15 @@ class OddCondition:
 
     def __init__(self):
         self._unused = 0
+
+    def attributes(self) -> List[str]:
+        raise NotImplementedError()
+
+    def describe(self) -> str:
+        raise NotImplementedError()
+
+    def references(self) -> List[str]:
+        raise NotImplementedError()
 
 
 def _expect_optional_conditions(conditions):
@@ -44,15 +74,14 @@ def _expect_optional_conditions(conditions):
             c: OddCondition = condition
 
 
-def _expect_optional_labels(labels):
-    """An Optional[Sequence[str]] argument."""
+def _expect_optional_labels(labels, where: Literal[str]):
+    """An Optional[Sequence[str]] argument of names: not a str (#299)."""
     if isinstance(labels, None):
         pass
     elif isinstance(labels, Optional[NoneType]):
         pass
     else:
-        for label in _acs_sequence(labels, str):
-            s: str = label
+        _expect_str_sequence(labels, where)
 
 
 class OddAttribute:
@@ -78,6 +107,26 @@ class OddAttribute:
         self.name = name
         self.unit = unit
         self.text = text
+
+    @property
+    def cover_by(self) -> str:
+        raise NotImplementedError()
+
+    @property
+    def min_stay(self) -> Optional[float]:
+        raise NotImplementedError()
+
+    @property
+    def derived(self) -> bool:
+        raise NotImplementedError()
+
+    @property
+    def derived_from(self) -> List[str]:
+        raise NotImplementedError()
+
+    @property
+    def source(self) -> Tuple[str, str]:
+        raise NotImplementedError()
 
     def is_in(self, values) -> OddCondition:
         for value in values:
@@ -156,10 +205,32 @@ class OddModule:
         _expect_optional_conditions(include_or)
         _expect_optional_conditions(exclude_and)
         _expect_optional_conditions(exclude_or)
-        _expect_optional_labels(labels)
+        _expect_optional_labels(labels, "OddModule(): labels")
         self.name = name
         self.active = active
         self.text = text
+
+    def as_situation(self, *_kw, target = 1.0, cover_by: str = "hits",
+                     min_stay = None) -> None:
+        _keyword_only(_kw, "OddModule.as_situation(): every argument")
+        _expect_float(target)
+        _expect_optional_float(min_stay)
+        raise NotImplementedError()
+
+    def conditions(self) -> List[OddCondition]:
+        raise NotImplementedError()
+
+    @property
+    def labels(self) -> List[str]:
+        raise NotImplementedError()
+
+    @property
+    def situation(self) -> bool:
+        raise NotImplementedError()
+
+    @property
+    def item(self) -> Optional[CoverItem]:
+        raise NotImplementedError()
 
 
 def _expect_optional_modules(modules):
@@ -188,13 +259,54 @@ class OddDefinition:
         for attribute in _acs_sequence(attributes, OddAttribute):
             a: OddAttribute = attribute
         _expect_optional_modules(modules)
-        _expect_optional_labels(roots)
+        _expect_optional_labels(roots, "OddDefinition(): roots")
         self.name = name
         self.modules = List[OddModule]()
         if not (isinstance(modules, None) or isinstance(modules, Optional[NoneType])):
             for module in _acs_sequence(modules, OddModule):
                 self.modules.append(module)
         self.text = text
+
+    @property
+    def roots(self) -> List[str]:
+        raise NotImplementedError()
+
+    @property
+    def version(self) -> Optional[str]:
+        raise NotImplementedError()
+
+    @property
+    def revision(self) -> Optional[str]:
+        raise NotImplementedError()
+
+    @property
+    def structure_digest(self) -> str:
+        raise NotImplementedError()
+
+    @property
+    def sources(self) -> List[Dict[str, str]]:
+        raise NotImplementedError()
+
+    def cover_items(self) -> List[CoverItem]:
+        raise NotImplementedError()
+
+    def situations(self) -> List[OddModule]:
+        raise NotImplementedError()
+
+    def unmeasured(self) -> List[str]:
+        raise NotImplementedError()
+
+    def outside_buckets(self, attribute) -> List[str]:
+        """Union[OddAttribute, str]: a Union parameter crashes Codon 0.19, so
+        the attribute is generic and its type is checked here."""
+        if isinstance(attribute, str) or isinstance(attribute, Optional[str]):
+            pass
+        elif isinstance(attribute, OddAttribute) or isinstance(attribute, Optional[OddAttribute]):
+            pass
+        else:
+            compile_error("OddDefinition.outside_buckets(): the attribute is an "
+                          "OddAttribute or its name")
+        raise NotImplementedError()
 
 
 # openodd's sample and parameter space (a Rust extension): the checked
@@ -244,14 +356,13 @@ class RouteLanelet:
 
 
 class RouteCoverage:
+    # Python's fields, in its order: the constructor Codon generates of them
+    # takes the calls Python's does, and the one below refuses each.
     odd: str
     name: str
     lanelets: List[RouteLanelet]
+    expected_m: Dict[str, Dict[str, float]]
     map_attributes: List[str]
-
-    # Codon would build it by its fields too (docs/typecheck.md, #244).
-    def __init__(self, odd, name, lanelets, map_attributes):
-        compile_error("RouteCoverage: plan_route_coverage() builds it")
 
     def __init__(self, odd: str, name: str, lanelets: List[RouteLanelet],
                  expected_m: Dict[str, Dict[str, float]], map_attributes: List[str]):

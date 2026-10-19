@@ -1,6 +1,6 @@
 [project]
 name = "autoware-carla-scenario"
-version = "15.0.0"
+version = "15.2.2"
 description = "CARLA scenario testing framework for Autoware"
 readme = "README.md"
 license = "Apache-2.0"
@@ -158,6 +158,8 @@ scenario-expand = "autoware_carla_scenario.examples.expand:main"
 scenario-check = "autoware_carla_scenario.typecheck.cli:main"
 # Merge the coverage files of scenario runs into an ODD/scenario coverage report.
 scenario-coverage = "autoware_carla_scenario.coverage.report:main"
+# Follow, collect, resubmit or cancel a batch run with launcher=slurm.
+scenario-slurm = "autoware_carla_scenario.slurm.cli:main"
 # Check an ODD (Python with Codon, or OpenODD YAML) and show its buckets.
 scenario-odd = "autoware_carla_scenario.odd.cli:main"
 scenario-new = "autoware_carla_scenario.scaffold.generator:main"

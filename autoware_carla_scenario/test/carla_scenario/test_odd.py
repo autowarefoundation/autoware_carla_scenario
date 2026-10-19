@@ -577,6 +577,43 @@ class TestProbes:
         collector.tick(_OddWorld([], None, None), 0.05)
         assert all(i["samples"] == 0 for i in collector.to_dict("S")["items"])
 
+    def test_a_read_is_kept_for_the_frame_even_when_it_fails(self) -> None:
+        # The weather is asked once per frame, a server without it included:
+        # the failed read is kept (as None) until the world moves on.
+        world = _odd_world(weather=None)
+        asked: list[int] = []
+
+        def get_weather() -> Any:
+            asked.append(world.frame)
+            raise RuntimeError("no weather on this server")
+
+        world.get_weather = get_weather  # type: ignore[method-assign]
+        assert probes.rain(world) is None
+        assert probes.fog(world) is None
+        assert asked == [1]
+        world.frame = 2
+        assert probes.illumination(world) is None
+        assert asked == [1, 2]
+
+    def test_each_map_decided_probe_reads_a_lanelet_too(self) -> None:
+        map_decided: tuple[Any, ...] = (
+            probes.in_junction,
+            probes.lanelet_speed_limit_kph,
+            probes.speed_limit_kph,
+            probes.lane_count,
+            probes.lanelet_location,
+            probes.lanelet_subtype,
+        )
+        readers = {probe.__name__: probe.on_lanelet.__name__ for probe in map_decided}
+        assert readers == {
+            "in_junction": "_in_junction_on_lanelet",
+            "lanelet_speed_limit_kph": "_lanelet_speed_limit_on_lanelet",
+            "speed_limit_kph": "_speed_limit_on_lanelet",
+            "lane_count": "_lane_count_on_lanelet",
+            "lanelet_location": "_location_on_lanelet",
+            "lanelet_subtype": "_subtype_on_lanelet",
+        }
+
     def test_the_carla_map_is_fetched_once_per_run(self) -> None:
         world = _odd_world()
         collector = CoverageCollector([], odd=default_odd())
@@ -1008,6 +1045,10 @@ def test_the_model_declares_the_probes_as_python_does() -> None:
         assert [a.arg for a in [*node.args.args, *node.args.kwonlyargs]] == list(
             inspect.signature(python).parameters
         ), name
+    # openodd's UNDECIDED is no literal: the model allocates its one instance
+    # of the sentinel's class, which prints as Python's does.
+    assert ast.unparse(constants.pop("UNDECIDED")) == "Undecided.__new__()"
+    assert repr(odd_pkg.UNDECIDED) == str(odd_pkg.UNDECIDED) == "UNDECIDED"
     for name, value in constants.items():
         assert getattr(odd_pkg, name) == ast.literal_eval(value), name
     probe_names = {n for n in probes.__all__ if n not in ("reset_probes",)}

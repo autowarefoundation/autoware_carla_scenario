@@ -9,6 +9,9 @@ defaults:
   - traffic: traffic_manager
   - scenario: intersection_passing/left_turn
   - map: nishishinjuku
+  # Who runs a batch's cases: this process, one after another, unless a run
+  # selects a launcher (launcher=slurm: SLURM array jobs, docs/slurm.md).
+  - launcher: null
 
 # The ODD every run is measured against (docs/odd.md): "default", a name
 # registered with register_odd() or an entry point, an OpenODD YAML file

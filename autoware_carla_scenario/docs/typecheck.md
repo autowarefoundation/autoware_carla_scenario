@@ -501,14 +501,27 @@ What `test_typecheck_model.py` compares, model by model:
 - **Every public member of a compared class** (#265): the comparisons above
   check that what a model class declares exists in Python; this checks the
   converse. For every class they compare (enums aside), each public method,
-  property and class attribute the package's Python defines on the class or
-  a package class it derives from (`VehicleEntity.set_desired_speed()` is
-  `BackendDriven`'s) is declared by the model class or one of its model
-  bases, or listed, with the reason, in `NOT_MODELLED_MEMBERS`
-  (`typecheck/not_modelled.py`), under the class or the Python base that
-  defines it (`BaseCondition.get_details` for every condition). A listed
-  member must still be public in Python and absent from the model. A
-  dataclass's fields are compared as its constructor's parameters, and an
+  property, class attribute and dataclass field the package's Python, or
+  openodd's, defines on the class or a class it derives from
+  (`VehicleEntity.set_desired_speed()` is `BackendDriven`'s) is declared by
+  the model class or one of its model bases, or listed, with the reason, in
+  `NOT_MODELLED_MEMBERS` (`typecheck/not_modelled.py`), under the class or
+  the Python base that defines it (`BaseCondition.get_details` for every
+  condition). openodd's classes, which the package re-exports
+  (`OddAttribute`, `OddModule`, `OddDefinition`, `OddCondition`, `CoverItem`,
+  `CrossItem`, `CoverageReport`), are compared as the package's are (#298),
+  each listed under the name the package gives it (openodd's `Condition` is
+  `OddCondition`). A listed member must still be public in Python and absent
+  from the model. A dataclass's public field is a member too, beside the
+  constructor's parameter it is compared as (#298): the model declares it as
+  a field or, where a field would change the constructor Codon generates
+  (*What Codon builds by the fields*, below), as a read-only property
+  (`RouteMatch.lanelet_ids`, a `List[int]` for Python's `tuple[int, ...]`;
+  `TrajectoryVertex.position`, the union of the ten poses, which narrows
+  with `isinstance` and passes on to a new `TrajectoryVertex`; `CoverItem`'s
+  fields). A frozen dataclass's field is read-only in Python too; writing a
+  `CoverItem`'s is refused, which Python allows, and a scenario, which
+  registers its items with `register_cover()`, has none to write. An
   attribute Python only annotates (set on the instance) is no member of the
   class. The scenario check adds the reason to Codon's error:
 
@@ -520,10 +533,23 @@ What `test_typecheck_model.py` compares, model by model:
   `dict[str, Any]`: a condition's `get_details()` and `to_summary_dict()`,
   `to_dict()`, `describe()`, `RouteMatch.to_config()` and `from_config()`),
   the run's traffic backend (`set_traffic_backend()`, `traffic_backend`),
-  `RouteMatch.junction()` and `junctions` (a `RouteSegmentMatch`), and the
-  members of the classes the model declares for the library check alone
-  (`CarlaDriverEntity`, the egodriver and bridge servers, the ROS 2
-  transport, the map cache's `MapSource`, `RunEnvironment`).
+  `RouteMatch.junction()`, `junctions` and `segments` (a
+  `RouteSegmentMatch`), a field of `Any` (`ConditionStatus.details`,
+  `RouteLanelet.values`, `OddModule.metadata`, `SweepConfig`'s Hydra
+  mappings, `CoverItem`'s `expression`, `ignore` and `values`), openodd's
+  evaluation, sampling and archive of an ODD (`OddDefinition.evaluate()`,
+  `sample()`, `archive()`, ..., `OddCondition.evaluate()`) and its report's
+  rows (`CoverageReport.entries`, ...), and the members of the classes the
+  model declares for the library check alone (`CarlaDriverEntity`, the
+  egodriver and bridge servers, the ROS 2 transport and its config, the map
+  cache's `MapSource`, `RunEnvironment`). An ODD's members compile as they
+  run:
+
+  ```python
+  roads = OddModule("roads", include_and=[location.is_in(["urban"])], labels=["fair"])
+  roads.as_situation(cover_by="meters", target=100.0)
+  text = roads.conditions()[0].describe() + roads.labels[0] + location.cover_by
+  ```
 - **Every model file**: each `.codon` of the package's model is in one of
   the tables above or exempt with the reason (`_UNCOMPARED_MODEL_FILES`: the
   model's helpers, the modules `coordinate.codon` and `entity.codon`
@@ -589,8 +615,12 @@ them (`OddModule`, `OddAttribute`, `BaseScenario`). The classes it finds:
 |---|---|
 | none | `RouteMatch`, `RouteFrame`, `VehicleEntity`, `PedestrianEntity`, `CoverageCollector`, `CoverageReport`, `EgoDriverGrpcClient`, `Ros2EgoTransport` (and `CycloneRos2Transport`, compared apart) |
 | the label | the conditions and actions whose constructor Python refuses one argument (`SpeedCondition`, `TurnAction`) |
-| the fields | `DebugMarkers`, `CoverItem`, `OddCondition` (one), `RouteCoverage`, `RunProgress` (four) |
+| the fields | `DebugMarkers`, `CoverItem`, `OddCondition` (one), `RunProgress` (four) |
 | an exception's | `FrameMismatchError` (one, two, ten), `DevContainerError`, `MapCacheError` (none, two, eight) |
+
+`RouteCoverage` declares Python's fields in Python's order (#298), so the
+constructor Codon generates of them takes no call Python's refuses, and the
+one it declares refuses each.
 
 Every condition and action declares the overload of one, its label, even
 where Python takes one argument by position: a call the constructor refuses
@@ -725,6 +755,22 @@ scenario has to do itself:
   `AndCondition([], ...)`, an ODD's `all_of([])`) through `_acs_sequence`
   (`_tc.codon`), and checks the elements of any other: `waypoints=[460, 265]`
   and `waypoints=[None]` are refused, in `EgoVehicle.route_to()` too.
+- **A sequence of names is a list or a tuple, not a `str`** (#299). Python's
+  typing takes a `str` as a `Sequence[str]`, and the framework then reads
+  each of its characters as a name (`roots="roads"` fails at run time with
+  "no root module ['r', 'o', 'a', 'd', 's']"). Here the check is stricter
+  than mypy, on purpose: `_expect_str_sequence` (`_tc.codon`) refuses a `str`
+  (or an `Optional[str]`) where a sequence of names is taken, the items of
+  `BaseScenario.register_cross()`, `OddModule`'s `labels` and
+  `OddDefinition`'s `roots`, and takes a list or a tuple of `str`, an empty
+  one too:
+
+  ```text
+  scenario.py:41: error: BaseScenario.register_cross(): items: expected a sequence of names (a list or a tuple of str), not a str: wrap it in a list
+  ```
+
+  `OddAttribute.is_in("urban")` still passes: it takes an `Iterable[Any]` of
+  values, and CPython takes a `str`'s characters as values.
 - **Call a manoeuvre your own entity class overrides with every argument, by
   position.** `VehicleEntity` and `EgoVehicle` declare the manoeuvres they
   take from `traffic.driven.BackendDriven` (`set_desired_speed()`,
@@ -1078,8 +1124,8 @@ To check one more module:
 
 ### What is checked of the framework
 
-Every module now has an entry other than `"not yet checked (#45)"`. 170 of
-the package's 250 modules (68%; about 43,500 of 76,200 lines) are `CHECKED`:
+Every module now has an entry other than `"not yet checked (#45)"`. 171 of
+the package's 259 modules (66%; about 44,400 of 79,600 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the conversions between
 Lanelet2, OpenDRIVE and CARLA world poses (`coordinate.transform`), the stop
 lines read off a Lanelet2 map (`utils.stop_line`, `coordinate.stop_line`)
@@ -1126,7 +1172,9 @@ container with Docker (`autoware_stack.docker`, over a model of
 `autoware_stack.devcontainer`, which reads JSON and YAML), the Autoware
 bridge interface and its fake, the trajectory model, the measures and the
 metrics, the ODD
-unit names (`odd.unit_names`), the placement of a road user so a scenario
+unit names (`odd.unit_names`), the ODD's probes, which read its attributes off
+the world and, for those the Lanelet2 map decides, off a lanelet
+(`odd.probes`), the placement of a road user so a scenario
 measure reads a given value (`placement`), the planning of a scenario's route on the
 Lanelet2 map that the ODD's route check starts from (`odd.route_plan`), the CARLA-only helpers, the traffic-light
 lookups included, and the scenario configs (`scenario_config`, `examples.configs`), the camera
@@ -1173,38 +1221,43 @@ a `TrajectoryVertex` call's arguments, each of any type (`Any`), walks or
 binds a sweeper constraint of any kind, builds a condition's status (its
 details), or takes the list a plain tick callback goes into
 (`BaseScenario._register_tick()`, a `List[Callable[[carla.World], None]]`,
-which the check has no value of). The 80 `EXCLUDED` modules fall in
-four groups. Many fit more than one (about 58 import what Codon cannot
-compile, 28 build on an excluded module and 21 hold values Codon has no type
+which the check has no value of). The 88 `EXCLUDED` modules fall in
+four groups. Many fit more than one (about 65 import what Codon cannot
+compile, 29 build on an excluded module and 20 hold values Codon has no type
 for), so each is counted once, in the first group that fits it:
 
-- **58 import what Codon cannot compile**: pyxodr,
+- **65 import what Codon cannot compile**: pyxodr,
   pydantic, pickle, lxml, grpc, omegaconf and hydra, yaml, openodd (a Rust extension),
   cyclonedds (`ros2.cyclone` and `ros2.messages`, the ROS 2 ego's DDS
   transport and its message types), or
-  a standard module Codon lacks (`json`, `inspect`, `tempfile`,
-  `concurrent.futures`, `importlib`
+  a standard module Codon lacks (`json`, `inspect`, `concurrent.futures`,
+  `importlib`
   beyond `importlib.metadata`, or more of `os`, `pathlib`, `shutil`, `signal`,
-  `subprocess`, `importlib.metadata` or `urllib.parse` than their shims
-  declare), at module level or inside a function the check calls. This is
+  `subprocess`, `tempfile`, `threading`, `dataclasses`, `importlib.metadata`
+  or `urllib.parse` than their shims declare), at module level or inside a function the check calls. This is
   the tooling around a run (the editor, the UI, authoring, the sweeper's
   expansion, Hydra sweeper and map loader, the map caches (the map
   repositories, the Lanelet2 z offset and the pyxodr road network), the Autoware
   stack's dev container, the
-  record of a run's environment, the Rerun recordings of a run's logs), the ODD and coverage modules that wrap
+  record of a run's environment, the SLURM launcher's submitting side,
+  its worker and its manifest, the batch summary they share, and the Rerun
+  recordings of a run's logs), the ODD and coverage modules that wrap
   openodd, and the rest of what reads Lanelet2. A reason names `pathlib`
   only where the module uses more of it than the shim declares, and the
-  other shimmed modules likewise.
-- **18 build on an excluded module**, and import nothing Codon lacks
+  other shimmed modules likewise; `test_typecheck_library.py` holds every
+  reason to that.
+- **19 build on an excluded module**, and import nothing Codon lacks
   themselves: they import a module that is neither checked nor modelled, or
   names that its package's model does not declare. Among them are the
   packages that re-export one (`authoring`, `odd`, `sweeper`,
-  `examples`, `scaffold`), the
-  authoring compiler, builders and validator, `odd.probes` and `odd.route`,
-  the coverage half of the route check (names of `odd.model` and `coverage.items` that the odd and coverage
-  models do not declare, such as `UNDECIDED`; both also hold attribute
-  values of any type, `dict[str, Any]`) and
-  `traffic.registry` (the `registry`, in its plugin loader); 5 of the 18
+  `examples`, `scaffold`, `slurm`), `slurm.collect`, the
+  authoring compiler, builders and validator, `odd.route`, the coverage
+  half of the route check (names of `odd.model` and `coverage.items` that
+  the odd and coverage models do not declare, such as `OddDefinition.evaluate()`
+  and `value_label()`; it also holds each lanelet's attribute values,
+  `dict[str, Any]`, which it hands to openodd, and finds a probe's
+  `on_lanelet` reader on any callable) and
+  `traffic.registry` (the `registry`, in its plugin loader); 4 of the 19
   also hold values Codon has no type for.
 - **3 hold values Codon has no type for**, and nothing else keeps them out:
   `Any` (`trajectory.authoring`, `authoring.registry`'s
@@ -1708,7 +1761,12 @@ What Codon 0.19 needs that Python does not, beyond
   instead of `None if x is None else x.attr`.
 - **A dict of values of different types** (`{"at": None, "around": None}`
   read back as a tuple and a list) becomes a small class with one declared
-  attribute per key.
+  attribute per key. A cache that told "not read yet" from a read that found
+  nothing with an `object()` sentinel (`cache.get(key, _UNREAD)`) keeps the
+  names it has read in a `set[str]` beside them: `odd.probes._Frame` holds
+  the frame's waypoint, weather, lanelet tags, ... each `Optional`, and
+  `read`, so a read that failed is still kept as `None` for the frame, as
+  before.
 - Standard modules Codon does not have (`json`, `inspect`, `tempfile`,
   ...) are not available to a checked module; the `typing`,
   `dataclasses`, `enum`, `logging`, `abc`, `queue`, `pathlib`, `hashlib`,
@@ -2265,6 +2323,22 @@ What Codon 0.19 needs that Python does not, beyond
 - **A dict has no truth value** in Codon: `if not d:` is `if len(d) == 0:`.
 - **No `setattr(obj, name, value)` with a name known only at run time**:
   spell the assignments out (`actions/environment.py`).
+- **No attribute on a function**: a Codon function has none, so neither
+  `setattr(probe, "on_lanelet", read)` in a decorator nor
+  `probe.on_lanelet = read` compiles. `odd.probes` defines each lanelet
+  reader as a plain function and attaches it at the end of the module, in
+  the body of `if not TYPE_CHECKING:`, which Python alone runs: the
+  probes have the same `on_lanelet` attribute as before, and the check
+  compiles each reader on its own, as it does every function of the module.
+- **A union a function returns goes through a module-level alias**: the
+  check drops a `Union` written out in any annotation (Codon 0.19 crashes on
+  one in a parameter), a local's and a return's included, and Codon then
+  types the function by its first `return`. An alias is kept, and Codon
+  converts each `return` to it: `odd.probes._speed_limit_on_lanelet()`
+  returns `_SpeedLimitOnLanelet = Union[float, "Undecided"]`, a number or
+  `UNDECIDED`. Codon 0.19 converts a value of any other type too, failing
+  only when the program runs (`internal.new_union`), so the check compiles
+  the body but does not check which member each `return` is.
 - **An exception class spells out its constructor**: Codon 0.19 cannot
   raise a subclass of a built-in exception that has none of its own
   (`'MapSourceError' object has no attribute '_pytype'`), so it takes the
@@ -2549,7 +2623,9 @@ What Codon 0.19 needs that Python does not, beyond
   Codon 0.19's code generation for every scenario (`LLVM: error: value
   doesn't match function result type`). `test_typecheck_model.py` compares
   each with the Python class, and checks that its constructor is the
-  `compile_error`.
+  `compile_error`. Of `CoverageReport`, which `merge_coverage()` returns, the
+  model also declares what Codon has types for (`runs`, `scenarios`,
+  `groups()`, `group_grade()`, `to_markdown()`, #298).
 - **A Protocol a scenario may take** is modelled with what is called of it:
   the library check compiles `autoware_stack.launcher` from its source, and
   for the scenario check `autoware_stack/launcher.codon` declares the `AutowareLauncher` that
@@ -2673,7 +2749,11 @@ What Codon 0.19 needs that Python does not, beyond
   the case a run records (`OddCase`, a `@tuple` of openodd's `OddSample` and
   `ParameterSpace`, which only the sampler builds) and what the runner reads
   of odd.route's verdict on the ego's planned route (`plan_route_coverage()`,
-  `RouteCoverage` and `RouteLanelet`, which only it builds),
+  `RouteCoverage` and `RouteLanelet`, which only it builds), and openodd's
+  `UNDECIDED`, which the checked `odd.probes` returns: the one instance of a
+  class openodd does not export (odd.model names it `Undecided`, for
+  annotations), whose constructor is a compile error, as Python cannot build
+  another, so the model allocates its one with `Undecided.__new__()`;
   `environment.codon` the id of the run's environment (`capture()` and
   `RunEnvironment.id`), and `autoware_stack/launcher.codon` the launcher's
   `prepare()` and `close()`, which the queue calls.

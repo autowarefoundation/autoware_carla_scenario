@@ -1,0 +1,20 @@
+# The part of Python's tempfile the checked framework names, for the checker
+# (docs/typecheck.md): mkstemp(), with CPython 3.10's signature, the oldest
+# Python the package supports. A directory is a str or a pathlib.Path
+# (os.PathLike); bytes prefixes and suffixes are not declared. Nothing here
+# runs: no file is made, the descriptor is -1 and the name is "".
+
+from os import fspath
+
+
+# mkstemp(suffix=None, prefix=None, dir=None, text=False): (an open
+# descriptor, the absolute name of the file).
+def mkstemp(
+    suffix: Optional[str] = None,
+    prefix: Optional[str] = None,
+    dir=None,
+    text: bool = False,
+) -> Tuple[int, str]:
+    if dir is not None:
+        fspath(dir)
+    return (-1, "")

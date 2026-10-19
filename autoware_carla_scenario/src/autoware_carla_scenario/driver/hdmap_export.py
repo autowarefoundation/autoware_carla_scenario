@@ -155,9 +155,21 @@ def export_map(
             json.dumps(manifest, indent=1), encoding="utf-8"
         )
 
+        # Runs in other processes may write the same set meanwhile (the tasks
+        # of a SLURM batch, docs/slurm.md): one complete by now is theirs, and
+        # as good as this one -- the id is the content's.
+        if _has_formats(target, formats):
+            logger.info("map %s written to %s meanwhile", map_id, target)
+            return map_id
         if target.exists():
             shutil.rmtree(target)
-        out.rename(target)
+        try:
+            out.rename(target)
+        except OSError:
+            if _has_formats(target, formats):
+                logger.info("map %s written to %s meanwhile", map_id, target)
+                return map_id
+            raise
         # The scratch directory is gone; recreate it so the context manager's
         # cleanup has something to remove.
         out.mkdir()

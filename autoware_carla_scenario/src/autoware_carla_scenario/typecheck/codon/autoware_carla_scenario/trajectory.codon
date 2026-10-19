@@ -145,6 +145,13 @@ def _expect_trajectory_position(position):
         pass
     elif isinstance(position, CarlaWorldPose):
         pass
+    elif isinstance(position, Union[CarlaWorldPose, Lanelet2Pose, OpenDrivePose, MapPose,
+                                    RelativeLanePose, RouteLanePose, RouteOppositePose,
+                                    RouteCrossingPose, RouteCrosswalkPose,
+                                    RouteRoadsidePose]):
+        # A vertex's own position (TrajectoryVertex.position, #298), passed
+        # on to a new vertex: any of the ten.
+        pass
     else:
         compile_error("expected a trajectory position: a MapPose, a RelativeLanePose, "
                       "a route pose (RouteLanePose, RouteOppositePose, "
@@ -162,6 +169,15 @@ class TrajectoryVertex:
     def __init__(self, position, advance = None):
         _expect_trajectory_position(position)
         self.advance = _expect_optional_condition(advance)
+
+    # Python's frozen dataclass field, read as a property (#298): a field
+    # here would change the constructor Codon generates. Any of the ten
+    # positions (TrajectoryPosition, declared below, spelled out here).
+    @property
+    def position(self) -> Union[CarlaWorldPose, Lanelet2Pose, OpenDrivePose, MapPose,
+                                RelativeLanePose, RouteLanePose, RouteOppositePose,
+                                RouteCrossingPose, RouteCrosswalkPose, RouteRoadsidePose]:
+        raise NotImplementedError()
 
     @property
     def time(self) -> Optional[float]:

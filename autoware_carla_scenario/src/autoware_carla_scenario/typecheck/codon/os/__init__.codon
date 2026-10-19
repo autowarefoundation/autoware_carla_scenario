@@ -218,3 +218,20 @@ def readlink(path, *_kw, dir_fd: Optional[int] = None) -> str:
     _keyword_only(_kw, "readlink(): dir_fd")
     fspath(path)
     return ""
+
+
+# close(fd): a descriptor tempfile.mkstemp() returned.
+def close(fd: int) -> None:
+    pass
+
+
+# chmod(path, mode, *, dir_fd=None, follow_symlinks=True).
+def chmod(
+    path,
+    mode: int,
+    *_kw,
+    dir_fd: Optional[int] = None,
+    follow_symlinks: bool = True,
+) -> None:
+    _keyword_only(_kw, "chmod(): dir_fd, follow_symlinks")
+    fspath(path)
