@@ -194,6 +194,11 @@ _CONCRETE_GENERICS = {
     "typing.Set",
     "typing.Tuple",
     "typing.ClassVar",
+    # The `typing` shim's collections types (codon/typing.codon).
+    "Deque",
+    "Counter",
+    "typing.Deque",
+    "typing.Counter",
     # The `queue` shim's Queue[T] (codon/queue.codon).
     "queue.Queue",
     # The `subprocess` shim's (codon/subprocess.codon): what a process reads
@@ -235,7 +240,23 @@ _DICT_ANNOTATIONS = {
 #: numpy's array class, which Codon's numpy has as ``ndarray[dtype, ndim]``.
 _NDARRAY_NAMES = {"np.ndarray", "numpy.ndarray"}
 _DTYPE_NAMES = {"np.dtype", "numpy.dtype"}
-_UNEXPRESSIBLE = {"Any", "object", "Callable", "type", "Type", "Literal", "Final"}
+_UNEXPRESSIBLE = {
+    "Any",
+    "object",
+    "Callable",
+    "type",
+    "Type",
+    "Literal",
+    "Final",
+    "NoReturn",
+    "Sized",
+    "Hashable",
+}
+#: Annotations that wrap another: ``Final[X]`` and ``Annotated[X, ...]`` are
+#: checked as ``X`` (a bare ``Final`` is dropped).
+_WRAPPERS = {"Final", "Annotated"}
+#: ``typing.cast``: ``cast(T, x)`` is ``x`` checked as ``T``.
+_CAST_NAMES = {"cast", "typing.cast"}
 #: Python's ``bytes``, which Codon 0.19 lacks: it reads a ``b"..."`` literal
 #: as a ``str``, so an annotation naming ``bytes`` is checked as one.
 _BYTES_NAMES = {"bytes", "builtins.bytes"}
@@ -539,6 +560,11 @@ def codon_annotation(node: ast.AST, *, class_level: bool = False) -> str | None:
     if subscript and base_name in _OPTIONAL_NAMES:
         inner_text = codon_annotation(node.slice, class_level=class_level)  # type: ignore[attr-defined]
         return None if inner_text is None else f"Optional[{inner_text}]"
+    if subscript and base in _WRAPPERS:
+        wrapped = node.slice  # type: ignore[attr-defined]
+        if isinstance(wrapped, ast.Tuple):
+            wrapped = wrapped.elts[0]
+        return codon_annotation(wrapped, class_level=class_level)
     if base in _UNEXPRESSIBLE or (base in _ABSTRACT_GENERICS and not class_level):
         return None
     if base_name in _FROZENSET_NAMES:
@@ -1384,7 +1410,14 @@ class _Rewriter(ast.NodeVisitor):
             self.generic_visit(value)
             value = None
         converted = self._rewrite_annotation(node.annotation, class_level=class_level)
-        if converted is None and node.value is not None and not class_level:
+        if (
+            converted is None
+            and node.value is not None
+            and (
+                not class_level
+                or (_dotted(node.annotation) or "").removeprefix("typing.") == "Final"
+            )
+        ):
             self.edits.replace(
                 self.edits.node_span(node.target)[1],
                 self.edits.node_span(node.value)[0],
@@ -1419,6 +1452,21 @@ class _Rewriter(ast.NodeVisitor):
             # `frozenset[str]()`, an empty one typed by its element: a Set.
             start, end = self.edits.node_span(node.func.value)
             self.edits.replace(start, end, "Set")
+        elif (
+            _dotted(node.func) in _CAST_NAMES
+            and len(node.args) == 2
+            and not node.keywords
+        ):
+            # `cast(T, x)`: `cast(T, x)` of the shim, which returns a T, or
+            # `(x)` when T cannot be named in Codon (a Callable, a class
+            # defined further down).
+            if self._rewrite_annotation(node.args[0], class_level=False) is None:
+                start, end = self.edits.node_span(node)
+                value_start, value_end = self.edits.node_span(node.args[1])
+                self.edits.replace(start, value_start, "(")
+                self.edits.replace(value_end, end, ")")
+            self.visit(node.args[1])
+            return
         elif (
             isinstance(node.func, ast.Name)
             and node.func.id in _RENAMED_BUILTINS

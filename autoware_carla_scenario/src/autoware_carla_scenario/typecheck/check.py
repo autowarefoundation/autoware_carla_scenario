@@ -794,6 +794,22 @@ _VARIADIC_LIMITS = (
         "Codon gives no tuple a truth value, *args included: test "
         "len(t) > 0 instead of the tuple t itself",
     ),
+    (
+        re.compile(r"cannot import name 'Generic' from 'typing'"),
+        "typing.Generic is not available in the check: leave the type "
+        "parameters of a class or function unannotated (Codon makes it generic "
+        "over them), or write the concrete type",
+    ),
+    (
+        re.compile(r"cannot import name 'TypedDict' from 'typing'"),
+        "typing.TypedDict is not available in the check: write a @dataclass "
+        "(or a plain class with annotated fields), or a Dict[str, X]",
+    ),
+    (
+        re.compile(r"cannot import name '\w+' from 'typing'"),
+        "the check models only some names of typing: docs/typecheck.md "
+        '("typing names") lists them',
+    ),
 )
 
 
