@@ -8,7 +8,7 @@ from ...coordinate.poses import CarlaWorldPose, Lanelet2Pose, OpenDrivePose
 from ...coordinate.transform import to_carla_location
 from ...entity_role import EntityRole
 from ...kinematics import Vector3
-from ..base import ScenarioResult, find_actor_in_list
+from ..base import ScenarioResult, find_actor_by_role_name
 from ..comparison import ComparisonRule, ScalarComparisonRule
 from .base import CompositionCondition
 
@@ -98,10 +98,10 @@ class EntityPositionDistanceCondition(CompositionCondition):
         )
         return details
 
-    def _measure(self, actors: "carla.ActorList") -> Optional[float]:
+    def _measure(self, world: "carla.World") -> Optional[float]:
         """Return the distance from the entity to the place, or ``None``."""
         assert self._entity_name is not None  # noqa: S101
-        entity = find_actor_in_list(actors, self._entity_name)
+        entity = find_actor_by_role_name(world, self._entity_name)
         if entity is None:
             return None
 
@@ -116,7 +116,7 @@ class EntityPositionDistanceCondition(CompositionCondition):
 
     def _check(self, world: "carla.World", elapsed: float) -> Optional[ScenarioResult]:
         """Return a pass result once the distance satisfies the rule."""
-        distance = self._measure(world.get_actors())
+        distance = self._measure(world)
         if distance is None:
             return None
         if not self._comparison.satisfied(distance):

@@ -6,9 +6,10 @@ No Codon needed: these store and load results directly.
 from __future__ import annotations
 
 import ast
+import json
 import os
 import shutil
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -22,8 +23,10 @@ from autoware_carla_scenario.typecheck.check import (
     _cache_key,
     _cached,
     _distributions_digest,
+    _editable_roots,
     _package_digest,
     _Module,
+    _source_tree_digest,
     _Sources,
     _store,
     _toolchain_digest,
@@ -189,6 +192,179 @@ def test_another_installed_distribution_is_another_key(
         _distributions_digest.cache_clear()
 
 
+def _editable(monkeypatch: pytest.MonkeyPatch, name: str, checkout: Path) -> None:
+    """*checkout* as the one distribution installed, editable."""
+    direct_url = json.dumps({"url": checkout.as_uri(), "dir_info": {"editable": True}})
+    dist = SimpleNamespace(
+        metadata={"Name": name},
+        version="0.1.0",
+        read_text=lambda file: direct_url if file == "direct_url.json" else None,
+    )
+    monkeypatch.setattr(check.importlib.metadata, "distributions", lambda: [dist])
+
+
+@pytest.fixture
+def fresh_digests() -> Iterator[None]:
+    """Digests taken once a process, taken again for the test."""
+    caches = (_distributions_digest, _editable_roots, _source_tree_digest)
+    for cache in caches:
+        cache.cache_clear()
+    yield
+    for cache in caches:
+        cache.cache_clear()
+
+
+def _write(path: Path, text: str) -> None:
+    """Write *text*, with a modification time no earlier write has had."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    before = path.stat().st_mtime_ns if path.exists() else 0
+    path.write_text(text, encoding="utf-8")
+    os.utime(path, ns=(before + 10**9, before + 10**9))
+
+
+def test_an_edit_to_an_editable_distribution_is_another_key(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    key: Callable[..., str],
+    fresh_digests: None,
+) -> None:
+    """Its version stays the same however its source changes; what is not its
+    source (a virtualenv inside the checkout, bytecode) does not count."""
+    checkout = tmp_path / "helpers"
+    module = checkout / "helpers" / "geometry.py"
+    _write(module, "def length() -> float: ...\n")
+    _editable(monkeypatch, "helpers", checkout)
+
+    def digest() -> str:
+        _source_tree_digest.cache_clear()
+        return key()
+
+    before = digest()
+    _write(checkout / ".venv" / "site.py", "x = 1\n")
+    _write(checkout / "venv" / "site.py", "x = 1\n")
+    _write(checkout / "helpers" / "__pycache__" / "x.py", "")
+    assert digest() == before
+    _write(module, "def length() -> float | None: ...\n")
+    edited = digest()
+    assert edited != before
+    _write(checkout / "helpers" / "py.typed", "")
+    assert digest() != edited
+
+
+def test_the_package_being_checked_counts_by_its_stubs_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fresh_digests: None
+) -> None:
+    """A scenario package installed editable: its modules are in the key by
+    their text, so an edit to another scenario of it is not -- but a stub mypy
+    prefers to a module is, and so is another package of the checkout."""
+    monkeypatch.setattr(check, "_toolchain_digest", lambda tc: "tc")
+    monkeypatch.setattr(check, "_framework_digest", lambda codon_path: "fw")
+    checkout = tmp_path / "checkout"
+    package = checkout / "my_scenarios"
+    _write(package / "__init__.py", "")
+    cut_in = package / "cut_in.py"
+    _write(cut_in, "x = 1\n")
+    _write(package / "merge.py", "y = 1\n")
+    _write(checkout / "helpers" / "__init__.py", "")
+    _editable(monkeypatch, "my-scenarios", checkout)
+    text = cut_in.read_text(encoding="utf-8")
+    sources = _Sources(
+        {"my_scenarios.cut_in": _Module(cut_in, False, text, ast.parse(text))}
+    )
+
+    def key() -> str:
+        _source_tree_digest.cache_clear()
+        return _cache_key(None, Path("/codon"), sources, "")  # type: ignore[arg-type]
+
+    before = key()
+    _write(package / "merge.py", "y = 2\n")
+    assert key() == before
+    _write(package / "merge.pyi", "y: int | None\n")
+    with_stub = key()
+    assert with_stub != before
+    _write(checkout / "helpers" / "__init__.py", "z = 1\n")
+    assert key() != with_stub
+
+
+def test_only_the_top_of_a_tree_is_left_out_by_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fresh_digests: None
+) -> None:
+    """``build/`` beside the package is a build's output; ``mypkg/log/`` is a
+    subpackage. A virtualenv is left out wherever it is, by its pyvenv.cfg."""
+    checkout = tmp_path / "mypkg"
+    _write(checkout / "build" / "lib" / "x.py", "")
+    _write(checkout / "mypkg" / "log" / "__init__.py", "")
+    _write(checkout / "mypkg" / "tools" / "env" / "pyvenv.cfg", "")
+
+    def digest() -> str:
+        _source_tree_digest.cache_clear()
+        return _source_tree_digest(str(checkout))
+
+    before = digest()
+    _write(checkout / "build" / "lib" / "x.py", "x = 1\n")
+    _write(checkout / "mypkg" / "tools" / "env" / "site.py", "x = 1\n")
+    assert digest() == before
+    _write(checkout / "mypkg" / "log" / "__init__.py", "x = 1\n")
+    assert digest() != before
+
+
+def test_a_symlinked_directory_is_followed(tmp_path: Path, fresh_digests: None) -> None:
+    """``colcon build --symlink-install``: the source is behind a link."""
+    source = tmp_path / "src" / "pkg"
+    _write(source / "__init__.py", "")
+    site = tmp_path / "site-packages"
+    site.mkdir()
+    (site / "pkg").symlink_to(source, target_is_directory=True)
+    (site / "loop").symlink_to(site, target_is_directory=True)  # and no loop
+
+    def digest() -> str:
+        _source_tree_digest.cache_clear()
+        return _source_tree_digest(str(site))
+
+    before = digest()
+    _write(source / "__init__.py", "x = 1\n")
+    assert digest() != before
+
+
+def test_a_relative_search_path_entry_is_the_directory_the_check_runs_from(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    key: Callable[..., str],
+    fresh_digests: None,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("MYPYPATH", "stubs")
+    stub = tmp_path / "stubs" / "helperlib.pyi"
+    _write(stub, "def get() -> int: ...\n")
+    before = key()
+    _source_tree_digest.cache_clear()
+    _write(stub, "def get() -> int | None: ...\n")
+    assert key() != before
+
+
+@pytest.mark.parametrize("variable", ["MYPYPATH", "PYTHONPATH"])
+def test_a_directory_mypy_searches_is_in_the_key(
+    variable: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    key: Callable[..., str],
+    fresh_digests: None,
+) -> None:
+    """Which directories, and what is in them: a stub edited in place counts."""
+    monkeypatch.delenv("MYPYPATH", raising=False)
+    monkeypatch.delenv("PYTHONPATH", raising=False)
+    without = key()
+    stubs = tmp_path / "stubs"
+    stub = stubs / "openodd" / "__init__.pyi"
+    _write(stub, "def f() -> int: ...\n")
+    monkeypatch.setenv(variable, str(stubs))
+    with_stubs = key()
+    assert with_stubs != without
+    _source_tree_digest.cache_clear()
+    _write(stub, "def f() -> int | None: ...\n")
+    assert key() != with_stubs
+
+
 def test_another_python_is_another_key(
     monkeypatch: pytest.MonkeyPatch, key: Callable[..., str]
 ) -> None:
@@ -241,15 +417,72 @@ def test_an_unreadable_entry_is_a_miss(cache_dir: Path) -> None:
     assert _cached("k", _sources("/run1")) is None
 
 
-def test_without_a_directory_nothing_is_written(
+def test_an_empty_directory_keeps_verdicts_for_the_process_only(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.delenv(CACHE_DIR_ENV, raising=False)
+    monkeypatch.setenv(CACHE_DIR_ENV, "")
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
     monkeypatch.setattr(check, "_CACHE", {})
     monkeypatch.chdir(tmp_path)
     _store("k", _failed(), _sources("/run1"))
     assert _cached("k", _sources("/run1")) is not None
     assert not list(tmp_path.iterdir())
+
+
+def test_unset_the_verdicts_are_kept_in_the_users_cache_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv(CACHE_DIR_ENV, raising=False)
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    monkeypatch.setattr(check, "_CACHE", {})
+    _store("k", _failed(), _sources("/run1"))
+    assert (tmp_path / "autoware_carla_scenario" / "typecheck" / "k.json").is_file()
+    monkeypatch.setattr(check, "_CACHE", {})
+    assert _cached("k", _sources("/run2")) is not None
+
+
+@pytest.mark.parametrize(
+    ("xdg", "home", "expected"),
+    [
+        ("/xdg", "/home/u", "/xdg/autoware_carla_scenario/typecheck"),
+        ("", "/home/u", "/home/u/.cache/autoware_carla_scenario/typecheck"),
+        # The XDG spec: a relative XDG_CACHE_HOME is ignored.
+        ("relative", "/home/u", "/home/u/.cache/autoware_carla_scenario/typecheck"),
+        # HOME="": Path.home() is "." -- the directory the check runs from.
+        ("", "", None),
+    ],
+)
+def test_the_default_directory(
+    xdg: str, home: str, expected: str | None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv(CACHE_DIR_ENV, raising=False)
+    monkeypatch.setenv("XDG_CACHE_HOME", xdg)
+    monkeypatch.setattr(check.Path, "home", lambda: Path(home))
+    found = check._cache_dir()
+    assert (str(found) if found is not None else None) == expected
+
+
+def test_without_a_home_directory_verdicts_stay_in_the_process(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def no_home() -> Path:
+        raise RuntimeError("Could not determine home directory.")
+
+    monkeypatch.delenv(CACHE_DIR_ENV, raising=False)
+    monkeypatch.delenv("XDG_CACHE_HOME", raising=False)
+    monkeypatch.setattr(check.Path, "home", no_home)
+    assert check._cache_dir() is None
+
+
+def test_an_unwritable_directory_keeps_verdicts_in_the_process(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    blocked = tmp_path / "file"
+    blocked.write_text("", encoding="utf-8")  # a file where the directory goes
+    monkeypatch.setenv(CACHE_DIR_ENV, str(blocked / "cache"))
+    monkeypatch.setattr(check, "_CACHE", {})
+    _store("k", _failed(), _sources("/run1"))
+    assert _cached("k", _sources("/run1")) is not None
 
 
 def test_another_compiler_at_the_same_path_is_another_key(
