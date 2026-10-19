@@ -518,10 +518,10 @@ What `test_typecheck_model.py` compares, model by model:
 - **`route.codon`**: every name it declares -- `parse_anchor`,
   `scenario_route`, `scenario_route_frame`, `RouteFrame`, `RouteMatch`,
   `RouteSegmentMatch`, and `APPROACHES`, `CROSSWALK_LEGS` and `SIDES` by
-  value. The constructors of `RouteSegmentMatch` and `RouteMatch` are generic: Python's are frozen
-  dataclasses of tuples (`tuple[int, ...]`, a `List[int]` here), which the
-  model's take untyped, and the model's take the
-  same parameters, and an overload of none is a `compile_error` (Codon builds
+  value. The constructors of `RouteSegmentMatch` and `RouteMatch` are
+  generic: Python's are frozen dataclasses of tuples (`tuple[int, ...]`, a
+  `List[int]` here), which the model's take untyped, but they take the same
+  parameters, and an overload of none is a `compile_error` (Codon builds
   a class without fields with no arguments otherwise; see *What Codon builds
   by the fields* below), so a call Python refuses fails the check too.
 - **`trajectory.codon`**: beside its exports, `ResolvedTrajectory`,

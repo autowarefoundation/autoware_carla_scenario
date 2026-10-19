@@ -3911,6 +3911,31 @@ def test_a_scenario_reads_the_route_s_segments_and_junctions(tmp_path: Path) -> 
     assert result.ok, result.format()
 
 
+def test_a_scenario_misreading_the_route_s_segments_is_refused(
+    tmp_path: Path,
+) -> None:
+    # The segment fields are typed as Python types them: a length is a float
+    # and junction() takes an int index.
+    for number, (read, fragment) in enumerate(
+        (
+            ('logger.info("%s", match.segments[0].length + "x")', "match.segments[0]"),
+            ('logger.info("%s", match.junction("0").turn)', 'match.junction("0")'),
+            ("count = match.junctions[0].turn + 1", "match.junctions[0].turn"),
+        )
+    ):
+        setup = "self._setup_ego_spawn()\nmatch = scenario_route()\n"
+        setup += "if match is not None:\n    " + read + "\n"
+        case = tmp_path / str(number)
+        case.mkdir()
+        scenario, config, path = _write_case(
+            case,
+            setup + _TIMEOUT_SETUP,
+            header=_ROUTE_HEADER,
+        )
+        error = _only_error(typecheck_scenario(scenario, config))
+        assert error.line == _line_of(path, fragment), error.format()
+
+
 def test_a_dataclass_field_the_model_leaves_out_says_why(tmp_path: Path) -> None:
     setup = _FIELD_READS.replace("match.lanelet_ids[0],", "len(match.to_config()),", 1)
     scenario, config, path = _write_case(
