@@ -1916,7 +1916,7 @@ def test_a_none_check_that_did_not_run_warns_and_is_not_kept(
     def compile_(name: str, *args: object, **kwargs: object) -> TypeCheckResult:
         return TypeCheckResult(name, ok=True)
 
-    def no_mypy(paths: object, timeout: float) -> object:
+    def no_mypy(paths: object, timeout: float, roots: object = ()) -> object:
         raise NoneCheckSkipped("mypy is not installed")
 
     monkeypatch.setattr(check, "_compile", compile_)

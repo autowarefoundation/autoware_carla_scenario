@@ -160,7 +160,7 @@ def compiles(monkeypatch: pytest.MonkeyPatch) -> list[str]:
         check, "_collect", lambda roots, tc, codon_path: _Sources({"scenario": module})
     )
 
-    def no_mypy(paths: Any, timeout: float) -> Any:
+    def no_mypy(paths: Any, timeout: float, roots: Any = ()) -> Any:
         raise NoneCheckSkipped("mypy is not installed")
 
     monkeypatch.setattr(check, "run_none_check", no_mypy)
@@ -250,7 +250,7 @@ def test_the_disk_cache_is_keyed_by_the_shape(
     compiles: list[str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv(CACHE_DIR_ENV, str(tmp_path))
-    monkeypatch.setattr(check, "run_none_check", lambda paths, timeout: [])
+    monkeypatch.setattr(check, "run_none_check", lambda paths, timeout, roots=(): [])
     assert _check(timeout_seconds=5.0).ok
     assert len(list(tmp_path.glob("*.json"))) == 1
     check._CACHE.clear()  # as a fresh process has it
