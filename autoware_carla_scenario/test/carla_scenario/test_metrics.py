@@ -40,6 +40,8 @@ from autoware_carla_scenario.metrics import (
 from autoware_carla_scenario.measures import BUILT_IN_MEASURES
 from autoware_carla_scenario.odd import load_odd_binding, scenario_measure
 
+from ._fake_world import ActorsById
+
 #: A car's half-extents: 4.6 m by 2 m.
 _CAR = (2.3, 1.0)
 _LANE_WIDTH = 3.5
@@ -67,6 +69,7 @@ class _Actor:
         role: str = "",
     ) -> None:
         self.id = actor_id
+        self.is_alive = True
         self.type_id = type_id
         self.attributes = {"role_name": role}
         self.bounding_box = _Box(extent)
@@ -138,7 +141,7 @@ _ONE_LANE = _Road([_Lane(-1, 0.0, 0.0)])
 _FRAMES = iter(range(1, 1_000_000))
 
 
-class _World:
+class _World(ActorsById):
     def __init__(self, actors: list[_Actor], road: Optional[_Road]) -> None:
         self._actors = actors
         self._road = road

@@ -213,9 +213,7 @@ class MapManager:
         # Build carla.Map for waypoint-based road/lane lookups (optional).
         # First, so the z offset below reads its spawn points off this map
         # rather than building a second one.
-        self._build_carla_map(
-            xodr_path.read_text(encoding="utf-8"), xodr_path.stem, carla_world
-        )
+        self._build_carla_map(carla_world)
 
         # Compute vertical offset: Lanelet2 z (MGRS absolute elevation) minus
         # XODR z (elevation relative to geoReference origin).  This is constant
@@ -345,12 +343,7 @@ class MapManager:
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _build_carla_map(
-        self,
-        xodr_content: str,
-        map_name: str,
-        carla_world: Optional[carla.World] = None,
-    ) -> None:
+    def _build_carla_map(self, carla_world: Optional[carla.World] = None) -> None:
         """Build and store a ``carla.Map`` for waypoint lookups.
 
         When *carla_world* is provided its map is used directly (matches the

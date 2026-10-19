@@ -78,9 +78,14 @@ converts in one case and not in another. A value whose literal Codon could
 refuse on its own (an int beyond 64 bits, a string with an escape) is kept
 as it is.
 
-Set `AUTOWARE_CARLA_SCENARIO_TYPECHECK_CACHE` to a directory to keep the
-verdicts beyond the process, one file per program: a later process with the
-same inputs reads the verdict instead of compiling. The key covers
+Verdicts are kept beyond the process, one file per program, in
+`$XDG_CACHE_HOME/autoware_carla_scenario/typecheck` (`~/.cache/...` without
+an absolute `XDG_CACHE_HOME`): a later process with the same inputs reads the
+verdict instead of compiling. Set `AUTOWARE_CARLA_SCENARIO_TYPECHECK_CACHE`
+to use another directory, or to an empty string to keep each verdict for its
+process only (as happens anyway without a home directory, or with one that
+cannot be written). Nothing prunes the directory; delete it, or its files
+not accessed for a while, to reclaim the space. The key covers
 everything the verdict depends on. For the compile, that is the scenario's
 (or the framework's) modules, the generated driver's shape, the model,
 typesafe_carla's Codon library, and the compiler's version and standard
@@ -90,13 +95,27 @@ included (mypy reads them for the types of what a scenario calls, and the
 CARLA stubs are written by its `carla_stubs.py` from typesafe_carla's Codon
 library, already in the key), the name and version of every other installed distribution
 (mypy follows a scenario's imports into numpy, lanelet2 or typesafe_carla),
-the mypy version, and the Python version. And it includes what the checks
-made in Python found before the compile: an import the framework's Python
-lacks, or an abstract class that is built. These digests are taken once a
-process (about 100 ms). What the key leaves out: the source of another
-distribution installed editable (only its version is read), and environment
-variables mypy reads, such as `MYPYPATH`; clear the directory after changing
-either.
+the mypy version, and the Python version. Where a version says nothing of
+what mypy reads, the files are in it by path, size and modification time:
+the `.py`, `.pyi` and `py.typed` files of each distribution installed
+editable and of each directory on `MYPYPATH` and `PYTHONPATH`, which mypy
+searches (a relative entry is taken from the directory the check runs in;
+symlinked directories are followed). Of the packages being checked, whose
+modules the key has by their text already, only their stubs count there, so
+an edit to one scenario of an editable or `PYTHONPATH` package does not
+stale the verdicts on the others. And it includes what the checks made in
+Python found before the compile: an import the framework's Python lacks, or
+an abstract class that is built. These digests are taken once a process
+(about 100 ms, more with a large `PYTHONPATH` such as a ROS workspace's).
+mypy runs with `--config-file=` and in an empty directory of its own, so
+neither a configuration file nor a module of the directory the check runs
+from reaches the verdict. A scenario package is therefore found as an
+installed or editable distribution, or through `MYPYPATH`: give a namespace
+package (one without `__init__.py`) an `__init__.py`, as the scaffolded
+packages have. What the key still leaves out: a distribution
+installed in development mode without PEP 610's `direct_url.json` (an old
+`setup.py develop`, a `.pth` file written by hand); clear the directory after
+editing one.
 A crash is never kept, and an entry
 that cannot be read counts as a miss. A verdict read from the directory has
 its file's times touched, so the directory can be pruned by access time.
@@ -500,9 +519,10 @@ What `test_typecheck_model.py` compares, model by model:
   for openodd's sample, and the `@tuple` of the pair Python's alias names.
 - **Every public member of a compared class** (#265): the comparisons above
   check that what a model class declares exists in Python; this checks the
-  converse. For every class they compare (enums aside), each public method,
-  property, class attribute and dataclass field the package's Python, or
-  openodd's, defines on the class or a class it derives from
+  converse. For every class they compare, enums included, each public
+  method, property, class attribute, dataclass field and instance attribute
+  the package's Python, or openodd's, defines on the class or a class it
+  derives from
   (`VehicleEntity.set_desired_speed()` is `BackendDriven`'s) is declared by
   the model class or one of its model bases, or listed, with the reason, in
   `NOT_MODELLED_MEMBERS` (`typecheck/not_modelled.py`), under the class or
@@ -521,9 +541,28 @@ What `test_typecheck_model.py` compares, model by model:
   with `isinstance` and passes on to a new `TrajectoryVertex`; `CoverItem`'s
   fields). A frozen dataclass's field is read-only in Python too; writing a
   `CoverItem`'s is refused, which Python allows, and a scenario, which
-  registers its items with `register_cover()`, has none to write. An
-  attribute Python only annotates (set on the instance) is no member of the
-  class. The scenario check adds the reason to Codon's error:
+  registers its items with `register_cover()`, has none to write.
+  An attribute a method sets on the instance (`self.<name> = ...` or
+  `setattr(self, "<name>", ...)`, read from the class's source,
+  `__init__`'s and the others', openodd's included; one set under a name
+  computed at run time is not found) is a member too (#307), as Python
+  reads it like any other: the model declares it as a read-only property,
+  since a field would change the constructor Codon generates
+  (`TimeoutCondition.timeout_seconds`, `OddDefinition.attributes`,
+  `OddAttribute.target` and `item`, `TrafficSinkAction.removed`,
+  `RouteFrame`'s `match`, `map`, `graph` and `lanelets`). Writing one is
+  refused, which Python allows (`'TimeoutCondition' object has no attribute
+  'timeout_seconds'`), except in the `__init__` of a scenario's own
+  subclass, where the assignment declares the subclass's own attribute. An enum is
+  compared beyond its members (#307): a model enum is a `@tuple` of its
+  value, so Codon gives it no `Enum`, and it declares Enum's `name` as a
+  property, a chain of `if self == Rule.MEMBER: return "MEMBER"` that
+  `test_typecheck_model.py` compares with each member's Python name, in
+  order (it also compares each member's value), and its own methods and
+  properties (`ComparisonRule.text`, `CollisionTargetType.matches()`,
+  `LaneChangeDirection.to_carla_bool()`). A scenario's own enum gets its
+  `name` from the check's rewrite (below). The scenario check adds the
+  reason to Codon's error:
 
   ```text
   scenario.py:68:19: error: 'CaseScenario' object has no attribute 'traffic_backend': BaseScenario.traffic_backend is not part of the Codon model, on purpose: takes or returns the run's TrafficBackend, ...
@@ -536,7 +575,11 @@ What `test_typecheck_model.py` compares, model by model:
   `RouteMatch.junction()`, `junctions` and `segments` (a
   `RouteSegmentMatch`), a field of `Any` (`ConditionStatus.details`,
   `RouteLanelet.values`, `OddModule.metadata`, `SweepConfig`'s Hydra
-  mappings, `CoverItem`'s `expression`, `ignore` and `values`), openodd's
+  mappings, `CoverItem`'s `expression`, `ignore` and `values`,
+  `OddAttribute.probe`), a class held as a value (`BaseScenario.ego_type`:
+  a scenario reads `ego_requires_goal` and calls `create_ego()`),
+  `RouteFrame.features` (`route.geometry`'s queries, which the library check
+  compiles from their source), openodd's
   evaluation, sampling and archive of an ODD (`OddDefinition.evaluate()`,
   `sample()`, `archive()`, ..., `OddCondition.evaluate()`) and its report's
   rows (`CoverageReport.entries`, ...), and the members of the classes the
@@ -549,6 +592,16 @@ What `test_typecheck_model.py` compares, model by model:
   roads = OddModule("roads", include_and=[location.is_in(["urban"])], labels=["fair"])
   roads.as_situation(cover_by="meters", target=100.0)
   text = roads.conditions()[0].describe() + roads.labels[0] + location.cover_by
+  for attribute in odd.attributes:
+      text += attribute.name + str(attribute.target)
+  ```
+
+  So do an instance attribute and an enum's name and methods:
+
+  ```python
+  timeout = TimeoutCondition(cfg.timeout_seconds, label="timeout")
+  logger.info("limit %f, %s", timeout.timeout_seconds, ComparisonRule.LESS_THAN.name)
+  logger.info("%s %s", ComparisonRule.LESS_THAN.text, LaneChangeDirection.LEFT.to_carla_bool())
   ```
 - **Every model file**: each `.codon` of the package's model is in one of
   the tables above or exempt with the reason (`_UNCOMPARED_MODEL_FILES`: the

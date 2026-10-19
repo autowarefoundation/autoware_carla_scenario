@@ -9,7 +9,7 @@ from ...coordinate.poses import CarlaWorldPose, Lanelet2Pose, OpenDrivePose
 from ...coordinate.transform import to_carla_location
 from ...entity_role import EntityRole
 from ...kinematics import Vector3
-from ..base import ScenarioResult, find_actor_in_list, find_actor_pair
+from ..base import ScenarioResult, find_actor_by_role_name
 from ..comparison import ComparisonRule, ScalarComparisonRule
 from .base import CompositionCondition, DistanceCoordinateSystem
 from .distance_measure import half_extent_along
@@ -154,7 +154,7 @@ class TimeToCollisionCondition(CompositionCondition):
     # Measurement
     # ------------------------------------------------------------------
 
-    def _measure(self, actors: "carla.ActorList") -> Optional[float]:
+    def _measure(self, world: "carla.World") -> Optional[float]:
         """Return the source-to-target TTC in seconds.
 
         Returns ``None`` when either actor is missing, when the two are
@@ -162,12 +162,12 @@ class TimeToCollisionCondition(CompositionCondition):
         closing at all.
         """
         assert self._entity_name is not None  # noqa: S101
+        target = None
         if self._target is not None:
-            source, target = find_actor_pair(actors, self._entity_name, self._target)
+            target = find_actor_by_role_name(world, self._target)
             if target is None:
                 return None
-        else:
-            source, target = find_actor_in_list(actors, self._entity_name), None
+        source = find_actor_by_role_name(world, self._entity_name)
         if source is None:
             return None
 
@@ -282,8 +282,7 @@ class TimeToCollisionCondition(CompositionCondition):
 
     def _check(self, world: "carla.World", elapsed: float) -> Optional[ScenarioResult]:
         """Return a pass result when the TTC satisfies the comparison rule."""
-        actors: carla.ActorList = world.get_actors()
-        ttc = self._measure(actors)
+        ttc = self._measure(world)
         if ttc is None:
             return None
 

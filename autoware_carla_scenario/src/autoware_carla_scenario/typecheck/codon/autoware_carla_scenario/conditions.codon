@@ -23,6 +23,25 @@ class ComparisonRule:
     GREATER_THAN_OR_EQUAL: ClassVar[ComparisonRule] = ComparisonRule(4)
     LESS_THAN_OR_EQUAL: ClassVar[ComparisonRule] = ComparisonRule(5)
 
+    # Enum's name (#307): Codon has no Enum to give a framework enum one.
+    @property
+    def name(self) -> str:
+        if self == ComparisonRule.GREATER_THAN:
+            return "GREATER_THAN"
+        if self == ComparisonRule.LESS_THAN:
+            return "LESS_THAN"
+        if self == ComparisonRule.EQUAL_TO:
+            return "EQUAL_TO"
+        if self == ComparisonRule.GREATER_THAN_OR_EQUAL:
+            return "GREATER_THAN_OR_EQUAL"
+        if self == ComparisonRule.LESS_THAN_OR_EQUAL:
+            return "LESS_THAN_OR_EQUAL"
+        raise ValueError("not a member of ComparisonRule")
+
+    @property
+    def text(self) -> str:
+        return self.name.lower().replace("_", " ")
+
 
 @tuple
 class AccelerationDirection:
@@ -31,6 +50,17 @@ class AccelerationDirection:
     LATERAL: ClassVar[AccelerationDirection] = AccelerationDirection(2)
     MAGNITUDE: ClassVar[AccelerationDirection] = AccelerationDirection(3)
 
+    # Enum's name (#307): Codon has no Enum to give a framework enum one.
+    @property
+    def name(self) -> str:
+        if self == AccelerationDirection.LONGITUDINAL:
+            return "LONGITUDINAL"
+        if self == AccelerationDirection.LATERAL:
+            return "LATERAL"
+        if self == AccelerationDirection.MAGNITUDE:
+            return "MAGNITUDE"
+        raise ValueError("not a member of AccelerationDirection")
+
 
 @tuple
 class SpeedDirection:
@@ -38,6 +68,17 @@ class SpeedDirection:
     LONGITUDINAL: ClassVar[SpeedDirection] = SpeedDirection(1)
     LATERAL: ClassVar[SpeedDirection] = SpeedDirection(2)
     MAGNITUDE: ClassVar[SpeedDirection] = SpeedDirection(3)
+
+    # Enum's name (#307): Codon has no Enum to give a framework enum one.
+    @property
+    def name(self) -> str:
+        if self == SpeedDirection.LONGITUDINAL:
+            return "LONGITUDINAL"
+        if self == SpeedDirection.LATERAL:
+            return "LATERAL"
+        if self == SpeedDirection.MAGNITUDE:
+            return "MAGNITUDE"
+        raise ValueError("not a member of SpeedDirection")
 
 
 @tuple
@@ -48,12 +89,34 @@ class TurnIndicatorState:
     RIGHT: ClassVar[TurnIndicatorState] = TurnIndicatorState(3)
     HAZARD: ClassVar[TurnIndicatorState] = TurnIndicatorState(4)
 
+    # Enum's name (#307): Codon has no Enum to give a framework enum one.
+    @property
+    def name(self) -> str:
+        if self == TurnIndicatorState.OFF:
+            return "OFF"
+        if self == TurnIndicatorState.LEFT:
+            return "LEFT"
+        if self == TurnIndicatorState.RIGHT:
+            return "RIGHT"
+        if self == TurnIndicatorState.HAZARD:
+            return "HAZARD"
+        raise ValueError("not a member of TurnIndicatorState")
+
 
 @tuple
 class SpeedCoordinateSystem:
     value: int
     WORLD: ClassVar[SpeedCoordinateSystem] = SpeedCoordinateSystem(1)
     ENTITY: ClassVar[SpeedCoordinateSystem] = SpeedCoordinateSystem(2)
+
+    # Enum's name (#307): Codon has no Enum to give a framework enum one.
+    @property
+    def name(self) -> str:
+        if self == SpeedCoordinateSystem.WORLD:
+            return "WORLD"
+        if self == SpeedCoordinateSystem.ENTITY:
+            return "ENTITY"
+        raise ValueError("not a member of SpeedCoordinateSystem")
 
 
 @tuple
@@ -62,6 +125,15 @@ class DistanceCoordinateSystem:
     ENTITY: ClassVar[DistanceCoordinateSystem] = DistanceCoordinateSystem(1)
     LANE: ClassVar[DistanceCoordinateSystem] = DistanceCoordinateSystem(2)
 
+    # Enum's name (#307): Codon has no Enum to give a framework enum one.
+    @property
+    def name(self) -> str:
+        if self == DistanceCoordinateSystem.ENTITY:
+            return "ENTITY"
+        if self == DistanceCoordinateSystem.LANE:
+            return "LANE"
+        raise ValueError("not a member of DistanceCoordinateSystem")
+
 
 @tuple
 class RelativeDistanceType:
@@ -69,6 +141,17 @@ class RelativeDistanceType:
     EUCLIDEAN: ClassVar[RelativeDistanceType] = RelativeDistanceType("euclidean")
     LONGITUDINAL: ClassVar[RelativeDistanceType] = RelativeDistanceType("longitudinal")
     LATERAL: ClassVar[RelativeDistanceType] = RelativeDistanceType("lateral")
+
+    # Enum's name (#307): Codon has no Enum to give a framework enum one.
+    @property
+    def name(self) -> str:
+        if self == RelativeDistanceType.EUCLIDEAN:
+            return "EUCLIDEAN"
+        if self == RelativeDistanceType.LONGITUDINAL:
+            return "LONGITUDINAL"
+        if self == RelativeDistanceType.LATERAL:
+            return "LATERAL"
+        raise ValueError("not a member of RelativeDistanceType")
 
 
 @tuple
@@ -79,11 +162,38 @@ class CollisionTargetType:
     PEDESTRIAN: ClassVar[CollisionTargetType] = CollisionTargetType("walker.")
     STATIC: ClassVar[CollisionTargetType] = CollisionTargetType("static.")
 
+    # Enum's name (#307): Codon has no Enum to give a framework enum one.
+    @property
+    def name(self) -> str:
+        if self == CollisionTargetType.ANY:
+            return "ANY"
+        if self == CollisionTargetType.VEHICLE:
+            return "VEHICLE"
+        if self == CollisionTargetType.PEDESTRIAN:
+            return "PEDESTRIAN"
+        if self == CollisionTargetType.STATIC:
+            return "STATIC"
+        raise ValueError("not a member of CollisionTargetType")
+
+    def matches(self, type_id: Optional[str]) -> bool:
+        if self == CollisionTargetType.ANY:
+            return True
+        if type_id is None:
+            return False
+        return type_id.startswith(self.value)
+
 
 @tuple
 class WaypointCheckType:
     value: int
     IS_EMPTY: ClassVar[WaypointCheckType] = WaypointCheckType(1)
+
+    # Enum's name (#307): Codon has no Enum to give a framework enum one.
+    @property
+    def name(self) -> str:
+        if self == WaypointCheckType.IS_EMPTY:
+            return "IS_EMPTY"
+        raise ValueError("not a member of WaypointCheckType")
 
 
 def compare(actual: float, rule: ComparisonRule, value: float,
@@ -377,6 +487,12 @@ class TimeoutCondition(BaseCondition):
     def __init__(self, timeout_seconds: float = 60.0, *_kw, label = _Required()):
         _keyword_only(_kw, "TimeoutCondition(): label")
         super().__init__(_required_str(label, "TimeoutCondition(): label"))
+
+    # Python's instance attribute, read as a property (#307): a field would
+    # change the constructor Codon generates.
+    @property
+    def timeout_seconds(self) -> float:
+        raise NotImplementedError()
 
 
 class CollisionCondition(BaseCondition):

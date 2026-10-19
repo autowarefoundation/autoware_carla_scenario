@@ -39,6 +39,7 @@ if TYPE_CHECKING:
     import lxml.etree
     from pyxodr.road_objects.lane import Lane
     from pyxodr.road_objects.lane_section import LaneSection
+    from pyxodr.road_objects.network import RoadNetwork
     from pyxodr.road_objects.road import Road
 
     from ..autoware_bridge.base import BridgePose
@@ -87,7 +88,9 @@ def project_onto_road(pose: CarlaWorldPose, road_id: str) -> OpenDrivePose:
 
     od_heading = -math.radians(pose.yaw)
     _idx, _dist, s, heading_ref, t = _project_onto_ref_line(
-        ref_line, np.array([pose.x, -pose.y])
+        ref_line,
+        np.array([pose.x, -pose.y]),
+        _road_arc_lengths(mm.road_network, road_id),
     )
 
     return OpenDrivePose(
@@ -393,7 +396,7 @@ def _opendrive_to_carla(pose: OpenDrivePose) -> CarlaWorldPose:
     ref_line: np.ndarray = road.reference_line  # shape (N, 2)
 
     z_coords: np.ndarray = road.z_coordinates  # shape (N,)
-    arc_lengths = _compute_arc_lengths_2d(ref_line)
+    arc_lengths = _road_arc_lengths(mm.road_network, pose.road_id)
 
     x_ref = float(np.interp(pose.s, arc_lengths, ref_line[:, 0]))
     y_ref = float(np.interp(pose.s, arc_lengths, ref_line[:, 1]))
@@ -426,6 +429,56 @@ def _opendrive_to_carla(pose: OpenDrivePose) -> CarlaWorldPose:
 # ---------------------------------------------------------------------------
 # Inverse: CarlaWorldPose → OpenDrivePose
 # ---------------------------------------------------------------------------
+
+
+#: The reference lines of the road network last read: the network itself
+#: (held, so that no other network can take its ``id`` while it is here), each
+#: road with two or more vertices in the network's order as ``(road_id, road,
+#: ref_line, arc_lengths)``, all their vertices stacked, where each road's
+#: begin in that stack, and each road's arc lengths by its id. A road's arc
+#: lengths never change, and the brute-force search measures every vertex of
+#: the map on every call.
+_REF_LINES: "Optional[tuple[RoadNetwork, list[tuple[str, Road, np.ndarray[tuple[int, int], np.dtype[np.float64]], np.ndarray[tuple[int], np.dtype[np.float64]]]], np.ndarray[tuple[int, int], np.dtype[np.float64]], list[int], dict[str, np.ndarray[tuple[int], np.dtype[np.float64]]]]]" = None
+
+
+def _ref_lines(
+    network: "RoadNetwork",
+) -> "tuple[RoadNetwork, list[tuple[str, Road, np.ndarray[tuple[int, int], np.dtype[np.float64]], np.ndarray[tuple[int], np.dtype[np.float64]]]], np.ndarray[tuple[int, int], np.dtype[np.float64]], list[int], dict[str, np.ndarray[tuple[int], np.dtype[np.float64]]]]":
+    """What :data:`_REF_LINES` keeps of *network*, read on first use."""
+    global _REF_LINES
+
+    kept = _REF_LINES
+    if kept is not None and kept[0] is network:
+        return kept
+    roads: "list[tuple[str, Road, np.ndarray[tuple[int, int], np.dtype[np.float64]], np.ndarray[tuple[int], np.dtype[np.float64]]]]" = []
+    starts: list[int] = []
+    arcs: "dict[str, np.ndarray[tuple[int], np.dtype[np.float64]]]" = {}
+    count = 0
+    for road_id, road in network.road_ids_to_object.items():
+        ref_line = road.reference_line
+        if len(ref_line) < 2:
+            continue
+        arc = _compute_arc_lengths_2d(ref_line)
+        roads.append((road_id, road, ref_line, arc))
+        arcs[road_id] = arc
+        starts.append(count)
+        count += len(ref_line)
+    stacked = np.concatenate([r[2] for r in roads]) if roads else np.zeros((0, 2))
+    read = (network, roads, stacked, starts, arcs)
+    _REF_LINES = read
+    return read
+
+
+def _road_arc_lengths(
+    network: "RoadNetwork", road_id: str
+) -> "np.ndarray[tuple[int], np.dtype[np.float64]]":
+    """The arc lengths of road *road_id*'s reference line, kept with
+    *network*'s reference lines (computed for one of fewer than two vertices,
+    which they leave out)."""
+    arcs = _ref_lines(network)[4]
+    if road_id in arcs:
+        return arcs[road_id]
+    return _compute_arc_lengths_2d(network.road_ids_to_object[road_id].reference_line)
 
 
 def _carla_to_opendrive(pose: CarlaWorldPose) -> OpenDrivePose:
@@ -487,7 +540,7 @@ def _carla_to_opendrive_via_waypoint(
     od_y = -pose.y
     od_heading = -math.radians(pose.yaw)
 
-    arc_lengths = _compute_arc_lengths_2d(ref_line)
+    arc_lengths = _road_arc_lengths(mm.road_network, road_id)
     diffs = ref_line - np.array([od_x, od_y])
     dists = np.linalg.norm(diffs, axis=1)
     nearest_idx = int(np.argmin(dists))
@@ -522,19 +575,26 @@ def _carla_to_opendrive_bruteforce(
     # CARLA world coords share the same origin as XODR; just flip y back.
     point = np.array([pose.x, -pose.y])
 
+    # Every vertex of the map measured at once; each road then reads its own.
+    _network, roads, stacked, starts, _arcs = _ref_lines(mm.road_network)
+    all_dists = np.linalg.norm(stacked - point, axis=1)
+
     # (outside, dist, at_end, road_id, road, s, t, heading_ref) of the best so far
     best: Optional[tuple[float, float, bool, str, Road, float, float, float]] = None
-    for road_id, road in mm.road_network.road_ids_to_object.items():
-        ref_line: np.ndarray = road.reference_line  # shape (N, 2)
-        if len(ref_line) < 2:
-            continue
-
-        nearest_idx, dist, s, heading_ref, t = _project_onto_ref_line(ref_line, point)
+    for (road_id, road, ref_line, arc_lengths), begin in zip(roads, starts):
+        dists = all_dists[begin : begin + len(ref_line)]
+        nearest_idx = int(np.argmin(dists))
+        dist = float(dists[nearest_idx])
         overshoot = _overshoot_along(ref_line, nearest_idx, point)
         # The lane widths are the costly part, and overshooting the road's end
         # alone already puts a point further out than the best road so far.
         if best is not None and overshoot > best[0] + _SEAM_TOLERANCE:
             continue
+        s = float(arc_lengths[nearest_idx])
+        heading_ref = _heading_at_s(ref_line, arc_lengths, s)
+        t = _signed_perp_distance(
+            float(point[0]), float(point[1]), ref_line, nearest_idx, heading_ref
+        )
         # The lanes stack from the lane offset line, not the reference line.
         t_lane = t - _lane_offset_at_s(road, s)
         outside = math.hypot(
@@ -590,6 +650,7 @@ def _beats(
 def _project_onto_ref_line(
     ref_line: np.ndarray[tuple[int, int], np.dtype[np.float64]],
     point: np.ndarray[tuple[int], np.dtype[np.float64]],
+    arc_lengths: np.ndarray[tuple[int], np.dtype[np.float64]],
 ) -> tuple[int, float, float, float, float]:
     """Project *point* onto *ref_line* at its nearest vertex.
 
@@ -597,7 +658,6 @@ def _project_onto_ref_line(
     distance to it, the arc length there, the reference heading at that arc
     length and the signed lateral offset from it.
     """
-    arc_lengths = _compute_arc_lengths_2d(ref_line)
     dists = np.linalg.norm(ref_line - point, axis=1)
     nearest_idx = int(np.argmin(dists))
     s = float(arc_lengths[nearest_idx])
