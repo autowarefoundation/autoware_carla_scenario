@@ -1261,11 +1261,15 @@ class SumoTrafficBackend(TrafficBackend):
                 gone.destroy()
             except RuntimeError:
                 pass
-        library = world.get_blueprint_library()
+        # The whole actor-definition list, over RPC: fetched on a tick that
+        # spawns, not on every tick.
+        library = None
         for sumo_id in wanted:
             length = tc.vehicle.getLength(sumo_id)
             actor = self._ambient.get(sumo_id)
             if actor is None:
+                if library is None:
+                    library = world.get_blueprint_library()
                 x, y, z = tc.vehicle.getPosition3D(sumo_id)
                 pose = sumo_to_carla(
                     Pose2D(x, y, z, tc.vehicle.getAngle(sumo_id)), length, self._offset

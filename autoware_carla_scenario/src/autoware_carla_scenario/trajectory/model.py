@@ -858,6 +858,8 @@ class ResolvedTrajectory:
         self.xs = [float(value) for value in self.xs]
         self.ys = [float(value) for value in self.ys]
         self.zs = [float(value) for value in self.zs]
+        if self.times is not None:
+            self.times = [float(value) for value in self.times]
         if self.closed:
             # The closing segment is an ordinary one, so the distance queries
             # need no special case for it.
@@ -982,7 +984,7 @@ class ResolvedTrajectory:
         """How far along the path the entity is at vertex time *time*."""
         if self.times is None:
             raise ValueError("distance_at_time needs a timed trajectory")
-        times = [float(value) for value in self.times]
+        times = self.times
         if time <= times[0]:
             return 0.0
         if time >= times[-1]:
@@ -1021,11 +1023,15 @@ class ResolvedTrajectory:
         """
         best_distance = math.inf
         best_along = 0.0
-        for index in range(len(self._arc) - 1):
-            if near is not None and (
-                self._arc[index + 1] < near - window or self._arc[index] > near + window
-            ):
-                continue
+        # The segments that reach into [near - window, near + window]: from the
+        # one ending at or past its start to the last one starting at or
+        # before its end (_arc does not decrease).
+        first = 0
+        stop = len(self._arc) - 1
+        if near is not None:
+            first = max(bisect.bisect_left(self._arc, near - window) - 1, 0)
+            stop = min(bisect.bisect_right(self._arc, near + window), stop)
+        for index in range(first, stop):
             x0, y0 = self.xs[index], self.ys[index]
             dx, dy = self.xs[index + 1] - x0, self.ys[index + 1] - y0
             squared = dx * dx + dy * dy
