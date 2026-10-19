@@ -152,6 +152,7 @@ def compiles(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     monkeypatch.setenv(CACHE_DIR_ENV, "")
     monkeypatch.setattr(check, "_CACHE", {})
     monkeypatch.setattr(check, "_CHECKED_FOR", {})
+    monkeypatch.setattr(check, "_IN_FLIGHT", {})
     monkeypatch.setattr(check, "codon_path_dir", lambda: Path("/codon"))
     monkeypatch.setattr(check, "_module_file", lambda name: Path("/run/scenario.py"))
     monkeypatch.setattr(check, "_toolchain_digest", lambda tc: "tc")
@@ -264,12 +265,10 @@ def test_a_check_of_a_shape_being_compiled_waits_for_it(
 def test_a_failed_compile_fails_the_checks_waiting_for_it(
     compiles: list[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    owned: Future[TypeCheckResult] = Future()
+    owned: Future[Optional[TypeCheckResult]] = Future()
     owned.set_exception(RuntimeError("codon died"))
-    key_of: list[str] = []
 
-    def spy(key: str, sources: Any) -> None:
-        key_of.append(key)
+    def spy(key: str, sources: Any) -> Optional[TypeCheckResult]:
         check._IN_FLIGHT[key] = owned  # another thread is compiling it
         return None
 
@@ -277,7 +276,32 @@ def test_a_failed_compile_fails_the_checks_waiting_for_it(
     with pytest.raises(RuntimeError, match="codon died"):
         _check(timeout_seconds=5.0)
     assert compiles == []
-    check._IN_FLIGHT.pop(key_of[0])
+
+
+def test_a_check_waiting_for_a_compile_that_timed_out_compiles_itself(
+    compiles: list[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A timed-out compile is no verdict: the check that waited for it gets
+    its own, under its own timeout."""
+    keys: list[str] = []
+
+    class TimedOut(Future[Optional[TypeCheckResult]]):
+        """Another thread's compile, which timed out and is then gone."""
+
+        def result(self, timeout: Optional[float] = None) -> None:
+            del check._IN_FLIGHT[keys[0]]
+            return None
+
+    def spy(key: str, sources: Any) -> Optional[TypeCheckResult]:
+        if not keys:
+            keys.append(key)
+            check._IN_FLIGHT[key] = TimedOut()
+        return None
+
+    monkeypatch.setattr(check, "_cached", spy)
+    result = _check(timeout_seconds=5.0)
+    assert result.ok and len(compiles) == 1
+    assert check._IN_FLIGHT == {}
 
 
 def test_a_timed_out_check_is_not_reused(

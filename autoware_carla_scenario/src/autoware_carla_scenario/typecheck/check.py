@@ -1038,8 +1038,8 @@ _CACHE: dict[str, TypeCheckResult] = {}
 _CHECKED_FOR: dict[str, dict[str, str]] = {}
 #: The verdict of each key being made right now, for the checks of the same
 #: key that start meanwhile to wait for (``scenario-check`` runs configs in
-#: threads side by side).
-_IN_FLIGHT: dict[str, Future[TypeCheckResult]] = {}
+#: threads side by side); ``None`` when the compile timed out.
+_IN_FLIGHT: dict[str, Future[TypeCheckResult | None]] = {}
 _IN_FLIGHT_LOCK = threading.Lock()
 
 #: A directory to keep verdicts in beyond the process, one file per cache key:
@@ -1551,33 +1551,40 @@ def _typecheck(
     if cached is not None:
         return _reused(name, key, rendered.case, cached)
     # scenario-check runs configs side by side: one of the same shape that is
-    # being compiled right now is waited for rather than compiled again.
-    with _IN_FLIGHT_LOCK:
-        pending = _IN_FLIGHT.get(key)
+    # being compiled right now is waited for rather than compiled again. A
+    # compile that timed out is no verdict: who waited for it compiles under
+    # its own timeout.
+    while True:
+        with _IN_FLIGHT_LOCK:
+            pending = _IN_FLIGHT.get(key)
+            if pending is None:
+                if key in _CACHE:  # kept since the miss above
+                    return _reused(name, key, rendered.case, _CACHE[key])
+                owned: Future[TypeCheckResult | None] = Future()
+                _IN_FLIGHT[key] = owned
         if pending is None:
-            if key in _CACHE:  # kept since the miss above
-                return _reused(name, key, rendered.case, _CACHE[key])
-            owned: Future[TypeCheckResult] = Future()
-            _IN_FLIGHT[key] = owned
-    if pending is not None:
-        return _reused(name, key, rendered.case, pending.result())
+            break
+        shared = pending.result()
+        if shared is not None:
+            return _reused(name, key, rendered.case, shared)
+    result: TypeCheckResult | None = None
     try:
         _CHECKED_FOR[key] = rendered.case
         none_check = _none_check_started(sources, timeout)
         result = _compile(name, sources, rendered, toolchain, codon_path, timeout)
-        if result is None:  # timed out: no verdict worth keeping
-            result = _timed_out(name, timeout)
-        else:
+        if result is not None:
             result = _none_checked(key, result, sources, none_check)
     except BaseException as exc:
         owned.set_exception(exc)
         raise
     else:
         owned.set_result(result)
-        return result
     finally:
         with _IN_FLIGHT_LOCK:
             del _IN_FLIGHT[key]
+    if result is None:  # timed out: no verdict worth keeping
+        return _timed_out(name, timeout)
+    return result
 
 
 def _reused(
