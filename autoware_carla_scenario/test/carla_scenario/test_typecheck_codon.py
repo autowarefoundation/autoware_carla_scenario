@@ -4375,6 +4375,55 @@ def test_an_enum_member_is_not_passed_as_its_value_type(
     assert error.line == _line_of(path, f"r = {call}")
 
 
+_PLAIN_ENUMS = """
+class Plain(enum.Enum):
+    A = 1
+    B = 2
+
+
+class Bits(enum.Flag):
+    A = 1
+    B = 2
+
+
+class Word(str, enum.Enum):
+    A = "a"
+"""
+
+
+@pytest.mark.parametrize(
+    "line",
+    ["Plain.A < Plain.B", "int(Plain.A)", "Bits.A < Bits.B", "Word.A < Word.A"]
+    + ["int(Word.A)", "Plain.A + 1"],
+)
+def test_only_an_int_enum_orders_and_converts_like_its_value(
+    tmp_path: Path, line: str
+) -> None:
+    # Python refuses these on a plain Enum / Flag / (str, Enum): the shim's
+    # ordering and int() belong to the IntEnum base alone.
+    scenario, config, path = _data_case(tmp_path, _PLAIN_ENUMS, f"r = {line}\n")
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert error.line == _line_of(path, f"r = {line}"), error.format()
+
+
+def test_enum_members_are_dictionary_keys_and_a_plain_enum_equals_only_members(
+    tmp_path: Path,
+) -> None:
+    setup = """
+        d = {Plain.A: 1, Plain.B: 2}
+        e = {Level.LOW: 1}
+        assert d[Plain.A] == 1 and e[Level.LOW] == 1
+        assert Plain.A == Plain.A and Plain.A != Plain.B
+        assert not (Plain.A == 1) and Plain.A != 1
+        assert Word.A == "a"
+    """
+    scenario, config, _ = _data_case(
+        tmp_path, _ENUMS + _PLAIN_ENUMS, textwrap.dedent(setup)
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
 def test_an_enum_compared_with_the_wrong_type_is_refused(tmp_path: Path) -> None:
     scenario, config, path = _data_case(tmp_path, _ENUMS, "r = Level.LOW == 'low'\n")
     error = _only_error(typecheck_scenario(scenario, config))

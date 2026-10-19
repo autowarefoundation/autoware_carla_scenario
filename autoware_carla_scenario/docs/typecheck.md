@@ -1082,12 +1082,16 @@ Two things Python does that Codon 0.19 does not are filled in for you:
     modelled either: write `a is b`. Python refuses `<` without `order=True`
     and `hash()` of a non-frozen dataclass, and so does the check, with a
     hint naming the flag.
-  - An `IntEnum` or `class M(str, Enum)` member compares with its value
-    (`M.A == 1`, `M.A == "a"`), with another member (`M.A < M.B`) and with
-    `int()`; its value of another type is refused. It is **not** an `int` or a
-    `str` otherwise: passing it to an `int` / `str` parameter or doing
-    arithmetic on it (`M.A + 1`) is refused with a hint. Write `M.A.value`.
-    Ordering a plain `Enum`, which Python refuses, is accepted.
+  - An `IntEnum` (also `IntFlag`, `class M(int, Enum)`) member compares with
+    its value (`M.A == 1`), orders against a member or an `int`
+    (`M.A < M.B`) and converts with `int()` and `float()`. A `StrEnum` or
+    `class M(str, Enum)` member compares with its string (`M.A == "a"`) and
+    does nothing more: ordering and `int()` are refused, as in Python for a
+    plain `Enum`, a `Flag` and a `(str, Enum)`. A plain `Enum` member equals
+    only members (`M.A == 1` is `False`, as in Python). An enum member is
+    **not** an `int` or a `str` otherwise: passing it to an `int` / `str`
+    parameter or doing arithmetic on it (`M.A + 1`) is refused with a hint.
+    Write `M.A.value`.
   - A `class Pt(typing.NamedTuple)` is checked as a Codon `@tuple` class: its
     fields, defaults and methods, `==`, ordering, `hash()`, iteration and
     `len()` work. Codon indexes and unpacks it (`p[0]`, `x, y = p`) only when

@@ -55,6 +55,9 @@ which :func:`transform_source_lines` maps back onto the handler):
   ``auto()``), and each member ``RED = "red"`` becomes the class variable
   ``RED: ClassVar[C] = C("RED", "red")``.  After the module, each such class
   is given a constructor by value (``C("red")``) with ``@extend``.
+  An ``IntEnum`` / ``IntFlag`` / ``(int, Enum)`` derives from the shim's
+  ``IntEnum[int]`` (ordering, ``int()``), a ``StrEnum`` / ``(str, Enum)`` from
+  ``StrEnum[str]`` (equality with its string); no other enum has either.
 * A class deriving from an exception (a built-in one, one defined above it in
   the module, or a name ending in ``Error`` / ``Exception``) derives from
   ``Static[Base]``, as Codon 0.19 derives exceptions.
@@ -174,6 +177,7 @@ PRELUDE = (
     "_acs_dict_into\n"
     "from autoware_carla_scenario._tc import _Required as _acs_Required, "
     "_acs_Returning, _acs_callable, _acs_tuple\n"
+    "from enum import IntEnum as _acs_IntEnum, StrEnum as _acs_StrEnum\n"
     "from autoware_carla_scenario._exceptions import "
     + ", ".join(MISSING_BUILTIN_EXCEPTIONS)
     + "\n"
@@ -1290,7 +1294,15 @@ class _Rewriter(ast.NodeVisitor):
             )
         first_start = self.edits.node_span(node.bases[0])[0]
         last_end = self.edits.node_span(node.bases[-1])[1]
-        self.edits.replace(first_start, last_end, f"{enum_base}[{value_type}]")
+        # Only an int-valued IntEnum / IntFlag / (int, Enum) orders and
+        # converts like its value, and a StrEnum / (str, Enum) equals its
+        # string: the shim has a class for each, a plain Enum has neither.
+        shim = enum_base
+        if kind in {"IntEnum", "IntFlag"} or "int" in bases:
+            shim = "_acs_IntEnum"
+        elif kind == "StrEnum" or "str" in bases:
+            shim = "_acs_StrEnum"
+        self.edits.replace(first_start, last_end, f"{shim}[{value_type}]")
         if self._class_depth == 0 and self._function_depth == 0:
             self.enums.append((node.name, value_type))
         return [stmt for stmt, _, _ in members]

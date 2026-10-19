@@ -837,7 +837,7 @@ def test_an_enum_becomes_a_subclass_of_the_enum_shim() -> None:
     body = out.partition("\n\n@extend\n")[0]  # the constructors by value follow
     assert body.count("\n") == source.count("\n")
     assert "@unique" not in out
-    assert "class Turn(Enum[str]):" in out
+    assert "class Turn(_acs_StrEnum[str]):" in out
     assert "    LEFT: ClassVar[Turn] = Turn('LEFT', \"left\")" in out
     assert "    RIGHT: ClassVar[Turn] = Turn('RIGHT', \"right\")" in out
     assert "    def opposite(self) -> Turn:" in out
@@ -871,7 +871,7 @@ def test_an_enum_is_given_a_constructor_by_value_after_the_module() -> None:
 
 def test_a_str_enum_with_auto_values_takes_the_lowercase_names() -> None:
     out = _transform("class Mode(StrEnum):\n    FAST = auto()\n")
-    assert "class Mode(StrEnum[str]):" in out
+    assert "class Mode(_acs_StrEnum[str]):" in out
     assert "FAST: ClassVar[Mode] = Mode('FAST', 'fast')" in out
 
 
