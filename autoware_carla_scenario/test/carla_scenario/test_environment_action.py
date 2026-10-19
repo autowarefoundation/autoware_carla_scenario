@@ -15,7 +15,7 @@ from unittest.mock import MagicMock
 import typesafe_carla.carla as carla
 import pytest
 
-from autoware_carla_scenario import EnvironmentAction
+from autoware_carla_scenario import BaseScenario, EnvironmentAction
 from autoware_carla_scenario.actions.environment import (
     apply_tire_friction,
     follow_tire_friction,
@@ -183,8 +183,16 @@ def _world_with(*vehicles: _Vehicle, **current: float) -> MagicMock:
     weather.precipitation_deposits = current.get("precipitation_deposits", 0.0)
     world.id = next(_world_ids)
     fleet = list(vehicles)
-    world.get_actors.return_value.filter.side_effect = lambda pattern: list(fleet)
     world.fleet = fleet
+
+    def actors(ids: "list[int] | None" = None) -> MagicMock:
+        chosen = [v for v in fleet if ids is None or v.id in ids]
+        listed = MagicMock()
+        listed.filter.side_effect = lambda pattern: list(chosen)
+        return listed
+
+    world.get_actors.side_effect = actors
+    world.get_snapshot.side_effect = lambda: [SimpleNamespace(id=v.id) for v in fleet]
     return world
 
 
@@ -267,6 +275,14 @@ class TestTireFriction:
         assert world.fleet[1].frictions == pytest.approx([3.5 * 0.6] * 4)
         assert world.fleet[1].applied == 1
         assert world.fleet[0].applied == 1
+        # The second call found nothing new, so asked the server for nothing.
+        assert world.get_actors.call_args_list[-1].args == ([2],)
+
+    def test_the_same_factor_again_only_reaches_new_vehicles(self) -> None:
+        world = _world_with(_Vehicle(1))
+        apply_tire_friction(world, 0.6)
+        apply_tire_friction(world, 0.6)
+        assert world.get_actors.call_count == 1
 
     def test_following_does_nothing_before_a_grip_is_set(self) -> None:
         world = _world_with(_Vehicle(1))
@@ -292,3 +308,27 @@ class TestTireFriction:
     def test_out_of_range_is_refused(self, kwargs: dict, message: str) -> None:
         with pytest.raises(ValueError, match=message):
             EnvironmentAction(**kwargs)
+
+
+class TestFollowingTheGrip:
+    """A scenario with an action that sets the grip follows it after every tick."""
+
+    def _scenario(self) -> BaseScenario:
+        class _Scenario(BaseScenario):
+            def setup(self) -> None: ...
+
+            def is_done(self) -> bool:
+                return False
+
+        return _Scenario(MagicMock())
+
+    def test_a_wet_road_is_followed_once(self) -> None:
+        scenario = self._scenario()
+        scenario.register_init(EnvironmentAction(rain=80.0))
+        scenario.register_pre_tick(EnvironmentAction(tire_friction=0.5))
+        assert scenario._post_tick_callbacks.count(follow_tire_friction) == 1
+
+    def test_fog_is_not_followed(self) -> None:
+        scenario = self._scenario()
+        scenario.register_init(EnvironmentAction(fog_density=40.0))
+        assert follow_tire_friction not in scenario._post_tick_callbacks

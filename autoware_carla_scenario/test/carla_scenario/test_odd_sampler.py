@@ -462,30 +462,6 @@ def test_the_environment_config_sets_the_weather_before_the_run() -> None:
     assert registered == []
 
 
-def test_a_wet_road_in_the_config_follows_the_vehicles_spawned_later() -> None:
-    from autoware_carla_scenario.actions.environment import follow_tire_friction
-    from autoware_carla_scenario.examples.run import add_environment
-
-    init: list = []
-    post: list = []
-    scenario = SimpleNamespace(
-        register_init=init.append, register_post_tick=post.append
-    )
-
-    add_environment(
-        OmegaConf.create({"environment": {"rain": 80, "tire_friction_quantile": 0.2}}),
-        scenario,  # type: ignore[arg-type]
-    )
-    assert init[0].sets_tire_friction
-    assert post == [follow_tire_friction]
-
-    # Fog leaves the road's grip, and the vehicles, alone.
-    init.clear()
-    post.clear()
-    add_environment(OmegaConf.create({"environment": {"fog_density": 40}}), scenario)  # type: ignore[arg-type]
-    assert len(init) == 1 and post == []
-
-
 def test_each_case_draws_its_grip_the_same_way_every_time() -> None:
     cfg = OmegaConf.create(
         {"odd": "default", "sweep": {"odd_sample": {"count": 8, "seed": 3}}}

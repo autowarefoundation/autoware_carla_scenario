@@ -952,8 +952,9 @@ case never runs on a dry road's grip. `tire_friction: false` in the
 `environment.tire_friction` fixes the grip whatever the weather (it wins over
 the quantile).
 
-The vehicles in the world when the action fires are scaled then; the config's
-action also registers `follow_tire_friction`, which gives the vehicles spawned
+The vehicles in the world when the action fires are scaled then; a scenario
+with such an action -- the config's, or its own -- also runs
+`follow_tire_friction` after every tick, which gives the vehicles spawned
 later (background traffic) the same grip. A scenario that sets the weather on
 the tick loop sets the grip with it: a factor applied again replaces the last
 one rather than compounding it.

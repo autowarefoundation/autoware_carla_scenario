@@ -7,7 +7,23 @@ from typing import TYPE_CHECKING, Collection
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
 
-__all__ = ["hold_vehicles_still", "release_vehicle"]
+__all__ = ["as_vehicle", "hold_vehicles_still", "release_vehicle"]
+
+
+def as_vehicle(actor: "carla.Actor") -> "carla.Vehicle":
+    """*actor* as the vehicle a control, a light state or a physics control is
+    read from and applied to.
+
+    At run time that is *actor* itself, which typesafe_carla's Python API
+    takes as it is.  Its Codon library has these on a ``carla.Vehicle`` only,
+    which the check gets with the checked conversion: Codon reads
+    ``TYPE_CHECKING`` as a compile-time true (docs/typecheck.md), and Python
+    as false.
+    """
+    if TYPE_CHECKING:
+        return actor.as_vehicle()
+    else:
+        return actor
 
 
 def hold_vehicles_still(world: "carla.World", spare: Collection[int] = ()) -> None:

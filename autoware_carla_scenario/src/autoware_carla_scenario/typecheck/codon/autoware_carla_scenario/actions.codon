@@ -74,6 +74,8 @@ class BaseAction:
             _acs_expect_return(r, bool, "BaseAction.done returns bool")
         elif name == "state":
             _acs_expect_return(r, ActionState, "BaseAction.state returns ActionState")
+        elif name == "sets_tire_friction":
+            _acs_expect_return(r, bool, "BaseAction.sets_tire_friction returns bool")
         elif name == "reissues_while_running":
             _acs_expect_return(r, bool, "BaseAction.reissues_while_running returns bool")
         elif name == "execute":
@@ -91,6 +93,10 @@ class BaseAction:
 
     @property
     def state(self) -> ActionState:
+        raise NotImplementedError()
+
+    @property
+    def sets_tire_friction(self) -> bool:
         raise NotImplementedError()
 
     @property

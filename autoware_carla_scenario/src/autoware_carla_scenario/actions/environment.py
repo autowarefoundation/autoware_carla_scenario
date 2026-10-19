@@ -13,6 +13,7 @@ import logging
 from typing import TYPE_CHECKING, Optional
 
 from ..conditions.base import BaseCondition
+from ..utils.vehicles import as_vehicle
 from .base import BaseAction, TickTiming
 
 if TYPE_CHECKING:
@@ -115,35 +116,35 @@ _TIRE_FACTORS: dict[int, float] = {}
 #: World (episode) id -> vehicle id -> its wheels' friction before any was
 #: applied: a later factor scales these, not what an earlier one left.
 _TIRE_BASES: dict[int, dict[int, list[float]]] = {}
+#: World (episode) id -> the ids of every actor already looked at, vehicle or
+#: not, so following the world reads only the actors new since.
+_TIRE_SEEN: dict[int, set[int]] = {}
 
 
-def _as_vehicle(actor: "carla.Actor") -> "carla.Vehicle":
-    """*actor* as the vehicle a physics control is read from and applied to.
+def _tire_state(world_id: int) -> tuple[dict[int, list[float]], set[int]]:
+    """The world's base frictions and seen actors; another world's are dropped
+    (an episode once left is not come back to)."""
+    for old in [w for w in _TIRE_BASES if w != world_id]:
+        # `in` and `del` rather than pop() with a default, which Codon lacks.
+        del _TIRE_BASES[old]
+        if old in _TIRE_SEEN:
+            del _TIRE_SEEN[old]
+        if old in _TIRE_FACTORS:
+            del _TIRE_FACTORS[old]
+    return _TIRE_BASES.setdefault(world_id, {}), _TIRE_SEEN.setdefault(world_id, set())
 
-    At run time that is *actor* itself, which typesafe_carla's Python API
-    takes as it is.  Its Codon library has the physics control on a
-    ``carla.Vehicle`` only, which the check gets with the checked conversion
-    (Codon reads ``TYPE_CHECKING`` as a compile-time true, docs/typecheck.md).
-    """
-    if TYPE_CHECKING:
-        return actor.as_vehicle()
-    else:
-        return actor
 
-
-def _scale_wheels(world_id: int, actor: "carla.Actor", factor: float) -> None:
+def _scale_wheels(
+    bases: dict[int, list[float]], actor: "carla.Actor", factor: float
+) -> None:
     """Set *actor*'s wheel friction to *factor* times what it was spawned with."""
-    vehicle = _as_vehicle(actor)
+    vehicle = as_vehicle(actor)
     physics = vehicle.get_physics_control()
     wheels = list(physics.wheels)
-    bases = _TIRE_BASES.setdefault(world_id, {})
     if actor.id not in bases:
         bases[actor.id] = [float(w.friction_force_multiplier) for w in wheels]
-    base = bases[actor.id]
-    if len(base) != len(wheels):
-        return
     changed = False
-    for wheel, spawned in zip(wheels, base):
+    for wheel, spawned in zip(wheels, bases[actor.id]):
         wanted = spawned * factor
         if abs(float(wheel.friction_force_multiplier) - wanted) > 1e-6:
             wheel.friction_force_multiplier = wanted
@@ -153,20 +154,19 @@ def _scale_wheels(world_id: int, actor: "carla.Actor", factor: float) -> None:
         vehicle.apply_physics_control(physics)
 
 
-def _scale_vehicles(world: "carla.World", factor: float, only_new: bool) -> int:
-    """Scale the wheels of the world's vehicles (those not yet scaled, with
-    *only_new*); return how many were scaled."""
-    world_id = world.id
-    seen = _TIRE_BASES.setdefault(world_id, {})
+def _scale_vehicles(
+    world: "carla.World", actors: "carla.ActorList", factor: float
+) -> int:
+    """Scale the wheels of the vehicles among *actors*; return how many."""
+    bases, seen = _tire_state(world.id)
     count = 0
-    for actor in world.get_actors().filter("vehicle.*"):
-        if only_new and actor.id in seen:
-            continue
+    for actor in actors.filter("vehicle.*"):
+        # Looked at once: a vehicle gone since the list was read, or one
+        # without wheels, is left as it is rather than tried every tick.
+        seen.add(actor.id)
         # One `except` per exception: Codon takes no tuple (docs/typecheck.md).
-        # A vehicle gone since the list was read, or one without wheels, is
-        # left as it is.
         try:
-            _scale_wheels(world_id, actor, factor)
+            _scale_wheels(bases, actor, factor)
         except RuntimeError:
             continue
         except AttributeError:
@@ -180,15 +180,21 @@ def apply_tire_friction(world: "carla.World", factor: float) -> None:
 
     The factor is remembered for the world, so :func:`follow_tire_friction`
     gives the vehicles spawned later the same.  Applied again, a factor
-    replaces the last one rather than scaling what it left.
+    replaces the last one rather than scaling what it left; the same factor
+    again only reaches the vehicles new since.
 
     Raises:
         ValueError: If *factor* is not positive.
     """
     if not factor > 0.0:
         raise ValueError(f"tire friction must be positive, got {factor}")
-    _TIRE_FACTORS[world.id] = factor
-    count = _scale_vehicles(world, factor, only_new=False)
+    world_id = world.id
+    _tire_state(world_id)
+    if world_id in _TIRE_FACTORS and _TIRE_FACTORS[world_id] == factor:
+        follow_tire_friction(world)
+        return
+    _TIRE_FACTORS[world_id] = factor
+    count = _scale_vehicles(world, world.get_actors(), factor)
     logger.info(
         "Tire friction set to %.3f of the dry road's on %d vehicle(s)", factor, count
     )
@@ -197,14 +203,22 @@ def apply_tire_friction(world: "carla.World", factor: float) -> None:
 def follow_tire_friction(world: "carla.World") -> None:
     """Give the vehicles spawned since the last call the world's tire friction.
 
-    A tick callback (``scenario.register_post_tick(follow_tire_friction)``):
-    background traffic spawns during the run, after the weather was set.
-    Nothing happens before :func:`apply_tire_friction` set one for *world*.
+    A tick callback, which :class:`~autoware_carla_scenario.BaseScenario`
+    registers for a scenario with an action that sets the grip: background
+    traffic spawns during the run, after the weather was set.  It reads the
+    actors' ids off the world's snapshot and asks the server only for those
+    it has not looked at; nothing happens before :func:`apply_tire_friction`
+    set a factor for *world*.
     """
     world_id = world.id
     if world_id not in _TIRE_FACTORS:
         return
-    _scale_vehicles(world, _TIRE_FACTORS[world_id], only_new=True)
+    _bases, seen = _tire_state(world_id)
+    new = [snapshot.id for snapshot in world.get_snapshot() if snapshot.id not in seen]
+    if len(new) == 0:
+        return
+    seen.update(new)
+    _scale_vehicles(world, world.get_actors(new), _TIRE_FACTORS[world_id])
 
 
 def _set_weather_field(
