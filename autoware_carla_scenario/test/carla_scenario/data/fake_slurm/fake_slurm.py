@@ -204,13 +204,17 @@ def squeue(args: list[str]) -> int:
 
 
 def scancel(args: list[str]) -> int:
-    for job in args:
-        if job.startswith("-"):
-            continue
+    jobs = [job for job in args if not job.startswith("-")]
+    # Every pending task first: a job waiting on another (the collect job,
+    # --dependency=afterany) must not start in the moment between the
+    # other's tasks ending and its own cancel.
+    for job in jobs:
         for task, state in _tasks(job).items():
             if state.get("state") == "PENDING":
                 _write(_job_dir(job) / f"{task}.json", {"state": "CANCELLED"})
-            elif state.get("state") == "RUNNING":
+    for job in jobs:
+        for task, state in _tasks(job).items():
+            if state.get("state") == "RUNNING":
                 state["state"] = "CANCELLED"
                 _write(_job_dir(job) / f"{task}.json", state)
                 try:
