@@ -8,8 +8,10 @@ so the scenario check runs mypy over the scenario's own modules, the ones it
 compiles, and keeps only what mypy reports of a value that may be ``None``
 used where it may not be: an attribute of it (``union-attr``), an operator
 (``operator``), an argument (``arg-type``), an assignment (``assignment``),
-a return (``return-value``), an index (``index``) or an overloaded call
-(``call-overload``), each only where ``None`` is the offending type
+a return (``return-value``), an index (``index``), an overloaded call
+(``call-overload``) or an item of a list or dict display (``list-item``,
+``dict-item``; a set display's is an ``arg-type``, #308), each only where
+``None`` is the offending type
 (:func:`is_none_misuse`): an operand or an item that is ``None`` or a union
 holding it, or a value whose type holds ``None`` where the type expected
 does not.  A message that merely mentions ``None`` (``"Callable[[Any], str |
@@ -21,6 +23,18 @@ non-Optional annotation (``speed: float = None``, which Codon reads as an
 ``Optional[float]``), or a value assigned to an attribute mypy inferred as
 ``None`` from its first assignment.  Neither uses a value that may be
 ``None``; a use of it later is reported at the use.
+
+The same pass keeps a second kind of finding (#309): Codon holds a union of
+the framework's classes the model declares as a ``Union``
+(``TrajectoryVertex.position``, a :data:`TrajectoryPosition`) and converts
+it to whichever member a use needs at run time, so an attribute of one
+member, or the union passed where one member is expected, compiles without
+the ``isinstance`` test Python needs.  mypy reports both (``union-attr``,
+``arg-type``), and they are kept where the union mypy names is made of the
+members of one of the model's unions (:func:`framework_unions`, read from
+the model, so it follows the model), as :data:`UNION` findings with their
+own advice.  mypy reports an attribute missing on several members once per
+member; the check reports it once, naming them all.
 
 mypy runs as its own process (``python -m mypy``), with no configuration file
 (the scenario package's own mypy settings do not apply), following imports
@@ -50,6 +64,7 @@ check reports as a warning.
 
 from __future__ import annotations
 
+import dataclasses
 import importlib.util
 import os
 import re
@@ -57,6 +72,7 @@ import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 
 from .carla_stubs import carla_stub_root
@@ -64,8 +80,13 @@ from .carla_stubs import carla_stub_root
 __all__ = [
     "NoneCheckSkipped",
     "NoneFinding",
+    "NONE",
+    "UNION",
+    "FrameworkUnion",
     "find_none_misuses",
+    "framework_unions",
     "is_none_misuse",
+    "is_union_misuse",
     "run_none_check",
 ]
 
@@ -79,8 +100,20 @@ NONE_CODES = frozenset(
         "return-value",
         "index",
         "call-overload",
+        # An item of a list or dict display (#308); a set display's item is
+        # an argument to mypy (``Argument 2 to <set> ...``, ``arg-type``).
+        "list-item",
+        "dict-item",
     }
 )
+
+#: The mypy error codes of a framework union used as one of its members (#309).
+UNION_CODES = frozenset({"union-attr", "arg-type"})
+
+#: :attr:`NoneFinding.kind`: a value that may be None, used where it may not.
+NONE = "none"
+#: :attr:`NoneFinding.kind`: a framework union used as one of its members.
+UNION = "union"
 
 #: An ``assignment`` that only declares (see the module's docstring): a
 #: ``None`` default or value for a non-Optional annotation, or a value for a
@@ -99,8 +132,18 @@ _EXPECTED = re.compile(
     r'(?: for ".*?")?[;,] (?:expected|variable has type|target has type|expected type) '
     r'"(?P<expected>.*?)"'
 )
+#: ``Dict entry 0 has incompatible type "K": "V"; expected "K": "V"``
+#: (``dict-item``): the key's and the value's types, of each side.
+_DICT_ENTRY = re.compile(
+    r'incompatible type "(?P<key>.*?)": "(?P<value>.*?)"; '
+    r'expected "(?P<expected_key>.*?)": "(?P<expected_value>.*?)"'
+)
 #: ``Item "None" of "X | None" has no attribute "y"`` (``union-attr``).
 _NONE_ITEM = re.compile(r'\bItem "None" of "')
+#: ``Item "A" of "A | B" has no attribute "y"`` (``union-attr``).
+_ITEM = re.compile(
+    r'^Item "(?P<item>.*?)" of "(?P<union>.*?)" has no attribute "(?P<attr>.*?)"$'
+)
 _QUOTED = re.compile(r'"(.*?)"')
 
 _LINE = re.compile(
@@ -145,6 +188,11 @@ def _holds_none(type_text: str) -> bool:
     return "None" in _members(type_text)
 
 
+def _offends(actual: str, expected: str) -> bool:
+    """Whether *actual* holds ``None`` and *expected* does not."""
+    return _holds_none(actual) and not _holds_none(expected)
+
+
 def is_none_misuse(code: str, message: str) -> bool:
     """Whether mypy's error *message* (of *code*) is of a value that may be None.
 
@@ -161,17 +209,129 @@ def is_none_misuse(code: str, message: str) -> bool:
         return False
     if code == "union-attr":
         return _NONE_ITEM.search(message) is not None
+    if code == "dict-item":
+        entry = _DICT_ENTRY.search(message)
+        return entry is not None and (
+            _offends(entry["key"], entry["expected_key"])
+            or _offends(entry["value"], entry["expected_value"])
+        )
     expected = _EXPECTED.search(message)
     if expected is not None:
-        return _holds_none(expected["actual"]) and not _holds_none(expected["expected"])
+        return _offends(expected["actual"], expected["expected"])
     if code in ("operator", "index", "call-overload"):
         return any(_holds_none(t) for t in _QUOTED.findall(message))
     return False
 
 
+#: The model of the framework the check compiles against.
+_MODEL_PACKAGE = Path(__file__).resolve().parent / "codon" / "autoware_carla_scenario"
+
+#: ``Name = Union[A, B]`` at the top level of a model file, or a method's
+#: ``-> Union[A, B]`` (a property: ``TrajectoryVertex.position``).
+_MODEL_UNION = re.compile(
+    r"^(?:(?P<alias>[A-Za-z_]\w*) = |[ \t]+def (?P<attribute>\w+)\(self\) -> )"
+    r"Union\[(?P<members>[^\[\]]*)\]",
+    re.MULTILINE,
+)
+_MODEL_CLASS = re.compile(r"^class (?P<name>\w+)\b", re.MULTILINE)
+
+
+@dataclass(frozen=True)
+class FrameworkUnion:
+    """A union of the framework's classes that the model holds as a Codon ``Union``.
+
+    *module* is the framework module the model file stands for
+    (``autoware_carla_scenario.trajectory``), *name* the alias
+    (``TrajectoryPosition``), or ``Class.attribute`` for a property whose
+    type the model spells out.
+    """
+
+    module: str
+    name: str
+    members: frozenset[str]
+
+
+@lru_cache(maxsize=1)
+def framework_unions() -> tuple[FrameworkUnion, ...]:
+    """The unions of classes the model of the framework holds as a ``Union``.
+
+    Read from the model (``typecheck/codon/autoware_carla_scenario``): each
+    module-level ``Name = Union[...]`` alias and each property declared to
+    return a ``Union[...]``, with no ``None`` among its members (an
+    ``Optional``, which is the None check's).  So the list follows the
+    model; ``test_typecheck_none_check`` checks that each is the union
+    Python's module of the framework declares.
+    """
+    out: list[FrameworkUnion] = []
+    for path in sorted(_MODEL_PACKAGE.rglob("*.codon")):
+        relative = path.relative_to(_MODEL_PACKAGE).with_suffix("")
+        parts = [p for p in relative.parts if p != "__init__"]
+        module = ".".join(["autoware_carla_scenario", *parts])
+        text = path.read_text(encoding="utf-8")
+        classes = [(m.start(), m["name"]) for m in _MODEL_CLASS.finditer(text)]
+        for match in _MODEL_UNION.finditer(text):
+            members = frozenset(
+                m.strip() for m in match["members"].replace("\n", " ").split(",")
+            )
+            if len(members) < 2 or "None" in members:
+                continue
+            if not all(re.fullmatch(r"[A-Za-z_]\w*", m) for m in members):
+                continue
+            if match["alias"]:
+                name = match["alias"]
+            else:
+                owner = [c for start, c in classes if start < match.start()]
+                if not owner:
+                    continue
+                name = f"{owner[-1]}.{match['attribute']}"
+            out.append(FrameworkUnion(module, name, members))
+    return tuple(out)
+
+
+def _short(member: str) -> str:
+    """*member* without its module (mypy qualifies a name it finds ambiguous)."""
+    if member == "..." or not re.fullmatch(r"[\w.]+", member):
+        return member
+    return member.rpartition(".")[2]
+
+
+def framework_union_of(type_text: str) -> FrameworkUnion | None:
+    """The framework union (:func:`framework_unions`) *type_text* is made of.
+
+    *type_text* is a union as mypy spells it, of two members or more besides
+    ``None`` (and the ``...`` mypy may shorten a long one with), all members
+    of one of the framework's unions: an alias first, so a property of the
+    same members is named by it.
+    """
+    members = {_short(m) for m in _members(type_text)} - {"None", "..."}
+    if len(members) < 2:
+        return None
+    found = [u for u in framework_unions() if members <= u.members]
+    found.sort(key=lambda u: ("." in u.name, len(u.members)))
+    return found[0] if found else None
+
+
+def is_union_misuse(code: str, message: str) -> bool:
+    """Whether mypy's error *message* (of *code*) uses a framework union as one member.
+
+    It is when the union an attribute is missing on (``union-attr``), or the
+    type given where another is expected (``arg-type``), is made of the
+    members of one of the model's unions (:func:`framework_union_of`), and
+    the message is not the None check's (:func:`is_none_misuse`).
+    """
+    if code not in UNION_CODES or is_none_misuse(code, message):
+        return False
+    if code == "union-attr":
+        item = _ITEM.match(message)
+        return item is not None and framework_union_of(item["union"]) is not None
+    expected = _EXPECTED.search(message)
+    return expected is not None and framework_union_of(expected["actual"]) is not None
+
+
 @dataclass(frozen=True)
 class NoneFinding:
-    """What mypy reports of a value that may be None, at its place."""
+    """What mypy reports of a value that may be None, at its place, or of a
+    framework union used as one of its members (*kind* :data:`UNION`)."""
 
     path: str
     line: int
@@ -179,6 +339,59 @@ class NoneFinding:
     message: str
     code: str
     notes: tuple[str, ...] = ()
+    kind: str = NONE
+
+    @property
+    def union(self) -> FrameworkUnion | None:
+        """The framework union a :data:`UNION` finding is of."""
+        if self.kind != UNION:
+            return None
+        item = _ITEM.match(self.message) or _ITEMS.match(self.message)
+        if item is not None:
+            return framework_union_of(item["union"])
+        expected = _EXPECTED.search(self.message)
+        return framework_union_of(expected["actual"]) if expected else None
+
+
+#: The findings :func:`_merged_items` makes of several ``Item "A" of "U"``.
+_ITEMS = re.compile(
+    r'^Items (?P<items>".*?") of "(?P<union>.*?)" have no attribute "(?P<attr>.*?)"$'
+)
+
+
+def _merged_items(findings: list[NoneFinding]) -> list[NoneFinding]:
+    """*findings*, with the ``union-attr`` :data:`UNION` findings mypy makes of
+    one attribute, one per member of the union lacking it, made one."""
+    out: list[NoneFinding] = []
+    merged: dict[tuple[str, int, int | None, str, str], int] = {}
+    for finding in findings:
+        item = _ITEM.match(finding.message) if finding.kind == UNION else None
+        if item is None:
+            out.append(finding)
+            continue
+        key = (finding.path, finding.line, finding.column, item["union"], item["attr"])
+        if key not in merged:
+            merged[key] = len(out)
+            out.append(finding)
+            continue
+        first = out[merged[key]]
+        items = [
+            *(
+                _QUOTED.findall(m["items"])
+                if (m := _ITEMS.match(first.message))
+                else [_ITEM.match(first.message)["item"]]  # type: ignore[index]
+            ),
+            item["item"],
+        ]
+        message = (
+            "Items "
+            + ", ".join(f'"{i}"' for i in items)
+            + f' of "{item["union"]}" have no attribute "{item["attr"]}"'
+        )
+        out[merged[key]] = dataclasses.replace(
+            first, message=message, notes=(*first.notes, *finding.notes)
+        )
+    return out
 
 
 class NoneCheckSkipped(Exception):
@@ -387,19 +600,18 @@ def run_none_check(paths: list[Path], timeout: float = 600.0) -> list[NoneFindin
             continue
         if match["severity"] == "note":
             if current is not None and match["path"] == reported:
-                current = NoneFinding(
-                    current.path,
-                    current.line,
-                    current.column,
-                    current.message,
-                    current.code,
-                    (*current.notes, match["message"]),
+                current = dataclasses.replace(
+                    current, notes=(*current.notes, match["message"])
                 )
                 findings[-1] = current
             continue
         current = None
         code = match["code"] or ""
-        if not is_none_misuse(code, match["message"]):
+        if is_none_misuse(code, match["message"]):
+            kind = NONE
+        elif is_union_misuse(code, match["message"]):
+            kind = UNION
+        else:
             continue
         if code == "assignment" and _DECLARATION.search(match["message"]):
             continue
@@ -411,6 +623,7 @@ def run_none_check(paths: list[Path], timeout: float = 600.0) -> list[NoneFindin
             int(match["col"]) if match["col"] else None,
             match["message"],
             code,
+            kind=kind,
         )
         findings.append(current)
-    return findings
+    return _merged_items(findings)
