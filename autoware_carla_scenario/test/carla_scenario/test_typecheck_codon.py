@@ -7,6 +7,7 @@ dependency on Linux x86_64 and aarch64).
 from __future__ import annotations
 
 import ast
+import enum
 import importlib
 import os
 import re
@@ -666,6 +667,12 @@ def build() -> OddDefinition:
             text += "sampled on a tick"
     for module in odd.situations():
         text += module.name
+    # Instance attributes (#307): what the definition and an attribute hold.
+    for attribute in odd.attributes:
+        text += attribute.name + str(attribute.target)
+        cover = attribute.item
+        if cover is not None:
+            text += cover.name
     version = odd.version
     revision = odd.revision
     text += odd.structure_digest + str(len(odd.sources)) + str(version) + str(revision)
@@ -696,8 +703,13 @@ def test_an_odd_reads_what_openodd_s_classes_hold(tmp_path: Path) -> None:
             'urban.evaluate({"scenery.location": "urban"})',
             "OddCondition.evaluate is not part of the Codon model, on purpose",
         ),
+        (
+            # An instance attribute (#307), listed with its reason.
+            "location.probe",
+            "OddAttribute.probe is not part of the Codon model, on purpose",
+        ),
     ],
-    ids=["module-describe", "condition-evaluate"],
+    ids=["module-describe", "condition-evaluate", "attribute-probe"],
 )
 def test_an_odd_member_the_model_leaves_out_says_why(
     tmp_path: Path, read: str, message: str
@@ -1905,7 +1917,7 @@ def test_cases_that_differ_only_in_their_values_compile_once(
     such case's."""
     from autoware_carla_scenario.typecheck import check
 
-    monkeypatch.delenv(check.CACHE_DIR_ENV, raising=False)
+    monkeypatch.setenv(check.CACHE_DIR_ENV, "")  # this process's verdicts only
     monkeypatch.setattr(check, "_CACHE", {})
     compiled: list[str] = []
     compile_ = check._compile
@@ -3717,8 +3729,15 @@ def test_an_own_turn_at_junction_compiles_until_it_is_called(
             "get_details()",
             "BaseCondition.get_details is not part of the Codon model, on purpose",
         ),
+        (
+            # An instance attribute (#307): a class held as a value.
+            'logger.info("%s", self.ego_type.requires_goal)\n',
+            "self.ego_type",
+            "BaseScenario.ego_type is not part of the Codon model, on purpose: "
+            "the EgoVehicle subclass",
+        ),
     ],
-    ids=["traffic-backend", "condition-details"],
+    ids=["traffic-backend", "condition-details", "ego-type"],
 )
 def test_a_member_the_model_leaves_out_says_why(
     tmp_path: Path, setup: str, needle: str, message: str
@@ -3733,6 +3752,97 @@ def test_a_member_the_model_leaves_out_says_why(
     assert message in error.message, error.format()
     assert error.path == str(path)
     assert error.line == _line_of(path, needle)
+
+
+def _framework_enums() -> dict[str, tuple[str, type[enum.Enum]]]:
+    """Every enum the package exports, and the two a scenario imports from a
+    submodule: name -> (module, the enum)."""
+    import autoware_carla_scenario as acs
+    from autoware_carla_scenario.action_state import ActionState
+    from autoware_carla_scenario.coverage import CoverGroup
+
+    out = {
+        name: ("autoware_carla_scenario", getattr(acs, name))
+        for name in sorted(set(acs.__all__) | set(acs._LAZY_IMPORTS))
+        if isinstance(getattr(acs, name, None), type)
+        and issubclass(getattr(acs, name), enum.Enum)
+    }
+    out["ActionState"] = ("autoware_carla_scenario.action_state", ActionState)
+    out["CoverGroup"] = ("autoware_carla_scenario.coverage", CoverGroup)
+    return out
+
+
+def _enum_reads() -> tuple[str, str]:
+    """(imports, setup): each framework enum member's name and value read,
+    and the enums' own methods and properties (#307)."""
+    enums = _framework_enums()
+    # Those _HEADER does not import already: Codon 0.19 cannot resolve a
+    # name imported twice once it is used (#311).
+    imports = "".join(
+        f"from {module} import {name}\n"
+        for name, (module, _) in enums.items()
+        if f"    {name},\n" not in _HEADER
+    )
+    lines = []
+    for name, (_module, python) in enums.items():
+        for member in python:
+            lines.append(f"names.append({name}.{member.name}.name)")
+        first = next(iter(python))
+        kind = type(first.value).__name__
+        lines.append(f"{name.lower()}_value: {kind} = {name}.{first.name}.value")
+    return imports, "names: list[str] = []\n" + "\n".join(lines) + "\n"
+
+
+_INSTANCE_READS = """
+self._setup_ego_spawn()
+timeout = TimeoutCondition(cfg.timeout_seconds, label="timeout")
+logger.info("limit %f", timeout.timeout_seconds)
+longer = LongerTimeout(5.0, label="longer")
+logger.info("longer %f", longer.timeout_seconds)
+logger.info("ego requires goal: %s", self.ego_requires_goal)
+logger.info("%s", ComparisonRule.LESS_THAN.text)
+logger.info("%s", LaneChangeDirection.LEFT.to_carla_bool())
+logger.info("%s", CollisionTargetType.VEHICLE.matches("vehicle.tesla.model3"))
+logger.info("%s", CollisionTargetType.ANY.matches(None))
+frame = scenario_route_frame()
+first = frame.lanelets[0]
+layer = frame.map.laneletLayer
+graph = frame.graph
+logger.info("%f %d %d", frame.match.length, len(frame.lanelets), first.id)
+"""
+
+# A subclass's __init__ may assign an attribute the model reads as a
+# property (#307): the assignment declares the subclass's own attribute.
+_LONGER_TIMEOUT = """
+
+class LongerTimeout(TimeoutCondition):
+    def __init__(self, timeout_seconds: float, label: str) -> None:
+        super().__init__(timeout_seconds, label=label)
+        self.timeout_seconds = timeout_seconds * 2.0
+"""
+
+
+def test_a_scenario_reads_instance_attributes_and_enum_members(
+    tmp_path: Path,
+) -> None:
+    # Instance attributes (TimeoutCondition.timeout_seconds, RouteFrame's)
+    # and every framework enum member's name, value and own methods compile
+    # (#307), as they run in Python.
+    imports, enum_reads = _enum_reads()
+    header = _HEADER.replace(
+        "import logging\n",
+        "import logging\n"
+        "from autoware_carla_scenario.route import scenario_route_frame\n" + imports,
+        1,
+    )
+    scenario, config, _ = _write_case(
+        tmp_path,
+        _INSTANCE_READS + enum_reads + _TIMEOUT_SETUP,
+        _LONGER_TIMEOUT,
+        header=header,
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
 
 
 _ROUTE_HEADER = _HEADER.replace(

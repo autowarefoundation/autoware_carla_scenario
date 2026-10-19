@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any, Optional, Union
 
 from ...entity_role import EntityRole
 from ...kinematics import AbsoluteVelocity, RelativeVelocity
-from ..base import ScenarioResult, find_actor_pair
+from ..base import ScenarioResult, find_actor_by_role_name
 from ..comparison import ComparisonRule, ScalarComparisonRule
 from .base import CompositionCondition, entity_axes
 from .speed import SpeedDirection
@@ -94,12 +94,11 @@ class RelativeSpeedCondition(CompositionCondition):
         )
         return details
 
-    def _measure(self, actors: "carla.ActorList") -> Optional[float]:
+    def _measure(self, world: "carla.World") -> Optional[float]:
         """Return the relative speed component, or ``None`` when unknowable."""
         assert self._entity_name is not None  # noqa: S101
-        entity, reference = find_actor_pair(
-            actors, self._entity_name, self._reference_entity_name
-        )
+        entity = find_actor_by_role_name(world, self._entity_name)
+        reference = find_actor_by_role_name(world, self._reference_entity_name)
         if entity is None or reference is None:
             return None
 
@@ -125,7 +124,7 @@ class RelativeSpeedCondition(CompositionCondition):
 
     def _check(self, world: "carla.World", elapsed: float) -> Optional[ScenarioResult]:
         """Return a pass result once the relative speed satisfies the rule."""
-        component = self._measure(world.get_actors())
+        component = self._measure(world)
         if component is None:
             return None
         if not self._comparison.satisfied(component):

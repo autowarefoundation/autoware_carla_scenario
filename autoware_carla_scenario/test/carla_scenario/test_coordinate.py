@@ -760,3 +760,32 @@ class TestZOffsetFromSpawnPoints:
         assert map_manager._z_offset_from_spawn_points(world) == pytest.approx(
             0.0, abs=0.05
         )
+
+
+def test_the_reference_lines_kept_are_the_loaded_networks() -> None:
+    """Kept per network, not per map name: a queue loads the next run's map
+    into a new network, whose roads must not be measured against the last."""
+    from types import SimpleNamespace
+
+    import numpy as np
+
+    from autoware_carla_scenario.coordinate import transform
+
+    def network(length: float) -> SimpleNamespace:
+        line = np.array([[0.0, 0.0], [length, 0.0]])
+        short = np.array([[0.0, 0.0]])  # fewer than two vertices: left out
+        return SimpleNamespace(
+            road_ids_to_object={
+                "1": SimpleNamespace(reference_line=line),
+                "2": SimpleNamespace(reference_line=short),
+            }
+        )
+
+    first, second = network(10.0), network(20.0)
+    assert transform._road_arc_lengths(first, "1").tolist() == [0.0, 10.0]
+    assert transform._ref_lines(first) is transform._ref_lines(first)
+    assert transform._road_arc_lengths(second, "1").tolist() == [0.0, 20.0]
+    assert transform._road_arc_lengths(second, "2").tolist() == [0.0]
+    _network, roads, stacked, starts, _arcs = transform._ref_lines(second)
+    assert [road[0] for road in roads] == ["1"] and starts == [0]
+    assert stacked.shape == (2, 2)

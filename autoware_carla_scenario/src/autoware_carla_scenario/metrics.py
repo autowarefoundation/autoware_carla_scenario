@@ -45,7 +45,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable, Optional
 
 from .constants import EGO_ROLE_NAME
-from .entity_role import find_actor_in_list
+from .entity_role import find_actor_in_world
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
@@ -381,7 +381,9 @@ def _frame(world: "carla.World") -> _Frame:
 def _read_frame(world: "carla.World") -> _Frame:
     try:
         actors = list(world.get_actors())
-        ego = find_actor_in_list(actors, EGO_ROLE_NAME)
+        # By id once found: a scan by role name reads every actor's
+        # attributes, which CARLA builds anew for each read.
+        ego = find_actor_in_world(world, EGO_ROLE_NAME)
     except Exception:
         ego = None
     if ego is None:

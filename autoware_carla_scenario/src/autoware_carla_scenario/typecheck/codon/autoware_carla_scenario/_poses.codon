@@ -12,6 +12,17 @@ class CoordinateFrame:
     LANELET2: ClassVar[CoordinateFrame] = CoordinateFrame(2)
     OPENDRIVE: ClassVar[CoordinateFrame] = CoordinateFrame(3)
 
+    # Enum's name (#307): Codon has no Enum to give a framework enum one.
+    @property
+    def name(self) -> str:
+        if self == CoordinateFrame.CARLA_WORLD:
+            return "CARLA_WORLD"
+        if self == CoordinateFrame.LANELET2:
+            return "LANELET2"
+        if self == CoordinateFrame.OPENDRIVE:
+            return "OPENDRIVE"
+        raise ValueError("not a member of CoordinateFrame")
+
 
 class FrameMismatchError(Static[Exception]):
     frame_a: CoordinateFrame

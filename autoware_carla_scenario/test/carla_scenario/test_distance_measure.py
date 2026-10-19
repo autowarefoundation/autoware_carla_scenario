@@ -283,3 +283,46 @@ class TestDefaultsAndGuards:
         details = condition.get_details()
         assert details["distance_type"] == "LATERAL"
         assert details["edge_to_edge"] is True
+
+
+def test_a_tick_reads_the_two_entities_and_not_every_actor() -> None:
+    """Both ends are looked up by id once found: a scan by role name reads the
+    ``attributes`` of every actor on the map (CARLA builds that dict anew on
+    each read), and a condition is checked every tick."""
+    from ._fake_world import ActorsById
+
+    reads: list[int] = []
+
+    class _Counted:
+        def __init__(self, actor_id: int, role: str) -> None:
+            self.id = actor_id
+            self.is_alive = True
+            self._role = role
+            mock = _actor(role, (float(actor_id), 0.0, 0.0))
+            self.get_location = mock.get_location
+            self.get_transform = mock.get_transform
+            self.bounding_box = mock.bounding_box
+
+        @property
+        def attributes(self) -> dict[str, str]:
+            reads.append(self.id)
+            return {"role_name": self._role}
+
+    class _World(ActorsById):
+        def __init__(self) -> None:
+            # Lights and sensors first: what a scan walks before the cars.
+            self.actors = [_Counted(i, f"light{i}") for i in range(50)]
+            self.actors += [_Counted(100, "Ego"), _Counted(101, "npc1")]
+
+        def get_actors(self) -> list[_Counted]:
+            return self.actors
+
+    world = _World()
+    condition = _condition()
+    condition.check(world, 0.0)  # the first tick finds them
+    reads.clear()
+    for tick in range(1, 11):
+        condition.check(world, tick * 0.05)
+    # The two entities, a few reads a tick; never the 50 actors before them.
+    assert sorted(set(reads)) == [100, 101]
+    assert len(reads) <= 3 * 10

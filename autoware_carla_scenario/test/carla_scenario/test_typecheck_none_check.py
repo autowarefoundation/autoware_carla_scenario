@@ -160,6 +160,38 @@ def test_a_link_that_cannot_be_made_gives_no_verdict(
         run_none_check([module])
 
 
+@pytest.mark.parametrize("variable", ["MYPYPATH", "PYTHONPATH"])
+def test_a_relative_search_path_entry_is_searched(
+    variable: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """mypy runs in a directory of its own, so a relative ``MYPYPATH`` or
+    ``PYTHONPATH`` entry is made absolute against the one the check runs
+    from; otherwise mypy would find nothing there and report nothing."""
+    if variable == "MYPYPATH":
+        (tmp_path / "found").mkdir()
+        (tmp_path / "found" / "helperlib.pyi").write_text(
+            "def get() -> int | None: ...\n", encoding="utf-8"
+        )
+    else:
+        package = tmp_path / "found" / "helperlib"
+        package.mkdir(parents=True)
+        (package / "__init__.py").write_text(
+            "def get() -> int | None:\n    return None\n", encoding="utf-8"
+        )
+        (package / "py.typed").write_text("", encoding="utf-8")
+    module = tmp_path / "scenario.py"
+    module.write_text(
+        "import helperlib\n\n\ndef value() -> int:\n    return helperlib.get()\n",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("MYPYPATH", raising=False)
+    monkeypatch.delenv("PYTHONPATH", raising=False)
+    monkeypatch.setenv(variable, "found")
+    findings = run_none_check([Path("scenario.py")])
+    assert [f.line for f in findings] == [5], findings
+
+
 def test_no_module_gives_no_verdict() -> None:
     assert find_none_misuses([]) is None
 

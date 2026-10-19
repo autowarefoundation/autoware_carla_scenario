@@ -108,6 +108,17 @@ class OddAttribute:
         self.unit = unit
         self.text = text
 
+    # Python's instance attributes, read as properties (#307): fields would
+    # change the constructor Codon generates. The probe is not modelled
+    # (NOT_MODELLED_MEMBERS).
+    @property
+    def target(self) -> float:
+        raise NotImplementedError()
+
+    @property
+    def item(self) -> Optional[CoverItem]:
+        raise NotImplementedError()
+
     @property
     def cover_by(self) -> str:
         raise NotImplementedError()
@@ -266,6 +277,12 @@ class OddDefinition:
             for module in _acs_sequence(modules, OddModule):
                 self.modules.append(module)
         self.text = text
+
+    # Python's instance attribute, read as a property (#307), as roots and
+    # the rest are: a field would change the constructor Codon generates.
+    @property
+    def attributes(self) -> List[OddAttribute]:
+        raise NotImplementedError()
 
     @property
     def roots(self) -> List[str]:
