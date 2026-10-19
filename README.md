@@ -1,6 +1,6 @@
 # Autoware CARLA Scenario
 
-A scenario-testing framework for validating [Autoware](https://www.autoware.org/)
+A scenario-testing framework for validating [Autoware](https://autoware.org/)
 on the [CARLA](https://carla.org/) simulator. A Hydra-driven scenario runner
 loads an OpenDRIVE map into CARLA, drives an Autoware ego vehicle, evaluates
 pass/fail conditions, and records JSON results and a trajectory log of every
