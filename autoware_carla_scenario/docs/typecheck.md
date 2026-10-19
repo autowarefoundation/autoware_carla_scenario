@@ -70,7 +70,9 @@ since Codon types it statically and reads no value at compile time. The
 cases of a sweep that differ only in their values are therefore one program,
 compiled for the first case and reused, verdict and diagnostics, for the
 others (logged as "reusing the static check made for the config with the
-same types"); a failure refuses each of them. What changes the shape
+same types"); a failure refuses each of them. `scenario-check` checks
+configs side by side, and one whose program is being compiled when it
+starts waits for that compile rather than starting its own. What changes the shape
 compiles again: another key or order of keys, a value of another type (an
 int where the first case had a float in a field not typed `float`, `None`
 where it had a value), another length of a list, a mapping the config

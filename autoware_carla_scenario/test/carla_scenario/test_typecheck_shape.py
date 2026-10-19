@@ -12,6 +12,8 @@ import ast
 import dataclasses
 import enum
 import logging
+import threading
+from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Optional
@@ -230,6 +232,52 @@ def test_a_failed_check_refuses_every_case_of_its_shape(
         assert result.diagnostics[0].path == "scenario.timeout_seconds"
         with pytest.raises(check.ScenarioTypeError):
             _enforce(result, "auto")
+
+
+def test_a_check_of_a_shape_being_compiled_waits_for_it(
+    compiles: list[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """scenario-check runs configs in threads: the second of a shape waits for
+    the first one's compile instead of starting its own."""
+    compile_ = check._compile
+    waiting = threading.Event()
+
+    class Watched(Future[TypeCheckResult]):
+        def result(self, timeout: Optional[float] = None) -> TypeCheckResult:
+            waiting.set()
+            return super().result(timeout)
+
+    def blocked(*args: Any) -> Optional[TypeCheckResult]:
+        assert waiting.wait(30), "the second check never waited"
+        return compile_(*args)
+
+    monkeypatch.setattr(check, "Future", Watched)
+    monkeypatch.setattr(check, "_compile", blocked)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(_check, timeout_seconds=5.0)
+        second = pool.submit(_check, timeout_seconds=7.5)
+        assert first.result(60) is second.result(60)
+    assert len(compiles) == 1
+    assert check._IN_FLIGHT == {}
+
+
+def test_a_failed_compile_fails_the_checks_waiting_for_it(
+    compiles: list[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    owned: Future[TypeCheckResult] = Future()
+    owned.set_exception(RuntimeError("codon died"))
+    key_of: list[str] = []
+
+    def spy(key: str, sources: Any) -> None:
+        key_of.append(key)
+        check._IN_FLIGHT[key] = owned  # another thread is compiling it
+        return None
+
+    monkeypatch.setattr(check, "_cached", spy)
+    with pytest.raises(RuntimeError, match="codon died"):
+        _check(timeout_seconds=5.0)
+    assert compiles == []
+    check._IN_FLIGHT.pop(key_of[0])
 
 
 def test_a_timed_out_check_is_not_reused(
