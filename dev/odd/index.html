@@ -1771,6 +1771,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#tire-friction-follows-the-weather" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tire friction follows the weather
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#the-road-a-case-is-on" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2317,6 +2328,17 @@
         
       </ul>
     </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#tire-friction-follows-the-weather" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tire friction follows the weather
+      
+    </span>
+  </a>
   
 </li>
         
@@ -3315,6 +3337,7 @@ path); a scenario on another ODD starts afresh.</p>
 <a id="__codelineno-16-7" name="__codelineno-16-7" href="#__codelineno-16-7"></a><span class="w">    </span><span class="nt">odd</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">null</span><span class="w">              </span><span class="c1"># the ODD to draw from; the run's (`odd`) by default</span>
 <a id="__codelineno-16-8" name="__codelineno-16-8" href="#__codelineno-16-8"></a><span class="w">    </span><span class="nt">knobs</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{}</span><span class="w">              </span><span class="c1"># by ODD attribute, replacing the scenario's controls; see below</span>
 <a id="__codelineno-16-9" name="__codelineno-16-9" href="#__codelineno-16-9"></a><span class="w">    </span><span class="nt">flaky</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">null</span><span class="w">            </span><span class="c1"># look for flaky cases; see "Finding flaky cases" below</span>
+<a id="__codelineno-16-10" name="__codelineno-16-10" href="#__codelineno-16-10"></a><span class="w">    </span><span class="nt">tire_friction</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span><span class="w">    </span><span class="c1"># draw each case's grip in the range its weather allows; see "Tire friction follows the weather"</span>
 </code></pre></div>
 <p>Each case is a list of Hydra overrides. A sweep that also has <code>constraints</code>
 gives each drawn case the next lanelet case in turn; one without draws from
@@ -3543,6 +3566,61 @@ sweep carries the world's precipitation and fog density
 (<a href="../driver_interface/#lidar">LiDAR</a>).</p>
 <p>A scenario that sets the weather itself (its own <code>EnvironmentAction</code>) has
 the last word over the config.</p>
+<h3 id="tire-friction-follows-the-weather">Tire friction follows the weather<a class="headerlink" href="#tire-friction-follows-the-weather" title="Permanent link">&para;</a></h3>
+<p>CARLA draws rain but does not drive on it: a vehicle grips a soaked road as
+it grips a dry one. So an <code>EnvironmentAction</code> that sets the road's water --
+<code>rain</code>, <code>wetness</code> or <code>precipitation_deposits</code> -- also scales every vehicle's
+wheel friction (<code>friction_force_multiplier</code>) to a share of the dry road's
+grip, within the range the resulting weather leaves
+(<code>tire_friction_range</code>), by the larger of <code>wetness</code> and
+<code>precipitation_deposits</code>:</p>
+<table>
+<thead>
+<tr>
+<th>Road water</th>
+<th>Grip, share of the dry road's</th>
+<th>What <code>rain</code> gives it</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>0 (dry)</td>
+<td>0.90-1.10</td>
+<td><code>rain=0</code></td>
+</tr>
+<tr>
+<td>50 (wet)</td>
+<td>0.65-0.85</td>
+<td><code>rain=30</code> (standing water 50)</td>
+</tr>
+<tr>
+<td>100 (flooded)</td>
+<td>0.45-0.65</td>
+<td><code>rain=100</code></td>
+</tr>
+</tbody>
+</table>
+<p>Between the rows the bounds are interpolated. Measured tire-road friction
+is about 0.8-1.0 on dry asphalt, 0.5-0.7 on wet and 0.3-0.5 under a water
+film; each range spans what tires, their wear and the asphalt make of the
+same water, and a dry road's is centred on CARLA's own grip, so a dry run
+drives as it did before.</p>
+<p>Where in the range a run's grip is, is <code>environment.tire_friction_quantile</code>
+(0 its low end, 1 its high end; the middle when not set). A
+<code>sweep.odd_sample</code> draws it for every case (<code>environment.tire_friction_quantile=0.412</code>
+among the case's overrides, recorded in its coverage file), from the sweep's
+<code>seed</code> and the case, so the same sweep draws the same grip. The weather comes
+from the ODD and the grip from the range that weather allows: a heavy-rain
+case never runs on a dry road's grip. <code>tire_friction: false</code> in the
+<code>odd_sample</code> leaves every case at the middle of its range, and
+<code>environment.tire_friction</code> fixes the grip whatever the weather (it wins over
+the quantile).</p>
+<p>The vehicles in the world when the action fires are scaled then; a scenario
+with such an action -- the config's, or its own -- also runs
+<code>follow_tire_friction</code> after every tick, which gives the vehicles spawned
+later (background traffic) the same grip. A scenario that sets the weather on
+the tick loop sets the grip with it: a factor applied again replaces the last
+one rather than compounding it.</p>
 <p>The example scenarios declare these:</p>
 <table>
 <thead>
@@ -3879,7 +3957,7 @@ target.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 18, 2026 04:41:10 UTC"><span class="timeago" datetime="2026-10-18T04:41:10+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 18, 2026 04:41:10 UTC">2026-10-18</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 19, 2026 22:07:47 UTC"><span class="timeago" datetime="2026-10-19T22:07:47+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 19, 2026 22:07:47 UTC">2026-10-19</span>
   </span>
 
     
