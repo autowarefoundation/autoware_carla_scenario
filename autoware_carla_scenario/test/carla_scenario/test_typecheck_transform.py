@@ -2146,3 +2146,23 @@ def test_a_decorated_or_nested_namedtuple_gets_the_decorator_above_it() -> None:
 def test_other_tuple_classes_are_not_made_tuples() -> None:
     out = transform_source("class A(NamedTuple, Other):\n    x: int\n")
     assert "@tuple" not in out
+
+
+def test_final_and_annotated_are_read_as_what_they_wrap() -> None:
+    assert _annotation("Final[int]") == "int"
+    assert _annotation("typing.Final[List[str]]") == "List[str]"
+    assert _annotation('Annotated[float, "m/s"]') == "float"
+    assert _annotation("Final") is None
+    assert _annotation("NoReturn") is None
+    assert _annotation("Sized") is None
+    assert _annotation("Hashable") is None
+    assert _transform("LIMIT: Final = 3\n") == "LIMIT = 3\n"
+    out = _transform("class C:\n    LIMIT: Final = 3\n")
+    assert out == "class C:\n    LIMIT = 3\n"
+
+
+def test_cast_is_kept_for_a_codon_type_and_dropped_for_any_other() -> None:
+    assert _transform("y = cast(int, x)\n") == "y = cast(int, x)\n"
+    assert _transform('y = cast("int", x)\n') == "y = cast(int, x)\n"
+    assert _transform("y = cast(Callable[[int], int], f)(2)\n") == "y = (f)(2)\n"
+    assert _transform("y = typing.cast(Any, x)\n") == "y = (x)\n"
