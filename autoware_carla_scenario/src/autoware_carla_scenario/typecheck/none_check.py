@@ -56,7 +56,6 @@ import re
 import subprocess
 import sys
 import tempfile
-from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -210,15 +209,12 @@ def search_path(variable: str) -> list[str]:
     return [os.path.abspath(entry) for entry in entries if entry]
 
 
-def _environment(stubs: Path | None, roots: Sequence[Path] = ()) -> dict[str, str]:
+def _environment(stubs: Path | None) -> dict[str, str]:
     """mypy's environment: the CARLA stubs (:mod:`.carla_stubs`) first on
-    ``MYPYPATH``, where they could be written, then *roots*; ``MYPYPATH`` and
+    ``MYPYPATH``, where they could be written; ``MYPYPATH`` and
     ``PYTHONPATH`` as :func:`search_path` gives them."""
     env = dict(os.environ)
-    mypypath = ([str(stubs)] if stubs is not None else []) + [
-        str(root.absolute()) for root in roots
-    ]
-    mypypath += search_path("MYPYPATH")
+    mypypath = ([str(stubs)] if stubs is not None else []) + search_path("MYPYPATH")
     for variable, entries in (
         ("MYPYPATH", mypypath),
         ("PYTHONPATH", search_path("PYTHONPATH")),
@@ -320,14 +316,8 @@ def find_none_misuses(
         return None
 
 
-def run_none_check(
-    paths: list[Path], timeout: float = 600.0, roots: Sequence[Path] = ()
-) -> list[NoneFinding]:
+def run_none_check(paths: list[Path], timeout: float = 600.0) -> list[NoneFinding]:
     """What mypy reports of a ``None`` misused in the modules *paths*.
-
-    *roots* are source roots mypy cannot find for itself: that of a namespace
-    package (no ``__init__.py`` to walk up), which it would otherwise look
-    for in the directory it runs in -- an empty one of its own here.
 
     Raises:
         NoneCheckSkipped: There is no verdict: no module, mypy is not
@@ -374,7 +364,7 @@ def run_none_check(
                 timeout=timeout,
                 check=False,
                 cwd=cwd,
-                env=_environment(carla_stub_root(Path(scratch)), roots),
+                env=_environment(carla_stub_root(Path(scratch))),
             )
     except subprocess.TimeoutExpired:
         raise NoneCheckSkipped(f"mypy did not finish within {timeout:.0f}s") from None

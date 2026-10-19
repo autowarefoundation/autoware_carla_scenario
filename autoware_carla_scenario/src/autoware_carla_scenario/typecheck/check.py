@@ -1335,51 +1335,18 @@ def _top_package(path: str) -> str:
     return top
 
 
-def _namespace_roots(sources: _Sources) -> tuple[str, ...]:
-    """The source root of each module whose top package is a namespace
-    package (no ``__init__.py``): mypy cannot walk up to it, and looks for
-    it in the directory it runs in, which the None check makes an empty one
-    of its own (:func:`.none_check.run_none_check`)."""
-    roots = set()
-    for name, module in sources.modules.items():
-        parts = name.split(".")
-        levels = len(parts) if module.is_package else len(parts) - 1
-        if levels == 0:
-            continue
-        path = Path(os.path.abspath(module.path))
-        if levels >= len(path.parents):
-            continue
-        root = path.parents[levels]
-        if not (root / parts[0] / "__init__.py").is_file():
-            roots.add(str(root))
-    return tuple(sorted(roots))
-
-
-def _own_trees(sources: _Sources) -> tuple[str, ...]:
-    """The top package (directory, or lone module) of each module checked."""
-    namespace = _namespace_roots(sources)
-    own = set()
-    for name, module in sources.modules.items():
-        path = os.path.abspath(module.path)
-        top = _top_package(path)
-        for root in namespace:
-            candidate = os.path.join(root, name.split(".")[0])
-            if path.startswith(os.path.join(candidate, "")):
-                top = candidate
-        own.add(top)
-    return tuple(sorted(own))
-
-
 def _outside_digest(sources: _Sources) -> str:
     """What mypy reads that no version names: the source of each editable
-    distribution, the directories of ``MYPYPATH`` and ``PYTHONPATH`` (mypy
-    searches both) and the namespace packages' roots it is given
-    (:func:`_namespace_roots`), but the ``.py`` files of the packages being
+    distribution, and the directories of ``MYPYPATH`` and ``PYTHONPATH``
+    (mypy searches both), but the ``.py`` files of the packages being
     checked, which are in the key by their text (:func:`_source_tree_digest`)."""
-    own = _own_trees(sources)
+    own = tuple(
+        sorted(
+            {_top_package(os.path.abspath(m.path)) for m in sources.modules.values()}
+        )
+    )
     digest = hashlib.sha256()
-    trees = [("namespace root", root) for root in _namespace_roots(sources)]
-    trees += [(f"editable {name}", root) for name, root in _editable_roots()]
+    trees = [(f"editable {name}", root) for name, root in _editable_roots()]
     trees += [
         (variable, entry)
         for variable in ("MYPYPATH", "PYTHONPATH")
@@ -1628,9 +1595,7 @@ def _with_none_misuses(
         return result
     try:
         findings = run_none_check(
-            sorted(m.path for m in sources.modules.values()),
-            timeout,
-            roots=[Path(root) for root in _namespace_roots(sources)],
+            sorted(m.path for m in sources.modules.values()), timeout
         )
     except NoneCheckSkipped as exc:
         warning = Diagnostic(

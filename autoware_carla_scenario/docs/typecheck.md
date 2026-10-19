@@ -109,9 +109,10 @@ an abstract class that is built. These digests are taken once a process
 (about 100 ms, more with a large `PYTHONPATH` such as a ROS workspace's).
 mypy runs with `--config-file=` and in an empty directory of its own, so
 neither a configuration file nor a module of the directory the check runs
-from reaches the verdict; the root of a namespace scenario package (one
-without `__init__.py`, which mypy cannot walk up to) is given to it instead,
-and is in the key like a `MYPYPATH` entry. What the key still leaves out: a distribution
+from reaches the verdict. A scenario package is therefore found as an
+installed or editable distribution, or through `MYPYPATH`: give a namespace
+package (one without `__init__.py`) an `__init__.py`, as the scaffolded
+packages have. What the key still leaves out: a distribution
 installed in development mode without PEP 610's `direct_url.json` (an old
 `setup.py develop`, a `.pth` file written by hand); clear the directory after
 editing one.

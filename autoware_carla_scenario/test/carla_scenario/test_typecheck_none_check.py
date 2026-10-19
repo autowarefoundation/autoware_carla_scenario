@@ -192,29 +192,6 @@ def test_a_relative_search_path_entry_is_searched(
     assert [f.line for f in findings] == [5], findings
 
 
-def test_a_namespace_package_is_found_under_the_root_given(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A scenario package without ``__init__.py``: mypy cannot walk up to its
-    root, and in a directory of its own would not find its sibling modules."""
-    package = tmp_path / "nsscen"
-    package.mkdir()
-    (package / "common.py").write_text(
-        "def get() -> int | None:\n    return None\n", encoding="utf-8"
-    )
-    module = package / "cut_in.py"
-    module.write_text(
-        "from nsscen import common\n\n\ndef value() -> int:\n"
-        "    return common.get()\n",
-        encoding="utf-8",
-    )
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.delenv("MYPYPATH", raising=False)
-    monkeypatch.delenv("PYTHONPATH", raising=False)
-    findings = run_none_check([module], roots=[tmp_path])
-    assert [f.line for f in findings] == [5], findings
-
-
 def test_no_module_gives_no_verdict() -> None:
     assert find_none_misuses([]) is None
 

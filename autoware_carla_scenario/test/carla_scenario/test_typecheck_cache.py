@@ -342,32 +342,6 @@ def test_a_relative_search_path_entry_is_the_directory_the_check_runs_from(
     assert key() != before
 
 
-def test_a_namespace_packages_root_is_in_the_key(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fresh_digests: None
-) -> None:
-    """mypy is given the root of a namespace scenario package to search: what
-    else is there counts, and the package's other modules do not."""
-    monkeypatch.setattr(check, "_toolchain_digest", lambda tc: "tc")
-    monkeypatch.setattr(check, "_framework_digest", lambda codon_path: "fw")
-    cut_in = tmp_path / "nsscen" / "cut_in.py"
-    _write(cut_in, "x = 1\n")
-    _write(tmp_path / "nsscen" / "merge.py", "y = 1\n")
-    _write(tmp_path / "helpers.py", "z = 1\n")
-    text = cut_in.read_text(encoding="utf-8")
-    sources = _Sources({"nsscen.cut_in": _Module(cut_in, False, text, ast.parse(text))})
-    assert check._namespace_roots(sources) == (str(tmp_path),)
-
-    def key() -> str:
-        _source_tree_digest.cache_clear()
-        return _cache_key(None, Path("/codon"), sources, "")  # type: ignore[arg-type]
-
-    before = key()
-    _write(tmp_path / "nsscen" / "merge.py", "y = 2\n")
-    assert key() == before
-    _write(tmp_path / "helpers.py", "z = 2\n")
-    assert key() != before
-
-
 @pytest.mark.parametrize("variable", ["MYPYPATH", "PYTHONPATH"])
 def test_a_directory_mypy_searches_is_in_the_key(
     variable: str,
