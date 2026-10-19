@@ -411,12 +411,20 @@ def _destroy_leftovers_before_reload(world: "carla.World", scenario_name: str) -
 
     The reload removes these actors too, but it does not release a sensor
     that is still listening. Its stream stays open in the server and in the
-    client and keeps waking both of them. A ``CollisionCondition`` leaves such
-    a sensor in every run, because nothing destroys it. Every case then adds
-    thousands of context switches per tick to each process, and after a few
-    cases the tick loop is a fifth slower (#290). Destroying the actors
-    through the server first releases the stream. The video's replay used to
-    do that before every reload, as a side effect, which hid the leak.
+    client and keeps waking both of them. A ``CollisionCondition`` used to
+    leave such a sensor in every run, because nothing destroyed it. Every case
+    then added thousands of context switches per tick to each process, and
+    after a few cases the tick loop was a fifth slower (#290). Destroying the
+    actors through the server first releases the server's end of the stream.
+    The video's replay used to do that before every reload, as a side effect,
+    which hid the leak.
+
+    Only the server's end: the handles taken here from ``world.get_actors()``
+    never listened, and LibCarla unsubscribes a sensor's stream on the client
+    only through the handle that listened. That is why the run's own cleanup
+    closes its conditions first (``BaseScenario.close_conditions``), which
+    stops and destroys their sensors through their own handles; what is
+    destroyed here is what nothing of the run owned (#371).
 
     Everything goes, an attached ego included, because the reload would
     remove it anyway. A failure is logged, and the reload still runs.
@@ -1471,6 +1479,20 @@ class ScenarioRunner:
             except Exception:
                 logger.warning(
                     "[%s] Ego entity teardown failed",
+                    scenario_name,
+                    exc_info=True,
+                )
+
+            # Stop and destroy the sensors the conditions started listening,
+            # through their own handles, while the world is still the run's:
+            # a sensor destroyed through any other handle (the leftovers'
+            # sweep, a reload) leaves its stream subscribed on the client,
+            # which can abort the process later (BaseCondition.close).
+            try:
+                scenario.close_conditions()
+            except Exception:
+                logger.warning(
+                    "[%s] Closing the conditions failed",
                     scenario_name,
                     exc_info=True,
                 )

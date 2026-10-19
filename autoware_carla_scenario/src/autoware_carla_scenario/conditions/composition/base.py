@@ -125,6 +125,16 @@ class CompositionCondition(BaseCondition):
             else None
         )
 
+    def close(self) -> None:
+        """Close the child and the entity guard (:meth:`BaseCondition.close`)."""
+        if self._child is not None:
+            # Annotated, so Codon unwraps the Optional (docs/typecheck.md).
+            child: BaseCondition = self._child
+            child.close()
+        if self._entity_existence is not None:
+            guard: EntityExistenceCondition = self._entity_existence
+            guard.close()
+
     def get_details(self) -> dict[str, Any]:
         details: dict[str, Any] = {}
         if self._entity_name is not None:

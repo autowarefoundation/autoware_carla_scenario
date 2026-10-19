@@ -375,6 +375,7 @@ classDiagram
         +check(world, elapsed) ScenarioResult | None
         +get_details() dict
         +to_summary_dict() dict
+        +close()
     }
 
     class ScenarioResult {

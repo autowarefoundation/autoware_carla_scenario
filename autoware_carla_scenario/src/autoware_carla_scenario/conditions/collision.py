@@ -101,6 +101,8 @@ class CollisionCondition(BaseCondition):
     _target: Optional[str]
     _target_type: CollisionTargetType
     _sensor: Optional["carla.Actor"]
+    _listening: bool
+    _closed: bool
     _lock: threading.Lock
     _collided: bool
     _other_type_id: Optional[str]
@@ -126,6 +128,10 @@ class CollisionCondition(BaseCondition):
         self._target = str(target) if target is not None else None
         self._target_type = target_type
         self._sensor: Optional["carla.Actor"] = None
+        # Whether the sensor's stream is subscribed: CARLA's own flag is
+        # spelled differently across its releases (a property, a method).
+        self._listening = False
+        self._closed = False
         self._lock = threading.Lock()
         self._collided = False
         self._other_type_id: Optional[str] = None
@@ -237,8 +243,10 @@ class CollisionCondition(BaseCondition):
 
         blueprint_library = world.get_blueprint_library()
         sensor_bp = blueprint_library.find("sensor.other.collision")
-        self._sensor = world.spawn_actor(sensor_bp, carla.Transform(), attach_to=ego)
-        self._sensor.listen(self._on_sensor_data)
+        sensor = world.spawn_actor(sensor_bp, carla.Transform(), attach_to=ego)
+        self._sensor = sensor
+        sensor.listen(self._on_sensor_data)
+        self._listening = True
 
     def check(self, world: "carla.World", elapsed: float) -> Optional[ScenarioResult]:
         """Return a failure result if the ego vehicle has collided.
@@ -254,7 +262,7 @@ class CollisionCondition(BaseCondition):
         if self._cached_result is not None:
             return self._cached_result
 
-        if self._sensor is None:
+        if self._sensor is None and not self._closed:
             self._try_attach_sensor(world, elapsed)
 
         with self._lock:
@@ -269,7 +277,45 @@ class CollisionCondition(BaseCondition):
                     elapsed_seconds=elapsed,
                 )
                 # Stop the listener — no further callbacks are needed.
-                if self._sensor is not None:
+                if self._sensor is not None and self._listening:
                     self._sensor.stop()
+                    self._listening = False
                 return self._cached_result
         return None
+
+    def close(self) -> None:
+        """Stop the collision sensor and destroy it, through this handle.
+
+        Only the handle that started a sensor listening can stop it: LibCarla
+        keeps whether a sensor listens on the client's handle, not on the
+        actor, and a handle of the same sensor taken from
+        ``world.get_actors()`` destroys the actor without unsubscribing its
+        stream.  The client then keeps that stream's socket, and its streaming
+        threads keep reconnecting it to a stream the server no longer has --
+        which slowed every later tick (#290), and races the socket's close
+        against the client's own until one of them fails with ``close: Bad
+        file descriptor`` and the process aborts (#371).  So the runner closes the
+        condition at the end of the run, before anything else destroys the
+        sensor or reloads the world.
+
+        A sensor already gone (destroyed by someone else, its episode
+        reloaded) is let go: LibCarla raises ``RuntimeError`` for it, and
+        there is nothing left to release.  The condition attaches no sensor
+        after this, and closing it again does nothing.
+        """
+        self._closed = True
+        if self._sensor is None:
+            return
+        # Annotated, so Codon unwraps the Optional (docs/typecheck.md).
+        sensor: "carla.Actor" = self._sensor
+        self._sensor = None
+        if self._listening:
+            self._listening = False
+            try:
+                sensor.stop()
+            except RuntimeError:
+                pass
+        try:
+            sensor.destroy()
+        except RuntimeError:
+            pass
