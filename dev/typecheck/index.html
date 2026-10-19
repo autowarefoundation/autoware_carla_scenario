@@ -2203,9 +2203,14 @@ where it had a value), another length of a list, a mapping the config
 converts in one case and not in another. A value whose literal Codon could
 refuse on its own (an int beyond 64 bits, a string with an escape) is kept
 as it is.</p>
-<p>Set <code>AUTOWARE_CARLA_SCENARIO_TYPECHECK_CACHE</code> to a directory to keep the
-verdicts beyond the process, one file per program: a later process with the
-same inputs reads the verdict instead of compiling. The key covers
+<p>Verdicts are kept beyond the process, one file per program, in
+<code>$XDG_CACHE_HOME/autoware_carla_scenario/typecheck</code> (<code>~/.cache/...</code> without
+an absolute <code>XDG_CACHE_HOME</code>): a later process with the same inputs reads the
+verdict instead of compiling. Set <code>AUTOWARE_CARLA_SCENARIO_TYPECHECK_CACHE</code>
+to use another directory, or to an empty string to keep each verdict for its
+process only (as happens anyway without a home directory, or with one that
+cannot be written). Nothing prunes the directory; delete it, or its files
+not accessed for a while, to reclaim the space. The key covers
 everything the verdict depends on. For the compile, that is the scenario's
 (or the framework's) modules, the generated driver's shape, the model,
 typesafe_carla's Codon library, and the compiler's version and standard
@@ -2215,13 +2220,27 @@ included (mypy reads them for the types of what a scenario calls, and the
 CARLA stubs are written by its <code>carla_stubs.py</code> from typesafe_carla's Codon
 library, already in the key), the name and version of every other installed distribution
 (mypy follows a scenario's imports into numpy, lanelet2 or typesafe_carla),
-the mypy version, and the Python version. And it includes what the checks
-made in Python found before the compile: an import the framework's Python
-lacks, or an abstract class that is built. These digests are taken once a
-process (about 100 ms). What the key leaves out: the source of another
-distribution installed editable (only its version is read), and environment
-variables mypy reads, such as <code>MYPYPATH</code>; clear the directory after changing
-either.
+the mypy version, and the Python version. Where a version says nothing of
+what mypy reads, the files are in it by path, size and modification time:
+the <code>.py</code>, <code>.pyi</code> and <code>py.typed</code> files of each distribution installed
+editable and of each directory on <code>MYPYPATH</code> and <code>PYTHONPATH</code>, which mypy
+searches (a relative entry is taken from the directory the check runs in;
+symlinked directories are followed). Of the packages being checked, whose
+modules the key has by their text already, only their stubs count there, so
+an edit to one scenario of an editable or <code>PYTHONPATH</code> package does not
+stale the verdicts on the others. And it includes what the checks made in
+Python found before the compile: an import the framework's Python lacks, or
+an abstract class that is built. These digests are taken once a process
+(about 100 ms, more with a large <code>PYTHONPATH</code> such as a ROS workspace's).
+mypy runs with <code>--config-file=</code> and in an empty directory of its own, so
+neither a configuration file nor a module of the directory the check runs
+from reaches the verdict. A scenario package is therefore found as an
+installed or editable distribution, or through <code>MYPYPATH</code>: give a namespace
+package (one without <code>__init__.py</code>) an <code>__init__.py</code>, as the scaffolded
+packages have. What the key still leaves out: a distribution
+installed in development mode without PEP 610's <code>direct_url.json</code> (an old
+<code>setup.py develop</code>, a <code>.pth</code> file written by hand); clear the directory after
+editing one.
 A crash is never kept, and an entry
 that cannot be read counts as a miss. A verdict read from the directory has
 its file's times touched, so the directory can be pruned by access time.</p>
@@ -4807,7 +4826,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 18, 2026 19:34:22 UTC"><span class="timeago" datetime="2026-10-18T19:34:22+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 18, 2026 19:34:22 UTC">2026-10-18</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 19, 2026 02:53:15 UTC"><span class="timeago" datetime="2026-10-19T02:53:15+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 19, 2026 02:53:15 UTC">2026-10-19</span>
   </span>
 
     
