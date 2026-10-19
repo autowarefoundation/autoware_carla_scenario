@@ -251,6 +251,7 @@ class _FakeWorld:
         self.actors = actors
         self.spawned: list[_FakeActor] = []
         self.frame = 0
+        self.library_fetches = 0
 
     def get_snapshot(self) -> _Snapshot:
         self.frame += 1
@@ -260,6 +261,7 @@ class _FakeWorld:
         return _Actors(self.actors)
 
     def get_blueprint_library(self) -> _Library:
+        self.library_fetches += 1
         return _Library()
 
     def try_spawn_actor(self, blueprint: _Blueprint, transform: Any) -> _FakeActor:
@@ -492,6 +494,9 @@ def test_ambient_traffic_is_mirrored_into_carla_and_cleaned_up(
         alive = [a for a in world.spawned if not a.destroyed]
         assert 0 < len(alive) <= 3
         assert all(a.attributes["role_name"].startswith("sumo:") for a in alive)
+        # The blueprint library is an RPC for every actor definition: fetched
+        # on the ticks that spawn, at most one fetch each, not on every tick.
+        assert 0 < world.library_fetches <= len(world.spawned)
         assert (tmp_path / "out" / "sumo" / "ambient.rou.xml").is_file()
     finally:
         backend.close()
