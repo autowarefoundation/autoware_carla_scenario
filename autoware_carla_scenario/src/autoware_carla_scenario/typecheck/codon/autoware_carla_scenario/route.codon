@@ -5,6 +5,7 @@
 # route and its frame.
 
 import lanelet2.core
+import lanelet2.routing
 
 
 class RouteMatch:
@@ -60,6 +61,26 @@ class RouteFrame:
 
     def __init__(self, match, lanelet_map, routing_graph):
         pass
+
+    # Python's instance attributes, read as properties (#307): fields would
+    # change the constructor Codon generates. Python holds a lanelet as the
+    # routing graph's ConstLanelet. features (route.geometry's MapFeatures)
+    # is not modelled (NOT_MODELLED_MEMBERS).
+    @property
+    def match(self) -> RouteMatch:
+        raise NotImplementedError()
+
+    @property
+    def map(self) -> lanelet2.core.LaneletMap:
+        raise NotImplementedError()
+
+    @property
+    def graph(self) -> lanelet2.routing.RoutingGraph:
+        raise NotImplementedError()
+
+    @property
+    def lanelets(self) -> List[lanelet2.core.ConstLanelet]:
+        raise NotImplementedError()
 
     def project(self, x: float, y: float, near: Optional[float] = None) -> Tuple[float, float]:
         raise NotImplementedError()

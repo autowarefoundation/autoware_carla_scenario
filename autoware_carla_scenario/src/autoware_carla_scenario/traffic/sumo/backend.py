@@ -1261,11 +1261,15 @@ class SumoTrafficBackend(TrafficBackend):
                 gone.destroy()
             except RuntimeError:
                 pass
-        library = world.get_blueprint_library()
+        # The whole actor-definition list, over RPC: fetched on a tick that
+        # spawns, not on every tick.
+        library = None
         for sumo_id in wanted:
             length = tc.vehicle.getLength(sumo_id)
             actor = self._ambient.get(sumo_id)
             if actor is None:
+                if library is None:
+                    library = world.get_blueprint_library()
                 x, y, z = tc.vehicle.getPosition3D(sumo_id)
                 pose = sumo_to_carla(
                     Pose2D(x, y, z, tc.vehicle.getAngle(sumo_id)), length, self._offset
@@ -1388,12 +1392,21 @@ class SumoTrafficBackend(TrafficBackend):
 
         tc = self._traci
         states: dict[str, str] = {}
+        # Each light once, with the state of its last link (a light switching
+        # several links was set once per link, the last one winning) ...
+        wanted: dict[int, tuple[Any, Any]] = {}
         for (tls, index), light in self._signals.items():
             if tls not in states:
                 states[tls] = tc.trafficlight.getRedYellowGreenState(tls)
             name = _SUMO_TO_CARLA_SIGNAL.get(states[tls][index])
             if name is not None:
-                light.set_state(getattr(carla.TrafficLightState, name))
+                wanted[id(light)] = (light, getattr(carla.TrafficLightState, name))
+        # ... and only when it shows another: set_state() is an RPC, and the
+        # state a light shows is read off the client's snapshot. A light a
+        # scenario switched is still set back to SUMO's state.
+        for light, state in wanted.values():
+            if int(light.get_state()) != int(state):
+                light.set_state(state)
 
     def _warm_up(self, world: Any) -> None:
         """Run SUMO alone for a while, holding the run's own vehicles still."""

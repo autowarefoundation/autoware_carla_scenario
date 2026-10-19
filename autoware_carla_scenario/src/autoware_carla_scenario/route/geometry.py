@@ -190,7 +190,15 @@ class MapFeatures:
     _lengths: dict[int, float]
     _lanes: dict[tuple[int, str], int]
     _opposite: dict[int, Optional[tuple[ConstLanelet, str]]]
-    _crosswalks: Optional[list[tuple[ConstLanelet, list[tuple[float, float]]]]]
+    _crosswalks: Optional[
+        list[
+            tuple[
+                ConstLanelet,
+                list[tuple[float, float]],
+                tuple[float, float, float, float],
+            ]
+        ]
+    ]
     _conflicting: dict[int, list[ConstLanelet]]
 
     def __init__(self, lanelet_map: LaneletMap, routing_graph: RoutingGraph) -> None:
@@ -562,16 +570,34 @@ class MapFeatures:
 
     # -- crosswalks ----------------------------------------------------------
 
-    def _all_crosswalks(self) -> list[tuple[ConstLanelet, list[tuple[float, float]]]]:
+    def _all_crosswalks(
+        self,
+    ) -> list[
+        tuple[
+            ConstLanelet, list[tuple[float, float]], tuple[float, float, float, float]
+        ]
+    ]:
+        """Every crosswalk of the map, its centreline, and its bounding box
+        ``(min x, max x, min y, max y)``, which each junction tests first."""
         if self._crosswalks is None:
-            crosswalks: list[tuple[ConstLanelet, list[tuple[float, float]]]] = []
+            crosswalks: list[
+                tuple[
+                    ConstLanelet,
+                    list[tuple[float, float]],
+                    tuple[float, float, float, float],
+                ]
+            ] = []
             for each in self.map.laneletLayer:
                 ll: ConstLanelet = each
                 if (
                     "subtype" in ll.attributes
                     and str(ll.attributes["subtype"]) == "crosswalk"
                 ):
-                    crosswalks.append((ll, _centreline(ll)))
+                    line = _centreline(ll)
+                    xs = [p[0] for p in line]
+                    ys = [p[1] for p in line]
+                    box = (min(xs), max(xs), min(ys), max(ys))
+                    crosswalks.append((ll, line, box))
             self._crosswalks = crosswalks
             return crosswalks
         return self._crosswalks
@@ -616,10 +642,8 @@ class MapFeatures:
         lo_x, hi_x = min(xs) - 1.0, max(xs) + 1.0
         lo_y, hi_y = min(ys) - 1.0, max(ys) + 1.0
         found: dict[int, Crosswalk] = {}
-        for crosswalk, line in self._all_crosswalks():
-            cxs = [p[0] for p in line]
-            cys = [p[1] for p in line]
-            if max(cxs) < lo_x or min(cxs) > hi_x or max(cys) < lo_y or min(cys) > hi_y:
+        for crosswalk, line, (min_x, max_x, min_y, max_y) in self._all_crosswalks():
+            if max_x < lo_x or min_x > hi_x or max_y < lo_y or min_y > hi_y:
                 continue
             for i, (p0, p1) in enumerate(zip(path, path[1:])):
                 for q0, q1 in zip(line, line[1:]):

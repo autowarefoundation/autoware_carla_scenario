@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any, Optional, Union
 
 from ...entity_role import EntityRole
 from ...kinematics import Vector3
-from ..base import ScenarioResult, find_actor_in_list
+from ..base import ScenarioResult, find_actor_by_role_name
 from ..comparison import ComparisonRule, ScalarComparisonRule
 from .base import CompositionCondition, entity_axes
 
@@ -126,15 +126,13 @@ class SpeedCondition(CompositionCondition):
     def _extract_speed_component(
         self,
         entity: carla.Actor,
-        actors: carla.ActorList,
+        world: "carla.World",
     ) -> Optional[float]:
         """Extract the relevant speed component from *entity*.
 
         Args:
             entity: The target actor whose velocity is measured.
-            actors: Pre-fetched actor list from the world (avoids a second
-                ``world.get_actors()`` call when looking up the reference
-                entity).
+            world: The world, to look up the reference entity in.
 
         Returns:
             The speed value (m/s), or ``None`` if the reference entity
@@ -155,7 +153,7 @@ class SpeedCondition(CompositionCondition):
 
         # --- ENTITY coordinate system ---
         assert self._reference_entity_name is not None
-        ref_entity = find_actor_in_list(actors, self._reference_entity_name)
+        ref_entity = find_actor_by_role_name(world, self._reference_entity_name)
         if ref_entity is None:
             return None
 
@@ -181,12 +179,11 @@ class SpeedCondition(CompositionCondition):
             condition is met, ``None`` otherwise.
         """
         assert self._entity_name is not None
-        actors: carla.ActorList = world.get_actors()
-        entity = find_actor_in_list(actors, self._entity_name)
+        entity = find_actor_by_role_name(world, self._entity_name)
         if entity is None:
             return None
 
-        speed_component = self._extract_speed_component(entity, actors)
+        speed_component = self._extract_speed_component(entity, world)
         if speed_component is None:
             return None
 

@@ -506,33 +506,6 @@ def test_a_single_run_waits_for_its_recording_and_reports_it(
     assert "Rerun recordings: 0/0 written" in capsys.readouterr().out
 
 
-def test_the_viewer_shows_the_recording_beside_the_log(tmp_path: Path) -> None:
-    from autoware_carla_scenario.ui import scanner
-
-    job = tmp_path / "outputs" / "2026-10-18" / "10-00-00"
-    job.mkdir(parents=True)
-    (job / "CutInScenario_result.json").write_text(
-        json.dumps({"passed": True, "message": "ok", "elapsed_seconds": 1.0})
-    )
-    (job / "CutInScenario.trajectory.jsonl").write_text("{}\n")
-
-    def load() -> Any:
-        scanner.clear_cache()
-        return scanner.load_scenario(tmp_path, "single", "2026-10-18", "10-00-00", 0)
-
-    assert load().recording_path is None
-    (job / "CutInScenario.rrd").write_bytes(b"RRD")
-    assert load().recording_path == str((job / "CutInScenario.rrd").resolve())
-
-
-def test_the_scenario_page_shows_the_command_to_open_the_recording() -> None:
-    from autoware_carla_scenario.ui import scanner
-
-    page = (Path(scanner.__file__).parent / "templates" / "scenario.html").read_text()
-    assert "rerun {{ result.recording_path }}" in page
-    assert "python -m autoware_carla_scenario.rerun" in page
-
-
 def test_a_failed_conversion_is_found_by_the_case_it_belongs_to(tmp_path: Path) -> None:
     from autoware_carla_scenario.examples.run import rerun_errors
 

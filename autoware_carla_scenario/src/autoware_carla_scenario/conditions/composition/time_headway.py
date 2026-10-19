@@ -8,7 +8,7 @@ from ...entity_role import EntityRole
 from ...kinematics import Vector3
 from ...coordinate.lane_distance import lane_gap
 from ...coordinate.poses import CarlaWorldPose
-from ..base import ScenarioResult, find_actor_pair
+from ..base import ScenarioResult, find_actor_by_role_name
 from ..comparison import ComparisonRule, ScalarComparisonRule
 from .base import CompositionCondition, DistanceCoordinateSystem
 
@@ -125,7 +125,7 @@ class TimeHeadwayCondition(CompositionCondition):
         )
         return details
 
-    def _measure(self, actors: "carla.ActorList") -> Optional[float]:
+    def _measure(self, world: "carla.World") -> Optional[float]:
         """Return the headway in seconds, or ``None`` when it is undefined.
 
         Two cases have no answer rather than a large one.  A stationary
@@ -138,7 +138,8 @@ class TimeHeadwayCondition(CompositionCondition):
         overtaken.
         """
         assert self._entity_name is not None  # noqa: S101
-        source, target = find_actor_pair(actors, self._entity_name, self._target)
+        source = find_actor_by_role_name(world, self._entity_name)
+        target = find_actor_by_role_name(world, self._target)
         if source is None or target is None:
             return None
 
@@ -178,7 +179,7 @@ class TimeHeadwayCondition(CompositionCondition):
 
     def _check(self, world: "carla.World", elapsed: float) -> Optional[ScenarioResult]:
         """Return a pass result when the headway satisfies the comparison rule."""
-        headway = self._measure(world.get_actors())
+        headway = self._measure(world)
         if headway is None:
             return None
         if not self._comparison.satisfied(headway):

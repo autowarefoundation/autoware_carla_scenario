@@ -18,12 +18,35 @@ class TurnDirection:
     RIGHT: ClassVar[TurnDirection] = TurnDirection("right")
     STRAIGHT: ClassVar[TurnDirection] = TurnDirection("straight")
 
+    # Enum's name (#307): Codon has no Enum to give a framework enum one.
+    @property
+    def name(self) -> str:
+        if self == TurnDirection.LEFT:
+            return "LEFT"
+        if self == TurnDirection.RIGHT:
+            return "RIGHT"
+        if self == TurnDirection.STRAIGHT:
+            return "STRAIGHT"
+        raise ValueError("not a member of TurnDirection")
+
 
 @tuple
 class LaneChangeDirection:
     value: str
     LEFT: ClassVar[LaneChangeDirection] = LaneChangeDirection("left")
     RIGHT: ClassVar[LaneChangeDirection] = LaneChangeDirection("right")
+
+    # Enum's name (#307): Codon has no Enum to give a framework enum one.
+    @property
+    def name(self) -> str:
+        if self == LaneChangeDirection.LEFT:
+            return "LEFT"
+        if self == LaneChangeDirection.RIGHT:
+            return "RIGHT"
+        raise ValueError("not a member of LaneChangeDirection")
+
+    def to_carla_bool(self) -> bool:
+        return self == LaneChangeDirection.RIGHT
 
 
 # traffic.context: a path is its str here, as in scenario_config.codon.

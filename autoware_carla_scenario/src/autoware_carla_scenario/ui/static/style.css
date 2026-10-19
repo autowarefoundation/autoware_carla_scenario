@@ -24,3 +24,11 @@
 #progress-fill {
   transition: width 0.3s ease-in-out;
 }
+
+/* The Rerun viewer's status line (static/rerun.js) */
+.rerun-status[data-kind="info"] {
+  color: rgb(75, 85, 99);
+}
+.rerun-status[data-kind="error"] {
+  color: rgb(185, 28, 28);
+}

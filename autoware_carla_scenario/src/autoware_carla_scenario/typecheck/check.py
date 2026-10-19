@@ -51,6 +51,8 @@ from collections.abc import Callable, Collection, Iterable, Iterator, Mapping
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal
+from urllib.parse import urlparse
+from urllib.request import url2pathname
 
 from .driver import (
     DRIVER_MODULE,
@@ -74,7 +76,7 @@ from .library import (
     UNCALLED,
     package_modules,
 )
-from .none_check import NoneCheckSkipped, run_none_check
+from .none_check import NoneCheckSkipped, run_none_check, search_path
 from .not_modelled import NOT_MODELLED, not_modelled_member
 from .library_driver import (
     call_sites,
@@ -1035,7 +1037,8 @@ _CHECKED_FOR: dict[str, dict[str, str]] = {}
 
 #: A directory to keep verdicts in beyond the process, one file per cache key:
 #: the test suite's xdist workers share it, and CI restores it from one run to
-#: the next. Unset, a verdict lives as long as the process.
+#: the next. Unset, the user's cache directory; set but empty, a verdict lives
+#: as long as the process.
 CACHE_DIR_ENV = "AUTOWARE_CARLA_SCENARIO_TYPECHECK_CACHE"
 
 
@@ -1073,9 +1076,35 @@ def _module_markers(sources: _Sources) -> dict[str, str]:
     return {str(m.path): f"\0module:{name}\0" for name, m in sources.modules.items()}
 
 
+def _cache_dir() -> Path | None:
+    """``$CACHE_DIR_ENV``, or the user's cache directory when it is unset.
+
+    ``None`` (verdicts kept for the process only) when it is set but empty,
+    or when there is no home directory to put the default in. A relative
+    ``XDG_CACHE_HOME`` is ignored, as the XDG spec says, and so is a home
+    that is not absolute (``HOME=""``): either would put the cache in
+    whatever directory the check runs from.
+    """
+    configured = os.environ.get(CACHE_DIR_ENV)
+    if configured is not None:
+        return Path(configured) if configured else None
+    xdg = os.environ.get("XDG_CACHE_HOME", "")
+    if os.path.isabs(xdg):
+        base = Path(xdg)
+    else:
+        try:
+            home = Path.home()
+        except RuntimeError:  # no home directory
+            return None
+        if not home.is_absolute():
+            return None
+        base = home / ".cache"
+    return base / "autoware_carla_scenario" / "typecheck"
+
+
 def _cache_file(key: str) -> Path | None:
-    root = os.environ.get(CACHE_DIR_ENV)
-    return Path(root) / f"{key}.json" if root else None
+    root = _cache_dir()
+    return root / f"{key}.json" if root is not None else None
 
 
 def _cached(key: str, sources: _Sources) -> TypeCheckResult | None:
@@ -1186,8 +1215,8 @@ def _distributions_digest() -> str:
     framework (its own aside, which :func:`_package_digest` covers by its
     text): mypy follows a scenario's imports into them (numpy, lanelet2,
     typesafe_carla's CPython package), and their types decide what may be
-    None. A version is all that is read of one, so an editable install's
-    edits are not seen."""
+    None. An editable install's version says nothing of its edits; those
+    are :func:`_outside_digest`'s."""
     own = _PACKAGE.replace("_", "-")
     names = set()
     for dist in importlib.metadata.distributions():
@@ -1206,6 +1235,127 @@ def _python_digest() -> str:
     digest.update(f"\0mypy {_mypy_version()}".encode())
     digest.update(f"\0dists {_distributions_digest()}".encode())
     digest.update(f"\0python {sys.version_info[0]}.{sys.version_info[1]}".encode())
+    return digest.hexdigest()
+
+
+#: What a source tree holds at its top that is none of its importable
+#: source: a build's or a colcon workspace's output, a virtualenv. Only at
+#: the top: deeper down, ``mypkg/log/`` is a subpackage like any other.
+_NOT_SOURCE_DIRS = frozenset(
+    {"build", "dist", "env", "install", "log", "node_modules", "venv"}
+)
+
+
+@lru_cache(maxsize=None)
+def _source_tree_digest(root: str, own: tuple[str, ...] = ()) -> str:
+    """Each ``.py``, ``.pyi`` and ``py.typed`` under *root* by its path, size
+    and modification time: what mypy may read there, without reading it
+    (a ``PYTHONPATH`` entry can be a whole ROS ``site-packages``).
+
+    Under a directory of *own* (the top packages of the modules being
+    checked, whose ``.py`` files are in the key by their text) only stubs
+    and markers count: an edit to one scenario of a package does not stale
+    the verdicts on the others, but a ``.pyi`` mypy prefers to a module does.
+    Symlinked directories are followed (``colcon build --symlink-install``),
+    each directory once. A tree that is not there is a digest of its own.
+    """
+    if not os.path.isdir(root):
+        return "missing"
+    digest = hashlib.sha256()
+    seen: set[str] = set()
+    for directory, dirnames, filenames in os.walk(root, followlinks=True):
+        real = os.path.realpath(directory)
+        if real in seen:  # a symlink back up the tree
+            dirnames[:] = []
+            continue
+        seen.add(real)
+        top = directory == root
+        dirnames[:] = sorted(
+            d
+            for d in dirnames
+            if not d.startswith(".")
+            and d != "__pycache__"
+            and not (top and d in _NOT_SOURCE_DIRS)
+            and not os.path.isfile(os.path.join(directory, d, "pyvenv.cfg"))
+        )
+        inside_own = any(
+            directory == o or directory.startswith(os.path.join(o, "")) for o in own
+        )
+        for filename in sorted(filenames):
+            if filename.endswith(".pyi") or filename == "py.typed":
+                pass
+            elif not filename.endswith(".py"):
+                continue
+            path = os.path.join(directory, filename)
+            if inside_own or path in own:
+                if filename.endswith(".py"):
+                    continue
+            try:
+                stat = os.stat(path)
+            except OSError:
+                continue
+            relative = os.path.relpath(path, root)
+            digest.update(f"\0{relative} {stat.st_size} {stat.st_mtime_ns}".encode())
+    return digest.hexdigest()
+
+
+@lru_cache(maxsize=1)
+def _editable_roots() -> tuple[tuple[str, str], ...]:
+    """``(name, directory)`` of every distribution but the framework that is
+    installed editable (PEP 610's ``direct_url.json``)."""
+    own = _PACKAGE.replace("_", "-")
+    roots = set()
+    for dist in importlib.metadata.distributions():
+        name = re.sub(r"[-_.]+", "-", dist.metadata["Name"] or "").lower()
+        if name == own:
+            continue
+        try:
+            info = json.loads(dist.read_text("direct_url.json") or "{}")
+            if not info.get("dir_info", {}).get("editable"):
+                continue
+            url = urlparse(info["url"])
+        except (OSError, ValueError, TypeError, KeyError, AttributeError):
+            continue
+        if url.scheme == "file" and url.netloc in ("", "localhost"):
+            roots.add((name, os.path.abspath(url2pathname(url.path))))
+    return tuple(sorted(roots))
+
+
+def _top_package(path: str) -> str:
+    """The directory of the top package holding the module *path* (the last
+    one up with an ``__init__.py``), or *path* itself for a lone module."""
+    top = path
+    directory = os.path.dirname(path)
+    while os.path.isfile(os.path.join(directory, "__init__.py")):
+        top = directory
+        parent = os.path.dirname(directory)
+        if parent == directory:
+            break
+        directory = parent
+    return top
+
+
+def _outside_digest(sources: _Sources) -> str:
+    """What mypy reads that no version names: the source of each editable
+    distribution, and the directories of ``MYPYPATH`` and ``PYTHONPATH``
+    (mypy searches both), but the ``.py`` files of the packages being
+    checked, which are in the key by their text (:func:`_source_tree_digest`)."""
+    own = tuple(
+        sorted(
+            {_top_package(os.path.abspath(m.path)) for m in sources.modules.values()}
+        )
+    )
+    digest = hashlib.sha256()
+    trees = [(f"editable {name}", root) for name, root in _editable_roots()]
+    trees += [
+        (variable, entry)
+        for variable in ("MYPYPATH", "PYTHONPATH")
+        for entry in search_path(variable)
+    ]
+    for label, root in trees:
+        prefix = os.path.join(root, "")
+        inside = tuple(o for o in own if o.startswith(prefix))
+        digest.update(f"\0{label} {root} {_source_tree_digest(root, inside)}".encode())
     return digest.hexdigest()
 
 
@@ -1229,6 +1379,7 @@ def _cache_key(
     digest = hashlib.sha256(_toolchain_digest(tc).encode())
     digest.update(_framework_digest(codon_path).encode())
     digest.update(_python_digest().encode())
+    digest.update(_outside_digest(sources).encode())
     for name, module in sorted(sources.modules.items()):
         digest.update(name.encode())
         digest.update(module.text.encode())
