@@ -1374,6 +1374,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#seeing-a-run-in-the-viewer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Seeing a run in the viewer
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#environment-variables" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2829,6 +2840,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#seeing-a-run-in-the-viewer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Seeing a run in the viewer
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#environment-variables" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4142,7 +4164,7 @@ the <code>carla_driver</code> entity:</p>
 <h3 id="how-it-works_2">How It Works<a class="headerlink" href="#how-it-works_2" title="Permanent link">&para;</a></h3>
 <ol>
 <li>Scans the base path directory for scenario output files (<code>outputs/YYYY-MM-DD/HH-MM-SS/</code>)</li>
-<li>Serves a web interface for browsing sessions and viewing individual scenario results (each names its trajectory log, which <a href="#seeing-a-run">Seeing a run</a> turns into a Rerun recording)</li>
+<li>Serves a web interface for browsing sessions and viewing individual scenario results, each with its run in an embedded Rerun viewer (<a href="#seeing-a-run-in-the-viewer">Seeing a run in the viewer</a>)</li>
 <li>Provides an API for triggering scenario runs and monitoring progress in real time</li>
 </ol>
 <h3 id="usage_1">Usage<a class="headerlink" href="#usage_1" title="Permanent link">&para;</a></h3>
@@ -4156,6 +4178,32 @@ the <code>carla_driver</code> entity:</p>
 <a id="__codelineno-20-8" name="__codelineno-20-8" href="#__codelineno-20-8"></a><span class="nv">VIEWER_BASE_PATH</span><span class="o">=</span>/path/to/scenario/outputs<span class="w"> </span>uv<span class="w"> </span>run<span class="w"> </span>viewer
 </code></pre></div>
 <p>Then open <code>http://localhost:9000</code> (or the configured host/port) in a browser.</p>
+<h3 id="seeing-a-run-in-the-viewer">Seeing a run in the viewer<a class="headerlink" href="#seeing-a-run-in-the-viewer" title="Permanent link">&para;</a></h3>
+<p>A scenario's page shows its run in Rerun's web viewer, embedded in the page:
+the case's trajectory log made into a Rerun recording (<a href="#seeing-a-run">Seeing a run</a>).
+A recording already beside the log (<code>X.rrd</code> beside <code>X.trajectory.jsonl</code>) is
+shown as it is; otherwise the viewer makes it the first time the page is
+opened (in a worker thread, some tens of milliseconds for a case) and keeps it
+beside the log, or, where the session's directory cannot be written, in its
+cache directory. Making one needs the converter in the viewer's environment:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s1">'autoware-carla-scenario[rerun]'</span><span class="w">    </span><span class="c1"># or: pip install autoware-carla-scenario-rerun</span>
+</code></pre></div>
+<p>Without it the page says so, and still shows a recording already made.
+The page's <em>Download .rrd</em> link is the recording itself, for the native
+viewer (<code>rerun X.rrd</code>).</p>
+<p>The web viewer is the <code>@rerun-io/web-viewer</code> package of the version the
+converter writes recordings with (<code>RERUN_VERSION</code>, 0.38.1 for converter 0.1;
+a recording opens only in a viewer of its minor version). By default the page
+loads it from the unpkg CDN, pinned to that version. For a machine without
+the network, keep a copy that the viewer serves itself:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a>uv<span class="w"> </span>run<span class="w"> </span>viewer<span class="w"> </span>--fetch-rerun-web-viewer<span class="w">                 </span><span class="c1"># from the npm registry, checked against its integrity hash</span>
+<a id="__codelineno-22-2" name="__codelineno-22-2" href="#__codelineno-22-2"></a>uv<span class="w"> </span>run<span class="w"> </span>viewer<span class="w"> </span>--fetch-rerun-web-viewer<span class="w"> </span>--from<span class="w"> </span>web-viewer-0.38.1.tgz<span class="w">   </span><span class="c1"># from the package's tarball, copied in</span>
+</code></pre></div>
+<p>The copy goes to <code>~/.cache/autoware_carla_scenario/viewer/rerun-web-viewer/&lt;version&gt;/</code>
+(<code>VIEWER_CACHE_DIR</code> moves the cache) and is used from then on.
+<code>VIEWER_RERUN_WEB_VIEWER</code> overrides where the viewer comes from: an unpacked
+copy of the package (a directory), a mirror of it (a URL), or <code>none</code> for no
+embedded viewer (the page then names the recording only).</p>
 <h3 id="environment-variables">Environment Variables<a class="headerlink" href="#environment-variables" title="Permanent link">&para;</a></h3>
 <table>
 <thead>
@@ -4181,6 +4229,21 @@ the <code>carla_driver</code> entity:</p>
 <td><code>9000</code></td>
 <td>Server listen port</td>
 </tr>
+<tr>
+<td><code>VIEWER_CACHE_DIR</code></td>
+<td><code>~/.cache/autoware_carla_scenario/viewer</code></td>
+<td>The web viewer's copy, and recordings of sessions that cannot be written</td>
+</tr>
+<tr>
+<td><code>VIEWER_RERUN_WEB_VIEWER</code></td>
+<td>the copy in the cache, else the CDN</td>
+<td>Where the Rerun web viewer is loaded from: a directory, a URL, or <code>none</code></td>
+</tr>
+<tr>
+<td><code>VIEWER_RERUN_MAP_DIR</code></td>
+<td><code>~/autoware_data/maps</code>, if it exists</td>
+<td>Where the converter looks a map up by name when the log's own map file is not on this machine</td>
+</tr>
 </tbody>
 </table>
 <h3 id="web-ui-pages">Web UI Pages<a class="headerlink" href="#web-ui-pages" title="Permanent link">&para;</a></h3>
@@ -4202,7 +4265,11 @@ the <code>carla_driver</code> entity:</p>
 </tr>
 <tr>
 <td><code>/session/{type}/{date}/{time}/{index}</code></td>
-<td>Scenario detail — condition tree, per-condition status, and the run's trajectory log</td>
+<td>Scenario detail — the run in the Rerun viewer, condition tree, per-condition status</td>
+</tr>
+<tr>
+<td><code>/recording/{type}/{date}/{time}/{index}.rrd</code></td>
+<td>The case's Rerun recording (made first if need be)</td>
 </tr>
 </tbody>
 </table>
@@ -4247,22 +4314,27 @@ the <code>carla_driver</code> entity:</p>
 <td><code>/api/run/progress</code></td>
 <td>SSE (Server-Sent Events) stream for real-time progress</td>
 </tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/api/recording/{type}/{date}/{time}/{index}</code></td>
+<td>Make the case's Rerun recording if there is none; its URL and path (503 with the install hint without the converter)</td>
+</tr>
 </tbody>
 </table>
 <p><strong>Run request body format:</strong></p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a><span class="p">{</span>
-<a id="__codelineno-21-2" name="__codelineno-21-2" href="#__codelineno-21-2"></a><span class="w">  </span><span class="nt">"scenario"</span><span class="p">:</span><span class="w"> </span><span class="s2">"*/*"</span><span class="p">,</span>
-<a id="__codelineno-21-3" name="__codelineno-21-3" href="#__codelineno-21-3"></a><span class="w">  </span><span class="nt">"extra_overrides"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"server.host=192.168.1.100"</span><span class="p">],</span>
-<a id="__codelineno-21-4" name="__codelineno-21-4" href="#__codelineno-21-4"></a><span class="w">  </span><span class="nt">"sweeper"</span><span class="p">:</span><span class="w"> </span><span class="s2">""</span>
-<a id="__codelineno-21-5" name="__codelineno-21-5" href="#__codelineno-21-5"></a><span class="p">}</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-23-1" name="__codelineno-23-1" href="#__codelineno-23-1"></a><span class="p">{</span>
+<a id="__codelineno-23-2" name="__codelineno-23-2" href="#__codelineno-23-2"></a><span class="w">  </span><span class="nt">"scenario"</span><span class="p">:</span><span class="w"> </span><span class="s2">"*/*"</span><span class="p">,</span>
+<a id="__codelineno-23-3" name="__codelineno-23-3" href="#__codelineno-23-3"></a><span class="w">  </span><span class="nt">"extra_overrides"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"server.host=192.168.1.100"</span><span class="p">],</span>
+<a id="__codelineno-23-4" name="__codelineno-23-4" href="#__codelineno-23-4"></a><span class="w">  </span><span class="nt">"sweeper"</span><span class="p">:</span><span class="w"> </span><span class="s2">""</span>
+<a id="__codelineno-23-5" name="__codelineno-23-5" href="#__codelineno-23-5"></a><span class="p">}</span>
 </code></pre></div>
 <p><strong>Progress SSE event format:</strong></p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a><span class="p">{</span>
-<a id="__codelineno-22-2" name="__codelineno-22-2" href="#__codelineno-22-2"></a><span class="w">  </span><span class="nt">"current"</span><span class="p">:</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span>
-<a id="__codelineno-22-3" name="__codelineno-22-3" href="#__codelineno-22-3"></a><span class="w">  </span><span class="nt">"total"</span><span class="p">:</span><span class="w"> </span><span class="mi">5</span><span class="p">,</span>
-<a id="__codelineno-22-4" name="__codelineno-22-4" href="#__codelineno-22-4"></a><span class="w">  </span><span class="nt">"scenario_name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"intersection_passing/straight"</span><span class="p">,</span>
-<a id="__codelineno-22-5" name="__codelineno-22-5" href="#__codelineno-22-5"></a><span class="w">  </span><span class="nt">"status"</span><span class="p">:</span><span class="w"> </span><span class="s2">"running"</span>
-<a id="__codelineno-22-6" name="__codelineno-22-6" href="#__codelineno-22-6"></a><span class="p">}</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-24-1" name="__codelineno-24-1" href="#__codelineno-24-1"></a><span class="p">{</span>
+<a id="__codelineno-24-2" name="__codelineno-24-2" href="#__codelineno-24-2"></a><span class="w">  </span><span class="nt">"current"</span><span class="p">:</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span>
+<a id="__codelineno-24-3" name="__codelineno-24-3" href="#__codelineno-24-3"></a><span class="w">  </span><span class="nt">"total"</span><span class="p">:</span><span class="w"> </span><span class="mi">5</span><span class="p">,</span>
+<a id="__codelineno-24-4" name="__codelineno-24-4" href="#__codelineno-24-4"></a><span class="w">  </span><span class="nt">"scenario_name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"intersection_passing/straight"</span><span class="p">,</span>
+<a id="__codelineno-24-5" name="__codelineno-24-5" href="#__codelineno-24-5"></a><span class="w">  </span><span class="nt">"status"</span><span class="p">:</span><span class="w"> </span><span class="s2">"running"</span>
+<a id="__codelineno-24-6" name="__codelineno-24-6" href="#__codelineno-24-6"></a><span class="p">}</span>
 </code></pre></div>
 <p>Where <code>status</code> is one of: <code>"running"</code>, <code>"idle"</code>, or <code>"done"</code>.</p>
 <hr />
@@ -4312,6 +4384,21 @@ the <code>carla_driver</code> entity:</p>
 <td>Viewer server listen port</td>
 </tr>
 <tr>
+<td><code>VIEWER_CACHE_DIR</code></td>
+<td>viewer</td>
+<td>The viewer's cache (the Rerun web viewer's copy, recordings it could not keep beside their logs)</td>
+</tr>
+<tr>
+<td><code>VIEWER_RERUN_WEB_VIEWER</code></td>
+<td>viewer</td>
+<td>Where the Rerun web viewer is loaded from (a directory, a URL, or <code>none</code>)</td>
+</tr>
+<tr>
+<td><code>VIEWER_RERUN_MAP_DIR</code></td>
+<td>viewer</td>
+<td>Where the Rerun converter looks maps up by name</td>
+</tr>
+<tr>
 <td><code>SCENARIO_EDITOR_DRAFTS</code></td>
 <td>scenario editor</td>
 <td>Directory holding scenario drafts</td>
@@ -4356,39 +4443,39 @@ the <code>carla_driver</code> entity:</p>
 <hr />
 <h2 id="common-use-cases">Common Use Cases<a class="headerlink" href="#common-use-cases" title="Permanent link">&para;</a></h2>
 <h3 id="use-case-1-run-a-single-scenario">Use Case 1: Run a Single Scenario<a class="headerlink" href="#use-case-1-run-a-single-scenario" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-23-1" name="__codelineno-23-1" href="#__codelineno-23-1"></a><span class="c1"># Start CARLA server first, then:</span>
-<a id="__codelineno-23-2" name="__codelineno-23-2" href="#__codelineno-23-2"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>intersection_passing/straight
+<div class="highlight"><pre><span></span><code><a id="__codelineno-25-1" name="__codelineno-25-1" href="#__codelineno-25-1"></a><span class="c1"># Start CARLA server first, then:</span>
+<a id="__codelineno-25-2" name="__codelineno-25-2" href="#__codelineno-25-2"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>intersection_passing/straight
 </code></pre></div>
 <h3 id="use-case-2-run-all-scenarios-for-a-map">Use Case 2: Run All Scenarios for a Map<a class="headerlink" href="#use-case-2-run-all-scenarios-for-a-map" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-24-1" name="__codelineno-24-1" href="#__codelineno-24-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span><span class="s1">'*/*'</span><span class="w"> </span><span class="nv">map</span><span class="o">=</span>nishishinjuku
+<div class="highlight"><pre><span></span><code><a id="__codelineno-26-1" name="__codelineno-26-1" href="#__codelineno-26-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span><span class="s1">'*/*'</span><span class="w"> </span><span class="nv">map</span><span class="o">=</span>nishishinjuku
 </code></pre></div>
 <h3 id="use-case-3-test-on-a-remote-carla-server">Use Case 3: Test on a Remote CARLA Server<a class="headerlink" href="#use-case-3-test-on-a-remote-carla-server" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-25-1" name="__codelineno-25-1" href="#__codelineno-25-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>intersection_passing/left_turn<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-25-2" name="__codelineno-25-2" href="#__codelineno-25-2"></a><span class="w">  </span>server.host<span class="o">=</span><span class="m">192</span>.168.1.100<span class="w"> </span>server.port<span class="o">=</span><span class="m">2000</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-27-1" name="__codelineno-27-1" href="#__codelineno-27-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>intersection_passing/left_turn<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-27-2" name="__codelineno-27-2" href="#__codelineno-27-2"></a><span class="w">  </span>server.host<span class="o">=</span><span class="m">192</span>.168.1.100<span class="w"> </span>server.port<span class="o">=</span><span class="m">2000</span>
 </code></pre></div>
 <h3 id="use-case-4-detect-missing-3d-models-before-running-scenarios">Use Case 4: Detect Missing 3D Models Before Running Scenarios<a class="headerlink" href="#use-case-4-detect-missing-3d-models-before-running-scenarios" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-26-1" name="__codelineno-26-1" href="#__codelineno-26-1"></a><span class="c1"># 1. Detect lanelets without ground geometry</span>
-<a id="__codelineno-26-2" name="__codelineno-26-2" href="#__codelineno-26-2"></a>uv<span class="w"> </span>run<span class="w"> </span>detect-no-3d-model<span class="w"> </span>conf/map/nishishinjuku.yaml
-<a id="__codelineno-26-3" name="__codelineno-26-3" href="#__codelineno-26-3"></a>
-<a id="__codelineno-26-4" name="__codelineno-26-4" href="#__codelineno-26-4"></a><span class="c1"># 2. The detected IDs are written to no_3d_model_lanelet_ids in the YAML</span>
-<a id="__codelineno-26-5" name="__codelineno-26-5" href="#__codelineno-26-5"></a><span class="c1"># 3. Now run scenarios — sweep will skip these lanelets</span>
-<a id="__codelineno-26-6" name="__codelineno-26-6" href="#__codelineno-26-6"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span><span class="s1">'intersection_passing/*'</span><span class="w"> </span><span class="nv">map</span><span class="o">=</span>nishishinjuku
+<div class="highlight"><pre><span></span><code><a id="__codelineno-28-1" name="__codelineno-28-1" href="#__codelineno-28-1"></a><span class="c1"># 1. Detect lanelets without ground geometry</span>
+<a id="__codelineno-28-2" name="__codelineno-28-2" href="#__codelineno-28-2"></a>uv<span class="w"> </span>run<span class="w"> </span>detect-no-3d-model<span class="w"> </span>conf/map/nishishinjuku.yaml
+<a id="__codelineno-28-3" name="__codelineno-28-3" href="#__codelineno-28-3"></a>
+<a id="__codelineno-28-4" name="__codelineno-28-4" href="#__codelineno-28-4"></a><span class="c1"># 2. The detected IDs are written to no_3d_model_lanelet_ids in the YAML</span>
+<a id="__codelineno-28-5" name="__codelineno-28-5" href="#__codelineno-28-5"></a><span class="c1"># 3. Now run scenarios — sweep will skip these lanelets</span>
+<a id="__codelineno-28-6" name="__codelineno-28-6" href="#__codelineno-28-6"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span><span class="s1">'intersection_passing/*'</span><span class="w"> </span><span class="nv">map</span><span class="o">=</span>nishishinjuku
 </code></pre></div>
 <h3 id="use-case-5-browse-results-in-the-web-ui">Use Case 5: Browse Results in the Web UI<a class="headerlink" href="#use-case-5-browse-results-in-the-web-ui" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-27-1" name="__codelineno-27-1" href="#__codelineno-27-1"></a><span class="c1"># 1. Run scenarios</span>
-<a id="__codelineno-27-2" name="__codelineno-27-2" href="#__codelineno-27-2"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span><span class="s1">'*/*'</span>
-<a id="__codelineno-27-3" name="__codelineno-27-3" href="#__codelineno-27-3"></a>
-<a id="__codelineno-27-4" name="__codelineno-27-4" href="#__codelineno-27-4"></a><span class="c1"># 2. Launch the viewer pointing to the outputs directory</span>
-<a id="__codelineno-27-5" name="__codelineno-27-5" href="#__codelineno-27-5"></a><span class="nv">VIEWER_BASE_PATH</span><span class="o">=</span>outputs<span class="w"> </span>uv<span class="w"> </span>run<span class="w"> </span>viewer
-<a id="__codelineno-27-6" name="__codelineno-27-6" href="#__codelineno-27-6"></a>
-<a id="__codelineno-27-7" name="__codelineno-27-7" href="#__codelineno-27-7"></a><span class="c1"># 3. Open http://localhost:9000 in a browser</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-29-1" name="__codelineno-29-1" href="#__codelineno-29-1"></a><span class="c1"># 1. Run scenarios</span>
+<a id="__codelineno-29-2" name="__codelineno-29-2" href="#__codelineno-29-2"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span><span class="s1">'*/*'</span>
+<a id="__codelineno-29-3" name="__codelineno-29-3" href="#__codelineno-29-3"></a>
+<a id="__codelineno-29-4" name="__codelineno-29-4" href="#__codelineno-29-4"></a><span class="c1"># 2. Launch the viewer pointing to the outputs directory</span>
+<a id="__codelineno-29-5" name="__codelineno-29-5" href="#__codelineno-29-5"></a><span class="nv">VIEWER_BASE_PATH</span><span class="o">=</span>outputs<span class="w"> </span>uv<span class="w"> </span>run<span class="w"> </span>viewer
+<a id="__codelineno-29-6" name="__codelineno-29-6" href="#__codelineno-29-6"></a>
+<a id="__codelineno-29-7" name="__codelineno-29-7" href="#__codelineno-29-7"></a><span class="c1"># 3. Open http://localhost:9000 in a browser</span>
 </code></pre></div>
 <h3 id="use-case-6-resume-a-failed-batch">Use Case 6: Resume a Failed Batch<a class="headerlink" href="#use-case-6-resume-a-failed-batch" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-28-1" name="__codelineno-28-1" href="#__codelineno-28-1"></a><span class="c1"># Original batch run (5 scenarios, stopped at the 4th, e.g. by Ctrl+C)</span>
-<a id="__codelineno-28-2" name="__codelineno-28-2" href="#__codelineno-28-2"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span><span class="s1">'intersection_passing/*'</span>
-<a id="__codelineno-28-3" name="__codelineno-28-3" href="#__codelineno-28-3"></a>
-<a id="__codelineno-28-4" name="__codelineno-28-4" href="#__codelineno-28-4"></a><span class="c1"># Resume from the 4th scenario</span>
-<a id="__codelineno-28-5" name="__codelineno-28-5" href="#__codelineno-28-5"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span><span class="s1">'intersection_passing/*'</span><span class="w"> </span>--resume-from<span class="w"> </span><span class="m">4</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-30-1" name="__codelineno-30-1" href="#__codelineno-30-1"></a><span class="c1"># Original batch run (5 scenarios, stopped at the 4th, e.g. by Ctrl+C)</span>
+<a id="__codelineno-30-2" name="__codelineno-30-2" href="#__codelineno-30-2"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span><span class="s1">'intersection_passing/*'</span>
+<a id="__codelineno-30-3" name="__codelineno-30-3" href="#__codelineno-30-3"></a>
+<a id="__codelineno-30-4" name="__codelineno-30-4" href="#__codelineno-30-4"></a><span class="c1"># Resume from the 4th scenario</span>
+<a id="__codelineno-30-5" name="__codelineno-30-5" href="#__codelineno-30-5"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span><span class="s1">'intersection_passing/*'</span><span class="w"> </span>--resume-from<span class="w"> </span><span class="m">4</span>
 </code></pre></div>
 <hr />
 <h2 id="troubleshooting">Troubleshooting<a class="headerlink" href="#troubleshooting" title="Permanent link">&para;</a></h2>
@@ -4449,7 +4536,7 @@ the <code>carla_driver</code> entity:</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 18, 2026 10:22:58 UTC"><span class="timeago" datetime="2026-10-18T10:22:58+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 18, 2026 10:22:58 UTC">2026-10-18</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 19, 2026 04:32:09 UTC"><span class="timeago" datetime="2026-10-19T04:32:09+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 19, 2026 04:32:09 UTC">2026-10-19</span>
   </span>
 
     

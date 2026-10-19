@@ -2594,9 +2594,10 @@ value, so the result is not checked:</p>
   for openodd's sample, and the <code>@tuple</code> of the pair Python's alias names.</li>
 <li><strong>Every public member of a compared class</strong> (#265): the comparisons above
   check that what a model class declares exists in Python; this checks the
-  converse. For every class they compare (enums aside), each public method,
-  property, class attribute and dataclass field the package's Python, or
-  openodd's, defines on the class or a class it derives from
+  converse. For every class they compare, enums included, each public
+  method, property, class attribute, dataclass field and instance attribute
+  the package's Python, or openodd's, defines on the class or a class it
+  derives from
   (<code>VehicleEntity.set_desired_speed()</code> is <code>BackendDriven</code>'s) is declared by
   the model class or one of its model bases, or listed, with the reason, in
   <code>NOT_MODELLED_MEMBERS</code> (<code>typecheck/not_modelled.py</code>), under the class or
@@ -2615,9 +2616,28 @@ value, so the result is not checked:</p>
   with <code>isinstance</code> and passes on to a new <code>TrajectoryVertex</code>; <code>CoverItem</code>'s
   fields). A frozen dataclass's field is read-only in Python too; writing a
   <code>CoverItem</code>'s is refused, which Python allows, and a scenario, which
-  registers its items with <code>register_cover()</code>, has none to write. An
-  attribute Python only annotates (set on the instance) is no member of the
-  class. The scenario check adds the reason to Codon's error:</li>
+  registers its items with <code>register_cover()</code>, has none to write.
+  An attribute a method sets on the instance (<code>self.&lt;name&gt; = ...</code> or
+  <code>setattr(self, "&lt;name&gt;", ...)</code>, read from the class's source,
+  <code>__init__</code>'s and the others', openodd's included; one set under a name
+  computed at run time is not found) is a member too (#307), as Python
+  reads it like any other: the model declares it as a read-only property,
+  since a field would change the constructor Codon generates
+  (<code>TimeoutCondition.timeout_seconds</code>, <code>OddDefinition.attributes</code>,
+  <code>OddAttribute.target</code> and <code>item</code>, <code>TrafficSinkAction.removed</code>,
+  <code>RouteFrame</code>'s <code>match</code>, <code>map</code>, <code>graph</code> and <code>lanelets</code>). Writing one is
+  refused, which Python allows (<code>'TimeoutCondition' object has no attribute
+  'timeout_seconds'</code>), except in the <code>__init__</code> of a scenario's own
+  subclass, where the assignment declares the subclass's own attribute. An enum is
+  compared beyond its members (#307): a model enum is a <code>@tuple</code> of its
+  value, so Codon gives it no <code>Enum</code>, and it declares Enum's <code>name</code> as a
+  property, a chain of <code>if self == Rule.MEMBER: return "MEMBER"</code> that
+  <code>test_typecheck_model.py</code> compares with each member's Python name, in
+  order (it also compares each member's value), and its own methods and
+  properties (<code>ComparisonRule.text</code>, <code>CollisionTargetType.matches()</code>,
+  <code>LaneChangeDirection.to_carla_bool()</code>). A scenario's own enum gets its
+  <code>name</code> from the check's rewrite (below). The scenario check adds the
+  reason to Codon's error:</li>
 </ul>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a>scenario.py:68:19: error: 'CaseScenario' object has no attribute 'traffic_backend': BaseScenario.traffic_backend is not part of the Codon model, on purpose: takes or returns the run's TrafficBackend, ...
 </code></pre></div>
@@ -2628,7 +2648,11 @@ value, so the result is not checked:</p>
   <code>RouteMatch.junction()</code>, <code>junctions</code> and <code>segments</code> (a
   <code>RouteSegmentMatch</code>), a field of <code>Any</code> (<code>ConditionStatus.details</code>,
   <code>RouteLanelet.values</code>, <code>OddModule.metadata</code>, <code>SweepConfig</code>'s Hydra
-  mappings, <code>CoverItem</code>'s <code>expression</code>, <code>ignore</code> and <code>values</code>), openodd's
+  mappings, <code>CoverItem</code>'s <code>expression</code>, <code>ignore</code> and <code>values</code>,
+  <code>OddAttribute.probe</code>), a class held as a value (<code>BaseScenario.ego_type</code>:
+  a scenario reads <code>ego_requires_goal</code> and calls <code>create_ego()</code>),
+  <code>RouteFrame.features</code> (<code>route.geometry</code>'s queries, which the library check
+  compiles from their source), openodd's
   evaluation, sampling and archive of an ODD (<code>OddDefinition.evaluate()</code>,
   <code>sample()</code>, <code>archive()</code>, ..., <code>OddCondition.evaluate()</code>) and its report's
   rows (<code>CoverageReport.entries</code>, ...), and the members of the classes the
@@ -2636,9 +2660,16 @@ value, so the result is not checked:</p>
   egodriver and bridge servers, the ROS 2 transport and its config, the map
   cache's <code>MapSource</code>, <code>RunEnvironment</code>). An ODD's members compile as they
   run:</p>
-<p><div class="highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="n">roads</span> <span class="o">=</span> <span class="n">OddModule</span><span class="p">(</span><span class="s2">"roads"</span><span class="p">,</span> <span class="n">include_and</span><span class="o">=</span><span class="p">[</span><span class="n">location</span><span class="o">.</span><span class="n">is_in</span><span class="p">([</span><span class="s2">"urban"</span><span class="p">])],</span> <span class="n">labels</span><span class="o">=</span><span class="p">[</span><span class="s2">"fair"</span><span class="p">])</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="n">roads</span> <span class="o">=</span> <span class="n">OddModule</span><span class="p">(</span><span class="s2">"roads"</span><span class="p">,</span> <span class="n">include_and</span><span class="o">=</span><span class="p">[</span><span class="n">location</span><span class="o">.</span><span class="n">is_in</span><span class="p">([</span><span class="s2">"urban"</span><span class="p">])],</span> <span class="n">labels</span><span class="o">=</span><span class="p">[</span><span class="s2">"fair"</span><span class="p">])</span>
 <a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a><span class="n">roads</span><span class="o">.</span><span class="n">as_situation</span><span class="p">(</span><span class="n">cover_by</span><span class="o">=</span><span class="s2">"meters"</span><span class="p">,</span> <span class="n">target</span><span class="o">=</span><span class="mf">100.0</span><span class="p">)</span>
 <a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a><span class="n">text</span> <span class="o">=</span> <span class="n">roads</span><span class="o">.</span><span class="n">conditions</span><span class="p">()[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">describe</span><span class="p">()</span> <span class="o">+</span> <span class="n">roads</span><span class="o">.</span><span class="n">labels</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">+</span> <span class="n">location</span><span class="o">.</span><span class="n">cover_by</span>
+<a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a><span class="k">for</span> <span class="n">attribute</span> <span class="ow">in</span> <span class="n">odd</span><span class="o">.</span><span class="n">attributes</span><span class="p">:</span>
+<a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a>    <span class="n">text</span> <span class="o">+=</span> <span class="n">attribute</span><span class="o">.</span><span class="n">name</span> <span class="o">+</span> <span class="nb">str</span><span class="p">(</span><span class="n">attribute</span><span class="o">.</span><span class="n">target</span><span class="p">)</span>
+</code></pre></div>
+<p>So do an instance attribute and an enum's name and methods:</p>
+<p><div class="highlight"><pre><span></span><code><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="n">timeout</span> <span class="o">=</span> <span class="n">TimeoutCondition</span><span class="p">(</span><span class="n">cfg</span><span class="o">.</span><span class="n">timeout_seconds</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">"timeout"</span><span class="p">)</span>
+<a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a><span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">"limit </span><span class="si">%f</span><span class="s2">, </span><span class="si">%s</span><span class="s2">"</span><span class="p">,</span> <span class="n">timeout</span><span class="o">.</span><span class="n">timeout_seconds</span><span class="p">,</span> <span class="n">ComparisonRule</span><span class="o">.</span><span class="n">LESS_THAN</span><span class="o">.</span><span class="n">name</span><span class="p">)</span>
+<a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a><span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">"</span><span class="si">%s</span><span class="s2"> </span><span class="si">%s</span><span class="s2">"</span><span class="p">,</span> <span class="n">ComparisonRule</span><span class="o">.</span><span class="n">LESS_THAN</span><span class="o">.</span><span class="n">text</span><span class="p">,</span> <span class="n">LaneChangeDirection</span><span class="o">.</span><span class="n">LEFT</span><span class="o">.</span><span class="n">to_carla_bool</span><span class="p">())</span>
 </code></pre></div>
 - <strong>Every model file</strong>: each <code>.codon</code> of the package's model is in one of
   the tables above or exempt with the reason (<code>_UNCOMPARED_MODEL_FILES</code>: the
@@ -2669,13 +2700,13 @@ plainly does not take its base's <code>__init__</code>.</p>
 and those it generates or inherits only after them, so the model declares,
 ahead of the constructor, an <code>__init__</code> of as many arguments whose body is a
 <code>compile_error</code>:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="k">class</span><span class="w"> </span><span class="nc">TimeoutCondition</span><span class="p">(</span><span class="n">BaseCondition</span><span class="p">):</span>
-<a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a>    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">label</span><span class="p">):</span>
-<a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a>        <span class="n">compile_error</span><span class="p">(</span><span class="s2">"TimeoutCondition(): no constructor takes these arguments "</span>
-<a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a>                      <span class="s2">"(required: keyword label)"</span><span class="p">)</span>
-<a id="__codelineno-16-5" name="__codelineno-16-5" href="#__codelineno-16-5"></a>
-<a id="__codelineno-16-6" name="__codelineno-16-6" href="#__codelineno-16-6"></a>    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">timeout_seconds</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">60.0</span><span class="p">,</span> <span class="o">*</span><span class="n">_kw</span><span class="p">,</span> <span class="n">label</span> <span class="o">=</span> <span class="n">_Required</span><span class="p">()):</span>
-<a id="__codelineno-16-7" name="__codelineno-16-7" href="#__codelineno-16-7"></a>        <span class="o">...</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a><span class="k">class</span><span class="w"> </span><span class="nc">TimeoutCondition</span><span class="p">(</span><span class="n">BaseCondition</span><span class="p">):</span>
+<a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a>    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">label</span><span class="p">):</span>
+<a id="__codelineno-17-3" name="__codelineno-17-3" href="#__codelineno-17-3"></a>        <span class="n">compile_error</span><span class="p">(</span><span class="s2">"TimeoutCondition(): no constructor takes these arguments "</span>
+<a id="__codelineno-17-4" name="__codelineno-17-4" href="#__codelineno-17-4"></a>                      <span class="s2">"(required: keyword label)"</span><span class="p">)</span>
+<a id="__codelineno-17-5" name="__codelineno-17-5" href="#__codelineno-17-5"></a>
+<a id="__codelineno-17-6" name="__codelineno-17-6" href="#__codelineno-17-6"></a>    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">timeout_seconds</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">60.0</span><span class="p">,</span> <span class="o">*</span><span class="n">_kw</span><span class="p">,</span> <span class="n">label</span> <span class="o">=</span> <span class="n">_Required</span><span class="p">()):</span>
+<a id="__codelineno-17-7" name="__codelineno-17-7" href="#__codelineno-17-7"></a>        <span class="o">...</span>
 </code></pre></div>
 <p>The constructor, declared last, still wins every call it takes
 (<code>TimeoutCondition(label="t")</code>, <code>TimeoutCondition(10.0, label="t")</code>); the
@@ -2748,8 +2779,8 @@ declares the names imported as Python exports them, and only where Python's
 module has the same object, so the import it suggests runs too; a name the
 model leaves out on purpose is refused with its reason, whichever module it
 is imported from (#237):</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a>scenario.py:3: error: autoware_carla_scenario.actions.base is not part of the Codon model; import ActionState from autoware_carla_scenario.action_state instead
-<a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a>scenario.py:4: error: autoware_carla_scenario.route.parse_route_search is not part of the Codon model, on purpose: the route search, parsed from a document's YAML ...
+<div class="highlight"><pre><span></span><code><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a>scenario.py:3: error: autoware_carla_scenario.actions.base is not part of the Codon model; import ActionState from autoware_carla_scenario.action_state instead
+<a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a>scenario.py:4: error: autoware_carla_scenario.route.parse_route_search is not part of the Codon model, on purpose: the route search, parsed from a document's YAML ...
 </code></pre></div>
 <p>Third-party packages the framework reads are modelled as
 far as it reads them (lanelet2, pyxodr, carla_driver_interface, python-dotenv;
@@ -2770,12 +2801,12 @@ scenario has to do itself:</p>
 <li><strong>Declare the attributes it assigns on <code>self</code></strong>, at class level, with their
   type:</li>
 </ul>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a><span class="k">class</span><span class="w"> </span><span class="nc">MyScenario</span><span class="p">(</span><span class="n">BaseScenario</span><span class="p">):</span>
-<a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a>    <span class="n">_config</span><span class="p">:</span> <span class="n">MyScenarioConfig</span>
-<a id="__codelineno-18-3" name="__codelineno-18-3" href="#__codelineno-18-3"></a>
-<a id="__codelineno-18-4" name="__codelineno-18-4" href="#__codelineno-18-4"></a>    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">ego_config</span><span class="p">,</span> <span class="n">spawn_pose</span><span class="p">,</span> <span class="n">config</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">ground_projection</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
-<a id="__codelineno-18-5" name="__codelineno-18-5" href="#__codelineno-18-5"></a>        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="n">ego_config</span><span class="p">,</span> <span class="n">spawn_pose</span><span class="o">=</span><span class="n">spawn_pose</span><span class="p">,</span> <span class="n">ground_projection</span><span class="o">=</span><span class="n">ground_projection</span><span class="p">)</span>
-<a id="__codelineno-18-6" name="__codelineno-18-6" href="#__codelineno-18-6"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">_config</span> <span class="o">=</span> <span class="n">config</span> <span class="ow">or</span> <span class="n">MyScenarioConfig</span><span class="p">()</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a><span class="k">class</span><span class="w"> </span><span class="nc">MyScenario</span><span class="p">(</span><span class="n">BaseScenario</span><span class="p">):</span>
+<a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a>    <span class="n">_config</span><span class="p">:</span> <span class="n">MyScenarioConfig</span>
+<a id="__codelineno-19-3" name="__codelineno-19-3" href="#__codelineno-19-3"></a>
+<a id="__codelineno-19-4" name="__codelineno-19-4" href="#__codelineno-19-4"></a>    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">ego_config</span><span class="p">,</span> <span class="n">spawn_pose</span><span class="p">,</span> <span class="n">config</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">ground_projection</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+<a id="__codelineno-19-5" name="__codelineno-19-5" href="#__codelineno-19-5"></a>        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="n">ego_config</span><span class="p">,</span> <span class="n">spawn_pose</span><span class="o">=</span><span class="n">spawn_pose</span><span class="p">,</span> <span class="n">ground_projection</span><span class="o">=</span><span class="n">ground_projection</span><span class="p">)</span>
+<a id="__codelineno-19-6" name="__codelineno-19-6" href="#__codelineno-19-6"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">_config</span> <span class="o">=</span> <span class="n">config</span> <span class="ow">or</span> <span class="n">MyScenarioConfig</span><span class="p">()</span>
 </code></pre></div>
 <p>A bare annotation is ignored by Python, so this changes nothing when the
   scenario runs; Codon needs it to type an attribute of a subclass. The check
@@ -2794,7 +2825,7 @@ scenario has to do itself:</p>
   helper (<code>type of attribute '_tracker' of object 'GapCondition' cannot be
   inferred</code>), so the check adds, for that helper, each attribute it assigns
   without declaring it, at its line, with the type to declare:</p>
-<p><div class="highlight"><pre><span></span><code><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a>scenario.py:34: error: GapTracker._samples is assigned without a type: declare it in the class body, e.g. `_samples: list[...]` ...
+<p><div class="highlight"><pre><span></span><code><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a>scenario.py:34: error: GapTracker._samples is assigned without a type: declare it in the class body, e.g. `_samples: list[...]` ...
 </code></pre></div>
 - <strong>Use only the public API</strong> from <code>autoware_carla_scenario</code> and its listed
   subpackages, and the <code>BaseScenario</code> attributes meant for subclasses
@@ -2808,7 +2839,7 @@ scenario has to do itself:</p>
   when the function first runs. So the check imports each modelled module
   a scenario imports from, in Python, and refuses each name it lacks, as an
   attribute and as a submodule, at the import's line:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a>scenario.py:118: error: autoware_carla_scenario.coordinate has no RoadNetwork in Python, whatever its Codon model declares: `from autoware_carla_scenario.coordinate import RoadNetwork` raises ImportError when the scenario runs
+<div class="highlight"><pre><span></span><code><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a>scenario.py:118: error: autoware_carla_scenario.coordinate has no RoadNetwork in Python, whatever its Codon model declares: `from autoware_carla_scenario.coordinate import RoadNetwork` raises ImportError when the scenario runs
 </code></pre></div>
 <p>An import under <code>if TYPE_CHECKING:</code> is exempt: Python never runs it.
 - <strong>Define every abstract method of what you build</strong> (#215). Codon has no
@@ -2821,7 +2852,7 @@ scenario has to do itself:</p>
   scenario's modules that is built, the scenario class (the runner builds
   it) or a class the modules call by name (<code>GapCondition(...)</code>), and
   refuses one still abstract at its <code>class</code> line:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a>scenario.py:46: error: GapCondition is built (at scenario.py:99) but leaves abstract check undefined: define it in GapCondition, or Python refuses to build it (TypeError: Can't instantiate abstract class)
+<div class="highlight"><pre><span></span><code><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a>scenario.py:46: error: GapCondition is built (at scenario.py:99) but leaves abstract check undefined: define it in GapCondition, or Python refuses to build it (TypeError: Can't instantiate abstract class)
 </code></pre></div>
 <p>A class only derived from, such as an abstract base of the scenario's own
   conditions with an <code>@abstractmethod</code> of its own, is never called and may
@@ -2846,7 +2877,7 @@ scenario has to do itself:</p>
   <code>BaseScenario.register_cross()</code>, <code>OddModule</code>'s <code>labels</code> and
   <code>OddDefinition</code>'s <code>roots</code>, and takes a list or a tuple of <code>str</code>, an empty
   one too:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a>scenario.py:41: error: BaseScenario.register_cross(): items: expected a sequence of names (a list or a tuple of str), not a str: wrap it in a list
+<div class="highlight"><pre><span></span><code><a id="__codelineno-23-1" name="__codelineno-23-1" href="#__codelineno-23-1"></a>scenario.py:41: error: BaseScenario.register_cross(): items: expected a sequence of names (a list or a tuple of str), not a str: wrap it in a list
 </code></pre></div>
 <p><code>OddAttribute.is_in("urban")</code> still passes: it takes an <code>Iterable[Any]</code> of
   values, and CPython takes a <code>str</code>'s characters as values.
@@ -2877,7 +2908,7 @@ scenario has to do itself:</p>
   <code>actions: dict[str, BaseAction] = {...}</code>, it becomes a dict of the
   annotated type (<code>_acs_dict_into</code>, when the key and value types are plain
   names). A value of another type is still refused at the display's line:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-23-1" name="__codelineno-23-1" href="#__codelineno-23-1"></a>scenario.py:73: error: 'int' does not match expected type 'BaseAction'
+<div class="highlight"><pre><span></span><code><a id="__codelineno-24-1" name="__codelineno-24-1" href="#__codelineno-24-1"></a>scenario.py:73: error: 'int' does not match expected type 'BaseAction'
 </code></pre></div>
 <p>Any other value is left to Codon's display, which types it as before
   (<code>{"a": 1, "b": speed}</code> is a <code>dict[str, float]</code>, a value with <code>None</code> is
@@ -2970,8 +3001,8 @@ scenario has to do itself:</p>
   builds (<code>class MyResult(ScenarioResult)</code>), can still meet it; the check
   then names the class and what to do, at the <code>class</code> line of it or of its
   subclass, and keeps no verdict, as for any crash:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-24-1" name="__codelineno-24-1" href="#__codelineno-24-1"></a>scenario.py:73: error: Codon 0.19 generated code it cannot compile for autoware_carla_scenario.conditions.ScenarioResult, a class with subclasses: a bug of Codon's rather than an error of the program (#263). It does so for an Optional of such a class (`x: ScenarioResult | None = None`, a parameter that defaults to None) when the program builds no object of the class or of a subclass, or defines a subclass after Codon compiled the class. Build a MyResult where setup() reaches it, or hold the value without Optional
-<a id="__codelineno-24-2" name="__codelineno-24-2" href="#__codelineno-24-2"></a>    LLVM: error: '%obj' defined with type 'ptr' but expected '{ ptr, ptr }'
+<div class="highlight"><pre><span></span><code><a id="__codelineno-25-1" name="__codelineno-25-1" href="#__codelineno-25-1"></a>scenario.py:73: error: Codon 0.19 generated code it cannot compile for autoware_carla_scenario.conditions.ScenarioResult, a class with subclasses: a bug of Codon's rather than an error of the program (#263). It does so for an Optional of such a class (`x: ScenarioResult | None = None`, a parameter that defaults to None) when the program builds no object of the class or of a subclass, or defines a subclass after Codon compiled the class. Build a MyResult where setup() reaches it, or hold the value without Optional
+<a id="__codelineno-25-2" name="__codelineno-25-2" href="#__codelineno-25-2"></a>    LLVM: error: '%obj' defined with type 'ptr' but expected '{ ptr, ptr }'
 </code></pre></div>
 <p>Annotations Codon cannot express (<code>Union</code> of two types, <code>Any</code>, <code>Callable</code>,
 <code>Sequence</code>, <code>type[...]</code>) are dropped from parameters, which become generic:
@@ -2998,10 +3029,10 @@ value whose members are <code>int</code>, not as a type: it becomes <code>int</c
   <code>__init__()</code>", #201). The check appends one to such a class, after the
   module, so no line moves:</li>
 </ul>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-25-1" name="__codelineno-25-1" href="#__codelineno-25-1"></a><span class="nd">@extend</span>
-<a id="__codelineno-25-2" name="__codelineno-25-2" href="#__codelineno-25-2"></a><span class="k">class</span><span class="w"> </span><span class="nc">MyDerivedScenario</span><span class="p">:</span>
-<a id="__codelineno-25-3" name="__codelineno-25-3" href="#__codelineno-25-3"></a>    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
-<a id="__codelineno-25-4" name="__codelineno-25-4" href="#__codelineno-25-4"></a>        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-26-1" name="__codelineno-26-1" href="#__codelineno-26-1"></a><span class="nd">@extend</span>
+<a id="__codelineno-26-2" name="__codelineno-26-2" href="#__codelineno-26-2"></a><span class="k">class</span><span class="w"> </span><span class="nc">MyDerivedScenario</span><span class="p">:</span>
+<a id="__codelineno-26-3" name="__codelineno-26-3" href="#__codelineno-26-3"></a>    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
+<a id="__codelineno-26-4" name="__codelineno-26-4" href="#__codelineno-26-4"></a>        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
 </code></pre></div>
 <p>It is added only where a base really defines an <code>__init__</code> (a class of the
   scenario's modules, its own or one it inherits, or one of the model's, such
@@ -3013,8 +3044,8 @@ value whose members are <code>int</code>, not as a type: it becomes <code>int</c
   base's <code>__init__</code> still checks every argument: a wrong one is reported at
   the <code>class</code> line of the subclass, with the call that passed it in the
   trace:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-26-1" name="__codelineno-26-1" href="#__codelineno-26-1"></a>scenario.py:52:9: error: no function 'MyScenario.__init__' with arguments (Super[MyScenario], EgoConfig, Lanelet2Pose, str)
-<a id="__codelineno-26-2" name="__codelineno-26-2" href="#__codelineno-26-2"></a>    during the realization of __init__(self: MyDerivedScenario, ...) [scenario.py:58]
+<div class="highlight"><pre><span></span><code><a id="__codelineno-27-1" name="__codelineno-27-1" href="#__codelineno-27-1"></a>scenario.py:52:9: error: no function 'MyScenario.__init__' with arguments (Super[MyScenario], EgoConfig, Lanelet2Pose, str)
+<a id="__codelineno-27-2" name="__codelineno-27-2" href="#__codelineno-27-2"></a>    during the realization of __init__(self: MyDerivedScenario, ...) [scenario.py:58]
 </code></pre></div>
 <p>A literal <code>None</code> passed through it is refused, though Python takes it
   (<code>MyDerivedScenario(ego, pose, None)</code>, or <code>config=None</code>): forwarded
@@ -3033,8 +3064,8 @@ value whose members are <code>int</code>, not as a type: it becomes <code>int</c
   function is rewritten for its own annotation), and the appended calls
   realize <code>X</code> (<code>_acs_value(X)</code>) before they call it. So</li>
 </ul>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-27-1" name="__codelineno-27-1" href="#__codelineno-27-1"></a><span class="k">def</span><span class="w"> </span><span class="nf">_find_npc</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Optional</span><span class="p">[</span><span class="n">carla</span><span class="o">.</span><span class="n">Actor</span><span class="p">]:</span>
-<a id="__codelineno-27-2" name="__codelineno-27-2" href="#__codelineno-27-2"></a>    <span class="k">return</span> <span class="kc">None</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-28-1" name="__codelineno-28-1" href="#__codelineno-28-1"></a><span class="k">def</span><span class="w"> </span><span class="nf">_find_npc</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Optional</span><span class="p">[</span><span class="n">carla</span><span class="o">.</span><span class="n">Actor</span><span class="p">]:</span>
+<a id="__codelineno-28-2" name="__codelineno-28-2" href="#__codelineno-28-2"></a>    <span class="k">return</span> <span class="kc">None</span>
 </code></pre></div>
 <p>compiles as written, and so does a local <code>found: Optional[carla.Actor] =
   None</code> returned at the end.</p>
@@ -3108,13 +3139,13 @@ The known gaps:</p>
 <p>The scenario check trusts the model: it never compiles the framework's own
 source. The library check does, a module at a time, as each is made to
 compile:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-28-1" name="__codelineno-28-1" href="#__codelineno-28-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario-check<span class="w"> </span>--library<span class="w">                                   </span><span class="c1"># every checked module</span>
-<a id="__codelineno-28-2" name="__codelineno-28-2" href="#__codelineno-28-2"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario-check<span class="w"> </span>--library<span class="w"> </span>autoware_carla_scenario.kinematics.vector
+<div class="highlight"><pre><span></span><code><a id="__codelineno-29-1" name="__codelineno-29-1" href="#__codelineno-29-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario-check<span class="w"> </span>--library<span class="w">                                   </span><span class="c1"># every checked module</span>
+<a id="__codelineno-29-2" name="__codelineno-29-2" href="#__codelineno-29-2"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario-check<span class="w"> </span>--library<span class="w"> </span>autoware_carla_scenario.kinematics.vector
 </code></pre></div>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-29-1" name="__codelineno-29-1" href="#__codelineno-29-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario.typecheck</span><span class="w"> </span><span class="kn">import</span> <span class="n">typecheck_library</span>
-<a id="__codelineno-29-2" name="__codelineno-29-2" href="#__codelineno-29-2"></a>
-<a id="__codelineno-29-3" name="__codelineno-29-3" href="#__codelineno-29-3"></a><span class="n">result</span> <span class="o">=</span> <span class="n">typecheck_library</span><span class="p">()</span>  <span class="c1"># the modules typecheck/library.py lists as checked</span>
-<a id="__codelineno-29-4" name="__codelineno-29-4" href="#__codelineno-29-4"></a><span class="k">assert</span> <span class="n">result</span><span class="o">.</span><span class="n">ok</span><span class="p">,</span> <span class="n">result</span><span class="o">.</span><span class="n">format</span><span class="p">()</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-30-1" name="__codelineno-30-1" href="#__codelineno-30-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario.typecheck</span><span class="w"> </span><span class="kn">import</span> <span class="n">typecheck_library</span>
+<a id="__codelineno-30-2" name="__codelineno-30-2" href="#__codelineno-30-2"></a>
+<a id="__codelineno-30-3" name="__codelineno-30-3" href="#__codelineno-30-3"></a><span class="n">result</span> <span class="o">=</span> <span class="n">typecheck_library</span><span class="p">()</span>  <span class="c1"># the modules typecheck/library.py lists as checked</span>
+<a id="__codelineno-30-4" name="__codelineno-30-4" href="#__codelineno-30-4"></a><span class="k">assert</span> <span class="n">result</span><span class="o">.</span><span class="n">ok</span><span class="p">,</span> <span class="n">result</span><span class="o">.</span><span class="n">format</span><span class="p">()</span>
 </code></pre></div>
 <p><code>test_typecheck_library.py</code> makes the same check in the test suite.</p>
 <p><strong>The checked modules get the None check too</strong> (#277), as a scenario's
@@ -3124,7 +3155,7 @@ the check at its line. Codon unwraps an <code>Optional</code> in the framework a
 in a scenario, so the compile alone accepted <code>CollisionCondition</code> reading
 <code>CollisionEvent.other_actor</code> (<code>None</code> for a collision with map geometry) as a
 <code>carla.Actor</code>, and the sensor callback raised in Python:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-30-1" name="__codelineno-30-1" href="#__codelineno-30-1"></a>conditions/collision.py:158:32: error: Incompatible types in assignment (expression has type "Actor | None", variable has type "Actor"): Codon unwraps an Optional implicitly, so test the value for None before this use, or Python fails here when it is None (mypy: assignment)
+<div class="highlight"><pre><span></span><code><a id="__codelineno-31-1" name="__codelineno-31-1" href="#__codelineno-31-1"></a>conditions/collision.py:158:32: error: Incompatible types in assignment (expression has type "Actor | None", variable has type "Actor"): Codon unwraps an Optional implicitly, so test the value for None before this use, or Python fails here when it is None (mypy: assignment)
 </code></pre></div>
 <p>It adds about 11 seconds to a run with mypy's cache cold, and under a second
 with it warm, to a compile of about a minute. A verdict kept between runs
@@ -3186,7 +3217,7 @@ method of a checked module.</p>
 </ol>
 <h3 id="what-is-checked-of-the-framework">What is checked of the framework<a class="headerlink" href="#what-is-checked-of-the-framework" title="Permanent link">&para;</a></h3>
 <p>Every module now has an entry other than <code>"not yet checked (#45)"</code>. 171 of
-the package's 258 modules (66%; about 44,400 of 79,100 lines) are <code>CHECKED</code>:
+the package's 260 modules (66%; about 44,400 of 79,100 lines) are <code>CHECKED</code>:
 the kinematics, the coordinate frames and poses, the conversions between
 Lanelet2, OpenDRIVE and CARLA world poses (<code>coordinate.transform</code>), the stop
 lines read off a Lanelet2 map (<code>utils.stop_line</code>, <code>coordinate.stop_line</code>)
@@ -3282,12 +3313,12 @@ a <code>TrajectoryVertex</code> call's arguments, each of any type (<code>Any</c
 binds a sweeper constraint of any kind, builds a condition's status (its
 details), or takes the list a plain tick callback goes into
 (<code>BaseScenario._register_tick()</code>, a <code>List[Callable[[carla.World], None]]</code>,
-which the check has no value of). The 87 <code>EXCLUDED</code> modules fall in
-four groups. Many fit more than one (about 64 import what Codon cannot
+which the check has no value of). The 89 <code>EXCLUDED</code> modules fall in
+four groups. Many fit more than one (about 66 import what Codon cannot
 compile, 29 build on an excluded module and 20 hold values Codon has no type
 for), so each is counted once, in the first group that fits it:</p>
 <ul>
-<li><strong>64 import what Codon cannot compile</strong>: pyxodr,
+<li><strong>66 import what Codon cannot compile</strong>: pyxodr,
   pydantic, pickle, lxml, grpc, omegaconf and hydra, yaml, openodd (a Rust extension),
   cyclonedds (<code>ros2.cyclone</code> and <code>ros2.messages</code>, the ROS 2 ego's DDS
   transport and its message types), or
@@ -3342,10 +3373,10 @@ method of every class (constructors, static and class methods,
 properties and their setters, dunder methods, protected <code>_</code> ones and those
 of <code>_</code> classes included) with a value of
 each parameter's annotated type:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-31-1" name="__codelineno-31-1" href="#__codelineno-31-1"></a><span class="k">def</span><span class="w"> </span><span class="nf">_acs_library_check</span><span class="p">():</span>
-<a id="__codelineno-31-2" name="__codelineno-31-2" href="#__codelineno-31-2"></a>    <span class="n">normalize_angle_deg</span><span class="p">(</span><span class="n">_acs_value</span><span class="p">(</span><span class="nb">float</span><span class="p">))</span>
-<a id="__codelineno-31-3" name="__codelineno-31-3" href="#__codelineno-31-3"></a>    <span class="n">Vector3</span><span class="p">(</span><span class="n">_acs_value</span><span class="p">(</span><span class="nb">float</span><span class="p">),</span> <span class="n">_acs_value</span><span class="p">(</span><span class="nb">float</span><span class="p">),</span> <span class="n">_acs_value</span><span class="p">(</span><span class="nb">float</span><span class="p">))</span>
-<a id="__codelineno-31-4" name="__codelineno-31-4" href="#__codelineno-31-4"></a>    <span class="n">_acs_value</span><span class="p">(</span><span class="n">Vector3</span><span class="p">)</span><span class="o">.</span><span class="n">dot</span><span class="p">(</span><span class="n">_acs_value</span><span class="p">(</span><span class="n">Vector3</span><span class="p">))</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-32-1" name="__codelineno-32-1" href="#__codelineno-32-1"></a><span class="k">def</span><span class="w"> </span><span class="nf">_acs_library_check</span><span class="p">():</span>
+<a id="__codelineno-32-2" name="__codelineno-32-2" href="#__codelineno-32-2"></a>    <span class="n">normalize_angle_deg</span><span class="p">(</span><span class="n">_acs_value</span><span class="p">(</span><span class="nb">float</span><span class="p">))</span>
+<a id="__codelineno-32-3" name="__codelineno-32-3" href="#__codelineno-32-3"></a>    <span class="n">Vector3</span><span class="p">(</span><span class="n">_acs_value</span><span class="p">(</span><span class="nb">float</span><span class="p">),</span> <span class="n">_acs_value</span><span class="p">(</span><span class="nb">float</span><span class="p">),</span> <span class="n">_acs_value</span><span class="p">(</span><span class="nb">float</span><span class="p">))</span>
+<a id="__codelineno-32-4" name="__codelineno-32-4" href="#__codelineno-32-4"></a>    <span class="n">_acs_value</span><span class="p">(</span><span class="n">Vector3</span><span class="p">)</span><span class="o">.</span><span class="n">dot</span><span class="p">(</span><span class="n">_acs_value</span><span class="p">(</span><span class="n">Vector3</span><span class="p">))</span>
 </code></pre></div>
 <p><code>_acs_value(T)</code> is a <code>T</code> Codon cannot tell from a real one; nothing compiled
 is ever run. A parameter annotated with a union (<code>Lanelet2Pose |
@@ -3384,8 +3415,8 @@ argument, so no default was ever compiled: <code>find_nearest_traffic_light(...,
 max_distance: float = "far")</code> passed the check. A function or method with a
 defaulted parameter is now called once more, with only the arguments that
 have no default, each of its first type:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-32-1" name="__codelineno-32-1" href="#__codelineno-32-1"></a>    <span class="n">find_nearest_traffic_light</span><span class="p">(</span><span class="n">_acs_value</span><span class="p">(</span><span class="n">carla</span><span class="o">.</span><span class="n">World</span><span class="p">),</span> <span class="n">_acs_value</span><span class="p">(</span><span class="n">Lanelet2Pose</span><span class="p">))</span>
-<a id="__codelineno-32-2" name="__codelineno-32-2" href="#__codelineno-32-2"></a>    <span class="n">AutowareBridge</span><span class="o">.</span><span class="n">configure</span><span class="p">(</span><span class="n">_acs_value</span><span class="p">(</span><span class="n">AutowareBridge</span><span class="p">),</span> <span class="n">_acs_value</span><span class="p">(</span><span class="n">BridgePose</span><span class="p">),</span> <span class="n">_acs_value</span><span class="p">(</span><span class="n">BridgePose</span><span class="p">))</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-33-1" name="__codelineno-33-1" href="#__codelineno-33-1"></a>    <span class="n">find_nearest_traffic_light</span><span class="p">(</span><span class="n">_acs_value</span><span class="p">(</span><span class="n">carla</span><span class="o">.</span><span class="n">World</span><span class="p">),</span> <span class="n">_acs_value</span><span class="p">(</span><span class="n">Lanelet2Pose</span><span class="p">))</span>
+<a id="__codelineno-33-2" name="__codelineno-33-2" href="#__codelineno-33-2"></a>    <span class="n">AutowareBridge</span><span class="o">.</span><span class="n">configure</span><span class="p">(</span><span class="n">_acs_value</span><span class="p">(</span><span class="n">AutowareBridge</span><span class="p">),</span> <span class="n">_acs_value</span><span class="p">(</span><span class="n">BridgePose</span><span class="p">),</span> <span class="n">_acs_value</span><span class="p">(</span><span class="n">BridgePose</span><span class="p">))</span>
 </code></pre></div>
 <p>A method is called through its class (<code>AutowareBridge.configure(...)</code>, not
 <code>_acs_value(AutowareBridge).configure(...)</code>): a dispatch thunk fills in no
@@ -3431,8 +3462,8 @@ field default was compiled: <code>stop_timeout_s: float = "far"</code> on
 <code>CommandAutowareLauncher</code> passed the check. A dataclass with a defaulted
 field is now constructed once more, with only the fields that have no
 default, each of its first type:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-33-1" name="__codelineno-33-1" href="#__codelineno-33-1"></a>    <span class="n">DockerAutowareConfig</span><span class="p">(</span><span class="n">_acs_value</span><span class="p">(</span><span class="n">Path</span><span class="p">),</span> <span class="n">_acs_value</span><span class="p">(</span><span class="n">Sequence</span><span class="p">[</span><span class="nb">str</span><span class="p">]))</span>
-<a id="__codelineno-33-2" name="__codelineno-33-2" href="#__codelineno-33-2"></a>    <span class="n">DriverClientConfig</span><span class="p">()</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-34-1" name="__codelineno-34-1" href="#__codelineno-34-1"></a>    <span class="n">DockerAutowareConfig</span><span class="p">(</span><span class="n">_acs_value</span><span class="p">(</span><span class="n">Path</span><span class="p">),</span> <span class="n">_acs_value</span><span class="p">(</span><span class="n">Sequence</span><span class="p">[</span><span class="nb">str</span><span class="p">]))</span>
+<a id="__codelineno-34-2" name="__codelineno-34-2" href="#__codelineno-34-2"></a>    <span class="n">DriverClientConfig</span><span class="p">()</span>
 </code></pre></div>
 <p>A field without a default after one with (a <code>field(kw_only=True)</code>) is passed
 by keyword. A field with no default of its own (<code>field()</code>, or
@@ -3490,8 +3521,8 @@ no call compiles it, and <code>BackendDriven._tm_port: int = "x"</code>,
 <code>BaseScenario.STABILIZE_TICKS: int = "a"</code> and <code>AutowareEgoEntity.stack_name:
 str = 1</code> passed the check. The check's function now assigns each such default
 to a local of its type, which compiles the value against the annotation:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-34-1" name="__codelineno-34-1" href="#__codelineno-34-1"></a>    <span class="n">_acs_cls_default_10</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">DEFAULT_TM_PORT</span>
-<a id="__codelineno-34-2" name="__codelineno-34-2" href="#__codelineno-34-2"></a>    <span class="n">_acs_cls_default_13</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="n">_expect_bool</span><span class="p">(</span><span class="kc">True</span><span class="p">)</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-35-1" name="__codelineno-35-1" href="#__codelineno-35-1"></a>    <span class="n">_acs_cls_default_10</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">DEFAULT_TM_PORT</span>
+<a id="__codelineno-35-2" name="__codelineno-35-2" href="#__codelineno-35-2"></a>    <span class="n">_acs_cls_default_13</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="n">_expect_bool</span><span class="p">(</span><span class="kc">True</span><span class="p">)</span>
 </code></pre></div>
 <p>Each local is named after its line in the function, and an error is reported
 at it, labelled with the member (<code>&lt;library check: class-level default of
@@ -3597,7 +3628,7 @@ the model's <code>BaseScenario</code>), and an injected <code>self._tm_port = "x
 every run. A function some of whose parameters Codon cannot express, each
 with a default, is now called once, leaving out every defaulted argument,
 instead of being a problem:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-35-1" name="__codelineno-35-1" href="#__codelineno-35-1"></a>    <span class="n">BaseScenario</span><span class="p">(</span><span class="n">_acs_value</span><span class="p">(</span><span class="n">EgoConfig</span><span class="p">))</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-36-1" name="__codelineno-36-1" href="#__codelineno-36-1"></a>    <span class="n">BaseScenario</span><span class="p">(</span><span class="n">_acs_value</span><span class="p">(</span><span class="n">EgoConfig</span><span class="p">))</span>
 </code></pre></div>
 <p>and the one line that stores the class is under <code>if not TYPE_CHECKING:</code>,
 which Python runs and Codon does not (<code>ego_type</code> stays declared at class
@@ -3616,8 +3647,8 @@ setter of <code>ScenarioRunner.xodr_path</code> passed a run of <code>scenario_r
 only the full run found it, through <code>ScenarioQueue.start()</code>. The check now
 assigns each property that has a setter, once with each member of the
 annotation of the value it takes:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-36-1" name="__codelineno-36-1" href="#__codelineno-36-1"></a>    <span class="n">_acs_value</span><span class="p">(</span><span class="n">BaseScenario</span><span class="p">)</span><span class="o">.</span><span class="n">goal_pose</span> <span class="o">=</span> <span class="n">_acs_value</span><span class="p">(</span><span class="n">Optional</span><span class="p">[</span><span class="n">Lanelet2Pose</span><span class="p">])</span>
-<a id="__codelineno-36-2" name="__codelineno-36-2" href="#__codelineno-36-2"></a>    <span class="n">_acs_value</span><span class="p">(</span><span class="n">ScenarioRunner</span><span class="p">)</span><span class="o">.</span><span class="n">xodr_path</span> <span class="o">=</span> <span class="n">_acs_value</span><span class="p">(</span><span class="n">Optional</span><span class="p">[</span><span class="n">Path</span><span class="p">])</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-37-1" name="__codelineno-37-1" href="#__codelineno-37-1"></a>    <span class="n">_acs_value</span><span class="p">(</span><span class="n">BaseScenario</span><span class="p">)</span><span class="o">.</span><span class="n">goal_pose</span> <span class="o">=</span> <span class="n">_acs_value</span><span class="p">(</span><span class="n">Optional</span><span class="p">[</span><span class="n">Lanelet2Pose</span><span class="p">])</span>
+<a id="__codelineno-37-2" name="__codelineno-37-2" href="#__codelineno-37-2"></a>    <span class="n">_acs_value</span><span class="p">(</span><span class="n">ScenarioRunner</span><span class="p">)</span><span class="o">.</span><span class="n">xodr_path</span> <span class="o">=</span> <span class="n">_acs_value</span><span class="p">(</span><span class="n">Optional</span><span class="p">[</span><span class="n">Path</span><span class="p">])</span>
 </code></pre></div>
 <p>An error is reported at its line, through <code>&lt;library check:
 ScenarioRunner.xodr_path (setter)&gt;</code>. That is 3 assignments, for the 3
@@ -4163,10 +4194,10 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   Convert under <code>if TYPE_CHECKING:</code>, which Codon reads as true and Python as
   false, so nothing changes at run time (<code>traffic_manager._vehicle()</code>):</li>
 </ul>
-<p><div class="highlight"><pre><span></span><code><a id="__codelineno-37-1" name="__codelineno-37-1" href="#__codelineno-37-1"></a><span class="k">if</span> <span class="n">TYPE_CHECKING</span><span class="p">:</span>
-<a id="__codelineno-37-2" name="__codelineno-37-2" href="#__codelineno-37-2"></a>    <span class="k">return</span> <span class="n">actor</span><span class="o">.</span><span class="n">as_vehicle</span><span class="p">()</span>
-<a id="__codelineno-37-3" name="__codelineno-37-3" href="#__codelineno-37-3"></a><span class="k">else</span><span class="p">:</span>
-<a id="__codelineno-37-4" name="__codelineno-37-4" href="#__codelineno-37-4"></a>    <span class="k">return</span> <span class="n">actor</span>
+<p><div class="highlight"><pre><span></span><code><a id="__codelineno-38-1" name="__codelineno-38-1" href="#__codelineno-38-1"></a><span class="k">if</span> <span class="n">TYPE_CHECKING</span><span class="p">:</span>
+<a id="__codelineno-38-2" name="__codelineno-38-2" href="#__codelineno-38-2"></a>    <span class="k">return</span> <span class="n">actor</span><span class="o">.</span><span class="n">as_vehicle</span><span class="p">()</span>
+<a id="__codelineno-38-3" name="__codelineno-38-3" href="#__codelineno-38-3"></a><span class="k">else</span><span class="p">:</span>
+<a id="__codelineno-38-4" name="__codelineno-38-4" href="#__codelineno-38-4"></a>    <span class="k">return</span> <span class="n">actor</span>
 </code></pre></div>
 - <strong>An import of the framework inside an uncalled function</strong> is left as
   written: Codon does not compile it, so a checked module may import a
@@ -4276,18 +4307,18 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
 - <strong>An operator whose result depends on the operand</strong> (<code>Absolute - Absolute
   -&gt; Relative</code>, <code>Absolute - Relative -&gt; Absolute</code>) keeps its <code>@overload</code>
   stubs, for mypy, and spells the union out on the implementation:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-38-1" name="__codelineno-38-1" href="#__codelineno-38-1"></a><span class="nd">@overload</span>
-<a id="__codelineno-38-2" name="__codelineno-38-2" href="#__codelineno-38-2"></a><span class="k">def</span><span class="w"> </span><span class="fm">__sub__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">:</span> <span class="n">AbsoluteVelocity</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">RelativeVelocity</span><span class="p">:</span> <span class="o">...</span>
-<a id="__codelineno-38-3" name="__codelineno-38-3" href="#__codelineno-38-3"></a><span class="nd">@overload</span>
-<a id="__codelineno-38-4" name="__codelineno-38-4" href="#__codelineno-38-4"></a><span class="k">def</span><span class="w"> </span><span class="fm">__sub__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">:</span> <span class="n">RelativeVelocity</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">AbsoluteVelocity</span><span class="p">:</span> <span class="o">...</span>
-<a id="__codelineno-38-5" name="__codelineno-38-5" href="#__codelineno-38-5"></a><span class="k">def</span><span class="w"> </span><span class="fm">__sub__</span><span class="p">(</span>
-<a id="__codelineno-38-6" name="__codelineno-38-6" href="#__codelineno-38-6"></a>    <span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">:</span> <span class="n">AbsoluteVelocity</span> <span class="o">|</span> <span class="n">RelativeVelocity</span>
-<a id="__codelineno-38-7" name="__codelineno-38-7" href="#__codelineno-38-7"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Union</span><span class="p">[</span><span class="n">RelativeVelocity</span><span class="p">,</span> <span class="n">AbsoluteVelocity</span><span class="p">]:</span>
-<a id="__codelineno-38-8" name="__codelineno-38-8" href="#__codelineno-38-8"></a>    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">other</span><span class="p">,</span> <span class="n">AbsoluteVelocity</span><span class="p">):</span>
-<a id="__codelineno-38-9" name="__codelineno-38-9" href="#__codelineno-38-9"></a>        <span class="k">return</span> <span class="n">RelativeVelocity</span><span class="p">(</span><span class="o">...</span><span class="p">)</span>
-<a id="__codelineno-38-10" name="__codelineno-38-10" href="#__codelineno-38-10"></a>    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">other</span><span class="p">,</span> <span class="n">RelativeVelocity</span><span class="p">):</span>
-<a id="__codelineno-38-11" name="__codelineno-38-11" href="#__codelineno-38-11"></a>        <span class="k">return</span> <span class="n">AbsoluteVelocity</span><span class="p">(</span><span class="o">...</span><span class="p">)</span>
-<a id="__codelineno-38-12" name="__codelineno-38-12" href="#__codelineno-38-12"></a>    <span class="k">return</span> <span class="bp">NotImplemented</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-39-1" name="__codelineno-39-1" href="#__codelineno-39-1"></a><span class="nd">@overload</span>
+<a id="__codelineno-39-2" name="__codelineno-39-2" href="#__codelineno-39-2"></a><span class="k">def</span><span class="w"> </span><span class="fm">__sub__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">:</span> <span class="n">AbsoluteVelocity</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">RelativeVelocity</span><span class="p">:</span> <span class="o">...</span>
+<a id="__codelineno-39-3" name="__codelineno-39-3" href="#__codelineno-39-3"></a><span class="nd">@overload</span>
+<a id="__codelineno-39-4" name="__codelineno-39-4" href="#__codelineno-39-4"></a><span class="k">def</span><span class="w"> </span><span class="fm">__sub__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">:</span> <span class="n">RelativeVelocity</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">AbsoluteVelocity</span><span class="p">:</span> <span class="o">...</span>
+<a id="__codelineno-39-5" name="__codelineno-39-5" href="#__codelineno-39-5"></a><span class="k">def</span><span class="w"> </span><span class="fm">__sub__</span><span class="p">(</span>
+<a id="__codelineno-39-6" name="__codelineno-39-6" href="#__codelineno-39-6"></a>    <span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">:</span> <span class="n">AbsoluteVelocity</span> <span class="o">|</span> <span class="n">RelativeVelocity</span>
+<a id="__codelineno-39-7" name="__codelineno-39-7" href="#__codelineno-39-7"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Union</span><span class="p">[</span><span class="n">RelativeVelocity</span><span class="p">,</span> <span class="n">AbsoluteVelocity</span><span class="p">]:</span>
+<a id="__codelineno-39-8" name="__codelineno-39-8" href="#__codelineno-39-8"></a>    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">other</span><span class="p">,</span> <span class="n">AbsoluteVelocity</span><span class="p">):</span>
+<a id="__codelineno-39-9" name="__codelineno-39-9" href="#__codelineno-39-9"></a>        <span class="k">return</span> <span class="n">RelativeVelocity</span><span class="p">(</span><span class="o">...</span><span class="p">)</span>
+<a id="__codelineno-39-10" name="__codelineno-39-10" href="#__codelineno-39-10"></a>    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">other</span><span class="p">,</span> <span class="n">RelativeVelocity</span><span class="p">):</span>
+<a id="__codelineno-39-11" name="__codelineno-39-11" href="#__codelineno-39-11"></a>        <span class="k">return</span> <span class="n">AbsoluteVelocity</span><span class="p">(</span><span class="o">...</span><span class="p">)</span>
+<a id="__codelineno-39-12" name="__codelineno-39-12" href="#__codelineno-39-12"></a>    <span class="k">return</span> <span class="bp">NotImplemented</span>
 </code></pre></div>
 <p>The check calls the implementation once per member, and Codon compiles
   only the <code>isinstance</code> branch of that member, so each call has one result
@@ -4826,7 +4857,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 19, 2026 02:53:15 UTC"><span class="timeago" datetime="2026-10-19T02:53:15+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 19, 2026 02:53:15 UTC">2026-10-19</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 19, 2026 04:32:09 UTC"><span class="timeago" datetime="2026-10-19T04:32:09+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 19, 2026 04:32:09 UTC">2026-10-19</span>
   </span>
 
     
