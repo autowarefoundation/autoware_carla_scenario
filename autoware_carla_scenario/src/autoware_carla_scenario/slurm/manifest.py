@@ -18,6 +18,7 @@ heavy imports: the ``scenario-slurm`` commands only read these.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import tempfile
@@ -27,15 +28,26 @@ from typing import Any
 
 __all__ = [
     "MANIFEST_VERSION",
+    "MANIFEST_VERSIONS",
     "RUN_FILE_SUFFIXES",
     "BatchLayout",
+    "config_files",
+    "file_sha256",
+    "resubmit_target",
     "read_json",
     "sequential_stems",
     "write_json",
 ]
 
 #: Bumped when the manifest changes in a way an older worker cannot read.
-MANIFEST_VERSION = 1
+#: Version 2 is a batch submitted with ``launcher.remote_cwd``: its jobs find
+#: the batch at ``batch_dir_relative`` under their working directory, not at
+#: ``batch_dir`` (the submit host's path), which an older framework would use.
+#: A batch without ``remote_cwd`` is still written as version 1.
+MANIFEST_VERSION = 2
+
+#: The versions this framework reads.
+MANIFEST_VERSIONS: tuple[int, ...] = (1, 2)
 
 #: The files a run writes under its stem (``scenario_runner``): what is
 #: removed before a case runs again, so a rerun never leaves a stale one.
@@ -50,6 +62,72 @@ RUN_FILE_SUFFIXES: tuple[str, ...] = (
     # The Rerun recording of the trajectory log (rerun.enabled).
     ".rrd",
 )
+
+
+def file_sha256(path: Path) -> str:
+    """The SHA-256 of the file *path*, hex."""
+    digest = hashlib.sha256()
+    with open(path, "rb") as stream:
+        for block in iter(lambda: stream.read(1 << 20), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def config_key(prefix: str, key: Any) -> str:
+    """The name of *key* under *prefix* in a config, as the worker reports a
+    difference (``a.b``, ``a.list[2]``)."""
+    if isinstance(key, int):
+        return f"{prefix}[{key}]"
+    return f"{prefix}.{key}" if prefix else str(key)
+
+
+def config_files(
+    config: Any, cache: dict[str, str] | None = None, prefix: str = ""
+) -> dict[str, str]:
+    """Every string of the resolved *config* that is the absolute path of a
+    file here, by its key: the file's SHA-256.
+
+    A task on a node whose paths differ from this host's (another mount,
+    another home, the package installed elsewhere) resolves such a value to
+    another path; it is the same config when the file there has the same
+    content (``worker._check_same_config``).  *cache* holds the digests of
+    the paths already read, across cases.
+    """
+    cache = {} if cache is None else cache
+    found: dict[str, str] = {}
+    if isinstance(config, dict):
+        items: Any = config.items()
+    elif isinstance(config, list):
+        items = enumerate(config)
+    else:
+        if (
+            isinstance(config, str)
+            and config.startswith("/")
+            and len(config) < 4096
+            and "\n" not in config
+            and "\0" not in config
+        ):
+            if config not in cache:
+                try:
+                    path = Path(config)
+                    cache[config] = file_sha256(path) if path.is_file() else ""
+                except OSError:
+                    cache[config] = ""
+            if cache[config]:
+                found[prefix or "<root>"] = cache[config]
+        return found
+    for key, value in items:
+        found.update(config_files(value, cache, config_key(prefix, key)))
+    return found
+
+
+def resubmit_target(layout: "BatchLayout", manifest: dict[str, Any]) -> str:
+    """The batch's directory as ``scenario-slurm`` on the submit host takes
+    it: a ``remote_cwd`` batch collected on a node names the submit host's
+    path (the manifest's ``batch_dir``), not the node's."""
+    if manifest.get("batch_dir_relative") and manifest.get("batch_dir"):
+        return str(manifest["batch_dir"])
+    return str(layout.batch_dir)
 
 
 def write_json(path: Path, data: Any) -> None:
@@ -155,10 +233,11 @@ class BatchLayout:
             )
         manifest = read_json(self.manifest)
         version = manifest.get("version")
-        if version != MANIFEST_VERSION:
+        if version not in MANIFEST_VERSIONS:
             raise ValueError(
                 f"{self.manifest} is a version {version} manifest; this "
-                f"autoware_carla_scenario reads version {MANIFEST_VERSION}"
+                "autoware_carla_scenario reads version(s) "
+                + ", ".join(str(v) for v in MANIFEST_VERSIONS)
             )
         return manifest
 

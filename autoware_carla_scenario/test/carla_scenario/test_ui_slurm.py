@@ -55,6 +55,31 @@ def test_the_options_become_launcher_overrides() -> None:
     ]
 
 
+def test_a_submit_host_with_other_paths_sets_the_node_s() -> None:
+    from hydra.core.override_parser.overrides_parser import OverridesParser
+
+    options = SlurmOptions.from_request(
+        {
+            "remote_cwd": "workspace/OnePlanner",
+            "python": ".venv/bin/python",
+            "setup": 'source ~/workspace/opt/env.sh\n\necho "it\'s $HOME"\n',
+        }
+    )
+    overrides = options.overrides()
+    assert overrides == [
+        "launcher=slurm",
+        "launcher.remote_cwd=workspace/OnePlanner",
+        "launcher.python=.venv/bin/python",
+        "launcher.setup=['source ~/workspace/opt/env.sh','echo \"it\\'s $HOME\"']",
+    ]
+    parser = OverridesParser.create()
+    assert parser.parse_override(overrides[-1]).value() == [
+        "source ~/workspace/opt/env.sh",
+        'echo "it\'s $HOME"',
+    ]
+    assert SlurmOptions.from_request({"remote_cwd": "~/work"}).remote_cwd == "~/work"
+
+
 @pytest.mark.parametrize(
     ("field", "value", "error"),
     [
@@ -64,6 +89,11 @@ def test_the_options_become_launcher_overrides() -> None:
         ("partition", "main; rm -rf", "characters"),
         ("env", "1BAD=x", "not an environment variable name"),
         ("env", "NOVALUE", "NAME=value"),
+        ("remote_cwd", "work; rm -rf", "not a path"),
+        ("remote_cwd", "~bob/work", "not a path"),
+        ("python", "$(evil)", "not a path"),
+        ("setup", "echo ${HOME}", "rather than"),
+        ("setup", "echo a\\b", "no backslash"),
     ],
 )
 def test_options_sbatch_would_not_take_are_refused(

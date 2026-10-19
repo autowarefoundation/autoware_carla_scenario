@@ -1116,3 +1116,399 @@ def test_interrupt_collects_after_the_bounded_wait(
     assert submit._wait_until_gone("77", 60.0, 15.0) is False
     assert 60.0 <= clock[0] <= 61.0
     assert "still in the queue" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# A submit host that sees the nodes' file system at other paths (remote_cwd)
+# ---------------------------------------------------------------------------
+
+_REMOTE_MANIFEST: dict[str, Any] = {
+    "python": "/submit/host/.venv/bin/python",
+    "cwd": "/home/alice/mnt/node/OnePlanner",
+    "batch_dir_relative": "outputs/2026-10-19/12-00-00",
+    "env": {},
+}
+
+
+def _remote_layout() -> BatchLayout:
+    return BatchLayout(
+        Path("/home/alice/mnt/node/OnePlanner/outputs/2026-10-19/12-00-00")
+    )
+
+
+def test_remote_cwd_defaults_pass_nothing_of_the_submit_host() -> None:
+    plain = SlurmSettings.from_mapping({"export": None, "env_passthrough": None})
+    assert plain.remote_cwd is None
+    assert plain.export == "ALL"
+    assert plain.env_passthrough == SlurmSettings().env_passthrough
+    remote = SlurmSettings.from_mapping(
+        {
+            "remote_cwd": "workspace/OnePlanner",
+            "python": ".venv/bin/python",
+            "export": None,
+            "env_passthrough": None,
+        }
+    )
+    assert remote.export == "NONE"
+    assert remote.env_passthrough == ()
+    # Given explicitly, they are what they are given.
+    explicit = SlurmSettings.from_mapping(
+        {
+            "remote_cwd": "workspace/OnePlanner",
+            "python": "python3",
+            "export": "ALL",
+            "env_passthrough": ["ONEPLANNER_*"],
+        }
+    )
+    assert explicit.export == "ALL"
+    assert explicit.env_passthrough == ("ONEPLANNER_*",)
+    # Recorded as resolved: a resubmit reads the same settings back.
+    assert SlurmSettings.from_mapping(remote.to_dict()) == remote
+    assert remote.replace(wait=False).remote_cwd == "workspace/OnePlanner"
+
+
+@pytest.mark.parametrize(
+    ("launcher", "error"),
+    [
+        ({"remote_cwd": "workspace/OnePlanner"}, "needs launcher.python"),
+        ({"remote_cwd": "~bob/work", "python": "python3"}, "not ~user"),
+        ({"remote_cwd": "work", "python": "~bob/python"}, "not ~user"),
+        ({"remote_cwd": "a\nb", "python": "python3"}, "one line"),
+    ],
+)
+def test_remote_cwd_settings_it_cannot_use_are_refused(
+    launcher: dict[str, Any], error: str
+) -> None:
+    with pytest.raises(ValueError, match=error):
+        SlurmSettings.from_mapping(launcher)
+
+
+@pytest.mark.parametrize(
+    ("remote_cwd", "cd"),
+    [
+        ("workspace/OnePlanner", 'cd "$HOME"/workspace/OnePlanner || '),
+        ("~/workspace/OnePlanner", 'cd "$HOME"/workspace/OnePlanner || '),
+        ("~", 'cd "$HOME" || '),
+        ("/shared/work dir", "cd '/shared/work dir' || "),
+    ],
+)
+@pytest.mark.parametrize(
+    ("python", "run"),
+    [
+        (".venv/bin/python", ".venv/bin/python -u -m "),
+        ("python3", "python3 -u -m "),
+        ("~/venv/bin/python", '"$HOME"/venv/bin/python -u -m '),
+        ("/opt/py/bin/python", "/opt/py/bin/python -u -m "),
+    ],
+)
+def test_remote_job_script_works_at_the_node_s_paths(
+    remote_cwd: str, cd: str, python: str, run: str
+) -> None:
+    from autoware_carla_scenario.slurm.submit import job_script, sbatch_command
+
+    layout = _remote_layout()
+    settings = SlurmSettings.from_mapping(
+        {
+            "remote_cwd": remote_cwd,
+            "python": python,
+            "setup": ["source ~/workspace/opt/env.sh"],
+            "env": {"ONEPLANNER_X": "x"},
+        }
+    )
+    script = job_script(layout, _REMOTE_MANIFEST, settings, 2)
+    lines = script.splitlines()
+    # Nothing of the submit host's paths: neither its cwd nor its interpreter.
+    assert "/home/alice" not in script and "/submit/host" not in script
+    workdir = next(i for i, line in enumerate(lines) if line.startswith(cd))
+    batch = lines.index('BATCH_DIR="$WORKDIR"/outputs/2026-10-19/12-00-00')
+    log = lines.index(
+        'exec >>"$BATCH_DIR"/slurm/logs/"${SLURM_ARRAY_JOB_ID}_${TASK}.out" 2>&1'
+    )
+    setup = lines.index("source ~/workspace/opt/env.sh")
+    # setup may read unset variables: the job has little of an environment.
+    assert lines[setup - 1] == "set +u" and lines[setup + 1] == "set -u"
+    back = lines.index('cd "$WORKDIR" || exit 1')
+    worker = next(i for i, line in enumerate(lines) if line.startswith(run))
+    assert workdir < batch < log < setup < back < worker
+    assert lines[worker].endswith(' "$BATCH_DIR"/slurm/manifest.json 2 "$TASK" &')
+    assert 'PORT_FILE="$BATCH_DIR"/slurm/tasks/2-${TASK}.port' in lines
+    completed = subprocess.run(["bash", "-n"], input=script, text=True, check=False)
+    assert completed.returncode == 0
+
+    command = sbatch_command(layout, settings, layout.job_script(2), 3)
+    assert "--chdir=/tmp" in command
+    assert "--output=/tmp/acs-slurm-%u-%A_%a.out" in command
+    assert "--export=NONE" in command
+    # sbatch reads the script on the submit host: its path is this host's.
+    assert command[-1] == str(layout.job_script(2))
+
+
+def test_remote_collect_job_runs_the_node_s_python_where_the_batch_is() -> None:
+    from autoware_carla_scenario.slurm.submit import _collect_command, collect_script
+
+    layout = _remote_layout()
+    settings = SlurmSettings.from_mapping(
+        {
+            "remote_cwd": "workspace/OnePlanner",
+            "python": ".venv/bin/python",
+            "setup": ["source ~/workspace/opt/env.sh"],
+        }
+    )
+    script = collect_script(_REMOTE_MANIFEST, settings)
+    lines = script.splitlines()
+    assert "/home/alice" not in script and "/submit/host" not in script
+    assert 'cd "$HOME"/workspace/OnePlanner || ' in "\n".join(lines)
+    assert 'exec >>"$BATCH_DIR"/slurm/logs/"collect-${SLURM_JOB_ID}.out" 2>&1' in lines
+    assert lines.index("source ~/workspace/opt/env.sh") < lines.index(
+        "exec .venv/bin/python -m autoware_carla_scenario.slurm.cli collect "
+        '"$BATCH_DIR"'
+    )
+    completed = subprocess.run(["bash", "-n"], input=script, text=True, check=False)
+    assert completed.returncode == 0
+    path = layout.root / "jobs" / "0-collect.sh"
+    command = _collect_command(layout, _REMOTE_MANIFEST, settings, "41", path)
+    assert "--dependency=afterany:41" in command
+    assert "--chdir=/tmp" in command
+    assert "--output=/tmp/acs-slurm-%u-collect-%j.out" in command
+    assert not any(arg.startswith("--wrap") for arg in command)
+    assert command[-1] == str(path)
+
+
+def test_without_remote_cwd_the_collect_job_runs_launcher_python() -> None:
+    from autoware_carla_scenario.slurm.submit import _collect_command
+
+    layout = BatchLayout(Path("/work/outputs/2026-10-19/12-00-00"))
+    manifest = {"python": "/usr/bin/python3", "cwd": "/work", "env": {}}
+    settings = SlurmSettings.from_mapping({"python": ".venv/bin/python"})
+    command = _collect_command(layout, manifest, settings, "41")
+    assert "--chdir=/work" in command
+    wrap = next(arg for arg in command if arg.startswith("--wrap="))
+    assert wrap.startswith("--wrap=.venv/bin/python -m ")
+
+
+def test_the_batch_must_lie_under_the_submitting_directory(tmp_path: Path) -> None:
+    from autoware_carla_scenario.slurm.submit import relative_batch_dir
+
+    work = tmp_path / "work"
+    (work / "outputs" / "d" / "t").mkdir(parents=True)
+    assert relative_batch_dir(work / "outputs" / "d" / "t", str(work)) == "outputs/d/t"
+    assert relative_batch_dir(Path("outputs/d/t"), str(work)) == "outputs/d/t"
+    with pytest.raises(ValueError, match="not under the directory scenario runs in"):
+        relative_batch_dir(tmp_path / "elsewhere", str(work))
+    with pytest.raises(ValueError, match="must be a directory under it"):
+        relative_batch_dir(work, str(work))
+
+
+def test_manifest_versions_one_and_two_are_read(tmp_path: Path) -> None:
+    from autoware_carla_scenario.slurm.manifest import MANIFEST_VERSIONS, write_json
+
+    layout = BatchLayout(tmp_path / "batch")
+    for version in MANIFEST_VERSIONS:
+        write_json(layout.manifest, {"version": version, "cases": []})
+        assert layout.read_manifest()["version"] == version
+    write_json(layout.manifest, {"version": 99, "cases": []})
+    with pytest.raises(ValueError, match="version 99 manifest"):
+        layout.read_manifest()
+
+
+def test_a_remote_job_script_refuses_a_manifest_without_the_relative_batch() -> None:
+    from autoware_carla_scenario.slurm.submit import job_script
+
+    settings = SlurmSettings.from_mapping({"remote_cwd": "work", "python": "python3"})
+    manifest = {k: v for k, v in _REMOTE_MANIFEST.items() if k != "batch_dir_relative"}
+    with pytest.raises(ValueError, match="batch_dir_relative"):
+        job_script(_remote_layout(), manifest, settings, 0)
+
+
+def test_a_batch_submitted_from_a_mount_runs_at_the_node_s_paths(
+    fake_slurm: SimpleNamespace, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The submit host sees the work directory at ``mnt/node/OnePlanner``;
+    the node at ``workspace/OnePlanner`` in its user's home, which is not the
+    submit host's: each job finds it through ``remote_cwd``, relative to the
+    home the node's passwd database gives it."""
+    from autoware_carla_scenario.slurm import cli, submit
+
+    local_status, local = _run_batch(fake_slurm, "local", list(_SWEEP))
+    tmp: Path = fake_slurm.tmp
+    mp = fake_slurm.monkeypatch
+    submit_side = tmp / "mnt" / "node" / "OnePlanner"
+    submit_side.mkdir(parents=True)
+    node_home = tmp / "node_home"
+    (node_home / "workspace").mkdir(parents=True)
+    (node_home / "workspace" / "OnePlanner").symlink_to(submit_side)
+    # The node's interpreter, relative to the work directory.
+    venv_python = submit_side / ".venv" / "bin" / "python"
+    venv_python.parent.mkdir(parents=True)
+    venv_python.write_text(f'#!/bin/sh\nexec {sys.executable} "$@"\n')
+    venv_python.chmod(0o755)
+    # The node's passwd database: the job user's home is node_home.
+    getent = tmp / "bin" / "getent"
+    getent.write_text(
+        f'#!/bin/sh\necho "user:x:$(id -u):$(id -g)::{node_home}:/bin/sh"\n'
+    )
+    getent.chmod(0o755)
+    node_tmp = tmp / "node_tmp"
+    node_tmp.mkdir()
+    mp.setattr(submit, "REMOTE_EARLY_OUTPUT_DIR", str(node_tmp))
+    mp.setenv("HOME", str(tmp / "submit_home"))
+    mp.chdir(submit_side)
+    output = submit_side / "outputs" / "2026-10-19" / "12-00-00"
+    output.mkdir(parents=True)
+    mp.setattr(fake_slurm.run, "_make_batch_output_dir", lambda: output)
+
+    overrides = _slurm(
+        "launcher.remote_cwd=workspace/OnePlanner",
+        "launcher.python=.venv/bin/python",
+        "launcher.setup=['echo node setup in $PWD']",
+    )
+    with pytest.raises(SystemExit) as exited:
+        fake_slurm.run.run_batch([_CONCRETE], overrides, expand=True, wait=False)
+    assert int(exited.value.code or 0) == 0
+    _wait_for(lambda: _jobs_done(fake_slurm), 120, "the array and its collect job")
+
+    layout = BatchLayout(output)
+    manifest = layout.read_manifest()
+    assert manifest["version"] == 2
+    assert manifest["batch_dir_relative"] == "outputs/2026-10-19/12-00-00"
+    assert manifest["launcher"]["remote_cwd"] == "workspace/OnePlanner"
+    # Nothing of the submit host's environment is handed to the node.
+    assert manifest["env"] == {}
+    assert manifest["launcher"]["export"] == "NONE"
+    for script in (layout.root / "jobs").glob("*.sh"):
+        assert str(submit_side) not in script.read_text()
+        assert str(tmp / "submit_home") not in script.read_text()
+    for line in (fake_slurm.state / "sbatch.log").open():
+        options = [a for a in json.loads(line)["argv"] if a.startswith("--")]
+        assert not any(str(submit_side) in a for a in options)
+
+    assert (output / "batch_results.json").read_bytes() == (
+        local / "batch_results.json"
+    ).read_bytes()
+    logs = {p.name: p.read_text() for p in layout.logs.iterdir()}
+    collect_log = next(t for n, t in logs.items() if n.startswith("collect-"))
+    assert "Batch Scenario Results" in collect_log
+    assert f"node setup in {node_home / 'workspace' / 'OnePlanner'}" in collect_log
+    task_logs = [t for n, t in logs.items() if not n.startswith("collect-")]
+    assert task_logs and all(
+        f"node setup in {node_home / 'workspace' / 'OnePlanner'}" in t
+        for t in task_logs
+    )
+
+    # The submit host follows, collects and resubmits at its own path.
+    capsys.readouterr()
+    assert cli.main(["status", str(output)]) == 0
+    assert "6 with a result" in capsys.readouterr().out
+    assert cli.main(["resubmit", str(output), "--cases", "0", "--wait"]) == local_status
+    assert layout.submissions() == [0, 1]
+    again = layout.job_script(1).read_text()
+    assert 'cd "$HOME"/workspace/OnePlanner || ' in again
+    assert str(submit_side) not in again
+    record = layout.read_result(0)
+    assert record is not None and record["submission"] == 1
+
+
+def _case_with_file(path: Path, **config: Any) -> dict[str, Any]:
+    from autoware_carla_scenario.slurm.manifest import config_files
+
+    resolved = {"odd": str(path), "maps": [str(path), "x"], **config}
+    return {"label": "s#1", "config": resolved, "files": config_files(resolved)}
+
+
+def test_the_manifest_records_the_files_a_config_names(tmp_path: Path) -> None:
+    from autoware_carla_scenario.slurm.manifest import config_files, file_sha256
+
+    odd = tmp_path / "odd.yaml"
+    odd.write_text("odd: 1\n")
+    files = config_files(
+        {"odd": str(odd), "a": {"b": [1, str(odd), str(tmp_path / "gone")]}, "c": "x"}
+    )
+    assert files == {"odd": file_sha256(odd), "a.b[1]": file_sha256(odd)}
+
+
+def test_a_file_at_another_path_with_the_same_content_is_the_same_config(
+    tmp_path: Path,
+) -> None:
+    from omegaconf import OmegaConf
+
+    from autoware_carla_scenario.slurm.worker import _check_same_config
+
+    there = tmp_path / "submit" / "odd.yaml"
+    here = tmp_path / "node" / "site-packages" / "odd.yaml"
+    for path in (there, here):
+        path.parent.mkdir(parents=True)
+        path.write_text("odd: 1\n")
+    case = _case_with_file(there)
+    _check_same_config(
+        case, OmegaConf.create({"odd": str(here), "maps": [str(here), "x"]})
+    )
+
+    here.write_text("odd: 2\n")
+    with pytest.raises(RuntimeError, match=r"at odd \(.*content differs\)"):
+        _check_same_config(
+            case, OmegaConf.create({"odd": str(here), "maps": [str(there), "x"]})
+        )
+    gone = tmp_path / "node" / "gone.yaml"
+    with pytest.raises(RuntimeError) as refused:
+        _check_same_config(
+            case, OmegaConf.create({"odd": str(gone), "maps": [str(there), "x"]})
+        )
+    assert f"at odd ({there} there, {gone} here: missing on the node)" in str(
+        refused.value
+    )
+    # A string that names no file is compared as it is.
+    with pytest.raises(RuntimeError, match="at name"):
+        _check_same_config(
+            {**case, "config": {**case["config"], "name": "a"}},
+            OmegaConf.create(
+                {"odd": str(there), "maps": [str(there), "x"], "name": "b"}
+            ),
+        )
+
+
+def test_the_submitting_directory_seen_from_the_job_s_is_the_same_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from omegaconf import OmegaConf
+
+    from autoware_carla_scenario.slurm.worker import _check_same_config
+
+    node = tmp_path / "node" / "OnePlanner"
+    node.mkdir(parents=True)
+    monkeypatch.chdir(node)
+    monkeypatch.delenv("PWD", raising=False)
+    case = {"label": "s#1", "config": {"out": "/mnt/node/OnePlanner/data/x.bin"}}
+    _check_same_config(
+        case, OmegaConf.create({"out": f"{node}/data/x.bin"}), "/mnt/node/OnePlanner"
+    )
+    with pytest.raises(RuntimeError, match="at out"):
+        _check_same_config(
+            case,
+            OmegaConf.create({"out": f"{node}/data/y.bin"}),
+            "/mnt/node/OnePlanner",
+        )
+
+
+def test_a_remote_batch_collected_on_a_node_names_the_submit_host_s_path(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from autoware_carla_scenario.slurm.collect import collect
+    from autoware_carla_scenario.slurm.manifest import write_json
+
+    layout = BatchLayout(tmp_path / "node" / "outputs" / "d" / "t")
+    write_json(
+        layout.manifest,
+        {
+            "version": 2,
+            "batch_dir": "/home/alice/mnt/node/OnePlanner/outputs/d/t",
+            "batch_dir_relative": "outputs/d/t",
+            "cases": [
+                {"index": 0, "label": "s#1", "case_overrides": [], "overrides": []}
+            ],
+            "launcher": {},
+        },
+    )
+    assert collect(layout) == 1
+    out = capsys.readouterr().out
+    assert "scenario-slurm resubmit /home/alice/mnt/node/OnePlanner/outputs/d/t" in out
+    assert f"resubmit {layout.batch_dir}" not in out

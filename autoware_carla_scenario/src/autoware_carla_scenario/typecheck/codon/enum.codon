@@ -35,10 +35,18 @@ class Enum:
         return self._value_
 
     def __eq__(self, other) -> bool:
-        return self._name_ == other._name_
+        # A member equals a member by name.  Python's plain Enum is equal to
+        # nothing else; an IntEnum / StrEnum subclass below adds its value.
+        if isinstance(other, Enum):
+            return self._name_ == other._name_
+        else:
+            return False
 
     def __ne__(self, other) -> bool:
-        return self._name_ != other._name_
+        if isinstance(other, Enum):
+            return self._name_ != other._name_
+        else:
+            return True
 
     def __hash__(self) -> int:
         return hash(self._name_)
@@ -56,10 +64,79 @@ class Enum:
         return 0
 
 
-IntEnum = Enum
-StrEnum = Enum
+class IntEnum(Enum[T]):
+    T: type
+    """An int-valued enum (`IntEnum`, `IntFlag`, `(int, Enum)`): a member
+    compares, orders and converts like its value, as Python's int mixin makes
+    it.  A plain `Enum` has none of this (Python refuses `<` and `int()`).
+    The checker names this class as the base of such an enum."""
+
+    def __eq__(self, other) -> bool:
+        if isinstance(other, Enum):
+            return self._value_ == other._value_
+        else:
+            return self._value_ == other
+
+    def __ne__(self, other) -> bool:
+        if isinstance(other, Enum):
+            return self._value_ != other._value_
+        else:
+            return self._value_ != other
+
+    def __lt__(self, other) -> bool:
+        if isinstance(other, Enum):
+            return self._value_ < other._value_
+        else:
+            return self._value_ < other
+
+    def __le__(self, other) -> bool:
+        if isinstance(other, Enum):
+            return self._value_ <= other._value_
+        else:
+            return self._value_ <= other
+
+    def __gt__(self, other) -> bool:
+        if isinstance(other, Enum):
+            return self._value_ > other._value_
+        else:
+            return self._value_ > other
+
+    def __ge__(self, other) -> bool:
+        if isinstance(other, Enum):
+            return self._value_ >= other._value_
+        else:
+            return self._value_ >= other
+
+    def __int__(self) -> int:
+        return self._value_
+
+    def __index__(self) -> int:
+        return self._value_
+
+    def __float__(self) -> float:
+        return float(self._value_)
+
+
+class StrEnum(Enum[T]):
+    T: type
+    """A str-valued enum (`StrEnum`, `(str, Enum)`): a member equals its
+    string, as Python's str mixin makes it."""
+
+    def __eq__(self, other) -> bool:
+        if isinstance(other, Enum):
+            return self._value_ == other._value_
+        else:
+            return self._value_ == other
+
+    def __ne__(self, other) -> bool:
+        if isinstance(other, Enum):
+            return self._value_ != other._value_
+        else:
+            return self._value_ != other
+
+
 Flag = Enum
-IntFlag = Enum
+IntFlag = IntEnum
 
 
 def auto() -> int:

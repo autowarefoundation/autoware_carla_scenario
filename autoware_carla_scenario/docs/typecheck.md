@@ -755,7 +755,8 @@ those models declare.
 
 A scenario is ordinary typed Python. Codon is stricter than Python in a few
 places, and the checker smooths over most of them (it rewrites `X | None` into
-`Optional[X]`, drops `@dataclass` and resolves `field(...)` defaults, accepts
+`Optional[X]`, drops `@dataclass` (and appends the `==`, ordering and hash it
+generates) and resolves `field(...)` defaults, accepts
 keyword-only parameters, required ones after a default included, gives a list of different conditions the type
 `list[BaseCondition]`, checks a `tuple[X, ...]` return annotation as a
 `List[X]`, drops a parameter or return annotation naming a
@@ -780,6 +781,24 @@ scenario has to do itself:
 
   ```text
   scenario.py:3: error: `from .. import helpers` imports the module pkg.helpers as a module, which Codon 0.19 resolves only inside the importing module's own package (pkg.sub): import the names instead (`from ..helpers import name`)
+  ```
+
+- **Import a name once.** Python accepts `from autoware_carla_scenario import
+  ComparisonRule` in the import header and again further down, and so does
+  the check (#354): Codon 0.19 leaves a module-level name imported twice
+  undefined in every module but the one it compiles first, so a use of it
+  failed the whole function with a bare "cannot typecheck". The checker drops
+  a module-level import that repeats an identical earlier one (the same
+  module and name, under the same alias), on its line: the repeat becomes
+  `pass`, or loses just the repeated names. An import in a function or an
+  `if` is left as written. A name imported from two different places
+  (`from a import X`, then `from b import X`) means the later one in Python:
+  the checker drops the earlier import when nothing reads the name in
+  between, and refuses the later import, naming the first, when something
+  does:
+
+  ```text
+  scenario.py:12: error: `ComparisonRule` is imported again from somewhere else (first on line 5) after it was used, which Codon 0.19 cannot compile: import each name once, under its own name (`import ... as other` to tell two apart)
   ```
 
 - **Declare the attributes it assigns on `self`**, at class level, with their
@@ -1066,6 +1085,38 @@ Two things Python does that Codon 0.19 does not are filled in for you:
 
   compiles as written, and so does a local `found: Optional[carla.Actor] =
   None` returned at the end.
+
+- **Your own dataclasses, enums and named tuples** keep what Python gives
+  them (#365), with these limits:
+  - A `@dataclass` compares, orders and hashes as Python's does: the check
+    appends `==` and `!=` (`eq=True`, the default), `<`, `<=`, `>` and `>=`
+    (`order=True`) and `hash()` (`frozen=True`, or `unsafe_hash=True`) after
+    the module, comparing the fields in order (a dataclass base's first;
+    `field(compare=False)`, `ClassVar` and `InitVar` are left out). A method
+    the class defines itself is kept. This holds for a dataclass whose bases
+    are dataclasses of the same module (or none): one deriving from a class
+    the check cannot see the fields of, such as a framework dataclass, gets
+    none, and `==` on it is refused. `eq=False` (identity comparison) is not
+    modelled either: write `a is b`. Python refuses `<` without `order=True`
+    and `hash()` of a non-frozen dataclass, and so does the check, with a
+    hint naming the flag.
+  - An `IntEnum` (also `IntFlag`, `class M(int, Enum)`) member compares with
+    its value (`M.A == 1`), orders against a member or an `int`
+    (`M.A < M.B`) and converts with `int()` and `float()`. A `StrEnum` or
+    `class M(str, Enum)` member compares with its string (`M.A == "a"`) and
+    does nothing more: ordering and `int()` are refused, as in Python for a
+    plain `Enum`, a `Flag` and a `(str, Enum)`. A plain `Enum` member equals
+    only members (`M.A == 1` is `False`, as in Python). An enum member is
+    **not** an `int` or a `str` otherwise: passing it to an `int` / `str`
+    parameter or doing arithmetic on it (`M.A + 1`) is refused with a hint.
+    Write `M.A.value`.
+  - A `class Pt(typing.NamedTuple)` is checked as a Codon `@tuple` class: its
+    fields, defaults and methods, `==`, ordering, `hash()`, iteration and
+    `len()` work. Codon indexes and unpacks it (`p[0]`, `x, y = p`) only when
+    all its fields have one type: otherwise read `p.x`, `p.y`. It has no
+    `_replace()`, `_asdict()`, `_fields` or `_make()`: build a new `Pt(...)`.
+    Only the class syntax is covered (not `NamedTuple("Pt", [...])` or
+    `collections.namedtuple`).
 
 ### The names of `typing` a scenario may import
 

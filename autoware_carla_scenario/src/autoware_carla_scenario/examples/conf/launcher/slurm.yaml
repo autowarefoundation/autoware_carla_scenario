@@ -39,27 +39,28 @@ extra_sbatch_args: []
 # load, source a venv), then `env` is set. A name with TOKEN, SECRET, KEY,
 # PASSWORD or CREDENTIAL in it is recorded only when named exactly here or in
 # `env`, not through a `*`.
-export: ALL
-env_passthrough:
-  - PATH
-  - LD_LIBRARY_PATH
-  - PYTHONPATH
-  - PYTHONHOME
-  - VIRTUAL_ENV
-  - CONDA_PREFIX
-  - CARLA_*
-  - AUTOWARE_*
-  - ONEPLANNER_*
-  - TYPESAFE_CARLA_*
-  - GLIBC_TUNABLES
-  - MALLOC_*
-  - CUDA_HOME
-  - CUDA_PATH
-  - CUDAToolkit_ROOT
+# null: ALL, and PATH, LD_LIBRARY_PATH, PYTHONPATH, PYTHONHOME, VIRTUAL_ENV,
+# CONDA_PREFIX, CARLA_*, AUTOWARE_*, ONEPLANNER_*, TYPESAFE_CARLA_*,
+# GLIBC_TUNABLES, MALLOC_*, CUDA_HOME, CUDA_PATH, CUDAToolkit_ROOT -- or, with
+# remote_cwd, NONE and nothing: the submitting host's environment is not the
+# nodes'.
+export: null
+env_passthrough: null
 setup: []
 env: {}
-# The interpreter the job runs the worker with; null: the submitting one.
+# The interpreter the jobs run (the worker, the collect job); null: the
+# submitting one. A relative path is the job's working directory's
+# (.venv/bin/python), a bare name is looked up on the node's PATH (python3),
+# ~/ is the home on the node.
 python: null
+# Where every job works on the nodes, for a submit host that sees their file
+# system at another path (shared storage mounted elsewhere, sshfs or NFS):
+# relative to the job user's home on the node (workspace/OnePlanner), ~/...,
+# or absolute; expanded on the node. The batch's output directory must lie
+# under the directory `scenario` runs in, which is this one as the submit
+# host sees it. Needs `python`. null: the directory `scenario` runs in, which
+# the nodes see at the same path.
+remote_cwd: null
 # Unset DISPLAY in the job, so CARLA renders off-screen.
 headless: true
 # No task of the batch starts sooner than this after another did (the first

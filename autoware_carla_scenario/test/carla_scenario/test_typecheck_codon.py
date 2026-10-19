@@ -4205,6 +4205,318 @@ def test_a_module_of_the_package_imported_without_a_name_is_refused(
 
 
 # ---------------------------------------------------------------------------
+# An import repeated in a module (#354)
+# ---------------------------------------------------------------------------
+
+_REPEAT_BODY = """
+        self._setup_ego_spawn()
+        self.register_fail_condition(TimeoutCondition(5.0, label="t"))
+        logger.info("%s", ComparisonRule.LESS_THAN.value)
+        """
+
+
+@pytest.mark.parametrize(
+    "repeat",
+    [
+        "from autoware_carla_scenario import ComparisonRule\n",
+        "from autoware_carla_scenario import TimeoutCondition, ComparisonRule\n",
+        "from autoware_carla_scenario import ComparisonRule, ComparisonRule\n",
+        "from autoware_carla_scenario import ComparisonRule as ComparisonRule\n",
+        "import typesafe_carla.carla as carla\nimport logging\n",
+    ],
+)
+def test_an_import_repeated_in_the_module_compiles(tmp_path: Path, repeat: str) -> None:
+    header = _HEADER.replace("import logging\n", "import logging\n" + repeat, 1)
+    scenario, config, _ = _write_case(tmp_path, _REPEAT_BODY, header=header)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_an_import_repeated_inside_one_statement_compiles(tmp_path: Path) -> None:
+    header = _HEADER.replace(
+        "    TimeoutCondition,\n", "    TimeoutCondition,\n    TimeoutCondition,\n", 1
+    )
+    scenario, config, _ = _write_case(tmp_path, _REPEAT_BODY, header=header)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_a_name_rebound_by_a_later_import_before_any_use_compiles(
+    tmp_path: Path,
+) -> None:
+    other = (
+        "from autoware_carla_scenario import ScalarComparisonRule as ComparisonRule\n"
+    )
+    header = _HEADER.replace("import logging\n", "import logging\n" + other, 1)
+    scenario, config, _ = _write_case(tmp_path, _REPEAT_BODY, header=header)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_a_name_rebound_after_it_was_used_is_refused_at_the_import(
+    tmp_path: Path,
+) -> None:
+    other = (
+        "from autoware_carla_scenario import ScalarComparisonRule as ComparisonRule\n"
+        "_FIRST = ComparisonRule\n"
+    )
+    header = _HEADER.replace("import logging\n", "import logging\n" + other, 1)
+    scenario, config, path = _write_case(tmp_path, _REPEAT_BODY, header=header)
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert error.path == str(path)
+    # The header's own import statement (it opens one line above its first
+    # name) is the later binding.
+    assert error.line == _line_of(path, "    EGO_ROLE_NAME,") - 1
+    assert f"first on line {_line_of(path, 'ScalarComparisonRule')}" in error.message
+    assert "`ComparisonRule` is imported again" in error.message
+
+
+# ---------------------------------------------------------------------------
+# A scenario's own dataclass, IntEnum / (str, Enum) and NamedTuple (#365)
+# ---------------------------------------------------------------------------
+
+_DATA_IMPORTS = "\n\nimport dataclasses\nimport enum\nimport typing\nfrom dataclasses import dataclass\n\n\n"
+
+
+def _data_case(tmp_path: Path, definitions: str, setup: str) -> tuple[Any, Any, Path]:
+    return _write_case(
+        tmp_path, _TIMEOUT_SETUP + textwrap.dedent(setup), _DATA_IMPORTS + definitions
+    )
+
+
+_DATACLASSES = """
+@dataclass
+class Fz:
+    a: int
+
+
+@dataclass(order=True)
+class Ordered:
+    a: int
+    b: str = "x"
+
+
+@dataclass(frozen=True)
+class Key:
+    a: int
+
+
+@dataclass(frozen=True, order=True)
+class SubKey(Key):
+    b: float = 1.0
+
+
+@dataclass(eq=False)
+class ByIdentity:
+    a: int
+"""
+
+
+def test_a_scenarios_dataclass_compares_orders_and_hashes(tmp_path: Path) -> None:
+    # Python's @dataclass generates these; the check drops the decorator, so it
+    # appends them after the module (#365).
+    setup = """
+        assert Fz(1) == Fz(1)
+        assert Fz(1) != Fz(2)
+        assert Fz(1) in [Fz(1)]
+        assert sorted([Ordered(2), Ordered(1)])[0] == Ordered(1)
+        assert Ordered(1) <= Ordered(2) and Ordered(2) >= Ordered(1)
+        assert Ordered(1) < Ordered(2) and Ordered(2) > Ordered(1)
+        assert {Key(1): 2}[Key(1)] == 2
+        assert len({SubKey(1, 2.0), SubKey(1, 2.0)}) == 1
+        assert SubKey(1) < SubKey(1, 2.0)
+        assert hash(Key(3)) == hash(Key(3))
+    """
+    scenario, config, _ = _data_case(tmp_path, _DATACLASSES, setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+_ENUMS = """
+class Level(enum.IntEnum):
+    LOW = 1
+    HIGH = 2
+
+
+class Mode(str, enum.Enum):
+    FAST = "fast"
+    SLOW = "slow"
+"""
+
+
+def test_an_int_enum_and_a_str_enum_compare_like_their_values(tmp_path: Path) -> None:
+    setup = """
+        assert Level.LOW == 1 and Level.LOW != 2
+        assert Level.LOW < Level.HIGH and Level.HIGH >= Level.LOW
+        assert Level.LOW <= 1 and Level.HIGH > 1
+        assert int(Level.HIGH) == 2
+        assert Level.LOW.value + 1 == 2
+        assert Mode.FAST == "fast" and Mode.FAST != "slow"
+        assert Mode.FAST == Mode.FAST and Mode.FAST != Mode.SLOW
+        assert Mode.FAST.value.upper() == "FAST"
+        assert Level.LOW in [Level.LOW, Level.HIGH]
+    """
+    scenario, config, _ = _data_case(tmp_path, _ENUMS, setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+_NAMED_TUPLES = """
+class Pt(typing.NamedTuple):
+    x: int
+    y: float = 1.0
+
+    def scaled(self, k: float) -> float:
+        return (self.x + self.y) * k
+
+
+class Pair(typing.NamedTuple):
+    a: int
+    b: int = 0
+"""
+
+
+def test_a_namedtuple_class_is_a_tuple_class(tmp_path: Path) -> None:
+    setup = """
+        p = Pt(1)
+        assert p.x == 1 and p.y == 1.0
+        assert p == Pt(1, 1.0) and p != Pt(2)
+        assert Pt(1) < Pt(2)
+        assert {p: 1}[Pt(1)] == 1
+        assert p.scaled(2.0) == 4.0
+        q = Pair(1, 2)
+        a, b = q
+        assert q[0] == a and len(q) == 2
+        for v in q:
+            assert v >= 0
+    """
+    scenario, config, _ = _data_case(tmp_path, _NAMED_TUPLES, setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+@pytest.mark.parametrize(
+    ("definitions", "line", "hint"),
+    [
+        (_DATACLASSES, "Fz(1) < Fz(2)", "order=True"),
+        (_DATACLASSES, "{Fz(1): 2}", "frozen=True"),
+        (_DATACLASSES, "ByIdentity(1) == ByIdentity(1)", "a is b"),
+    ],
+    ids=["unordered", "unhashable", "eq-false"],
+)
+def test_what_a_dataclass_does_not_generate_is_refused_with_a_hint(
+    tmp_path: Path, definitions: str, line: str, hint: str
+) -> None:
+    scenario, config, path = _data_case(tmp_path, definitions, f"r = {line}\n")
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert hint in error.message, error.format()
+    assert error.path == str(path)
+    assert error.line == _line_of(path, f"r = {line}")
+
+
+@pytest.mark.parametrize(
+    ("call", "definitions", "hint"),
+    [
+        (
+            "takes_str(Mode.FAST)",
+            "def takes_str(s: str) -> int:\n    return len(s)\n",
+            ".value",
+        ),
+        (
+            "takes_int(Level.LOW)",
+            "def takes_int(n: int) -> int:\n    return n\n",
+            ".value",
+        ),
+        ("Level.LOW + 1", "", "use its .value"),
+    ],
+    ids=["str-parameter", "int-parameter", "arithmetic"],
+)
+def test_an_enum_member_is_not_passed_as_its_value_type(
+    tmp_path: Path, call: str, definitions: str, hint: str
+) -> None:
+    scenario, config, path = _data_case(
+        tmp_path, _ENUMS + "\n\n" + definitions, f"r = {call}\n"
+    )
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert hint in error.message, error.format()
+    assert error.line == _line_of(path, f"r = {call}")
+
+
+_PLAIN_ENUMS = """
+class Plain(enum.Enum):
+    A = 1
+    B = 2
+
+
+class Bits(enum.Flag):
+    A = 1
+    B = 2
+
+
+class Word(str, enum.Enum):
+    A = "a"
+"""
+
+
+@pytest.mark.parametrize(
+    "line",
+    ["Plain.A < Plain.B", "int(Plain.A)", "Bits.A < Bits.B", "Word.A < Word.A"]
+    + ["int(Word.A)", "Plain.A + 1"],
+)
+def test_only_an_int_enum_orders_and_converts_like_its_value(
+    tmp_path: Path, line: str
+) -> None:
+    # Python refuses these on a plain Enum / Flag / (str, Enum): the shim's
+    # ordering and int() belong to the IntEnum base alone.
+    scenario, config, path = _data_case(tmp_path, _PLAIN_ENUMS, f"r = {line}\n")
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert error.line == _line_of(path, f"r = {line}"), error.format()
+
+
+def test_enum_members_are_dictionary_keys_and_a_plain_enum_equals_only_members(
+    tmp_path: Path,
+) -> None:
+    setup = """
+        d = {Plain.A: 1, Plain.B: 2}
+        e = {Level.LOW: 1}
+        assert d[Plain.A] == 1 and e[Level.LOW] == 1
+        assert Plain.A == Plain.A and Plain.A != Plain.B
+        assert not (Plain.A == 1) and Plain.A != 1
+        assert Word.A == "a"
+    """
+    scenario, config, _ = _data_case(
+        tmp_path, _ENUMS + _PLAIN_ENUMS, textwrap.dedent(setup)
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_an_enum_compared_with_the_wrong_type_is_refused(tmp_path: Path) -> None:
+    scenario, config, path = _data_case(tmp_path, _ENUMS, "r = Level.LOW == 'low'\n")
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "unsupported operand type(s) for ==" in error.message, error.format()
+
+
+@pytest.mark.parametrize(
+    ("line", "hint"),
+    [
+        ("Pt(1)._replace(x=2)", "build a new Pt(...)"),
+        ("Pt(1)._asdict()", "build a new Pt(...)"),
+        ("x, y = Pt(1)", "read the fields by name"),
+        ("Pt(1)[1]", "read the fields by name"),
+    ],
+    ids=["replace", "asdict", "unpack-mixed", "index-mixed"],
+)
+def test_what_a_namedtuple_cannot_do_in_the_check_says_what_to_write(
+    tmp_path: Path, line: str, hint: str
+) -> None:
+    scenario, config, path = _data_case(tmp_path, _NAMED_TUPLES, f"{line}\n")
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert hint in error.message, error.format()
+    assert error.line == _line_of(path, line)
+
+
+# ---------------------------------------------------------------------------
 # The names of typing a scenario may import (docs/typecheck.md, #364)
 # ---------------------------------------------------------------------------
 

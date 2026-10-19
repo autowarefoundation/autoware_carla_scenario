@@ -7,12 +7,14 @@ subprocesses, at most ``%K`` at once, each in a process group of its own (what
 JSON line per submission, its argv).
 
 Only what the launcher uses: ``sbatch --parsable [--array=a-b%K]
-[--dependency=afterany:J] [--output=P] [--wrap=CMD | script]``, ``squeue -h -r
+[--dependency=afterany:J] [--output=P] [--chdir=D] [--wrap=CMD | script]``
+(``%A %a %j %u`` in ``P``), ``squeue -h -r
 -j J -o "%i %T"``, ``scancel J...``, ``scontrol show job J``.
 """
 
 from __future__ import annotations
 
+import getpass
 import json
 import os
 import signal
@@ -71,6 +73,7 @@ def sbatch(args: list[str]) -> int:
     dependency = None
     output = "slurm-%j.out"
     wrap = None
+    chdir = None
     script = None
     rest = []
     for arg in args:
@@ -80,6 +83,8 @@ def sbatch(args: list[str]) -> int:
             dependency = arg.split("=", 1)[1]
         elif arg.startswith("--output="):
             output = arg.split("=", 1)[1]
+        elif arg.startswith("--chdir="):
+            chdir = arg.split("=", 1)[1]
         elif arg.startswith("--wrap="):
             wrap = arg.split("=", 1)[1]
         elif arg.startswith("-"):
@@ -107,6 +112,7 @@ def sbatch(args: list[str]) -> int:
         "parallel": parallel,
         "dependency": dependency,
         "output": output,
+        "chdir": chdir,
         "command": ["bash", "-c", wrap] if wrap is not None else ["bash", script],
     }
     _write(_job_dir(job) / "plan.json", plan)
@@ -161,6 +167,7 @@ def _run(job: str) -> int:
                 .replace("%A", job)
                 .replace("%a", str(task))
                 .replace("%j", task_id if plan["array"] else job)
+                .replace("%u", getpass.getuser())
             )
             Path(out).parent.mkdir(parents=True, exist_ok=True)
             stream = open(out, "ab")
@@ -170,6 +177,7 @@ def _run(job: str) -> int:
                 stdout=stream,
                 stderr=subprocess.STDOUT,
                 env=env,
+                cwd=plan.get("chdir"),
                 start_new_session=True,
             )
             running[task] = proc
@@ -196,13 +204,17 @@ def squeue(args: list[str]) -> int:
 
 
 def scancel(args: list[str]) -> int:
-    for job in args:
-        if job.startswith("-"):
-            continue
+    jobs = [job for job in args if not job.startswith("-")]
+    # Every pending task first: a job waiting on another (the collect job,
+    # --dependency=afterany) must not start in the moment between the
+    # other's tasks ending and its own cancel.
+    for job in jobs:
         for task, state in _tasks(job).items():
             if state.get("state") == "PENDING":
                 _write(_job_dir(job) / f"{task}.json", {"state": "CANCELLED"})
-            elif state.get("state") == "RUNNING":
+    for job in jobs:
+        for task, state in _tasks(job).items():
+            if state.get("state") == "RUNNING":
                 state["state"] = "CANCELLED"
                 _write(_job_dir(job) / f"{task}.json", state)
                 try:
