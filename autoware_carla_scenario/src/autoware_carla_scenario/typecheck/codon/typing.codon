@@ -18,6 +18,9 @@ MutableMapping = Dict
 AbstractSet = Set
 # Codon has no immutable set; the checker rewrites frozenset(...) to set(...).
 FrozenSet = Set
+# Iterator is Codon's generator type; the collections types are Codon's own.
+Iterator = Generator
+from collections import Counter, defaultdict as DefaultDict, deque as Deque
 
 
 # Only for the import: the checker drops every parameter and local annotation
@@ -101,3 +104,35 @@ class IO:
 
     def __exit__(self, *args) -> None:
         pass
+
+
+# Names only an annotation uses: the checker drops every annotation naming
+# them (typecheck/transform.py), so they exist for the import alone. Final[X]
+# and Annotated[X, ...] are read as X.
+class Final:
+    pass
+
+
+class Annotated:
+    pass
+
+
+class NoReturn:
+    pass
+
+
+class Type:
+    pass
+
+
+class Sized:
+    pass
+
+
+class Hashable:
+    pass
+
+
+# typing.cast(T, x): x, typed as T. Nothing here runs.
+def cast(T: type, x) -> T:
+    return Ptr[T]()[0]

@@ -4514,3 +4514,180 @@ def test_what_a_namedtuple_cannot_do_in_the_check_says_what_to_write(
     error = _only_error(typecheck_scenario(scenario, config))
     assert hint in error.message, error.format()
     assert error.line == _line_of(path, line)
+
+
+# ---------------------------------------------------------------------------
+# The names of typing a scenario may import (docs/typecheck.md, #364)
+# ---------------------------------------------------------------------------
+
+#: Each supported name of typing that the typing shim adds (or that is not a
+#: Codon builtin): the import and the module-level code that uses it. The
+#: cases cover every documented name (``test_typing_names``).
+_TYPING_CASES: dict[str, tuple[str, str]] = {
+    "Iterator": (
+        "Iterator",
+        "def count(n: int) -> Iterator[int]:\n    yield n\n",
+    ),
+    "Deque": (
+        "Deque",
+        "def window() -> Deque[int]:\n    d: Deque[int] = Deque()\n"
+        "    d.append(1)\n    return d\n",
+    ),
+    "DefaultDict": (
+        "DefaultDict",
+        "def groups() -> DefaultDict[str, int]:\n"
+        "    d: DefaultDict[str, int] = DefaultDict(int)\n"
+        '    d["a"] += 1\n    return d\n',
+    ),
+    "Counter": (
+        "Counter",
+        "def tally() -> Counter[str]:\n    c: Counter[str] = Counter()\n"
+        '    c["a"] += 1\n    return c\n',
+    ),
+    "Final": (
+        "Final",
+        "LIMIT: Final = 3\nOTHER: Final[int] = 4\n",
+    ),
+    "Annotated": (
+        "Annotated",
+        "def scaled(x: Annotated[float, 'm/s']) -> Annotated[float, 'km/h']:\n"
+        "    return x * 3.6\n",
+    ),
+    "NoReturn": (
+        "NoReturn",
+        "def fail(why: str) -> NoReturn:\n    raise ValueError(why)\n",
+    ),
+    "Type": (
+        "Type",
+        "def build(kind: Type[int]) -> int:\n    return 1\n",
+    ),
+    "Sized": (
+        "Sized",
+        "def size(x: Sized) -> int:\n    return 1\n",
+    ),
+    "Hashable": (
+        "Hashable",
+        "def key(x: Hashable) -> int:\n    return 1\n",
+    ),
+    "cast": (
+        "cast",
+        "def widen(x: int) -> float:\n    return cast(float, x) * 1.5\n"
+        "def same(x: Optional[int]) -> int:\n    return cast(int, x) + 1\n"
+        "def hush(x: int) -> int:\n    return cast('Callable', x)\n",
+    ),
+}
+
+_TYPING_CALLS = {
+    "Iterator": "for i in count(2):\n    logger.info('%d', i)\n",
+    "Deque": "logger.info('%d', len(window()))\n",
+    "DefaultDict": "logger.info('%d', len(groups()))\n",
+    "Counter": "logger.info('%d', len(tally()))\n",
+    "Final": "logger.info('%d', LIMIT + OTHER)\n",
+    "Annotated": "logger.info('%f', scaled(2.0))\n",
+    "NoReturn": "if cfg.timeout_seconds < 0:\n    fail('x')\n",
+    "Type": "logger.info('%d', build(int))\n",
+    "Sized": "logger.info('%d', size([1]))\n",
+    "Hashable": "logger.info('%d', key(1))\n",
+    "cast": "logger.info('%f %d %d', widen(2), same(1), hush(1))\n",
+}
+
+
+@pytest.mark.parametrize("name", sorted(_TYPING_CASES))
+def test_a_supported_typing_name_compiles_in_a_scenario(
+    tmp_path: Path, name: str
+) -> None:
+    imports, helper = _TYPING_CASES[name]
+    imports = f"{imports}, Optional, Callable" if name == "cast" else imports
+    header = _HEADER.replace(
+        "from .configs import CaseConfig\n",
+        f"from typing import {imports}\n\nfrom .configs import CaseConfig\n",
+        1,
+    )
+    scenario, config, _ = _write_case(
+        tmp_path,
+        _TIMEOUT_SETUP + _TYPING_CALLS[name],
+        "\n\n" + helper,
+        header=header,
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+@pytest.mark.parametrize(
+    ("name", "usage", "hint"),
+    [
+        (
+            "Generic",
+            'T = TypeVar("T")\n\n\nclass Box(Generic[T]):\n    pass\n',
+            "leave the type parameters",
+        ),
+        (
+            "TypedDict",
+            "class Point(TypedDict):\n    x: float\n",
+            "@dataclass",
+        ),
+        ("ChainMap", "", "docs/typecheck.md"),
+    ],
+)
+def test_an_unsupported_typing_name_is_refused_with_a_hint(
+    tmp_path: Path, name: str, usage: str, hint: str
+) -> None:
+    header = _HEADER.replace(
+        "from .configs import CaseConfig\n",
+        f"from typing import TypeVar, {name}\n\nfrom .configs import CaseConfig\n",
+        1,
+    )
+    scenario, config, path = _write_case(
+        tmp_path, _TIMEOUT_SETUP, "\n\n" + usage, header=header
+    )
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert f"cannot import name '{name}' from 'typing'" in error.message
+    assert hint in error.message, error.format()
+    assert error.path == str(path)
+    assert error.line == _line_of(path, f"from typing import TypeVar, {name}")
+
+
+#: What Codon's own typing has, which the shim does not declare.
+_CODON_TYPING_BUILTINS = {
+    "Optional",
+    "List",
+    "Dict",
+    "Set",
+    "Tuple",
+    "Callable",
+    "Union",
+    "ClassVar",
+    "Generator",
+    "overload",
+}
+
+
+def test_typing_names() -> None:
+    # The documented list, the typing shim and the cases above agree.
+    root = Path(__file__).resolve().parents[2]
+    docs = (root / "docs" / "typecheck.md").read_text()
+    block = docs.split("<!-- typing-names:start -->")[1].split(
+        "<!-- typing-names:end -->"
+    )[0]
+    documented = set(re.findall(r"`(\w+)`", block))
+
+    shim = ast.parse(
+        (root / "src/autoware_carla_scenario/typecheck/codon/typing.codon").read_text()
+    )
+    declared: set[str] = set()
+    for node in shim.body:
+        if isinstance(node, (ast.FunctionDef, ast.ClassDef)):
+            declared.add(node.name)
+        elif isinstance(node, ast.Assign):
+            declared |= {t.id for t in node.targets if isinstance(t, ast.Name)}
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            declared.add(node.target.id)
+        elif isinstance(node, ast.ImportFrom):
+            declared |= {a.asname or a.name for a in node.names}
+    assert documented == declared | _CODON_TYPING_BUILTINS
+    # Every name the shim adds beyond Python's typing exists there too.
+    import typing
+
+    assert documented <= set(dir(typing))
+    # Every name the shim adds beyond Codon is compiled by a test above.
+    assert set(_TYPING_CASES) <= documented
