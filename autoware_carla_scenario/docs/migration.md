@@ -19,7 +19,7 @@ already writes, from a Rerun recording made out of it.
 | `ScenarioRunner(video_width=, video_height=)`, `ScenarioQueue(video_width=, video_height=)`, `run_scenario_with_queue(video_size=)` | Drop the arguments |
 | `ScenarioRunner._render_video_from_recording`, `DebugMarkerLog`, `DrivenPathDrawer`, `draw_debug_markers` | The trajectory log's `markers` records (the ego's plan) and its ticks (the path it drove) |
 | `SpectatorCameraConfig`, `BaseScenario._spectator_camera_config` (where the video's camera went) | — : `BaseScenario.follow_with_spectator()` still moves CARLA's spectator, and takes the same arguments |
-| The viewer's video player and its `/video/...` route | The scenario page names the run's trajectory log |
+| The viewer's video player and its `/video/...` route | The scenario page shows the run in an embedded Rerun web viewer (`/recording/...rrd`) |
 | The `ffmpeg-python` dependency, and ffmpeg itself | — |
 | `with-ffmpeg` of the `pack-scenario-image` action | — |
 

@@ -8,12 +8,17 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import (
+    FileResponse,
+    HTMLResponse,
+    JSONResponse,
+    StreamingResponse,
+)
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import runner, scanner
+from . import cases, recordings, runner, scanner
 from .models import RunProgress
 
 logger = logging.getLogger(__name__)
@@ -117,8 +122,34 @@ async def scenario_detail(
             "time": time,
             "index": index,
             "page": "scenario",
+            "recording": _recording_context(session_type, date, time, index),
         },
     )
+
+
+def _case_path(session_type: str, date: str, time: str, index: int) -> str:
+    return f"{session_type}/{date}/{time}/{index}"
+
+
+def _recording_context(
+    session_type: str, date: str, time: str, index: int
+) -> dict[str, Any] | None:
+    """What the scenario page shows of the case's Rerun recording, or
+    ``None`` when the case has no trajectory log."""
+    files = cases.case_files(_base_path(), session_type, date, time, index)
+    if files is None or not files.trajectory.is_file():
+        return None
+    made = recordings.recording_path(files.trajectory)
+    case = _case_path(session_type, date, time, index)
+    return {
+        "trajectory": str(files.trajectory.resolve()),
+        "rrd": str(made.resolve()) if made.is_file() else None,
+        "converter": recordings.converter_available(),
+        "install_hint": recordings.INSTALL_HINT,
+        "make_url": f"/api/recording/{case}",
+        "rrd_url": f"/recording/{case}.rrd",
+        "viewer": recordings.web_viewer(),
+    }
 
 
 # ── API routes ───────────────────────────────────────────────────────────
@@ -265,3 +296,101 @@ async def run_progress() -> StreamingResponse:
             await asyncio.sleep(0.5)
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+# ── Rerun recordings ─────────────────────────────────────────────────────
+
+
+def _trajectory_of(session_type: str, date: str, time: str, index: int) -> Path:
+    files = cases.case_files(_base_path(), session_type, date, time, index)
+    if files is None or not files.trajectory.is_file():
+        raise HTTPException(status_code=404, detail="This case has no trajectory log.")
+    return files.trajectory
+
+
+async def _recording_of(trajectory: Path) -> Path:
+    """The case's recording, made in a worker thread if need be (the
+    converter releases the GIL)."""
+    try:
+        return await asyncio.to_thread(recordings.ensure_recording, trajectory)
+    except recordings.ConverterMissingError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except (recordings.RecordingError, OSError) as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/api/recording/{session_type}/{date}/{time}/{index}")
+async def make_recording(
+    session_type: str, date: str, time: str, index: int
+) -> JSONResponse:
+    """Make the case's Rerun recording if there is none yet; where it is.
+
+    404 without a trajectory log, 503 (with the install hint) when a recording
+    has to be made and the converter is not installed, 500 when it fails.
+    """
+    trajectory = _trajectory_of(session_type, date, time, index)
+    try:
+        path = await _recording_of(trajectory)
+    except HTTPException as exc:
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={
+                "error": exc.detail,
+                "missing_converter": exc.status_code == 503,
+                "install_hint": recordings.INSTALL_HINT,
+            },
+        )
+    return JSONResponse(
+        {
+            "url": f"/recording/{_case_path(session_type, date, time, index)}.rrd",
+            "path": str(path.resolve()),
+            "bytes": path.stat().st_size,
+        }
+    )
+
+
+@app.get("/recording/{session_type}/{date}/{time}/{index}.rrd")
+async def recording_file(
+    session_type: str, date: str, time: str, index: int
+) -> FileResponse:
+    """The case's Rerun recording (made on the way if need be)."""
+    trajectory = _trajectory_of(session_type, date, time, index)
+    path = await _recording_of(trajectory)
+    return FileResponse(
+        path,
+        media_type="application/octet-stream",
+        # Its name beside the log, also when it is kept in the cache instead.
+        filename=recordings.recording_path(trajectory).name,
+        content_disposition_type="inline",
+    )
+
+
+#: The web viewer's files, by the name the page asks for: the file, and its type.
+#: ``index.js`` imports ``./re_viewer`` with no extension (as a bundler would
+#: resolve it), which is ``re_viewer.js``.
+_WEB_VIEWER_FILES = {
+    "index.js": ("index.js", "text/javascript"),
+    "re_viewer": ("re_viewer.js", "text/javascript"),
+    "re_viewer.js": ("re_viewer.js", "text/javascript"),
+    "re_viewer_bg.wasm": ("re_viewer_bg.wasm", "application/wasm"),
+    "package.json": ("package.json", "application/json"),
+}
+
+
+@app.get(recordings.LOCAL_ROUTE + "/{version}/{name}")
+async def web_viewer_file(version: str, name: str) -> FileResponse:
+    """A file of the web viewer this app serves itself (``recordings.web_viewer``)."""
+    viewer = recordings.web_viewer()
+    if (
+        viewer.source != "local"
+        or viewer.directory is None
+        or version != viewer.version
+        or name not in _WEB_VIEWER_FILES
+    ):
+        raise HTTPException(status_code=404)
+    file_name, media_type = _WEB_VIEWER_FILES[name]
+    return FileResponse(
+        viewer.directory / file_name,
+        media_type=media_type,
+        headers={"Cache-Control": "public, max-age=31536000, immutable"},
+    )

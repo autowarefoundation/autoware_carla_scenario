@@ -780,6 +780,8 @@ graph TB
 | **`runner.py`** | `ui/runner.py` | Execute `uv run scenario` as subprocesses in a background thread. Track progress with thread-safe global state. |
 | **`sweep_resolver.py`** | `ui/sweep_resolver.py` | Resolve sweep constraints into concrete override lists without launching CARLA. Lightweight Hydra Compose API usage. |
 | **`models.py`** | `ui/models.py` | Pydantic data models for the viewer UI. |
+| **`cases.py`** | `ui/cases.py` | Which files are each case's: the stem its result, trajectory log, coverage and ODD archive share (a SLURM batch's manifest, or matched against `batch_results.json`). |
+| **`recordings.py`** | `ui/recordings.py` | A case's Rerun recording, made from its trajectory log on demand in a worker thread (the optional `autoware_carla_scenario_rerun`), and where the page loads Rerun's web viewer from (a copy it serves, or the CDN). |
 
 ### Data Models
 
