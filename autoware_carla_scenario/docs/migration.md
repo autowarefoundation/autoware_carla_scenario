@@ -19,7 +19,7 @@ already writes, from a Rerun recording made out of it.
 | `ScenarioRunner(video_width=, video_height=)`, `ScenarioQueue(video_width=, video_height=)`, `run_scenario_with_queue(video_size=)` | Drop the arguments |
 | `ScenarioRunner._render_video_from_recording`, `DebugMarkerLog`, `DrivenPathDrawer`, `draw_debug_markers` | The trajectory log's `markers` records (the ego's plan) and its ticks (the path it drove) |
 | `SpectatorCameraConfig`, `BaseScenario._spectator_camera_config` (where the video's camera went) | — : `BaseScenario.follow_with_spectator()` still moves CARLA's spectator, and takes the same arguments |
-| The viewer's video player and its `/video/...` route | The scenario page names the run's trajectory log, its Rerun recording, and the command to open it |
+| The viewer's video player and its `/video/...` route | The scenario page shows the run in an embedded Rerun web viewer (`/recording/...rrd`): the recording `rerun.enabled=true` made as the run ended, else one the viewer makes on demand |
 | The `ffmpeg-python` dependency, and ffmpeg itself | — |
 | `with-ffmpeg` of the `pack-scenario-image` action | — |
 
@@ -38,8 +38,8 @@ are written into the trajectory log.
 - **Seeing runs**: install the converter and the viewer
   (`pip install 'autoware-carla-scenario[rerun,viewer]'`) and run with
   `rerun.enabled=true`: each run's log is converted into `X.rrd` beside it as
-  the run ends, and the result (`rerun_recording`) and the viewer's scenario
-  page name it. Open it with `rerun X.rrd`. Runs made without it convert
+  the run ends, the result (`rerun_recording`) names it, and the viewer's
+  scenario page shows it. Open it with `rerun X.rrd`. Runs made without it convert
   afterwards with `python -m autoware_carla_scenario.rerun outputs/...` (a
   session, a sweep, or one `X.trajectory.jsonl`). The log carries the map it
   was recorded on (paths and SHA-256 of the Lanelet2 and OpenDRIVE files), the

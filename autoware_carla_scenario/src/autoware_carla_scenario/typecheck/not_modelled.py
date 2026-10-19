@@ -9,9 +9,10 @@ with that reason before compiling, and ``test_typecheck_model.py`` fails when
 a public name is neither declared by the model nor listed here, or when a
 name listed here is declared by the model or no longer public in Python.
 
-The same holds for the public methods, properties, class attributes and
-dataclass fields of the classes the model declares, openodd's that the
-package re-exports included (#265, #298): :data:`NOT_MODELLED_MEMBERS`
+The same holds for the public methods, properties, class attributes,
+dataclass fields and instance attributes of the classes the model declares,
+openodd's that the package re-exports and enums (`name`, `value` and their
+own methods) included (#265, #298, #307): :data:`NOT_MODELLED_MEMBERS`
 lists, with the reason, each one the model's class leaves out, and the
 check adds that reason to Codon's "object has no attribute" error.
 """
@@ -390,6 +391,22 @@ _RUN_ENVIRONMENT = (
     "the runner's record of the run's environment (json, `dict[str, Any]`); "
     "environment.codon models what the runner's _record_run reads"
 )
+_EGO_TYPE = (
+    "the EgoVehicle subclass the scenario builds its ego from: a class held "
+    "as a value, which Codon cannot hold (BaseScenario.__init__ sets it "
+    "outside the check, under `if not TYPE_CHECKING:`); a scenario reads "
+    "ego_requires_goal and create_ego(), which are modelled"
+)
+_PROBE = (
+    "the attribute's probe, a callable of `Any` (`Callable[[Any], Any]`, or "
+    "a measure's reader), which Codon cannot hold as a value of one type; "
+    "OddAttribute() checks the one an ODD passes"
+)
+_MAP_FEATURES = (
+    "route.geometry's MapFeatures, the lanelet2 queries the checked route "
+    "modules share (the library check compiles them from their source); a "
+    "scenario reads the route's lanelets (lanelets, junction_way()) instead"
+)
 
 
 def _members(names: str, reason: str) -> dict[str, str]:
@@ -405,9 +422,10 @@ def _members(names: str, reason: str) -> dict[str, str]:
 NOT_MODELLED_MEMBERS: dict[str, dict[str, str]] = {
     "BackendDriven": {"set_traffic_backend": _SET_TRAFFIC_BACKEND},
     "BaseCondition": _members("get_details to_summary_dict", _CONDITION_DETAILS),
-    "BaseScenario": _members(
-        "set_traffic_backend traffic_backend", _SET_TRAFFIC_BACKEND
-    ),
+    "BaseScenario": {
+        **_members("set_traffic_backend traffic_backend", _SET_TRAFFIC_BACKEND),
+        "ego_type": _EGO_TYPE,
+    },
     "CarlaDriverEntity": _members(
         "actor attaches_to_existing_actor carried_actor_ids change_lane client "
         "config debug_markers debug_state destroy drive_count forget_lane_change "
@@ -449,6 +467,7 @@ NOT_MODELLED_MEMBERS: dict[str, dict[str, str]] = {
     "MapSource": _members(
         "at directory name parse pinned repo_name uri with_path", _MAP_CACHE
     ),
+    "OddAttribute": {"probe": _PROBE},
     "OddCondition": {"evaluate": _ODD_RUN_VALUES},
     "OddDefinition": {
         **_members("complete evaluate sample", _ODD_RUN_VALUES),
@@ -471,6 +490,7 @@ NOT_MODELLED_MEMBERS: dict[str, dict[str, str]] = {
         _ROS2_TRANSPORT,
     ),
     "RouteCoverage": {"describe": _AS_DICT},
+    "RouteFrame": {"features": _MAP_FEATURES},
     "RouteLanelet": {"describe": _AS_DICT, "values": _ANY_FIELD},
     "RouteMatch": {
         "from_config": _FROM_MAPPING,
@@ -486,7 +506,9 @@ NOT_MODELLED_MEMBERS: dict[str, dict[str, str]] = {
         "runner, which only submits each log",
     ),
     "RunEnvironment": _members(
-        "lock pins scenario_package summary to_dict", _RUN_ENVIRONMENT
+        "by_name implementation lock machine packages pins platform python "
+        "scenario_package summary to_dict",
+        _RUN_ENVIRONMENT,
     ),
     "RunProgress": {
         "model_config": (

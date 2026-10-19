@@ -346,7 +346,8 @@ With `rerun.enabled=true`:
 - Each case's `{ScenarioName}_result.json` names its recording
   (`rerun_recording`), and so does its entry in a batch's
   `batch_results.json`, with `rerun_error` when the conversion failed. The
-  viewer's scenario page shows the recording and the command to open it.
+  viewer's scenario page shows the recording in its embedded Rerun web viewer
+  ([Seeing a run in the viewer](#seeing-a-run-in-the-viewer)).
 - A Hydra sweep (`--multirun` without a glob) runs each case in a process of
   its own, and each converts its own log. So does each task of a batch run on
   SLURM (`launcher=slurm`, [Running a Batch on SLURM](slurm.md)): it converts
@@ -686,7 +687,7 @@ Web UI for browsing and monitoring scenario test results. Starts a FastAPI serve
 ### How It Works
 
 1. Scans the base path directory for scenario output files (`outputs/YYYY-MM-DD/HH-MM-SS/`)
-2. Serves a web interface for browsing sessions and viewing individual scenario results (each names its trajectory log, which [Seeing a run](#seeing-a-run) turns into a Rerun recording)
+2. Serves a web interface for browsing sessions and viewing individual scenario results, each with its run in an embedded Rerun viewer ([Seeing a run in the viewer](#seeing-a-run-in-the-viewer))
 3. Provides an API for triggering scenario runs and monitoring progress in real time
 
 ### Usage
@@ -704,6 +705,41 @@ VIEWER_BASE_PATH=/path/to/scenario/outputs uv run viewer
 
 Then open `http://localhost:9000` (or the configured host/port) in a browser.
 
+### Seeing a run in the viewer
+
+A scenario's page shows its run in Rerun's web viewer, embedded in the page:
+the case's trajectory log made into a Rerun recording ([Seeing a run](#seeing-a-run)).
+A recording already beside the log (`X.rrd` beside `X.trajectory.jsonl`) is
+shown as it is; otherwise the viewer makes it the first time the page is
+opened (in a worker thread, some tens of milliseconds for a case) and keeps it
+beside the log, or, where the session's directory cannot be written, in its
+cache directory. Making one needs the converter in the viewer's environment:
+
+```bash
+pip install 'autoware-carla-scenario[rerun]'    # or: pip install autoware-carla-scenario-rerun
+```
+
+Without it the page says so, and still shows a recording already made.
+The page's *Download .rrd* link is the recording itself, for the native
+viewer (`rerun X.rrd`).
+
+The web viewer is the `@rerun-io/web-viewer` package of the version the
+converter writes recordings with (`RERUN_VERSION`, 0.38.1 for converter 0.1;
+a recording opens only in a viewer of its minor version). By default the page
+loads it from the unpkg CDN, pinned to that version. For a machine without
+the network, keep a copy that the viewer serves itself:
+
+```bash
+uv run viewer --fetch-rerun-web-viewer                 # from the npm registry, checked against its integrity hash
+uv run viewer --fetch-rerun-web-viewer --from web-viewer-0.38.1.tgz   # from the package's tarball, copied in
+```
+
+The copy goes to `~/.cache/autoware_carla_scenario/viewer/rerun-web-viewer/<version>/`
+(`VIEWER_CACHE_DIR` moves the cache) and is used from then on.
+`VIEWER_RERUN_WEB_VIEWER` overrides where the viewer comes from: an unpacked
+copy of the package (a directory), a mirror of it (a URL), or `none` for no
+embedded viewer (the page then names the recording only).
+
 ### Environment Variables
 
 | Variable | Default | Description |
@@ -711,6 +747,9 @@ Then open `http://localhost:9000` (or the configured host/port) in a browser.
 | `VIEWER_BASE_PATH` | Current working directory | Base path for scanning scenario result files |
 | `VIEWER_HOST` | `0.0.0.0` | Server bind address |
 | `VIEWER_PORT` | `9000` | Server listen port |
+| `VIEWER_CACHE_DIR` | `~/.cache/autoware_carla_scenario/viewer` | The web viewer's copy, and recordings of sessions that cannot be written |
+| `VIEWER_RERUN_WEB_VIEWER` | the copy in the cache, else the CDN | Where the Rerun web viewer is loaded from: a directory, a URL, or `none` |
+| `VIEWER_RERUN_MAP_DIR` | `~/autoware_data/maps`, if it exists | Where the converter looks a map up by name when the log's own map file is not on this machine |
 
 ### Web UI Pages
 
@@ -718,7 +757,8 @@ Then open `http://localhost:9000` (or the configured host/port) in a browser.
 |-------|-------------|
 | `/` | Session list — displays all test sessions grouped by date/time |
 | `/session/{type}/{date}/{time}` | Session detail — shows all scenarios in a session with pass/fail status |
-| `/session/{type}/{date}/{time}/{index}` | Scenario detail — condition tree, per-condition status, and the run's trajectory log |
+| `/session/{type}/{date}/{time}/{index}` | Scenario detail — the run in the Rerun viewer, condition tree, per-condition status |
+| `/recording/{type}/{date}/{time}/{index}.rrd` | The case's Rerun recording (made first if need be) |
 
 ### REST API Endpoints
 
@@ -732,6 +772,7 @@ The viewer also provides API endpoints for programmatic use and the web UI's int
 | `POST` | `/api/run` | Start a scenario execution in the background |
 | `GET` | `/api/run/status` | Get current run status (non-streaming) |
 | `GET` | `/api/run/progress` | SSE (Server-Sent Events) stream for real-time progress |
+| `POST` | `/api/recording/{type}/{date}/{time}/{index}` | Make the case's Rerun recording if there is none; its URL and path (503 with the install hint without the converter) |
 
 **Run request body format:**
 
@@ -769,6 +810,9 @@ Where `status` is one of: `"running"`, `"idle"`, or `"done"`.
 | `VIEWER_BASE_PATH` | viewer | Base path for scenario results |
 | `VIEWER_HOST` | viewer | Viewer server bind address |
 | `VIEWER_PORT` | viewer | Viewer server listen port |
+| `VIEWER_CACHE_DIR` | viewer | The viewer's cache (the Rerun web viewer's copy, recordings it could not keep beside their logs) |
+| `VIEWER_RERUN_WEB_VIEWER` | viewer | Where the Rerun web viewer is loaded from (a directory, a URL, or `none`) |
+| `VIEWER_RERUN_MAP_DIR` | viewer | Where the Rerun converter looks maps up by name |
 | `SCENARIO_EDITOR_DRAFTS` | scenario editor | Directory holding scenario drafts |
 | `SCENARIO_EDITOR_EXPORT_DIR` | scenario editor | Staging area for exported package archives |
 | `SCENARIO_EDITOR_MAP_ROOTS` | scenario editor | Directories a Lanelet2 map may be served from |

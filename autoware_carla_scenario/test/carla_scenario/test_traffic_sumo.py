@@ -251,6 +251,8 @@ class _FakeWorld:
         self.actors = actors
         self.spawned: list[_FakeActor] = []
         self.frame = 0
+        self.library_fetches = 0
+        self.spawn_attempts = 0
 
     def get_snapshot(self) -> _Snapshot:
         self.frame += 1
@@ -260,9 +262,11 @@ class _FakeWorld:
         return _Actors(self.actors)
 
     def get_blueprint_library(self) -> _Library:
+        self.library_fetches += 1
         return _Library()
 
     def try_spawn_actor(self, blueprint: _Blueprint, transform: Any) -> _FakeActor:
+        self.spawn_attempts += 1
         actor = _FakeActor(transform, getattr(blueprint, "role_name", ""))
         self.spawned.append(actor)
         return actor
@@ -492,6 +496,9 @@ def test_ambient_traffic_is_mirrored_into_carla_and_cleaned_up(
         alive = [a for a in world.spawned if not a.destroyed]
         assert 0 < len(alive) <= 3
         assert all(a.attributes["role_name"].startswith("sumo:") for a in alive)
+        # The blueprint library is an RPC for every actor definition: fetched
+        # on the ticks that spawn, at most one fetch each, not on every tick.
+        assert 0 < world.library_fetches <= world.spawn_attempts
         assert (tmp_path / "out" / "sumo" / "ambient.rou.xml").is_file()
     finally:
         backend.close()
@@ -937,6 +944,48 @@ def test_carla_light_states_reach_sumo_as_typesafe_carla_reports_them() -> None:
     }
     backend._signals_to_sumo()
     assert backend._traci.trafficlight.states["tls"] == "Gyrr"
+
+
+def test_sumo_light_states_are_sent_to_carla_only_when_they_change() -> None:
+    """``set_state()`` is an RPC: a light is set once per tick at most, and only
+    when it shows something else -- also when a scenario switched it."""
+    import typesafe_carla.carla as carla
+
+    from autoware_carla_scenario.traffic.sumo.backend import SumoTrafficBackend
+
+    class _Light:
+        def __init__(self) -> None:
+            self.state = int(carla.TrafficLightState.Red)
+            self.sets = 0
+
+        def get_state(self) -> int:
+            return self.state
+
+        def set_state(self, state: Any) -> None:
+            self.sets += 1
+            self.state = int(state)
+
+    lights = SimpleNamespace(states={"tls": "GGr"})
+    lights.getRedYellowGreenState = lambda tls: lights.states[tls]
+    two_links, one_link = _Light(), _Light()
+    backend = SumoTrafficBackend.__new__(SumoTrafficBackend)
+    backend._traci = SimpleNamespace(trafficlight=lights)
+    backend._signals = {
+        ("tls", 0): two_links,
+        ("tls", 1): two_links,
+        ("tls", 2): one_link,
+    }
+    backend._signals_to_carla()
+    assert (two_links.sets, one_link.sets) == (1, 0)
+    assert two_links.state == int(carla.TrafficLightState.Green)
+    backend._signals_to_carla()  # nothing changed
+    assert (two_links.sets, one_link.sets) == (1, 0)
+    two_links.state = int(carla.TrafficLightState.Red)  # a scenario's action
+    lights.states["tls"] = "GGy"
+    backend._signals_to_carla()
+    assert (two_links.sets, one_link.sets) == (2, 1)
+    assert two_links.state == int(carla.TrafficLightState.Green)
+    assert one_link.state == int(carla.TrafficLightState.Yellow)
 
 
 class _FakeTrace:

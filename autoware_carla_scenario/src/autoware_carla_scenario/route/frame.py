@@ -179,11 +179,15 @@ class RouteFrame:
         """``(distance, s)`` of the nearest reference-line point, within the window."""
         best = (math.inf, 0.0)
         arc = self._arc
-        for i in range(len(arc) - 1):
-            if near is not None and (
-                arc[i + 1] < near - PROJECT_WINDOW_M or arc[i] > near + PROJECT_WINDOW_M
-            ):
-                continue
+        # The segments that reach into the window: from the one ending at or
+        # past its start to the last one starting at or before its end (arc
+        # does not decrease).
+        first = 0
+        stop = len(arc) - 1
+        if near is not None:
+            first = max(bisect.bisect_left(arc, near - PROJECT_WINDOW_M) - 1, 0)
+            stop = min(bisect.bisect_right(arc, near + PROJECT_WINDOW_M), stop)
+        for i in range(first, stop):
             x0, y0 = self._xs[i], self._ys[i]
             dx, dy = self._xs[i + 1] - x0, self._ys[i + 1] - y0
             squared = dx * dx + dy * dy

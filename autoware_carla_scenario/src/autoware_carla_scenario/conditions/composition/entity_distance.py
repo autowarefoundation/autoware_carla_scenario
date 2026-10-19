@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any, Optional, Union
 from ...coordinate.lane_distance import lane_separation
 from ...coordinate.poses import CarlaWorldPose
 from ...entity_role import EntityRole
-from ..base import ScenarioResult, find_actor_pair
+from ..base import ScenarioResult, find_actor_by_role_name
 from ..comparison import ComparisonRule, ScalarComparisonRule
 from .base import CompositionCondition, DistanceCoordinateSystem
 from .distance_measure import RelativeDistanceType, separation
@@ -166,10 +166,11 @@ class EntityDistanceCondition(CompositionCondition):
     # Measurement
     # ------------------------------------------------------------------
 
-    def _measure(self, actors: "carla.ActorList") -> Optional[float]:
+    def _measure(self, world: "carla.World") -> Optional[float]:
         """Return the source-to-target distance, or ``None`` if unavailable."""
         assert self._entity_name is not None  # noqa: S101
-        source, target = find_actor_pair(actors, self._entity_name, self._target)
+        source = find_actor_by_role_name(world, self._entity_name)
+        target = find_actor_by_role_name(world, self._target)
         if source is None or target is None:
             return None
 
@@ -193,8 +194,7 @@ class EntityDistanceCondition(CompositionCondition):
 
     def _check(self, world: "carla.World", elapsed: float) -> Optional[ScenarioResult]:
         """Return a pass result when the distance satisfies the comparison rule."""
-        actors: carla.ActorList = world.get_actors()
-        distance = self._measure(actors)
+        distance = self._measure(world)
         if distance is None:
             return None
 

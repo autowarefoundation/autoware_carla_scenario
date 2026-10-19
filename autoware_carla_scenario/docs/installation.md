@@ -125,7 +125,7 @@ package, or by loading a `.env` file (the package depends on
 | `NISHISHINJUKU_MAP_PATH` | when overwriting the built-in `.xodr` | Path inside the CARLA install where the original `.xodr` lives. |
 | `NISHISHINJUKU_XODR_PATH` | optional | Override the default OpenDRIVE file resolved in `conf/map/nishishinjuku.yaml`. |
 | `NISHISHINJUKU_LANELET2_PATH` | optional | Override the default Lanelet2 `.osm` path. |
-| `VIEWER_BASE_PATH`, `VIEWER_HOST`, `VIEWER_PORT` | optional | `viewer` web-app overrides. |
+| `VIEWER_BASE_PATH`, `VIEWER_HOST`, `VIEWER_PORT`, `VIEWER_CACHE_DIR`, `VIEWER_RERUN_WEB_VIEWER`, `VIEWER_RERUN_MAP_DIR` | optional | `viewer` web-app overrides. |
 
 See the [Usage Guide](usage.md) and [Architecture](architecture.md) for
 the full list.
