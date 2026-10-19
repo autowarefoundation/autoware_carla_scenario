@@ -12,6 +12,8 @@ import ast
 import dataclasses
 import enum
 import logging
+import threading
+from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Optional
@@ -150,6 +152,7 @@ def compiles(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     monkeypatch.setenv(CACHE_DIR_ENV, "")
     monkeypatch.setattr(check, "_CACHE", {})
     monkeypatch.setattr(check, "_CHECKED_FOR", {})
+    monkeypatch.setattr(check, "_IN_FLIGHT", {})
     monkeypatch.setattr(check, "codon_path_dir", lambda: Path("/codon"))
     monkeypatch.setattr(check, "_module_file", lambda name: Path("/run/scenario.py"))
     monkeypatch.setattr(check, "_toolchain_digest", lambda tc: "tc")
@@ -230,6 +233,75 @@ def test_a_failed_check_refuses_every_case_of_its_shape(
         assert result.diagnostics[0].path == "scenario.timeout_seconds"
         with pytest.raises(check.ScenarioTypeError):
             _enforce(result, "auto")
+
+
+def test_a_check_of_a_shape_being_compiled_waits_for_it(
+    compiles: list[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """scenario-check runs configs in threads: the second of a shape waits for
+    the first one's compile instead of starting its own."""
+    compile_ = check._compile
+    waiting = threading.Event()
+
+    class Watched(Future[TypeCheckResult]):
+        def result(self, timeout: Optional[float] = None) -> TypeCheckResult:
+            waiting.set()
+            return super().result(timeout)
+
+    def blocked(*args: Any) -> Optional[TypeCheckResult]:
+        assert waiting.wait(30), "the second check never waited"
+        return compile_(*args)
+
+    monkeypatch.setattr(check, "Future", Watched)
+    monkeypatch.setattr(check, "_compile", blocked)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(_check, timeout_seconds=5.0)
+        second = pool.submit(_check, timeout_seconds=7.5)
+        assert first.result(60) is second.result(60)
+    assert len(compiles) == 1
+    assert check._IN_FLIGHT == {}
+
+
+def test_a_failed_compile_fails_the_checks_waiting_for_it(
+    compiles: list[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    owned: Future[Optional[TypeCheckResult]] = Future()
+    owned.set_exception(RuntimeError("codon died"))
+
+    def spy(key: str, sources: Any) -> Optional[TypeCheckResult]:
+        check._IN_FLIGHT[key] = owned  # another thread is compiling it
+        return None
+
+    monkeypatch.setattr(check, "_cached", spy)
+    with pytest.raises(RuntimeError, match="codon died"):
+        _check(timeout_seconds=5.0)
+    assert compiles == []
+
+
+def test_a_check_waiting_for_a_compile_that_timed_out_compiles_itself(
+    compiles: list[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A timed-out compile is no verdict: the check that waited for it gets
+    its own, under its own timeout."""
+    keys: list[str] = []
+
+    class TimedOut(Future[Optional[TypeCheckResult]]):
+        """Another thread's compile, which timed out and is then gone."""
+
+        def result(self, timeout: Optional[float] = None) -> None:
+            del check._IN_FLIGHT[keys[0]]
+            return None
+
+    def spy(key: str, sources: Any) -> Optional[TypeCheckResult]:
+        if not keys:
+            keys.append(key)
+            check._IN_FLIGHT[key] = TimedOut()
+        return None
+
+    monkeypatch.setattr(check, "_cached", spy)
+    result = _check(timeout_seconds=5.0)
+    assert result.ok and len(compiles) == 1
+    assert check._IN_FLIGHT == {}
 
 
 def test_a_timed_out_check_is_not_reused(

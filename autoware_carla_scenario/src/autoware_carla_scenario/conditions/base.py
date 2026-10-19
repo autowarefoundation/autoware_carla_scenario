@@ -112,15 +112,21 @@ class ScenarioResult:
     message: str
     elapsed_seconds: float
     condition_statuses: list[ConditionStatus] = field(default_factory=list)
+    #: The Rerun recording made of the run's trajectory log
+    #: (``rerun.enabled``, docs/usage.md), or ``None`` when none is made.
+    rerun_recording: Optional[str] = None
 
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-serialisable nested dict of the full result."""
-        return {
+        data: dict[str, Any] = {
             "passed": self.passed,
             "message": self.message,
             "elapsed_seconds": self.elapsed_seconds,
             "condition_statuses": [cs.to_dict() for cs in self.condition_statuses],
         }
+        if self.rerun_recording is not None:
+            data["rerun_recording"] = self.rerun_recording
+        return data
 
     def to_json(self, **kwargs: Any) -> str:
         """Serialise to a JSON string.

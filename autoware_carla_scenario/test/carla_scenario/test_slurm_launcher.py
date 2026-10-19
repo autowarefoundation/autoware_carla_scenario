@@ -266,6 +266,30 @@ def test_a_slurm_batch_reports_what_the_same_local_batch_does(
         assert carla_processes_on_port(port) == []
 
 
+def test_each_slurm_task_makes_the_recordings_a_local_batch_makes(
+    fake_slurm: SimpleNamespace, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """rerun.enabled (#295): each task converts its own cases, and the batch
+    reports them as the same local batch does."""
+    pytest.importorskip("autoware_carla_scenario_rerun")
+    local_status, local = _run_batch(
+        fake_slurm, "local", [*_SWEEP, "rerun.enabled=true"]
+    )
+    local_out = capsys.readouterr().out
+    slurm_status, batch = _run_batch(fake_slurm, "slurm", _slurm("rerun.enabled=true"))
+    slurm_out = capsys.readouterr().out
+
+    assert slurm_status == local_status
+    recordings = sorted(p.name for p in local.glob("*.rrd"))
+    assert recordings
+    assert sorted(p.name for p in batch.glob("*.rrd")) == recordings
+    assert "Rerun recordings:" in local_out
+    assert _summary(slurm_out, batch) == _summary(local_out, local)
+    assert (batch / "batch_results.json").read_text().replace(str(batch), "<b>") == (
+        local / "batch_results.json"
+    ).read_text().replace(str(local), "<b>")
+
+
 def test_the_manifest_rebuilds_each_case_exactly(
     fake_slurm: SimpleNamespace,
 ) -> None:

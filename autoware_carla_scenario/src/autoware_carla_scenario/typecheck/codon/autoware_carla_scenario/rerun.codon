@@ -1,0 +1,17 @@
+# Model of autoware_carla_scenario.rerun (docs/typecheck.md), which runs the
+# conversion on a thread pool and imports the converter package at run time:
+# what the checked scenario_runner and scenario_queue use of it, with the
+# signatures of the Python class.
+
+from pathlib import Path
+
+from ._tc import _keyword_only as _acs_keyword_only
+
+
+class RerunConverter:
+    # The converter package, which Python holds as `Any`: taken as it comes.
+    def __init__(self, *_kw, strict: bool = False, converter = None):
+        _acs_keyword_only(_kw, "RerunConverter(): strict and converter")
+
+    def submit(self, trajectory: Path, label: str) -> Path:
+        raise NotImplementedError()

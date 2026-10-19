@@ -80,6 +80,8 @@ class FakeQueue:
         self.port = int(kwargs["port"])
         self.tm_port = int(kwargs["tm_port"])
         self.extra = list(kwargs.get("server_extra_args") or [])
+        # Hands each trajectory log on as the runner does (rerun.enabled).
+        self.rerun = kwargs.get("rerun")
         self._pending: list[tuple[FakeScenario, Any, str | None]] = []
         self._errored: list[int] = []
         self._carla: subprocess.Popen[bytes] | None = None
@@ -151,6 +153,10 @@ class FakeQueue:
             if value % 5 == 0:
                 # Raised on every attempt, once its trajectory log was opened.
                 (self.output_dir / f"{stem}.trajectory.jsonl").write_text("")
+                if self.rerun is not None:
+                    self.rerun.submit(
+                        self.output_dir / f"{stem}.trajectory.jsonl", stem
+                    )
                 self._errored.append(i)
                 results.append(
                     ScenarioResult(
@@ -177,8 +183,24 @@ class FakeQueue:
                 ],
             )
             (self.output_dir / f"{stem}.trajectory.jsonl").write_text(
-                json.dumps({"type": "world", "digest": scenario.digest}) + "\n"
+                json.dumps(
+                    {
+                        "type": "world",
+                        "schema_version": 2,
+                        "map": "Carla/Maps/M",
+                        # What tells the cases' logs apart (and an unknown
+                        # field to the Rerun converter: skipped, with a warning).
+                        "digest": scenario.digest,
+                    }
+                )
+                + "\n"
             )
+            if self.rerun is not None:
+                result.rerun_recording = str(
+                    self.rerun.submit(
+                        self.output_dir / f"{stem}.trajectory.jsonl", stem
+                    )
+                )
             (self.output_dir / f"{stem}_result.json").write_text(
                 result.to_json(indent=2)
             )

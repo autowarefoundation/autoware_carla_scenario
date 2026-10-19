@@ -55,6 +55,7 @@ import subprocess
 import sys
 import tempfile
 from collections.abc import Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -400,6 +401,8 @@ def build_wheelhouse(
 
             single = platform.python_version()
         targets = [single]
+    # A Python named twice is one pass: two of it would race for its venv.
+    targets = list(dict.fromkeys(targets))
 
     destination.mkdir(parents=True, exist_ok=True)
     scratch = Path(tempfile.mkdtemp(prefix="scenario-wheelhouse-"))
@@ -413,15 +416,40 @@ def build_wheelhouse(
 
         log += _build_project_wheel(package_root, destination)
 
-        # A pass per interpreter, all into the same directory. pip resolves the
-        # requirements file against the interpreter that runs it -- markers and
-        # wheel tags both -- so this is the only way to end up with a directory
-        # that installs under more than one. The passes cannot collide: a wheel
-        # two interpreters share is byte-identical and is simply rewritten.
-        for interpreter in targets:
+        # A pass per interpreter. pip resolves the requirements file against
+        # the interpreter that runs it -- markers and wheel tags both -- so
+        # this is the only way to end up with a directory that installs under
+        # more than one. The passes mostly wait on pip, so they run side by
+        # side, each into a directory of its own inside the destination (two
+        # pips writing one wheel into one directory would race), and their
+        # wheels are moved up after, in the targets' order: as when the passes
+        # ran one after another, a wheel two of them produce is the last one's.
+        def one_pass(index: int, interpreter: str) -> tuple[Path, str]:
             venv, venv_log = _builder_environment(scratch, interpreter)
-            log += venv_log
-            log += _download_wheels(venv, pinned, destination)
+            directory = destination / f".pass-{index}"
+            directory.mkdir()
+            try:
+                return directory, venv_log + _download_wheels(venv, pinned, directory)
+            except WheelhouseError as exc:
+                exc.log = venv_log + exc.log
+                raise
+
+        with ThreadPoolExecutor(max_workers=len(targets)) as pool:
+            passes = [
+                pool.submit(one_pass, index, interpreter)
+                for index, interpreter in enumerate(targets)
+            ]
+            # In the targets' order, so the log reads as it did one pass after
+            # another, and a failed pass's error carries the passes before it.
+            gathered: list[Path] = []
+            for future in passes:
+                directory, pass_log = future.result()
+                log += pass_log
+                gathered.append(directory)
+        for directory in gathered:
+            for wheel in sorted(directory.glob("*.whl")):
+                os.replace(wheel, destination / wheel.name)
+            shutil.rmtree(directory)
 
         # Inside the guard: the last two files are small, but the disk they go
         # on has just taken 160 MB of wheels, and a wheelhouse missing its

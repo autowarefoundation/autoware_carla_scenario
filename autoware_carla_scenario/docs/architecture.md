@@ -330,7 +330,7 @@ Key features:
 A run leaves two recordings, neither of which renders anything:
 
 1. **The CARLA recording** (`{stem}.log`): CARLA's native recorder captures every actor's state from the moment the ego exists, warm-up included. CARLA's replayer (`client.replay_file()`) plays it back on a server running the same map.
-2. **The trajectory log** (`{stem}.trajectory.jsonl`, [Trajectory Log](trajectory_log.md)): written by the runner itself after every tick of the scenario, in-process -- every vehicle and pedestrian, the lights, the map the run was on, the ego's debug markers, each condition's state and the verdict. A Rerun recording made from it with the `autoware_carla_scenario_rerun` package (`convert` / `convert_dir`) is how a run is seen ([Seeing a run](usage.md#seeing-a-run)).
+2. **The trajectory log** (`{stem}.trajectory.jsonl`, [Trajectory Log](trajectory_log.md)): written by the runner itself after every tick of the scenario, in-process -- every vehicle and pedestrian, the lights, the map the run was on, the ego's debug markers, each condition's state and the verdict. A Rerun recording made from it with the `autoware_carla_scenario_rerun` package is how a run is seen ([Seeing a run](usage.md#seeing-a-run)): with `rerun.enabled=true` the runner hands each closed log to a `RerunConverter` (`rerun.py`), which converts it on a background thread while the next case runs, and the run waits for it at the end.
 
 Releases before 15.0.0 also rendered a video from the CARLA recording after each run (`{stem}.mp4`, a replay with an RGB camera and ffmpeg); that is gone, and so is the ffmpeg it needed.
 
@@ -781,6 +781,7 @@ graph TB
 | **`sweep_resolver.py`** | `ui/sweep_resolver.py` | Resolve sweep constraints into concrete override lists without launching CARLA. Lightweight Hydra Compose API usage. |
 | **`models.py`** | `ui/models.py` | Pydantic data models for the viewer UI. |
 | **`cases.py`** | `ui/cases.py` | Which files are each case's: the stem its result, trajectory log, coverage and ODD archive share (a SLURM batch's manifest, or matched against `batch_results.json`). |
+| **`results.py`** | `ui/results.py` | A session's cases with their ODD case, coverage and metrics off the trajectory log; the cases in a cell of openodd's coverage view; sessions compared, cases matched by what they ran. |
 | **`slurm_launch.py`** | `ui/slurm_launch.py` | Submit a batch through SLURM (`launcher=slurm --no-wait`) and follow it from its directory and `squeue`; resubmit, collect, cancel with `scenario-slurm`. |
 | **`recordings.py`** | `ui/recordings.py` | A case's Rerun recording, made from its trajectory log on demand in a worker thread (the optional `autoware_carla_scenario_rerun`), and where the page loads Rerun's web viewer from (a copy it serves, or the CDN). |
 
