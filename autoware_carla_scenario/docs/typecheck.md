@@ -78,9 +78,14 @@ converts in one case and not in another. A value whose literal Codon could
 refuse on its own (an int beyond 64 bits, a string with an escape) is kept
 as it is.
 
-Set `AUTOWARE_CARLA_SCENARIO_TYPECHECK_CACHE` to a directory to keep the
-verdicts beyond the process, one file per program: a later process with the
-same inputs reads the verdict instead of compiling. The key covers
+Verdicts are kept beyond the process, one file per program, in
+`$XDG_CACHE_HOME/autoware_carla_scenario/typecheck` (`~/.cache/...` without
+an absolute `XDG_CACHE_HOME`): a later process with the same inputs reads the
+verdict instead of compiling. Set `AUTOWARE_CARLA_SCENARIO_TYPECHECK_CACHE`
+to use another directory, or to an empty string to keep each verdict for its
+process only (as happens anyway without a home directory, or with one that
+cannot be written). Nothing prunes the directory; delete it, or its files
+not accessed for a while, to reclaim the space. The key covers
 everything the verdict depends on. For the compile, that is the scenario's
 (or the framework's) modules, the generated driver's shape, the model,
 typesafe_carla's Codon library, and the compiler's version and standard
@@ -90,13 +95,27 @@ included (mypy reads them for the types of what a scenario calls, and the
 CARLA stubs are written by its `carla_stubs.py` from typesafe_carla's Codon
 library, already in the key), the name and version of every other installed distribution
 (mypy follows a scenario's imports into numpy, lanelet2 or typesafe_carla),
-the mypy version, and the Python version. And it includes what the checks
-made in Python found before the compile: an import the framework's Python
-lacks, or an abstract class that is built. These digests are taken once a
-process (about 100 ms). What the key leaves out: the source of another
-distribution installed editable (only its version is read), and environment
-variables mypy reads, such as `MYPYPATH`; clear the directory after changing
-either.
+the mypy version, and the Python version. Where a version says nothing of
+what mypy reads, the files are in it by path, size and modification time:
+the `.py`, `.pyi` and `py.typed` files of each distribution installed
+editable and of each directory on `MYPYPATH` and `PYTHONPATH`, which mypy
+searches (a relative entry is taken from the directory the check runs in;
+symlinked directories are followed). Of the packages being checked, whose
+modules the key has by their text already, only their stubs count there, so
+an edit to one scenario of an editable or `PYTHONPATH` package does not
+stale the verdicts on the others. And it includes what the checks made in
+Python found before the compile: an import the framework's Python lacks, or
+an abstract class that is built. These digests are taken once a process
+(about 100 ms, more with a large `PYTHONPATH` such as a ROS workspace's).
+mypy runs with `--config-file=` and in an empty directory of its own, so
+neither a configuration file nor a module of the directory the check runs
+from reaches the verdict. A scenario package is therefore found as an
+installed or editable distribution, or through `MYPYPATH`: give a namespace
+package (one without `__init__.py`) an `__init__.py`, as the scaffolded
+packages have. What the key still leaves out: a distribution
+installed in development mode without PEP 610's `direct_url.json` (an old
+`setup.py develop`, a `.pth` file written by hand); clear the directory after
+editing one.
 A crash is never kept, and an entry
 that cannot be read counts as a miss. A verdict read from the directory has
 its file's times touched, so the directory can be pruned by access time.

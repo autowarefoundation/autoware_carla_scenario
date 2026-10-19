@@ -1894,7 +1894,7 @@ def test_cases_that_differ_only_in_their_values_compile_once(
     such case's."""
     from autoware_carla_scenario.typecheck import check
 
-    monkeypatch.delenv(check.CACHE_DIR_ENV, raising=False)
+    monkeypatch.setenv(check.CACHE_DIR_ENV, "")  # this process's verdicts only
     monkeypatch.setattr(check, "_CACHE", {})
     compiled: list[str] = []
     compile_ = check._compile

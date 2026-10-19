@@ -147,7 +147,7 @@ def test_the_case_names_its_values() -> None:
 @pytest.fixture
 def compiles(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     """Each program compiled, by its driver source; no Codon and no mypy."""
-    monkeypatch.delenv(CACHE_DIR_ENV, raising=False)
+    monkeypatch.setenv(CACHE_DIR_ENV, "")
     monkeypatch.setattr(check, "_CACHE", {})
     monkeypatch.setattr(check, "_CHECKED_FOR", {})
     monkeypatch.setattr(check, "codon_path_dir", lambda: Path("/codon"))
