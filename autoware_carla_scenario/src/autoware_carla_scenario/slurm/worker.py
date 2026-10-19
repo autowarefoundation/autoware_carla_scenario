@@ -36,7 +36,13 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from .manifest import RUN_FILE_SUFFIXES, BatchLayout, write_json
+from .manifest import (
+    RUN_FILE_SUFFIXES,
+    BatchLayout,
+    config_key,
+    file_sha256,
+    write_json,
+)
 from .ports import PortSlot, acquire_slot, first_slot, kill_carla_on_port
 from .settings import SlurmSettings
 
@@ -154,23 +160,85 @@ def worker_overrides(cfg: "DictConfig", slot: PortSlot) -> dict[str, Any]:
     return changes
 
 
-def _differences(expected: Any, actual: Any, prefix: str = "") -> list[str]:
+class _SameFiles:
+    """Whether a string of a case's config that differs here names the same
+    thing: the submitting directory's path seen from this job's working
+    directory, or a file with the content it had where it was submitted."""
+
+    def __init__(self, files: dict[str, str], submit_cwd: str | None) -> None:
+        self.files = files
+        self.prefixes: list[tuple[str, str]] = []
+        if submit_cwd:
+            here = {os.getcwd(), os.environ.get("PWD") or os.getcwd()}
+            for directory in sorted(here):
+                if directory != submit_cwd:
+                    self.prefixes.append((submit_cwd.rstrip("/") + "/", directory))
+        self._digests: dict[str, str] = {}
+
+    def why_not(self, key: str, expected: str, actual: str) -> str | None:
+        """``None`` when *actual* names what *expected* did; else why not."""
+        for prefix, directory in self.prefixes:
+            if expected.startswith(prefix):
+                moved = os.path.join(directory, expected[len(prefix) :])
+                if moved == actual:
+                    return None
+        digest = self.files.get(key)
+        if digest is None:
+            return None if expected == actual else ""
+        if not Path(actual).is_file():
+            return f"{expected} there, {actual} here: missing on the node"
+        if actual not in self._digests:
+            self._digests[actual] = file_sha256(Path(actual))
+        if self._digests[actual] != digest:
+            return f"{expected} there, {actual} here: content differs"
+        return None
+
+
+def _differences(
+    expected: Any,
+    actual: Any,
+    prefix: str = "",
+    same: _SameFiles | None = None,
+) -> list[str]:
     if isinstance(expected, dict) and isinstance(actual, dict):
         keys = sorted(set(expected) | set(actual), key=str)
         out: list[str] = []
         for key in keys:
-            name = f"{prefix}.{key}" if prefix else str(key)
+            name = config_key(prefix, key)
             if key not in expected or key not in actual:
                 out.append(name)
             else:
-                out.extend(_differences(expected[key], actual[key], name))
+                out.extend(_differences(expected[key], actual[key], name, same))
         return out
-    same = json.dumps(expected, sort_keys=True) == json.dumps(actual, sort_keys=True)
-    return [] if same else [prefix or "<root>"]
+    if (
+        isinstance(expected, list)
+        and isinstance(actual, list)
+        and len(expected) == len(actual)
+    ):
+        out = []
+        for index, (left, right) in enumerate(zip(expected, actual)):
+            out.extend(_differences(left, right, config_key(prefix, index), same))
+        return out
+    name = prefix or "<root>"
+    if same is not None and isinstance(expected, str) and isinstance(actual, str):
+        if expected == actual:
+            return []
+        why = same.why_not(name, expected, actual)
+        if why is None:
+            return []
+        return [f"{name} ({why})" if why else name]
+    equal = json.dumps(expected, sort_keys=True) == json.dumps(actual, sort_keys=True)
+    return [] if equal else [name]
 
 
-def _check_same_config(case: dict[str, Any], cfg: "DictConfig") -> None:
+def _check_same_config(
+    case: dict[str, Any], cfg: "DictConfig", submit_cwd: str | None = None
+) -> None:
     """Refuse a case whose config here is not the one it was submitted with.
+
+    A path that differs counts as the same when it is the submitting
+    directory's (*submit_cwd*) seen from here, or a file with the content it
+    had where it was submitted (the manifest's ``files``, by SHA-256).
 
     Raises:
         RuntimeError: They differ (the environment or the installed scenario
@@ -182,7 +250,8 @@ def _check_same_config(case: dict[str, Any], cfg: "DictConfig") -> None:
     if expected is None:
         return  # it did not resolve where it was submitted: nothing to compare
     actual = OmegaConf.to_container(cfg, resolve=True)
-    differing = _differences(expected, actual)
+    same = _SameFiles(dict(case.get("files") or {}), submit_cwd)
+    differing = _differences(expected, actual, same=same)
     if differing:
         shown = ", ".join(differing[:10]) + (" ..." if len(differing) > 10 else "")
         raise RuntimeError(
@@ -408,7 +477,7 @@ def run_task(manifest_path: Path, submission_index: int, task_index: int) -> int
         configs = []
         for case in cases:
             cfg = run._compose_config(case["scenario"], list(case["overrides"]))
-            _check_same_config(case, cfg)
+            _check_same_config(case, cfg, manifest.get("cwd"))
             worker_overrides(cfg, slot)
             configs.append(cfg)
         scenarios = []

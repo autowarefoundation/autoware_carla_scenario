@@ -21,6 +21,7 @@ from autoware_carla_scenario.typecheck.transform import (
     PRELUDE,
     classes_with_init,
     codon_annotation,
+    conflicting_imports,
     inherited_inits,
     relative_module_imports,
     split_tuple_excepts,
@@ -807,6 +808,40 @@ def test_a_return_annotation_over_several_lines_is_dropped_in_place() -> None:
     lines = out.splitlines()
     assert lines[1:7] == ["def make(", "    n: int,", "", "", "", "):"]
     assert lines[7] == "    return n"
+
+
+def test_only_an_int_or_str_enum_derives_from_the_value_comparing_classes() -> None:
+    out = _transform(
+        textwrap.dedent(
+            """
+            import enum
+            class A(enum.IntEnum):
+                X = 1
+            class B(int, enum.Enum):
+                X = 1
+            class C(enum.IntFlag):
+                X = 1
+            class D(enum.StrEnum):
+                X = "x"
+            class E(str, enum.Enum):
+                X = "x"
+            class F(enum.Enum):
+                X = 1
+            class G(enum.Flag):
+                X = 1
+            """
+        )
+    )
+    for line in (
+        "class A(_acs_IntEnum[int]):",
+        "class B(_acs_IntEnum[int]):",
+        "class C(_acs_IntEnum[int]):",
+        "class D(_acs_StrEnum[str]):",
+        "class E(_acs_StrEnum[str]):",
+        "class F(enum.Enum[int]):",
+        "class G(enum.Flag[int]):",
+    ):
+        assert line in out
 
 
 def test_an_enum_becomes_a_subclass_of_the_enum_shim() -> None:
@@ -1821,6 +1856,119 @@ def test_a_top_level_module_imports_its_sibling_as_written() -> None:
     )
     assert problems == []
     assert out == "import helpers as helpers\nimport helpers as h\n"
+
+
+# ---------------------------------------------------------------------------
+# An import repeated in a module (#354)
+# ---------------------------------------------------------------------------
+
+
+def _body(text: str) -> str:
+    return transform_source(text)[len(PRELUDE) :]
+
+
+def test_a_repeated_import_is_dropped_on_its_line() -> None:
+    out = _body(
+        "import logging\n"
+        "from pkg import A, B\n"
+        "import logging\n"
+        "from pkg import A\n"
+        "x = A\n"
+    )
+    assert out == ("import logging\nfrom pkg import A, B\npass\npass\nx = A\n")
+
+
+def test_a_repeat_inside_one_statement_and_beside_new_names() -> None:
+    out = _body("from pkg import A, A\nfrom pkg import A, C as D, A\nimport os, os\n")
+    assert out == "from pkg import A\nfrom pkg import C as D\nimport os\n"
+
+
+def test_a_repeat_under_the_same_alias_is_dropped_but_not_a_new_alias() -> None:
+    out = _body(
+        "from pkg import A as B\nfrom pkg import A as B\nfrom pkg import A as C\n"
+        "from pkg import A\n"
+    )
+    assert (
+        out
+        == "from pkg import A as B\npass\nfrom pkg import A as C\nfrom pkg import A\n"
+    )
+
+
+def test_a_relative_repeat_is_dropped_only_at_the_same_level() -> None:
+    out = _body("from .m import A\nfrom .m import A\nB = A\nfrom ..m import A\n")
+    assert out == "from .m import A\npass\nB = A\nfrom ..m import A\n"
+
+
+def test_imports_in_functions_and_branches_are_left_alone() -> None:
+    text = (
+        "from pkg import A\n"
+        "def f():\n"
+        "    from pkg import A\n"
+        "    from pkg import A\n"
+        "if True:\n"
+        "    from pkg import A\n"
+    )
+    assert _body(text) == text
+
+
+def test_different_dotted_imports_are_no_repeat() -> None:
+    text = "import a.b\nimport a.c\nimport a.b\n"
+    assert _body(text) == "import a.b\nimport a.c\npass\n"
+    assert conflicting_imports(text) == []
+
+
+def test_a_repeated_import_keeps_every_line() -> None:
+    text = "from pkg import (\n    A,\n)\nfrom pkg import (\n    A,\n)\nx = 1\n"
+    out, origin = transform_source_lines(text)
+    assert out.count("\n") - PRELUDE.count("\n") == text.count("\n")
+    assert len(origin) == text.count("\n")
+    assert out.endswith("x = 1\n")
+
+
+def test_a_name_read_before_it_is_rebound_is_reported_at_the_later_import() -> None:
+    problems = conflicting_imports(
+        "from a import X\nY = X\nimport b as X\nfrom c import Y2, Y2\n"
+    )
+    assert [line for line, _ in problems] == [3]
+    assert "`X` is imported again" in problems[0][1]
+    assert "line 1" in problems[0][1]
+    assert conflicting_imports("from a import X\nfrom a import X\n") == []
+
+
+def test_a_rebound_name_nothing_read_drops_the_earlier_import() -> None:
+    text = (
+        "from a import X, Z\n"
+        "def f():\n"
+        "    return X\n"
+        "from b import X\n"
+        "from a import X\n"
+    )
+    assert _body(text) == (
+        "from a import Z\ndef f():\n    return X\npass\nfrom a import X\n"
+    )
+    assert conflicting_imports(text) == []
+
+
+def test_a_read_in_a_class_body_or_decorator_counts_as_a_use() -> None:
+    for use in ("class C:\n    v = X\n", "@X\ndef f(): ...\n", "def f(d=X): ...\n"):
+        text = f"from a import X\n{use}from b import X\n"
+        assert [p[0] for p in conflicting_imports(text)] == [text.count("\n")], use
+
+
+def test_a_name_assigned_between_two_identical_imports_keeps_the_second() -> None:
+    text = "from a import X\nX = 1\nfrom a import X\n"
+    assert _body(text) == text
+
+
+def test_star_imports_and_future_imports_are_not_rebindings() -> None:
+    text = "from __future__ import annotations\nfrom a import *\nfrom b import *\n"
+    assert _body(text) == text
+    assert conflicting_imports(text) == []
+
+
+def test_a_try_import_fallback_is_left_alone() -> None:
+    text = "from a import X\ntry:\n    from b import X\nexcept ImportError:\n    pass\n"
+    assert _body(text) == text
 
 
 # The methods @dataclass generates, and a NamedTuple as a @tuple (#365)

@@ -54,6 +54,8 @@ _ENV_COMMAND = "VIEWER_SCENARIO_COMMAND"
 _ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _TIME = re.compile(r"^(\d+-)?\d{1,2}(:\d{2}){0,2}$|^\d+$")
 _SIMPLE = re.compile(r"^[A-Za-z0-9_.:/@+-]+$")
+#: A path on the nodes (``launcher.remote_cwd``, ``launcher.python``).
+_NODE_PATH = re.compile(r"^~?[A-Za-z0-9_.:/@+-]*$")
 _OUTPUTS_IN = re.compile(r"outputs in (?P<dir>\S+)")
 
 
@@ -110,6 +112,12 @@ class SlurmOptions:
     mem: str | None = None
     gres: str | None = None
     start_stagger_seconds: float | None = None
+    #: Where the jobs work on the nodes, for a viewer whose host sees their
+    #: file system at another path (docs/slurm.md).
+    remote_cwd: str | None = None
+    python: str | None = None
+    #: ``launcher.setup``: shell lines a job runs first; empty: the config's.
+    setup: list[str] = field(default_factory=list)
     env: dict[str, str] = field(default_factory=dict)
 
     @classmethod
@@ -158,6 +166,28 @@ class SlurmOptions:
             value = text(key)
             if value is not None and not _SIMPLE.match(value):
                 raise ValueError(f"{key} {value!r} has characters sbatch does not take")
+        for key in ("remote_cwd", "python"):
+            value = text(key)
+            if value is not None and (
+                not _NODE_PATH.match(value)
+                or (value.startswith("~") and value != "~" and value[1] != "/")
+            ):
+                raise ValueError(
+                    f"{key} {value!r} is not a path the launcher takes (letters, "
+                    "digits, _ . : / @ + -, and ~ or ~/ first)"
+                )
+        raw_setup = data.get("setup") or []
+        if isinstance(raw_setup, str):
+            raw_setup = raw_setup.splitlines()
+        setup = [str(line).strip() for line in raw_setup if str(line).strip()]
+        for line in setup:
+            # A Hydra override's value, then an OmegaConf string: a backslash
+            # or an interpolation would not reach the job as written.
+            if "\\" in line or "${" in line:
+                raise ValueError(
+                    f"setup line {line!r}: write $NAME rather than ${{NAME}}, and "
+                    "no backslash (or set launcher.setup in a config)"
+                )
         return cls(
             partition=text("partition"),
             array_parallelism=number("array_parallelism", int),
@@ -166,6 +196,9 @@ class SlurmOptions:
             mem=text("mem"),
             gres=text("gres"),
             start_stagger_seconds=number("start_stagger_seconds", float),
+            remote_cwd=text("remote_cwd"),
+            python=text("python"),
+            setup=setup,
             env=env,
         )
 
@@ -180,10 +213,17 @@ class SlurmOptions:
             "mem",
             "gres",
             "start_stagger_seconds",
+            "remote_cwd",
+            "python",
         ):
             value = getattr(self, key)
             if value is not None:
                 out.append(f"launcher.{key}={_quote(str(value))}")
+        if self.setup:
+            lines = ",".join(
+                "'" + line.replace("'", "\\'") + "'" for line in self.setup
+            )
+            out.append(f"launcher.setup=[{lines}]")
         # `env` is an empty mapping in the config: a new key is added (++).
         out.extend(
             f"++launcher.env.{k}={_quote(v)}" for k, v in sorted(self.env.items())

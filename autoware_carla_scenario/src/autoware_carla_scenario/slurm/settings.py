@@ -151,6 +151,17 @@ def _optional_str(value: Any) -> str | None:
     return None if value is None or value == "" else str(value)
 
 
+def _check_remote_path(value: str, name: str) -> None:
+    """Refuse a path the job script cannot expand on the node: ``~user/``."""
+    if "\n" in value or "\0" in value:
+        raise ValueError(f"launcher.{name} must be one line, not {value!r}")
+    if value.startswith("~") and value != "~" and not value.startswith("~/"):
+        raise ValueError(
+            f"launcher.{name} {value!r}: only ~ and ~/... (the job user's own "
+            "home on the node) are expanded, not ~user"
+        )
+
+
 def _optional_int(value: Any, name: str, minimum: int = 1) -> int | None:
     if value is None:
         return None
@@ -185,16 +196,25 @@ class SlurmSettings:
     cases_per_task: int | None = None
     job_name: str | None = None
     extra_sbatch_args: tuple[str, ...] = ()
-    #: ``sbatch --export``: ``ALL`` passes the submitting shell's environment.
+    #: ``sbatch --export``: ``ALL`` passes the submitting shell's environment
+    #: (``NONE`` by default with ``remote_cwd``).
     export: str = "ALL"
     #: Set in the job before the worker starts, after ``setup``.
     env: Mapping[str, str] = field(default_factory=dict)
-    #: The submitting shell's variables the job sets again (fnmatch patterns).
+    #: The submitting shell's variables the job sets again (fnmatch patterns;
+    #: none by default with ``remote_cwd``).
     env_passthrough: tuple[str, ...] = DEFAULT_ENV_PASSTHROUGH
     #: Shell lines the job runs before the worker (``module load``, ``source``).
     setup: tuple[str, ...] = ()
-    #: The interpreter the job runs the worker with; ``None``: this one.
+    #: The interpreter the jobs (the worker's and the collect job) run; a
+    #: relative path is the job's working directory's, a bare name is looked
+    #: up on ``PATH``, ``~/`` is the home on the node; ``None``: this one.
     python: str | None = None
+    #: Where every job works on the nodes, when the submit host sees their
+    #: file system at another path (an sshfs or NFS mount): relative to the
+    #: job user's home on the node, ``~/...``, or absolute.  Expanded on the
+    #: node.  ``None``: the submitting directory, which the nodes see too.
+    remote_cwd: str | None = None
     #: Follow the batch until it ends, then collect; ``False``: submit and exit.
     wait: bool = True
     poll_seconds: float = 15.0
@@ -240,7 +260,7 @@ class SlurmSettings:
         for key in ("partition", "account", "qos", "time", "mem", "gres"):
             if key in data:
                 options[key] = _optional_str(data[key])
-        for key in ("job_name", "python", "collect_mem", "port_lock_dir"):
+        for key in ("job_name", "python", "collect_mem", "port_lock_dir", "remote_cwd"):
             if key in data:
                 options[key] = _optional_str(data[key])
         for key in ("cpus_per_task", "array_parallelism", "cases_per_task"):
@@ -249,13 +269,37 @@ class SlurmSettings:
         for key in ("extra_sbatch_args", "env_passthrough", "setup"):
             if key in data:
                 value = data[key]
+                if value is None and key == "env_passthrough":
+                    options[key] = None  # the mode's default, below
+                    continue
                 if isinstance(value, str):
                     value = [value]
                 options[key] = tuple(str(v) for v in (value or ()))
         if "env" in data:
             options["env"] = {str(k): str(v) for k, v in (data["env"] or {}).items()}
-        if "export" in data:
-            options["export"] = str(data["export"] or "ALL")
+        remote = options.get("remote_cwd") is not None
+        if remote:
+            _check_remote_path(options["remote_cwd"], "remote_cwd")
+            if options.get("python") is None:
+                raise ValueError(
+                    "launcher.remote_cwd needs launcher.python, the interpreter "
+                    "on the nodes: a path relative to remote_cwd "
+                    "(.venv/bin/python), ~/..., absolute, or a command on the "
+                    "node's PATH (python3, with launcher.setup activating its "
+                    "environment); the submitting one's path is this host's"
+                )
+        if options.get("python") is not None:
+            _check_remote_path(options["python"], "python")
+        # null: the default of the mode.  With remote_cwd nothing of the
+        # submitting host's environment is the nodes' (docs/slurm.md).
+        if data.get("export") is not None and data.get("export") != "":
+            options["export"] = str(data["export"])
+        elif remote:
+            options["export"] = "NONE"
+        if options.get("env_passthrough") is None:
+            options.pop("env_passthrough", None)
+            if remote:
+                options["env_passthrough"] = ()
         for key in ("wait", "headless", "collect_job", "cancel_on_interrupt"):
             if key in data:
                 options[key] = bool(data[key])
