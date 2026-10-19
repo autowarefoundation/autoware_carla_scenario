@@ -28,6 +28,7 @@ from omegaconf import DictConfig, OmegaConf
 from tqdm import tqdm
 
 from ..maps import resolve_map_paths
+from ..rerun import require_converter
 from .expand import expand_sweep, scenario_controls
 from .map_loader import load_map
 
@@ -212,6 +213,12 @@ class LaneletConstraintSweeper(Sweeper):
         assert self.launcher is not None
 
         cfg = self.config
+
+        # -- 0. Refuse at once a sweep asking for Rerun recordings without
+        # the extra, rather than fail every case it forks.  Each case
+        # converts its own log (examples/run.py).
+        if OmegaConf.select(cfg, "rerun.enabled", default=False):
+            require_converter()
 
         # -- 1. Resolve map paths ------------------------------------------
         # A map named by `map.source` is cloned (or found already downloaded)

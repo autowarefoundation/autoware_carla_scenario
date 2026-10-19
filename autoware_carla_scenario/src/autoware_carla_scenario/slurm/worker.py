@@ -43,6 +43,8 @@ from .settings import SlurmSettings
 if TYPE_CHECKING:
     from omegaconf import DictConfig
 
+    from ..rerun import RerunConverter
+
 __all__ = ["main", "wait_for_start_turn", "worker_overrides"]
 
 logger = logging.getLogger("autoware_carla_scenario.slurm.worker")
@@ -364,6 +366,9 @@ def run_task(manifest_path: Path, submission_index: int, task_index: int) -> int
     signal.signal(signal.SIGUSR1, _raise_interrupt)
 
     slot: PortSlot | None = None
+    # Converts each case's trajectory log into a Rerun recording as the case
+    # ends (rerun.enabled): each task converts its own cases.
+    rerun: RerunConverter | None = None
     sampler = _RssSampler()
     exit_status = 0
     try:
@@ -421,6 +426,8 @@ def run_task(manifest_path: Path, submission_index: int, task_index: int) -> int
 
         first_cfg = configs[0]
         map_paths = run.resolve_map_paths(first_cfg.map)
+        # The submitting process already refused a batch without the extra.
+        rerun = run.build_rerun_converter(*configs)
         queue = run._batch_queue(
             first_cfg,
             map_paths,
@@ -429,6 +436,7 @@ def run_task(manifest_path: Path, submission_index: int, task_index: int) -> int
                 f"-carla-streaming-port={slot.streaming}",
                 f"-carla-secondary-port={slot.secondary}",
             ],
+            rerun=rerun,
         )
         cooldown = float(first_cfg.server.get("cooldown_seconds", 0.0))
 
@@ -458,6 +466,14 @@ def run_task(manifest_path: Path, submission_index: int, task_index: int) -> int
                 )
                 started = time.time()
                 (result,) = queue.run_all(release=True, continue_on_error=True)
+                # The case's recording is a few milliseconds' work, done while
+                # the world was reset: wait for it, so its outcome is in the
+                # case's record for `collect`.
+                rerun_error = (
+                    run.rerun_errors([result], rerun.wait()).get(0)
+                    if rerun is not None
+                    else None
+                )
                 write_json(
                     layout.result(index),
                     {
@@ -472,6 +488,7 @@ def run_task(manifest_path: Path, submission_index: int, task_index: int) -> int
                         "host": task.status["host"],
                         "wall_seconds": round(time.time() - started, 3),
                         "finished": _now(),
+                        **({"rerun_error": rerun_error} if rerun_error else {}),
                     },
                 )
                 task.update(done=[*task.status["done"], index], current=None)
@@ -498,6 +515,10 @@ def run_task(manifest_path: Path, submission_index: int, task_index: int) -> int
         signal.signal(signal.SIGTERM, signal.SIG_IGN)
         signal.signal(signal.SIGUSR1, signal.SIG_IGN)
         sampler.stop()
+        if rerun is not None:
+            from ..rerun import report  # noqa: PLC0415
+
+            logger.info("%s", report(rerun.close()))
         if slot is not None:
             left = kill_carla_on_port(slot.rpc)
             if left:

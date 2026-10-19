@@ -41,8 +41,9 @@ def test_an_old_video_setting_is_accepted_and_told_it_does_nothing(
     assert warn_if_video_set(cfg)
     err = capsys.readouterr().err
     assert override.lower() in err.lower()
-    assert "pip install 'autoware-carla-scenario-rerun[viewer]'" in err
-    assert "from autoware_carla_scenario_rerun import convert_dir" in err
+    assert "pip install 'autoware-carla-scenario[rerun,viewer]'" in err
+    assert "rerun.enabled=true" in err
+    assert "python -m autoware_carla_scenario.rerun" in err
     assert "Rerun viewer" in err
 
 

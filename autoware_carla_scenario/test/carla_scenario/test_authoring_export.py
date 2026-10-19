@@ -734,9 +734,12 @@ class TestWheelhouseInterpreters:
             built.append(python)
             return parent / f"builder-{python}", ""
 
-        def _download(venv: Path, *_args: Any) -> str:
+        def _download(venv: Path, _requirements: Path, wheels: Path) -> str:
             filled.append(venv)
-            return ""
+            python = venv.name.removeprefix("builder-")
+            (wheels / "shared-1.0-py3-none-any.whl").write_text("same")
+            (wheels / f"only-{python}-1.0-py3-none-any.whl").write_text(python)
+            return f"pass {python}\n"
 
         monkeypatch.setattr(module, "_export_requirements", lambda _r: ("", ""))
         monkeypatch.setattr(module, "_build_project_wheel", lambda *_a: "")
@@ -751,12 +754,86 @@ class TestWheelhouseInterpreters:
             run_command="scenario scenario=nothing",
         )
 
-        assert built == ["3.10", "3.12"]
+        # The passes run side by side, so in no particular order.
+        assert sorted(built) == ["3.10", "3.12"]
         assert wheelhouse.python_tags == ("3.10", "3.12")
-        # Each pass fills the one directory from its own environment; a shared
-        # builder venv would mean the second pass resolved nothing new.
+        # Each pass resolves from its own environment; a shared builder venv
+        # would mean the second pass resolved nothing new.
         assert len(set(filled)) == 2
+        # Each into a directory of its own, gathered after: what the two
+        # share once, and what only one of them resolved.
+        assert wheelhouse.wheels == (
+            "only-3.10-1.0-py3-none-any.whl",
+            "only-3.12-1.0-py3-none-any.whl",
+            "shared-1.0-py3-none-any.whl",
+        )
+        assert wheelhouse.log.index("pass 3.10") < wheelhouse.log.index("pass 3.12")
         assert "3.10, 3.12" in (wheelhouse.root / "README.md").read_text()
+
+    def test_an_interpreter_named_twice_is_one_pass(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Two passes of one Python would race for its builder venv."""
+        import autoware_carla_scenario.authoring.wheelhouse as module
+
+        (tmp_path / "uv.lock").write_text("", encoding="utf-8")
+        built: list[str] = []
+
+        def _environment(parent: Path, python: str) -> tuple[Path, str]:
+            built.append(python)
+            return parent / f"builder-{python}", ""
+
+        monkeypatch.setattr(module, "_export_requirements", lambda _r: ("", ""))
+        monkeypatch.setattr(module, "_build_project_wheel", lambda *_a: "")
+        monkeypatch.setattr(module, "_builder_environment", _environment)
+        monkeypatch.setattr(module, "_download_wheels", lambda *_a: "")
+
+        wheelhouse = build_wheelhouse(
+            tmp_path,
+            tmp_path / "out",
+            distribution="nothing",
+            version="0.1.0",
+            run_command="scenario scenario=nothing",
+            pythons=("3.12", "3.10", "3.12"),
+        )
+        assert sorted(built) == ["3.10", "3.12"]
+        assert wheelhouse.python_tags == ("3.12", "3.10")
+        # The passes' own directories are gone once their wheels moved up.
+        assert not list((tmp_path / "out").glob(".pass-*"))
+
+    def test_a_failed_pass_names_its_environment_and_leaves_nothing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import autoware_carla_scenario.authoring.wheelhouse as module
+
+        (tmp_path / "uv.lock").write_text("", encoding="utf-8")
+
+        def _environment(parent: Path, python: str) -> tuple[Path, str]:
+            return parent / f"builder-{python}", f"venv for {python}\n"
+
+        def _download(venv: Path, *_args: Any) -> str:
+            if venv.name.endswith("3.12"):
+                raise module.WheelhouseError("no wheel", "pip said no\n")
+            return "pass 3.10\n"
+
+        monkeypatch.setattr(module, "_export_requirements", lambda _r: ("", ""))
+        monkeypatch.setattr(module, "_build_project_wheel", lambda *_a: "")
+        monkeypatch.setattr(module, "_builder_environment", _environment)
+        monkeypatch.setattr(module, "_download_wheels", _download)
+
+        with pytest.raises(module.WheelhouseError) as raised:
+            build_wheelhouse(
+                tmp_path,
+                tmp_path / "out",
+                distribution="nothing",
+                version="0.1.0",
+                run_command="scenario scenario=nothing",
+                pythons=("3.10", "3.12"),
+            )
+        log = raised.value.log
+        assert log.index("pass 3.10") < log.index("venv for 3.12")
+        assert log.index("venv for 3.12") < log.index("pip said no")
+        assert not (tmp_path / "out").exists()
 
     def test_an_explicit_interpreter_overrides_requires_python(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -915,6 +992,7 @@ class TestExportSelfCheck:
         every other one's wheels.
         """
         import subprocess
+        from concurrent.futures import ThreadPoolExecutor
 
         from autoware_carla_scenario.authoring.uv_tool import run_uv
         from autoware_carla_scenario.authoring.wheelhouse import venv_python
@@ -922,8 +1000,9 @@ class TestExportSelfCheck:
         result = exported
         assert result.wheelhouse is not None, result.log
         assert result.wheelhouse.python_tags, result.log
+        wheelhouse = result.wheelhouse
 
-        for interpreter in result.wheelhouse.python_tags:
+        def install(interpreter: str) -> None:
             # `uv venv --seed` rather than the stdlib `venv`: the consumer's
             # venv needs pip in it, and uv is already required by this test.
             target = tmp_path / f"venv-{interpreter}"
@@ -946,8 +1025,8 @@ class TestExportSelfCheck:
                     "install",
                     "--no-index",
                     "--find-links",
-                    str(result.wheelhouse.root),
-                    result.wheelhouse.distribution,
+                    str(wheelhouse.root),
+                    wheelhouse.distribution,
                 ],
                 capture_output=True,
                 text=True,
@@ -975,6 +1054,12 @@ class TestExportSelfCheck:
             )
             assert probe.returncode == 0, probe.stdout + probe.stderr
             assert (venv_python(target).parent / "scenario").exists()
+
+        # Each interpreter installs into a venv of its own: side by side.
+        tags = wheelhouse.python_tags
+        with ThreadPoolExecutor(max_workers=len(tags)) as pool:
+            for done in [pool.submit(install, interpreter) for interpreter in tags]:
+                done.result()
 
 
 class TestFreeFormTextReachesTheManifest:

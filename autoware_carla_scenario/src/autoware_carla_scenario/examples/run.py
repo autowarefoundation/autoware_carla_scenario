@@ -69,6 +69,12 @@ from autoware_carla_scenario.constants import DEFAULT_TM_PORT
 from autoware_carla_scenario.maps import resolve_map_paths
 from autoware_carla_scenario.odd.route import PlannedRoute, RouteError
 from autoware_carla_scenario.odd.sampler import ODD_CASE_KEY, OddCase, decode_case
+from autoware_carla_scenario.rerun import (
+    RerunConversion,
+    RerunConverter,
+    RerunUnavailableError,
+)
+from autoware_carla_scenario.rerun import report as rerun_report
 from autoware_carla_scenario.server import fog_density_scale_args
 from autoware_carla_scenario.typecheck import ScenarioTypeError
 from autoware_carla_scenario.typecheck.mode import (
@@ -638,6 +644,7 @@ def run_scenario_with_queue(
     case: OddCase | None = None,
     server_extra_args: list[str] | None = None,
     map_source: str | None = None,
+    rerun: RerunConverter | None = None,
 ) -> ScenarioResult:
     """Run a single pre-built scenario using :class:`ScenarioQueue`.
 
@@ -646,6 +653,8 @@ def run_scenario_with_queue(
     *map_source* is where the map
     came from, which the run's trajectory log names.  *server_extra_args* are passed to
     ``CarlaUnreal.sh`` when the run starts the server (:func:`server_extra_args`).
+    *rerun* converts the run's trajectory log into a Rerun recording once it
+    is closed (:func:`build_rerun_converter`); the caller waits for it.
 
     This is the extracted orchestration logic that was previously embedded
     inside :func:`run_scenario`.  Downstream projects can use this to execute
@@ -677,6 +686,7 @@ def run_scenario_with_queue(
         autoware_launcher=autoware_launcher,
         server_extra_args=server_extra_args,
         map_source=map_source,
+        rerun=rerun,
     )
     queue.add(scenario, case=case)
     with queue:
@@ -722,15 +732,61 @@ def _map_source(cfg: DictConfig) -> str | None:
     return None
 
 
+def _rerun_settings(cfg: DictConfig) -> tuple[bool, bool]:
+    """``rerun.enabled`` and ``rerun.strict`` (both off when absent)."""
+    rerun_cfg = cfg.get("rerun") or {}
+    return bool(rerun_cfg.get("enabled", False)), bool(rerun_cfg.get("strict", False))
+
+
+def build_rerun_converter(*cfgs: DictConfig) -> RerunConverter | None:
+    """What converts each run's trajectory log into a Rerun recording, when
+    any of *cfgs* sets ``rerun.enabled`` (strict when any sets
+    ``rerun.strict``); ``None`` otherwise.
+
+    Called before anything runs, so a run asking for recordings without the
+    ``rerun`` extra installed is refused at once.
+
+    Raises:
+        RerunUnavailableError: The extra is not installed.
+    """
+    settings = [_rerun_settings(cfg) for cfg in cfgs]
+    if not any(enabled for enabled, _ in settings):
+        return None
+    return RerunConverter(strict=any(strict for _, strict in settings))
+
+
+def rerun_errors(
+    results: list[ScenarioResult], conversions: list[RerunConversion]
+) -> dict[int, str]:
+    """Why each case's Rerun recording failed, by its position in *results*:
+    the cases whose ``rerun_recording`` is among the failed *conversions*."""
+    failed = {str(c.recording): c.error for c in conversions if c.error is not None}
+    return {
+        i: failed[result.rerun_recording]
+        for i, result in enumerate(results)
+        if result.rerun_recording is not None and result.rerun_recording in failed
+    }
+
+
+def _finish_rerun(rerun: RerunConverter | None) -> list[RerunConversion]:
+    """Wait for *rerun*'s conversions, end its thread, and print how they went."""
+    if rerun is None:
+        return []
+    conversions = rerun.close()
+    print(rerun_report(conversions))  # noqa: T201
+    return conversions
+
+
 #: What a run's ``video`` settings are now: none of them does anything.
 VIDEO_REMOVED = (
     "video.* is set ({settings}), but autoware_carla_scenario renders no video "
-    "any more (removed in 15.0.0): it is ignored. To see a run, convert its "
-    "{{Scenario}}.trajectory.jsonl into a Rerun recording and open that in the "
-    "Rerun viewer: pip install 'autoware-carla-scenario-rerun[viewer]', then "
-    "python -c 'from autoware_carla_scenario_rerun import convert_dir; "
-    'convert_dir("<output dir>")\'; the CARLA recording ({{Scenario}}.log) is '
-    "still written, for CARLA's replayer (docs/usage.md#seeing-a-run)."
+    "any more (removed in 15.0.0): it is ignored. To see a run, make a Rerun "
+    "recording of its {{Scenario}}.trajectory.jsonl and open that in the Rerun "
+    "viewer: pip install 'autoware-carla-scenario[rerun,viewer]' and run with "
+    "rerun.enabled=true (or, after a run, python -m "
+    "autoware_carla_scenario.rerun <output dir>), then rerun {{Scenario}}.rrd; "
+    "the CARLA recording ({{Scenario}}.log) is still written, for CARLA's "
+    "replayer (docs/usage.md#seeing-a-run)."
 )
 
 
@@ -985,11 +1041,14 @@ def _batch_queue(
     map_paths: Any,
     output_dir: Path,
     extra_server_args: list[str] | None = None,
+    rerun: RerunConverter | None = None,
 ) -> ScenarioQueue:
     """The queue a batch runs its cases in, on one CARLA, from its first config.
 
     *map_paths* is what :func:`resolve_map_paths` gave for the batch's map;
-    *extra_server_args* are added to the server's own (a SLURM task's ports).
+    *extra_server_args* are added to the server's own (a SLURM task's ports);
+    *rerun* converts each case's trajectory log as the case ends
+    (:func:`build_rerun_converter`).
     """
     cooldown = float(first_cfg.server.get("cooldown_seconds", 0.0))
     cooldown_max_retries = int(first_cfg.server.get("cooldown_max_retries", 0))
@@ -1012,6 +1071,7 @@ def _batch_queue(
         autoware_launcher=build_autoware_launcher(first_cfg),
         server_extra_args=[*server_extra_args(first_cfg), *(extra_server_args or [])],
         map_source=_map_source(first_cfg),
+        rerun=rerun,
     )
 
 
@@ -1146,6 +1206,15 @@ def run_batch(
         print("Error: --no-wait is for launcher=slurm only")  # noqa: T201
         sys.exit(1)
 
+    # Before anything is built: a batch asking for Rerun recordings without
+    # the extra installed is refused at once (RerunUnavailableError).  Under
+    # SLURM each task converts its own cases (slurm/worker.py), so this only
+    # checks.
+    rerun = build_rerun_converter(*configs)
+    if rerun is not None and launcher == "slurm":
+        rerun.close()
+        rerun = None
+
     # Log detailed execution plan before building anything.
     _log_batch_plan(
         [name for name, _ in cases],
@@ -1199,7 +1268,7 @@ def run_batch(
             )
         )
 
-    queue = _batch_queue(first_cfg, map_paths, output_dir)
+    queue = _batch_queue(first_cfg, map_paths, output_dir, rerun=rerun)
 
     for cfg, scenario in zip(configs, scenarios):
         # The runner's own fail-safe, each scenario's own: without it the
@@ -1218,11 +1287,15 @@ def run_batch(
 
     logger.info("All %d scenario(s) built. Starting execution...", len(labels))
 
-    with queue:
-        # A case that cannot run (a spawn point without ground, say) is
-        # recorded as errored, and the rest of the batch still runs.
-        results = queue.run_all(release=True, continue_on_error=True)
-        errored = queue.errored_indices()
+    try:
+        with queue:
+            # A case that cannot run (a spawn point without ground, say) is
+            # recorded as errored, and the rest of the batch still runs.
+            results = queue.run_all(release=True, continue_on_error=True)
+            errored = queue.errored_indices()
+    finally:
+        # Each log was converted as its case ended; wait for the last ones.
+        conversions = rerun.close() if rerun is not None else []
 
     all_passed = _print_summary(
         labels,
@@ -1230,6 +1303,7 @@ def run_batch(
         output_dir=output_dir,
         overrides=case_overrides if expand else None,
         errored=errored,
+        rerun_errors=rerun_errors(results, conversions),
     )
     sys.exit(0 if all_passed else 1)
 
@@ -1416,7 +1490,21 @@ def run_scenario(
     """
     logger.info("Resolved config:\n%s", OmegaConf.to_yaml(cfg))
     warn_if_video_set(cfg)
+    # Before anything is built: refused at once without the extra.
+    rerun = build_rerun_converter(cfg)
+    try:
+        return _run_scenario(cfg, rerun, build_scenario_fn=build_scenario_fn)
+    finally:
+        _finish_rerun(rerun)
 
+
+def _run_scenario(
+    cfg: DictConfig,
+    rerun: RerunConverter | None,
+    *,
+    build_scenario_fn: BuildScenarioFn | None = None,
+) -> ScenarioResult:
+    """:func:`run_scenario`, with its Rerun converter, if any."""
     _ego, scenario = build_scenario(cfg, build_scenario_fn=build_scenario_fn)
     # The ODD the run is measured against, checked when it is Python.
     check_odd(_odd_spec(cfg), typecheck_mode(cfg))
@@ -1453,6 +1541,7 @@ def run_scenario(
         case=_odd_case(cfg),
         server_extra_args=server_extra_args(cfg),
         map_source=_map_source(cfg),
+        rerun=rerun,
     )
 
     status = "PASSED" if result.passed else "FAILED"
@@ -1471,7 +1560,7 @@ def _hydra_main(cfg: DictConfig) -> None:
     )
     try:
         result = run_scenario(cfg)
-    except ScenarioTypeError as exc:
+    except (ScenarioTypeError, RerunUnavailableError) as exc:
         if _is_multirun():
             raise
         print(exc, file=sys.stderr)  # noqa: T201
@@ -1587,7 +1676,7 @@ def main() -> None:
                 run_batch(
                     scenario_names, remaining, expand=expand, resume_from=resume_from
                 )
-        except ScenarioTypeError as exc:
+        except (ScenarioTypeError, RerunUnavailableError) as exc:
             print(exc, file=sys.stderr)  # noqa: T201
             sys.exit(2)
     else:
