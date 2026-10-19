@@ -571,3 +571,41 @@ class TestProgressIsNotStale:
         npc.z = -500.0  # ... parked under the map
         assert condition.check(world, 0.1) is None
         assert condition.progress is None
+
+
+def test_a_windowed_projection_answers_as_a_scan_of_every_segment(
+    frame: RouteFrame,
+) -> None:
+    """The window is found by bisection rather than by testing each segment;
+    the answer is the one a test of each segment gives."""
+    import math
+    import random
+
+    from autoware_carla_scenario.route.frame import PROJECT_WINDOW_M
+
+    def scanned(x: float, y: float, near: float) -> tuple[float, float]:
+        best = (math.inf, 0.0)
+        arc, xs, ys = frame._arc, frame._xs, frame._ys
+        for i in range(len(arc) - 1):
+            if arc[i + 1] < near - PROJECT_WINDOW_M or arc[i] > near + PROJECT_WINDOW_M:
+                continue
+            dx, dy = xs[i + 1] - xs[i], ys[i + 1] - ys[i]
+            squared = dx * dx + dy * dy
+            f = (
+                0.0
+                if squared < 1e-12
+                else ((x - xs[i]) * dx + (y - ys[i]) * dy) / squared
+            )
+            f = min(max(f, 0.0), 1.0)
+            gap = math.hypot(xs[i] + f * dx - x, ys[i] + f * dy - y)
+            if gap < best[0]:
+                best = (gap, arc[i] + f * (arc[i + 1] - arc[i]))
+        return best
+
+    rng = random.Random(11)
+    nears = [*frame._arc, -100.0, frame.length + 100.0]
+    nears += [a + PROJECT_WINDOW_M for a in frame._arc]
+    for near in nears:
+        x = rng.uniform(min(frame._xs) - 20.0, max(frame._xs) + 20.0)
+        y = rng.uniform(min(frame._ys) - 20.0, max(frame._ys) + 20.0)
+        assert frame._nearest(x, y, near) == scanned(x, y, near), near
