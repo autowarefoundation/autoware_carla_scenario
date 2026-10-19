@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from ..batch_report import print_summary
-from .manifest import BatchLayout, write_json
+from .manifest import BatchLayout, resubmit_target, write_json
 
 __all__ = ["RecordedResult", "collect", "missing_cases", "unfinished_cases"]
 
@@ -72,7 +72,7 @@ def _last_submission_of(layout: BatchLayout, case: int) -> tuple[int, int] | Non
     return None
 
 
-def _missing_message(layout: BatchLayout, case: int) -> str:
+def _missing_message(layout: BatchLayout, case: int, target: str) -> str:
     where = _last_submission_of(layout, case)
     if where is None:
         detail = "it was never submitted"
@@ -86,7 +86,7 @@ def _missing_message(layout: BatchLayout, case: int) -> str:
             detail += f": {status['error']}"
     return (
         f"No result: the case did not finish under SLURM ({detail}). "
-        f"Run it again with: scenario-slurm resubmit {layout.batch_dir}"
+        f"Run it again with: scenario-slurm resubmit {target}"
     )
 
 
@@ -121,6 +121,7 @@ def collect(layout: BatchLayout, *, quiet_hint: bool = False) -> int:
     """Print the batch's summary and write ``batch_results.json``, as a local
     batch does; 0 when every case passed, 1 otherwise."""
     manifest = layout.read_manifest()
+    target = resubmit_target(layout, manifest)
     labels: list[str] = []
     results: list[RecordedResult] = []
     errored: list[int] = []
@@ -137,7 +138,7 @@ def collect(layout: BatchLayout, *, quiet_hint: bool = False) -> int:
                 RecordedResult(
                     {
                         "passed": False,
-                        "message": _missing_message(layout, index),
+                        "message": _missing_message(layout, index, target),
                         "elapsed_seconds": 0.0,
                         "condition_statuses": [],
                     }
@@ -175,6 +176,6 @@ def collect(layout: BatchLayout, *, quiet_hint: bool = False) -> int:
         print(  # noqa: T201
             f"{len(missing)} case(s) have no result: "
             + ", ".join(labels[i] for i in missing)
-            + f"\nRun them again with: scenario-slurm resubmit {layout.batch_dir}"
+            + f"\nRun them again with: scenario-slurm resubmit {target}"
         )
     return 0 if all_passed else 1

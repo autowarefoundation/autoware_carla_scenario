@@ -113,11 +113,12 @@ command line (`launcher.mem=12G`), or in a config.
 | `cases_per_task` | `null` | cases a task runs on its CARLA; `null`: the cases spread evenly over `array_parallelism` tasks (one case a task without a cap) |
 | `job_name` | `null` | `acs-<date>-<time>` of the output directory |
 | `extra_sbatch_args` | `[]` | further `sbatch` arguments |
-| `export` | `ALL` | `sbatch --export` |
-| `env_passthrough` | see below | variables recorded at submission and set again in the job |
+| `export` | `null` | `sbatch --export`; `null`: `ALL`, or `NONE` with `remote_cwd` |
+| `env_passthrough` | `null` | variables recorded at submission and set again in the job; `null`: see below, or none with `remote_cwd` |
 | `setup` | `[]` | shell lines the job runs before the worker (`module load`, `source .venv/bin/activate`) |
 | `env` | `{}` | variables set in the job, last |
-| `python` | `null` | the interpreter the job runs; `null`: the submitting one |
+| `python` | `null` | the interpreter the jobs run (the tasks and the collect job): an absolute path, a path relative to the job's working directory (`.venv/bin/python`), `~/...` (the home on the node), or a command on the node's `PATH` (`python3`); `null`: the submitting one |
+| `remote_cwd` | `null` | where the jobs work on the nodes, for a submit host that sees their file system at another path ([A submit host with other paths](#a-submit-host-with-other-paths)); `null`: the directory `scenario` runs in |
 | `headless` | `true` | unset `DISPLAY` in the job, so CARLA renders off-screen |
 | `start_stagger_seconds` | `0` | no task of the batch starts sooner than this after another did: the first wave, the tasks started as slots free up, a resubmit's ([Shared state](#limits)) |
 | `wait` | `true` | follow and collect; `false` (or `--no-wait`): submit and exit |
@@ -160,9 +161,81 @@ and the job scripts holding the values are files in the batch's output
 directory (both the user's alone, mode `0600` and `0700`). With
 `export: NONE`, the job has only what steps 2 to 4 give it.
 
+With `launcher.remote_cwd` set, none of this comes from the submit host: the
+job has the environment SLURM gives it on the node (`export: NONE`), the
+variables `env_passthrough` names only when it is given, then `setup` and
+`env` ([A submit host with other paths](#a-submit-host-with-other-paths)).
+
 A config that reads the environment (`${oc.env:ONEPLANNER_MAP_DIR}`) is
 resolved in the task too; a case whose config resolves differently there than
 where it was submitted is refused, naming the keys that differ.
+
+### A submit host with other paths
+
+By default the jobs run where `scenario` was run: the directory it ran in, the
+interpreter it ran with and the batch's output directory are recorded by
+their absolute paths, which the nodes must see as the submit host does. A
+submit host that sees the nodes' file system somewhere else -- a workstation
+that mounts a node's `~/workspace/OnePlanner` with sshfs or NFS at
+`~/mnt/node/OnePlanner`, under another user's home -- names the nodes' paths
+instead, none of them absolute:
+
+```bash
+# On the submit host, in its mount of the node's ~/workspace/OnePlanner:
+cd ~/mnt/node/OnePlanner
+uv run scenario --multirun 'scenario=cut_in/*' +sweep.odd_sample.count=24 \
+  launcher=slurm launcher.partition=main launcher.gres=shard:1 \
+  launcher.remote_cwd=workspace/OnePlanner \
+  launcher.python=.venv/bin/python \
+  "launcher.setup=['source ~/workspace/opt/env.sh']"
+```
+
+- `launcher.remote_cwd` is where every job -- each task and the collect job --
+  works on the node. A relative path is relative to the job user's home on the
+  node, `~/...` is that home too, and an absolute path is used as it is. It is
+  expanded by the job script on the node, never here: the home is the one the
+  node's passwd database gives the job's user (whatever `$HOME` the job was
+  handed), so the user name and home may differ from the submit host's.
+- `launcher.python` is then required: the submit host's interpreter is not the
+  node's. A relative path (`.venv/bin/python`) is relative to `remote_cwd`, a
+  bare name (`python3`) is looked up on the node's `PATH` as `setup` leaves it.
+- The batch's output directory must lie under the directory `scenario` runs in
+  (`outputs/<date>/<time>/` does), which is what the node sees at
+  `remote_cwd`; `scenario` refuses a batch elsewhere. The manifest records it
+  relative to that directory (`batch_dir_relative`, a version 2 manifest), and
+  the jobs find it under their own working directory. On the submit host,
+  `scenario-slurm` takes the batch's directory as this host sees it
+  (`scenario-slurm wait ~/mnt/node/OnePlanner/outputs/<date>/<time>`), and
+  `resubmit` submits with the settings the batch was submitted with.
+- Nothing of the submit host's environment reaches the job: `export` is
+  `NONE` (the job starts with the environment SLURM gives it on the node,
+  which on most clusters is the user's login environment) and
+  `env_passthrough` is empty, unless either is set. Set the node's
+  environment with `setup`, which runs in `remote_cwd` and may read unset
+  variables (`source ~/workspace/opt/env.sh`, `module load cuda`,
+  `source .venv/bin/activate`), and `env`.
+- SLURM writes a job's output before the job knows where the batch is: each
+  job starts in `/tmp` with its output there
+  (`/tmp/acs-slurm-<user>-<job>_<task>.out` on the node) and sends it on to
+  the batch's `slurm/logs/` once it is in `remote_cwd`. The file in `/tmp`
+  keeps what came before (a `remote_cwd` the node does not have) and what SLURM
+  itself writes (a time limit, a cancel).
+- A case's config that resolves to absolute paths -- an ODD file in a
+  scenario package, a map -- resolves to the node's paths there; see below
+  for when that is still the same config.
+
+Without `remote_cwd` the batch is submitted and run exactly as before (a
+version 1 manifest).
+
+A value that is a path may differ and still be the same config. That is the
+case when it is the submitting directory's path seen from the job's working
+directory (`<cwd>/x` there, `<remote_cwd>/x` here), or when it names a file
+with the content it had where the batch was submitted: `scenario` records the
+SHA-256 of every file an absolute path in a case's config names (the
+manifest's `files`), and the task compares the file its own config names. A
+file missing on the node, or with other content, is refused, naming the key
+and both paths. This holds with or without `remote_cwd`: a package installed
+in another environment names its files at other paths too.
 
 ### Ports
 

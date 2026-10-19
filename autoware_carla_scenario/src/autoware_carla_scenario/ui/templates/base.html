@@ -168,6 +168,15 @@
           <label class="text-xs text-gray-600 col-span-2 md:col-span-1">Extra env (NAME=value per line)
             <textarea id="slurm-env" rows="2" class="mt-1 w-full rounded border border-gray-300 px-2 py-1 text-sm font-mono"></textarea>
           </label>
+          <label class="text-xs text-gray-600" title="Where the jobs work on the nodes, when this host sees their file system at another path (an sshfs or NFS mount): relative to the home on the node, ~/..., or absolute">Remote cwd
+            <input id="slurm-remote-cwd" class="mt-1 w-full rounded border border-gray-300 px-2 py-1 text-sm font-mono" placeholder="same as here">
+          </label>
+          <label class="text-xs text-gray-600" title="The interpreter the jobs run: relative to the job's working directory, ~/..., absolute, or a command on the node's PATH">Python
+            <input id="slurm-python" class="mt-1 w-full rounded border border-gray-300 px-2 py-1 text-sm font-mono" placeholder="e.g. .venv/bin/python">
+          </label>
+          <label class="text-xs text-gray-600 col-span-2" title="launcher.setup: shell lines each job runs first, on the node">Setup (a shell line per line)
+            <textarea id="slurm-setup" rows="2" class="mt-1 w-full rounded border border-gray-300 px-2 py-1 text-sm font-mono" placeholder="e.g. source ~/env.sh"></textarea>
+          </label>
         </div>
         <p class="mt-1 text-xs text-gray-400">Submitted without waiting (<code>--no-wait</code>); a collect job writes the summary when the array ends. The batch's page follows it.</p>
       </div>
@@ -309,7 +318,7 @@
 
     // --- localStorage persistence for Run Options panel ---
     const STORAGE_KEY = 'viewer_run_options';
-    const SLURM_FIELDS = ['partition', 'array-parallelism', 'cases-per-task', 'time', 'mem', 'gres', 'start-stagger-seconds', 'env'];
+    const SLURM_FIELDS = ['partition', 'array-parallelism', 'cases-per-task', 'time', 'mem', 'gres', 'start-stagger-seconds', 'remote-cwd', 'python', 'setup', 'env'];
     const PANEL_FIELDS = ['run-scenario', 'extra-overrides', 'run-sweeper', 'run-launcher',
       ...SLURM_FIELDS.map(f => 'slurm-' + f)];
 
