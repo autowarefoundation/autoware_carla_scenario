@@ -6,6 +6,7 @@ No Codon needed: these store and load results directly.
 from __future__ import annotations
 
 import ast
+import json
 import os
 import shutil
 from collections.abc import Callable
@@ -189,6 +190,49 @@ def test_another_installed_distribution_is_another_key(
         _distributions_digest.cache_clear()
 
 
+def test_an_edit_to_an_editable_distribution_is_another_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, key: Callable[..., str]
+) -> None:
+    """Its version stays the same however its source changes; what is not its
+    source (a virtualenv inside the checkout, bytecode) does not count."""
+    checkout = tmp_path / "helpers"
+    (checkout / "helpers").mkdir(parents=True)
+    module = checkout / "helpers" / "geometry.py"
+    module.write_text("def length() -> float: ...\n", encoding="utf-8")
+    direct_url = json.dumps({"url": checkout.as_uri(), "dir_info": {"editable": True}})
+    dist = SimpleNamespace(
+        metadata={"Name": "helpers"},
+        version="0.1.0",
+        read_text=lambda name: direct_url if name == "direct_url.json" else None,
+    )
+    monkeypatch.setattr(check.importlib.metadata, "distributions", lambda: [dist])
+
+    def digest() -> str:
+        _distributions_digest.cache_clear()
+        return key()
+
+    try:
+        before = digest()
+        (checkout / ".venv").mkdir()
+        (checkout / ".venv" / "site.py").write_text("x = 1\n", encoding="utf-8")
+        (checkout / "helpers" / "__pycache__").mkdir()
+        (checkout / "helpers" / "__pycache__" / "x.py").write_text("", "utf-8")
+        assert digest() == before
+        module.write_text("def length() -> float | None: ...\n", encoding="utf-8")
+        assert digest() != before
+    finally:
+        _distributions_digest.cache_clear()
+
+
+def test_another_mypypath_is_another_key(
+    monkeypatch: pytest.MonkeyPatch, key: Callable[..., str]
+) -> None:
+    monkeypatch.delenv("MYPYPATH", raising=False)
+    before = key()
+    monkeypatch.setenv("MYPYPATH", "/stubs")
+    assert key() != before
+
+
 def test_another_python_is_another_key(
     monkeypatch: pytest.MonkeyPatch, key: Callable[..., str]
 ) -> None:
@@ -241,15 +285,28 @@ def test_an_unreadable_entry_is_a_miss(cache_dir: Path) -> None:
     assert _cached("k", _sources("/run1")) is None
 
 
-def test_without_a_directory_nothing_is_written(
+def test_an_empty_directory_keeps_verdicts_for_the_process_only(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.delenv(CACHE_DIR_ENV, raising=False)
+    monkeypatch.setenv(CACHE_DIR_ENV, "")
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
     monkeypatch.setattr(check, "_CACHE", {})
     monkeypatch.chdir(tmp_path)
     _store("k", _failed(), _sources("/run1"))
     assert _cached("k", _sources("/run1")) is not None
     assert not list(tmp_path.iterdir())
+
+
+def test_unset_the_verdicts_are_kept_in_the_users_cache_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv(CACHE_DIR_ENV, raising=False)
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    monkeypatch.setattr(check, "_CACHE", {})
+    _store("k", _failed(), _sources("/run1"))
+    assert (tmp_path / "autoware_carla_scenario" / "typecheck" / "k.json").is_file()
+    monkeypatch.setattr(check, "_CACHE", {})
+    assert _cached("k", _sources("/run2")) is not None
 
 
 def test_another_compiler_at_the_same_path_is_another_key(

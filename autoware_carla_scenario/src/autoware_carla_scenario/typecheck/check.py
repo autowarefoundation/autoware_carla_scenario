@@ -51,6 +51,8 @@ from collections.abc import Callable, Collection, Iterable, Iterator, Mapping
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal
+from urllib.parse import urlparse
+from urllib.request import url2pathname
 
 from .driver import (
     DRIVER_MODULE,
@@ -1035,7 +1037,8 @@ _CHECKED_FOR: dict[str, dict[str, str]] = {}
 
 #: A directory to keep verdicts in beyond the process, one file per cache key:
 #: the test suite's xdist workers share it, and CI restores it from one run to
-#: the next. Unset, a verdict lives as long as the process.
+#: the next. Unset, the user's cache directory; set but empty, a verdict lives
+#: as long as the process.
 CACHE_DIR_ENV = "AUTOWARE_CARLA_SCENARIO_TYPECHECK_CACHE"
 
 
@@ -1073,9 +1076,25 @@ def _module_markers(sources: _Sources) -> dict[str, str]:
     return {str(m.path): f"\0module:{name}\0" for name, m in sources.modules.items()}
 
 
+def _cache_dir() -> Path | None:
+    """``$CACHE_DIR_ENV``, or the user's cache directory when it is unset.
+
+    ``None`` (verdicts kept for the process only) when it is set but empty,
+    or when there is no home directory to put the default in.
+    """
+    configured = os.environ.get(CACHE_DIR_ENV)
+    if configured is not None:
+        return Path(configured) if configured else None
+    try:
+        base = os.environ.get("XDG_CACHE_HOME") or str(Path.home() / ".cache")
+    except RuntimeError:  # no home directory
+        return None
+    return Path(base) / "autoware_carla_scenario" / "typecheck"
+
+
 def _cache_file(key: str) -> Path | None:
-    root = os.environ.get(CACHE_DIR_ENV)
-    return Path(root) / f"{key}.json" if root else None
+    root = _cache_dir()
+    return root / f"{key}.json" if root is not None else None
 
 
 def _cached(key: str, sources: _Sources) -> TypeCheckResult | None:
@@ -1186,25 +1205,58 @@ def _distributions_digest() -> str:
     framework (its own aside, which :func:`_package_digest` covers by its
     text): mypy follows a scenario's imports into them (numpy, lanelet2,
     typesafe_carla's CPython package), and their types decide what may be
-    None. A version is all that is read of one, so an editable install's
-    edits are not seen."""
+    None. An editable install's version says nothing of its edits, so its
+    Python sources are read too (:func:`_editable_digest`)."""
     own = _PACKAGE.replace("_", "-")
     names = set()
     for dist in importlib.metadata.distributions():
         name = re.sub(r"[-_.]+", "-", dist.metadata["Name"] or "").lower()
         if name != own:
-            names.add(f"{name}=={dist.version}")
+            names.add(f"{name}=={dist.version}{_editable_digest(dist)}")
     return hashlib.sha256("\n".join(sorted(names)).encode()).hexdigest()
+
+
+#: Directories of an editable checkout that hold no source of it.
+_NOT_SOURCE_DIRS = frozenset({"__pycache__", "node_modules", "build", "dist"})
+
+
+def _editable_digest(dist: importlib.metadata.Distribution) -> str:
+    """The text of every ``.py`` and ``.pyi`` under *dist*'s directory when it
+    is installed editable (PEP 610's ``direct_url.json``), as ``@<digest>``;
+    ``""`` for any other install."""
+    try:
+        info = json.loads(dist.read_text("direct_url.json") or "{}")
+        if not info.get("dir_info", {}).get("editable"):
+            return ""
+        root = url2pathname(urlparse(info["url"]).path)
+    except (OSError, ValueError, TypeError, KeyError, AttributeError):
+        return ""
+    digest = hashlib.sha256()
+    for directory, dirnames, filenames in os.walk(root):
+        dirnames[:] = sorted(
+            d for d in dirnames if not d.startswith(".") and d not in _NOT_SOURCE_DIRS
+        )
+        for filename in sorted(filenames):
+            if not filename.endswith((".py", ".pyi")):
+                continue
+            path = Path(directory, filename)
+            digest.update(str(path.relative_to(root)).encode())
+            try:
+                digest.update(path.read_bytes())
+            except OSError:
+                continue
+    return f"@{digest.hexdigest()}"
 
 
 def _python_digest() -> str:
     """What the verdict depends on beyond the compile (#268): the framework's
     Python, the mypy that reads it, the distributions it follows imports
-    into, and the Python (its typeshed, and what the checks made in Python
-    find) that runs both."""
+    into, the ``MYPYPATH`` it reads stubs from, and the Python (its typeshed,
+    and what the checks made in Python find) that runs both."""
     digest = hashlib.sha256(_package_digest().encode())
     digest.update(f"\0mypy {_mypy_version()}".encode())
     digest.update(f"\0dists {_distributions_digest()}".encode())
+    digest.update(f"\0mypypath {os.environ.get('MYPYPATH', '')}".encode())
     digest.update(f"\0python {sys.version_info[0]}.{sys.version_info[1]}".encode())
     return digest.hexdigest()
 
