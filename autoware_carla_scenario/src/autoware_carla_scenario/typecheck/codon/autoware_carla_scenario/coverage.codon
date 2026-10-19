@@ -155,6 +155,76 @@ class CoverItem:
                  min_stay = None, attribute = None):
         self.name = name
 
+    # Python's dataclass fields but name, read as properties (#298): fields
+    # here would change the constructor Codon generates. Writing one is
+    # refused, which Python allows; a scenario registers its items with
+    # register_cover() and has no CoverItem to write.
+    @property
+    def unit(self) -> str:
+        raise NotImplementedError()
+
+    @property
+    def range(self) -> Optional[Tuple[float, float]]:
+        raise NotImplementedError()
+
+    @property
+    def every(self) -> Optional[float]:
+        raise NotImplementedError()
+
+    @property
+    def buckets(self) -> Optional[List[float]]:
+        raise NotImplementedError()
+
+    @property
+    def text(self) -> str:
+        raise NotImplementedError()
+
+    @property
+    def target(self) -> float:
+        raise NotImplementedError()
+
+    @property
+    def group(self) -> CoverGroup:
+        raise NotImplementedError()
+
+    @property
+    def cover_by(self) -> str:
+        raise NotImplementedError()
+
+    @property
+    def min_stay(self) -> Optional[float]:
+        raise NotImplementedError()
+
+    @property
+    def attribute(self) -> Optional[str]:
+        raise NotImplementedError()
+
+    @property
+    def edges(self) -> List[float]:
+        raise NotImplementedError()
+
+    @property
+    def labels(self) -> List[str]:
+        raise NotImplementedError()
+
+    # Python's Event, Union[SamplingEvent, BaseCondition]: a union of classes
+    # without None is an attribute type (docs/typecheck.md).
+    @property
+    def event(self) -> Union[SamplingEvent, BaseCondition]:
+        raise NotImplementedError()
+
+    @property
+    def numeric(self) -> bool:
+        raise NotImplementedError()
+
+    @property
+    def amount(self) -> str:
+        raise NotImplementedError()
+
+    def bucket_of(self, value) -> str:
+        """*value* is Any in Python."""
+        raise NotImplementedError()
+
 
 class CrossItem:
     name: str
@@ -163,6 +233,14 @@ class CrossItem:
     target: float = 1.0
     cover_by: str = "hits"
     min_stay: Optional[float] = None
+
+    @property
+    def event(self) -> Union[SamplingEvent, BaseCondition]:
+        raise NotImplementedError()
+
+    @property
+    def group(self) -> CoverGroup:
+        raise NotImplementedError()
 
 
 # What the checked scenario_runner uses of coverage.collector (openodd's
@@ -213,8 +291,8 @@ class CoverageCollector:
 
 
 # What the package re-exports of coverage.report (openodd's merge): its
-# constructor is a compile error, so a scenario cannot build one; nothing of it
-# is declared but its constructor, as Python's.
+# constructor is a compile error, so a scenario cannot build one; of what
+# merge_coverage() returns, what Codon has types for is declared (#298).
 class CoverageReport:
     # No fields: Codon would build one with no arguments too (docs/typecheck.md).
     def __init__(self):
@@ -223,6 +301,24 @@ class CoverageReport:
     def __init__(self, core):
         compile_error("CoverageReport is not modelled: the static check cannot "
                       "build one (typecheck/codon/autoware_carla_scenario/coverage.codon)")
+
+    @property
+    def runs(self) -> int:
+        raise NotImplementedError()
+
+    @property
+    def scenarios(self) -> Dict[str, int]:
+        raise NotImplementedError()
+
+    def groups(self) -> List[str]:
+        raise NotImplementedError()
+
+    def group_grade(self, group: str) -> float:
+        raise NotImplementedError()
+
+    def to_markdown(self, *_kw, max_holes: int = 20) -> str:
+        _keyword_only(_kw, "CoverageReport.to_markdown(): max_holes")
+        raise NotImplementedError()
 
 
 def merge_coverage(documents) -> CoverageReport:

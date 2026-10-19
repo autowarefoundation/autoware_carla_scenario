@@ -12,7 +12,7 @@ import typesafe_carla.carla as carla
 # module (_reader.codon).
 from ._reader import Measure, _expect_reader
 from ._tc import (_keyword_only, _expect_float, _expect_int_sequence, _expect_optional_float,
-                  _acs_expect_return, _acs_sequence, _acs_takes)
+                  _acs_expect_return, _acs_takes, _expect_str_sequence)
 from .actions import BaseAction, _expect_action
 from .conditions import BaseCondition, _expect_condition
 from .constants import DEFAULT_TM_PORT
@@ -218,8 +218,7 @@ class BaseScenario:
         _keyword_only(_kw, "BaseScenario.register_cross(): text, target, cover_by and min_stay")
         _expect_float(target)
         _expect_optional_float(min_stay)
-        for item in _acs_sequence(items, str):
-            n: str = item
+        _expect_str_sequence(items, "BaseScenario.register_cross(): items")
         raise NotImplementedError()
 
     def follow_with_spectator(self, actor_getter, *_kw, offset_back: float = 8.0,

@@ -43,6 +43,8 @@ from .settings import SlurmSettings
 if TYPE_CHECKING:
     from omegaconf import DictConfig
 
+    from ..rerun import RerunConverter
+
 __all__ = ["main", "wait_for_start_turn", "worker_overrides"]
 
 logger = logging.getLogger("autoware_carla_scenario.slurm.worker")
@@ -285,7 +287,9 @@ def wait_for_start_turn(lock: Path, spacing: float) -> float:
             time.sleep(waited)
         stream.seek(0)
         stream.truncate()
-        stream.write(f"{time.time():.3f}\n")
+        # Full precision: a start rounded up would make the next task wait
+        # out the rounding after a full spacing (#304).
+        stream.write(f"{time.time()!r}\n")
         stream.flush()
     return waited
 
@@ -364,7 +368,7 @@ def run_task(manifest_path: Path, submission_index: int, task_index: int) -> int
     slot: PortSlot | None = None
     # Converts each case's trajectory log into a Rerun recording as the case
     # ends (rerun.enabled): each task converts its own cases.
-    rerun: Any = None
+    rerun: RerunConverter | None = None
     sampler = _RssSampler()
     exit_status = 0
     try:
@@ -422,6 +426,7 @@ def run_task(manifest_path: Path, submission_index: int, task_index: int) -> int
 
         first_cfg = configs[0]
         map_paths = run.resolve_map_paths(first_cfg.map)
+        # The submitting process already refused a batch without the extra.
         rerun = run.build_rerun_converter(*configs)
         queue = run._batch_queue(
             first_cfg,
@@ -511,7 +516,9 @@ def run_task(manifest_path: Path, submission_index: int, task_index: int) -> int
         signal.signal(signal.SIGUSR1, signal.SIG_IGN)
         sampler.stop()
         if rerun is not None:
-            rerun.close()
+            from ..rerun import report  # noqa: PLC0415
+
+            logger.info("%s", report(rerun.close()))
         if slot is not None:
             left = kill_carla_on_port(slot.rpc)
             if left:
