@@ -91,6 +91,7 @@ from .transform import (
     class_declarations,
     classes_with_init,
     redirect_imports,
+    relative_module_imports,
     transform_source_lines,
     undeclared_attributes,
 )
@@ -243,8 +244,7 @@ def _not_modelled(module: str, names: list[str]) -> list[str]:
     *module* leaves out on purpose (:data:`.not_modelled.NOT_MODELLED`)."""
     reasons = NOT_MODELLED.get(module, {})
     return [
-        f"{module}.{name} is not part of the Codon model, on purpose: "
-        f"{reasons[name]}"
+        f"{module}.{name} is not part of the Codon model, on purpose: {reasons[name]}"
         for name in names
         if name in reasons
     ]
@@ -736,7 +736,14 @@ def _build_workspace(
             problems.append(Diagnostic(attr.message(), str(module.path), attr.lineno))
         dest = root / rel
         dest.parent.mkdir(parents=True, exist_ok=True)
-        text, origin = transform_source_lines(module.text, init_classes=init_classes)
+        # An own module imported as a module, in the form Codon resolves (#310).
+        source, refused = relative_module_imports(
+            module.text, name, module.is_package, sources.modules.__contains__
+        )
+        problems += [
+            Diagnostic(message, str(module.path), line) for line, message in refused
+        ]
+        text, origin = transform_source_lines(source, init_classes=init_classes)
         checks = render_library_checks(
             module.tree,
             classes=classes,
@@ -1628,19 +1635,28 @@ def _with_none_misuses(
     if not findings:
         return result
     diagnostics = [
-        Diagnostic(
-            f"{f.message}: Codon unwraps an Optional implicitly, so test the "
-            f"value for None before this use, or Python fails here when it is "
-            f"None (mypy: {f.code})",
-            f.path,
-            f.line,
-            f.column,
-            f.notes,
-        )
+        Diagnostic(_none_check_advice(f), f.path, f.line, f.column, f.notes)
         for f in findings
     ]
     return dataclasses.replace(
         result, ok=False, diagnostics=[*result.diagnostics, *diagnostics]
+    )
+
+
+def _none_check_advice(finding: NoneFinding) -> str:
+    """The message of a :class:`.none_check.NoneFinding`, with what to do."""
+    union = finding.union
+    if union is None:
+        return (
+            f"{finding.message}: Codon unwraps an Optional implicitly, so test "
+            f"the value for None before this use, or Python fails here when it "
+            f"is None (mypy: {finding.code})"
+        )
+    return (
+        f"{finding.message}: Codon holds this union of the framework's "
+        f"({union.name}) and converts it to the member this use needs at run "
+        f"time, so narrow it with isinstance first, or Python fails here on "
+        f"any other member (mypy: {finding.code})"
     )
 
 

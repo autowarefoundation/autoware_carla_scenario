@@ -236,13 +236,20 @@ functions too, and with no configuration file of the package's (so the
 verdict does not depend on how strict the package's own mypy settings are),
 and keeps only what it reports of a value that may be `None` used where it
 may not be: an attribute of it, an operator, an argument, an assignment, a
-return, an index (mypy's `union-attr`, `operator`, `arg-type`,
-`assignment`, `return-value`, `index` and `call-overload`), each only where
+return, an index, or an item of a list or dict display (mypy's
+`union-attr`, `operator`, `arg-type`, `assignment`, `return-value`, `index`,
+`call-overload`, `list-item` and `dict-item`; a set display's item is an
+`arg-type` to mypy), each only where
 `None` is the offending type (#267): the `None` item of a union an attribute
 is missing on (`Item "None" of "Waypoint | None"`), an operand, the value
 indexed or an argument that is `None` or a union holding it, or a value whose
 type holds `None` given where the type expected does not (`incompatible type
-"float | None"; expected "float"`). A message that only mentions `None`
+"float | None"; expected "float"`), the key or the value of a dict entry
+included (`Dict entry 0 has incompatible type "str": "float | None"; expected
+"str": "float"`). An item matters because Codon unwraps it where the model
+iterates the sequence (#308): `register_cover(..., buckets=[0.0, 10.0,
+cfg.min_speed_kmh])` and `register_cross("c", ["speed", maybe_name])`
+compiled, and failed in Python on the `None`; `[0.0, x or 0.0]` passes. A message that only mentions `None`
 inside another type or in the type expected is not one: a reader returning
 `Optional[str]` given to `register_measure()`, which takes one returning
 `Optional[float]`, is a `str` for a `float`, Codon's error to report, and a
@@ -256,6 +263,32 @@ fails the check at its line, after Codon's errors:
 scenario.py:67:28: error: Unsupported operand types for / ("None" and "float"): Codon unwraps an Optional implicitly, so test the value for None before this use, or Python fails here when it is None (mypy: operator)
     Left operand is of type "float | None"
 ```
+
+**The same pass refuses a framework union used as one of its members**
+(#309). Codon holds `TrajectoryVertex.position` (a `TrajectoryPosition`, the
+union of the ten poses) as a `Union`, and converts it to whichever member a
+use needs at run time (*No attribute of a union*, below), so
+`v.position.lanelet_id` of a `MapPose` vertex, or `v.position` passed to a
+parameter typed `Lanelet2Pose`, compiled, and raised `AttributeError` in
+Python. mypy reports both (`union-attr`, `arg-type`), and the pass keeps
+them where the union mypy names is made of the members of one of the unions
+the model holds: each module-level `Name = Union[...]` alias of
+`typecheck/codon/autoware_carla_scenario/` (`TrajectoryPosition`, `AnyPose`)
+and each property it declares to return a `Union[...]`
+(`TrajectoryVertex.position`, `CoverItem.event`), read from the model, so
+the list follows it (`none_check.framework_unions()`;
+`test_typecheck_none_check.py` checks each against the union Python
+declares). mypy reports a missing attribute once per member lacking it; the
+check reports it once, naming them all, with its own advice:
+
+```text
+scenario.py:71:27: error: Items "CarlaWorldPose", "OpenDrivePose", "MapPose", ... of "CarlaWorldPose | Lanelet2Pose | ... | RouteRoadsidePose" have no attribute "lanelet_id": Codon holds this union of the framework's (TrajectoryPosition) and converts it to the member this use needs at run time, so narrow it with isinstance first, or Python fails here on any other member (mypy: union-attr)
+```
+
+Narrowed code passes (`if isinstance(p, Lanelet2Pose): p.lanelet_id`), and
+so does the union passed on where the union is taken
+(`TrajectoryVertex(v.position, advance=v.advance)`, a `TrajectoryPosition`
+parameter).
 
 **The CARLA API's `Optional` results are checked too** (#267).
 typesafe_carla's CPython package is a prebuilt extension with no `.pyi` and
@@ -538,7 +571,9 @@ What `test_typecheck_model.py` compares, model by model:
   (*What Codon builds by the fields*, below), as a read-only property
   (`RouteMatch.lanelet_ids`, a `List[int]` for Python's `tuple[int, ...]`;
   `TrajectoryVertex.position`, the union of the ten poses, which narrows
-  with `isinstance` and passes on to a new `TrajectoryVertex`; `CoverItem`'s
+  with `isinstance` and passes on to a new `TrajectoryVertex`, and which
+  the None check's pass refuses un-narrowed where one pose is expected,
+  #309; `CoverItem`'s
   fields). A frozen dataclass's field is read-only in Python too; writing a
   `CoverItem`'s is refused, which Python allows, and a scenario, which
   registers its items with `register_cover()`, has none to write.
@@ -726,6 +761,24 @@ class the module defines further down, which Codon cannot name yet, gives a
 subclass that keeps its base's `__init__` that `__init__`, and types the
 `return None` of a function returning `Optional[X]`; see below). What a
 scenario has to do itself:
+
+- **Import its own modules from its own package.** A module of the
+  scenario's package imported as a module works (#310): Codon 0.19 resolves
+  `from X import name` only as a name `X/__init__` defines, and an absolute
+  `import a.b` only from the importing file's directory, so the checker
+  rewrites, on the same line, `from . import helpers`, `from pkg import
+  helpers` and `import pkg.helpers as helpers` in `pkg/scenario.py` into
+  `import helpers as helpers`, and `from .sub import mod` into `import
+  sub.mod as mod`. A module outside the importing module's package (`from
+  .. import helpers` in `pkg/sub/scenario.py`, or `import pkg as p`) has no
+  such form, and neither has one imported without a name (`import
+  pkg.helpers`, which binds `pkg`): each is refused at its line, naming the
+  form that works, which is to import the names (`from ..helpers import
+  speed_kph`) or to name the module (`import pkg.helpers as helpers`):
+
+  ```text
+  scenario.py:3: error: `from .. import helpers` imports the module pkg.helpers as a module, which Codon 0.19 resolves only inside the importing module's own package (pkg.sub): import the names instead (`from ..helpers import name`)
+  ```
 
 - **Declare the attributes it assigns on `self`**, at class level, with their
   type:
@@ -1031,6 +1084,12 @@ The known gaps:
   different types), or the result of a function with no return annotation.
   Neither does it check the arguments of a CARLA call: an `Optional` passed
   to one is Codon's to unwrap (`world.get_actor(maybe_id)` compiles).
+- **A union of the scenario's own classes** used as one of its members.
+  The None check's pass refuses only a union made of the members of one of
+  the framework's (#309, [*What is checked*](#what-is-checked)): a union of
+  classes the scenario defines (a class-level `tuple[A | B, ...]`, held as
+  `List[Union[A, B]]`) is converted at run time as Codon converts any union,
+  and an un-narrowed use of one member's attribute compiles.
 - **A helper with `**kwargs` or `*args` that nothing calls and that reads
   `**kwargs` by key** is not compiled, with a warning: the check has no
   keyword to call it with (#266). One the scenario calls that reads them is
