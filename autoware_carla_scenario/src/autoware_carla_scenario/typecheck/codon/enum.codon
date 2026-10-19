@@ -35,10 +35,52 @@ class Enum:
         return self._value_
 
     def __eq__(self, other) -> bool:
-        return self._name_ == other._name_
+        # A member equals a member by name; an IntEnum / (str, Enum) member
+        # also equals its value's type (`M.A == 1`, `M.A == "a"`), as Python's
+        # mixins make it.
+        if isinstance(other, Enum):
+            return self._name_ == other._name_
+        else:
+            return self._value_ == other
 
     def __ne__(self, other) -> bool:
-        return self._name_ != other._name_
+        return not self.__eq__(other)
+
+    # Ordering and conversion of an IntEnum / (str, Enum) member, by value.
+    # Codon types a method of a generic class only where it is called, so
+    # these compile only for a value type that has them.
+    def __lt__(self, other) -> bool:
+        if isinstance(other, Enum):
+            return self._value_ < other._value_
+        else:
+            return self._value_ < other
+
+    def __le__(self, other) -> bool:
+        if isinstance(other, Enum):
+            return self._value_ <= other._value_
+        else:
+            return self._value_ <= other
+
+    def __gt__(self, other) -> bool:
+        if isinstance(other, Enum):
+            return self._value_ > other._value_
+        else:
+            return self._value_ > other
+
+    def __ge__(self, other) -> bool:
+        if isinstance(other, Enum):
+            return self._value_ >= other._value_
+        else:
+            return self._value_ >= other
+
+    def __int__(self) -> int:
+        return int(self._value_)
+
+    def __index__(self) -> int:
+        return int(self._value_)
+
+    def __float__(self) -> float:
+        return float(self._value_)
 
     def __hash__(self) -> int:
         return hash(self._name_)

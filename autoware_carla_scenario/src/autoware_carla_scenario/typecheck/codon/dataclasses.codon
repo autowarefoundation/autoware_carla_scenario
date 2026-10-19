@@ -3,7 +3,8 @@
 # A Codon class with annotated fields already has the generated __init__ of a
 # dataclass, so the checker drops @dataclass decorators and puts each
 # `field(default=...)` / `field(default_factory=...)` default in place
-# (typecheck/transform.py). These definitions only resolve the import.
+# (typecheck/transform.py), which also appends the __eq__, __hash__ and
+# ordering methods the decorator would generate. These definitions only resolve the import.
 
 
 def dataclass(cls):

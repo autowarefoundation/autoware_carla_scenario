@@ -753,7 +753,8 @@ those models declare.
 
 A scenario is ordinary typed Python. Codon is stricter than Python in a few
 places, and the checker smooths over most of them (it rewrites `X | None` into
-`Optional[X]`, drops `@dataclass` and resolves `field(...)` defaults, accepts
+`Optional[X]`, drops `@dataclass` (and appends the `==`, ordering and hash it
+generates) and resolves `field(...)` defaults, accepts
 keyword-only parameters, required ones after a default included, gives a list of different conditions the type
 `list[BaseCondition]`, checks a `tuple[X, ...]` return annotation as a
 `List[X]`, drops a parameter or return annotation naming a
@@ -1064,6 +1065,34 @@ Two things Python does that Codon 0.19 does not are filled in for you:
 
   compiles as written, and so does a local `found: Optional[carla.Actor] =
   None` returned at the end.
+
+- **Your own dataclasses, enums and named tuples** keep what Python gives
+  them (#365), with these limits:
+  - A `@dataclass` compares, orders and hashes as Python's does: the check
+    appends `==` and `!=` (`eq=True`, the default), `<`, `<=`, `>` and `>=`
+    (`order=True`) and `hash()` (`frozen=True`, or `unsafe_hash=True`) after
+    the module, comparing the fields in order (a dataclass base's first;
+    `field(compare=False)`, `ClassVar` and `InitVar` are left out). A method
+    the class defines itself is kept. This holds for a dataclass whose bases
+    are dataclasses of the same module (or none): one deriving from a class
+    the check cannot see the fields of, such as a framework dataclass, gets
+    none, and `==` on it is refused. `eq=False` (identity comparison) is not
+    modelled either: write `a is b`. Python refuses `<` without `order=True`
+    and `hash()` of a non-frozen dataclass, and so does the check, with a
+    hint naming the flag.
+  - An `IntEnum` or `class M(str, Enum)` member compares with its value
+    (`M.A == 1`, `M.A == "a"`), with another member (`M.A < M.B`) and with
+    `int()`; its value of another type is refused. It is **not** an `int` or a
+    `str` otherwise: passing it to an `int` / `str` parameter or doing
+    arithmetic on it (`M.A + 1`) is refused with a hint. Write `M.A.value`.
+    Ordering a plain `Enum`, which Python refuses, is accepted.
+  - A `class Pt(typing.NamedTuple)` is checked as a Codon `@tuple` class: its
+    fields, defaults and methods, `==`, ordering, `hash()`, iteration and
+    `len()` work. Codon indexes and unpacks it (`p[0]`, `x, y = p`) only when
+    all its fields have one type: otherwise read `p.x`, `p.y`. It has no
+    `_replace()`, `_asdict()`, `_fields` or `_make()`: build a new `Pt(...)`.
+    Only the class syntax is covered (not `NamedTuple("Pt", [...])` or
+    `collections.namedtuple`).
 
 ## What the check does not catch
 
