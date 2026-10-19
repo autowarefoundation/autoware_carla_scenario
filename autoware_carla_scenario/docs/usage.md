@@ -784,8 +784,12 @@ The *Run Scenarios* panel's **Launcher** runs the batch here, case after case
 (`local`, the default), or submits it as a SLURM array job (`SLURM`,
 [Running a Batch on SLURM](slurm.md)) with the `launcher.*` keys the panel
 sets: the partition (from `sinfo`), `array_parallelism`, `cases_per_task`,
-`time`, `mem`, `gres`, `start_stagger_seconds` and extra environment
-variables (`launcher.env`); the extra overrides can set any other. The
+`time`, `mem`, `gres`, `start_stagger_seconds`, extra environment
+variables (`launcher.env`), and for a viewer whose host sees the nodes' file
+system at another path (an sshfs or NFS mount) `remote_cwd`, `python` and the
+`setup` lines a job runs first ([A submit host with other
+paths](slurm.md#a-submit-host-with-other-paths)); the extra overrides can set
+any other. The
 viewer runs `scenario [--multirun] scenario=... launcher=slurm ... --no-wait`
 (with a sweeper, every case of the sweep) in its base path, and opens the
 batch's page once it is submitted. Where `sbatch` is not on the viewer's
@@ -861,7 +865,10 @@ The viewer also provides API endpoints for programmatic use and the web UI's int
 With `"launcher": "slurm"`, `"slurm"` holds the `launcher.*` keys:
 `{"partition": "main", "array_parallelism": 2, "cases_per_task": null,
 "time": "02:00:00", "mem": "12G", "gres": null, "start_stagger_seconds": 30,
-"env": {"NAME": "value"}}`.
+"remote_cwd": "workspace/OnePlanner", "python": ".venv/bin/python",
+"setup": "source ~/env.sh", "env": {"NAME": "value"}}` (`setup`: a shell line
+per line, without `${...}` or backslashes; `env`: `NAME=value` lines, or a
+mapping).
 
 **Progress SSE event format:**
 

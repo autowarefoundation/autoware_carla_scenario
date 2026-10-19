@@ -27,6 +27,7 @@ from typing import Any
 
 __all__ = [
     "MANIFEST_VERSION",
+    "MANIFEST_VERSIONS",
     "RUN_FILE_SUFFIXES",
     "BatchLayout",
     "read_json",
@@ -35,7 +36,14 @@ __all__ = [
 ]
 
 #: Bumped when the manifest changes in a way an older worker cannot read.
-MANIFEST_VERSION = 1
+#: Version 2 is a batch submitted with ``launcher.remote_cwd``: its jobs find
+#: the batch at ``batch_dir_relative`` under their working directory, not at
+#: ``batch_dir`` (the submit host's path), which an older framework would use.
+#: A batch without ``remote_cwd`` is still written as version 1.
+MANIFEST_VERSION = 2
+
+#: The versions this framework reads.
+MANIFEST_VERSIONS: tuple[int, ...] = (1, 2)
 
 #: The files a run writes under its stem (``scenario_runner``): what is
 #: removed before a case runs again, so a rerun never leaves a stale one.
@@ -155,10 +163,11 @@ class BatchLayout:
             )
         manifest = read_json(self.manifest)
         version = manifest.get("version")
-        if version != MANIFEST_VERSION:
+        if version not in MANIFEST_VERSIONS:
             raise ValueError(
                 f"{self.manifest} is a version {version} manifest; this "
-                f"autoware_carla_scenario reads version {MANIFEST_VERSION}"
+                "autoware_carla_scenario reads version(s) "
+                + ", ".join(str(v) for v in MANIFEST_VERSIONS)
             )
         return manifest
 

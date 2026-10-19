@@ -33,8 +33,10 @@ if TYPE_CHECKING:
 
 __all__ = [
     "callable_path",
+    "collect_script",
     "follow",
     "job_script",
+    "relative_batch_dir",
     "sbatch_command",
     "squeue_states",
     "submit_batch",
@@ -124,11 +126,17 @@ def submit_batch(
 
     layout = BatchLayout(output_dir)
     stems = sequential_stems(scenario_classes)
+    cwd = os.getcwd()
+    remote: dict[str, Any] = {}
+    if settings.remote_cwd is not None:
+        remote["batch_dir_relative"] = relative_batch_dir(output_dir, cwd)
     manifest: dict[str, Any] = {
-        "version": MANIFEST_VERSION,
+        # Version 1 unless the jobs need what version 2 adds (remote_cwd).
+        "version": MANIFEST_VERSION if remote else 1,
         "created": _now(),
         "batch_dir": str(output_dir),
-        "cwd": os.getcwd(),
+        **remote,
+        "cwd": cwd,
         "python": sys.executable,
         "argv": list(sys.argv),
         "scenario_names": list(scenario_names),
@@ -168,6 +176,95 @@ def submit_batch(
     return after_submit(layout, index, settings)
 
 
+def relative_batch_dir(batch_dir: Path, cwd: str) -> str:
+    """*batch_dir* relative to *cwd*, as the jobs of a ``remote_cwd`` batch
+    find it under their working directory.
+
+    Raises:
+        ValueError: *batch_dir* is not under *cwd*.
+    """
+    base = Path(cwd).resolve()
+    target = (base / batch_dir).resolve()
+    try:
+        relative = target.relative_to(base)
+    except ValueError:
+        raise ValueError(
+            f"launcher.remote_cwd: the batch's output directory {target} is not "
+            f"under the directory scenario runs in ({base}), which the nodes see "
+            "at launcher.remote_cwd; run scenario from that directory (the "
+            "submit host's mount of it) with the outputs under it "
+            "(docs/slurm.md)"
+        ) from None
+    if relative == Path("."):
+        raise ValueError(
+            "launcher.remote_cwd: the batch's output directory is the directory "
+            f"scenario runs in ({base}); it must be a directory under it"
+        )
+    return relative.as_posix()
+
+
+def _shell_path(path: str) -> str:
+    """*path* as one shell word, its leading ``~`` the job user's ``$HOME``."""
+    if path == "~":
+        return '"$HOME"'
+    if path.startswith("~/"):
+        rest = path[2:].lstrip("/")
+        return '"$HOME"/' + shlex.quote(rest) if rest else '"$HOME"'
+    return shlex.quote(path)
+
+
+def _remote_dir(remote_cwd: str) -> str:
+    """``launcher.remote_cwd`` as one shell word: relative to ``$HOME``."""
+    if remote_cwd.startswith("/") or remote_cwd.startswith("~"):
+        return _shell_path(remote_cwd)
+    return '"$HOME"/' + shlex.quote(remote_cwd)
+
+
+#: Where sbatch puts a ``remote_cwd`` job's output until the job script sends
+#: it to the batch's ``slurm/logs/``: the batch's path on the node is not known
+#: on the submit host, and ``/tmp`` is a directory every node has.  Only what
+#: comes before the job reaches its working directory, and what SLURM itself
+#: writes (a time limit, a cancel), is left there.
+REMOTE_EARLY_OUTPUT_DIR = "/tmp"
+
+
+def _remote_prologue(
+    manifest: dict[str, Any], settings: SlurmSettings, log: str
+) -> list[str]:
+    """The lines a ``remote_cwd`` job starts with: to its working directory
+    (``$WORKDIR``) on the node, the batch's (``$BATCH_DIR``) under it, and its
+    output to *log* in the batch's ``slurm/logs/``."""
+    relative = manifest.get("batch_dir_relative")
+    if not relative or settings.remote_cwd is None:
+        raise ValueError(
+            "launcher.remote_cwd is set, but the batch's manifest has no "
+            "batch_dir_relative: the batch was submitted without remote_cwd"
+        )
+    workdir = _remote_dir(settings.remote_cwd)
+    return [
+        "# launcher.remote_cwd: the submit host sees this file system at other",
+        "# paths, so every path here is the node's.  The job user's home on",
+        "# this node, from its passwd database: --export may have handed over",
+        "# the submit host's $HOME.",
+        'node_home=$(getent passwd "$(id -u)" 2>/dev/null | cut -d: -f6)',
+        'if [ -n "$node_home" ]; then export HOME="$node_home"; fi',
+        f"cd {workdir} || "
+        f'{{ echo "launcher.remote_cwd: no directory "{workdir} >&2; exit 1; }}',
+        "WORKDIR=$PWD",
+        f'BATCH_DIR="$WORKDIR"/{shlex.quote(str(relative))}',
+        "# The job's output from here on: the batch's logs.",
+        f'exec >>"$BATCH_DIR"/slurm/logs/{log} 2>&1',
+    ]
+
+
+def _setup_lines(settings: SlurmSettings) -> list[str]:
+    """``launcher.setup``; with ``remote_cwd`` free to read unset variables
+    (an environment script on the node, run with little of an environment)."""
+    if settings.remote_cwd is None:
+        return list(settings.setup)
+    return ["set +u", *settings.setup, "set -u"]
+
+
 def after_submit(layout: BatchLayout, index: int, settings: SlurmSettings) -> int:
     """Follow submission *index* to its end and collect (``wait``), or say
     how to; the exit status."""
@@ -202,15 +299,30 @@ def job_script(
     submission: int,
 ) -> str:
     """The shell script every task of submission *submission* runs."""
-    python = settings.python or manifest["python"]
-    tasks_dir = layout.root / "tasks"
+    python = _shell_path(settings.python or manifest["python"])
+    remote = settings.remote_cwd is not None
+    batch = (
+        f"{manifest.get('batch_dir_relative')} under launcher.remote_cwd "
+        f"{settings.remote_cwd}"
+        if remote
+        else str(layout.batch_dir)
+    )
     lines = [
         "#!/bin/bash",
         "# autoware_carla_scenario: one task of a batch submitted with "
         "launcher=slurm (docs/slurm.md).",
-        f"# Batch: {layout.batch_dir}  submission: {submission}",
+        f"# Batch: {batch}  submission: {submission}",
         "set -u",
         'TASK="${SLURM_ARRAY_TASK_ID:?this script runs as a SLURM array task}"',
+    ]
+    if remote:
+        lines += [
+            "",
+            *_remote_prologue(
+                manifest, settings, '"${SLURM_ARRAY_JOB_ID}_${TASK}.out"'
+            ),
+        ]
+    lines += [
         "",
         "# The submitting shell's environment, as it was (launcher.env_passthrough).",
     ]
@@ -226,23 +338,30 @@ def job_script(
         ]
     if settings.setup:
         lines += ["", "# launcher.setup"]
-        lines += list(settings.setup)
+        lines += _setup_lines(settings)
     if settings.env:
         lines += ["", "# launcher.env"]
         lines += [
             f"export {name}={shlex.quote(value)}"
             for name, value in sorted(settings.env.items())
         ]
-    port_file = f"{shlex.quote(str(tasks_dir))}/{submission}-${{TASK}}.port"
+    if remote:
+        port_file = f'"$BATCH_DIR"/slurm/tasks/{submission}-${{TASK}}.port'
+        manifest_path = '"$BATCH_DIR"/slurm/manifest.json'
+        workdir = '"$WORKDIR"'
+    else:
+        tasks_dir = layout.root / "tasks"
+        port_file = f"{shlex.quote(str(tasks_dir))}/{submission}-${{TASK}}.port"
+        manifest_path = shlex.quote(str(layout.manifest))
+        workdir = shlex.quote(manifest["cwd"])
     lines += [
         "",
-        f"cd {shlex.quote(manifest['cwd'])} || exit 1",
+        f"cd {workdir} || exit 1",
         f"PORT_FILE={port_file}",
         "",
         "# The worker runs in the background so that the signal SLURM sends",
         "# before the time limit (--signal=B:TERM) reaches it through this trap.",
-        f"{shlex.quote(python)} -u -m {WORKER_MODULE} "
-        f'{shlex.quote(str(layout.manifest))} {submission} "$TASK" &',
+        f"{python} -u -m {WORKER_MODULE} " f'{manifest_path} {submission} "$TASK" &',
         "child=$!",
         "trap 'kill -TERM \"$child\" 2>/dev/null' TERM INT USR1 USR2",
         "rc=0",
@@ -274,6 +393,21 @@ def _job_name(layout: BatchLayout, settings: SlurmSettings) -> str:
     return f"acs-{batch.parent.name}-{batch.name}"
 
 
+def _output_options(
+    layout: BatchLayout, settings: SlurmSettings, name: str
+) -> list[str]:
+    """``sbatch --output`` (and ``--chdir``) of a job whose log is *name*.
+
+    With ``remote_cwd`` neither the batch's path nor the job's working
+    directory on the node is known here: the job starts in ``/tmp`` with its
+    output there, and its script sends the output on to the batch's logs.
+    """
+    if settings.remote_cwd is None:
+        return [f"--output={layout.logs}/{name}"]
+    early = REMOTE_EARLY_OUTPUT_DIR
+    return [f"--chdir={early}", f"--output={early}/acs-slurm-%u-{name}"]
+
+
 def sbatch_command(
     layout: BatchLayout,
     settings: SlurmSettings,
@@ -289,7 +423,7 @@ def sbatch_command(
         "--parsable",
         f"--job-name={_job_name(layout, settings)}",
         f"--array={array}",
-        f"--output={layout.logs}/%A_%a.out",
+        *_output_options(layout, settings, "%A_%a.out"),
         f"--export={settings.export}",
         f"--signal=B:TERM@{settings.signal_grace_seconds}",
     ]
@@ -309,13 +443,77 @@ def sbatch_command(
     return command
 
 
+def collect_script(manifest: dict[str, Any], settings: SlurmSettings) -> str:
+    """The script of the job collecting a ``remote_cwd`` batch, on a node."""
+    python = _shell_path(settings.python or manifest["python"])
+    lines = [
+        "#!/bin/bash",
+        "# autoware_carla_scenario: collects a batch submitted with "
+        "launcher=slurm once its array has ended (docs/slurm.md).",
+        f"# Batch: {manifest.get('batch_dir_relative')} under launcher.remote_cwd "
+        f"{settings.remote_cwd}",
+        "set -u",
+        "",
+        *_remote_prologue(manifest, settings, '"collect-${SLURM_JOB_ID}.out"'),
+    ]
+    if manifest.get("env"):
+        lines += ["", "# launcher.env_passthrough"]
+        lines += [
+            f"export {name}={shlex.quote(value)}"
+            for name, value in sorted(manifest["env"].items())
+        ]
+    if settings.setup:
+        lines += ["", "# launcher.setup", *_setup_lines(settings)]
+    if settings.env:
+        lines += ["", "# launcher.env"]
+        lines += [
+            f"export {name}={shlex.quote(value)}"
+            for name, value in sorted(settings.env.items())
+        ]
+    lines += [
+        "",
+        'cd "$WORKDIR" || exit 1',
+        f'exec {python} -m {CLI_MODULE} collect "$BATCH_DIR"',
+        "",
+    ]
+    return "\n".join(lines)
+
+
 def _collect_command(
-    layout: BatchLayout, manifest: dict[str, Any], settings: SlurmSettings, job: str
+    layout: BatchLayout,
+    manifest: dict[str, Any],
+    settings: SlurmSettings,
+    job: str,
+    script: Path | None = None,
 ) -> list[str]:
+    """The ``sbatch`` command of the job collecting the batch after *job*:
+    with ``remote_cwd``, the job runs *script* (:func:`collect_script`)."""
+    if settings.remote_cwd is not None:
+        if script is None:
+            raise ValueError("a remote_cwd batch's collect job runs a script")
+        command = [
+            "sbatch",
+            "--parsable",
+            f"--job-name={_job_name(layout, settings)}-collect",
+            f"--dependency=afterany:{job}",
+            *_output_options(layout, settings, "collect-%j.out"),
+            f"--export={settings.export}",
+            "--cpus-per-task=1",
+        ]
+        for flag, value in (
+            ("partition", settings.partition),
+            ("account", settings.account),
+            ("qos", settings.qos),
+            ("mem", settings.collect_mem),
+        ):
+            if value is not None:
+                command.append(f"--{flag}={value}")
+        command.append(str(script))
+        return command
     python = settings.python or manifest["python"]
     wrap = " ".join(
         [
-            shlex.quote(python),
+            _shell_path(python),
             "-m",
             CLI_MODULE,
             "collect",
@@ -366,6 +564,16 @@ def _run_sbatch(command: list[str]) -> str:
     return job
 
 
+def _write_script(path: Path, text: str) -> None:
+    """Write the job script *path*.  Only the user's: it exports the recorded
+    environment.  Created so, never readable by others even for a moment."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o700)
+    with os.fdopen(fd, "w", encoding="utf-8") as stream:
+        stream.write(text)
+    path.chmod(0o700)
+
+
 def submit_cases(
     layout: BatchLayout,
     manifest: dict[str, Any],
@@ -382,13 +590,7 @@ def submit_cases(
     index = layout.next_submission()
     chunks = _chunks(list(case_indices), settings.chunk_size(len(case_indices)))
     script = layout.job_script(index)
-    script.parent.mkdir(parents=True, exist_ok=True)
-    # Only the user's: it exports the recorded environment.  Created so, never
-    # readable by others even for a moment.
-    fd = os.open(script, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o700)
-    with os.fdopen(fd, "w", encoding="utf-8") as stream:
-        stream.write(job_script(layout, manifest, settings, index))
-    script.chmod(0o700)
+    _write_script(script, job_script(layout, manifest, settings, index))
     layout.logs.mkdir(parents=True, exist_ok=True)
     (layout.root / "tasks").mkdir(parents=True, exist_ok=True)
     (layout.root / "results").mkdir(parents=True, exist_ok=True)
@@ -425,7 +627,13 @@ def submit_cases(
         flush=True,
     )
     if not settings.wait and settings.collect_job:
-        collect = _collect_command(layout, manifest, settings, submission["job_id"])
+        collect_path: Path | None = None
+        if settings.remote_cwd is not None:
+            collect_path = layout.root / "jobs" / f"{index}-collect.sh"
+            _write_script(collect_path, collect_script(manifest, settings))
+        collect = _collect_command(
+            layout, manifest, settings, submission["job_id"], collect_path
+        )
         submission["collect_sbatch"] = collect
         try:
             submission["collect_job_id"] = _run_sbatch(collect)
