@@ -447,8 +447,9 @@ def _ref_lines(
     """What :data:`_REF_LINES` keeps of *network*, read on first use."""
     global _REF_LINES
 
-    if _REF_LINES is not None and _REF_LINES[0] is network:
-        return _REF_LINES
+    kept = _REF_LINES
+    if kept is not None and kept[0] is network:
+        return kept
     roads: "list[tuple[str, Road, np.ndarray[tuple[int, int], np.dtype[np.float64]], np.ndarray[tuple[int], np.dtype[np.float64]]]]" = []
     starts: list[int] = []
     arcs: "dict[str, np.ndarray[tuple[int], np.dtype[np.float64]]]" = {}
@@ -463,8 +464,9 @@ def _ref_lines(
         starts.append(count)
         count += len(ref_line)
     stacked = np.concatenate([r[2] for r in roads]) if roads else np.zeros((0, 2))
-    _REF_LINES = (network, roads, stacked, starts, arcs)
-    return _REF_LINES
+    read = (network, roads, stacked, starts, arcs)
+    _REF_LINES = read
+    return read
 
 
 def _road_arc_lengths(
