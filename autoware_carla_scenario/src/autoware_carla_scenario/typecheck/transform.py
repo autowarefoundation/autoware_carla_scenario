@@ -1779,6 +1779,7 @@ def transform_source_lines(
     exceptions = _exception_classes(tree)
     rewriter = _Rewriter(edits, exceptions, dropped_decorators)
     rewriter.visit(tree)
+    repeated_imports(tree, edits)
     lines = {
         node.name: origin[node.lineno - 1]
         for node in tree.body
@@ -1794,6 +1795,96 @@ def transform_source_lines(
         text += block
         origin += [lines[name]] * block.count("\n")
     return text, origin
+
+
+def _import_bindings(
+    node: ast.Import | ast.ImportFrom,
+) -> list[tuple[str, tuple[object, ...]]]:
+    """The (bound name, source) of each name an import statement binds.
+
+    Two imports bind the same thing when their sources are equal: the module
+    (and its relative level) and the imported name, or the module for
+    ``import a.b as c``.
+    """
+    bindings: list[tuple[str, tuple[object, ...]]] = []
+    for alias in node.names:
+        if isinstance(node, ast.ImportFrom):
+            source: tuple[object, ...] = (node.level, node.module, alias.name)
+            bound = alias.asname or alias.name
+        else:
+            source = (alias.name,)
+            bound = alias.asname or alias.name.partition(".")[0]
+            if alias.asname is None and "." in alias.name:
+                # `import a.b` binds `a` and imports `a.b`: another `import
+                # a.c` is neither a repeat of it nor a rebinding.
+                bound = alias.name
+        bindings.append((bound, source))
+    return bindings
+
+
+def repeated_imports(tree: ast.Module, edits: _Edits) -> None:
+    """Drop each module-level import of a name an identical import already bound.
+
+    Python accepts ``from m import A`` twice (once in the import header, once
+    further down), and so does Codon 0.19 in the module it compiles first; in
+    any other module the repeat leaves the name undefined, so that a use of it
+    fails the whole function with a bare "cannot typecheck".  The repeat is
+    removed on its line: a statement of repeats becomes ``pass``, one with
+    other names keeps those.
+    """
+    bound: dict[str, tuple[object, ...]] = {}
+    for node in tree.body:
+        if not isinstance(node, (ast.Import, ast.ImportFrom)):
+            continue
+        kept: list[ast.alias] = []
+        for alias, (name, source) in zip(node.names, _import_bindings(node)):
+            if bound.get(name) == source:
+                continue
+            bound[name] = source
+            kept.append(alias)
+        if len(kept) == len(node.names):
+            continue
+        if not kept:
+            text = "pass"
+        else:
+            names = ", ".join(_alias(a.name, a.asname) for a in kept)
+            if isinstance(node, ast.ImportFrom):
+                text = f"from {'.' * node.level}{node.module or ''} import {names}"
+            else:
+                text = f"import {names}"
+        edits.replace(*edits.node_span(node), text)
+
+
+def conflicting_imports(source: str) -> list[tuple[int, str]]:
+    """(line, message) for each module-level import that rebinds a name.
+
+    ``from a import X`` followed by ``from b import X`` is valid Python (the
+    later import wins), but Codon 0.19 leaves the name undefined in any module
+    it does not compile first.  An identical repeat is not reported: it is
+    dropped (:func:`repeated_imports`).
+    """
+    if not source.endswith("\n"):
+        source += "\n"
+    problems: list[tuple[int, str]] = []
+    bound: dict[str, tuple[tuple[object, ...], int]] = {}
+    for node in ast.parse(source).body:
+        if not isinstance(node, (ast.Import, ast.ImportFrom)):
+            continue
+        for name, imported in _import_bindings(node):
+            earlier = bound.get(name)
+            if earlier is None:
+                bound[name] = (imported, node.lineno)
+            elif earlier[0] != imported:
+                problems.append(
+                    (
+                        node.lineno,
+                        f"`{name}` is imported again from somewhere "
+                        f"else (first on line {earlier[1]}), which Codon 0.19 "
+                        "cannot compile: import each name once, under its own "
+                        "name (`import ... as other` to tell two apart)",
+                    )
+                )
+    return problems
 
 
 def _enum_lookups(enums: list[tuple[str, str]]) -> list[tuple[str, str]]:

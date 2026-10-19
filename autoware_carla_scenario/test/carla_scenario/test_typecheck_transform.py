@@ -21,6 +21,7 @@ from autoware_carla_scenario.typecheck.transform import (
     PRELUDE,
     classes_with_init,
     codon_annotation,
+    conflicting_imports,
     inherited_inits,
     relative_module_imports,
     split_tuple_excepts,
@@ -1821,3 +1822,80 @@ def test_a_top_level_module_imports_its_sibling_as_written() -> None:
     )
     assert problems == []
     assert out == "import helpers as helpers\nimport helpers as h\n"
+
+
+# ---------------------------------------------------------------------------
+# An import repeated in a module (#354)
+# ---------------------------------------------------------------------------
+
+
+def _body(text: str) -> str:
+    return transform_source(text)[len(PRELUDE) :]
+
+
+def test_a_repeated_import_is_dropped_on_its_line() -> None:
+    out = _body(
+        "import logging\n"
+        "from pkg import A, B\n"
+        "import logging\n"
+        "from pkg import A\n"
+        "x = A\n"
+    )
+    assert out == ("import logging\nfrom pkg import A, B\npass\npass\nx = A\n")
+
+
+def test_a_repeat_inside_one_statement_and_beside_new_names() -> None:
+    out = _body("from pkg import A, A\nfrom pkg import A, C as D, A\nimport os, os\n")
+    assert out == "from pkg import A\nfrom pkg import C as D\nimport os\n"
+
+
+def test_a_repeat_under_the_same_alias_is_dropped_but_not_a_new_alias() -> None:
+    out = _body(
+        "from pkg import A as B\nfrom pkg import A as B\nfrom pkg import A as C\n"
+        "from pkg import A\n"
+    )
+    assert (
+        out
+        == "from pkg import A as B\npass\nfrom pkg import A as C\nfrom pkg import A\n"
+    )
+
+
+def test_a_relative_repeat_is_dropped_only_at_the_same_level() -> None:
+    out = _body("from .m import A\nfrom .m import A\nfrom ..m import A\n")
+    assert out == "from .m import A\npass\nfrom ..m import A\n"
+
+
+def test_imports_in_functions_and_branches_are_left_alone() -> None:
+    text = (
+        "from pkg import A\n"
+        "def f():\n"
+        "    from pkg import A\n"
+        "    from pkg import A\n"
+        "if True:\n"
+        "    from pkg import A\n"
+    )
+    assert _body(text) == text
+
+
+def test_different_dotted_imports_are_no_repeat() -> None:
+    text = "import a.b\nimport a.c\nimport a.b\n"
+    assert _body(text) == "import a.b\nimport a.c\npass\n"
+    assert conflicting_imports(text) == []
+
+
+def test_a_repeated_import_keeps_every_line() -> None:
+    text = "from pkg import (\n    A,\n)\nfrom pkg import (\n    A,\n)\nx = 1\n"
+    out, origin = transform_source_lines(text)
+    assert out.count("\n") - PRELUDE.count("\n") == text.count("\n")
+    assert len(origin) == text.count("\n")
+    assert out.endswith("x = 1\n")
+
+
+def test_a_name_imported_from_two_places_is_reported_at_the_later_import() -> None:
+    problems = conflicting_imports(
+        "from a import X\nimport b as X\nfrom c import Y, Y\n"
+    )
+    assert [line for line, _ in problems] == [2]
+    assert "`X` is imported again" in problems[0][1]
+    assert "line 1" in problems[0][1]
+    assert conflicting_imports("from a import X\nfrom a import X\n") == []

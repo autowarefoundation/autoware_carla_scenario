@@ -4202,3 +4202,57 @@ def test_a_module_of_the_package_imported_without_a_name_is_refused(
     assert ".helpers as helpers`" in error.message, error.format()
     assert error.path == str(path)
     assert error.line == _line_of(path, "import acs_typecheck_case_")
+
+
+# ---------------------------------------------------------------------------
+# An import repeated in a module (#354)
+# ---------------------------------------------------------------------------
+
+_REPEAT_BODY = """
+        self._setup_ego_spawn()
+        self.register_fail_condition(TimeoutCondition(5.0, label="t"))
+        logger.info("%s", ComparisonRule.LESS_THAN.value)
+        """
+
+
+@pytest.mark.parametrize(
+    "repeat",
+    [
+        "from autoware_carla_scenario import ComparisonRule\n",
+        "from autoware_carla_scenario import TimeoutCondition, ComparisonRule\n",
+        "from autoware_carla_scenario import ComparisonRule, ComparisonRule\n",
+        "from autoware_carla_scenario import ComparisonRule as ComparisonRule\n",
+        "import typesafe_carla.carla as carla\nimport logging\n",
+    ],
+)
+def test_an_import_repeated_in_the_module_compiles(tmp_path: Path, repeat: str) -> None:
+    header = _HEADER.replace("import logging\n", "import logging\n" + repeat, 1)
+    scenario, config, _ = _write_case(tmp_path, _REPEAT_BODY, header=header)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_an_import_repeated_inside_one_statement_compiles(tmp_path: Path) -> None:
+    header = _HEADER.replace(
+        "    TimeoutCondition,\n", "    TimeoutCondition,\n    TimeoutCondition,\n", 1
+    )
+    scenario, config, _ = _write_case(tmp_path, _REPEAT_BODY, header=header)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_a_name_imported_from_two_places_is_refused_at_the_import(
+    tmp_path: Path,
+) -> None:
+    other = (
+        "from autoware_carla_scenario import ScalarComparisonRule as ComparisonRule\n"
+    )
+    header = _HEADER.replace("import logging\n", "import logging\n" + other, 1)
+    scenario, config, path = _write_case(tmp_path, _REPEAT_BODY, header=header)
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert error.path == str(path)
+    # The header's own import statement (it opens one line above its first
+    # name) is the later binding.
+    assert error.line == _line_of(path, "    EGO_ROLE_NAME,") - 1
+    assert f"first on line {_line_of(path, 'ScalarComparisonRule')}" in error.message
+    assert "`ComparisonRule` is imported again" in error.message

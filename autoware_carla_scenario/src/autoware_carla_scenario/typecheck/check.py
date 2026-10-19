@@ -90,6 +90,7 @@ from .transform import (
     PRELUDE,
     class_declarations,
     classes_with_init,
+    conflicting_imports,
     redirect_imports,
     relative_module_imports,
     transform_source_lines,
@@ -742,6 +743,10 @@ def _build_workspace(
         )
         problems += [
             Diagnostic(message, str(module.path), line) for line, message in refused
+        ]
+        problems += [
+            Diagnostic(message, str(module.path), line)
+            for line, message in conflicting_imports(source)
         ]
         text, origin = transform_source_lines(source, init_classes=init_classes)
         checks = render_library_checks(
