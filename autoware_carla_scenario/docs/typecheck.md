@@ -1087,8 +1087,12 @@ in step:
   `Annotated[int, "m"]` are `int`; a bare `Final` is dropped). `NoReturn`,
   `Type`, `Sized`, `Hashable`, `Any` and `Callable` annotations are dropped,
   so they are not checked.
-- `cast(T, x)` is `x` checked as `T`; when `T` cannot be named in Codon (a
-  `Callable`, a class defined further down) it is `x` as it is.
+- `cast(T, x)` is `x` typed as `T` (as in Python, nothing checks that `x` is
+  a `T`); when `T` cannot be named in Codon (a `Callable`, a class defined
+  further down) it is `x` as it is.
+- A class-level `Y: Final[int] = 4` stays a typed field, not a class
+  attribute, as any annotated class-level name does; write `Y: Final = 4` for
+  a class attribute read as `C.Y`.
 - `Iterator` is Codon's generator type, and `Deque`, `DefaultDict` and
   `Counter` are `collections.deque`, `defaultdict` and `Counter`.
 - Any other name is refused at its import line. `Generic` and `TypedDict`
