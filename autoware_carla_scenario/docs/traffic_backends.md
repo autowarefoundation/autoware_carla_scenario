@@ -392,7 +392,8 @@ How a CARLA vehicle follows its SUMO vehicle is `vehicle_control`:
 - `teleport` places it where its SUMO vehicle was at the start of the step and
   gives it SUMO's speed as a constant velocity (`enable_constant_velocity`),
   which carries it to where SUMO is at the end of it: exact, but the car is not
-  driven by its physics.
+  driven by its physics. The poses of a tick go to CARLA in one batch, and a
+  speed only when it is not the one the car already has.
 
 **Traffic lights** (`traffic_light_authority`): `carla` (default) gives SUMO's
 signals the states of CARLA's lights every step, so a scenario that sets the
