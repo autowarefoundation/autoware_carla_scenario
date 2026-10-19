@@ -18,7 +18,7 @@ from fastapi.responses import (
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import cases, recordings, runner, scanner
+from . import cases, recordings, results, runner, scanner
 from .models import RunProgress
 
 logger = logging.getLogger(__name__)
@@ -96,7 +96,8 @@ async def session_detail(
 
 
 @app.get(
-    "/session/{session_type}/{date}/{time}/{index}",
+    # :int, so /session/.../odd is the ODD view's.
+    "/session/{session_type}/{date}/{time}/{index:int}",
     response_class=HTMLResponse,
 )
 async def scenario_detail(
@@ -393,4 +394,202 @@ async def web_viewer_file(version: str, name: str) -> FileResponse:
         viewer.directory / file_name,
         media_type=media_type,
         headers={"Cache-Control": "public, max-age=31536000, immutable"},
+    )
+
+
+# ── ODD results and comparison ───────────────────────────────────────────
+
+
+def _session_ref(session_type: str, date: str, time: str) -> str:
+    return f"{session_type}/{date}/{time}"
+
+
+def _parse_ref(ref: str) -> tuple[str, str, str] | None:
+    parts = ref.strip("/").split("/")
+    if len(parts) != 3:
+        return None
+    session_type, date, time = parts
+    if cases.session_dir(_base_path(), session_type, date, time) is None:
+        return None
+    return session_type, date, time
+
+
+def _family(results_: list[results.CaseResult]) -> set[str]:
+    return {r.scenario for r in results_}
+
+
+def _openodd() -> Any:
+    import openodd  # noqa: PLC0415 -- a Rust extension, loaded on first use
+
+    return openodd
+
+
+def _attribute(value: str | None, attributes: list[str]) -> str | None:
+    return value if value and value in attributes else None
+
+
+@app.get("/session/{session_type}/{date}/{time}/odd", response_class=HTMLResponse)
+async def session_odd(
+    request: Request, session_type: str, date: str, time: str
+) -> HTMLResponse:
+    """A session's results on its ODD: openodd's coverage matrix (cells
+    coloured by what the runs in them did; a click drills into a cell), its
+    plot of the drawn cases, and the cases in the cell drilled into."""
+    if cases.session_dir(_base_path(), session_type, date, time) is None:
+        raise HTTPException(status_code=404)
+    found = await asyncio.to_thread(
+        results.load_results, _base_path(), session_type, date, time
+    )
+    documents = results.coverage_documents(found)
+    openodd = _openodd()
+    conditions = openodd.view.parse_conditions(request.query_params.getlist("at"))
+    ref = _session_ref(session_type, date, time)
+    link = f"/session/{ref}/odd?{{conditions}}"
+    matrix_html = plot_html = ""
+    if documents:
+        view = openodd.CoverageView(documents)
+        dx, dy = results.default_axes(found)
+        x = _attribute(request.query_params.get("x"), view.attributes)
+        y = _attribute(request.query_params.get("y"), view.attributes)
+        if x is None and y is None and not conditions:
+            x, y = _attribute(dx, view.attributes), _attribute(dy, view.attributes)
+        matrix_html = view.html(
+            x=x, y=y, conditions=conditions, id="odd-matrix", link=link
+        )
+        plot = openodd.CasePlot(documents)
+        if plot.cases:
+            px = _attribute(x or dx, plot.attributes)
+            py = _attribute(y or dy, plot.attributes)
+            plot_html = plot.html(
+                x=px, y=py, id="odd-cases", link=f"/session/{ref}/odd?{{axes}}"
+            )
+    in_cell = results.cases_in_cell(found, conditions)
+    return templates.TemplateResponse(
+        request=request,
+        name="odd.html",
+        context={
+            "page": "odd",
+            "session_type": session_type,
+            "date": date,
+            "time": time,
+            "ref": ref,
+            "results": found,
+            "in_cell": in_cell,
+            "varying": results.varying_attributes(found),
+            "conditions": conditions,
+            "matrix_html": matrix_html,
+            "plot_html": plot_html,
+            "oo_styles": openodd.view.styles(),
+            "oo_script": openodd.view.script(),
+            "metric_names": results.METRICS,
+        },
+    )
+
+
+@app.get("/compare", response_class=HTMLResponse)
+async def compare_sessions(request: Request) -> HTMLResponse:
+    """Sessions of one scenario family compared: pass rates, each case's
+    flip (matched by what it ran, not by position), metric deltas, and the
+    pass rate of each ODD cell. ``?s=type/date/time`` per session (two or
+    more; ordered oldest first, the first being the baseline)."""
+    refs = [r for r in (_parse_ref(v) for v in request.query_params.getlist("s")) if r]
+    refs = sorted(dict.fromkeys(refs), key=lambda r: (r[1], r[2]))
+    loaded = [
+        (
+            _session_ref(*ref),
+            await asyncio.to_thread(results.load_results, _base_path(), *ref),
+        )
+        for ref in refs
+    ]
+    family: set[str] = set()
+    for _, found in loaded:
+        family |= _family(found)
+    # The sessions offered: those that ran a scenario of the family (all when
+    # none is picked yet).
+    offered = []
+    for summary in scanner.scan_sessions(_base_path()):
+        names = {n.strip().split("#", 1)[0] for n in summary.scenario_name.split(",")}
+        if not family or names & family:
+            offered.append(
+                (
+                    _session_ref(summary.session_type, summary.date, summary.time),
+                    summary,
+                )
+            )
+    comparison = None
+    matrices: list[tuple[str, str]] = []
+    if len(loaded) >= 2:
+        every = [r for _, found in loaded for r in found]
+        dx, dy = results.default_axes(every)
+        x = request.query_params.get("x") or dx
+        y = request.query_params.get("y") or dy
+        comparison = results.compare(loaded, x=x, y=y)
+        openodd = _openodd()
+        for ref, found in loaded:
+            documents = results.coverage_documents(found)
+            if not documents:
+                matrices.append((ref, ""))
+                continue
+            view = openodd.CoverageView(documents)
+            matrices.append(
+                (
+                    ref,
+                    view.html(
+                        x=_attribute(x, view.attributes),
+                        y=_attribute(y, view.attributes),
+                        id=f"cmp-{len(matrices)}",
+                        link=f"/session/{ref}/odd?{{conditions}}",
+                    ),
+                )
+            )
+    attributes = sorted({a for _, found in loaded for r in found for a in r.buckets})
+    return templates.TemplateResponse(
+        request=request,
+        name="compare.html",
+        context={
+            "page": "compare",
+            "selected": [ref for ref, _ in loaded],
+            "offered": offered,
+            "comparison": comparison,
+            "matrices": matrices,
+            "attributes": attributes,
+            "metric_names": results.METRICS,
+            "oo_styles": _openodd().view.styles() if matrices else "",
+            "oo_script": _openodd().view.script() if matrices else "",
+        },
+    )
+
+
+@app.get("/compare/runs", response_class=HTMLResponse)
+async def compare_runs(request: Request) -> HTMLResponse:
+    """The same case's runs side by side, each in a Rerun web viewer:
+    ``?run=type/date/time/index`` per run."""
+    runs: list[dict[str, Any]] = []
+    for value in request.query_params.getlist("run")[:4]:
+        ref, _, index = value.strip("/").rpartition("/")
+        parsed = _parse_ref(ref)
+        if parsed is None or not index.isdigit():
+            continue
+        found = await asyncio.to_thread(
+            results.load_results, _base_path(), *parsed, metrics=False
+        )
+        case = next((r for r in found if r.index == int(index)), None)
+        runs.append(
+            {
+                "ref": ref,
+                "index": int(index),
+                "case": case,
+                "recording": _recording_context(*parsed, int(index)),
+            }
+        )
+    return templates.TemplateResponse(
+        request=request,
+        name="compare_runs.html",
+        context={
+            "page": "compare_runs",
+            "runs": runs,
+            "viewer": recordings.web_viewer(),
+            "converter": recordings.converter_available(),
+            "install_hint": recordings.INSTALL_HINT,
+        },
     )

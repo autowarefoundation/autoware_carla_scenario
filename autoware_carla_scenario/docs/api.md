@@ -269,6 +269,7 @@ surface, but the helper modules are importable for tooling:
 | `ui.runner` | Background `subprocess.run(["uv", "run", "scenario", ...])` orchestration with thread-safe progress. |
 | `ui.sweep_resolver.resolve_sweep` | Resolve a sweep without launching CARLA. |
 | `ui.cases` | Which files are a session's cases: the stem each case's files share (a SLURM batch's manifest, or matched against `batch_results.json`). |
+| `ui.results` | A session's cases with their case, coverage and metrics (`load_results`, `case_metrics`), the cases in an ODD cell, and sessions compared case by case and cell by cell (`compare`). |
 | `ui.recordings` | A case's Rerun recording, made on demand with `autoware_carla_scenario_rerun` when installed, and where the Rerun web viewer is loaded from. |
 | `ui.models` | Pydantic models (`SessionSummary`, `SessionItem`, `ConditionNode`, `ScenarioResultView`, `RunProgress`). |
 
