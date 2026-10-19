@@ -25,6 +25,7 @@ from .geometry import Pose, Trajectory
 
 
 __all__ = [
+    "DRIVER_TRANSPORTS",
     "BaseEgoDriverClient",
     "DriveOutcome",
     "DriverCameraConfig",
@@ -32,6 +33,9 @@ __all__ = [
     "DriverLidarConfig",
     "EgoObservation",
 ]
+
+#: How the run reaches its driver policy (:attr:`DriverClientConfig.transport`).
+DRIVER_TRANSPORTS: Tuple[str, ...] = ("tcp", "unix", "direct")
 
 #: Logical camera id used by alpasim's reference rig for the forward-facing camera.
 #: Policies look their inputs up by this string, so it must match what the policy expects.
@@ -132,6 +136,25 @@ class DriverClientConfig:
     port -- one command starts everything; unset, the policy is a separate process
     already serving at :attr:`address` (``carla-driver-interface serve``, an
     alpasim driver, ...).
+    """
+
+    transport: str = "tcp"
+    """How the run reaches the policy, one of :data:`DRIVER_TRANSPORTS`.
+
+    * ``tcp`` (the default): dial :attr:`address`; with :attr:`policy`, serve it on
+      a free local port and dial that.
+    * ``unix``: a Unix domain socket instead of a port. With :attr:`policy`, the
+      run serves it on a socket in a directory of its own, so runs sharing a node
+      never meet; without, :attr:`address` names the socket another process
+      serves (``unix:///run/policy.sock``,
+      ``carla-driver-interface serve --host unix:///run/policy.sock``).
+    * ``direct``: no socket at all -- the run calls the servicer of the
+      :attr:`policy` it serves through ``carla_driver_interface.inprocess``, with
+      the same messages serialized to the same bytes as on the wire. Only with
+      :attr:`policy`: a policy in another process has to be dialled.
+
+    ``unix`` with :attr:`policy` and ``direct`` need carla-driver-interface 2.2 or
+    later; the run says so when it starts if it is older.
     """
 
     timeout_s: float = 60.0
@@ -247,6 +270,28 @@ class DriverClientConfig:
     """
 
     def __post_init__(self) -> None:
+        if self.transport not in DRIVER_TRANSPORTS:
+            raise ValueError(
+                "driver.transport must be one of tcp, unix, direct, "
+                f"got {self.transport!r}"
+            )
+        if self.transport == "direct" and self.policy is None:
+            raise ValueError(
+                "driver.transport=direct calls a policy this run serves itself, "
+                "and driver.policy is unset; set driver.policy, or use "
+                "driver.transport=tcp (or unix) to dial a policy at driver.address"
+            )
+        if (
+            self.transport == "unix"
+            and self.policy is None
+            and not self.address.startswith("unix:")
+            and not self.address.startswith("unix-abstract:")
+        ):
+            raise ValueError(
+                "driver.transport=unix dials driver.address when driver.policy is "
+                "unset, so it must name a Unix socket (unix:///path/policy.sock), "
+                f"got {self.address!r}"
+            )
         ids = [lidar.logical_id for lidar in self.lidars]
         if len(set(ids)) != len(ids):
             raise ValueError(f"LiDAR logical ids must be unique, got {ids}")

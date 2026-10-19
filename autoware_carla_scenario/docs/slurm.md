@@ -90,6 +90,11 @@ how they are spread. A case run again replaces its earlier files, so
 `sacct` is not needed: the batch is followed through `squeue` and the files the
 tasks write.
 
+The result viewer does the same from its pages: its run panel submits a
+batch with `launcher=slurm`, and a SLURM batch's page shows its cases, jobs
+and tasks as they run and resubmits, collects or cancels it
+([Running through SLURM](usage.md#running-through-slurm)).
+
 ## Configuration
 
 `launcher=slurm` selects `conf/launcher/slurm.yaml`; every key can be set on the
@@ -183,7 +188,12 @@ ephemeral ports.
 
 `driver.address` is not changed: a policy the run serves itself
 (`driver.policy`) listens on a port the OS picks, and one it does not is a
-server someone else runs, which every task dials.
+server someone else runs, which every task dials. `driver.transport` is not
+changed either: with `direct` a task calls the policy it serves without a
+socket, and with `unix` it serves it on a socket in a directory of its own
+(under `$TMPDIR`, which SLURM does not set by default, so usually `/tmp`), so neither needs a port of the slot and tasks
+sharing a node never meet; a `unix:` `driver.address` someone else serves is
+dialled by every task, as a TCP one is.
 
 ## Limits
 

@@ -103,6 +103,19 @@
               <option value="lanelet_constraint" selected>lanelet_constraint</option>
             </select>
           </div>
+          <div>
+            <label for="run-launcher" class="block text-sm font-medium text-gray-700 mb-1">
+              Launcher
+            </label>
+            <select
+              id="run-launcher"
+              class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+            >
+              <option value="local" selected>local (here, case after case)</option>
+              <option value="slurm" disabled>SLURM (array job)</option>
+            </select>
+            <p id="slurm-unavailable" class="mt-1 text-xs text-gray-400 hidden"></p>
+          </div>
         </div>
 
         <!-- Actions -->
@@ -123,6 +136,39 @@
             Cancel
           </button>
         </div>
+      </div>
+
+      <!-- SLURM options (launcher=slurm, docs/slurm.md) -->
+      <div id="slurm-options" class="hidden mt-3 pt-3 border-t border-gray-200">
+        <div class="text-sm font-medium text-gray-700 mb-2">SLURM <span class="text-xs font-normal text-gray-400">(launcher.*; empty: the config's default)</span></div>
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <label class="text-xs text-gray-600">Partition
+            <input id="slurm-partition" list="slurm-partitions" class="mt-1 w-full rounded border border-gray-300 px-2 py-1 text-sm font-mono" placeholder="default">
+            <datalist id="slurm-partitions"></datalist>
+          </label>
+          <label class="text-xs text-gray-600">Array parallelism
+            <input id="slurm-array-parallelism" type="number" min="1" class="mt-1 w-full rounded border border-gray-300 px-2 py-1 text-sm font-mono" placeholder="no cap">
+          </label>
+          <label class="text-xs text-gray-600">Cases per task
+            <input id="slurm-cases-per-task" type="number" min="1" class="mt-1 w-full rounded border border-gray-300 px-2 py-1 text-sm font-mono" placeholder="spread evenly">
+          </label>
+          <label class="text-xs text-gray-600">Time limit
+            <input id="slurm-time" class="mt-1 w-full rounded border border-gray-300 px-2 py-1 text-sm font-mono" placeholder="e.g. 02:00:00">
+          </label>
+          <label class="text-xs text-gray-600">Memory
+            <input id="slurm-mem" class="mt-1 w-full rounded border border-gray-300 px-2 py-1 text-sm font-mono" placeholder="e.g. 12G">
+          </label>
+          <label class="text-xs text-gray-600">GRES
+            <input id="slurm-gres" class="mt-1 w-full rounded border border-gray-300 px-2 py-1 text-sm font-mono" placeholder="e.g. shard:1">
+          </label>
+          <label class="text-xs text-gray-600">Start stagger (s)
+            <input id="slurm-start-stagger-seconds" type="number" min="0" class="mt-1 w-full rounded border border-gray-300 px-2 py-1 text-sm font-mono" placeholder="0">
+          </label>
+          <label class="text-xs text-gray-600 col-span-2 md:col-span-1">Extra env (NAME=value per line)
+            <textarea id="slurm-env" rows="2" class="mt-1 w-full rounded border border-gray-300 px-2 py-1 text-sm font-mono"></textarea>
+          </label>
+        </div>
+        <p class="mt-1 text-xs text-gray-400">Submitted without waiting (<code>--no-wait</code>); a collect job writes the summary when the array ends. The batch's page follows it.</p>
       </div>
 
       <!-- Command Preview -->
@@ -186,6 +232,7 @@
       }
       if (!panel.classList.contains('hidden')) {
         // Load scenario list on first open
+        if (!launchersLoaded) loadLaunchers();
         if (!scenarioListLoaded) {
           fetch('/api/scenarios').then(r => r.json()).then(names => {
             const datalist = document.getElementById('scenario-list');
@@ -206,6 +253,37 @@
       }
     }
 
+    // Which launchers this viewer can use: SLURM only where sbatch is.
+    let launchersLoaded = false;
+    function loadLaunchers() {
+      fetch('/api/launchers').then(r => r.json()).then(data => {
+        launchersLoaded = true;
+        const select = document.getElementById('run-launcher');
+        const option = select.querySelector('option[value="slurm"]');
+        const note = document.getElementById('slurm-unavailable');
+        option.disabled = !data.slurm.available;
+        if (!data.slurm.available) {
+          option.textContent = 'SLURM (unavailable here)';
+          note.textContent = data.slurm.reason;
+          note.classList.remove('hidden');
+          if (select.value === 'slurm') select.value = 'local';
+        }
+        const list = document.getElementById('slurm-partitions');
+        list.innerHTML = '';
+        (data.slurm.partitions || []).forEach(p => {
+          const opt = document.createElement('option');
+          opt.value = p;
+          list.appendChild(opt);
+        });
+        showLauncherOptions();
+      });
+    }
+
+    function showLauncherOptions() {
+      const slurm = document.getElementById('run-launcher').value === 'slurm';
+      document.getElementById('slurm-options').classList.toggle('hidden', !slurm);
+    }
+
     // Debounce helper
     function debounce(fn, ms) {
       let timer;
@@ -221,11 +299,7 @@
       fetch('/api/run/preview', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({
-          scenario: opts.scenario,
-          extra_overrides: opts.extra_overrides,
-          sweeper: opts.sweeper,
-        })
+        body: JSON.stringify(opts)
       }).then(r => r.json()).then(data => {
         const el = document.getElementById('cmd-preview');
         if (el) el.textContent = data.command;
@@ -234,7 +308,9 @@
 
     // --- localStorage persistence for Run Options panel ---
     const STORAGE_KEY = 'viewer_run_options';
-    const PANEL_FIELDS = ['run-scenario', 'extra-overrides', 'run-sweeper'];
+    const SLURM_FIELDS = ['partition', 'array-parallelism', 'cases-per-task', 'time', 'mem', 'gres', 'start-stagger-seconds', 'env'];
+    const PANEL_FIELDS = ['run-scenario', 'extra-overrides', 'run-sweeper', 'run-launcher',
+      ...SLURM_FIELDS.map(f => 'slurm-' + f)];
 
     function saveRunOptions() {
       const data = {};
@@ -271,6 +347,8 @@
           el.addEventListener('change', debouncedSync);
         }
       });
+      document.getElementById('run-launcher').addEventListener('change', showLauncherOptions);
+      showLauncherOptions();
 
       // Reconnect to progress bar if a run is still active
       fetch('/api/run/status')
@@ -291,7 +369,16 @@
       const raw = (textarea ? textarea.value : '').trim();
       const extra = raw ? raw.split('\n').map(l => l.trim()).filter(l => l && l.includes('=')) : [];
       const sweeper = document.getElementById('run-sweeper')?.value || '';
-      return { scenario: scenario, extra_overrides: extra, sweeper: sweeper };
+      const launcher = document.getElementById('run-launcher')?.value || 'local';
+      const opts = { scenario: scenario, extra_overrides: extra, sweeper: sweeper, launcher: launcher };
+      if (launcher === 'slurm') {
+        opts.slurm = {};
+        SLURM_FIELDS.forEach(f => {
+          const el = document.getElementById('slurm-' + f);
+          opts.slurm[f.replace(/-/g, '_')] = el ? el.value : '';
+        });
+      }
+      return opts;
     }
 
     // Connect to SSE progress stream, show progress bar, and call onComplete when done.
@@ -336,11 +423,11 @@
     // Run scenarios using options from the panel
     function startRun() {
       const opts = collectRunOptions();
-      const body = {
-        scenario: opts.scenario,
-        extra_overrides: opts.extra_overrides,
-        sweeper: opts.sweeper,
-      };
+      const body = opts;
+      if (opts.launcher === 'slurm') {
+        submitSlurm(body);
+        return;
+      }
 
       // Hide panel, show progress bar
       document.getElementById('run-panel').classList.add('hidden');
@@ -348,6 +435,47 @@
       if (chevron) chevron.classList.remove('rotate-180');
 
       executeRunWithProgress(body, () => htmx.trigger('#update-btn', 'click'));
+    }
+
+    // Submit through SLURM, then go to the batch's page, which follows it.
+    function submitSlurm(body) {
+      const bar = document.getElementById('progress-bar');
+      const text = document.getElementById('progress-text');
+      const fill = document.getElementById('progress-fill');
+      document.getElementById('run-panel').classList.add('hidden');
+      bar.classList.remove('hidden');
+      text.textContent = 'Submitting to SLURM (expanding and checking the batch)...';
+      fill.style.width = '30%';
+      fetch('/api/run', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(body)
+      }).then(r => r.json()).then(data => {
+        if (data.status !== 'submitting') {
+          showSubmitError(data.message || 'The batch was not submitted');
+          return;
+        }
+        const poll = () => fetch('/api/slurm/submission').then(r => r.json()).then(sub => {
+          if (sub.state === 'submitting') { setTimeout(poll, 2000); return; }
+          if (sub.state === 'submitted' && sub.session_url) {
+            text.textContent = 'Submitted.';
+            fill.style.width = '100%';
+            window.location = sub.session_url;
+          } else {
+            showSubmitError(sub.output || 'The batch was not submitted');
+          }
+        });
+        poll();
+      });
+    }
+
+    function showSubmitError(message) {
+      const text = document.getElementById('progress-text');
+      const fill = document.getElementById('progress-fill');
+      text.textContent = 'SLURM submission failed: ' + message.split('\n').filter(Boolean).slice(-3).join(' / ');
+      text.title = message;
+      fill.className = 'bg-red-500 h-2 rounded-full transition-all duration-300';
+      fill.style.width = '100%';
     }
 
     function updateProgress(data) {

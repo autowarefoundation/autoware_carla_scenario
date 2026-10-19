@@ -521,9 +521,10 @@ What `test_typecheck_model.py` compares, model by model:
   for openodd's sample, and the `@tuple` of the pair Python's alias names.
 - **Every public member of a compared class** (#265): the comparisons above
   check that what a model class declares exists in Python; this checks the
-  converse. For every class they compare (enums aside), each public method,
-  property, class attribute and dataclass field the package's Python, or
-  openodd's, defines on the class or a class it derives from
+  converse. For every class they compare, enums included, each public
+  method, property, class attribute, dataclass field and instance attribute
+  the package's Python, or openodd's, defines on the class or a class it
+  derives from
   (`VehicleEntity.set_desired_speed()` is `BackendDriven`'s) is declared by
   the model class or one of its model bases, or listed, with the reason, in
   `NOT_MODELLED_MEMBERS` (`typecheck/not_modelled.py`), under the class or
@@ -542,9 +543,28 @@ What `test_typecheck_model.py` compares, model by model:
   with `isinstance` and passes on to a new `TrajectoryVertex`; `CoverItem`'s
   fields). A frozen dataclass's field is read-only in Python too; writing a
   `CoverItem`'s is refused, which Python allows, and a scenario, which
-  registers its items with `register_cover()`, has none to write. An
-  attribute Python only annotates (set on the instance) is no member of the
-  class. The scenario check adds the reason to Codon's error:
+  registers its items with `register_cover()`, has none to write.
+  An attribute a method sets on the instance (`self.<name> = ...` or
+  `setattr(self, "<name>", ...)`, read from the class's source,
+  `__init__`'s and the others', openodd's included; one set under a name
+  computed at run time is not found) is a member too (#307), as Python
+  reads it like any other: the model declares it as a read-only property,
+  since a field would change the constructor Codon generates
+  (`TimeoutCondition.timeout_seconds`, `OddDefinition.attributes`,
+  `OddAttribute.target` and `item`, `TrafficSinkAction.removed`,
+  `RouteFrame`'s `match`, `map`, `graph` and `lanelets`). Writing one is
+  refused, which Python allows (`'TimeoutCondition' object has no attribute
+  'timeout_seconds'`), except in the `__init__` of a scenario's own
+  subclass, where the assignment declares the subclass's own attribute. An enum is
+  compared beyond its members (#307): a model enum is a `@tuple` of its
+  value, so Codon gives it no `Enum`, and it declares Enum's `name` as a
+  property, a chain of `if self == Rule.MEMBER: return "MEMBER"` that
+  `test_typecheck_model.py` compares with each member's Python name, in
+  order (it also compares each member's value), and its own methods and
+  properties (`ComparisonRule.text`, `CollisionTargetType.matches()`,
+  `LaneChangeDirection.to_carla_bool()`). A scenario's own enum gets its
+  `name` from the check's rewrite (below). The scenario check adds the
+  reason to Codon's error:
 
   ```text
   scenario.py:68:19: error: 'CaseScenario' object has no attribute 'traffic_backend': BaseScenario.traffic_backend is not part of the Codon model, on purpose: takes or returns the run's TrafficBackend, ...
@@ -557,7 +577,11 @@ What `test_typecheck_model.py` compares, model by model:
   `RouteMatch.junction()`, `junctions` and `segments` (a
   `RouteSegmentMatch`), a field of `Any` (`ConditionStatus.details`,
   `RouteLanelet.values`, `OddModule.metadata`, `SweepConfig`'s Hydra
-  mappings, `CoverItem`'s `expression`, `ignore` and `values`), openodd's
+  mappings, `CoverItem`'s `expression`, `ignore` and `values`,
+  `OddAttribute.probe`), a class held as a value (`BaseScenario.ego_type`:
+  a scenario reads `ego_requires_goal` and calls `create_ego()`),
+  `RouteFrame.features` (`route.geometry`'s queries, which the library check
+  compiles from their source), openodd's
   evaluation, sampling and archive of an ODD (`OddDefinition.evaluate()`,
   `sample()`, `archive()`, ..., `OddCondition.evaluate()`) and its report's
   rows (`CoverageReport.entries`, ...), and the members of the classes the
@@ -570,6 +594,16 @@ What `test_typecheck_model.py` compares, model by model:
   roads = OddModule("roads", include_and=[location.is_in(["urban"])], labels=["fair"])
   roads.as_situation(cover_by="meters", target=100.0)
   text = roads.conditions()[0].describe() + roads.labels[0] + location.cover_by
+  for attribute in odd.attributes:
+      text += attribute.name + str(attribute.target)
+  ```
+
+  So do an instance attribute and an enum's name and methods:
+
+  ```python
+  timeout = TimeoutCondition(cfg.timeout_seconds, label="timeout")
+  logger.info("limit %f, %s", timeout.timeout_seconds, ComparisonRule.LESS_THAN.name)
+  logger.info("%s %s", ComparisonRule.LESS_THAN.text, LaneChangeDirection.LEFT.to_carla_bool())
   ```
 - **Every model file**: each `.codon` of the package's model is in one of
   the tables above or exempt with the reason (`_UNCOMPARED_MODEL_FILES`: the
@@ -1146,7 +1180,7 @@ To check one more module:
 ### What is checked of the framework
 
 Every module now has an entry other than `"not yet checked (#45)"`. 171 of
-the package's 258 modules (66%; about 44,400 of 79,100 lines) are `CHECKED`:
+the package's 261 modules (66%; about 44,400 of 79,100 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the conversions between
 Lanelet2, OpenDRIVE and CARLA world poses (`coordinate.transform`), the stop
 lines read off a Lanelet2 map (`utils.stop_line`, `coordinate.stop_line`)
@@ -1242,12 +1276,12 @@ a `TrajectoryVertex` call's arguments, each of any type (`Any`), walks or
 binds a sweeper constraint of any kind, builds a condition's status (its
 details), or takes the list a plain tick callback goes into
 (`BaseScenario._register_tick()`, a `List[Callable[[carla.World], None]]`,
-which the check has no value of). The 87 `EXCLUDED` modules fall in
-four groups. Many fit more than one (about 64 import what Codon cannot
+which the check has no value of). The 90 `EXCLUDED` modules fall in
+four groups. Many fit more than one (about 67 import what Codon cannot
 compile, 29 build on an excluded module and 20 hold values Codon has no type
 for), so each is counted once, in the first group that fits it:
 
-- **64 import what Codon cannot compile**: pyxodr,
+- **67 import what Codon cannot compile**: pyxodr,
   pydantic, pickle, lxml, grpc, omegaconf and hydra, yaml, openodd (a Rust extension),
   cyclonedds (`ros2.cyclone` and `ros2.messages`, the ROS 2 ego's DDS
   transport and its message types), or

@@ -653,7 +653,7 @@ Web UI for browsing and monitoring scenario test results. Starts a FastAPI serve
 ### How It Works
 
 1. Scans the base path directory for scenario output files (`outputs/YYYY-MM-DD/HH-MM-SS/`)
-2. Serves a web interface for browsing sessions and viewing individual scenario results (each names its trajectory log, which [Seeing a run](#seeing-a-run) turns into a Rerun recording)
+2. Serves a web interface for browsing sessions and viewing individual scenario results, each with its run in an embedded Rerun viewer ([Seeing a run in the viewer](#seeing-a-run-in-the-viewer))
 3. Provides an API for triggering scenario runs and monitoring progress in real time
 
 ### Usage
@@ -671,6 +671,68 @@ VIEWER_BASE_PATH=/path/to/scenario/outputs uv run viewer
 
 Then open `http://localhost:9000` (or the configured host/port) in a browser.
 
+### Seeing a run in the viewer
+
+A scenario's page shows its run in Rerun's web viewer, embedded in the page:
+the case's trajectory log made into a Rerun recording ([Seeing a run](#seeing-a-run)).
+A recording already beside the log (`X.rrd` beside `X.trajectory.jsonl`) is
+shown as it is; otherwise the viewer makes it the first time the page is
+opened (in a worker thread, some tens of milliseconds for a case) and keeps it
+beside the log, or, where the session's directory cannot be written, in its
+cache directory. Making one needs the converter in the viewer's environment:
+
+```bash
+pip install 'autoware-carla-scenario[rerun]'    # or: pip install autoware-carla-scenario-rerun
+```
+
+Without it the page says so, and still shows a recording already made.
+The page's *Download .rrd* link is the recording itself, for the native
+viewer (`rerun X.rrd`).
+
+The web viewer is the `@rerun-io/web-viewer` package of the version the
+converter writes recordings with (`RERUN_VERSION`, 0.38.1 for converter 0.1;
+a recording opens only in a viewer of its minor version). By default the page
+loads it from the unpkg CDN, pinned to that version. For a machine without
+the network, keep a copy that the viewer serves itself:
+
+```bash
+uv run viewer --fetch-rerun-web-viewer                 # from the npm registry, checked against its integrity hash
+uv run viewer --fetch-rerun-web-viewer --from web-viewer-0.38.1.tgz   # from the package's tarball, copied in
+```
+
+The copy goes to `~/.cache/autoware_carla_scenario/viewer/rerun-web-viewer/<version>/`
+(`VIEWER_CACHE_DIR` moves the cache) and is used from then on.
+`VIEWER_RERUN_WEB_VIEWER` overrides where the viewer comes from: an unpacked
+copy of the package (a directory), a mirror of it (a URL), or `none` for no
+embedded viewer (the page then names the recording only).
+
+### Running through SLURM
+
+The *Run Scenarios* panel's **Launcher** runs the batch here, case after case
+(`local`, the default), or submits it as a SLURM array job (`SLURM`,
+[Running a Batch on SLURM](slurm.md)) with the `launcher.*` keys the panel
+sets: the partition (from `sinfo`), `array_parallelism`, `cases_per_task`,
+`time`, `mem`, `gres`, `start_stagger_seconds` and extra environment
+variables (`launcher.env`); the extra overrides can set any other. The
+viewer runs `scenario [--multirun] scenario=... launcher=slurm ... --no-wait`
+(with a sweeper, every case of the sweep) in its base path, and opens the
+batch's page once it is submitted. Where `sbatch` is not on the viewer's
+`PATH` the option is disabled, and says so.
+
+A SLURM batch's page (`outputs/<date>/<time>/` with a `slurm/` directory,
+whoever submitted it) follows it through `squeue` and the records its tasks
+write: each case passed, failed, errored, running, pending or missing (with
+why: its task's state and error), each submission's job and tasks (state,
+host, cases done, peak memory), and the cases as they land, before the batch
+has a summary. Its buttons run `scenario-slurm` on the batch: *Resubmit
+missing* (the cases with no outcome, or that errored), *Resubmit failed too*
+(`--failed`), with the array parallelism and cases per task to use, *Collect*
+(the summary and `batch_results.json`) and *Cancel jobs*.
+
+`VIEWER_SCENARIO_COMMAND` replaces `uv run scenario` as the command a SLURM
+batch is submitted with (`.venv/bin/scenario`, say, where `uv run` must not
+sync the environment).
+
 ### Environment Variables
 
 | Variable | Default | Description |
@@ -678,6 +740,10 @@ Then open `http://localhost:9000` (or the configured host/port) in a browser.
 | `VIEWER_BASE_PATH` | Current working directory | Base path for scanning scenario result files |
 | `VIEWER_HOST` | `0.0.0.0` | Server bind address |
 | `VIEWER_PORT` | `9000` | Server listen port |
+| `VIEWER_CACHE_DIR` | `~/.cache/autoware_carla_scenario/viewer` | The web viewer's copy, and recordings of sessions that cannot be written |
+| `VIEWER_RERUN_WEB_VIEWER` | the copy in the cache, else the CDN | Where the Rerun web viewer is loaded from: a directory, a URL, or `none` |
+| `VIEWER_RERUN_MAP_DIR` | `~/autoware_data/maps`, if it exists | Where the converter looks a map up by name when the log's own map file is not on this machine |
+| `VIEWER_SCENARIO_COMMAND` | `uv run scenario` | The command a SLURM batch is submitted with |
 
 ### Web UI Pages
 
@@ -685,7 +751,8 @@ Then open `http://localhost:9000` (or the configured host/port) in a browser.
 |-------|-------------|
 | `/` | Session list — displays all test sessions grouped by date/time |
 | `/session/{type}/{date}/{time}` | Session detail — shows all scenarios in a session with pass/fail status |
-| `/session/{type}/{date}/{time}/{index}` | Scenario detail — condition tree, per-condition status, and the run's trajectory log |
+| `/session/{type}/{date}/{time}/{index}` | Scenario detail — the run in the Rerun viewer, condition tree, per-condition status |
+| `/recording/{type}/{date}/{time}/{index}.rrd` | The case's Rerun recording (made first if need be) |
 
 ### REST API Endpoints
 
@@ -699,6 +766,11 @@ The viewer also provides API endpoints for programmatic use and the web UI's int
 | `POST` | `/api/run` | Start a scenario execution in the background |
 | `GET` | `/api/run/status` | Get current run status (non-streaming) |
 | `GET` | `/api/run/progress` | SSE (Server-Sent Events) stream for real-time progress |
+| `GET` | `/api/launchers` | The launchers a run can use here (`slurm` only where `sbatch` is, with the partitions) |
+| `GET` | `/api/slurm/submission` | The batch the viewer last submitted through SLURM, and its page once submitted |
+| `GET` | `/api/slurm/{date}/{time}/status` | A SLURM batch's cases, jobs and tasks |
+| `POST` | `/api/slurm/{date}/{time}/{resubmit,collect,cancel}` | `scenario-slurm` on the batch (`resubmit` takes `failed`, `array_parallelism`, `cases_per_task`) |
+| `POST` | `/api/recording/{type}/{date}/{time}/{index}` | Make the case's Rerun recording if there is none; its URL and path (503 with the install hint without the converter) |
 
 **Run request body format:**
 
@@ -706,9 +778,15 @@ The viewer also provides API endpoints for programmatic use and the web UI's int
 {
   "scenario": "*/*",
   "extra_overrides": ["server.host=192.168.1.100"],
-  "sweeper": ""
+  "sweeper": "",
+  "launcher": "local"
 }
 ```
+
+With `"launcher": "slurm"`, `"slurm"` holds the `launcher.*` keys:
+`{"partition": "main", "array_parallelism": 2, "cases_per_task": null,
+"time": "02:00:00", "mem": "12G", "gres": null, "start_stagger_seconds": 30,
+"env": {"NAME": "value"}}`.
 
 **Progress SSE event format:**
 
@@ -736,6 +814,10 @@ Where `status` is one of: `"running"`, `"idle"`, or `"done"`.
 | `VIEWER_BASE_PATH` | viewer | Base path for scenario results |
 | `VIEWER_HOST` | viewer | Viewer server bind address |
 | `VIEWER_PORT` | viewer | Viewer server listen port |
+| `VIEWER_CACHE_DIR` | viewer | The viewer's cache (the Rerun web viewer's copy, recordings it could not keep beside their logs) |
+| `VIEWER_RERUN_WEB_VIEWER` | viewer | Where the Rerun web viewer is loaded from (a directory, a URL, or `none`) |
+| `VIEWER_RERUN_MAP_DIR` | viewer | Where the Rerun converter looks maps up by name |
+| `VIEWER_SCENARIO_COMMAND` | viewer | The command a SLURM batch is submitted with (default `uv run scenario`) |
 | `SCENARIO_EDITOR_DRAFTS` | scenario editor | Directory holding scenario drafts |
 | `SCENARIO_EDITOR_EXPORT_DIR` | scenario editor | Staging area for exported package archives |
 | `SCENARIO_EDITOR_MAP_ROOTS` | scenario editor | Directories a Lanelet2 map may be served from |

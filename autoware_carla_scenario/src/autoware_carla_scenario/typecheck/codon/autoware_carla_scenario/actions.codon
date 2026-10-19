@@ -20,11 +20,27 @@ class TickTiming:
     PRE_TICK: ClassVar[TickTiming] = TickTiming("pre_tick")
     POST_TICK: ClassVar[TickTiming] = TickTiming("post_tick")
 
+    # Enum's name (#307): Codon has no Enum to give a framework enum one.
+    @property
+    def name(self) -> str:
+        if self == TickTiming.PRE_TICK:
+            return "PRE_TICK"
+        if self == TickTiming.POST_TICK:
+            return "POST_TICK"
+        raise ValueError("not a member of TickTiming")
+
 
 @tuple
 class TrafficLightTarget:
     value: str
     ALL: ClassVar[TrafficLightTarget] = TrafficLightTarget("all")
+
+    # Enum's name (#307): Codon has no Enum to give a framework enum one.
+    @property
+    def name(self) -> str:
+        if self == TrafficLightTarget.ALL:
+            return "ALL"
+        raise ValueError("not a member of TrafficLightTarget")
 
 
 class BaseAction:
@@ -307,6 +323,12 @@ class TrafficSinkAction(BaseAction):
                  until = None, reissue = None):
         _keyword_only(_kw, "TrafficSinkAction(): everything after the constraints")
         super().__init__(label, condition, timing, once=once, until=until, reissue=reissue)
+
+    # Python's instance attribute (the vehicles taken off so far), read as a
+    # property (#307): a field would change the constructor Codon generates.
+    @property
+    def removed(self) -> int:
+        raise NotImplementedError()
 
 
 class WalkStraightAction(BaseAction):

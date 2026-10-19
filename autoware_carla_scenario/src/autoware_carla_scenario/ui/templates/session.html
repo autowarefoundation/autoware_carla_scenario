@@ -33,8 +33,8 @@
         <div class="text-3xl font-bold text-green-600">{{ passed_count }}/{{ total_count }}</div>
         <div class="text-sm text-green-600">All passed</div>
       {% else %}
-        <div class="text-3xl font-bold text-red-600">{{ passed_count }}/{{ total_count }}</div>
-        <div class="text-sm text-red-600">{{ total_count - passed_count }} failed</div>
+        <div class="text-3xl font-bold {% if total_count - passed_count - pending_count %}text-red-600{% else %}text-gray-700{% endif %}">{{ passed_count }}/{{ total_count }}</div>
+        <div class="text-sm {% if total_count - passed_count - pending_count %}text-red-600{% else %}text-gray-500{% endif %}">{% if total_count - passed_count - pending_count %}{{ total_count - passed_count - pending_count }} failed{% endif %}{% if pending_count %}{% if total_count - passed_count - pending_count %}, {% endif %}{{ pending_count }} without a result{% endif %}</div>
       {% endif %}
     </div>
   </div>
@@ -68,6 +68,28 @@
     <span id="filter-count" class="ml-2 text-xs text-gray-400"></span>
   </div>
 </div>
+
+{% if slurm %}
+<!-- SLURM: the batch's jobs, tasks and cases, followed through squeue -->
+<div class="mb-6 bg-white rounded-lg shadow p-4" id="slurm-panel" data-status-url="/api/slurm/{{ date }}/{{ time }}/status" data-action-url="/api/slurm/{{ date }}/{{ time }}">
+  <div class="flex items-center justify-between">
+    <h2 class="text-lg font-semibold text-gray-700">SLURM <span id="slurm-state" class="ml-2 text-sm font-normal text-gray-500">loading...</span></h2>
+    <div class="flex items-center gap-2 text-sm">
+      <label class="text-xs text-gray-500">parallelism <input id="slurm-re-parallelism" type="number" min="1" class="w-16 rounded border border-gray-300 px-1 py-0.5 text-xs"></label>
+      <label class="text-xs text-gray-500">cases/task <input id="slurm-re-cases" type="number" min="1" class="w-16 rounded border border-gray-300 px-1 py-0.5 text-xs"></label>
+      <button type="button" data-slurm-action="resubmit" class="slurm-btn px-3 py-1 rounded bg-amber-500 text-white hover:bg-amber-600">Resubmit missing</button>
+      <button type="button" data-slurm-action="resubmit" data-failed="1" class="slurm-btn px-3 py-1 rounded bg-amber-600 text-white hover:bg-amber-700">Resubmit failed too</button>
+      <button type="button" data-slurm-action="collect" class="slurm-btn px-3 py-1 rounded bg-blue-600 text-white hover:bg-blue-700">Collect</button>
+      <button type="button" data-slurm-action="cancel" class="slurm-btn px-3 py-1 rounded bg-gray-200 text-gray-700 hover:bg-gray-300">Cancel jobs</button>
+    </div>
+  </div>
+  <div id="slurm-counts" class="mt-2 flex flex-wrap gap-2 text-xs"></div>
+  <div class="mt-3 w-full bg-gray-200 rounded-full h-2 overflow-hidden flex" id="slurm-bar"></div>
+  <div id="slurm-jobs" class="mt-3 text-sm"></div>
+  <div id="slurm-problems" class="mt-3 text-sm"></div>
+  <pre id="slurm-output" class="hidden mt-3 bg-gray-900 text-gray-100 rounded p-3 text-xs whitespace-pre-wrap max-h-64 overflow-y-auto"></pre>
+</div>
+{% endif %}
 
 <!-- Scenario list -->
 {% if items %}
@@ -129,6 +151,124 @@
 {% endblock %}
 
 {% block extra_scripts %}
+{% if slurm %}
+<script>
+(function () {
+  var panel = document.getElementById('slurm-panel');
+  var COLORS = { passed: 'bg-green-500', failed: 'bg-red-500', errored: 'bg-orange-500',
+                 running: 'bg-blue-500', pending: 'bg-blue-200', missing: 'bg-gray-500', unknown: 'bg-gray-300' };
+  var BADGES = { passed: 'bg-green-100 text-green-800', failed: 'bg-red-100 text-red-800',
+                 errored: 'bg-orange-100 text-orange-800', running: 'bg-blue-100 text-blue-800',
+                 pending: 'bg-blue-50 text-blue-700', missing: 'bg-gray-200 text-gray-800',
+                 unknown: 'bg-gray-100 text-gray-600' };
+  var ORDER = ['passed', 'failed', 'errored', 'running', 'pending', 'missing', 'unknown'];
+  var lastDone = null, timer = null;
+
+  function el(tag, cls, text) {
+    var e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text !== undefined) e.textContent = text;
+    return e;
+  }
+
+  function render(st) {
+    var state = document.getElementById('slurm-state');
+    state.textContent = st.active ? 'running' : (st.summary ? 'collected' : 'ended, not collected');
+    if (!st.slurm_available) state.textContent += ' (' + st.slurm_reason + ')';
+    panel.dataset.active = st.active ? '1' : '0';
+    var counts = document.getElementById('slurm-counts');
+    var bar = document.getElementById('slurm-bar');
+    counts.innerHTML = ''; bar.innerHTML = '';
+    ORDER.forEach(function (k) {
+      var n = st.counts[k] || 0;
+      if (!n) return;
+      counts.appendChild(el('span', 'px-2 py-0.5 rounded-full font-medium ' + BADGES[k], k + ' ' + n));
+      var seg = el('div', COLORS[k]);
+      seg.style.width = (100 * n / st.total) + '%';
+      bar.appendChild(seg);
+    });
+    var jobs = document.getElementById('slurm-jobs');
+    jobs.innerHTML = '';
+    st.submissions.forEach(function (sub) {
+      var head = el('div', 'font-medium text-gray-700 mt-1',
+        'Submission ' + sub.index + ': job ' + sub.job_id + ', ' + sub.cases + ' case(s)' +
+        (sub.collect_job_id ? ', collect job ' + sub.collect_job_id : '') +
+        (sub.squeue_unavailable ? ' (squeue unavailable)' : (sub.active ? ' -- in the queue' : ' -- ended')));
+      jobs.appendChild(head);
+      if (sub.collect_error) jobs.appendChild(el('div', 'text-xs text-red-700', sub.collect_error));
+      var table = el('table', 'text-xs mt-1');
+      sub.tasks.forEach(function (t) {
+        var row = el('tr');
+        [ 'task ' + t.task, t.squeue || '-', t.state, t.host || '', t.done + '/' + t.cases.length + ' case(s)',
+          t.state === 'running' && t.current !== null && t.current !== undefined ? 'running case ' + t.current : '',
+          t.peak_rss_mb ? 'peak ' + t.peak_rss_mb + ' MB' : '', t.error || '' ].forEach(function (v) {
+          row.appendChild(el('td', 'pr-4 py-0.5 font-mono text-gray-600', v));
+        });
+        table.appendChild(row);
+      });
+      jobs.appendChild(table);
+    });
+    var problems = document.getElementById('slurm-problems');
+    problems.innerHTML = '';
+    var bad = st.cases.filter(function (c) { return ['failed', 'errored', 'missing', 'unknown'].indexOf(c.state) >= 0; });
+    if (bad.length) {
+      problems.appendChild(el('div', 'font-medium text-gray-700', 'Failed, errored and missing cases'));
+      var list = el('ul', 'mt-1 space-y-0.5');
+      bad.forEach(function (c) {
+        var li = el('li', 'text-xs');
+        var a = el('a', 'font-mono text-blue-600 hover:text-blue-800 mr-2', '#' + c.index);
+        a.href = window.location.pathname + '/' + c.index;
+        li.appendChild(a);
+        li.appendChild(el('span', 'px-1.5 rounded mr-2 ' + BADGES[c.state], c.state));
+        li.appendChild(el('span', 'text-gray-700 mr-2', c.label));
+        li.appendChild(el('span', 'text-gray-500', c.message || ''));
+        list.appendChild(li);
+      });
+      problems.appendChild(list);
+    }
+    var done = st.total - (st.counts.running || 0) - (st.counts.pending || 0);
+    if (lastDone !== null && done !== lastDone) {
+      problems.appendChild(el('div', 'mt-2 text-xs text-gray-500', 'New results: reload the page to see them in the table below.'));
+    }
+    lastDone = done;
+  }
+
+  function refresh() {
+    fetch(panel.dataset.statusUrl).then(function (r) { return r.json(); }).then(function (st) {
+      render(st);
+      clearTimeout(timer);
+      timer = setTimeout(refresh, st.active ? 5000 : 30000);
+    });
+  }
+
+  panel.querySelectorAll('.slurm-btn').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var action = btn.dataset.slurmAction;
+      var body = {};
+      if (action === 'resubmit') {
+        body.failed = btn.dataset.failed === '1';
+        body.array_parallelism = document.getElementById('slurm-re-parallelism').value;
+        body.cases_per_task = document.getElementById('slurm-re-cases').value;
+      }
+      var out = document.getElementById('slurm-output');
+      out.classList.remove('hidden');
+      out.textContent = 'scenario-slurm ' + action + ' ...';
+      panel.querySelectorAll('.slurm-btn').forEach(function (b) { b.disabled = true; });
+      fetch(panel.dataset.actionUrl + '/' + action, {
+        method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)
+      }).then(function (r) { return r.json(); }).then(function (res) {
+        out.textContent = res.output || '(no output)';
+        out.dataset.ok = res.ok ? '1' : '0';
+      }).finally(function () {
+        panel.querySelectorAll('.slurm-btn').forEach(function (b) { b.disabled = false; });
+        refresh();
+      });
+    });
+  });
+  refresh();
+})();
+</script>
+{% endif %}
 <script>
 (function() {
   var buttons = document.querySelectorAll('.filter-btn');

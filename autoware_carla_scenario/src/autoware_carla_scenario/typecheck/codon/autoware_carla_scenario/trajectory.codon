@@ -234,6 +234,15 @@ class ReferenceContext:
     ABSOLUTE: ClassVar[ReferenceContext] = ReferenceContext("absolute")
     RELATIVE: ClassVar[ReferenceContext] = ReferenceContext("relative")
 
+    # Enum's name (#307): Codon has no Enum to give a framework enum one.
+    @property
+    def name(self) -> str:
+        if self == ReferenceContext.ABSOLUTE:
+            return "ABSOLUTE"
+        if self == ReferenceContext.RELATIVE:
+            return "RELATIVE"
+        raise ValueError("not a member of ReferenceContext")
+
 
 class TrajectoryTiming:
     domain: ReferenceContext
@@ -255,6 +264,15 @@ class TrajectoryFollowingMode:
     value: str
     POSITION: ClassVar[TrajectoryFollowingMode] = TrajectoryFollowingMode("position")
     FOLLOW: ClassVar[TrajectoryFollowingMode] = TrajectoryFollowingMode("follow")
+
+    # Enum's name (#307): Codon has no Enum to give a framework enum one.
+    @property
+    def name(self) -> str:
+        if self == TrajectoryFollowingMode.POSITION:
+            return "POSITION"
+        if self == TrajectoryFollowingMode.FOLLOW:
+            return "FOLLOW"
+        raise ValueError("not a member of TrajectoryFollowingMode")
 
 
 def _expect_optional_timing(timing) -> Optional[TrajectoryTiming]:

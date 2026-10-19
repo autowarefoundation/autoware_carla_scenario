@@ -1908,16 +1908,25 @@ class _LibraryFile:
 
 def _uncalled(module: str) -> list[str]:
     """What :data:`.library.UNCALLED` lists of *module*, relative to it."""
+    # Keyed by what the lists hold now, not by the module alone: tests add to
+    # them, and a library check asks for each module several times.
+    return list(_uncalled_of(module, tuple(CHECKED), tuple(UNCALLED)))
+
+
+@lru_cache(maxsize=1024)
+def _uncalled_of(
+    module: str, checked: tuple[str, ...], uncalled: tuple[str, ...]
+) -> tuple[str, ...]:
     # A name belongs to the longest module it starts with:
     # ``trajectory.model._wrap`` is of ``trajectory.model``, not of the
     # ``trajectory`` package.
-    modules = {*CHECKED, module}
+    modules = {*checked, module}
     out: list[str] = []
-    for name in UNCALLED:
+    for name in uncalled:
         owners = [m for m in modules if name.startswith(f"{m}.")]
         if owners and max(owners, key=len) == module:
             out.append(name.removeprefix(f"{module}."))
-    return out
+    return tuple(out)
 
 
 def _read_module(path: Path) -> _Module:

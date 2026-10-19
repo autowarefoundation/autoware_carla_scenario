@@ -172,6 +172,7 @@ class DriverControlSpec:
 class DriverConfig:
     address: str = "localhost:50051"
     policy: Optional[str] = None
+    transport: str = "tcp"
     timeout_s: float = 60.0
     policy_timestep_s: float = 0.1
     image_quality: int = 90
