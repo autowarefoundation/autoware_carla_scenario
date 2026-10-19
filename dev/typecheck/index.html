@@ -2822,7 +2822,8 @@ those models declare.</p>
 <h2 id="writing-a-scenario-that-type-checks">Writing a scenario that type-checks<a class="headerlink" href="#writing-a-scenario-that-type-checks" title="Permanent link">&para;</a></h2>
 <p>A scenario is ordinary typed Python. Codon is stricter than Python in a few
 places, and the checker smooths over most of them (it rewrites <code>X | None</code> into
-<code>Optional[X]</code>, drops <code>@dataclass</code> and resolves <code>field(...)</code> defaults, accepts
+<code>Optional[X]</code>, drops <code>@dataclass</code> (and appends the <code>==</code>, ordering and hash it
+generates) and resolves <code>field(...)</code> defaults, accepts
 keyword-only parameters, required ones after a default included, gives a list of different conditions the type
 <code>list[BaseCondition]</code>, checks a <code>tuple[X, ...]</code> return annotation as a
 <code>List[X]</code>, drops a parameter or return annotation naming a
@@ -3136,6 +3137,39 @@ value whose members are <code>int</code>, not as a type: it becomes <code>int</c
 </code></pre></div>
 <p>compiles as written, and so does a local <code>found: Optional[carla.Actor] =
   None</code> returned at the end.</p>
+<ul>
+<li><strong>Your own dataclasses, enums and named tuples</strong> keep what Python gives
+  them (#365), with these limits:</li>
+<li>A <code>@dataclass</code> compares, orders and hashes as Python's does: the check
+    appends <code>==</code> and <code>!=</code> (<code>eq=True</code>, the default), <code>&lt;</code>, <code>&lt;=</code>, <code>&gt;</code> and <code>&gt;=</code>
+    (<code>order=True</code>) and <code>hash()</code> (<code>frozen=True</code>, or <code>unsafe_hash=True</code>) after
+    the module, comparing the fields in order (a dataclass base's first;
+    <code>field(compare=False)</code>, <code>ClassVar</code> and <code>InitVar</code> are left out). A method
+    the class defines itself is kept. This holds for a dataclass whose bases
+    are dataclasses of the same module (or none): one deriving from a class
+    the check cannot see the fields of, such as a framework dataclass, gets
+    none, and <code>==</code> on it is refused. <code>eq=False</code> (identity comparison) is not
+    modelled either: write <code>a is b</code>. Python refuses <code>&lt;</code> without <code>order=True</code>
+    and <code>hash()</code> of a non-frozen dataclass, and so does the check, with a
+    hint naming the flag.</li>
+<li>An <code>IntEnum</code> (also <code>IntFlag</code>, <code>class M(int, Enum)</code>) member compares with
+    its value (<code>M.A == 1</code>), orders against a member or an <code>int</code>
+    (<code>M.A &lt; M.B</code>) and converts with <code>int()</code> and <code>float()</code>. A <code>StrEnum</code> or
+    <code>class M(str, Enum)</code> member compares with its string (<code>M.A == "a"</code>) and
+    does nothing more: ordering and <code>int()</code> are refused, as in Python for a
+    plain <code>Enum</code>, a <code>Flag</code> and a <code>(str, Enum)</code>. A plain <code>Enum</code> member equals
+    only members (<code>M.A == 1</code> is <code>False</code>, as in Python). An enum member is
+    <strong>not</strong> an <code>int</code> or a <code>str</code> otherwise: passing it to an <code>int</code> / <code>str</code>
+    parameter or doing arithmetic on it (<code>M.A + 1</code>) is refused with a hint.
+    Write <code>M.A.value</code>.</li>
+<li>A <code>class Pt(typing.NamedTuple)</code> is checked as a Codon <code>@tuple</code> class: its
+    fields, defaults and methods, <code>==</code>, ordering, <code>hash()</code>, iteration and
+    <code>len()</code> work. Codon indexes and unpacks it (<code>p[0]</code>, <code>x, y = p</code>) only when
+    all its fields have one type: otherwise read <code>p.x</code>, <code>p.y</code>. It has no
+    <code>_replace()</code>, <code>_asdict()</code>, <code>_fields</code> or <code>_make()</code>: build a new <code>Pt(...)</code>.
+    Only the class syntax is covered (not <code>NamedTuple("Pt", [...])</code> or
+    <code>collections.namedtuple</code>).</li>
+</ul>
 <h2 id="what-the-check-does-not-catch">What the check does not catch<a class="headerlink" href="#what-the-check-does-not-catch" title="Permanent link">&para;</a></h2>
 <p>The check compiles the scenario and never runs it, so it says nothing of
 what a value is at run time (a division by zero, a missing key, an actor
@@ -4932,7 +4966,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 19, 2026 12:04:26 UTC"><span class="timeago" datetime="2026-10-19T12:04:26+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 19, 2026 12:04:26 UTC">2026-10-19</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 19, 2026 14:34:49 UTC"><span class="timeago" datetime="2026-10-19T14:34:49+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 19, 2026 14:34:49 UTC">2026-10-19</span>
   </span>
 
     
