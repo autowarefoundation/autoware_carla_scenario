@@ -93,6 +93,7 @@ from .transform import (
     class_declarations,
     classes_with_init,
     conflicting_imports,
+    enum_class_names,
     redirect_imports,
     relative_module_imports,
     transform_source_lines,
@@ -750,7 +751,9 @@ def _build_workspace(
             Diagnostic(message, str(module.path), line)
             for line, message in conflicting_imports(source)
         ]
-        text, origin = transform_source_lines(source, init_classes=init_classes)
+        text, origin = transform_source_lines(
+            source, init_classes=init_classes, enum_classes=enum_class_names(classes)
+        )
         checks = render_library_checks(
             module.tree,
             classes=classes,
@@ -2194,6 +2197,7 @@ def _library_files(
             redirected,
             dropped_decorators=[n for n in uncalled if "." not in n],
             init_classes=init_classes,
+            enum_classes=enum_class_names(classes),
         )
         rel = workspace_module(name).replace(".", "/") + ".codon"
         # Python sets a module's `__file__`, which Codon 0.19 does not: a

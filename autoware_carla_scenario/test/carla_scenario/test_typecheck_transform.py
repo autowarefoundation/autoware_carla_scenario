@@ -904,6 +904,65 @@ def test_an_enum_is_given_a_constructor_by_value_after_the_module() -> None:
     assert "class Local" not in lookups  # the module's top-level enums only
 
 
+def test_an_enum_is_given_its_members_and_a_lookup_by_name() -> None:
+    source = textwrap.dedent(
+        """
+        class Turn(Enum):
+            LEFT = "left"
+            RIGHT = "right"
+            ALIAS = "left"
+            _hidden = 3
+        """
+    )
+    out = _transform(source)
+    # An alias is looked up by name, but iteration skips it.
+    assert (
+        "def _acs_members() -> List[Turn]:\n        return [Turn.LEFT, Turn.RIGHT]"
+        in out
+    )
+    assert "if name == 'ALIAS':\n            return Turn.ALIAS" in out
+    assert out.rstrip().endswith("raise KeyError(name)")
+
+
+def test_iterating_over_an_enum_class_and_looking_up_a_member_by_name() -> None:
+    source = textwrap.dedent(
+        """
+        class Mode(Enum):
+            A = 1
+        def f(n):
+            for m in Mode:
+                pass
+            a = [x for x in Mode if x in Mode]
+            b = list(Mode), len(Mode), sorted(Mode), (*Mode,)
+            c = Mode[
+                n
+            ]
+            d = Mode["A"].value
+            e = Other[n]
+            g = Mode.A
+            h = {m: 1 for m in Mode}
+        """
+    )
+    out = _transform(source)
+    body = out.partition("\n\n@extend\n")[0]
+    assert body.count("\n") == source.count("\n")  # no line moves
+    assert "for m in Mode._acs_members():" in out
+    assert "[x for x in Mode._acs_members() if x in Mode._acs_members()]" in out
+    assert "list(Mode._acs_members()), len(Mode._acs_members())" in out
+    assert "sorted(Mode._acs_members()), (*Mode._acs_members(),)" in out
+    assert "c = Mode._acs_by_name(\n" in out  # the line breaks stay
+    assert 'd = Mode._acs_by_name("A").value' in out
+    assert "e = Other[n]" in out and "g = Mode.A" in out
+    assert "h = {m: 1 for m in Mode._acs_members()}" in out
+
+
+def test_an_enum_of_another_module_is_iterated_when_named() -> None:
+    source = "def f():\n    return list(Rule), Rule['A']\n"
+    assert "list(Rule)" in _transform(source)
+    out = transform_source(source, enum_classes=["Rule"])
+    assert "list(Rule._acs_members()), Rule._acs_by_name('A')" in out
+
+
 def test_a_str_enum_with_auto_values_takes_the_lowercase_names() -> None:
     out = _transform("class Mode(StrEnum):\n    FAST = auto()\n")
     assert "class Mode(_acs_StrEnum[str]):" in out
