@@ -770,6 +770,71 @@ class TestWheelhouseInterpreters:
         assert wheelhouse.log.index("pass 3.10") < wheelhouse.log.index("pass 3.12")
         assert "3.10, 3.12" in (wheelhouse.root / "README.md").read_text()
 
+    def test_an_interpreter_named_twice_is_one_pass(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Two passes of one Python would race for its builder venv."""
+        import autoware_carla_scenario.authoring.wheelhouse as module
+
+        (tmp_path / "uv.lock").write_text("", encoding="utf-8")
+        built: list[str] = []
+
+        def _environment(parent: Path, python: str) -> tuple[Path, str]:
+            built.append(python)
+            return parent / f"builder-{python}", ""
+
+        monkeypatch.setattr(module, "_export_requirements", lambda _r: ("", ""))
+        monkeypatch.setattr(module, "_build_project_wheel", lambda *_a: "")
+        monkeypatch.setattr(module, "_builder_environment", _environment)
+        monkeypatch.setattr(module, "_download_wheels", lambda *_a: "")
+
+        wheelhouse = build_wheelhouse(
+            tmp_path,
+            tmp_path / "out",
+            distribution="nothing",
+            version="0.1.0",
+            run_command="scenario scenario=nothing",
+            pythons=("3.12", "3.10", "3.12"),
+        )
+        assert sorted(built) == ["3.10", "3.12"]
+        assert wheelhouse.python_tags == ("3.12", "3.10")
+        # The passes' own directories are gone once their wheels moved up.
+        assert not list((tmp_path / "out").glob(".pass-*"))
+
+    def test_a_failed_pass_names_its_environment_and_leaves_nothing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import autoware_carla_scenario.authoring.wheelhouse as module
+
+        (tmp_path / "uv.lock").write_text("", encoding="utf-8")
+
+        def _environment(parent: Path, python: str) -> tuple[Path, str]:
+            return parent / f"builder-{python}", f"venv for {python}\n"
+
+        def _download(venv: Path, *_args: Any) -> str:
+            if venv.name.endswith("3.12"):
+                raise module.WheelhouseError("no wheel", "pip said no\n")
+            return "pass 3.10\n"
+
+        monkeypatch.setattr(module, "_export_requirements", lambda _r: ("", ""))
+        monkeypatch.setattr(module, "_build_project_wheel", lambda *_a: "")
+        monkeypatch.setattr(module, "_builder_environment", _environment)
+        monkeypatch.setattr(module, "_download_wheels", _download)
+
+        with pytest.raises(module.WheelhouseError) as raised:
+            build_wheelhouse(
+                tmp_path,
+                tmp_path / "out",
+                distribution="nothing",
+                version="0.1.0",
+                run_command="scenario scenario=nothing",
+                pythons=("3.10", "3.12"),
+            )
+        log = raised.value.log
+        assert log.index("pass 3.10") < log.index("venv for 3.12")
+        assert log.index("venv for 3.12") < log.index("pip said no")
+        assert not (tmp_path / "out").exists()
+
     def test_an_explicit_interpreter_overrides_requires_python(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

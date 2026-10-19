@@ -401,6 +401,8 @@ def build_wheelhouse(
 
             single = platform.python_version()
         targets = [single]
+    # A Python named twice is one pass: two of it would race for its venv.
+    targets = list(dict.fromkeys(targets))
 
     destination.mkdir(parents=True, exist_ok=True)
     scratch = Path(tempfile.mkdtemp(prefix="scenario-wheelhouse-"))
@@ -418,17 +420,25 @@ def build_wheelhouse(
         # the interpreter that runs it -- markers and wheel tags both -- so
         # this is the only way to end up with a directory that installs under
         # more than one. The passes mostly wait on pip, so they run side by
-        # side, each into a directory of its own (two pips writing one wheel
-        # into one directory would race); their wheels are gathered after. A
-        # wheel two interpreters share is byte-identical, so the first is kept.
-        def one_pass(interpreter: str) -> tuple[Path, str]:
+        # side, each into a directory of its own inside the destination (two
+        # pips writing one wheel into one directory would race), and their
+        # wheels are moved up after, in the targets' order: as when the passes
+        # ran one after another, a wheel two of them produce is the last one's.
+        def one_pass(index: int, interpreter: str) -> tuple[Path, str]:
             venv, venv_log = _builder_environment(scratch, interpreter)
-            directory = scratch / f"wheels-{interpreter}"
+            directory = destination / f".pass-{index}"
             directory.mkdir()
-            return directory, venv_log + _download_wheels(venv, pinned, directory)
+            try:
+                return directory, venv_log + _download_wheels(venv, pinned, directory)
+            except WheelhouseError as exc:
+                exc.log = venv_log + exc.log
+                raise
 
         with ThreadPoolExecutor(max_workers=len(targets)) as pool:
-            passes = [pool.submit(one_pass, interpreter) for interpreter in targets]
+            passes = [
+                pool.submit(one_pass, index, interpreter)
+                for index, interpreter in enumerate(targets)
+            ]
             # In the targets' order, so the log reads as it did one pass after
             # another, and a failed pass's error carries the passes before it.
             gathered: list[Path] = []
@@ -438,8 +448,8 @@ def build_wheelhouse(
                 gathered.append(directory)
         for directory in gathered:
             for wheel in sorted(directory.glob("*.whl")):
-                if not (destination / wheel.name).exists():
-                    shutil.move(str(wheel), str(destination / wheel.name))
+                os.replace(wheel, destination / wheel.name)
+            shutil.rmtree(directory)
 
         # Inside the guard: the last two files are small, but the disk they go
         # on has just taken 160 MB of wheels, and a wheelhouse missing its
