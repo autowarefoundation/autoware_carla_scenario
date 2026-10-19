@@ -1861,8 +1861,8 @@ def test_a_repeat_under_the_same_alias_is_dropped_but_not_a_new_alias() -> None:
 
 
 def test_a_relative_repeat_is_dropped_only_at_the_same_level() -> None:
-    out = _body("from .m import A\nfrom .m import A\nfrom ..m import A\n")
-    assert out == "from .m import A\npass\nfrom ..m import A\n"
+    out = _body("from .m import A\nfrom .m import A\nB = A\nfrom ..m import A\n")
+    assert out == "from .m import A\npass\nB = A\nfrom ..m import A\n"
 
 
 def test_imports_in_functions_and_branches_are_left_alone() -> None:
@@ -1891,11 +1891,47 @@ def test_a_repeated_import_keeps_every_line() -> None:
     assert out.endswith("x = 1\n")
 
 
-def test_a_name_imported_from_two_places_is_reported_at_the_later_import() -> None:
+def test_a_name_read_before_it_is_rebound_is_reported_at_the_later_import() -> None:
     problems = conflicting_imports(
-        "from a import X\nimport b as X\nfrom c import Y, Y\n"
+        "from a import X\nY = X\nimport b as X\nfrom c import Y2, Y2\n"
     )
-    assert [line for line, _ in problems] == [2]
+    assert [line for line, _ in problems] == [3]
     assert "`X` is imported again" in problems[0][1]
     assert "line 1" in problems[0][1]
     assert conflicting_imports("from a import X\nfrom a import X\n") == []
+
+
+def test_a_rebound_name_nothing_read_drops_the_earlier_import() -> None:
+    text = (
+        "from a import X, Z\n"
+        "def f():\n"
+        "    return X\n"
+        "from b import X\n"
+        "from a import X\n"
+    )
+    assert _body(text) == (
+        "from a import Z\ndef f():\n    return X\npass\nfrom a import X\n"
+    )
+    assert conflicting_imports(text) == []
+
+
+def test_a_read_in_a_class_body_or_decorator_counts_as_a_use() -> None:
+    for use in ("class C:\n    v = X\n", "@X\ndef f(): ...\n", "def f(d=X): ...\n"):
+        text = f"from a import X\n{use}from b import X\n"
+        assert [p[0] for p in conflicting_imports(text)] == [text.count("\n")], use
+
+
+def test_a_name_assigned_between_two_identical_imports_keeps_the_second() -> None:
+    text = "from a import X\nX = 1\nfrom a import X\n"
+    assert _body(text) == text
+
+
+def test_star_imports_and_future_imports_are_not_rebindings() -> None:
+    text = "from __future__ import annotations\nfrom a import *\nfrom b import *\n"
+    assert _body(text) == text
+    assert conflicting_imports(text) == []
+
+
+def test_a_try_import_fallback_is_left_alone() -> None:
+    text = "from a import X\ntry:\n    from b import X\nexcept ImportError:\n    pass\n"
+    assert _body(text) == text

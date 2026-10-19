@@ -791,11 +791,13 @@ scenario has to do itself:
   module and name, under the same alias), on its line: the repeat becomes
   `pass`, or loses just the repeated names. An import in a function or an
   `if` is left as written. A name imported from two different places
-  (`from a import X`, then `from b import X`) has no such reading and is
-  refused at the later import, naming the first:
+  (`from a import X`, then `from b import X`) means the later one in Python:
+  the checker drops the earlier import when nothing reads the name in
+  between, and refuses the later import, naming the first, when something
+  does:
 
   ```text
-  scenario.py:12: error: `ComparisonRule` is imported again from somewhere else (first on line 5), which Codon 0.19 cannot compile: import each name once, under its own name (`import ... as other` to tell two apart)
+  scenario.py:12: error: `ComparisonRule` is imported again from somewhere else (first on line 5) after it was used, which Codon 0.19 cannot compile: import each name once, under its own name (`import ... as other` to tell two apart)
   ```
 
 - **Declare the attributes it assigns on `self`**, at class level, with their

@@ -4241,11 +4241,24 @@ def test_an_import_repeated_inside_one_statement_compiles(tmp_path: Path) -> Non
     assert result.ok, result.format()
 
 
-def test_a_name_imported_from_two_places_is_refused_at_the_import(
+def test_a_name_rebound_by_a_later_import_before_any_use_compiles(
     tmp_path: Path,
 ) -> None:
     other = (
         "from autoware_carla_scenario import ScalarComparisonRule as ComparisonRule\n"
+    )
+    header = _HEADER.replace("import logging\n", "import logging\n" + other, 1)
+    scenario, config, _ = _write_case(tmp_path, _REPEAT_BODY, header=header)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_a_name_rebound_after_it_was_used_is_refused_at_the_import(
+    tmp_path: Path,
+) -> None:
+    other = (
+        "from autoware_carla_scenario import ScalarComparisonRule as ComparisonRule\n"
+        "_FIRST = ComparisonRule\n"
     )
     header = _HEADER.replace("import logging\n", "import logging\n" + other, 1)
     scenario, config, path = _write_case(tmp_path, _REPEAT_BODY, header=header)
