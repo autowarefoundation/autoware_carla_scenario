@@ -782,6 +782,24 @@ scenario has to do itself:
   scenario.py:3: error: `from .. import helpers` imports the module pkg.helpers as a module, which Codon 0.19 resolves only inside the importing module's own package (pkg.sub): import the names instead (`from ..helpers import name`)
   ```
 
+- **Import a name once.** Python accepts `from autoware_carla_scenario import
+  ComparisonRule` in the import header and again further down, and so does
+  the check (#354): Codon 0.19 leaves a module-level name imported twice
+  undefined in every module but the one it compiles first, so a use of it
+  failed the whole function with a bare "cannot typecheck". The checker drops
+  a module-level import that repeats an identical earlier one (the same
+  module and name, under the same alias), on its line: the repeat becomes
+  `pass`, or loses just the repeated names. An import in a function or an
+  `if` is left as written. A name imported from two different places
+  (`from a import X`, then `from b import X`) means the later one in Python:
+  the checker drops the earlier import when nothing reads the name in
+  between, and refuses the later import, naming the first, when something
+  does:
+
+  ```text
+  scenario.py:12: error: `ComparisonRule` is imported again from somewhere else (first on line 5) after it was used, which Codon 0.19 cannot compile: import each name once, under its own name (`import ... as other` to tell two apart)
+  ```
+
 - **Declare the attributes it assigns on `self`**, at class level, with their
   type:
 

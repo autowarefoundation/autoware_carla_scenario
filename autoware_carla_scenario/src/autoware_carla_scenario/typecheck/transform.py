@@ -1779,6 +1779,7 @@ def transform_source_lines(
     exceptions = _exception_classes(tree)
     rewriter = _Rewriter(edits, exceptions, dropped_decorators)
     rewriter.visit(tree)
+    repeated_imports(tree, edits)
     lines = {
         node.name: origin[node.lineno - 1]
         for node in tree.body
@@ -1794,6 +1795,189 @@ def transform_source_lines(
         text += block
         origin += [lines[name]] * block.count("\n")
     return text, origin
+
+
+def _import_bindings(
+    node: ast.Import | ast.ImportFrom,
+) -> list[tuple[str, tuple[object, ...]]]:
+    """The (bound name, source) of each name an import statement binds.
+
+    Two imports bind the same thing when their sources are equal: the module
+    (and its relative level) and the imported name, or the module for
+    ``import a.b as c``.
+    """
+    bindings: list[tuple[str, tuple[object, ...]]] = []
+    for alias in node.names:
+        if isinstance(node, ast.ImportFrom):
+            source: tuple[object, ...] = (node.level, node.module, alias.name)
+            bound = alias.asname or alias.name
+        else:
+            source = (alias.name,)
+            bound = alias.asname or alias.name.partition(".")[0]
+            if alias.asname is None and "." in alias.name:
+                # `import a.b` binds `a` and imports `a.b`: another `import
+                # a.c` is neither a repeat of it nor a rebinding.
+                bound = alias.name
+        bindings.append((bound, source))
+    return bindings
+
+
+class _ModuleScope(ast.NodeVisitor):
+    """The names a module-level statement reads and (re)binds when it runs.
+
+    A function body, a lambda body and the bindings of a class body run later
+    or in a scope of their own: they neither read nor bind module names here.
+    Over-approximates (a comprehension target counts as a binding), which only
+    makes the import analysis keep more imports.
+    """
+
+    def __init__(self) -> None:
+        self.loads: set[str] = set()
+        self.stores: set[str] = set()
+        self._depth = 0
+
+    def _store(self, name: str) -> None:
+        if self._depth == 0:
+            self.stores.add(name)
+
+    def visit_Name(self, node: ast.Name) -> None:
+        if isinstance(node.ctx, ast.Load):
+            self.loads.add(node.id)
+        else:
+            self._store(node.id)
+
+    def visit_Import(self, node: ast.Import) -> None:
+        for name, _ in _import_bindings(node):
+            self._store(name)
+
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+        for name, _ in _import_bindings(node):
+            self._store(name)
+
+    def _function(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
+        self._store(node.name)
+        for decorator in node.decorator_list:
+            self.visit(decorator)
+        self.visit(node.args)
+        if node.returns is not None:
+            self.visit(node.returns)
+
+    visit_FunctionDef = _function
+    visit_AsyncFunctionDef = _function
+
+    def visit_Lambda(self, node: ast.Lambda) -> None:
+        self.visit(node.args)
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        self._store(node.name)
+        for expr in [*node.decorator_list, *node.bases, *node.keywords]:
+            self.visit(expr)
+        self._depth += 1
+        for statement in node.body:
+            self.visit(statement)
+        self._depth -= 1
+
+
+@dataclass
+class _Bound:
+    source: tuple[object, ...]
+    node: ast.Import | ast.ImportFrom
+    index: int
+    used: bool = False
+
+
+def _import_plan(
+    tree: ast.Module,
+) -> tuple[set[tuple[int, int]], list[tuple[int, str]]]:
+    """The module-level imports to drop, and the rebindings that cannot be.
+
+    The drops are ``(id(statement), index of the name)``: an import that
+    repeats an identical earlier one, and an import whose name a later import
+    from elsewhere rebinds before anything has read it (the later one wins in
+    Python, so dropping the earlier changes nothing).  What is left is a name
+    rebound after it was read, reported as ``(line, message)``.
+    """
+    drops: set[tuple[int, int]] = set()
+    problems: list[tuple[int, str]] = []
+    bound: dict[str, _Bound] = {}
+    for node in tree.body:
+        if not isinstance(node, (ast.Import, ast.ImportFrom)):
+            scope = _ModuleScope()
+            scope.visit(node)
+            for name in scope.loads & bound.keys():
+                bound[name].used = True
+            for name in scope.stores:
+                for key in [k for k in bound if k == name or k.startswith(name + ".")]:
+                    del bound[key]
+            continue
+        for index, (name, source) in enumerate(_import_bindings(node)):
+            if name == "*":
+                continue
+            earlier = bound.get(name)
+            if earlier is not None and earlier.source == source:
+                drops.add((id(node), index))
+                continue
+            if earlier is not None:
+                if earlier.used:
+                    problems.append(
+                        (
+                            node.lineno,
+                            f"`{name}` is imported again from somewhere "
+                            f"else (first on line {earlier.node.lineno}) after "
+                            "it was used, which Codon 0.19 cannot compile: "
+                            "import each name once, under its own name "
+                            "(`import ... as other` to tell two apart)",
+                        )
+                    )
+                else:
+                    drops.add((id(earlier.node), earlier.index))
+            bound[name] = _Bound(source, node, index)
+    return drops, problems
+
+
+def repeated_imports(tree: ast.Module, edits: _Edits) -> None:
+    """Drop the module-level imports Codon 0.19 cannot compile twice.
+
+    Python accepts ``from m import A`` twice (once in the import header, once
+    further down), and so does Codon 0.19 in the module it compiles first; in
+    any other module the repeat leaves the name undefined, so that a use of it
+    fails the whole function with a bare "cannot typecheck".  The same goes for
+    ``from a import X`` followed by ``from b import X``.  The earlier import
+    of a rebound name and the repeat of an identical one are removed on their
+    lines: a statement of such names becomes ``pass``, one with other names
+    keeps those.  A name rebound after it was read stays
+    (:func:`conflicting_imports`).
+    """
+    drops, _ = _import_plan(tree)
+    for node in tree.body:
+        if not isinstance(node, (ast.Import, ast.ImportFrom)):
+            continue
+        kept = [a for i, a in enumerate(node.names) if (id(node), i) not in drops]
+        if len(kept) == len(node.names):
+            continue
+        if not kept:
+            text = "pass"
+        else:
+            names = ", ".join(_alias(a.name, a.asname) for a in kept)
+            if isinstance(node, ast.ImportFrom):
+                text = f"from {'.' * node.level}{node.module or ''} import {names}"
+            else:
+                text = f"import {names}"
+        edits.replace(*edits.node_span(node), text)
+
+
+def conflicting_imports(source: str) -> list[tuple[int, str]]:
+    """(line, message) for each module-level name rebound after it was used.
+
+    ``from a import X`` followed by ``from b import X`` is valid Python (the
+    later import wins), but Codon 0.19 leaves the name undefined in any module
+    it does not compile first.  :func:`repeated_imports` drops the earlier
+    import when nothing read the name in between; when something did, the
+    rebinding has no single reading and is reported here.
+    """
+    if not source.endswith("\n"):
+        source += "\n"
+    return _import_plan(ast.parse(source))[1]
 
 
 def _enum_lookups(enums: list[tuple[str, str]]) -> list[tuple[str, str]]:
