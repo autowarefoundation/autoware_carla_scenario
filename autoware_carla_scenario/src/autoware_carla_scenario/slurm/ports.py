@@ -31,6 +31,8 @@ import fcntl
 import os
 import signal
 import socket
+import subprocess
+import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -38,6 +40,7 @@ from typing import IO
 
 __all__ = [
     "PORT_SLOT_WIDTH",
+    "CarlaWatchdog",
     "PortSlot",
     "acquire_slot",
     "carla_processes_on_port",
@@ -232,3 +235,60 @@ def kill_carla_on_port(port: int, *, grace_s: float = 5.0) -> list[int]:
             time.sleep(0.2)
         pids = carla_processes_on_port(port)
     return pids
+
+
+class CarlaWatchdog:
+    """Stops the task's CARLA if the worker dies without cleaning up.
+
+    CARLA runs in a session of its own (``CarlaServerManager.start``), so the
+    ``SIGKILL`` that follows a cancel's ``SIGTERM`` after the scheduler's grace
+    period (SLURM's ``KillWait``) reaches the worker but not CARLA -- unless
+    the site tracks a job's processes by cgroup.  A worker that is too slow to
+    stop CARLA within that period (a node under load) would leave it running,
+    holding the GPU and the slot's ports.
+
+    The watchdog is a process of its own (a session of its own too, so the
+    job's signals miss it) that holds the read end of a pipe the worker holds
+    the write end of.  End of file without a ``done`` first means the worker
+    died: it then runs :func:`kill_carla_on_port`.  It also holds the slot's
+    lock, so no other task takes the slot before CARLA is gone.
+    """
+
+    def __init__(self, slot: PortSlot) -> None:
+        pass_fds = [] if slot._lock is None else [slot._lock.fileno()]
+        self._process: subprocess.Popen[bytes] | None = subprocess.Popen(
+            [sys.executable, "-m", __name__, "--watch", str(slot.rpc)],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+            pass_fds=pass_fds,
+        )
+
+    def finish(self) -> None:
+        """The worker cleaned up itself: the watchdog has nothing to do."""
+        process, self._process = self._process, None
+        if process is None or process.stdin is None:
+            return
+        try:
+            process.stdin.write(b"done")
+            process.stdin.close()
+        except OSError:
+            pass  # it is gone: nothing to tell
+        try:
+            process.wait(timeout=5.0)
+        except subprocess.TimeoutExpired:
+            pass  # exits by itself; not worth holding the worker up
+
+
+def _watch(port: int) -> int:
+    if sys.stdin.buffer.read().startswith(b"done"):
+        return 0
+    kill_carla_on_port(port)
+    return 0
+
+
+if __name__ == "__main__":
+    if len(sys.argv) == 3 and sys.argv[1] == "--watch":
+        sys.exit(_watch(int(sys.argv[2])))
+    sys.exit(2)

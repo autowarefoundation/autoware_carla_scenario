@@ -14,7 +14,8 @@ has run (``slurm/results/<i>.json``); the task's progress is in
 ``slurm/tasks/<submission>-<task>.json``.
 
 SIGTERM (``scancel``, or ``--signal`` before the time limit) ends the case
-running and stops CARLA; the cases not run by then have no outcome and are run
+running and stops CARLA; if the worker is killed before it has (the SIGKILL
+after the scheduler's grace period), :class:`.ports.CarlaWatchdog` stops it; the cases not run by then have no outcome and are run
 again by ``scenario-slurm resubmit``.
 """
 
@@ -43,7 +44,13 @@ from .manifest import (
     file_sha256,
     write_json,
 )
-from .ports import PortSlot, acquire_slot, first_slot, kill_carla_on_port
+from .ports import (
+    CarlaWatchdog,
+    PortSlot,
+    acquire_slot,
+    first_slot,
+    kill_carla_on_port,
+)
 from .settings import SlurmSettings
 
 if TYPE_CHECKING:
@@ -435,6 +442,7 @@ def run_task(manifest_path: Path, submission_index: int, task_index: int) -> int
     signal.signal(signal.SIGUSR1, _raise_interrupt)
 
     slot: PortSlot | None = None
+    watchdog: CarlaWatchdog | None = None
     # Converts each case's trajectory log into a Rerun recording as the case
     # ends (rerun.enabled): each task converts its own cases.
     rerun: RerunConverter | None = None
@@ -461,6 +469,10 @@ def run_task(manifest_path: Path, submission_index: int, task_index: int) -> int
                 else None
             ),
         )
+        try:
+            watchdog = CarlaWatchdog(slot)
+        except OSError as exc:
+            logger.warning("No CARLA watchdog (%s): a SIGKILL would leave CARLA", exc)
         port_file = layout.task_port(submission_index, task_index)
         port_file.write_text(f"{slot.rpc}\n", encoding="utf-8")
         logger.info(
@@ -594,6 +606,9 @@ def run_task(manifest_path: Path, submission_index: int, task_index: int) -> int
                 logger.error("CARLA on port %d still runs: %s", slot.rpc, left)
             else:
                 layout.task_port(submission_index, task_index).unlink(missing_ok=True)
+                if watchdog is not None:
+                    watchdog.finish()
+            # With CARLA left, the watchdog ends it when this process does.
             slot.release()
     return exit_status
 
