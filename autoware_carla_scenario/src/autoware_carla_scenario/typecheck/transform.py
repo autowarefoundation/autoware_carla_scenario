@@ -15,7 +15,12 @@ which :func:`transform_source_lines` maps back onto the handler):
   ``typing`` shim maps onto ``List`` / ``Dict``.
 * ``@dataclass`` is removed (a Codon class with annotated fields already gets
   the dataclass ``__init__``), and each ``field(default=...)`` /
-  ``field(default_factory=...)`` is replaced by its default.
+  ``field(default_factory=...)`` is replaced by its default.  The methods
+  ``@dataclass`` generates besides ``__init__`` are appended after the module
+  with ``@extend`` (:func:`_dataclass_dunders`): ``__eq__`` / ``__ne__``,
+  ``__hash__`` (``frozen`` or ``unsafe_hash``), ordering (``order=True``).
+* A ``class Pt(NamedTuple)`` becomes a Codon ``@tuple`` class, the decorator
+  on a new line above it (:func:`tuple_named_tuples`).
 * ``@abstractmethod`` is removed (Codon 0.19 cannot decorate a method; the
   ``abc`` shim's ``ABC`` is an empty base), and so is ``@runtime_checkable``
   (the ``typing`` shim's ``Protocol`` is an empty base too).
@@ -50,6 +55,9 @@ which :func:`transform_source_lines` maps back onto the handler):
   ``auto()``), and each member ``RED = "red"`` becomes the class variable
   ``RED: ClassVar[C] = C("RED", "red")``.  After the module, each such class
   is given a constructor by value (``C("red")``) with ``@extend``.
+  An ``IntEnum`` / ``IntFlag`` / ``(int, Enum)`` derives from the shim's
+  ``IntEnum[int]`` (ordering, ``int()``), a ``StrEnum`` / ``(str, Enum)`` from
+  ``StrEnum[str]`` (equality with its string); no other enum has either.
 * A class deriving from an exception (a built-in one, one defined above it in
   the module, or a name ending in ``Error`` / ``Exception``) derives from
   ``Static[Base]``, as Codon 0.19 derives exceptions.
@@ -141,6 +149,7 @@ __all__ = [
     "redirect_imports",
     "relative_module_imports",
     "split_tuple_excepts",
+    "tuple_named_tuples",
     "uncalled_nodes",
     "transform_source",
     "transform_source_lines",
@@ -168,6 +177,7 @@ PRELUDE = (
     "_acs_dict_into\n"
     "from autoware_carla_scenario._tc import _Required as _acs_Required, "
     "_acs_Returning, _acs_callable, _acs_tuple\n"
+    "from enum import IntEnum as _acs_IntEnum, StrEnum as _acs_StrEnum\n"
     "from autoware_carla_scenario._exceptions import "
     + ", ".join(MISSING_BUILTIN_EXCEPTIONS)
     + "\n"
@@ -1197,7 +1207,10 @@ class _Rewriter(ast.NodeVisitor):
             else:
                 self.visit(decorator)
         members = self._rewrite_enum(node)
-        if (
+        if _is_named_tuple(node):
+            # `@tuple` is on the line above (tuple_named_tuples).
+            self.edits.replace(*self.edits.node_span(node.bases[0]), "")
+        elif (
             members is None
             and self._class_depth == 0
             and self._function_depth == 0
@@ -1281,7 +1294,15 @@ class _Rewriter(ast.NodeVisitor):
             )
         first_start = self.edits.node_span(node.bases[0])[0]
         last_end = self.edits.node_span(node.bases[-1])[1]
-        self.edits.replace(first_start, last_end, f"{enum_base}[{value_type}]")
+        # Only an int-valued IntEnum / IntFlag / (int, Enum) orders and
+        # converts like its value, and a StrEnum / (str, Enum) equals its
+        # string: the shim has a class for each, a plain Enum has neither.
+        shim = enum_base
+        if kind in {"IntEnum", "IntFlag"} or "int" in bases:
+            shim = "_acs_IntEnum"
+        elif kind == "StrEnum" or "str" in bases:
+            shim = "_acs_StrEnum"
+        self.edits.replace(first_start, last_end, f"{shim}[{value_type}]")
         if self._class_depth == 0 and self._function_depth == 0:
             self.enums.append((node.name, value_type))
         return [stmt for stmt, _, _ in members]
@@ -1678,6 +1699,45 @@ def _splittable(handler: ast.ExceptHandler) -> bool:
     )
 
 
+_NAMED_TUPLE_BASES = {"NamedTuple", "typing.NamedTuple"}
+
+
+def _is_named_tuple(node: ast.ClassDef) -> bool:
+    """``class Pt(NamedTuple):``, the class syntax (the only base, no keyword)."""
+    return (
+        len(node.bases) == 1
+        and not node.keywords
+        and _dotted(node.bases[0]) in _NAMED_TUPLE_BASES
+    )
+
+
+def tuple_named_tuples(source: str, origin: list[int]) -> tuple[str, list[int]]:
+    """Put ``@tuple`` above each ``class Pt(NamedTuple)``.
+
+    Codon refuses a class deriving from ``NamedTuple`` ("reference classes
+    cannot inherit tuple classes"); its own ``@tuple`` class is the same
+    thing: immutable, built from its fields in order (with defaults), indexed,
+    unpacked and iterated, with ``==``, ordering and hashing by value.  The
+    base is dropped by the rewriter; the decorator is a new line, which maps
+    to the class's line (*origin* is :func:`split_tuple_excepts`'s, extended
+    the same way).
+    """
+    lines = source.encode().splitlines(keepends=True)
+    origin = list(origin)
+    classes = [
+        node
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.ClassDef) and _is_named_tuple(node)
+    ]
+    for node in sorted(classes, key=lambda n: n.lineno, reverse=True):
+        # Above the first decorator, if the class has any.
+        first = min([node.lineno, *(d.lineno for d in node.decorator_list)])
+        indent = b" " * node.col_offset
+        lines.insert(first - 1, indent + b"@tuple\n")
+        origin.insert(first - 1, origin[node.lineno - 1])
+    return b"".join(lines).decode(), origin
+
+
 def split_tuple_excepts(source: str) -> tuple[str, list[int]]:
     """Split each ``except (A, B):`` into one handler per class, in order.
 
@@ -1774,6 +1834,7 @@ def transform_source_lines(
     if not source.endswith("\n"):
         source += "\n"
     source, origin = split_tuple_excepts(source)
+    source, origin = tuple_named_tuples(source, origin)
     tree = ast.parse(source)
     edits = _Edits(source.encode().splitlines(keepends=True))
     exceptions = _exception_classes(tree)
@@ -1788,6 +1849,7 @@ def transform_source_lines(
     appended = [
         *_enum_lookups(rewriter.enums),
         *_inherited_init_extensions(_inherited_bases(tree, init_classes, exceptions)),
+        *_dataclass_dunders(tree, exceptions),
     ]
     text = PRELUDE + edits.apply()
     origin = list(origin)
@@ -2002,6 +2064,156 @@ def _enum_lookups(enums: list[tuple[str, str]]) -> list[tuple[str, str]]:
         )
         for name, value_type in enums
     ]
+
+
+#: Bases of a dataclass that add no field and no generated method.
+_PLAIN_BASES = {"object", "ABC", "abc.ABC"}
+_NOT_FIELDS = {"ClassVar", "typing.ClassVar", "InitVar", "dataclasses.InitVar"}
+_NOT_FIELDS |= {"KW_ONLY", "dataclasses.KW_ONLY"}
+
+
+def _dataclass_options(node: ast.ClassDef) -> dict[str, bool] | None:
+    """The flags of *node*'s ``@dataclass`` (Python's defaults where not
+    written as a literal), or ``None`` for a class that is no dataclass."""
+    options = {"eq": True, "order": False, "frozen": False, "unsafe_hash": False}
+    for decorator in node.decorator_list:
+        target = decorator.func if isinstance(decorator, ast.Call) else decorator
+        if _dotted(target) not in ("dataclass", "dataclasses.dataclass"):
+            continue
+        if isinstance(decorator, ast.Call):
+            for keyword in decorator.keywords:
+                if (
+                    keyword.arg in options
+                    and isinstance(keyword.value, ast.Constant)
+                    and isinstance(keyword.value.value, bool)
+                ):
+                    options[keyword.arg] = keyword.value.value
+        return options
+    return None
+
+
+def _compared_fields(node: ast.ClassDef) -> list[str]:
+    """The fields *node* declares that ``==``, ordering and hashing compare:
+    not a ``ClassVar``, an ``InitVar``, ``KW_ONLY`` or ``field(compare=False)``."""
+    names = []
+    for stmt in node.body:
+        if not (isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name)):
+            continue
+        annotation = stmt.annotation
+        if isinstance(annotation, ast.Constant) and isinstance(annotation.value, str):
+            annotation = ast.parse(annotation.value, mode="eval").body
+        if isinstance(annotation, ast.Subscript):
+            annotation = annotation.value
+        if _dotted(annotation) in _NOT_FIELDS:
+            continue
+        value = stmt.value
+        if isinstance(value, ast.Call) and _dotted(value.func) in _FIELD_FUNCTIONS:
+            if any(
+                k.arg == "compare"
+                and isinstance(k.value, ast.Constant)
+                and k.value.value is False
+                for k in value.keywords
+            ):
+                continue
+        names.append(stmt.target.id)
+    return names
+
+
+def _defined_methods(node: ast.ClassDef) -> set[str]:
+    return {
+        m.name
+        for m in node.body
+        if isinstance(m, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+
+
+def _dataclass_dunders(tree: ast.Module, exceptions: set[str]) -> list[tuple[str, str]]:
+    """The methods Python's ``@dataclass`` generates that Codon does not, per class.
+
+    The check drops ``@dataclass`` (Codon's constructor takes the fields), so
+    ``==``, ``!=`` and ``in``, hashing (``frozen=True``, ``unsafe_hash=True``)
+    and ordering (``order=True``) are missing.  Each is appended after the
+    module with ``@extend``, comparing the fields in order (the fields of a
+    dataclass base first), as Python does: ``eq=False`` and a method the
+    class defines itself are respected.  A top-level dataclass with a base the
+    module does not define (a framework dataclass, ``Generic``) is left as it
+    is: its fields are not known here.  Each is (the class, the lines).
+    """
+    fields: dict[str, list[str]] = {}
+    out: list[tuple[str, str]] = []
+    for node in tree.body:
+        if not isinstance(node, ast.ClassDef):
+            continue
+        options = _dataclass_options(node)
+        if options is None or node.name in exceptions or node.keywords:
+            continue
+        inherited: list[str] | None = []
+        for base in node.bases:
+            name = _dotted(base)
+            if name in fields:
+                inherited = [*(inherited or []), *fields[name]]
+            elif name not in _PLAIN_BASES:
+                inherited = None
+                break
+        if inherited is None:
+            continue
+        names = [*inherited, *(n for n in _compared_fields(node) if n not in inherited)]
+        fields[node.name] = names
+        own = _defined_methods(node)
+        lines: list[str] = []
+
+        def method(
+            name: str,
+            result: str,
+            body: str,
+            lines: list[str] = lines,
+            own: set[str] = own,
+        ) -> None:
+            if name in own:
+                return
+            other = "" if name == "__hash__" else f", other: {node.name}"
+            lines.append(
+                f"    def {name}(self{other}) -> {result}:\n        return {body}\n"
+            )
+
+        def tuples(op: str) -> str:
+            if not names:
+                return "True" if "=" in op else "False"
+            mine = ", ".join(f"self.{n}" for n in names)
+            theirs = ", ".join(f"other.{n}" for n in names)
+            return f"({mine},) {op} ({theirs},)"
+
+        if options["eq"]:
+            same = " and ".join(f"self.{n} == other.{n}" for n in names) or "True"
+            method("__eq__", "bool", same)
+            method("__ne__", "bool", "not self.__eq__(other)")
+            if options["frozen"] or options["unsafe_hash"]:
+                method(
+                    "__hash__",
+                    "int",
+                    f"hash(({', '.join(f'self.{n}' for n in names)},))"
+                    if names
+                    else "0",
+                )
+        elif options["unsafe_hash"]:
+            method(
+                "__hash__",
+                "int",
+                f"hash(({', '.join(f'self.{n}' for n in names)},))" if names else "0",
+            )
+        if options["order"]:
+            for dunder, op in (
+                ("__lt__", "<"),
+                ("__le__", "<="),
+                ("__gt__", ">"),
+                ("__ge__", ">="),
+            ):
+                method(dunder, "bool", tuples(op))
+        if lines:
+            out.append(
+                (node.name, f"\n\n@extend\nclass {node.name}:\n" + "".join(lines))
+            )
+    return out
 
 
 def _inherited_init_extensions(

@@ -228,7 +228,7 @@ def test_every_line_stays_where_it_was() -> None:
             later: int = 0  # marker
         """
     )
-    out = _transform(source)
+    out = _transform(source).partition("\n\n@extend\n")[0]  # the dunders follow
     assert out.count("\n") == source.count("\n")
     lines = out.splitlines()
     assert lines[source.splitlines().index("    later: int = 0  # marker")] == (
@@ -810,6 +810,40 @@ def test_a_return_annotation_over_several_lines_is_dropped_in_place() -> None:
     assert lines[7] == "    return n"
 
 
+def test_only_an_int_or_str_enum_derives_from_the_value_comparing_classes() -> None:
+    out = _transform(
+        textwrap.dedent(
+            """
+            import enum
+            class A(enum.IntEnum):
+                X = 1
+            class B(int, enum.Enum):
+                X = 1
+            class C(enum.IntFlag):
+                X = 1
+            class D(enum.StrEnum):
+                X = "x"
+            class E(str, enum.Enum):
+                X = "x"
+            class F(enum.Enum):
+                X = 1
+            class G(enum.Flag):
+                X = 1
+            """
+        )
+    )
+    for line in (
+        "class A(_acs_IntEnum[int]):",
+        "class B(_acs_IntEnum[int]):",
+        "class C(_acs_IntEnum[int]):",
+        "class D(_acs_StrEnum[str]):",
+        "class E(_acs_StrEnum[str]):",
+        "class F(enum.Enum[int]):",
+        "class G(enum.Flag[int]):",
+    ):
+        assert line in out
+
+
 def test_an_enum_becomes_a_subclass_of_the_enum_shim() -> None:
     source = textwrap.dedent(
         """
@@ -838,7 +872,7 @@ def test_an_enum_becomes_a_subclass_of_the_enum_shim() -> None:
     body = out.partition("\n\n@extend\n")[0]  # the constructors by value follow
     assert body.count("\n") == source.count("\n")
     assert "@unique" not in out
-    assert "class Turn(Enum[str]):" in out
+    assert "class Turn(_acs_StrEnum[str]):" in out
     assert "    LEFT: ClassVar[Turn] = Turn('LEFT', \"left\")" in out
     assert "    RIGHT: ClassVar[Turn] = Turn('RIGHT', \"right\")" in out
     assert "    def opposite(self) -> Turn:" in out
@@ -872,7 +906,7 @@ def test_an_enum_is_given_a_constructor_by_value_after_the_module() -> None:
 
 def test_a_str_enum_with_auto_values_takes_the_lowercase_names() -> None:
     out = _transform("class Mode(StrEnum):\n    FAST = auto()\n")
-    assert "class Mode(StrEnum[str]):" in out
+    assert "class Mode(_acs_StrEnum[str]):" in out
     assert "FAST: ClassVar[Mode] = Mode('FAST', 'fast')" in out
 
 
@@ -1935,3 +1969,180 @@ def test_star_imports_and_future_imports_are_not_rebindings() -> None:
 def test_a_try_import_fallback_is_left_alone() -> None:
     text = "from a import X\ntry:\n    from b import X\nexcept ImportError:\n    pass\n"
     assert _body(text) == text
+
+
+# The methods @dataclass generates, and a NamedTuple as a @tuple (#365)
+
+
+def _appended(source: str, name: str) -> str:
+    """The ``@extend`` block appended for class *name*."""
+    out = transform_source(textwrap.dedent(source))
+    blocks = out.split("\n\n@extend\n")[1:]
+    return next((b for b in blocks if b.startswith(f"class {name}:")), "")
+
+
+def _methods(block: str) -> set[str]:
+    return {
+        node.name
+        for node in ast.walk(ast.parse(block))
+        if isinstance(node, ast.FunctionDef)
+    }
+
+
+def test_a_dataclass_gets_eq_and_ne_comparing_its_fields() -> None:
+    block = _appended(
+        """
+        @dataclass
+        class Fz:
+            a: int
+            b: str = "x"
+        """,
+        "Fz",
+    )
+    assert _methods(block) == {"__eq__", "__ne__"}
+    assert "return self.a == other.a and self.b == other.b" in block
+    assert "return not self.__eq__(other)" in block
+    ast.parse(block.replace("class Fz", "@extend\nclass Fz", 1))
+
+
+@pytest.mark.parametrize(
+    ("decorator", "methods"),
+    [
+        ("@dataclass", {"__eq__", "__ne__"}),
+        ("@dataclass(eq=False)", set()),
+        ("@dataclass(frozen=True)", {"__eq__", "__ne__", "__hash__"}),
+        ("@dataclass(unsafe_hash=True)", {"__eq__", "__ne__", "__hash__"}),
+        ("@dataclass(eq=False, unsafe_hash=True)", {"__hash__"}),
+        (
+            "@dataclasses.dataclass(order=True)",
+            {"__eq__", "__ne__", "__lt__", "__le__", "__gt__", "__ge__"},
+        ),
+    ],
+)
+def test_a_dataclasss_flags_pick_the_methods_generated(
+    decorator: str, methods: set[str]
+) -> None:
+    source = f"{decorator}\nclass Fz:\n    a: int\n"
+    out = transform_source(source)
+    generated = {
+        node.name
+        for node in ast.walk(ast.parse(out.partition("\n\n@extend\n")[2] or "pass"))
+        if isinstance(node, ast.FunctionDef)
+    }
+    assert generated == methods, out
+
+
+def test_order_compares_the_field_tuples_and_hash_hashes_them() -> None:
+    out = transform_source(
+        "@dataclass(frozen=True, order=True)\nclass Fz:\n    a: int\n    b: int\n"
+    )
+    assert "return (self.a, self.b,) < (other.a, other.b,)" in out
+    assert "return (self.a, self.b,) >= (other.a, other.b,)" in out
+    assert "return hash((self.a, self.b,))" in out
+
+
+def test_a_dataclass_inheriting_a_dataclass_compares_the_base_fields_first() -> None:
+    out = transform_source(
+        textwrap.dedent(
+            """
+            @dataclass(frozen=True)
+            class Base:
+                a: int
+
+            @dataclass(frozen=True)
+            class Sub(Base):
+                b: int
+                a: int = 0
+            """
+        )
+    )
+    sub = out.rpartition("class Sub:")[2]
+    assert "self.a == other.a and self.b == other.b" in sub
+    assert "hash((self.a, self.b,))" in sub
+
+
+def test_fields_that_are_not_compared_are_left_out() -> None:
+    out = transform_source(
+        textwrap.dedent(
+            """
+            @dataclass
+            class Fz:
+                a: int
+                b: ClassVar[int] = 1
+                c: int = field(default=0, compare=False)
+                d: InitVar[int] = 0
+            """
+        )
+    )
+    assert "return self.a == other.a\n" in out
+
+
+def test_a_method_the_class_defines_is_kept() -> None:
+    out = transform_source(
+        textwrap.dedent(
+            """
+            @dataclass(frozen=True, order=True)
+            class Fz:
+                a: int
+
+                def __eq__(self, other: "Fz") -> bool:
+                    return True
+
+                def __lt__(self, other: "Fz") -> bool:
+                    return False
+            """
+        )
+    )
+    appended = out.partition("\n\n@extend\n")[2]
+    assert "def __eq__" not in appended
+    assert "def __lt__" not in appended
+    assert "__hash__" in appended and "__le__" in appended
+
+
+@pytest.mark.parametrize(
+    "bases",
+    ["FrameworkConfig", "Generic[T]", "Mixin, FrameworkConfig"],
+)
+def test_a_dataclass_with_a_base_it_cannot_see_is_left_alone(bases: str) -> None:
+    out = transform_source(f"@dataclass\nclass Fz({bases}):\n    a: int\n")
+    assert "@extend" not in out
+
+
+def test_the_dunders_map_to_the_line_of_their_class() -> None:
+    source = "x = 1\n\n\n@dataclass(frozen=True)\nclass Fz:\n    a: int\n"
+    out, origin = transform_source_lines(source)
+    extra = out.count("\n") - PRELUDE.count("\n") - len(origin)
+    assert extra == 0
+    assert len(origin) == out.count("\n") - PRELUDE.count("\n")
+    assert origin[-1] == 5  # the class line, for every appended line
+    assert origin[:6] == [1, 2, 3, 4, 5, 6]
+
+
+def test_a_namedtuple_class_becomes_a_tuple_class_on_the_same_lines() -> None:
+    source = (
+        "import typing\n\n\nclass Pt(typing.NamedTuple):\n"
+        "    x: int\n    y: float = 1.0\n\n\nz = Pt(1)\n"
+    )
+    out, origin = transform_source_lines(source)
+    body = out[len(PRELUDE) :]
+    assert "@tuple\nclass Pt():\n    x: int\n    y: float = 1.0\n" in body
+    # The decorator is a new line, mapped to its class.
+    lines = body.splitlines()
+    assert origin[lines.index("@tuple")] == 4
+    assert origin[lines.index("    x: int")] == 5
+    assert origin[lines.index("z = Pt(1)")] == 9
+
+
+def test_a_decorated_or_nested_namedtuple_gets_the_decorator_above_it() -> None:
+    source = (
+        "from typing import NamedTuple\n\n\n"
+        "def f():\n    class Q(NamedTuple):\n        a: int\n    return Q\n"
+    )
+    out = transform_source(source)
+    assert "    @tuple\n    class Q():\n" in out
+    ast.parse(out[len(PRELUDE) :])
+
+
+def test_other_tuple_classes_are_not_made_tuples() -> None:
+    out = transform_source("class A(NamedTuple, Other):\n    x: int\n")
+    assert "@tuple" not in out

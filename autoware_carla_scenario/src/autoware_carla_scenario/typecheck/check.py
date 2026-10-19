@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import ast
 import dataclasses
+import enum
 import hashlib
 import importlib.metadata
 import importlib.util
@@ -908,6 +909,116 @@ def _python_class(name: str, sources: _Sources) -> type | None:
             continue
         if isinstance(found, type):
             return found
+    return None
+
+
+_EXPECTED_TYPE = re.compile(
+    r"^'(?P<cls>\w+)' does not match expected type '(?P<want>str|int|float)'"
+)
+_OPERAND = re.compile(
+    r"^unsupported operand type\(s\) for (?P<op>[^:]+): '(?P<cls>\w+)' and"
+)
+_GETITEM = re.compile(r"__getitem__\(self: (?P<cls>\w+),")
+_NO_HASH = re.compile(r"^'(?P<cls>\w+)' object has no attribute '__hash__'")
+_NAMED_TUPLE_ONLY = ("_replace", "_asdict", "_fields", "_field_defaults", "_make")
+
+
+def _is_named_tuple_class(cls: type | None) -> bool:
+    return (
+        cls is not None and issubclass(cls, tuple) and hasattr(cls, "_fields")
+    )  # typing.NamedTuple / collections.namedtuple
+
+
+def _data_model_hints(
+    diagnostics: list[Diagnostic], sources: _Sources
+) -> list[Diagnostic]:
+    """Why Codon refuses a scenario's own dataclass, enum or NamedTuple, and
+    what to write instead (#365).
+
+    The check generates a dataclass's ``==``, hash and ordering and gives an
+    ``IntEnum`` / ``(str, Enum)`` member its comparisons and ``int()``, and
+    makes a ``NamedTuple`` a Codon ``@tuple``; what remains is Codon's own
+    refusal, which names none of this.
+    """
+    out = []
+    for diagnostic in diagnostics:
+        hint = None
+        message = diagnostic.message
+        try:
+            hint = _data_model_hint(message, diagnostic.trace, sources)
+        except Exception:  # noqa: BLE001 - only a hint: never lose Codon's error
+            pass
+        if hint is not None:
+            diagnostic = dataclasses.replace(diagnostic, message=f"{message}: {hint}")
+        out.append(diagnostic)
+    return out
+
+
+def _data_model_hint(
+    message: str, trace: tuple[str, ...], sources: _Sources
+) -> str | None:
+    expected = _EXPECTED_TYPE.match(message)
+    if expected is not None:
+        cls = _python_class(expected["cls"], sources)
+        if (
+            cls is not None
+            and issubclass(cls, enum.Enum)
+            and issubclass(cls, (int, str))
+        ):
+            return (
+                f"an {cls.__name__} member is not a {expected['want']} in the "
+                f"check (only its comparisons and int() are modelled): pass "
+                f"its .value"
+            )
+    operand = _OPERAND.match(message)
+    if operand is not None:
+        cls = _python_class(operand["cls"], sources)
+        if cls is not None and issubclass(cls, enum.Enum) and issubclass(cls, int):
+            return (
+                f"an {cls.__name__} member does no arithmetic in the check "
+                f"(only comparisons and int()): use its .value"
+            )
+        if cls is not None and dataclasses.is_dataclass(cls):
+            if operand["op"] in ("==", "!="):
+                return (
+                    "the check gives a @dataclass its == and != only with "
+                    "eq=True (the default) and bases it can see the fields "
+                    "of (dataclasses of this module); with eq=False Python "
+                    "compares by identity: write `a is b`, or compare the "
+                    "fields"
+                )
+            return (
+                "the check gives a @dataclass ordering only with "
+                "order=True (Python refuses it otherwise) and bases it can "
+                "see the fields of (dataclasses of this module); compare "
+                "the fields instead"
+            )
+    no_hash = _NO_HASH.match(message)
+    if no_hash is not None:
+        cls = _python_class(no_hash["cls"], sources)
+        if cls is not None and dataclasses.is_dataclass(cls):
+            return (
+                "the check generates hash() for a @dataclass(frozen=True) "
+                "(or unsafe_hash=True) whose bases are dataclasses of this "
+                "module; key on a field or a tuple of fields instead"
+            )
+    if message.startswith("expected iterable expression"):
+        for frame in trace:
+            found = _GETITEM.search(frame)
+            if found and _is_named_tuple_class(_python_class(found["cls"], sources)):
+                return (
+                    "Codon indexes and unpacks a NamedTuple only when all its "
+                    "fields have one type: read the fields by name "
+                    "(p.x, p.y)"
+                )
+    missing = _NO_ATTRIBUTE.search(message)
+    if missing is not None and missing["attr"] in _NAMED_TUPLE_ONLY:
+        if _is_named_tuple_class(_python_class(missing["cls"], sources)):
+            return (
+                f"a NamedTuple is a Codon @tuple in the check, which has no "
+                f"{missing['attr']}(): build a new {missing['cls']}(...) from "
+                f"the fields instead"
+            )
     return None
 
 
@@ -1802,8 +1913,9 @@ def _compile(
         except subprocess.TimeoutExpired:
             return None
         output = proc.stdout + proc.stderr
-        diagnostics = _with_member_reasons(
-            _variadic_hints(_parse_output(output, ws)), sources
+        diagnostics = _data_model_hints(
+            _with_member_reasons(_variadic_hints(_parse_output(output, ws)), sources),
+            sources,
         )
         if proc.returncode != 0:
             try:
