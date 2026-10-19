@@ -1810,3 +1810,14 @@ def test_an_own_module_import_codon_cannot_resolve_is_refused_with_the_working_f
     assert line == 2
     assert f"`{written}`" in message
     assert form in message, message
+
+
+def test_a_top_level_module_imports_its_sibling_as_written() -> None:
+    # No package: the importing file's directory is the root, so `import
+    # helpers` is already the form Codon resolves, and is not refused.
+    source = "import helpers\nimport helpers as h\n"
+    out, problems = relative_module_imports(
+        source, "scenario", False, {"helpers"}.__contains__
+    )
+    assert problems == []
+    assert out == "import helpers as helpers\nimport helpers as h\n"

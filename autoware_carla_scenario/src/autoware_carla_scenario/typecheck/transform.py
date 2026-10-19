@@ -2187,8 +2187,9 @@ def relative_module_imports(
     problems: list[tuple[int, str]] = []
 
     def form(target: str, asname: str, written: str, line: int) -> str | None:
-        if target.startswith(package + "."):
-            return f"import {target[len(package) + 1 :]} as {asname}"
+        prefix = package + "." if package else ""
+        if target.startswith(prefix):
+            return f"import {target[len(prefix) :]} as {asname}"
         problems.append(
             (
                 line,
