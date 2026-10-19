@@ -200,6 +200,18 @@ class BaseCondition(ABC):
         """
         ...
 
+    def close(self) -> None:
+        """Release what the condition holds in the simulator, at the run's end.
+
+        The runner calls it once the run is over, on every pass and fail
+        condition and every action's trigger, before the world is reloaded.
+        A condition that started a sensor listening stops and destroys it here,
+        through its own handle: only that handle unsubscribes the sensor's
+        stream on the client (``CollisionCondition``).  A composite condition
+        closes its children.  Nothing by default; a closed condition is not
+        checked again, and closing one twice does nothing.
+        """
+
     def get_details(self) -> dict[str, Any]:
         """Return structured details about this condition's configuration.
 

@@ -46,6 +46,10 @@ class StickyCondition(BaseCondition):
         self._condition = condition
         self._latched_result: Optional[ScenarioResult] = None
 
+    def close(self) -> None:
+        """Close the child (:meth:`BaseCondition.close`)."""
+        self._condition.close()
+
     def get_details(self) -> dict[str, Any]:
         return {
             "wrapper": "sticky",

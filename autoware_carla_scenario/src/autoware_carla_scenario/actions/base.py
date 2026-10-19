@@ -181,6 +181,15 @@ class BaseAction(ABC):
         """
         return self.REISSUES_BY_DEFAULT
 
+    def close(self) -> None:
+        """Close the action's trigger and its *until* condition, at the run's
+        end (:meth:`BaseCondition.close`)."""
+        self._condition.close()
+        if self._until is not None:
+            # Annotated, so Codon unwraps the Optional (docs/typecheck.md).
+            until: BaseCondition = self._until
+            until.close()
+
     @abstractmethod
     def execute(self, world: "carla.World") -> None:
         """Perform the action.

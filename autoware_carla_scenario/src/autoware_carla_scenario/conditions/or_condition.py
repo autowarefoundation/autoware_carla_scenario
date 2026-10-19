@@ -34,6 +34,11 @@ class OrCondition(BaseCondition):
         super().__init__(label=label if label is not None else auto_label)
         self._conditions: Sequence[BaseCondition] = conditions
 
+    def close(self) -> None:
+        """Close every child (:meth:`BaseCondition.close`)."""
+        for condition in self._conditions:
+            condition.close()
+
     def get_details(self) -> dict[str, Any]:
         return {
             "operator": "OR",

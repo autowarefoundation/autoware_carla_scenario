@@ -713,6 +713,37 @@ class BaseScenario(ABC):
         else:
             _register_entity(entity.role_name, entity)
 
+    def close_conditions(self) -> None:
+        """Close every condition of the run: the pass and fail conditions and
+        the actions' triggers (:meth:`BaseCondition.close`).
+
+        The runner calls it at the run's end, while the world is still the
+        run's, so that a sensor a condition started listening is stopped and
+        destroyed through its own handle before the world is cleared.  A
+        condition whose close raises is logged, and the others are still
+        closed.
+        """
+        conditions: List[BaseCondition] = self._pass_conditions + self._fail_conditions
+        for condition in conditions:
+            try:
+                condition.close()
+            except Exception:  # noqa: BLE001 - the rest must still be closed
+                logger.warning(
+                    "Closing condition %s failed", condition.label, exc_info=True
+                )
+        # Concatenated rather than unpacked into a tuple, which Codon cannot.
+        for action in (
+            self._init_actions + self._pre_tick_actions + self._post_tick_actions
+        ):
+            try:
+                action.close()
+            except Exception:  # noqa: BLE001 - the rest must still be closed
+                logger.warning(
+                    "Closing the conditions of action %s failed",
+                    action.label,
+                    exc_info=True,
+                )
+
     def register_pass_condition(self, condition: BaseCondition) -> None:
         """Register a condition that marks the scenario as *passed*.
 

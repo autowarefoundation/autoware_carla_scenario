@@ -408,6 +408,13 @@ _MAP_FEATURES = (
     "scenario reads the route's lanelets (lanelets, junction_way()) instead"
 )
 
+_RUN_CLEANUP = (
+    "what the runner's cleanup calls once the run is over, to stop and "
+    "destroy a sensor a condition started listening through its own handle "
+    "(#371); a scenario never calls it, and a condition that overrides it "
+    "needs no declaration in the model to do so"
+)
+
 
 def _members(names: str, reason: str) -> dict[str, str]:
     return {name: reason for name in names.split()}
@@ -421,8 +428,13 @@ def _members(names: str, reason: str) -> dict[str, str]:
 #: class itself (`BackendDriven`).
 NOT_MODELLED_MEMBERS: dict[str, dict[str, str]] = {
     "BackendDriven": {"set_traffic_backend": _SET_TRAFFIC_BACKEND},
-    "BaseCondition": _members("get_details to_summary_dict", _CONDITION_DETAILS),
+    "BaseAction": {"close": _RUN_CLEANUP},
+    "BaseCondition": {
+        **_members("get_details to_summary_dict", _CONDITION_DETAILS),
+        "close": _RUN_CLEANUP,
+    },
     "BaseScenario": {
+        "close_conditions": _RUN_CLEANUP,
         **_members("set_traffic_backend traffic_backend", _SET_TRAFFIC_BACKEND),
         "ego_type": _EGO_TYPE,
     },

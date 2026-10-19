@@ -43,6 +43,10 @@ class PersistentCondition(BaseCondition):
         self._duration = duration
         self._true_start: Optional[float] = None
 
+    def close(self) -> None:
+        """Close the child (:meth:`BaseCondition.close`)."""
+        self._condition.close()
+
     def get_details(self) -> dict[str, Any]:
         return {
             "wrapper": "persistent",

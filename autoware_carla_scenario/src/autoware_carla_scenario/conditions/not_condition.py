@@ -64,6 +64,10 @@ class NotCondition(BaseCondition):
         self._condition = condition
         self._holds_when_pending = holds_when_pending
 
+    def close(self) -> None:
+        """Close the child (:meth:`BaseCondition.close`)."""
+        self._condition.close()
+
     def get_details(self) -> dict[str, Any]:
         details: dict[str, Any] = {
             "operator": "NOT",
