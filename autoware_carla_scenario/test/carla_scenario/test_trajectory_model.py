@@ -263,6 +263,51 @@ class TestAlongThePath:
         assert u_turn.project(5.0, 0.5, near=96.0, window=10.0) == pytest.approx(96.0)
         assert u_turn.project(5.0, 0.4, near=5.0, window=10.0) == pytest.approx(5.0)
 
+    def test_project_near_answers_as_a_scan_of_every_segment_would(self) -> None:
+        """The window is found by bisection rather than by testing each
+        segment; the answer is the one a test of each segment gives, at the
+        window's edges, with repeated vertices, and with *near* off the path."""
+        import random
+
+        rng = random.Random(7)
+        xs, ys = [0.0], [0.0]
+        for _ in range(200):
+            if rng.random() < 0.1:  # a repeated vertex: a zero-length segment
+                xs.append(xs[-1])
+                ys.append(ys[-1])
+            else:
+                xs.append(xs[-1] + rng.uniform(-5.0, 5.0))
+                ys.append(ys[-1] + rng.uniform(-5.0, 5.0))
+        path = ResolvedTrajectory(xs=xs, ys=ys, zs=[0.0] * len(xs), yaws=[None] * 201)
+
+        def scanned(x: float, y: float, near: float, window: float) -> float:
+            arc = path._arc
+            best, along = math.inf, 0.0
+            for i in range(len(arc) - 1):
+                if arc[i + 1] < near - window or arc[i] > near + window:
+                    continue
+                x0, y0 = path.xs[i], path.ys[i]
+                dx, dy = path.xs[i + 1] - x0, path.ys[i + 1] - y0
+                squared = dx * dx + dy * dy
+                f = (
+                    0.0
+                    if squared < 1e-6
+                    else min(max(((x - x0) * dx + (y - y0) * dy) / squared, 0.0), 1.0)
+                )
+                gap = math.hypot(x0 + f * dx - x, y0 + f * dy - y)
+                if gap < best:
+                    best, along = gap, arc[i] + f * math.sqrt(squared)
+            return along
+
+        edges = [path._arc[i] for i in range(0, len(path._arc), 17)]
+        nears = [*edges, -50.0, path.length + 50.0, *(e + 30.0 for e in edges)]
+        for near in nears:
+            for window in (0.0, 3.0, 30.0):
+                x, y = rng.uniform(-60.0, 60.0), rng.uniform(-60.0, 60.0)
+                assert path.project(x, y, near=near, window=window) == scanned(
+                    x, y, near, window
+                ), (near, window)
+
 
 # ---------------------------------------------------------------------------
 # Placing a trajectory in CARLA
