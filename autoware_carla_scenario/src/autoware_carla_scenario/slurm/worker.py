@@ -15,8 +15,9 @@ has run (``slurm/results/<i>.json``); the task's progress is in
 
 SIGTERM (``scancel``, or ``--signal`` before the time limit) ends the case
 running and stops CARLA; if the worker is killed before it has (the SIGKILL
-after the scheduler's grace period), :class:`.ports.CarlaWatchdog` stops it; the cases not run by then have no outcome and are run
-again by ``scenario-slurm resubmit``.
+after the scheduler's grace period), :class:`.ports.CarlaWatchdog` stops it.
+The cases not run by then have no outcome and are run again by
+``scenario-slurm resubmit``.
 """
 
 from __future__ import annotations
@@ -608,8 +609,9 @@ def run_task(manifest_path: Path, submission_index: int, task_index: int) -> int
                 layout.task_port(submission_index, task_index).unlink(missing_ok=True)
                 if watchdog is not None:
                     watchdog.finish()
-            # With CARLA left, the watchdog ends it when this process does.
-            slot.release()
+            # With CARLA left, the watchdog ends it when this process does,
+            # and keeps the slot locked until then.
+            slot.release(keep_lock=watchdog is not None and bool(left))
     return exit_status
 
 

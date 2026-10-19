@@ -723,6 +723,22 @@ def test_port_slots_are_exclusive_and_skip_ports_in_use(tmp_path: Path) -> None:
         first.release()
 
 
+def test_a_kept_lock_survives_the_release_while_the_watchdog_holds_it(
+    tmp_path: Path,
+) -> None:
+    from autoware_carla_scenario.slurm.ports import CarlaWatchdog
+
+    base = 31700
+    slot = acquire_slot(base, 1, start=0, lock_dir=tmp_path)
+    watchdog = CarlaWatchdog(slot)
+    slot.release(keep_lock=True)
+    with pytest.raises(RuntimeError):
+        acquire_slot(base, 1, start=0, lock_dir=tmp_path)
+    watchdog.finish()  # no CARLA runs: it ends, and with it the lock
+    again = acquire_slot(base, 1, start=0, lock_dir=tmp_path)
+    again.release()
+
+
 def test_first_slot_differs_by_task() -> None:
     env = {"SLURM_ARRAY_JOB_ID": "120", "SLURM_ARRAY_TASK_ID": "3"}
     assert first_slot(env, 1000) == 123

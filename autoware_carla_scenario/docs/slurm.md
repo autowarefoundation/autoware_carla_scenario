@@ -66,7 +66,11 @@ Each task, on its node:
    checks that the `rerun` extra is installed; the nodes need it too;
 5. stops its CARLA however it ends: at the end, on `scancel`, on the signal SLURM
    sends `launcher.signal_grace_seconds` before `launcher.time` runs out, and
-   -- through the job script -- when the worker itself was killed.
+   -- through the job script -- when the worker itself was killed, even by the
+   `SIGKILL` that ends a `scancel` after SLURM's `KillWait` (CARLA runs in a
+   session of its own, which that signal misses): a small watchdog process of
+   its own, started once the slot is taken, stops CARLA when the worker ends
+   without having done so, and keeps the slot locked until then.
 
 ## Following, collecting, resubmitting
 

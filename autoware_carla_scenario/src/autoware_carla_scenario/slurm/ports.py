@@ -118,10 +118,14 @@ class PortSlot:
             "driver_bridge": self.driver_bridge,
         }
 
-    def release(self) -> None:
+    def release(self, *, keep_lock: bool = False) -> None:
+        """Let the slot go.  With *keep_lock*, only this process's descriptor
+        is closed: a process that inherited it (:class:`CarlaWatchdog`) keeps
+        the slot locked, which ``LOCK_UN`` would end for every holder."""
         if self._lock is not None:
             try:
-                fcntl.flock(self._lock.fileno(), fcntl.LOCK_UN)
+                if not keep_lock:
+                    fcntl.flock(self._lock.fileno(), fcntl.LOCK_UN)
             finally:
                 self._lock.close()
                 self._lock = None
