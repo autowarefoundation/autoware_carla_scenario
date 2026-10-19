@@ -886,6 +886,51 @@ def test_physics_mode_drives_sumos_vehicles_with_throttle_brake_and_steer(
 
 
 @needs_sumo
+def test_teleport_mode_batches_the_pose_and_sends_a_speed_once(
+    crossroads: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With a client, each tick's pose goes into the batch, and the constant
+    velocity -- which has no batch command -- only when SUMO's speed changed."""
+    import typesafe_carla.carla as carla
+
+    moves: list[SimpleNamespace] = []
+
+    def apply_transform(actor_id: int, transform: Any) -> SimpleNamespace:
+        moves.append(SimpleNamespace(actor_id=actor_id, transform=transform))
+        return moves[-1]
+
+    monkeypatch.setattr(carla.command, "ApplyTransform", apply_transform)
+    client = _BatchClient()
+    _CLIENT["client"] = client
+    try:
+        backend, world, npc, _ego = _prepared(crossroads, tmp_path)
+    finally:
+        _CLIENT.clear()
+    speeds: list[float] = []
+    placed: list[Any] = []
+    monkeypatch.setattr(npc, "enable_constant_velocity", lambda v: speeds.append(v.x))
+    monkeypatch.setattr(npc, "set_transform", placed.append)
+    sumo_id = next(iter(backend._driven))
+    try:
+        ticks = 100
+        for i in range(ticks):
+            if i == 20:  # SUMO brings it to a stop, where it then stands
+                backend._traci.vehicle.setSpeed(sumo_id, 0.0)
+            backend.tick(world, i * 0.05)
+        sent = [c for batch in client.batches for c in batch]
+        mine = [m for m in moves if m.actor_id == npc.id]
+        assert len(mine) == ticks and all(m in sent for m in mine)
+        assert placed == []  # never one RPC of its own
+        # Sent again only when it differs from the one the actor has: once
+        # for the standstill it ends in, however many ticks that lasts.
+        assert all(a != b for a, b in zip(speeds, speeds[1:]))
+        assert speeds[-1] == 0.0
+        assert len(speeds) < ticks - 30
+    finally:
+        backend.close()
+
+
+@needs_sumo
 def test_feedback_moves_the_sumo_vehicle_to_where_its_car_really_is(
     crossroads: Path, tmp_path: Path
 ) -> None:
