@@ -2949,7 +2949,7 @@ than assumed to be zero.</p>
 <p>A run leaves two recordings, neither of which renders anything:</p>
 <ol>
 <li><strong>The CARLA recording</strong> (<code>{stem}.log</code>): CARLA's native recorder captures every actor's state from the moment the ego exists, warm-up included. CARLA's replayer (<code>client.replay_file()</code>) plays it back on a server running the same map.</li>
-<li><strong>The trajectory log</strong> (<code>{stem}.trajectory.jsonl</code>, <a href="../trajectory_log/">Trajectory Log</a>): written by the runner itself after every tick of the scenario, in-process -- every vehicle and pedestrian, the lights, the map the run was on, the ego's debug markers, each condition's state and the verdict. A Rerun recording made from it with the <code>autoware_carla_scenario_rerun</code> package (<code>convert</code> / <code>convert_dir</code>) is how a run is seen (<a href="../usage/#seeing-a-run">Seeing a run</a>).</li>
+<li><strong>The trajectory log</strong> (<code>{stem}.trajectory.jsonl</code>, <a href="../trajectory_log/">Trajectory Log</a>): written by the runner itself after every tick of the scenario, in-process -- every vehicle and pedestrian, the lights, the map the run was on, the ego's debug markers, each condition's state and the verdict. A Rerun recording made from it with the <code>autoware_carla_scenario_rerun</code> package is how a run is seen (<a href="../usage/#seeing-a-run">Seeing a run</a>): with <code>rerun.enabled=true</code> the runner hands each closed log to a <code>RerunConverter</code> (<code>rerun.py</code>), which converts it on a background thread while the next case runs, and the run waits for it at the end.</li>
 </ol>
 <p>Releases before 15.0.0 also rendered a video from the CARLA recording after each run (<code>{stem}.mp4</code>, a replay with an RGB camera and ffmpeg); that is gone, and so is the ffmpeg it needed.</p>
 <h4 id="debug-markers">Debug markers<a class="headerlink" href="#debug-markers" title="Permanent link">&para;</a></h4>
@@ -4047,7 +4047,7 @@ CARLA map name using the <code>_map_name_to_env_var()</code> function:</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 19, 2026 08:09:20 UTC"><span class="timeago" datetime="2026-10-19T08:09:20+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 19, 2026 08:09:20 UTC">2026-10-19</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 19, 2026 08:48:56 UTC"><span class="timeago" datetime="2026-10-19T08:48:56+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 19, 2026 08:48:56 UTC">2026-10-19</span>
   </span>
 
     

@@ -1897,8 +1897,9 @@ conditions tick by tick and its verdict -- one JSON object per line.
 <code>TrajectoryRecorder</code> (<code>autoware_carla_scenario/trajectory_recorder.py</code>) writes
 it, and the carla-hub run report replays it. The file holds everything needed
 to show the run again without CARLA, the ego's plan and the path it drove
-included: the <code>autoware_carla_scenario_rerun</code> package (<code>convert</code> /
-<code>convert_dir</code>) makes a Rerun recording of it, which is how a run is seen (<a href="../usage/#seeing-a-run">Seeing a run</a>).</p>
+included: the <code>autoware_carla_scenario_rerun</code> package (the <code>rerun</code> extra;
+<code>rerun.enabled=true</code> runs it on each log as its run ends) makes a Rerun
+recording of it, which is how a run is seen (<a href="../usage/#seeing-a-run">Seeing a run</a>).</p>
 <p>Its format is published as a JSON Schema of one line, the contract for readers
 in any language: <code>schemas/trajectory.schema.json</code> in the package and in the
 wheel (JSON Schema 2020-12, tuples as <code>prefixItems</code>). From Python, find it with
@@ -2149,7 +2150,7 @@ change that a reader of the last version could not skip over is a new
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 18, 2026 07:44:02 UTC"><span class="timeago" datetime="2026-10-18T07:44:02+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 18, 2026 07:44:02 UTC">2026-10-18</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 19, 2026 08:48:56 UTC"><span class="timeago" datetime="2026-10-19T08:48:56+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 19, 2026 08:48:56 UTC">2026-10-19</span>
   </span>
 
     

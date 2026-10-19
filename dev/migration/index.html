@@ -1852,7 +1852,7 @@ already writes, from a Rerun recording made out of it.</p>
 <tbody>
 <tr>
 <td><code>{Scenario}.mp4</code> after each run</td>
-<td><code>{Scenario}.trajectory.jsonl</code> → the <code>autoware_carla_scenario_rerun</code> package (<code>convert</code> / <code>convert_dir</code>) → <code>{Scenario}.rrd</code>, opened in the Rerun viewer (<a href="../usage/#seeing-a-run">Seeing a run</a>)</td>
+<td><code>{Scenario}.rrd</code>, a Rerun recording of <code>{Scenario}.trajectory.jsonl</code> made as the run ends (<code>rerun.enabled=true</code>, the <code>rerun</code> extra), opened in the Rerun viewer (<a href="../usage/#seeing-a-run">Seeing a run</a>)</td>
 </tr>
 <tr>
 <td><code>video.width</code>, <code>video.height</code> (and <code>video.enabled</code>, which never shipped in a release)</td>
@@ -1876,7 +1876,7 @@ already writes, from a Rerun recording made out of it.</p>
 </tr>
 <tr>
 <td>The viewer's video player and its <code>/video/...</code> route</td>
-<td>The scenario page shows the run in an embedded Rerun web viewer (<code>/recording/...rrd</code>)</td>
+<td>The scenario page shows the run in an embedded Rerun web viewer (<code>/recording/...rrd</code>): the recording <code>rerun.enabled=true</code> made as the run ended, else one the viewer makes on demand</td>
 </tr>
 <tr>
 <td>The <code>ffmpeg-python</code> dependency, and ffmpeg itself</td>
@@ -1900,14 +1900,15 @@ are written into the trajectory log.</p>
   <code>CameraRecorder</code> or the drawing helpers: remove that. These are gone, and
   passing them is a <code>TypeError</code> or an <code>ImportError</code>.</li>
 <li><strong>Seeing runs</strong>: install the converter and the viewer
-  (<code>pip install 'autoware-carla-scenario-rerun[viewer]'</code>; building it into
-  the framework is a later change). Convert the logs with the
-  <code>autoware_carla_scenario_rerun</code> package -- <code>convert_dir("outputs/...")</code> for
-  a session or a sweep, <code>convert(".../X.trajectory.jsonl")</code> for one run, each
-  writing <code>X.rrd</code> beside the log -- then open the <code>.rrd</code> with <code>rerun</code>. The log
-  carries the map it was recorded on (paths and SHA-256 of the Lanelet2 and
-  OpenDRIVE files), the warm-up, the ego's plan, every condition's state and
-  the verdict (<a href="../trajectory_log/">Trajectory Log</a>).</li>
+  (<code>pip install 'autoware-carla-scenario[rerun,viewer]'</code>) and run with
+  <code>rerun.enabled=true</code>: each run's log is converted into <code>X.rrd</code> beside it as
+  the run ends, the result (<code>rerun_recording</code>) names it, and the viewer's
+  scenario page shows it. Open it with <code>rerun X.rrd</code>. Runs made without it convert
+  afterwards with <code>python -m autoware_carla_scenario.rerun outputs/...</code> (a
+  session, a sweep, or one <code>X.trajectory.jsonl</code>). The log carries the map it
+  was recorded on (paths and SHA-256 of the Lanelet2 and OpenDRIVE files), the
+  warm-up, the ego's plan, every condition's state and the verdict
+  (<a href="../trajectory_log/">Trajectory Log</a>).</li>
 <li><strong>Container images</strong> built with <code>with-ffmpeg: true</code>: drop the input.</li>
 </ul>
 
@@ -1932,7 +1933,7 @@ are written into the trajectory log.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 19, 2026 04:32:09 UTC"><span class="timeago" datetime="2026-10-19T04:32:09+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 19, 2026 04:32:09 UTC">2026-10-19</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 19, 2026 08:48:56 UTC"><span class="timeago" datetime="2026-10-19T08:48:56+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 19, 2026 08:48:56 UTC">2026-10-19</span>
   </span>
 
     
