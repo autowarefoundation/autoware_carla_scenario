@@ -430,7 +430,7 @@ def test_the_result_names_its_recording_only_when_there_is_one() -> None:
 def test_the_batch_summary_lists_each_recording_and_every_failure(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    from autoware_carla_scenario.examples.run import _print_summary
+    from autoware_carla_scenario.examples.run import _print_summary, rerun_errors
 
     results = [
         ScenarioResult(True, "ok", 1.0, rerun_recording=str(tmp_path / "A.rrd")),
@@ -451,7 +451,7 @@ def test_the_batch_summary_lists_each_recording_and_every_failure(
         results,
         output_dir=tmp_path,
         errored=[2],
-        conversions=conversions,
+        rerun_errors=rerun_errors(results, conversions),
     )
     # The verdicts alone decide.
     assert passed is False
@@ -531,3 +531,68 @@ def test_the_scenario_page_shows_the_command_to_open_the_recording() -> None:
     page = (Path(scanner.__file__).parent / "templates" / "scenario.html").read_text()
     assert "rerun {{ result.recording_path }}" in page
     assert "python -m autoware_carla_scenario.rerun" in page
+
+
+def test_a_failed_conversion_is_found_by_the_case_it_belongs_to(tmp_path: Path) -> None:
+    from autoware_carla_scenario.examples.run import rerun_errors
+
+    results = [
+        ScenarioResult(True, "ok", 1.0, rerun_recording=str(tmp_path / "A.rrd")),
+        ScenarioResult(True, "ok", 1.0),
+        ScenarioResult(True, "ok", 1.0, rerun_recording=str(tmp_path / "C.rrd")),
+    ]
+    conversions = [
+        RerunConversion("A", tmp_path / "A.trajectory.jsonl", tmp_path / "A.rrd"),
+        # A retried attempt's log: no case's result names it.
+        RerunConversion(
+            "X", tmp_path / "X.trajectory.jsonl", tmp_path / "X.rrd", error="E: x"
+        ),
+        RerunConversion(
+            "C", tmp_path / "C.trajectory.jsonl", tmp_path / "C.rrd", error="E: c"
+        ),
+    ]
+    assert rerun_errors(results, conversions) == {2: "E: c"}
+
+
+def test_a_slurm_batch_reports_the_recordings_its_tasks_made(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``scenario-slurm collect`` reads each case's recording and its failure
+    from the record its task wrote, and reports them as a local batch does."""
+    from autoware_carla_scenario.batch_report import print_summary
+    from autoware_carla_scenario.slurm.collect import RecordedResult
+
+    results = [
+        RecordedResult(
+            {
+                "passed": True,
+                "message": "ok",
+                "elapsed_seconds": 1.0,
+                "condition_statuses": [],
+                "rerun_recording": str(tmp_path / "A.rrd"),
+            }
+        ),
+        RecordedResult(
+            {
+                "passed": True,
+                "message": "ok",
+                "elapsed_seconds": 1.0,
+                "condition_statuses": [],
+            }
+        ),
+    ]
+    assert results[0].rerun_recording == str(tmp_path / "A.rrd")
+    assert results[1].rerun_recording is None
+    print_summary(["A", "B"], results, output_dir=tmp_path, rerun_errors={0: "E: a"})
+    out = capsys.readouterr().out
+    assert "Rerun recordings: 0/1 written" in out
+    assert "[FAILED] A: E: a" in out
+    entries = json.loads((tmp_path / "batch_results.json").read_text())
+    assert entries[0]["rerun_error"] == "E: a"
+    assert "rerun_error" not in entries[1]
+
+
+def test_a_rerun_of_a_slurm_case_removes_its_old_recording() -> None:
+    from autoware_carla_scenario.slurm.manifest import RUN_FILE_SUFFIXES
+
+    assert ".rrd" in RUN_FILE_SUFFIXES

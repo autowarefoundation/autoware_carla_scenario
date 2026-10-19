@@ -22,6 +22,27 @@ INTENSITY_LEVELS: List[str] = ["none", "light", "moderate", "heavy"]
 TRAFFIC_DENSITY_LEVELS: List[str] = ["none", "low", "medium", "high"]
 
 
+# openodd's sentinel for a value only the run can tell (odd.model.UNDECIDED,
+# of a Rust extension's class, which odd.model names Undecided): one
+# instance, compared by identity, written UNDECIDED.  Python cannot build
+# another (`type(UNDECIDED)()` raises), so neither can the check: the model's
+# one is allocated without its constructor.
+class Undecided:
+    _unused: int
+
+    def __init__(self):
+        compile_error("Undecided(): UNDECIDED is openodd's only one; it is not built")
+
+    def __repr__(self) -> str:
+        return "UNDECIDED"
+
+    def __str__(self) -> str:
+        return "UNDECIDED"
+
+
+UNDECIDED: Undecided = Undecided.__new__()
+
+
 class OddCondition:
     _unused: int
 

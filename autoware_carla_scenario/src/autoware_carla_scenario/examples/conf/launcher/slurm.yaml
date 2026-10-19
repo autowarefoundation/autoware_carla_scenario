@@ -1,0 +1,87 @@
+# Run a batch's cases as the tasks of a SLURM array job, each on a CARLA of its
+# own (docs/slurm.md). Off unless selected:
+#
+#   uv run scenario --multirun 'scenario=cut_in/*' +sweep.odd_sample.count=24 \
+#     launcher=slurm launcher.array_parallelism=2 launcher.gres=shard:1
+#
+# The outputs land where a local batch writes them, under the same names;
+# `scenario-slurm` follows, collects, resubmits and cancels the batch.
+type: slurm
+
+# sbatch options; null leaves an option out (the cluster's default).
+partition: null
+account: null
+qos: null
+# --time (e.g. "02:00:00"). The task is sent SIGTERM signal_grace_seconds
+# before it runs out, stops the case it is running and its CARLA.
+time: null
+# --mem (e.g. 12G) and --cpus-per-task: a task runs one CARLA and one scenario
+# process (with a driver policy, if the run serves one).
+mem: null
+cpus_per_task: null
+# --gres, e.g. gpu:1, or shard:1 where the node shares a GPU between jobs.
+gres: null
+# At most this many tasks at once (--array=0-N%K); null: as many as SLURM runs.
+array_parallelism: null
+# Cases one task runs, one after another on its CARLA (which takes ~50 s to
+# start, and a policy as long to load); null: the cases spread evenly over
+# array_parallelism tasks, or one case a task without a cap.
+cases_per_task: null
+# The job's name; null: acs-<date>-<time> of the batch's output directory.
+job_name: null
+# Further sbatch arguments, as they are given to it.
+extra_sbatch_args: []
+
+# The job's environment. `export` is sbatch --export: ALL hands the job the
+# submitting shell's environment. The variables `env_passthrough` matches are
+# also recorded when the batch is submitted and set again in the job, so a
+# resubmit from another shell runs with them too; `setup` runs next (module
+# load, source a venv), then `env` is set. A name with TOKEN, SECRET, KEY,
+# PASSWORD or CREDENTIAL in it is recorded only when named exactly here or in
+# `env`, not through a `*`.
+export: ALL
+env_passthrough:
+  - PATH
+  - LD_LIBRARY_PATH
+  - PYTHONPATH
+  - PYTHONHOME
+  - VIRTUAL_ENV
+  - CONDA_PREFIX
+  - CARLA_*
+  - AUTOWARE_*
+  - ONEPLANNER_*
+  - TYPESAFE_CARLA_*
+  - GLIBC_TUNABLES
+  - MALLOC_*
+  - CUDA_HOME
+  - CUDA_PATH
+  - CUDAToolkit_ROOT
+setup: []
+env: {}
+# The interpreter the job runs the worker with; null: the submitting one.
+python: null
+# Unset DISPLAY in the job, so CARLA renders off-screen.
+headless: true
+# No task of the batch starts sooner than this after another did (the first
+# wave, the tasks started as slots free up, a resubmit's), so that two do not
+# fill a cache they share at once (a driver policy building or checking its
+# TensorRT engines, say); 0: as SLURM starts them.
+start_stagger_seconds: 0
+
+# Follow the batch until it ends and collect it (true), or submit and exit
+# (false, or --no-wait), with a job that collects it once the array ends.
+wait: true
+poll_seconds: 15
+cancel_on_interrupt: true
+collect_job: true
+collect_mem: 2G
+signal_grace_seconds: 120
+
+# Each task's ports: a slot of 10 from port_base (CARLA's RPC, streaming and
+# secondary ports, the TrafficManager, the bridges the run hosts), one no
+# other task holds and nothing listens on.
+port_base: 20000
+port_slots: 1000
+# Where the slots' locks are: a directory every job on a node sees. null:
+# /dev/shm/acs-slurm-ports-<uid> (else /tmp), not a job's private /tmp.
+port_lock_dir: null

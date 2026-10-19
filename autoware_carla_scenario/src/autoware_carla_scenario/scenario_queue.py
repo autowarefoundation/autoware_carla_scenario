@@ -83,6 +83,9 @@ class ScenarioQueue:
     _timeouts: dict[int, float]
     #: id(scenario) -> the ODD case it runs, to record.
     _cases: dict[int, OddCase]
+    #: id(scenario) -> the stem its files are named by, in place of the next
+    #: free one.
+    _stems: dict[int, str]
     _results: List[ScenarioResult]
     _scenario_results: dict[int, ScenarioResult]
     #: Indices into the last run_all()'s results of the cases that raised on
@@ -225,6 +228,7 @@ class ScenarioQueue:
         self._scenarios = []
         self._timeouts = {}
         self._cases = {}
+        self._stems = {}
         self._results = []
         self._scenario_results = {}
         self._errored = []
@@ -241,6 +245,7 @@ class ScenarioQueue:
         *,
         timeout_seconds: Optional[float] = None,
         case: Optional[OddCase] = None,
+        file_stem: Optional[str] = None,
     ) -> None:
         """Append a scenario to the queue.
 
@@ -253,12 +258,17 @@ class ScenarioQueue:
             case: The case drawn from the ODD it runs, and the space it was
                 drawn in, to record in its coverage file
                 (:meth:`ScenarioRunner.run_scenario`).
+            file_stem: The stem its output files are named by; ``None``
+                names them by its class, numbered past the runs already in the
+                output directory (:meth:`ScenarioRunner.run_scenario`).
         """
         self._scenarios.append(scenario)
         if timeout_seconds is not None:
             self._timeouts[id(scenario)] = timeout_seconds
         if case is not None:
             self._cases[id(scenario)] = case
+        if file_stem is not None:
+            self._stems[id(scenario)] = file_stem
 
     # ------------------------------------------------------------------
     # Execution
@@ -322,6 +332,7 @@ class ScenarioQueue:
             key = id(scenario)
             timeout_seconds = self._timeouts.get(key)
             case = self._cases.get(key)
+            file_stem = self._stems.get(key)
             if release:
                 # Keyed by id(): a released scenario's id may be the next
                 # scenario's, so nothing is left keyed by it.
@@ -329,6 +340,8 @@ class ScenarioQueue:
                     del self._timeouts[key]
                 if key in self._cases:
                     del self._cases[key]
+                if key in self._stems:
+                    del self._stems[key]
             last_error: Optional[Exception] = None
             last_message = ""
             for attempt in range(max_attempts):
@@ -345,15 +358,27 @@ class ScenarioQueue:
                             if attempt == 0
                             else "CARLA cooldown (retry)",
                         )
-                    result = self._runner.run_scenario(
-                        scenario,
-                        timeout_seconds=timeout_seconds,
-                        case=case,
-                        # The map is reloaded for the next scenario; after the
-                        # last there is none, and a later run_all() or a new
-                        # queue loads it first.
-                        reset_world=i < total - 1,
-                    )
+                    # The map is reloaded for the next scenario; after the
+                    # last there is none, and a later run_all() or a new
+                    # queue loads it first.
+                    reset_world = i < total - 1
+                    if file_stem is None:
+                        result = self._runner.run_scenario(
+                            scenario,
+                            timeout_seconds=timeout_seconds,
+                            case=case,
+                            reset_world=reset_world,
+                        )
+                    else:
+                        # Only when given: a runner predating file_stem still
+                        # runs the scenarios that do not name their files.
+                        result = self._runner.run_scenario(
+                            scenario,
+                            timeout_seconds=timeout_seconds,
+                            case=case,
+                            reset_world=reset_world,
+                            file_stem=file_stem,
+                        )
                     if not release:
                         self._scenario_results[key] = result
                     results.append(result)
@@ -383,6 +408,8 @@ class ScenarioQueue:
                                 del self._timeouts[rest_key]
                             if rest_key in self._cases:
                                 del self._cases[rest_key]
+                            if rest_key in self._stems:
+                                del self._stems[rest_key]
                     # All attempts exhausted — re-raise the last error.
                     raise RuntimeError(
                         f"Scenario {type(scenario).__name__} failed after "

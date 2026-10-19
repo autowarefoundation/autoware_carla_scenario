@@ -53,6 +53,10 @@ class AttributeMap:
     def __len__(self) -> int:
         raise NotImplementedError()
 
+    # Each tag as a (key, value) pair of strings, in key order.
+    def items(self) -> List[Tuple[str, str]]:
+        raise NotImplementedError()
+
 
 class BasicPoint2d:
     x: float

@@ -207,7 +207,7 @@ NOT_MODELLED: dict[str, dict[str, str]] = {
     f"{_PACKAGE}.odd": {
         **_each(
             "DEFAULT_KNOBS GitSource GitSourceError OddDraws OddKnob OddVerdict "
-            "OpenOddError UNDECIDED knobs_from_mapping load_odd_binding "
+            "OpenOddError knobs_from_mapping load_odd_binding "
             "load_odd_file load_openodd read_probe",
             _OPENODD,
         ),
@@ -222,9 +222,9 @@ NOT_MODELLED: dict[str, dict[str, str]] = {
         ),
         **_each(
             "backend probes",
-            "a submodule (openodd's backend; probe values of any type), not a "
-            "name an ODD or a scenario imports; the model declares no "
-            "submodules of odd",
+            "a submodule (openodd's backend; the probes, which the library "
+            "check compiles from their source), not a name an ODD or a "
+            "scenario imports; the model declares no submodules of odd",
         ),
     },
     f"{_PACKAGE}.ros2.cyclone": _each(
