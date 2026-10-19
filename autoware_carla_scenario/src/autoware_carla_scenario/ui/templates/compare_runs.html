@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}Runs side by side - Scenario Result Viewer{% endblock %}
+
+{% block breadcrumb %}
+<nav class="flex text-sm text-gray-500" aria-label="Breadcrumb">
+  <ol class="flex items-center space-x-2">
+    <li><a href="/" class="hover:text-blue-600">Sessions</a></li>
+    <li><span class="mx-1">/</span></li>
+    <li><a href="javascript:history.back()" class="hover:text-blue-600">Compare</a></li>
+    <li><span class="mx-1">/</span></li>
+    <li class="text-gray-800 font-medium">Side by side</li>
+  </ol>
+</nav>
+{% endblock %}
+
+{% block content %}
+<h1 class="text-2xl font-bold text-gray-800 mb-4">Runs side by side</h1>
+{% if not runs %}
+<p class="text-gray-500">No run picked (<code>?run=type/date/time/index</code>, two or more).</p>
+{% endif %}
+<div class="grid gap-4" style="grid-template-columns: repeat({{ [runs | length, 1] | max }}, minmax(0, 1fr));">
+  {% for run in runs %}
+  <div class="min-w-0" data-run="{{ run.ref }}/{{ run.index }}">
+    <div class="flex items-center gap-2 mb-1">
+      <a class="font-mono text-sm text-blue-600 hover:text-blue-800" href="/session/{{ run.ref }}/{{ run.index }}">{{ run.ref }} #{{ run.index }}</a>
+      {% if run.case %}
+        {% if run.case.outcome == "pass" %}<span class="px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">PASS</span>
+        {% elif run.case.outcome == "fail" %}<span class="px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">FAIL</span>
+        {% else %}<span class="px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-600">{{ run.case.outcome | upper }}</span>{% endif %}
+        <span class="text-xs text-gray-500 truncate" title="{{ run.case.message }}">{{ run.case.message }}</span>
+      {% endif %}
+    </div>
+    {% if run.recording and (run.recording.rrd or converter) and viewer.base_url %}
+    <div class="rerun-pane w-full h-[600px] bg-gray-900 rounded-lg shadow overflow-hidden" data-make-url="{{ run.recording.make_url }}"></div>
+    <p class="rerun-status mt-1 text-sm" hidden></p>
+    {% elif run.recording %}
+    <div class="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm text-amber-900">
+      {% if viewer.base_url %}The Rerun converter is not installed: <code>{{ install_hint }}</code>{% else %}No web viewer is embedded (VIEWER_RERUN_WEB_VIEWER=none).{% endif %}
+    </div>
+    {% else %}
+    <div class="bg-gray-50 rounded-lg p-3 text-sm text-gray-500">This run has no trajectory log.</div>
+    {% endif %}
+  </div>
+  {% endfor %}
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script type="module">
+  import { mountRerun } from '/static/rerun.js';
+  // One viewer a run, one after another: each loads the same wasm module.
+  for (const pane of document.querySelectorAll('.rerun-pane')) {
+    await mountRerun(pane, {
+      viewerUrl: {{ viewer.base_url | tojson }},
+      makeUrls: [pane.dataset.makeUrl],
+      status: pane.nextElementSibling,
+    });
+  }
+</script>
+{% endblock %}

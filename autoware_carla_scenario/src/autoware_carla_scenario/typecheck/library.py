@@ -457,6 +457,7 @@ EXCLUDED: dict[str, str] = {
     "autoware_carla_scenario.ui.app": "imports fastapi, json, asyncio, fnmatch",
     "autoware_carla_scenario.ui.cases": "imports json, and reads JSON documents of any type (`Any`)",
     "autoware_carla_scenario.ui.models": "imports pydantic",
+    "autoware_carla_scenario.ui.results": "imports json, and yaml inside a function; reads JSON documents and trajectory log records of any type (`Any`)",
     "autoware_carla_scenario.ui.recordings": "imports json, base64, io and tarfile, and, inside functions, the converter (autoware_carla_scenario_rerun, a Rust extension), which it holds as a module of any type (`Any`)",
     "autoware_carla_scenario.ui.scanner": "imports yaml, json, and more of pathlib than its shim declares (`Path.iterdir()`, `Path.stat()`, `Path.with_suffix()`)",
     "autoware_carla_scenario.ui.slurm_launch": "imports re, shlex, datetime, and slurm.manifest (json) and slurm.submit (omegaconf inside functions), which are not checked; reads the batch's JSON records of any type (`Any`)",

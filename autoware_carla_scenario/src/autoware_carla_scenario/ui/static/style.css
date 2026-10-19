@@ -32,3 +32,17 @@
 .rerun-status[data-kind="error"] {
   color: rgb(185, 28, 28);
 }
+
+/* The comparison's ODD cells (templates/compare.html) */
+.cmp-grid td.cmp-worse {
+  background-color: rgb(254, 226, 226);
+}
+.cmp-grid td.cmp-better {
+  background-color: rgb(220, 252, 231);
+}
+#case-table tr.cmp-regression {
+  background-color: rgb(254, 242, 242);
+}
+#case-table tr.cmp-fixed {
+  background-color: rgb(240, 253, 244);
+}

@@ -706,6 +706,44 @@ The copy goes to `~/.cache/autoware_carla_scenario/viewer/rerun-web-viewer/<vers
 copy of the package (a directory), a mirror of it (a URL), or `none` for no
 embedded viewer (the page then names the recording only).
 
+### Results on the ODD
+
+A session's page links its results on the ODD
+(`/session/{type}/{date}/{time}/odd`): openodd's coverage matrix
+(`openodd.CoverageView`) of the cases' coverage files (`{stem}_coverage.json`),
+along two ODD attributes picked above it (by default the two the cases were
+drawn over that tell them apart most). Each cell holds the runs that spent
+time in it, coloured by what they did -- green passed, red failed, yellow
+flaky (both), white not sampled -- and a click on one drills into it: the
+matrix of the next two attributes inside it, and below, the cases in it, each
+linking to its page (and its run in the Rerun viewer) with its verdict, the
+buckets it was drawn in and a few metrics of how the ego drove, read off its
+trajectory log: the least gap from its box to another road user's
+(`min gap`), its hardest braking (over half a second), when it first stopped,
+how far it drove, its top and final speed, and the elapsed time. openodd's
+plot of the drawn cases (`openodd.CasePlot`) is shown too.
+
+### Comparing runs
+
+`/compare` (the navigation bar's *Compare*, or *Compare with past runs* on a
+session's page) compares two or more sessions of the same scenarios
+(`?s=batch/2026-10-18/16-09-52&s=...`), the oldest the baseline:
+
+- **Cases** are matched by what they ran -- their sweep overrides (less
+  `++odd_case`, which names a case's position), else the ODD values they
+  were drawn at -- not by their index, so a case keeps its match when a
+  sweep's order or size changes. Each is marked by how its verdict changed
+  between the first session that ran it and the last: `pass → fail` (a
+  regression, listed first and in red), `fail → pass`, flaky, the same, or
+  run by one session only. Beside it, the change of each metric (bold when
+  more than 5%), each run's verdict linking to its page, and *side by side*:
+  the first and last runs in two Rerun viewers on one page
+  (`/compare/runs?run=type/date/time/index&run=...`).
+- **ODD cells**: each session's passes and runs in each cell of the two
+  attributes picked (the buckets the cases were drawn in), red where the last
+  session passes fewer of them, green where more; and openodd's matrix of
+  each session beside the others.
+- **Pass rates** of each session.
 ### Running through SLURM
 
 The *Run Scenarios* panel's **Launcher** runs the batch here, case after case
@@ -753,6 +791,9 @@ sync the environment).
 | `/session/{type}/{date}/{time}` | Session detail — shows all scenarios in a session with pass/fail status |
 | `/session/{type}/{date}/{time}/{index}` | Scenario detail — the run in the Rerun viewer, condition tree, per-condition status |
 | `/recording/{type}/{date}/{time}/{index}.rrd` | The case's Rerun recording (made first if need be) |
+| `/session/{type}/{date}/{time}/odd` | The session's results on the ODD (`?x=`, `?y=` the attributes, `?at=attribute=bucket` the cell drilled into) |
+| `/compare` | Sessions compared (`?s=type/date/time`, two or more; `?x=`, `?y=` the cells' attributes) |
+| `/compare/runs` | Runs side by side in Rerun viewers (`?run=type/date/time/index`, up to four) |
 
 ### REST API Endpoints
 
