@@ -2,7 +2,10 @@
 
 This is the *runtime* half of the conversation: the scenario framework renders
 observations from CARLA and asks a driver policy -- running as a separate gRPC server,
-for example ``carla-driver-interface serve`` -- what to do next.
+for example ``carla-driver-interface serve``, or served by the run itself
+(``driver.policy``) -- what to do next. ``driver.transport`` says how it is reached:
+over TCP, over a Unix domain socket, or (a policy the run serves) by calling its
+servicer directly, with the same messages and bytes as on the wire.
 
 The generated stubs come from the alpasim protos vendored in ``carla-driver-interface``,
 so the messages are wire compatible with an upstream alpasim driver as well; see
@@ -13,7 +16,11 @@ from __future__ import annotations
 
 import atexit
 import functools
+import importlib
 import logging
+import os
+import shutil
+import tempfile
 from typing import Optional, Sequence
 
 import grpc
@@ -27,12 +34,18 @@ from carla_driver_interface.contract import (
     contract_metadata,
     negotiate,
 )
+import carla_driver_interface
+from carla_driver_interface import server as _cdi_server
+from carla_driver_interface.driver import BaseDriver
 from carla_driver_interface.geometry import body_to_optical
 from carla_driver_interface.policies import load_policy
 from carla_driver_interface.server import build_server
+from carla_driver_interface.service import EgodriverServicer
 from carla_driver_interface.protocol import (
     EGODRIVER_SERVICE_FULL_NAME,
     MAX_MESSAGE_BYTES,
+    add_CarlaVehicleServiceServicer_to_server,
+    add_EgodriverServiceServicer_to_server,
     carla_driver_pb2,
     carla_driver_pb2_grpc,
     channel_options,
@@ -66,6 +79,10 @@ class EgoDriverGrpcClient(BaseEgoDriverClient):
         channel: Pre-built channel to use instead of dialling
             :attr:`DriverClientConfig.address`.  Intended for tests, which run the
             policy in-process.
+
+    Raises:
+        RuntimeError: ``config.transport`` serves ``config.policy`` in a way the
+            installed carla-driver-interface cannot (``unix``, ``direct``: 2.2+).
     """
 
     def __init__(
@@ -74,6 +91,9 @@ class EgoDriverGrpcClient(BaseEgoDriverClient):
         channel: Optional[grpc.Channel] = None,
     ) -> None:
         super().__init__(config)
+        if channel is None and config.policy is not None and config.transport != "tcp":
+            # Now, while the run sets up, rather than at its first scenario.
+            _require_in_process_support(config.transport)
         self._owns_channel = channel is None
         self._channel: Optional[grpc.Channel] = channel
         self._stub: Optional[egodriver_pb2_grpc.EgodriverServiceStub] = None
@@ -83,6 +103,8 @@ class EgoDriverGrpcClient(BaseEgoDriverClient):
         #: asked again.
         self._serves_vehicle_commands = True
         self._session_uuid: Optional[str] = None
+        #: Where the policy is, for the log: an address, or the in-process servicer.
+        self._target = "an injected channel" if channel is not None else config.address
 
     # ------------------------------------------------------------------
     # Connection
@@ -94,16 +116,11 @@ class EgoDriverGrpcClient(BaseEgoDriverClient):
         return self._session_uuid
 
     def _connect(self) -> egodriver_pb2_grpc.EgodriverServiceStub:
-        """Return the stub, dialling the configured address on first use."""
+        """Return the stub, opening the configured transport on first use."""
         if self._stub is not None:
             return self._stub
         if self._channel is None:
-            target = (
-                self._config.address
-                if self._config.policy is None
-                else f"localhost:{_serve_in_process(self._config.policy)}"
-            )
-            self._channel = grpc.insecure_channel(target, options=channel_options())
+            self._channel, self._target = _open_channel(self._config)
         self._stub = egodriver_pb2_grpc.EgodriverServiceStub(self._channel)
         self._vehicle = carla_driver_pb2_grpc.CarlaVehicleServiceStub(self._channel)
         return self._stub
@@ -173,7 +190,7 @@ class EgoDriverGrpcClient(BaseEgoDriverClient):
         logger.info(
             "Connected to %s at %s (version_id=%r git_hash=%r contract revision %d)",
             EGODRIVER_SERVICE_FULL_NAME,
-            self._config.address,
+            self._target,
             version.version_id,
             version.git_hash,
             revision,
@@ -401,15 +418,113 @@ def _vec3(values: NDArray[np.float64]) -> common_pb2.Vec3:
     return common_pb2.Vec3(x=array[0], y=array[1], z=array[2])
 
 
+#: The carla-driver-interface release the in-process transports first ship in.
+_IN_PROCESS_RELEASE = "2.2"
+
+
+def _open_channel(config: DriverClientConfig) -> tuple[grpc.Channel, str]:
+    """A channel to the configured policy over ``config.transport``, and where it is.
+
+    Raises:
+        RuntimeError: The transport needs a newer carla-driver-interface.
+    """
+    if config.policy is None:
+        # A policy in a process of its own, at a TCP or a unix: address.
+        return (
+            grpc.insecure_channel(config.address, options=channel_options()),
+            config.address,
+        )
+    if config.transport == "direct":
+        return _in_process_channel(config.policy), f"policy {config.policy!r} (direct)"
+    if config.transport == "unix":
+        target = _serve_on_unix_socket(config.policy)
+    else:
+        target = f"localhost:{_serve_in_process(config.policy)}"
+    return grpc.insecure_channel(target, options=channel_options()), target
+
+
+def _require_in_process_support(transport: str) -> None:
+    """Refuse *transport* on a carla-driver-interface that cannot serve it, saying why."""
+    try:
+        importlib.import_module("carla_driver_interface.inprocess")
+    except ImportError:
+        supported = False
+    else:
+        supported = hasattr(_cdi_server, "bind_address")
+    if not supported:
+        raise RuntimeError(
+            f"driver.transport={transport} with driver.policy needs "
+            f"carla-driver-interface>={_IN_PROCESS_RELEASE}, which serves a policy "
+            "on a Unix socket and in-process; this environment has "
+            f"{carla_driver_interface.__version__}. Upgrade it, or use "
+            "driver.transport=tcp."
+        )
+
+
+@functools.lru_cache(maxsize=None)
+def _policy(spec: str) -> BaseDriver:
+    """The *spec* policy, loaded once per run whatever transport reaches it.
+
+    Every scenario's session goes to the same policy, which the protocol resets
+    between sessions, so a model is loaded once, not per scenario.
+    """
+    return load_policy(spec)
+
+
 @functools.lru_cache(maxsize=None)
 def _serve_in_process(spec: str) -> int:
-    """Serve the *spec* policy from this process and return its port.
-
-    Once per run: every scenario's session goes to the same policy, which the
-    protocol resets between sessions, so a model is loaded once, not per scenario.
-    """
-    server, port = build_server(load_policy(spec), port=0, host="localhost")
+    """Serve the *spec* policy from this process and return its port. Once per run."""
+    server, port = build_server(_policy(spec), port=0, host="localhost")
     server.start()
     atexit.register(server.stop, None)
     logger.info("Serving policy %r in this process on port %d", spec, port)
     return port
+
+
+#: The longest path a Unix socket address may carry (``sun_path``, less its NUL).
+_MAX_SOCKET_PATH = 107
+
+
+@functools.lru_cache(maxsize=None)
+def _serve_on_unix_socket(spec: str) -> str:
+    """Serve the *spec* policy from this process on a Unix socket; its address. Once per run.
+
+    In a directory of its own (``0700``, under ``$TMPDIR``), so runs sharing a node
+    -- SLURM tasks, say -- never share a socket, and nothing else can dial it.
+    """
+    _require_in_process_support("unix")
+    directory = tempfile.mkdtemp(prefix="acs-policy-")
+    if len(os.path.join(directory, "policy.sock")) > _MAX_SOCKET_PATH:
+        shutil.rmtree(directory, ignore_errors=True)
+        directory = tempfile.mkdtemp(prefix="acs-policy-", dir="/tmp")
+    address = f"unix://{os.path.join(directory, 'policy.sock')}"
+    server, _ = build_server(_policy(spec), host=address)
+    server.start()
+    # Stopped before the directory goes: atexit runs in reverse order.
+    atexit.register(shutil.rmtree, directory, True)
+    atexit.register(server.stop, None)
+    logger.info("Serving policy %r in this process on %s", spec, address)
+    return address
+
+
+@functools.lru_cache(maxsize=None)
+def _in_process_servicer(spec: str) -> EgodriverServicer:
+    """The servicer a server for *spec* would run, for the direct transport. Once per run."""
+    _require_in_process_support("direct")
+    logger.info("Serving policy %r in this process, called directly", spec)
+    return EgodriverServicer(_policy(spec))
+
+
+def _in_process_channel(spec: str) -> grpc.Channel:
+    """A fresh channel to *spec*'s one servicer, carrying both services a server would.
+
+    One per client: closing it at the end of a scenario leaves the servicer, and the
+    policy, to the next.
+    """
+    from carla_driver_interface.inprocess import InProcessChannel  # noqa: PLC0415
+
+    servicer = _in_process_servicer(spec)
+    channel = InProcessChannel(channel_options())
+    add_EgodriverServiceServicer_to_server(servicer, channel)
+    add_CarlaVehicleServiceServicer_to_server(servicer, channel)
+    return channel

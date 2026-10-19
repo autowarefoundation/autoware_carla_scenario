@@ -7,6 +7,7 @@ server.
 
 from __future__ import annotations
 
+import importlib.util
 import math
 from concurrent import futures
 from types import SimpleNamespace
@@ -913,18 +914,24 @@ def test_the_run_up_keeps_the_spawn_pose_s_offset_from_its_lane() -> None:
 # A policy served by the scenario itself
 # ---------------------------------------------------------------------------
 
+_NEEDS_IN_PROCESS = pytest.mark.skipif(
+    importlib.util.find_spec("carla_driver_interface.inprocess") is None,
+    reason="carla-driver-interface < 2.2 has no in-process transports",
+)
 
-def test_a_named_policy_is_served_by_the_run() -> None:
-    """driver.policy serves the policy in this process; nothing else has to run."""
+
+def _served_plans(transport: str) -> list:
     config = DriverClientConfig(
         address="nowhere.invalid:1",  # not dialled: the run serves its own policy
         policy="constant_speed",
+        transport=transport,
         cameras=(),
         rear_axle_offset_m=-1.4,
         send_renderer_data=False,
         policy_timestep_s=0.05,
         timeout_s=10.0,
     )
+    plans = []
     for _ in range(2):  # a second scenario reuses the policy the first started
         entity = CarlaDriverEntity(config)
         entity._vehicle = _actor()  # noqa: SLF001 - stands in for spawn()
@@ -932,7 +939,25 @@ def test_a_named_policy_is_served_by_the_run() -> None:
         entity.on_scenario_start(world)
         entity.on_tick(world, 0.0)
         assert len(entity._plan) > 0  # noqa: SLF001 - the served policy planned
+        plans.append(entity._plan.to_proto().SerializeToString())  # noqa: SLF001
         entity.on_scenario_end(world)
+    return plans
+
+
+@pytest.mark.parametrize(
+    "transport",
+    [
+        "tcp",
+        pytest.param("unix", marks=_NEEDS_IN_PROCESS),
+        pytest.param("direct", marks=_NEEDS_IN_PROCESS),
+    ],
+)
+def test_a_named_policy_is_served_by_the_run(transport: str) -> None:
+    """driver.policy serves the policy in this process; nothing else has to run.
+
+    However the run reaches it (driver.transport), it plans the same.
+    """
+    assert _served_plans(transport) == _served_plans("tcp")
 
 
 # ---------------------------------------------------------------------------

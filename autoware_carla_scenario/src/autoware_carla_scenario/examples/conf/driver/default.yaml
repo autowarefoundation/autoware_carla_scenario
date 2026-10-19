@@ -9,6 +9,12 @@ driver:
   # own BaseDriver. null dials a policy serving at `address` in a process of its own:
   #   carla-driver-interface serve --policy route_follower --port 50051
   policy: null
+  # How the run reaches the policy. tcp: dial `address`, or serve `policy` on a free
+  # local port. unix: a Unix socket instead -- `policy` on one of the run's own, or
+  # `address` naming one (unix:///run/policy.sock). direct: call the servicer of the
+  # `policy` the run serves, no socket (needs `policy`). unix with `policy` and
+  # direct need carla-driver-interface 2.2+.
+  transport: tcp
   timeout_s: 60.0
   # Must be a positive integer multiple of the 0.05 s simulation step.
   policy_timestep_s: 0.1
