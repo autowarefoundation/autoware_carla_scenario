@@ -1366,7 +1366,9 @@ def add_environment(cfg: DictConfig, scenario: BaseScenario) -> None:
     initialization, so the world is in it before the run starts.  It is
     registered before the scenario's own ``setup()`` runs, so a scenario that
     sets the weather itself has the last word.  Nothing is registered when
-    every field is ``null`` (the default).
+    every field is ``null`` (the default).  When the action sets the
+    vehicles' grip (a wet road, or ``tire_friction``), the vehicles spawned
+    later get it too (:func:`~autoware_carla_scenario.actions.environment.follow_tire_friction`).
     """
     env_cfg = cfg.get("environment")
     if env_cfg is None:
@@ -1379,8 +1381,15 @@ def add_environment(cfg: DictConfig, scenario: BaseScenario) -> None:
     if not settings:
         return
     from autoware_carla_scenario import EnvironmentAction  # noqa: PLC0415
+    from autoware_carla_scenario.actions.environment import (  # noqa: PLC0415
+        follow_tire_friction,
+    )
 
-    scenario.register_init(EnvironmentAction(**settings, label="config.environment"))
+    action = EnvironmentAction(**settings, label="config.environment")
+    scenario.register_init(action)
+    if action.sets_tire_friction:
+        # Background traffic spawns during the run, after the init phase.
+        scenario.register_post_tick(follow_tire_friction)
 
 
 def add_background_traffic(cfg: DictConfig, scenario: BaseScenario) -> None:

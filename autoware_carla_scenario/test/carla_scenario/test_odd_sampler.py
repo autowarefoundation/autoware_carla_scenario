@@ -32,6 +32,7 @@ from autoware_carla_scenario.odd import scenario_measure
 from autoware_carla_scenario.odd.probes import illumination_level, intensity_level
 from autoware_carla_scenario.odd.sampler import (
     controls_from_mapping,
+    decode_case,
     sampler_from_config,
 )
 from autoware_carla_scenario.sweeper.expand import expand_config, expand_sweep
@@ -400,6 +401,8 @@ def test_a_sweep_of_samples_alone_needs_no_map() -> None:
             "environment.sun_altitude_angle",
             "environment.rain",
             "environment.fog_density",
+            # Where the case's grip is in the range its rain leaves.
+            "environment.tire_friction_quantile",
         }
 
 
@@ -424,7 +427,7 @@ def test_drawn_cases_take_the_lanelet_cases_in_turn(monkeypatch) -> None:
         "ego.spawn_lanelet_id=2",
         "ego.spawn_lanelet_id=1",
     ]
-    assert all(c[-1] == "x=1" and len(c) == 6 for c in cases)
+    assert all(c[-1] == "x=1" and len(c) == 7 for c in cases)
 
     # Without a count, one drawn case per lanelet case.
     del odd_sample["count"]
@@ -457,6 +460,82 @@ def test_the_environment_config_sets_the_weather_before_the_run() -> None:
     add_environment(OmegaConf.create({"environment": {"fog_density": None}}), scenario)  # type: ignore[arg-type]
     add_environment(OmegaConf.create({}), scenario)  # type: ignore[arg-type]
     assert registered == []
+
+
+def test_a_wet_road_in_the_config_follows_the_vehicles_spawned_later() -> None:
+    from autoware_carla_scenario.actions.environment import follow_tire_friction
+    from autoware_carla_scenario.examples.run import add_environment
+
+    init: list = []
+    post: list = []
+    scenario = SimpleNamespace(
+        register_init=init.append, register_post_tick=post.append
+    )
+
+    add_environment(
+        OmegaConf.create({"environment": {"rain": 80, "tire_friction_quantile": 0.2}}),
+        scenario,  # type: ignore[arg-type]
+    )
+    assert init[0].sets_tire_friction
+    assert post == [follow_tire_friction]
+
+    # Fog leaves the road's grip, and the vehicles, alone.
+    init.clear()
+    post.clear()
+    add_environment(OmegaConf.create({"environment": {"fog_density": 40}}), scenario)  # type: ignore[arg-type]
+    assert len(init) == 1 and post == []
+
+
+def test_each_case_draws_its_grip_the_same_way_every_time() -> None:
+    cfg = OmegaConf.create(
+        {"odd": "default", "sweep": {"odd_sample": {"count": 8, "seed": 3}}}
+    )
+
+    def quantiles(cases: list[list[str]]) -> list[float]:
+        return [
+            float(o.split("=", 1)[1])
+            for case in cases
+            for o in case
+            if o.startswith("environment.tire_friction_quantile=")
+        ]
+
+    first = quantiles(expand_config(cfg))
+    assert len(first) == 8
+    assert all(0.0 <= q <= 1.0 for q in first)
+    assert len(set(first)) > 1
+    assert quantiles(expand_config(cfg)) == first
+
+    # The case carries it, for its run to record.
+    case = expand_config(cfg)[0]
+    sample, _space = decode_case(case[-1].split("=", 1)[1])
+    assert any(
+        o.startswith("environment.tire_friction_quantile=") for o in sample.overrides
+    )
+
+
+def test_a_sweep_can_leave_the_grip_at_the_middle() -> None:
+    cfg = OmegaConf.create(
+        {
+            "odd": "default",
+            "sweep": {"odd_sample": {"count": 2, "tire_friction": False}},
+        }
+    )
+
+    for case in expand_config(cfg):
+        assert not any("tire_friction" in o for o in case)
+
+
+def test_a_case_that_names_its_grip_keeps_it() -> None:
+    from autoware_carla_scenario.odd.sampler import OddSample, with_tire_friction
+
+    named = OddSample(0, ["environment.tire_friction_quantile=0.9"], {}, {})
+    drawn = OddSample(1, ["environment.rain=80"], {}, {})
+
+    kept, added = with_tire_friction([named, drawn], seed=0)
+
+    assert kept == named
+    assert added.overrides[0] == "environment.rain=80"
+    assert added.overrides[1].startswith("environment.tire_friction_quantile=")
 
 
 # ---------------------------------------------------------------------------

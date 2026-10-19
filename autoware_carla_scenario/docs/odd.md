@@ -750,6 +750,7 @@ sweep:
     odd: null              # the ODD to draw from; the run's (`odd`) by default
     knobs: {}              # by ODD attribute, replacing the scenario's controls; see below
     flaky: null            # look for flaky cases; see "Finding flaky cases" below
+    tire_friction: true    # draw each case's grip in the range its weather allows; see "Tire friction follows the weather"
 ```
 
 Each case is a list of Hydra overrides. A sweep that also has `constraints`
@@ -917,6 +918,45 @@ sweep carries the world's precipitation and fog density
 
 A scenario that sets the weather itself (its own `EnvironmentAction`) has
 the last word over the config.
+
+### Tire friction follows the weather
+
+CARLA draws rain but does not drive on it: a vehicle grips a soaked road as
+it grips a dry one. So an `EnvironmentAction` that sets the road's water --
+`rain`, `wetness` or `precipitation_deposits` -- also scales every vehicle's
+wheel friction (`friction_force_multiplier`) to a share of the dry road's
+grip, within the range the resulting weather leaves
+(`tire_friction_range`), by the larger of `wetness` and
+`precipitation_deposits`:
+
+| Road water | Grip, share of the dry road's | What `rain` gives it |
+|---|---|---|
+| 0 (dry) | 0.90-1.10 | `rain=0` |
+| 50 (wet) | 0.65-0.85 | `rain=30` (standing water 50) |
+| 100 (flooded) | 0.45-0.65 | `rain=100` |
+
+Between the rows the bounds are interpolated. Measured tire-road friction
+is about 0.8-1.0 on dry asphalt, 0.5-0.7 on wet and 0.3-0.5 under a water
+film; each range spans what tires, their wear and the asphalt make of the
+same water, and a dry road's is centred on CARLA's own grip, so a dry run
+drives as it did before.
+
+Where in the range a run's grip is, is `environment.tire_friction_quantile`
+(0 its low end, 1 its high end; the middle when not set). A
+`sweep.odd_sample` draws it for every case (`environment.tire_friction_quantile=0.412`
+among the case's overrides, recorded in its coverage file), from the sweep's
+`seed` and the case, so the same sweep draws the same grip. The weather comes
+from the ODD and the grip from the range that weather allows: a heavy-rain
+case never runs on a dry road's grip. `tire_friction: false` in the
+`odd_sample` leaves every case at the middle of its range, and
+`environment.tire_friction` fixes the grip whatever the weather (it wins over
+the quantile).
+
+The vehicles in the world when the action fires are scaled then; the config's
+action also registers `follow_tire_friction`, which gives the vehicles spawned
+later (background traffic) the same grip. A scenario that sets the weather on
+the tick loop sets the grip with it: a factor applied again replaces the last
+one rather than compounding it.
 
 The example scenarios declare these:
 
