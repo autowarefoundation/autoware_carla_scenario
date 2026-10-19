@@ -372,6 +372,8 @@ class SumoTrafficBackend(TrafficBackend):
                 self._signals_to_carla()
             self._failures = 0
         except Exception as exc:  # must not end the run
+            # What this step queued is stale by the next one: not sent with it.
+            self._commands = []
             self._failures += 1
             logger.warning("SUMO step failed (%d in a row): %s", self._failures, exc)
             if self._failures >= 20:
@@ -1193,7 +1195,10 @@ class SumoTrafficBackend(TrafficBackend):
         module docstring for why not a physics-off actor).  The pose goes into
         this tick's batch; the velocity, which has no batch command, is sent
         only when it is not the one the actor already has -- it is kept in the
-        actor's own frame, so the new pose does not change it.
+        actor's own frame, so the new pose does not change it.  That holds as
+        long as only this backend turns it off (release(), close(),
+        which forget it): whatever else disables an actor's constant velocity
+        must forget its entry in _constant_speed too.
         """
         import typesafe_carla.carla as carla  # noqa: PLC0415
 
