@@ -2169,10 +2169,52 @@ class _EnumIteration(ast.NodeVisitor):
     def __init__(self, edits: _Edits, enums: Collection[str]) -> None:
         self.edits = edits
         self.enums = enums
+        #: The names bound inside each enclosing function or lambda: a
+        #: parameter or local called like an Enum class is not that class.
+        self._bound: list[set[str]] = []
+
+    def _is_enum(self, node: ast.AST) -> bool:
+        return (
+            isinstance(node, ast.Name)
+            and node.id in self.enums
+            and not any(node.id in bound for bound in self._bound)
+        )
 
     def _members(self, node: ast.AST) -> None:
-        if isinstance(node, ast.Name) and node.id in self.enums:
+        if isinstance(node, ast.Name) and self._is_enum(node):
             self.edits.replace(*self.edits.node_span(node), f"{node.id}._acs_members()")
+
+    def _scope(self, node: ast.AST, args: ast.arguments) -> None:
+        bound = {a.arg for a in (*args.posonlyargs, *args.args, *args.kwonlyargs)}
+        bound.update(a.arg for a in (args.vararg, args.kwarg) if a is not None)
+        for child in ast.walk(node):
+            if isinstance(child, ast.Name) and isinstance(child.ctx, ast.Store):
+                bound.add(child.id)
+            elif isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                bound.add(child.name)
+        self._bound.append(bound)
+        for attr, value in ast.iter_fields(node):
+            if attr == "returns":
+                continue  # an annotation (`Mode[int]`), not an expression
+            for item in value if isinstance(value, list) else [value]:
+                if isinstance(item, ast.AST):
+                    self.visit(item)
+        self._bound.pop()
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        self._scope(node, node.args)
+
+    visit_AsyncFunctionDef = visit_FunctionDef  # type: ignore[assignment]
+
+    def visit_Lambda(self, node: ast.Lambda) -> None:
+        self._scope(node, node.args)
+
+    def visit_arg(self, node: ast.arg) -> None:
+        pass  # an annotation is not an expression to evaluate
+
+    def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
+        if node.value is not None:
+            self.visit(node.value)
 
     def visit_For(self, node: ast.For) -> None:
         self._members(node.iter)
@@ -2202,7 +2244,7 @@ class _EnumIteration(ast.NodeVisitor):
         value = node.value
         if (
             isinstance(value, ast.Name)
-            and value.id in self.enums
+            and self._is_enum(value)
             and isinstance(node.ctx, ast.Load)
         ):
             _, value_end = self.edits.node_span(value)

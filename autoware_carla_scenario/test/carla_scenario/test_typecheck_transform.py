@@ -963,6 +963,27 @@ def test_an_enum_of_another_module_is_iterated_when_named() -> None:
     assert "list(Rule._acs_members()), Rule._acs_by_name('A')" in out
 
 
+def test_a_name_that_is_not_the_enum_class_is_left_alone() -> None:
+    source = textwrap.dedent(
+        """
+        class Mode(Enum):
+            A = 1
+        def f(Mode):
+            return list(Mode), Mode["A"], 1 in Mode
+        def g():
+            Mode = {1: 2}
+            return [m for m in Mode], Mode[1]
+        def h(x: Mode[int]) -> Mode[int]:
+            return list(Mode), self.Mode["A"]
+        """
+    )
+    out = _transform(source).partition("\n\n@extend\n")[0]
+    assert 'list(Mode), Mode["A"], 1 in Mode' in out
+    assert "[m for m in Mode], Mode[1]" in out
+    assert "_acs_by_name(int)" not in out
+    assert 'return list(Mode._acs_members()), self.Mode["A"]' in out
+
+
 def test_a_str_enum_with_auto_values_takes_the_lowercase_names() -> None:
     out = _transform("class Mode(StrEnum):\n    FAST = auto()\n")
     assert "class Mode(_acs_StrEnum[str]):" in out
