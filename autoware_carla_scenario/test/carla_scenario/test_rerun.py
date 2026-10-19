@@ -506,16 +506,25 @@ def test_a_single_run_waits_for_its_recording_and_reports_it(
     assert "Rerun recordings: 0/0 written" in capsys.readouterr().out
 
 
-@pytest.mark.parametrize(
-    "name", ["CutInScenario-3.trajectory.jsonl", "CutInScenario.trajectory.jsonl"]
-)
-def test_the_viewer_serves_the_recording_a_run_writes(name: str) -> None:
-    """The scenario page embeds ``X.rrd`` beside the log when there is one
-    (ui.recordings), so it must be the file ``rerun.enabled`` writes."""
+def test_the_viewer_shows_the_recording_rerun_enabled_made(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The viewer looks for a case's recording where ``rerun.enabled`` writes
+    it, and shows that one rather than making another."""
     from autoware_carla_scenario.ui import recordings
 
-    log = Path("/o") / name
-    assert recordings.recording_path(log) == recording_path(log)
+    for name in ("CutInScenario.trajectory.jsonl", "CutInScenario-3.trajectory.jsonl"):
+        log = tmp_path / name
+        assert recordings.recording_path(log) == recording_path(log)
+    log = tmp_path / "CutInScenario.trajectory.jsonl"
+    log.write_text("{}\n")
+    recording_path(log).write_bytes(b"RRD")
+
+    def convert(trajectory: Path, out: Path) -> None:
+        raise AssertionError(f"made {out} again")
+
+    monkeypatch.setattr(recordings, "_convert", convert)
+    assert recordings.ensure_recording(log) == recording_path(log)
 
 
 def test_a_failed_conversion_is_found_by_the_case_it_belongs_to(tmp_path: Path) -> None:
