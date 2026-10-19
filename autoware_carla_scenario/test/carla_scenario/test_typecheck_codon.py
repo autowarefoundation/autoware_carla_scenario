@@ -3886,18 +3886,43 @@ def test_a_scenario_reads_a_frozen_dataclass_s_fields(tmp_path: Path) -> None:
     assert result.ok, result.format()
 
 
+_SEGMENT_READS = """
+self._setup_ego_spawn()
+match = scenario_route()
+if match is not None:
+    for segment in match.segments:
+        logger.info("%s %f %f %f", segment.kind, segment.start, segment.end, segment.length)
+        logger.info("%s %d", segment.turn, len(segment.lanelet_ids))
+    for junction in match.junctions:
+        logger.info("%s %d", junction.turn, junction.lanelet_ids[0])
+    if len(match.junctions) > 0:
+        first = match.junction(0)
+        logger.info("%s %f %f", first.turn, first.start, first.end)
+"""
+
+
+def test_a_scenario_reads_the_route_s_segments_and_junctions(tmp_path: Path) -> None:
+    # RouteMatch.segments, junctions and junction() and RouteSegmentMatch were
+    # left out for a stale "variadic tuples have no Codon type" (#380).
+    scenario, config, _ = _write_case(
+        tmp_path, _SEGMENT_READS + _TIMEOUT_SETUP, header=_ROUTE_HEADER
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
 def test_a_dataclass_field_the_model_leaves_out_says_why(tmp_path: Path) -> None:
-    setup = _FIELD_READS.replace("match.lanelet_ids[0],", "len(match.segments),", 1)
+    setup = _FIELD_READS.replace("match.lanelet_ids[0],", "len(match.to_config()),", 1)
     scenario, config, path = _write_case(
         tmp_path, setup + _TIMEOUT_SETUP, header=_ROUTE_HEADER
     )
     error = _only_error(typecheck_scenario(scenario, config))
     assert "object has no attribute" in error.message, error.format()
     assert (
-        "RouteMatch.segments is not part of the Codon model, on purpose"
+        "RouteMatch.to_config is not part of the Codon model, on purpose"
         in error.message
     ), error.format()
-    assert error.line == _line_of(path, "match.segments")
+    assert error.line == _line_of(path, "match.to_config")
 
 
 _CROSS_SETUP = """

@@ -95,8 +95,8 @@ _ODD_REGISTRY = (
 )
 _ROUTE_SEARCH = (
     "the route search, parsed from a document's YAML (parse_route_search() "
-    "takes `Mapping[str, Any]`) into frozen dataclasses of variadic tuples, "
-    "which Codon has no type for; a scenario reads the route its sweep "
+    "takes `Mapping[str, Any]`, which Codon has no type for) into frozen "
+    "dataclasses; a scenario reads the route its sweep "
     "matched with scenario_route(), which is modelled"
 )
 _ROUTE_SETTER = (
@@ -242,7 +242,7 @@ NOT_MODELLED: dict[str, dict[str, str]] = {
     f"{_PACKAGE}.route": {
         **_each(
             "JunctionSegmentSpec LaneSegmentSpec Range RouteSearchSpec "
-            "RouteSegmentMatch parse_route_search",
+            "parse_route_search",
             _ROUTE_SEARCH,
         ),
         **_each("clear_scenario_route set_scenario_route", _ROUTE_SETTER),
@@ -317,12 +317,6 @@ _SET_TRAFFIC_BACKEND = (
     "entities' manoeuvres (set_desired_speed(), change_lane(), ...), which are "
     "modelled"
 )
-_ROUTE_SEGMENTS = (
-    "returns a RouteSegmentMatch, a frozen dataclass of variadic tuples, "
-    "which Codon has no type for (see autoware_carla_scenario.route); a "
-    "scenario reads a junction's lanelets with "
-    "scenario_route_frame().junction_way()"
-)
 _BY_NAME = (
     "the model declares the class by name only, so the checked package's "
     "re-export resolves, and a scenario cannot build one (its constructor is "
@@ -354,12 +348,6 @@ _ROS2_CONFIG = (
     "run's config: the model's constructor is a compile error, so a scenario "
     "holds none to read; the library check compiles ros2.config in this "
     "model's place"
-)
-_ROUTE_SEGMENT_FIELD = (
-    "a tuple of RouteSegmentMatch, frozen dataclasses of variadic tuples, "
-    "which Codon has no type for (see autoware_carla_scenario.route); a "
-    "scenario reads a junction's lanelets with "
-    "scenario_route_frame().junction_way()"
 )
 _CALLABLE_ANY = (
     "a callable of `Any` (`Callable[[Any], Any]`, `Callable[[Any], bool]`), "
@@ -506,9 +494,6 @@ NOT_MODELLED_MEMBERS: dict[str, dict[str, str]] = {
     "RouteLanelet": {"describe": _AS_DICT, "values": _ANY_FIELD},
     "RouteMatch": {
         "from_config": _FROM_MAPPING,
-        "junction": _ROUTE_SEGMENTS,
-        "junctions": _ROUTE_SEGMENTS,
-        "segments": _ROUTE_SEGMENT_FIELD,
         "to_config": _AS_DICT,
     },
     "RerunConverter": _members(

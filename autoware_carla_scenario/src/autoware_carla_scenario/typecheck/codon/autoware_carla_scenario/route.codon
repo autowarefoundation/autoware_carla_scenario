@@ -8,9 +8,48 @@ import lanelet2.core
 import lanelet2.routing
 
 
+class RouteSegmentMatch:
+    # Generic: a scenario reads the segments of the running route
+    # (scenario_route()) rather than building one, and lanelet_ids, a
+    # tuple[int, ...] in Python, is a List[int] here (docs/typecheck.md), so
+    # the constructor takes it untyped.
+    def __init__(self):
+        compile_error("RouteSegmentMatch(): no constructor takes these arguments "
+                      "(required: kind, start, end, lanelet_ids)")
+
+    def __init__(self, kind, start, end, lanelet_ids, turn = ""):
+        pass
+
+    # Python's frozen dataclass fields, read as properties (#298).
+    @property
+    def kind(self) -> str:
+        raise NotImplementedError()
+
+    @property
+    def start(self) -> float:
+        raise NotImplementedError()
+
+    @property
+    def end(self) -> float:
+        raise NotImplementedError()
+
+    @property
+    def lanelet_ids(self) -> List[int]:
+        raise NotImplementedError()
+
+    @property
+    def turn(self) -> str:
+        raise NotImplementedError()
+
+    @property
+    def length(self) -> float:
+        raise NotImplementedError()
+
+
 class RouteMatch:
-    # Generic: Python's fields are variadic tuples (tuple[int, ...],
-    # tuple[RouteSegmentMatch, ...]), which have no Codon type, and a scenario
+    # Generic: Python's fields are tuples (tuple[int, ...],
+    # tuple[RouteSegmentMatch, ...]), which the constructor takes untyped (a
+    # tuple[X, ...] is a List[X] here), and a scenario
     # reads the running route (scenario_route()) rather than building one.
     # The constructor takes Python's parameters all the same, so a call
     # Python refuses is refused here too. Codon builds a class without fields
@@ -41,6 +80,17 @@ class RouteMatch:
 
     @property
     def index(self) -> int:
+        raise NotImplementedError()
+
+    @property
+    def segments(self) -> List[RouteSegmentMatch]:
+        raise NotImplementedError()
+
+    @property
+    def junctions(self) -> List[RouteSegmentMatch]:
+        raise NotImplementedError()
+
+    def junction(self, index: int) -> RouteSegmentMatch:
         raise NotImplementedError()
 
     def anchor_s(self, anchor: Optional[str]) -> float:

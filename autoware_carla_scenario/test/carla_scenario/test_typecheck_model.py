@@ -400,6 +400,7 @@ _BOUNDARY: dict[str, tuple[str, Any]] = {
     # Everything route.codon declares: the running route, its frame, the
     # anchors, and the values (compared by value) the route poses check.
     "RouteMatch": ("route", route_model.RouteMatch),
+    "RouteSegmentMatch": ("route", route_model.RouteSegmentMatch),
     "parse_anchor": ("route", route_model.parse_anchor),
     "scenario_route": ("route", route_active.scenario_route),
     "scenario_route_frame": ("route", route_active.scenario_route_frame),
@@ -1255,6 +1256,7 @@ def test_the_classes_codon_builds_by_other_arities_are_found() -> None:
         "PedestrianEntity",
         "RouteFrame",
         "RouteMatch",
+        "RouteSegmentMatch",
         "Ros2EgoTransport",
         "VehicleEntity",
     ):
