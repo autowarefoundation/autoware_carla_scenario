@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -99,3 +100,33 @@ def test_unwritable_cache_still_returns_the_value(
     assert _cached(maps, tmp_path, compute) == 1.5
     assert _cached(maps, tmp_path, compute) == 1.5
     assert compute.calls == 2
+
+
+def test_a_file_is_hashed_once_while_it_is_unchanged(
+    maps: tuple[Path, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A queue re-initialises the map manager for every run: the maps' digests
+    are taken again only once a file has changed."""
+    import os
+
+    from autoware_carla_scenario.maps import z_offset_cache
+
+    monkeypatch.setattr(z_offset_cache, "_DIGESTS", {})
+    opened: list[str] = []
+    real_open = Path.open
+
+    def counted(self: Path, *args: Any, **kwargs: Any) -> Any:
+        if self in maps:
+            opened.append(self.name)
+        return real_open(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", counted)
+    for _ in range(3):
+        _cached(maps, tmp_path, _Compute(1.0))
+    assert sorted(opened) == ["lanelet2_map.osm", "map.xodr"]
+    stat = maps[1].stat()
+    maps[1].write_text("<OpenDRIVE version='2'/>", encoding="utf-8")
+    os.utime(maps[1], ns=(stat.st_atime_ns, stat.st_mtime_ns + 10**9))
+    opened.clear()  # write_text() opens it too
+    assert _cached(maps, tmp_path, _Compute(2.0)) == 2.0
+    assert opened == ["map.xodr"]
