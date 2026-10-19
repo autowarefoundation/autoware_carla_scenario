@@ -315,26 +315,59 @@ A run renders no video (since 15.0.0). What it leaves to look at is its
 trajectory log, `{ScenarioName}.trajectory.jsonl`: every vehicle and pedestrian
 tick by tick, the traffic lights, the map it ran on, the ego's plan (its debug
 markers), each condition's state and the verdict ([Trajectory Log](trajectory_log.md)).
-To see it, make it a [Rerun](https://rerun.io) recording with the
-`autoware_carla_scenario_rerun` Python package (`convert` for one log,
-`convert_dir` for a whole run or sweep directory; each writes `X.rrd` beside
-`X.trajectory.jsonl`) and open that in the Rerun viewer:
+To see it, make it a [Rerun](https://rerun.io) recording, `{ScenarioName}.rrd`
+beside the log, and open that in the Rerun viewer. The conversion is the
+`autoware-carla-scenario-rerun` package, installed with the `rerun` extra:
 
 ```bash
-# The converter, with the Rerun viewer it is made for (rerun-sdk >=0.38.1,<0.39):
-pip install 'autoware-carla-scenario-rerun[viewer]'
-# Every run of a session (a sweep's directory works the same):
-python -c 'from autoware_carla_scenario_rerun import convert_dir; convert_dir("outputs/2026-10-18/08-48-12")'
-# Or one run:
-python -c 'from autoware_carla_scenario_rerun import convert; convert("outputs/2026-10-18/08-48-12/CutInScenario-3.trajectory.jsonl")'
-rerun outputs/2026-10-18/08-48-12/CutInScenario-3.rrd               # the Rerun viewer
+# The converter (rerun), and the Rerun viewer its recordings are made for (viewer):
+pip install 'autoware-carla-scenario[rerun,viewer]'
+# A recording of every run, made as each run ends:
+uv run scenario scenario=cut_in/cut_in rerun.enabled=true
+uv run scenario 'scenario=cut_in/*' --multirun rerun.enabled=true
+rerun outputs/2026-10-18/08-48-12/CutInScenario-3.rrd     # the Rerun viewer
 ```
 
-The converter is a package of its own, not a dependency of this one (being
-built into the framework is a later change); it reads nothing but the log and
-the map files the log names, so it runs anywhere, without CARLA. The CARLA
-recording (`{ScenarioName}.log`) is still written: CARLA's own replayer
-(`client.replay_file()`) plays it back on a server running the same map.
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `rerun.enabled` | bool | `false` | Convert each run's trajectory log into `{ScenarioName}.rrd` as soon as the run ends |
+| `rerun.strict` | bool | `false` | Fail the conversion of a log with a record type or a field the converter does not know, rather than skip it with a warning |
+
+With `rerun.enabled=true`:
+
+- A run asking for recordings without the extra installed is refused before
+  anything starts (exit code 2), saying how to install it.
+- Each log is converted on a background thread as soon as its run ends, while
+  the next case runs (the converter releases the GIL; a log takes milliseconds).
+  A run that raised is converted too: its log is what shows what happened.
+- At the end the run waits for the last conversions and prints how they went:
+  `Rerun recordings: N/M written`, and a line per failure naming its case. A
+  failed conversion does not change any verdict or the exit code.
+- Each case's `{ScenarioName}_result.json` names its recording
+  (`rerun_recording`), and so does its entry in a batch's
+  `batch_results.json`, with `rerun_error` when the conversion failed. The
+  viewer's scenario page shows it in the embedded Rerun viewer, without
+  converting the log again ([Seeing a run in the viewer](#seeing-a-run-in-the-viewer)).
+- A Hydra sweep (`--multirun` without a glob) runs each case in a process of
+  its own, and each converts its own log. So does each task of a batch run on
+  SLURM (`launcher=slurm`, [Running a Batch on SLURM](slurm.md)): it converts
+  its own cases, and `scenario-slurm collect` reports their recordings as a
+  local batch does.
+
+A run made without it (or by a version before it) can be converted afterwards,
+the same way:
+
+```bash
+# Every run of a session (a sweep's directory works the same), or one log:
+python -m autoware_carla_scenario.rerun outputs/2026-10-18/08-48-12
+python -m autoware_carla_scenario.rerun outputs/2026-10-18/08-48-12/CutInScenario-3.trajectory.jsonl
+```
+
+or from Python, `autoware_carla_scenario.rerun.convert_outputs(path)`. The
+converter reads nothing but the log and the map files the log names, so it
+runs anywhere, without CARLA. The CARLA recording (`{ScenarioName}.log`) is
+still written: CARLA's own replayer (`client.replay_file()`) plays it back on a
+server running the same map.
 
 `video.*` settings (`video.enabled`, `video.width`, `video.height`) are
 accepted for old command lines and configs, and do nothing: a run that sets
@@ -520,6 +553,7 @@ Each scenario run generates output in `outputs/YYYY-MM-DD/HH-MM-SS/`:
 | `{ScenarioName}_requirements.lock` | What the run ran with: every installed distribution pinned, in the requirements format (`pip install -r`), headed by the framework, the scenario's package, Python and the platform. A distribution from git is pinned to its commit; an editable one (a checkout) names its directory, commit and whether it had uncommitted changes |
 | `{ScenarioName}_environment.json` | The same, structured; `_result.json` carries its summary (`environment`: the framework, the scenario's package, key dependencies, and the lock's id -- the SHA-256 of what it pins -- so runs on one environment can be found by it) |
 | `{ScenarioName}.trajectory.jsonl` | The run, tick by tick, and the map, plan, conditions and verdict ([Trajectory Log](trajectory_log.md)); make it a Rerun recording to see the run ([Seeing a run](#seeing-a-run)) |
+| `{ScenarioName}.rrd` | The Rerun recording of the trajectory log, with `rerun.enabled=true` ([Seeing a run](#seeing-a-run)) |
 | `batch_results.json` | Batch summary (glob/batch mode only) |
 
 **Result JSON format:**
