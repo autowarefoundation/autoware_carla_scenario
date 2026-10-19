@@ -730,6 +730,42 @@ def test_worker_points_the_config_at_its_ports() -> None:
     assert cfg.driver.address == "localhost:50051"
 
 
+@pytest.mark.parametrize(
+    ("transport", "address"),
+    [("direct", "localhost:50051"), ("unix", "unix:///shared/policy.sock")],
+)
+def test_worker_leaves_the_driver_transport_alone(transport: str, address: str) -> None:
+    """direct and unix use no port of the slot: a policy the task serves is reached
+    without one (in-process, or on a socket in a directory of the task's own), and
+    a Unix socket someone else serves is dialled where it is, as a TCP one."""
+    from autoware_carla_scenario.driver.base import DriverClientConfig
+    from autoware_carla_scenario.examples import run
+    from autoware_carla_scenario.slurm.ports import PortSlot
+    from autoware_carla_scenario.slurm.worker import worker_overrides
+
+    cfg = run._compose_config(
+        _CONCRETE,
+        [
+            f"driver.transport={transport}",
+            f"driver.address={address}",
+            "driver.policy=constant_speed"
+            if transport == "direct"
+            else "driver.policy=null",
+        ],
+    )
+    changes = worker_overrides(cfg, PortSlot(index=0, base=20000))
+    assert not any(key.startswith("driver.") for key in changes)
+    assert (cfg.driver.transport, cfg.driver.address) == (transport, address)
+    config = DriverClientConfig.from_mapping(
+        {
+            k: v
+            for k, v in run._to_dict(cfg.driver).items()
+            if k not in ("control", "bridge")
+        }
+    )
+    assert config.transport == transport
+
+
 def test_job_script_guard_pattern_matches_only_its_port() -> None:
     pattern = re.compile(r"-carla-rpc-port=20000( |$)")
     assert pattern.search("CarlaUnreal -carla-rpc-port=20000 -RenderOffScreen")

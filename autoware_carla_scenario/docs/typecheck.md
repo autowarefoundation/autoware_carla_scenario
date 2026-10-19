@@ -1178,7 +1178,7 @@ To check one more module:
 ### What is checked of the framework
 
 Every module now has an entry other than `"not yet checked (#45)"`. 171 of
-the package's 261 modules (66%; about 44,400 of 79,100 lines) are `CHECKED`:
+the package's 262 modules (65%; about 44,400 of 79,100 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the conversions between
 Lanelet2, OpenDRIVE and CARLA world poses (`coordinate.transform`), the stop
 lines read off a Lanelet2 map (`utils.stop_line`, `coordinate.stop_line`)
@@ -1274,12 +1274,12 @@ a `TrajectoryVertex` call's arguments, each of any type (`Any`), walks or
 binds a sweeper constraint of any kind, builds a condition's status (its
 details), or takes the list a plain tick callback goes into
 (`BaseScenario._register_tick()`, a `List[Callable[[carla.World], None]]`,
-which the check has no value of). The 90 `EXCLUDED` modules fall in
-four groups. Many fit more than one (about 67 import what Codon cannot
+which the check has no value of). The 91 `EXCLUDED` modules fall in
+four groups. Many fit more than one (about 68 import what Codon cannot
 compile, 29 build on an excluded module and 20 hold values Codon has no type
 for), so each is counted once, in the first group that fits it:
 
-- **67 import what Codon cannot compile**: pyxodr,
+- **68 import what Codon cannot compile**: pyxodr,
   pydantic, pickle, lxml, grpc, omegaconf and hydra, yaml, openodd (a Rust extension),
   cyclonedds (`ros2.cyclone` and `ros2.messages`, the ROS 2 ego's DDS
   transport and its message types), or

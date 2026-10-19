@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import shlex
 from pathlib import Path
 from typing import Any
 
@@ -18,7 +19,7 @@ from fastapi.responses import (
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import cases, recordings, results, runner, scanner
+from . import cases, recordings, results, runner, scanner, slurm_launch
 from .models import RunProgress
 
 logger = logging.getLogger(__name__)
@@ -80,6 +81,8 @@ async def session_detail(
     items = scanner.load_session(_base_path(), session_type, date, time)
     passed_count = sum(1 for it in items if it.passed is True)
     total_count = len(items)
+    # A SLURM batch's cases without an outcome yet.
+    pending_count = sum(1 for it in items if it.passed is None)
     return templates.TemplateResponse(
         request=request,
         name="session.html",
@@ -90,7 +93,13 @@ async def session_detail(
             "time": time,
             "passed_count": passed_count,
             "total_count": total_count,
+            "pending_count": pending_count,
             "page": "session",
+            "slurm": session_type == "batch"
+            and (
+                _base_path() / "outputs" / date / time / "slurm" / "manifest.json"
+            ).is_file()
+            and cases.session_dir(_base_path(), session_type, date, time) is not None,
         },
     )
 
@@ -187,6 +196,14 @@ async def run_preview(request: Request) -> dict[str, str]:
     extra_overrides: list[str] = body.get("extra_overrides", [])
     sweeper: str = body.get("sweeper", "")
 
+    if body.get("launcher") == "slurm":
+        try:
+            options = slurm_launch.SlurmOptions.from_request(body.get("slurm"))
+        except ValueError as exc:
+            return {"command": f"# {exc}"}
+        cmd = slurm_launch.build_command(scenario, extra_overrides, sweeper, options)
+        return {"command": " ".join(shlex.quote(c) for c in cmd)}
+
     cmd, note = runner.build_command(scenario, extra_overrides, sweeper)
     preview = " ".join(cmd)
     if note:
@@ -210,6 +227,9 @@ async def run_scenarios(request: Request) -> dict[str, str]:
     scenario: str = body.get("scenario", "*/*")
     extra_overrides: list[str] = body.get("extra_overrides", [])
     sweeper: str = body.get("sweeper", "")
+
+    if body.get("launcher") == "slurm":
+        return _submit_slurm(scenario, extra_overrides, sweeper, body.get("slurm"))
 
     if sweeper:
         # Resolve sweep constraints in-process (lightweight, no CARLA).
@@ -592,4 +612,139 @@ async def compare_runs(request: Request) -> HTMLResponse:
             "converter": recordings.converter_available(),
             "install_hint": recordings.INSTALL_HINT,
         },
+    )
+
+
+# ── SLURM ────────────────────────────────────────────────────────────────
+
+
+def _submit_slurm(
+    scenario: str, extra_overrides: list[str], sweeper: str, raw: Any
+) -> dict[str, str]:
+    """Submit the batch through SLURM (``launcher=slurm --no-wait``)."""
+    available, reason = slurm_launch.availability()
+    if not available:
+        return {"status": "error", "message": reason}
+    try:
+        options = slurm_launch.SlurmOptions.from_request(
+            raw if isinstance(raw, dict) else {}
+        )
+    except ValueError as exc:
+        return {"status": "error", "message": str(exc)}
+    command = slurm_launch.build_command(scenario, extra_overrides, sweeper, options)
+    try:
+        slurm_launch.start_submit(command, _base_path())
+    except RuntimeError as exc:
+        return {"status": "error", "message": str(exc)}
+    return {"status": "submitting"}
+
+
+@app.get("/api/launchers")
+async def launchers() -> dict[str, Any]:
+    """Which launchers a run can use here: ``local`` always, ``slurm`` where
+    sbatch is (with the partitions sinfo lists), else why not."""
+    available, reason = slurm_launch.availability()
+    return {
+        "local": {"available": True},
+        "slurm": {
+            "available": available,
+            "reason": reason,
+            "partitions": await asyncio.to_thread(slurm_launch.partitions)
+            if available
+            else [],
+        },
+    }
+
+
+def _session_of(batch_dir: str | None) -> str | None:
+    """``/session/batch/<date>/<time>`` of a batch directory under the base."""
+    if not batch_dir:
+        return None
+    try:
+        rel = Path(batch_dir).resolve().relative_to(_base_path().resolve() / "outputs")
+    except ValueError:
+        return None
+    parts = rel.parts
+    return f"/session/batch/{parts[0]}/{parts[1]}" if len(parts) == 2 else None
+
+
+@app.get("/api/slurm/submission")
+async def slurm_submission() -> dict[str, Any]:
+    """The batch this viewer last submitted: ``submitting``, ``submitted``
+    (with its session's page) or ``failed`` (with the output)."""
+    record = slurm_launch.submission()
+    if record is None:
+        return {"state": "none"}
+    out = record.to_dict()
+    out["session_url"] = _session_of(record.batch_dir)
+    if record.state != "submitting":
+        scanner.clear_cache()
+    return out
+
+
+def _slurm_batch(date: str, time: str) -> Path:
+    directory = cases.session_dir(_base_path(), "batch", date, time)
+    if directory is None or not (directory / "slurm" / "manifest.json").is_file():
+        raise HTTPException(status_code=404, detail="Not a SLURM batch")
+    return directory
+
+
+@app.get("/api/slurm/{date}/{time}/status")
+async def slurm_status(date: str, time: str) -> dict[str, Any]:
+    """A SLURM batch's cases, jobs and tasks (``squeue``)."""
+    status = await asyncio.to_thread(
+        slurm_launch.batch_status, _slurm_batch(date, time)
+    )
+    if status is None:
+        raise HTTPException(status_code=404, detail="Not a SLURM batch")
+    available, reason = slurm_launch.availability()
+    status["slurm_available"] = available
+    status["slurm_reason"] = reason
+    return status
+
+
+@app.post("/api/slurm/{date}/{time}/{action}")
+async def slurm_action(
+    request: Request, date: str, time: str, action: str
+) -> JSONResponse:
+    """``scenario-slurm resubmit|collect|cancel`` on the batch.
+
+    ``resubmit`` takes ``{"failed": bool, "array_parallelism": n,
+    "cases_per_task": n}`` and submits without waiting.
+    """
+    directory = _slurm_batch(date, time)
+    if action not in ("resubmit", "collect", "cancel"):
+        raise HTTPException(status_code=404)
+    if action != "collect":
+        available, reason = slurm_launch.availability()
+        if not available:
+            return JSONResponse(
+                status_code=503, content={"ok": False, "output": reason}
+            )
+    args = [action, str(directory)]
+    if action == "resubmit":
+        body: dict[str, Any] = {}
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001 -- no body: the defaults
+            pass
+        if body.get("failed"):
+            args.append("--failed")
+        for key in ("array_parallelism", "cases_per_task"):
+            value = body.get(key)
+            if value not in (None, ""):
+                if not str(value).isdigit() or int(value) < 1:
+                    return JSONResponse(
+                        status_code=400,
+                        content={
+                            "ok": False,
+                            "output": f"{key} must be a positive integer",
+                        },
+                    )
+                args.extend([f"--{key.replace('_', '-')}", str(int(value))])
+        args.append("--no-wait")
+    code, output = await asyncio.to_thread(slurm_launch.run_cli, args)
+    scanner.clear_cache()
+    return JSONResponse(
+        {"ok": code == 0 or action == "collect", "code": code, "output": output}
     )

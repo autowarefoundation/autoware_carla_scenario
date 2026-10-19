@@ -1,6 +1,6 @@
 [project]
 name = "autoware-carla-scenario"
-version = "15.2.4"
+version = "15.3.0"
 description = "CARLA scenario testing framework for Autoware"
 readme = "README.md"
 license = "Apache-2.0"
@@ -76,7 +76,7 @@ dependencies = [
     # scenario package share an environment whenever their majors agree. A policy
     # in another process may be on another major: the contract revision each side
     # declares on the wire (`carla_driver_interface.contract`) covers that.
-    "carla-driver-interface>=2.1,<3",
+    "carla-driver-interface>=2.2,<3",
     "grpcio>=1.60",
     # The vendored modules are protobuf 4.25 gencode, which every runtime from
     # 4.25 through 7.x loads. The 4.x runtime itself cannot load on Python 3.14,

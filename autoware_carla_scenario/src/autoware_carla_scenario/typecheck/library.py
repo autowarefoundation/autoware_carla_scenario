@@ -400,7 +400,7 @@ EXCLUDED: dict[str, str] = {
     "autoware_carla_scenario.coverage.items": "re-exports openodd's cover items (a Rust extension)",
     "autoware_carla_scenario.coverage.report": "re-exports openodd's coverage merge and report (a Rust extension)",
     "autoware_carla_scenario.declarative": "imports authoring.builders, authoring.compiler, authoring.models (pydantic) and authoring.persistence (yaml), which are not checked and have no model",
-    "autoware_carla_scenario.driver.egodriver_client": "imports grpc, google.protobuf, numpy.typing (`NDArray`), which Codon's numpy lacks, and carla_driver_interface's contract, policies, server and protocol, which its model (geometry only) does not declare",
+    "autoware_carla_scenario.driver.egodriver_client": "imports grpc, google.protobuf, numpy.typing (`NDArray`), which Codon's numpy lacks, importlib and tempfile (the Unix socket's directory), and carla_driver_interface's contract, policies, server, service, driver, inprocess and protocol, which its model (geometry only) does not declare",
     "autoware_carla_scenario.driver.hdmap_export": "imports roadgen, tempfile, json, and more of pathlib and shutil than their shims declare (`Path.rename()`, `shutil.copyfile()`)",
     "autoware_carla_scenario.driver.renderer": "imports carla_driver_interface.protocol (the protobuf messages it builds: CarlaRendererData, CarlaActorState, CarlaWeather, TrafficLight, StopPoint, the TrafficLightState values, and common_pb2's AABB, DynamicState and Vec3), which its model (geometry only) does not declare, and numpy.typing (`NDArray`), which Codon's numpy lacks; reads CARLA's traffic lights, waypoints and stop waypoints typed `Any`",
     "autoware_carla_scenario.editor": "imports uvicorn and editor.app (fastapi) inside main()",
@@ -460,6 +460,7 @@ EXCLUDED: dict[str, str] = {
     "autoware_carla_scenario.ui.results": "imports json, and yaml inside a function; reads JSON documents and trajectory log records of any type (`Any`)",
     "autoware_carla_scenario.ui.recordings": "imports json, base64, io and tarfile, and, inside functions, the converter (autoware_carla_scenario_rerun, a Rust extension), which it holds as a module of any type (`Any`)",
     "autoware_carla_scenario.ui.scanner": "imports yaml, json, and more of pathlib than its shim declares (`Path.iterdir()`, `Path.stat()`, `Path.with_suffix()`)",
+    "autoware_carla_scenario.ui.slurm_launch": "imports re, shlex, datetime, and slurm.manifest (json) and slurm.submit (omegaconf inside functions), which are not checked; reads the batch's JSON records of any type (`Any`)",
     "autoware_carla_scenario.ui.sweep_resolver": "imports omegaconf, hydra",
     "autoware_carla_scenario.utils.config": "reads the fields of a dataclass it is handed as a class (`type`, dataclasses.fields), which Codon cannot express",
 }
