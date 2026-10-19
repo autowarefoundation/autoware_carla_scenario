@@ -1655,6 +1655,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Writing a scenario that type-checks">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-names-of-typing-a-scenario-may-import" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The names of typing a scenario may import
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -2006,6 +2023,23 @@
       
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label="Writing a scenario that type-checks">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-names-of-typing-a-scenario-may-import" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The names of typing a scenario may import
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -3169,6 +3203,39 @@ value whose members are <code>int</code>, not as a type: it becomes <code>int</c
     <code>_replace()</code>, <code>_asdict()</code>, <code>_fields</code> or <code>_make()</code>: build a new <code>Pt(...)</code>.
     Only the class syntax is covered (not <code>NamedTuple("Pt", [...])</code> or
     <code>collections.namedtuple</code>).</li>
+</ul>
+<h3 id="the-names-of-typing-a-scenario-may-import">The names of <code>typing</code> a scenario may import<a class="headerlink" href="#the-names-of-typing-a-scenario-may-import" title="Permanent link">&para;</a></h3>
+<p>Codon has no <code>typing</code> module of its own beyond a few names, so the check
+brings a shim (<code>typecheck/codon/typing.codon</code>). A scenario may import these
+names from <code>typing</code> (#364); <code>test_typing_names</code> keeps this list and the shim
+in step:</p>
+<!-- typing-names:start -->
+<p><code>TYPE_CHECKING</code>, <code>Sequence</code>, <code>MutableSequence</code>, <code>Iterable</code>, <code>Collection</code>,
+<code>Mapping</code>, <code>MutableMapping</code>, <code>AbstractSet</code>, <code>FrozenSet</code>, <code>Any</code>, <code>TypeVar</code>,
+<code>Protocol</code>, <code>runtime_checkable</code>, <code>Literal</code>, <code>IO</code>, <code>Iterator</code>, <code>Deque</code>,
+<code>DefaultDict</code>, <code>Counter</code>, <code>Final</code>, <code>Annotated</code>, <code>NoReturn</code>, <code>Type</code>, <code>Sized</code>,
+<code>Hashable</code>, <code>cast</code>, <code>Optional</code>, <code>List</code>, <code>Dict</code>, <code>Set</code>, <code>Tuple</code>, <code>Callable</code>,
+<code>Union</code>, <code>ClassVar</code>, <code>Generator</code>, <code>overload</code></p>
+<!-- typing-names:end -->
+
+<ul>
+<li><code>Final</code> and <code>Annotated</code> are read as what they wrap (<code>Final[int]</code> and
+  <code>Annotated[int, "m"]</code> are <code>int</code>; a bare <code>Final</code> is dropped). <code>NoReturn</code>,
+  <code>Type</code>, <code>Sized</code>, <code>Hashable</code>, <code>Any</code> and <code>Callable</code> annotations are dropped,
+  so they are not checked.</li>
+<li><code>cast(T, x)</code> is <code>x</code> typed as <code>T</code> (as in Python, nothing checks that <code>x</code> is
+  a <code>T</code>); when <code>T</code> cannot be named in Codon (a <code>Callable</code>, a class defined
+  further down) it is <code>x</code> as it is.</li>
+<li>A class-level <code>Y: Final[int] = 4</code> stays a typed field, not a class
+  attribute, as any annotated class-level name does; write <code>Y: Final = 4</code> for
+  a class attribute read as <code>C.Y</code>.</li>
+<li><code>Iterator</code> is Codon's generator type, and <code>Deque</code>, <code>DefaultDict</code> and
+  <code>Counter</code> are <code>collections.deque</code>, <code>defaultdict</code> and <code>Counter</code>.</li>
+<li>Any other name is refused at its import line. <code>Generic</code> and <code>TypedDict</code>
+  cannot be modelled: leave the type parameters of a class or function
+  unannotated (Codon makes it generic over them) instead of subclassing
+  <code>Generic</code>, and write a <code>@dataclass</code> (or a <code>Dict[str, X]</code>) instead of a
+  <code>TypedDict</code>.</li>
 </ul>
 <h2 id="what-the-check-does-not-catch">What the check does not catch<a class="headerlink" href="#what-the-check-does-not-catch" title="Permanent link">&para;</a></h2>
 <p>The check compiles the scenario and never runs it, so it says nothing of
@@ -4966,7 +5033,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 19, 2026 14:34:49 UTC"><span class="timeago" datetime="2026-10-19T14:34:49+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 19, 2026 14:34:49 UTC">2026-10-19</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 19, 2026 17:20:58 UTC"><span class="timeago" datetime="2026-10-19T17:20:58+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 19, 2026 17:20:58 UTC">2026-10-19</span>
   </span>
 
     
