@@ -394,6 +394,12 @@ class DriverConfig:
     #: ``None`` to dial a policy already serving there.
     policy: str | None = None
 
+    #: How the run reaches the policy: ``tcp`` (the default), ``unix`` (a Unix
+    #: socket), or ``direct`` (in-process calls carrying the same serialized
+    #: alpasim messages; needs :attr:`policy`).  See
+    #: :attr:`DriverClientConfig.transport`.
+    transport: str = "tcp"
+
     #: Per-RPC deadline in seconds.
     timeout_s: float = 60.0
 
