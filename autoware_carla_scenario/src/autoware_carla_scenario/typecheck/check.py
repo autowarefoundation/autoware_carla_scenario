@@ -45,6 +45,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from dataclasses import dataclass, field
 from collections.abc import Callable, Collection, Iterable, Iterator, Mapping
@@ -1042,6 +1043,11 @@ _CACHE: dict[str, TypeCheckResult] = {}
 #: The case (:attr:`Driver.case`) each verdict of :data:`_CACHE` was made
 #: for, so that another case of the same shape names it when it reuses it.
 _CHECKED_FOR: dict[str, dict[str, str]] = {}
+#: The verdict of each key being made right now, for the checks of the same
+#: key that start meanwhile to wait for (``scenario-check`` runs configs in
+#: threads side by side); ``None`` when the compile timed out.
+_IN_FLIGHT: dict[str, Future[TypeCheckResult | None]] = {}
+_IN_FLIGHT_LOCK = threading.Lock()
 
 #: A directory to keep verdicts in beyond the process, one file per cache key:
 #: the test suite's xdist workers share it, and CI restores it from one run to
@@ -1550,23 +1556,60 @@ def _typecheck(
     )
     cached = _cached(key, sources)
     if cached is not None:
-        checked_for = _CHECKED_FOR.setdefault(key, rendered.case)
-        changed = [k for k, v in rendered.case.items() if checked_for.get(k) != v]
-        if changed:
-            logger.info(
-                "%s: reusing the static check made for %s for %s: the config "
-                "has the same types, so it is the same program to Codon",
-                name,
-                ", ".join(f"{k}={checked_for.get(k)}" for k in changed),
-                ", ".join(f"{k}={rendered.case[k]}" for k in changed),
-            )
-        return cached
-    _CHECKED_FOR[key] = rendered.case
-    none_check = _none_check_started(sources, timeout)
-    result = _compile(name, sources, rendered, toolchain, codon_path, timeout)
+        return _reused(name, key, rendered.case, cached)
+    # scenario-check runs configs side by side: one of the same shape that is
+    # being compiled right now is waited for rather than compiled again. A
+    # compile that timed out is no verdict: who waited for it compiles under
+    # its own timeout.
+    while True:
+        with _IN_FLIGHT_LOCK:
+            pending = _IN_FLIGHT.get(key)
+            if pending is None:
+                if key in _CACHE:  # kept since the miss above
+                    return _reused(name, key, rendered.case, _CACHE[key])
+                owned: Future[TypeCheckResult | None] = Future()
+                _IN_FLIGHT[key] = owned
+        if pending is None:
+            break
+        shared = pending.result()
+        if shared is not None:
+            return _reused(name, key, rendered.case, shared)
+    result: TypeCheckResult | None = None
+    try:
+        _CHECKED_FOR[key] = rendered.case
+        none_check = _none_check_started(sources, timeout)
+        result = _compile(name, sources, rendered, toolchain, codon_path, timeout)
+        if result is not None:
+            result = _none_checked(key, result, sources, none_check)
+    except BaseException as exc:
+        owned.set_exception(exc)
+        raise
+    else:
+        owned.set_result(result)
+    finally:
+        with _IN_FLIGHT_LOCK:
+            del _IN_FLIGHT[key]
     if result is None:  # timed out: no verdict worth keeping
         return _timed_out(name, timeout)
-    return _none_checked(key, result, sources, none_check)
+    return result
+
+
+def _reused(
+    name: str, key: str, case: dict[str, str], result: TypeCheckResult
+) -> TypeCheckResult:
+    """*result*, the verdict kept (or being made) under *key*, for the check
+    *name* of the case *case*: logged when it was made for another case."""
+    checked_for = _CHECKED_FOR.setdefault(key, case)
+    changed = [k for k, v in case.items() if checked_for.get(k) != v]
+    if changed:
+        logger.info(
+            "%s: reusing the static check made for %s for %s: the config "
+            "has the same types, so it is the same program to Codon",
+            name,
+            ", ".join(f"{k}={checked_for.get(k)}" for k in changed),
+            ", ".join(f"{k}={case[k]}" for k in changed),
+        )
+    return result
 
 
 def _none_check_started(
