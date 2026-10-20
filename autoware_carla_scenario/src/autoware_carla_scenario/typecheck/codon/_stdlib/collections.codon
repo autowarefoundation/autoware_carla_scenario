@@ -1,0 +1,7 @@
+# What the checker adds to Codon's collections (docs/typecheck.md). The
+# workspace gets Codon's own stdlib/collections.codon followed by this file
+# (typecheck/check.py, _base_workspace), so every name Codon has stays.
+
+# A Codon dict keeps insertion order, which is all an OrderedDict adds in
+# Python 3.7+ besides move_to_end() and popitem(last=...), not declared here.
+OrderedDict = dict
