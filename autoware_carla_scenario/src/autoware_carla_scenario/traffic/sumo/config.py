@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Mapping, Optional
 
 from ...constants import DEFAULT_TM_PORT
+from ..fidelity import MesoscopicConfig
 
 __all__ = ["AmbientTrafficConfig", "SumoBackendConfig"]
 
@@ -122,6 +123,12 @@ class SumoBackendConfig:
             CARLA; ``None`` mirrors them wherever they are.
         max_vehicles: Most ambient vehicles mirrored into CARLA at once, the
             nearest to the ego first; ``None`` for no limit.
+        mesoscopic: Simulate SUMO's vehicles far from the ego (and from every
+            vehicle CARLA drives) in a mesoscopic queue model instead of in
+            SUMO, with no actor in CARLA, and put them back into SUMO -- and
+            CARLA -- when they come near
+            (:class:`~autoware_carla_scenario.traffic.fidelity.MesoscopicConfig`).
+            Off by default.
         blueprint: CARLA blueprint of an ambient vehicle.
         binary: SUMO executable, when not in-process (``sumo-gui`` to watch).
         use_libsumo: Run SUMO in-process through libsumo (faster, no GUI);
@@ -150,6 +157,7 @@ class SumoBackendConfig:
     warmup_s: float = 30.0
     spawn_radius_m: Optional[float] = None
     max_vehicles: Optional[int] = None
+    mesoscopic: MesoscopicConfig = field(default_factory=MesoscopicConfig)
     blueprint: str = "vehicle.lincoln.mkz"
     binary: str = "sumo"
     use_libsumo: bool = True
@@ -189,6 +197,8 @@ class SumoBackendConfig:
         checked = checked_options(cls, mapping)
         if isinstance(checked.get("ambient"), Mapping):
             checked["ambient"] = AmbientTrafficConfig.from_mapping(checked["ambient"])
+        if isinstance(checked.get("mesoscopic"), Mapping):
+            checked["mesoscopic"] = MesoscopicConfig.from_mapping(checked["mesoscopic"])
         if "sumo_args" in checked:
             checked["sumo_args"] = [str(a) for a in checked["sumo_args"] or []]
         if checked.get("tm_port") is None:

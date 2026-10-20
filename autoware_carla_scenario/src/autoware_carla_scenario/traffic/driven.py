@@ -181,6 +181,13 @@ class BackendDriven(DrivenEntity):
         entity: DrivenEntity = self
         self._resolve_backend().resume(entity, world)
 
+    def require_microscopic(self, world: "carla.World") -> bool:
+        """Have the backend put this vehicle back in the world if it took it
+        out (:class:`~autoware_carla_scenario.traffic.SimulationFidelity`);
+        whether it is in the world afterwards."""
+        entity: DrivenEntity = self
+        return self._resolve_backend().require_microscopic(entity, world)
+
     # ------------------------------------------------------------------
     # Internals
     # ------------------------------------------------------------------

@@ -20,12 +20,15 @@ import pytest
 
 from autoware_carla_scenario.constants import EGO_ROLE_NAME
 from autoware_carla_scenario.traffic import (
+    DrivenEntity,
     LaneChangeDirection,
+    SimulationFidelity,
     TrafficContext,
     TurnDirection,
     available_backends,
     build_backend,
 )
+from autoware_carla_scenario.traffic.fidelity import MesoscopicConfig
 from autoware_carla_scenario.traffic.sumo.config import SumoBackendConfig
 from autoware_carla_scenario.traffic.sumo.geometry import (
     Pose2D,
@@ -1166,3 +1169,226 @@ def test_a_network_keeps_its_traces_whatever_its_map_is_called(
         path.name for path in network.net_file.parent.iterdir()
     )
     assert SignalTable.load(network) is not None
+
+
+# ---------------------------------------------------------------------------
+# Mesoscopic far traffic
+# ---------------------------------------------------------------------------
+
+
+class _LeavingEntity(DrivenEntity):
+    """A scenario vehicle that lets the backend take its actor away."""
+
+    def __init__(self, actor: _FakeActor, role_name: str) -> None:
+        self.actor: Any = actor
+        self.role_name = role_name
+
+    def _replace_actor(self, actor: Any) -> bool:
+        self.actor = actor
+        return True
+
+
+def _mesoscopic(
+    crossroads: Path, tmp_path: Path, **options: Any
+) -> tuple[Any, _FakeWorld, _LeavingEntity, _FakeActor]:
+    """A started backend whose NPC (SUMO's, and free to leave CARLA) drives
+    away east from an ego standing at the west end of arm 0."""
+    from autoware_carla_scenario.traffic.sumo.backend import SumoTrafficBackend
+    from autoware_carla_scenario.traffic.sumo.config import AmbientTrafficConfig
+
+    meso = {
+        "enabled": True,
+        "micro_radius_m": 40.0,
+        "meso_radius_m": 50.0,
+        "update_interval_s": 0.0,
+        "scenario_vehicles": True,
+        **options.pop("mesoscopic", {}),
+    }
+    ego_published = options.pop("ego_published", True)
+    config = SumoBackendConfig(
+        scenario_vehicles="sumo",
+        ambient=AmbientTrafficConfig(
+            enabled="period_s" in options, period_s=options.pop("period_s", None)
+        ),
+        traffic_light_authority="none",
+        warmup_s=options.pop("warmup_s", 0.0),
+        vehicle_control="teleport",
+        cache_dir=str(tmp_path / "cache"),
+        mesoscopic=MesoscopicConfig(**meso),
+        **options,
+    )
+    backend = SumoTrafficBackend(config)
+    backend.prepare(
+        TrafficContext(
+            xodr_path=crossroads,
+            fixed_delta_seconds=0.05,
+            random_seed=3,
+            output_dir=tmp_path / "out",
+        )
+    )
+    npc = _FakeActor(_carla_transform(-80.0, 5.25, 0.0), "npc", "vehicle.npc")
+    ego = _FakeActor(_carla_transform(-110.0, 1.75, 0.0), str(EGO_ROLE_NAME))
+    world = _FakeWorld([npc, ego])
+    entity = _LeavingEntity(npc, "npc")
+    backend.adopt(entity)
+    backend.adopt(_Entity(ego, str(EGO_ROLE_NAME)))
+    backend.start(world, skip_actor_ids={ego.id} if ego_published else ())
+    return backend, world, entity, ego
+
+
+def _tick_until(backend: Any, world: _FakeWorld, done: Any, ticks: int = 600) -> None:
+    for i in range(ticks):
+        backend.tick(world, i * 0.05)
+        if done():
+            return
+    raise AssertionError("never happened")
+
+
+@needs_sumo
+def test_a_far_vehicle_leaves_sumo_and_carla_and_comes_back_near(
+    crossroads: Path, tmp_path: Path
+) -> None:
+    backend, world, entity, ego = _mesoscopic(crossroads, tmp_path)
+    tc = backend._traci
+    npc = entity.actor
+    (sumo_id,) = backend._driven
+    try:
+        assert entity.simulation_fidelity is SimulationFidelity.MICROSCOPIC
+        # Driving east, away from the ego: more than 50 m off, it goes.
+        _tick_until(
+            backend,
+            world,
+            lambda: entity.simulation_fidelity is SimulationFidelity.MESOSCOPIC,
+        )
+        assert entity.actor is None and npc.destroyed
+        assert sumo_id not in tc.vehicle.getIDList() and sumo_id in backend._meso
+        assert backend.fidelity_census() == {"microscopic": 1, "mesoscopic": 1}
+        assert backend.fidelity_of(entity) is SimulationFidelity.MESOSCOPIC
+        # The queue model drives it on, east.
+        before = backend._meso_carla_pose(sumo_id, backend._now()).x
+        for i in range(40):
+            backend.tick(world, i * 0.05)
+        after = backend._meso_carla_pose(sumo_id, backend._now())
+        assert after.x > before + 5.0
+        assert after.y == pytest.approx(5.25, abs=2.0)  # an eastbound lane
+
+        # The ego comes near: it is back, in SUMO and as a new actor in CARLA.
+        ego.transform = _carla_transform(after.x - 20.0, 1.75, 0.0)
+        _tick_until(
+            backend,
+            world,
+            lambda: entity.simulation_fidelity is SimulationFidelity.MICROSCOPIC,
+            ticks=5,
+        )
+        back = entity.actor
+        assert back is not None and back in world.spawned
+        assert back.attributes["role_name"] == "npc"
+        assert backend._driven[sumo_id] is entity
+        assert sumo_id not in backend._meso
+        backend.tick(world, 0.0)
+        assert sumo_id in tc.vehicle.getIDList()
+        assert back.transform.location.x == pytest.approx(after.x, abs=15.0)
+    finally:
+        backend.close()
+
+
+@needs_sumo
+def test_a_mesoscopic_vehicle_takes_its_manoeuvres_as_far_as_it_can(
+    crossroads: Path, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    backend, world, entity, ego = _mesoscopic(crossroads, tmp_path)
+    (sumo_id,) = backend._driven
+    try:
+        _tick_until(
+            backend,
+            world,
+            lambda: entity.simulation_fidelity is SimulationFidelity.MESOSCOPIC,
+        )
+        backend.set_desired_speed(entity, world, 18.0)
+        assert backend._meso.vehicle(sumo_id).speed_cap == pytest.approx(5.0)
+        backend.change_lane(entity, world, LaneChangeDirection.LEFT)
+        assert "no lanes" in caplog.text
+        assert not backend.lane_change_finished(entity, world)
+
+        # An action that needs its actor has it at once, wherever it is.
+        assert backend.require_microscopic(entity, world)
+        assert entity.actor is not None
+        assert entity.simulation_fidelity is SimulationFidelity.MICROSCOPIC
+        backend.tick(world, 0.0)
+        assert backend._traci.vehicle.getSpeed(sumo_id) <= 5.0 + 0.1
+
+        # Released, CARLA drives it: published, and never mesoscopic again.
+        backend.release(entity, world)
+        assert backend._external[sumo_id] is entity.actor
+        for i in range(100):
+            backend.tick(world, i * 0.05)
+        assert entity.simulation_fidelity is SimulationFidelity.MICROSCOPIC
+    finally:
+        backend.close()
+    assert entity.simulation_fidelity is SimulationFidelity.MICROSCOPIC
+
+
+@needs_sumo
+def test_an_ego_sumo_drives_is_a_focus_point_too(
+    crossroads: Path, tmp_path: Path
+) -> None:
+    backend, world, entity, ego = _mesoscopic(crossroads, tmp_path, ego_published=False)
+    try:
+        assert backend._external == {} and len(backend._driven) == 2
+        ego_entity = next(e for e in backend._driven.values() if e.actor is ego)
+        backend.set_desired_speed(ego_entity, world, 0.0)
+        # The NPC, 30 m ahead of the ego, leaves once it is 50 m ahead.
+        _tick_until(
+            backend,
+            world,
+            lambda: entity.simulation_fidelity is SimulationFidelity.MESOSCOPIC,
+        )
+        # The ego itself never does: its entity keeps its actor.
+        assert not ego.destroyed and len(backend._driven) == 1
+    finally:
+        backend.close()
+
+
+@needs_sumo
+def test_the_scenarios_vehicles_stay_in_carla_unless_let_go(
+    crossroads: Path, tmp_path: Path
+) -> None:
+    backend, world, entity, _ego = _mesoscopic(
+        crossroads, tmp_path, mesoscopic={"scenario_vehicles": False}
+    )
+    try:
+        for i in range(300):
+            backend.tick(world, i * 0.05)
+        assert entity.simulation_fidelity is SimulationFidelity.MICROSCOPIC
+        assert entity.actor is not None and not entity.actor.destroyed
+        assert len(backend._meso) == 0
+    finally:
+        backend.close()
+
+
+@needs_sumo
+def test_only_the_traffic_near_the_ego_is_in_sumo_and_carla(
+    crossroads: Path, tmp_path: Path
+) -> None:
+    backend, world, _entity, ego = _mesoscopic(
+        crossroads, tmp_path, period_s=0.5, warmup_s=20.0
+    )
+    tc = backend._traci
+    try:
+        for i in range(100):
+            backend.tick(world, i * 0.05)
+        census = backend.fidelity_census()
+        assert census["mesoscopic"] > 0 and census["microscopic"] > 0
+        ego_pose = backend._carla_pose_to_sumo(ego)
+        ego_x, ego_y = ego_pose.x, ego_pose.y
+        own = set(backend._driven) | set(backend._external)
+        for sumo_id in tc.vehicle.getIDList():
+            if sumo_id not in own:
+                x, y = tc.vehicle.getPosition(sumo_id)
+                # 50 m, and what one decision's worth of driving adds to it.
+                assert math.hypot(x - ego_x, y - ego_y) < 55.0
+        alive = [a for a in world.spawned if not a.destroyed]
+        assert len(alive) == len([i for i in tc.vehicle.getIDList() if i not in own])
+    finally:
+        backend.close()
+    assert backend._meso is None

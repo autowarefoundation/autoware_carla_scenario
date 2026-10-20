@@ -224,6 +224,52 @@ released, or driven elsewhere from the start (an ego: `ExternallyDrivenEgo`
 refuses `resume_traffic`, and both backends ignore it), is left as it is, and
 saying it twice is harmless.
 
+### Simulating far traffic mesoscopically
+
+A backend may simulate the vehicles far from anything that matters at a
+coarser level than the ones near it: nobody sees the difference there, and the
+run is cheaper for it. The seam names two levels, `SimulationFidelity`:
+
+| Level | What is simulated | In CARLA |
+| --- | --- | --- |
+| `MICROSCOPIC` | each vehicle on its lane: car-following, lane changes | an actor |
+| `MESOSCOPIC` | a place in a queue on a road: when it gets to the end, not where it is on the way | nothing |
+
+Every vehicle entity carries its level as `entity.simulation_fidelity`
+(`MICROSCOPIC` by default, and always under a backend with one level), so a
+scenario or a condition can tell a vehicle that is far away and out of the
+world from one that is gone. Three rules keep the flag honest:
+
+- **Only the backend writes it**, through `TrafficBackend._mark_fidelity`, and
+  only once a change is complete: an entity reading `MESOSCOPIC` has no actor
+  (`entity.actor is None`), one reading `MICROSCOPIC` has one.
+- **An entity leaves the world only if it agrees to.** The backend asks
+  `entity._replace_actor(None)`, and later hands it the actor it spawned where
+  its model has the vehicle with `entity._replace_actor(actor)`. A
+  `VehicleEntity` agrees; an ego, and anything that owns its actor in a way a
+  backend cannot see, does not, and stays microscopic.
+- **Whatever needs the actor asks for it**: `entity.require_microscopic(world)`
+  (`backend.require_microscopic(entity, world)`) brings the vehicle back at once
+  and keeps it for the rest of the run. A backend's `release()` does it too,
+  since whatever takes a vehicle over drives it in CARLA.
+
+`backend.fidelity_census()` counts the vehicles a backend simulates at each
+level. The parts that are the same for every backend are reusable:
+
+- `traffic.fidelity.MesoscopicConfig` is the policy: the radii around the
+  *focus points* (the ego and every vehicle CARLA drives) inside which traffic
+  is microscopic, with hysteresis between them, how often to decide, and
+  whether the scenario's own vehicles may leave the world.
+  `plan_fidelity(config, candidates, focus)` returns which vehicles change level,
+  the ones that matter most first.
+- `traffic.mesoscopic.MesoscopicTraffic` is a queue model -- SUMO's own
+  mesoscopic model, cut down: a road lets a vehicle out once it has driven the
+  road's length, first in first out, one per headway per lane, when the road
+  ahead has room and the junction (an optional gate, a red light) lets it
+  through. It knows no simulator: a backend builds it from its own roads
+  (`MesoLink`), moves a vehicle in when it becomes mesoscopic and reads where
+  it is to decide when to bring it back.
+
 ## Using a backend from Python
 
 A scenario run built in code takes the backend the same way it takes the ego:
@@ -425,6 +471,39 @@ waypoints to the SUMO lane there.
 
 On Town10HD_Opt all 15 lights match, 56 links between them; SUMO's only other
 signal links are on emergency-only shoulder lanes.
+
+**Far traffic** (`mesoscopic`, off by default) leaves SUMO for the queue model
+above, and CARLA with it, once it is further than `meso_radius_m` from every
+vehicle CARLA drives (the ego, and the scenario's vehicles under
+`scenario_vehicles=traffic_manager` or an action), and comes back -- into SUMO
+on the best lane for its route, and into CARLA -- when it is within
+`micro_radius_m` of one again. SUMO then steps only the traffic near what CARLA
+drives, and CARLA holds an actor only for that, so a large demand costs what
+the traffic around the ego costs.
+
+```bash
+uv run scenario ... traffic=sumo traffic.options.mesoscopic.enabled=true \
+    traffic.options.mesoscopic.micro_radius_m=150
+```
+
+| Option | Default | |
+| --- | --- | --- |
+| `micro_radius_m` | `200` | a mesoscopic vehicle this close to a focus point comes back |
+| `meso_radius_m` | `1.25 × micro_radius_m` | a microscopic one further than this from all of them leaves |
+| `update_interval_s` | `1.0` | simulated seconds between two decisions; the queue model steps every tick |
+| `scenario_vehicles` | `false` | let the scenario's vehicles SUMO drives (`scenario_vehicles=sumo`) leave CARLA too |
+| `headway_s`, `jam_spacing_m` | `1.5`, `7.5` | the queue model's capacity per lane, and the road a queued vehicle takes up |
+| `junction_control` | `true` | hold a mesoscopic vehicle at a red SUMO signal |
+
+A vehicle leaves only from a normal edge, never from inside a junction, and
+comes back with its route, its type, length, width and top speed, and a speed
+it was told to keep. A scenario's vehicle that is mesoscopic takes
+`set_desired_speed` and `turn_at_junction` in the queue model; it cannot change
+lanes there, and says so. `scenario_vehicles` is off by default because such a
+vehicle has no actor while it is far: a scenario that reads it -- a condition
+on its speed -- should check `entity.simulation_fidelity`, or call
+`entity.require_microscopic(world)` first. SUMO's FCD output records the
+microscopic vehicles only.
 
 **Manoeuvres** of SUMO-driven vehicles become TraCI calls: `change_lane` →
 `changeLane` (SUMO obeys a solid line, and says so), `set_desired_speed` →

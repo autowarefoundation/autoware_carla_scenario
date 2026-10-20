@@ -40,6 +40,22 @@ traffic:
     # Mirror only the nearest SUMO vehicles into CARLA (null: all of them).
     spawn_radius_m: null
     max_vehicles: null
+    # Simulate traffic far from what CARLA drives (the ego, and the scenario's
+    # vehicles the TrafficManager drives) in a mesoscopic queue model, out of
+    # SUMO and out of CARLA, and bring it back when it comes near.
+    mesoscopic:
+      enabled: false
+      # Back into SUMO and CARLA this close; out further than meso_radius_m
+      # (null: 1.25 x micro_radius_m).
+      micro_radius_m: 200.0
+      meso_radius_m: null
+      update_interval_s: 1.0
+      # Let the scenario's own vehicles SUMO drives leave CARLA too: such an
+      # entity has no actor while it is far (entity.simulation_fidelity).
+      scenario_vehicles: false
+      headway_s: 1.5
+      jam_spacing_m: 7.5
+      junction_control: true
     blueprint: vehicle.lincoln.mkz
     # An existing .net.xml instead of converting the world's OpenDRIVE, and
     # extra demand beside the ambient traffic.
