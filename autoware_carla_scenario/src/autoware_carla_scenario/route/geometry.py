@@ -58,7 +58,13 @@ from ..trajectory.relative_lane import (
 )
 
 if TYPE_CHECKING:
-    from lanelet2.core import ConstLanelet, ConstLineString3d, Lanelet, LaneletMap
+    from lanelet2.core import (
+        ConstLanelet,
+        ConstLineString3d,
+        Lanelet,
+        LaneletMap,
+        RegulatoryElement,
+    )
     from lanelet2.routing import RoutingGraph
 
 __all__ = [
@@ -74,6 +80,9 @@ __all__ = [
     "OPPOSITE_SEARCH_M",
     "approach_of",
 ]
+
+#: A stop line further than this (m) beyond a lanelet's end is not on it.
+_ON_STOP_LINE_M = 0.1
 
 #: Entering within this many degrees of the ego's own heading is the ego's
 #: approach; ignored.
@@ -234,6 +243,7 @@ class MapFeatures:
         ]
     ]
     _conflicting: dict[int, list[ConstLanelet]]
+    _stops: dict[int, list[tuple[float, int]]]
 
     def __init__(self, lanelet_map: LaneletMap, routing_graph: RoutingGraph) -> None:
         self.map = lanelet_map
@@ -243,6 +253,7 @@ class MapFeatures:
         self._opposite = {}
         self._crosswalks = None
         self._conflicting = {}
+        self._stops = {}
 
     # -- lanelets ------------------------------------------------------------
 
@@ -269,6 +280,14 @@ class MapFeatures:
         if "turn_direction" not in lanelet.attributes:
             return ""
         return str(lanelet.attributes["turn_direction"])
+
+    @staticmethod
+    def is_crosswalk(lanelet: ConstLanelet) -> bool:
+        """Whether it is a crosswalk (subtype ``crosswalk``)."""
+        return (
+            "subtype" in lanelet.attributes
+            and str(lanelet.attributes["subtype"]) == "crosswalk"
+        )
 
     @staticmethod
     def is_road(lanelet: ConstLanelet) -> bool:
@@ -566,18 +585,83 @@ class MapFeatures:
         return HasTrafficLightStopLineConstraint().evaluate(lanelet)
 
     @staticmethod
+    def is_traffic_light(element: RegulatoryElement) -> bool:
+        """Whether a regulatory element is a traffic light."""
+        attributes = element.attributes
+        if "subtype" in attributes and str(attributes["subtype"]) == "traffic_light":
+            return True
+        return "TrafficLight" in type(element).__name__
+
+    @staticmethod
     def has_traffic_light(lanelet: ConstLanelet) -> bool:
         """Whether a traffic light regulates it."""
         for element in lanelet.regulatoryElements:
-            attributes = element.attributes
-            if (
-                "subtype" in attributes
-                and str(attributes["subtype"]) == "traffic_light"
-            ):
-                return True
-            if "TrafficLight" in type(element).__name__:
+            if MapFeatures.is_traffic_light(element):
                 return True
         return False
+
+    def _stop_s(self, lanelet: ConstLanelet, element: RegulatoryElement) -> float:
+        """Where on *lanelet* *element*'s stop line is (m along it), or -1.
+
+        -1 when the stop line lies before *lanelet* or past it: the junction
+        lanelets after a stop line often carry the same light.  An element
+        without a stop line stops at the lanelet's end.
+        """
+        from ..utils.stop_line import regulatory_element_stop_lines  # noqa: PLC0415
+
+        length = self.length(lanelet)
+        lines = regulatory_element_stop_lines(element, set())
+        if not lines:
+            return length
+        line = [(float(p.x), float(p.y)) for p in lines[0]]
+        if not line:
+            return length
+        mx = sum(p[0] for p in line) / len(line)
+        my = sum(p[1] for p in line) / len(line)
+        s, _t = _arc(lanelet, mx, my)
+        # The arc length is clamped to the lanelet: a stop line before its
+        # start reads as 0, one past its end as its length.  Which side of
+        # the end it is on is its projection on the end's heading.
+        if s <= 0.0 or s >= length:
+            centreline = _centreline(lanelet)
+            at_start = s <= 0.0
+            heading = _start_heading(lanelet) if at_start else _end_heading(lanelet)
+            ex, ey = centreline[0] if at_start else centreline[-1]
+            beyond = (mx - ex) * math.cos(heading) + (my - ey) * math.sin(heading)
+            if (at_start and beyond < -_ON_STOP_LINE_M) or (
+                not at_start and beyond > _ON_STOP_LINE_M
+            ):
+                return -1.0
+        return s
+
+    def traffic_light_stops(self, lanelet: ConstLanelet) -> list[tuple[float, int]]:
+        """The traffic lights it stops for, as ``(s, element id)``.
+
+        ``s`` (m along it) is where the light's stop line is; a light whose
+        stop line is not on it (on the lane before, say) is left out.
+        """
+        key = int(lanelet.id)
+        if key not in self._stops:
+            stops: list[tuple[float, int]] = []
+            for element in lanelet.regulatoryElements:
+                if MapFeatures.is_traffic_light(element):
+                    s = self._stop_s(lanelet, element)
+                    if s >= 0.0:
+                        stops.append((s, int(element.id)))
+            self._stops[key] = stops
+        return self._stops[key]
+
+    def traffic_light_ids(self) -> list[int]:
+        """The ids of the traffic lights its lanelets name, each once."""
+        ids: list[int] = []
+        seen: set[int] = set()
+        for lanelet in self.map.laneletLayer:
+            for element in lanelet.regulatoryElements:
+                key = int(element.id)
+                if key not in seen and MapFeatures.is_traffic_light(element):
+                    seen.add(key)
+                    ids.append(key)
+        return ids
 
     @staticmethod
     def speed_limit(lanelet: ConstLanelet) -> Optional[float]:
@@ -696,10 +780,7 @@ class MapFeatures:
             ] = []
             for each in self.map.laneletLayer:
                 ll: ConstLanelet = each
-                if (
-                    "subtype" in ll.attributes
-                    and str(ll.attributes["subtype"]) == "crosswalk"
-                ):
+                if MapFeatures.is_crosswalk(ll):
                     line = _centreline(ll)
                     xs = [p[0] for p in line]
                     ys = [p[1] for p in line]

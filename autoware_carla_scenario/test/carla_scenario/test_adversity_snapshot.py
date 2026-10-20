@@ -29,6 +29,7 @@ def _actor(
     velocity: Any,
     acceleration: Any,
     extent: Any,
+    box_x: float = 0.0,
 ) -> SimpleNamespace:
     yaw = math.radians(yaw_deg)
     transform = SimpleNamespace(
@@ -38,7 +39,7 @@ def _actor(
     )
     return SimpleNamespace(
         type_id=type_id,
-        bounding_box=SimpleNamespace(extent=extent),
+        bounding_box=SimpleNamespace(extent=extent, location=_vector(box_x, 0.0)),
         get_transform=lambda: transform,
         get_velocity=lambda: velocity,
         get_acceleration=lambda: acceleration,
@@ -98,24 +99,55 @@ def test_a_walker_is_no_vehicle() -> None:
     assert agent.acceleration == pytest.approx(-1.0)
 
 
+@pytest.mark.usefixtures("offset_map")
+def test_the_position_is_the_centre_of_the_bounding_box() -> None:
+    # The box 1.5 m ahead of the origin, heading +30 degrees in the map.
+    car = _actor(
+        "vehicle.audi.tt",
+        10.0,
+        5.0,
+        -30.0,
+        _vector(0.0, 0.0),
+        _vector(0.0, 0.0),
+        _vector(2.0, 1.0, 0.7),
+        box_x=1.5,
+    )
+    agent = snapshot.snapshot_actor(car, "npc1")
+    yaw = math.radians(30.0)
+    assert (agent.x, agent.y) == pytest.approx(
+        (110.0 + 1.5 * math.cos(yaw), 195.0 + 1.5 * math.sin(yaw))
+    )
+
+
 def test_the_maps_traffic_lights() -> None:
     lanelet_map = rm.crossroads()
     features = MapFeatures(lanelet_map, rm.routing_graph(lanelet_map))
-    assert snapshot.traffic_light_ids(features) == [rm.TRAFFIC_LIGHT]
+    assert features.traffic_light_ids() == [rm.TRAFFIC_LIGHT]
 
 
 def test_signal_states_by_regulatory_element(monkeypatch: pytest.MonkeyPatch) -> None:
     import typesafe_carla.carla as carla
 
+    state = {"red": carla.TrafficLightState.Red}
     lights = {
-        1: [SimpleNamespace(get_state=lambda: carla.TrafficLightState.Red)],
+        1: [SimpleNamespace(get_state=lambda: state["red"])],
         2: [SimpleNamespace(get_state=lambda: carla.TrafficLightState.Green)],
         3: [SimpleNamespace(get_state=lambda: carla.TrafficLightState.Off)],
     }
-    monkeypatch.setattr(
-        snapshot,
-        "find_traffic_lights_for_lanelet2_id",
-        lambda world, i: lights.get(i, []),
-    )
-    states = snapshot.read_signal_states(SimpleNamespace(), [1, 2, 3, 4])
-    assert states == {1: SignalState.RED, 2: SignalState.GREEN, 3: SignalState.UNKNOWN}
+    resolved: list[int] = []
+
+    def find(world: Any, regulatory_id: int) -> list[Any]:
+        resolved.append(regulatory_id)
+        return lights.get(regulatory_id, [])
+
+    monkeypatch.setattr(snapshot, "find_traffic_lights_for_lanelet2_id", find)
+    reader = snapshot.SignalReader(SimpleNamespace(), [1, 2, 3, 4])
+    assert reader.read() == {
+        1: SignalState.RED,
+        2: SignalState.GREEN,
+        3: SignalState.UNKNOWN,
+    }
+    state["red"] = carla.TrafficLightState.Yellow
+    assert reader.read()[1] is SignalState.YELLOW
+    # The lights are looked up once, not on every read.
+    assert resolved == [1, 2, 3, 4]

@@ -31,16 +31,8 @@ from typing import TYPE_CHECKING, Optional
 import lanelet2.core
 import lanelet2.geometry
 
-from ..route.geometry import MapFeatures
-from ..trajectory.relative_lane import (
-    _arc,
-    _centreline,
-    _end_heading,
-    _point_at,
-    _start_heading,
-    reference_lane_pose,
-)
-from ..utils.stop_line import regulatory_element_stop_lines
+from ..route.geometry import LaneSpan, MapFeatures
+from ..trajectory.relative_lane import _arc, _centreline, _point_at, reference_lane_pose
 from .geometry import AgentFootprint
 
 if TYPE_CHECKING:
@@ -76,9 +68,6 @@ DEFAULT_DESIRED_SPEED = 50.0 / 3.6
 #: than :data:`_MAX_HEADING_RAD` from it, is not on it.
 _MAX_LATERAL_M = 2.5
 _MAX_HEADING_RAD = math.pi / 3.0
-
-#: A stop line further than this (m) beyond a lanelet's end is not on it.
-_ON_LINE_M = 0.1
 
 
 class SignalState(Enum):
@@ -194,11 +183,11 @@ class VehicleObservation:
     agent: AgentSnapshot
     lane: Optional[LanePosition]
     desired_speed: float
-    leader: Optional[Neighbour]
-    follower: Optional[Neighbour]
-    left: Optional[SideLane]
-    right: Optional[SideLane]
-    signal: Optional[SignalAhead]
+    leader: Optional[Neighbour] = None
+    follower: Optional[Neighbour] = None
+    left: Optional[SideLane] = None
+    right: Optional[SideLane] = None
+    signal: Optional[SignalAhead] = None
 
 
 @dataclass(frozen=True)
@@ -233,20 +222,6 @@ class PedestrianObservation:
     nearest_road: Optional[RoadPoint]
 
 
-def _is_crosswalk(lanelet: ConstLanelet) -> bool:
-    return (
-        "subtype" in lanelet.attributes
-        and str(lanelet.attributes["subtype"]) == "crosswalk"
-    )
-
-
-def _is_traffic_light(element: lanelet2.core.RegulatoryElement) -> bool:
-    return (
-        "subtype" in element.attributes
-        and str(element.attributes["subtype"]) == "traffic_light"
-    )
-
-
 class Scene:
     """The agents of one tick, located on the map once.
 
@@ -263,6 +238,7 @@ class Scene:
     signals: dict[int, SignalState]
     search: float
     _lanes: dict[str, Optional[LanePosition]]
+    _by_lanelet: Optional[dict[int, list[str]]]
 
     def __init__(
         self,
@@ -276,6 +252,7 @@ class Scene:
         self.signals = signals
         self.search = search
         self._lanes = {}
+        self._by_lanelet = None
 
     # -- where the agents are ------------------------------------------------
 
@@ -297,34 +274,47 @@ class Scene:
         self._lanes[name] = found
         return found
 
+    def _on_lanelets(self) -> dict[int, list[str]]:
+        """The located vehicles, by the id of the lanelet each is on."""
+        if self._by_lanelet is None:
+            by_lanelet: dict[int, list[str]] = {}
+            for name in self.agents:
+                lane = self.lane_of(name)
+                if lane is not None:
+                    by_lanelet.setdefault(int(lane.lanelet.id), []).append(name)
+            self._by_lanelet = by_lanelet
+        return self._by_lanelet
+
     # -- vehicles ------------------------------------------------------------
 
     def _neighbours(
-        self, agent: AgentSnapshot, lanelet: ConstLanelet, s: float
+        self, agent: AgentSnapshot, chain: dict[int, LaneSpan]
     ) -> tuple[Optional[Neighbour], Optional[Neighbour]]:
-        """The nearest vehicle ahead and behind *s* on *lanelet*'s chain."""
-        chain = self.features.lane_chain(lanelet, s, self.search, self.search)
+        """The nearest vehicle ahead and behind the agent along *chain*."""
+        on_lanelets = self._on_lanelets()
         leader: Optional[Neighbour] = None
         follower: Optional[Neighbour] = None
-        for name, other in self.agents.items():
-            if name == agent.name or not other.footprint.is_vehicle:
+        for key, span in chain.items():
+            if key not in on_lanelets:
                 continue
-            lane = self.lane_of(name)
-            if lane is None:
-                continue
-            key = int(lane.lanelet.id)
-            if key not in chain:
-                continue
-            along = chain[key].start + lane.s
-            half = (agent.footprint.length + other.footprint.length) / 2.0
-            if along >= 0.0:
-                gap = along - half
-                if gap <= self.search and (leader is None or gap < leader.gap):
-                    leader = Neighbour(name, gap, other.speed, other.acceleration)
-            else:
-                gap = -along - half
-                if gap <= self.search and (follower is None or gap < follower.gap):
-                    follower = Neighbour(name, gap, other.speed, other.acceleration)
+            for name in on_lanelets[key]:
+                if name == agent.name:
+                    continue
+                other = self.agents[name]
+                lane = self._lanes[name]
+                assert lane is not None
+                along = span.start + lane.s
+                gap = (
+                    abs(along) - (agent.footprint.length + other.footprint.length) / 2.0
+                )
+                if gap > self.search:
+                    continue
+                found = Neighbour(name, gap, other.speed, other.acceleration)
+                if along >= 0.0:
+                    if leader is None or gap < leader.gap:
+                        leader = found
+                elif follower is None or gap < follower.gap:
+                    follower = found
         return leader, follower
 
     def _side(
@@ -334,64 +324,22 @@ class Scene:
         if neighbour is None:
             return None
         s, _t = _arc(neighbour, agent.x, agent.y)
-        leader, follower = self._neighbours(agent, neighbour, s)
+        chain = self.features.lane_chain(neighbour, s, self.search, self.search)
+        leader, follower = self._neighbours(agent, chain)
         return SideLane(neighbour, s, leader, follower)
 
-    def _stop_line_s(
-        self, lanelet: ConstLanelet, element: lanelet2.core.RegulatoryElement
-    ) -> Optional[float]:
-        """Where on *lanelet* the stop line of *element* is (m along it).
-
-        None when the stop line lies before *lanelet* or past it: the
-        junction lanelets after a stop line often carry the same light.  An element without a
-        stop line stops at the lanelet's end.
-        """
-        lines = regulatory_element_stop_lines(element, set())
-        if not lines:
-            return self.features.length(lanelet)
-        points = [(float(p.x), float(p.y)) for p in lines[0]]
-        if not points:
-            return self.features.length(lanelet)
-        mx = sum(p[0] for p in points) / len(points)
-        my = sum(p[1] for p in points) / len(points)
-        s, _t = _arc(lanelet, mx, my)
-        # The arc length is clamped to the lanelet: a stop line before its
-        # start reads as 0, one past its end as its length.
-        points = _centreline(lanelet)
-        if s <= 0.0:
-            heading = _start_heading(lanelet)
-            x0, y0 = points[0]
-            if (mx - x0) * math.cos(heading) + (my - y0) * math.sin(
-                heading
-            ) < -_ON_LINE_M:
-                return None
-        elif s >= self.features.length(lanelet):
-            heading = _end_heading(lanelet)
-            x1, y1 = points[-1]
-            if (mx - x1) * math.cos(heading) + (my - y1) * math.sin(
-                heading
-            ) > _ON_LINE_M:
-                return None
-        return s
-
-    def _signal(self, lane: LanePosition) -> Optional[SignalAhead]:
-        chain = self.features.lane_chain(lane.lanelet, lane.s, self.search)
+    def _signal(self, chain: dict[int, LaneSpan]) -> Optional[SignalAhead]:
         best: Optional[SignalAhead] = None
         for span in chain.values():
-            for element in span.lanelet.regulatoryElements:
-                if not _is_traffic_light(element):
-                    continue
-                at = self._stop_line_s(span.lanelet, element)
-                if at is None:
-                    continue
+            for at, element_id in self.features.traffic_light_stops(span.lanelet):
                 distance = span.start + at
                 if distance < 0.0 or distance > self.search:
                     continue
                 if best is None or distance < best.distance:
                     state = SignalState.UNKNOWN
-                    if int(element.id) in self.signals:
-                        state = self.signals[int(element.id)]
-                    best = SignalAhead(distance, state, int(element.id))
+                    if element_id in self.signals:
+                        state = self.signals[element_id]
+                    best = SignalAhead(distance, state, element_id)
         return best
 
     def vehicle(self, name: str) -> VehicleObservation:
@@ -399,12 +347,11 @@ class Scene:
         agent = self.agents[name]
         lane = self.lane_of(name)
         if lane is None:
-            return VehicleObservation(
-                agent, None, DEFAULT_DESIRED_SPEED, None, None, None, None, None
-            )
+            return VehicleObservation(agent, None, DEFAULT_DESIRED_SPEED)
         limit = MapFeatures.speed_limit(lane.lanelet)
         desired = DEFAULT_DESIRED_SPEED if limit is None else limit / 3.6
-        leader, follower = self._neighbours(agent, lane.lanelet, lane.s)
+        chain = self.features.lane_chain(lane.lanelet, lane.s, self.search, self.search)
+        leader, follower = self._neighbours(agent, chain)
         return VehicleObservation(
             agent,
             lane,
@@ -413,7 +360,7 @@ class Scene:
             follower,
             self._side(agent, lane.lanelet, "left"),
             self._side(agent, lane.lanelet, "right"),
-            self._signal(lane),
+            self._signal(chain),
         )
 
     # -- pedestrians ---------------------------------------------------------
@@ -431,14 +378,18 @@ class Scene:
         ):
             if float(distance) > road_radius:
                 break
-            if _is_crosswalk(lanelet):
+            if MapFeatures.is_crosswalk(lanelet):
                 if crosswalk is None and float(distance) <= 0.0:
                     # A typed local: Codon upcasts a Lanelet to a ConstLanelet,
                     # not to an Optional of one.
                     on: ConstLanelet = lanelet
                     crosswalk = on
                 continue
-            if road is not None or not MapFeatures.is_road(lanelet):
+            if road is not None:
+                if float(distance) > 0.0:
+                    break  # sorted by distance: no crosswalk underfoot either
+                continue
+            if not MapFeatures.is_road(lanelet):
                 continue
             s, _t = _arc(lanelet, agent.x, agent.y)
             cx, cy = _point_at(_centreline(lanelet), s)
