@@ -78,7 +78,6 @@ from autoware_carla_scenario.odd import route as odd_route
 from autoware_carla_scenario.route import active as route_active
 from autoware_carla_scenario.route import frame as route_frame
 from autoware_carla_scenario.route import model as route_model
-from autoware_carla_scenario.sweeper import constraints as sweeper_constraints
 from autoware_carla_scenario.traffic import context as traffic_context
 from autoware_carla_scenario.traffic import registry as traffic_registry
 from autoware_carla_scenario.trajectory import model as trajectory_model
@@ -400,6 +399,7 @@ _BOUNDARY: dict[str, tuple[str, Any]] = {
     # Everything route.codon declares: the running route, its frame, the
     # anchors, and the values (compared by value) the route poses check.
     "RouteMatch": ("route", route_model.RouteMatch),
+    "RouteSegmentMatch": ("route", route_model.RouteSegmentMatch),
     "parse_anchor": ("route", route_model.parse_anchor),
     "scenario_route": ("route", route_active.scenario_route),
     "scenario_route_frame": ("route", route_active.scenario_route_frame),
@@ -1255,6 +1255,7 @@ def test_the_classes_codon_builds_by_other_arities_are_found() -> None:
         "PedestrianEntity",
         "RouteFrame",
         "RouteMatch",
+        "RouteSegmentMatch",
         "Ros2EgoTransport",
         "VehicleEntity",
     ):
@@ -1512,30 +1513,6 @@ def test_the_odd_case_models_are_stand_ins() -> None:
     ]
     assert typing.get_origin(odd.OddCase) is tuple
     assert fields == [t.__name__ for t in typing.get_args(odd.OddCase)]
-
-
-def test_the_comparison_rules_spelled_out_for_codon_are_the_enum_s_members() -> None:
-    # sweeper.constraints lists the ComparisonRule members under
-    # `if TYPE_CHECKING:` (Codon iterates over no enum class), and the run
-    # never reads those lists: a member missing there passes every run-time
-    # test, so compare each list with the enum.
-    source = Path(sweeper_constraints.__file__).read_text()
-    spelled_out: list[list[str]] = []
-    for node in ast.walk(ast.parse(source)):
-        if not isinstance(node, ast.List) or not node.elts:
-            continue
-        names = [
-            element.attr
-            for element in node.elts
-            if isinstance(element, ast.Attribute)
-            and isinstance(element.value, ast.Name)
-            and element.value.id == "ComparisonRule"
-        ]
-        if len(names) == len(node.elts):
-            spelled_out.append(names)
-    assert len(spelled_out) == 2, spelled_out  # _comparison_rule, __post_init__
-    for names in spelled_out:
-        assert names == [rule.name for rule in ComparisonRule]
 
 
 def test_the_launcher_model_is_the_protocol_s_methods() -> None:

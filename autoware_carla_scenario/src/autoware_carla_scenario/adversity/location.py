@@ -31,8 +31,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import TYPE_CHECKING, Optional
 
-from ..route.geometry import MapFeatures
-from .lanes import LaneSpan, lane_chain
+from ..route.geometry import LaneSpan, MapFeatures
 
 if TYPE_CHECKING:
     from lanelet2.core import ConstLanelet
@@ -79,7 +78,7 @@ def _is_signalised(features: MapFeatures, lanelet: ConstLanelet) -> bool:
         return True
     if not MapFeatures.is_junction(lanelet):
         return False
-    for previous in features.graph.previous(lanelet):
+    for previous in features.previous(lanelet):
         if MapFeatures.has_traffic_light(previous):
             return True
     return False
@@ -131,7 +130,7 @@ def location_of(
     """The location of an agent *s* metres along *lanelet*, or None."""
     if _is_highway(lanelet):
         return AdversityLocation.HIGHWAY
-    chain = lane_chain(features, lanelet, s, lookahead)
+    chain = features.lane_chain(lanelet, s, lookahead)
     if _signal_ahead(features, lanelet, chain, lookahead):
         return AdversityLocation.INTERSECTION
     if _roundabout_ahead(chain):
@@ -148,17 +147,8 @@ def location_matches(
 ) -> bool:
     """Whether an agent *s* metres along *lanelet* is at *location*.
 
-    Reads only what *location* needs: :attr:`AdversityLocation.ANY` nothing,
-    a highway the lanelet itself.
+    :attr:`AdversityLocation.ANY` matches anywhere, without reading the map.
     """
     if location is AdversityLocation.ANY:
         return True
-    if _is_highway(lanelet):
-        return location is AdversityLocation.HIGHWAY
-    if location is AdversityLocation.HIGHWAY:
-        return False
-    chain = lane_chain(features, lanelet, s, lookahead)
-    signal = _signal_ahead(features, lanelet, chain, lookahead)
-    if location is AdversityLocation.INTERSECTION:
-        return signal
-    return not signal and _roundabout_ahead(chain)
+    return location_of(features, lanelet, s, lookahead) is location

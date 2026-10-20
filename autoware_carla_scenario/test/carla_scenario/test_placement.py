@@ -13,7 +13,7 @@ import pytest
 import typesafe_carla.carla as carla
 
 from autoware_carla_scenario import placement
-from autoware_carla_scenario.constants import EGO_ROLE_NAME
+from autoware_carla_scenario.constants import BUMPER_PROBE_ROLE_NAME, EGO_ROLE_NAME
 from autoware_carla_scenario.coordinate.map_manager import MapManager
 from autoware_carla_scenario.coordinate.poses import CarlaWorldPose, Lanelet2Pose
 from autoware_carla_scenario.coordinate.transform import to_carla_world
@@ -285,7 +285,7 @@ class _ProbeWorld:
 
     def try_spawn_actor(self, blueprint: _Blueprint, at: Any) -> _Probe | None:
         self.heights.append(at.location.z)
-        assert blueprint.attributes["role_name"] == placement._PROBE_ROLE
+        assert blueprint.attributes["role_name"] == BUMPER_PROBE_ROLE_NAME
         if len(self.heights) <= self.refusals:
             return None
         probe = _Probe(7)
@@ -302,7 +302,7 @@ def _no_bumpers_known(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_the_probe_has_the_role_the_measure_skips() -> None:
     from autoware_carla_scenario.measures import PROBE_ROLE
 
-    assert placement._PROBE_ROLE == PROBE_ROLE
+    assert BUMPER_PROBE_ROLE_NAME == PROBE_ROLE
 
 
 @pytest.mark.usefixtures("_no_bumpers_known")

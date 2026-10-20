@@ -11,7 +11,7 @@ snapshot of the agents, so a trigger is a pure function of what it is given:
   acceleration and footprint in the Lanelet2 map frame -- located on its
   lane once per scene (:meth:`Scene.lane_of`);
 * :meth:`Scene.vehicle` gives a :class:`VehicleObservation`: the leader and
-  follower along the lane chain (:func:`.lanes.lane_chain`), the same for the
+  follower along the lane chain (:meth:`~..route.geometry.MapFeatures.lane_chain`), the same for the
   lanes on either side, the desired speed, the next signal ahead;
 * :meth:`Scene.pedestrian` gives a :class:`PedestrianObservation`: whether it
   is on a crosswalk, and the nearest point of a road within reach.
@@ -42,7 +42,6 @@ from ..trajectory.relative_lane import (
 )
 from ..utils.stop_line import regulatory_element_stop_lines
 from .geometry import AgentFootprint
-from .lanes import lane_chain
 
 if TYPE_CHECKING:
     from lanelet2.core import ConstLanelet
@@ -304,7 +303,7 @@ class Scene:
         self, agent: AgentSnapshot, lanelet: ConstLanelet, s: float
     ) -> tuple[Optional[Neighbour], Optional[Neighbour]]:
         """The nearest vehicle ahead and behind *s* on *lanelet*'s chain."""
-        chain = lane_chain(self.features, lanelet, s, self.search, self.search)
+        chain = self.features.lane_chain(lanelet, s, self.search, self.search)
         leader: Optional[Neighbour] = None
         follower: Optional[Neighbour] = None
         for name, other in self.agents.items():
@@ -376,7 +375,7 @@ class Scene:
         return s
 
     def _signal(self, lane: LanePosition) -> Optional[SignalAhead]:
-        chain = lane_chain(self.features, lane.lanelet, lane.s, self.search)
+        chain = self.features.lane_chain(lane.lanelet, lane.s, self.search)
         best: Optional[SignalAhead] = None
         for span in chain.values():
             for element in span.lanelet.regulatoryElements:
