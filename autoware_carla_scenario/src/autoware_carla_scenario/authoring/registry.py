@@ -1413,56 +1413,80 @@ _ADVERSITY_NOTE = (
     "numbers), drives the planned path, then hands the entity back to traffic."
 )
 
-for _type_id, _title, _target, _kinds, _description in (
-    (
-        "adversarial_brake",
-        "Adversarial Brake",
-        "AdversarialBrakeAction",
-        ("vehicle",),
-        "Brake hard in front of a follower that keeps coming.",
-    ),
-    (
-        "ignore_leader",
-        "Ignore Leader",
-        "IgnoreLeaderAction",
-        ("vehicle",),
-        "Drive on as if the close, slower leader were not there.",
-    ),
-    (
-        "adversarial_cut_in",
-        "Adversarial Cut-in",
-        "AdversarialCutInAction",
-        ("vehicle",),
-        "Change lane in front of a vehicle too close behind in the next lane.",
-    ),
-    (
-        "run_traffic_rule",
-        "Run Traffic Rule",
-        "RunTrafficRuleAction",
-        ("vehicle",),
-        "Run the red or yellow light the vehicle is stopping for.",
-    ),
-    (
-        "jaywalk",
-        "Jaywalk",
-        "JaywalkAction",
-        ("pedestrian",),
-        "Walk straight across the nearest road, off any crosswalk.",
-    ),
-):
-    register_action_spec(
-        ActionSpec(
-            type_id=_type_id,
-            title=_title,
-            category="Adversity",
-            builder=f"build_{_type_id}_action",
-            target=f"..actions.adversarial:{_target}",
-            actor_kinds=_kinds,
-            visual_kind="continuous",
-            fields=_ADVERSITY_FIELDS,
-            description=_description + _ADVERSITY_NOTE,
-        )
+register_action_spec(
+    ActionSpec(
+        type_id="adversarial_brake",
+        title="Adversarial Brake",
+        category="Adversity",
+        builder="build_adversarial_brake_action",
+        target="..actions.adversarial:AdversarialBrakeAction",
+        actor_kinds=("vehicle",),
+        visual_kind="continuous",
+        fields=_ADVERSITY_FIELDS,
+        description="Brake hard in front of a follower that keeps coming."
+        + _ADVERSITY_NOTE,
     )
+)
+
+register_action_spec(
+    ActionSpec(
+        type_id="ignore_leader",
+        title="Ignore Leader",
+        category="Adversity",
+        builder="build_ignore_leader_action",
+        target="..actions.adversarial:IgnoreLeaderAction",
+        actor_kinds=("vehicle",),
+        visual_kind="continuous",
+        fields=_ADVERSITY_FIELDS,
+        description="Drive on as if the close, slower leader were not there."
+        + _ADVERSITY_NOTE,
+    )
+)
+
+register_action_spec(
+    ActionSpec(
+        type_id="adversarial_cut_in",
+        title="Adversarial Cut-in",
+        category="Adversity",
+        builder="build_adversarial_cut_in_action",
+        target="..actions.adversarial:AdversarialCutInAction",
+        actor_kinds=("vehicle",),
+        visual_kind="continuous",
+        fields=_ADVERSITY_FIELDS,
+        description="Change lane in front of a vehicle too close behind in the next lane."
+        + _ADVERSITY_NOTE,
+    )
+)
+
+register_action_spec(
+    ActionSpec(
+        type_id="run_traffic_rule",
+        title="Run Traffic Rule",
+        category="Adversity",
+        builder="build_run_traffic_rule_action",
+        target="..actions.adversarial:RunTrafficRuleAction",
+        actor_kinds=("vehicle",),
+        visual_kind="continuous",
+        fields=_ADVERSITY_FIELDS,
+        description="Run the red or yellow light the vehicle is stopping for."
+        + _ADVERSITY_NOTE,
+    )
+)
+
+register_action_spec(
+    ActionSpec(
+        type_id="jaywalk",
+        title="Jaywalk",
+        category="Adversity",
+        builder="build_jaywalk_action",
+        target="..actions.adversarial:JaywalkAction",
+        actor_kinds=("pedestrian",),
+        visual_kind="continuous",
+        fields=_ADVERSITY_FIELDS,
+        description="Walk straight across the nearest road, off any crosswalk."
+        + _ADVERSITY_NOTE,
+    )
+)
 
 register_action_spec(
     ActionSpec(

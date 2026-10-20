@@ -41,10 +41,12 @@ from .test_adversity_feasible_condition import crossroads as crossroads  # noqa:
 ANY = AdversityLocation.ANY
 
 
+#: Every stand-in made in the test, in order.
+made: list["_Execution"] = []
+
+
 class _Execution:
     """Stands in for AdversarialExecution: done on its third tick."""
-
-    made: list["_Execution"] = []
 
     def __init__(
         self,
@@ -59,7 +61,7 @@ class _Execution:
         self.label = label
         self.ticks: list[float] = []
         self.closed = False
-        _Execution.made.append(self)
+        made.append(self)
 
     @property
     def done(self) -> bool:
@@ -74,7 +76,7 @@ class _Execution:
 
 @pytest.fixture(autouse=True)
 def execution(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
-    _Execution.made = []
+    made.clear()
     monkeypatch.setattr(adversarial, "AdversarialExecution", _Execution)
     yield
 
@@ -117,7 +119,7 @@ def test_a_triggered_adversity_is_driven_to_its_end() -> None:
         ActionState.END_TRANSITION,
         ActionState.COMPLETE,
     ]
-    (run,) = _Execution.made
+    (run,) = made
     assert run.entity_name == "npc1" and run.label == "adversarial_brake"
     assert run.following_mode is TrajectoryFollowingMode.FOLLOW
     # Planned from the scene it fired on: braking from 10 m/s in its lane.
@@ -130,7 +132,7 @@ def test_a_triggered_adversity_is_driven_to_its_end() -> None:
 def test_nothing_fires_where_the_adversity_may_not() -> None:
     action = AdversarialBrakeAction("npc1", AdversityLocation.HIGHWAY)
     assert _run(action, [_brake_world(1), _brake_world(2)]) == [ActionState.STANDBY] * 2
-    assert _Execution.made == []
+    assert made == []
 
 
 def test_a_given_condition_fires_it_and_the_trigger_is_asked_then(
@@ -139,7 +141,7 @@ def test_a_given_condition_fires_it_and_the_trigger_is_asked_then(
     held = AdversarialBrakeAction("npc1", ANY, AlwaysTrueCondition(), label="held")
     assert not isinstance(held._condition, AdversityFeasibleCondition)
     _run(held, [_brake_world(1), _brake_world(2), _brake_world(3)])
-    assert len(_Execution.made) == 1
+    assert len(made) == 1
 
     # No follower: the trigger does not hold, and the run ends with nothing done.
     alone = _world(_actor(1, "npc1", -40.0, INNER, 10.0), frame=9)
@@ -147,7 +149,7 @@ def test_a_given_condition_fires_it_and_the_trigger_is_asked_then(
     with caplog.at_level(logging.WARNING):
         states = _run(unheld, [alone, alone, alone])
     assert states[-1] is ActionState.COMPLETE
-    assert len(_Execution.made) == 1
+    assert len(made) == 1
     assert "'npc1' cannot brake check now" in caplog.text
 
 
@@ -166,7 +168,7 @@ def test_a_command_with_no_path_to_plan_does_nothing(
     with pytest.MonkeyPatch.context() as patch, caplog.at_level(logging.WARNING):
         patch.setattr(adversarial, "plan_command", refuse)
         states = _run(action, [world, world, world])
-    assert states[-1] is ActionState.COMPLETE and _Execution.made == []
+    assert states[-1] is ActionState.COMPLETE and made == []
     assert "no lane on the right; nothing done" in caplog.text
 
 
@@ -174,15 +176,15 @@ def test_it_repeats_when_not_once() -> None:
     action = AdversarialBrakeAction("npc1", ANY, once=False)
     # Three ticks a run, the next fired on the tick the last one ends.
     _run(action, [_brake_world(frame) for frame in range(1, 8)])
-    assert len(_Execution.made) == 3
-    assert all(len(run.ticks) == 3 for run in _Execution.made[:2])
+    assert len(made) == 3
+    assert all(len(run.ticks) == 3 for run in made[:2])
 
 
 def test_closing_closes_the_path() -> None:
     action = AdversarialBrakeAction("npc1", ANY)
     _run(action, [_brake_world(1)])
     action.close()
-    assert _Execution.made[0].closed
+    assert made[0].closed
 
 
 @pytest.mark.parametrize(
@@ -203,10 +205,10 @@ def test_each_action_is_its_kind(cls: Any, kind: AdversityKind, label: str) -> N
 
 def test_a_jaywalker_walks_its_seeded_path() -> None:
     def walk(seed: int) -> Optional[PredictedState]:
-        _Execution.made = []
+        made.clear()
         walker = _actor(7, "p1", -40.0, -12.0, 0.0, type_id="walker.pedestrian.0001")
         _run(JaywalkAction("p1", ANY, seed=seed), [_world(walker, frame=seed)])
-        return _Execution.made[0].path[-1] if _Execution.made else None
+        return made[0].path[-1] if made else None
 
     assert walk(3) == walk(3) != walk(4)
 
