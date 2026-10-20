@@ -29,6 +29,10 @@ from autoware_carla_scenario.trajectory.model import MapPose, TrajectoryFollowin
 from . import _route_maps as rm
 
 CAR = AgentFootprint(5.0, 2.0)
+TWO_STATES = [
+    PredictedState(0.0, 0.0, 0.0, 1.0, 0.0),
+    PredictedState(1.0, 0.0, 0.0, 1.0, 1.0),
+]
 INNER = -1.75
 OUTER = -5.25
 
@@ -136,6 +140,11 @@ def test_a_given_path_is_retimed_from_zero(features: MapFeatures) -> None:
 
 
 # -- driving --------------------------------------------------------------------
+
+
+def test_the_vehicle_is_left_moving_for_traffic_to_take_over() -> None:
+    run = execution.AdversarialExecution("npc1", TWO_STATES)
+    assert run._follow._stop_at_end is False
 
 
 def test_the_path_becomes_a_timed_trajectory_in_the_map_frame() -> None:

@@ -4,7 +4,8 @@ A trigger answers with an :class:`AdversarialCommand`: accelerate (or brake)
 at a rate, change lanes, or follow a given path, for a duration.  TeraSim
 turns every one into a predicted trajectory before it executes it
 (``update_control_cmds_from_predicted_trajectory``); :func:`plan_command`
-does the same, along the Lanelet2 lanes, so :mod:`.execution` has one kind
+does the same, along the Lanelet2 lanes, so the actions' executor
+(``actions._adversarial_execution``) has one kind
 of thing to drive: a list of :class:`~.geometry.PredictedState`, timed from
 the command's start, in the Lanelet2 map frame.
 
@@ -25,9 +26,9 @@ from enum import Enum
 from typing import TYPE_CHECKING, Optional
 
 from ..route.geometry import MapFeatures
-from ..trajectory.relative_lane import _centreline, _end_heading, _heading_at, _point_at
+from ..trajectory.relative_lane import _centreline, _heading_at, _point_at
 from .geometry import PredictedState
-from .observation import SideLane, VehicleObservation
+from .observation import AgentSnapshot, LanePosition, SideLane, VehicleObservation
 from .prediction import lane_change_longitudinal_speed, predict_distance_velocity
 
 if TYPE_CHECKING:
@@ -94,32 +95,55 @@ class AdversarialCommand:
         )
 
 
-def _along(
-    features: MapFeatures, lanelet: ConstLanelet, s: float, distance: float
-) -> tuple[float, float, float]:
-    """``(x, y, yaw)`` *distance* metres along the lane from *s* on *lanelet*.
+class _LaneWalk:
+    """Points along the lane from where an agent is, for growing distances.
 
-    Past a lanelet's end the straightest successor carries on; with none,
-    the line goes on straight along the end's heading.
+    Past a lanelet's end the straightest successor carries on; with none, the
+    line goes on straight along the end's heading.  Each lanelet's centreline
+    is read once, however many points are asked of it.
     """
-    here = lanelet
-    at = s + distance
-    while at > features.length(here):
-        successor = features.straightest_following(here)
-        if successor is None:
-            heading = _end_heading(here)
-            x, y = _centreline(here)[-1]
-            beyond = at - features.length(here)
+
+    features: MapFeatures
+    lanelet: ConstLanelet
+    points: list[tuple[float, float]]
+    length: float
+    start: float
+    end_of_lane: bool
+
+    def __init__(self, features: MapFeatures, lanelet: ConstLanelet, s: float) -> None:
+        self.features = features
+        self.lanelet = lanelet
+        self.points = _centreline(lanelet)
+        self.length = features.length(lanelet)
+        # Where the current lanelet starts, in metres from the agent.
+        self.start = -s
+        self.end_of_lane = False
+
+    def at(self, distance: float) -> tuple[float, float, float]:
+        """``(x, y, yaw)`` *distance* metres on; not less than the last asked."""
+        while not self.end_of_lane and distance - self.start > self.length:
+            successor = self.features.straightest_following(self.lanelet)
+            if successor is None:
+                self.end_of_lane = True
+                break
+            # A typed local: Codon unwraps the Optional here, not at each use.
+            following: ConstLanelet = successor
+            self.start += self.length
+            self.lanelet = following
+            self.points = _centreline(following)
+            self.length = self.features.length(following)
+        along = distance - self.start
+        if along > self.length:
+            (x0, y0), (x1, y1) = self.points[-2], self.points[-1]
+            heading = math.atan2(y1 - y0, x1 - x0)
+            beyond = along - self.length
             return (
-                x + beyond * math.cos(heading),
-                y + beyond * math.sin(heading),
+                x1 + beyond * math.cos(heading),
+                y1 + beyond * math.sin(heading),
                 heading,
             )
-        at -= features.length(here)
-        here = successor
-    points = _centreline(here)
-    x, y = _point_at(points, at)
-    return x, y, _heading_at(points, at)
+        x, y = _point_at(self.points, along)
+        return x, y, _heading_at(self.points, along)
 
 
 def _times(duration: float, resolution: float) -> list[float]:
@@ -129,59 +153,57 @@ def _times(duration: float, resolution: float) -> list[float]:
 
 def _accelerate(
     features: MapFeatures,
-    observation: VehicleObservation,
+    lane: LanePosition,
+    agent: AgentSnapshot,
+    desired_speed: float,
     command: AdversarialCommand,
     resolution: float,
 ) -> list[PredictedState]:
-    lane = observation.lane
-    assert lane is not None
-    agent = observation.agent
     times = _times(command.duration, resolution)
     distances, speeds = predict_distance_velocity(
-        agent.speed,
-        command.acceleration,
-        times,
-        max(observation.desired_speed, agent.speed),
+        agent.speed, command.acceleration, times, max(desired_speed, agent.speed)
     )
+    walk = _LaneWalk(features, lane.lanelet, lane.s)
     states: list[PredictedState] = []
     for t, d, v in zip(times, distances, speeds):
-        x, y, yaw = _along(features, lane.lanelet, lane.s, d)
+        x, y, yaw = walk.at(d)
         states.append(PredictedState(x, y, yaw, v, t))
     return states
 
 
 def _change_lane(
     features: MapFeatures,
-    observation: VehicleObservation,
+    lane: LanePosition,
+    side: SideLane,
+    agent: AgentSnapshot,
     command: AdversarialCommand,
     resolution: float,
 ) -> list[PredictedState]:
-    lane = observation.lane
-    assert lane is not None
-    side: Optional[SideLane] = (
-        observation.left if command.side == "left" else observation.right
-    )
-    if side is None:
-        raise ValueError(f"there is no lane on the {command.side} to change into")
-    agent = observation.agent
-    x0, y0, _yaw = _along(features, lane.lanelet, lane.s, 0.0)
-    x1, y1, _yaw1 = _along(features, side.lanelet, side.s, 0.0)
-    speed = lane_change_longitudinal_speed(
-        agent.speed, math.hypot(x1 - x0, y1 - y0), command.duration
-    )
+    own = _LaneWalk(features, lane.lanelet, lane.s)
+    beside = _LaneWalk(features, side.lanelet, side.s)
     times = _times(command.duration, resolution)
-    points: list[tuple[float, float]] = []
-    for t in times:
-        f = t / command.duration
-        ox, oy, _o = _along(features, lane.lanelet, lane.s, speed * t)
-        nx, ny, _n = _along(features, side.lanelet, side.s, speed * t)
-        points.append((ox + (nx - ox) * f, oy + (ny - oy) * f))
-    states: list[PredictedState] = []
+    xs: list[float] = []
+    ys: list[float] = []
+    speed = agent.speed
     for i, t in enumerate(times):
-        a = points[max(i - 1, 0)]
-        b = points[min(i + 1, len(points) - 1)]
-        yaw = math.atan2(b[1] - a[1], b[0] - a[0])
-        states.append(PredictedState(points[i][0], points[i][1], yaw, agent.speed, t))
+        ox, oy, _o = own.at(speed * t)
+        nx, ny, _n = beside.at(speed * t)
+        if i == 0:
+            # The lanes' separation, sideways out of the speed (TeraSim's
+            # lane-change longitudinal speed); from here on, at that speed.
+            speed = lane_change_longitudinal_speed(
+                agent.speed, math.hypot(nx - ox, ny - oy), command.duration
+            )
+        f = t / command.duration
+        xs.append(ox + (nx - ox) * f)
+        ys.append(oy + (ny - oy) * f)
+    states: list[PredictedState] = []
+    last = len(times) - 1
+    for i, t in enumerate(times):
+        a = max(i - 1, 0)
+        b = min(i + 1, last)
+        yaw = math.atan2(ys[b] - ys[a], xs[b] - xs[a])
+        states.append(PredictedState(xs[i], ys[i], yaw, agent.speed, t))
     return states
 
 
@@ -202,8 +224,21 @@ def plan_command(
         return [
             PredictedState(p.x, p.y, p.yaw, p.speed, p.t - start) for p in command.path
         ]
-    if observation.lane is None:
+    lane = observation.lane
+    if lane is None:
         raise ValueError(f"{observation.agent.name} is off the lanes")
     if command.kind is CommandKind.ACCELERATION:
-        return _accelerate(features, observation, command, resolution)
-    return _change_lane(features, observation, command, resolution)
+        return _accelerate(
+            features,
+            lane,
+            observation.agent,
+            observation.desired_speed,
+            command,
+            resolution,
+        )
+    side: Optional[SideLane] = observation.right
+    if command.side == "left":
+        side = observation.left
+    if side is None:
+        raise ValueError(f"there is no lane on the {command.side} to change into")
+    return _change_lane(features, lane, side, observation.agent, command, resolution)

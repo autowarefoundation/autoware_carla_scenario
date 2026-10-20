@@ -6,9 +6,10 @@ by a :class:`~.follow_trajectory.FollowTrajectoryAction` on the path's own
 clock -- ``FOLLOW`` (the vehicle's own motion, by default) or ``POSITION``
 (TeraSim's ``moveToXY`` teleport) -- which takes the vehicle back from its
 traffic backend first.  When the path is done a vehicle is handed back to
-the backend (:meth:`~..traffic.driven.BackendDriven.resume_traffic`) and
-rejoins traffic from there, as TeraSim's controller turns SUMO's checks
-back on; a pedestrian is left standing where the path ended.
+the backend (:meth:`~..traffic.driven.BackendDriven.resume_traffic`) still
+moving (``stop_at_end=False``) and rejoins traffic from there, as TeraSim's
+controller turns SUMO's checks back on; a pedestrian is left standing where
+the path ended.
 """
 
 from __future__ import annotations
@@ -83,6 +84,7 @@ class AdversarialExecution:
             following_mode=following_mode,
             timing=TickTiming.PRE_TICK,
             label=label,
+            stop_at_end=False,
         )
         self._handed_back = False
 

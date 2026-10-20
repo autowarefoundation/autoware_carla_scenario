@@ -21,8 +21,8 @@ bumper); the port converts once, where an actor's state is read, and nowhere
 else.
 """
 
-from .command import AdversarialCommand, CommandKind, plan_command
 from .collision import collision_time, segments_intersect, trajectories_intersect
+from .command import AdversarialCommand, CommandKind, plan_command
 from .geometry import (
     AgentFootprint,
     PredictedState,
