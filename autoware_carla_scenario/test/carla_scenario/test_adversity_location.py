@@ -13,7 +13,6 @@ import pytest
 
 from autoware_carla_scenario.adversity import (
     AdversityLocation,
-    lane_chain,
     location_matches,
     location_of,
 )
@@ -156,7 +155,7 @@ def test_the_chain_ahead_follows_every_branch_by_its_start(
     features: MapFeatures,
 ) -> None:
     # W_IN2 (50 m) at s = 40: its three junction lanelets start 10 m ahead.
-    chain = lane_chain(features, _lanelet(features, rm.W_IN2), 40.0, ahead=15.0)
+    chain = features.lane_chain(_lanelet(features, rm.W_IN2), 40.0, ahead=15.0)
     assert chain[rm.W_IN2].start == -40.0
     for to in ("E", "N", "S"):
         assert chain[rm.J[("W", to)]].start == pytest.approx(10.0)
@@ -165,13 +164,12 @@ def test_the_chain_ahead_follows_every_branch_by_its_start(
 
 
 def test_the_chain_behind_ends_within_its_distance(features: MapFeatures) -> None:
-    chain = lane_chain(
-        features, _lanelet(features, rm.W_IN2), 10.0, ahead=0.0, behind=20.0
+    chain = features.lane_chain(
+        _lanelet(features, rm.W_IN2), 10.0, ahead=0.0, behind=20.0
     )
     assert chain[rm.W_IN1].start == pytest.approx(-60.0)
     assert chain[rm.W_IN1].end == pytest.approx(-10.0)
     assert set(chain) == {rm.W_IN1, rm.W_IN2}
     # Nothing behind by default, even at the very start of a lanelet.
-    assert set(lane_chain(features, _lanelet(features, rm.W_IN2), 0.0, ahead=0.0)) == {
-        rm.W_IN2
-    }
+    own = _lanelet(features, rm.W_IN2)
+    assert set(features.lane_chain(own, 0.0, ahead=0.0)) == {rm.W_IN2}
