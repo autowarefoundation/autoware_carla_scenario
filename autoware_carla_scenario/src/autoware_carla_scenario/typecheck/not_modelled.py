@@ -415,6 +415,13 @@ def _members(names: str, reason: str) -> dict[str, str]:
 #: lists `get_details` for every condition), so a key need not be a modelled
 #: class itself (`BackendDriven`).
 NOT_MODELLED_MEMBERS: dict[str, dict[str, str]] = {
+    "AdversityFeasibleCondition": _members(
+        "command scene",
+        "what the adversarial actions read off the condition they fire on: an "
+        "AdversarialCommand and the adversity Scene, of the adversity "
+        "package, which a scenario does not import; the library check "
+        "compiles them from their source",
+    ),
     "BackendDriven": {"set_traffic_backend": _SET_TRAFFIC_BACKEND},
     "BaseAction": {"close": _RUN_CLEANUP},
     "BaseCondition": {

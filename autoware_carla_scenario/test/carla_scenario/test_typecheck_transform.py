@@ -16,6 +16,10 @@ import pytest
 
 from autoware_carla_scenario.typecheck import model_dir
 from autoware_carla_scenario.typecheck.driver import render_driver
+from autoware_carla_scenario.typecheck.python_rewrites import (
+    python_rewrite_refusals,
+    python_rewrites,
+)
 from autoware_carla_scenario.typecheck.transform import (
     MISSING_BUILTIN_EXCEPTIONS,
     PRELUDE,
@@ -297,7 +301,6 @@ def test_an_evidently_homogeneous_dict_display_is_left_as_written() -> None:
         b = {"a": Foo(1), "b": Foo(2)}
         c = {"a": f"{p}", "b": f"{q}"}
         d = {"l": Direction.LEFT, "r": Direction.RIGHT}
-        e = {**base, "b": c}
         f = {"a": p}
         g = {}
         h = {k: v for k, v in items}
@@ -2353,3 +2356,281 @@ def test_a_rebound_functools_name_is_left_alone() -> None:
     assert "_acs_reduce(xs)" not in out
     assert "return reduce(xs)" in out
     assert "@cache\ndef h()" in out
+
+
+# ---------------------------------------------------------------------------
+# Valid Python Codon refuses or crashes on (#376)
+# ---------------------------------------------------------------------------
+
+
+def _rewritten(source: str) -> str:
+    text, _ = python_rewrites(textwrap.dedent(source))
+    ast.parse(text)
+    return text
+
+
+def test_an_ellipsis_in_a_class_body_becomes_pass() -> None:
+    text = _rewritten(
+        """
+        class A: ...
+        class B(Exception):
+            ...
+        class C:
+            x: int
+            ...
+        def f() -> None: ...
+        """
+    )
+    assert "class A: pass" in text
+    assert text.count("pass") == 3
+    assert "def f() -> None: ..." in text
+
+
+def test_a_dict_display_with_double_star_becomes_a_union() -> None:
+    text = _rewritten(
+        """
+        d = {**a, **b}
+        e = {**a}
+        f = {"x": 1, **a, "y": 2, **(a or b)}
+        """
+    )
+    assert "d = (a | b)" in text
+    assert "e = dict(a)" in text
+    assert 'f = ({"x": 1} | a | {"y": 2} | (a or b))' in text
+
+
+def test_a_dict_display_with_double_star_keeps_its_lines() -> None:
+    source = "d = {\n    **a,\n    'k': 1,\n    **b,\n}\nz = 1\n"
+    text, _ = python_rewrites(source)
+    assert text.count("\n") == source.count("\n")
+    assert text.endswith("\nz = 1\n")
+    assert text.startswith("d = (a | {'k': 1} | b)")
+
+
+@pytest.mark.parametrize(
+    ("call", "expected"),
+    [
+        ('"{:>5}|{}".format(1, 2)', 'f"{1:>5}|{2}"'),
+        ('"{0}-{0}".format(x)', 'f"{x}-{x}"'),
+        ('"{a}-{b:.2f}".format(a=x, b=y)', 'f"{x}-{y:.2f}"'),
+        ('"{!r} {!s}".format(x, y)', 'f"{x!r} {y!s}"'),
+        ('"{0.size[1]}".format(x)', 'f"{x.size[1]}"'),
+        ('"{0[key]}".format(x)', "f\"{x['key']}\""),
+        ('"plain".format()', '"plain"'),
+        ('"{{}}".format()', '("{" + "}")'),
+        ('"a{{{}}}".format(x)', '("a" + "{" + f"{x}" + "}")'),
+    ],
+)
+def test_str_format_on_a_literal_becomes_an_fstring(call: str, expected: str) -> None:
+    assert _rewritten(f"s = {call}\n") == f"s = {expected}\n"
+
+
+def test_str_format_evaluates_a_complex_argument_once() -> None:
+    text = _rewritten('s = "{0}{0}{k}".format(f(1), k=g("q"))\n')
+    assert text == (
+        's = (lambda _acs_f0, _acs_k_k: f"{_acs_f0}{_acs_f0}{_acs_k_k}")'
+        '(f(1), g("q"))\n'
+    )
+    assert _rewritten('s = "x".format(f())\n') == 's = (lambda _acs_f0: "x")(f())\n'
+
+
+def test_str_format_keeps_its_lines() -> None:
+    source = 's = ("a {} "\n     "b {}").format(\n    1,\n    2,\n)\nz = 1\n'
+    text, _ = python_rewrites(source)
+    assert text.count("\n") == source.count("\n")
+    assert text.endswith("\nz = 1\n")
+
+
+def test_str_format_inside_str_format_is_rewritten_too() -> None:
+    text = _rewritten('s = "{}".format("[{}]".format(f(1)))\n')
+    assert ".format" not in text
+
+
+@pytest.mark.parametrize(
+    ("call", "hint"),
+    [
+        ('"{:>{}}".format(1, 2)', "a field inside it"),
+        ('"{} {}".format(1)', "positional argument 1 but only 1 given"),
+        ('"{k}".format(j=1)', "keyword 'k'"),
+        ('"{} {1}".format(1, 2)', "mixes automatic and manual"),
+        ('"{}".format(*a)', "*args or **kwargs"),
+        ('"{}".format(**a)', "*args or **kwargs"),
+        ('"{".format(1)', "invalid"),
+        ('"{0!x}".format(1)', "unknown conversion"),
+    ],
+)
+def test_str_format_that_cannot_be_expressed_is_refused(call: str, hint: str) -> None:
+    refused = python_rewrite_refusals(f"x = 1\ns = {call}\n")
+    assert [line for line, _ in refused] == [2]
+    assert hint in refused[0][1]
+
+
+def test_str_format_on_something_else_is_left_alone() -> None:
+    text = _rewritten("s = fmt.format(1)\nt = obj.format(1)\n")
+    assert text == "s = fmt.format(1)\nt = obj.format(1)\n"
+    assert python_rewrite_refusals(text) == []
+
+
+def test_zip_strict_is_dropped() -> None:
+    assert _rewritten("zip(a, b, strict=True)\n") == "zip(a, b)\n"
+    assert _rewritten("zip(strict=False)\n") == "zip()\n"
+    assert _rewritten("zip(a, strict=x) + zip(b, strict=1)\n") == "zip(a) + zip(b)\n"
+    source = "zip(\n    a,\n    b,\n    strict=True,\n)\n"
+    text = _rewritten(source)
+    assert text.count("\n") == source.count("\n")
+    assert "strict" not in text
+    assert _rewritten("other(a, strict=True)\n") == "other(a, strict=True)\n"
+
+
+_LT_ONLY = """
+class V:
+    def __lt__(self, other: "V") -> bool:
+        return True
+"""
+
+
+def test_a_class_with_only_lt_gets_gt_and_ge() -> None:
+    text, blocks = python_rewrites(_LT_ONLY)
+    assert text == _LT_ONLY
+    [(name, block)] = blocks
+    assert name == "V"
+    assert "@extend\nclass V:" in block
+    assert (
+        "def __gt__(self, other: V) -> bool:\n        return other.__lt__(self)"
+        in block
+    )
+    assert "return not self.__lt__(other)" in block
+    assert "__le__" not in block
+
+
+def test_a_class_with_every_comparison_gets_none() -> None:
+    source = (
+        _LT_ONLY
+        + """
+    def __gt__(self, other: "V") -> bool:
+        return True
+
+    def __ge__(self, other: "V") -> bool:
+        return True
+"""
+    )
+    assert python_rewrites(source)[1] == []
+    ordered = "from dataclasses import dataclass\n@dataclass(order=True)\nclass D:\n    a: int\n    def __lt__(self, o): ...\n"
+    assert python_rewrites(ordered)[1] == []
+    assert python_rewrites("class N:\n    pass\n")[1] == []
+
+
+def test_a_subclass_does_not_repeat_what_its_base_defines() -> None:
+    source = (
+        _LT_ONLY
+        + "\nclass W(V):\n    def __lt__(self, other: V) -> bool:\n        return False\n"
+    )
+    blocks = dict(python_rewrites(source)[1])
+    # W's own __lt__ is the one its comparisons must call.
+    assert set(blocks) == {"V", "W"}
+
+
+@pytest.mark.parametrize(
+    ("root", "added", "absent"),
+    [
+        ("__lt__", ["__gt__", "__le__", "__ge__"], "__lt__"),
+        ("__le__", ["__lt__", "__gt__", "__ge__"], "__le__"),
+        ("__gt__", ["__lt__", "__le__", "__ge__"], "__gt__"),
+        ("__ge__", ["__lt__", "__le__", "__gt__"], "__ge__"),
+    ],
+)
+def test_total_ordering_adds_the_other_three_from_its_root(
+    root: str, added: list[str], absent: str
+) -> None:
+    source = (
+        "import functools\n"
+        "@functools.total_ordering\n"
+        f"class V:\n    def {root}(self, o): ...\n    def __eq__(self, o): ...\n"
+    )
+    text, [(name, block)] = python_rewrites(source)
+    assert "total_ordering" not in text.replace("import functools", "")
+    assert text.count("\n") == source.count("\n")
+    assert name == "V"
+    for dunder in added:
+        assert f"def {dunder}(self, other: V) -> bool:" in block
+    assert f"def {absent}(" not in block
+    assert "self == other" in block
+
+
+def test_total_ordering_without_eq_compares_identity() -> None:
+    source = "from functools import total_ordering\n@total_ordering\nclass V:\n    def __lt__(self, o): ...\n"
+    text, [(_, block)] = python_rewrites(source)
+    assert "self is other" in block
+    assert text.splitlines()[0] == "pass"
+    assert "total_ordering" not in text
+
+
+def test_total_ordering_takes_its_root_from_a_base() -> None:
+    source = (
+        "from functools import total_ordering\n"
+        "class B:\n    def __lt__(self, o): ...\n"
+        "@total_ordering\nclass V(B): ...\n"
+    )
+    _, blocks = python_rewrites(source)
+    block = dict(blocks)["V"]
+    assert "def __le__(self, other: V)" in block
+    assert "def __ge__(self, other: V)" in block
+    assert "def __lt__(" not in block
+
+
+def test_the_total_ordering_import_loses_only_its_name() -> None:
+    text = _rewritten(
+        "from functools import partial, total_ordering as to\n@to\nclass V: ...\n"
+    )
+    assert text.splitlines()[0] == "from functools import partial"
+    assert "@" not in text
+
+
+def test_total_ordering_that_cannot_be_expressed_is_refused() -> None:
+    nested = (
+        "from functools import total_ordering\n"
+        "def make():\n    @total_ordering\n    class V:\n"
+        "        def __lt__(self, o): ...\n    return V\n"
+    )
+    [(line, message)] = python_rewrite_refusals(nested)
+    assert line == 3 and "not at module level" in message
+    empty = "from functools import total_ordering\n@total_ordering\nclass V: ...\n"
+    [(line, message)] = python_rewrite_refusals(empty)
+    assert line == 3 and "one of __lt__" in message
+
+
+def test_a_lambda_default_that_is_not_a_literal_is_bound_by_a_call() -> None:
+    assert (
+        _rewritten("fs = [lambda x, k=k: x + k for k in range(3)]\n")
+        == "fs = [(lambda k: lambda x: x + k)(k) for k in range(3)]\n"
+    )
+    assert (
+        _rewritten("g = lambda a, b=1, *r, c=k, **kw: a\n")
+        == "g = (lambda c: lambda a, b=1, *r, **kw: a)(k)\n"
+    )
+    # A default after a bound one is bound too, so a positional call keeps
+    # meaning what it did.
+    assert (
+        _rewritten("g = lambda a, b=f(), c=2: a\n")
+        == "g = (lambda b, c: lambda a: a)(f(), 2)\n"
+    )
+    assert _rewritten("lambda: 0\n") == "lambda: 0\n"
+    assert _rewritten("g = lambda a, b=2, c=-1, d=None: a\n") == (
+        "g = lambda a, b=2, c=-1, d=None: a\n"
+    )
+
+
+def test_the_rewrites_leave_a_module_with_none_of_them_unchanged() -> None:
+    source = "class A:\n    x: int = 1\n\nd = {'a': 1}\ns = f'{d}'\nz = zip(d, d)\n"
+    assert python_rewrites(source) == (source, [])
+    assert python_rewrite_refusals(source) == []
+
+
+def test_transform_source_lines_applies_the_rewrites_and_appends_the_ordering() -> None:
+    source = _LT_ONLY + "x = {**a, **b}\nclass E(Exception): ...\n"
+    text, origin = transform_source_lines(source)
+    assert "x = (a | b)" in text
+    assert "class E(Static[Exception]): pass" in text
+    assert "@extend\nclass V:" in text
+    assert len(origin) == text.count("\n") - PRELUDE.count("\n")
+    assert origin[-1] == 2  # the appended methods map to their class

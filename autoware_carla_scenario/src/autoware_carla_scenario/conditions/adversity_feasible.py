@@ -14,7 +14,7 @@ every condition and action that asks (:func:`~..adversity.snapshot.scene_at`).
 Needs the :class:`~..coordinate.map_manager.MapManager` to hold the Lanelet2
 map.  Not re-exported from :mod:`autoware_carla_scenario.conditions`, which
 every scenario imports, because it pulls in the Lanelet2 map layer: import it
-from here (or with the adversarial actions).
+from here or from the package's top level.
 """
 
 from __future__ import annotations

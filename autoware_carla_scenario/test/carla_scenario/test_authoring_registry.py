@@ -216,11 +216,37 @@ class TestSelectFieldDefaults:
                 for field_spec in spec.fields:
                     if field_spec.kind != "select":
                         continue
+                    if field_spec.default is None and field_spec.required:
+                        # A choice the author has to make (an adversity's
+                        # location): the validator reports it missing.
+                        continue
                     allowed = {o.value for o in field_spec.options}
                     assert field_spec.default in allowed, (
                         f"{spec.type_id}.{field_spec.name} defaults to "
                         f"{field_spec.default!r}, not one of {sorted(allowed)}"
                     )
+
+    def test_a_required_select_without_default_must_be_chosen(self) -> None:
+        """What the skip above relies on: the validator reports the blank."""
+        from autoware_carla_scenario.authoring import validator
+
+        blanks = [
+            (spec, field_spec)
+            for spec in registry.action_specs()
+            for field_spec in spec.fields
+            if field_spec.kind == "select"
+            and field_spec.default is None
+            and field_spec.required
+        ]
+        assert blanks  # the adversities' location
+        for spec, field_spec in blanks:
+            out = validator._Collector()
+            validator._check_field(
+                out, spec.type_id, field_spec, {}, validator._NO_REFS, None
+            )
+            assert [issue.message for issue in out.issues] == [
+                f"{field_spec.label} is required."
+            ]
 
     def test_a_non_entity_target_says_what_frame_it_is_in(self) -> None:
         """A bare id on a card belongs to no coordinate system on sight.

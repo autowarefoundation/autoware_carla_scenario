@@ -1983,6 +1983,10 @@ def transform_source_lines(
     """
     if not source.endswith("\n"):
         source += "\n"
+    # Valid Python Codon refuses or crashes on (#376): python_rewrites.py.
+    from .python_rewrites import python_rewrites
+
+    source, ordering = python_rewrites(source)
     source, origin = split_tuple_excepts(source)
     source, origin = tuple_named_tuples(source, origin)
     tree = ast.parse(source)
@@ -2001,6 +2005,7 @@ def transform_source_lines(
         *_enum_lookups(rewriter.enums),
         *_inherited_init_extensions(_inherited_bases(tree, init_classes, exceptions)),
         *_dataclass_dunders(tree, exceptions),
+        *ordering,
     ]
     text = PRELUDE + edits.apply()
     origin = list(origin)

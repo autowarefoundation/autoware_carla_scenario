@@ -5,7 +5,8 @@ import typesafe_carla.carla as carla
 from ._tc import (_keyword_only, _expect_float, _expect_optional_float, _expect_optional_bool,
                   _acs_expect_return, _acs_sequence)
 from .action_state import ActionState
-from .conditions import BaseCondition, TurnIndicatorState, _expect_optional_condition
+from .conditions import (AdversityKind, AdversityLocation, BaseCondition, TurnIndicatorState,
+                         _expect_optional_condition)
 from .coordinate import (Lanelet2Pose, CarlaWorldPose, GroundProjectionConfig,
                          _expect_lanelet2_poses, _expect_optional_ground_projection)
 from .entity_role import EntityRole, _expect_role
@@ -357,6 +358,135 @@ class WalkStraightAction(BaseAction):
         _expect_role(entity_name)
         super().__init__(label, condition, timing, once=once)
 
+
+class AdversarialBrakeAction(BaseAction):
+    def __init__(self, label):
+        compile_error("AdversarialBrakeAction(): no constructor takes these arguments "
+                      "(required: entity_name, location)")
+
+    def __init__(self, entity_name, location: AdversityLocation, condition = None,
+                 timing: TickTiming = TickTiming("pre_tick"), *_kw, label: str = "adversarial_brake",
+                 once: bool = True, thresholds = None,
+                 following_mode: TrajectoryFollowingMode = TrajectoryFollowingMode("follow")):
+        _keyword_only(_kw, "AdversarialBrakeAction(): label, once, thresholds and following_mode")
+        _expect_role(entity_name)
+        super().__init__(label, condition, timing, once=once)
+
+    @property
+    def kind(self) -> AdversityKind:
+        raise NotImplementedError()
+
+    @property
+    def location(self) -> AdversityLocation:
+        raise NotImplementedError()
+
+    @property
+    def finished(self) -> bool:
+        raise NotImplementedError()
+
+
+class IgnoreLeaderAction(BaseAction):
+    def __init__(self, label):
+        compile_error("IgnoreLeaderAction(): no constructor takes these arguments "
+                      "(required: entity_name, location)")
+
+    def __init__(self, entity_name, location: AdversityLocation, condition = None,
+                 timing: TickTiming = TickTiming("pre_tick"), *_kw, label: str = "ignore_leader",
+                 once: bool = True, thresholds = None,
+                 following_mode: TrajectoryFollowingMode = TrajectoryFollowingMode("follow")):
+        _keyword_only(_kw, "IgnoreLeaderAction(): label, once, thresholds and following_mode")
+        _expect_role(entity_name)
+        super().__init__(label, condition, timing, once=once)
+
+    @property
+    def kind(self) -> AdversityKind:
+        raise NotImplementedError()
+
+    @property
+    def location(self) -> AdversityLocation:
+        raise NotImplementedError()
+
+    @property
+    def finished(self) -> bool:
+        raise NotImplementedError()
+
+
+class AdversarialCutInAction(BaseAction):
+    def __init__(self, label):
+        compile_error("AdversarialCutInAction(): no constructor takes these arguments "
+                      "(required: entity_name, location)")
+
+    def __init__(self, entity_name, location: AdversityLocation, condition = None,
+                 timing: TickTiming = TickTiming("pre_tick"), *_kw, label: str = "adversarial_cut_in",
+                 once: bool = True, thresholds = None,
+                 following_mode: TrajectoryFollowingMode = TrajectoryFollowingMode("follow")):
+        _keyword_only(_kw, "AdversarialCutInAction(): label, once, thresholds and following_mode")
+        _expect_role(entity_name)
+        super().__init__(label, condition, timing, once=once)
+
+    @property
+    def kind(self) -> AdversityKind:
+        raise NotImplementedError()
+
+    @property
+    def location(self) -> AdversityLocation:
+        raise NotImplementedError()
+
+    @property
+    def finished(self) -> bool:
+        raise NotImplementedError()
+
+
+class RunTrafficRuleAction(BaseAction):
+    def __init__(self, label):
+        compile_error("RunTrafficRuleAction(): no constructor takes these arguments "
+                      "(required: entity_name, location)")
+
+    def __init__(self, entity_name, location: AdversityLocation, condition = None,
+                 timing: TickTiming = TickTiming("pre_tick"), *_kw, label: str = "run_traffic_rule",
+                 once: bool = True, thresholds = None,
+                 following_mode: TrajectoryFollowingMode = TrajectoryFollowingMode("follow")):
+        _keyword_only(_kw, "RunTrafficRuleAction(): label, once, thresholds and following_mode")
+        _expect_role(entity_name)
+        super().__init__(label, condition, timing, once=once)
+
+    @property
+    def kind(self) -> AdversityKind:
+        raise NotImplementedError()
+
+    @property
+    def location(self) -> AdversityLocation:
+        raise NotImplementedError()
+
+    @property
+    def finished(self) -> bool:
+        raise NotImplementedError()
+
+
+class JaywalkAction(BaseAction):
+    def __init__(self, label):
+        compile_error("JaywalkAction(): no constructor takes these arguments "
+                      "(required: entity_name, location)")
+
+    def __init__(self, entity_name, location: AdversityLocation, condition = None,
+                 timing: TickTiming = TickTiming("pre_tick"), *_kw, label: str = "jaywalk",
+                 once: bool = True, seed: int = 0, thresholds = None,
+                 following_mode: TrajectoryFollowingMode = TrajectoryFollowingMode("follow")):
+        _keyword_only(_kw, "JaywalkAction(): label, once, seed, thresholds and following_mode")
+        _expect_role(entity_name)
+        super().__init__(label, condition, timing, once=once)
+
+    @property
+    def kind(self) -> AdversityKind:
+        raise NotImplementedError()
+
+    @property
+    def location(self) -> AdversityLocation:
+        raise NotImplementedError()
+
+    @property
+    def finished(self) -> bool:
+        raise NotImplementedError()
 
 # As conditions.codon builds a BaseCondition: so `Optional[BaseAction]` None
 # compiles in a program that builds no action (#263).
