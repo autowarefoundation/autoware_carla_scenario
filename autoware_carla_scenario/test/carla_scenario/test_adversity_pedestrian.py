@@ -88,8 +88,10 @@ def test_a_pedestrian_sees_the_crosswalk_near_it(features: MapFeatures) -> None:
 
 
 def test_a_waiting_pedestrian_crosses_on_red(features: MapFeatures) -> None:
-    seen = _scene(features, _person(-15.0, -9.0)).pedestrian("p")
-    command = running_red_light(seen, features, RED)
+    seen = _scene(features, _person(-15.0, -9.0), signals=RED).pedestrian("p")
+    assert seen.nearest_crosswalk is not None
+    assert seen.nearest_crosswalk.signal is SignalState.RED
+    command = running_red_light(seen, features)
     assert command is not None and command.kind is CommandKind.TRAJECTORY
     # From the end it waits at to the far end: north, 14 m at 2.8 m/s.
     assert command.duration == pytest.approx(5.0)
@@ -99,8 +101,8 @@ def test_a_waiting_pedestrian_crosses_on_red(features: MapFeatures) -> None:
 
 
 def test_from_the_other_end_it_crosses_the_other_way(features: MapFeatures) -> None:
-    seen = _scene(features, _person(-15.0, 9.0)).pedestrian("p")
-    command = running_red_light(seen, features, RED)
+    seen = _scene(features, _person(-15.0, 9.0), signals=RED).pedestrian("p")
+    command = running_red_light(seen, features)
     assert command is not None
     assert command.path[-1].yaw == pytest.approx(-math.pi / 2)
 
@@ -117,14 +119,14 @@ def test_from_the_other_end_it_crosses_the_other_way(features: MapFeatures) -> N
 def test_no_crossing_on_red(
     features: MapFeatures, person: AgentSnapshot, signals: dict[int, SignalState]
 ) -> None:
-    seen = _scene(features, person).pedestrian("p")
-    assert running_red_light(seen, features, signals) is None
+    seen = _scene(features, person, signals=signals).pedestrian("p")
+    assert running_red_light(seen, features) is None
 
 
 def test_a_crosswalk_without_a_light_has_no_red_to_run(features: MapFeatures) -> None:
     # The E leg's crosswalk (x = 15) carries no light.
-    seen = _scene(features, _person(15.0, -9.0)).pedestrian("p")
-    assert running_red_light(seen, features, RED) is None
+    seen = _scene(features, _person(15.0, -9.0), signals=RED).pedestrian("p")
+    assert running_red_light(seen, features) is None
 
 
 # -- STOP_CROSSING ----------------------------------------------------------------
@@ -183,6 +185,11 @@ def test_a_vehicle_carries_out_no_pedestrian_adversity(
         assert (command is not None) is fires
 
 
+def test_a_scene_looks_around_a_pedestrian_once(features: MapFeatures) -> None:
+    scene = _scene(features, _person(-15.0, -9.0))
+    assert scene.pedestrian("p") is scene.pedestrian("p")
+
+
 def test_the_dispatcher_asks_the_pedestrian_triggers(features: MapFeatures) -> None:
     scene = _scene(features, _person(-15.0, -9.0), signals=RED)
     command = adversity_command(
@@ -192,4 +199,4 @@ def test_the_dispatcher_asks_the_pedestrian_triggers(features: MapFeatures) -> N
         AdversityLocation.ANY,
         random.Random(0),
     )
-    assert command == running_red_light(scene.pedestrian("p"), features, RED)
+    assert command == running_red_light(scene.pedestrian("p"), features)

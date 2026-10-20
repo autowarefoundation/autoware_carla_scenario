@@ -1,7 +1,7 @@
 """TeraSim's adversities as actions (#393, #398, #399).
 
 Each action carries out one adversity of :mod:`~..adversity.triggers` on a
-named vehicle (or, for :class:`JaywalkAction`, a pedestrian):
+named vehicle (or, for the pedestrian kinds, a pedestrian):
 
 * :class:`AdversarialBrakeAction` -- brakes hard in front of a follower that
   keeps coming (:attr:`~..adversity.triggers.AdversityKind.BRAKE_CHECK`).
@@ -88,7 +88,8 @@ class AdversarialAction(BaseAction):
         timing: Tick phase (``PRE_TICK`` or ``POST_TICK``).
         label: Human-readable identifier.
         once: If ``True`` (default) the action runs at most once.
-        seed: Seeds the trigger's random draws (a jaywalker's speed).
+        seed: Seeds the trigger's random draws (a jaywalker's
+            speed, a stopped crosser's wait).
         thresholds: The triggers' numbers; TeraSim's by default.
         following_mode: How the path is driven: ``FOLLOW`` (the vehicle's own
             motion, default) or ``POSITION`` (placed on it, as TeraSim's

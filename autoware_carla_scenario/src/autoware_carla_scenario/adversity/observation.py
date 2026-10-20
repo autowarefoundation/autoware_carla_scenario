@@ -221,10 +221,13 @@ class NearCrosswalk:
     Attributes:
         lanelet: The crosswalk lanelet.
         distance: From the pedestrian to it (m), 0 on it.
+        signal: The state of the Lanelet2 traffic light the crosswalk
+            carries: RED if any of its lights is red, UNKNOWN without one.
     """
 
     lanelet: ConstLanelet
     distance: float
+    signal: SignalState = SignalState.UNKNOWN
 
 
 @dataclass(frozen=True)
@@ -262,6 +265,7 @@ class Scene:
     search: float
     _lanes: dict[str, Optional[LanePosition]]
     _vehicles: dict[str, VehicleObservation]
+    _pedestrians: dict[str, PedestrianObservation]
     _by_lanelet: Optional[dict[int, list[str]]]
 
     def __init__(
@@ -277,6 +281,7 @@ class Scene:
         self.search = search
         self._lanes = {}
         self._vehicles = {}
+        self._pedestrians = {}
         self._by_lanelet = None
 
     # -- where the agents are ------------------------------------------------
@@ -404,7 +409,27 @@ class Scene:
     def pedestrian(
         self, name: str, road_radius: float = DEFAULT_ROAD_RADIUS_M
     ) -> PedestrianObservation:
-        """What pedestrian *name* sees."""
+        """What pedestrian *name* sees, worked out once a scene (at the
+        default radius)."""
+        if road_radius == DEFAULT_ROAD_RADIUS_M and name in self._pedestrians:
+            return self._pedestrians[name]
+        seen = self._look_around(name, road_radius)
+        if road_radius == DEFAULT_ROAD_RADIUS_M:
+            self._pedestrians[name] = seen
+        return seen
+
+    def _crosswalk_signal(self, crosswalk: ConstLanelet) -> SignalState:
+        """The state of *crosswalk*'s traffic light: RED if any is red."""
+        state = SignalState.UNKNOWN
+        for element in crosswalk.regulatoryElements:
+            key = int(element.id)
+            if MapFeatures.is_traffic_light(element) and key in self.signals:
+                state = self.signals[key]
+                if state is SignalState.RED:
+                    return state
+        return state
+
+    def _look_around(self, name: str, road_radius: float) -> PedestrianObservation:
         agent = self.agents[name]
         point = lanelet2.core.BasicPoint2d(agent.x, agent.y)
         crosswalk: Optional[ConstLanelet] = None
@@ -422,7 +447,9 @@ class Scene:
                     # A typed local: Codon upcasts a Lanelet to a ConstLanelet,
                     # not to an Optional of one.
                     nearest: ConstLanelet = lanelet
-                    near = NearCrosswalk(nearest, float(distance))
+                    near = NearCrosswalk(
+                        nearest, float(distance), self._crosswalk_signal(nearest)
+                    )
                     if float(distance) <= 0.0:
                         crosswalk = nearest
             elif road is None and MapFeatures.is_road(lanelet):

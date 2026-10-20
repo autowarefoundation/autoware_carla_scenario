@@ -74,7 +74,7 @@ from .observation import (
 )
 
 if TYPE_CHECKING:
-    from lanelet2.core import ConstLanelet
+    pass
 
 __all__ = [
     "DEFAULT_THRESHOLDS",
@@ -405,29 +405,15 @@ def _walk(
     return path
 
 
-def _has_red_light(lanelet: ConstLanelet, signals: dict[int, SignalState]) -> bool:
-    """Whether a traffic light of *lanelet* shows red."""
-    for element in lanelet.regulatoryElements:
-        key = int(element.id)
-        if (
-            MapFeatures.is_traffic_light(element)
-            and key in signals
-            and signals[key] is SignalState.RED
-        ):
-            return True
-    return False
-
-
 def running_red_light(
     seen: PedestrianObservation,
     features: MapFeatures,
-    signals: dict[int, SignalState],
     limits: TriggerThresholds = DEFAULT_THRESHOLDS,
 ) -> Optional[AdversarialCommand]:
     """RUNNING_RED_LIGHT: cross on red at the crosswalk it waits at.
 
     The crosswalk's light is the Lanelet2 traffic light the crosswalk
-    lanelet carries; *signals* has its state.
+    lanelet carries (:attr:`~.observation.NearCrosswalk.signal`).
     """
     agent = seen.agent
     near = seen.nearest_crosswalk
@@ -437,7 +423,7 @@ def running_red_light(
     crossing: NearCrosswalk = near
     if crossing.distance > limits.crosswalk_reach:
         return None
-    if not _has_red_light(crossing.lanelet, signals):
+    if crossing.signal is not SignalState.RED:
         return None
     points = _centreline(crossing.lanelet)
     (ax, ay), (bx, by) = points[0], points[-1]
@@ -510,7 +496,7 @@ def adversity_command(
         if kind is AdversityKind.JAYWALKING:
             return jaywalking(walker, rng, limits)
         if kind is AdversityKind.RUNNING_RED_LIGHT:
-            return running_red_light(walker, scene.features, scene.signals, limits)
+            return running_red_light(walker, scene.features, limits)
         return stop_crossing(walker, scene.features, rng, limits)
     lane = scene.lane_of(name)
     if lane is None:
