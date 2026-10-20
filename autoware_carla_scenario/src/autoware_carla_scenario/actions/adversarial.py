@@ -38,14 +38,13 @@ import logging
 from typing import TYPE_CHECKING, Optional, Union
 
 from ..action_state import ActionState
-from ..adversity.command import plan_command
 from ..adversity.location import AdversityLocation
 from ..adversity.triggers import DEFAULT_THRESHOLDS, AdversityKind, TriggerThresholds
 from ..conditions.adversity_feasible import AdversityFeasibleCondition
 from ..conditions.base import BaseCondition, ScenarioResult
 from ..entity_role import EntityRole
 from ..trajectory.model import TrajectoryFollowingMode
-from ._adversarial_execution import AdversarialExecution
+from ._adversarial_execution import AdversarialExecution, start_execution
 from .base import BaseAction, TickTiming
 
 if TYPE_CHECKING:
@@ -193,15 +192,8 @@ class AdversarialAction(BaseAction):
         scene = self._feasible.scene
         if command is None or scene is None:
             return None
-        try:
-            path = plan_command(
-                scene.features, scene.vehicle(self._entity_name), command
-            )
-        except ValueError as error:
-            logger.warning("%s: %s; nothing done", self.label, error)
-            return None
-        return AdversarialExecution(
-            self._entity_name, path, self._following_mode, self.label
+        return start_execution(
+            scene, self._entity_name, command, self._following_mode, self.label
         )
 
 
