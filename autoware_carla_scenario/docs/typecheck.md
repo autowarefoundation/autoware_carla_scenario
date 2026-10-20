@@ -1134,7 +1134,7 @@ cannot express is refused at its line, with what to write instead.
 | `sorted(xs)`, `xs.sort()`, `min` / `max` of a class that defines `__lt__` only | the class gets `__gt__` (`other < self`) and `__ge__` (`not self < other`), which Codon's sort calls | the class defines no ordering (use `@dataclass(order=True)` or `key=`) |
 | `@functools.total_ordering` | the decorator and its import are dropped, and the class gets the comparisons it would add from its `__lt__`, `__le__`, `__gt__` or `__ge__` (and `==`, or identity without `__eq__`) | the class is not at module level, or defines none of the four |
 | `lambda x, k=k: x + k` (a default that is not a literal) | `(lambda k: lambda x: x + k)(k)`: the default is bound by a call, once, as in Python | |
-| a class constant read in its own class body (#433): `DOUBLE = LIMIT * 2`, `x: int = SIZE` (a dataclass default), `def f(self, n=LIMIT)`, `@register(LIMIT)` | `Class.LIMIT` (`Outer.Inner.LIMIT` in a nested class) | the constant is annotated (`LIMIT: int = 5`), it is assigned again later in the body, the class is defined in a function, the read is a `NamedTuple` field default, or it is an Enum member with a non-literal value |
+| a class constant read in its own class body (#433): `DOUBLE = LIMIT * 2`, `x: int = SIZE` (a dataclass default), `def f(self, n=LIMIT)`, `@register(LIMIT)` | `Class.LIMIT` (`Outer.Inner.LIMIT` in a nested class) | the constant is annotated and not a single-line literal (`LIMIT: int = 2 * 3`), it is assigned again later in the body, the class is defined in a function, the read is a `NamedTuple` field default, or it is an Enum member with a non-literal value |
 
 Notes:
 
@@ -1161,9 +1161,12 @@ Notes:
   writes the literal; any other name of the body is qualified as above.
 - The constant has to be a class attribute in Codon. A name annotated at class
   level (`LIMIT: int = 5`, `Final[int]`, `ClassVar[int]`) is a typed field of
-  the instance, not an attribute of the class, so reading it from the body is
-  refused with a hint: write `LIMIT: Final = 5` (a bare `Final` is dropped,
-  leaving a class attribute) or no annotation, or use a module-level constant.
+  the instance, not an attribute of the class, so a read of it cannot be
+  qualified: when its value is a single-line literal the check writes that
+  literal where the name is (`n: int = 5`; Python reads the same value), and
+  otherwise the read is refused with a hint: write `LIMIT: Final = 5` (a bare
+  `Final` is dropped, leaving a class attribute) or no annotation, or use a
+  module-level constant.
   A `NamedTuple` field default cannot read its own class constant either
   (`x: int = LIM` is "no module named"): its other statements and methods can.
 

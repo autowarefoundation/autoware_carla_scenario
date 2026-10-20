@@ -2808,17 +2808,37 @@ def test_a_class_constant_that_cannot_be_qualified_is_refused() -> None:
     assert line == 3 and "write the value" in message
 
 
-def test_an_annotated_class_attribute_read_in_the_class_scope_is_refused() -> None:
+def test_an_annotated_literal_read_in_the_class_scope_is_written_as_its_value() -> None:
     # Codon makes `LIMIT: int = 5` a field of the instance, not an attribute
-    # of the class, so there is nothing to qualify the read with.
-    source = "class H:\n    LIMIT: int = 5\n    def f(self, n: int = LIMIT): ...\n"
-    [(line, message)] = python_rewrite_refusals(source)
+    # of the class, so there is nothing to qualify the read with: Python reads
+    # the literal the body bound, and that is written in its place.
+    source = (
+        "class H:\n    LIMIT: int = 5\n    NEG: Final[int] = -2\n"
+        "    def f(self, n: int = LIMIT, m: int = NEG ** 2): ...\n"
+        "    X: int = NEG\n"
+    )
+    text = python_rewrites(source)[0]
+    assert "n: int = 5, m: int = (-2) ** 2" in text and "X: int = -2" in text
+    assert python_rewrite_refusals(source) == []
+    # A value the check cannot write, or a second binding, is refused.
+    computed = (
+        "class H:\n    LIMIT: int = 2 * 3\n    def f(self, n: int = LIMIT): ...\n"
+    )
+    [(line, message)] = python_rewrite_refusals(computed)
     assert line == 3 and "Final" in message
-    assert python_rewrites(source)[0] == source
+    again = "class H:\n    X: int = 1\n    Y = X\n    X: int = 2\n"
+    [(line, message)] = python_rewrite_refusals(again)
+    assert line == 3 and "assigned again later" in message
+    # A later plain assignment replaces the annotated value for the next read.
+    plain = "class H:\n    X: int = 1\n    X = 2\n    Y = X\n"
+    assert "Y = H.X" in python_rewrites(plain)[0]
     final = "from typing import Final\nclass H:\n    LIMIT: Final = 5\n    X = LIMIT\n"
     assert python_rewrite_refusals(final) == []
-    typed = "class H:\n    LIMIT: Final[int] = 5\n    X = LIMIT\n"
-    assert len(python_rewrite_refusals(typed)) == 1
+
+
+def test_a_negative_enum_alias_keeps_the_literal_of_its_member() -> None:
+    source = "class E(enum.IntEnum):\n    A = -1\n    B = A\n"
+    assert "B = -1\n" in python_rewrites(source)[0]
 
 
 def test_a_namedtuple_field_default_reading_a_class_constant_is_refused() -> None:

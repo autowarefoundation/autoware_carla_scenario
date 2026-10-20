@@ -379,6 +379,14 @@ class _Pass(ast.NodeVisitor):
 
     # -- class A: B = A_CONST * 2 ------------------------------------------
 
+    def _refuse_rebound(self, name: ast.Name, node: ast.ClassDef) -> None:
+        self._refuse(
+            name,
+            f"`{name.id}` is assigned again later in the body of class "
+            f"{node.name}: Codon reads a class attribute's last value, not "
+            "the one at this point; give the second assignment another name",
+        )
+
     def _class_constants(self, node: ast.ClassDef, path: str | None) -> None:
         """Write ``Class.X`` for a class constant read in the class scope (#433).
 
@@ -395,7 +403,8 @@ class _Pass(ast.NodeVisitor):
         # name -> its value, for the names assigned once at the body's level
         constants: dict[str, ast.expr | None] = {}
         other: set[str] = set()  # bound some other way: not a constant to read
-        fields: set[str] = set()  # annotated: a typed field in Codon
+        # name -> its value, for the annotated names: typed fields in Codon
+        fields: dict[str, ast.expr] = {}
 
         def check(expr: ast.AST, index: int, field_default: bool = False) -> None:
             for name in _scope_names(expr):
@@ -407,23 +416,32 @@ class _Pass(ast.NodeVisitor):
                 if self.edits.text(*span) != name.id:
                     continue  # a position inside an f-string, before 3.12
                 if name.id in fields:
-                    self._refuse(
-                        name,
-                        f"`{name.id}` is annotated in the body of class "
-                        f"{node.name}, which Codon makes a field of the "
-                        "instance, not a class attribute to read here: write "
-                        f"`{name.id}: Final = ...` (or no annotation) for a "
-                        "constant, or use a module-level constant",
+                    fvalue = fields[name.id]
+                    text = self._text(fvalue)
+                    if not _literal(fvalue) or "\n" in text:
+                        self._refuse(
+                            name,
+                            f"`{name.id}` is annotated in the body of class "
+                            f"{node.name}, which Codon makes a field of the "
+                            "instance, not a class attribute to read here, "
+                            "and its value is not a literal the check can "
+                            "write in its place: write "
+                            f"`{name.id}: Final = ...` (or no annotation) for "
+                            "a constant, or use a module-level constant",
+                        )
+                        continue
+                    # Python reads the value the body bound; a literal can be
+                    # written where the name is.
+                    if any(name.id in names for names in later[index + 1 :]):
+                        self._refuse_rebound(name, node)
+                        continue
+                    wrap = isinstance(fvalue, ast.UnaryOp) and not (
+                        expr is name or getattr(expr, "value", None) is name
                     )
+                    self.edits.replace(*span, f"({text})" if wrap else text)
                     continue
                 if any(name.id in names for names in later[index + 1 :]):
-                    self._refuse(
-                        name,
-                        f"`{name.id}` is assigned again later in the body of "
-                        f"class {node.name}: Codon reads a class attribute's "
-                        "last value, not the one at this point; give the "
-                        "second assignment another name",
-                    )
+                    self._refuse_rebound(name, node)
                     continue
                 if field_default:
                     self._refuse(
@@ -446,7 +464,18 @@ class _Pass(ast.NodeVisitor):
                             "the value",
                         )
                         continue
-                    self.edits.replace(*span, self._text(value))
+                    text = self._text(value)
+                    if "\n" in text:
+                        self._refuse(
+                            name,
+                            f"`{name.id}` is an Enum member whose value spans "
+                            "lines: write the value",
+                        )
+                        continue
+                    wrap = isinstance(value, ast.UnaryOp) and not (
+                        expr is name or getattr(expr, "value", None) is name
+                    )
+                    self.edits.replace(*span, f"({text})" if wrap else text)
                 elif path is None:
                     self._refuse(
                         name,
@@ -471,11 +500,14 @@ class _Pass(ast.NodeVisitor):
                     other.update(_stores(stmt))
                     continue
                 if isinstance(stmt, ast.AnnAssign) and not _bare_final(stmt.annotation):
-                    fields.update(assigned - other)
+                    for name in assigned - other:
+                        constants.pop(name, None)
+                        fields[name] = stmt.value  # type: ignore[assignment]
                     continue
                 member = enum and isinstance(stmt, ast.Assign)
                 value = stmt.value if isinstance(stmt, ast.Assign) else None
                 for name in assigned - other:
+                    fields.pop(name, None)
                     # The last assignment before a read is the one it sees.
                     constants[name] = (
                         value if member and not name.startswith("_") else None

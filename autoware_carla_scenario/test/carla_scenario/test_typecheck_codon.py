@@ -5747,12 +5747,43 @@ class Helper:
     assert result.ok, result.format()
 
 
-def test_an_annotated_class_attribute_read_in_the_class_scope_is_refused(
+def test_an_annotated_class_attribute_read_in_the_class_scope_compiles(
+    tmp_path: Path,
+) -> None:
+    definitions = """
+@dataclass(order=True)
+class D:
+    X: int = 5
+    NEG: typing.Final[int] = -2
+    y: int = X
+    z: int = NEG
+
+    def f(self, n: int = X, m: int = NEG**2) -> int:
+        return n + m
+
+
+class Plain:
+    LIMIT: int = 3
+    NAME: str = "a"
+
+    def g(self, n: int = LIMIT, s: str = NAME) -> int:
+        return n
+"""
+    setup = """
+        d = D()
+        logger.info("%d %d %d %d", d.y, d.z, d.f(), Plain().g())
+    """
+    scenario, config, _ = _data_case(tmp_path, definitions, setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_an_annotated_computed_class_attribute_read_in_the_class_scope_is_refused(
     tmp_path: Path,
 ) -> None:
     definitions = """
 class Helper:
-    LIMIT: int = 5
+    LIMIT: int = 2 * 3
 
     def f(self, n: int = LIMIT) -> int:
         return n
@@ -5761,6 +5792,26 @@ class Helper:
     error = _only_error(typecheck_scenario(scenario, config))
     assert "`LIMIT: Final = ...`" in error.message, error.format()
     assert error.line == _line_of(path, "def f(self, n: int = LIMIT)")
+
+
+def test_an_enum_alias_of_a_negative_member_is_skipped_by_iteration(
+    tmp_path: Path,
+) -> None:
+    definitions = """
+class Level(enum.IntEnum):
+    LOW = -1
+    ALIAS = LOW
+    HIGH = 2
+"""
+    setup = """
+        total = 0
+        for level in Level:
+            total += level.value
+        logger.info("%d", total)
+    """
+    scenario, config, _ = _data_case(tmp_path, definitions, setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
 
 
 def test_a_namedtuple_field_default_reading_a_class_constant_is_refused(
