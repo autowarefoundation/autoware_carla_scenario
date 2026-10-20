@@ -59,6 +59,8 @@ class _Execution:
         path: list[PredictedState],
         following_mode: TrajectoryFollowingMode,
         label: str,
+        actor: Any = None,
+        backend: Any = None,
     ) -> None:
         self.entity_name = entity_name
         self.path = path
