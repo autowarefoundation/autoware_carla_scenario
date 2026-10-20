@@ -95,6 +95,7 @@ nav:
   - Traffic Backends: traffic_backends.md
   - Trajectories and Recorded-Scene Replay: trajectory.md
   - Trajectory Log: trajectory_log.md
+  - Adversarial Actions and NADE: adversity.md
   - Logical Scenarios from Routes: logical_scenarios.md
   - Running a Batch on SLURM: slurm.md
   - Coverage: coverage.md
