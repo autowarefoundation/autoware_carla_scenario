@@ -8,8 +8,8 @@
 
 from .actions import (AdversarialBrakeAction, AdversarialCutInAction,
                       AdversarialTrafficAction, NadeAdversity, NadeSettings, BaseAction,
-                      EnvironmentAction, FollowTrajectoryAction, IgnoreLeaderAction,
-                      JaywalkAction, LaneChangeAction, RunTrafficRuleAction, RoutingAction,
+                      EnvironmentAction, FollowTrajectoryAction, HeadOnAction, IgnoreLeaderAction,
+                      JaywalkAction, LaneChangeAbortAction, LaneChangeAction, RunTrafficRuleAction, RoutingAction,
                       SetSpeedAction, TickTiming, TrafficLightTarget, TrafficSignalAction,
                       TrafficSignalControllerAction, TurnAction, TurnIndicatorAction,
                       WalkStraightAction,

@@ -1495,6 +1495,35 @@ register_action_spec(
 
 register_action_spec(
     ActionSpec(
+        type_id="lane_change_abort",
+        title="Lane-change Abort",
+        category="Adversity",
+        builder="build_lane_change_abort_action",
+        target="..actions.adversarial:LaneChangeAbortAction",
+        actor_kinds=("vehicle",),
+        visual_kind="continuous",
+        fields=_ADVERSITY_FIELDS,
+        description="Start into the next lane in front of a vehicle too close "
+        "behind there, then swerve back." + _ADVERSITY_NOTE,
+    )
+)
+
+register_action_spec(
+    ActionSpec(
+        type_id="head_on",
+        title="Head-on",
+        category="Adversity",
+        builder="build_head_on_action",
+        target="..actions.adversarial:HeadOnAction",
+        actor_kinds=("vehicle",),
+        visual_kind="continuous",
+        fields=_ADVERSITY_FIELDS,
+        description="Drive on at a leader coming the other way." + _ADVERSITY_NOTE,
+    )
+)
+
+register_action_spec(
+    ActionSpec(
         type_id="run_traffic_rule",
         title="Run Traffic Rule",
         category="Adversity",
@@ -1531,6 +1560,8 @@ _ADVERSITY_KINDS: tuple[SelectOption, ...] = (
     SelectOption("cut_in", "Cut in"),
     SelectOption("traffic_rule", "Run a red light"),
     SelectOption("jaywalking", "Jaywalk"),
+    SelectOption("lane_change_abort", "Abort a lane change"),
+    SelectOption("head_on", "Head-on"),
 )
 
 _NADE_SETTINGS = (

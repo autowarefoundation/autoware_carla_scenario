@@ -20,8 +20,10 @@ from autoware_carla_scenario.actions import _adversarial_execution as executions
 from autoware_carla_scenario.actions.adversarial import (
     AdversarialBrakeAction,
     AdversarialCutInAction,
+    HeadOnAction,
     IgnoreLeaderAction,
     JaywalkAction,
+    LaneChangeAbortAction,
     RunTrafficRuleAction,
 )
 from autoware_carla_scenario.adversity import (
@@ -195,6 +197,8 @@ def test_closing_closes_the_path() -> None:
         (AdversarialCutInAction, AdversityKind.CUT_IN, "adversarial_cut_in"),
         (RunTrafficRuleAction, AdversityKind.TRAFFIC_RULE, "run_traffic_rule"),
         (JaywalkAction, AdversityKind.JAYWALKING, "jaywalk"),
+        (LaneChangeAbortAction, AdversityKind.LANE_CHANGE_ABORT, "lane_change_abort"),
+        (HeadOnAction, AdversityKind.HEAD_ON, "head_on"),
     ],
 )
 def test_each_action_is_its_kind(cls: Any, kind: AdversityKind, label: str) -> None:

@@ -3093,12 +3093,16 @@ from autoware_carla_scenario import (
     AdversityFeasibleCondition,
     AdversityKind,
     AdversityLocation,
+    HeadOnAction,
     IgnoreLeaderAction,
     JaywalkAction,
+    LaneChangeAbortAction,
     RunTrafficRuleAction,
     TrajectoryFollowingMode,
 )
 self.register_pre_tick(AdversarialBrakeAction("npc1", AdversityLocation.ANY))
+self.register_pre_tick(LaneChangeAbortAction("npc2", AdversityLocation.HIGHWAY))
+self.register_pre_tick(HeadOnAction("npc3", AdversityLocation.ANY, label="head_on"))
 self.register_pre_tick(
     IgnoreLeaderAction(
         "npc1",
@@ -3120,7 +3124,12 @@ self.register_pre_tick(JaywalkAction("p1", AdversityLocation.ANY, seed=7))
 feasible = AdversityFeasibleCondition(
     "npc1", AdversityKind.CUT_IN, AdversityLocation.ANY, label="may_cut_in", seed=1
 )
-logger.info("%s %s", feasible.kind.name, feasible.location.value)
+logger.info(
+    "%s %s %s",
+    feasible.kind.name,
+    feasible.location.value,
+    AdversityKind.HEAD_ON.name,
+)
 self.register_fail_condition(feasible)
 """
 
