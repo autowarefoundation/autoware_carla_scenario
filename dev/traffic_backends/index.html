@@ -2510,9 +2510,18 @@ nearest first. With <code>radius_m: null</code> the radii are <code>mesoscopic</
 enabled; otherwise every one is mirrored. The rest walk on in SUMO only, where
 SUMO's traffic still sees them. A walker is put where its person was at the
 start of the step and walked at its speed (<code>WalkerControl</code>), so CARLA animates
-it; it is never published back into SUMO as one of CARLA's pedestrians. How
-well they cross roads is the network's: a network built without crossings and
-walking areas has its pedestrians jump between footways at junctions.</p>
+it; it is never published back into SUMO as one of CARLA's pedestrians.</p>
+<p><strong>Pedestrian crossings</strong> (<code>pedestrian_crossings</code>, on by default): the network
+is built with a crossing across each road at a junction where footways meet it,
+and walking areas joining footways and crossings (netconvert's
+<code>--crossings.guess</code>), so pedestrians cross roads on crossings — where SUMO's
+vehicles yield to them — instead of jumping between footways. At a signalised
+junction netconvert appends the crossings' links after the vehicle links, so the
+vehicle links keep the indices CARLA's lights are matched to. With
+<code>traffic_light_authority=carla</code> a crossing is green while every vehicle link
+into or out of a road it crosses is red, and red otherwise; with <code>sumo</code>, SUMO's
+own program (which netconvert gives a pedestrian phase) drives it. A network
+given as <code>net_path</code> is used as it is.</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>...<span class="w"> </span><span class="nv">traffic</span><span class="o">=</span>sumo<span class="w"> </span>traffic.options.pedestrians.enabled<span class="o">=</span><span class="nb">true</span><span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="w">    </span>traffic.options.pedestrians.radius_m<span class="o">=</span><span class="m">80</span>
 </code></pre></div>
@@ -2678,7 +2687,7 @@ CARLA co-simulation; its adversarial behaviour generation is left to scenarios.<
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 20, 2026 14:57:38 UTC"><span class="timeago" datetime="2026-10-20T14:57:38+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 20, 2026 14:57:38 UTC">2026-10-20</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 20, 2026 21:13:05 UTC"><span class="timeago" datetime="2026-10-20T21:13:05+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 20, 2026 21:13:05 UTC">2026-10-20</span>
   </span>
 
     
