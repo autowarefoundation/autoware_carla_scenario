@@ -147,6 +147,14 @@ class SumoBackendConfig:
             that sets them (``TrafficSignalAction``) sets them for SUMO too.
             ``sumo``: CARLA's lights follow SUMO's programs.  ``none``: each
             keeps its own.
+        pedestrian_crossings: Build the network with a pedestrian crossing
+            across each road at a junction where footways meet it, and walking
+            areas joining them (netconvert's ``--crossings.guess``), so SUMO's
+            pedestrians cross roads on crossings, where SUMO's vehicles yield
+            to them.  At a signalised junction, with
+            ``traffic_light_authority=carla``, a crossing is green while every
+            vehicle movement into or out of a road it crosses is red.
+            Ignored with ``net_path``.
         publish_walkers: Put CARLA's pedestrians into SUMO as persons where
             they stand, every step, so SUMO traffic sees them: a SUMO vehicle
             brakes for a pedestrian on its lane -- on a crossing or anywhere
@@ -213,6 +221,7 @@ class SumoBackendConfig:
     resync_distance_m: float = 8.0
     traffic_light_authority: str = "carla"
     publish_walkers: bool = True
+    pedestrian_crossings: bool = True
     follow_visibility: bool = True
     curve_lateral_acceleration: Optional[float] = 3.0
     net_path: Optional[str] = None

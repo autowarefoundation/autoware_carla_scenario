@@ -91,6 +91,7 @@ from .network import (
     SignalTable,
     SumoNetwork,
     build_network,
+    crossing_edges,
     generate_trips,
     generate_walks,
     sumo_home,
@@ -214,6 +215,9 @@ class SumoTrafficBackend(TrafficBackend):
         self._lane_targets: dict[str, int] = {}
         #: (tls id, link index) -> the CARLA traffic light controlling it.
         self._signals: dict[tuple[str, int], Any] = {}
+        #: tls id -> each pedestrian crossing link it controls, with the
+        #: vehicle links into or out of a road the crossing crosses.
+        self._crossing_links: dict[str, list[tuple[int, list[int]]]] = {}
         self._ego_actor: Any = None
         self._running = False
         self._failures = 0
@@ -287,6 +291,7 @@ class SumoTrafficBackend(TrafficBackend):
                 self._opendrive(context),
                 self._config.resolved_cache_dir(),
                 self._config.curve_lateral_acceleration,
+                pedestrian_crossings=self._config.pedestrian_crossings,
             )
         self._offset = _net_offset(self._network.net_file)
         try:
@@ -414,6 +419,8 @@ class SumoTrafficBackend(TrafficBackend):
         )
         if self._config.traffic_light_authority != "none":
             self._signals = self._match_signals(world)
+            if self._config.traffic_light_authority == "carla":
+                self._crossing_links = self._match_crossings()
             if self._config.traffic_light_authority == "sumo":
                 for light in {id(tl): tl for tl in self._signals.values()}.values():
                     light.freeze(True)
@@ -518,6 +525,7 @@ class SumoTrafficBackend(TrafficBackend):
         self._ambient = {}
         self._lane_targets = {}
         self._signals = {}
+        self._crossing_links = {}
         self._ego_actor = None
         self._failures = 0
         if self._feedback_count:
@@ -542,6 +550,7 @@ class SumoTrafficBackend(TrafficBackend):
         out["scenario_vehicles"] = self._config.scenario_vehicles
         out["vehicle_control"] = self._config.vehicle_control
         out["publish_walkers"] = self._config.publish_walkers
+        out["pedestrian_crossings"] = self._config.pedestrian_crossings
         if self._config.vehicle_control == "physics":
             out["feedback_distance_m"] = self._config.feedback_distance_m
         out["ambient_period_s"] = (
@@ -2164,7 +2173,56 @@ class SumoTrafficBackend(TrafficBackend):
                 if char == "G" and state[index] == "g":
                     char = "g"  # a permissive green stays one
                 state[index] = char
+            # A crossing walks while nothing drives over the road it crosses:
+            # the CARLA lights decide the vehicles, and with them the people.
+            for index, foes in self._crossing_links.get(tls, ()):
+                clear = all(state[foe] in "rR" for foe in foes)
+                state[index] = "G" if clear else "r"
             tc.trafficlight.setRedYellowGreenState(tls, "".join(state))
+
+    def _match_crossings(self) -> dict[str, list[tuple[int, list[int]]]]:
+        """Each signalled pedestrian crossing, and the vehicle links it waits for.
+
+        netconvert appends a crossing's link to its junction's program after
+        the vehicle links (``pedestrian_crossings``), so the vehicle links keep
+        the indices CARLA's lights are matched to and only the crossings' are
+        left without a CARLA light: each takes its state from the vehicle links
+        into or out of a road it crosses.
+        """
+        if self._network is None:
+            return {}
+        crossings = crossing_edges(self._network.net_file)
+        if not crossings:
+            return {}
+        tc = self._traci
+        out: dict[str, list[tuple[int, list[int]]]] = {}
+        for tls in tc.trafficlight.getIDList():
+            vehicles: list[tuple[int, str, str]] = []
+            walks: list[tuple[int, frozenset[str]]] = []
+            for index, controlled in enumerate(tc.trafficlight.getControlledLinks(tls)):
+                for in_lane, out_lane, _via in controlled:
+                    to_edge = out_lane.rsplit("_", 1)[0]
+                    if to_edge in crossings:
+                        walks.append((index, crossings[to_edge]))
+                    else:
+                        vehicles.append((index, in_lane.rsplit("_", 1)[0], to_edge))
+            links = [
+                (
+                    index,
+                    sorted(
+                        {i for i, src, dst in vehicles if src in roads or dst in roads}
+                    ),
+                )
+                for index, roads in walks
+            ]
+            if links:
+                out[tls] = links
+        if out:
+            logger.info(
+                "SUMO: %d signalled pedestrian crossing(s) follow CARLA's lights",
+                sum(len(links) for links in out.values()),
+            )
+        return out
 
     def _signals_to_carla(self) -> None:
         import typesafe_carla.carla as carla  # noqa: PLC0415
