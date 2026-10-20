@@ -139,6 +139,19 @@ class VehicleEntity(BackendDriven):
         )
         return self._vehicle
 
+    def _replace_actor(self, actor: Optional["carla.Actor"]) -> bool:
+        """Accept a traffic backend taking this NPC out of the world while it
+        simulates it mesoscopically, and the actor it spawns when it brings it
+        back (:class:`~autoware_carla_scenario.traffic.SimulationFidelity`).
+
+        An NPC is the scenario's only by role name, which the backend gives the
+        new actor too, so nothing the scenario holds goes stale -- except the
+        lane change in progress, which was the old actor's.
+        """
+        self.forget_lane_change()
+        self._vehicle = actor
+        return True
+
     def destroy(self) -> None:
         """Destroy the vehicle actor and release resources."""
         self.forget_lane_change()
