@@ -205,3 +205,45 @@ def test_an_npc_victim_s_response_is_driven_too() -> None:
     for t in range(1, 4):
         action.tick(world, 0.1 * t)
     assert all(run.ticks == 3 for run in made)
+
+
+def test_it_reports_its_weight_its_events_and_the_kind_sampled_now() -> None:
+    action = AdversarialTrafficAction([BRAKE], settings=ALWAYS)
+    world = _leading(1)
+    assert action.importance_sampling_weight == 1.0
+    action.tick(world, 0.1)
+    assert action.importance_sampling_weight == pytest.approx(0.01)
+    assert action.sampled_kind(world) is AdversityKind.BRAKE_CHECK
+    (event,) = action.take_adversity_events()
+    assert (event.agent, event.kind, event.location) == ("npc1", "brake_check", "any")
+    assert (event.probability, event.is_probability) == (0.01, 1.0)
+    assert event.weight == pytest.approx(0.01) and event.avoidable
+    assert (event.victims, event.response) == ([], "")
+    assert action.take_adversity_events() == []  # taken
+    action.tick(_leading(2), 0.2)
+    assert action.sampled_kind(world) is None  # sampled last tick, not this one
+
+
+def test_a_scenario_s_weight_is_its_actions() -> None:
+    from autoware_carla_scenario import BaseScenario
+    from autoware_carla_scenario.actions.base import BaseAction
+
+    class _Weighs(BaseAction):
+        def __init__(self, weight: float) -> None:
+            super().__init__("weighs")
+            self._weight = weight
+
+        @property
+        def importance_sampling_weight(self) -> float:
+            return self._weight
+
+        def execute(self, world: Any) -> None:
+            pass
+
+    scenario = SimpleNamespace(
+        _init_actions=[_Weighs(0.5)],
+        _pre_tick_actions=[_Weighs(0.25), AdversarialTrafficAction([BRAKE])],
+        _post_tick_actions=[],
+    )
+    weight = BaseScenario.importance_sampling_weight.fget(scenario)  # type: ignore[attr-defined]
+    assert weight == pytest.approx(0.125)

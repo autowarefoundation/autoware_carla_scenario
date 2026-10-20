@@ -25,6 +25,7 @@ OFFROAD_OR_COLLISION_AT_FAULT: str = "offroad_or_collision_at_fault"
 WRONG_LANE: str = "wrong_lane"
 MIN_DISTANCE_TO_OBSTACLE_M: str = "min_distance_to_obstacle_m"
 MIN_DISTANCE_TO_LANE_BOUNDARY_M: str = "min_distance_to_lane_boundary_m"
+IMPORTANCE_SAMPLING_WEIGHT: str = "importance_sampling_weight"
 
 
 def _acs_unread(world: carla.World) -> Optional[float]:
@@ -140,6 +141,16 @@ BUILT_IN_METRICS: Dict[str, Metric] = {
         "it; 0 off the road (AlpaSim min_distance_to_lane_boundary_m)",
         aggregation="min",
     ),
+    IMPORTANCE_SAMPLING_WEIGHT: Metric(
+        IMPORTANCE_SAMPLING_WEIGHT,
+        _acs_unread,
+        title="Importance-sampling weight",
+        unit="ratio",
+        text="The run's likelihood ratio so far, the product of NADE's "
+        "p/q and (1-p)/(1-q) (1 without NADE); a batch of runs weighted "
+        "by its last value estimates the naturalistic rate",
+        aggregation="last",
+    ),
 }
 
 
@@ -148,4 +159,8 @@ def is_metric(key: str) -> bool:
 
 
 def read_metric(key: str, world: carla.World) -> Optional[float]:
+    raise NotImplementedError()
+
+
+def set_importance_sampling_weight(weight: Optional[float]) -> None:
     raise NotImplementedError()

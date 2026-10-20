@@ -842,7 +842,7 @@ def build_adversarial_traffic_action(
     """Build an :class:`AdversarialTrafficAction`."""
     from ..actions.adversarial_traffic import AdversarialTrafficAction  # noqa: PLC0415
     from ..adversity.nade import NadeSettings  # noqa: PLC0415
-    from ..adversity.triggers import AdversityKind  # noqa: PLC0415
+    from ..actions.adversarial_traffic import AdversityKind  # noqa: PLC0415
     from ..adversity.location import AdversityLocation  # noqa: PLC0415
     from ..actions.adversarial_traffic import NadeAdversity  # noqa: PLC0415
     from ..actions.adversarial_traffic import TrajectoryFollowingMode  # noqa: PLC0415
