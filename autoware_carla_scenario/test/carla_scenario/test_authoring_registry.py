@@ -204,6 +204,46 @@ class TestOptionSets:
         assert declared <= available, declared - available
 
 
+class TestRecordListFields:
+    def test_a_record_list_is_built_to_be_edited_as_rows(self) -> None:
+        """What the inspector's rows and the builder rely on (#394).
+
+        A record_list declares its records' fields, starts with a list of
+        records rather than ``None`` (an empty one is what an unset field
+        holds), and holds no field the rows cannot edit: a lanelet's map
+        lives in a modal outside the form, and records do not nest.
+        """
+        offenders = []
+        for specs in (
+            registry.action_specs(),
+            registry.condition_specs(),
+            registry.constraint_specs(),
+            registry.binding_specs(),
+        ):
+            for spec in specs:
+                for field_spec in spec.fields:
+                    if field_spec.item_fields and field_spec.kind != "record_list":
+                        offenders.append(f"{spec.type_id}.{field_spec.name}: rows")
+                    if field_spec.kind != "record_list":
+                        continue
+                    if not field_spec.item_fields:
+                        offenders.append(f"{spec.type_id}.{field_spec.name}: none")
+                    if not isinstance(field_spec.default, (list, tuple)):
+                        offenders.append(f"{spec.type_id}.{field_spec.name}: default")
+                    for item in field_spec.item_fields:
+                        if item.kind in ("lanelet", "lanelet_list", "record_list"):
+                            offenders.append(
+                                f"{spec.type_id}.{field_spec.name}.{item.name}"
+                            )
+                        allowed = {o.value for o in item.options}
+                        if item.kind == "select" and item.default not in allowed:
+                            offenders.append(
+                                f"{spec.type_id}.{field_spec.name}.{item.name}: "
+                                "default"
+                            )
+        assert not offenders
+
+
 class TestSelectFieldDefaults:
     def test_select_defaults_are_valid_options(self) -> None:
         for specs in (

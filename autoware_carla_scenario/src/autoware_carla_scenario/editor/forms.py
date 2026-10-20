@@ -21,9 +21,25 @@ from ..authoring.registry import (
     REFERENCE_PATTERN,
     TRUTHY_VALUES,
     FieldSpec,
+    default_params,
 )
 
-__all__ = ["parse_int_list", "parse_params", "parse_value"]
+__all__ = [
+    "RECORD_OP",
+    "RECORD_ROWS",
+    "parse_int_list",
+    "parse_params",
+    "parse_records",
+    "parse_value",
+]
+
+#: A ``record_list`` field posts each record's fields as ``<field>.<i>.<sub>``,
+#: with ``<field>.__rows`` saying how many records the form holds -- so an
+#: empty list, and a record whose checkboxes are all clear, still parse -- and
+#: ``<field>.__op`` naming the row button pressed: ``add``, or ``delete``,
+#: ``up`` or ``down`` with ``:<i>``.
+RECORD_ROWS = "__rows"
+RECORD_OP = "__op"
 
 #: Separators accepted in a list-of-integers field: commas, spaces, newlines.
 _LIST_SEPARATORS = re.compile(r"[,\s]+")
@@ -92,6 +108,12 @@ def parse_params(
     """
     params: dict[str, Any] = {}
     for spec in fields:
+        if spec.kind == "record_list":
+            if f"{spec.name}.{RECORD_ROWS}" in form:
+                params[spec.name] = parse_records(spec, form)
+            else:
+                params[spec.name] = spec.default
+            continue
         present = spec.name in form
         if not present and spec.kind != "bool":
             params[spec.name] = spec.default
@@ -101,3 +123,49 @@ def parse_params(
         except ValueError as exc:
             raise ValueError(f"{spec.label}: {exc}") from exc
     return params
+
+
+def parse_records(spec: FieldSpec, form: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Return the records a ``record_list`` field's rows post, with the row
+    button pressed (if any) applied.
+
+    Raises:
+        ValueError: If a record's field cannot be parsed, or the row count or
+            the button is malformed.
+    """
+    count = int(str(form[f"{spec.name}.{RECORD_ROWS}"]))
+    rows: list[dict[str, Any]] = []
+    for index in range(count):
+        prefix = f"{spec.name}.{index}."
+        posted = {
+            key[len(prefix) :]: value
+            for key, value in form.items()
+            if key.startswith(prefix)
+        }
+        try:
+            rows.append(parse_params(spec.item_fields, posted))
+        except ValueError as exc:
+            raise ValueError(f"row {index + 1}: {exc}") from exc
+    op = str(form.get(f"{spec.name}.{RECORD_OP}") or "")
+    if op:
+        _apply_row_op(spec, rows, op)
+    return rows
+
+
+def _apply_row_op(spec: FieldSpec, rows: list[dict[str, Any]], op: str) -> None:
+    """Add a record of defaults, or delete or move the one *op* names."""
+    if op == "add":
+        rows.append(default_params(spec.item_fields))
+        return
+    verb, _, where = op.partition(":")
+    index = int(where)
+    if not 0 <= index < len(rows):
+        raise ValueError(f"no row {index + 1}")
+    if verb == "delete":
+        del rows[index]
+    elif verb in ("up", "down"):
+        other = index - 1 if verb == "up" else index + 1
+        if 0 <= other < len(rows):
+            rows[index], rows[other] = rows[other], rows[index]
+    else:
+        raise ValueError(f"unknown row action {op!r}")

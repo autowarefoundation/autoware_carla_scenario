@@ -42,6 +42,7 @@ from ..authoring.persistence import Draft, DraftStore
 from ..authoring.registry import (
     default_params,
     TRUTHY_VALUES,
+    field_holders,
     get_action_spec,
     get_binding_spec,
     get_condition_spec,
@@ -63,7 +64,7 @@ from ..maps import (
     resolve_map,
 )
 from ..authoring.validator import ValidationReport, validate_document
-from .forms import parse_params
+from .forms import RECORD_ROWS, parse_params
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -1332,7 +1333,13 @@ def _parse(fields: Any, form: Mapping[str, Any], prefix: str = "") -> dict[str, 
         }
     else:
         stripped = dict(form)
-    present = [f for f in fields if f.name in stripped or f.kind == "bool"]
+    present = [
+        f
+        for f in fields
+        if f.name in stripped
+        or f.kind == "bool"
+        or f"{f.name}.{RECORD_ROWS}" in stripped
+    ]
     try:
         return parse_params(present, stripped)
     except ValueError as exc:
@@ -1566,12 +1573,9 @@ def _clear_action_entity_refs(document: ScenarioDocument, entity_id: str) -> Non
         spec = get_action_spec(action.type)
         if spec is None:
             continue
-        for field_spec in spec.fields:
-            if (
-                field_spec.kind == "entity"
-                and action.params.get(field_spec.name) == entity_id
-            ):
-                action.params[field_spec.name] = None
+        for field_spec, holder in field_holders(spec.fields, action.params):
+            if field_spec.kind == "entity" and holder.get(field_spec.name) == entity_id:
+                holder[field_spec.name] = None
 
 
 def _attach_trigger(

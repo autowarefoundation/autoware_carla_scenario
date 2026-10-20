@@ -35,6 +35,7 @@ from .registry import (
     ActionSpec,
     ConditionSpec,
     FieldSpec,
+    field_holders,
     get_action_spec,
     get_condition_spec,
 )
@@ -82,6 +83,11 @@ class CompilationError(Exception):
 
 def _coerce_one(spec: FieldSpec, value: Any) -> Any:
     """Return *value* converted to the type *spec* describes."""
+    if spec.kind == "record_list":
+        # Never None: a builder maps over the records, and no records is a
+        # list with none in it.
+        rows = value if value not in (None, "") else spec.default
+        return [coerce_params(spec.item_fields, dict(row)) for row in rows or ()]
     if value is None or (isinstance(value, str) and not value.strip()):
         return spec.default
 
@@ -225,11 +231,11 @@ def _resolve_entity_refs(
     Entity references are resolved here so that no builder -- and no runtime
     object -- has to know about document ids.
     """
-    for field_spec in fields:
+    for field_spec, holder in field_holders(fields, params):
         if field_spec.kind == "entity":
-            entity_id = params.get(field_spec.name)
+            entity_id = holder.get(field_spec.name)
             if entity_id is not None:
-                params[field_spec.name] = roles[str(entity_id)]
+                holder[field_spec.name] = roles[str(entity_id)]
     return params
 
 

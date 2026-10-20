@@ -16,6 +16,7 @@ never imports it; only a live scenario run does.
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
@@ -181,6 +182,11 @@ class DeclarativeScenario(BaseScenario):
         longer has is logged and skipped rather than raised on -- an override is
         a run's opinion about a document, and a stale one must not make the
         scenario unrunnable.
+
+        A list of records (a ``record_list`` field) is overridden one record's
+        field at a time, ``...<field>.<index>.<sub>=<value>``: the value
+        arrives as ``{index: {sub: value}}`` and is merged into that record.
+        A whole list replaces the field as any other value does.
         """
         for node_id, override in (self._config.param_overrides or {}).items():
             if override is None:
@@ -194,7 +200,12 @@ class DeclarativeScenario(BaseScenario):
                 )
                 continue
             for name, value in override.items():
-                if value is not None:
+                if value is None:
+                    continue
+                current = node.params.get(str(name))
+                if isinstance(current, list) and isinstance(value, Mapping):
+                    _merge_records(str(node_id), str(name), current, value)
+                else:
                     node.params[str(name)] = value
 
     def _apply_ego_goal(self) -> None:
@@ -599,3 +610,31 @@ def _spawn_pose(entity: Entity) -> Lanelet2Pose:
         t=spawn.t,
         heading=spawn.heading,
     )
+
+
+def _merge_records(
+    node_id: str, name: str, records: list[Any], override: Mapping[Any, Any]
+) -> None:
+    """Merge ``{index: {sub: value}}`` into *records*, a record list's rows.
+
+    An index the list does not have is logged and skipped, as an unknown node
+    is: the override is the run's opinion, the document says how many rows
+    there are.
+    """
+    for key, fields in override.items():
+        try:
+            index = int(key)
+        except (TypeError, ValueError):
+            index = -1
+        if not 0 <= index < len(records) or not isinstance(records[index], dict):
+            logger.warning(
+                "param_overrides names no record %r of %s.%s; ignoring.",
+                key,
+                node_id,
+                name,
+            )
+            continue
+        if isinstance(fields, Mapping):
+            records[index].update(
+                {str(sub): value for sub, value in fields.items() if value is not None}
+            )

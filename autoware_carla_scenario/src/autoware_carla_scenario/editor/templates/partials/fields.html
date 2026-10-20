@@ -116,6 +116,46 @@
     <p class="ed-help mono">{{ route_trajectory_summary(current) }}</p>
     <textarea name="{{ name }}" class="ed-input mono" rows="8" spellcheck="false"
               placeholder="lane ds=10 d_lane=1  -- one vertex per line">{{ format_route_vertices(current or []) }}</textarea>
+  {% elif spec.kind == 'record_list' %}
+    {# One block of controls per record, in order.  `__rows` says how many the
+       form holds, and each row button is a submit whose name and value say
+       what to do -- so adding, removing and reordering go through the
+       inspector form's own post, with the rest of the form, and need no
+       route of their own. #}
+    {%- set rows = current or [] -%}
+    <input type="hidden" name="{{ name }}.__rows" value="{{ rows|length }}">
+    <div class="ed-records">
+      {% for row in rows %}
+        {%- set row_prefix = name ~ '.' ~ loop.index0 ~ '.' -%}
+        <fieldset class="ed-record">
+          <legend class="ed-record-head">
+            <span class="mono">{{ loop.index }}</span>
+            <button type="submit" class="ed-btn-xs" name="{{ name }}.__op"
+                    value="up:{{ loop.index0 }}" title="Move up"
+                    {% if loop.first %}disabled{% endif %}>↑</button>
+            <button type="submit" class="ed-btn-xs" name="{{ name }}.__op"
+                    value="down:{{ loop.index0 }}" title="Move down"
+                    {% if loop.last %}disabled{% endif %}>↓</button>
+            <button type="submit" class="ed-btn-xs" name="{{ name }}.__op"
+                    value="delete:{{ loop.index0 }}" title="Remove">{{ ic.icon('trash', 12) }}</button>
+          </legend>
+          {% for item in spec.item_fields %}
+            <div class="ed-field">
+              {% if item.kind != 'bool' %}
+                <label class="ed-label">
+                  {{ item.label }}{% if item.unit %} <span class="unit">({{ item.unit }})</span>{% endif %}
+                </label>
+              {% endif %}
+              {{ control(item, row.get(item.name), document, row_prefix, draft, row) }}
+              {% if item.help and item.kind != 'bool' %}<p class="ed-help">{{ item.help }}</p>{% endif %}
+            </div>
+          {% endfor %}
+        </fieldset>
+      {% endfor %}
+      <button type="submit" class="ed-btn-sm" name="{{ name }}.__op" value="add">
+        {{ ic.icon('plus', 12) }} Add
+      </button>
+    </div>
   {% elif spec.kind == 'int' %}
     <input type="number" step="1" name="{{ name }}" class="ed-input"
            value="{{ '' if current is none else current }}">
