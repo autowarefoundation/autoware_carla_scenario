@@ -11,7 +11,7 @@ from .constants import DEFAULT_TM_PORT, EGO_ROLE_NAME
 from .debug_markers import DebugMarkers
 from .coordinate import (Lanelet2Pose, OpenDrivePose, CarlaWorldPose, GroundProjectionConfig,
                          _expect_lanelet2_poses, _expect_optional_ground_projection)
-from .traffic import LaneChangeDirection, TurnDirection
+from .traffic import LaneChangeDirection, SimulationFidelity, TurnDirection
 from ._vehicle_entity import (SpawnLocation, SpawnPointIndex, SpawnTransform, VehicleEntity,
                               VehicleEntityConfig)
 from .entity_role import _expect_role_name
@@ -100,6 +100,7 @@ class EgoVehicle:
     use_autopilot: ClassVar[bool] = True
     requires_goal: ClassVar[bool] = False
     attaches_to_existing_actor: ClassVar[bool] = False
+    simulation_fidelity: ClassVar[SimulationFidelity] = SimulationFidelity.MICROSCOPIC
 
     def __init__(self):
         pass
@@ -139,6 +140,8 @@ class EgoVehicle:
             _acs_expect_return(r, NoneType, "EgoVehicle.release_from_traffic() returns None")
         elif name == "resume_traffic":
             _acs_expect_return(r, NoneType, "EgoVehicle.resume_traffic() returns None")
+        elif name == "require_microscopic":
+            _acs_expect_return(r, bool, "EgoVehicle.require_microscopic() returns bool")
         elif name == "forget_lane_change":
             _acs_expect_return(r, NoneType, "EgoVehicle.forget_lane_change() returns None")
         elif name == "spawn":
@@ -209,6 +212,9 @@ class EgoVehicle:
         raise NotImplementedError()
 
     def resume_traffic(self, world: carla.World) -> None:
+        raise NotImplementedError()
+
+    def require_microscopic(self, world: carla.World) -> bool:
         raise NotImplementedError()
 
     def forget_lane_change(self) -> None:
