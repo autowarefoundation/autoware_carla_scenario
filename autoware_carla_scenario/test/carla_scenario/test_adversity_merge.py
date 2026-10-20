@@ -11,6 +11,7 @@ Its lanes share their boundaries, so each is the other's neighbour.
 
 from __future__ import annotations
 
+import math
 import random
 from typing import Any
 
@@ -50,8 +51,10 @@ def features() -> MapFeatures:
     return MapFeatures(b.map, rm.routing_graph(b.map))
 
 
-def _car(name: str, x: float, y: float, speed: float = 10.0) -> AgentSnapshot:
-    return AgentSnapshot(name, x, y, 0.0, speed, 0.0, CAR)
+def _car(
+    name: str, x: float, y: float, speed: float = 10.0, yaw: float = 0.0
+) -> AgentSnapshot:
+    return AgentSnapshot(name, x, y, yaw, speed, 0.0, CAR)
 
 
 def _command(features: MapFeatures, *agents: AgentSnapshot) -> object:
@@ -129,3 +132,20 @@ def test_no_change_in_within_the_headway(
 def test_without_a_merging_lane_beyond_nothing_changes(features: MapFeatures) -> None:
     scene = Scene(features, [_car("ego", 50.0, L1)], {})
     assert merge(scene.vehicle("ego"), None, features) is None
+
+
+@pytest.mark.parametrize(
+    ("yaw", "fires"),
+    [
+        (math.radians(4.0), True),
+        (math.radians(6.0), False),
+        (math.radians(-6.0), False),
+    ],
+)
+def test_a_vehicle_already_changing_lanes_is_left_alone(
+    features: MapFeatures, yaw: float, fires: bool
+) -> None:
+    # TeraSim's is_lane_changing: 5 degrees or more off its lane (#440).
+    ego = _car("ego", 50.0, L2, yaw=yaw)
+    command = _command(features, ego, _car("merging", 60.0, M, 5.0))
+    assert (command is not None) is fires
