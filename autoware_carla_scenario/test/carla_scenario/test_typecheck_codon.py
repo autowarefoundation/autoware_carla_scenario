@@ -3125,6 +3125,35 @@ self.register_fail_condition(feasible)
 """
 
 
+_NADE_SETUP = """
+from autoware_carla_scenario import (
+    AdversarialTrafficAction,
+    AdversityKind,
+    AdversityLocation,
+    NadeAdversity,
+    NadeSettings,
+)
+adversities = [
+    NadeAdversity(AdversityKind.CUT_IN, AdversityLocation.HIGHWAY, 0.002),
+    NadeAdversity(AdversityKind.BRAKE_CHECK, AdversityLocation.ANY, 0.01),
+]
+nade = AdversarialTrafficAction(
+    adversities, seed=3, settings=NadeSettings(max_controlled=3, fixed_is_probability=0.1)
+)
+self.register_pre_tick(nade)
+logger.info("%f %d", nade.weight, adversities[0].kind == AdversityKind.CUT_IN)
+"""
+
+
+def test_the_nade_action_compiles(tmp_path: Path) -> None:
+    # #395: the action and its list's entries, from the top level.
+    scenario, config, _ = _write_case(
+        tmp_path, textwrap.dedent(_NADE_SETUP) + textwrap.dedent(_VALID_SETUP)
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
 def test_the_adversarial_actions_compile(tmp_path: Path) -> None:
     # #393: the actions, their condition and its enums, from the top level.
     scenario, config, _ = _write_case(

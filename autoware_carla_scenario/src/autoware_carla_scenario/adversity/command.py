@@ -29,7 +29,11 @@ from ..route.geometry import MapFeatures
 from ..trajectory.relative_lane import _centreline, _heading_at, _point_at
 from .geometry import PredictedState
 from .observation import AgentSnapshot, LanePosition, SideLane, VehicleObservation
-from .prediction import lane_change_longitudinal_speed, predict_distance_velocity
+from .prediction import (
+    interpolate_trajectory,
+    lane_change_longitudinal_speed,
+    predict_distance_velocity,
+)
 
 if TYPE_CHECKING:
     from lanelet2.core import ConstLanelet
@@ -39,6 +43,7 @@ __all__ = [
     "AdversarialCommand",
     "CommandKind",
     "plan_command",
+    "predict_command",
 ]
 
 #: How far apart in time (s) the states of a planned path are.
@@ -178,10 +183,12 @@ def _change_lane(
     agent: AgentSnapshot,
     command: AdversarialCommand,
     resolution: float,
+    span: float,
 ) -> list[PredictedState]:
+    """Cross in ``command.duration``, then (to *span*) keep to the new lane."""
     own = _LaneWalk(features, lane.lanelet, lane.s)
     beside = _LaneWalk(features, side.lanelet, side.s)
-    times = _times(command.duration, resolution)
+    times = _times(max(span, command.duration), resolution)
     xs: list[float] = []
     ys: list[float] = []
     speed = agent.speed
@@ -194,7 +201,7 @@ def _change_lane(
             speed = lane_change_longitudinal_speed(
                 agent.speed, math.hypot(nx - ox, ny - oy), command.duration
             )
-        f = t / command.duration
+        f = min(t / command.duration, 1.0)
         xs.append(ox + (nx - ox) * f)
         ys.append(oy + (ny - oy) * f)
     states: list[PredictedState] = []
@@ -241,4 +248,43 @@ def plan_command(
         side = observation.left
     if side is None:
         raise ValueError(f"there is no lane on the {command.side} to change into")
-    return _change_lane(features, lane, side, observation.agent, command, resolution)
+    return _change_lane(
+        features, lane, side, observation.agent, command, resolution, command.duration
+    )
+
+
+def predict_command(
+    features: MapFeatures,
+    observation: VehicleObservation,
+    command: AdversarialCommand,
+    resolution: float,
+    horizon: float,
+) -> list[PredictedState]:
+    """The observed vehicle's future under *command*, to *horizon* (s).
+
+    As TeraSim's NADE predicts: an acceleration is held throughout, a lane
+    change keeps to the new lane once across, and a given path is resampled
+    every *resolution* and cut at the horizon.
+
+    Raises:
+        ValueError: As :func:`plan_command`.
+    """
+    if command.kind is CommandKind.ACCELERATION:
+        held = AdversarialCommand.accelerate(command.acceleration, horizon)
+        return plan_command(features, observation, held, resolution)
+    if command.kind is CommandKind.TRAJECTORY:
+        path = plan_command(features, observation, command, resolution)
+        return [
+            p for p in interpolate_trajectory(path, resolution) if p.t <= horizon + 1e-9
+        ]
+    lane = observation.lane
+    if lane is None:
+        raise ValueError(f"{observation.agent.name} is off the lanes")
+    side: Optional[SideLane] = observation.right
+    if command.side == "left":
+        side = observation.left
+    if side is None:
+        raise ValueError(f"there is no lane on the {command.side} to change into")
+    return _change_lane(
+        features, lane, side, observation.agent, command, resolution, horizon
+    )
