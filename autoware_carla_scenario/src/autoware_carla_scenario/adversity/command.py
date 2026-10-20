@@ -173,8 +173,7 @@ def drift_path(
     states: list[PredictedState] = []
     for t in _times(duration, resolution):
         x, y, yaw = walk.at(speed * t)
-        rise = t / half if t <= half else (duration - t) / half
-        offset = lane.t + drift * rise
+        offset = lane.t + drift * (1.0 - abs(t - half) / half)
         states.append(
             PredictedState(
                 x - offset * math.sin(yaw), y + offset * math.cos(yaw), yaw, speed, t

@@ -40,10 +40,10 @@ import math
 import random
 from dataclasses import dataclass
 from enum import Enum
-from typing import TYPE_CHECKING, Optional
+from typing import Optional
 
 from ..route.geometry import MapFeatures
-from ..trajectory.relative_lane import _centreline, _heading_at, _point_at
+from ..trajectory.relative_lane import _centreline, _point_at, _start_heading, _turn
 from .command import AdversarialCommand, drift_path
 from .geometry import PredictedState
 from .idm import (
@@ -62,9 +62,6 @@ from .observation import (
     SignalState,
     VehicleObservation,
 )
-
-if TYPE_CHECKING:
-    from lanelet2.core import ConstLanelet
 
 __all__ = [
     "DEFAULT_THRESHOLDS",
@@ -114,7 +111,8 @@ class TriggerThresholds:
         duration: How long (s) the acceleration commands last.
         lane_change_duration: How long (s) a cut-in, or a lane-change abort,
             takes.
-        moving_speed: LANE_CHANGE_ABORT's least speed (m/s).
+        moving_speed: LANE_CHANGE_ABORT's least speed (m/s): TeraSim's
+            "moving at all", not the ``standstill_speed`` the others use.
         abort_resolution: The time step (s) of a lane-change abort's path.
         head_on_angle: HEAD_ON's least difference (degrees) between the
             directions the agent's and its leader's lanelets start in.
@@ -215,18 +213,29 @@ def _blocked_by_follower_only(
     return leader is None or leader.gap >= _secure_gap(speed, leader.speed, limits.idm)
 
 
+def _blocked_side(
+    seen: VehicleObservation, speed: float, limits: TriggerThresholds
+) -> Optional[SideLane]:
+    """The lane beside, left first, blocked only by the vehicle behind there."""
+    left = seen.left
+    if left is not None and _blocked_by_follower_only(left, speed, limits):
+        return left
+    right = seen.right
+    if right is not None and _blocked_by_follower_only(right, speed, limits):
+        return right
+    return None
+
+
 def cut_in(
     seen: VehicleObservation, limits: TriggerThresholds = DEFAULT_THRESHOLDS
 ) -> Optional[AdversarialCommand]:
     """CUT_IN: change into the lane beside in front of the vehicle there."""
-    speed = seen.agent.speed
-    left = seen.left
-    if left is not None and _blocked_by_follower_only(left, speed, limits):
+    side = _blocked_side(seen, seen.agent.speed, limits)
+    if side is None:
+        return None
+    if side is seen.left:
         return AdversarialCommand.change_lane("left", limits.lane_change_duration)
-    right = seen.right
-    if right is not None and _blocked_by_follower_only(right, speed, limits):
-        return AdversarialCommand.change_lane("right", limits.lane_change_duration)
-    return None
+    return AdversarialCommand.change_lane("right", limits.lane_change_duration)
 
 
 def lane_change_abort(
@@ -248,33 +257,19 @@ def lane_change_abort(
         return None
     if lane.s + speed * duration >= features.length(lane.lanelet):
         return None
-    sign = 1.0
-    side = seen.left
-    if side is None or not _blocked_by_follower_only(side, speed, limits):
-        sign = -1.0
-        side = seen.right
-        if side is None or not _blocked_by_follower_only(side, speed, limits):
-            return None
+    side = _blocked_side(seen, speed, limits)
+    if side is None:
+        return None
     # A typed local: Codon unwraps the Optional here, not at each use.
     beside: SideLane = side
-    ox, oy = _point_on(features, lane.lanelet, lane.s)
-    nx, ny = _point_on(features, beside.lanelet, beside.s)
-    drift = sign * math.hypot(nx - ox, ny - oy) / 2.0
+    ox, oy = _point_at(_centreline(lane.lanelet), lane.s)
+    nx, ny = _point_at(_centreline(beside.lanelet), beside.s)
+    drift = math.hypot(nx - ox, ny - oy) / 2.0
+    if beside is not seen.left:
+        drift = -drift
     return AdversarialCommand.follow(
         drift_path(features, lane, speed, drift, duration, limits.abort_resolution)
     )
-
-
-def _point_on(
-    features: MapFeatures, lanelet: ConstLanelet, s: float
-) -> tuple[float, float]:
-    """The point *s* metres along *lanelet*'s centreline."""
-    return _point_at(_centreline(lanelet), min(max(s, 0.0), features.length(lanelet)))
-
-
-def _start_heading(lanelet: ConstLanelet) -> float:
-    """The direction (degrees) *lanelet* starts in."""
-    return math.degrees(_heading_at(_centreline(lanelet), 0.0))
 
 
 def head_on(
@@ -290,12 +285,13 @@ def head_on(
     lane = seen.lane
     if lane is None or leader_lane is None:
         return None
+    if lane.lanelet.id == leader_lane.lanelet.id:
+        return None  # one lanelet, one direction
     command = ignore_leader(seen, limits)
     if command is None:
         return None
-    difference = abs(_start_heading(lane.lanelet) - _start_heading(leader_lane.lanelet))
-    difference = min(difference % 360.0, 360.0 - difference % 360.0)
-    if difference <= limits.head_on_angle:
+    apart = _turn(_start_heading(lane.lanelet), _start_heading(leader_lane.lanelet))
+    if math.degrees(apart) <= limits.head_on_angle:
         return None
     return command
 
