@@ -265,6 +265,16 @@ class TestPositionWithTiming:
         assert entity.actor.speed == 0.0
         assert entity.actor.control.brake == 1.0
 
+    def test_it_can_end_still_moving(self, entity: _Entity) -> None:
+        """stop_at_end=False: handed back to traffic at speed, not braked."""
+        action = FollowTrajectoryAction(
+            "npc1", _line(), TrajectoryTiming(), stop_at_end=False
+        )
+        _run(action, entity.actor, 2.5)
+        assert action.state is ActionState.COMPLETE
+        assert entity.actor.speed > 0.0
+        assert entity.actor.control.brake == 0.0
+
     def test_relative_timing_starts_with_the_action(self, entity: _Entity) -> None:
         action = FollowTrajectoryAction(
             "npc1", _line(), TrajectoryTiming(ReferenceContext.RELATIVE)
