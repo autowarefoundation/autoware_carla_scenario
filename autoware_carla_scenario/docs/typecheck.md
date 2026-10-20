@@ -1134,9 +1134,25 @@ cannot express is refused at its line, with what to write instead.
 | `sorted(xs)`, `xs.sort()`, `min` / `max` of a class that defines `__lt__` only | the class gets `__gt__` (`other < self`) and `__ge__` (`not self < other`), which Codon's sort calls | the class defines no ordering (use `@dataclass(order=True)` or `key=`) |
 | `@functools.total_ordering` | the decorator and its import are dropped, and the class gets the comparisons it would add from its `__lt__`, `__le__`, `__gt__` or `__ge__` (and `==`, or identity without `__eq__`) | the class is not at module level, or defines none of the four |
 | `lambda x, k=k: x + k` (a default that is not a literal) | `(lambda k: lambda x: x + k)(k)`: the default is bound by a call, once, as in Python | |
+| `def __exit__(self, exc_type, exc, tb)` (annotated `type[BaseException] \| None`, `BaseException \| None`, `object`, ... or not) | each parameter without a default gets `=None` and loses its annotation: Codon calls `__exit__()` with no arguments, even when the block raised (#435) | |
+| `fs: list[Callable[[int], int]] = [inc, lambda x: x * 2]`, `table: dict[str, Callable[[int], int]] = {"a": inc, "b": dbl}`, or a `return` of such a display from a function annotated so (a dispatch table) | each function, module function (`mod.f`) or lambda element is wrapped in Codon's `Callable[Tuple[int], int](...)`, so they share one type (#436) | the element is a bound method, a lambda using a local variable of its function, or a call (not wrapped, then Codon's own refusal and a hint); the table is an attribute of a class, is unannotated, or is built another way than a display |
 
 Notes:
 
+- `__exit__` is `None` in all its parameters in the check, so
+  `if exc_type is not None:` is not compiled and anything in it is not checked
+  (Python runs it as you wrote it). `from types import TracebackType` is
+  refused (`types` has no model): annotate `tb` as `object`. `__enter__`
+  returning `self` (`-> "Ctx"`, or no annotation) compiles as it is.
+  `__exit__(self, *args: object)` needs no rewrite.
+- Codon gives every function and lambda a type of its own, so a list or dict
+  of different ones does not compile without the annotation, even if you
+  annotate nothing else. Annotate where the table is assigned or returned. An
+  unannotated `fs = [inc, dbl]` or a class attribute is
+  refused with a hint: write an `if`/`elif` chain or a `match` on the key
+  instead (`if key == "a": return inc(x)`). A bound method (`self.run`) or a
+  lambda using a local variable cannot be converted: use a module-level
+  function that takes the object, or the chain.
 - `__ge__` of a class that defines `__lt__` only is more than Python gives it
   (`a >= b` is a `TypeError` there): the check accepts it because Codon's sort
   needs it. It does not change what runs.
@@ -1245,8 +1261,9 @@ instead:
   and `replace`.
 - `functools.wraps` (and any other name of `functools`, `itertools` or
   `collections` not listed above) is not modelled.
-- `contextlib`: write a class with `__enter__` and `__exit__` for
-  `contextmanager`, and `try/except X: pass` for `suppress`. `warnings`: log
+- `contextlib`: write a class with `__enter__` and
+  `__exit__(self, exc_type, exc, tb)` for `contextmanager` (the check rewrites
+  the signature, see "Python the check rewrites for Codon"), and `try/except X: pass` for `suppress`. `warnings`: log
   with `logger.warning`. `json`: read into a `@dataclass`. `types`: name the
   type itself. `textwrap`: build the string with `str` methods. `traceback`
   and `io` are refused likewise.

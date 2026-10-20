@@ -5617,3 +5617,191 @@ def test_total_ordering_composes_with_the_stubbed_functools_names(
     )
     result = typecheck_scenario(scenario, config)
     assert result.ok, result.format()
+
+
+# ---------------------------------------------------------------------------
+# A context manager's __exit__ and a table of functions (#435, #436)
+# ---------------------------------------------------------------------------
+
+_CONTEXT_MANAGER = """
+class Ctx:
+    n: int
+
+    def __init__(self) -> None:
+        self.n = 1
+
+    def __enter__(self) -> "Ctx":
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: object | None,
+    ) -> bool | None:
+        if exc_type is not None:
+            logger.info("failed: %s", exc_type.__name__)
+        self.n = 2
+        return None
+"""
+
+
+def test_a_context_manager_with_the_usual_exit_compiles(tmp_path: Path) -> None:
+    setup = """
+        with Ctx() as c:
+            n = c.n
+        logger.info("%d %d", n, c.n)
+    """
+    scenario, config, _ = _data_case(tmp_path, _CONTEXT_MANAGER, setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_exit_parameters_unannotated_or_defaulted_compile(tmp_path: Path) -> None:
+    definitions = """
+class Plain:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, et, ev, tb):
+        return False
+
+
+class Half:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, et: object, ev: object = None, tb: object | None = None):
+        pass
+
+
+class Star:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args: object):
+        pass
+"""
+    setup = """
+        with Plain() as p, Half() as h, Star() as s:
+            logger.info("%s", "in")
+    """
+    scenario, config, _ = _data_case(tmp_path, definitions, setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_the_body_of_an_exit_is_still_typed(tmp_path: Path) -> None:
+    definitions = _CONTEXT_MANAGER.replace("self.n = 2", 'self.n = "two"')
+    setup = """
+        with Ctx() as c:
+            n = c.n
+    """
+    scenario, config, path = _data_case(tmp_path, definitions, setup)
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "str" in error.message, error.format()
+    assert error.line == _line_of(path, 'self.n = "two"')
+
+
+_TABLE = """
+def inc(x: int) -> int:
+    return x + 1
+
+
+def dbl(x: int) -> int:
+    return x * 2
+"""
+
+
+def test_a_table_of_functions_annotated_callable_compiles(tmp_path: Path) -> None:
+    definitions = (
+        _TABLE
+        + """
+
+def table(k: int) -> dict[str, typing.Callable[[int], int]]:
+    return {"inc": inc, "dbl": dbl, "neg": lambda x: -x}
+
+
+def nested(k: int) -> int:
+    ops: dict[str, list[typing.Callable[[int], int]]] = {
+        "a": [inc, lambda x: x * 3],
+        "b": [dbl],
+    }
+    one: list[typing.Callable[[int], int]] = [lambda x: x + k]
+    return ops["a"][1](2) + ops["b"][0](1) + one[0](1)
+"""
+    )
+    setup = """
+        fs: list[typing.Callable[[int], int]] = [inc, dbl]
+        d: dict[str, typing.Callable[[int], int]] = {"a": inc, "b": lambda x: x - 1}
+        fns: list[typing.Callable[[float, str], None]] = [
+            lambda v, s: None,
+            lambda v, s: logger.info("%s", s),
+        ]
+        fns[1](1.0, "x")
+        logger.info("%d %d %d", fs[1](3), d["b"](3), table(1)["neg"](2) + nested(1))
+    """
+    scenario, config, _ = _data_case(tmp_path, definitions, setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_a_table_of_functions_is_still_typed(tmp_path: Path) -> None:
+    setup = """
+        fs: list[typing.Callable[[int], int]] = [inc, dbl]
+        r = fs[1]("x")
+    """
+    scenario, config, path = _data_case(tmp_path, _TABLE, setup)
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert error.line == _line_of(path, 'r = fs[1]("x")') or any(
+        f"scenario.py:{_line_of(path, 'r = fs[1](')}]" in f for f in error.trace
+    ), error.format()
+
+
+def test_a_table_of_functions_with_the_wrong_signature_is_refused(
+    tmp_path: Path,
+) -> None:
+    setup = """
+        fs: list[typing.Callable[[str], int]] = [inc, dbl]
+    """
+    scenario, config, _ = _data_case(tmp_path, _TABLE, setup)
+    assert not typecheck_scenario(scenario, config).ok
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "fs = [inc, dbl]",
+        'fs = {"a": inc, "b": dbl}',
+        "fs = [lambda x: x + 1, lambda x: x * 2]",
+    ],
+)
+def test_an_unannotated_table_of_functions_is_refused_with_a_hint(
+    tmp_path: Path, line: str
+) -> None:
+    scenario, config, path = _data_case(
+        tmp_path, _TABLE, f"        {line}\n        logger.info('%d', len(fs))\n"
+    )
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "dispatch table" in error.message, error.format()
+    assert "if/elif" in error.message, error.format()
+    assert error.line == _line_of(path, line)
+
+
+def test_a_table_of_bound_methods_is_refused_with_a_hint(tmp_path: Path) -> None:
+    definitions = """
+class Ops:
+    def inc(self, x: int) -> int:
+        return x + 1
+
+    def dbl(self, x: int) -> int:
+        return x * 2
+"""
+    setup = """
+        ops = Ops()
+        fs: list[typing.Callable[[int], int]] = [ops.inc, ops.dbl]
+    """
+    scenario, config, path = _data_case(tmp_path, definitions, setup)
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "dispatch table" in error.message and "bound method" in error.message
+    assert error.line == _line_of(path, "fs: list")
