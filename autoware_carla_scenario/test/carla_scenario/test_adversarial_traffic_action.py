@@ -186,3 +186,22 @@ def test_the_editor_s_card_builds_the_action() -> None:
         NadeAdversity(AdversityKind.BRAKE_CHECK, AdversityLocation.ANY, 0.01),
     ]
     assert action._sampler.settings == NadeSettings(fixed_is_probability=0.2)
+
+
+def test_an_npc_victim_s_response_is_driven_too() -> None:
+    # npc1 brake-checks npc2 behind it, the ego well ahead: npc2 responds.
+    settings = NadeSettings(fixed_is_probability=1.0, challenge_npcs=True)
+    action = AdversarialTrafficAction([BRAKE], settings=settings)
+    world = _world(
+        _actor(1, EGO, -20.0, INNER, 10.0),
+        _actor(2, "npc1", -45.0, INNER, 10.0),
+        _actor(3, "npc2", -58.0, INNER, 10.0),
+    )
+    action.tick(world, 0.0)
+    assert [run.name for run in made] == ["npc1", "npc2"]
+    (choice,) = action.choices
+    assert choice.victims == ["npc2"]
+    # One adversity at a time: both are driven to their end before the next.
+    for t in range(1, 4):
+        action.tick(world, 0.1 * t)
+    assert all(run.ticks == 3 for run in made)

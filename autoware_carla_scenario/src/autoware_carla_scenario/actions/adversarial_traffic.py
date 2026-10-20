@@ -19,6 +19,8 @@ import logging
 from typing import TYPE_CHECKING, Optional
 
 from ..action_state import ActionState
+from ..adversity.avoidance import AVOID, accept_command, avoid_command
+from ..adversity.command import AdversarialCommand
 from ..adversity.nade import (
     DEFAULT_NADE,
     ImportanceSampler,
@@ -26,6 +28,7 @@ from ..adversity.nade import (
     NadeChoice,
     NadeSettings,
 )
+from ..adversity.observation import Scene
 from ..adversity.snapshot import scene_at
 from ..adversity.triggers import DEFAULT_THRESHOLDS, TriggerThresholds
 from ..conditions.base import BaseCondition, find_actor_by_role_name
@@ -48,7 +51,9 @@ class AdversarialTrafficAction(BaseAction):
     """NADE: sample adversities around the ego, keeping the IS weight.
 
     Runs for the rest of the run once triggered (every tick, an environment
-    action), and carries out at most one adversity at a time.
+    action), and carries out at most one adversity at a time -- with its
+    NPC victims' response to it (:mod:`~..adversity.avoidance`), when the
+    settings challenge NPCs.
 
     Args:
         adversities: The adversities to sample, in order: an agent's is the
@@ -69,7 +74,7 @@ class AdversarialTrafficAction(BaseAction):
     _adversities: list[NadeAdversity]
     _sampler: ImportanceSampler
     _following_mode: TrajectoryFollowingMode
-    _execution: Optional[AdversarialExecution]
+    _executions: list[AdversarialExecution]
     _choices: list[NadeChoice]
     _elapsed: float
 
@@ -102,7 +107,7 @@ class AdversarialTrafficAction(BaseAction):
         self._adversities = list(adversities)
         self._sampler = ImportanceSampler(seed, settings, thresholds)
         self._following_mode = following_mode
-        self._execution = None
+        self._executions = []
         self._choices = []
         self._elapsed = 0.0
 
@@ -124,13 +129,13 @@ class AdversarialTrafficAction(BaseAction):
     def execute(self, world: "carla.World") -> None:
         """Drive the adversity under way, or sample the next one."""
         if self.state is ActionState.STANDBY:
-            self._execution = None
-        if self._execution is not None:
-            running: AdversarialExecution = self._execution
-            running.tick(world, self._elapsed)
-            if not running.done:
+            self._executions = []
+        if self._executions:
+            for running in self._executions:
+                running.tick(world, self._elapsed)
+            self._executions = [run for run in self._executions if not run.done]
+            if self._executions:
                 return
-            self._execution = None
         if self._sampler.cooling(self._elapsed):
             return  # nothing to sample: no need to read the world
         scene = scene_at(world)
@@ -155,24 +160,40 @@ class AdversarialTrafficAction(BaseAction):
             sampled.adversity.probability,
             self.weight,
         )
+        self._start(world, scene, sampled.name, sampled.command)
+        if not sampled.response:
+            return
+        avoidance = self._sampler.settings.avoidance
+        response = accept_command(avoidance)
+        if sampled.response == AVOID:
+            response = avoid_command(
+                self._sampler.thresholds.idm.emergency_deceleration, avoidance
+            )
+        for victim in sampled.victims:
+            logger.info("%s: '%s' %ss it", self.label, victim, sampled.response)
+            self._start(world, scene, victim, response)
+
+    def _start(
+        self,
+        world: "carla.World",
+        scene: Scene,
+        name: str,
+        command: AdversarialCommand,
+    ) -> None:
+        """Start driving *command* on *name*, from this tick."""
         started = start_execution(
-            scene,
-            sampled.name,
-            sampled.command,
-            self._following_mode,
-            f"{self.label}:{sampled.name}",
+            scene, name, command, self._following_mode, f"{self.label}:{name}"
         )
         if started is None:
             return
         execution: AdversarialExecution = started
-        self._execution = execution
+        self._executions.append(execution)
         execution.tick(world, self._elapsed)
 
     def close(self) -> None:
-        """Close the conditions, the action's and the adversity's."""
+        """Close the conditions, the action's and those of what it drives."""
         super().close()
-        if self._execution is not None:
-            running: AdversarialExecution = self._execution
+        for running in self._executions:
             running.close()
 
 

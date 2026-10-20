@@ -1540,6 +1540,7 @@ _NADE_SETTINGS = (
     "max_is_probability",
     "fixed_is_probability",
     "cooldown",
+    "challenge_npcs",
 )
 
 register_action_spec(
@@ -1626,6 +1627,16 @@ register_action_spec(
                 default=5.5,
                 unit="s",
                 help="After an adversity, how long before the next.",
+            ),
+            FieldSpec(
+                name="challenge_npcs",
+                label="Challenge NPCs too",
+                kind="bool",
+                default=False,
+                help=(
+                    "Not the ego only: an NPC victim avoids or accepts the "
+                    "adversity, its own weight on the run's."
+                ),
             ),
             FieldSpec(
                 name="following_mode",

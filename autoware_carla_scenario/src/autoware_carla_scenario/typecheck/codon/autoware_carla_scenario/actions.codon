@@ -517,11 +517,12 @@ class NadeSettings:
     max_is_probability: float
     fixed_is_probability: float
     cooldown: float
+    challenge_npcs: bool
 
     def __init__(self, max_controlled: int = 5, control_radius: float = 50.0,
                  horizon: float = 5.0, resolution: float = 0.5, magnitude: float = 20.0,
                  max_is_probability: float = 0.05, fixed_is_probability: float = 0.0,
-                 cooldown: float = 5.5):
+                 cooldown: float = 5.5, challenge_npcs: bool = False, avoidance = None):
         self.max_controlled = max_controlled
         self.control_radius = control_radius
         self.horizon = horizon
@@ -530,6 +531,7 @@ class NadeSettings:
         self.max_is_probability = max_is_probability
         self.fixed_is_probability = fixed_is_probability
         self.cooldown = cooldown
+        self.challenge_npcs = challenge_npcs
 
 
 class AdversarialTrafficAction(BaseAction):
