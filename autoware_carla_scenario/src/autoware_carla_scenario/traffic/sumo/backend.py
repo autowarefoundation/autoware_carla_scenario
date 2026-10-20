@@ -38,7 +38,7 @@ the step.  Height, pitch and roll stay CARLA's, so the car sits on CARLA's road.
 SUMO's own traffic sees only as far as the run's weather lets its drivers see
 (``follow_visibility``, :mod:`autoware_carla_scenario.visibility`): night,
 rain and fog hold each vehicle to the speed it can stop from within that
-distance.  The TrafficManager has no notion of sight.
+distance.  The TrafficManager has no notion of sight, and only logs it.
 
 The CARLA coupling is one step behind SUMO, as in TeraSim: SUMO steps after
 the world has ticked, and its new state is applied to the actors for the next

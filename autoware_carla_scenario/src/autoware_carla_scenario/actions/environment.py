@@ -288,7 +288,7 @@ class EnvironmentAction(BaseAction):
     if given, else the point *visibility_quantile* of
     :func:`~autoware_carla_scenario.visibility.visibility_range` -- its middle
     by default.  A traffic backend that models drivers' sight (``sumo``)
-    holds its traffic to it; the TrafficManager ignores it.
+    holds its traffic to it; the TrafficManager only logs it.
 
     **The road's grip follows the water on it.**  An action that sets the
     ``wetness`` or the standing water (``rain`` sets both), or names a tire

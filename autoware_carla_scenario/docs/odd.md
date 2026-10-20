@@ -1030,7 +1030,8 @@ it always did; each run starts with none, whatever the last left.
 What follows it is the traffic backend's: the `sumo` backend holds its own
 traffic to the speed it stops from within it
 ([Visibility](traffic_backends.md#the-sumo-backend)); the TrafficManager has no notion of
-sight and ignores it.
+sight, so the `traffic_manager` backend logs the speed it would hold traffic
+to whenever the visibility changes, and its vehicles drive as before.
 
 ### The road a case is on
 

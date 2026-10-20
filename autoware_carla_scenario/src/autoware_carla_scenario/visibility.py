@@ -7,7 +7,8 @@ visibility is a quantity of the run of its own, in metres, which the weather
 bounds (:func:`visibility_range`) and a traffic backend that models drivers'
 sight follows -- the ``sumo`` backend holds its traffic to the speed it can
 stop from within it (:func:`sight_speed`).  The TrafficManager has no such
-notion, and its vehicles ignore it.
+notion: the ``traffic_manager`` backend logs what it would hold its traffic
+to, and leaves it as it was.
 
 :class:`~autoware_carla_scenario.EnvironmentAction` sets it, when it sets the
 fog, the rain or the sun (or names a visibility), for the world it acts on
@@ -27,6 +28,8 @@ import math
 from typing import Optional
 
 __all__ = [
+    "DEFAULT_DECEL",
+    "DEFAULT_REACTION_S",
     "FOG_VISIBILITY_RANGES",
     "LIGHT_VISIBILITY_RANGES",
     "RAIN_VISIBILITY_RANGES",
@@ -37,6 +40,11 @@ __all__ = [
     "visibility_range",
     "world_visibility",
 ]
+
+#: The braking (m/s²) and reaction time (s) of a car nothing says more of:
+#: SUMO's passenger car's ``decel`` and ``tau``.
+DEFAULT_DECEL: float = 4.5
+DEFAULT_REACTION_S: float = 1.0
 
 #: The distance a driver sees, metres, by CARLA's ``fog_density`` (0-100):
 #: ``(fog_density, low, high)``, interpolated linearly between the rows.  A

@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import logging
 from types import SimpleNamespace
-from typing import Any, List, Optional, Tuple
+from typing import Any, Iterator, List, Optional, Tuple
 
 import pytest
 
@@ -350,6 +350,59 @@ class TestTrafficManagerClose:
             "port": 8123,
             "random_seed": 11,
         }
+
+
+class TestTrafficManagerVisibility:
+    """The TrafficManager models no sight: it logs the plan and does nothing."""
+
+    @pytest.fixture(autouse=True)
+    def _forget(self) -> Iterator[None]:
+        from autoware_carla_scenario.visibility import forget_visibility
+
+        forget_visibility()
+        yield
+        forget_visibility()
+
+    def test_a_visibility_is_logged_once_and_nothing_is_done(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        from autoware_carla_scenario.visibility import set_world_visibility
+
+        actor = _Actor(1)
+        world = _World([actor])
+        world.id = 4  # type: ignore[attr-defined]
+        client = _Client()
+        backend = TrafficManagerBackend(client=client)
+        backend.prepare(_context(client, world))
+        backend.start(world)
+        calls = (list(actor.autopilot), list(client.ports))
+
+        set_world_visibility(4, 50.0)
+        with caplog.at_level(logging.INFO):
+            backend.tick(world, 0.05)
+            backend.tick(world, 0.10)
+        planned = [r for r in caplog.records if "drivers see 50 m" in r.getMessage()]
+        assert len(planned) == 1
+        assert "at most 62 km/h" in planned[0].getMessage()
+        # Nothing reached CARLA: no autopilot change, no TrafficManager call.
+        assert (actor.autopilot, client.ports) == calls
+
+        caplog.clear()
+        set_world_visibility(4, 20.0)
+        with caplog.at_level(logging.INFO):
+            backend.tick(world, 0.15)
+        assert any("drivers see 20 m" in r.getMessage() for r in caplog.records)
+        backend.close()
+
+    def test_a_world_with_no_visibility_logs_nothing(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        world = _World()
+        world.id = 4  # type: ignore[attr-defined]
+        backend = TrafficManagerBackend(client=_Client())
+        with caplog.at_level(logging.INFO):
+            backend.tick(world, 0.05)
+        assert not any("drivers see" in r.getMessage() for r in caplog.records)
 
 
 class _Blueprint:

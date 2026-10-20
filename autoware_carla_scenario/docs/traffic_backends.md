@@ -410,7 +410,9 @@ How a CARLA vehicle follows its SUMO vehicle is `vehicle_control`:
 **Visibility** (`follow_visibility`, on by default): SUMO's traffic sees only
 as far as the run's weather lets a driver see. The TrafficManager has no
 notion of sight -- its vehicles know where every actor is whatever the fog --
-so night, rain and fog change nothing about how it drives. An
+so night, rain and fog change nothing about how it drives: the
+`traffic_manager` backend logs each visibility a run sets, with the speed
+SUMO's default car would be held to, and does nothing else. An
 `EnvironmentAction` that sets the fog, the rain or the sun records how far
 drivers see in the weather it leaves
 ([Visibility follows the weather](odd.md#visibility-follows-the-weather)),
