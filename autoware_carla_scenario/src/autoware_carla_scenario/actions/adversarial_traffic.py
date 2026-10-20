@@ -10,10 +10,10 @@ keeps the likelihood ratio that makes the run's statistics unbiased.
 What it drives is what a scenario registers -- named NPCs and pedestrians
 -- and, with ``drive_background`` (the default), the traffic backend's
 background vehicles in the world (#417,
-:meth:`~..traffic.base.TrafficBackend.background_actors`): one taken over
-is wrapped in a :class:`~..entity.background_vehicle.BackgroundVehicle`,
-registered under its role name while it is driven, released from the
-backend, and handed back to it when its path is done.  The ego is never
+:meth:`~..traffic.base.TrafficBackend.background_actors`): no entity stands
+for one, so its actor is driven directly, taken from the backend
+(:meth:`~..traffic.base.TrafficBackend.release_actor`) and handed back to it
+when its path is done.  The ego is never
 driven; its turn indicators say whether it is predicted to change lane.
 """
 
@@ -36,8 +36,6 @@ from ..adversity.snapshot import scene_at
 from ..adversity.triggers import DEFAULT_THRESHOLDS, AdversityKind, TriggerThresholds
 from ..conditions.base import BaseCondition, find_actor_by_role_name
 from ..constants import EGO_ROLE_NAME
-from ..entity.background_vehicle import BackgroundVehicle
-from ..entity.registry import register_vehicle_entity, unregister_entity
 from ..traffic.base import TrafficBackend
 from ..trajectory.model import TrajectoryFollowingMode
 from ..utils.turn_indicator import TurnIndicatorState, is_vehicle, turn_indicators_of
@@ -92,7 +90,6 @@ class AdversarialTrafficAction(BaseAction):
     _drive_background: bool
     _backend: Optional[TrafficBackend]
     _background: dict[str, "carla.Actor"]
-    _adopted: set[str]
 
     def __init__(
         self,
@@ -132,7 +129,6 @@ class AdversarialTrafficAction(BaseAction):
         self._drive_background = drive_background
         self._backend = None
         self._background = {}
-        self._adopted = set()
 
     def set_traffic_backend(self, backend: TrafficBackend) -> None:
         """The run's traffic backend, whose background vehicles it may drive;
@@ -178,13 +174,7 @@ class AdversarialTrafficAction(BaseAction):
             self._executions = []
         for running in self._executions:
             running.tick(world, self._elapsed)
-        unfinished: list[AdversarialExecution] = []
-        for execution in self._executions:
-            if execution.done:
-                self._forget(execution.entity_name)
-            else:
-                unfinished.append(execution)
-        self._executions = unfinished
+        self._executions = [run for run in self._executions if not run.done]
         if self._executions:
             return
         if self._sampler.cooling(self._elapsed):
@@ -242,13 +232,21 @@ class AdversarialTrafficAction(BaseAction):
         name: str,
         command: AdversarialCommand,
     ) -> None:
-        """Start driving *command* on *name*, from this tick."""
-        self._adopt(name)
+        """Start driving *command* on *name*, from this tick: a registered
+        entity, or a background vehicle's actor through the backend."""
+        actor: Optional["carla.Actor"] = None
+        if not drivable(name) and name in self._background:
+            actor = self._background[name]
         started = start_execution(
-            scene, name, command, self._following_mode, f"{self.label}:{name}"
+            scene,
+            name,
+            command,
+            self._following_mode,
+            f"{self.label}:{name}",
+            actor,
+            self._backend,
         )
         if started is None:
-            self._forget(name)
             return
         execution: AdversarialExecution = started
         self._executions.append(execution)
@@ -259,8 +257,6 @@ class AdversarialTrafficAction(BaseAction):
         super().close()
         for running in self._executions:
             running.close()
-        for name in list(self._adopted):
-            self._forget(name)
 
     def _background_actors(self, world: "carla.World") -> dict[str, "carla.Actor"]:
         """The backend's background vehicles it may drive, by role name."""
@@ -268,24 +264,6 @@ class AdversarialTrafficAction(BaseAction):
             return {}
         backend: TrafficBackend = self._backend
         return backend.background_actors(world)
-
-    def _adopt(self, name: str) -> None:
-        """Register background vehicle *name* as an entity while it is driven."""
-        if name not in self._background or name in self._adopted:
-            return
-        if drivable(name) or self._backend is None:
-            return  # a registered entity of the same name: that one
-        backend: TrafficBackend = self._backend
-        register_vehicle_entity(
-            name, BackgroundVehicle(name, self._background[name], backend)
-        )
-        self._adopted.add(name)
-
-    def _forget(self, name: str) -> None:
-        """Unregister *name* if it was a background vehicle it adopted."""
-        if name in self._adopted:
-            self._adopted.discard(name)
-            unregister_entity(name)
 
 
 def _indicator(world: "carla.World") -> str:

@@ -512,10 +512,16 @@ class TrafficManagerBackend(TrafficBackend):
         actor = _require_actor(entity, "release")
         if actor is None:
             return
+        # A typed local: Codon unwraps the Optional here.
+        vehicle: "carla.Actor" = actor
+        self.release_actor(world, vehicle)
+
+    def release_actor(self, world: "carla.World", actor: "carla.Actor") -> None:
+        """Take *actor* off autopilot, and keep it off at :meth:`start`."""
         self._released.add(actor.id)
         if self._started:
             actor.set_autopilot(False, self.port)
-            logger.info("%s: autopilot released", _entity_name(entity))
+            logger.info("%s: autopilot released", _actor_name(actor))
 
     def resume(self, entity: DrivenEntity, world: "carla.World") -> None:
         """Put *entity*'s vehicle back on autopilot, and on it at :meth:`start`.
@@ -525,7 +531,15 @@ class TrafficManagerBackend(TrafficBackend):
         did before it was released.
         """
         actor = _require_actor(entity, "resume")
-        if actor is None or actor.id not in self._released:
+        if actor is None:
+            return
+        # A typed local: Codon unwraps the Optional here.
+        vehicle: "carla.Actor" = actor
+        self.resume_actor(world, vehicle)
+
+    def resume_actor(self, world: "carla.World", actor: "carla.Actor") -> None:
+        """Put *actor* back on autopilot, and on it at :meth:`start`."""
+        if actor.id not in self._released:
             return
         if actor.id in self._skipped:
             # Driven elsewhere from the start (an ego's stack): never ours.
@@ -533,7 +547,7 @@ class TrafficManagerBackend(TrafficBackend):
         self._released.discard(actor.id)
         if self._started:
             actor.set_autopilot(True, self.port)
-            logger.info("%s: autopilot resumed", _entity_name(entity))
+            logger.info("%s: autopilot resumed", _actor_name(actor))
 
     # ------------------------------------------------------------------
     # Internals
@@ -577,6 +591,14 @@ def _vehicle(actor: "carla.Actor") -> "carla.Vehicle":
         return actor.as_vehicle()
     else:
         return actor
+
+
+def _actor_name(actor: "carla.Actor") -> str:
+    """*actor*'s role name, for the logs; its id when it has none."""
+    attributes = actor.attributes
+    if "role_name" in attributes:
+        return str(attributes["role_name"])
+    return f"actor {actor.id}"
 
 
 def _require_actor(entity: DrivenEntity, what: str) -> Optional["carla.Actor"]:

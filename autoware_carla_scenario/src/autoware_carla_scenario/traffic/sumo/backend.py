@@ -197,10 +197,10 @@ class SumoTrafficBackend(TrafficBackend):
         #: ``id()`` of an entity released while SUMO drove it -> its SUMO id
         #: and the speed and lane-change modes resume() puts back.
         self._handed: dict[int, tuple[str, int, int]] = {}
-        #: id(entity) -> the SUMO id, speed mode and lane-change mode of an
-        #: ambient vehicle released to an adversity (#417); its actor is
-        #: in ``_external`` meanwhile.
-        self._handed_ambient: dict[int, tuple[str, int, int]] = {}
+        #: SUMO id -> the speed and lane-change modes of an ambient vehicle
+        #: released to an adversity (#417); its actor is in ``_external``
+        #: meanwhile.
+        self._handed_ambient: dict[str, tuple[int, int]] = {}
         #: SUMO id -> the speed (m/s) set_desired_speed() last held it at.
         self._commanded: dict[str, float] = {}
         #: SUMO id -> the entity SUMO drives.
@@ -506,9 +506,9 @@ class SumoTrafficBackend(TrafficBackend):
         self._edge_shapes = {}
         self._level_changes = [0, 0]
         handed_ambient = [
-            self._external[handed[0]]
-            for handed in self._handed_ambient.values()
-            if handed[0] in self._external
+            self._external[sumo_id]
+            for sumo_id in self._handed_ambient
+            if sumo_id in self._external
         ]
         for actor in [
             *self._ambient.values(),
@@ -738,8 +738,6 @@ class SumoTrafficBackend(TrafficBackend):
         but as one CARLA drives, like the ego: its pose is pushed in every tick
         rather than pulled out.
         """
-        if self._release_ambient(entity):
-            return
         if self._tm_drives_scenario:
             self._tm.release(entity, world)
             return
@@ -768,8 +766,6 @@ class SumoTrafficBackend(TrafficBackend):
         lane-change modes it had and the speed set_desired_speed() last held
         it at; its pose is pulled out each tick again.
         """
-        if self._resume_ambient(entity):
-            return
         if self._tm_drives_scenario:
             self._tm.resume(entity, world)
             return
@@ -845,49 +841,56 @@ class SumoTrafficBackend(TrafficBackend):
             return False
         return True
 
-    def _release_ambient(self, entity: Any) -> bool:
-        """Take an ambient vehicle's mirror over for CARLA; whether *entity*
-        was one.  It stays in SUMO, published like a released entity, and
-        is no longer followed nor removed by the ambient sync."""
-        role = str(getattr(entity, "role_name", ""))
-        actor = getattr(entity, "actor", None)
-        if actor is None or not role.startswith(_MIRROR_PREFIX):
-            return False
-        sumo_id = role[len(_MIRROR_PREFIX) :]
-        if self._ambient.get(sumo_id) is not actor:
-            return False
-        mirror = self._ambient.pop(sumo_id)
-        self._physics.pop(mirror.id, None)
-        modes = self._hand_over(sumo_id, mirror)
-        if modes is None:
-            modes = (-1, -1)
-        self._handed_ambient[id(entity)] = (sumo_id, modes[0], modes[1])
+    def release_actor(self, world: Any, actor: Any) -> None:
+        """Take an ambient vehicle's mirror over for CARLA (#417).  It stays
+        in SUMO, published like a released entity, and is no longer followed
+        nor removed by the ambient sync."""
+        del world
+        sumo_id = self._ambient_id_of(actor)
+        if sumo_id is None:
+            return
+        self._ambient.pop(sumo_id)
+        self._physics.pop(actor.id, None)
+        modes = self._hand_over(sumo_id, actor)
+        self._handed_ambient[sumo_id] = (-1, -1) if modes is None else modes
         logger.info(
             "SUMO: ambient %s released; it is published from CARLA now", sumo_id
         )
-        return True
 
-    def _resume_ambient(self, entity: Any) -> bool:
-        """Give a released ambient vehicle back to SUMO; whether *entity* was
-        one.  SUMO drives it on from where CARLA has it, with its modes as
-        they were, and the ambient sync follows (or removes) its mirror again."""
-        handed = self._handed_ambient.pop(id(entity), None)
-        if handed is None:
-            return False
-        sumo_id, speed_mode, lane_change_mode = handed
-        actor = getattr(entity, "actor", None)
-        if not self._take_back(sumo_id, (speed_mode, lane_change_mode), -1.0):
+    def resume_actor(self, world: Any, actor: Any) -> None:
+        """Give a released ambient vehicle back to SUMO, which drives it on
+        from where CARLA has it with its modes as they were; the ambient sync
+        follows (or removes) its mirror again."""
+        del world
+        sumo_id = self._mirrored_id(actor)
+        if sumo_id is None or sumo_id not in self._handed_ambient:
+            return
+        modes = self._handed_ambient.pop(sumo_id)
+        if not self._take_back(sumo_id, modes, -1.0):
             # Gone from SUMO while CARLA drove it (its route ended): the
             # mirror has nothing left to follow.
-            if actor is not None:
-                try:
-                    actor.destroy()
-                except RuntimeError:
-                    pass
-            return True
+            try:
+                actor.destroy()
+            except RuntimeError:
+                pass
+            return
         self._ambient[sumo_id] = actor
         logger.info("SUMO: ambient %s resumed; SUMO drives it again", sumo_id)
-        return True
+
+    @staticmethod
+    def _mirrored_id(actor: Any) -> Optional[str]:
+        """The SUMO id a mirror's role name names, if it is one."""
+        role = str(actor.attributes.get("role_name", ""))
+        if not role.startswith(_MIRROR_PREFIX):
+            return None
+        return role[len(_MIRROR_PREFIX) :]
+
+    def _ambient_id_of(self, actor: Any) -> Optional[str]:
+        """*actor*'s SUMO id, if it is an ambient vehicle's mirror now."""
+        sumo_id = self._mirrored_id(actor)
+        if sumo_id is None or self._ambient.get(sumo_id) is not actor:
+            return None
+        return sumo_id
 
     def _publish(self, sumo_id: str, actor: Any) -> None:
         """Have SUMO stop driving *sumo_id*: CARLA's *actor* is pushed into it."""

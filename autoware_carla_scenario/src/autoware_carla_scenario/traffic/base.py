@@ -567,10 +567,16 @@ class TrafficBackend:
     def background_actors(self, world: "carla.World") -> dict[str, "carla.Actor"]:
         """The CARLA actor of every background vehicle this backend drives in
         the world now, by its ``role_name``: what an adversity may take over
-        for a while (:meth:`release` and :meth:`resume` take a
-        :class:`~autoware_carla_scenario.entity.background_vehicle.BackgroundVehicle`
-        of one, #417).  None by default."""
+        for a while, by its actor (:meth:`release_actor`, #417).  None by
+        default."""
         return {}
+
+    def release_actor(self, world: "carla.World", actor: "carla.Actor") -> None:
+        """Stop driving the background vehicle *actor*; the caller drives it
+        now (:meth:`release` for a vehicle no entity stands for)."""
+
+    def resume_actor(self, world: "carla.World", actor: "carla.Actor") -> None:
+        """Drive the background vehicle *actor* again, from where it is now."""
 
     # ------------------------------------------------------------------
     # Internals

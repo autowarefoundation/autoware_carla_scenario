@@ -43,6 +43,7 @@ from autoware_carla_scenario.traffic.traffic_manager import TrafficManagerBacken
 class _Actor:
     def __init__(self, actor_id: int) -> None:
         self.id = actor_id
+        self.attributes: dict = {}
         self.autopilot: List[Tuple[bool, int]] = []
 
     def set_autopilot(self, enabled: bool, port: int) -> None:
@@ -289,19 +290,17 @@ class TestTrafficManagerBackgroundVehicles:
         assert backend.background_actors(_World()) == backend._background
         assert NullTrafficBackend().background_actors(_World()) == {}
 
-    def test_a_wrapped_background_vehicle_comes_off_and_back_on_autopilot(self) -> None:
-        from autoware_carla_scenario.entity.background_vehicle import BackgroundVehicle
-
+    def test_a_background_vehicle_comes_off_and_back_on_autopilot(self) -> None:
         npc = _Actor(2)
+        npc.attributes = {"role_name": "background1"}
         backend = TrafficManagerBackend(
             TrafficManagerBackendConfig(port=8123), client=_Client()
         )
         backend.start(_World([npc]))
-        vehicle = BackgroundVehicle("background1", npc, backend)  # type: ignore[arg-type]
-        assert vehicle.use_autopilot and vehicle.role_name == "background1"
-        vehicle.release_from_traffic(_World())
-        vehicle.resume_traffic(_World())
+        backend.release_actor(_World(), npc)  # type: ignore[arg-type]
+        backend.resume_actor(_World(), npc)  # type: ignore[arg-type]
         assert npc.autopilot == [(True, 8123), (False, 8123), (True, 8123)]
+        assert NullTrafficBackend().release_actor(_World(), npc) is None  # type: ignore[arg-type,func-returns-value]
 
 
 @pytest.mark.parametrize(

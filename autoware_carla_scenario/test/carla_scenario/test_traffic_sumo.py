@@ -592,8 +592,6 @@ def test_an_ambient_vehicle_can_be_taken_over_and_handed_back(
     """An adversity takes an ambient vehicle's mirror over (#417): SUMO stops
     following it, keeps it published from CARLA, and drives it again once
     handed back."""
-    from autoware_carla_scenario.entity.background_vehicle import BackgroundVehicle
-
     backend, world, _npc, _ego = _prepared(
         crossroads, tmp_path, period_s=1.0, max_vehicles=3
     )
@@ -604,8 +602,7 @@ def test_an_ambient_vehicle_can_be_taken_over_and_handed_back(
         assert offered and all(name.startswith("sumo:") for name in offered)
         name, actor = next(iter(offered.items()))
         sumo_id = name[len("sumo:") :]
-        vehicle = BackgroundVehicle(name, actor, backend)
-        vehicle.release_from_traffic(world)
+        backend.release_actor(world, actor)
         assert sumo_id not in backend._ambient and backend._external[sumo_id] is actor
         assert name not in backend.background_actors(world)
         held = actor.transform.location.x
@@ -614,10 +611,10 @@ def test_an_ambient_vehicle_can_be_taken_over_and_handed_back(
         # Neither followed nor removed: the pose it has is CARLA's own.
         assert not actor.destroyed
         assert actor.transform.location.x == pytest.approx(held)
-        vehicle.resume_traffic(world)
+        backend.resume_actor(world, actor)
         assert sumo_id not in backend._external
         assert backend._ambient.get(sumo_id) is actor
-        vehicle.resume_traffic(world)  # and saying it twice is harmless
+        backend.resume_actor(world, actor)  # and saying it twice is harmless
     finally:
         backend.close()
     assert actor.destroyed
@@ -627,16 +624,14 @@ def test_an_ambient_vehicle_can_be_taken_over_and_handed_back(
 def test_a_taken_over_ambient_vehicle_is_cleaned_up_at_close(
     crossroads: Path, tmp_path: Path
 ) -> None:
-    from autoware_carla_scenario.entity.background_vehicle import BackgroundVehicle
-
     backend, world, _npc, _ego = _prepared(
         crossroads, tmp_path, period_s=1.0, max_vehicles=3
     )
     try:
         for i in range(200):
             backend.tick(world, i * 0.05)
-        name, actor = next(iter(backend.background_actors(world).items()))
-        BackgroundVehicle(name, actor, backend).release_from_traffic(world)
+        _name, actor = next(iter(backend.background_actors(world).items()))
+        backend.release_actor(world, actor)
     finally:
         backend.close()
     assert actor.destroyed and backend._handed_ambient == {}
