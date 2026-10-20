@@ -2128,7 +2128,11 @@ scenario anyone wrote.</p>
 trajectory: the last vertex's time with a timing, the end of the path without
 one (never, for a closed trajectory), within <code>ARRIVAL_TOLERANCE_M</code> (1 m) of it
 in <code>FOLLOW</code> mode. Then a vehicle is braked to a stop and a walker stood still
-where the trajectory ended. Pass <code>until=</code> to end it on a condition of your own.</p>
+where the trajectory ended. Pass <code>until=</code> to end it on a condition of your own.
+<code>stop_at_end=False</code> (an extension) leaves a vehicle moving as it arrived instead
+-- in <code>POSITION</code> mode with the last segment's velocity -- for an action that
+hands it straight back to traffic, as the adversarial actions do
+(<code>resume_traffic</code>).</p>
 <p><code>hidden_outside_trajectory=True</code> (an extension, <code>POSITION</code> mode with a timing
 only) keeps the entity out of the world -- parked under the map with its physics
 off -- before its first vertex's time and after its last. That is what a road
@@ -2414,7 +2418,7 @@ the same projector.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 17, 2026 04:26:35 UTC"><span class="timeago" datetime="2026-10-17T04:26:35+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 17, 2026 04:26:35 UTC">2026-10-17</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 20, 2026 06:06:44 UTC"><span class="timeago" datetime="2026-10-20T06:06:44+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 20, 2026 06:06:44 UTC">2026-10-20</span>
   </span>
 
     
