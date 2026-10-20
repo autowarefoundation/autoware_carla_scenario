@@ -83,13 +83,12 @@ class CompilationError(Exception):
 
 def _coerce_one(spec: FieldSpec, value: Any) -> Any:
     """Return *value* converted to the type *spec* describes."""
-    if spec.kind == "record_list":
-        # Never None: a builder maps over the records, and no records is a
-        # list with none in it.
-        rows = value if value not in (None, "") else spec.default
-        return [coerce_params(spec.item_fields, dict(row)) for row in rows or ()]
     if value is None or (isinstance(value, str) and not value.strip()):
-        return spec.default
+        # The default stands in for the value and is coerced as one would be,
+        # so a record list's default tuple reaches the builder as a list.
+        if spec.default is None or spec.default == "":
+            return spec.default
+        value = spec.default
 
     if spec.kind in INT_KINDS:
         return int(str(value).strip())
@@ -112,6 +111,8 @@ def _coerce_one(spec: FieldSpec, value: Any) -> Any:
         return [list(row) for row in parse_relative_vertices(value)]
     if spec.kind == "route_trajectory":
         return parse_route_vertices(value)
+    if spec.kind == "record_list":
+        return [coerce_params(spec.item_fields, row) for row in value]
     return value
 
 

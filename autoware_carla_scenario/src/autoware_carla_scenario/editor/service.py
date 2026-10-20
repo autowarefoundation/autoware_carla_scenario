@@ -64,7 +64,7 @@ from ..maps import (
     resolve_map,
 )
 from ..authoring.validator import ValidationReport, validate_document
-from .forms import RECORD_ROWS, parse_params
+from .forms import field_present, parse_params
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -1333,13 +1333,7 @@ def _parse(fields: Any, form: Mapping[str, Any], prefix: str = "") -> dict[str, 
         }
     else:
         stripped = dict(form)
-    present = [
-        f
-        for f in fields
-        if f.name in stripped
-        or f.kind == "bool"
-        or f"{f.name}.{RECORD_ROWS}" in stripped
-    ]
+    present = [f for f in fields if field_present(f, stripped)]
     try:
         return parse_params(present, stripped)
     except ValueError as exc:

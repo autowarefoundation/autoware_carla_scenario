@@ -557,8 +557,6 @@ def _record_builds(
         item_parameters = {p.name: p for p in _parameters(item_cls, localns)}
         pieces: list[tuple[str, str]] = []
         for item in field.item_fields:
-            if item.kind == "record_list":
-                raise GenerationError(f"{item_where}: records do not nest")
             item_parameter = item_parameters.get(item.name)
             if item_parameter is None:
                 raise GenerationError(

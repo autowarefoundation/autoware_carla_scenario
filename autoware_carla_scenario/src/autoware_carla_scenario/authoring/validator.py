@@ -164,21 +164,9 @@ def _check_field(
     """Validate one parameter against its :class:`FieldSpec`."""
     value = params.get(spec.name, spec.default)
 
-    if spec.kind == "record_list":
-        # Required means at least one record: no records is a list, not a
-        # blank, and an empty one is what an unset field holds.
-        rows = [] if value is None else value
-        if spec.required and isinstance(rows, (list, tuple)) and not rows:
-            out.error(
-                f"{path}.{spec.name}",
-                f"{spec.label} needs at least one entry.",
-                object_id,
-            )
-            return
-        _check_records(out, f"{path}.{spec.name}", spec, rows, refs, object_id)
-        return
-
-    if _is_blank(value):
+    # A record list with no records is blank too: an empty list is what an
+    # unset one holds, so a required one needs a record.
+    if _is_blank(value) or (spec.kind == "record_list" and value in ([], ())):
         if spec.required:
             out.error(f"{path}.{spec.name}", f"{spec.label} is required.", object_id)
         return
@@ -239,6 +227,8 @@ def _check_field(
             parse_route_vertices(value)
         except ValueError as exc:
             out.error(f"{path}.{spec.name}", f"{spec.label}: {exc}.", object_id)
+    elif spec.kind == "record_list":
+        _check_records(out, f"{path}.{spec.name}", spec, value, refs, object_id)
     elif spec.kind == "int_list_or_ref":
         if value != MAP_EXCLUSION_REF and not _is_int_list(value):
             out.error(

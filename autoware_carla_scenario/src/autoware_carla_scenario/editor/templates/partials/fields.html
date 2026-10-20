@@ -121,7 +121,7 @@
        form holds, and each row button is a submit whose name and value say
        what to do -- so adding, removing and reordering go through the
        inspector form's own post, with the rest of the form, and need no
-       route of their own. #}
+       route of their own.  `editor/forms.py` parses the names written here. #}
     {%- set rows = current or [] -%}
     <input type="hidden" name="{{ name }}.__rows" value="{{ rows|length }}">
     <div class="ed-records">
@@ -139,17 +139,7 @@
             <button type="submit" class="ed-btn-xs" name="{{ name }}.__op"
                     value="delete:{{ loop.index0 }}" title="Remove">{{ ic.icon('trash', 12) }}</button>
           </legend>
-          {% for item in spec.item_fields %}
-            <div class="ed-field">
-              {% if item.kind != 'bool' %}
-                <label class="ed-label">
-                  {{ item.label }}{% if item.unit %} <span class="unit">({{ item.unit }})</span>{% endif %}
-                </label>
-              {% endif %}
-              {{ control(item, row.get(item.name), document, row_prefix, draft, row) }}
-              {% if item.help and item.kind != 'bool' %}<p class="ed-help">{{ item.help }}</p>{% endif %}
-            </div>
-          {% endfor %}
+          {{ fields(spec.item_fields, row, document, row_prefix, draft) }}
         </fieldset>
       {% endfor %}
       <button type="submit" class="ed-btn-sm" name="{{ name }}.__op" value="add">

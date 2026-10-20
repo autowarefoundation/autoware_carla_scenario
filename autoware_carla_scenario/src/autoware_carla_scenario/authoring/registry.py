@@ -24,6 +24,7 @@ the editor process, which never talks to a simulator.
 
 from __future__ import annotations
 
+import copy
 import re
 
 # Free to import: `action_state` holds nothing but the enum, which is why it
@@ -817,16 +818,10 @@ def get_binding_spec(type_id: str) -> Optional[BindingSpec]:
 def default_params(fields: "tuple[FieldSpec, ...]") -> dict[str, Any]:
     """Return a fresh params mapping seeded with each field's default.
 
-    A ``record_list``'s records are copied, so no two nodes share one.
+    Copied, so no two nodes share a default list -- or a record list's
+    records -- that one of them then edits in place.
     """
-    return {
-        f.name: (
-            [dict(row) for row in f.default or ()]
-            if f.kind == "record_list"
-            else f.default
-        )
-        for f in fields
-    }
+    return {f.name: copy.deepcopy(f.default) for f in fields}
 
 
 def searchable_lanelet_fields(

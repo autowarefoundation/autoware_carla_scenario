@@ -235,12 +235,6 @@ class TestRecordListFields:
                             offenders.append(
                                 f"{spec.type_id}.{field_spec.name}.{item.name}"
                             )
-                        allowed = {o.value for o in item.options}
-                        if item.kind == "select" and item.default not in allowed:
-                            offenders.append(
-                                f"{spec.type_id}.{field_spec.name}.{item.name}: "
-                                "default"
-                            )
         assert not offenders
 
 
@@ -253,7 +247,9 @@ class TestSelectFieldDefaults:
             registry.binding_specs(),
         ):
             for spec in specs:
-                for field_spec in spec.fields:
+                # A record list's fields too: each record is a form of its own.
+                record_fields = [item for f in spec.fields for item in f.item_fields]
+                for field_spec in (*spec.fields, *record_fields):
                     if field_spec.kind != "select":
                         continue
                     if field_spec.default is None and field_spec.required:

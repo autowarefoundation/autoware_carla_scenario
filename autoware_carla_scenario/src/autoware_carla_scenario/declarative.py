@@ -25,6 +25,7 @@ from .authoring.builders import instantiate_action, instantiate_condition
 from .authoring.compiler import BuildContext, CompiledScenario, compile_document
 from .authoring.models import Entity, ScenarioDocument
 from .authoring.persistence import load_document
+from .authoring.registry import get_action_spec, get_condition_spec
 from .actions.base import TickTiming
 from .conditions import TimeoutCondition
 from .signals import (
@@ -199,11 +200,19 @@ class DeclarativeScenario(BaseScenario):
                     "param_overrides names unknown node %r; ignoring.", node_id
                 )
                 continue
+            spec = get_action_spec(node.type) or get_condition_spec(node.type)
+            records = {
+                f.name for f in (spec.fields if spec else ()) if f.kind == "record_list"
+            }
             for name, value in override.items():
                 if value is None:
                     continue
                 current = node.params.get(str(name))
-                if isinstance(current, list) and isinstance(value, Mapping):
+                if (
+                    str(name) in records
+                    and isinstance(current, list)
+                    and isinstance(value, Mapping)
+                ):
                     _merge_records(str(node_id), str(name), current, value)
                 else:
                     node.params[str(name)] = value
@@ -622,10 +631,7 @@ def _merge_records(
     there are.
     """
     for key, fields in override.items():
-        try:
-            index = int(key)
-        except (TypeError, ValueError):
-            index = -1
+        index = int(key) if str(key).isdigit() else -1
         if not 0 <= index < len(records) or not isinstance(records[index], dict):
             logger.warning(
                 "param_overrides names no record %r of %s.%s; ignoring.",

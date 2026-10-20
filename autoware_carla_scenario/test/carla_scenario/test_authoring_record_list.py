@@ -83,7 +83,7 @@ def test_a_default_list_is_not_shared() -> None:
     )
     first, second = default_params((spec,)), default_params((spec,))
     first["rows"][0]["probability"] = 0.9
-    assert second["rows"] == [{"probability": 0.1}]
+    assert second["rows"][0] == {"probability": 0.1}
 
 
 # -- validation -------------------------------------------------------------------
@@ -132,9 +132,7 @@ def test_each_record_is_validated_by_its_fields() -> None:
 
 
 def test_a_required_list_needs_an_entry_and_an_optional_one_does_not() -> None:
-    assert _issues([]) == [
-        ("error", "nade.adversities", "Adversities needs at least one entry.")
-    ]
+    assert _issues([]) == [("error", "nade.adversities", "Adversities is required.")]
     assert _issues(None, required=False) == []
 
 
@@ -313,6 +311,12 @@ def test_a_form_without_the_rows_keeps_the_default() -> None:
 def test_a_malformed_row_button_is_refused(op: str) -> None:
     with pytest.raises(ValueError):
         parse_params((ROWS,), {"adversities.__rows": "1", "adversities.__op": op})
+
+
+@pytest.mark.parametrize("rows", ["-1", "1001", "many"])
+def test_a_forged_row_count_is_refused(rows: str) -> None:
+    with pytest.raises(ValueError):
+        parse_params((ROWS,), {"adversities.__rows": rows})
 
 
 def test_a_row_that_does_not_parse_says_which() -> None:

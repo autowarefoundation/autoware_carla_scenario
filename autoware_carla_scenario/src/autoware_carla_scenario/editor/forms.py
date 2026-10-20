@@ -25,8 +25,7 @@ from ..authoring.registry import (
 )
 
 __all__ = [
-    "RECORD_OP",
-    "RECORD_ROWS",
+    "field_present",
     "parse_int_list",
     "parse_params",
     "parse_records",
@@ -37,9 +36,13 @@ __all__ = [
 #: with ``<field>.__rows`` saying how many records the form holds -- so an
 #: empty list, and a record whose checkboxes are all clear, still parse -- and
 #: ``<field>.__op`` naming the row button pressed: ``add``, or ``delete``,
-#: ``up`` or ``down`` with ``:<i>``.
-RECORD_ROWS = "__rows"
-RECORD_OP = "__op"
+#: ``up`` or ``down`` with ``:<i>`` (``partials/fields.html`` writes them).
+_ROWS = "__rows"
+_OP = "__op"
+
+#: More records than any list is written with, so a forged row count is
+#: refused rather than looped over.
+_MAX_RECORDS = 1000
 
 #: Separators accepted in a list-of-integers field: commas, spaces, newlines.
 _LIST_SEPARATORS = re.compile(r"[,\s]+")
@@ -108,21 +111,31 @@ def parse_params(
     """
     params: dict[str, Any] = {}
     for spec in fields:
-        if spec.kind == "record_list":
-            if f"{spec.name}.{RECORD_ROWS}" in form:
-                params[spec.name] = parse_records(spec, form)
-            else:
-                params[spec.name] = spec.default
-            continue
-        present = spec.name in form
-        if not present and spec.kind != "bool":
+        if not field_present(spec, form):
             params[spec.name] = spec.default
             continue
+        if spec.kind == "record_list":
+            params[spec.name] = parse_records(spec, form)
+            continue
+        present = spec.name in form
         try:
             params[spec.name] = parse_value(spec, form.get(spec.name), present=present)
         except ValueError as exc:
             raise ValueError(f"{spec.label}: {exc}") from exc
     return params
+
+
+def field_present(spec: FieldSpec, form: Mapping[str, Any]) -> bool:
+    """Whether *form* posts *spec*'s field at all.
+
+    A checkbox always counts -- an unchecked one posts nothing, and absence is
+    its value -- and a ``record_list`` counts when it posts its row count.
+    """
+    if spec.kind == "bool":
+        return True
+    if spec.kind == "record_list":
+        return f"{spec.name}.{_ROWS}" in form
+    return spec.name in form
 
 
 def parse_records(spec: FieldSpec, form: Mapping[str, Any]) -> list[dict[str, Any]]:
@@ -133,20 +146,25 @@ def parse_records(spec: FieldSpec, form: Mapping[str, Any]) -> list[dict[str, An
         ValueError: If a record's field cannot be parsed, or the row count or
             the button is malformed.
     """
-    count = int(str(form[f"{spec.name}.{RECORD_ROWS}"]))
+    count = int(str(form[f"{spec.name}.{_ROWS}"]))
+    if not 0 <= count <= _MAX_RECORDS:
+        raise ValueError(f"{count} rows")
+    # Each row's fields, by row, in one pass over the form.
+    posted: list[dict[str, Any]] = [{} for _ in range(count)]
+    prefix = f"{spec.name}."
+    for key, value in form.items():
+        if not key.startswith(prefix):
+            continue
+        slot, _, sub = key[len(prefix) :].partition(".")
+        if sub and slot.isdigit() and int(slot) < count:
+            posted[int(slot)][sub] = value
     rows: list[dict[str, Any]] = []
-    for index in range(count):
-        prefix = f"{spec.name}.{index}."
-        posted = {
-            key[len(prefix) :]: value
-            for key, value in form.items()
-            if key.startswith(prefix)
-        }
+    for index, row in enumerate(posted):
         try:
-            rows.append(parse_params(spec.item_fields, posted))
+            rows.append(parse_params(spec.item_fields, row))
         except ValueError as exc:
             raise ValueError(f"row {index + 1}: {exc}") from exc
-    op = str(form.get(f"{spec.name}.{RECORD_OP}") or "")
+    op = str(form.get(f"{spec.name}.{_OP}") or "")
     if op:
         _apply_row_op(spec, rows, op)
     return rows
