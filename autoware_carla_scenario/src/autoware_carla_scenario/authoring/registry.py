@@ -24,6 +24,7 @@ the editor process, which never talks to a simulator.
 
 from __future__ import annotations
 
+import copy
 import re
 
 # Free to import: `action_state` holds nothing but the enum, which is why it
@@ -37,6 +38,7 @@ from ..action_state import ActionState
 # is read, so the Metric card's options are the metrics themselves.
 from ..metrics import BUILT_IN_METRICS
 from dataclasses import dataclass
+from collections.abc import Iterator
 from typing import Any, Literal, Optional
 
 __all__ = [
@@ -55,6 +57,7 @@ __all__ = [
     "SEARCHABLE_LANELET_KINDS",
     "searchable_lanelet_fields",
     "FieldSpec",
+    "field_holders",
     "ConditionVisual",
     "REFERENCE_PATTERN",
     "SelectOption",
@@ -124,6 +127,12 @@ FieldKind = Literal[
     # :func:`autoware_carla_scenario.trajectory.authoring.parse_route_vertices`).
     # Edited as text, ``kind key=value ...`` per line.
     "route_trajectory",
+    # An ordered list of records, each a mapping of its own typed fields
+    # (:attr:`FieldSpec.item_fields`), edited as rows that can be added,
+    # removed and reordered.  For a list whose order means something and whose
+    # entries repeat -- NADE's adversities, the first to fire winning -- which
+    # one field per entry cannot say.
+    "record_list",
 ]
 
 #: Field kinds that hold one whole number, and those that hold a list of them.
@@ -199,6 +208,8 @@ class FieldSpec:
         place: For a lanelet field, what kind of place it names -- see
             :data:`LaneletPlace`.  Read by the editor's map, which draws a
             destination differently from a place merely watched.
+        item_fields: For a ``record_list`` field, the fields of each record,
+            checked and coerced as a primitive's own are.
     """
 
     name: str
@@ -210,6 +221,7 @@ class FieldSpec:
     help: str = ""
     required: bool = True
     place: LaneletPlace = "watched"
+    item_fields: tuple["FieldSpec", ...] = ()
 
 
 @dataclass(frozen=True)
@@ -383,6 +395,25 @@ class ActionSpec:
     def actor_required(self) -> bool:
         """Whether this action needs a vehicle to perform it."""
         return self.scope == "actor"
+
+
+def field_holders(
+    fields: "tuple[FieldSpec, ...]", params: "dict[str, Any]"
+) -> "Iterator[tuple[FieldSpec, dict[str, Any]]]":
+    """Yield every field of *fields* with the mapping that holds its value.
+
+    A ``record_list`` field is not yielded itself: each of its records yields
+    its own fields, with the record as the holder.  For whatever looks for a
+    kind of field -- entity references, action references -- so a reference
+    written in a record is found as one written at the top level is.
+    """
+    for spec in fields:
+        if spec.kind == "record_list":
+            for row in params.get(spec.name) or ():
+                if isinstance(row, dict):
+                    yield from field_holders(spec.item_fields, row)
+        else:
+            yield spec, params
 
 
 @dataclass(frozen=True)
@@ -785,8 +816,12 @@ def get_binding_spec(type_id: str) -> Optional[BindingSpec]:
 
 
 def default_params(fields: "tuple[FieldSpec, ...]") -> dict[str, Any]:
-    """Return a fresh params mapping seeded with each field's default."""
-    return {f.name: f.default for f in fields}
+    """Return a fresh params mapping seeded with each field's default.
+
+    Copied, so no two nodes share a default list -- or a record list's
+    records -- that one of them then edits in place.
+    """
+    return {f.name: copy.deepcopy(f.default) for f in fields}
 
 
 def searchable_lanelet_fields(
