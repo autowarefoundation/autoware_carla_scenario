@@ -2754,6 +2754,12 @@ make it a bound too, refer to it from a root, or name it in <code>roots</code>.<
 planned route is checked before a run
 (<a href="#checking-a-planned-route">Checking a planned route</a>) and how a sweep picks
 the road a drawn case is on (<a href="#the-road-a-case-is-on">The road a case is on</a>).</p>
+<p>What they read off a lanelet is public too, for code that has to judge a
+lanelet exactly as the ODD does: <code>lanelet_in_junction(lanelet)</code> (a
+<code>turn_direction</code> tag, <code>scenery.junction</code>), <code>lanelet_road_type(lanelet)</code> (the
+<code>subtype</code> tag, <code>scenery.road_type</code>) and <code>lanelet_speed_limit(lanelet)</code> (the
+<code>speed_limit</code> tag, km/h). The adversities' location gate reads them
+(<code>autoware_carla_scenario.adversity.location</code>).</p>
 <p>Import them from <code>autoware_carla_scenario.odd</code> itself
 (<code>from autoware_carla_scenario.odd import rain</code>). The Codon model that checks
 an ODD has no <code>probes</code> submodule.</p>
@@ -3957,7 +3963,7 @@ target.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 19, 2026 22:07:47 UTC"><span class="timeago" datetime="2026-10-19T22:07:47+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 19, 2026 22:07:47 UTC">2026-10-19</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 20, 2026 03:56:09 UTC"><span class="timeago" datetime="2026-10-20T03:56:09+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 20, 2026 03:56:09 UTC">2026-10-20</span>
   </span>
 
     
