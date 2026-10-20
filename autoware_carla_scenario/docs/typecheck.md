@@ -1191,7 +1191,7 @@ the check needs the other spelling.
 | You write | Codon says | Write instead |
 | --- | --- | --- |
 | `case int(n):`, `case Pt(x=x, y=y):`, `case Pt(a, b):` (a class pattern with arguments), or `case Pt():` of a class of your own | `name 'n' is not defined`, or it reads the pattern as a call of `Pt` (`__init__() missing 1 required positional argument`) | `if isinstance(v, Pt):`, then read the attributes (`v.x`, `v.y`); `case int():`, `case str():` and the other builtin types compile |
-| `case {"k": v}:`, `case {"k": _}:`, `case {**rest}:` | `name 'v' is not defined` | `if "k" in d:` and read `d["k"]`; a mapping pattern of literal values (`case {"k": 1}:`) compiles |
+| `case {"k": v}:`, `case {"k": _}:`, `case {**rest}:` (any name or `_` inside the mapping) | `name 'v' is not defined` | `if "k" in d:` and read `d["k"]`; a mapping pattern whose values are literals, values or or-patterns (`case {"k": 1 \| 2}:`) compiles |
 | `case [a, *rest]:`, `case [*_]:` | `unexpected star expression` | a fixed length (`case [a, b]:`), or test `len(xs)` and slice |
 | `case [a, b] as whole:` | `unexpected indentation` | match without `as` and use the name the subject already has |
 | `def show(h: HasArea)` called with a class that has `area()` but does not derive from the `Protocol` `HasArea` | `'Sq[float]' does not match expected type 'HasArea'` (also `List[Sq]` against `List[HasArea]`) | derive from it (`class Sq(HasArea):`), give the classes a common base class, or annotate `Union[Sq, Circle]`; Codon lists are invariant: annotate a list with the class it holds (`list[Sq]`) |

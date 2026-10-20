@@ -938,6 +938,10 @@ def _python_class(name: str, sources: _Sources) -> type | None:
 _EXPECTED_TYPE = re.compile(
     r"^'(?P<cls>\w+)' does not match expected type '(?P<want>str|int|float)'"
 )
+_PROTOCOL_EXPECTED = re.compile(
+    r"^'[^']+' does not match expected type "
+    r"'(?:(?:List|Set|Optional)\[)*(?P<cls>[A-Za-z_]\w*)"
+)
 _OPERAND = re.compile(
     r"^unsupported operand type\(s\) for (?P<op>[^:]+): '(?P<cls>\w+)' and"
 )
@@ -992,6 +996,17 @@ def _data_model_hint(
                 f"an {cls.__name__} member is not a {expected['want']} in the "
                 f"check (only its comparisons and int() are modelled): pass "
                 f"its .value"
+            )
+    wanted = _PROTOCOL_EXPECTED.match(message)
+    if wanted is not None:
+        cls = _python_class(wanted["cls"], sources)
+        if cls is not None and getattr(cls, "_is_protocol", False):
+            return (
+                f"{cls.__name__} is a typing.Protocol, which Codon matches by "
+                f"class name, not by shape: derive from it (class Sq("
+                f"{cls.__name__})), give the classes a common base class, or "
+                f"annotate a Union of the classes (a list is invariant: "
+                f"annotate it with the class it holds)"
             )
     operand = _OPERAND.match(message)
     if operand is not None:

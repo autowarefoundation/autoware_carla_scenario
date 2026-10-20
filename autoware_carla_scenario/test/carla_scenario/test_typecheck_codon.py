@@ -5193,10 +5193,20 @@ def two(a: int, b: int) -> int:
         (_POINT, "x = Pt(1, 2)", "Pt(x=a, y=b)", "isinstance(v, Pt)"),
         ("", 'x = {"k": 1}', '{"k": v}', "test `'k' in d`"),
         ("", 'x = {"k": 1}', "{**r}", "test `'k' in d`"),
+        ("", 'x = {"k": [1, 2]}', '{"k": [1, b]}', "test `'k' in d`"),
         ("", "x = [1, 2]", "[a, *rest]", "test len(xs)"),
         ("", "x = [1, 2]", "[a, b] as whole", "match the subject unnamed"),
     ],
-    ids=["class", "own-class", "dataclass", "mapping", "mapping-rest", "star", "as"],
+    ids=[
+        "class",
+        "own-class",
+        "dataclass",
+        "mapping",
+        "mapping-rest",
+        "mapping-nested",
+        "star",
+        "as",
+    ],
 )
 def test_a_match_pattern_codon_cannot_bind_is_refused_with_a_hint(
     tmp_path: Path, definitions: str, subject: str, pattern: str, hint: str
@@ -5230,6 +5240,13 @@ def test_the_match_patterns_codon_compiles_still_compile(tmp_path: Path) -> None
         match d:
             case {"k": 1}:
                 logger.info("%s", "one")
+            case _:
+                pass
+        match d:
+            case {"k": 1 | 2}:
+                logger.info("%s", "one or two")
+            case {"k": [1, 2]}:
+                logger.info("%s", "pair")
             case _:
                 pass
         match pair:
@@ -5273,8 +5290,8 @@ def test_isinstance_and_attribute_reads_replace_a_capture_pattern(
 @pytest.mark.parametrize(
     ("call", "hint"),
     [
-        ("show(Sq(1.0))", "derive from the Protocol"),
-        ("total([Sq(1.0)])", "derive from the Protocol"),
+        ("show(Sq(1.0))", "is a typing.Protocol"),
+        ("total([Sq(1.0)])", "is a typing.Protocol"),
         ("two(*[1, 2])", "pass the elements"),
         ('two(**{"a": 1, "b": 2})', "pass the keywords"),
     ],
@@ -5307,3 +5324,26 @@ def test_the_documented_protocol_and_unpacking_spellings_compile(
     scenario, config, _ = _data_case(tmp_path, _PROTOCOL, setup)
     result = typecheck_scenario(scenario, config)
     assert result.ok, result.format()
+
+
+def test_a_class_mismatch_that_is_no_protocol_gets_no_protocol_hint(
+    tmp_path: Path,
+) -> None:
+    definitions = (
+        _PROTOCOL
+        + """
+
+class Other:
+    pass
+
+
+def take(o: Other) -> int:
+    return 1
+"""
+    )
+    scenario, config, _ = _data_case(
+        tmp_path, definitions, 'logger.info("%d", take(Sq(1.0)))\n'
+    )
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "does not match expected type" in error.message, error.format()
+    assert "Protocol" not in error.message, error.format()

@@ -31,8 +31,9 @@ so a rewrite has to keep the *types*, not the values, of what it replaces.
 
 Refused with a hint, as no cheap faithful rewrite exists (#379): a ``match``
 class, mapping (with a value pattern or ``**rest``), star or ``as`` pattern;
-and Codon's own refusals of ``f(*list)`` / ``f(**dict)`` and of a class passed
-where a ``Protocol`` is expected.
+and Codon's own refusals of ``f(*list)`` / ``f(**dict)``.  (A class passed
+where a ``Protocol`` is expected is hinted in ``check.py``, which knows the
+scenario's classes.)
 """
 
 from __future__ import annotations
@@ -77,19 +78,6 @@ REWRITE_HINTS: tuple[tuple[re.Pattern[str], str], ...] = (
         re.compile(r"argument after \*\* must be a named tuple, not 'Dict\["),
         "Codon unpacks only a named tuple with **: pass the keywords "
         "(f(a=d['a'], b=d['b'])), or take the dict as a parameter",
-    ),
-    (
-        # Only a Protocol (or any class) can be expected where a class is
-        # not what the argument derives from; a builtin's name is lowercase.
-        re.compile(
-            r"'[^']+' does not match expected type "
-            r"'(?:(?:List|Set|Optional)\[)*"
-            r"(?!(?:List|Dict|Set|Tuple|Optional|Callable|Generator)\b)[A-Z]\w*"
-        ),
-        "if the expected type is a typing.Protocol, Codon matches classes by "
-        "name, not by shape: derive from the Protocol (class Sq(HasArea)), "
-        "give both a common base class, or annotate a Union of the classes (a "
-        "list is invariant: annotate it with the class it holds)",
     ),
 )
 
@@ -147,8 +135,9 @@ def _match_refusal(pattern: ast.AST) -> str | None:
     if isinstance(pattern, ast.MatchMapping) and (
         pattern.rest is not None
         or any(
-            not isinstance(p, (ast.MatchValue, ast.MatchSingleton))
-            for p in pattern.patterns
+            isinstance(sub, ast.MatchAs)
+            for value in pattern.patterns
+            for sub in ast.walk(value)
         )
     ):
         return (
