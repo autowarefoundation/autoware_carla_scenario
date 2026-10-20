@@ -83,8 +83,7 @@ def test_the_victims_are_those_whose_normal_future_it_conflicts_with() -> None:
 
 def test_a_victim_that_can_brake_out_of_it_makes_it_avoidable() -> None:
     adversary = _line(0.0, 0.0)
-    far = [PredictedState(-20.0, 0.0, 0.0, 0.0, 0.5 * i) for i in range(11)]
-    near = [PredictedState(-7.0, 0.0, 0.0, 0.0, 0.5 * i) for i in range(11)]
+    far, near = _line(-20.0, 0.0), _line(-7.0, 0.0)
     assert avoidable(adversary, CAR, {"v": far}, {"v": CAR})
     # 7 m apart: clear of each other, but not of the 0.5 m buffer.
     assert not avoidable(adversary, CAR, {"v": near}, {"v": CAR})
@@ -130,7 +129,7 @@ def test_an_ego_that_can_brake_in_time_keeps_p(features: MapFeatures) -> None:
     sampler = ImportanceSampler(settings=ALWAYS)
     choice = _step(sampler, scene, "npc1")
     assert choice is not None and choice.avoidable
-    assert choice.victims == [] and choice.response == ""  # the ego's only
+    assert choice.responses == []  # the ego's only, which drives itself
     assert sampler.weight == pytest.approx(0.01)
 
 
@@ -157,6 +156,9 @@ def test_npc_victims_respond_when_npcs_are_challenged(features: MapFeatures) -> 
     )
     choice = _step(npcs, scene, "npc1", "npc2")
     assert choice is not None and choice.name == "npc1"
-    assert choice.victims == ["npc2"] and choice.response in (AVOID, ACCEPT)
-    factor = 0.99 / 0.2 if choice.response == AVOID else 0.01 / 0.8
+    ((victim, response),) = choice.responses
+    assert victim == "npc2"
+    avoided = response == avoid_command(9.0)
+    assert avoided or response == accept_command()
+    factor = 0.99 / 0.2 if avoided else 0.01 / 0.8
     assert npcs.weight == pytest.approx(0.01 * factor)

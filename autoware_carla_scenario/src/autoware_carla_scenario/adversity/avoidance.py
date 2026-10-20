@@ -106,15 +106,16 @@ def accept_command(
 def victims(
     future: list[PredictedState],
     footprint: AgentFootprint,
-    normal_futures: dict[str, list[PredictedState]],
+    futures: dict[str, list[PredictedState]],
     footprints: dict[str, AgentFootprint],
+    buffer: float = 0.0,
 ) -> list[str]:
-    """The agents of *normal_futures* the adversarial *future* conflicts with,
-    in the order given."""
+    """The agents of *futures* the adversarial *future* conflicts with, in
+    the order given; each further apart by *buffer* (m)."""
     return [
         name
-        for name, normal in normal_futures.items()
-        if trajectories_intersect(future, footprint, normal, footprints[name])
+        for name, other in futures.items()
+        if trajectories_intersect(future, footprint, other, footprints[name], buffer)
     ]
 
 
@@ -126,12 +127,7 @@ def avoidable(
     settings: AvoidanceSettings = DEFAULT_AVOIDANCE,
 ) -> bool:
     """Whether every victim can brake out of the adversarial *future*."""
-    for name, avoid in avoid_futures.items():
-        if trajectories_intersect(
-            future, footprint, avoid, footprints[name], settings.buffer
-        ):
-            return False
-    return True
+    return not victims(future, footprint, avoid_futures, footprints, settings.buffer)
 
 
 def respond(

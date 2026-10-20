@@ -200,7 +200,7 @@ def test_an_npc_victim_s_response_is_driven_too() -> None:
     action.tick(world, 0.0)
     assert [run.name for run in made] == ["npc1", "npc2"]
     (choice,) = action.choices
-    assert choice.victims == ["npc2"]
+    assert [victim for victim, _ in choice.responses] == ["npc2"]
     # One adversity at a time: both are driven to their end before the next.
     for t in range(1, 4):
         action.tick(world, 0.1 * t)

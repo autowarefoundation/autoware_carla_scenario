@@ -46,13 +46,16 @@ from dataclasses import dataclass
 from typing import Optional
 
 from .avoidance import (
+    AVOID,
     DEFAULT_AVOIDANCE,
     AvoidanceSettings,
+    accept_command,
     avoid_command,
     avoidable,
     respond,
     victims,
 )
+from .collision import DEFAULT_DISTANCE_THRESHOLD
 from .command import AdversarialCommand, predict_command
 from .geometry import AgentFootprint, PredictedState
 from .location import AdversityLocation
@@ -136,9 +139,8 @@ class NadeChoice:
         adversity: The list's entry it is.
         command: The command its trigger gave.
         is_probability: ``q`` it was sampled with.
-        victims: The NPCs it challenges, which respond to it (not the ego).
-        response: Theirs: :data:`~.avoidance.AVOID`,
-            :data:`~.avoidance.ACCEPT`, or ``""`` when none is driven.
+        responses: What its NPC victims do in response, victim by victim
+            (:mod:`.avoidance`); none when the ego is a victim.
         avoidable: Whether its victims could brake out of it.
     """
 
@@ -146,8 +148,7 @@ class NadeChoice:
     adversity: NadeAdversity
     command: AdversarialCommand
     is_probability: float
-    victims: list[str]
-    response: str
+    responses: list[tuple[str, AdversarialCommand]]
     avoidable: bool
 
 
@@ -273,17 +274,18 @@ class ImportanceSampler:
         if not names:
             return None
         futures = _Futures(scene, settings, self.thresholds)
+        ego_normal = ego_command(scene, ego, indicator, settings)
         for name in names:
             found = self._adversity(scene, name, adversities)
             if found is None:
                 continue
             adversity, command = found
-            if not futures.normal(ego, ego_command(scene, ego, indicator, settings)):
+            if not futures.normal(ego, ego_normal):
                 return None  # the ego off the lanes: no future to challenge
-            hit = futures.victims(name, command, ego, names)
+            hit, future = futures.victims(name, command, ego, names)
             if not hit:
                 continue
-            can_avoid = futures.avoidable(name, hit)
+            can_avoid = futures.avoidable(name, future, hit)
             p = adversity.probability
             if not can_avoid:
                 p *= settings.avoidance.unavoidable_factor
@@ -299,15 +301,13 @@ class ImportanceSampler:
                 self._responses, ego in hit, can_avoid, settings.avoidance
             )
             self.weight *= response.weight
-            return NadeChoice(
-                name,
-                adversity,
-                command,
-                q,
-                [victim for victim in hit if victim != ego],
-                response.mode,
-                can_avoid,
-            )
+            responses: list[tuple[str, AdversarialCommand]] = []
+            if response.mode:
+                reaction = accept_command(settings.avoidance)
+                if response.mode == AVOID:
+                    reaction = futures.brake
+                responses = [(victim, reaction) for victim in hit if victim != ego]
+            return NadeChoice(name, adversity, command, q, responses, can_avoid)
         return None
 
     def _adversity(
@@ -336,20 +336,20 @@ class _Futures:
 
     scene: Scene
     settings: NadeSettings
-    thresholds: TriggerThresholds
+    brake: AdversarialCommand
     _normal: dict[str, list[PredictedState]]
     _avoid: dict[str, list[PredictedState]]
-    _adversarial: dict[str, list[PredictedState]]
 
     def __init__(
         self, scene: Scene, settings: NadeSettings, thresholds: TriggerThresholds
     ) -> None:
         self.scene = scene
         self.settings = settings
-        self.thresholds = thresholds
+        self.brake = avoid_command(
+            thresholds.idm.emergency_deceleration, settings.avoidance
+        )
         self._normal = {}
         self._avoid = {}
-        self._adversarial = {}
 
     def _predict(self, name: str, command: AdversarialCommand) -> list[PredictedState]:
         """*name*'s future under *command*; empty when it cannot be predicted."""
@@ -370,17 +370,23 @@ class _Futures:
             self._normal[name] = self._predict(name, command)
         return self._normal[name]
 
+    def avoid(self, name: str) -> list[PredictedState]:
+        """*name*'s future braking as hard as it can."""
+        if name not in self._avoid:
+            self._avoid[name] = self._predict(name, self.brake)
+        return self._avoid[name]
+
     def victims(
         self, name: str, command: AdversarialCommand, ego: str, names: list[str]
-    ) -> list[str]:
-        """Whom *name* carrying out *command* challenges: the ego, and with
-        ``challenge_npcs`` the other candidates' vehicles."""
+    ) -> tuple[list[str], list[PredictedState]]:
+        """Whom *name* carrying out *command* challenges -- the ego, and with
+        ``challenge_npcs`` the other candidates' vehicles -- and its future."""
         agents = self.scene.agents
         agent = agents[name]
         future = self._predict(name, command)
+        none: list[str] = []
         if not future:
-            return []
-        self._adversarial[name] = future
+            return none, future
         others = [ego]
         if self.settings.challenge_npcs:
             others += [
@@ -391,36 +397,39 @@ class _Futures:
         normal_futures: dict[str, list[PredictedState]] = {}
         footprints: dict[str, AgentFootprint] = {}
         for other in others:
-            # A pedestrian challenges only what moves (TeraSim's 1 m/s).
-            if not agent.footprint.is_vehicle and agents[other].speed < 1.0:
+            near = agents[other]
+            # A pedestrian challenges only what moves (TeraSim's 1 m/s), and
+            # nothing starting further than the check looks.
+            if not agent.footprint.is_vehicle and near.speed < 1.0:
                 continue
-            held = AdversarialCommand.accelerate(
-                agents[other].acceleration, self.settings.horizon
+            if (
+                math.hypot(near.x - agent.x, near.y - agent.y)
+                > DEFAULT_DISTANCE_THRESHOLD
+            ):
+                continue
+            # The ego's was predicted first, from its indicator; the others'
+            # as ego_command predicts with none.
+            normal = self.normal(
+                other, ego_command(self.scene, other, "", self.settings)
             )
-            normal = self.normal(other, held)
             if normal:
                 normal_futures[other] = normal
-                footprints[other] = agents[other].footprint
-        return victims(future, agent.footprint, normal_futures, footprints)
+                footprints[other] = near.footprint
+        return victims(future, agent.footprint, normal_futures, footprints), future
 
-    def avoidable(self, name: str, hit: list[str]) -> bool:
-        """Whether every one of *hit* can brake out of *name*'s adversity."""
+    def avoidable(
+        self, name: str, future: list[PredictedState], hit: list[str]
+    ) -> bool:
+        """Whether every one of *hit* can brake out of *name*'s *future*."""
         agents = self.scene.agents
-        brake = avoid_command(
-            self.thresholds.idm.emergency_deceleration, self.settings.avoidance
-        )
-        avoid_futures: dict[str, list[PredictedState]] = {}
-        footprints: dict[str, AgentFootprint] = {}
         for victim in hit:
-            if victim not in self._avoid:
-                self._avoid[victim] = self._predict(victim, brake)
-            if self._avoid[victim]:
-                avoid_futures[victim] = self._avoid[victim]
-                footprints[victim] = agents[victim].footprint
-        return avoidable(
-            self._adversarial[name],
-            agents[name].footprint,
-            avoid_futures,
-            footprints,
-            self.settings.avoidance,
-        )
+            avoid = self.avoid(victim)
+            if avoid and not avoidable(
+                future,
+                agents[name].footprint,
+                {victim: avoid},
+                {victim: agents[victim].footprint},
+                self.settings.avoidance,
+            ):
+                return False
+        return True

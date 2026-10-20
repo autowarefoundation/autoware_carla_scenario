@@ -19,7 +19,6 @@ import logging
 from typing import TYPE_CHECKING, Optional
 
 from ..action_state import ActionState
-from ..adversity.avoidance import AVOID, accept_command, avoid_command
 from ..adversity.command import AdversarialCommand
 from ..adversity.nade import (
     DEFAULT_NADE,
@@ -130,12 +129,11 @@ class AdversarialTrafficAction(BaseAction):
         """Drive the adversity under way, or sample the next one."""
         if self.state is ActionState.STANDBY:
             self._executions = []
+        for running in self._executions:
+            running.tick(world, self._elapsed)
+        self._executions = [run for run in self._executions if not run.done]
         if self._executions:
-            for running in self._executions:
-                running.tick(world, self._elapsed)
-            self._executions = [run for run in self._executions if not run.done]
-            if self._executions:
-                return
+            return
         if self._sampler.cooling(self._elapsed):
             return  # nothing to sample: no need to read the world
         scene = scene_at(world)
@@ -161,16 +159,8 @@ class AdversarialTrafficAction(BaseAction):
             self.weight,
         )
         self._start(world, scene, sampled.name, sampled.command)
-        if not sampled.response:
-            return
-        avoidance = self._sampler.settings.avoidance
-        response = accept_command(avoidance)
-        if sampled.response == AVOID:
-            response = avoid_command(
-                self._sampler.thresholds.idm.emergency_deceleration, avoidance
-            )
-        for victim in sampled.victims:
-            logger.info("%s: '%s' %ss it", self.label, victim, sampled.response)
+        for victim, response in sampled.responses:
+            logger.info("%s: '%s' responds: %s", self.label, victim, response)
             self._start(world, scene, victim, response)
 
     def _start(
