@@ -3097,7 +3097,9 @@ from autoware_carla_scenario import (
     IgnoreLeaderAction,
     JaywalkAction,
     LaneChangeAbortAction,
+    PedestrianRunRedLightAction,
     RunTrafficRuleAction,
+    StopCrossingAction,
     TrajectoryFollowingMode,
 )
 self.register_pre_tick(AdversarialBrakeAction("npc1", AdversityLocation.ANY))
@@ -3121,14 +3123,17 @@ self.register_pre_tick(
 )
 self.register_pre_tick(RunTrafficRuleAction("npc3", AdversityLocation.ROUNDABOUT))
 self.register_pre_tick(JaywalkAction("p1", AdversityLocation.ANY, seed=7))
+self.register_pre_tick(PedestrianRunRedLightAction("p1", AdversityLocation.INTERSECTION))
+self.register_pre_tick(StopCrossingAction("p1", AdversityLocation.ANY, seed=3))
 feasible = AdversityFeasibleCondition(
     "npc1", AdversityKind.CUT_IN, AdversityLocation.ANY, label="may_cut_in", seed=1
 )
 logger.info(
-    "%s %s %s",
+    "%s %s %s %s",
     feasible.kind.name,
     feasible.location.value,
     AdversityKind.HEAD_ON.name,
+    AdversityKind.STOP_CROSSING.value,
 )
 self.register_fail_condition(feasible)
 """

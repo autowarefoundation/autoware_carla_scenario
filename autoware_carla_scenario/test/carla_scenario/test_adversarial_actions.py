@@ -24,7 +24,9 @@ from autoware_carla_scenario.actions.adversarial import (
     IgnoreLeaderAction,
     JaywalkAction,
     LaneChangeAbortAction,
+    PedestrianRunRedLightAction,
     RunTrafficRuleAction,
+    StopCrossingAction,
 )
 from autoware_carla_scenario.adversity import (
     AdversityKind,
@@ -199,6 +201,12 @@ def test_closing_closes_the_path() -> None:
         (JaywalkAction, AdversityKind.JAYWALKING, "jaywalk"),
         (LaneChangeAbortAction, AdversityKind.LANE_CHANGE_ABORT, "lane_change_abort"),
         (HeadOnAction, AdversityKind.HEAD_ON, "head_on"),
+        (
+            PedestrianRunRedLightAction,
+            AdversityKind.RUNNING_RED_LIGHT,
+            "pedestrian_run_red_light",
+        ),
+        (StopCrossingAction, AdversityKind.STOP_CROSSING, "stop_crossing"),
     ],
 )
 def test_each_action_is_its_kind(cls: Any, kind: AdversityKind, label: str) -> None:

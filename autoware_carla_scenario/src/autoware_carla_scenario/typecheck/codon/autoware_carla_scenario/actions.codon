@@ -586,6 +586,58 @@ class JaywalkAction(BaseAction):
         raise NotImplementedError()
 
 
+class PedestrianRunRedLightAction(BaseAction):
+    def __init__(self, label):
+        compile_error("PedestrianRunRedLightAction(): no constructor takes these arguments "
+                      "(required: entity_name, location)")
+
+    def __init__(self, entity_name, location: AdversityLocation, condition = None,
+                 timing: TickTiming = TickTiming("pre_tick"), *_kw, label: str = "pedestrian_run_red_light",
+                 once: bool = True, thresholds = None,
+                 following_mode: TrajectoryFollowingMode = TrajectoryFollowingMode("follow")):
+        _keyword_only(_kw, "PedestrianRunRedLightAction(): label, once, thresholds and following_mode")
+        _expect_role(entity_name)
+        super().__init__(label, condition, timing, once=once)
+
+    @property
+    def kind(self) -> AdversityKind:
+        raise NotImplementedError()
+
+    @property
+    def location(self) -> AdversityLocation:
+        raise NotImplementedError()
+
+    @property
+    def finished(self) -> bool:
+        raise NotImplementedError()
+
+
+class StopCrossingAction(BaseAction):
+    def __init__(self, label):
+        compile_error("StopCrossingAction(): no constructor takes these arguments "
+                      "(required: entity_name, location)")
+
+    def __init__(self, entity_name, location: AdversityLocation, condition = None,
+                 timing: TickTiming = TickTiming("pre_tick"), *_kw, label: str = "stop_crossing",
+                 once: bool = True, seed: int = 0, thresholds = None,
+                 following_mode: TrajectoryFollowingMode = TrajectoryFollowingMode("follow")):
+        _keyword_only(_kw, "StopCrossingAction(): label, once, seed, thresholds and following_mode")
+        _expect_role(entity_name)
+        super().__init__(label, condition, timing, once=once)
+
+    @property
+    def kind(self) -> AdversityKind:
+        raise NotImplementedError()
+
+    @property
+    def location(self) -> AdversityLocation:
+        raise NotImplementedError()
+
+    @property
+    def finished(self) -> bool:
+        raise NotImplementedError()
+
+
 class NadeAdversity:
     kind: AdversityKind
     location: AdversityLocation

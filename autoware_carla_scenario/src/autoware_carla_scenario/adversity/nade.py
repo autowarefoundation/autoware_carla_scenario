@@ -222,7 +222,8 @@ class ImportanceSampler:
     """NADE's sampling over a run: the weight, the cooldown, the draws.
 
     Args:
-        seed: Seeds the draws (and a jaywalker's speed).
+        seed: Seeds the draws (and a jaywalker's speed, a stopped
+            crosser's wait).
         settings: NADE's numbers.
         thresholds: The triggers' numbers.
     """
@@ -244,7 +245,7 @@ class ImportanceSampler:
         self.settings = settings
         self.thresholds = thresholds
         self.weight = 1.0
-        # Apart, so a trigger's draw (a jaywalker's speed) or a victim's
+        # Apart, so a trigger's draw (a jaywalker's speed, say) or a victim's
         # response does not shift the sampling's sequence.
         self._draws = random.Random(seed)
         self._triggers = random.Random(seed + 1)

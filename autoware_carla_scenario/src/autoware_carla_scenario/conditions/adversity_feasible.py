@@ -45,12 +45,13 @@ class AdversityFeasibleCondition(BaseCondition):
     """Holds when *entity_name* may carry out a *kind* adversity at *location*.
 
     Args:
-        entity_name: ``role_name`` of the vehicle (or, for JAYWALKING, the
-            pedestrian).
+        entity_name: ``role_name`` of the vehicle (or, for a kind of
+            ``PEDESTRIAN_KINDS``, the pedestrian).
         kind: The adversity.
         location: Where it may fire; :attr:`AdversityLocation.ANY` anywhere.
         label: Human-readable identifier.
-        seed: Seeds the random draws a trigger makes (a jaywalker's speed).
+        seed: Seeds the random draws a trigger makes (a jaywalker's speed,
+            a stopped crosser's wait).
         thresholds: The triggers' numbers; TeraSim's by default.
     """
 

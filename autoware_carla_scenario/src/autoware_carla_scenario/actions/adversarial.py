@@ -1,7 +1,7 @@
-"""TeraSim's adversities as actions (#393, #398).
+"""TeraSim's adversities as actions (#393, #398, #399).
 
 Each action carries out one adversity of :mod:`~..adversity.triggers` on a
-named vehicle (or, for :class:`JaywalkAction`, a pedestrian):
+named vehicle (or, for the pedestrian kinds, a pedestrian):
 
 * :class:`AdversarialBrakeAction` -- brakes hard in front of a follower that
   keeps coming (:attr:`~..adversity.triggers.AdversityKind.BRAKE_CHECK`).
@@ -17,6 +17,10 @@ named vehicle (or, for :class:`JaywalkAction`, a pedestrian):
   stopping for (``TRAFFIC_RULE``).
 * :class:`JaywalkAction` -- a pedestrian walks straight across the road, off
   any crosswalk (``JAYWALKING``).
+* :class:`PedestrianRunRedLightAction` -- a pedestrian waiting at a crosswalk
+  crosses on red (``RUNNING_RED_LIGHT``).
+* :class:`StopCrossingAction` -- a pedestrian stops on the crosswalk, then
+  hurries across (``STOP_CROSSING``).
 
 The trigger is an :class:`~..conditions.adversity_feasible.AdversityFeasibleCondition`
 of the action's kind at its *location* by default -- which is why *location*
@@ -62,7 +66,9 @@ __all__ = [
     "IgnoreLeaderAction",
     "JaywalkAction",
     "LaneChangeAbortAction",
+    "PedestrianRunRedLightAction",
     "RunTrafficRuleAction",
+    "StopCrossingAction",
 ]
 
 logger = logging.getLogger(__name__)
@@ -82,7 +88,8 @@ class AdversarialAction(BaseAction):
         timing: Tick phase (``PRE_TICK`` or ``POST_TICK``).
         label: Human-readable identifier.
         once: If ``True`` (default) the action runs at most once.
-        seed: Seeds the trigger's random draws (a jaywalker's speed).
+        seed: Seeds the trigger's random draws (a jaywalker's
+            speed, a stopped crosser's wait).
         thresholds: The triggers' numbers; TeraSim's by default.
         following_mode: How the path is driven: ``FOLLOW`` (the vehicle's own
             motion, default) or ``POSITION`` (placed on it, as TeraSim's
@@ -453,6 +460,79 @@ class JaywalkAction(AdversarialAction):
         super().__init__(
             entity_name,
             AdversityKind.JAYWALKING,
+            location,
+            condition,
+            timing,
+            label=label,
+            once=once,
+            seed=seed,
+            thresholds=thresholds,
+            following_mode=following_mode,
+        )
+
+
+class PedestrianRunRedLightAction(AdversarialAction):
+    """Walk a pedestrian waiting at a crosswalk across it on red.
+
+    TeraSim's RunningRedLight adversity: fires for a pedestrian at most
+    ``thresholds.waiting_speed`` fast within ``thresholds.crosswalk_reach``
+    of a crosswalk whose Lanelet2 traffic light is red, and walks it from
+    the crosswalk's near end to its far end at
+    ``thresholds.pedestrian_max_speed``.  See :class:`AdversarialAction` for
+    the arguments.
+    """
+
+    def __init__(
+        self,
+        entity_name: Union[EntityRole, str],
+        location: AdversityLocation,
+        condition: Optional[BaseCondition] = None,
+        timing: TickTiming = TickTiming.PRE_TICK,
+        *,
+        label: str = "pedestrian_run_red_light",
+        once: bool = True,
+        thresholds: TriggerThresholds = DEFAULT_THRESHOLDS,
+        following_mode: TrajectoryFollowingMode = TrajectoryFollowingMode.FOLLOW,
+    ) -> None:
+        super().__init__(
+            entity_name,
+            AdversityKind.RUNNING_RED_LIGHT,
+            location,
+            condition,
+            timing,
+            label=label,
+            once=once,
+            thresholds=thresholds,
+            following_mode=following_mode,
+        )
+
+
+class StopCrossingAction(AdversarialAction):
+    """Stop a pedestrian on the crosswalk a moment, then hurry it across.
+
+    TeraSim's StopCrossing adversity: fires for a pedestrian on a crosswalk,
+    stands it still for a time drawn from ``thresholds.stop_crossing_wait``
+    (seeded by *seed*), then walks it a crosswalk's length on along its
+    heading at ``thresholds.pedestrian_max_speed``.  See
+    :class:`AdversarialAction` for the arguments.
+    """
+
+    def __init__(
+        self,
+        entity_name: Union[EntityRole, str],
+        location: AdversityLocation,
+        condition: Optional[BaseCondition] = None,
+        timing: TickTiming = TickTiming.PRE_TICK,
+        *,
+        label: str = "stop_crossing",
+        once: bool = True,
+        seed: int = 0,
+        thresholds: TriggerThresholds = DEFAULT_THRESHOLDS,
+        following_mode: TrajectoryFollowingMode = TrajectoryFollowingMode.FOLLOW,
+    ) -> None:
+        super().__init__(
+            entity_name,
+            AdversityKind.STOP_CROSSING,
             location,
             condition,
             timing,
