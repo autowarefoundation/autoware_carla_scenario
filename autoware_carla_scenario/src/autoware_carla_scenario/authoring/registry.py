@@ -1414,6 +1414,92 @@ register_action_spec(
     )
 )
 
+register_action_spec(
+    ActionSpec(
+        type_id="stalled_object",
+        title="Stalled Object",
+        category="Adversity",
+        builder="build_stalled_object_action",
+        target="..actions.stalled_object:StalledObjectAction",
+        actor_kinds=("vehicle",),
+        visual_kind="continuous",
+        builds=(
+            BuiltArgument(
+                kwarg="pose",
+                target="..coordinate:Lanelet2Pose",
+                parts=(
+                    BuiltPart(
+                        args=(
+                            ("lanelet_id", "lanelet_id"),
+                            ("s", "s"),
+                            ("t", "t"),
+                            ("heading", "heading"),
+                        )
+                    ),
+                ),
+            ),
+        ),
+        fields=(
+            FieldSpec(
+                name="lanelet_id",
+                label="Lanelet",
+                kind="lanelet",
+                default=0,
+                help="The lanelet the vehicle stands on.",
+            ),
+            FieldSpec(
+                name="s",
+                label="s",
+                kind="number",
+                default=0.0,
+                unit="m",
+                help="Along the lanelet from its start.",
+            ),
+            FieldSpec(
+                name="t",
+                label="t",
+                kind="number",
+                default=0.0,
+                required=False,
+                unit="m",
+                help="Off the centreline, positive to the left.",
+            ),
+            FieldSpec(
+                name="heading",
+                label="Heading",
+                kind="number",
+                default=0.0,
+                required=False,
+                unit="rad",
+                help="Turned from the lane's direction, counter-clockwise.",
+            ),
+            FieldSpec(
+                name="start_time",
+                label="Appears at",
+                kind="number",
+                default=0.0,
+                unit="s",
+                help="From the scenario's start.",
+            ),
+            FieldSpec(
+                name="end_time",
+                label="Removed at",
+                kind="number",
+                default=None,
+                required=False,
+                unit="s",
+                help="From the scenario's start; empty: never.",
+            ),
+        ),
+        description=(
+            "TeraSim's stalled object: the vehicle stands still at a pose "
+            "from one time to another, out of the world before and after.  "
+            "Spawn it out of the world; two of them make a collision's "
+            "aftermath."
+        ),
+    )
+)
+
 #: Mirrors ``AdversityLocation``; the codegen refuses an option that names no
 #: member.  No default: an adversity fires anywhere only when told so.
 _ADVERSITY_LOCATIONS: tuple[SelectOption, ...] = (

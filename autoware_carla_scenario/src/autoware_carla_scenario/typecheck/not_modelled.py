@@ -423,6 +423,12 @@ NOT_MODELLED_MEMBERS: dict[str, dict[str, str]] = {
             "metric)"
         ),
     },
+    "StalledObjectAction": {
+        "pose": (
+            "the pose the action was given, one of three pose classes, which "
+            "Codon has no union to return; a scenario keeps the pose it passed"
+        ),
+    },
     "NadeSettings": {
         "avoidance": (
             "adversity.avoidance's AvoidanceSettings, TeraSim's avoidance "
