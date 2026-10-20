@@ -264,8 +264,10 @@ class DriverClientConfig:
     as it is, instead of the one roadgen converts from the world's OpenDRIVE.
 
     Implies ``lanelet2`` in :attr:`map_formats`.  The file carries no roadgen
-    trace, so the stop lines a policy resolves against it hold each light's stop
-    point and OpenDRIVE lane but no lanelet ids.  roadgen is needed only for the
+    trace; a policy resolving lights against it (``carla_driver_interface`` 2.3 or
+    later) finds each light on the map instead, as the first traffic-light element
+    on or ahead of its stop point.  Its ``local_x`` / ``local_y`` must be the
+    ``local`` frame.  roadgen is needed only for the
     other formats :attr:`map_formats` names, if any.  Needs :attr:`map_dir`.
     """
 
