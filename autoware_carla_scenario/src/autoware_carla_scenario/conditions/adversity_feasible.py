@@ -8,30 +8,31 @@ adversarial action, which reads the command it found (:attr:`command`); a
 scenario can also compose it with others (``AndCondition``) or use it on its
 own, to assert that a situation came about.
 
-Each check takes a snapshot of every vehicle and walker in the world (in the
-Lanelet2 map frame, :mod:`~..adversity.snapshot`) and of the traffic lights
-the map names, and asks the trigger.  Needs the
-:class:`~..coordinate.map_manager.MapManager` to hold the Lanelet2 map.
+Each check asks the trigger of the tick's scene: the world's vehicles,
+walkers and traffic lights in the Lanelet2 map frame, read once a frame for
+every condition and action that asks (:func:`~..adversity.snapshot.scene_at`).
+Needs the :class:`~..coordinate.map_manager.MapManager` to hold the Lanelet2
+map.  Not re-exported from :mod:`autoware_carla_scenario.conditions`, which
+every scenario imports, because it pulls in the Lanelet2 map layer: import it
+from here (or with the adversarial actions).
 """
 
 from __future__ import annotations
 
 import random
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, Optional, Union
 
 from ..adversity.command import AdversarialCommand
 from ..adversity.location import AdversityLocation
-from ..adversity.observation import AgentSnapshot, Scene
-from ..adversity.snapshot import SignalReader, snapshot_actor
+from ..adversity.observation import Scene
+from ..adversity.snapshot import scene_at
 from ..adversity.triggers import (
     DEFAULT_THRESHOLDS,
     AdversityKind,
     TriggerThresholds,
     adversity_command,
 )
-from ..coordinate.map_manager import MapManager
-from ..entity_role import EntityRole, _role_name
-from ..route.geometry import MapFeatures
+from ..entity_role import EntityRole
 from .base import BaseCondition, ScenarioResult
 
 if TYPE_CHECKING:
@@ -58,14 +59,12 @@ class AdversityFeasibleCondition(BaseCondition):
     _location: AdversityLocation
     _rng: random.Random
     _thresholds: TriggerThresholds
-    _features: Optional[MapFeatures]
-    _signals: Optional[SignalReader]
     _command: Optional[AdversarialCommand]
     _scene: Optional[Scene]
 
     def __init__(
         self,
-        entity_name: EntityRole | str,
+        entity_name: Union[EntityRole, str],
         kind: AdversityKind,
         location: AdversityLocation,
         *,
@@ -79,8 +78,6 @@ class AdversityFeasibleCondition(BaseCondition):
         self._location = location
         self._rng = random.Random(seed)
         self._thresholds = thresholds
-        self._features = None
-        self._signals = None
         self._command = None
         self._scene = None
 
@@ -111,33 +108,9 @@ class AdversityFeasibleCondition(BaseCondition):
             "location": self._location.value,
         }
 
-    def _map(self) -> MapFeatures:
-        if self._features is None:
-            manager = MapManager.get_instance()
-            features = MapFeatures(manager.lanelet_map, manager.routing_graph)
-            self._features = features
-            return features
-        return self._features
-
-    def _read_signals(self, world: carla.World, features: MapFeatures) -> SignalReader:
-        if self._signals is None:
-            reader = SignalReader(world, features.traffic_light_ids())
-            self._signals = reader
-            return reader
-        return self._signals
-
     def check(self, world: carla.World, elapsed: float) -> Optional[ScenarioResult]:
         """Hold, with the command kept, when the adversity may fire now."""
-        features = self._map()
-        agents: list[AgentSnapshot] = []
-        for actor in world.get_actors():
-            type_id = str(actor.type_id)
-            if not (type_id.startswith("vehicle.") or type_id.startswith("walker.")):
-                continue
-            role = _role_name(actor)
-            name = str(actor.id) if role is None else str(role)
-            agents.append(snapshot_actor(actor, name))
-        scene = Scene(features, agents, self._read_signals(world, features).read())
+        scene = scene_at(world)
         if self._entity_name not in scene.agents:
             return None
         command = adversity_command(

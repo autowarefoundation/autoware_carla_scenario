@@ -35,8 +35,8 @@ import math
 import random
 from dataclasses import dataclass
 from enum import Enum
+from typing import Optional
 
-from ..route.geometry import MapFeatures
 from .command import AdversarialCommand
 from .geometry import PredictedState
 from .idm import (
@@ -56,6 +56,7 @@ from .observation import (
 )
 
 __all__ = [
+    "DEFAULT_THRESHOLDS",
     "AdversityKind",
     "TriggerThresholds",
     "adversity_command",
@@ -89,6 +90,8 @@ class TriggerThresholds:
             acceleration for TRAFFIC_RULE to blame the rule, not the leader.
         rule_gain: How much (m/s²) free flow must beat the agent's own
             acceleration for TRAFFIC_RULE.
+        rule_free_flow_floor: Or, for TRAFFIC_RULE, the least free flow
+            (m/s²) of an agent that is braking.
         min_speed_difference: IGNORE_LEADER's least speed difference (m/s)
             from a leader it follows.
         overlap_limit: CUT_IN's most (m) the agent may already overlap the
@@ -105,6 +108,7 @@ class TriggerThresholds:
     standstill_speed: float = 0.5
     acceleration_gain: float = 1.5
     rule_gain: float = 1.0
+    rule_free_flow_floor: float = 0.2
     min_speed_difference: float = 2.0
     overlap_limit: float = 2.0
     duration: float = 2.0
@@ -118,17 +122,16 @@ class TriggerThresholds:
 DEFAULT_THRESHOLDS = TriggerThresholds()
 
 
-def _both_stopped(speed: float, other: Neighbour, limits: TriggerThresholds) -> bool:
-    return speed < limits.standstill_speed and other.speed < limits.standstill_speed
-
-
 def brake_check(
     seen: VehicleObservation, limits: TriggerThresholds = DEFAULT_THRESHOLDS
-) -> AdversarialCommand | None:
+) -> Optional[AdversarialCommand]:
     """BRAKE_CHECK: brake hard in front of a follower that keeps coming."""
     follower = seen.follower
     agent = seen.agent
-    if follower is None or _both_stopped(agent.speed, follower, limits):
+    if follower is None or (
+        agent.speed < limits.standstill_speed
+        and follower.speed < limits.standstill_speed
+    ):
         return None
     if agent.acceleration > 0.0 or follower.acceleration < 0.0:
         return None
@@ -148,13 +151,12 @@ def _held_back_by(
 
 def ignore_leader(
     seen: VehicleObservation, limits: TriggerThresholds = DEFAULT_THRESHOLDS
-) -> AdversarialCommand | None:
+) -> Optional[AdversarialCommand]:
     """IGNORE_LEADER: drive on as if the leader were not there."""
     leader = seen.leader
     agent = seen.agent
-    if leader is None or _both_stopped(agent.speed, leader, limits):
-        return None
-    if agent.speed < limits.standstill_speed:
+    # Stopped itself, it has nothing to ignore its leader with.
+    if leader is None or agent.speed < limits.standstill_speed:
         return None
     if abs(agent.speed - leader.speed) < limits.min_speed_difference:
         return None
@@ -192,7 +194,7 @@ def _blocked_by_follower_only(
 
 def cut_in(
     seen: VehicleObservation, limits: TriggerThresholds = DEFAULT_THRESHOLDS
-) -> AdversarialCommand | None:
+) -> Optional[AdversarialCommand]:
     """CUT_IN: change into the lane beside in front of the vehicle there."""
     speed = seen.agent.speed
     left = seen.left
@@ -206,7 +208,7 @@ def cut_in(
 
 def traffic_rule(
     seen: VehicleObservation, limits: TriggerThresholds = DEFAULT_THRESHOLDS
-) -> AdversarialCommand | None:
+) -> Optional[AdversarialCommand]:
     """TRAFFIC_RULE: run the red (or yellow) light it is stopping for."""
     signal = seen.signal
     if signal is None or signal.state not in (SignalState.RED, SignalState.YELLOW):
@@ -218,7 +220,9 @@ def traffic_rule(
         if _held_back_by(seen, leader, limits) - current <= limits.acceleration_gain:
             return None  # the leader holds it back, not the rule
     free = free_flow_acceleration(agent.speed, seen.desired_speed, limits.idm)
-    if free - current > limits.rule_gain or (current < 0.0 and free > 0.2):
+    if free - current > limits.rule_gain or (
+        current < 0.0 and free > limits.rule_free_flow_floor
+    ):
         return AdversarialCommand.accelerate(free, limits.duration)
     return None
 
@@ -227,7 +231,7 @@ def jaywalking(
     seen: PedestrianObservation,
     rng: random.Random,
     limits: TriggerThresholds = DEFAULT_THRESHOLDS,
-) -> AdversarialCommand | None:
+) -> Optional[AdversarialCommand]:
     """JAYWALKING: walk straight across the nearest road, off any crosswalk."""
     road = seen.nearest_road
     if seen.crosswalk is not None or road is None:
@@ -236,12 +240,11 @@ def jaywalking(
     base = agent.speed if agent.speed >= 1.0 else limits.pedestrian_speed
     low, high = limits.pedestrian_speed_factor
     speed = base * rng.uniform(low, high)
-    heading = math.atan2(road.y - agent.y, road.x - agent.x)
-    if road.distance <= 0.0:
-        heading = agent.yaw
-    # TeraSim walks at least 10 s worth, cut to the command's 5 s.
-    length = max(road.distance, speed * 10.0)
-    duration = min(length / speed, limits.jaywalk_duration)
+    heading = agent.yaw
+    if road.distance > 0.0:
+        heading = math.atan2(road.y - agent.y, road.x - agent.x)
+    # TeraSim walks across, at least 10 s worth, cut to the command's 5 s.
+    duration = min(max(road.distance / speed, 10.0), limits.jaywalk_duration)
     steps = max(int(math.ceil(duration / limits.jaywalk_resolution - 1e-9)), 1)
     path: list[PredictedState] = []
     for i in range(steps + 1):
@@ -258,26 +261,6 @@ def jaywalking(
     return AdversarialCommand.follow(path)
 
 
-def _located(
-    features: MapFeatures,
-    scene: Scene,
-    name: str,
-    location: AdversityLocation,
-    is_vehicle: bool,
-) -> bool:
-    if location is AdversityLocation.ANY:
-        return True
-    if is_vehicle:
-        lane = scene.lane_of(name)
-        if lane is None:
-            return False
-        return location_matches(location, features, lane.lanelet, lane.s)
-    road = scene.pedestrian(name).nearest_road
-    if road is None:
-        return False
-    return location_matches(location, features, road.lanelet, 0.0)
-
-
 def adversity_command(
     kind: AdversityKind,
     scene: Scene,
@@ -285,20 +268,32 @@ def adversity_command(
     location: AdversityLocation,
     rng: random.Random,
     limits: TriggerThresholds = DEFAULT_THRESHOLDS,
-) -> AdversarialCommand | None:
+) -> Optional[AdversarialCommand]:
     """What agent *name* of *scene* does as *kind* at *location* now, or None.
 
-    The location gate first (a pedestrian is located by the road nearest
-    it), then the kind's trigger.
+    The location gate first -- a vehicle by its lane, a pedestrian by the road
+    nearest it -- so a vehicle outside it costs no look around; then the
+    kind's trigger.
     """
-    is_vehicle = kind is not AdversityKind.JAYWALKING
-    if not _located(scene.features, scene, name, location, is_vehicle):
+    anywhere = location is AdversityLocation.ANY
+    if kind is AdversityKind.JAYWALKING:
+        walker = scene.pedestrian(name)
+        road = walker.nearest_road
+        if road is None:
+            return None
+        if not anywhere and not location_matches(
+            location, scene.features, road.lanelet, 0.0
+        ):
+            return None
+        return jaywalking(walker, rng, limits)
+    lane = scene.lane_of(name)
+    if lane is None:
         return None
-    if not is_vehicle:
-        return jaywalking(scene.pedestrian(name), rng, limits)
+    if not anywhere and not location_matches(
+        location, scene.features, lane.lanelet, lane.s
+    ):
+        return None
     seen = scene.vehicle(name)
-    if seen.lane is None:
-        return None
     if kind is AdversityKind.BRAKE_CHECK:
         return brake_check(seen, limits)
     if kind is AdversityKind.IGNORE_LEADER:

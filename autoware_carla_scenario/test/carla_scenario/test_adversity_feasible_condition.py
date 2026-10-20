@@ -16,8 +16,8 @@ from autoware_carla_scenario.adversity import (
     AdversarialCommand,
     AdversityKind,
     AdversityLocation,
+    snapshot,
 )
-from autoware_carla_scenario.adversity import snapshot
 from autoware_carla_scenario.conditions.adversity_feasible import (
     AdversityFeasibleCondition,
 )
@@ -58,8 +58,16 @@ def _actor(
     )
 
 
-def _world(*actors: Any) -> Any:
-    return SimpleNamespace(get_actors=lambda: list(actors))
+class _Actors(list):
+    def filter(self, pattern: str) -> "_Actors":
+        return _Actors(a for a in self if a.type_id.startswith(pattern.rstrip("*")))
+
+
+def _world(*actors: Any, frame: int = 1) -> Any:
+    return SimpleNamespace(
+        get_actors=lambda: _Actors(actors),
+        get_snapshot=lambda: SimpleNamespace(frame=frame),
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -132,8 +140,27 @@ def test_a_jaywalker_is_seeded() -> None:
         assert condition.command is not None
         return condition.command.path[-1]
 
-    assert run(3) == run(3)
-    assert run(3) != run(4)
+    three = run(3)
+    assert three == run(3) != run(4)
+
+
+def test_one_scene_a_frame_for_everyone_who_asks() -> None:
+    world = _world(
+        _actor(1, "npc1", -40.0, INNER, 10.0), _actor(2, "npc2", -55.0, INNER, 10.0)
+    )
+    first = snapshot.scene_at(world)
+    assert snapshot.scene_at(world) is first
+    world.get_snapshot = lambda: SimpleNamespace(frame=2)
+    assert snapshot.scene_at(world) is not first
+    brake = AdversityFeasibleCondition(
+        "npc1", AdversityKind.BRAKE_CHECK, AdversityLocation.ANY, label="a"
+    )
+    follow = AdversityFeasibleCondition(
+        "npc2", AdversityKind.IGNORE_LEADER, AdversityLocation.ANY, label="b"
+    )
+    brake.check(world, 0.0)
+    follow.check(world, 0.0)
+    assert brake.scene is snapshot.scene_at(world)
 
 
 def test_its_details() -> None:

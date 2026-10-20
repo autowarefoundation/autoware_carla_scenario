@@ -200,28 +200,24 @@ def test_no_jaywalking_on_a_crosswalk_or_far_from_a_road(features: MapFeatures) 
 # -- the location gate and the thresholds ---------------------------------------
 
 
-def test_the_location_gate_comes_first(features: MapFeatures) -> None:
-    rng = random.Random(0)
-    # 30 m from the junction: not at the intersection yet; 10 m: there.
-    far = _scene(features, _car("ego", -40.0), _car("behind", -55.0))
-    near = _scene(features, _car("ego", -20.0), _car("behind", -35.0))
-    gate = AdversityLocation.INTERSECTION
-    assert adversity_command(AdversityKind.BRAKE_CHECK, far, "ego", gate, rng) is None
-    assert (
-        adversity_command(AdversityKind.BRAKE_CHECK, near, "ego", gate, rng) is not None
+@pytest.mark.parametrize(
+    ("ego_x", "location", "fires"),
+    [
+        # 30 m from the junction: not at the intersection yet; 10 m: there.
+        (-40.0, AdversityLocation.INTERSECTION, False),
+        (-20.0, AdversityLocation.INTERSECTION, True),
+        (-40.0, AdversityLocation.ANY, True),
+        (-20.0, AdversityLocation.HIGHWAY, False),
+    ],
+)
+def test_the_location_gate_comes_first(
+    features: MapFeatures, ego_x: float, location: AdversityLocation, fires: bool
+) -> None:
+    scene = _scene(features, _car("ego", ego_x), _car("behind", ego_x - 15.0))
+    command = adversity_command(
+        AdversityKind.BRAKE_CHECK, scene, "ego", location, random.Random(0)
     )
-    assert (
-        adversity_command(
-            AdversityKind.BRAKE_CHECK, far, "ego", AdversityLocation.ANY, rng
-        )
-        is not None
-    )
-    assert (
-        adversity_command(
-            AdversityKind.BRAKE_CHECK, near, "ego", AdversityLocation.HIGHWAY, rng
-        )
-        is None
-    )
+    assert (command is not None) is fires
 
 
 def test_a_pedestrian_is_located_by_the_road_nearest_it(features: MapFeatures) -> None:
