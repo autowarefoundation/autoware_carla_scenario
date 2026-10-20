@@ -8,10 +8,10 @@ attributes are measured and set. Here:
   speed_limit_kph``), each reading the CARLA world (:mod:`.probes`);
 * **readers** -- ``measure: <key>``: the running scenario's measure *key*
   (:func:`~.scenario_measure.scenario_measure`);
-* **knobs** -- how a run sets an attribute: the weather and the sun, through
-  the ``environment`` config, for the built-in probes that read them
-  (:data:`DEFAULT_KNOBS`), and a scenario's ``controls`` for the measures its
-  parameters set;
+* **knobs** -- how a run sets an attribute: the weather, the sun and how far
+  drivers see, through the ``environment`` config, for the built-in probes
+  that read them (:data:`DEFAULT_KNOBS`), and a scenario's ``controls`` for
+  the measures its parameters set;
 * **where the ego is** -- in the world (the metres a tick stands for in
   coverage) and on Earth (the positions of an exported COD).
 
@@ -48,6 +48,7 @@ _PROBE_UNITS: dict[str, str] = {
     "ego_speed_kph": "km/h",
     "speed_limit_kph": "km/h",
     "lanelet_speed_limit_kph": "km/h",
+    "visibility": "m",
     **{
         name: ""
         for name in (
@@ -90,7 +91,12 @@ BUILT_IN_PROBES: Mapping[str, tuple[Callable[[Any], Any], str]] = _BuiltInProbes
 #: are the probes' own levels (:func:`~.probes.intensity_level`,
 #: :func:`~.probes.illumination_level`), read backwards.  The rain and fog
 #: knobs set the LiDARs' noise too
-#: (:mod:`autoware_carla_scenario.sensor.lidar_weather`).
+#: (:mod:`autoware_carla_scenario.sensor.lidar_weather`).  The rain, fog and
+#: illumination knobs set how far drivers see as well: the visibility follows
+#: the weather (:func:`~autoware_carla_scenario.visibility.visibility_range`),
+#: and a traffic backend that models drivers' sight (``sumo``) holds its
+#: traffic to it.  The visibility knob names it outright, in metres, whatever
+#: the weather.
 DEFAULT_KNOBS: dict[Callable[..., Any], OddKnob] = {
     # environment.rain rather than environment.precipitation: precipitation
     # alone barely shows in a camera image, so a "heavy rain" case would look
@@ -111,6 +117,10 @@ DEFAULT_KNOBS: dict[Callable[..., Any], OddKnob] = {
             "twilight": [-6, 0],
             "night": [-90, -6],
         },
+    ),
+    probes.visibility: OddKnob(
+        "environment.visibility_m",
+        range=(15.0, 400.0),
     ),
 }
 

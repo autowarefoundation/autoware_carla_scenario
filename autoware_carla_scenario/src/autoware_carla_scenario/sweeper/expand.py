@@ -335,6 +335,7 @@ def _with_odd_samples(
         encode_case,
         search_from_config,
         with_tire_friction,
+        with_visibility,
     )
 
     raw = {str(k): v for k, v in odd_sample.items()}
@@ -380,6 +381,9 @@ def _with_odd_samples(
     if raw.get("tire_friction", True):
         # After the draws are recorded: the grip is no attribute of the ODD.
         samples = with_tire_friction(samples, raw.get("seed", 0))
+    if raw.get("visibility", True):
+        # Nor is how far drivers see.
+        samples = with_visibility(samples, raw.get("seed", 0))
     logger.info(
         "Drew %d case(s) from ODD %s over %s (%s)%s",
         len(samples),

@@ -38,6 +38,15 @@ Each case is given where in that range its grip is,
 from the sweep's seed and the case, so the same sweep draws the same grip;
 ``tire_friction: false`` in the sweep leaves it at the middle.
 
+How far drivers see follows the weather the same way
+(:func:`~autoware_carla_scenario.visibility.visibility_range`): night, rain
+and fog shorten it.  Each case is given where in that range its visibility
+is, ``environment.visibility_quantile`` (:func:`with_visibility`), drawn the
+same way; ``visibility: false`` in the sweep leaves it at the middle.  A
+traffic backend that models drivers' sight (``sumo``) holds its traffic to
+it.  An ODD that names the visibility itself (the ``visibility`` probe) sets
+it through its knob, ``environment.visibility_m``, whatever the weather.
+
 With ``flaky`` in the sweep, openodd's :class:`~openodd.FlakySearch` draws
 part of each batch where a small change flips the outcome, learning from the
 runs in ``coverage_from`` that recorded their case and outcome. Every drawn
@@ -78,7 +87,9 @@ __all__ = [
     "sampler_from_config",
     "search_from_config",
     "TIRE_FRICTION_KEY",
+    "VISIBILITY_KEY",
     "with_tire_friction",
+    "with_visibility",
 ]
 
 #: The config key (an override a sweep adds) that carries a drawn case to its
@@ -97,9 +108,11 @@ CONTROL_TARGETS = ("setting", "measure")
 #: measure's own value, unchanged.
 _MAPPING_FIELDS = ("scale", "offset", "integer", "values")
 
-#: The fields of ``sweep.odd_sample``: ``tire_friction`` (default true) says
-#: whether each case draws where its grip is in the range its weather leaves
-#: (:func:`with_tire_friction`); the rest are :func:`search_from_config`'s.
+#: The fields of ``sweep.odd_sample``: ``tire_friction`` and ``visibility``
+#: (default true) say whether each case draws where its grip
+#: (:func:`with_tire_friction`) and its visibility (:func:`with_visibility`)
+#: are in the ranges its weather leaves; the rest are
+#: :func:`search_from_config`'s.
 SAMPLE_FIELDS = {
     "count",
     "seed",
@@ -109,11 +122,16 @@ SAMPLE_FIELDS = {
     "knobs",
     "flaky",
     "tire_friction",
+    "visibility",
 }
 
 #: The setting a case's grip is drawn into: where in the range of grip its
 #: weather leaves it is (``EnvironmentAction``'s ``tire_friction_quantile``).
 TIRE_FRICTION_KEY = "environment.tire_friction_quantile"
+#: The setting a case's visibility is drawn into: where in the range of
+#: visibility its weather leaves it is (``EnvironmentAction``'s
+#: ``visibility_quantile``).
+VISIBILITY_KEY = "environment.visibility_quantile"
 #: The fields of ``sweep.odd_sample.flaky``: :class:`~openodd.FlakySearch`'s
 #: options, and ``scenario``, the scenario whose earlier runs it learns from
 #: (every scenario's, chosen in the same space, when not given).
@@ -298,14 +316,46 @@ def with_tire_friction(
     a dry road's around its own grip, a flooded one's about half.  A case that
     names its quantile already keeps it.
     """
+    return _with_quantile(samples, seed, TIRE_FRICTION_KEY, "tire_friction")
+
+
+def with_visibility(
+    samples: Iterable[OddSample], seed: Union[int, str] = 0
+) -> list[OddSample]:
+    """*samples*, each with where its visibility is in the range its weather leaves.
+
+    Each case gets ``environment.visibility_quantile=<q>``, *q* uniform in
+    [0, 1] and drawn from *seed* and the case itself, as
+    :func:`with_tire_friction` draws the grip.  The range is the run's: the
+    ``EnvironmentAction`` reads it off the weather it leaves
+    (:func:`~autoware_carla_scenario.visibility.visibility_range`), a clear
+    day's 250-400 m, a night's 50-150 m, heavy fog's 15-40 m.  A case that
+    names its quantile, or a visibility (``environment.visibility_m``),
+    already keeps it.
+    """
+    return _with_quantile(
+        samples, seed, VISIBILITY_KEY, "visibility", "environment.visibility_m"
+    )
+
+
+def _with_quantile(
+    samples: Iterable[OddSample],
+    seed: Union[int, str],
+    key: str,
+    name: str,
+    *fixed: str,
+) -> list[OddSample]:
+    """*samples*, each with ``key=<q>`` drawn from *seed*, *name* and the case,
+    unless it sets *key* or one of the *fixed* keys already."""
     out: list[OddSample] = []
-    prefix = f"{TIRE_FRICTION_KEY}="
+    prefix = f"{key}="
+    given = tuple(f"{k}=" for k in (key, *fixed))
     for sample in samples:
-        if any(o.lstrip("+").startswith(prefix) for o in sample.overrides):
+        if any(o.lstrip("+").startswith(given) for o in sample.overrides):
             out.append(sample)
             continue
         rng = random.Random(
-            f"{seed}/tire_friction/{sample.index}/{','.join(sample.overrides)}"
+            f"{seed}/{name}/{sample.index}/{','.join(sample.overrides)}"
         )
         quantile = round(rng.random(), 3)
         out.append(

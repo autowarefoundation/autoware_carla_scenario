@@ -188,6 +188,7 @@ CHECKED: tuple[str, ...] = (
     "autoware_carla_scenario.traffic.context",
     "autoware_carla_scenario.traffic.driven",
     "autoware_carla_scenario.traffic.traffic_manager",
+    "autoware_carla_scenario.visibility",
     "autoware_carla_scenario.kinematics.velocity",
     "autoware_carla_scenario.maps",
     "autoware_carla_scenario.maps.catalogue",

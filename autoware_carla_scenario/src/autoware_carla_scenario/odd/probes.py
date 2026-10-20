@@ -21,7 +21,8 @@ The scenery attributes come from two maps:
   ``speed_limit``), for a run with a Lanelet2 map loaded.
 
 Weather values are CARLA's 0-100 intensities, not physical units such as mm/h,
-so rain and fog are named levels.
+so rain and fog are named levels.  How far drivers see, which the weather
+bounds, is in metres (:func:`visibility`).
 
 The probes whose value the Lanelet2 map alone decides also read it off a
 lanelet, without a world: ``probe.on_lanelet(lanelet, lanelet_map,
@@ -40,6 +41,7 @@ from typing import TYPE_CHECKING, Optional, Union
 from ..entity_role import find_actor_in_world
 from ..constants import EGO_ROLE_NAME
 from ..kinematics import Vector3
+from ..visibility import world_visibility
 from .model import UNDECIDED
 
 if TYPE_CHECKING:
@@ -73,6 +75,7 @@ __all__ = [
     "speed_limit_kph",
     "traffic_density",
     "traffic_density_level",
+    "visibility",
 ]
 
 #: Radius around the ego in which other road users count as near it, in metres.
@@ -491,6 +494,17 @@ def fog(world: carla.World) -> Optional[str]:
     if weather is None:
         return None
     return intensity_level(float(weather.fog_density))
+
+
+def visibility(world: carla.World) -> Optional[float]:
+    """How far drivers see, metres: what the run's weather left
+    (:mod:`autoware_carla_scenario.visibility`); ``None`` when the run set
+    none."""
+    try:
+        world_id = int(world.id)
+    except Exception:
+        return None
+    return world_visibility(world_id)
 
 
 def traffic_density(world: carla.World) -> Optional[str]:

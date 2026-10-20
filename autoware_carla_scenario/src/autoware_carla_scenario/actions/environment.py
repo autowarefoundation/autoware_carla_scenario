@@ -1,10 +1,15 @@
-"""Environment action: set the world's weather and sun position, and the road's grip.
+"""Environment action: set the world's weather and sun position, the road's grip
+and how far drivers see.
 
 A wet road holds a tyre less well than a dry one, and CARLA does not know it:
 its weather is drawn, never driven on.  So the action scales every vehicle's
 wheel friction (``friction_force_multiplier``) to the grip the road's water
 leaves it (:func:`tire_friction_range`), and :func:`follow_tire_friction`
 gives a vehicle spawned later the same.
+
+Nor is CARLA's weather ever seen through: the action records how far drivers
+see in the weather it leaves (:mod:`autoware_carla_scenario.visibility`), for
+a traffic backend that models their sight.
 """
 
 from __future__ import annotations
@@ -14,6 +19,7 @@ from typing import TYPE_CHECKING, Optional
 
 from ..conditions.base import BaseCondition
 from ..utils.vehicles import as_vehicle
+from ..visibility import set_world_visibility, visibility
 from .base import BaseAction, TickTiming
 
 if TYPE_CHECKING:
@@ -275,6 +281,15 @@ class EnvironmentAction(BaseAction):
     anything moves.  Registering it on the tick loop instead is what makes the
     weather change *during* a run.
 
+    **How far drivers see follows the weather.**  An action that sets the fog,
+    the rain or the sun, or names a visibility, records the distance drivers
+    see in the resulting weather
+    (:func:`~autoware_carla_scenario.visibility.visibility`): *visibility_m*
+    if given, else the point *visibility_quantile* of
+    :func:`~autoware_carla_scenario.visibility.visibility_range` -- its middle
+    by default.  A traffic backend that models drivers' sight (``sumo``)
+    holds its traffic to it; the TrafficManager ignores it.
+
     **The road's grip follows the water on it.**  An action that sets the
     ``wetness`` or the standing water (``rain`` sets both), or names a tire
     friction, scales every vehicle's wheel friction to the share of the dry
@@ -308,6 +323,14 @@ class EnvironmentAction(BaseAction):
             1 (its high end); 0.5 when the action sets the road's water and
             this is not given.  *tire_friction* wins over it.  An ODD sweep
             draws it per case.  Keyword-only.
+        visibility_m: How far drivers see, metres: fixed, whatever the
+            weather.  Keyword-only.
+        visibility_quantile: Where in the range of visibility the weather
+            leaves (:func:`~autoware_carla_scenario.visibility.visibility_range`)
+            the drivers' is, 0 (its low end) to 1 (its high end); 0.5 when the
+            action sets the fog, the rain or the sun and this is not given.
+            *visibility_m* wins over it.  An ODD sweep draws it per case.
+            Keyword-only.
         condition: Trigger condition (see :class:`BaseCondition`).
         timing: Tick phase.
         label: Human-readable identifier.
@@ -317,6 +340,8 @@ class EnvironmentAction(BaseAction):
     _settings: dict[str, float]
     _tire_friction: Optional[float]
     _tire_friction_quantile: Optional[float]
+    _visibility_m: Optional[float]
+    _visibility_quantile: Optional[float]
 
     def __init__(
         self,
@@ -335,6 +360,8 @@ class EnvironmentAction(BaseAction):
         rain: Optional[float] = None,
         tire_friction: Optional[float] = None,
         tire_friction_quantile: Optional[float] = None,
+        visibility_m: Optional[float] = None,
+        visibility_quantile: Optional[float] = None,
         label: str = "environment",
         once: bool = True,
     ) -> None:
@@ -357,8 +384,19 @@ class EnvironmentAction(BaseAction):
                 "EnvironmentAction: tire_friction_quantile must be within [0, 1], "
                 f"got {tire_friction_quantile}"
             )
+        if visibility_m is not None and not visibility_m > 0.0:
+            raise ValueError(
+                f"EnvironmentAction: visibility_m must be positive, got {visibility_m}"
+            )
+        if visibility_quantile is not None and not (0.0 <= visibility_quantile <= 1.0):
+            raise ValueError(
+                "EnvironmentAction: visibility_quantile must be within [0, 1], "
+                f"got {visibility_quantile}"
+            )
         self._tire_friction = tire_friction
         self._tire_friction_quantile = tire_friction_quantile
+        self._visibility_m = visibility_m
+        self._visibility_quantile = visibility_quantile
         settings: dict[str, float] = {}
         if rain is not None:
             settings.update(rain_weather(rain))
@@ -393,6 +431,30 @@ class EnvironmentAction(BaseAction):
             or "precipitation_deposits" in self._settings
         )
 
+    @property
+    def sets_visibility(self) -> bool:
+        """Whether the action sets how far drivers see: it names a visibility
+        or sets the fog, the rain or the sun."""
+        return (
+            self._visibility_m is not None
+            or self._visibility_quantile is not None
+            or "fog_density" in self._settings
+            or "precipitation" in self._settings
+            or "sun_altitude_angle" in self._settings
+        )
+
+    def _visibility(self, weather: "carla.WeatherParameters") -> float:
+        """How far drivers see in *weather*, the weather the action leaves, m."""
+        if self._visibility_m is not None:
+            return self._visibility_m
+        quantile = self._visibility_quantile
+        return visibility(
+            float(weather.fog_density),
+            float(weather.precipitation),
+            float(weather.sun_altitude_angle),
+            0.5 if quantile is None else quantile,
+        )
+
     def _tire_factor(self, weather: "carla.WeatherParameters") -> float:
         """The grip share for *weather*, the weather the action leaves."""
         if self._tire_friction is not None:
@@ -406,7 +468,11 @@ class EnvironmentAction(BaseAction):
 
     def execute(self, world: "carla.World") -> None:
         """Apply the settings on top of the world's current weather."""
-        if len(self._settings) == 0 and not self.sets_tire_friction:
+        if (
+            len(self._settings) == 0
+            and not self.sets_tire_friction
+            and not self.sets_visibility
+        ):
             logger.warning(
                 "EnvironmentAction '%s' sets nothing; the weather is unchanged",
                 self.label,
@@ -427,3 +493,7 @@ class EnvironmentAction(BaseAction):
             )
         if self.sets_tire_friction:
             apply_tire_friction(world, self._tire_factor(weather))
+        if self.sets_visibility:
+            seen = self._visibility(weather)
+            set_world_visibility(world.id, seen)
+            logger.info("Drivers see %.0f m", seen)

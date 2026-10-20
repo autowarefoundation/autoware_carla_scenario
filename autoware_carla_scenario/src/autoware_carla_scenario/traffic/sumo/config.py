@@ -99,6 +99,16 @@ class SumoBackendConfig:
             they stand, every step, so SUMO traffic sees them: a SUMO vehicle
             brakes for a pedestrian on its lane -- on a crossing or anywhere
             else on the road -- or changes lanes round it.
+        follow_visibility: Hold SUMO's own traffic (its ambient and background
+            vehicles) to the speed each can stop from within what its driver
+            sees, once the run's weather says how far that is
+            (:mod:`autoware_carla_scenario.visibility`, set by the
+            ``EnvironmentAction``): the reaction time is the vehicle's
+            ``tau`` and the braking its ``decel``, so 50 m of fog holds a
+            default car to about 62 km/h.  When the weather lifts, each gets
+            its own maximum speed back.  The scenario's own vehicles are left
+            to the scenario.  ``false`` ignores the visibility, as the
+            TrafficManager does.
         curve_lateral_acceleration: Lateral acceleration (m/s²) SUMO traffic is
             held to in bends when the world's OpenDRIVE is converted: roadgen
             cuts each edge at its bends and gives every piece, and every path
@@ -143,6 +153,7 @@ class SumoBackendConfig:
     resync_distance_m: float = 8.0
     traffic_light_authority: str = "carla"
     publish_walkers: bool = True
+    follow_visibility: bool = True
     curve_lateral_acceleration: Optional[float] = 3.0
     net_path: Optional[str] = None
     route_path: Optional[str] = None

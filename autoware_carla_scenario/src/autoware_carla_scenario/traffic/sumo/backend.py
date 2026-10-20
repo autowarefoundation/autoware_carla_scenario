@@ -35,6 +35,11 @@ was at the start of the step and given SUMO's speed as a constant velocity
 (``enable_constant_velocity``), which carries it to where SUMO is at the end of
 the step.  Height, pitch and roll stay CARLA's, so the car sits on CARLA's road.
 
+SUMO's own traffic sees only as far as the run's weather lets its drivers see
+(``follow_visibility``, :mod:`autoware_carla_scenario.visibility`): night,
+rain and fog hold each vehicle to the speed it can stop from within that
+distance.  The TrafficManager has no notion of sight.
+
 The CARLA coupling is one step behind SUMO, as in TeraSim: SUMO steps after
 the world has ticked, and its new state is applied to the actors for the next
 tick.
@@ -52,6 +57,7 @@ from typing import Any, ClassVar, Collection, Optional
 from ...constants import EGO_ROLE_NAME
 from ...coordinate.map_manager import run_carla_map
 from ...utils.traffic_light import traffic_light_state_name
+from ...visibility import sight_speed, world_visibility
 from ..base import (
     LaneChangeDirection,
     TrafficBackend,
@@ -203,6 +209,10 @@ class SumoTrafficBackend(TrafficBackend):
         self._constant_speed: dict[int, float] = {}
         #: How often a SUMO vehicle was moved to its car (physics feedback).
         self._feedback_count = 0
+        #: How far drivers see, m, as last applied; ``None``: as far as SUMO lets them.
+        self._visibility: Optional[float] = None
+        #: SUMO id -> its maximum speed (m/s) before the visibility held it down.
+        self._max_speeds: dict[str, float] = {}
 
     @property
     def port(self) -> int:
@@ -363,6 +373,7 @@ class SumoTrafficBackend(TrafficBackend):
             if self._config.traffic_light_authority == "carla":
                 self._signals_to_sumo()
             self._traci.simulationStep()
+            self._follow_visibility(world)
             if self._clock_log is not None:
                 stamp = world.get_snapshot().timestamp
                 self._clock_log.write(
@@ -438,6 +449,8 @@ class SumoTrafficBackend(TrafficBackend):
         self._commands = []
         self._constant_speed = {}
         self._feedback_count = 0
+        self._visibility = None
+        self._max_speeds = {}
 
     def describe(self) -> dict[str, Any]:
         """The backend, its seed, network and demand, for the result record."""
@@ -455,6 +468,8 @@ class SumoTrafficBackend(TrafficBackend):
             self._config.ambient.period() if self._config.ambient.enabled else None
         )
         out["traffic_light_authority"] = self._config.traffic_light_authority
+        out["follow_visibility"] = self._config.follow_visibility
+        out["visibility_m"] = self._visibility
         return out
 
     # ------------------------------------------------------------------
@@ -1372,6 +1387,52 @@ class SumoTrafficBackend(TrafficBackend):
             self._follow(actor, sumo_id, length)
 
     # ------------------------------------------------------------------
+    # Internals: what drivers see
+    # ------------------------------------------------------------------
+
+    def _follow_visibility(self, world: Any) -> None:
+        """Hold SUMO's own traffic to the speed it stops from within what its
+        drivers see: every vehicle when the visibility changes, and the ones
+        that have just departed otherwise."""
+        if not self._config.follow_visibility:
+            return
+        tc = self._traci
+        for sumo_id in tc.simulation.getArrivedIDList():
+            self._max_speeds.pop(sumo_id, None)
+        world_id = getattr(world, "id", None)
+        seen = None if world_id is None else world_visibility(int(world_id))
+        if seen != self._visibility:
+            self._visibility = seen
+            ids = list(tc.vehicle.getIDList())
+            if seen is None:
+                logger.info("SUMO: drivers see as far as SUMO lets them again")
+            else:
+                logger.info("SUMO: drivers see %.0f m; traffic is held to it", seen)
+        elif seen is None:
+            return
+        else:
+            ids = list(tc.simulation.getDepartedIDList())
+        own = set(self._driven) | set(self._external)
+        for sumo_id in ids:
+            if sumo_id not in own:
+                self._hold_to_sight(sumo_id, seen)
+
+    def _hold_to_sight(self, sumo_id: str, seen: Optional[float]) -> None:
+        """Cap *sumo_id*'s maximum speed at the one it stops from within
+        *seen* metres; ``None`` gives it its own back."""
+        vehicle = self._traci.vehicle
+        if seen is None:
+            if sumo_id in self._max_speeds:
+                vehicle.setMaxSpeed(sumo_id, self._max_speeds.pop(sumo_id))
+            return
+        own = self._max_speeds.get(sumo_id)
+        if own is None:
+            own = self._max_speeds[sumo_id] = vehicle.getMaxSpeed(sumo_id)
+        limit = sight_speed(seen, vehicle.getDecel(sumo_id), vehicle.getTau(sumo_id))
+        # Never to a standstill: a car in thick fog still creeps on.
+        vehicle.setMaxSpeed(sumo_id, max(min(own, limit), 1.0))
+
+    # ------------------------------------------------------------------
     # Internals: traffic lights
     # ------------------------------------------------------------------
 
@@ -1498,6 +1559,7 @@ class SumoTrafficBackend(TrafficBackend):
             if self._config.traffic_light_authority == "carla":
                 self._signals_to_sumo()
             tc.simulationStep()
+            self._follow_visibility(world)
         for sumo_id in self._driven:
             tc.vehicle.setSpeed(sumo_id, -1)  # back to SUMO's own speed
         self._sync_ambient(world)
