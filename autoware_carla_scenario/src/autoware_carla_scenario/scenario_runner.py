@@ -43,6 +43,7 @@ from .world_reset import episode_of, reload_current_map, same_episode, short_map
 from .traffic.config import TrafficManagerBackendConfig
 from .traffic.traffic_manager import TrafficManagerBackend
 from .rerun import RerunConverter
+from .visibility import forget_visibility
 from .trajectory_recorder import TrajectoryRecorder
 
 logger = logging.getLogger(__name__)
@@ -1099,6 +1100,9 @@ class ScenarioRunner:
             # autopilot call), and where a backend that cannot run at all -- a
             # simulator that is not installed -- refuses.  Inside the try, so a
             # refusal still gets the cleanup every other failure gets.
+            # How far drivers see is what this run's weather leaves, not what
+            # the last run's left in the same episode.
+            forget_visibility()
             backend.prepare(
                 TrafficContext(
                     client=self._client,
