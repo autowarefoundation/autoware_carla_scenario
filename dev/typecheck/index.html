@@ -1659,6 +1659,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#python-the-check-rewrites-for-codon-376" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Python the check rewrites for Codon (#376)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#the-names-of-typing-a-scenario-may-import" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2026,6 +2037,17 @@
   
     <nav class="md-nav" aria-label="Writing a scenario that type-checks">
       <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#python-the-check-rewrites-for-codon-376" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Python the check rewrites for Codon (#376)
+      
+    </span>
+  </a>
+  
+</li>
         
           <li class="md-nav__item">
   <a href="#the-names-of-typing-a-scenario-may-import" class="md-nav__link">
@@ -3203,6 +3225,69 @@ value whose members are <code>int</code>, not as a type: it becomes <code>int</c
     <code>_replace()</code>, <code>_asdict()</code>, <code>_fields</code> or <code>_make()</code>: build a new <code>Pt(...)</code>.
     Only the class syntax is covered (not <code>NamedTuple("Pt", [...])</code> or
     <code>collections.namedtuple</code>).</li>
+</ul>
+<h3 id="python-the-check-rewrites-for-codon-376">Python the check rewrites for Codon (#376)<a class="headerlink" href="#python-the-check-rewrites-for-codon-376" title="Permanent link">&para;</a></h3>
+<p>Each of these is valid Python that Codon 0.19 refuses or crashes on. The check
+rewrites the checked copy of your module (on the same lines; what runs is your
+code as written), so you write the Python you would anyway. A form the rewrite
+cannot express is refused at its line, with what to write instead.</p>
+<table>
+<thead>
+<tr>
+<th>You write</th>
+<th>The check compiles</th>
+<th>Refused when</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>class MyError(Exception): ...</code></td>
+<td>the same with <code>pass</code> for <code>...</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>{**a, "k": v, **b}</code></td>
+<td><code>(a \| {"k": v} \| b)</code>; <code>{**a}</code> is <code>dict(a)</code></td>
+<td>the values of the parts have other types (<code>Dict[str, int]</code> and <code>Dict[str, str]</code>)</td>
+</tr>
+<tr>
+<td><code>"{:&gt;5}\|{a}".format(1, a=x)</code> on a string literal</td>
+<td>the f-string <code>f"{1:&gt;5}\|{x}"</code> (a complex argument is bound once by a lambda)</td>
+<td><code>*args</code> / <code>**kwargs</code>, a field inside a format spec (<code>{:&gt;{}}</code>), a missing argument, mixed auto and manual numbering, a template that is not a literal (write an f-string)</td>
+</tr>
+<tr>
+<td><code>zip(a, b, strict=True)</code></td>
+<td><code>zip(a, b)</code>: the check types the loop, it does not run it</td>
+<td></td>
+</tr>
+<tr>
+<td><code>sorted(xs)</code>, <code>xs.sort()</code>, <code>min</code> / <code>max</code> of a class that defines <code>__lt__</code> only</td>
+<td>the class gets <code>__gt__</code> (<code>other &lt; self</code>) and <code>__ge__</code> (<code>not self &lt; other</code>), which Codon's sort calls</td>
+<td>the class defines no ordering (use <code>@dataclass(order=True)</code> or <code>key=</code>)</td>
+</tr>
+<tr>
+<td><code>@functools.total_ordering</code></td>
+<td>the decorator and its import are dropped, and the class gets the comparisons it would add from its <code>__lt__</code>, <code>__le__</code>, <code>__gt__</code> or <code>__ge__</code> (and <code>==</code>, or identity without <code>__eq__</code>)</td>
+<td>the class is not at module level, or defines none of the four</td>
+</tr>
+<tr>
+<td><code>lambda x, k=k: x + k</code> (a default that is not a literal)</td>
+<td><code>(lambda k: lambda x: x + k)(k)</code>: the default is bound by a call, once, as in Python</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<p>Notes:</p>
+<ul>
+<li><code>__ge__</code> of a class that defines <code>__lt__</code> only is more than Python gives it
+  (<code>a &gt;= b</code> is a <code>TypeError</code> there): the check accepts it because Codon's sort
+  needs it. It does not change what runs.</li>
+<li>A rewritten lambda no longer takes the captured parameter: <code>fs[0](1, 5)</code>,
+  which passes <code>k</code>, is refused (with a hint naming this). A default after a non-literal one is bound the
+  same way, so positional calls keep their meaning. Use <code>functools.partial</code>
+  where you pass the captured value.</li>
+<li>Codon's f-strings have no <code>{{</code> / <code>}}</code>: a literal brace becomes a string
+  joined with <code>+</code>.</li>
 </ul>
 <h3 id="the-names-of-typing-a-scenario-may-import">The names of <code>typing</code> a scenario may import<a class="headerlink" href="#the-names-of-typing-a-scenario-may-import" title="Permanent link">&para;</a></h3>
 <p>Codon has no <code>typing</code> module of its own beyond a few names, so the check
@@ -5033,7 +5118,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 20, 2026 06:52:23 UTC"><span class="timeago" datetime="2026-10-20T06:52:23+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 20, 2026 06:52:23 UTC">2026-10-20</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 20, 2026 07:59:37 UTC"><span class="timeago" datetime="2026-10-20T07:59:37+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 20, 2026 07:59:37 UTC">2026-10-20</span>
   </span>
 
     
