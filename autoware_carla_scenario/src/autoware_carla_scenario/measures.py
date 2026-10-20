@@ -189,15 +189,17 @@ _BLOCK = 16
 #: metres.
 _OFF_THE_ROAD_M = 100.0
 #: The role name of the vehicle placement.vehicle_bumpers() spawns, high
-#: above the map, to measure a blueprint; never a vehicle ahead.
+#: above the map, to measure a blueprint; never a vehicle ahead.  The same
+#: name as :data:`~autoware_carla_scenario.constants.BUMPER_PROBE_ROLE_NAME`,
+#: kept here for the code that imports it from this module.
 PROBE_ROLE = BUMPER_PROBE_ROLE_NAME
 #: How far the ego, found on no lanelet, moves (m) or turns (degrees) before
 #: the map is searched for its lanelet again.
 _NOWHERE_M = 2.0
+_NOWHERE_DEG = 5.0
 #: How far apart along a lanelet's bound it is asked whether it runs inside
 #: the ego's lanelet, in metres.
 _RIVAL_STEP_M = 1.0
-_NOWHERE_DEG = 5.0
 #: Metres of lane looked along beyond a lanelet, either way, to project a
 #: point near its end onto: more than a vehicle's length.
 _REACH_MARGIN_M = 15.0
@@ -781,22 +783,30 @@ def _runs_inside(
     area: _Area, line: _Line, xs: list[float], ys: list[float], limit: float
 ) -> bool:
     """Whether the polyline ``xs, ys`` runs through the inside of *area*
-    within *limit* (radians) of *line*'s heading there: asked of a segment
-    every :data:`_RIVAL_STEP_M` along it, for an overlap runs metres."""
-    since = _RIVAL_STEP_M
+    within *limit* (radians) of *line*'s heading there: asked every
+    :data:`_RIVAL_STEP_M` along it (half a step in, then a step apart), for
+    an overlap runs metres -- within a long segment too, which a sparse map
+    draws a straight with."""
+    travelled = 0.0
+    next_at = _RIVAL_STEP_M / 2
     for i in range(len(xs) - 1):
-        since += math.hypot(xs[i + 1] - xs[i], ys[i + 1] - ys[i])
-        if since < _RIVAL_STEP_M:
+        dx = xs[i + 1] - xs[i]
+        dy = ys[i + 1] - ys[i]
+        length = math.hypot(dx, dy)
+        if length == 0.0:
             continue
-        since = 0.0
-        mx = (xs[i] + xs[i + 1]) / 2
-        my = (ys[i] + ys[i + 1]) / 2
-        if not area.deep_inside(mx, my):
-            continue
-        yaw = math.atan2(ys[i + 1] - ys[i], xs[i + 1] - xs[i])
-        _s, _d2, along = line.project(mx, my)
-        if _angle_between(yaw, along) < limit:
-            return True
+        yaw = math.atan2(dy, dx)
+        while next_at <= travelled + length:
+            t = (next_at - travelled) / length
+            next_at += _RIVAL_STEP_M
+            mx = xs[i] + t * dx
+            my = ys[i] + t * dy
+            if not area.deep_inside(mx, my):
+                continue
+            _s, _d2, along = line.project(mx, my)
+            if _angle_between(yaw, along) < limit:
+                return True
+        travelled += length
     return False
 
 
