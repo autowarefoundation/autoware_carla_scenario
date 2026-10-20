@@ -8,6 +8,9 @@ The layers, bottom-up:
   Angles wrap with :func:`..kinematics.normalize_angle_rad`.
 * :mod:`.location`: where an agent is on the Lanelet2 map (intersection,
   highway, roundabout), for each adversity's location gate.
+* :mod:`.observation`: what an agent sees -- leader, follower, the lanes
+  beside, the next signal, the road near a pedestrian -- from a snapshot of
+  the agents (:mod:`.snapshot` takes it of a CARLA world).
 
 Everything here works in the Lanelet2 map frame: ENU, right-handed, yaw in
 radians counter-clockwise from +x, positions at the agent's centre.  TeraSim
