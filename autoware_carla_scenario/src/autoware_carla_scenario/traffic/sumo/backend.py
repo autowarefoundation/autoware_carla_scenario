@@ -58,6 +58,7 @@ from ...constants import EGO_ROLE_NAME
 from ...coordinate.map_manager import run_carla_map
 from ...utils.traffic_light import traffic_light_state_name
 from ...visibility import sight_speed, world_visibility
+from ...world_reset import episode_of
 from ..base import (
     LaneChangeDirection,
     TrafficBackend,
@@ -211,8 +212,9 @@ class SumoTrafficBackend(TrafficBackend):
         self._feedback_count = 0
         #: How far drivers see, m, as last applied; ``None``: as far as SUMO lets them.
         self._visibility: Optional[float] = None
-        #: SUMO id -> its maximum speed (m/s) before the visibility held it down.
-        self._max_speeds: dict[str, float] = {}
+        #: SUMO id -> its maximum speed (m/s) before the visibility held it
+        #: down, its deceleration (m/s²) and its tau (s): read once.
+        self._max_speeds: dict[str, tuple[float, float, float]] = {}
 
     @property
     def port(self) -> int:
@@ -1396,25 +1398,28 @@ class SumoTrafficBackend(TrafficBackend):
         that have just departed otherwise."""
         if not self._config.follow_visibility:
             return
+        seen = world_visibility(episode_of(world))
+        if seen is None and self._visibility is None:
+            return  # nothing set, nothing held: no TraCI call at all
         tc = self._traci
-        for sumo_id in tc.simulation.getArrivedIDList():
-            self._max_speeds.pop(sumo_id, None)
-        world_id = getattr(world, "id", None)
-        seen = None if world_id is None else world_visibility(int(world_id))
-        if seen != self._visibility:
-            self._visibility = seen
-            ids = list(tc.vehicle.getIDList())
-            if seen is None:
-                logger.info("SUMO: drivers see as far as SUMO lets them again")
-            else:
-                logger.info("SUMO: drivers see %.0f m; traffic is held to it", seen)
-        elif seen is None:
-            return
-        else:
+        if self._max_speeds:
+            for sumo_id in tc.simulation.getArrivedIDList():
+                self._max_speeds.pop(sumo_id, None)
+        if seen == self._visibility:
             ids = list(tc.simulation.getDepartedIDList())
-        own = set(self._driven) | set(self._external)
+        elif seen is None:
+            self._visibility = None
+            logger.info("SUMO: drivers see as far as SUMO lets them again")
+            # Only the held ones have anything to get back, if still there.
+            present = set(tc.vehicle.getIDList())
+            ids = [i for i in self._max_speeds if i in present]
+            self._max_speeds = {i: self._max_speeds[i] for i in ids}
+        else:
+            self._visibility = seen
+            logger.info("SUMO: drivers see %.0f m; traffic is held to it", seen)
+            ids = list(tc.vehicle.getIDList())
         for sumo_id in ids:
-            if sumo_id not in own:
+            if sumo_id not in self._driven and sumo_id not in self._external:
                 self._hold_to_sight(sumo_id, seen)
 
     def _hold_to_sight(self, sumo_id: str, seen: Optional[float]) -> None:
@@ -1423,12 +1428,17 @@ class SumoTrafficBackend(TrafficBackend):
         vehicle = self._traci.vehicle
         if seen is None:
             if sumo_id in self._max_speeds:
-                vehicle.setMaxSpeed(sumo_id, self._max_speeds.pop(sumo_id))
+                vehicle.setMaxSpeed(sumo_id, self._max_speeds.pop(sumo_id)[0])
             return
-        own = self._max_speeds.get(sumo_id)
-        if own is None:
-            own = self._max_speeds[sumo_id] = vehicle.getMaxSpeed(sumo_id)
-        limit = sight_speed(seen, vehicle.getDecel(sumo_id), vehicle.getTau(sumo_id))
+        held = self._max_speeds.get(sumo_id)
+        if held is None:
+            held = self._max_speeds[sumo_id] = (
+                vehicle.getMaxSpeed(sumo_id),
+                vehicle.getDecel(sumo_id),
+                vehicle.getTau(sumo_id),
+            )
+        own, decel, tau = held
+        limit = sight_speed(seen, decel, tau)
         # Never to a standstill: a car in thick fog still creeps on.
         vehicle.setMaxSpeed(sumo_id, max(min(own, limit), 1.0))
 

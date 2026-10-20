@@ -33,7 +33,9 @@ __all__ = [
     "FOG_VISIBILITY_RANGES",
     "LIGHT_VISIBILITY_RANGES",
     "RAIN_VISIBILITY_RANGES",
+    "at_quantile",
     "forget_visibility",
+    "interpolate_range",
     "set_world_visibility",
     "sight_speed",
     "visibility",
@@ -79,10 +81,16 @@ LIGHT_VISIBILITY_RANGES: tuple[tuple[float, float, float], ...] = (
 )
 
 
-def _interpolate(
+def interpolate_range(
     rows: tuple[tuple[float, float, float], ...], at: float
 ) -> tuple[float, float]:
-    """``(low, high)`` of *rows* at *at*, clamped to the rows' first and last."""
+    """``(low, high)`` of *rows* -- ``(x, low, high)``, by rising ``x`` -- at
+    *at*, interpolated linearly between them and clamped to the first and last.
+
+    The tables of a range a weather leaves are written this way: this
+    module's, and the grip's
+    (:data:`~autoware_carla_scenario.actions.environment.TIRE_FRICTION_RANGES`).
+    """
     first = rows[0]
     if at <= first[0]:
         return first[1], first[2]
@@ -114,9 +122,11 @@ def visibility_range(
         sun_altitude_angle: Its ``sun_altitude_angle``, degrees above the
             horizon.
     """
-    fog_low, fog_high = _interpolate(FOG_VISIBILITY_RANGES, float(fog_density))
-    rain_low, rain_high = _interpolate(RAIN_VISIBILITY_RANGES, float(precipitation))
-    light_low, light_high = _interpolate(
+    fog_low, fog_high = interpolate_range(FOG_VISIBILITY_RANGES, float(fog_density))
+    rain_low, rain_high = interpolate_range(
+        RAIN_VISIBILITY_RANGES, float(precipitation)
+    )
+    light_low, light_high = interpolate_range(
         LIGHT_VISIBILITY_RANGES, float(sun_altitude_angle)
     )
     return (
@@ -136,6 +146,11 @@ def visibility(
     0.5, the default, is the middle of the range.
     """
     low, high = visibility_range(fog_density, precipitation, sun_altitude_angle)
+    return at_quantile(low, high, quantile)
+
+
+def at_quantile(low: float, high: float, quantile: float) -> float:
+    """The point *quantile* (clamped to 0-1) of the way from *low* to *high*."""
     q = min(max(float(quantile), 0.0), 1.0)
     return low + q * (high - low)
 
@@ -182,8 +197,14 @@ def set_world_visibility(world_id: int, visibility_m: float) -> None:
     _VISIBILITY[world_id] = float(visibility_m)
 
 
-def world_visibility(world_id: int) -> Optional[float]:
-    """The visibility set in the world *world_id*, metres, or ``None``."""
+def world_visibility(world_id: Optional[int]) -> Optional[float]:
+    """The visibility set in the world *world_id*, metres, or ``None``.
+
+    *world_id* is what :func:`~autoware_carla_scenario.world_reset.episode_of`
+    reads off a world: ``None``, a world that names none, has none set.
+    """
+    if world_id is None:
+        return None
     if world_id in _VISIBILITY:
         return _VISIBILITY[world_id]
     return None

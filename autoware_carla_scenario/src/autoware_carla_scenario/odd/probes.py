@@ -42,6 +42,7 @@ from ..entity_role import find_actor_in_world
 from ..constants import EGO_ROLE_NAME
 from ..kinematics import Vector3
 from ..visibility import world_visibility
+from ..world_reset import episode_of
 from .model import UNDECIDED
 
 if TYPE_CHECKING:
@@ -500,11 +501,7 @@ def visibility(world: carla.World) -> Optional[float]:
     """How far drivers see, metres: what the run's weather left
     (:mod:`autoware_carla_scenario.visibility`); ``None`` when the run set
     none."""
-    try:
-        world_id = int(world.id)
-    except Exception:
-        return None
-    return world_visibility(world_id)
+    return world_visibility(episode_of(world))
 
 
 def traffic_density(world: carla.World) -> Optional[str]:

@@ -19,7 +19,12 @@ from typing import TYPE_CHECKING, Optional
 
 from ..conditions.base import BaseCondition
 from ..utils.vehicles import as_vehicle
-from ..visibility import set_world_visibility, visibility
+from ..visibility import (
+    at_quantile,
+    interpolate_range,
+    set_world_visibility,
+    visibility,
+)
 from .base import BaseAction, TickTiming
 
 if TYPE_CHECKING:
@@ -95,14 +100,8 @@ def tire_friction_range(
         wetness: The weather's ``wetness``, 0-100.
         precipitation_deposits: Its standing water, 0-100.
     """
-    water = min(max(max(float(wetness), float(precipitation_deposits)), 0.0), 100.0)
-    for (w0, lo0, hi0), (w1, lo1, hi1) in zip(
-        TIRE_FRICTION_RANGES, TIRE_FRICTION_RANGES[1:]
-    ):
-        if water <= w1:
-            t = (water - w0) / (w1 - w0)
-            return lo0 + t * (lo1 - lo0), hi0 + t * (hi1 - hi0)
-    raise AssertionError("unreachable: the ranges end at 100")
+    water = max(float(wetness), float(precipitation_deposits))
+    return interpolate_range(TIRE_FRICTION_RANGES, water)
 
 
 def tire_friction(
@@ -113,8 +112,7 @@ def tire_friction(
     0.5, the default, is the middle of the range: a dry road's is 1.0.
     """
     low, high = tire_friction_range(wetness, precipitation_deposits)
-    q = min(max(float(quantile), 0.0), 1.0)
-    return low + q * (high - low)
+    return at_quantile(low, high, quantile)
 
 
 #: World (episode) id -> the grip share last applied in it.

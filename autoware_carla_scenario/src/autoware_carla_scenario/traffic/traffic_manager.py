@@ -32,6 +32,7 @@ from .base import (
     _entity_name,
 )
 from .config import TrafficManagerBackendConfig
+from ..world_reset import episode_of
 from ..visibility import (
     DEFAULT_DECEL,
     DEFAULT_REACTION_S,
@@ -202,11 +203,7 @@ class TrafficManagerBackend(TrafficBackend):
         sight would hold a car to (:func:`~autoware_carla_scenario.visibility.sight_speed`,
         for SUMO's default car), and the traffic drives as it did.
         """
-        # hasattr rather than getattr with a default: Codon decides it when
-        # it compiles (docs/typecheck.md).
-        if not hasattr(world, "id"):
-            return
-        seen = world_visibility(int(world.id))
+        seen = world_visibility(episode_of(world))
         if seen == self._visibility:
             return
         self._visibility = seen
