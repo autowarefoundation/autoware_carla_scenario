@@ -16,8 +16,9 @@ stop line in, say, a Lanelet2 map.
 
 A Lanelet2 map can be given instead of converted (``driver.lanelet2_path``):
 the file (and the ``map_projector_info.yaml`` beside it, if any) is copied into
-the set as it is, with an empty trace, so a policy still gets
-each light's stop point but not the lanelet it lies on. A set whose every format
+the set as it is, with an empty trace; ``carla_driver_interface.hdmap`` (2.3
+and later) then finds each light on the map itself, as the first traffic-light
+element on or ahead of its stop point. A set whose every format
 is given that way is written without roadgen, its IR and read trace empty too:
 every set has the same shape, so any reader of these files opens it.
 
