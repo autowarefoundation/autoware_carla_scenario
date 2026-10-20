@@ -403,6 +403,8 @@ def test_a_sweep_of_samples_alone_needs_no_map() -> None:
             "environment.fog_density",
             # Where the case's grip is in the range its rain leaves.
             "environment.tire_friction_quantile",
+            # And how far its drivers see, in the range its weather leaves.
+            "environment.visibility_quantile",
         }
 
 
@@ -427,7 +429,7 @@ def test_drawn_cases_take_the_lanelet_cases_in_turn(monkeypatch) -> None:
         "ego.spawn_lanelet_id=2",
         "ego.spawn_lanelet_id=1",
     ]
-    assert all(c[-1] == "x=1" and len(c) == 7 for c in cases)
+    assert all(c[-1] == "x=1" and len(c) == 8 for c in cases)
 
     # Without a count, one drawn case per lanelet case.
     del odd_sample["count"]
@@ -512,6 +514,69 @@ def test_a_case_that_names_its_grip_keeps_it() -> None:
     assert kept == named
     assert added.overrides[0] == "environment.rain=80"
     assert added.overrides[1].startswith("environment.tire_friction_quantile=")
+
+
+def test_each_case_draws_its_visibility_the_same_way_every_time() -> None:
+    cfg = OmegaConf.create(
+        {"odd": "default", "sweep": {"odd_sample": {"count": 8, "seed": 3}}}
+    )
+
+    def quantiles(cases: list[list[str]]) -> list[float]:
+        return [
+            float(o.split("=", 1)[1])
+            for case in cases
+            for o in case
+            if o.startswith("environment.visibility_quantile=")
+        ]
+
+    first = quantiles(expand_config(cfg))
+    assert len(first) == 8
+    assert all(0.0 <= q <= 1.0 for q in first)
+    assert len(set(first)) > 1
+    assert quantiles(expand_config(cfg)) == first
+    # Drawn apart from the grip, not the same number twice.
+    grips = [
+        float(o.split("=", 1)[1])
+        for case in expand_config(cfg)
+        for o in case
+        if o.startswith("environment.tire_friction_quantile=")
+    ]
+    assert grips != first
+
+
+def test_a_sweep_can_leave_the_visibility_at_the_middle() -> None:
+    cfg = OmegaConf.create(
+        {
+            "odd": "default",
+            "sweep": {"odd_sample": {"count": 2, "visibility": False}},
+        }
+    )
+
+    for case in expand_config(cfg):
+        assert not any(o.startswith("environment.visibility") for o in case)
+
+
+def test_a_case_that_names_its_visibility_keeps_it() -> None:
+    from autoware_carla_scenario.odd.sampler import OddSample, with_visibility
+
+    quantile = OddSample(0, ["environment.visibility_quantile=0.9"], {}, {})
+    metres = OddSample(1, ["environment.visibility_m=30"], {}, {})
+    drawn = OddSample(2, ["environment.fog_density=80"], {}, {})
+
+    kept, fixed, added = with_visibility([quantile, metres, drawn], seed=0)
+
+    assert kept == quantile and fixed == metres
+    assert added.overrides[1].startswith("environment.visibility_quantile=")
+
+
+def test_the_visibility_probe_has_a_knob_in_metres() -> None:
+    from autoware_carla_scenario.odd import probes
+    from autoware_carla_scenario.odd.backend import BUILT_IN_PROBES, DEFAULT_KNOBS
+
+    assert BUILT_IN_PROBES["visibility"] == (probes.visibility, "m")
+    knob = DEFAULT_KNOBS[probes.visibility]
+    assert knob.key == "environment.visibility_m"
+    assert knob.range == (15.0, 400.0)
 
 
 # ---------------------------------------------------------------------------

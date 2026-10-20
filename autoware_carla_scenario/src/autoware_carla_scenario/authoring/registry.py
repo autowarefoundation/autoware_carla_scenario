@@ -24,6 +24,7 @@ the editor process, which never talks to a simulator.
 
 from __future__ import annotations
 
+import copy
 import re
 
 # Free to import: `action_state` holds nothing but the enum, which is why it
@@ -37,6 +38,7 @@ from ..action_state import ActionState
 # is read, so the Metric card's options are the metrics themselves.
 from ..metrics import BUILT_IN_METRICS
 from dataclasses import dataclass
+from collections.abc import Iterator
 from typing import Any, Literal, Optional
 
 __all__ = [
@@ -55,6 +57,7 @@ __all__ = [
     "SEARCHABLE_LANELET_KINDS",
     "searchable_lanelet_fields",
     "FieldSpec",
+    "field_holders",
     "ConditionVisual",
     "REFERENCE_PATTERN",
     "SelectOption",
@@ -124,6 +127,12 @@ FieldKind = Literal[
     # :func:`autoware_carla_scenario.trajectory.authoring.parse_route_vertices`).
     # Edited as text, ``kind key=value ...`` per line.
     "route_trajectory",
+    # An ordered list of records, each a mapping of its own typed fields
+    # (:attr:`FieldSpec.item_fields`), edited as rows that can be added,
+    # removed and reordered.  For a list whose order means something and whose
+    # entries repeat -- NADE's adversities, the first to fire winning -- which
+    # one field per entry cannot say.
+    "record_list",
 ]
 
 #: Field kinds that hold one whole number, and those that hold a list of them.
@@ -199,6 +208,8 @@ class FieldSpec:
         place: For a lanelet field, what kind of place it names -- see
             :data:`LaneletPlace`.  Read by the editor's map, which draws a
             destination differently from a place merely watched.
+        item_fields: For a ``record_list`` field, the fields of each record,
+            checked and coerced as a primitive's own are.
     """
 
     name: str
@@ -210,6 +221,7 @@ class FieldSpec:
     help: str = ""
     required: bool = True
     place: LaneletPlace = "watched"
+    item_fields: tuple["FieldSpec", ...] = ()
 
 
 @dataclass(frozen=True)
@@ -383,6 +395,25 @@ class ActionSpec:
     def actor_required(self) -> bool:
         """Whether this action needs a vehicle to perform it."""
         return self.scope == "actor"
+
+
+def field_holders(
+    fields: "tuple[FieldSpec, ...]", params: "dict[str, Any]"
+) -> "Iterator[tuple[FieldSpec, dict[str, Any]]]":
+    """Yield every field of *fields* with the mapping that holds its value.
+
+    A ``record_list`` field is not yielded itself: each of its records yields
+    its own fields, with the record as the holder.  For whatever looks for a
+    kind of field -- entity references, action references -- so a reference
+    written in a record is found as one written at the top level is.
+    """
+    for spec in fields:
+        if spec.kind == "record_list":
+            for row in params.get(spec.name) or ():
+                if isinstance(row, dict):
+                    yield from field_holders(spec.item_fields, row)
+        else:
+            yield spec, params
 
 
 @dataclass(frozen=True)
@@ -785,8 +816,12 @@ def get_binding_spec(type_id: str) -> Optional[BindingSpec]:
 
 
 def default_params(fields: "tuple[FieldSpec, ...]") -> dict[str, Any]:
-    """Return a fresh params mapping seeded with each field's default."""
-    return {f.name: f.default for f in fields}
+    """Return a fresh params mapping seeded with each field's default.
+
+    Copied, so no two nodes share a default list -- or a record list's
+    records -- that one of them then edits in place.
+    """
+    return {f.name: copy.deepcopy(f.default) for f in fields}
 
 
 def searchable_lanelet_fields(
@@ -1376,6 +1411,115 @@ register_action_spec(
             "driver.  A vertex is departed on its time, on a waypoint "
             "condition, or on arrival."
         ),
+    )
+)
+
+#: Mirrors ``AdversityLocation``; the codegen refuses an option that names no
+#: member.  No default: an adversity fires anywhere only when told so.
+_ADVERSITY_LOCATIONS: tuple[SelectOption, ...] = (
+    SelectOption("any", "Anywhere"),
+    SelectOption("intersection", "In or 25 m before a junction"),
+    SelectOption("highway", "On a highway"),
+    SelectOption("roundabout", "In or 25 m before a roundabout"),
+)
+
+
+#: Every adversarial action's fields: where it may fire, how it drives.
+_ADVERSITY_FIELDS: tuple[FieldSpec, ...] = (
+    FieldSpec(
+        name="location",
+        label="Where",
+        kind="select",
+        options=_ADVERSITY_LOCATIONS,
+        help="Where the adversity may fire; 'Anywhere' has to be chosen.",
+    ),
+    FieldSpec(
+        name="following_mode",
+        label="Following mode",
+        kind="select",
+        default="follow",
+        options=_FOLLOWING_MODES,
+    ),
+)
+
+
+_ADVERSITY_NOTE = (
+    "  Fires when its trigger holds at the chosen location (TeraSim's "
+    "numbers), drives the planned path, then hands the entity back to traffic."
+)
+
+register_action_spec(
+    ActionSpec(
+        type_id="adversarial_brake",
+        title="Adversarial Brake",
+        category="Adversity",
+        builder="build_adversarial_brake_action",
+        target="..actions.adversarial:AdversarialBrakeAction",
+        actor_kinds=("vehicle",),
+        visual_kind="continuous",
+        fields=_ADVERSITY_FIELDS,
+        description="Brake hard in front of a follower that keeps coming."
+        + _ADVERSITY_NOTE,
+    )
+)
+
+register_action_spec(
+    ActionSpec(
+        type_id="ignore_leader",
+        title="Ignore Leader",
+        category="Adversity",
+        builder="build_ignore_leader_action",
+        target="..actions.adversarial:IgnoreLeaderAction",
+        actor_kinds=("vehicle",),
+        visual_kind="continuous",
+        fields=_ADVERSITY_FIELDS,
+        description="Drive on as if the close, slower leader were not there."
+        + _ADVERSITY_NOTE,
+    )
+)
+
+register_action_spec(
+    ActionSpec(
+        type_id="adversarial_cut_in",
+        title="Adversarial Cut-in",
+        category="Adversity",
+        builder="build_adversarial_cut_in_action",
+        target="..actions.adversarial:AdversarialCutInAction",
+        actor_kinds=("vehicle",),
+        visual_kind="continuous",
+        fields=_ADVERSITY_FIELDS,
+        description="Change lane in front of a vehicle too close behind in the next lane."
+        + _ADVERSITY_NOTE,
+    )
+)
+
+register_action_spec(
+    ActionSpec(
+        type_id="run_traffic_rule",
+        title="Run Traffic Rule",
+        category="Adversity",
+        builder="build_run_traffic_rule_action",
+        target="..actions.adversarial:RunTrafficRuleAction",
+        actor_kinds=("vehicle",),
+        visual_kind="continuous",
+        fields=_ADVERSITY_FIELDS,
+        description="Run the red or yellow light the vehicle is stopping for."
+        + _ADVERSITY_NOTE,
+    )
+)
+
+register_action_spec(
+    ActionSpec(
+        type_id="jaywalk",
+        title="Jaywalk",
+        category="Adversity",
+        builder="build_jaywalk_action",
+        target="..actions.adversarial:JaywalkAction",
+        actor_kinds=("pedestrian",),
+        visual_kind="continuous",
+        fields=_ADVERSITY_FIELDS,
+        description="Walk straight across the nearest road, off any crosswalk."
+        + _ADVERSITY_NOTE,
     )
 )
 

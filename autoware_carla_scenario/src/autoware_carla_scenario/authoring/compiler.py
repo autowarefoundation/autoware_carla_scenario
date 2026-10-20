@@ -35,6 +35,7 @@ from .registry import (
     ActionSpec,
     ConditionSpec,
     FieldSpec,
+    field_holders,
     get_action_spec,
     get_condition_spec,
 )
@@ -83,7 +84,11 @@ class CompilationError(Exception):
 def _coerce_one(spec: FieldSpec, value: Any) -> Any:
     """Return *value* converted to the type *spec* describes."""
     if value is None or (isinstance(value, str) and not value.strip()):
-        return spec.default
+        # The default stands in for the value and is coerced as one would be,
+        # so a record list's default tuple reaches the builder as a list.
+        if spec.default is None or spec.default == "":
+            return spec.default
+        value = spec.default
 
     if spec.kind in INT_KINDS:
         return int(str(value).strip())
@@ -106,6 +111,8 @@ def _coerce_one(spec: FieldSpec, value: Any) -> Any:
         return [list(row) for row in parse_relative_vertices(value)]
     if spec.kind == "route_trajectory":
         return parse_route_vertices(value)
+    if spec.kind == "record_list":
+        return [coerce_params(spec.item_fields, row) for row in value]
     return value
 
 
@@ -225,11 +232,11 @@ def _resolve_entity_refs(
     Entity references are resolved here so that no builder -- and no runtime
     object -- has to know about document ids.
     """
-    for field_spec in fields:
+    for field_spec, holder in field_holders(fields, params):
         if field_spec.kind == "entity":
-            entity_id = params.get(field_spec.name)
+            entity_id = holder.get(field_spec.name)
             if entity_id is not None:
-                params[field_spec.name] = roles[str(entity_id)]
+                holder[field_spec.name] = roles[str(entity_id)]
     return params
 
 

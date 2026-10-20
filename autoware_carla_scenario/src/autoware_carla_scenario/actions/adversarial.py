@@ -1,0 +1,398 @@
+"""TeraSim's phase-1 adversities as actions (#393).
+
+Each action carries out one adversity of :mod:`~..adversity.triggers` on a
+named vehicle (or, for :class:`JaywalkAction`, a pedestrian):
+
+* :class:`AdversarialBrakeAction` -- brakes hard in front of a follower that
+  keeps coming (:attr:`~..adversity.triggers.AdversityKind.BRAKE_CHECK`).
+* :class:`IgnoreLeaderAction` -- drives on as if its leader were not there
+  (``IGNORE_LEADER``).
+* :class:`AdversarialCutInAction` -- changes lane in front of a vehicle too
+  close behind there (``CUT_IN``).
+* :class:`RunTrafficRuleAction` -- runs the red or yellow light it is
+  stopping for (``TRAFFIC_RULE``).
+* :class:`JaywalkAction` -- a pedestrian walks straight across the road, off
+  any crosswalk (``JAYWALKING``).
+
+The trigger is an :class:`~..conditions.adversity_feasible.AdversityFeasibleCondition`
+of the action's kind at its *location* by default -- which is why *location*
+is required: :attr:`~..adversity.location.AdversityLocation.ANY` says
+anywhere, and has to be said.  When it holds, the command it found is
+planned on the map (:func:`~..adversity.command.plan_command`) and driven by
+an :class:`~._adversarial_execution.AdversarialExecution`; the run ends when
+the path is driven and the vehicle is handed back to its traffic backend.
+
+A *condition* given in its place decides when the action fires instead: the
+adversity's trigger is then asked on that tick, and when it does not hold
+the run ends with nothing done (and a warning).  To require both, give
+``AndCondition`` of the two.
+
+Not re-exported from :mod:`autoware_carla_scenario.actions`, which every
+scenario imports, because it pulls in the Lanelet2 map layer: import it from
+here or from the package's top level.
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import TYPE_CHECKING, Optional, Union
+
+from ..action_state import ActionState
+from ..adversity.command import plan_command
+from ..adversity.location import AdversityLocation
+from ..adversity.triggers import DEFAULT_THRESHOLDS, AdversityKind, TriggerThresholds
+from ..conditions.adversity_feasible import AdversityFeasibleCondition
+from ..conditions.base import BaseCondition, ScenarioResult
+from ..entity_role import EntityRole
+from ..trajectory.model import TrajectoryFollowingMode
+from ._adversarial_execution import AdversarialExecution
+from .base import BaseAction, TickTiming
+
+if TYPE_CHECKING:
+    import typesafe_carla.carla as carla
+
+__all__ = [
+    "AdversarialAction",
+    "AdversarialBrakeAction",
+    "AdversarialCutInAction",
+    "IgnoreLeaderAction",
+    "JaywalkAction",
+    "RunTrafficRuleAction",
+]
+
+logger = logging.getLogger(__name__)
+
+
+class AdversarialAction(BaseAction):
+    """An adversity of *kind* carried out by *entity_name* at *location*.
+
+    The shared machinery of the phase-1 actions, which fix *kind*; see the
+    module for how a run goes.
+
+    Args:
+        entity_name: ``role_name`` of the vehicle (or pedestrian).
+        kind: The adversity.
+        location: Where it may fire; :attr:`AdversityLocation.ANY` anywhere.
+        condition: Fires the action in place of the adversity's own trigger.
+        timing: Tick phase (``PRE_TICK`` or ``POST_TICK``).
+        label: Human-readable identifier.
+        once: If ``True`` (default) the action runs at most once.
+        seed: Seeds the trigger's random draws (a jaywalker's speed).
+        thresholds: The triggers' numbers; TeraSim's by default.
+        following_mode: How the path is driven: ``FOLLOW`` (the vehicle's own
+            motion, default) or ``POSITION`` (placed on it, as TeraSim's
+            ``moveToXY``).
+    """
+
+    REISSUES_BY_DEFAULT = True
+
+    # Declared for the static check (docs/typecheck.md).
+    _entity_name: str
+    _feasible: AdversityFeasibleCondition
+    _gated: bool
+    _following_mode: TrajectoryFollowingMode
+    _execution: Optional[AdversarialExecution]
+    _elapsed: float
+
+    def __init__(
+        self,
+        entity_name: Union[EntityRole, str],
+        kind: AdversityKind,
+        location: AdversityLocation,
+        condition: Optional[BaseCondition] = None,
+        timing: TickTiming = TickTiming.PRE_TICK,
+        *,
+        label: str,
+        once: bool = True,
+        seed: int = 0,
+        thresholds: TriggerThresholds = DEFAULT_THRESHOLDS,
+        following_mode: TrajectoryFollowingMode = TrajectoryFollowingMode.FOLLOW,
+    ) -> None:
+        feasible = AdversityFeasibleCondition(
+            entity_name,
+            kind,
+            location,
+            label=f"{label}_feasible",
+            seed=seed,
+            thresholds=thresholds,
+        )
+        # If statements, not conditional expressions: Codon does not take a
+        # subclass for an Optional of its base there (docs/typecheck.md).
+        trigger: Optional[BaseCondition] = condition
+        if trigger is None:
+            gate: BaseCondition = feasible
+            trigger = gate
+        end: BaseCondition = _AdversityDone(self, label)
+        super().__init__(
+            label=label,
+            condition=trigger,
+            timing=timing,
+            once=once,
+            until=end,
+        )
+        self._entity_name = str(entity_name)
+        self._feasible = feasible
+        self._gated = condition is None
+        self._following_mode = following_mode
+        self._execution = None
+        self._elapsed = 0.0
+
+    @property
+    def kind(self) -> AdversityKind:
+        """The adversity carried out."""
+        return self._feasible.kind
+
+    @property
+    def location(self) -> AdversityLocation:
+        """Where it may fire."""
+        return self._feasible.location
+
+    @property
+    def finished(self) -> bool:
+        """Whether the current run is over: its path driven and the vehicle
+        handed back, or nothing to drive."""
+        if self._execution is None:
+            return True
+        execution: AdversarialExecution = self._execution
+        return execution.done
+
+    def tick(self, world: "carla.World", elapsed: float) -> None:
+        """Remember the scenario time, which :meth:`execute` is not given."""
+        self._elapsed = elapsed
+        super().tick(world, elapsed)
+
+    def execute(self, world: "carla.World") -> None:
+        """Plan the command when triggered, then drive it a tick at a time."""
+        if self.state is ActionState.STANDBY:
+            self._execution = self._plan(world)
+        if self._execution is None:
+            return
+        execution: AdversarialExecution = self._execution
+        execution.tick(world, self._elapsed)
+
+    def close(self) -> None:
+        """Close the conditions, the trigger's and the path's."""
+        super().close()
+        if not self._gated:
+            self._feasible.close()
+        if self._execution is not None:
+            execution: AdversarialExecution = self._execution
+            execution.close()
+
+    def _plan(self, world: "carla.World") -> Optional[AdversarialExecution]:
+        """The run's execution, or None when there is nothing to carry out."""
+        if not self._gated and self._feasible.check(world, self._elapsed) is None:
+            logger.warning(
+                "%s: '%s' cannot %s now; nothing done",
+                self.label,
+                self._entity_name,
+                self.kind.value.replace("_", " "),
+            )
+            return None
+        command = self._feasible.command
+        scene = self._feasible.scene
+        if command is None or scene is None:
+            return None
+        try:
+            path = plan_command(
+                scene.features, scene.vehicle(self._entity_name), command
+            )
+        except ValueError as error:
+            logger.warning("%s: %s; nothing done", self.label, error)
+            return None
+        return AdversarialExecution(
+            self._entity_name, path, self._following_mode, self.label
+        )
+
+
+class _AdversityDone(BaseCondition):
+    """Holds once the action it watches has finished its run."""
+
+    _action: AdversarialAction
+
+    def __init__(self, action: AdversarialAction, label: str) -> None:
+        super().__init__(label=f"{label}_done")
+        self._action = action
+
+    def check(self, world: "carla.World", elapsed: float) -> Optional[ScenarioResult]:
+        if not self._action.finished:
+            return None
+        return ScenarioResult(
+            passed=True,
+            message=f"{self._action.label} is over",
+            elapsed_seconds=elapsed,
+        )
+
+
+class AdversarialBrakeAction(AdversarialAction):
+    """Brake hard in front of a follower that keeps coming.
+
+    TeraSim's Follower adversity: fires with a follower close behind, the
+    vehicle not speeding up and the follower not slowing, and brakes at the
+    IDM's emergency deceleration for ``thresholds.duration``.  See
+    :class:`AdversarialAction` for the arguments.
+    """
+
+    def __init__(
+        self,
+        entity_name: Union[EntityRole, str],
+        location: AdversityLocation,
+        condition: Optional[BaseCondition] = None,
+        timing: TickTiming = TickTiming.PRE_TICK,
+        *,
+        label: str = "adversarial_brake",
+        once: bool = True,
+        thresholds: TriggerThresholds = DEFAULT_THRESHOLDS,
+        following_mode: TrajectoryFollowingMode = TrajectoryFollowingMode.FOLLOW,
+    ) -> None:
+        super().__init__(
+            entity_name,
+            AdversityKind.BRAKE_CHECK,
+            location,
+            condition,
+            timing,
+            label=label,
+            once=once,
+            thresholds=thresholds,
+            following_mode=following_mode,
+        )
+
+
+class IgnoreLeaderAction(AdversarialAction):
+    """Drive on as if the close, slower leader were not there.
+
+    TeraSim's Leader adversity: fires when the IDM's free-flow acceleration
+    beats its car-following one by more than
+    ``thresholds.acceleration_gain``, and accelerates at the free-flow rate
+    for ``thresholds.duration``.  See :class:`AdversarialAction` for the
+    arguments.
+    """
+
+    def __init__(
+        self,
+        entity_name: Union[EntityRole, str],
+        location: AdversityLocation,
+        condition: Optional[BaseCondition] = None,
+        timing: TickTiming = TickTiming.PRE_TICK,
+        *,
+        label: str = "ignore_leader",
+        once: bool = True,
+        thresholds: TriggerThresholds = DEFAULT_THRESHOLDS,
+        following_mode: TrajectoryFollowingMode = TrajectoryFollowingMode.FOLLOW,
+    ) -> None:
+        super().__init__(
+            entity_name,
+            AdversityKind.IGNORE_LEADER,
+            location,
+            condition,
+            timing,
+            label=label,
+            once=once,
+            thresholds=thresholds,
+            following_mode=following_mode,
+        )
+
+
+class AdversarialCutInAction(AdversarialAction):
+    """Change lane into a gap too short for the vehicle behind there.
+
+    TeraSim's LaneChange adversity: fires when a lane beside is blocked only
+    by the vehicle behind there, closer than SUMO's secure gap, and changes
+    into it in ``thresholds.lane_change_duration``.  See
+    :class:`AdversarialAction` for the arguments.
+    """
+
+    def __init__(
+        self,
+        entity_name: Union[EntityRole, str],
+        location: AdversityLocation,
+        condition: Optional[BaseCondition] = None,
+        timing: TickTiming = TickTiming.PRE_TICK,
+        *,
+        label: str = "adversarial_cut_in",
+        once: bool = True,
+        thresholds: TriggerThresholds = DEFAULT_THRESHOLDS,
+        following_mode: TrajectoryFollowingMode = TrajectoryFollowingMode.FOLLOW,
+    ) -> None:
+        super().__init__(
+            entity_name,
+            AdversityKind.CUT_IN,
+            location,
+            condition,
+            timing,
+            label=label,
+            once=once,
+            thresholds=thresholds,
+            following_mode=following_mode,
+        )
+
+
+class RunTrafficRuleAction(AdversarialAction):
+    """Run the red (or yellow) light the vehicle is braking for.
+
+    TeraSim's TrafficRule adversity: fires when the vehicle is stopping for
+    the light rather than for its leader, and accelerates at the free-flow
+    rate for ``thresholds.duration``.  See
+    :class:`AdversarialAction` for the arguments.
+    """
+
+    def __init__(
+        self,
+        entity_name: Union[EntityRole, str],
+        location: AdversityLocation,
+        condition: Optional[BaseCondition] = None,
+        timing: TickTiming = TickTiming.PRE_TICK,
+        *,
+        label: str = "run_traffic_rule",
+        once: bool = True,
+        thresholds: TriggerThresholds = DEFAULT_THRESHOLDS,
+        following_mode: TrajectoryFollowingMode = TrajectoryFollowingMode.FOLLOW,
+    ) -> None:
+        super().__init__(
+            entity_name,
+            AdversityKind.TRAFFIC_RULE,
+            location,
+            condition,
+            timing,
+            label=label,
+            once=once,
+            thresholds=thresholds,
+            following_mode=following_mode,
+        )
+
+
+class JaywalkAction(AdversarialAction):
+    """Walk a pedestrian straight across the road, off a crosswalk.
+
+    TeraSim's Jaywalking adversity: fires for a pedestrian off any
+    crosswalk with a road nearby, and walks it across at its speed times a
+    factor drawn from ``thresholds.pedestrian_speed_factor`` (seeded by
+    *seed*), for up to ``thresholds.jaywalk_duration``.  See :class:`AdversarialAction` for the
+    arguments.
+    """
+
+    def __init__(
+        self,
+        entity_name: Union[EntityRole, str],
+        location: AdversityLocation,
+        condition: Optional[BaseCondition] = None,
+        timing: TickTiming = TickTiming.PRE_TICK,
+        *,
+        label: str = "jaywalk",
+        once: bool = True,
+        seed: int = 0,
+        thresholds: TriggerThresholds = DEFAULT_THRESHOLDS,
+        following_mode: TrajectoryFollowingMode = TrajectoryFollowingMode.FOLLOW,
+    ) -> None:
+        super().__init__(
+            entity_name,
+            AdversityKind.JAYWALKING,
+            location,
+            condition,
+            timing,
+            label=label,
+            once=once,
+            seed=seed,
+            thresholds=thresholds,
+            following_mode=following_mode,
+        )
