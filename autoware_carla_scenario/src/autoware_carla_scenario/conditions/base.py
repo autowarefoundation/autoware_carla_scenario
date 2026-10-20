@@ -13,6 +13,7 @@ from ..entity_role import EntityRole, _role_name
 # finds an actor by role need not import the conditions (and CARLA) for it.
 from ..entity_role import find_actor_in_list as find_actor_in_list
 from ..entity_role import find_actor_in_world
+from ..traffic.base import warn_if_mesoscopic
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
@@ -69,7 +70,11 @@ def find_actor_by_role_name(
     """
     # By id once found: a scan of world.get_actors() walks every actor on the
     # map, and conditions look their entities up every tick.
-    return find_actor_in_world(world, role_name)
+    actor = find_actor_in_world(world, role_name)
+    if actor is None:
+        # Out of the world on purpose, not gone: says so once.
+        warn_if_mesoscopic(str(role_name))
+    return actor
 
 
 @dataclass

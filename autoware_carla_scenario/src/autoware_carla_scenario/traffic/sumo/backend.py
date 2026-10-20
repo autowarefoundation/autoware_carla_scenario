@@ -565,6 +565,9 @@ class SumoTrafficBackend(TrafficBackend):
                 "micro_radius_m": meso.micro_radius_m,
                 "meso_radius_m": meso.demote_radius_m,
                 "scenario_vehicles": meso.scenario_vehicles,
+                # So far this run: what a result read at its end records.
+                "to_mesoscopic": self._level_changes[0],
+                "to_microscopic": self._level_changes[1],
             }
         out["follow_visibility"] = self._config.follow_visibility
         out["visibility_m"] = self._visibility

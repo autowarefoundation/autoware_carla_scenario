@@ -254,7 +254,11 @@ world from one that is gone. Three rules keep the flag honest:
   since whatever takes a vehicle over drives it in CARLA.
 
 `backend.fidelity_census()` counts the vehicles a backend simulates at each
-level. The parts that are the same for every backend are reusable:
+level. A run's result (`<output>/<scenario>_result.json`) records it under
+`traffic.fidelity`, read when the run ends, beside the backend's `describe()`
+(for SUMO, how many vehicles changed level during the run). A condition that
+looks an entity up by role name while it is mesoscopic finds no actor, and the
+log says why, once each time the entity becomes mesoscopic. The parts that are the same for every backend are reusable:
 
 - `traffic.fidelity.MesoscopicConfig` is the policy: the radii around the
   *focus points* (the ego and every vehicle CARLA drives) inside which traffic
