@@ -123,6 +123,14 @@ class ExternallyDrivenEgo(EgoVehicle):
         """Refuse a TrafficManager route: nothing here is driven by it."""
         self._refuse("a turn was asked for", "setting a route there would do nothing")
 
+    def resume_traffic(self, world: "carla.World") -> None:
+        """Refuse to hand this ego to the traffic backend: its stack drives it.
+
+        A backend told to drive it again would put it on the TrafficManager's
+        autopilot, or have SUMO drive it, against the stack driving it.
+        """
+        self._refuse("traffic was to resume", "it would take the ego from its stack")
+
     def _refuse(self, request: str, consequence: str) -> None:
         """Log that *request* was refused, and why it would have done nothing."""
         logger.warning(

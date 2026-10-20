@@ -430,8 +430,7 @@ def test_a_released_vehicle_is_published_rather_than_driven(
 ) -> None:
     """Taken back by an action, the NPC stays in SUMO -- as CARLA's, like the ego."""
     backend, world, npc, _ego = _prepared(crossroads, tmp_path)
-    entity = backend._driven[next(iter(backend._driven))]
-    sumo_id = next(iter(backend._driven))
+    sumo_id, entity = next(iter(backend._driven.items()))
     try:
         backend.tick(world, 0.0)
         backend.release(entity, world)
@@ -452,12 +451,18 @@ def test_a_released_vehicle_is_published_rather_than_driven(
 def test_a_resumed_vehicle_is_driven_by_sumo_again(
     crossroads: Path, tmp_path: Path
 ) -> None:
-    """Handed back, the NPC is SUMO's again, from where CARLA left it."""
+    """Handed back, the NPC is SUMO's again, from where CARLA left it, with
+    the modes and the speed it had."""
     backend, world, npc, _ego = _prepared(crossroads, tmp_path)
-    entity = backend._driven[next(iter(backend._driven))]
-    sumo_id = next(iter(backend._driven))
+    sumo_id, entity = next(iter(backend._driven.items()))
+    tc = backend._traci
     try:
         backend.tick(world, 0.0)
+        backend.set_desired_speed(entity, world, 18.0)
+        modes = (
+            tc.vehicle.getSpeedMode(sumo_id),
+            tc.vehicle.getLaneChangeMode(sumo_id),
+        )
         backend.release(entity, world)
         for i in range(5):
             backend.tick(world, (i + 1) * 0.05)
@@ -465,13 +470,34 @@ def test_a_resumed_vehicle_is_driven_by_sumo_again(
         backend.resume(entity, world)
         assert backend._driven[sumo_id] is entity
         assert sumo_id not in backend._external
-        assert backend._traci.vehicle.getSpeedMode(sumo_id) == 31
+        assert (
+            tc.vehicle.getSpeedMode(sumo_id),
+            tc.vehicle.getLaneChangeMode(sumo_id),
+        ) == modes
         for i in range(60):
             backend.tick(world, (i + 6) * 0.05)
-        # SUMO moves it on from where it was held.
+        # SUMO moves it on from where it was held, at the speed it was set.
         assert npc.transform.location.x > held + 1.0
+        assert tc.vehicle.getSpeed(sumo_id) == pytest.approx(18.0 / 3.6, abs=0.3)
         backend.resume(entity, world)  # and saying it twice is harmless
         assert backend._driven[sumo_id] is entity
+    finally:
+        backend.close()
+
+
+@needs_sumo
+def test_a_vehicle_published_from_the_start_is_not_resumed(
+    crossroads: Path, tmp_path: Path
+) -> None:
+    """The ego, published from the start, stays CARLA's whatever it is told."""
+    backend, world, _npc, ego = _prepared(crossroads, tmp_path)
+    ego_id = next(iter(backend._external))
+    try:
+        stand_in = SimpleNamespace(actor=ego, role_name="Ego")
+        backend.release(stand_in, world)
+        backend.resume(stand_in, world)
+        assert backend._external[ego_id] is ego
+        assert ego_id not in backend._driven
     finally:
         backend.close()
 

@@ -235,23 +235,6 @@ class TestTrafficManagerRelease:
         backend.start(_World([npc]))
         assert npc.autopilot == [(True, backend.port)]
 
-    def test_the_entity_asks_its_own_backend(self) -> None:
-        released: List[Any] = []
-
-        class _Backend(NullTrafficBackend):
-            def release(self, entity: Any, world: Any) -> None:
-                released.append(entity)
-
-        entity = VehicleEntity(
-            VehicleEntityConfig(role_name="npc1", spawn_location=SpawnPointIndex(0))
-        )
-        entity.set_traffic_backend(_Backend())
-        entity.release_from_traffic(_World())
-        assert released == [entity]
-
-    def test_the_base_backend_releases_quietly(self) -> None:
-        NullTrafficBackend().release(_stand_in(_Actor(1), role_name=None), _World())
-
 
 class TestTrafficManagerResume:
     """An action done with a vehicle hands it back to the manager."""
@@ -277,6 +260,15 @@ class TestTrafficManagerResume:
         backend.start(_World([npc]))
         assert npc.autopilot == [(True, backend.port)]
 
+    def test_a_vehicle_driven_elsewhere_is_never_put_on_autopilot(self) -> None:
+        """An ego skipped at start stays its stack's, released and resumed or not."""
+        ego = _Actor(1)
+        backend = TrafficManagerBackend(client=_Client())
+        backend.start(_World([ego]), skip_actor_ids={ego.id})
+        backend.release(_stand_in(ego), _World())
+        backend.resume(_stand_in(ego), _World())
+        assert ego.autopilot == [(False, backend.port)]
+
     def test_a_vehicle_never_released_is_left_alone(self) -> None:
         npc = _Actor(2)
         backend = TrafficManagerBackend(client=_Client())
@@ -284,22 +276,33 @@ class TestTrafficManagerResume:
         backend.resume(_stand_in(npc), _World())
         assert npc.autopilot == [(True, backend.port)]
 
-    def test_the_entity_asks_its_own_backend(self) -> None:
-        resumed: List[Any] = []
 
-        class _Backend(NullTrafficBackend):
-            def resume(self, entity: Any, world: Any) -> None:
-                resumed.append(entity)
+@pytest.mark.parametrize(
+    ("intent", "entity_method"),
+    [("release", "release_from_traffic"), ("resume", "resume_traffic")],
+)
+class TestTheHandOverIntents:
+    """Release and resume go to the entity's own backend; the base does nothing."""
 
+    def test_the_entity_asks_its_own_backend(
+        self, intent: str, entity_method: str
+    ) -> None:
+        asked: List[Any] = []
+        backend = NullTrafficBackend()
+        setattr(backend, intent, lambda entity, world: asked.append(entity))
         entity = VehicleEntity(
             VehicleEntityConfig(role_name="npc1", spawn_location=SpawnPointIndex(0))
         )
-        entity.set_traffic_backend(_Backend())
-        entity.resume_traffic(_World())
-        assert resumed == [entity]
+        entity.set_traffic_backend(backend)
+        getattr(entity, entity_method)(_World())
+        assert asked == [entity]
 
-    def test_the_base_backend_resumes_quietly(self) -> None:
-        NullTrafficBackend().resume(_stand_in(_Actor(1), role_name=None), _World())
+    def test_the_base_backend_does_it_quietly(
+        self, intent: str, entity_method: str
+    ) -> None:
+        getattr(NullTrafficBackend(), intent)(
+            _stand_in(_Actor(1), role_name=None), _World()
+        )
 
 
 class TestVehicleEntityDestroy:

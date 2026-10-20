@@ -59,8 +59,9 @@ def test_terminate_records_the_reason() -> None:
         lambda entity: entity.change_lane(None, None),
         lambda entity: entity.set_desired_speed(None, 30.0),
         lambda entity: entity.turn_at_junction(None, None),
+        lambda entity: entity.resume_traffic(None),
     ],
-    ids=["change_lane", "set_desired_speed", "turn_at_junction"],
+    ids=["change_lane", "set_desired_speed", "turn_at_junction", "resume_traffic"],
 )
 def test_a_refusal_names_what_drives(
     refuse: Callable[[ExternallyDrivenEgo], None],
