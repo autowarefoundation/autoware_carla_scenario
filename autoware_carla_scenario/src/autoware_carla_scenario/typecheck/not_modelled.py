@@ -423,6 +423,14 @@ NOT_MODELLED_MEMBERS: dict[str, dict[str, str]] = {
             "metric)"
         ),
     },
+    "NadeSettings": {
+        "avoidance": (
+            "adversity.avoidance's AvoidanceSettings, TeraSim's avoidance "
+            "numbers, of the adversity package that a scenario does not import; "
+            "a scenario leaves them at TeraSim's (the library check compiles "
+            "them from their source)"
+        ),
+    },
     "AdversityFeasibleCondition": _members(
         "command scene",
         "what the adversarial actions read off the condition they fire on: an "

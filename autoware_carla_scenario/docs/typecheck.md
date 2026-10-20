@@ -1352,8 +1352,8 @@ To check one more module:
 
 ### What is checked of the framework
 
-Every module now has an entry other than `"not yet checked (#45)"`. 187 of
-the package's 279 modules (67%; about 45,500 of 80,800 lines) are `CHECKED`:
+Every module now has an entry other than `"not yet checked (#45)"`. 188 of
+the package's 280 modules (67%; about 45,700 of 81,000 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the conversions between
 Lanelet2, OpenDRIVE and CARLA world poses (`coordinate.transform`), the stop
 lines read off a Lanelet2 map (`utils.stop_line`, `coordinate.stop_line`)
@@ -1399,7 +1399,7 @@ the `scenario_bridge` node's command and Python root beside it
 container with Docker (`autoware_stack.docker`, over a model of
 `autoware_stack.devcontainer`, which reads JSON and YAML), the Autoware
 bridge interface and its fake, the trajectory model, the adversity math, location gate, observation, commands and triggers
-(`adversity`, NADE included, the actions' `_adversarial_execution`, `adversarial` and `adversarial_traffic`, `conditions.adversity_feasible`), the measures and the metrics, the ODD
+(`adversity`, NADE and its avoidance included, the actions' `_adversarial_execution`, `adversarial` and `adversarial_traffic`, `conditions.adversity_feasible`), the measures and the metrics, the ODD
 unit names (`odd.unit_names`), the ODD's probes, which read its attributes off
 the world and, for those the Lanelet2 map decides, off a lanelet
 (`odd.probes`), the placement of a road user so a scenario

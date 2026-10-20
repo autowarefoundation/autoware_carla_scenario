@@ -855,6 +855,7 @@ def build_adversarial_traffic_action(
         max_is_probability=params["max_is_probability"],
         fixed_is_probability=params["fixed_is_probability"],
         cooldown=params["cooldown"],
+        challenge_npcs=params["challenge_npcs"],
     )
     adversities: list[Any] = []
     for item in params["adversities"]:

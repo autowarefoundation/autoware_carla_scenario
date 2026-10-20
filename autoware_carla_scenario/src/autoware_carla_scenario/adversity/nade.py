@@ -22,16 +22,20 @@ As TeraSim's ``NADE`` (``envs/nade.py``, ``envs/nade_with_av.py``):
   normal -- its acceleration held along its lane, or a lane change when
   its turn indicator says so.
 * **Challenge**: the candidate's adversarial future conflicts with the
-  ego's normal future (:func:`~.collision.trajectories_intersect`); a
-  pedestrian's only while the ego moves.
+  ego's normal future -- and with ``challenge_npcs`` the other candidates'
+  -- (:func:`~.avoidance.victims`); a pedestrian's only with what moves.
+* **Avoidability** (:func:`~.avoidance.avoidable`): when no victim can
+  brake out of it, ``p`` is cut by ``unavoidable_factor`` and the
+  magnitude multiplied by ``unavoidable_magnitude``.
 * **Importance sampling**: ``q = clip(p * magnitude, 0,
   max_is_probability)``, or ``fixed_is_probability`` when set.  At most one
   adversity is sampled a tick, the nearest challenger first, and none for
   ``cooldown`` seconds after one.
+* **Response** (:func:`~.avoidance.respond`): the sampled adversity's NPC
+  victims avoid or accept it, its own weight on the run's.
 
 NADE discards the command TeraSim's ``AdversityManager`` samples and uses
-only the distribution; so does this.  Avoidability -- which multiplies the
-magnitude for an unavoidable conflict -- is #396.
+only the distribution; so does this.
 """
 
 from __future__ import annotations
@@ -41,11 +45,21 @@ import random
 from dataclasses import dataclass
 from typing import Optional
 
-from .collision import trajectories_intersect
+from .avoidance import (
+    AVOID,
+    DEFAULT_AVOIDANCE,
+    AvoidanceSettings,
+    accept_command,
+    avoid_command,
+    avoidable,
+    respond,
+    victims,
+)
+from .collision import DEFAULT_DISTANCE_THRESHOLD
 from .command import AdversarialCommand, predict_command
-from .geometry import PredictedState
+from .geometry import AgentFootprint, PredictedState
 from .location import AdversityLocation
-from .observation import AgentSnapshot, Scene
+from .observation import Scene
 from .triggers import (
     DEFAULT_THRESHOLDS,
     AdversityKind,
@@ -95,6 +109,10 @@ class NadeSettings:
         fixed_is_probability: ``q`` for every adversity when above 0, in
             place of the clip (TeraSim's ``adversity_sampling_probability``).
         cooldown: How long after a sampled adversity none is (s).
+        challenge_npcs: Whether an adversity challenges the other candidates
+            too, not the ego only (TeraSim's AV-centred check): their victims
+            avoid or accept it (:mod:`.avoidance`).
+        avoidance: The avoidance numbers.
     """
 
     max_controlled: int = 5
@@ -105,6 +123,8 @@ class NadeSettings:
     max_is_probability: float = 0.05
     fixed_is_probability: float = 0.0
     cooldown: float = 5.5
+    challenge_npcs: bool = False
+    avoidance: AvoidanceSettings = DEFAULT_AVOIDANCE
 
 
 DEFAULT_NADE = NadeSettings()
@@ -119,19 +139,30 @@ class NadeChoice:
         adversity: The list's entry it is.
         command: The command its trigger gave.
         is_probability: ``q`` it was sampled with.
+        responses: What its NPC victims do in response, victim by victim
+            (:mod:`.avoidance`); none when the ego is a victim.
+        avoidable: Whether its victims could brake out of it.
     """
 
     name: str
     adversity: NadeAdversity
     command: AdversarialCommand
     is_probability: float
+    responses: list[tuple[str, AdversarialCommand]]
+    avoidable: bool
 
 
-def is_probability(probability: float, settings: NadeSettings) -> float:
-    """``q`` for an adversity of naturalistic *probability* ``p``."""
+def is_probability(
+    probability: float, settings: NadeSettings, avoidable: bool = True
+) -> float:
+    """``q`` for an adversity of naturalistic *probability* ``p``; an
+    unavoidable one's magnitude is multiplied (TeraSim's x40)."""
     if settings.fixed_is_probability > 0.0:
         return settings.fixed_is_probability
-    return min(max(probability * settings.magnitude, 0.0), settings.max_is_probability)
+    magnitude = settings.magnitude
+    if not avoidable:
+        magnitude *= settings.avoidance.unavoidable_magnitude
+    return min(max(probability * magnitude, 0.0), settings.max_is_probability)
 
 
 def candidates(
@@ -196,6 +227,7 @@ class ImportanceSampler:
     weight: float
     _draws: random.Random
     _triggers: random.Random
+    _responses: random.Random
     _sampled_at: float
 
     def __init__(
@@ -207,10 +239,11 @@ class ImportanceSampler:
         self.settings = settings
         self.thresholds = thresholds
         self.weight = 1.0
-        # Apart, so a trigger's draw (a jaywalker's speed) does not shift
-        # the sampling's sequence.
+        # Apart, so a trigger's draw (a jaywalker's speed) or a victim's
+        # response does not shift the sampling's sequence.
         self._draws = random.Random(seed)
         self._triggers = random.Random(seed + 1)
+        self._responses = random.Random(seed + 2)
         self._sampled_at = -math.inf
 
     def cooling(self, elapsed: float) -> bool:
@@ -231,7 +264,8 @@ class ImportanceSampler:
         The candidates are those of :func:`candidates` among *controllable*,
         and the ego is predicted from its turn *indicator*
         (:func:`ego_command`).  Updates :attr:`weight` for every challenger
-        the tick decides on.
+        the tick decides on, and for the victims' response to the one
+        sampled.
         """
         if self.cooling(elapsed) or ego not in scene.agents:
             return None
@@ -239,36 +273,41 @@ class ImportanceSampler:
         names = candidates(scene, ego, controllable, settings)
         if not names:
             return None
-        me = scene.agents[ego]
-        # Predicted once a trigger fires: most ticks none does.
-        ego_future: list[PredictedState] = []
+        futures = _Futures(scene, settings, self.thresholds)
+        ego_normal = ego_command(scene, ego, indicator, settings)
         for name in names:
             found = self._adversity(scene, name, adversities)
             if found is None:
                 continue
             adversity, command = found
-            if not ego_future:
-                try:
-                    ego_future = predict_command(
-                        scene.features,
-                        scene.vehicle(ego),
-                        ego_command(scene, ego, indicator, settings),
-                        settings.resolution,
-                        settings.horizon,
-                    )
-                except ValueError:
-                    return None  # off the lanes: no future to challenge
-            if not self._challenges(scene, name, command, me, ego_future):
+            if not futures.normal(ego, ego_normal):
+                return None  # the ego off the lanes: no future to challenge
+            hit, future = futures.victims(name, command, ego, names)
+            if not hit:
                 continue
+            can_avoid = futures.avoidable(name, future, hit)
             p = adversity.probability
-            q = is_probability(p, settings)
+            if not can_avoid:
+                p *= settings.avoidance.unavoidable_factor
+            q = is_probability(p, settings, can_avoid)
             if q <= 0.0:
                 continue  # never sampled: nothing to decide
-            if self._draws.random() < q:
-                self.weight *= p / q
-                self._sampled_at = elapsed
-                return NadeChoice(name, adversity, command, q)
-            self.weight *= (1.0 - p) / (1.0 - q)
+            if self._draws.random() >= q:
+                self.weight *= (1.0 - p) / (1.0 - q)
+                continue
+            self.weight *= p / q
+            self._sampled_at = elapsed
+            response = respond(
+                self._responses, ego in hit, can_avoid, settings.avoidance
+            )
+            self.weight *= response.weight
+            responses: list[tuple[str, AdversarialCommand]] = []
+            if response.mode:
+                reaction = accept_command(settings.avoidance)
+                if response.mode == AVOID:
+                    reaction = futures.brake
+                responses = [(victim, reaction) for victim in hit if victim != ego]
+            return NadeChoice(name, adversity, command, q, responses, can_avoid)
         return None
 
     def _adversity(
@@ -291,26 +330,106 @@ class ImportanceSampler:
                 return adversity, fires
         return None
 
-    def _challenges(
-        self,
-        scene: Scene,
-        name: str,
-        command: AdversarialCommand,
-        me: AgentSnapshot,
-        ego_future: list[PredictedState],
-    ) -> bool:
-        """Whether *name* carrying out *command* conflicts with the ego."""
-        agent = scene.agents[name]
-        if not agent.footprint.is_vehicle and me.speed < 1.0:
-            return False  # a pedestrian challenges a moving ego only
+
+class _Futures:
+    """One tick's predicted futures, each worked out once when first asked."""
+
+    scene: Scene
+    settings: NadeSettings
+    brake: AdversarialCommand
+    _normal: dict[str, list[PredictedState]]
+    _avoid: dict[str, list[PredictedState]]
+
+    def __init__(
+        self, scene: Scene, settings: NadeSettings, thresholds: TriggerThresholds
+    ) -> None:
+        self.scene = scene
+        self.settings = settings
+        self.brake = avoid_command(
+            thresholds.idm.emergency_deceleration, settings.avoidance
+        )
+        self._normal = {}
+        self._avoid = {}
+
+    def _predict(self, name: str, command: AdversarialCommand) -> list[PredictedState]:
+        """*name*'s future under *command*; empty when it cannot be predicted."""
         try:
-            future = predict_command(
-                scene.features,
-                scene.vehicle(name),
+            return predict_command(
+                self.scene.features,
+                self.scene.vehicle(name),
                 command,
                 self.settings.resolution,
                 self.settings.horizon,
             )
         except ValueError:
-            return False
-        return trajectories_intersect(future, agent.footprint, ego_future, me.footprint)
+            return []
+
+    def normal(self, name: str, command: AdversarialCommand) -> list[PredictedState]:
+        """*name*'s normal future under *command*, the first one asked."""
+        if name not in self._normal:
+            self._normal[name] = self._predict(name, command)
+        return self._normal[name]
+
+    def avoid(self, name: str) -> list[PredictedState]:
+        """*name*'s future braking as hard as it can."""
+        if name not in self._avoid:
+            self._avoid[name] = self._predict(name, self.brake)
+        return self._avoid[name]
+
+    def victims(
+        self, name: str, command: AdversarialCommand, ego: str, names: list[str]
+    ) -> tuple[list[str], list[PredictedState]]:
+        """Whom *name* carrying out *command* challenges -- the ego, and with
+        ``challenge_npcs`` the other candidates' vehicles -- and its future."""
+        agents = self.scene.agents
+        agent = agents[name]
+        future = self._predict(name, command)
+        none: list[str] = []
+        if not future:
+            return none, future
+        others = [ego]
+        if self.settings.challenge_npcs:
+            others += [
+                other
+                for other in names
+                if other != name and agents[other].footprint.is_vehicle
+            ]
+        normal_futures: dict[str, list[PredictedState]] = {}
+        footprints: dict[str, AgentFootprint] = {}
+        for other in others:
+            near = agents[other]
+            # A pedestrian challenges only what moves (TeraSim's 1 m/s), and
+            # nothing starting further than the check looks.
+            if not agent.footprint.is_vehicle and near.speed < 1.0:
+                continue
+            if (
+                math.hypot(near.x - agent.x, near.y - agent.y)
+                > DEFAULT_DISTANCE_THRESHOLD
+            ):
+                continue
+            # The ego's was predicted first, from its indicator; the others'
+            # as ego_command predicts with none.
+            normal = self.normal(
+                other, ego_command(self.scene, other, "", self.settings)
+            )
+            if normal:
+                normal_futures[other] = normal
+                footprints[other] = near.footprint
+        return victims(future, agent.footprint, normal_futures, footprints), future
+
+    def avoidable(
+        self, name: str, future: list[PredictedState], hit: list[str]
+    ) -> bool:
+        """Whether every one of *hit* can brake out of *name*'s *future*."""
+        agents = self.scene.agents
+        for victim in hit:
+            avoid = self.avoid(victim)
+            if avoid and not avoidable(
+                future,
+                agents[name].footprint,
+                {victim: avoid},
+                {victim: agents[victim].footprint},
+                self.settings.avoidance,
+            ):
+                return False
+        return True
