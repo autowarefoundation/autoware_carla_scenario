@@ -470,7 +470,8 @@ scenario.py:70:9: error: BaseScenario.follow_with_spectator(): the getter must r
 are checked as openodd uses them (#279). `values=` must be `None`, an
 iterable (a list, a tuple, an empty one too, a set, a str, a range) or an
 enum class, the framework's (`values=TurnDirection`) or the scenario's own.
-Nothing is iterated, because iterating an enum class is not modelled.
+Nothing is iterated: the enum class is read as a value of the type, not
+looped over (see [Iterating an enum](#iterating-an-enum)).
 `ignore=` must be `None` or a callable that takes one value of the type
 `expression` returns, unwrapped from its `Optional`, since the collector never
 passes `None`. The model calls it with such a value, so its body is compiled
@@ -1023,7 +1024,8 @@ The checker also rewrites what Codon spells differently: an `Enum` class (its
 members become instances with a `name` and a typed `value`; a lookup by value,
 `ActionState("completeState")`, takes a value of that type and is typed but
 not resolved to the member; looking a member up by name and iterating over the
-class are not modelled), a class deriving from an exception, a `@classmethod`
+class work for a scenario's own enum, see
+[Iterating an enum](#iterating-an-enum)), a class deriving from an exception, a `@classmethod`
 (a static method of its class: `cls` names the class it is defined in), and an
 annotation naming one of CARLA's integer enumerations
 (`carla.TrafficLightState`), which typesafe_carla's Codon library has as a
@@ -1237,7 +1239,7 @@ instead:
 
 <!-- stdlib-refused:start -->
 `dataclasses.asdict`, `functools.wraps`, `contextlib`, `warnings`, `json`,
-`types`, `textwrap`
+`types`, `textwrap`, `traceback`, `io`
 <!-- stdlib-refused:end -->
 
 - `dataclasses.asdict` returns a `dict[str, Any]`: build the dict from the
@@ -1248,8 +1250,34 @@ instead:
 - `contextlib`: write a class with `__enter__` and `__exit__` for
   `contextmanager`, and `try/except X: pass` for `suppress`. `warnings`: log
   with `logger.warning`. `json`: read into a `@dataclass`. `types`: name the
-  type itself. `textwrap`: build the string with `str` methods. `traceback`
-  and `io` are refused likewise.
+  type itself. `textwrap`: build the string with `str` methods.
+  `traceback`: log with `logger.exception`. `io`: use a `str`, or a
+  `pathlib.Path` opened with `open()`.
+
+### Iterating an enum
+
+For a scenario's own `Enum` class (any of `Enum`, `IntEnum`, `StrEnum`,
+`Flag`, `IntFlag`, `(str, Enum)`), the check rewrites, as Python reads it:
+
+- `for m in Mode` and a comprehension over `Mode`, and `*Mode`;
+- `list(Mode)`, `tuple`, `set`, `frozenset`, `sorted`, `len`, `reversed`,
+  `enumerate`, `iter`, `min`, `max`, `sum`, `any`, `all`, `zip`, `map` and
+  `filter` of `Mode`;
+- `x in Mode` and `x not in Mode`;
+- `Mode["A"]`, a member looked up by name.
+
+Iteration yields the members in definition order. A member whose value repeats
+an earlier one is an alias, and is skipped, as in Python. Only the bare name of
+the class is rewritten, so a parameter or local called like the class is left
+alone, and the enum may be defined in another module of the package.
+
+What does not work (Flag operators and the model enums are tracked in #437):
+
+- the framework's own model enums (`TurnDirection`, ...) are not iterable;
+- the class passed as a value, `f(Mode)`, or `Mode.__members__`: both stay as
+  written, which Codon does not resolve;
+- the operators of a `Flag` (`A | B`, `in` on a combined value);
+- an enum with no member.
 
 ## What the check does not catch
 
@@ -1316,8 +1344,9 @@ The known gaps:
   (a `@tuple`, so iterable to Codon) passes too, and so does an element type
   `expression` never returns.
 - **An enum member looked up by value** (`ActionState("completeState")`) is
-  typed, but not resolved to the member; looking a member up by name and
-  iterating over the enum are not modelled.
+  typed, but not resolved to the member. Lookup by name and iteration work
+  for a scenario's own enum, within the limits of
+  [Iterating an enum](#iterating-an-enum).
 - **typesafe_carla's Python-API compatibility shortcuts** (a `Vehicle`
   method called on a plain `Actor`) compile, as they do outside its strict
   mode.
@@ -2996,14 +3025,11 @@ What Codon 0.19 needs that Python does not, beyond
   `dict[str, Any]` and assign it in the `else` branch of `if TYPE_CHECKING:`;
   only the uncalled parser reads it.
 - **An enum member looked up by name, or an enum iterated over**
-  (`ComparisonRule[name]`, `for r in ComparisonRule`): the `enum` shim models
-  neither. `sweeper.constraints._comparison_rule()` looks the member up in a
-  list of the members spelled out under `if TYPE_CHECKING:`, and by name in
-  the `else` branch; `LaneletLengthConstraint.__post_init__()` validates its
-  rule against the names of the same members, spelled out again under
-  `if TYPE_CHECKING:`, and of `list(ComparisonRule)` in the `else` branch.
-  The run never reads the spelled-out lists, so `test_typecheck_model.py`
-  compares each with the enum's members.
+  (`ComparisonRule[name]`, `list(ComparisonRule)`): write it as in Python.
+  The check rewrites both for an enum of the package being checked
+  ([Iterating an enum](#iterating-an-enum)), so `sweeper.constraints` has no
+  spelled-out member lists left. The framework's own model enums are the
+  exception: they are not iterable.
 - **An exception class raised with no arguments** (`raise _Exhausted()` in
   `route.search`): Codon 0.19 raises no exception class without its own
   `__init__`, and its `Exception` takes a message where Python's takes none.
