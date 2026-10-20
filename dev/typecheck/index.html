@@ -1748,6 +1748,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#iterating-an-enum" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Iterating an enum
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -2144,6 +2155,17 @@
     <span class="md-ellipsis">
       
         Standard library names Codon lacks
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#iterating-an-enum" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Iterating an enum
       
     </span>
   </a>
@@ -2690,7 +2712,8 @@ self.ego_entity</code>) included:</p>
 are checked as openodd uses them (#279). <code>values=</code> must be <code>None</code>, an
 iterable (a list, a tuple, an empty one too, a set, a str, a range) or an
 enum class, the framework's (<code>values=TurnDirection</code>) or the scenario's own.
-Nothing is iterated, because iterating an enum class is not modelled.
+Nothing is iterated: the enum class is read as a value of the type, not
+looped over (see <a href="#iterating-an-enum">Iterating an enum</a>).
 <code>ignore=</code> must be <code>None</code> or a callable that takes one value of the type
 <code>expression</code> returns, unwrapped from its <code>Optional</code>, since the collector never
 passes <code>None</code>. The model calls it with such a value, so its body is compiled
@@ -3229,7 +3252,8 @@ call with, hence the warning.</p>
 members become instances with a <code>name</code> and a typed <code>value</code>; a lookup by value,
 <code>ActionState("completeState")</code>, takes a value of that type and is typed but
 not resolved to the member; looking a member up by name and iterating over the
-class are not modelled), a class deriving from an exception, a <code>@classmethod</code>
+class work for a scenario's own enum, see
+<a href="#iterating-an-enum">Iterating an enum</a>), a class deriving from an exception, a <code>@classmethod</code>
 (a static method of its class: <code>cls</code> names the class it is defined in), and an
 annotation naming one of CARLA's integer enumerations
 (<code>carla.TrafficLightState</code>), which typesafe_carla's Codon library has as a
@@ -3494,7 +3518,7 @@ check's additions and the tests in step:</p>
 instead:</p>
 <!-- stdlib-refused:start -->
 <p><code>dataclasses.asdict</code>, <code>functools.wraps</code>, <code>contextlib</code>, <code>warnings</code>, <code>json</code>,
-<code>types</code>, <code>textwrap</code></p>
+<code>types</code>, <code>textwrap</code>, <code>traceback</code>, <code>io</code></p>
 <!-- stdlib-refused:end -->
 
 <ul>
@@ -3506,8 +3530,37 @@ instead:</p>
 <li><code>contextlib</code>: write a class with <code>__enter__</code> and <code>__exit__</code> for
   <code>contextmanager</code>, and <code>try/except X: pass</code> for <code>suppress</code>. <code>warnings</code>: log
   with <code>logger.warning</code>. <code>json</code>: read into a <code>@dataclass</code>. <code>types</code>: name the
-  type itself. <code>textwrap</code>: build the string with <code>str</code> methods. <code>traceback</code>
-  and <code>io</code> are refused likewise.</li>
+  type itself. <code>textwrap</code>: build the string with <code>str</code> methods.
+  <code>traceback</code>: log with <code>logger.exception</code>. <code>io</code>: use a <code>str</code>, or a
+  <code>pathlib.Path</code> opened with <code>open()</code>.</li>
+</ul>
+<h3 id="iterating-an-enum">Iterating an enum<a class="headerlink" href="#iterating-an-enum" title="Permanent link">&para;</a></h3>
+<p>For a scenario's own <code>Enum</code> class (any of <code>Enum</code>, <code>IntEnum</code>, <code>StrEnum</code>,
+<code>Flag</code>, <code>IntFlag</code>, <code>(str, Enum)</code>), the check rewrites, as Python reads it:</p>
+<ul>
+<li><code>for m in Mode</code> and a comprehension over <code>Mode</code>, and <code>*Mode</code>;</li>
+<li><code>list(Mode)</code>, <code>tuple</code>, <code>set</code>, <code>frozenset</code>, <code>sorted</code>, <code>len</code>, <code>reversed</code>,
+  <code>enumerate</code>, <code>iter</code>, <code>min</code>, <code>max</code>, <code>zip</code>, <code>map</code> and <code>filter</code> (with a
+  function) of <code>Mode</code>;</li>
+<li><code>x in Mode</code> and <code>x not in Mode</code>;</li>
+<li><code>Mode["A"]</code>, a member looked up by name.</li>
+</ul>
+<p>Iteration yields the members in definition order. A member whose value repeats
+an earlier one is an alias, and is skipped, as in Python. Only the bare name of
+the class is rewritten, so a parameter or local called like the class is left
+alone, and the enum may be defined in another module of the package.</p>
+<p>What does not work (Flag operators and the model enums are tracked in #437):</p>
+<ul>
+<li>the framework's own model enums (<code>TurnDirection</code>, ...) are not iterable;</li>
+<li>the class passed as a value, <code>f(Mode)</code>, or <code>Mode.__members__</code>: both stay as
+  written, which Codon does not resolve (<code>no function 'List.__init__' with
+  arguments (List[T], type[Mode])</code> for <code>list(e)</code> in <code>f</code>, and <code>'Mode' object
+  has no attribute '__members__'</code>);</li>
+<li><code>sum</code>, <code>any</code> and <code>all</code> of the class, and <code>filter(None, Mode)</code>: Codon needs
+  <code>__bool__</code> or <code>+</code> on the member (<code>sum(int(m) for m in Mode)</code>, <code>any(m == x
+  for m in Mode)</code>);</li>
+<li>the operators of a <code>Flag</code> (<code>A | B</code>: <code>unsupported operand type(s) for |</code>);</li>
+<li>an enum with no member (<code>'Empty' object has no attribute '_acs_members'</code>).</li>
 </ul>
 <h2 id="what-the-check-does-not-catch">What the check does not catch<a class="headerlink" href="#what-the-check-does-not-catch" title="Permanent link">&para;</a></h2>
 <p>The check compiles the scenario and never runs it, so it says nothing of
@@ -3573,8 +3626,9 @@ The known gaps:</p>
   (a <code>@tuple</code>, so iterable to Codon) passes too, and so does an element type
   <code>expression</code> never returns.</li>
 <li><strong>An enum member looked up by value</strong> (<code>ActionState("completeState")</code>) is
-  typed, but not resolved to the member; looking a member up by name and
-  iterating over the enum are not modelled.</li>
+  typed, but not resolved to the member. Lookup by name and iteration work
+  for a scenario's own enum, within the limits of
+  <a href="#iterating-an-enum">Iterating an enum</a>.</li>
 <li><strong>typesafe_carla's Python-API compatibility shortcuts</strong> (a <code>Vehicle</code>
   method called on a plain <code>Actor</code>) compile, as they do outside its strict
   mode.</li>
@@ -5189,14 +5243,11 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   <code>dict[str, Any]</code> and assign it in the <code>else</code> branch of <code>if TYPE_CHECKING:</code>;
   only the uncalled parser reads it.
 - <strong>An enum member looked up by name, or an enum iterated over</strong>
-  (<code>ComparisonRule[name]</code>, <code>for r in ComparisonRule</code>): the <code>enum</code> shim models
-  neither. <code>sweeper.constraints._comparison_rule()</code> looks the member up in a
-  list of the members spelled out under <code>if TYPE_CHECKING:</code>, and by name in
-  the <code>else</code> branch; <code>LaneletLengthConstraint.__post_init__()</code> validates its
-  rule against the names of the same members, spelled out again under
-  <code>if TYPE_CHECKING:</code>, and of <code>list(ComparisonRule)</code> in the <code>else</code> branch.
-  The run never reads the spelled-out lists, so <code>test_typecheck_model.py</code>
-  compares each with the enum's members.
+  (<code>ComparisonRule[name]</code>, <code>list(ComparisonRule)</code>): write it as in Python.
+  The check rewrites both for an enum of the package being checked
+  (<a href="#iterating-an-enum">Iterating an enum</a>), so <code>sweeper.constraints</code> has no
+  spelled-out member lists left. The framework's own model enums are the
+  exception: they are not iterable.
 - <strong>An exception class raised with no arguments</strong> (<code>raise _Exhausted()</code> in
   <code>route.search</code>): Codon 0.19 raises no exception class without its own
   <code>__init__</code>, and its <code>Exception</code> takes a message where Python's takes none.
@@ -5306,7 +5357,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 20, 2026 17:08:36 UTC"><span class="timeago" datetime="2026-10-20T17:08:36+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 20, 2026 17:08:36 UTC">2026-10-20</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 20, 2026 23:55:34 UTC"><span class="timeago" datetime="2026-10-20T23:55:34+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 20, 2026 23:55:34 UTC">2026-10-20</span>
   </span>
 
     
