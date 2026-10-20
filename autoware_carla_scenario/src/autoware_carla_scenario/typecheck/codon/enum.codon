@@ -11,8 +11,9 @@
 # of its own. Looking a member up by value (`Color("red")`) is typed by a
 # constructor the checker adds to each class after its module (`@extend`); it
 # makes a Color, not the member, since nothing the check compiles runs.
-# Looking a member up by name (`Color["RED"]`) and iterating over the class are
-# not modelled.
+# The checker also appends `Color._acs_members()` (the members as a list) and
+# `Color._acs_by_name(name)`, which it reads for `for c in Color`, `list(Color)`
+# and `Color["RED"]` (#377).
 
 
 class Enum:
