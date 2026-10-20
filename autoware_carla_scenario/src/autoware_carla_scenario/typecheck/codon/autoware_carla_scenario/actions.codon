@@ -301,6 +301,49 @@ class FollowTrajectoryAction(BaseAction):
         raise NotImplementedError()
 
 
+class StalledObjectAction(BaseAction):
+    def __init__(self, label):
+        compile_error("StalledObjectAction(): no constructor takes these arguments "
+                      "(required: entity_name, pose)")
+
+    def __init__(self, entity_name, pose, start_time: float = 0.0, end_time = None,
+                 condition = None, timing: TickTiming = TickTiming("pre_tick"), *_kw,
+                 label: str = "stalled_object"):
+        _keyword_only(_kw, "StalledObjectAction(): label")
+        _expect_role(entity_name)
+        _expect_optional_float(end_time)
+        super().__init__(label, condition, timing)
+
+    @property
+    def start_time(self) -> float:
+        raise NotImplementedError()
+
+    @property
+    def end_time(self) -> Optional[float]:
+        raise NotImplementedError()
+
+    @property
+    def trajectory(self) -> Trajectory:
+        raise NotImplementedError()
+
+    @property
+    def finished(self) -> bool:
+        raise NotImplementedError()
+
+    @property
+    def held_vertex(self) -> Optional[int]:
+        raise NotImplementedError()
+
+
+def collision_objects(first, second, first_pose, second_pose, start_time: float = 0.0,
+                      end_time = None, *_kw, label: str = "collision") -> List[StalledObjectAction]:
+    _keyword_only(_kw, "collision_objects(): label")
+    _expect_role(first)
+    _expect_role(second)
+    return [StalledObjectAction(first, first_pose, start_time, end_time, label=label + "_1"),
+            StalledObjectAction(second, second_pose, start_time, end_time, label=label + "_2")]
+
+
 class SetSpeedAction(BaseAction):
     def __init__(self, label):
         compile_error("SetSpeedAction(): no constructor takes these arguments "

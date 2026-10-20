@@ -73,6 +73,7 @@ __all__ = [
     "build_lane_change_abort_action",
     "build_pedestrian_run_red_light_action",
     "build_run_traffic_rule_action",
+    "build_stalled_object_action",
     "build_stop_crossing_action",
     "build_traffic_signal_controller_action",
     "build_traffic_signal_action",
@@ -1047,6 +1048,35 @@ def build_run_traffic_rule_action(
         label=compiled.label,
         once=compiled.node.once,
         following_mode=TrajectoryFollowingMode[str(params["following_mode"]).upper()],
+    )
+
+
+def build_stalled_object_action(
+    compiled: "CompiledAction",
+    condition: "BaseCondition | None",
+    timing: Any,
+    ctx: "BuildContext",
+) -> "BaseAction":
+    """Build a :class:`StalledObjectAction`."""
+    from ..actions.stalled_object import StalledObjectAction  # noqa: PLC0415
+    from ..coordinate import Lanelet2Pose  # noqa: PLC0415
+
+    assert compiled.actor_role is not None  # noqa: S101 -- required by the spec
+    params = compiled.params
+    pose = Lanelet2Pose(
+        lanelet_id=params["lanelet_id"],
+        s=params["s"],
+        t=params["t"],
+        heading=params["heading"],
+    )
+    return StalledObjectAction(
+        entity_name=compiled.actor_role,
+        pose=pose,
+        start_time=params["start_time"],
+        end_time=params["end_time"],
+        condition=condition,
+        timing=timing,
+        label=compiled.label,
     )
 
 

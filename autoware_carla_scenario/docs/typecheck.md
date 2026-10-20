@@ -1399,8 +1399,8 @@ To check one more module:
 
 ### What is checked of the framework
 
-Every module now has an entry other than `"not yet checked (#45)"`. 191 of
-the package's 283 modules (67%; about 46,450 of 83,300 lines) are `CHECKED`:
+Every module now has an entry other than `"not yet checked (#45)"`. 192 of
+the package's 284 modules (68%; about 46,600 of 83,450 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the conversions between
 Lanelet2, OpenDRIVE and CARLA world poses (`coordinate.transform`), the stop
 lines read off a Lanelet2 map (`utils.stop_line`, `coordinate.stop_line`)
@@ -1418,7 +1418,7 @@ frame, poses and search (`route.geometry`, `route.frame`, `route.positions`,
 `route.search`), all against the lanelet2 model, the condition base and
 every condition, the action base with the environment, follow-trajectory,
 traffic-signal, signal-controller, lane-change, routing, set-speed, turn and
-walk-straight actions and the background-traffic source and sink
+walk-straight actions, the stalled object (`actions.stalled_object`) and the background-traffic source and sink
 (`actions.background_traffic`), the logical scenario's route search and matches (`route.model`) and
 the scenario's route (`route.active`),
 the `signals` package (the signal controllers and their registry), the ego,

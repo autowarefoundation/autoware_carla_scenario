@@ -3100,8 +3100,12 @@ from autoware_carla_scenario import (
     LaneChangeAbortAction,
     PedestrianRunRedLightAction,
     RunTrafficRuleAction,
+    Lanelet2Pose,
+    MapPose,
+    StalledObjectAction,
     StopCrossingAction,
     TrajectoryFollowingMode,
+    collision_objects,
 )
 self.register_pre_tick(AdversarialBrakeAction("npc1", AdversityLocation.ANY))
 self.register_pre_tick(LaneChangeAbortAction("npc2", AdversityLocation.HIGHWAY))
@@ -3127,6 +3131,12 @@ self.register_pre_tick(RunTrafficRuleAction("npc3", AdversityLocation.ROUNDABOUT
 self.register_pre_tick(JaywalkAction("p1", AdversityLocation.ANY, seed=7))
 self.register_pre_tick(PedestrianRunRedLightAction("p1", AdversityLocation.INTERSECTION))
 self.register_pre_tick(StopCrossingAction("p1", AdversityLocation.ANY, seed=3))
+self.register_pre_tick(StalledObjectAction("npc3", Lanelet2Pose(1, 2.0), 1.0, 5.0))
+self.register_pre_tick(StalledObjectAction("npc4", MapPose(1.0, 2.0, 0.5), label="stalled"))
+for crashed in collision_objects(
+    "npc1", "npc2", Lanelet2Pose(1, 2.0), Lanelet2Pose(1, 6.0), end_time=9.0
+):
+    self.register_pre_tick(crashed)
 feasible = AdversityFeasibleCondition(
     "npc1", AdversityKind.CUT_IN, AdversityLocation.ANY, label="may_cut_in", seed=1
 )
