@@ -83,6 +83,7 @@ CHECKED: tuple[str, ...] = (
     "autoware_carla_scenario.adversity.prediction",
     "autoware_carla_scenario.adversity.snapshot",
     "autoware_carla_scenario.adversity.triggers",
+    "autoware_carla_scenario.adversity_event",
     "autoware_carla_scenario.authoring.framework_pin",
     "autoware_carla_scenario.authoring.uv_tool",
     "autoware_carla_scenario.autoware_bridge",

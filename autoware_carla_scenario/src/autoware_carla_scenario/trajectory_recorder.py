@@ -42,6 +42,9 @@ One JSON object per line, in CARLA's (left-handed) frame, metres/degrees
 * ``{"type": "action", "frame", "t", "phase", "index", "label", "action_type",
   "state"}`` -- an action's lifecycle state (:class:`ActionState`'s value) on
   the first tick of the loop, and whenever it changes.
+* ``{"type": "adversity", "frame", "t", "label", "agent", "kind", "location",
+  "probability", "is_probability", "weight", "avoidable", "victims",
+  "response"}`` -- an adversity NADE sampled, on its tick (#397).
 * ``{"type": "result", "passed", "message", "elapsed_seconds",
   "conditions"}`` -- last, the verdict.
 
@@ -59,6 +62,7 @@ never fails the scenario.
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import logging
 from pathlib import Path
@@ -67,6 +71,7 @@ from typing import IO, Any, Optional
 import orjson
 import typesafe_carla.carla as carla
 
+from .adversity_event import AdversityEvent
 from .coordinate.map_manager import MapManager, run_carla_map
 from .utils.traffic_light import traffic_light_state_name
 
@@ -377,6 +382,25 @@ class TrajectoryRecorder:
                     "label": label,
                     "action_type": action_type,
                     "state": state,
+                }
+            ),
+        )
+
+    def record_adversity(self, label: str, event: AdversityEvent) -> None:
+        """Write an adversity NADE sampled (:class:`AdversityEvent`) on the
+        tick last recorded, from the action labelled *label*."""
+        if self._out is None:
+            return
+        self._guarded(
+            "stopped",
+            lambda: self._emit(
+                {
+                    "type": "adversity",
+                    "frame": self._frame,
+                    "t": _r(self._t),
+                    "label": label,
+                    # Every field of the event, so none can be left out.
+                    **dataclasses.asdict(event),
                 }
             ),
         )

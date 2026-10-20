@@ -139,8 +139,11 @@ class NadeChoice:
         adversity: The list's entry it is.
         command: The command its trigger gave.
         is_probability: ``q`` it was sampled with.
+        probability: Its naturalistic ``p``, cut for an unavoidable one.
         responses: What its NPC victims do in response, victim by victim
             (:mod:`.avoidance`); none when the ego is a victim.
+        response: Which response that is: :data:`~.avoidance.AVOID`,
+            :data:`~.avoidance.ACCEPT`, or ``""``.
         avoidable: Whether its victims could brake out of it.
     """
 
@@ -148,7 +151,9 @@ class NadeChoice:
     adversity: NadeAdversity
     command: AdversarialCommand
     is_probability: float
+    probability: float
     responses: list[tuple[str, AdversarialCommand]]
+    response: str
     avoidable: bool
 
 
@@ -307,7 +312,16 @@ class ImportanceSampler:
                 if response.mode == AVOID:
                     reaction = futures.brake
                 responses = [(victim, reaction) for victim in hit if victim != ego]
-            return NadeChoice(name, adversity, command, q, responses, can_avoid)
+            return NadeChoice(
+                name,
+                adversity,
+                command,
+                q,
+                p,
+                responses,
+                response.mode,
+                can_avoid,
+            )
         return None
 
     def _adversity(

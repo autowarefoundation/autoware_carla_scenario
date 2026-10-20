@@ -3132,6 +3132,7 @@ from autoware_carla_scenario import (
     AdversityLocation,
     NadeAdversity,
     NadeSettings,
+    SamplingEvent,
 )
 adversities = [
     NadeAdversity(AdversityKind.CUT_IN, AdversityLocation.HIGHWAY, 0.002),
@@ -3142,6 +3143,11 @@ nade = AdversarialTrafficAction(
 )
 self.register_pre_tick(nade)
 logger.info("%f %d", nade.weight, adversities[0].kind == AdversityKind.CUT_IN)
+# #397: the kind sampled, as a cover item; the run's weight.
+self.register_cover(
+    "adversity.kind", nade.sampled_kind, values=AdversityKind, event=SamplingEvent.TICK
+)
+logger.info("%f", self.importance_sampling_weight * nade.importance_sampling_weight)
 """
 
 
