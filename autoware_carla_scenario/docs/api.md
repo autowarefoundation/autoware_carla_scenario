@@ -130,6 +130,28 @@ tree internally:
 | `TrafficSignalAction`, `TrafficLightTarget` | Set traffic-light states (e.g. all RED, all GREEN, or a specific actor). |
 | `FollowTrajectoryAction` | Move a vehicle or pedestrian along a `Trajectory` (OpenSCENARIO `FollowTrajectoryAction`); `speed` paces the segments no time does; `held_vertex` names the vertex a waypoint condition is holding it at; `appear_on_start=True` brings a hidden entity in on its first vertex, moving at `speed`, when a run starts. See [Trajectories and Recorded-Scene Replay](trajectory.md). |
 
+### Adversarial actions (`autoware_carla_scenario.actions.adversarial`)
+
+TeraSim's phase-1 adversities, on a named NPC (exported from the top-level
+package, not from `actions`, which would pull in the Lanelet2 map layer).
+Each takes the entity and a required `location` (`AdversityLocation`: `ANY`,
+`INTERSECTION`, `HIGHWAY`, `ROUNDABOUT`); its default trigger is an
+`AdversityFeasibleCondition` of its kind there. When it fires, the command is
+planned on the map and driven (`following_mode`: `FOLLOW` by default, or
+`POSITION`), and the vehicle is handed back to its traffic backend at the
+end. A `condition` given instead fires the action, and the adversity's
+trigger is asked on that tick: when it does not hold, nothing is done.
+`thresholds` overrides TeraSim's numbers.
+
+| Symbol | Description |
+|--------|-------------|
+| `AdversarialBrakeAction` | Brake hard in front of a follower that keeps coming (`BRAKE_CHECK`). |
+| `IgnoreLeaderAction` | Drive on as if the close, slower leader were not there (`IGNORE_LEADER`). |
+| `AdversarialCutInAction` | Change lane in front of a vehicle too close behind in the next lane (`CUT_IN`). |
+| `RunTrafficRuleAction` | Run the red or yellow light the vehicle is stopping for (`TRAFFIC_RULE`). |
+| `JaywalkAction` | Walk a pedestrian straight across the nearest road, off any crosswalk (`JAYWALKING`); `seed` seeds its speed. |
+| `AdversityFeasibleCondition`, `AdversityKind`, `AdversityLocation` | Holds when the entity may carry out a `kind` adversity at `location` (`autoware_carla_scenario.conditions.adversity_feasible`). |
+
 ## Trajectories (`autoware_carla_scenario.trajectory`)
 
 See [Trajectories and Recorded-Scene Replay](trajectory.md).

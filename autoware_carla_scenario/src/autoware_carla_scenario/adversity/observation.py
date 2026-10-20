@@ -243,6 +243,7 @@ class Scene:
     signals: dict[int, SignalState]
     search: float
     _lanes: dict[str, Optional[LanePosition]]
+    _vehicles: dict[str, VehicleObservation]
     _by_lanelet: Optional[dict[int, list[str]]]
 
     def __init__(
@@ -257,6 +258,7 @@ class Scene:
         self.signals = signals
         self.search = search
         self._lanes = {}
+        self._vehicles = {}
         self._by_lanelet = None
 
     # -- where the agents are ------------------------------------------------
@@ -348,7 +350,14 @@ class Scene:
         return best
 
     def vehicle(self, name: str) -> VehicleObservation:
-        """What vehicle *name* sees."""
+        """What vehicle *name* sees, worked out once a scene."""
+        if name in self._vehicles:
+            return self._vehicles[name]
+        seen = self._observe(name)
+        self._vehicles[name] = seen
+        return seen
+
+    def _observe(self, name: str) -> VehicleObservation:
         agent = self.agents[name]
         lane = self.lane_of(name)
         if lane is None:

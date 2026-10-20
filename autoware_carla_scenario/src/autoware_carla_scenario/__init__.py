@@ -94,6 +94,20 @@ if TYPE_CHECKING:
         TrafficSourceAction as TrafficSourceAction,
         WalkStraightAction as WalkStraightAction,
     )
+    from .actions.adversarial import (
+        AdversarialBrakeAction as AdversarialBrakeAction,
+        AdversarialCutInAction as AdversarialCutInAction,
+        IgnoreLeaderAction as IgnoreLeaderAction,
+        JaywalkAction as JaywalkAction,
+        RunTrafficRuleAction as RunTrafficRuleAction,
+    )
+    from .adversity import (
+        AdversityKind as AdversityKind,
+        AdversityLocation as AdversityLocation,
+    )
+    from .conditions.adversity_feasible import (
+        AdversityFeasibleCondition as AdversityFeasibleCondition,
+    )
     from .trajectory import (
         MapPose as MapPose,
         ReferenceContext as ReferenceContext,
@@ -459,6 +473,15 @@ __all__ = [
     "TrafficSinkAction",
     "TrafficSourceAction",
     "WalkStraightAction",
+    # Adversarial actions (#393)
+    "AdversarialBrakeAction",
+    "AdversarialCutInAction",
+    "IgnoreLeaderAction",
+    "JaywalkAction",
+    "RunTrafficRuleAction",
+    "AdversityFeasibleCondition",
+    "AdversityKind",
+    "AdversityLocation",
     # Trajectories
     "MapPose",
     "ReferenceContext",
@@ -492,6 +515,17 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "TurnIndicatorAction": (".actions", "TurnIndicatorAction"),
     "LaneChangeDirection": (".actions", "LaneChangeDirection"),
     "TickTiming": (".actions", "TickTiming"),
+    "AdversarialBrakeAction": (".actions.adversarial", "AdversarialBrakeAction"),
+    "AdversarialCutInAction": (".actions.adversarial", "AdversarialCutInAction"),
+    "IgnoreLeaderAction": (".actions.adversarial", "IgnoreLeaderAction"),
+    "JaywalkAction": (".actions.adversarial", "JaywalkAction"),
+    "RunTrafficRuleAction": (".actions.adversarial", "RunTrafficRuleAction"),
+    "AdversityFeasibleCondition": (
+        ".conditions.adversity_feasible",
+        "AdversityFeasibleCondition",
+    ),
+    "AdversityKind": (".adversity", "AdversityKind"),
+    "AdversityLocation": (".adversity", "AdversityLocation"),
     "TrafficLightTarget": (".actions", "TrafficLightTarget"),
     "RoutingAction": (".actions", "RoutingAction"),
     "SetSpeedAction": (".actions", "SetSpeedAction"),
