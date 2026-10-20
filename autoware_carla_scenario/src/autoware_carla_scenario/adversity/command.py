@@ -29,7 +29,11 @@ from ..route.geometry import MapFeatures
 from ..trajectory.relative_lane import _centreline, _heading_at, _point_at
 from .geometry import PredictedState
 from .observation import AgentSnapshot, LanePosition, SideLane, VehicleObservation
-from .prediction import lane_change_longitudinal_speed, predict_distance_velocity
+from .prediction import (
+    interpolate_trajectory,
+    lane_change_longitudinal_speed,
+    predict_distance_velocity,
+)
 
 if TYPE_CHECKING:
     from lanelet2.core import ConstLanelet
@@ -178,10 +182,12 @@ def _change_lane(
     agent: AgentSnapshot,
     command: AdversarialCommand,
     resolution: float,
+    span: float,
 ) -> list[PredictedState]:
+    """Cross in ``command.duration``, then (to *span*) keep to the new lane."""
     own = _LaneWalk(features, lane.lanelet, lane.s)
     beside = _LaneWalk(features, side.lanelet, side.s)
-    times = _times(command.duration, resolution)
+    times = _times(max(span, command.duration), resolution)
     xs: list[float] = []
     ys: list[float] = []
     speed = agent.speed
@@ -194,7 +200,7 @@ def _change_lane(
             speed = lane_change_longitudinal_speed(
                 agent.speed, math.hypot(nx - ox, ny - oy), command.duration
             )
-        f = t / command.duration
+        f = min(t / command.duration, 1.0)
         xs.append(ox + (nx - ox) * f)
         ys.append(oy + (ny - oy) * f)
     states: list[PredictedState] = []
@@ -212,8 +218,14 @@ def plan_command(
     observation: VehicleObservation,
     command: AdversarialCommand,
     resolution: float = DEFAULT_RESOLUTION_S,
+    horizon: float = 0.0,
 ) -> list[PredictedState]:
     """The path *command* drives the observed vehicle along, timed from 0.
+
+    With a *horizon* (s), the path is a prediction to that time instead, as
+    TeraSim's NADE predicts: an acceleration is held throughout, a lane
+    change keeps to the new lane once across, and a given path is resampled
+    every *resolution* and cut there.
 
     Raises:
         ValueError: The vehicle is off the lanes (for ACCELERATION and
@@ -221,19 +233,29 @@ def plan_command(
     """
     if command.kind is CommandKind.TRAJECTORY:
         start = command.path[0].t
-        return [
+        retimed = [
             PredictedState(p.x, p.y, p.yaw, p.speed, p.t - start) for p in command.path
+        ]
+        if horizon <= 0.0:
+            return retimed
+        return [
+            p
+            for p in interpolate_trajectory(retimed, resolution)
+            if p.t <= horizon + 1e-9
         ]
     lane = observation.lane
     if lane is None:
         raise ValueError(f"{observation.agent.name} is off the lanes")
     if command.kind is CommandKind.ACCELERATION:
+        held = command
+        if horizon > 0.0:
+            held = AdversarialCommand.accelerate(command.acceleration, horizon)
         return _accelerate(
             features,
             lane,
             observation.agent,
             observation.desired_speed,
-            command,
+            held,
             resolution,
         )
     side: Optional[SideLane] = observation.right
@@ -241,4 +263,6 @@ def plan_command(
         side = observation.left
     if side is None:
         raise ValueError(f"there is no lane on the {command.side} to change into")
-    return _change_lane(features, lane, side, observation.agent, command, resolution)
+    return _change_lane(
+        features, lane, side, observation.agent, command, resolution, horizon
+    )

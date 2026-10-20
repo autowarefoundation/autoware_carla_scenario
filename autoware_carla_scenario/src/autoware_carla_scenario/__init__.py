@@ -94,6 +94,13 @@ if TYPE_CHECKING:
         TrafficSourceAction as TrafficSourceAction,
         WalkStraightAction as WalkStraightAction,
     )
+    from .actions.adversarial_traffic import (
+        AdversarialTrafficAction as AdversarialTrafficAction,
+    )
+    from .adversity.nade import (
+        NadeAdversity as NadeAdversity,
+        NadeSettings as NadeSettings,
+    )
     from .actions.adversarial import (
         AdversarialBrakeAction as AdversarialBrakeAction,
         AdversarialCutInAction as AdversarialCutInAction,
@@ -473,7 +480,10 @@ __all__ = [
     "TrafficSinkAction",
     "TrafficSourceAction",
     "WalkStraightAction",
-    # Adversarial actions (#393)
+    # Adversarial actions (#393) and NADE (#395)
+    "AdversarialTrafficAction",
+    "NadeAdversity",
+    "NadeSettings",
     "AdversarialBrakeAction",
     "AdversarialCutInAction",
     "IgnoreLeaderAction",
@@ -524,6 +534,12 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
         ".conditions.adversity_feasible",
         "AdversityFeasibleCondition",
     ),
+    "AdversarialTrafficAction": (
+        ".actions.adversarial_traffic",
+        "AdversarialTrafficAction",
+    ),
+    "NadeAdversity": (".adversity.nade", "NadeAdversity"),
+    "NadeSettings": (".adversity.nade", "NadeSettings"),
     "AdversityKind": (".adversity", "AdversityKind"),
     "AdversityLocation": (".adversity", "AdversityLocation"),
     "TrafficLightTarget": (".actions", "TrafficLightTarget"),
