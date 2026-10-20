@@ -78,8 +78,6 @@ class StalledObjectAction(FollowTrajectoryAction):
     """
 
     _pose: Union[Lanelet2Pose, MapPose, CarlaWorldPose]
-    _appears: float
-    _removed: Optional[float]
 
     def __init__(
         self,
@@ -94,16 +92,20 @@ class StalledObjectAction(FollowTrajectoryAction):
     ) -> None:
         if isinstance(pose, MapPose) and pose.yaw is None:
             raise ValueError(f"{label}: a stalled object's MapPose needs its yaw")
-        if start_time < 0.0:
-            raise ValueError(f"{label}: start_time must not be negative")
+        start = float(start_time)
         end = FOREVER_S
         if end_time is not None:
             end = float(end_time)
-        if not end > start_time:
-            raise ValueError(f"{label}: end_time must be after start_time")
+        if start < 0.0:
+            raise ValueError(f"{label}: start_time must not be negative")
+        if not start < end <= FOREVER_S:
+            raise ValueError(
+                f"{label}: end_time must be after start_time (and before "
+                f"{FOREVER_S:g} s, never)"
+            )
         super().__init__(
             entity_name,
-            _held(label, pose, float(start_time), end),
+            _held(label, pose, start, end),
             TrajectoryTiming(ReferenceContext.ABSOLUTE),
             TrajectoryFollowingMode.POSITION,
             condition=condition,
@@ -112,8 +114,6 @@ class StalledObjectAction(FollowTrajectoryAction):
             hidden_outside_trajectory=True,
         )
         self._pose = pose
-        self._appears = float(start_time)
-        self._removed = end_time
 
     @property
     def pose(self) -> Union[Lanelet2Pose, MapPose, CarlaWorldPose]:
@@ -123,12 +123,21 @@ class StalledObjectAction(FollowTrajectoryAction):
     @property
     def start_time(self) -> float:
         """When it appears (s)."""
-        return self._appears
+        return self._vertex_time(0)
 
     @property
     def end_time(self) -> Optional[float]:
         """When it is removed (s), or ``None`` for never."""
-        return self._removed
+        end = self._vertex_time(-1)
+        if end >= FOREVER_S:
+            return None
+        return end
+
+    def _vertex_time(self, index: int) -> float:
+        """The time of the held trajectory's vertex *index*."""
+        time = self.trajectory.vertices[index].time
+        assert time is not None  # noqa: S101 -- both vertices carry one
+        return time
 
 
 def collision_objects(
