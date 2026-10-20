@@ -206,6 +206,8 @@ class SumoTrafficBackend(TrafficBackend):
         self._walkers_off_network: set[int] = set()
         #: SUMO ids of the background vehicles spawn_background added.
         self._background: set[str] = set()
+        #: Lane id -> the vehicle classes it allowed before close_lane().
+        self._closed_lanes: dict[str, list[str]] = {}
         self._background_count = 0
         #: SUMO id -> the CARLA blueprint asked for its mirror.
         self._blueprints: dict[str, str] = {}
@@ -521,6 +523,7 @@ class SumoTrafficBackend(TrafficBackend):
         self._walkers_off_network = set()
         self._background = set()
         self._background_count = 0
+        self._closed_lanes = {}
         self._blueprints = {}
         self._ambient = {}
         self._lane_targets = {}
@@ -955,6 +958,56 @@ class SumoTrafficBackend(TrafficBackend):
         if blueprint:
             self._blueprints[sumo_id] = blueprint
         return sumo_id
+
+    def close_lane(self, world: Any, transform: Any) -> Optional[str]:
+        """Disallow every vehicle class on the SUMO lane at *transform*, as
+        TeraSim's full-lane construction zone does (``setDisallowed``); the
+        lane's id, or None off the network."""
+        del world
+        if not self._running:
+            return None
+        location, rotation = transform.location, transform.rotation
+        pose = carla_to_sumo(
+            Pose2D(location.x, location.y, location.z, rotation.yaw),
+            0.0,
+            self._offset,
+        )
+        tc = self._traci
+        try:
+            # Whatever the lane allows: one this zone (or another) closed
+            # already is no passenger lane any more, and a passenger match
+            # would close the lane beside it.
+            edge, _pos, lane = tc.simulation.convertRoad(
+                pose.x, pose.y, False, "ignoring"
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("A construction zone is off the SUMO network: %s", exc)
+            return None
+        lane_id = f"{edge}_{lane}"
+        if lane_id in self._closed_lanes:
+            return lane_id
+        try:
+            self._closed_lanes[lane_id] = list(tc.lane.getAllowed(lane_id))
+            tc.lane.setDisallowed(lane_id, ["all"])
+        except Exception as exc:  # noqa: BLE001 - a closure must not end the run
+            logger.warning("SUMO could not close lane %s: %s", lane_id, exc)
+            self._closed_lanes.pop(lane_id, None)
+            return None
+        logger.info("SUMO: lane %s closed", lane_id)
+        return lane_id
+
+    def reopen_lane(self, world: Any, handle: str) -> None:
+        """Allow on lane *handle* again what it allowed before it was closed."""
+        del world
+        allowed = self._closed_lanes.pop(handle, None)
+        if allowed is None or not self._running:
+            return
+        try:
+            self._traci.lane.setAllowed(handle, allowed)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("SUMO could not reopen lane %s: %s", handle, exc)
+            return
+        logger.info("SUMO: lane %s reopened", handle)
 
     def background_vehicles(self, world: Any) -> dict[str, tuple[float, float]]:
         """Every background vehicle SUMO still has, at its CARLA ``(x, y)``."""

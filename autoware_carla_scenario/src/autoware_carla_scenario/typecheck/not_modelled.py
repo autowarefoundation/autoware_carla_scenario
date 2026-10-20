@@ -547,6 +547,7 @@ NOT_MODELLED_MEMBERS: dict[str, dict[str, str]] = {
     "ScenarioResult": {"to_dict": _AS_DICT},
     "SweepConfig": _members("bindings constraints odd_sample", _SWEEP_FIELD),
     "TrafficSinkAction": {"set_traffic_backend": _SET_TRAFFIC_BACKEND},
+    "ConstructionZoneAction": {"set_traffic_backend": _SET_TRAFFIC_BACKEND},
     "TrafficSourceAction": {"set_traffic_backend": _SET_TRAFFIC_BACKEND},
 }
 

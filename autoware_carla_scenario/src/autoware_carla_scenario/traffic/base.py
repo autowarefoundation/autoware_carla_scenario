@@ -305,6 +305,8 @@ class TrafficBackend:
     #: The name this backend is selected by, and how it names itself in logs and
     #: in a run's result record.  Subclasses must set it.
     name: ClassVar[str] = "unnamed"
+    #: Whether :meth:`close_lane` has said this backend cannot close a lane.
+    _warned_lane_closure: bool = False
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -563,6 +565,29 @@ class TrafficBackend:
 
     def remove_background(self, world: "carla.World", handle: str) -> None:
         """Take the background vehicle *handle* off the road."""
+
+    # ------------------------------------------------------------------
+    # Lane closures -- a construction zone (#402)
+    # ------------------------------------------------------------------
+
+    def close_lane(
+        self, world: "carla.World", transform: "carla.Transform"
+    ) -> Optional[str]:
+        """Keep this backend's traffic off the lane at *transform* until
+        :meth:`reopen_lane`; a handle naming the closure, or ``None`` when
+        this backend cannot close a lane (the default, with a warning once)."""
+        if not self._warned_lane_closure:
+            self._warned_lane_closure = True
+            logger.warning(
+                "%s: %r cannot close a lane; its traffic may drive into the "
+                "zone (a TrafficSinkAction there takes it off the road)",
+                type(self).__name__,
+                self.name,
+            )
+        return None
+
+    def reopen_lane(self, world: Optional["carla.World"], handle: str) -> None:
+        """Open the lane :meth:`close_lane` closed as *handle* again."""
 
     # ------------------------------------------------------------------
     # Internals

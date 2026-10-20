@@ -563,6 +563,29 @@ def test_manoeuvres_become_sumo_commands(crossroads: Path, tmp_path: Path) -> No
 
 
 @needs_sumo
+def test_a_construction_zone_closes_and_reopens_the_lane(
+    crossroads: Path, tmp_path: Path
+) -> None:
+    """TeraSim's full-lane construction zone: setDisallowed, then the lane's
+    own permissions back (#402)."""
+    backend, world, _npc, _ego = _prepared(crossroads, tmp_path)
+    tc = backend._traci
+    try:
+        lane = backend.close_lane(world, _carla_transform(-60.0, 5.25, 0.0))
+        assert lane is not None
+        assert "passenger" in tc.lane.getDisallowed(lane)
+        # Asked again for the same lane: the one closure.
+        assert backend.close_lane(world, _carla_transform(-58.0, 5.25, 0.0)) == lane
+        # The lane beside stays open: a closed lane is still matched as itself.
+        assert "passenger" not in tc.lane.getDisallowed("0.fwd_1")
+        backend.reopen_lane(world, lane)
+        assert "passenger" not in tc.lane.getDisallowed(lane)
+        backend.reopen_lane(world, lane)  # and saying it twice is harmless
+    finally:
+        backend.close()
+
+
+@needs_sumo
 def test_ambient_traffic_is_mirrored_into_carla_and_cleaned_up(
     crossroads: Path, tmp_path: Path
 ) -> None:

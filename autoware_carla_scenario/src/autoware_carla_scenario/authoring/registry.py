@@ -1698,6 +1698,191 @@ _ADVERSITY_KINDS: tuple[SelectOption, ...] = (
     SelectOption("merge", "Cut off a merge"),
 )
 
+_CONSTRUCTION_SETTINGS = (
+    "construction_type",
+    "spacing",
+    "work_zone_offset",
+    "taper_length_in",
+    "taper_length_out",
+    "taper_type",
+    "warning_zone_length",
+    "buffer_zone_length",
+    "termination_zone_length",
+    "side",
+)
+
+register_action_spec(
+    ActionSpec(
+        type_id="construction_zone",
+        title="Construction Zone",
+        category="Adversity",
+        builder="build_construction_zone_action",
+        target="..actions.construction_zone:ConstructionZoneAction",
+        scope="environment",
+        visual_kind="continuous",
+        builds=(
+            BuiltArgument(
+                kwarg="settings",
+                target="..adversity.construction:ConstructionSettings",
+                parts=(
+                    BuiltPart(
+                        args=tuple((name, name) for name in _CONSTRUCTION_SETTINGS)
+                    ),
+                ),
+            ),
+        ),
+        fields=(
+            FieldSpec(
+                name="lanelet_id",
+                label="Lanelet",
+                kind="lanelet",
+                default=0,
+                help="The lane the zone is on is measured from this lanelet's start.",
+            ),
+            FieldSpec(
+                name="start_s",
+                label="Work starts at",
+                kind="number",
+                default=100.0,
+                unit="m",
+                help="Along the lane; the warning signs stand before it.",
+            ),
+            FieldSpec(
+                name="end_s",
+                label="Work ends at",
+                kind="number",
+                default=250.0,
+                unit="m",
+                help="Along the lane, on past the lanelet's end if need be.",
+            ),
+            FieldSpec(
+                name="start_time",
+                label="Appears at",
+                kind="number",
+                default=0.0,
+                unit="s",
+                help="From the scenario's start.",
+            ),
+            FieldSpec(
+                name="end_time",
+                label="Cleared away at",
+                kind="number",
+                default=None,
+                required=False,
+                unit="s",
+                help="From the scenario's start; empty: never.",
+            ),
+            FieldSpec(
+                name="construction_type",
+                label="Work zone of",
+                kind="select",
+                default="cone",
+                options=(
+                    SelectOption("cone", "Cones"),
+                    SelectOption("barrier", "Barriers"),
+                    SelectOption("mixed", "Cones and barriers"),
+                ),
+            ),
+            FieldSpec(
+                name="side",
+                label="Closed from",
+                kind="select",
+                default="right",
+                options=(
+                    SelectOption("right", "The right"),
+                    SelectOption("left", "The left"),
+                ),
+            ),
+            FieldSpec(
+                name="spacing",
+                label="Spacing",
+                kind="number",
+                default=20.0,
+                unit="m",
+                help="Between the objects; 0.7 of it in a taper, 0.8 in the buffer.",
+            ),
+            FieldSpec(
+                name="work_zone_offset",
+                label="Work zone offset",
+                kind="number",
+                default=0.0,
+                required=False,
+                unit="m",
+                help="Off the lane's centreline, positive to the left.",
+            ),
+            FieldSpec(
+                name="taper_length_in",
+                label="Entry taper",
+                kind="number",
+                default=60.0,
+                required=False,
+                unit="m",
+            ),
+            FieldSpec(
+                name="taper_length_out",
+                label="Exit taper",
+                kind="number",
+                default=30.0,
+                required=False,
+                unit="m",
+            ),
+            FieldSpec(
+                name="taper_type",
+                label="Taper",
+                kind="select",
+                default="linear",
+                required=False,
+                options=(
+                    SelectOption("linear", "Linear"),
+                    SelectOption("curved", "Curved"),
+                ),
+            ),
+            FieldSpec(
+                name="warning_zone_length",
+                label="Warning zone",
+                kind="number",
+                default=100.0,
+                required=False,
+                unit="m",
+            ),
+            FieldSpec(
+                name="buffer_zone_length",
+                label="Buffer zone",
+                kind="number",
+                default=10.0,
+                required=False,
+                unit="m",
+            ),
+            FieldSpec(
+                name="termination_zone_length",
+                label="Termination zone",
+                kind="number",
+                default=30.0,
+                required=False,
+                unit="m",
+            ),
+            FieldSpec(
+                name="close_lane",
+                label="Close the lane to the traffic backend",
+                kind="bool",
+                default=True,
+                help="SUMO routes no traffic onto it; the TrafficManager cannot.",
+            ),
+            FieldSpec(
+                name="clear_traffic",
+                label="Take background traffic in the zone off the road",
+                kind="bool",
+                default=True,
+            ),
+        ),
+        description=(
+            "TeraSim's construction zone: warning signs, an entry taper of "
+            "cones, a buffer, the work zone, an exit taper and termination "
+            "signs along a lane, from one time to another."
+        ),
+    )
+)
+
 _NADE_SETTINGS = (
     "max_controlled",
     "control_radius",

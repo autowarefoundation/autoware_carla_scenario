@@ -67,6 +67,7 @@ __all__ = [
     "build_adversarial_cut_in_action",
     "build_adversarial_merge_action",
     "build_adversarial_traffic_action",
+    "build_construction_zone_action",
     "build_head_on_action",
     "build_ignore_leader_action",
     "build_jaywalk_action",
@@ -904,6 +905,44 @@ def build_adversarial_traffic_action(
         seed=params["seed"],
         settings=settings,
         following_mode=TrajectoryFollowingMode[str(params["following_mode"]).upper()],
+    )
+
+
+def build_construction_zone_action(
+    compiled: "CompiledAction",
+    condition: "BaseCondition | None",
+    timing: Any,
+    ctx: "BuildContext",
+) -> "BaseAction":
+    """Build a :class:`ConstructionZoneAction`."""
+    from ..actions.construction_zone import ConstructionZoneAction  # noqa: PLC0415
+    from ..adversity.construction import ConstructionSettings  # noqa: PLC0415
+
+    params = compiled.params
+    settings = ConstructionSettings(
+        construction_type=params["construction_type"],
+        spacing=params["spacing"],
+        work_zone_offset=params["work_zone_offset"],
+        taper_length_in=params["taper_length_in"],
+        taper_length_out=params["taper_length_out"],
+        taper_type=params["taper_type"],
+        warning_zone_length=params["warning_zone_length"],
+        buffer_zone_length=params["buffer_zone_length"],
+        termination_zone_length=params["termination_zone_length"],
+        side=params["side"],
+    )
+    return ConstructionZoneAction(
+        lanelet_id=params["lanelet_id"],
+        start_s=params["start_s"],
+        end_s=params["end_s"],
+        settings=settings,
+        start_time=params["start_time"],
+        end_time=params["end_time"],
+        close_lane=params["close_lane"],
+        clear_traffic=params["clear_traffic"],
+        condition=condition,
+        timing=timing,
+        label=compiled.label,
     )
 
 
