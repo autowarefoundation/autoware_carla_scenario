@@ -6,6 +6,7 @@ The layers, bottom-up:
   simulator-agnostic math -- footprints, trajectory conflicts, kinematic
   prediction and the car-following model the triggers compare against.
   Angles wrap with :func:`..kinematics.normalize_angle_rad`.
+* :mod:`.lanes`: the lane chain around an agent, ahead and behind.
 * :mod:`.location`: where an agent is on the Lanelet2 map (intersection,
   highway, roundabout), for each adversity's location gate.
 
@@ -30,6 +31,7 @@ from .idm import (
     car_following_acceleration,
     free_flow_acceleration,
 )
+from .lanes import LaneSpan, lane_chain
 from .location import AdversityLocation, location_matches, location_of
 from .prediction import (
     interpolate_trajectory,
@@ -42,6 +44,7 @@ __all__ = [
     "AdversityLocation",
     "AgentFootprint",
     "IdmParameters",
+    "LaneSpan",
     "PredictedState",
     "car_following_acceleration",
     "circle_centers",
@@ -51,6 +54,7 @@ __all__ = [
     "free_flow_acceleration",
     "interpolate_trajectory",
     "lane_change_longitudinal_speed",
+    "lane_chain",
     "location_matches",
     "location_of",
     "predict_distance_velocity",

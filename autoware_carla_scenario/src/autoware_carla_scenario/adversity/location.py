@@ -32,6 +32,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, Optional
 
 from ..route.geometry import MapFeatures
+from .lanes import LaneSpan, lane_chain
 
 if TYPE_CHECKING:
     from lanelet2.core import ConstLanelet
@@ -97,52 +98,27 @@ def _is_roundabout(lanelet: ConstLanelet) -> bool:
     return False
 
 
-def _found_ahead(
+def _signal_ahead(
     features: MapFeatures,
     lanelet: ConstLanelet,
-    s: float,
+    chain: dict[int, LaneSpan],
     lookahead: float,
-    roundabout: bool,
 ) -> bool:
-    """Whether a signal (or, with *roundabout*, a roundabout) is within reach.
+    # The agent's own lanelet counts wherever on it the agent is; one ahead
+    # when its end, where its stop line is, is within the look-ahead.
+    own = int(lanelet.id)
+    for key, span in chain.items():
+        if (key == own or span.end <= lookahead) and _is_signalised(
+            features, span.lanelet
+        ):
+            return True
+    return False
 
-    A signal counts when the end of its lanelet is within *lookahead* of *s*
-    on *lanelet*; a roundabout when the start of its lanelet is.  The search
-    runs the following lanelets in order of their start, shortest chain
-    first, and stops at the first find.
-    """
-    if roundabout and _is_roundabout(lanelet):
-        return True
-    if not roundabout and _is_signalised(features, lanelet):
-        return True
-    # Each lanelet reached, by id: how far ahead of the agent it starts.
-    starts: dict[int, float] = {}
-    frontier: list[tuple[float, ConstLanelet]] = [
-        (features.length(lanelet) - s, lanelet)
-    ]
-    while frontier:
-        index = 0
-        for i in range(1, len(frontier)):
-            if frontier[i][0] < frontier[index][0]:
-                index = i
-        start, current = frontier.pop(index)
-        if start > lookahead:
-            continue
-        for following in features.graph.following(current):
-            key = int(following.id)
-            if key in starts and starts[key] <= start:
-                continue
-            starts[key] = start
-            if roundabout and _is_roundabout(following):
-                return True
-            end = start + features.length(following)
-            if (
-                not roundabout
-                and end <= lookahead
-                and _is_signalised(features, following)
-            ):
-                return True
-            frontier.append((end, following))
+
+def _roundabout_ahead(chain: dict[int, LaneSpan]) -> bool:
+    for span in chain.values():
+        if _is_roundabout(span.lanelet):
+            return True
     return False
 
 
@@ -155,9 +131,10 @@ def location_of(
     """The location of an agent *s* metres along *lanelet*, or None."""
     if _is_highway(lanelet):
         return AdversityLocation.HIGHWAY
-    if _found_ahead(features, lanelet, s, lookahead, False):
+    chain = lane_chain(features, lanelet, s, lookahead)
+    if _signal_ahead(features, lanelet, chain, lookahead):
         return AdversityLocation.INTERSECTION
-    if _found_ahead(features, lanelet, s, lookahead, True):
+    if _roundabout_ahead(chain):
         return AdversityLocation.ROUNDABOUT
     return None
 
@@ -172,8 +149,7 @@ def location_matches(
     """Whether an agent *s* metres along *lanelet* is at *location*.
 
     Reads only what *location* needs: :attr:`AdversityLocation.ANY` nothing,
-    a highway the lanelet itself, an intersection no search for a
-    roundabout.
+    a highway the lanelet itself.
     """
     if location is AdversityLocation.ANY:
         return True
@@ -181,7 +157,8 @@ def location_matches(
         return location is AdversityLocation.HIGHWAY
     if location is AdversityLocation.HIGHWAY:
         return False
-    signal = _found_ahead(features, lanelet, s, lookahead, False)
+    chain = lane_chain(features, lanelet, s, lookahead)
+    signal = _signal_ahead(features, lanelet, chain, lookahead)
     if location is AdversityLocation.INTERSECTION:
         return signal
-    return not signal and _found_ahead(features, lanelet, s, lookahead, True)
+    return not signal and _roundabout_ahead(chain)
