@@ -169,7 +169,7 @@ wheels = [
 
 [[package]]
 name = "autoware-carla-scenario"
-version = "15.9.0"
+version = "15.13.0"
 source = { editable = "autoware_carla_scenario" }
 dependencies = [
     { name = "carla-driver-interface" },
@@ -226,7 +226,7 @@ viewer = [
 requires-dist = [
     { name = "autoware-carla-scenario-rerun", marker = "extra == 'rerun'", specifier = ">=0.1,<0.2" },
     { name = "autoware-carla-scenario-rerun", extras = ["viewer"], marker = "extra == 'viewer'", specifier = ">=0.1,<0.2" },
-    { name = "carla-driver-interface", specifier = ">=2.2,<3" },
+    { name = "carla-driver-interface", specifier = ">=2.3,<3" },
     { name = "cyclonedds", marker = "python_full_version < '3.14' and platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'ros2'", specifier = ">=11.0.1" },
     { name = "eclipse-sumo", marker = "extra == 'sumo'", specifier = ">=1.23" },
     { name = "fastapi", specifier = ">=0.115.0" },
@@ -439,7 +439,7 @@ wheels = [
 
 [[package]]
 name = "carla-driver-interface"
-version = "2.2.0"
+version = "2.3.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "grpcio" },
@@ -452,9 +452,9 @@ dependencies = [
     { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/ec/2c/1a29459982e63183e93467a26698371fa37102e691426b71d77c4b2d501f/carla_driver_interface-2.2.0.tar.gz", hash = "sha256:8183a76560d13afa09aa70649d2b64d5cb4ec27195b2ba24b2e595c38c8eaf09", size = 81898, upload-time = "2026-10-19T02:19:06.527Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/f9/bd/8dbf86edd1ac7c9b73b23f3ed9e7b17de54800c160e5244c6fc048a75019/carla_driver_interface-2.3.0.tar.gz", hash = "sha256:8fe2f828629b3716d9b47b18d89e3dc46d8c7db8bc97b0a121153222cc332095", size = 84695, upload-time = "2026-10-20T03:10:16.776Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/de/c4/8b5fdb551e45cb053d31285eb5d335fb28e8ee9bbd97e8a6f9f1bade9cb8/carla_driver_interface-2.2.0-py3-none-any.whl", hash = "sha256:7074e2dd800add4e378c57af1461457d66fb86463ce582b05161cbd8dd12f8d6", size = 89755, upload-time = "2026-10-19T02:19:05.136Z" },
+    { url = "https://files.pythonhosted.org/packages/8f/5b/8620800b581854d1566a7ccad47a3230b1bae0a318ef16b4d66ddc9c87bb/carla_driver_interface-2.3.0-py3-none-any.whl", hash = "sha256:8e0f5658ab81e685523ac39b9d04a3d0f25b5a1cf80c778ac6803d36e3f19280", size = 92484, upload-time = "2026-10-20T03:10:15.496Z" },
 ]
 
 [[package]]

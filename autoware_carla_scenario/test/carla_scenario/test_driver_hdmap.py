@@ -209,13 +209,37 @@ def test_a_given_lanelet2_map_is_copied_without_roadgen(
     assert manifest["roadgen_version"] == ""
     assert (maps / map_id / entry["path"]).read_text() == _LOCAL_OSM
 
-    # The policy still gets the stop point and OpenDRIVE lane, but no lanelet.
-    # An unchanged reader opens the set: its IR and traces are there, empty.
+    # The policy still gets the stop point and OpenDRIVE lane; this file has no
+    # lanelet to find the light on. Any reader opens the set: its IR and traces
+    # are there, empty.
     map_files = MapFiles.open(maps, map_id)
     [stop] = map_files.stop_lines([_light_on_road_0(opendrive)])
     assert stop.position_local.tolist() == [99.0, -1.75, 0.0]
     assert (stop.road_id, stop.lane_id) == (0, -1)
     assert stop.lane_ids == stop.rule_ids == stop.light_ids == ()
+
+
+def test_a_given_lanelet2_map_finds_its_lights_on_the_map(
+    opendrive: str, tmp_path: Path
+) -> None:
+    # roadgen's own conversion, given back as a file: no trace relates it to the
+    # OpenDRIVE, yet the light lands on the same lanelet, element and light.
+    converted = MapFiles.open(
+        tmp_path / "converted", export_map(opendrive, "Town", tmp_path / "converted")
+    )
+    [expected] = converted.stop_lines([_light_on_road_0(opendrive)])
+    given_id = export_map(
+        opendrive, "Town", tmp_path / "given", formats=(), lanelet2_path=converted.path
+    )
+    [stop] = MapFiles.open(tmp_path / "given", given_id).stop_lines(
+        [_light_on_road_0(opendrive)]
+    )
+    assert stop.rule_ids and stop.light_ids
+    assert (stop.lane_ids, stop.rule_ids, stop.light_ids) == (
+        expected.lane_ids,
+        expected.rule_ids,
+        expected.light_ids,
+    )
 
 
 def test_a_given_lanelet2_map_sits_beside_converted_formats(

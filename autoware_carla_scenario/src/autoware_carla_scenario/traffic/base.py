@@ -399,6 +399,21 @@ class TrafficBackend:
             world: The CARLA world.
         """
 
+    def resume(self, entity: DrivenEntity, world: "carla.World") -> None:
+        """Drive *entity* again: what took it over (:meth:`release`) is done.
+
+        Called when a scenario action that drove the vehicle itself hands it
+        back -- an adversarial manoeuvre over, the vehicle rejoins traffic
+        from wherever the action left it.  Undoes :meth:`release`, and like
+        it must hold before or after :meth:`start` and be safe to repeat; an
+        entity never released is left as it is.  The base does nothing, which
+        is right for a backend that never drives the scenario's vehicles.
+
+        Args:
+            entity: The entity handed back.
+            world: The CARLA world.
+        """
+
     # ------------------------------------------------------------------
     # Background traffic -- vehicles no scenario entity stands for
     # ------------------------------------------------------------------

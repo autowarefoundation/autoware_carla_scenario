@@ -92,6 +92,8 @@ LANE_CHANGE_SETTLED_M: float = 0.3
 TURN_SEARCH_EDGES: int = 8
 #: Speed mode bits of a vehicle SUMO does not control (all checks off).
 _SPEED_MODE_EXTERNAL = 0
+#: Lane-change mode bits of a vehicle SUMO does not control (none).
+_LANE_CHANGE_MODE_EXTERNAL = 0
 #: SUMO connection directions that count as each turn, by TurnDirection value.
 _TURNS = {"left": ("l", "L"), "right": ("r", "R"), "straight": ("s",)}
 #: How the run's own vehicles look in sumo-gui, apart from SUMO's traffic.
@@ -164,6 +166,11 @@ class SumoTrafficBackend(TrafficBackend):
         self._entities: list[Any] = []
         #: ``id()`` of the entities taken back with release(): published, not driven.
         self._released: set[int] = set()
+        #: ``id()`` of an entity released while SUMO drove it -> its SUMO id
+        #: and the speed and lane-change modes resume() puts back.
+        self._handed: dict[int, tuple[str, int, int]] = {}
+        #: SUMO id -> the speed (m/s) set_desired_speed() last held it at.
+        self._commanded: dict[str, float] = {}
         #: SUMO id -> the entity SUMO drives.
         self._driven: dict[str, Any] = {}
         #: SUMO id -> the actor CARLA's side drives, published into SUMO.
@@ -327,10 +334,7 @@ class SumoTrafficBackend(TrafficBackend):
                 or self._tm_drives_scenario
                 or id(entity) in self._released
             ):
-                tc.vehicle.setSpeedMode(sumo_id, _SPEED_MODE_EXTERNAL)
-                tc.vehicle.setLaneChangeMode(sumo_id, 0)
-                tc.vehicle.setColor(sumo_id, _PUBLISHED_COLOR)
-                self._external[sumo_id] = actor
+                self._publish(sumo_id, actor)
             else:
                 tc.vehicle.setColor(sumo_id, _DRIVEN_COLOR)
                 self._driven[sumo_id] = entity
@@ -411,6 +415,8 @@ class SumoTrafficBackend(TrafficBackend):
                     pass
         self._entities = []
         self._released = set()
+        self._handed = {}
+        self._commanded = {}
         self._driven = {}
         self._external = {}
         self._walkers = {}
@@ -518,10 +524,13 @@ class SumoTrafficBackend(TrafficBackend):
         sumo_id = self._driven_id(entity, "set_desired_speed")
         if sumo_id is None:
             return
+        speed = max(speed_kmh, 0.0) / 3.6
         try:
-            self._traci.vehicle.setSpeed(sumo_id, max(speed_kmh, 0.0) / 3.6)
+            self._traci.vehicle.setSpeed(sumo_id, speed)
         except Exception as exc:  # noqa: BLE001
             logger.warning("SUMO could not set the speed of %s: %s", sumo_id, exc)
+            return
+        self._commanded[sumo_id] = speed
 
     def turn_at_junction(
         self, entity: Any, world: Any, direction: TurnDirection, **kwargs: Any
@@ -573,15 +582,56 @@ class SumoTrafficBackend(TrafficBackend):
             actor.disable_constant_velocity()
         except RuntimeError:
             pass
-        self._external[sumo_id] = actor
         try:
             tc = self._traci
-            tc.vehicle.setSpeedMode(sumo_id, _SPEED_MODE_EXTERNAL)
-            tc.vehicle.setLaneChangeMode(sumo_id, 0)
-            tc.vehicle.setColor(sumo_id, _PUBLISHED_COLOR)
+            self._handed[id(entity)] = (
+                sumo_id,
+                int(tc.vehicle.getSpeedMode(sumo_id)),
+                int(tc.vehicle.getLaneChangeMode(sumo_id)),
+            )
+            self._publish(sumo_id, actor)
         except Exception as exc:  # noqa: BLE001
             logger.warning("SUMO could not hand %s over: %s", sumo_id, exc)
+            self._external[sumo_id] = actor
         logger.info("SUMO: %s released; it is published from CARLA now", sumo_id)
+
+    def resume(self, entity: Any, world: Any) -> None:
+        """Drive *entity* in SUMO again, from where CARLA has it now.
+
+        While released its pose was pushed into SUMO every tick, so SUMO
+        takes it over where the action left it, with the speed and
+        lane-change modes it had and the speed set_desired_speed() last held
+        it at; its pose is pulled out each tick again.
+        """
+        if self._tm_drives_scenario:
+            self._tm.resume(entity, world)
+            return
+        self._released.discard(id(entity))
+        handed = self._handed.pop(id(entity), None)
+        if handed is None or not self._running:
+            # Never released while SUMO drove it: start() drives it, or it
+            # was never SUMO's to drive.
+            return
+        sumo_id, speed_mode, lane_change_mode = handed
+        self._external.pop(sumo_id, None)
+        try:
+            tc = self._traci
+            tc.vehicle.setSpeedMode(sumo_id, speed_mode)
+            tc.vehicle.setLaneChangeMode(sumo_id, lane_change_mode)
+            tc.vehicle.setSpeed(sumo_id, self._commanded.get(sumo_id, -1.0))
+            tc.vehicle.setColor(sumo_id, _DRIVEN_COLOR)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("SUMO could not take %s back: %s", sumo_id, exc)
+        self._driven[sumo_id] = entity
+        logger.info("SUMO: %s resumed; SUMO drives it again", sumo_id)
+
+    def _publish(self, sumo_id: str, actor: Any) -> None:
+        """Have SUMO stop driving *sumo_id*: CARLA's *actor* is pushed into it."""
+        tc = self._traci
+        tc.vehicle.setSpeedMode(sumo_id, _SPEED_MODE_EXTERNAL)
+        tc.vehicle.setLaneChangeMode(sumo_id, _LANE_CHANGE_MODE_EXTERNAL)
+        tc.vehicle.setColor(sumo_id, _PUBLISHED_COLOR)
+        self._external[sumo_id] = actor
 
     # ------------------------------------------------------------------
     # Internals: the run's vehicles

@@ -483,11 +483,18 @@ driver:
 The file is copied into the set as `lanelet2_map.osm`, as it is (with the
 `map_projector_info.yaml` beside it, if any), and its content is part
 of `map_id`, so another file gets another set. roadgen is not needed unless
-`driver.map_formats` names other formats too. The file carries no roadgen trace, so
-`ctx.stop_lines()` still gives each light's state, stop point and OpenDRIVE lane, but
-`lane_ids`, `rule_ids` and `light_ids` are empty (the manifest marks the format
-`"provided": true`, its trace empty): match the
-stop point to your map's lanelets yourself. Nothing checks that the file and the world's
+`driver.map_formats` names other formats too. The file carries no roadgen trace (the
+manifest marks the format `"provided": true`, its trace empty), so `ctx.stop_lines()`
+finds each light on the map instead (carla-driver-interface 2.3 and later):
+
+- `lane_ids` are the lanelets the stop point lies on;
+- `rule_ids` are the traffic-light regulatory elements of the first lanelets on or ahead
+  of it that carry one, up to 50 m past its own lanelet, so a map may hang its lights
+  off the approach or off the junction lanes past the line;
+- `light_ids` are the line strings those elements refer to.
+
+The map's `local_x` / `local_y` must be the `local` frame (CARLA's world with y
+mirrored, as carla-ue5-maps' are). Nothing checks that the file and the world's
 OpenDRIVE describe the same roads in the same frame.
 
 ### Diagnostics coming back

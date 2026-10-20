@@ -41,6 +41,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+#: How far before its end (s) a run that does not stop is sampled at last, so
+#: the entity keeps the last segment's velocity there.
+_END_EPSILON_S = 1e-6
+
 __all__ = ["ARRIVAL_TOLERANCE_M", "FollowTrajectoryAction", "HIDDEN_DEPTH_M"]
 
 #: How near the end of the path (m) a followed trajectory counts as finished.
@@ -103,8 +107,8 @@ class FollowTrajectoryAction(BaseAction):
     :meth:`~autoware_carla_scenario.traffic.base.TrafficBackend.release`), and
     an ego driven by an external stack (Autoware, a driver policy) is refused,
     because two authorities on one vehicle is not a scenario anyone wrote.
-    When the run ends a vehicle is braked to a stop and a walker stood still,
-    where the trajectory ended.
+    When the run ends a vehicle is braked to a stop (unless *stop_at_end* is
+    off) and a walker stood still, where the trajectory ended.
 
     **Waypoint conditions.**  Each vertex is departed on its condition
     (:attr:`~autoware_carla_scenario.TrajectoryVertex.advance`): a time
@@ -190,6 +194,11 @@ class FollowTrajectoryAction(BaseAction):
             its action is triggered, e.g. once the ego has progressed to where
             it was first seen.  Not part of OpenSCENARIO; not combined with
             *hidden_outside_trajectory*.
+        stop_at_end: Brake a vehicle to a stop where the trajectory ends
+            (default).  ``False`` leaves it moving as it arrived, for an
+            action that hands it back to traffic at once (an adversarial
+            manoeuvre, :meth:`~autoware_carla_scenario.traffic.driven.BackendDriven.resume_traffic`);
+            a walker is stood still either way.
 
     Raises:
         ValueError: If a timing is given for an untimed trajectory, the
@@ -210,6 +219,7 @@ class FollowTrajectoryAction(BaseAction):
     _control_config: Optional[ControlConfig]
     _hidden_outside: bool
     _appear_on_start: bool
+    _stop_at_end: bool
     _given_speed: Optional[float]
     _gated: bool
     _timeline: Optional[DepartureTimeline]
@@ -247,6 +257,7 @@ class FollowTrajectoryAction(BaseAction):
         hidden_outside_trajectory: bool = False,
         speed: Optional[float] = None,
         appear_on_start: bool = False,
+        stop_at_end: bool = True,
     ) -> None:
         if appear_on_start and hidden_outside_trajectory:
             raise ValueError(
@@ -291,6 +302,7 @@ class FollowTrajectoryAction(BaseAction):
         self._control_config = control_config
         self._hidden_outside = hidden_outside_trajectory
         self._appear_on_start = appear_on_start
+        self._stop_at_end = stop_at_end
         self._given_speed = None if speed is None else float(speed)
         # Departure conditions other than times: the timeline engine.
         self._gated = trajectory.is_gated
@@ -426,7 +438,7 @@ class FollowTrajectoryAction(BaseAction):
         else:
             self._drive(world, actor)
         if self._finished:
-            if not self._hidden:
+            if not self._hidden and (self._stop_at_end or walker):
                 _stop(actor, walker)
             logger.info(
                 "FollowTrajectoryAction: '%s' reached the end of %r",
@@ -651,6 +663,10 @@ class FollowTrajectoryAction(BaseAction):
             now = self._trajectory_time()
             if now >= resolved.end_time:
                 self._finished = True
+                if not self._stop_at_end:
+                    # At the end, but with the last segment's velocity rather
+                    # than at rest: handed back to traffic still moving.
+                    now = resolved.end_time - _END_EPSILON_S
             sample = resolved.at_time(now)
             # The sample moves in vertex time; the world, in scenario time,
             # which runs `scale` times slower.

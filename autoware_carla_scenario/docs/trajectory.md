@@ -162,6 +162,10 @@ trajectory: the last vertex's time with a timing, the end of the path without
 one (never, for a closed trajectory), within `ARRIVAL_TOLERANCE_M` (1 m) of it
 in `FOLLOW` mode. Then a vehicle is braked to a stop and a walker stood still
 where the trajectory ended. Pass `until=` to end it on a condition of your own.
+`stop_at_end=False` (an extension) leaves a vehicle moving as it arrived instead
+-- in `POSITION` mode with the last segment's velocity -- for an action that
+hands it straight back to traffic, as the adversarial actions do
+(`resume_traffic`).
 
 `hidden_outside_trajectory=True` (an extension, `POSITION` mode with a timing
 only) keeps the entity out of the world -- parked under the map with its physics
