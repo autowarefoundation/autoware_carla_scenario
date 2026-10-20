@@ -626,6 +626,43 @@ class. The inspector, the canvas, validation and the compiler all pick it up
 with no template edit. `test_authoring_registry.py` fails if a spec names a
 builder that does not exist, or a visual that names a field the primitive lacks.
 
+### A list of records
+
+A field of kind `record_list` holds an ordered list of records, each a mapping
+of its own `item_fields` -- for a list whose order means something and whose
+entries repeat, such as NADE's adversities, where the first to fire wins:
+
+```python
+FieldSpec(
+    name="adversities",
+    label="Adversities",
+    kind="record_list",
+    default=(),
+    item_fields=(
+        FieldSpec("kind", "Kind", "select", "brake_check", _KINDS),
+        FieldSpec("probability", "Probability", "number", 0.01),
+    ),
+)
+```
+
+- **Inspector**: one block of controls per record, with buttons to add one
+  and to remove or move each.
+  - The buttons are submits of the inspector's own form.
+  - The form posts each record's fields as `<field>.<i>.<sub>`, the row count
+    as `<field>.__rows`, and the button pressed as `<field>.__op`.
+- **Validation and compiling**: each record is validated and coerced by its
+  fields, as a node's params are.
+  - `required` means at least one record.
+  - An unset list is an empty one.
+  - Entity references inside a record are resolved as top-level ones are.
+- **Generated builder**: it builds one item per record. The item class comes
+  from the constructor's annotation (`list[AdversitySpec]`), and each item
+  field feeds the item constructor's keyword of the same name, enums lifted.
+- **Restrictions**: a record holds no lanelet field, whose map lives outside
+  the form, and no record list.
+- **Overrides**: a run overrides one record's field with
+  `scenario.param_overrides.<node id>.<field>.<index>.<sub>=<value>`.
+
 ### The map path is a document field
 
 `/draft/<id>/map.osm` serves the file the document names, and that name is

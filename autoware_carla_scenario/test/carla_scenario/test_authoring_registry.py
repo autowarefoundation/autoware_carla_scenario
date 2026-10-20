@@ -204,6 +204,40 @@ class TestOptionSets:
         assert declared <= available, declared - available
 
 
+class TestRecordListFields:
+    def test_a_record_list_is_built_to_be_edited_as_rows(self) -> None:
+        """What the inspector's rows and the builder rely on (#394).
+
+        A record_list declares its records' fields, starts with a list of
+        records rather than ``None`` (an empty one is what an unset field
+        holds), and holds no field the rows cannot edit: a lanelet's map
+        lives in a modal outside the form, and records do not nest.
+        """
+        offenders = []
+        for specs in (
+            registry.action_specs(),
+            registry.condition_specs(),
+            registry.constraint_specs(),
+            registry.binding_specs(),
+        ):
+            for spec in specs:
+                for field_spec in spec.fields:
+                    if field_spec.item_fields and field_spec.kind != "record_list":
+                        offenders.append(f"{spec.type_id}.{field_spec.name}: rows")
+                    if field_spec.kind != "record_list":
+                        continue
+                    if not field_spec.item_fields:
+                        offenders.append(f"{spec.type_id}.{field_spec.name}: none")
+                    if not isinstance(field_spec.default, (list, tuple)):
+                        offenders.append(f"{spec.type_id}.{field_spec.name}: default")
+                    for item in field_spec.item_fields:
+                        if item.kind in ("lanelet", "lanelet_list", "record_list"):
+                            offenders.append(
+                                f"{spec.type_id}.{field_spec.name}.{item.name}"
+                            )
+        assert not offenders
+
+
 class TestSelectFieldDefaults:
     def test_select_defaults_are_valid_options(self) -> None:
         for specs in (
@@ -213,14 +247,42 @@ class TestSelectFieldDefaults:
             registry.binding_specs(),
         ):
             for spec in specs:
-                for field_spec in spec.fields:
+                # A record list's fields too: each record is a form of its own.
+                record_fields = [item for f in spec.fields for item in f.item_fields]
+                for field_spec in (*spec.fields, *record_fields):
                     if field_spec.kind != "select":
+                        continue
+                    if field_spec.default is None and field_spec.required:
+                        # A choice the author has to make (an adversity's
+                        # location): the validator reports it missing.
                         continue
                     allowed = {o.value for o in field_spec.options}
                     assert field_spec.default in allowed, (
                         f"{spec.type_id}.{field_spec.name} defaults to "
                         f"{field_spec.default!r}, not one of {sorted(allowed)}"
                     )
+
+    def test_a_required_select_without_default_must_be_chosen(self) -> None:
+        """What the skip above relies on: the validator reports the blank."""
+        from autoware_carla_scenario.authoring import validator
+
+        blanks = [
+            (spec, field_spec)
+            for spec in registry.action_specs()
+            for field_spec in spec.fields
+            if field_spec.kind == "select"
+            and field_spec.default is None
+            and field_spec.required
+        ]
+        assert blanks  # the adversities' location
+        for spec, field_spec in blanks:
+            out = validator._Collector()
+            validator._check_field(
+                out, spec.type_id, field_spec, {}, validator._NO_REFS, None
+            )
+            assert [issue.message for issue in out.issues] == [
+                f"{field_spec.label} is required."
+            ]
 
     def test_a_non_entity_target_says_what_frame_it_is_in(self) -> None:
         """A bare id on a card belongs to no coordinate system on sight.

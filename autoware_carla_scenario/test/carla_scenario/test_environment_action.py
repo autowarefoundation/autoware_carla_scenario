@@ -332,3 +332,84 @@ class TestFollowingTheGrip:
         scenario = self._scenario()
         scenario.register_init(EnvironmentAction(fog_density=40.0))
         assert follow_tire_friction not in scenario._post_tick_callbacks
+
+
+class TestVisibility:
+    """How far drivers see follows the weather the action leaves."""
+
+    @pytest.fixture(autouse=True)
+    def _forget(self) -> None:
+        from autoware_carla_scenario.visibility import forget_visibility
+
+        forget_visibility()
+
+    def _seen(self, world: MagicMock) -> float | None:
+        from autoware_carla_scenario.visibility import world_visibility
+
+        return world_visibility(world.id)
+
+    def test_fog_shortens_it_to_the_middle_of_its_range(self) -> None:
+        world = _world()
+        world.id = 5
+        EnvironmentAction(fog_density=100.0).execute(world)
+        assert self._seen(world) == pytest.approx(27.5)
+
+    def test_night_comes_from_the_sun(self) -> None:
+        world = _world()
+        world.id = 5
+        EnvironmentAction(sun_altitude_angle=-30.0, visibility_quantile=0.0).execute(
+            world
+        )
+        assert self._seen(world) == pytest.approx(50.0)
+
+    def test_rain_counts_the_weather_the_world_already_has(self) -> None:
+        world = _world(sun_altitude_angle=-30.0)
+        world.id = 5
+        EnvironmentAction(rain=100.0, visibility_quantile=1.0).execute(world)
+        # Heavy rain at night: the rain's and the night's 150 m.
+        assert self._seen(world) == pytest.approx(150.0)
+
+    def test_a_fixed_visibility_wins_over_the_weather(self) -> None:
+        world = _world()
+        world.id = 5
+        EnvironmentAction(
+            fog_density=100.0, visibility_m=200.0, visibility_quantile=0.0
+        ).execute(world)
+        assert self._seen(world) == 200.0
+
+    def test_the_visibility_alone_needs_no_weather(self) -> None:
+        world = _world(sun_altitude_angle=-30.0)
+        world.id = 5
+        action = EnvironmentAction(visibility_quantile=1.0)
+        assert action.sets_visibility and not action.sets_tire_friction
+        action.execute(world)
+        world.set_weather.assert_not_called()
+        assert self._seen(world) == pytest.approx(150.0)
+
+    def test_weather_that_does_not_hide_the_road_sets_none(self) -> None:
+        world = _world()
+        world.id = 5
+        action = EnvironmentAction(cloudiness=80.0, wetness=40.0)
+        assert not action.sets_visibility
+        action.execute(world)
+        assert self._seen(world) is None
+
+    def test_the_probe_reads_it(self) -> None:
+        from autoware_carla_scenario.odd import probes
+
+        world = _world()
+        world.id = 5
+        assert probes.visibility(world) is None
+        EnvironmentAction(visibility_m=60.0).execute(world)
+        assert probes.visibility(world) == 60.0
+
+    @pytest.mark.parametrize(
+        "kwargs, message",
+        [
+            ({"visibility_m": 0.0}, "positive"),
+            ({"visibility_quantile": -0.1}, r"\[0, 1\]"),
+        ],
+    )
+    def test_out_of_range_is_refused(self, kwargs: dict, message: str) -> None:
+        with pytest.raises(ValueError, match=message):
+            EnvironmentAction(**kwargs)

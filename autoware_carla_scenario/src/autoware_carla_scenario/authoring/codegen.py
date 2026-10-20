@@ -388,7 +388,11 @@ def _is_carla_type(annotation: type) -> bool:
 
 
 def _field_expression(
-    field: FieldSpec, parameter: _Parameter, where: str, package: str
+    field: FieldSpec,
+    parameter: _Parameter,
+    where: str,
+    package: str,
+    source: Optional[str] = None,
 ) -> tuple[str, Optional[str]]:
     """Return the expression feeding *parameter* from *field*.
 
@@ -396,8 +400,12 @@ def _field_expression(
     already converted the value to the type ``FieldSpec.kind`` declares.  The
     hand-written builders converted a second time, and the ``or default``
     idiom they used to do it turned a deliberate ``0.0`` back into the default.
+
+    *source* is where the value is read from: the node's ``params`` by
+    default, a record's ``item`` for a ``record_list`` field's sub-field.
     """
-    source = f'params["{field.name}"]'
+    if source is None:
+        source = f'params["{field.name}"]'
     annotation = parameter.annotation
     if isinstance(annotation, type) and (
         issubclass(annotation, enum.Enum) or _is_carla_type(annotation)
@@ -461,8 +469,13 @@ def _build_one(
     choices, consumed = _render_choices(spec, fields, where, imports)
     builds, built_from = _render_builds(spec, fields, where, imports)
     consumed |= built_from
-    built = {build.kwarg for build in builds}
     parameters = {parameter.name: parameter for parameter in _parameters(cls, localns)}
+    records = _record_builds(
+        parameters, by_kwarg, consumed, where, relative, localns, imports
+    )
+    builds += records
+    consumed |= {build.over for build in records}
+    built = {build.kwarg for build in builds}
 
     args: list[tuple[str, str]] = []
     uses_params = bool(choices)
@@ -498,6 +511,75 @@ def _build_one(
         uses_params=uses_params,
         needs_actor_assert=isinstance(spec, ActionSpec) and spec.actor_required,
     )
+
+
+def _record_item_class(annotation: Any) -> Any:
+    """The class of a list parameter's items: ``X`` of ``list[X]``,
+    ``Sequence[X]`` or ``tuple[X, ...]``, else None."""
+    if typing.get_origin(annotation) not in (list, tuple, Sequence):
+        return None
+    args = [arg for arg in typing.get_args(annotation) if arg is not Ellipsis]
+    if len(args) != 1 or not isinstance(args[0], type):
+        return None
+    return args[0]
+
+
+def _record_builds(
+    parameters: dict[str, _Parameter],
+    by_kwarg: dict[str, FieldSpec],
+    consumed: set[str],
+    where: str,
+    package: str,
+    localns: dict[str, Any],
+    imports: list[str],
+) -> "tuple[RenderedBuild, ...]":
+    """Render a ``record_list`` field as one item-class call per record.
+
+    The item class is the parameter's annotation (``list[AdversitySpec]``),
+    and each of the field's ``item_fields`` feeds the item constructor's
+    keyword of its name, through :func:`_field_expression` -- so a select is
+    lifted into its enum there as it is at the top level.  The item
+    constructor gets the checks a target does: every item field reaches a
+    keyword, and every keyword without a default is fed.
+    """
+    rendered: list[RenderedBuild] = []
+    for name, parameter in parameters.items():
+        field = by_kwarg.get(name)
+        if field is None or field.kind != "record_list" or field.name in consumed:
+            continue
+        item_cls = _record_item_class(parameter.annotation)
+        if item_cls is None:
+            raise GenerationError(
+                f"{where}: record list {field.name!r} feeds {name!r}, which is "
+                f"not annotated as a list of one class"
+            )
+        item_where = f"{where} [{field.name}: {item_cls.__name__}]"
+        item_parameters = {p.name: p for p in _parameters(item_cls, localns)}
+        pieces: list[tuple[str, str]] = []
+        for item in field.item_fields:
+            item_parameter = item_parameters.get(item.name)
+            if item_parameter is None:
+                raise GenerationError(
+                    f"{item_where}: field {item.name!r} reaches no argument"
+                )
+            expression, import_line = _field_expression(
+                item, item_parameter, item_where, package, f'item["{item.name}"]'
+            )
+            if import_line:
+                imports.append(import_line)
+            pieces.append((item.name, expression))
+        _check_required(item_parameters, pieces, item_where)
+        imports.append(_import_line(item_cls, item_cls.__name__, package))
+        rendered.append(
+            RenderedBuild(
+                kwarg=name,
+                mode="over",
+                cls=item_cls.__name__,
+                over=field.name,
+                parts=(RenderedPart(pieces=tuple(pieces)),),
+            )
+        )
+    return tuple(rendered)
 
 
 def _render_builds(

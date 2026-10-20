@@ -3086,6 +3086,77 @@ def test_the_public_names_the_model_now_declares_compile(tmp_path: Path) -> None
     assert result.ok, result.format()
 
 
+_ADVERSARIAL_SETUP = """
+from autoware_carla_scenario import (
+    AdversarialBrakeAction,
+    AdversarialCutInAction,
+    AdversityFeasibleCondition,
+    AdversityKind,
+    AdversityLocation,
+    IgnoreLeaderAction,
+    JaywalkAction,
+    RunTrafficRuleAction,
+    TrajectoryFollowingMode,
+)
+self.register_pre_tick(AdversarialBrakeAction("npc1", AdversityLocation.ANY))
+self.register_pre_tick(
+    IgnoreLeaderAction(
+        "npc1",
+        AdversityLocation.INTERSECTION,
+        following_mode=TrajectoryFollowingMode.POSITION,
+    )
+)
+self.register_pre_tick(
+    AdversarialCutInAction(
+        "npc2",
+        AdversityLocation.HIGHWAY,
+        ElapsedTimeCondition(3.0, label="later"),
+        label="cut",
+        once=False,
+    )
+)
+self.register_pre_tick(RunTrafficRuleAction("npc3", AdversityLocation.ROUNDABOUT))
+self.register_pre_tick(JaywalkAction("p1", AdversityLocation.ANY, seed=7))
+feasible = AdversityFeasibleCondition(
+    "npc1", AdversityKind.CUT_IN, AdversityLocation.ANY, label="may_cut_in", seed=1
+)
+logger.info("%s %s", feasible.kind.name, feasible.location.value)
+self.register_fail_condition(feasible)
+"""
+
+
+def test_the_adversarial_actions_compile(tmp_path: Path) -> None:
+    # #393: the actions, their condition and its enums, from the top level.
+    scenario, config, _ = _write_case(
+        tmp_path, textwrap.dedent(_ADVERSARIAL_SETUP) + textwrap.dedent(_VALID_SETUP)
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+@pytest.mark.parametrize(
+    "setup",
+    [
+        'AdversarialBrakeAction("npc1")\n',  # the location is required
+        'JaywalkAction("p1", AdversityKind.JAYWALKING)\n',
+        'AdversityFeasibleCondition("npc1", AdversityKind.CUT_IN, AdversityLocation.ANY)\n',
+    ],
+)
+def test_an_adversarial_action_built_wrong_is_refused(
+    tmp_path: Path, setup: str
+) -> None:
+    imports = (
+        "from autoware_carla_scenario import (\n"
+        "    AdversarialBrakeAction, AdversityFeasibleCondition, AdversityKind,\n"
+        "    AdversityLocation, JaywalkAction,\n"
+        ")\n"
+    )
+    scenario, config, _ = _write_case(
+        tmp_path, imports + setup + textwrap.dedent(_VALID_SETUP)
+    )
+    assert not typecheck_scenario(scenario, config).ok
+
+
 @pytest.mark.parametrize(
     ("setup", "needle", "message"),
     [
