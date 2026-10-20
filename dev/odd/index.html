@@ -1782,6 +1782,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#visibility-follows-the-weather" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Visibility follows the weather
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#the-road-a-case-is-on" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2343,6 +2354,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#visibility-follows-the-weather" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Visibility follows the weather
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#the-road-a-case-is-on" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2725,6 +2747,11 @@ make it a bound too, refer to it from a root, or name it in <code>roots</code>.<
 <td><code>rain</code>, <code>fog</code></td>
 <td><code>INTENSITY_LEVELS</code></td>
 <td>CARLA weather (0-100)</td>
+</tr>
+<tr>
+<td><code>visibility</code></td>
+<td>float, m</td>
+<td>How far drivers see, as the run's weather left it (<a href="#visibility-follows-the-weather">Visibility follows the weather</a>); nothing when the run set none</td>
 </tr>
 <tr>
 <td><code>traffic_density</code></td>
@@ -3344,6 +3371,7 @@ path); a scenario on another ODD starts afresh.</p>
 <a id="__codelineno-16-8" name="__codelineno-16-8" href="#__codelineno-16-8"></a><span class="w">    </span><span class="nt">knobs</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{}</span><span class="w">              </span><span class="c1"># by ODD attribute, replacing the scenario's controls; see below</span>
 <a id="__codelineno-16-9" name="__codelineno-16-9" href="#__codelineno-16-9"></a><span class="w">    </span><span class="nt">flaky</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">null</span><span class="w">            </span><span class="c1"># look for flaky cases; see "Finding flaky cases" below</span>
 <a id="__codelineno-16-10" name="__codelineno-16-10" href="#__codelineno-16-10"></a><span class="w">    </span><span class="nt">tire_friction</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span><span class="w">    </span><span class="c1"># draw each case's grip in the range its weather allows; see "Tire friction follows the weather"</span>
+<a id="__codelineno-16-11" name="__codelineno-16-11" href="#__codelineno-16-11"></a><span class="w">    </span><span class="nt">visibility</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span><span class="w">       </span><span class="c1"># draw how far each case's drivers see in the range its weather allows; see "Visibility follows the weather"</span>
 </code></pre></div>
 <p>Each case is a list of Hydra overrides. A sweep that also has <code>constraints</code>
 gives each drawn case the next lanelet case in turn; one without draws from
@@ -3552,6 +3580,11 @@ their own:</p>
 <td><code>environment.sun_altitude_angle</code></td>
 <td><code>day</code> 15-90, <code>low_sun</code> 0-15, <code>twilight</code> -6-0, <code>night</code> -90 to -6</td>
 </tr>
+<tr>
+<td><code>visibility</code></td>
+<td><code>environment.visibility_m</code></td>
+<td>15-400 m, whatever the weather</td>
+</tr>
 </tbody>
 </table>
 <p><code>environment.rain</code> sets the precipitation and, with it, the cloudiness,
@@ -3675,6 +3708,58 @@ and replaces anything above, attribute by attribute, for that sweep. It is for
 the command line -- one sweep against one ODD -- not for a scenario's config,
 which would then name the ODD's taxonomy: a scenario says <code>controls</code>. Controls set where a run starts;
 the measures read what it then drives, which is what coverage counts.</p>
+<h3 id="visibility-follows-the-weather">Visibility follows the weather<a class="headerlink" href="#visibility-follows-the-weather" title="Permanent link">&para;</a></h3>
+<p>CARLA draws the weather but its traffic never looks through it: the
+TrafficManager's vehicles know where every actor is, fog or not. A driver
+does not, and drives so as to stop within the road they see. So how far
+drivers see is a quantity of the run, in metres, which the weather bounds
+(<code>visibility_range</code>, in <code>autoware_carla_scenario.visibility</code>): each of the
+fog, the rain and the light gives a range, and the shortest holds.</p>
+<table>
+<thead>
+<tr>
+<th>Weather</th>
+<th>Visibility, m</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>clear day</td>
+<td>250-400</td>
+</tr>
+<tr>
+<td><code>fog_density</code> 30 / 70 / 100</td>
+<td>120-250 / 40-100 / 15-40</td>
+</tr>
+<tr>
+<td><code>precipitation</code> 30 / 70 / 100</td>
+<td>180-320 / 100-220 / 60-150</td>
+</tr>
+<tr>
+<td>night (<code>sun_altitude_angle</code> -6 and below)</td>
+<td>50-150 (a dipped beam to a main beam or a lit street)</td>
+</tr>
+</tbody>
+</table>
+<p>Between the rows the bounds are interpolated; through civil twilight (0 to
+-6 degrees) the day's range shortens to the night's. An <code>EnvironmentAction</code>
+that sets the fog, the rain (<code>rain</code> or <code>precipitation</code>) or the sun records
+the visibility of the weather it leaves for its world, at
+<code>environment.visibility_quantile</code> in that range (0 its low end, 1 its high
+end; the middle when not set); <code>environment.visibility_m</code> fixes it whatever
+the weather. A <code>sweep.odd_sample</code> draws the quantile for every case, as it
+draws the grip, so the ODD's <code>rain</code>, <code>fog</code> and <code>illumination</code> knobs are what
+shorten it: a night case's drivers see 50-150 m, a heavy-fog case's 15-40 m.
+<code>visibility: false</code> in the <code>odd_sample</code> leaves every case at the middle of
+its range. An ODD that names the visibility itself (the <code>visibility</code> probe)
+sets it through its own knob, <code>environment.visibility_m</code>, and a case with one
+keeps it. A run that sets no weather records none, and its traffic sees as
+it always did; each run starts with none, whatever the last left.</p>
+<p>What follows it is the traffic backend's: the <code>sumo</code> backend holds its own
+traffic to the speed it stops from within it
+(<a href="../traffic_backends/#the-sumo-backend">Visibility</a>); the TrafficManager has no notion of
+sight, so the <code>traffic_manager</code> backend logs the speed it would hold traffic
+to whenever the visibility changes, and its vehicles drive as before.</p>
 <h3 id="the-road-a-case-is-on">The road a case is on<a class="headerlink" href="#the-road-a-case-is-on" title="Permanent link">&para;</a></h3>
 <p>A sweep with cases of its own -- constraints, or a route search -- draws the
 attributes the Lanelet2 map decides as well: whether the case is in a
@@ -3963,7 +4048,7 @@ target.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 20, 2026 03:56:09 UTC"><span class="timeago" datetime="2026-10-20T03:56:09+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 20, 2026 03:56:09 UTC">2026-10-20</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 20, 2026 10:05:33 UTC"><span class="timeago" datetime="2026-10-20T10:05:33+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 20, 2026 10:05:33 UTC">2026-10-20</span>
   </span>
 
     

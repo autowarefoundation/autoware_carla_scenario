@@ -2407,6 +2407,24 @@ How a CARLA vehicle follows its SUMO vehicle is <code>vehicle_control</code>:</p
   speed only when it is not the one the car already has (a standing car, in a
   queue at a light say, is given its zero once).</li>
 </ul>
+<p><strong>Visibility</strong> (<code>follow_visibility</code>, on by default): SUMO's traffic sees only
+as far as the run's weather lets a driver see. The TrafficManager has no
+notion of sight -- its vehicles know where every actor is whatever the fog --
+so night, rain and fog change nothing about how it drives: the
+<code>traffic_manager</code> backend logs each visibility a run sets, with the speed
+SUMO's default car would be held to, and does nothing else. An
+<code>EnvironmentAction</code> that sets the fog, the rain or the sun records how far
+drivers see in the weather it leaves
+(<a href="../odd/#visibility-follows-the-weather">Visibility follows the weather</a>),
+and the backend holds each of SUMO's own vehicles (ambient and background)
+to the speed it stops from within that distance: <code>v * tau + v² / (2 *
+decel)</code>, with the vehicle's own <code>tau</code> as its reaction time and its <code>decel</code> as
+its braking -- a default car in 50 m of fog drives at most about 62 km/h, at
+night under a dipped beam (50 m) the same. A vehicle that departs later is
+held as it departs, and when the weather lifts each gets its own maximum speed
+back. The scenario's own vehicles, driven by SUMO or not, are left to the
+scenario. <code>follow_visibility=false</code> ignores the visibility, as the
+TrafficManager does.</p>
 <p><strong>Traffic lights</strong> (<code>traffic_light_authority</code>): <code>carla</code> (default) gives SUMO's
 signals the states of CARLA's lights every step, so a scenario that sets the
 lights sets them for SUMO's traffic too; <code>sumo</code> drives CARLA's lights from
@@ -2451,7 +2469,7 @@ CARLA co-simulation; its adversarial behaviour generation is left to scenarios.<
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 20, 2026 05:05:34 UTC"><span class="timeago" datetime="2026-10-20T05:05:34+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 20, 2026 05:05:34 UTC">2026-10-20</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 20, 2026 10:05:33 UTC"><span class="timeago" datetime="2026-10-20T10:05:33+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 20, 2026 10:05:33 UTC">2026-10-20</span>
   </span>
 
     
