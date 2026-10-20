@@ -2716,11 +2716,18 @@ with <code>driver.lanelet2_path</code>:</p>
 <p>The file is copied into the set as <code>lanelet2_map.osm</code>, as it is (with the
 <code>map_projector_info.yaml</code> beside it, if any), and its content is part
 of <code>map_id</code>, so another file gets another set. roadgen is not needed unless
-<code>driver.map_formats</code> names other formats too. The file carries no roadgen trace, so
-<code>ctx.stop_lines()</code> still gives each light's state, stop point and OpenDRIVE lane, but
-<code>lane_ids</code>, <code>rule_ids</code> and <code>light_ids</code> are empty (the manifest marks the format
-<code>"provided": true</code>, its trace empty): match the
-stop point to your map's lanelets yourself. Nothing checks that the file and the world's
+<code>driver.map_formats</code> names other formats too. The file carries no roadgen trace (the
+manifest marks the format <code>"provided": true</code>, its trace empty), so <code>ctx.stop_lines()</code>
+finds each light on the map instead (carla-driver-interface 2.3 and later):</p>
+<ul>
+<li><code>lane_ids</code> are the lanelets the stop point lies on;</li>
+<li><code>rule_ids</code> are the traffic-light regulatory elements of the first lanelets on or ahead
+  of it that carry one, up to 50 m past its own lanelet, so a map may hang its lights
+  off the approach or off the junction lanes past the line;</li>
+<li><code>light_ids</code> are the line strings those elements refer to.</li>
+</ul>
+<p>The map's <code>local_x</code> / <code>local_y</code> must be the <code>local</code> frame (CARLA's world with y
+mirrored, as carla-ue5-maps' are). Nothing checks that the file and the world's
 OpenDRIVE describe the same roads in the same frame.</p>
 <h3 id="diagnostics-coming-back">Diagnostics coming back<a class="headerlink" href="#diagnostics-coming-back" title="Permanent link">&para;</a></h3>
 <p><code>DriveResponse.debug_info.unstructured_debug_info</code> is decoded as
@@ -2880,7 +2887,7 @@ See <code>carla_driver_interface/proto/README.md</code> for the full provenance.
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 19, 2026 05:47:07 UTC"><span class="timeago" datetime="2026-10-19T05:47:07+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 19, 2026 05:47:07 UTC">2026-10-19</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 20, 2026 05:38:41 UTC"><span class="timeago" datetime="2026-10-20T05:38:41+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 20, 2026 05:38:41 UTC">2026-10-20</span>
   </span>
 
     
