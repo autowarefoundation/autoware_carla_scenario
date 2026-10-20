@@ -1,4 +1,9 @@
-"""Scenario pass/fail conditions for CARLA scenario testing."""
+"""Scenario pass/fail conditions for CARLA scenario testing.
+
+``conditions.adversity_feasible`` (``AdversityFeasibleCondition``) is the one
+condition not re-exported here: it pulls in the Lanelet2 map layer, which
+every scenario would then import.  Import it from its module.
+"""
 
 from .action_state import ActionStateCondition
 from .always_true import AlwaysTrueCondition

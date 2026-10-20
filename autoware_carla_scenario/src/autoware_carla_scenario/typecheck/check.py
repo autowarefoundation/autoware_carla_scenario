@@ -88,6 +88,7 @@ from .library_driver import (
     uncalled_nodes,
     workspace_module,
 )
+from .python_rewrites import REWRITE_HINTS, python_rewrite_refusals
 from .transform import (
     PRELUDE,
     class_declarations,
@@ -749,7 +750,10 @@ def _build_workspace(
         ]
         problems += [
             Diagnostic(message, str(module.path), line)
-            for line, message in conflicting_imports(source)
+            for line, message in [
+                *conflicting_imports(source),
+                *python_rewrite_refusals(source),
+            ]
         ]
         text, origin = transform_source_lines(
             source, init_classes=init_classes, enum_classes=enum_class_names(classes)
@@ -828,7 +832,7 @@ def _variadic_hints(diagnostics: list[Diagnostic]) -> list[Diagnostic]:
     ``*args`` or on a tuple saying why and what to write instead (#266)."""
     out = []
     for diagnostic in diagnostics:
-        for pattern, hint in _VARIADIC_LIMITS:
+        for pattern, hint in (*_VARIADIC_LIMITS, *REWRITE_HINTS):
             if pattern.search(diagnostic.message):
                 diagnostic = dataclasses.replace(
                     diagnostic, message=f"{diagnostic.message}: {hint}"
@@ -2188,7 +2192,11 @@ def _library_files(
         )
         uncalled = _uncalled(name)
         checks = render_library_checks(module.tree, uncalled, classes)
-        for line, message in [*problems, *checks.problems]:
+        for line, message in [
+            *problems,
+            *checks.problems,
+            *python_rewrite_refusals(redirected),
+        ]:
             sources.problems.append(Diagnostic(message, str(module.path), line))
         # A function the check never compiles cannot decorate one it does: a
         # run-time-only wrapper (trajectory.model's TrajectoryVertex.__init__)
