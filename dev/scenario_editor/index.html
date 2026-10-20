@@ -1180,6 +1180,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#a-list-of-records" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A list of records
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#the-map-path-is-a-document-field" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2282,6 +2293,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#a-list-of-records" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A list of records
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#the-map-path-is-a-document-field" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3050,6 +3072,40 @@ change in <code>autoware_carla_scenario.authoring.registry</code>:</p>
 class. The inspector, the canvas, validation and the compiler all pick it up
 with no template edit. <code>test_authoring_registry.py</code> fails if a spec names a
 builder that does not exist, or a visual that names a field the primitive lacks.</p>
+<h3 id="a-list-of-records">A list of records<a class="headerlink" href="#a-list-of-records" title="Permanent link">&para;</a></h3>
+<p>A field of kind <code>record_list</code> holds an ordered list of records, each a mapping
+of its own <code>item_fields</code> -- for a list whose order means something and whose
+entries repeat, such as NADE's adversities, where the first to fire wins:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="n">FieldSpec</span><span class="p">(</span>
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>    <span class="n">name</span><span class="o">=</span><span class="s2">"adversities"</span><span class="p">,</span>
+<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a>    <span class="n">label</span><span class="o">=</span><span class="s2">"Adversities"</span><span class="p">,</span>
+<a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a>    <span class="n">kind</span><span class="o">=</span><span class="s2">"record_list"</span><span class="p">,</span>
+<a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a>    <span class="n">default</span><span class="o">=</span><span class="p">(),</span>
+<a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a>    <span class="n">item_fields</span><span class="o">=</span><span class="p">(</span>
+<a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a>        <span class="n">FieldSpec</span><span class="p">(</span><span class="s2">"kind"</span><span class="p">,</span> <span class="s2">"Kind"</span><span class="p">,</span> <span class="s2">"select"</span><span class="p">,</span> <span class="s2">"brake_check"</span><span class="p">,</span> <span class="n">_KINDS</span><span class="p">),</span>
+<a id="__codelineno-10-8" name="__codelineno-10-8" href="#__codelineno-10-8"></a>        <span class="n">FieldSpec</span><span class="p">(</span><span class="s2">"probability"</span><span class="p">,</span> <span class="s2">"Probability"</span><span class="p">,</span> <span class="s2">"number"</span><span class="p">,</span> <span class="mf">0.01</span><span class="p">),</span>
+<a id="__codelineno-10-9" name="__codelineno-10-9" href="#__codelineno-10-9"></a>    <span class="p">),</span>
+<a id="__codelineno-10-10" name="__codelineno-10-10" href="#__codelineno-10-10"></a><span class="p">)</span>
+</code></pre></div>
+<ul>
+<li><strong>Inspector</strong>: one block of controls per record, with buttons to add one
+  and to remove or move each.</li>
+<li>The buttons are submits of the inspector's own form.</li>
+<li>The form posts each record's fields as <code>&lt;field&gt;.&lt;i&gt;.&lt;sub&gt;</code>, the row count
+    as <code>&lt;field&gt;.__rows</code>, and the button pressed as <code>&lt;field&gt;.__op</code>.</li>
+<li><strong>Validation and compiling</strong>: each record is validated and coerced by its
+  fields, as a node's params are.</li>
+<li><code>required</code> means at least one record.</li>
+<li>An unset list is an empty one.</li>
+<li>Entity references inside a record are resolved as top-level ones are.</li>
+<li><strong>Generated builder</strong>: it builds one item per record. The item class comes
+  from the constructor's annotation (<code>list[AdversitySpec]</code>), and each item
+  field feeds the item constructor's keyword of the same name, enums lifted.</li>
+<li><strong>Restrictions</strong>: a record holds no lanelet field, whose map lives outside
+  the form, and no record list.</li>
+<li><strong>Overrides</strong>: a run overrides one record's field with
+  <code>scenario.param_overrides.&lt;node id&gt;.&lt;field&gt;.&lt;index&gt;.&lt;sub&gt;=&lt;value&gt;</code>.</li>
+</ul>
 <h3 id="the-map-path-is-a-document-field">The map path is a document field<a class="headerlink" href="#the-map-path-is-a-document-field" title="Permanent link">&para;</a></h3>
 <p><code>/draft/&lt;id&gt;/map.osm</code> serves the file the document names, and that name is
 typed by whoever is using the editor -- which binds <code>0.0.0.0</code> by default. Handed
@@ -3064,22 +3120,22 @@ a network you trust.</p>
 <p><strong>Save Draft</strong> writes the working document to <code>scenario_drafts/&lt;id&gt;.yaml</code>.</p>
 <p><strong>Export Wheelhouse</strong> produces a <code>.zip</code> <strong>the browser downloads</strong>, holding every
 wheel the scenario needs:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>cut_in-wheelhouse.zip
-<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>`-- cut_in_scenario_wheelhouse/
-<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a>    |-- cut_in_scenario-0.1.0-py3-none-any.whl     # the scenario itself
-<a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a>    |-- autoware_carla_scenario-*.whl              # the framework, at the pinned commit
-<a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a>    |-- typesafe_carla-*.whl                       # the CARLA client, CPython package prebuilt
-<a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a>    |-- typesafe_carla_toolchain-*.whl             # the Codon compiler it pins
-<a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a>    |-- ... every transitive dependency, ~94 wheels
-<a id="__codelineno-10-8" name="__codelineno-10-8" href="#__codelineno-10-8"></a>    |-- requirements.txt                           # the whole set, pinned
-<a id="__codelineno-10-9" name="__codelineno-10-9" href="#__codelineno-10-9"></a>    `-- README.md                                  # how to install it
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>cut_in-wheelhouse.zip
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>`-- cut_in_scenario_wheelhouse/
+<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>    |-- cut_in_scenario-0.1.0-py3-none-any.whl     # the scenario itself
+<a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a>    |-- autoware_carla_scenario-*.whl              # the framework, at the pinned commit
+<a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a>    |-- typesafe_carla-*.whl                       # the CARLA client, CPython package prebuilt
+<a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a>    |-- typesafe_carla_toolchain-*.whl             # the Codon compiler it pins
+<a id="__codelineno-11-7" name="__codelineno-11-7" href="#__codelineno-11-7"></a>    |-- ... every transitive dependency, ~94 wheels
+<a id="__codelineno-11-8" name="__codelineno-11-8" href="#__codelineno-11-8"></a>    |-- requirements.txt                           # the whole set, pinned
+<a id="__codelineno-11-9" name="__codelineno-11-9" href="#__codelineno-11-9"></a>    `-- README.md                                  # how to install it
 </code></pre></div>
 <p>Install it with pip and nothing else -- no <code>uv</code>, no <code>git</code>, no network, no
 resolution:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>unzip<span class="w"> </span>cut_in-wheelhouse.zip
-<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>python3<span class="w"> </span>-m<span class="w"> </span>venv<span class="w"> </span>.venv
-<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>.venv/bin/pip<span class="w"> </span>install<span class="w"> </span>--no-index<span class="w"> </span>--find-links<span class="w"> </span>cut_in_scenario_wheelhouse<span class="w"> </span>cut-in-scenario
-<a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a>.venv/bin/scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>cut_in<span class="w"> </span><span class="nv">map</span><span class="o">=</span>nishishinjuku
+<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a>unzip<span class="w"> </span>cut_in-wheelhouse.zip
+<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>python3<span class="w"> </span>-m<span class="w"> </span>venv<span class="w"> </span>.venv
+<a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a>.venv/bin/pip<span class="w"> </span>install<span class="w"> </span>--no-index<span class="w"> </span>--find-links<span class="w"> </span>cut_in_scenario_wheelhouse<span class="w"> </span>cut-in-scenario
+<a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a>.venv/bin/scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>cut_in<span class="w"> </span><span class="nv">map</span><span class="o">=</span>nishishinjuku
 </code></pre></div>
 <p>The CARLA client is <a href="https://github.com/hakuturu583/typesafe_carla">typesafe_carla</a>,
 and the <code>typesafe-carla</code> wheel in the wheelhouse is the released one from
@@ -3180,23 +3236,23 @@ the current checkout's commit.</p>
 package whose dependencies never resolved, or that no environment can install,
 is not a successful export.</p>
 <p>The manifest records only values that were actually observed:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="nt">format_version</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">3</span>
-<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a><span class="nt">scenario</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">id</span><span class="p">:</span><span class="w"> </span><span class="nv">cut_in</span><span class="p p-Indicator">,</span><span class="nt"> title</span><span class="p">:</span><span class="w"> </span><span class="nv">Cut in</span><span class="p p-Indicator">,</span><span class="nt"> document_version</span><span class="p">:</span><span class="w"> </span><span class="nv">1</span><span class="p p-Indicator">,</span><span class="nt"> package</span><span class="p">:</span><span class="w"> </span><span class="nv">cut-in-scenario</span><span class="p p-Indicator">}</span>
-<a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a><span class="nt">runtime</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">python</span><span class="p">:</span><span class="w"> </span><span class="nv">3.12.10</span><span class="p p-Indicator">,</span><span class="nt"> uv</span><span class="p">:</span><span class="w"> </span><span class="nv">0.12.0</span><span class="p p-Indicator">,</span><span class="nt"> requires_python</span><span class="p">:</span><span class="w"> </span><span class="s">'&gt;=3.10,&lt;3.15'</span><span class="p p-Indicator">}</span>
-<a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a><span class="nt">wheelhouse</span><span class="p">:</span>
-<a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a><span class="w">  </span><span class="nt">directory</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">cut_in_scenario_wheelhouse</span>
-<a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a><span class="w">  </span><span class="nt">install</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">pip install --no-index --find-links cut_in_scenario_wheelhouse cut-in-scenario</span>
-<a id="__codelineno-12-7" name="__codelineno-12-7" href="#__codelineno-12-7"></a><span class="w">  </span><span class="nt">wheels</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">104</span>
-<a id="__codelineno-12-8" name="__codelineno-12-8" href="#__codelineno-12-8"></a><span class="w">  </span><span class="nt">python</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">'3.10'</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">'3.11'</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">'3.12'</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">'3.13'</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">'3.14'</span><span class="p p-Indicator">]</span>
-<a id="__codelineno-12-9" name="__codelineno-12-9" href="#__codelineno-12-9"></a><span class="nt">autoware_carla_scenario</span><span class="p">:</span>
-<a id="__codelineno-12-10" name="__codelineno-12-10" href="#__codelineno-12-10"></a><span class="w">  </span><span class="nt">source</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">git</span>
-<a id="__codelineno-12-11" name="__codelineno-12-11" href="#__codelineno-12-11"></a><span class="w">  </span><span class="nt">repository</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">https://github.com/hakuturu583/autoware_carla_scenario</span>
-<a id="__codelineno-12-12" name="__codelineno-12-12" href="#__codelineno-12-12"></a><span class="w">  </span><span class="nt">commit</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0123456789abcdef0123456789abcdef01234567</span>
-<a id="__codelineno-12-13" name="__codelineno-12-13" href="#__codelineno-12-13"></a><span class="w">  </span><span class="nt">subdirectory</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">autoware_carla_scenario</span>
-<a id="__codelineno-12-14" name="__codelineno-12-14" href="#__codelineno-12-14"></a><span class="nt">files</span><span class="p">:</span>
-<a id="__codelineno-12-15" name="__codelineno-12-15" href="#__codelineno-12-15"></a><span class="w">  </span><span class="nt">document</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">src/cut_in_scenario/document.yaml</span>
-<a id="__codelineno-12-16" name="__codelineno-12-16" href="#__codelineno-12-16"></a><span class="w">  </span><span class="nt">hydra_config</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">src/cut_in_scenario/conf/scenario/cut_in.yaml</span>
-<a id="__codelineno-12-17" name="__codelineno-12-17" href="#__codelineno-12-17"></a><span class="nt">notes</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[]</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="nt">format_version</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">3</span>
+<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a><span class="nt">scenario</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">id</span><span class="p">:</span><span class="w"> </span><span class="nv">cut_in</span><span class="p p-Indicator">,</span><span class="nt"> title</span><span class="p">:</span><span class="w"> </span><span class="nv">Cut in</span><span class="p p-Indicator">,</span><span class="nt"> document_version</span><span class="p">:</span><span class="w"> </span><span class="nv">1</span><span class="p p-Indicator">,</span><span class="nt"> package</span><span class="p">:</span><span class="w"> </span><span class="nv">cut-in-scenario</span><span class="p p-Indicator">}</span>
+<a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a><span class="nt">runtime</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">python</span><span class="p">:</span><span class="w"> </span><span class="nv">3.12.10</span><span class="p p-Indicator">,</span><span class="nt"> uv</span><span class="p">:</span><span class="w"> </span><span class="nv">0.12.0</span><span class="p p-Indicator">,</span><span class="nt"> requires_python</span><span class="p">:</span><span class="w"> </span><span class="s">'&gt;=3.10,&lt;3.15'</span><span class="p p-Indicator">}</span>
+<a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a><span class="nt">wheelhouse</span><span class="p">:</span>
+<a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a><span class="w">  </span><span class="nt">directory</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">cut_in_scenario_wheelhouse</span>
+<a id="__codelineno-13-6" name="__codelineno-13-6" href="#__codelineno-13-6"></a><span class="w">  </span><span class="nt">install</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">pip install --no-index --find-links cut_in_scenario_wheelhouse cut-in-scenario</span>
+<a id="__codelineno-13-7" name="__codelineno-13-7" href="#__codelineno-13-7"></a><span class="w">  </span><span class="nt">wheels</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">104</span>
+<a id="__codelineno-13-8" name="__codelineno-13-8" href="#__codelineno-13-8"></a><span class="w">  </span><span class="nt">python</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">'3.10'</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">'3.11'</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">'3.12'</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">'3.13'</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">'3.14'</span><span class="p p-Indicator">]</span>
+<a id="__codelineno-13-9" name="__codelineno-13-9" href="#__codelineno-13-9"></a><span class="nt">autoware_carla_scenario</span><span class="p">:</span>
+<a id="__codelineno-13-10" name="__codelineno-13-10" href="#__codelineno-13-10"></a><span class="w">  </span><span class="nt">source</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">git</span>
+<a id="__codelineno-13-11" name="__codelineno-13-11" href="#__codelineno-13-11"></a><span class="w">  </span><span class="nt">repository</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">https://github.com/hakuturu583/autoware_carla_scenario</span>
+<a id="__codelineno-13-12" name="__codelineno-13-12" href="#__codelineno-13-12"></a><span class="w">  </span><span class="nt">commit</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0123456789abcdef0123456789abcdef01234567</span>
+<a id="__codelineno-13-13" name="__codelineno-13-13" href="#__codelineno-13-13"></a><span class="w">  </span><span class="nt">subdirectory</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">autoware_carla_scenario</span>
+<a id="__codelineno-13-14" name="__codelineno-13-14" href="#__codelineno-13-14"></a><span class="nt">files</span><span class="p">:</span>
+<a id="__codelineno-13-15" name="__codelineno-13-15" href="#__codelineno-13-15"></a><span class="w">  </span><span class="nt">document</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">src/cut_in_scenario/document.yaml</span>
+<a id="__codelineno-13-16" name="__codelineno-13-16" href="#__codelineno-13-16"></a><span class="w">  </span><span class="nt">hydra_config</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">src/cut_in_scenario/conf/scenario/cut_in.yaml</span>
+<a id="__codelineno-13-17" name="__codelineno-13-17" href="#__codelineno-13-17"></a><span class="nt">notes</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[]</span>
 </code></pre></div>
 <p>Anything that could not be determined is <code>null</code> with a note, never a plausible
 guess.</p>
@@ -3246,11 +3302,11 @@ guess.</p>
 <p>An exported scenario plugs in through the same entry point any scenario package
 uses (see <a href="../architecture/">Architecture</a>) -- installed from its wheelhouse, the
 <code>scenario</code> command is on the venv's <code>PATH</code>:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a>.venv/bin/scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>cut_in<span class="w"> </span><span class="nv">map</span><span class="o">=</span>nishishinjuku
-<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a>
-<a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a><span class="c1"># Sweep every lanelet the spawn constraints match:</span>
-<a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a>.venv/bin/scenario<span class="w"> </span>--multirun<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>cut_in<span class="w"> </span><span class="nv">map</span><span class="o">=</span>nishishinjuku<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a><span class="w">    </span>hydra/sweeper<span class="o">=</span>lanelet_constraint
+<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a>.venv/bin/scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>cut_in<span class="w"> </span><span class="nv">map</span><span class="o">=</span>nishishinjuku
+<a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a>
+<a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a><span class="c1"># Sweep every lanelet the spawn constraints match:</span>
+<a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a>.venv/bin/scenario<span class="w"> </span>--multirun<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>cut_in<span class="w"> </span><span class="nv">map</span><span class="o">=</span>nishishinjuku<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a><span class="w">    </span>hydra/sweeper<span class="o">=</span>lanelet_constraint
 </code></pre></div>
 <p>The CARLA client needs no separate install: <code>typesafe-carla</code> is a dependency of
 the framework, so it is in the lock and in the wheelhouse alongside everything
@@ -3302,7 +3358,7 @@ egress rule cannot take the layout with it.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 15, 2026 01:53:01 UTC"><span class="timeago" datetime="2026-10-15T01:53:01+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 15, 2026 01:53:01 UTC">2026-10-15</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 20, 2026 10:09:57 UTC"><span class="timeago" datetime="2026-10-20T10:09:57+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 20, 2026 10:09:57 UTC">2026-10-20</span>
   </span>
 
     
