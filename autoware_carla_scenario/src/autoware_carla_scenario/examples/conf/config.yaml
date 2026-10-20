@@ -204,6 +204,14 @@ controls: {}
 # about 0.65-0.85 of the dry grip, a flooded one 0.45-0.65 -- at
 # `tire_friction_quantile` (0-1, the middle when null; an odd_sample sweep
 # draws it per case). `tire_friction` fixes the share of the dry grip instead.
+#
+# How far drivers see follows the weather too (docs/odd.md): a run that sets
+# `rain`, `precipitation`, `fog_density` or `sun_altitude_angle` records the
+# visibility its weather leaves -- a clear day 250-400 m, night 50-150 m,
+# heavy fog 15-40 m -- at `visibility_quantile` (0-1, the middle when null; an
+# odd_sample sweep draws it per case). `visibility_m` fixes it instead. The
+# `sumo` traffic backend holds its traffic to the speed it can stop from
+# within it; the TrafficManager only logs what it would do.
 environment:
   rain: null
   cloudiness: null
@@ -217,6 +225,8 @@ environment:
   sun_azimuth_angle: null
   tire_friction: null
   tire_friction_quantile: null
+  visibility_m: null
+  visibility_quantile: null
 
 entity:
   ground_projection_ray_distance_upper: 5.0

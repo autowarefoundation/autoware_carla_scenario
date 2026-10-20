@@ -141,10 +141,12 @@ class EnvironmentAction(BaseAction):
                  sun_altitude_angle = None, sun_azimuth_angle = None, condition = None,
                  timing: TickTiming = TickTiming("pre_tick"), *_kw, rain = None,
                  tire_friction = None, tire_friction_quantile = None,
+                 visibility_m = None, visibility_quantile = None,
                  label: str = "environment",
                  once: bool = True):
         _keyword_only(_kw, "EnvironmentAction(): rain, tire_friction, "
-                      "tire_friction_quantile, label and once")
+                      "tire_friction_quantile, visibility_m, visibility_quantile, "
+                      "label and once")
         _expect_optional_float(cloudiness)
         _expect_optional_float(precipitation)
         _expect_optional_float(precipitation_deposits)
@@ -157,6 +159,8 @@ class EnvironmentAction(BaseAction):
         _expect_optional_float(rain)
         _expect_optional_float(tire_friction)
         _expect_optional_float(tire_friction_quantile)
+        _expect_optional_float(visibility_m)
+        _expect_optional_float(visibility_quantile)
         super().__init__(label, condition, timing, once=once)
 
     @property
@@ -165,6 +169,10 @@ class EnvironmentAction(BaseAction):
 
     @property
     def sets_tire_friction(self) -> bool:
+        raise NotImplementedError()
+
+    @property
+    def sets_visibility(self) -> bool:
         raise NotImplementedError()
 
 
