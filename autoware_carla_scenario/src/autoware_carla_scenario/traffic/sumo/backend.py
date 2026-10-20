@@ -987,12 +987,12 @@ class SumoTrafficBackend(TrafficBackend):
         if lane_id in self._closed_lanes:
             return lane_id
         try:
-            self._closed_lanes[lane_id] = list(tc.lane.getAllowed(lane_id))
+            allowed = list(tc.lane.getAllowed(lane_id))
             tc.lane.setDisallowed(lane_id, ["all"])
         except Exception as exc:  # noqa: BLE001 - a closure must not end the run
             logger.warning("SUMO could not close lane %s: %s", lane_id, exc)
-            self._closed_lanes.pop(lane_id, None)
             return None
+        self._closed_lanes[lane_id] = allowed
         logger.info("SUMO: lane %s closed", lane_id)
         return lane_id
 

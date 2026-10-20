@@ -159,9 +159,7 @@ def _spacing(zone: str, settings: ConstructionSettings) -> float:
         return feet
     if zone in ("work", "buffer"):
         return 2.0 * feet
-    if zone in ("warning", "termination"):
-        return max(30.0, 3.0 * feet)
-    return settings.spacing
+    return max(30.0, 3.0 * feet)  # the warning and termination zones
 
 
 def _kinds(zone: str, settings: ConstructionSettings) -> list[str]:
@@ -180,16 +178,14 @@ def _offset(
     s: float,
     zone_start: float,
     zone_end: float,
-    lane_width: float,
+    half: float,
+    sign: float,
     settings: ConstructionSettings,
 ) -> float:
-    """An object's offset (m) off the centreline, kept inside the lane."""
-    edge = lane_width / 2.0 - _EDGE_MARGIN_M
-    if settings.side != "left":
-        edge = -edge
-    work = min(max(settings.work_zone_offset, -abs(edge)), abs(edge))
-    if zone in ("warning", "termination"):
-        return 0.0
+    """A cone's or barrier's offset (m) off the centreline: inside the lane,
+    at most *half* off it, on the closed side (*sign*)."""
+    edge = half * sign
+    work = min(max(settings.work_zone_offset, -half), half)
     if zone in ("buffer", "work"):
         return work
     length = zone_end - zone_start
@@ -197,10 +193,8 @@ def _offset(
     if settings.taper_type == "curved":
         progress = 3.0 * progress * progress - 2.0 * progress * progress * progress
     if zone == "taper_in":
-        offset = edge + progress * (work - edge)
-    else:
-        offset = work + progress * (edge - work)
-    return min(max(offset, -abs(edge)), abs(edge))
+        return edge + progress * (work - edge)
+    return work + progress * (edge - work)
 
 
 def construction_layout(
@@ -221,9 +215,9 @@ def construction_layout(
     """
     if not end > start:
         raise ValueError(f"a construction zone ends after it starts, not at {end}")
-    shoulder = lane_width / 2.0 + abs(settings.warning_sign_offset)
-    if settings.side != "left":
-        shoulder = -shoulder
+    sign = 1.0 if settings.side == "left" else -1.0
+    half = lane_width / 2.0 - _EDGE_MARGIN_M
+    shoulder = (lane_width / 2.0 + abs(settings.warning_sign_offset)) * sign
     objects: list[ConstructionObject] = []
     for zone, zone_start, zone_end in construction_zones(start, end, settings):
         step = _spacing(zone, settings)
@@ -236,7 +230,7 @@ def construction_layout(
             kind = kinds[index % len(kinds)]
             t = shoulder
             if kind != SIGN:
-                t = _offset(zone, s, zone_start, zone_end, lane_width, settings)
+                t = _offset(zone, s, zone_start, zone_end, half, sign, settings)
             objects.append(ConstructionObject(kind, zone, s, t))
             s += step
             index += 1

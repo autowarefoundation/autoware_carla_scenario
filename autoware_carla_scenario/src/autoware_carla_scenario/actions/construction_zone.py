@@ -34,18 +34,18 @@ from ..adversity.construction import (
     CONE,
     DEFAULT_CONSTRUCTION,
     SIGN,
-    ConstructionObject,
     ConstructionSettings,
     construction_layout,
 )
 from ..conditions.base import BaseCondition, ScenarioResult
-from ..coordinate.map_manager import MapManager
+from ..coordinate.map_manager import MapManager, run_carla_map
 from ..coordinate.poses import CarlaWorldPose, Lanelet2Pose
 from ..coordinate.transform import on_lanelet, project_onto_lanelet, to_carla_world
 from ..route.geometry import MapFeatures
 from ..traffic.base import TrafficBackend
-from ..trajectory.relative_lane import _centreline, _point_at
+from ..trajectory.relative_lane import _centreline, _point_at, advance_along_lane
 from ..trajectory.resolve import road_height
+from .background_traffic import _BackendAction
 from .base import BaseAction, TickTiming
 
 if TYPE_CHECKING:
@@ -67,7 +67,7 @@ DEFAULT_PROP_BLUEPRINTS: dict[str, str] = {
 _DEFAULT_LANE_WIDTH_M = 3.5
 
 
-class ConstructionZoneAction(BaseAction):
+class ConstructionZoneAction(_BackendAction):
     """A construction zone on lanelet *lanelet_id*'s lane, from *start_s* to
     *end_s*, from *start_time* until *end_time*.
 
@@ -94,8 +94,6 @@ class ConstructionZoneAction(BaseAction):
             *end_time* not after it.
     """
 
-    REISSUES_BY_DEFAULT = True
-
     # Declared for the static check (docs/typecheck.md).
     _lanelet_id: int
     _start_s: float
@@ -106,7 +104,6 @@ class ConstructionZoneAction(BaseAction):
     _close_lane: bool
     _clear_traffic: bool
     _blueprints: dict[str, str]
-    _backend: Optional[TrafficBackend]
     _props: list["carla.Actor"]
     _closed: list[str]
     _placed: bool
@@ -137,7 +134,7 @@ class ConstructionZoneAction(BaseAction):
             raise ValueError(f"{label}: end_time must be after start_time")
         end: BaseCondition = _Cleared(self, label)
         super().__init__(
-            label=label, condition=condition, timing=timing, once=True, until=end
+            label, condition=condition, timing=timing, once=True, until=end
         )
         self._lanelet_id = int(lanelet_id)
         self._start_s = float(start_s)
@@ -151,17 +148,11 @@ class ConstructionZoneAction(BaseAction):
         if blueprints is not None:
             chosen.update(blueprints)
         self._blueprints = chosen
-        self._backend = None
         self._props = []
         self._closed = []
         self._placed = False
         self._cleared = False
         self._elapsed = 0.0
-
-    def set_traffic_backend(self, backend: TrafficBackend) -> None:
-        """The run's traffic backend, told of the closure; the scenario hands
-        it over when the action is registered."""
-        self._backend = backend
 
     @property
     def cleared(self) -> bool:
@@ -176,7 +167,8 @@ class ConstructionZoneAction(BaseAction):
     def tick(self, world: "carla.World", elapsed: float) -> None:
         """Remember the scenario time, which :meth:`execute` is not given."""
         self._elapsed = elapsed
-        super().tick(world, elapsed)
+        # Named, not super(): Codon 0.19 cannot dispatch super() two classes up.
+        BaseAction.tick(self, world, elapsed)
 
     def execute(self, world: "carla.World") -> None:
         """Place the zone at its start time, clear it away at its end time."""
@@ -190,9 +182,8 @@ class ConstructionZoneAction(BaseAction):
 
     def close(self) -> None:
         """Clear the zone away if the run ends with it standing."""
-        super().close()
-        self._destroy_props()
-        self._reopen(None)
+        BaseAction.close(self)  # named, as in tick
+        self._teardown(None)
 
     # -- placing -------------------------------------------------------------
 
@@ -201,24 +192,51 @@ class ConstructionZoneAction(BaseAction):
         manager = MapManager.get_instance()
         features = MapFeatures(manager.lanelet_map, manager.routing_graph)
         start: ConstLanelet = manager.lanelet_map.laneletLayer[self._lanelet_id]
-        width = _lane_width(start, self._start_s, features)
+        width = _lane_width(start, self._start_s)
         objects = construction_layout(self._start_s, self._end_s, width, self._settings)
-        if self._clear_traffic:
-            self._clear_zone(world, features, start)
+        backend = (
+            self._require_backend() if self._clear_traffic or self._close_lane else None
+        )
+        if backend is not None:
+            driver: TrafficBackend = backend
+            if self._clear_traffic:
+                self._clear_zone(
+                    world, driver, _spans(features, start, self._start_s, self._end_s)
+                )
+            closed = [item.s for item in objects if item.kind != SIGN]
+            if self._close_lane and closed:
+                self._close(
+                    world, driver, _spans(features, start, min(closed), max(closed))
+                )
         library = world.get_blueprint_library()
-        height = road_height(world.get_map())
-        missing: set[str] = set()
+        found: dict[str, "carla.ActorBlueprint"] = {}
+        for kind, name in self._blueprints.items():
+            matches = library.filter(name)
+            if len(matches) == 0:  # A BlueprintLibrary has no truth value in Codon.
+                logger.warning(
+                    "%s: CARLA has no prop %r for a %s", self.label, name, kind
+                )
+            else:
+                found[kind] = matches[0]
+        height = road_height(run_carla_map(world))
         for item in objects:
-            pose = _carla_pose(features, start, item)
-            if pose is None:
+            if item.kind not in found:
                 continue
-            placed: CarlaWorldPose = pose
-            spawned = self._spawn(world, library, item.kind, placed, height, missing)
+            try:
+                lanelet_id, along = advance_along_lane(
+                    manager.lanelet_map,
+                    manager.routing_graph,
+                    self._lanelet_id,
+                    0.0,
+                    item.s,
+                )
+            except ValueError:
+                continue  # past the lane's last lanelet
+            pose = to_carla_world(Lanelet2Pose(lanelet_id, along, item.t))
+            spawned = _spawn(world, found[item.kind], pose, height)
             if spawned is not None:
                 actor: "carla.Actor" = spawned
                 self._props.append(actor)
-            if self._close_lane and item.kind != SIGN:
-                self._close(world, placed)
         logger.info(
             "%s: %d of %d objects placed on lanelet %d from s=%.1f to %.1f",
             self.label,
@@ -229,47 +247,13 @@ class ConstructionZoneAction(BaseAction):
             self._end_s,
         )
 
-    def _spawn(
+    def _clear_zone(
         self,
         world: "carla.World",
-        library: "carla.BlueprintLibrary",
-        kind: str,
-        pose: CarlaWorldPose,
-        height: Callable[[float, float], Optional[float]],
-        missing: set[str],
-    ) -> Optional["carla.Actor"]:
-        """One prop of *kind* at *pose*, on the road surface; None if CARLA
-        has no such prop or the spot is taken."""
-        import typesafe_carla.carla as carla  # noqa: PLC0415
-
-        name = self._blueprints.get(kind, "")
-        found = library.filter(name)
-        if len(found) == 0:  # A BlueprintLibrary has no truth value in Codon.
-            if name not in missing:
-                missing.add(name)
-                logger.warning(
-                    "%s: CARLA has no prop %r for a %s", self.label, name, kind
-                )
-            none: Optional["carla.Actor"] = None
-            return none
-        z = pose.z
-        ground = height(pose.x, pose.y)
-        if ground is not None:
-            z = float(ground)
-        transform = carla.Transform(
-            carla.Location(x=pose.x, y=pose.y, z=z + 0.05),
-            carla.Rotation(yaw=pose.yaw),
-        )
-        return world.try_spawn_actor(found[0], transform)
-
-    def _clear_zone(
-        self, world: "carla.World", features: MapFeatures, start: "ConstLanelet"
+        backend: TrafficBackend,
+        spans: list[tuple[int, float, float]],
     ) -> None:
-        """Take the backend's background vehicles in the zone off the road."""
-        if self._backend is None:
-            return
-        backend: TrafficBackend = self._backend
-        spans = _spans(features, start, self._start_s, self._end_s)
+        """Take the backend's background vehicles in *spans* off the road."""
         for handle, (x, y) in backend.background_vehicles(world).items():
             pose = CarlaWorldPose(x, y, 0.0)
             for lanelet_id, s_from, s_to in spans:
@@ -280,32 +264,37 @@ class ConstructionZoneAction(BaseAction):
                     backend.remove_background(world, handle)
                     break
 
-    def _close(self, world: "carla.World", pose: CarlaWorldPose) -> None:
-        """Have the backend close the lane at *pose*, once per lane."""
-        if self._backend is None:
-            return
-        backend: TrafficBackend = self._backend
-        handle = backend.close_lane(world, pose.to_carla_transform())
-        if handle is not None and handle not in self._closed:
-            self._closed.append(handle)
+    def _close(
+        self,
+        world: "carla.World",
+        backend: TrafficBackend,
+        spans: list[tuple[int, float, float]],
+    ) -> None:
+        """Have the backend close the lane of each of *spans*, at its middle on
+        the centreline."""
+        for lanelet_id, s_from, s_to in spans:
+            middle = to_carla_world(
+                Lanelet2Pose(lanelet_id, (s_from + s_to) / 2.0, 0.0)
+            )
+            handle = backend.close_lane(world, middle.to_carla_transform())
+            if handle is not None and handle not in self._closed:
+                self._closed.append(handle)
 
     # -- clearing away -------------------------------------------------------
 
     def _clear(self, world: "carla.World") -> None:
-        self._destroy_props()
-        self._reopen(world)
+        self._teardown(world)
         self._cleared = True
         logger.info("%s: cleared away", self.label)
 
-    def _destroy_props(self) -> None:
+    def _teardown(self, world: Optional["carla.World"]) -> None:
+        """Destroy the props and reopen the lane."""
         for actor in self._props:
             try:
                 actor.destroy()
             except RuntimeError:
                 pass  # gone with the world already
         self._props = []
-
-    def _reopen(self, world: Optional["carla.World"]) -> None:
         if self._backend is not None:
             backend: TrafficBackend = self._backend
             for handle in self._closed:
@@ -330,26 +319,6 @@ class _Cleared(BaseCondition):
             message=f"{self._action.label} cleared away",
             elapsed_seconds=elapsed,
         )
-
-
-def _locate(
-    features: MapFeatures, start: "ConstLanelet", s: float
-) -> Optional[tuple["ConstLanelet", float]]:
-    """The lanelet *s* metres along the lane from *start*'s start, and how far
-    along it; past the last, None."""
-    lanelet: ConstLanelet = start
-    along = s
-    for _hop in range(64):
-        length = features.length(lanelet)
-        if along <= length:
-            return lanelet, max(along, 0.0)
-        following = features.straightest_following(lanelet)
-        if following is None:
-            return None
-        ahead: ConstLanelet = following
-        along -= length
-        lanelet = ahead
-    return None
 
 
 def _spans(
@@ -381,40 +350,48 @@ def _spans(
     return spans
 
 
-def _lane_width(lanelet: "ConstLanelet", s: float, features: MapFeatures) -> float:
+def _spawn(
+    world: "carla.World",
+    blueprint: "carla.ActorBlueprint",
+    pose: CarlaWorldPose,
+    height: Callable[[float, float], Optional[float]],
+) -> Optional["carla.Actor"]:
+    """A prop of *blueprint* at *pose*, on the road surface; None if the spot
+    is taken."""
+    import typesafe_carla.carla as carla  # noqa: PLC0415
+
+    z = pose.z
+    ground = height(pose.x, pose.y)
+    if ground is not None:
+        z = float(ground)
+    transform = carla.Transform(
+        carla.Location(x=pose.x, y=pose.y, z=z + 0.05),
+        carla.Rotation(yaw=pose.yaw),
+    )
+    return world.try_spawn_actor(blueprint, transform)
+
+
+def _bound_distance(
+    bound: "lanelet2.core.ConstLineString3d", centre: "lanelet2.core.BasicPoint2d"
+) -> float:
+    """How far (m) *centre* is off *bound*; the arc coordinates' distance is
+    signed."""
+    return abs(
+        float(
+            lanelet2.geometry.toArcCoordinates(
+                lanelet2.geometry.to2D(bound), centre
+            ).distance
+        )
+    )
+
+
+def _lane_width(lanelet: "ConstLanelet", s: float) -> float:
     """The width (m) of *lanelet* at *s*, between its bounds."""
-    points = _centreline(lanelet)
-    x, y = _point_at(points, min(max(s, 0.0), features.length(lanelet)))
+    x, y = _point_at(_centreline(lanelet), s)
     centre = lanelet2.core.BasicPoint2d(x, y)
-    # The arc coordinates' distance is signed; its size is how far off it is.
-    left = abs(
-        float(
-            lanelet2.geometry.toArcCoordinates(
-                lanelet2.geometry.to2D(lanelet.leftBound), centre
-            ).distance
-        )
+    width = _bound_distance(lanelet.leftBound, centre) + _bound_distance(
+        lanelet.rightBound, centre
     )
-    right = abs(
-        float(
-            lanelet2.geometry.toArcCoordinates(
-                lanelet2.geometry.to2D(lanelet.rightBound), centre
-            ).distance
-        )
-    )
-    width = left + right
     if not math.isfinite(width) or width <= 0.0:
         return _DEFAULT_LANE_WIDTH_M
     return width
-
-
-def _carla_pose(
-    features: MapFeatures, start: "ConstLanelet", item: ConstructionObject
-) -> Optional[CarlaWorldPose]:
-    """Where *item* stands in CARLA's world, facing along the lane; None past
-    the lane's last lanelet."""
-    found = _locate(features, start, item.s)
-    if found is None:
-        none: Optional[CarlaWorldPose] = None
-        return none
-    lanelet, along = found
-    return to_carla_world(Lanelet2Pose(int(lanelet.id), along, item.t))

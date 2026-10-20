@@ -214,9 +214,11 @@ def test_the_zone_appears_at_its_start_and_is_cleared_away_at_its_end() -> None:
     assert (location.x, location.y) == pytest.approx((-90.0, 1.75 + 1.45), abs=0.05)
     # Past W_IN1's end (50 m), on along W_IN2.
     assert world.spawned[7].transform.location.x == pytest.approx(-60.0, abs=0.05)
-    # The background vehicle in the zone is gone, the lane closed per cone.
+    # The background vehicle in the zone is gone; the lane closed once per
+    # lanelet the cones stand on (W_IN1, W_IN2), on its centreline.
     assert backend.removed == ["in_zone"]
-    assert len(backend.closed) == 8 and backend.reopened == []
+    assert [t.location.y for t in backend.closed] == pytest.approx([1.75, 1.75])
+    assert backend.reopened == []
     _run(action, world, [2.0, 3.0, 3.1])
     assert all(p.destroyed for p in world.spawned) and action.prop_count == 0
     assert backend.reopened == ["lane"]
