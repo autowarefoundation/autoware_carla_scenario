@@ -1552,6 +1552,36 @@ register_action_spec(
     )
 )
 
+register_action_spec(
+    ActionSpec(
+        type_id="pedestrian_run_red_light",
+        title="Pedestrian Runs a Red Light",
+        category="Adversity",
+        builder="build_pedestrian_run_red_light_action",
+        target="..actions.adversarial:PedestrianRunRedLightAction",
+        actor_kinds=("pedestrian",),
+        visual_kind="continuous",
+        fields=_ADVERSITY_FIELDS,
+        description="Cross on red at the crosswalk the pedestrian waits at."
+        + _ADVERSITY_NOTE,
+    )
+)
+
+register_action_spec(
+    ActionSpec(
+        type_id="stop_crossing",
+        title="Stop Crossing",
+        category="Adversity",
+        builder="build_stop_crossing_action",
+        target="..actions.adversarial:StopCrossingAction",
+        actor_kinds=("pedestrian",),
+        visual_kind="continuous",
+        fields=_ADVERSITY_FIELDS,
+        description="Stop on the crosswalk a moment, then hurry across."
+        + _ADVERSITY_NOTE,
+    )
+)
+
 #: Mirrors ``AdversityKind``; the codegen refuses an option that names no
 #: member.
 _ADVERSITY_KINDS: tuple[SelectOption, ...] = (
@@ -1562,6 +1592,8 @@ _ADVERSITY_KINDS: tuple[SelectOption, ...] = (
     SelectOption("jaywalking", "Jaywalk"),
     SelectOption("lane_change_abort", "Abort a lane change"),
     SelectOption("head_on", "Head-on"),
+    SelectOption("running_red_light", "Cross on red"),
+    SelectOption("stop_crossing", "Stop while crossing"),
 )
 
 _NADE_SETTINGS = (

@@ -108,7 +108,9 @@ if TYPE_CHECKING:
         IgnoreLeaderAction as IgnoreLeaderAction,
         JaywalkAction as JaywalkAction,
         LaneChangeAbortAction as LaneChangeAbortAction,
+        PedestrianRunRedLightAction as PedestrianRunRedLightAction,
         RunTrafficRuleAction as RunTrafficRuleAction,
+        StopCrossingAction as StopCrossingAction,
     )
     from .adversity import (
         AdversityKind as AdversityKind,
@@ -490,6 +492,8 @@ __all__ = [
     "AdversarialCutInAction",
     "HeadOnAction",
     "LaneChangeAbortAction",
+    "PedestrianRunRedLightAction",
+    "StopCrossingAction",
     "IgnoreLeaderAction",
     "JaywalkAction",
     "RunTrafficRuleAction",
@@ -533,6 +537,11 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "AdversarialCutInAction": (".actions.adversarial", "AdversarialCutInAction"),
     "HeadOnAction": (".actions.adversarial", "HeadOnAction"),
     "LaneChangeAbortAction": (".actions.adversarial", "LaneChangeAbortAction"),
+    "PedestrianRunRedLightAction": (
+        ".actions.adversarial",
+        "PedestrianRunRedLightAction",
+    ),
+    "StopCrossingAction": (".actions.adversarial", "StopCrossingAction"),
     "IgnoreLeaderAction": (".actions.adversarial", "IgnoreLeaderAction"),
     "JaywalkAction": (".actions.adversarial", "JaywalkAction"),
     "RunTrafficRuleAction": (".actions.adversarial", "RunTrafficRuleAction"),

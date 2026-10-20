@@ -70,7 +70,9 @@ __all__ = [
     "build_ignore_leader_action",
     "build_jaywalk_action",
     "build_lane_change_abort_action",
+    "build_pedestrian_run_red_light_action",
     "build_run_traffic_rule_action",
+    "build_stop_crossing_action",
     "build_traffic_signal_controller_action",
     "build_traffic_signal_action",
     "build_environment_action",
@@ -975,6 +977,30 @@ def build_lane_change_abort_action(
     )
 
 
+def build_pedestrian_run_red_light_action(
+    compiled: "CompiledAction",
+    condition: "BaseCondition | None",
+    timing: Any,
+    ctx: "BuildContext",
+) -> "BaseAction":
+    """Build a :class:`PedestrianRunRedLightAction`."""
+    from ..actions.adversarial import PedestrianRunRedLightAction  # noqa: PLC0415
+    from ..actions.adversarial import AdversityLocation  # noqa: PLC0415
+    from ..actions.adversarial import TrajectoryFollowingMode  # noqa: PLC0415
+
+    assert compiled.actor_role is not None  # noqa: S101 -- required by the spec
+    params = compiled.params
+    return PedestrianRunRedLightAction(
+        entity_name=compiled.actor_role,
+        location=AdversityLocation[str(params["location"]).upper()],
+        condition=condition,
+        timing=timing,
+        label=compiled.label,
+        once=compiled.node.once,
+        following_mode=TrajectoryFollowingMode[str(params["following_mode"]).upper()],
+    )
+
+
 def build_run_traffic_rule_action(
     compiled: "CompiledAction",
     condition: "BaseCondition | None",
@@ -989,6 +1015,30 @@ def build_run_traffic_rule_action(
     assert compiled.actor_role is not None  # noqa: S101 -- required by the spec
     params = compiled.params
     return RunTrafficRuleAction(
+        entity_name=compiled.actor_role,
+        location=AdversityLocation[str(params["location"]).upper()],
+        condition=condition,
+        timing=timing,
+        label=compiled.label,
+        once=compiled.node.once,
+        following_mode=TrajectoryFollowingMode[str(params["following_mode"]).upper()],
+    )
+
+
+def build_stop_crossing_action(
+    compiled: "CompiledAction",
+    condition: "BaseCondition | None",
+    timing: Any,
+    ctx: "BuildContext",
+) -> "BaseAction":
+    """Build a :class:`StopCrossingAction`."""
+    from ..actions.adversarial import StopCrossingAction  # noqa: PLC0415
+    from ..actions.adversarial import AdversityLocation  # noqa: PLC0415
+    from ..actions.adversarial import TrajectoryFollowingMode  # noqa: PLC0415
+
+    assert compiled.actor_role is not None  # noqa: S101 -- required by the spec
+    params = compiled.params
+    return StopCrossingAction(
         entity_name=compiled.actor_role,
         location=AdversityLocation[str(params["location"]).upper()],
         condition=condition,

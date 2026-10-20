@@ -24,7 +24,15 @@ adversarial thing now, else None:
   leader's lanelet starts more than 120 degrees off the agent's;
 * :attr:`AdversityKind.JAYWALKING`: a pedestrian off any crosswalk, a road
   within 10 m -- walk straight across it at its speed (1.4 m/s if it
-  stands) times U(0.5, 2.0), for up to 5 s.
+  stands) times U(0.5, 2.0), for up to 5 s;
+* :attr:`AdversityKind.RUNNING_RED_LIGHT` (RunningRedLight): a pedestrian
+  waiting (at most 0.2 m/s) within 3 m of a crosswalk whose light is red --
+  cross it anyway, from its near end to its far end, at full speed;
+* :attr:`AdversityKind.STOP_CROSSING` (StopCrossing): a pedestrian on a
+  crosswalk -- stand still for N(2 s, 0.5 s), then cross at full speed, a
+  crosswalk's length on along its heading.
+
+The pedestrian kinds are only a pedestrian's, the others only a vehicle's.
 
 TeraSim's numbers are the defaults, every one overridable
 (:class:`TriggerThresholds`).  The accelerations are the Intelligent Driver
@@ -40,11 +48,11 @@ import math
 import random
 from dataclasses import dataclass
 from enum import Enum
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from ..route.geometry import MapFeatures
 from ..trajectory.relative_lane import _centreline, _point_at, _start_heading, _turn
-from .command import AdversarialCommand, drift_path
+from .command import AdversarialCommand, _times, drift_path
 from .geometry import PredictedState
 from .idm import (
     DEFAULT_IDM,
@@ -54,7 +62,9 @@ from .idm import (
 )
 from .location import AdversityLocation, location_matches
 from .observation import (
+    AgentSnapshot,
     LanePosition,
+    NearCrosswalk,
     Neighbour,
     PedestrianObservation,
     Scene,
@@ -63,8 +73,12 @@ from .observation import (
     VehicleObservation,
 )
 
+if TYPE_CHECKING:
+    from lanelet2.core import ConstLanelet
+
 __all__ = [
     "DEFAULT_THRESHOLDS",
+    "PEDESTRIAN_KINDS",
     "AdversityKind",
     "TriggerThresholds",
     "adversity_command",
@@ -74,6 +88,8 @@ __all__ = [
     "ignore_leader",
     "jaywalking",
     "lane_change_abort",
+    "running_red_light",
+    "stop_crossing",
     "traffic_rule",
 ]
 
@@ -88,6 +104,16 @@ class AdversityKind(Enum):
     JAYWALKING = "jaywalking"
     LANE_CHANGE_ABORT = "lane_change_abort"
     HEAD_ON = "head_on"
+    RUNNING_RED_LIGHT = "running_red_light"
+    STOP_CROSSING = "stop_crossing"
+
+
+#: The kinds a pedestrian carries out; every other kind is a vehicle's.
+PEDESTRIAN_KINDS = (
+    AdversityKind.JAYWALKING,
+    AdversityKind.RUNNING_RED_LIGHT,
+    AdversityKind.STOP_CROSSING,
+)
 
 
 @dataclass(frozen=True)
@@ -119,7 +145,15 @@ class TriggerThresholds:
         pedestrian_speed: A standing pedestrian's speed (m/s) when it goes.
         pedestrian_speed_factor: The random factor on a jaywalker's speed.
         jaywalk_duration: The most (s) a jaywalk lasts.
-        jaywalk_resolution: The time step (s) of a jaywalk's path.
+        jaywalk_resolution: The time step (s) of a pedestrian's path.
+        waiting_speed: RUNNING_RED_LIGHT's most speed (m/s) of a pedestrian
+            waiting at the crosswalk.
+        crosswalk_reach: How near (m) the crosswalk it waits at must be.
+        pedestrian_max_speed: The speed (m/s) a pedestrian crosses at in
+            RUNNING_RED_LIGHT and STOP_CROSSING (TeraSim's "max speed"), as
+            fast as the fastest jaywalker (1.4 m/s times 2).
+        stop_crossing_wait: The mean and standard deviation (s) of how long
+            a STOP_CROSSING pedestrian stands still first.
     """
 
     idm: IdmParameters = DEFAULT_IDM
@@ -138,6 +172,10 @@ class TriggerThresholds:
     pedestrian_speed_factor: tuple[float, float] = (0.5, 2.0)
     jaywalk_duration: float = 5.0
     jaywalk_resolution: float = 0.1
+    waiting_speed: float = 0.2
+    crosswalk_reach: float = 3.0
+    pedestrian_max_speed: float = 2.8
+    stop_crossing_wait: tuple[float, float] = (2.0, 0.5)
 
 
 DEFAULT_THRESHOLDS = TriggerThresholds()
@@ -335,20 +373,113 @@ def jaywalking(
         heading = math.atan2(road.y - agent.y, road.x - agent.x)
     # TeraSim walks across, at least 10 s worth, cut to the command's 5 s.
     duration = min(max(road.distance / speed, 10.0), limits.jaywalk_duration)
-    steps = max(int(math.ceil(duration / limits.jaywalk_resolution - 1e-9)), 1)
+    return AdversarialCommand.follow(
+        _walk(agent, heading, speed, duration, limits.jaywalk_resolution)
+    )
+
+
+def _walk(
+    agent: AgentSnapshot,
+    heading: float,
+    speed: float,
+    duration: float,
+    resolution: float,
+    wait: float = 0.0,
+) -> list[PredictedState]:
+    """Stand still for *wait*, then walk straight on at *speed* for *duration*."""
     path: list[PredictedState] = []
-    for i in range(steps + 1):
-        t = min(i * limits.jaywalk_resolution, duration)
-        path.append(
-            PredictedState(
-                agent.x + speed * t * math.cos(heading),
-                agent.y + speed * t * math.sin(heading),
-                heading,
-                speed,
-                t,
+    if wait > 0.0:
+        for t in _times(wait, resolution):
+            path.append(PredictedState(agent.x, agent.y, heading, 0.0, t))
+    for t in _times(duration, resolution):
+        if t > 0.0 or not path:
+            path.append(
+                PredictedState(
+                    agent.x + speed * t * math.cos(heading),
+                    agent.y + speed * t * math.sin(heading),
+                    heading,
+                    speed,
+                    wait + t,
+                )
             )
+    return path
+
+
+def _has_red_light(lanelet: ConstLanelet, signals: dict[int, SignalState]) -> bool:
+    """Whether a traffic light of *lanelet* shows red."""
+    for element in lanelet.regulatoryElements:
+        key = int(element.id)
+        if (
+            MapFeatures.is_traffic_light(element)
+            and key in signals
+            and signals[key] is SignalState.RED
+        ):
+            return True
+    return False
+
+
+def running_red_light(
+    seen: PedestrianObservation,
+    features: MapFeatures,
+    signals: dict[int, SignalState],
+    limits: TriggerThresholds = DEFAULT_THRESHOLDS,
+) -> Optional[AdversarialCommand]:
+    """RUNNING_RED_LIGHT: cross on red at the crosswalk it waits at.
+
+    The crosswalk's light is the Lanelet2 traffic light the crosswalk
+    lanelet carries; *signals* has its state.
+    """
+    agent = seen.agent
+    near = seen.nearest_crosswalk
+    if agent.speed > limits.waiting_speed or near is None:
+        return None
+    # A typed local: Codon unwraps the Optional here, not at each use.
+    crossing: NearCrosswalk = near
+    if crossing.distance > limits.crosswalk_reach:
+        return None
+    if not _has_red_light(crossing.lanelet, signals):
+        return None
+    points = _centreline(crossing.lanelet)
+    (ax, ay), (bx, by) = points[0], points[-1]
+    if math.hypot(bx - agent.x, by - agent.y) < math.hypot(ax - agent.x, ay - agent.y):
+        ax, ay, bx, by = bx, by, ax, ay  # from the end it waits at
+    speed = limits.pedestrian_max_speed
+    duration = features.length(crossing.lanelet) / speed
+    return AdversarialCommand.follow(
+        _walk(
+            agent,
+            math.atan2(by - ay, bx - ax),
+            speed,
+            duration,
+            limits.jaywalk_resolution,
         )
-    return AdversarialCommand.follow(path)
+    )
+
+
+def stop_crossing(
+    seen: PedestrianObservation,
+    features: MapFeatures,
+    rng: random.Random,
+    limits: TriggerThresholds = DEFAULT_THRESHOLDS,
+) -> Optional[AdversarialCommand]:
+    """STOP_CROSSING: stop on the crosswalk a moment, then hurry across."""
+    on = seen.crosswalk
+    if on is None:
+        return None
+    mean, deviation = limits.stop_crossing_wait
+    wait = max(rng.gauss(mean, deviation), 0.0)
+    speed = limits.pedestrian_max_speed
+    agent = seen.agent
+    return AdversarialCommand.follow(
+        _walk(
+            agent,
+            agent.yaw,
+            speed,
+            features.length(on) / speed,
+            limits.jaywalk_resolution,
+            wait,
+        )
+    )
 
 
 def adversity_command(
@@ -366,16 +497,21 @@ def adversity_command(
     kind's trigger.
     """
     anywhere = location is AdversityLocation.ANY
-    if kind is AdversityKind.JAYWALKING:
+    if kind in PEDESTRIAN_KINDS:
+        if scene.agents[name].footprint.is_vehicle:
+            return None
         walker = scene.pedestrian(name)
-        road = walker.nearest_road
-        if road is None:
-            return None
-        if not anywhere and not location_matches(
-            location, scene.features, road.lanelet, 0.0
-        ):
-            return None
-        return jaywalking(walker, rng, limits)
+        if not anywhere:
+            road = walker.nearest_road
+            if road is None or not location_matches(
+                location, scene.features, road.lanelet, 0.0
+            ):
+                return None
+        if kind is AdversityKind.JAYWALKING:
+            return jaywalking(walker, rng, limits)
+        if kind is AdversityKind.RUNNING_RED_LIGHT:
+            return running_red_light(walker, scene.features, scene.signals, limits)
+        return stop_crossing(walker, scene.features, rng, limits)
     lane = scene.lane_of(name)
     if lane is None:
         return None
