@@ -1129,6 +1129,35 @@ Two things Python does that Codon 0.19 does not are filled in for you:
     Only the class syntax is covered (not `NamedTuple("Pt", [...])` or
     `collections.namedtuple`).
 
+### Python the check rewrites for Codon (#376)
+
+Each of these is valid Python that Codon 0.19 refuses or crashes on. The check
+rewrites the checked copy of your module (on the same lines; what runs is your
+code as written), so you write the Python you would anyway. A form the rewrite
+cannot express is refused at its line, with what to write instead.
+
+| You write | The check compiles | Refused when |
+| --- | --- | --- |
+| `class MyError(Exception): ...` | the same with `pass` for `...` | |
+| `{**a, "k": v, **b}` | `(a \| {"k": v} \| b)`; `{**a}` is `dict(a)` | the values of the parts have other types (`Dict[str, int]` and `Dict[str, str]`) |
+| `"{:>5}\|{a}".format(1, a=x)` on a string literal | the f-string `f"{1:>5}\|{x}"` (a complex argument is bound once by a lambda) | `*args` / `**kwargs`, a field inside a format spec (`{:>{}}`), a missing argument, mixed auto and manual numbering, a template that is not a literal (write an f-string) |
+| `zip(a, b, strict=True)` | `zip(a, b)`: the check types the loop, it does not run it | |
+| `sorted(xs)`, `xs.sort()`, `min` / `max` of a class that defines `__lt__` only | the class gets `__gt__` (`other < self`) and `__ge__` (`not self < other`), which Codon's sort calls | the class defines no ordering (use `@dataclass(order=True)` or `key=`) |
+| `@functools.total_ordering` | the decorator and its import are dropped, and the class gets the comparisons it would add from its `__lt__`, `__le__`, `__gt__` or `__ge__` (and `==`, or identity without `__eq__`) | the class is not at module level, or defines none of the four |
+| `lambda x, k=k: x + k` (a default that is not a literal) | `(lambda k: lambda x: x + k)(k)`: the default is bound by a call, once, as in Python | |
+
+Notes:
+
+- `__ge__` of a class that defines `__lt__` only is more than Python gives it
+  (`a >= b` is a `TypeError` there): the check accepts it because Codon's sort
+  needs it. It does not change what runs.
+- A rewritten lambda no longer takes the captured parameter: `fs[0](1, 5)`,
+  which passes `k`, is refused. A default after a non-literal one is bound the
+  same way, so positional calls keep their meaning. Use `functools.partial`
+  where you pass the captured value.
+- Codon's f-strings have no `{{` / `}}`: a literal brace becomes a string
+  joined with `+`.
+
 ### The names of `typing` a scenario may import
 
 Codon has no `typing` module of its own beyond a few names, so the check
