@@ -20,6 +20,7 @@ from autoware_carla_scenario.actions import _adversarial_execution as executions
 from autoware_carla_scenario.actions.adversarial import (
     AdversarialBrakeAction,
     AdversarialCutInAction,
+    AdversarialMergeAction,
     HeadOnAction,
     IgnoreLeaderAction,
     JaywalkAction,
@@ -207,6 +208,7 @@ def test_closing_closes_the_path() -> None:
             "pedestrian_run_red_light",
         ),
         (StopCrossingAction, AdversityKind.STOP_CROSSING, "stop_crossing"),
+        (AdversarialMergeAction, AdversityKind.MERGE, "adversarial_merge"),
     ],
 )
 def test_each_action_is_its_kind(cls: Any, kind: AdversityKind, label: str) -> None:

@@ -75,6 +75,7 @@ __all__ = [
     "JUNCTION_RADIUS_M",
     "JunctionMember",
     "LaneSpan",
+    "MERGE_WINDOW_M",
     "MapFeatures",
     "OPPOSITE_MIN_TURN_DEG",
     "OPPOSITE_SEARCH_M",
@@ -96,6 +97,9 @@ APPROACH_OPPOSITE_MIN_DEG = 135.0
 JUNCTION_RADIUS_M = 60.0
 #: How far (m) before and after a junction a crosswalk still crosses its leg.
 CROSSWALK_WINDOW_M = 10.0
+#: How far ahead (m) a lane may end into the lane on its left and still be a
+#: merging lane where it is: a ramp's acceleration lane, split in lanelets.
+MERGE_WINDOW_M = 100.0
 #: How far (m) from the outermost lane's outer bound an unconnected
 #: opposite-direction lanelet may be found.
 OPPOSITE_SEARCH_M = 4.0
@@ -244,6 +248,7 @@ class MapFeatures:
     ]
     _conflicting: dict[int, list[ConstLanelet]]
     _stops: dict[int, list[tuple[float, int]]]
+    _merges: dict[int, bool]
 
     def __init__(self, lanelet_map: LaneletMap, routing_graph: RoutingGraph) -> None:
         self.map = lanelet_map
@@ -254,6 +259,7 @@ class MapFeatures:
         self._crosswalks = None
         self._conflicting = {}
         self._stops = {}
+        self._merges = {}
 
     # -- lanelets ------------------------------------------------------------
 
@@ -413,6 +419,49 @@ class MapFeatures:
             seen.add(int(beside.id))
             current = beside
         return current
+
+    def _ends_into_left(self, lanelet: ConstLanelet) -> bool:
+        """Whether it ends, or runs into what follows it, beside a lane on
+        its left that goes on."""
+        left = self.neighbour(lanelet, "left")
+        if left is None:
+            return False
+        # A typed local: Codon unwraps the Optional here, not at each use.
+        beside: ConstLanelet = left
+        goes_on = {int(ll.id) for ll in self.following(beside)}
+        if not goes_on:
+            return False
+        own = self.following(lanelet)
+        return not own or any(int(ll.id) in goes_on for ll in own)
+
+    def merges(self, lanelet: ConstLanelet) -> bool:
+        """Whether it is a merging lane (TeraSim's ramp, without SUMO's names).
+
+        A lane that ends into the lane on its left -- ends beside it, or
+        shares what follows with it -- there or, along its straightest
+        successors, within :data:`MERGE_WINDOW_M`.
+        """
+        key = int(lanelet.id)
+        known = self._merges.get(key)
+        if known is not None:
+            return known
+        found = False
+        current: ConstLanelet = lanelet
+        travelled = 0.0
+        seen = {key}
+        while not found:
+            found = self._ends_into_left(current)
+            travelled += self.length(current)
+            following = self.straightest_following(current)
+            if found or following is None or travelled > MERGE_WINDOW_M:
+                break
+            ahead: ConstLanelet = following
+            if int(ahead.id) in seen:
+                break
+            seen.add(int(ahead.id))
+            current = ahead
+        self._merges[key] = found
+        return found
 
     # -- the other direction -------------------------------------------------
 

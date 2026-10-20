@@ -104,6 +104,7 @@ if TYPE_CHECKING:
     from .actions.adversarial import (
         AdversarialBrakeAction as AdversarialBrakeAction,
         AdversarialCutInAction as AdversarialCutInAction,
+        AdversarialMergeAction as AdversarialMergeAction,
         HeadOnAction as HeadOnAction,
         IgnoreLeaderAction as IgnoreLeaderAction,
         JaywalkAction as JaywalkAction,
@@ -490,6 +491,7 @@ __all__ = [
     "NadeSettings",
     "AdversarialBrakeAction",
     "AdversarialCutInAction",
+    "AdversarialMergeAction",
     "HeadOnAction",
     "LaneChangeAbortAction",
     "PedestrianRunRedLightAction",
@@ -535,6 +537,7 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "TickTiming": (".actions", "TickTiming"),
     "AdversarialBrakeAction": (".actions.adversarial", "AdversarialBrakeAction"),
     "AdversarialCutInAction": (".actions.adversarial", "AdversarialCutInAction"),
+    "AdversarialMergeAction": (".actions.adversarial", "AdversarialMergeAction"),
     "HeadOnAction": (".actions.adversarial", "HeadOnAction"),
     "LaneChangeAbortAction": (".actions.adversarial", "LaneChangeAbortAction"),
     "PedestrianRunRedLightAction": (

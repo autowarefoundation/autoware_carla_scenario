@@ -1,4 +1,4 @@
-"""TeraSim's adversities as actions (#393, #398, #399).
+"""TeraSim's adversities as actions (#393, #398, #399, #400).
 
 Each action carries out one adversity of :mod:`~..adversity.triggers` on a
 named vehicle (or, for the pedestrian kinds, a pedestrian):
@@ -13,6 +13,8 @@ named vehicle (or, for the pedestrian kinds, a pedestrian):
   a vehicle too close behind there, and swerves back (``LANE_CHANGE_ABORT``).
 * :class:`HeadOnAction` -- drives on at a leader coming the other way
   (``HEAD_ON``).
+* :class:`AdversarialMergeAction` -- beside a merging lane, speeds up or
+  changes in to cut a merging vehicle off (``MERGE``).
 * :class:`RunTrafficRuleAction` -- runs the red or yellow light it is
   stopping for (``TRAFFIC_RULE``).
 * :class:`JaywalkAction` -- a pedestrian walks straight across the road, off
@@ -62,6 +64,7 @@ __all__ = [
     "AdversarialAction",
     "AdversarialBrakeAction",
     "AdversarialCutInAction",
+    "AdversarialMergeAction",
     "HeadOnAction",
     "IgnoreLeaderAction",
     "JaywalkAction",
@@ -322,6 +325,44 @@ class AdversarialCutInAction(AdversarialAction):
         super().__init__(
             entity_name,
             AdversityKind.CUT_IN,
+            location,
+            condition,
+            timing,
+            label=label,
+            once=once,
+            thresholds=thresholds,
+            following_mode=following_mode,
+        )
+
+
+class AdversarialMergeAction(AdversarialAction):
+    """Make a merging vehicle's way in harder.
+
+    TeraSim's Merge adversity, beside a merging lane with traffic on it
+    (:meth:`~..route.geometry.MapFeatures.merges`): one lane over, it speeds
+    up as if the vehicle merging ahead were not there, when that beats
+    giving way by more than ``thresholds.acceleration_gain``, for
+    ``thresholds.duration``; two lanes over, it changes into the lane
+    between in ``thresholds.lane_change_duration`` when nobody there is
+    within ``thresholds.merge_headway``.  See :class:`AdversarialAction` for
+    the arguments.
+    """
+
+    def __init__(
+        self,
+        entity_name: Union[EntityRole, str],
+        location: AdversityLocation,
+        condition: Optional[BaseCondition] = None,
+        timing: TickTiming = TickTiming.PRE_TICK,
+        *,
+        label: str = "adversarial_merge",
+        once: bool = True,
+        thresholds: TriggerThresholds = DEFAULT_THRESHOLDS,
+        following_mode: TrajectoryFollowingMode = TrajectoryFollowingMode.FOLLOW,
+    ) -> None:
+        super().__init__(
+            entity_name,
+            AdversityKind.MERGE,
             location,
             condition,
             timing,

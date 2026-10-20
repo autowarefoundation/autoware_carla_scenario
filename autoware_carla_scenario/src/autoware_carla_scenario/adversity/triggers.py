@@ -22,6 +22,11 @@ adversarial thing now, else None:
   half a lane toward that side and back, in 1 s;
 * :attr:`AdversityKind.HEAD_ON` (Headon): IGNORE_LEADER's command, where the
   leader's lanelet starts more than 120 degrees off the agent's;
+* :attr:`AdversityKind.MERGE` (Merge): beside a merging lane with traffic
+  on it (:meth:`~..route.geometry.MapFeatures.merges`) -- one lane over,
+  speed up as if the vehicle merging ahead were not there, when that beats
+  giving way by more than 1.5 m/s², for 2 s; two lanes over, change into
+  the lane between in 1 s when nobody there is within 2 s of headway;
 * :attr:`AdversityKind.JAYWALKING`: a pedestrian off any crosswalk, a road
   within 10 m -- walk straight across it at its speed (1.4 m/s if it
   stands) times U(0.5, 2.0), for up to 5 s;
@@ -88,6 +93,7 @@ __all__ = [
     "ignore_leader",
     "jaywalking",
     "lane_change_abort",
+    "merge",
     "running_red_light",
     "stop_crossing",
     "traffic_rule",
@@ -106,6 +112,7 @@ class AdversityKind(Enum):
     HEAD_ON = "head_on"
     RUNNING_RED_LIGHT = "running_red_light"
     STOP_CROSSING = "stop_crossing"
+    MERGE = "merge"
 
 
 #: The kinds a pedestrian carries out; every other kind is a vehicle's.
@@ -140,6 +147,8 @@ class TriggerThresholds:
         moving_speed: LANE_CHANGE_ABORT's least speed (m/s): TeraSim's
             "moving at all", not the ``standstill_speed`` the others use.
         abort_resolution: The time step (s) of a lane-change abort's path.
+        merge_headway: MERGE's least time headway (s) to a vehicle in the
+            lane it changes into, closing in ahead or behind.
         head_on_angle: HEAD_ON's least difference (degrees) between the
             directions the agent's and its leader's lanelets start in.
         pedestrian_speed: A standing pedestrian's speed (m/s) when it goes.
@@ -168,6 +177,7 @@ class TriggerThresholds:
     moving_speed: float = 0.01
     abort_resolution: float = 0.1
     head_on_angle: float = 120.0
+    merge_headway: float = 2.0
     pedestrian_speed: float = 1.4
     pedestrian_speed_factor: tuple[float, float] = (0.5, 2.0)
     jaywalk_duration: float = 5.0
@@ -332,6 +342,76 @@ def head_on(
     if math.degrees(apart) <= limits.head_on_angle:
         return None
     return command
+
+
+def _merging(features: MapFeatures, side: Optional[SideLane]) -> bool:
+    """Whether *side* is a merging lane with a vehicle on it, near."""
+    if side is None:
+        return False
+    # A typed local: Codon unwraps the Optional here, not at each use.
+    lane: SideLane = side
+    if lane.leader is None and lane.follower is None:
+        return False
+    return features.merges(lane.lanelet)
+
+
+def _within_headway(
+    other: Optional[Neighbour], speed: float, ahead: bool, limits: TriggerThresholds
+) -> bool:
+    """Whether *other*, ahead or behind an agent at *speed*, closes in within
+    the headway."""
+    if other is None:
+        return False
+    # A typed local: Codon unwraps the Optional here, not at each use.
+    near: Neighbour = other
+    closing = speed - near.speed if ahead else near.speed - speed
+    return closing > 0.0 and near.gap / closing <= limits.merge_headway
+
+
+def merge(
+    seen: VehicleObservation,
+    beyond: Optional[SideLane],
+    features: MapFeatures,
+    limits: TriggerThresholds = DEFAULT_THRESHOLDS,
+) -> Optional[AdversarialCommand]:
+    """MERGE: make a merging vehicle's way in harder.
+
+    TeraSim's Merge, on the lane right beside the agent (one lane over) and
+    *beyond*, the lane right of that one (two lanes over).
+    """
+    right = seen.right
+    if right is None:
+        return None
+    # A typed local: Codon unwraps the Optional here, not at each use.
+    beside: SideLane = right
+    agent = seen.agent
+    if _merging(features, beside):
+        # MergeSpeedUp: drive as its own leader lets it, ignoring the
+        # vehicle merging ahead it would give way to.
+        safe = free_flow_acceleration(agent.speed, seen.desired_speed, limits.idm)
+        leader = seen.leader
+        if leader is not None:
+            if (
+                agent.speed < limits.standstill_speed
+                and leader.speed < limits.standstill_speed
+            ):
+                return None
+            safe = _held_back_by(seen, leader, limits)
+        cooperative = safe
+        merging = beside.leader
+        if merging is not None:
+            cooperative = min(cooperative, _held_back_by(seen, merging, limits))
+        if safe - cooperative <= limits.acceleration_gain:
+            return None
+        return AdversarialCommand.accelerate(safe, limits.duration)
+    if not _merging(features, beyond):
+        return None
+    # MergeLaneChange: into the lane the merging vehicle is to merge into.
+    if _within_headway(beside.leader, agent.speed, True, limits):
+        return None
+    if _within_headway(beside.follower, agent.speed, False, limits):
+        return None
+    return AdversarialCommand.change_lane("right", limits.lane_change_duration)
 
 
 def traffic_rule(
@@ -514,6 +594,12 @@ def adversity_command(
         return cut_in(seen, limits)
     if kind is AdversityKind.LANE_CHANGE_ABORT:
         return lane_change_abort(seen, scene.features, limits)
+    if kind is AdversityKind.MERGE:
+        beyond: Optional[SideLane] = None
+        right = seen.right
+        if right is not None:
+            beyond = scene.lane_beside(name, right.lanelet, "right")
+        return merge(seen, beyond, scene.features, limits)
     if kind is AdversityKind.HEAD_ON:
         leader = seen.leader
         if leader is None:

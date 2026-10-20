@@ -1495,6 +1495,21 @@ register_action_spec(
 
 register_action_spec(
     ActionSpec(
+        type_id="adversarial_merge",
+        title="Adversarial Merge",
+        category="Adversity",
+        builder="build_adversarial_merge_action",
+        target="..actions.adversarial:AdversarialMergeAction",
+        actor_kinds=("vehicle",),
+        visual_kind="continuous",
+        fields=_ADVERSITY_FIELDS,
+        description="Beside a merging lane, speed up or change in to cut a "
+        "merging vehicle off." + _ADVERSITY_NOTE,
+    )
+)
+
+register_action_spec(
+    ActionSpec(
         type_id="lane_change_abort",
         title="Lane-change Abort",
         category="Adversity",
@@ -1594,6 +1609,7 @@ _ADVERSITY_KINDS: tuple[SelectOption, ...] = (
     SelectOption("head_on", "Head-on"),
     SelectOption("running_red_light", "Cross on red"),
     SelectOption("stop_crossing", "Stop while crossing"),
+    SelectOption("merge", "Cut off a merge"),
 )
 
 _NADE_SETTINGS = (

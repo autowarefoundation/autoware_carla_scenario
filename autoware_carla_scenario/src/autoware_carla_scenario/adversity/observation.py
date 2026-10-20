@@ -358,6 +358,13 @@ class Scene:
         leader, follower = self._neighbours(agent, chain)
         return SideLane(neighbour, s, leader, follower)
 
+    def lane_beside(
+        self, name: str, lanelet: ConstLanelet, side: str
+    ) -> Optional[SideLane]:
+        """The lane on *side* of *lanelet*, abreast of agent *name*, and who
+        is on it: the lane beside the lane beside, say."""
+        return self._side(self.agents[name], lanelet, side)
+
     def _signal(self, chain: dict[int, LaneSpan]) -> Optional[SignalAhead]:
         best: Optional[SignalAhead] = None
         for span in chain.values():

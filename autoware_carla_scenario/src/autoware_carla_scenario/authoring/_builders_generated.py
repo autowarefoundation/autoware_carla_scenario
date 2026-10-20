@@ -65,6 +65,7 @@ __all__ = [
     "build_trajectory_time_condition",
     "build_adversarial_brake_action",
     "build_adversarial_cut_in_action",
+    "build_adversarial_merge_action",
     "build_adversarial_traffic_action",
     "build_head_on_action",
     "build_ignore_leader_action",
@@ -827,6 +828,30 @@ def build_adversarial_cut_in_action(
     assert compiled.actor_role is not None  # noqa: S101 -- required by the spec
     params = compiled.params
     return AdversarialCutInAction(
+        entity_name=compiled.actor_role,
+        location=AdversityLocation[str(params["location"]).upper()],
+        condition=condition,
+        timing=timing,
+        label=compiled.label,
+        once=compiled.node.once,
+        following_mode=TrajectoryFollowingMode[str(params["following_mode"]).upper()],
+    )
+
+
+def build_adversarial_merge_action(
+    compiled: "CompiledAction",
+    condition: "BaseCondition | None",
+    timing: Any,
+    ctx: "BuildContext",
+) -> "BaseAction":
+    """Build an :class:`AdversarialMergeAction`."""
+    from ..actions.adversarial import AdversarialMergeAction  # noqa: PLC0415
+    from ..actions.adversarial import AdversityLocation  # noqa: PLC0415
+    from ..actions.adversarial import TrajectoryFollowingMode  # noqa: PLC0415
+
+    assert compiled.actor_role is not None  # noqa: S101 -- required by the spec
+    params = compiled.params
+    return AdversarialMergeAction(
         entity_name=compiled.actor_role,
         location=AdversityLocation[str(params["location"]).upper()],
         condition=condition,
