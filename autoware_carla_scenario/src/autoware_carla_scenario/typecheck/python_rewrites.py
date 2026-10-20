@@ -28,6 +28,11 @@ so a rewrite has to keep the *types*, not the values, of what it replaces.
   up in the lambda: "name '%_k_930' is not defined"), becomes
   ``(lambda k: lambda x: ...)(k)``: the default is bound by a call, as Python
   binds it once.  The captured parameter can then no longer be passed.
+
+Refused with a hint, as no cheap faithful rewrite exists (#379): a ``match``
+class, mapping (with a value pattern or ``**rest``), star or ``as`` pattern;
+and Codon's own refusals of ``f(*list)`` / ``f(**dict)`` and of a class passed
+where a ``Protocol`` is expected.
 """
 
 from __future__ import annotations
@@ -63,6 +68,29 @@ REWRITE_HINTS: tuple[tuple[re.Pattern[str], str], ...] = (
         "define __lt__ (the check adds the __gt__ and __ge__ Codon's sort "
         "calls), use @dataclass(order=True), or sort with key=",
     ),
+    (
+        re.compile(r"argument after \* must be a tuple, not '(?:List|Set)\["),
+        "Codon unpacks only a tuple with *: pass the elements "
+        "(f(xs[0], xs[1])), or take the list as a parameter",
+    ),
+    (
+        re.compile(r"argument after \*\* must be a named tuple, not 'Dict\["),
+        "Codon unpacks only a named tuple with **: pass the keywords "
+        "(f(a=d['a'], b=d['b'])), or take the dict as a parameter",
+    ),
+    (
+        # Only a Protocol (or any class) can be expected where a class is
+        # not what the argument derives from; a builtin's name is lowercase.
+        re.compile(
+            r"'[^']+' does not match expected type "
+            r"'(?:(?:List|Set|Optional)\[)*"
+            r"(?!(?:List|Dict|Set|Tuple|Optional|Callable|Generator)\b)[A-Z]\w*"
+        ),
+        "if the expected type is a typing.Protocol, Codon matches classes by "
+        "name, not by shape: derive from the Protocol (class Sq(HasArea)), "
+        "give both a common base class, or annotate a Union of the classes (a "
+        "list is invariant: annotate it with the class it holds)",
+    ),
 )
 
 _ORDERING = ("__lt__", "__le__", "__gt__", "__ge__")
@@ -84,6 +112,58 @@ def _plain(node: ast.AST) -> bool:
     if isinstance(node, ast.Attribute):
         return _plain(node.value) and not isinstance(node.value, ast.Constant)
     return isinstance(node, ast.Name)
+
+
+#: The classes whose bare pattern (``case int():``) Codon compiles.
+_BUILTIN_PATTERNS = frozenset(
+    {"int", "float", "str", "bool", "bytes", "list", "dict", "tuple", "set"}
+)
+
+
+def _match_refusal(pattern: ast.AST) -> str | None:
+    """Why Codon 0.19 cannot compile *pattern*, a ``match`` pattern: it binds
+    no name inside a class, mapping or star pattern, and compiles a class
+    pattern's arguments as a call of the class (#379)."""
+    if isinstance(pattern, ast.MatchStar):
+        return (
+            "a star pattern (`case [a, *rest]`) is not supported by the check "
+            "(Codon: unexpected star expression): match the length with "
+            "`case [a, b]`, or test len(xs) and slice"
+        )
+    if isinstance(pattern, ast.MatchClass) and (
+        pattern.patterns
+        or pattern.kwd_patterns
+        or not (
+            isinstance(pattern.cls, ast.Name) and pattern.cls.id in _BUILTIN_PATTERNS
+        )
+    ):
+        return (
+            "a class pattern with arguments (`case int(n)`, `case Pt(x=x)`), or "
+            "of a class of your own (`case Pt()`), is not supported by the "
+            "check (Codon binds none of its names, and reads the pattern as a "
+            "call of the class): write isinstance(v, Pt), then read the "
+            "attributes (v.x); `case int():` and the like compile"
+        )
+    if isinstance(pattern, ast.MatchMapping) and (
+        pattern.rest is not None
+        or any(
+            not isinstance(p, (ast.MatchValue, ast.MatchSingleton))
+            for p in pattern.patterns
+        )
+    ):
+        return (
+            "a mapping pattern that binds or ignores a value (`case {'k': v}`) "
+            "is not supported by the check (Codon binds none of its names): "
+            "test `'k' in d` and read d['k'], or match literal values only "
+            "(`case {'k': 1}`)"
+        )
+    if isinstance(pattern, ast.MatchAs) and pattern.pattern is not None:
+        return (
+            "an `as` pattern (`case [a, b] as whole`) is not supported by the "
+            "check (Codon: unexpected indentation): match the subject "
+            "unnamed, and read the name it already has"
+        )
+    return None
 
 
 def _escaped(text: str) -> str:
@@ -168,6 +248,17 @@ class _Pass(ast.NodeVisitor):
         if kept:
             text = ast.unparse(ast.ImportFrom(module="functools", names=kept, level=0))
         self.edits.replace(*self.edits.node_span(node), text)
+
+    # -- match ... case ... -------------------------------------------------
+
+    def visit_Match(self, node: ast.Match) -> None:
+        for case in node.cases:
+            for sub in ast.walk(case.pattern):
+                message = _match_refusal(sub)
+                if message is not None:
+                    self._refuse(sub, message)
+                    break
+        self.generic_visit(node)
 
     # -- {**a, **b} ---------------------------------------------------------
 
