@@ -2123,6 +2123,10 @@ own hooks:</p>
 <td>When an action takes a vehicle over (a <code>FollowTrajectoryAction</code>). Stop driving it; may come before or after <code>start</code>.</td>
 </tr>
 <tr>
+<td><code>resume(entity, world)</code></td>
+<td>When an action that took a vehicle over hands it back (an adversarial manoeuvre is over). Drive it again from where it is; undoes <code>release</code>, may come before or after <code>start</code>.</td>
+</tr>
+<tr>
 <td><code>close()</code></td>
 <td>During teardown, while the world is still alive. Called even when the run failed.</td>
 </tr>
@@ -2208,6 +2212,15 @@ the backend to stop driving it first. The TrafficManager takes it off autopilot
 (and never puts it on, if <code>start</code> has not run yet); SUMO keeps it in its own
 simulation but publishes it from CARLA, as it does the ego. The base class does
 nothing, which is right for a backend that never drives the scenario's vehicles.</p>
+<p><code>resume(entity, world)</code> undoes it, for an action that hands the vehicle back
+when it is done (<code>entity.resume_traffic(world)</code>; <code>FollowTrajectoryAction</code>
+leaves its vehicle where the trajectory ends and does not): the TrafficManager
+puts it back on autopilot, keeping the desired speed and lane-change settings
+it had; SUMO drives it again from the pose it was published at, with the speed
+and lane-change modes and the desired speed it had before. A vehicle never
+released, or driven elsewhere from the start (an ego: <code>ExternallyDrivenEgo</code>
+refuses <code>resume_traffic</code>, and both backends ignore it), is left as it is, and
+saying it twice is harmless.</p>
 <h2 id="using-a-backend-from-python">Using a backend from Python<a class="headerlink" href="#using-a-backend-from-python" title="Permanent link">&para;</a></h2>
 <p>A scenario run built in code takes the backend the same way it takes the ego:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario</span><span class="w"> </span><span class="kn">import</span> <span class="n">NullTrafficBackend</span><span class="p">,</span> <span class="n">ScenarioQueue</span>
@@ -2438,7 +2451,7 @@ CARLA co-simulation; its adversarial behaviour generation is left to scenarios.<
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 19, 2026 09:49:21 UTC"><span class="timeago" datetime="2026-10-19T09:49:21+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 19, 2026 09:49:21 UTC">2026-10-19</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 20, 2026 05:05:34 UTC"><span class="timeago" datetime="2026-10-20T05:05:34+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 20, 2026 05:05:34 UTC">2026-10-20</span>
   </span>
 
     
