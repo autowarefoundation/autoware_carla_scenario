@@ -1,5 +1,5 @@
 # Lychee Link Checker Configuration
-# Documentation: https://lychee.cli.rs/usage/config/
+# Documentation: https://lychee.cli.rs/guides/config/
 
 # Cache configuration
 cache = true

@@ -39,5 +39,16 @@ file://.*
 # Placeholders in docstrings that describe URL shapes, not links.
 ^https?://(user@)?host/owner/repo
 ^https://huggingface\.co/datasets/OWNER/NAME
-# The git-lfs pointer format's version line, not a page.
-^https://git-lfs\.github\.com/spec/v1$
+# Placeholders in the tests: repositories and files that exist nowhere.
+^https://github\.com/owner/repo$
+^https://github\.com/(OWNER/NAME|o/n)(/|$)
+^https://huggingface\.co/datasets/O/N(/|$)
+^https?://x/
+# The git-lfs pointer format's version line, not a page (and as a test writes
+# it, with its newline escaped).
+^https://git-lfs\.github\.com/spec/v1(/n)?$
+# CARLA's nightly URL is written over two lines (carla_install.NIGHTLY_URL);
+# lychee reads the first, the bucket's directory, which is no page.
+^https://s3\.us-east-005\.backblazeb2\.com/carla-releases/Linux/Dev/$
+# ISO answers link checkers with 403; the standard's page is there.
+^https://www\.iso\.org/standard/

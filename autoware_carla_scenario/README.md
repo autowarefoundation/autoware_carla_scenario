@@ -1,6 +1,6 @@
 # Autoware CARLA Scenario
 
-A CARLA scenario testing framework for [Autoware](https://www.autoware.org/). Drives an Autoware ego vehicle through configurable scenarios in the [CARLA simulator](https://carla.org/), evaluates pass/fail conditions tick-by-tick, and produces JSON results plus a trajectory log of the run.
+A CARLA scenario testing framework for [Autoware](https://autoware.org/). Drives an Autoware ego vehicle through configurable scenarios in the [CARLA simulator](https://carla.org/), evaluates pass/fail conditions tick-by-tick, and produces JSON results plus a trajectory log of the run.
 
 It is typically run against OpenDRIVE maps produced by the `convert` CLI of [`autoware_lanelet2_to_opendrive`](https://github.com/hakuturu583/autoware_lanelet2_to_opendrive), but does not depend on it: the Lanelet2 and OpenDRIVE maps are loaded as two independent coordinate systems, related only through CARLA world coordinates.
 
