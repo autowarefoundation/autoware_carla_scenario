@@ -55,6 +55,7 @@ NOT_YET_CHECKED = "not yet checked (#45)"
 CHECKED: tuple[str, ...] = (
     "autoware_carla_scenario.action_state",
     "autoware_carla_scenario.actions",
+    "autoware_carla_scenario.actions._adversarial_execution",
     "autoware_carla_scenario.actions._departures",
     "autoware_carla_scenario.actions.background_traffic",
     "autoware_carla_scenario.actions.base",
@@ -70,6 +71,7 @@ CHECKED: tuple[str, ...] = (
     "autoware_carla_scenario.actions.walk_straight",
     "autoware_carla_scenario.adversity",
     "autoware_carla_scenario.adversity.collision",
+    "autoware_carla_scenario.adversity.command",
     "autoware_carla_scenario.adversity.geometry",
     "autoware_carla_scenario.adversity.idm",
     "autoware_carla_scenario.adversity.location",

@@ -11,6 +11,8 @@ The layers, bottom-up:
 * :mod:`.observation`: what an agent sees -- leader, follower, the lanes
   beside, the next signal, the road near a pedestrian -- from a snapshot of
   the agents (:mod:`.snapshot` takes it of a CARLA world).
+* :mod:`.command`: what a trigger answers with -- accelerate, change lanes,
+  follow a path -- and the timed path it drives (``actions`` drives it).
 
 Everything here works in the Lanelet2 map frame: ENU, right-handed, yaw in
 radians counter-clockwise from +x, positions at the agent's centre.  TeraSim
@@ -19,6 +21,7 @@ bumper); the port converts once, where an actor's state is read, and nowhere
 else.
 """
 
+from .command import AdversarialCommand, CommandKind, plan_command
 from .collision import collision_time, segments_intersect, trajectories_intersect
 from .geometry import (
     AgentFootprint,
@@ -41,6 +44,8 @@ from .prediction import (
 )
 
 __all__ = [
+    "AdversarialCommand",
+    "CommandKind",
     "DEFAULT_IDM",
     "AdversityLocation",
     "AgentFootprint",
@@ -56,6 +61,7 @@ __all__ = [
     "lane_change_longitudinal_speed",
     "location_matches",
     "location_of",
+    "plan_command",
     "predict_distance_velocity",
     "segments_intersect",
     "trajectories_intersect",
