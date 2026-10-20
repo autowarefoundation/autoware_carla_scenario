@@ -2619,7 +2619,7 @@ tree internally:</p>
 </tbody>
 </table>
 <h3 id="adversarial-actions-autoware_carla_scenarioactionsadversarial">Adversarial actions (<code>autoware_carla_scenario.actions.adversarial</code>)<a class="headerlink" href="#adversarial-actions-autoware_carla_scenarioactionsadversarial" title="Permanent link">&para;</a></h3>
-<p>TeraSim's phase-1 adversities, on a named NPC (exported from the top-level
+<p>TeraSim's adversities, on a named NPC (exported from the top-level
 package, not from <code>actions</code>, which would pull in the Lanelet2 map layer).
 Each takes the entity and a required <code>location</code> (<code>AdversityLocation</code>: <code>ANY</code>,
 <code>INTERSECTION</code>, <code>HIGHWAY</code>, <code>ROUNDABOUT</code>); its default trigger is an
@@ -2648,6 +2648,14 @@ trigger is asked on that tick: when it does not hold, nothing is done.
 <tr>
 <td><code>AdversarialCutInAction</code></td>
 <td>Change lane in front of a vehicle too close behind in the next lane (<code>CUT_IN</code>).</td>
+</tr>
+<tr>
+<td><code>LaneChangeAbortAction</code></td>
+<td>Start into the next lane in front of a vehicle too close behind there, drifting half a lane toward it, and swerve back, within 1 s (<code>LANE_CHANGE_ABORT</code>).</td>
+</tr>
+<tr>
+<td><code>HeadOnAction</code></td>
+<td>Drive on at a leader coming the other way: <code>IgnoreLeaderAction</code>'s command, where the lanelets the vehicle and its leader are on start more than 120 degrees apart (<code>HEAD_ON</code>).</td>
 </tr>
 <tr>
 <td><code>RunTrafficRuleAction</code></td>
@@ -3336,7 +3344,7 @@ imports the other.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 20, 2026 12:22:32 UTC"><span class="timeago" datetime="2026-10-20T12:22:32+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 20, 2026 12:22:32 UTC">2026-10-20</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 20, 2026 14:03:43 UTC"><span class="timeago" datetime="2026-10-20T14:03:43+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 20, 2026 14:03:43 UTC">2026-10-20</span>
   </span>
 
     
