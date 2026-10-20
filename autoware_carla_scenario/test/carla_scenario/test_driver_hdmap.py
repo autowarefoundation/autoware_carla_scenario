@@ -13,7 +13,7 @@ import sys
 import xml.etree.ElementTree as ElementTree
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Dict
+from typing import Dict, Set
 from unittest.mock import MagicMock
 
 import pytest
@@ -92,6 +92,33 @@ def _relations(osm: Path) -> Dict[str, ElementTree.Element]:
     }
 
 
+def _ways(osm: Path) -> Dict[str, Set[str]]:
+    """Each way's nodes."""
+    return {
+        str(way.get("id")): {str(nd.get("ref")) for nd in way.iter("nd")}
+        for way in ElementTree.parse(osm).getroot().iter("way")
+    }
+
+
+def _held(lanelet: ElementTree.Element) -> Set[str]:
+    """The regulatory elements a lanelet holds."""
+    return {
+        str(m.get("ref"))
+        for m in lanelet.iter("member")
+        if m.get("role") == "regulatory_element"
+    }
+
+
+def _bound_nodes(lanelet: ElementTree.Element, ways: Dict[str, Set[str]]) -> Set[str]:
+    """The nodes of a lanelet's two bounds."""
+    return {
+        node
+        for m in lanelet.iter("member")
+        if m.get("role") in ("left", "right")
+        for node in ways[str(m.get("ref"))]
+    }
+
+
 # ---------------------------------------------------------------------------
 # Writing
 # ---------------------------------------------------------------------------
@@ -157,16 +184,20 @@ def test_a_light_resolves_to_its_lanelet_and_regulatory_element(
     assert stop.position_local.tolist() == [99.0, -1.75, 0.0]
     assert len(stop.lane_ids) == 1 and stop.rule_ids and stop.light_ids
 
-    # Cross-check against the Lanelet2 file itself: the lanelet is the one that
-    # carries the regulatory element, and the element refers to the light.
+    # Cross-check against the Lanelet2 file itself. The lanelet is the approach
+    # the light stops; the regulatory element hangs, as in Autoware's maps, on the
+    # lanelet through the junction that the approach feeds (roadgen 0.35) -- one
+    # starting where the approach ends, with a turn_direction -- and refers to
+    # the light.
     relations = _relations(map_files.path)
-    lanelet = relations[stop.lane_ids[0]]
-    regulatory = [
-        m.get("ref")
-        for m in lanelet.iter("member")
-        if m.get("role") == "regulatory_element"
-    ]
-    assert set(stop.rule_ids) <= set(regulatory)
+    ways = _ways(map_files.path)
+    approach = relations[stop.lane_ids[0]]
+    assert not set(stop.rule_ids) & _held(approach)
+    carriers = [rel for rel in relations.values() if set(stop.rule_ids) <= _held(rel)]
+    assert carriers
+    for carrier in carriers:
+        assert _bound_nodes(carrier, ways) & _bound_nodes(approach, ways)
+        assert carrier.find("tag[@k='turn_direction']") is not None
     refers = {
         m.get("ref")
         for m in relations[stop.rule_ids[0]].iter("member")
