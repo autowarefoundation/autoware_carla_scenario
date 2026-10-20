@@ -470,7 +470,7 @@ scenario.py:70:9: error: BaseScenario.follow_with_spectator(): the getter must r
 are checked as openodd uses them (#279). `values=` must be `None`, an
 iterable (a list, a tuple, an empty one too, a set, a str, a range) or an
 enum class, the framework's (`values=TurnDirection`) or the scenario's own.
-Nothing is iterated by the check.
+Nothing is iterated, because iterating an enum class is not modelled.
 `ignore=` must be `None` or a callable that takes one value of the type
 `expression` returns, unwrapped from its `Optional`, since the collector never
 passes `None`. The model calls it with such a value, so its body is compiled
@@ -516,12 +516,11 @@ What `test_typecheck_model.py` compares, model by model:
 - **`constants.codon`**: every constant, by value (`EGO_ROLE_NAME` as
   `EntityRole.ego()`), and no name `constants.py` lacks.
 - **`route.codon`**: every name it declares -- `parse_anchor`,
-  `scenario_route`, `scenario_route_frame`, `RouteFrame`, `RouteMatch`,
-  `RouteSegmentMatch`, and `APPROACHES`, `CROSSWALK_LEGS` and `SIDES` by
-  value. The constructors of `RouteSegmentMatch` and `RouteMatch` are
-  generic: Python's are frozen dataclasses of tuples (`tuple[int, ...]`, a
-  `List[int]` here), which the model's take untyped, but they take the same
-  parameters, and an overload of none is a `compile_error` (Codon builds
+  `scenario_route`, `scenario_route_frame`, `RouteFrame`, `RouteMatch`, and
+  `APPROACHES`, `CROSSWALK_LEGS` and `SIDES` by value. `RouteMatch`'s
+  constructor is generic: Python's is a frozen dataclass of variadic tuples
+  (`tuple[int, ...]`), which Codon cannot express, but the model's takes the
+  same parameters, and an overload of none is a `compile_error` (Codon builds
   a class without fields with no arguments otherwise; see *What Codon builds
   by the fields* below), so a call Python refuses fails the check too.
 - **`trajectory.codon`**: beside its exports, `ResolvedTrajectory`,
@@ -572,8 +571,7 @@ What `test_typecheck_model.py` compares, model by model:
   constructor's parameter it is compared as (#298): the model declares it as
   a field or, where a field would change the constructor Codon generates
   (*What Codon builds by the fields*, below), as a read-only property
-  (`RouteMatch.lanelet_ids`, a `List[int]` for Python's `tuple[int, ...]`, and
-  `segments` and `junctions`, `List[RouteSegmentMatch]`;
+  (`RouteMatch.lanelet_ids`, a `List[int]` for Python's `tuple[int, ...]`;
   `TrajectoryVertex.position`, the union of the ten poses, which narrows
   with `isinstance` and passes on to a new `TrajectoryVertex`, and which
   the None check's pass refuses un-narrowed where one pose is expected,
@@ -611,7 +609,8 @@ What `test_typecheck_model.py` compares, model by model:
   `dict[str, Any]`: a condition's `get_details()` and `to_summary_dict()`,
   `to_dict()`, `describe()`, `RouteMatch.to_config()` and `from_config()`),
   the run's traffic backend (`set_traffic_backend()`, `traffic_backend`),
-  a field of `Any` (`ConditionStatus.details`,
+  `RouteMatch.junction()`, `junctions` and `segments` (a
+  `RouteSegmentMatch`), a field of `Any` (`ConditionStatus.details`,
   `RouteLanelet.values`, `OddModule.metadata`, `SweepConfig`'s Hydra
   mappings, `CoverItem`'s `expression`, `ignore` and `values`,
   `OddAttribute.probe`), a class held as a value (`BaseScenario.ego_type`:
@@ -1111,16 +1110,6 @@ Two things Python does that Codon 0.19 does not are filled in for you:
     **not** an `int` or a `str` otherwise: passing it to an `int` / `str`
     parameter or doing arithmetic on it (`M.A + 1`) is refused with a hint.
     Write `M.A.value`.
-  - An enum class is iterated and looked up by name as in Python (#377):
-    `for m in M`, `list(M)`, `len(M)`, `sorted(M)`, `x in M`, a
-    comprehension over `M` and `M["A"]` all compile, for a plain `Enum`, an
-    `IntEnum` and a `(str, Enum)`, and iteration skips an alias as Python
-    does. The check rewrites a bare name of an enum class of the checked
-    modules in those positions; an unknown name in `M["X"]` raises
-    `KeyError` at run time, not in the check. The enum class passed on as a
-    value (`f(M)`, `M.__members__`) is not rewritten: write `list(M)`. The
-    framework's own enums (the model's) are not iterable to the scenario
-    check.
   - A `class Pt(typing.NamedTuple)` is checked as a Codon `@tuple` class: its
     fields, defaults and methods, `==`, ordering, `hash()`, iteration and
     `len()` work. Codon indexes and unpacks it (`p[0]`, `x, y = p`) only when
@@ -1228,10 +1217,8 @@ The known gaps:
   (a `@tuple`, so iterable to Codon) passes too, and so does an element type
   `expression` never returns.
 - **An enum member looked up by value** (`ActionState("completeState")`) is
-  typed, but not resolved to the member (it makes an instance of the class,
-  not the member, since nothing the check compiles runs). Iterating over a
-  scenario's own enum and looking a member up by name are supported (see
-  "Your own dataclasses, enums and named tuples" above, #377).
+  typed, but not resolved to the member; looking a member up by name and
+  iterating over the enum are not modelled.
 - **typesafe_carla's Python-API compatibility shortcuts** (a `Vehicle`
   method called on a plain `Actor`) compile, as they do outside its strict
   mode.
@@ -1336,8 +1323,8 @@ To check one more module:
 
 ### What is checked of the framework
 
-Every module now has an entry other than `"not yet checked (#45)"`. 176 of
-the package's 268 modules (66%; about 44,400 of 79,600 lines) are `CHECKED`:
+Every module now has an entry other than `"not yet checked (#45)"`. 177 of
+the package's 269 modules (66%; about 44,400 of 79,600 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the conversions between
 Lanelet2, OpenDRIVE and CARLA world poses (`coordinate.transform`), the stop
 lines read off a Lanelet2 map (`utils.stop_line`, `coordinate.stop_line`)
@@ -1382,7 +1369,7 @@ the `scenario_bridge` node's command and Python root beside it
 (`autoware_stack.bridge_node`) and the one that runs a workspace in its dev
 container with Docker (`autoware_stack.docker`, over a model of
 `autoware_stack.devcontainer`, which reads JSON and YAML), the Autoware
-bridge interface and its fake, the trajectory model, the adversity math
+bridge interface and its fake, the trajectory model, the adversity math and location gate
 (`adversity`), the measures and the metrics, the ODD
 unit names (`odd.unit_names`), the ODD's probes, which read its attributes off
 the world and, for those the Lanelet2 map decides, off a lanelet
@@ -2908,6 +2895,15 @@ What Codon 0.19 needs that Python does not, beyond
   class as a value, and cannot type `dict[str, type]`. Declare it
   `dict[str, Any]` and assign it in the `else` branch of `if TYPE_CHECKING:`;
   only the uncalled parser reads it.
+- **An enum member looked up by name, or an enum iterated over**
+  (`ComparisonRule[name]`, `for r in ComparisonRule`): the `enum` shim models
+  neither. `sweeper.constraints._comparison_rule()` looks the member up in a
+  list of the members spelled out under `if TYPE_CHECKING:`, and by name in
+  the `else` branch; `LaneletLengthConstraint.__post_init__()` validates its
+  rule against the names of the same members, spelled out again under
+  `if TYPE_CHECKING:`, and of `list(ComparisonRule)` in the `else` branch.
+  The run never reads the spelled-out lists, so `test_typecheck_model.py`
+  compares each with the enum's members.
 - **An exception class raised with no arguments** (`raise _Exhausted()` in
   `route.search`): Codon 0.19 raises no exception class without its own
   `__init__`, and its `Exception` takes a message where Python's takes none.
