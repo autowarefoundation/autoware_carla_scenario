@@ -918,6 +918,6 @@ def test_an_overlap_within_one_long_segment_is_found() -> None:
     assert asked == [_RIVAL_STEP_M / 2 + i * _RIVAL_STEP_M for i in range(7)]
     asked.clear()
     # Heading the other way along the lane: not a rival.
-    line = SimpleNamespace(project=lambda x, y: (x, 0.0, 3.14159))
+    line = SimpleNamespace(project=lambda x, y: (x, 0.0, math.pi))
     assert not _runs_inside(area, line, [0.0, 10.0], [0.0, 0.0], 0.1)  # type: ignore[arg-type]
     assert len(asked) == 10
