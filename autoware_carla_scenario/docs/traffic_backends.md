@@ -400,6 +400,7 @@ mirrored. `traffic.options.net_path` runs on an existing `.net.xml` instead.
 | Scenario NPCs, autopilot ego | the TrafficManager (`scenario_vehicles=traffic_manager`, default), or SUMO (`scenario_vehicles=sumo`) | published, or driven |
 | Ambient traffic (`randomTrips.py`) | SUMO | native; mirrored into CARLA |
 | Pedestrians (`walker.pedestrian.*`, e.g. `WalkStraightAction`) | CARLA | published as SUMO persons (`publish_walkers`, on by default) |
+| SUMO's pedestrians (`randomTrips.py --pedestrians`, `pedestrians.enabled`) | SUMO | native; mirrored into CARLA as walkers near the ego |
 
 A published vehicle has SUMO's speed and lane-change control switched off, so
 SUMO traffic sees it where CARLA has it and reacts to it. With the default the
@@ -413,6 +414,24 @@ crossing or anywhere else, or changes lanes round it. A person has to be added
 on an edge with a footway -- SUMO aborts the whole simulation when one is moved
 off an edge without -- so a pedestrian with no footway within 50 m (or on a
 network with none) is left out, with a warning.
+
+**SUMO's own pedestrians** (`pedestrians`, off by default) walk the network's
+footways (`randomTrips.py --pedestrians`, unweighted, up to `max_distance_m`
+each) and are mirrored into CARLA as walkers (`blueprint`, with the role name
+`sumo:<id>`) while they are near the ego or a vehicle CARLA drives: within
+`radius_m`, kept until 1.25 times as far, at most `max_persons` of them, the
+nearest first. With `radius_m: null` the radii are `mesoscopic`'s when that is
+enabled; otherwise every one is mirrored. The rest walk on in SUMO only, where
+SUMO's traffic still sees them. A walker is put where its person was at the
+start of the step and walked at its speed (`WalkerControl`), so CARLA animates
+it; it is never published back into SUMO as one of CARLA's pedestrians. How
+well they cross roads is the network's: a network built without crossings and
+walking areas has its pedestrians jump between footways at junctions.
+
+```bash
+uv run scenario ... traffic=sumo traffic.options.pedestrians.enabled=true \
+    traffic.options.pedestrians.radius_m=80
+```
 
 **Stepping**: one SUMO step per CARLA tick, with the step length set to the
 world's `fixed_delta_seconds` and the seed to the scenario's. CARLA poses are

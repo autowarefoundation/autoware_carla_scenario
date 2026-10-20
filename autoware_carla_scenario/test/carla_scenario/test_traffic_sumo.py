@@ -29,7 +29,10 @@ from autoware_carla_scenario.traffic import (
     build_backend,
 )
 from autoware_carla_scenario.traffic.fidelity import MesoscopicConfig
-from autoware_carla_scenario.traffic.sumo.config import SumoBackendConfig
+from autoware_carla_scenario.traffic.sumo.config import (
+    PedestrianConfig,
+    SumoBackendConfig,
+)
 from autoware_carla_scenario.traffic.sumo.geometry import (
     Pose2D,
     carla_to_sumo,
@@ -214,6 +217,9 @@ class _FakeActor:
 
     def disable_constant_velocity(self) -> None:
         self.constant_velocity = None
+
+    def apply_control(self, control: Any) -> None:
+        self.control = control
 
     def destroy(self) -> bool:
         self.destroyed = True
@@ -1392,3 +1398,124 @@ def test_only_the_traffic_near_the_ego_is_in_sumo_and_carla(
     finally:
         backend.close()
     assert backend._meso is None
+
+
+# ---------------------------------------------------------------------------
+# SUMO's own pedestrians
+# ---------------------------------------------------------------------------
+
+
+def test_the_pedestrian_options_are_checked() -> None:
+    config = SumoBackendConfig.from_mapping(
+        {"pedestrians": {"enabled": True, "period_s": 2.0, "radius_m": 40.0}}
+    )
+    assert config.pedestrians.enabled and config.pedestrians.period() == 2.0
+    assert PedestrianConfig(persons_per_hour=1800).period() == pytest.approx(2.0)
+    assert not SumoBackendConfig().pedestrians.enabled
+    with pytest.raises(ValueError):
+        PedestrianConfig(radius_m=0.0)
+
+
+def _walking(
+    crossroads: Path, tmp_path: Path, **pedestrians: Any
+) -> tuple[Any, _FakeWorld, _FakeActor]:
+    """A started backend generating SUMO pedestrians, with an ego published
+    from the west arm."""
+    from autoware_carla_scenario.traffic.sumo.backend import SumoTrafficBackend
+    from autoware_carla_scenario.traffic.sumo.config import AmbientTrafficConfig
+
+    config = SumoBackendConfig(
+        traffic_light_authority="none",
+        warmup_s=pedestrians.pop("warmup_s", 0.0),
+        vehicle_control="teleport",
+        cache_dir=str(tmp_path / "cache"),
+        ambient=AmbientTrafficConfig(enabled=False),
+        pedestrians=PedestrianConfig(enabled=True, period_s=0.5, **pedestrians),
+    )
+    backend = SumoTrafficBackend(config)
+    backend.prepare(
+        TrafficContext(
+            xodr_path=crossroads,
+            fixed_delta_seconds=0.05,
+            random_seed=3,
+            output_dir=tmp_path / "out",
+        )
+    )
+    ego = _FakeActor(_carla_transform(-100.0, 1.75, 0.0), str(EGO_ROLE_NAME))
+    world = _FakeWorld([ego])
+    backend.adopt(_Entity(ego, str(EGO_ROLE_NAME)))
+    backend.start(world, skip_actor_ids={ego.id})
+    return backend, world, ego
+
+
+def _mirrors(world: _FakeWorld) -> list[_FakeActor]:
+    return [
+        a
+        for a in world.spawned
+        if a.attributes["role_name"].startswith("sumo:sumoped") and not a.destroyed
+    ]
+
+
+@needs_sumo
+def test_sumos_pedestrians_walk_in_carla_as_walkers(
+    crossroads_with_sidewalks: Path, tmp_path: Path
+) -> None:
+    backend, world, _ego = _walking(crossroads_with_sidewalks, tmp_path, warmup_s=20.0)
+    tc = backend._traci
+    try:
+        assert (tmp_path / "out" / "sumo" / "pedestrians.rou.xml").is_file()
+        for i in range(40):
+            backend.tick(world, i * 0.05)
+        mirrors = _mirrors(world)
+        assert mirrors and len(mirrors) == len(backend._persons)
+        for person, walker in backend._persons.items():
+            x, y = tc.person.getPosition(person)
+            location = walker.transform.location
+            # Where SUMO has it (CARLA's y mirrored), a step behind at most.
+            assert math.hypot(location.x - x, location.y + y) < 0.5
+        walking = [w for w in mirrors if getattr(w, "control", None) is not None]
+        assert any(w.control.speed > 0.5 for w in walking)
+
+        # A mirror is CARLA's walker, but not one to publish back into SUMO.
+        for walker in mirrors:
+            walker.type_id = "walker.pedestrian.0001"
+        world.actors.extend(mirrors)
+        backend.tick(world, 2.0)
+        assert backend._walkers == {}
+    finally:
+        backend.close()
+    assert _mirrors(world) == []
+    assert backend._persons == {}
+
+
+@needs_sumo
+def test_only_the_pedestrians_near_the_ego_are_in_carla(
+    crossroads_with_sidewalks: Path, tmp_path: Path
+) -> None:
+    backend, world, ego = _walking(
+        crossroads_with_sidewalks, tmp_path, warmup_s=60.0, radius_m=40.0
+    )
+    tc = backend._traci
+    try:
+        for i in range(100):
+            backend.tick(world, i * 0.05)
+        assert backend._persons, "no pedestrian came near"
+        assert len(backend._persons) < tc.person.getIDCount()
+        focus = backend._carla_pose_to_sumo(ego)
+        for person in backend._persons:
+            x, y = tc.person.getPosition(person)
+            assert math.hypot(x - focus.x, y - focus.y) <= 50.0 + 1.0
+        limited, world2, _ = _walking(
+            crossroads_with_sidewalks,
+            tmp_path / "limited",
+            warmup_s=60.0,
+            max_persons=1,
+        )
+        try:
+            for i in range(10):
+                limited.tick(world2, i * 0.05)
+            assert len(limited._persons) == 1
+        finally:
+            limited.close()
+    finally:
+        backend.close()

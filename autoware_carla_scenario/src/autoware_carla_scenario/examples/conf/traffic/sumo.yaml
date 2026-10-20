@@ -35,6 +35,16 @@ traffic:
     ambient:
       enabled: false
       vehicles_per_hour: 900
+    # SUMO's own pedestrians (randomTrips --pedestrians), mirrored into CARLA
+    # as walkers within radius_m of the ego (null: mesoscopic's radii when
+    # enabled, everywhere otherwise).
+    pedestrians:
+      enabled: false
+      persons_per_hour: 600
+      max_distance_m: 500.0
+      radius_m: null
+      max_persons: null
+      blueprint: walker.pedestrian.0001
     # SUMO seconds simulated before the scenario clock starts.
     warmup_s: 30.0
     # Mirror only the nearest SUMO vehicles into CARLA (null: all of them).
