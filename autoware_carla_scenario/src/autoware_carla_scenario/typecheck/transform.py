@@ -116,6 +116,13 @@ which :func:`transform_source_lines` maps back onto the handler):
   annotation naming a module-level ``TypeVar`` (which types such a wrapper
   for mypy) is dropped.
 
+* Iterating over an Enum class (``for m in Mode``, ``list(Mode)``,
+  ``len(Mode)``, ``sorted(Mode)``, ``x in Mode``, a comprehension source)
+  reads ``Mode._acs_members()`` and ``Mode[name]`` reads
+  ``Mode._acs_by_name(name)``: two static methods added to each Enum class
+  after the module, as is its lookup by value.  The Enum classes of other
+  modules are named by *enum_classes* (:func:`enum_class_names`).
+
 * ``return None`` (and a bare ``return``) of a function whose kept return
   annotation is ``Optional[X]`` becomes ``return Optional[X]()``: a bare
   ``None`` is Codon's ``NoneType``, which cannot be typed as one (#202).
@@ -149,6 +156,7 @@ __all__ = [
     "UndeclaredAttribute",
     "class_declarations",
     "classes_with_init",
+    "enum_class_names",
     "inherited_inits",
     "redirect_imports",
     "relative_module_imports",
@@ -894,10 +902,10 @@ class _Rewriter(ast.NodeVisitor):
         #: Codon (whose ``typing`` shim makes a ``TypeVar`` a string) cannot
         #: type with it.
         self._type_vars: set[str] = set()
-        #: Enum classes rewritten at the module's top level, with the type of
-        #: their values: each is given a constructor by value
+        #: Enum classes rewritten at the module's top level: each is given a
+        #: constructor by value, a list of its members and a lookup by name
         #: (:func:`_enum_lookups`).
-        self.enums: list[tuple[str, str]] = []
+        self.enums: list[_EnumInfo] = []
         #: Local name -> the ``functools`` name it is imported as.
         self._functools_names: dict[str, str] = {}
         #: Local names of the ``functools`` module.
@@ -1364,6 +1372,8 @@ class _Rewriter(ast.NodeVisitor):
                 return None
         flag = kind in {"Flag", "IntFlag"}
         last = 0
+        seen_values: set[str] = set()
+        listed: list[str] = []
         for stmt, name, value in members:
             if is_auto(value):
                 if value_type == "str":
@@ -1375,6 +1385,11 @@ class _Rewriter(ast.NodeVisitor):
                 if isinstance(value, ast.Constant) and isinstance(value.value, int):
                     last = value.value
                 text = self.edits.text(*self.edits.node_span(value))
+            # A member whose value repeats an earlier one is an alias, which
+            # iterating over the enum skips.
+            if text not in seen_values or is_auto(value):
+                listed.append(name)
+            seen_values.add(text)
             self.edits.replace(
                 *self.edits.node_span(stmt),
                 f"{name}: ClassVar[{node.name}] = {node.name}({name!r}, {text})",
@@ -1391,7 +1406,9 @@ class _Rewriter(ast.NodeVisitor):
             shim = "_acs_StrEnum"
         self.edits.replace(first_start, last_end, f"{shim}[{value_type}]")
         if self._class_depth == 0 and self._function_depth == 0:
-            self.enums.append((node.name, value_type))
+            self.enums.append(
+                _EnumInfo(node.name, value_type, listed, [n for _, n, _ in members])
+            )
         return [stmt for stmt, _, _ in members]
 
     def _rewrite_tuple_default(self, value: ast.expr, annotation: ast.expr) -> bool:
@@ -1913,6 +1930,7 @@ def transform_source(
     source: str,
     dropped_decorators: Collection[str] = (),
     init_classes: Collection[str] = (),
+    enum_classes: Collection[str] = (),
 ) -> str:
     """Rewrite *source* for Codon; the result starts with :data:`PRELUDE`.
 
@@ -1924,13 +1942,16 @@ def transform_source(
     (:func:`classes_with_init`): a class of *source* deriving from one
     without an ``__init__`` of its own inherits it (:func:`inherited_inits`).
     """
-    return transform_source_lines(source, dropped_decorators, init_classes)[0]
+    return transform_source_lines(
+        source, dropped_decorators, init_classes, enum_classes
+    )[0]
 
 
 def transform_source_lines(
     source: str,
     dropped_decorators: Collection[str] = (),
     init_classes: Collection[str] = (),
+    enum_classes: Collection[str] = (),
 ) -> tuple[str, list[int]]:
     """:func:`transform_source`, and the line of *source* each line comes from.
 
@@ -1949,6 +1970,7 @@ def transform_source_lines(
     exceptions = _exception_classes(tree)
     rewriter = _Rewriter(edits, exceptions, dropped_decorators)
     rewriter.visit(tree)
+    enum_iteration(tree, edits, {e.name for e in rewriter.enums} | set(enum_classes))
     repeated_imports(tree, edits)
     lines = {
         node.name: origin[node.lineno - 1]
@@ -2163,8 +2185,161 @@ def conflicting_imports(source: str) -> list[tuple[int, str]]:
     return _import_plan(ast.parse(source))[1]
 
 
-def _enum_lookups(enums: list[tuple[str, str]]) -> list[tuple[str, str]]:
+@dataclass
+class _EnumInfo:
+    """A rewritten Enum class: its value type, iterated members, all names."""
+
+    name: str
+    value_type: str
+    members: list[str]
+    names: list[str]
+
+
+#: Builtins whose argument may be an enum class, which they iterate over.
+_ITERATING_BUILTINS = {
+    "list",
+    "tuple",
+    "set",
+    "frozenset",
+    "sorted",
+    "len",
+    "reversed",
+    "enumerate",
+    "iter",
+    "min",
+    "max",
+    "sum",
+    "any",
+    "all",
+    "zip",
+    "map",
+    "filter",
+}
+
+
+def enum_class_names(classes: Mapping[str, ast.ClassDef]) -> set[str]:
+    """The names of the Enum classes among *classes* (by their bases).
+
+    What another module's :func:`transform_source_lines` is given as
+    *enum_classes*: it iterates over, and looks up by name in, these too.
+    """
+    return {
+        name
+        for name, node in classes.items()
+        if any((_dotted(b) or "").rsplit(".", 1)[-1] in _ENUM_BASES for b in node.bases)
+    }
+
+
+class _EnumIteration(ast.NodeVisitor):
+    """Rewrite the iteration over, and the lookup by name in, an Enum class.
+
+    ``for m in Mode`` / ``list(Mode)`` / ``len(Mode)`` / ``x in Mode`` read
+    ``Mode._acs_members()``, and ``Mode[name]`` is ``Mode._acs_by_name(name)``
+    (:func:`_enum_lookups`).  Only a bare name of an Enum class is rewritten,
+    in place, so no line moves.
+    """
+
+    def __init__(self, edits: _Edits, enums: Collection[str]) -> None:
+        self.edits = edits
+        self.enums = enums
+        #: The names bound inside each enclosing function or lambda: a
+        #: parameter or local called like an Enum class is not that class.
+        self._bound: list[set[str]] = []
+
+    def _is_enum(self, node: ast.AST) -> bool:
+        return (
+            isinstance(node, ast.Name)
+            and node.id in self.enums
+            and not any(node.id in bound for bound in self._bound)
+        )
+
+    def _members(self, node: ast.AST) -> None:
+        if isinstance(node, ast.Name) and self._is_enum(node):
+            self.edits.replace(*self.edits.node_span(node), f"{node.id}._acs_members()")
+
+    def _scope(self, node: ast.AST, args: ast.arguments) -> None:
+        bound = {a.arg for a in (*args.posonlyargs, *args.args, *args.kwonlyargs)}
+        bound.update(a.arg for a in (args.vararg, args.kwarg) if a is not None)
+        for child in ast.walk(node):
+            if isinstance(child, ast.Name) and isinstance(child.ctx, ast.Store):
+                bound.add(child.id)
+            elif isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                bound.add(child.name)
+        self._bound.append(bound)
+        for attr, value in ast.iter_fields(node):
+            if attr == "returns":
+                continue  # an annotation (`Mode[int]`), not an expression
+            for item in value if isinstance(value, list) else [value]:
+                if isinstance(item, ast.AST):
+                    self.visit(item)
+        self._bound.pop()
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        self._scope(node, node.args)
+
+    visit_AsyncFunctionDef = visit_FunctionDef  # type: ignore[assignment]
+
+    def visit_Lambda(self, node: ast.Lambda) -> None:
+        self._scope(node, node.args)
+
+    def visit_arg(self, node: ast.arg) -> None:
+        pass  # an annotation is not an expression to evaluate
+
+    def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
+        if node.value is not None:
+            self.visit(node.value)
+
+    def visit_For(self, node: ast.For) -> None:
+        self._members(node.iter)
+        self.generic_visit(node)
+
+    def visit_comprehension(self, node: ast.comprehension) -> None:
+        self._members(node.iter)
+        self.generic_visit(node)
+
+    def visit_Starred(self, node: ast.Starred) -> None:
+        self._members(node.value)
+        self.generic_visit(node)
+
+    def visit_Call(self, node: ast.Call) -> None:
+        if isinstance(node.func, ast.Name) and node.func.id in _ITERATING_BUILTINS:
+            for arg in node.args:
+                self._members(arg)
+        self.generic_visit(node)
+
+    def visit_Compare(self, node: ast.Compare) -> None:
+        for op, right in zip(node.ops, node.comparators):
+            if isinstance(op, (ast.In, ast.NotIn)):
+                self._members(right)
+        self.generic_visit(node)
+
+    def visit_Subscript(self, node: ast.Subscript) -> None:
+        value = node.value
+        if (
+            isinstance(value, ast.Name)
+            and self._is_enum(value)
+            and isinstance(node.ctx, ast.Load)
+        ):
+            _, value_end = self.edits.node_span(value)
+            slice_start, slice_end = self.edits.node_span(node.slice)
+            _, end = self.edits.node_span(node)
+            self.edits.replace(value_end, slice_start, "._acs_by_name(")
+            self.edits.replace(slice_end, end, ")")
+        self.generic_visit(node)
+
+
+def enum_iteration(tree: ast.Module, edits: _Edits, enums: Collection[str]) -> None:
+    """Apply :class:`_EnumIteration` to *tree* for the Enum classes *enums*."""
+    if enums:
+        _EnumIteration(edits, enums).visit(tree)
+
+
+def _enum_lookups(enums: list[_EnumInfo]) -> list[tuple[str, str]]:
     """A constructor by value (``Color("red")``) for each rewritten Enum class.
+
+    Also its members as a list (``Color._acs_members()``, what iterating over
+    the class reads) and a lookup by name (``Color._acs_by_name("RED")``,
+    what ``Color["RED"]`` reads; ``KeyError`` for an unknown name).
 
     Codon gives a class without an ``__init__`` one that takes each field
     (``Color("RED", "red")``, what a member is built with); the lookup by
@@ -2173,18 +2348,33 @@ def _enum_lookups(enums: list[tuple[str, str]]) -> list[tuple[str, str]]:
     member, which nothing the check compiles needs, since nothing runs.
     Each is (the class, the lines appended).
     """
-    return [
-        (
-            name,
-            (
-                f"\n\n@extend\nclass {name}:\n"
-                f"    def __init__(self, value: {value_type}):\n"
-                f'        self._name_ = ""\n'
-                f"        self._value_ = value\n"
-            ),
+    out = []
+    for info in enums:
+        name = info.name
+        listing = ", ".join(f"{name}.{m}" for m in info.members)
+        lookups = "".join(
+            f"        if name == {n!r}:\n            return {name}.{n}\n"
+            for n in info.names
         )
-        for name, value_type in enums
-    ]
+        out.append(
+            (
+                name,
+                (
+                    f"\n\n@extend\nclass {name}:\n"
+                    f"    def __init__(self, value: {info.value_type}):\n"
+                    f'        self._name_ = ""\n'
+                    f"        self._value_ = value\n"
+                    f"\n    @staticmethod\n"
+                    f"    def _acs_members() -> List[{name}]:\n"
+                    f"        return [{listing}]\n"
+                    f"\n    @staticmethod\n"
+                    f"    def _acs_by_name(name: str) -> {name}:\n"
+                    f"{lookups}"
+                    f"        raise KeyError(name)\n"
+                ),
+            )
+        )
+    return out
 
 
 #: Bases of a dataclass that add no field and no generated method.

@@ -169,8 +169,6 @@ def solve_along(
     )
 
 
-#: The role name of the vehicle :func:`vehicle_bumpers` spawns to measure.
-_PROBE_ROLE = BUMPER_PROBE_ROLE_NAME
 #: Where :func:`vehicle_bumpers` spawns it: this high above the map's origin,
 #: clear of everything on the road, and higher by as much again if that fails.
 _PROBE_HEIGHT_M = 500.0
@@ -242,7 +240,7 @@ def vehicle_bumpers(world: carla.World, vehicle_type: str) -> Bumpers:
             f"vehicle_bumpers(): {vehicle_type!r} is not a vehicle blueprint"
         )
     blueprint = library.find(vehicle_type)
-    blueprint.set_attribute("role_name", _PROBE_ROLE)
+    blueprint.set_attribute("role_name", BUMPER_PROBE_ROLE_NAME)
     for attempt in range(1, 4):
         at = carla.Transform(
             carla.Location(x=0.0, y=0.0, z=_PROBE_HEIGHT_M * attempt),

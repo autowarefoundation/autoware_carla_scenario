@@ -61,7 +61,10 @@ __all__ = [
     "in_junction",
     "intensity_level",
     "lane_count",
+    "lanelet_in_junction",
     "lanelet_location",
+    "lanelet_road_type",
+    "lanelet_speed_limit",
     "lanelet_speed_limit_kph",
     "lanelet_subtype",
     "pedestrian_nearby",
@@ -525,8 +528,11 @@ def _tag(lanelet: ConstLanelet, key: str) -> Optional[str]:
     return None
 
 
-def _is_junction_lanelet(lanelet: ConstLanelet) -> bool:
+def lanelet_in_junction(lanelet: ConstLanelet) -> bool:
     """Whether *lanelet* lies in a junction: it has a ``turn_direction`` tag.
+
+    What ``in_junction`` reads off a lanelet (``scenery.junction`` of the
+    default ODD); the adversities' location gate reads the same.
 
     Autoware's Lanelet2 maps tag every lanelet inside an intersection with
     ``turn_direction`` (``straight``, ``left`` or ``right``), and only those;
@@ -538,12 +544,14 @@ def _is_junction_lanelet(lanelet: ConstLanelet) -> bool:
 def _in_junction_on_lanelet(
     lanelet: ConstLanelet, lanelet_map: LaneletMap, routing_graph: RoutingGraph
 ) -> Optional[bool]:
-    return _is_junction_lanelet(lanelet)
+    return lanelet_in_junction(lanelet)
 
 
-def _lanelet_speed_limit_on_lanelet(
-    lanelet: ConstLanelet, lanelet_map: LaneletMap, routing_graph: RoutingGraph
-) -> Optional[float]:
+def lanelet_speed_limit(lanelet: ConstLanelet) -> Optional[float]:
+    """*lanelet*'s ``speed_limit`` tag in km/h, or None untagged or not a number.
+
+    What ``lanelet_speed_limit_kph`` reads off a lanelet.
+    """
     tag = _tag(lanelet, "speed_limit")
     if tag is None:
         return None
@@ -551,6 +559,21 @@ def _lanelet_speed_limit_on_lanelet(
         return float(tag)
     except ValueError:
         return None
+
+
+def lanelet_road_type(lanelet: ConstLanelet) -> Optional[str]:
+    """*lanelet*'s ``subtype`` tag (road, highway, ...), or None.
+
+    What ``lanelet_subtype`` reads off a lanelet (``scenery.road_type`` of
+    the default ODD).
+    """
+    return _tag(lanelet, "subtype")
+
+
+def _lanelet_speed_limit_on_lanelet(
+    lanelet: ConstLanelet, lanelet_map: LaneletMap, routing_graph: RoutingGraph
+) -> Optional[float]:
+    return lanelet_speed_limit(lanelet)
 
 
 def _speed_limit_on_lanelet(
@@ -587,7 +610,7 @@ def _lane_count_on_lanelet(
 ) -> Optional[int]:
     # As the run reads it: nothing inside a junction, and every lane in the
     # same direction, whether or not a lane change into it is allowed.
-    if _is_junction_lanelet(lanelet):
+    if lanelet_in_junction(lanelet):
         return None
     seen = {lanelet.id}
     for left in (True, False):
@@ -610,7 +633,7 @@ def _location_on_lanelet(
 def _subtype_on_lanelet(
     lanelet: ConstLanelet, lanelet_map: LaneletMap, routing_graph: RoutingGraph
 ) -> Optional[str]:
-    return _tag(lanelet, "subtype")
+    return lanelet_road_type(lanelet)
 
 
 # Each probe the map decides has the function reading it off a lanelet as its

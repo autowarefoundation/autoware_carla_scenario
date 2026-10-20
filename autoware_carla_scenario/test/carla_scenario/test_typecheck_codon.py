@@ -3886,18 +3886,68 @@ def test_a_scenario_reads_a_frozen_dataclass_s_fields(tmp_path: Path) -> None:
     assert result.ok, result.format()
 
 
+_SEGMENT_READS = """
+self._setup_ego_spawn()
+match = scenario_route()
+if match is not None:
+    for segment in match.segments:
+        logger.info("%s %f %f %f", segment.kind, segment.start, segment.end, segment.length)
+        logger.info("%s %d", segment.turn, len(segment.lanelet_ids))
+    for junction in match.junctions:
+        logger.info("%s %d", junction.turn, junction.lanelet_ids[0])
+    if len(match.junctions) > 0:
+        first = match.junction(0)
+        logger.info("%s %f %f", first.turn, first.start, first.end)
+"""
+
+
+def test_a_scenario_reads_the_route_s_segments_and_junctions(tmp_path: Path) -> None:
+    # RouteMatch.segments, junctions and junction() and RouteSegmentMatch were
+    # left out for a stale "variadic tuples have no Codon type" (#380).
+    scenario, config, _ = _write_case(
+        tmp_path, _SEGMENT_READS + _TIMEOUT_SETUP, header=_ROUTE_HEADER
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_a_scenario_misreading_the_route_s_segments_is_refused(
+    tmp_path: Path,
+) -> None:
+    # The segment fields are typed as Python types them: a length is a float
+    # and junction() takes an int index.
+    for number, (read, fragment) in enumerate(
+        (
+            ('logger.info("%s", match.segments[0].length + "x")', "match.segments[0]"),
+            ('logger.info("%s", match.junction("0").turn)', 'match.junction("0")'),
+            ("count = match.junctions[0].turn + 1", "match.junctions[0].turn"),
+        )
+    ):
+        setup = "self._setup_ego_spawn()\nmatch = scenario_route()\n"
+        setup += "if match is not None:\n    " + read + "\n"
+        case = tmp_path / str(number)
+        case.mkdir()
+        scenario, config, path = _write_case(
+            case,
+            setup + _TIMEOUT_SETUP,
+            header=_ROUTE_HEADER,
+        )
+        error = _only_error(typecheck_scenario(scenario, config))
+        assert error.line == _line_of(path, fragment), error.format()
+
+
 def test_a_dataclass_field_the_model_leaves_out_says_why(tmp_path: Path) -> None:
-    setup = _FIELD_READS.replace("match.lanelet_ids[0],", "len(match.segments),", 1)
+    setup = _FIELD_READS.replace("match.lanelet_ids[0],", "len(match.to_config()),", 1)
     scenario, config, path = _write_case(
         tmp_path, setup + _TIMEOUT_SETUP, header=_ROUTE_HEADER
     )
     error = _only_error(typecheck_scenario(scenario, config))
     assert "object has no attribute" in error.message, error.format()
     assert (
-        "RouteMatch.segments is not part of the Codon model, on purpose"
+        "RouteMatch.to_config is not part of the Codon model, on purpose"
         in error.message
     ), error.format()
-    assert error.line == _line_of(path, "match.segments")
+    assert error.line == _line_of(path, "match.to_config")
 
 
 _CROSS_SETUP = """
@@ -4359,6 +4409,54 @@ def test_an_int_enum_and_a_str_enum_compare_like_their_values(tmp_path: Path) ->
     scenario, config, _ = _data_case(tmp_path, _ENUMS, setup)
     result = typecheck_scenario(scenario, config)
     assert result.ok, result.format()
+
+
+_ITERATED_ENUMS = (
+    _ENUMS
+    + """
+
+class Plain(enum.Enum):
+    A = "a"
+    B = "b"
+    ALIAS = "a"
+"""
+)
+
+
+def test_an_enum_class_is_iterated_and_looked_up_by_name(tmp_path: Path) -> None:
+    # `for m in Mode`, `list(Mode)`, `len(Mode)` and `Mode["A"]` (#377).
+    setup = """
+        assert [m.name for m in Plain] == ["A", "B"]
+        assert len(list(Plain)) == 2 and len(Plain) == 2
+        assert Plain["B"].value == "b" and Plain["ALIAS"] is not None
+        assert {m: m.value for m in Plain}[Plain.A] == "a"
+        assert [m.value for m in Mode] == ["fast", "slow"]
+        assert sorted(Level)[0] == Level.LOW and max(Level) == Level.HIGH
+        assert Level["HIGH"] > Level["LOW"] and Mode["SLOW"] == "slow"
+        assert Mode.FAST in Mode and Plain.A in list(Plain)
+        names = {m.name.lower(): m for m in Level}
+        assert names["low"] == Level.LOW
+        total = 0
+        for i, m in enumerate(Level):
+            total += i + int(m)
+        assert total == 4
+        try:
+            Plain["X"]
+            assert False
+        except KeyError:
+            pass
+    """
+    scenario, config, _ = _data_case(tmp_path, _ITERATED_ENUMS, setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_an_error_in_an_iterated_enum_keeps_its_line(tmp_path: Path) -> None:
+    line = "r = [m.nope for m in Plain]"
+    scenario, config, path = _data_case(tmp_path, _ITERATED_ENUMS, f"{line}\n")
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert error.path == str(path)
+    assert error.line == _line_of(path, line)
 
 
 _NAMED_TUPLES = """
