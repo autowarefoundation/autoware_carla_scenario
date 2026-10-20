@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-__all__ = ["normalize_angle_deg"]
+import math
+
+__all__ = ["normalize_angle_deg", "normalize_angle_rad"]
 
 
 def normalize_angle_deg(angle: float) -> float:
@@ -13,3 +15,11 @@ def normalize_angle_deg(angle: float) -> float:
     compares two yaws needs the same answer.
     """
     return (angle + 180.0) % 360.0 - 180.0
+
+
+def normalize_angle_rad(angle: float) -> float:
+    """Return *angle* (radians) wrapped into ``[-pi, pi)``.
+
+    :func:`normalize_angle_deg` for radians.
+    """
+    return (angle + math.pi) % (2.0 * math.pi) - math.pi

@@ -239,6 +239,13 @@ planned route is checked before a run
 ([Checking a planned route](#checking-a-planned-route)) and how a sweep picks
 the road a drawn case is on ([The road a case is on](#the-road-a-case-is-on)).
 
+What they read off a lanelet is public too, for code that has to judge a
+lanelet exactly as the ODD does: `lanelet_in_junction(lanelet)` (a
+`turn_direction` tag, `scenery.junction`), `lanelet_road_type(lanelet)` (the
+`subtype` tag, `scenery.road_type`) and `lanelet_speed_limit(lanelet)` (the
+`speed_limit` tag, km/h). The adversities' location gate reads them
+(`autoware_carla_scenario.adversity.location`).
+
 Import them from `autoware_carla_scenario.odd` itself
 (`from autoware_carla_scenario.odd import rain`). The Codon model that checks
 an ODD has no `probes` submodule.

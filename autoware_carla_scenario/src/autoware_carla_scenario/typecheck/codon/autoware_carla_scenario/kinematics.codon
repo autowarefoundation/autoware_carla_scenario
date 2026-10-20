@@ -9,6 +9,10 @@ def normalize_angle_deg(angle: float) -> float:
     return (angle + 180.0) % 360.0 - 180.0
 
 
+def normalize_angle_rad(angle: float) -> float:
+    return (angle + 3.141592653589793) % 6.283185307179586 - 3.141592653589793
+
+
 class Vector3:
     x: float
     y: float

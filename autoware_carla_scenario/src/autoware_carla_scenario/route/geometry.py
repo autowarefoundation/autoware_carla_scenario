@@ -68,6 +68,7 @@ __all__ = [
     "Crosswalk",
     "JUNCTION_RADIUS_M",
     "JunctionMember",
+    "LaneSpan",
     "MapFeatures",
     "OPPOSITE_MIN_TURN_DEG",
     "OPPOSITE_SEARCH_M",
@@ -182,6 +183,39 @@ def _segment_intersection(
     return None
 
 
+@dataclass(frozen=True)
+class LaneSpan:
+    """A lanelet of a lane chain, and where it starts relative to an agent.
+
+    Attributes:
+        lanelet: The lanelet.
+        start: Its start, in metres along the chain from the agent: negative
+            for the agent's own lanelet (``-s``) and those behind it.
+        length: Its centreline length (m).
+    """
+
+    lanelet: ConstLanelet
+    start: float
+    length: float
+
+    @property
+    def end(self) -> float:
+        """Its end, in metres along the chain from the agent."""
+        return self.start + self.length
+
+
+def _nearest(frontier: list[LaneSpan], forward: bool) -> LaneSpan:
+    # The span nearest the agent: smallest start ahead, largest end behind.
+    index = 0
+    for i in range(1, len(frontier)):
+        if forward:
+            if frontier[i].start < frontier[index].start:
+                index = i
+        elif frontier[i].end > frontier[index].end:
+            index = i
+    return frontier.pop(index)
+
+
 class MapFeatures:
     """The questions a route search asks of a map, answered once per lanelet."""
 
@@ -262,6 +296,69 @@ class MapFeatures:
         return _straightest(
             self.graph.following(lanelet), _end_heading(lanelet), ahead=True
         )
+
+    def _walk(
+        self, own: LaneSpan, limit: float, forward: bool, skip: dict[int, LaneSpan]
+    ) -> dict[int, LaneSpan]:
+        """The spans reached from *own* within *limit*, ahead or behind.
+
+        Dijkstra over the following (or preceding) lanelets: a span is final
+        when it is popped, so one replaced by a nearer one is not expanded.
+        Lanelets in *skip* are not reached.
+        """
+        reached: dict[int, LaneSpan] = {int(own.lanelet.id): own}
+        frontier = [own]
+        while frontier:
+            current = _nearest(frontier, forward)
+            if reached[int(current.lanelet.id)] is not current:
+                continue
+            if forward:
+                if current.end > limit:
+                    continue
+                for following in self.following(current.lanelet):
+                    key = int(following.id)
+                    if key in skip or (
+                        key in reached and reached[key].start <= current.end
+                    ):
+                        continue
+                    span = LaneSpan(following, current.end, self.length(following))
+                    reached[key] = span
+                    frontier.append(span)
+            else:
+                if -current.start >= limit:
+                    continue
+                for previous in self.previous(current.lanelet):
+                    key = int(previous.id)
+                    if key in skip or (
+                        key in reached and reached[key].end >= current.start
+                    ):
+                        continue
+                    length = self.length(previous)
+                    span = LaneSpan(previous, current.start - length, length)
+                    reached[key] = span
+                    frontier.append(span)
+        return reached
+
+    def lane_chain(
+        self, lanelet: ConstLanelet, s: float, ahead: float, behind: float = 0.0
+    ) -> dict[int, LaneSpan]:
+        """The lanelets around an agent *s* metres along *lanelet*, by id.
+
+        What SUMO's ``getLeader``, ``getFollower`` and ``getNextTLS`` measure
+        along: a lanelet ahead is in the chain when it starts within *ahead*
+        metres, one behind when it ends less than *behind* metres behind
+        (none with the default 0).  Every branch of a fork or a junction is
+        followed, each by its shortest chain, without changing lanes; the
+        agent's own lanelet is always in it, and a lanelet both ahead and
+        behind (a loop) keeps its place ahead.
+        """
+        own = LaneSpan(lanelet, -s, self.length(lanelet))
+        chain = self._walk(own, ahead, True, {})
+        if behind > 0.0:
+            for key, span in self._walk(own, behind, False, chain).items():
+                if key not in chain:
+                    chain[key] = span
+        return chain
 
     # -- lanes beside --------------------------------------------------------
 
