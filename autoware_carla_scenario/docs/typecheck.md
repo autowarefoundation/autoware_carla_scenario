@@ -470,7 +470,7 @@ scenario.py:70:9: error: BaseScenario.follow_with_spectator(): the getter must r
 are checked as openodd uses them (#279). `values=` must be `None`, an
 iterable (a list, a tuple, an empty one too, a set, a str, a range) or an
 enum class, the framework's (`values=TurnDirection`) or the scenario's own.
-Nothing is iterated, because iterating an enum class is not modelled.
+Nothing is iterated by the check.
 `ignore=` must be `None` or a callable that takes one value of the type
 `expression` returns, unwrapped from its `Optional`, since the collector never
 passes `None`. The model calls it with such a value, so its body is compiled
@@ -1111,6 +1111,16 @@ Two things Python does that Codon 0.19 does not are filled in for you:
     **not** an `int` or a `str` otherwise: passing it to an `int` / `str`
     parameter or doing arithmetic on it (`M.A + 1`) is refused with a hint.
     Write `M.A.value`.
+  - An enum class is iterated and looked up by name as in Python (#377):
+    `for m in M`, `list(M)`, `len(M)`, `sorted(M)`, `x in M`, a
+    comprehension over `M` and `M["A"]` all compile, for a plain `Enum`, an
+    `IntEnum` and a `(str, Enum)`, and iteration skips an alias as Python
+    does. The check rewrites a bare name of an enum class of the checked
+    modules in those positions; an unknown name in `M["X"]` raises
+    `KeyError` at run time, not in the check. The enum class passed on as a
+    value (`f(M)`, `M.__members__`) is not rewritten: write `list(M)`. The
+    framework's own enums (the model's) are not iterable to the scenario
+    check.
   - A `class Pt(typing.NamedTuple)` is checked as a Codon `@tuple` class: its
     fields, defaults and methods, `==`, ordering, `hash()`, iteration and
     `len()` work. Codon indexes and unpacks it (`p[0]`, `x, y = p`) only when
@@ -1218,8 +1228,10 @@ The known gaps:
   (a `@tuple`, so iterable to Codon) passes too, and so does an element type
   `expression` never returns.
 - **An enum member looked up by value** (`ActionState("completeState")`) is
-  typed, but not resolved to the member; looking a member up by name and
-  iterating over the enum are not modelled.
+  typed, but not resolved to the member (it makes an instance of the class,
+  not the member, since nothing the check compiles runs). Iterating over a
+  scenario's own enum and looking a member up by name are supported (see
+  "Your own dataclasses, enums and named tuples" above, #377).
 - **typesafe_carla's Python-API compatibility shortcuts** (a `Vehicle`
   method called on a plain `Actor`) compile, as they do outside its strict
   mode.
@@ -2896,15 +2908,6 @@ What Codon 0.19 needs that Python does not, beyond
   class as a value, and cannot type `dict[str, type]`. Declare it
   `dict[str, Any]` and assign it in the `else` branch of `if TYPE_CHECKING:`;
   only the uncalled parser reads it.
-- **An enum member looked up by name, or an enum iterated over**
-  (`ComparisonRule[name]`, `for r in ComparisonRule`): the `enum` shim models
-  neither. `sweeper.constraints._comparison_rule()` looks the member up in a
-  list of the members spelled out under `if TYPE_CHECKING:`, and by name in
-  the `else` branch; `LaneletLengthConstraint.__post_init__()` validates its
-  rule against the names of the same members, spelled out again under
-  `if TYPE_CHECKING:`, and of `list(ComparisonRule)` in the `else` branch.
-  The run never reads the spelled-out lists, so `test_typecheck_model.py`
-  compares each with the enum's members.
 - **An exception class raised with no arguments** (`raise _Exhausted()` in
   `route.search`): Codon 0.19 raises no exception class without its own
   `__init__`, and its `Exception` takes a message where Python's takes none.

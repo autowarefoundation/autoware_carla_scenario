@@ -4411,6 +4411,54 @@ def test_an_int_enum_and_a_str_enum_compare_like_their_values(tmp_path: Path) ->
     assert result.ok, result.format()
 
 
+_ITERATED_ENUMS = (
+    _ENUMS
+    + """
+
+class Plain(enum.Enum):
+    A = "a"
+    B = "b"
+    ALIAS = "a"
+"""
+)
+
+
+def test_an_enum_class_is_iterated_and_looked_up_by_name(tmp_path: Path) -> None:
+    # `for m in Mode`, `list(Mode)`, `len(Mode)` and `Mode["A"]` (#377).
+    setup = """
+        assert [m.name for m in Plain] == ["A", "B"]
+        assert len(list(Plain)) == 2 and len(Plain) == 2
+        assert Plain["B"].value == "b" and Plain["ALIAS"] is not None
+        assert {m: m.value for m in Plain}[Plain.A] == "a"
+        assert [m.value for m in Mode] == ["fast", "slow"]
+        assert sorted(Level)[0] == Level.LOW and max(Level) == Level.HIGH
+        assert Level["HIGH"] > Level["LOW"] and Mode["SLOW"] == "slow"
+        assert Mode.FAST in Mode and Plain.A in list(Plain)
+        names = {m.name.lower(): m for m in Level}
+        assert names["low"] == Level.LOW
+        total = 0
+        for i, m in enumerate(Level):
+            total += i + int(m)
+        assert total == 4
+        try:
+            Plain["X"]
+            assert False
+        except KeyError:
+            pass
+    """
+    scenario, config, _ = _data_case(tmp_path, _ITERATED_ENUMS, setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_an_error_in_an_iterated_enum_keeps_its_line(tmp_path: Path) -> None:
+    line = "r = [m.nope for m in Plain]"
+    scenario, config, path = _data_case(tmp_path, _ITERATED_ENUMS, f"{line}\n")
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert error.path == str(path)
+    assert error.line == _line_of(path, line)
+
+
 _NAMED_TUPLES = """
 class Pt(typing.NamedTuple):
     x: int
