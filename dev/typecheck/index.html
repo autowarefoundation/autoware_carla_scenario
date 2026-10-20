@@ -1680,6 +1680,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#standard-library-names-codon-lacks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Standard library names Codon lacks
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -2054,6 +2065,17 @@
     <span class="md-ellipsis">
       
         The names of typing a scenario may import
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#standard-library-names-codon-lacks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Standard library names Codon lacks
       
     </span>
   </a>
@@ -3321,6 +3343,52 @@ in step:</p>
   unannotated (Codon makes it generic over them) instead of subclassing
   <code>Generic</code>, and write a <code>@dataclass</code> (or a <code>Dict[str, X]</code>) instead of a
   <code>TypedDict</code>.</li>
+</ul>
+<h3 id="standard-library-names-codon-lacks">Standard library names Codon lacks<a class="headerlink" href="#standard-library-names-codon-lacks" title="Permanent link">&para;</a></h3>
+<p>Codon ships its own <code>functools</code> (only <code>partial</code>), <code>itertools</code> and
+<code>collections</code>, and a name it lacks fails with a bare "cannot import name".
+The check supplies these (#378); <code>test_stdlib_names</code> keeps this list, the
+check's additions and the tests in step:</p>
+<!-- stdlib-names:start -->
+<p><code>functools.reduce</code>, <code>functools.lru_cache</code>, <code>functools.cache</code>,
+<code>functools.cached_property</code>, <code>itertools.pairwise</code>, <code>collections.OrderedDict</code></p>
+<!-- stdlib-names:end -->
+
+<ul>
+<li><code>functools.reduce</code> (with or without an initial value) is a function of the
+  model, which the check puts in place of the name.</li>
+<li><code>lru_cache</code> (with or without arguments), <code>cache</code> and <code>cached_property</code> are
+  decorators the check drops, as caching changes no type; <code>cached_property</code>
+  becomes a <code>property</code>. Nothing is cached, so <code>f.cache_clear()</code> and
+  <code>f.cache_info()</code> are refused, and so is assigning to a <code>cached_property</code>
+  attribute (<code>self.area = 3</code> is legal in Python, not on a <code>property</code>). A name
+  the module binds again (a parameter <code>reduce</code>, a <code>def cache</code>) is left alone.
+  The names are handled where the module imports them, not in a function.</li>
+<li>The initial value of <code>reduce</code> must have the type of the accumulator the
+  function returns: <code>reduce(add, [1.5, 2.5], 0)</code> is refused (write <code>0.0</code>).</li>
+<li><code>itertools.pairwise</code> is added to Codon's <code>itertools</code>, and
+  <code>collections.OrderedDict</code> is a <code>dict</code>, which keeps its insertion order;
+  <code>move_to_end()</code> and <code>popitem(last=...)</code> are not declared, and are
+  refused when called.</li>
+</ul>
+<p>These are refused at the import line, with a hint saying what to write
+instead:</p>
+<!-- stdlib-refused:start -->
+<p><code>dataclasses.asdict</code>, <code>functools.wraps</code>, <code>contextlib</code>, <code>warnings</code>, <code>json</code>,
+<code>types</code>, <code>textwrap</code></p>
+<!-- stdlib-refused:end -->
+
+<ul>
+<li><code>dataclasses.asdict</code> returns a <code>dict[str, Any]</code>: build the dict from the
+  fields you need. The <code>dataclasses</code> shim declares only <code>dataclass</code>, <code>field</code>
+  and <code>replace</code>.</li>
+<li><code>functools.wraps</code> (and any other name of <code>functools</code>, <code>itertools</code> or
+  <code>collections</code> not listed above) is not modelled.</li>
+<li><code>contextlib</code>: write a class with <code>__enter__</code> and <code>__exit__</code> for
+  <code>contextmanager</code>, and <code>try/except X: pass</code> for <code>suppress</code>. <code>warnings</code>: log
+  with <code>logger.warning</code>. <code>json</code>: read into a <code>@dataclass</code>. <code>types</code>: name the
+  type itself. <code>textwrap</code>: build the string with <code>str</code> methods. <code>traceback</code>
+  and <code>io</code> are refused likewise.</li>
 </ul>
 <h2 id="what-the-check-does-not-catch">What the check does not catch<a class="headerlink" href="#what-the-check-does-not-catch" title="Permanent link">&para;</a></h2>
 <p>The check compiles the scenario and never runs it, so it says nothing of
@@ -5118,7 +5186,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 20, 2026 12:22:32 UTC"><span class="timeago" datetime="2026-10-20T12:22:32+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 20, 2026 12:22:32 UTC">2026-10-20</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 20, 2026 12:34:35 UTC"><span class="timeago" datetime="2026-10-20T12:34:35+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 20, 2026 12:34:35 UTC">2026-10-20</span>
   </span>
 
     
