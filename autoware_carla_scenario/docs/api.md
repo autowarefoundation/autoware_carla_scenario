@@ -132,7 +132,7 @@ tree internally:
 
 ### Adversarial actions (`autoware_carla_scenario.actions.adversarial`)
 
-TeraSim's phase-1 adversities, on a named NPC (exported from the top-level
+TeraSim's adversities, on a named NPC (exported from the top-level
 package, not from `actions`, which would pull in the Lanelet2 map layer).
 Each takes the entity and a required `location` (`AdversityLocation`: `ANY`,
 `INTERSECTION`, `HIGHWAY`, `ROUNDABOUT`); its default trigger is an
@@ -148,6 +148,8 @@ trigger is asked on that tick: when it does not hold, nothing is done.
 | `AdversarialBrakeAction` | Brake hard in front of a follower that keeps coming (`BRAKE_CHECK`). |
 | `IgnoreLeaderAction` | Drive on as if the close, slower leader were not there (`IGNORE_LEADER`). |
 | `AdversarialCutInAction` | Change lane in front of a vehicle too close behind in the next lane (`CUT_IN`). |
+| `LaneChangeAbortAction` | Start into the next lane in front of a vehicle too close behind there, drifting half a lane toward it, and swerve back, within 1 s (`LANE_CHANGE_ABORT`). |
+| `HeadOnAction` | Drive on at a leader coming the other way: `IgnoreLeaderAction`'s command, where the lanelets the vehicle and its leader are on start more than 120 degrees apart (`HEAD_ON`). |
 | `RunTrafficRuleAction` | Run the red or yellow light the vehicle is stopping for (`TRAFFIC_RULE`). |
 | `JaywalkAction` | Walk a pedestrian straight across the nearest road, off any crosswalk (`JAYWALKING`); `seed` seeds its speed. |
 | `AdversarialTrafficAction`, `NadeAdversity`, `NadeSettings` | TeraSim's NADE as an environment action that runs for the whole run. Each tick, the NPC or pedestrian near the ego whose adversity (the first of `adversities` whose trigger fires) would challenge the ego carries it out, with the importance-sampling probability `q = clip(p x magnitude, 0, max_is_probability)`, or a fixed one. One adversity at a time, then a cooldown. An adversity no victim can brake out of is unavoidable: its `p` is cut by 3e-4 and its magnitude multiplied by 40 (`adversity.avoidance`). With `challenge_npcs`, an NPC victim avoids it (emergency brake) or accepts it, with its own IS weight. `weight` keeps the run's likelihood ratio. It drives registered entities only; background vehicles are #417. |

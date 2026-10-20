@@ -482,6 +482,58 @@ class AdversarialCutInAction(BaseAction):
         raise NotImplementedError()
 
 
+class LaneChangeAbortAction(BaseAction):
+    def __init__(self, label):
+        compile_error("LaneChangeAbortAction(): no constructor takes these arguments "
+                      "(required: entity_name, location)")
+
+    def __init__(self, entity_name, location: AdversityLocation, condition = None,
+                 timing: TickTiming = TickTiming("pre_tick"), *_kw, label: str = "lane_change_abort",
+                 once: bool = True, thresholds = None,
+                 following_mode: TrajectoryFollowingMode = TrajectoryFollowingMode("follow")):
+        _keyword_only(_kw, "LaneChangeAbortAction(): label, once, thresholds and following_mode")
+        _expect_role(entity_name)
+        super().__init__(label, condition, timing, once=once)
+
+    @property
+    def kind(self) -> AdversityKind:
+        raise NotImplementedError()
+
+    @property
+    def location(self) -> AdversityLocation:
+        raise NotImplementedError()
+
+    @property
+    def finished(self) -> bool:
+        raise NotImplementedError()
+
+
+class HeadOnAction(BaseAction):
+    def __init__(self, label):
+        compile_error("HeadOnAction(): no constructor takes these arguments "
+                      "(required: entity_name, location)")
+
+    def __init__(self, entity_name, location: AdversityLocation, condition = None,
+                 timing: TickTiming = TickTiming("pre_tick"), *_kw, label: str = "head_on",
+                 once: bool = True, thresholds = None,
+                 following_mode: TrajectoryFollowingMode = TrajectoryFollowingMode("follow")):
+        _keyword_only(_kw, "HeadOnAction(): label, once, thresholds and following_mode")
+        _expect_role(entity_name)
+        super().__init__(label, condition, timing, once=once)
+
+    @property
+    def kind(self) -> AdversityKind:
+        raise NotImplementedError()
+
+    @property
+    def location(self) -> AdversityLocation:
+        raise NotImplementedError()
+
+    @property
+    def finished(self) -> bool:
+        raise NotImplementedError()
+
+
 class RunTrafficRuleAction(BaseAction):
     def __init__(self, label):
         compile_error("RunTrafficRuleAction(): no constructor takes these arguments "

@@ -17,6 +17,11 @@ adversarial thing now, else None:
 * :attr:`AdversityKind.TRAFFIC_RULE` (TrafficRule): stopping for a red or
   yellow light rather than for its leader, with free flow at least 1 m/s²
   better (or braking while free flow would not) -- drive on through, 2 s;
+* :attr:`AdversityKind.LANE_CHANGE_ABORT` (LanechangeAbort): blocked beside
+  as for CUT_IN, moving, and the lanelet long enough for 1 s more -- drift
+  half a lane toward that side and back, in 1 s;
+* :attr:`AdversityKind.HEAD_ON` (Headon): IGNORE_LEADER's command, where the
+  leader's lanelet starts more than 120 degrees off the agent's;
 * :attr:`AdversityKind.JAYWALKING`: a pedestrian off any crosswalk, a road
   within 10 m -- walk straight across it at its speed (1.4 m/s if it
   stands) times U(0.5, 2.0), for up to 5 s.
@@ -37,7 +42,9 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
 
-from .command import AdversarialCommand
+from ..route.geometry import MapFeatures
+from ..trajectory.relative_lane import _centreline, _point_at, _start_heading, _turn
+from .command import AdversarialCommand, drift_path
 from .geometry import PredictedState
 from .idm import (
     DEFAULT_IDM,
@@ -47,6 +54,7 @@ from .idm import (
 )
 from .location import AdversityLocation, location_matches
 from .observation import (
+    LanePosition,
     Neighbour,
     PedestrianObservation,
     Scene,
@@ -62,20 +70,24 @@ __all__ = [
     "adversity_command",
     "brake_check",
     "cut_in",
+    "head_on",
     "ignore_leader",
     "jaywalking",
+    "lane_change_abort",
     "traffic_rule",
 ]
 
 
 class AdversityKind(Enum):
-    """The phase-1 adversities."""
+    """The adversities ported from TeraSim."""
 
     BRAKE_CHECK = "brake_check"
     IGNORE_LEADER = "ignore_leader"
     CUT_IN = "cut_in"
     TRAFFIC_RULE = "traffic_rule"
     JAYWALKING = "jaywalking"
+    LANE_CHANGE_ABORT = "lane_change_abort"
+    HEAD_ON = "head_on"
 
 
 @dataclass(frozen=True)
@@ -97,7 +109,13 @@ class TriggerThresholds:
         overlap_limit: CUT_IN's most (m) the agent may already overlap the
             vehicle behind in the target lane.
         duration: How long (s) the acceleration commands last.
-        lane_change_duration: How long (s) a cut-in takes.
+        lane_change_duration: How long (s) a cut-in, or a lane-change abort,
+            takes.
+        moving_speed: LANE_CHANGE_ABORT's least speed (m/s): TeraSim's
+            "moving at all", not the ``standstill_speed`` the others use.
+        abort_resolution: The time step (s) of a lane-change abort's path.
+        head_on_angle: HEAD_ON's least difference (degrees) between the
+            directions the agent's and its leader's lanelets start in.
         pedestrian_speed: A standing pedestrian's speed (m/s) when it goes.
         pedestrian_speed_factor: The random factor on a jaywalker's speed.
         jaywalk_duration: The most (s) a jaywalk lasts.
@@ -113,6 +131,9 @@ class TriggerThresholds:
     overlap_limit: float = 2.0
     duration: float = 2.0
     lane_change_duration: float = 1.0
+    moving_speed: float = 0.01
+    abort_resolution: float = 0.1
+    head_on_angle: float = 120.0
     pedestrian_speed: float = 1.4
     pedestrian_speed_factor: tuple[float, float] = (0.5, 2.0)
     jaywalk_duration: float = 5.0
@@ -192,18 +213,87 @@ def _blocked_by_follower_only(
     return leader is None or leader.gap >= _secure_gap(speed, leader.speed, limits.idm)
 
 
+def _blocked_side(
+    seen: VehicleObservation, speed: float, limits: TriggerThresholds
+) -> Optional[SideLane]:
+    """The lane beside, left first, blocked only by the vehicle behind there."""
+    left = seen.left
+    if left is not None and _blocked_by_follower_only(left, speed, limits):
+        return left
+    right = seen.right
+    if right is not None and _blocked_by_follower_only(right, speed, limits):
+        return right
+    return None
+
+
 def cut_in(
     seen: VehicleObservation, limits: TriggerThresholds = DEFAULT_THRESHOLDS
 ) -> Optional[AdversarialCommand]:
     """CUT_IN: change into the lane beside in front of the vehicle there."""
-    speed = seen.agent.speed
-    left = seen.left
-    if left is not None and _blocked_by_follower_only(left, speed, limits):
+    side = _blocked_side(seen, seen.agent.speed, limits)
+    if side is None:
+        return None
+    if side is seen.left:
         return AdversarialCommand.change_lane("left", limits.lane_change_duration)
-    right = seen.right
-    if right is not None and _blocked_by_follower_only(right, speed, limits):
-        return AdversarialCommand.change_lane("right", limits.lane_change_duration)
-    return None
+    return AdversarialCommand.change_lane("right", limits.lane_change_duration)
+
+
+def lane_change_abort(
+    seen: VehicleObservation,
+    features: MapFeatures,
+    limits: TriggerThresholds = DEFAULT_THRESHOLDS,
+) -> Optional[AdversarialCommand]:
+    """LANE_CHANGE_ABORT: start into the lane beside, then think better of it.
+
+    Blocked as for CUT_IN, it drifts half the lanes' separation toward that
+    side and back, within its lanelet.
+    """
+    lane = seen.lane
+    if lane is None:
+        return None
+    speed = seen.agent.speed
+    duration = limits.lane_change_duration
+    if speed <= limits.moving_speed:
+        return None
+    if lane.s + speed * duration >= features.length(lane.lanelet):
+        return None
+    side = _blocked_side(seen, speed, limits)
+    if side is None:
+        return None
+    # A typed local: Codon unwraps the Optional here, not at each use.
+    beside: SideLane = side
+    ox, oy = _point_at(_centreline(lane.lanelet), lane.s)
+    nx, ny = _point_at(_centreline(beside.lanelet), beside.s)
+    drift = math.hypot(nx - ox, ny - oy) / 2.0
+    if beside is not seen.left:
+        drift = -drift
+    return AdversarialCommand.follow(
+        drift_path(features, lane, speed, drift, duration, limits.abort_resolution)
+    )
+
+
+def head_on(
+    seen: VehicleObservation,
+    leader_lane: Optional[LanePosition],
+    limits: TriggerThresholds = DEFAULT_THRESHOLDS,
+) -> Optional[AdversarialCommand]:
+    """HEAD_ON: IGNORE_LEADER at a leader coming the other way.
+
+    TeraSim's ``is_head_on``: the lanelets the agent and its leader
+    (*leader_lane*) are on start more than ``head_on_angle`` apart.
+    """
+    lane = seen.lane
+    if lane is None or leader_lane is None:
+        return None
+    if lane.lanelet.id == leader_lane.lanelet.id:
+        return None  # one lanelet, one direction
+    command = ignore_leader(seen, limits)
+    if command is None:
+        return None
+    apart = _turn(_start_heading(lane.lanelet), _start_heading(leader_lane.lanelet))
+    if math.degrees(apart) <= limits.head_on_angle:
+        return None
+    return command
 
 
 def traffic_rule(
@@ -300,4 +390,11 @@ def adversity_command(
         return ignore_leader(seen, limits)
     if kind is AdversityKind.CUT_IN:
         return cut_in(seen, limits)
+    if kind is AdversityKind.LANE_CHANGE_ABORT:
+        return lane_change_abort(seen, scene.features, limits)
+    if kind is AdversityKind.HEAD_ON:
+        leader = seen.leader
+        if leader is None:
+            return None
+        return head_on(seen, scene.lane_of(leader.name), limits)
     return traffic_rule(seen, limits)

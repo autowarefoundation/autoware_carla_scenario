@@ -191,6 +191,20 @@ def test_an_agent_s_adversity_is_its_first_that_fires_even_unchallenging(
     assert sampler.weight == 1.0
 
 
+def test_a_lane_change_abort_challenges_the_ego_beside(features: MapFeatures) -> None:
+    # The ego closes in on the outer lane, just behind npc1: npc1 starts to
+    # cut in front of it, half a lane, and swerves back (#398).
+    scene = _scene(features, _car("ego", -46.0, OUTER, speed=12.0), _car("npc1", -40.0))
+    abort = NadeAdversity(AdversityKind.LANE_CHANGE_ABORT, AdversityLocation.ANY, 0.02)
+    sampler = ImportanceSampler(settings=ALWAYS)
+    choice = _step(sampler, scene, adversities=(abort,))
+    assert choice is not None and choice.adversity is abort
+    assert choice.command.duration == pytest.approx(1.0)
+    # 6 m behind and faster, the ego cannot brake out of it: unavoidable.
+    assert not choice.avoidable
+    assert sampler.weight == pytest.approx(0.02 * 3e-4)
+
+
 def test_the_draws_are_seeded(features: MapFeatures) -> None:
     def run(seed: int) -> list[bool]:
         sampler = ImportanceSampler(

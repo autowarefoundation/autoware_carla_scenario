@@ -1,4 +1,4 @@
-"""When the phase-1 adversities fire (#392).
+"""When the adversities fire (#392, #398).
 
 On the synthetic crossroads of :mod:`._route_maps`: the eastbound W approach
 is W_IN2 (x -60..-10, y = -1.75), signalised with its stop line at x = -12,
@@ -30,8 +30,10 @@ from autoware_carla_scenario.adversity.triggers import (
     TriggerThresholds,
     brake_check,
     cut_in,
+    head_on,
     ignore_leader,
     jaywalking,
+    lane_change_abort,
     traffic_rule,
 )
 from autoware_carla_scenario.route.geometry import MapFeatures
@@ -143,6 +145,99 @@ def test_a_cut_in_in_front_of_the_vehicle_too_close_behind(
 )
 def test_no_cut_in(features: MapFeatures, others: list[AgentSnapshot]) -> None:
     assert cut_in(_scene(features, _car("ego", -40.0), *others).vehicle("ego")) is None
+
+
+# -- LANE_CHANGE_ABORT ------------------------------------------------------------
+
+
+def test_a_lane_change_abort_drifts_half_a_lane_and_back(
+    features: MapFeatures,
+) -> None:
+    seen = _scene(features, _car("ego", -40.0), _car("side", -46.0, OUTER)).vehicle(
+        "ego"
+    )
+    command = lane_change_abort(seen, features)
+    assert command is not None and command.kind is CommandKind.TRAJECTORY
+    assert command.duration == pytest.approx(1.0)
+    path = command.path
+    assert len(path) == 11
+    # Toward the outer lane on the right, half the 3.5 m to it, and back.
+    middle, last = path[5], path[-1]
+    assert (middle.x, middle.y) == pytest.approx((-35.0, INNER - 1.75))
+    assert (last.x, last.y) == pytest.approx((-30.0, INNER))
+    assert all(p.speed == 10.0 and p.yaw == pytest.approx(0.0) for p in path)
+
+
+def test_no_lane_change_abort_where_its_lanelet_ends_too_soon(
+    features: MapFeatures,
+) -> None:
+    # Blocked beside as for a cut-in, but W_IN2 ends within the second.
+    seen = _scene(features, _car("ego", -18.0), _car("side", -24.0, OUTER)).vehicle(
+        "ego"
+    )
+    assert cut_in(seen) is not None
+    assert lane_change_abort(seen, features) is None
+
+
+def test_no_lane_change_abort_below_the_moving_speed(features: MapFeatures) -> None:
+    seen = _scene(features, _car("ego", -40.0), _car("side", -46.0, OUTER)).vehicle(
+        "ego"
+    )
+    slow = TriggerThresholds(moving_speed=10.0)
+    assert lane_change_abort(seen, features, slow) is None
+
+
+def test_no_lane_change_abort_when_the_lane_beside_is_free(
+    features: MapFeatures,
+) -> None:
+    seen = _scene(features, _car("ego", -40.0)).vehicle("ego")
+    assert lane_change_abort(seen, features) is None
+
+
+# -- HEAD_ON ----------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def hairpin() -> MapFeatures:
+    """Eastbound A (x 0..30, y = 0), a U-turn B, then westbound C (y = 10)."""
+    b = rm._Builder()
+    b.lanelet(1, rm._line((0.0, 0.0), (30.0, 0.0)))
+    b.lanelet(
+        2,
+        rm._arc((30.0, 5.0), 5.0, -math.pi / 2, math.pi / 2),
+        ends=(0.0, math.pi),
+    )
+    b.lanelet(3, rm._line((30.0, 10.0), (0.0, 10.0)))
+    return MapFeatures(b.map, rm.routing_graph(b.map))
+
+
+def _towards(name: str, x: float, y: float, yaw: float, speed: float) -> AgentSnapshot:
+    return AgentSnapshot(name, x, y, yaw, speed, 0.0, CAR)
+
+
+def test_a_head_on_at_a_leader_coming_the_other_way(hairpin: MapFeatures) -> None:
+    scene = _scene(
+        hairpin,
+        _towards("ego", 20.0, 0.0, 0.0, 10.0),
+        _towards("ahead", 25.0, 10.0, math.pi, 5.0),
+    )
+    seen = scene.vehicle("ego")
+    assert seen.leader is not None and seen.leader.name == "ahead"
+    command = head_on(seen, scene.lane_of("ahead"))
+    assert command is not None and command == ignore_leader(seen)
+    assert (
+        adversity_command(
+            AdversityKind.HEAD_ON, scene, "ego", AdversityLocation.ANY, random.Random()
+        )
+        == command
+    )
+
+
+def test_no_head_on_at_a_leader_going_the_same_way(features: MapFeatures) -> None:
+    scene = _scene(features, _car("ego", -40.0), _car("ahead", -25.0, speed=5.0))
+    seen = scene.vehicle("ego")
+    assert ignore_leader(seen) is not None  # it would ignore it, but not head-on
+    assert head_on(seen, scene.lane_of("ahead")) is None
 
 
 # -- TRAFFIC_RULE -----------------------------------------------------------------

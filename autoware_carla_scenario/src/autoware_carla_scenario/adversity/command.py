@@ -42,6 +42,7 @@ __all__ = [
     "DEFAULT_RESOLUTION_S",
     "AdversarialCommand",
     "CommandKind",
+    "drift_path",
     "plan_command",
     "predict_command",
 ]
@@ -149,6 +150,36 @@ class _LaneWalk:
             )
         x, y = _point_at(self.points, along)
         return x, y, _heading_at(self.points, along)
+
+
+def drift_path(
+    features: MapFeatures,
+    lane: LanePosition,
+    speed: float,
+    drift: float,
+    duration: float,
+    resolution: float = DEFAULT_RESOLUTION_S,
+) -> list[PredictedState]:
+    """Drift *drift* metres sideways (negative: right) and back, in *duration*.
+
+    TeraSim's lane-change abort path: along the lane at *speed*, the offset
+    from the centreline growing at a constant rate from where the agent is
+    to *drift* more at half the duration, then back; the heading is the
+    lane's.  The lanelet's own frame and normal stand in for SUMO's
+    ``convert2D``.
+    """
+    walk = _LaneWalk(features, lane.lanelet, lane.s)
+    half = duration / 2.0
+    states: list[PredictedState] = []
+    for t in _times(duration, resolution):
+        x, y, yaw = walk.at(speed * t)
+        offset = lane.t + drift * (1.0 - abs(t - half) / half)
+        states.append(
+            PredictedState(
+                x - offset * math.sin(yaw), y + offset * math.cos(yaw), yaw, speed, t
+            )
+        )
+    return states
 
 
 def _times(duration: float, resolution: float) -> list[float]:

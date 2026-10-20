@@ -1,4 +1,4 @@
-"""TeraSim's phase-1 adversities as actions (#393).
+"""TeraSim's adversities as actions (#393, #398).
 
 Each action carries out one adversity of :mod:`~..adversity.triggers` on a
 named vehicle (or, for :class:`JaywalkAction`, a pedestrian):
@@ -9,6 +9,10 @@ named vehicle (or, for :class:`JaywalkAction`, a pedestrian):
   (``IGNORE_LEADER``).
 * :class:`AdversarialCutInAction` -- changes lane in front of a vehicle too
   close behind there (``CUT_IN``).
+* :class:`LaneChangeAbortAction` -- starts into the lane beside, in front of
+  a vehicle too close behind there, and swerves back (``LANE_CHANGE_ABORT``).
+* :class:`HeadOnAction` -- drives on at a leader coming the other way
+  (``HEAD_ON``).
 * :class:`RunTrafficRuleAction` -- runs the red or yellow light it is
   stopping for (``TRAFFIC_RULE``).
 * :class:`JaywalkAction` -- a pedestrian walks straight across the road, off
@@ -54,8 +58,10 @@ __all__ = [
     "AdversarialAction",
     "AdversarialBrakeAction",
     "AdversarialCutInAction",
+    "HeadOnAction",
     "IgnoreLeaderAction",
     "JaywalkAction",
+    "LaneChangeAbortAction",
     "RunTrafficRuleAction",
 ]
 
@@ -309,6 +315,74 @@ class AdversarialCutInAction(AdversarialAction):
         super().__init__(
             entity_name,
             AdversityKind.CUT_IN,
+            location,
+            condition,
+            timing,
+            label=label,
+            once=once,
+            thresholds=thresholds,
+            following_mode=following_mode,
+        )
+
+
+class LaneChangeAbortAction(AdversarialAction):
+    """Start into the lane beside, then swerve back.
+
+    TeraSim's LanechangeAbort adversity: fires as the cut-in does, the
+    vehicle moving and its lanelet long enough for the manoeuvre, and drifts
+    half a lane toward that side and back in ``thresholds.lane_change_duration``.
+    See :class:`AdversarialAction` for the arguments.
+    """
+
+    def __init__(
+        self,
+        entity_name: Union[EntityRole, str],
+        location: AdversityLocation,
+        condition: Optional[BaseCondition] = None,
+        timing: TickTiming = TickTiming.PRE_TICK,
+        *,
+        label: str = "lane_change_abort",
+        once: bool = True,
+        thresholds: TriggerThresholds = DEFAULT_THRESHOLDS,
+        following_mode: TrajectoryFollowingMode = TrajectoryFollowingMode.FOLLOW,
+    ) -> None:
+        super().__init__(
+            entity_name,
+            AdversityKind.LANE_CHANGE_ABORT,
+            location,
+            condition,
+            timing,
+            label=label,
+            once=once,
+            thresholds=thresholds,
+            following_mode=following_mode,
+        )
+
+
+class HeadOnAction(AdversarialAction):
+    """Drive on at a leader coming the other way.
+
+    TeraSim's Headon adversity: the Leader adversity's command, kept only
+    where the lanelets the vehicle and its leader are on start more than
+    ``thresholds.head_on_angle`` apart.  See :class:`AdversarialAction` for
+    the arguments.
+    """
+
+    def __init__(
+        self,
+        entity_name: Union[EntityRole, str],
+        location: AdversityLocation,
+        condition: Optional[BaseCondition] = None,
+        timing: TickTiming = TickTiming.PRE_TICK,
+        *,
+        label: str = "head_on",
+        once: bool = True,
+        thresholds: TriggerThresholds = DEFAULT_THRESHOLDS,
+        following_mode: TrajectoryFollowingMode = TrajectoryFollowingMode.FOLLOW,
+    ) -> None:
+        super().__init__(
+            entity_name,
+            AdversityKind.HEAD_ON,
             location,
             condition,
             timing,
