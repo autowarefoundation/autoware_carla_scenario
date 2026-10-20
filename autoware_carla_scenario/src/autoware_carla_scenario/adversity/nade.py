@@ -18,7 +18,7 @@ As TeraSim's ``NADE`` (``envs/nade.py``, ``envs/nade_with_av.py``):
   fires (:func:`~.triggers.adversity_command`, the location gate
   included), giving ``{normal: 1 - p, adversarial: p}``.
 * **Prediction**: ``horizon`` seconds every ``resolution``
-  (:func:`~.command.plan_command` with a horizon).  The ego is predicted
+  (:func:`~.command.predict_command`).  The ego is predicted
   normal -- its acceleration held along its lane, or a lane change when
   its turn indicator says so.
 * **Challenge**: the candidate's adversarial future conflicts with the
@@ -42,7 +42,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 from .collision import trajectories_intersect
-from .command import AdversarialCommand, plan_command
+from .command import AdversarialCommand, predict_command
 from .geometry import PredictedState
 from .location import AdversityLocation
 from .observation import AgentSnapshot, Scene
@@ -60,6 +60,7 @@ __all__ = [
     "NadeChoice",
     "NadeSettings",
     "candidates",
+    "ego_command",
     "is_probability",
 ]
 
@@ -164,6 +165,23 @@ def candidates(
     return near + [name for _, name in pedestrians]
 
 
+def ego_command(
+    scene: Scene, ego: str, indicator: str, settings: NadeSettings = DEFAULT_NADE
+) -> AdversarialCommand:
+    """The ego's predicted normal behaviour.
+
+    A lane change its turn *indicator* (``"left"``, ``"right"`` or ``""``)
+    announces, where there is a lane to change into; else its acceleration
+    held -- as TeraSim predicts its AV.
+    """
+    seen = scene.vehicle(ego)
+    if indicator == "left" and seen.left is not None:
+        return AdversarialCommand.change_lane("left")
+    if indicator == "right" and seen.right is not None:
+        return AdversarialCommand.change_lane("right")
+    return AdversarialCommand.accelerate(seen.agent.acceleration, settings.horizon)
+
+
 class ImportanceSampler:
     """NADE's sampling over a run: the weight, the cooldown, the draws.
 
@@ -178,7 +196,6 @@ class ImportanceSampler:
     weight: float
     _draws: random.Random
     _triggers: random.Random
-    _sampled: bool
     _sampled_at: float
 
     def __init__(
@@ -194,47 +211,53 @@ class ImportanceSampler:
         # the sampling's sequence.
         self._draws = random.Random(seed)
         self._triggers = random.Random(seed + 1)
-        self._sampled = False
-        self._sampled_at = 0.0
+        self._sampled_at = -math.inf
 
     def cooling(self, elapsed: float) -> bool:
         """Whether *elapsed* is within the cooldown of the last sample."""
-        return self._sampled and elapsed - self._sampled_at < self.settings.cooldown
+        return elapsed - self._sampled_at < self.settings.cooldown
 
     def step(
         self,
         scene: Scene,
         ego: str,
-        ego_command: AdversarialCommand,
-        names: list[str],
+        indicator: str,
+        controllable: set[str],
         adversities: list[NadeAdversity],
         elapsed: float,
     ) -> Optional[NadeChoice]:
         """Sample this tick: the adversity to carry out, or None.
 
-        *names* are the candidates in order (:func:`candidates`), and
-        *ego_command* the ego's predicted normal behaviour.  Updates
-        :attr:`weight` for every challenger the tick decides on.
+        The candidates are those of :func:`candidates` among *controllable*,
+        and the ego is predicted from its turn *indicator*
+        (:func:`ego_command`).  Updates :attr:`weight` for every challenger
+        the tick decides on.
         """
         if self.cooling(elapsed) or ego not in scene.agents:
             return None
         settings = self.settings
-        try:
-            ego_future = plan_command(
-                scene.features,
-                scene.vehicle(ego),
-                ego_command,
-                settings.resolution,
-                settings.horizon,
-            )
-        except ValueError:
-            return None  # off the lanes: no future to challenge
+        names = candidates(scene, ego, controllable, settings)
+        if not names:
+            return None
         me = scene.agents[ego]
+        # Predicted once a trigger fires: most ticks none does.
+        ego_future: list[PredictedState] = []
         for name in names:
             found = self._adversity(scene, name, adversities)
             if found is None:
                 continue
             adversity, command = found
+            if not ego_future:
+                try:
+                    ego_future = predict_command(
+                        scene.features,
+                        scene.vehicle(ego),
+                        ego_command(scene, ego, indicator, settings),
+                        settings.resolution,
+                        settings.horizon,
+                    )
+                except ValueError:
+                    return None  # off the lanes: no future to challenge
             if not self._challenges(scene, name, command, me, ego_future):
                 continue
             p = adversity.probability
@@ -243,7 +266,6 @@ class ImportanceSampler:
                 continue  # never sampled: nothing to decide
             if self._draws.random() < q:
                 self.weight *= p / q
-                self._sampled = True
                 self._sampled_at = elapsed
                 return NadeChoice(name, adversity, command, q)
             self.weight *= (1.0 - p) / (1.0 - q)
@@ -282,7 +304,7 @@ class ImportanceSampler:
         if not agent.footprint.is_vehicle and me.speed < 1.0:
             return False  # a pedestrian challenges a moving ego only
         try:
-            future = plan_command(
+            future = predict_command(
                 scene.features,
                 scene.vehicle(name),
                 command,

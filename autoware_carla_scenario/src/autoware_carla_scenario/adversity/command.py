@@ -43,6 +43,7 @@ __all__ = [
     "AdversarialCommand",
     "CommandKind",
     "plan_command",
+    "predict_command",
 ]
 
 #: How far apart in time (s) the states of a planned path are.
@@ -218,14 +219,8 @@ def plan_command(
     observation: VehicleObservation,
     command: AdversarialCommand,
     resolution: float = DEFAULT_RESOLUTION_S,
-    horizon: float = 0.0,
 ) -> list[PredictedState]:
     """The path *command* drives the observed vehicle along, timed from 0.
-
-    With a *horizon* (s), the path is a prediction to that time instead, as
-    TeraSim's NADE predicts: an acceleration is held throughout, a lane
-    change keeps to the new lane once across, and a given path is resampled
-    every *resolution* and cut there.
 
     Raises:
         ValueError: The vehicle is off the lanes (for ACCELERATION and
@@ -233,31 +228,58 @@ def plan_command(
     """
     if command.kind is CommandKind.TRAJECTORY:
         start = command.path[0].t
-        retimed = [
-            PredictedState(p.x, p.y, p.yaw, p.speed, p.t - start) for p in command.path
-        ]
-        if horizon <= 0.0:
-            return retimed
         return [
-            p
-            for p in interpolate_trajectory(retimed, resolution)
-            if p.t <= horizon + 1e-9
+            PredictedState(p.x, p.y, p.yaw, p.speed, p.t - start) for p in command.path
         ]
     lane = observation.lane
     if lane is None:
         raise ValueError(f"{observation.agent.name} is off the lanes")
     if command.kind is CommandKind.ACCELERATION:
-        held = command
-        if horizon > 0.0:
-            held = AdversarialCommand.accelerate(command.acceleration, horizon)
         return _accelerate(
             features,
             lane,
             observation.agent,
             observation.desired_speed,
-            held,
+            command,
             resolution,
         )
+    side: Optional[SideLane] = observation.right
+    if command.side == "left":
+        side = observation.left
+    if side is None:
+        raise ValueError(f"there is no lane on the {command.side} to change into")
+    return _change_lane(
+        features, lane, side, observation.agent, command, resolution, command.duration
+    )
+
+
+def predict_command(
+    features: MapFeatures,
+    observation: VehicleObservation,
+    command: AdversarialCommand,
+    resolution: float,
+    horizon: float,
+) -> list[PredictedState]:
+    """The observed vehicle's future under *command*, to *horizon* (s).
+
+    As TeraSim's NADE predicts: an acceleration is held throughout, a lane
+    change keeps to the new lane once across, and a given path is resampled
+    every *resolution* and cut at the horizon.
+
+    Raises:
+        ValueError: As :func:`plan_command`.
+    """
+    if command.kind is CommandKind.ACCELERATION:
+        held = AdversarialCommand.accelerate(command.acceleration, horizon)
+        return plan_command(features, observation, held, resolution)
+    if command.kind is CommandKind.TRAJECTORY:
+        path = plan_command(features, observation, command, resolution)
+        return [
+            p for p in interpolate_trajectory(path, resolution) if p.t <= horizon + 1e-9
+        ]
+    lane = observation.lane
+    if lane is None:
+        raise ValueError(f"{observation.agent.name} is off the lanes")
     side: Optional[SideLane] = observation.right
     if command.side == "left":
         side = observation.left

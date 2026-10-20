@@ -9,7 +9,6 @@ finishes after three ticks.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
 from types import SimpleNamespace
 from typing import Any
 
@@ -17,6 +16,7 @@ import pytest
 
 import autoware_carla_scenario as acs
 from autoware_carla_scenario.action_state import ActionState
+from autoware_carla_scenario.actions import _adversarial_execution as executions
 from autoware_carla_scenario.actions import adversarial_traffic
 from autoware_carla_scenario.actions.adversarial_traffic import AdversarialTrafficAction
 from autoware_carla_scenario.adversity import AdversityKind, AdversityLocation
@@ -38,7 +38,7 @@ class _Execution:
     """Stands in for AdversarialExecution: done on its third tick."""
 
     def __init__(self, name: str, path: Any, mode: Any, label: str) -> None:
-        self.name, self.path, self.mode, self.label = name, path, mode, label
+        self.name, self.path, self.label = name, path, label
         self.ticks = 0
         self.closed = False
         made.append(self)
@@ -55,14 +55,12 @@ class _Execution:
 
 
 @pytest.fixture(autouse=True)
-def stand_ins(monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str, Any]]:
+def stand_ins(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     made.clear()
-    registered = {"npc1": object(), "npc2": object()}
-    ego_lights: dict[str, Any] = {"state": TurnIndicatorState.OFF}
-    monkeypatch.setattr(adversarial_traffic, "AdversarialExecution", _Execution)
-    monkeypatch.setattr(adversarial_traffic, "find_vehicle_entity", registered.get)
+    ego_lights = {"state": TurnIndicatorState.OFF}
+    monkeypatch.setattr(executions, "AdversarialExecution", _Execution)
     monkeypatch.setattr(
-        adversarial_traffic, "find_pedestrian_entity", lambda name: None
+        adversarial_traffic, "drivable", lambda name: name in ("npc1", "npc2")
     )
     monkeypatch.setattr(
         adversarial_traffic,
@@ -72,7 +70,7 @@ def stand_ins(monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str, Any]]:
     monkeypatch.setattr(
         adversarial_traffic, "turn_indicators_of", lambda actor: ego_lights["state"]
     )
-    yield {"registered": registered, "lights": ego_lights}
+    return ego_lights
 
 
 def _leading(frame: int, *, npc: str = "npc1") -> Any:
@@ -115,7 +113,7 @@ def test_one_adversity_at_a_time_and_none_in_the_cooldown() -> None:
     assert action.weight == pytest.approx(0.01**2)
 
 
-def test_only_a_registered_entity_is_driven(stand_ins: dict[str, Any]) -> None:
+def test_only_a_registered_entity_is_driven() -> None:
     action = AdversarialTrafficAction([BRAKE], settings=ALWAYS)
     _run(action, 3, npc="background_7")
     assert made == [] and action.weight == 1.0
@@ -134,7 +132,7 @@ def test_the_ego_s_indicator_is_its_predicted_lane_change(
     stand_ins: dict[str, Any],
 ) -> None:
     # Signalling right, the ego is predicted out of npc1's way: no challenge.
-    stand_ins["lights"]["state"] = TurnIndicatorState.RIGHT
+    stand_ins["state"] = TurnIndicatorState.RIGHT
     action = AdversarialTrafficAction([BRAKE], settings=ALWAYS)
     _run(action, 2)
     assert made == [] and action.weight == 1.0

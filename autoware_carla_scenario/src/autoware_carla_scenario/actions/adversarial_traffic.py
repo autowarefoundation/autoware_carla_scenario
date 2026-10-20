@@ -19,24 +19,20 @@ import logging
 from typing import TYPE_CHECKING, Optional
 
 from ..action_state import ActionState
-from ..adversity.command import AdversarialCommand, plan_command
 from ..adversity.nade import (
     DEFAULT_NADE,
     ImportanceSampler,
     NadeAdversity,
     NadeChoice,
     NadeSettings,
-    candidates,
 )
-from ..adversity.observation import Scene
 from ..adversity.snapshot import scene_at
 from ..adversity.triggers import DEFAULT_THRESHOLDS, TriggerThresholds
 from ..conditions.base import BaseCondition, find_actor_by_role_name
 from ..constants import EGO_ROLE_NAME
-from ..entity.registry import find_pedestrian_entity, find_vehicle_entity
 from ..trajectory.model import TrajectoryFollowingMode
 from ..utils.turn_indicator import TurnIndicatorState, is_vehicle, turn_indicators_of
-from ._adversarial_execution import AdversarialExecution
+from ._adversarial_execution import AdversarialExecution, drivable, start_execution
 from .background_traffic import _Never
 from .base import BaseAction, TickTiming
 
@@ -135,15 +131,14 @@ class AdversarialTrafficAction(BaseAction):
             if not running.done:
                 return
             self._execution = None
+        if self._sampler.cooling(self._elapsed):
+            return  # nothing to sample: no need to read the world
         scene = scene_at(world)
-        ego = str(EGO_ROLE_NAME)
-        if ego not in scene.agents:
-            return
         choice = self._sampler.step(
             scene,
-            ego,
-            _ego_command(world, scene, ego, self._sampler.settings),
-            candidates(scene, ego, _controllable(scene, ego), self._sampler.settings),
+            str(EGO_ROLE_NAME),
+            _indicator(world),
+            {name for name in scene.agents if drivable(name)},
             self._adversities,
             self._elapsed,
         )
@@ -160,19 +155,16 @@ class AdversarialTrafficAction(BaseAction):
             sampled.adversity.probability,
             self.weight,
         )
-        try:
-            path = plan_command(
-                scene.features, scene.vehicle(sampled.name), sampled.command
-            )
-        except ValueError as error:
-            logger.warning("%s: %s; nothing done", self.label, error)
-            return
-        execution = AdversarialExecution(
+        started = start_execution(
+            scene,
             sampled.name,
-            path,
+            sampled.command,
             self._following_mode,
             f"{self.label}:{sampled.name}",
         )
+        if started is None:
+            return
+        execution: AdversarialExecution = started
         self._execution = execution
         execution.tick(world, self._elapsed)
 
@@ -184,35 +176,17 @@ class AdversarialTrafficAction(BaseAction):
             running.close()
 
 
-def _controllable(scene: Scene, ego: str) -> set[str]:
-    """The agents of *scene* an action can drive: the registered entities."""
-    names: set[str] = set()
-    for name in scene.agents:
-        if name == ego:
-            continue
-        if find_vehicle_entity(name) is not None:
-            names.add(name)
-        elif find_pedestrian_entity(name) is not None:
-            names.add(name)
-    return names
-
-
-def _ego_command(
-    world: "carla.World", scene: Scene, ego: str, settings: NadeSettings
-) -> AdversarialCommand:
-    """The ego's predicted normal behaviour: a lane change its indicator
-    announces (where there is a lane), else its acceleration held."""
-    seen = scene.vehicle(ego)
-    held = AdversarialCommand.accelerate(seen.agent.acceleration, settings.horizon)
-    found = find_actor_by_role_name(world, ego)
+def _indicator(world: "carla.World") -> str:
+    """The side the ego's turn indicator shows: ``"left"``, ``"right"`` or ``""``."""
+    found = find_actor_by_role_name(world, EGO_ROLE_NAME)
     if found is None:
-        return held
+        return ""
     actor: "carla.Actor" = found
     if not is_vehicle(actor):
-        return held
+        return ""
     state = turn_indicators_of(actor)
-    if state == TurnIndicatorState.LEFT and seen.left is not None:
-        return AdversarialCommand.change_lane("left")
-    if state == TurnIndicatorState.RIGHT and seen.right is not None:
-        return AdversarialCommand.change_lane("right")
-    return held
+    if state == TurnIndicatorState.LEFT:
+        return "left"
+    if state == TurnIndicatorState.RIGHT:
+        return "right"
+    return ""
