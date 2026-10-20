@@ -15,13 +15,15 @@ the path ended.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 from ..action_state import ActionState
+from ..adversity.command import AdversarialCommand, plan_command
 from ..adversity.geometry import PredictedState
+from ..adversity.observation import Scene
 from ..conditions.base import BaseCondition
 from ..conditions.trajectory_time import TrajectoryTimeCondition
-from ..entity.registry import find_vehicle_entity
+from ..entity.registry import find_pedestrian_entity, find_vehicle_entity
 from ..trajectory.model import (
     MapPose,
     ReferenceContext,
@@ -36,7 +38,7 @@ from .follow_trajectory import FollowTrajectoryAction
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
 
-__all__ = ["AdversarialExecution", "path_trajectory"]
+__all__ = ["AdversarialExecution", "drivable", "path_trajectory", "start_execution"]
 
 logger = logging.getLogger(__name__)
 
@@ -111,3 +113,28 @@ class AdversarialExecution:
     def close(self) -> None:
         """Close the follow action's conditions."""
         self._follow.close()
+
+
+def drivable(name: str) -> bool:
+    """Whether an adversity can be driven on *name*: a registered vehicle or
+    pedestrian, what the follow action finds."""
+    return find_vehicle_entity(name) is not None or (
+        find_pedestrian_entity(name) is not None
+    )
+
+
+def start_execution(
+    scene: Scene,
+    name: str,
+    command: AdversarialCommand,
+    following_mode: TrajectoryFollowingMode,
+    label: str,
+) -> Optional[AdversarialExecution]:
+    """*command* planned for *name* on *scene*, ready to drive; None, with a
+    warning, when it cannot be planned (off the lanes, no lane to change to)."""
+    try:
+        path = plan_command(scene.features, scene.vehicle(name), command)
+    except ValueError as error:
+        logger.warning("%s: %s; nothing done", label, error)
+        return None
+    return AdversarialExecution(name, path, following_mode, label)

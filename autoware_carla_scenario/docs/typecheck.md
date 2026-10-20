@@ -1204,6 +1204,53 @@ A `Protocol` is not structural in the check: Codon compares class names, so a
 class is a `HasArea` only if it lists `HasArea` among its bases. Python runs
 the same code either way, because a `Protocol` base is only a marker there.
 
+### Standard library names Codon lacks
+
+Codon ships its own `functools` (only `partial`), `itertools` and
+`collections`, and a name it lacks fails with a bare "cannot import name".
+The check supplies these (#378); `test_stdlib_names` keeps this list, the
+check's additions and the tests in step:
+
+<!-- stdlib-names:start -->
+`functools.reduce`, `functools.lru_cache`, `functools.cache`,
+`functools.cached_property`, `itertools.pairwise`, `collections.OrderedDict`
+<!-- stdlib-names:end -->
+
+- `functools.reduce` (with or without an initial value) is a function of the
+  model, which the check puts in place of the name.
+- `lru_cache` (with or without arguments), `cache` and `cached_property` are
+  decorators the check drops, as caching changes no type; `cached_property`
+  becomes a `property`. Nothing is cached, so `f.cache_clear()` and
+  `f.cache_info()` are refused, and so is assigning to a `cached_property`
+  attribute (`self.area = 3` is legal in Python, not on a `property`). A name
+  the module binds again (a parameter `reduce`, a `def cache`) is left alone.
+  The names are handled where the module imports them, not in a function.
+- The initial value of `reduce` must have the type of the accumulator the
+  function returns: `reduce(add, [1.5, 2.5], 0)` is refused (write `0.0`).
+- `itertools.pairwise` is added to Codon's `itertools`, and
+  `collections.OrderedDict` is a `dict`, which keeps its insertion order;
+  `move_to_end()` and `popitem(last=...)` are not declared, and are
+  refused when called.
+
+These are refused at the import line, with a hint saying what to write
+instead:
+
+<!-- stdlib-refused:start -->
+`dataclasses.asdict`, `functools.wraps`, `contextlib`, `warnings`, `json`,
+`types`, `textwrap`
+<!-- stdlib-refused:end -->
+
+- `dataclasses.asdict` returns a `dict[str, Any]`: build the dict from the
+  fields you need. The `dataclasses` shim declares only `dataclass`, `field`
+  and `replace`.
+- `functools.wraps` (and any other name of `functools`, `itertools` or
+  `collections` not listed above) is not modelled.
+- `contextlib`: write a class with `__enter__` and `__exit__` for
+  `contextmanager`, and `try/except X: pass` for `suppress`. `warnings`: log
+  with `logger.warning`. `json`: read into a `@dataclass`. `types`: name the
+  type itself. `textwrap`: build the string with `str` methods. `traceback`
+  and `io` are refused likewise.
+
 ## What the check does not catch
 
 The check compiles the scenario and never runs it, so it says nothing of
@@ -1375,8 +1422,8 @@ To check one more module:
 
 ### What is checked of the framework
 
-Every module now has an entry other than `"not yet checked (#45)"`. 185 of
-the package's 277 modules (67%; about 45,000 of 80,200 lines) are `CHECKED`:
+Every module now has an entry other than `"not yet checked (#45)"`. 188 of
+the package's 280 modules (67%; about 45,700 of 81,000 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the conversions between
 Lanelet2, OpenDRIVE and CARLA world poses (`coordinate.transform`), the stop
 lines read off a Lanelet2 map (`utils.stop_line`, `coordinate.stop_line`)
@@ -1422,7 +1469,7 @@ the `scenario_bridge` node's command and Python root beside it
 container with Docker (`autoware_stack.docker`, over a model of
 `autoware_stack.devcontainer`, which reads JSON and YAML), the Autoware
 bridge interface and its fake, the trajectory model, the adversity math, location gate, observation, commands and triggers
-(`adversity`, the actions' `_adversarial_execution` and `adversarial`, `conditions.adversity_feasible`), the measures and the metrics, the ODD
+(`adversity`, NADE and its avoidance included, the actions' `_adversarial_execution`, `adversarial` and `adversarial_traffic`, `conditions.adversity_feasible`), the measures and the metrics, the ODD
 unit names (`odd.unit_names`), the ODD's probes, which read its attributes off
 the world and, for those the Lanelet2 map decides, off a lanelet
 (`odd.probes`), the placement of a road user so a scenario

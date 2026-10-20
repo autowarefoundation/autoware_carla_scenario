@@ -24,7 +24,7 @@ else.
 """
 
 from .collision import collision_time, segments_intersect, trajectories_intersect
-from .command import AdversarialCommand, CommandKind, plan_command
+from .command import AdversarialCommand, CommandKind, plan_command, predict_command
 from .geometry import (
     AgentFootprint,
     PredictedState,
@@ -68,6 +68,7 @@ __all__ = [
     "location_matches",
     "location_of",
     "plan_command",
+    "predict_command",
     "predict_distance_velocity",
     "segments_intersect",
     "trajectories_intersect",

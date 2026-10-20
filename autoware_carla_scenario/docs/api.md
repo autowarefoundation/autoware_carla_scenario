@@ -150,6 +150,7 @@ trigger is asked on that tick: when it does not hold, nothing is done.
 | `AdversarialCutInAction` | Change lane in front of a vehicle too close behind in the next lane (`CUT_IN`). |
 | `RunTrafficRuleAction` | Run the red or yellow light the vehicle is stopping for (`TRAFFIC_RULE`). |
 | `JaywalkAction` | Walk a pedestrian straight across the nearest road, off any crosswalk (`JAYWALKING`); `seed` seeds its speed. |
+| `AdversarialTrafficAction`, `NadeAdversity`, `NadeSettings` | TeraSim's NADE as an environment action that runs for the whole run. Each tick, the NPC or pedestrian near the ego whose adversity (the first of `adversities` whose trigger fires) would challenge the ego carries it out, with the importance-sampling probability `q = clip(p x magnitude, 0, max_is_probability)`, or a fixed one. One adversity at a time, then a cooldown. An adversity no victim can brake out of is unavoidable: its `p` is cut by 3e-4 and its magnitude multiplied by 40 (`adversity.avoidance`). With `challenge_npcs`, an NPC victim avoids it (emergency brake) or accepts it, with its own IS weight. `weight` keeps the run's likelihood ratio. It drives registered entities only; background vehicles are #417. |
 | `AdversityFeasibleCondition`, `AdversityKind`, `AdversityLocation` | Holds when the entity may carry out a `kind` adversity at `location` (`autoware_carla_scenario.conditions.adversity_feasible`). |
 
 ## Trajectories (`autoware_carla_scenario.trajectory`)

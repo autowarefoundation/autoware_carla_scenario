@@ -1387,6 +1387,7 @@ class TestEnvironmentTrack:
             "turn_indicator",
         }
         assert offers[""] == {
+            "adversarial_traffic",
             "environment",
             "traffic_signal",
             "traffic_signal_controller",

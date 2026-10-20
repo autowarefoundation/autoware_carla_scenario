@@ -65,6 +65,7 @@ __all__ = [
     "build_trajectory_time_condition",
     "build_adversarial_brake_action",
     "build_adversarial_cut_in_action",
+    "build_adversarial_traffic_action",
     "build_ignore_leader_action",
     "build_jaywalk_action",
     "build_run_traffic_rule_action",
@@ -828,6 +829,50 @@ def build_adversarial_cut_in_action(
         timing=timing,
         label=compiled.label,
         once=compiled.node.once,
+        following_mode=TrajectoryFollowingMode[str(params["following_mode"]).upper()],
+    )
+
+
+def build_adversarial_traffic_action(
+    compiled: "CompiledAction",
+    condition: "BaseCondition | None",
+    timing: Any,
+    ctx: "BuildContext",
+) -> "BaseAction":
+    """Build an :class:`AdversarialTrafficAction`."""
+    from ..actions.adversarial_traffic import AdversarialTrafficAction  # noqa: PLC0415
+    from ..adversity.nade import NadeSettings  # noqa: PLC0415
+    from ..adversity.triggers import AdversityKind  # noqa: PLC0415
+    from ..adversity.location import AdversityLocation  # noqa: PLC0415
+    from ..actions.adversarial_traffic import NadeAdversity  # noqa: PLC0415
+    from ..actions.adversarial_traffic import TrajectoryFollowingMode  # noqa: PLC0415
+
+    params = compiled.params
+    settings = NadeSettings(
+        max_controlled=params["max_controlled"],
+        control_radius=params["control_radius"],
+        magnitude=params["magnitude"],
+        max_is_probability=params["max_is_probability"],
+        fixed_is_probability=params["fixed_is_probability"],
+        cooldown=params["cooldown"],
+        challenge_npcs=params["challenge_npcs"],
+    )
+    adversities: list[Any] = []
+    for item in params["adversities"]:
+        adversities.append(
+            NadeAdversity(
+                kind=AdversityKind[str(item["kind"]).upper()],
+                location=AdversityLocation[str(item["location"]).upper()],
+                probability=item["probability"],
+            )
+        )
+    return AdversarialTrafficAction(
+        adversities=adversities,
+        condition=condition,
+        timing=timing,
+        label=compiled.label,
+        seed=params["seed"],
+        settings=settings,
         following_mode=TrajectoryFollowingMode[str(params["following_mode"]).upper()],
     )
 

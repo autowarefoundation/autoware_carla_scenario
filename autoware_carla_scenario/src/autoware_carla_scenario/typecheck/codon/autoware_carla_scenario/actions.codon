@@ -496,6 +496,62 @@ class JaywalkAction(BaseAction):
     def finished(self) -> bool:
         raise NotImplementedError()
 
+
+class NadeAdversity:
+    kind: AdversityKind
+    location: AdversityLocation
+    probability: float
+
+    def __init__(self, kind: AdversityKind, location: AdversityLocation, probability: float):
+        self.kind = kind
+        self.location = location
+        self.probability = probability
+
+
+class NadeSettings:
+    max_controlled: int
+    control_radius: float
+    horizon: float
+    resolution: float
+    magnitude: float
+    max_is_probability: float
+    fixed_is_probability: float
+    cooldown: float
+    challenge_npcs: bool
+
+    def __init__(self, max_controlled: int = 5, control_radius: float = 50.0,
+                 horizon: float = 5.0, resolution: float = 0.5, magnitude: float = 20.0,
+                 max_is_probability: float = 0.05, fixed_is_probability: float = 0.0,
+                 cooldown: float = 5.5, challenge_npcs: bool = False, avoidance = None):
+        self.max_controlled = max_controlled
+        self.control_radius = control_radius
+        self.horizon = horizon
+        self.resolution = resolution
+        self.magnitude = magnitude
+        self.max_is_probability = max_is_probability
+        self.fixed_is_probability = fixed_is_probability
+        self.cooldown = cooldown
+        self.challenge_npcs = challenge_npcs
+
+
+class AdversarialTrafficAction(BaseAction):
+    def __init__(self, label):
+        compile_error("AdversarialTrafficAction(): no constructor takes these arguments "
+                      "(required: adversities)")
+
+    def __init__(self, adversities: List[NadeAdversity], condition = None,
+                 timing: TickTiming = TickTiming("pre_tick"), *_kw,
+                 label: str = "adversarial_traffic", seed: int = 0,
+                 settings: NadeSettings = NadeSettings(), thresholds = None,
+                 following_mode: TrajectoryFollowingMode = TrajectoryFollowingMode("follow")):
+        _keyword_only(_kw, "AdversarialTrafficAction(): label, seed, settings, thresholds "
+                           "and following_mode")
+        super().__init__(label, condition, timing)
+
+    @property
+    def weight(self) -> float:
+        raise NotImplementedError()
+
 # As conditions.codon builds a BaseCondition: so `Optional[BaseAction]` None
 # compiles in a program that builds no action (#263).
 BaseAction("")

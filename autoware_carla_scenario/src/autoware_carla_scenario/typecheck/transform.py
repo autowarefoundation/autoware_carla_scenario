@@ -24,6 +24,10 @@ which :func:`transform_source_lines` maps back onto the handler):
 * ``@abstractmethod`` is removed (Codon 0.19 cannot decorate a method; the
   ``abc`` shim's ``ABC`` is an empty base), and so is ``@runtime_checkable``
   (the ``typing`` shim's ``Protocol`` is an empty base too).
+* The names Codon's ``functools`` lacks (:data:`FUNCTOOLS_NAMES`): the
+  decorators ``lru_cache`` / ``cache`` are dropped (caching changes no type),
+  ``cached_property`` becomes ``property``, ``reduce`` becomes ``_acs_reduce``,
+  and the names are left out of the ``from functools import`` line.
 * A parameter or return annotation naming a class the module defines further
   down (``AbsoluteVelocity.__add__(self, other: RelativeVelocity)``) is
   dropped: Codon 0.19 cannot name a class in a signature before its
@@ -184,7 +188,7 @@ PRELUDE = (
     "from autoware_carla_scenario._lists import _acs_list, _acs_base, "
     "_acs_dict_into\n"
     "from autoware_carla_scenario._tc import _Required as _acs_Required, "
-    "_acs_Returning, _acs_callable, _acs_tuple\n"
+    "_acs_Returning, _acs_callable, _acs_tuple, _acs_reduce\n"
     "from enum import IntEnum as _acs_IntEnum, StrEnum as _acs_StrEnum\n"
     "from autoware_carla_scenario._exceptions import "
     + ", ".join(MISSING_BUILTIN_EXCEPTIONS)
@@ -313,6 +317,12 @@ _DROPPED_CLASS_DECORATORS = {
     "typing.runtime_checkable",
 }
 _FIELD_FUNCTIONS = {"field", "dataclasses.field"}
+#: The names of ``functools`` that Codon's module (which has only ``partial``)
+#: lacks and the transform handles (#378): ``lru_cache``, ``cache`` and
+#: ``cached_property`` are decorators, and ``reduce`` a function.  The names
+#: are left out of the ``from functools import`` line.
+FUNCTOOLS_NAMES = ("cache", "cached_property", "lru_cache", "reduce")
+_FUNCTOOLS_DROPPED = {"cache", "lru_cache"}
 #: Function decorators dropped: Codon 0.19 rejects a decorated method, and
 #: the method compiles the same without them.
 _DROPPED_FUNCTION_DECORATORS = {"abstractmethod", "abc.abstractmethod"}
@@ -896,10 +906,70 @@ class _Rewriter(ast.NodeVisitor):
         #: constructor by value, a list of its members and a lookup by name
         #: (:func:`_enum_lookups`).
         self.enums: list[_EnumInfo] = []
+        #: Local name -> the ``functools`` name it is imported as.
+        self._functools_names: dict[str, str] = {}
+        #: Local names of the ``functools`` module.
+        self._functools_modules: set[str] = set()
+
+    def _functools_name(self, node: ast.AST) -> str | None:
+        """The :data:`FUNCTOOLS_NAMES` name *node* (``lru_cache`` or
+        ``functools.lru_cache``) refers to, if any."""
+        if isinstance(node, ast.Name):
+            return self._functools_names.get(node.id)
+        if (
+            isinstance(node, ast.Attribute)
+            and isinstance(node.value, ast.Name)
+            and node.value.id in self._functools_modules
+            and node.attr in FUNCTOOLS_NAMES
+        ):
+            return node.attr
+        return None
+
+    def visit_Name(self, node: ast.Name) -> None:
+        if (
+            isinstance(node.ctx, ast.Load)
+            and self._functools_names.get(node.id) == "reduce"
+        ):
+            self.edits.replace(*self.edits.node_span(node), "_acs_reduce")
+
+    def visit_Attribute(self, node: ast.Attribute) -> None:
+        if self._functools_name(node) == "reduce":
+            self.edits.replace(*self.edits.node_span(node), "_acs_reduce")
+        else:
+            self.generic_visit(node)
 
     # -- annotations -----------------------------------------------------
 
     def visit_Module(self, node: ast.Module) -> None:
+        for stmt in node.body:
+            if isinstance(stmt, ast.ImportFrom) and _is_functools_import(stmt):
+                for alias in stmt.names:
+                    if alias.name in FUNCTOOLS_NAMES:
+                        self._functools_names[alias.asname or alias.name] = alias.name
+            elif isinstance(stmt, ast.Import):
+                for alias in stmt.names:
+                    if alias.name == "functools":
+                        self._functools_modules.add(alias.asname or alias.name)
+        # A name the module binds again (a parameter ``reduce``, a ``def cache``)
+        # is no longer functools's: leave it, and Codon refuses what is missing.
+        rebound = (
+            {
+                n.id
+                for n in ast.walk(node)
+                if isinstance(n, ast.Name) and not isinstance(n.ctx, ast.Load)
+            }
+            | {
+                n.name
+                for n in ast.walk(node)
+                if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+            }
+            | {n.arg for n in ast.walk(node) if isinstance(n, ast.arg)}
+        )
+        self._functools_names = {
+            local: name
+            for local, name in self._functools_names.items()
+            if local not in rebound
+        }
         later = {stmt.name for stmt in node.body if isinstance(stmt, ast.ClassDef)}
         self._type_vars = {
             target.id
@@ -1182,8 +1252,19 @@ class _Rewriter(ast.NodeVisitor):
             and any(_dotted(d) == "classmethod" for d in node.decorator_list)
         )
         for decorator in node.decorator_list:
+            wrapped = self._functools_name(
+                decorator.func if isinstance(decorator, ast.Call) else decorator
+            )
             if classmethod_ and _dotted(decorator) == "classmethod":
                 self.edits.replace(*self.edits.node_span(decorator), "staticmethod")
+            elif wrapped == "cached_property":
+                # Computed once, read as an attribute: a property types the same.
+                self.edits.replace(*self.edits.node_span(decorator), "property")
+            elif wrapped in _FUNCTOOLS_DROPPED:
+                start, end = self.edits.node_span(decorator)
+                # Keep the lines of a decorator broken over several.
+                lines = "\n" * self.edits.text(start, end).count("\n")
+                self.edits.replace(start - 1, end, lines)
             elif (
                 _dotted(decorator) in _DROPPED_FUNCTION_DECORATORS
                 or _dotted(decorator) in self._dropped_decorators
@@ -2072,6 +2153,10 @@ def _import_plan(
     return drops, problems
 
 
+def _is_functools_import(node: ast.ImportFrom) -> bool:
+    return node.module == "functools" and node.level == 0
+
+
 def repeated_imports(tree: ast.Module, edits: _Edits) -> None:
     """Drop the module-level imports Codon 0.19 cannot compile twice.
 
@@ -2089,7 +2174,13 @@ def repeated_imports(tree: ast.Module, edits: _Edits) -> None:
     for node in tree.body:
         if not isinstance(node, (ast.Import, ast.ImportFrom)):
             continue
-        kept = [a for i, a in enumerate(node.names) if (id(node), i) not in drops]
+        stubbed = isinstance(node, ast.ImportFrom) and _is_functools_import(node)
+        kept = [
+            a
+            for i, a in enumerate(node.names)
+            if (id(node), i) not in drops
+            and not (stubbed and a.name in FUNCTOOLS_NAMES)
+        ]
         if len(kept) == len(node.names):
             continue
         if not kept:
@@ -2100,7 +2191,9 @@ def repeated_imports(tree: ast.Module, edits: _Edits) -> None:
                 text = f"from {'.' * node.level}{node.module or ''} import {names}"
             else:
                 text = f"import {names}"
-        edits.replace(*edits.node_span(node), text)
+        # An import broken over several lines keeps them: later lines stay put.
+        start, end = edits.node_span(node)
+        edits.replace(start, end, text + "\n" * edits.text(start, end).count("\n"))
 
 
 def conflicting_imports(source: str) -> list[tuple[int, str]]:

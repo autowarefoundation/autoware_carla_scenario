@@ -16,7 +16,7 @@ import pytest
 
 import autoware_carla_scenario as acs
 from autoware_carla_scenario.action_state import ActionState
-from autoware_carla_scenario.actions import adversarial
+from autoware_carla_scenario.actions import _adversarial_execution as executions
 from autoware_carla_scenario.actions.adversarial import (
     AdversarialBrakeAction,
     AdversarialCutInAction,
@@ -77,7 +77,7 @@ class _Execution:
 @pytest.fixture(autouse=True)
 def execution(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     made.clear()
-    monkeypatch.setattr(adversarial, "AdversarialExecution", _Execution)
+    monkeypatch.setattr(executions, "AdversarialExecution", _Execution)
     yield
 
 
@@ -166,7 +166,7 @@ def test_a_command_with_no_path_to_plan_does_nothing(
     )
     action = AdversarialCutInAction("npc1", ANY)
     with pytest.MonkeyPatch.context() as patch, caplog.at_level(logging.WARNING):
-        patch.setattr(adversarial, "plan_command", refuse)
+        patch.setattr(executions, "plan_command", refuse)
         states = _run(action, [world, world, world])
     assert states[-1] is ActionState.COMPLETE and made == []
     assert "no lane on the right; nothing done" in caplog.text

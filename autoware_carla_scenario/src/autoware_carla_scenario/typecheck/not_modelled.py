@@ -415,6 +415,22 @@ def _members(names: str, reason: str) -> dict[str, str]:
 #: lists `get_details` for every condition), so a key need not be a modelled
 #: class itself (`BackendDriven`).
 NOT_MODELLED_MEMBERS: dict[str, dict[str, str]] = {
+    "AdversarialTrafficAction": {
+        "choices": (
+            "the adversities NADE sampled, as adversity.nade's NadeChoice, "
+            "which holds an AdversarialCommand of the adversity package that a "
+            "scenario does not import; read its weight instead (#397 makes it a "
+            "metric)"
+        ),
+    },
+    "NadeSettings": {
+        "avoidance": (
+            "adversity.avoidance's AvoidanceSettings, TeraSim's avoidance "
+            "numbers, of the adversity package that a scenario does not import; "
+            "a scenario leaves them at TeraSim's (the library check compiles "
+            "them from their source)"
+        ),
+    },
     "AdversityFeasibleCondition": _members(
         "command scene",
         "what the adversarial actions read off the condition they fire on: an "

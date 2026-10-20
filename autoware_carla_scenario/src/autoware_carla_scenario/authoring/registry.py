@@ -1523,6 +1523,138 @@ register_action_spec(
     )
 )
 
+#: Mirrors ``AdversityKind``; the codegen refuses an option that names no
+#: member.
+_ADVERSITY_KINDS: tuple[SelectOption, ...] = (
+    SelectOption("brake_check", "Brake check"),
+    SelectOption("ignore_leader", "Ignore leader"),
+    SelectOption("cut_in", "Cut in"),
+    SelectOption("traffic_rule", "Run a red light"),
+    SelectOption("jaywalking", "Jaywalk"),
+)
+
+_NADE_SETTINGS = (
+    "max_controlled",
+    "control_radius",
+    "magnitude",
+    "max_is_probability",
+    "fixed_is_probability",
+    "cooldown",
+    "challenge_npcs",
+)
+
+register_action_spec(
+    ActionSpec(
+        type_id="adversarial_traffic",
+        title="Adversarial Traffic (NADE)",
+        category="Adversity",
+        builder="build_adversarial_traffic_action",
+        target="..actions.adversarial_traffic:AdversarialTrafficAction",
+        scope="environment",
+        visual_kind="continuous",
+        builds=(
+            BuiltArgument(
+                kwarg="settings",
+                target="..adversity.nade:NadeSettings",
+                parts=(BuiltPart(args=tuple((name, name) for name in _NADE_SETTINGS)),),
+            ),
+        ),
+        fields=(
+            FieldSpec(
+                name="adversities",
+                label="Adversities",
+                kind="record_list",
+                default=(),
+                help=(
+                    "In order: an agent carries out the first whose trigger "
+                    "fires where it is."
+                ),
+                item_fields=(
+                    FieldSpec(
+                        "kind", "Kind", "select", "brake_check", _ADVERSITY_KINDS
+                    ),
+                    FieldSpec(
+                        "location", "Where", "select", "any", _ADVERSITY_LOCATIONS
+                    ),
+                    FieldSpec(
+                        "probability",
+                        "Probability",
+                        "number",
+                        0.001,
+                        help="Naturalistic, a tick, when its trigger holds.",
+                    ),
+                ),
+            ),
+            FieldSpec(name="seed", label="Seed", kind="int", default=0),
+            FieldSpec(
+                name="max_controlled",
+                label="Vehicles considered",
+                kind="int",
+                default=5,
+                help="The nearest this many vehicles around the ego.",
+            ),
+            FieldSpec(
+                name="control_radius",
+                label="Around the ego",
+                kind="number",
+                default=50.0,
+                unit="m",
+            ),
+            FieldSpec(
+                name="magnitude",
+                label="IS magnitude",
+                kind="number",
+                default=20.0,
+                help="q = clip(p x magnitude, 0, the most q).",
+            ),
+            FieldSpec(
+                name="max_is_probability",
+                label="Most q",
+                kind="number",
+                default=0.05,
+            ),
+            FieldSpec(
+                name="fixed_is_probability",
+                label="Fixed q",
+                kind="number",
+                default=0.0,
+                help="Above 0, every adversity's q, in place of the clip.",
+            ),
+            FieldSpec(
+                name="cooldown",
+                label="Cooldown",
+                kind="number",
+                default=5.5,
+                unit="s",
+                help="After an adversity, how long before the next.",
+            ),
+            FieldSpec(
+                name="challenge_npcs",
+                label="Challenge NPCs too",
+                kind="bool",
+                default=False,
+                help=(
+                    "Not the ego only: an NPC victim avoids or accepts the "
+                    "adversity, its own weight on the run's."
+                ),
+            ),
+            FieldSpec(
+                name="following_mode",
+                label="Following mode",
+                kind="select",
+                default="follow",
+                options=_FOLLOWING_MODES,
+            ),
+        ),
+        description=(
+            "TeraSim's NADE: every tick, the NPC or pedestrian near the ego "
+            "whose adversity would challenge it carries it out, sampled with "
+            "an importance-sampling probability, and the run keeps the weight "
+            "that unbiases its statistics. One adversity at a time."
+        ),
+    )
+)
+
 register_action_spec(
     ActionSpec(
         type_id="set_speed",
