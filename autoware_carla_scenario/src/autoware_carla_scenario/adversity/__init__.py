@@ -11,6 +11,8 @@ The layers, bottom-up:
 * :mod:`.observation`: what an agent sees -- leader, follower, the lanes
   beside, the next signal, the road near a pedestrian -- from a snapshot of
   the agents (:mod:`.snapshot` takes it of a CARLA world).
+* :mod:`.triggers`: when each phase-1 adversity fires, behind its
+  location gate (:func:`.triggers.adversity_command`).
 * :mod:`.command`: what a trigger answers with -- accelerate, change lanes,
   follow a path -- and the timed path it drives (``actions`` drives it).
 
@@ -42,15 +44,19 @@ from .prediction import (
     lane_change_longitudinal_speed,
     predict_distance_velocity,
 )
+from .triggers import AdversityKind, TriggerThresholds, adversity_command
 
 __all__ = [
-    "AdversarialCommand",
-    "CommandKind",
     "DEFAULT_IDM",
+    "AdversarialCommand",
+    "AdversityKind",
     "AdversityLocation",
     "AgentFootprint",
+    "CommandKind",
     "IdmParameters",
     "PredictedState",
+    "TriggerThresholds",
+    "adversity_command",
     "car_following_acceleration",
     "circle_centers",
     "circle_offsets",
