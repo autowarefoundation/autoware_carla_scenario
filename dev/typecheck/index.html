@@ -3543,8 +3543,8 @@ method of a checked module.</p>
 <li>Run <code>uv run pytest autoware_carla_scenario/test/carla_scenario/test_typecheck_library.py</code>.</li>
 </ol>
 <h3 id="what-is-checked-of-the-framework">What is checked of the framework<a class="headerlink" href="#what-is-checked-of-the-framework" title="Permanent link">&para;</a></h3>
-<p>Every module now has an entry other than <code>"not yet checked (#45)"</code>. 189 of
-the package's 281 modules (67%; about 45,750 of 81,100 lines) are <code>CHECKED</code>:
+<p>Every module now has an entry other than <code>"not yet checked (#45)"</code>. 191 of
+the package's 283 modules (67%; about 46,450 of 83,300 lines) are <code>CHECKED</code>:
 the kinematics, the coordinate frames and poses, the conversions between
 Lanelet2, OpenDRIVE and CARLA world poses (<code>coordinate.transform</code>), the stop
 lines read off a Lanelet2 map (<code>utils.stop_line</code>, <code>coordinate.stop_line</code>)
@@ -3603,7 +3603,7 @@ driver's configs and client interface, trajectory follower and observations
 <code>driver.geometry</code>), and the <code>autoware_bridge</code>, <code>autoware_stack</code>, <code>entity</code>,
 <code>driver</code>, <code>maps</code> and <code>coverage</code> packages themselves, whose <code>__init__</code> re-exports what is not checked
 through models of it (see <em>A class a checked package only re-exports</em>
-below). 90
+below). 92
 functions and methods of those modules are <code>UNCALLED</code> (20 of them
 protected helpers, see <em>What is compiled</em> below): most of them a
 condition's <code>get_details()</code> or a backend's <code>describe()</code>, what takes a traffic
@@ -3680,8 +3680,9 @@ for), so each is counted once, in the first group that fits it:</p>
   also hold values Codon has no type for.</li>
 <li><strong>3 hold values Codon has no type for</strong>, and nothing else keeps them out:
   <code>Any</code> (<code>trajectory.authoring</code>, <code>authoring.registry</code>'s
-  field defaults), or a class as a value (<code>utils.config</code>, which <code>traffic.config</code>
-  and <code>traffic.sumo.config</code> import only in their uncalled <code>from_mapping()</code>).</li>
+  field defaults), or a class as a value (<code>utils.config</code>, which <code>traffic.config</code>,
+  <code>traffic.fidelity</code> and <code>traffic.sumo.config</code> import only in their uncalled
+  <code>from_mapping()</code>).</li>
 <li><strong>1 has a callback the check cannot type</strong>: <code>ros2.camera</code>, whose camera
   hands each frame back to the ROS 2 ego from a CARLA sensor thread through
   <code>CarlaCameraSensor</code>'s listen callback.</li>
@@ -5186,7 +5187,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 20, 2026 13:10:33 UTC"><span class="timeago" datetime="2026-10-20T13:10:33+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 20, 2026 13:10:33 UTC">2026-10-20</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 20, 2026 14:57:38 UTC"><span class="timeago" datetime="2026-10-20T14:57:38+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 20, 2026 14:57:38 UTC">2026-10-20</span>
   </span>
 
     
