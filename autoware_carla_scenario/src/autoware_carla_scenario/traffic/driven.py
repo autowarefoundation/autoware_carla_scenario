@@ -176,6 +176,11 @@ class BackendDriven(DrivenEntity):
         entity: DrivenEntity = self
         self._resolve_backend().release(entity, world)
 
+    def resume_traffic(self, world: "carla.World") -> None:
+        """Hand this vehicle back to the backend (:meth:`release_from_traffic`'s inverse)."""
+        entity: DrivenEntity = self
+        self._resolve_backend().resume(entity, world)
+
     # ------------------------------------------------------------------
     # Internals
     # ------------------------------------------------------------------

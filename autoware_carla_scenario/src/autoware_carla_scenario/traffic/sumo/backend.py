@@ -92,6 +92,10 @@ LANE_CHANGE_SETTLED_M: float = 0.3
 TURN_SEARCH_EDGES: int = 8
 #: Speed mode bits of a vehicle SUMO does not control (all checks off).
 _SPEED_MODE_EXTERNAL = 0
+#: SUMO's defaults, which a vehicle SUMO drives keeps: every speed check
+#: on, and lane changes for strategy, cooperation, speed and the right lane.
+_SPEED_MODE_DRIVEN = 31
+_LANE_CHANGE_MODE_DRIVEN = 1621
 #: SUMO connection directions that count as each turn, by TurnDirection value.
 _TURNS = {"left": ("l", "L"), "right": ("r", "R"), "straight": ("s",)}
 #: How the run's own vehicles look in sumo-gui, apart from SUMO's traffic.
@@ -582,6 +586,39 @@ class SumoTrafficBackend(TrafficBackend):
         except Exception as exc:  # noqa: BLE001
             logger.warning("SUMO could not hand %s over: %s", sumo_id, exc)
         logger.info("SUMO: %s released; it is published from CARLA now", sumo_id)
+
+    def resume(self, entity: Any, world: Any) -> None:
+        """Drive *entity* in SUMO again, from where CARLA has it now.
+
+        While released its pose was pushed into SUMO every tick, so SUMO
+        takes it over where the action left it: SUMO's own speed and
+        lane-change rules again, and its pose pulled out each tick.
+        """
+        if self._tm_drives_scenario:
+            self._tm.resume(entity, world)
+            return
+        if id(entity) not in self._released:
+            return
+        self._released.discard(id(entity))
+        actor = getattr(entity, "actor", None)
+        sumo_id = None
+        for published, published_actor in self._external.items():
+            if actor is not None and published_actor is actor:
+                sumo_id = published
+        if sumo_id is None or not self._running:
+            # Not in SUMO yet: start() drives it rather than publishing it.
+            return
+        self._external.pop(sumo_id)
+        try:
+            tc = self._traci
+            tc.vehicle.setSpeedMode(sumo_id, _SPEED_MODE_DRIVEN)
+            tc.vehicle.setLaneChangeMode(sumo_id, _LANE_CHANGE_MODE_DRIVEN)
+            tc.vehicle.setSpeed(sumo_id, -1.0)
+            tc.vehicle.setColor(sumo_id, _DRIVEN_COLOR)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("SUMO could not take %s back: %s", sumo_id, exc)
+        self._driven[sumo_id] = entity
+        logger.info("SUMO: %s resumed; SUMO drives it again", sumo_id)
 
     # ------------------------------------------------------------------
     # Internals: the run's vehicles

@@ -253,6 +253,55 @@ class TestTrafficManagerRelease:
         NullTrafficBackend().release(_stand_in(_Actor(1), role_name=None), _World())
 
 
+class TestTrafficManagerResume:
+    """An action done with a vehicle hands it back to the manager."""
+
+    def test_resumed_after_start_it_goes_back_on_autopilot(self) -> None:
+        npc = _Actor(2)
+        backend = TrafficManagerBackend(
+            TrafficManagerBackendConfig(port=8123), client=_Client()
+        )
+        backend.start(_World([npc]))
+        backend.release(_stand_in(npc), _World())
+        backend.resume(_stand_in(npc), _World())
+        assert npc.autopilot == [(True, 8123), (False, 8123), (True, 8123)]
+        # Saying it twice is harmless.
+        backend.resume(_stand_in(npc), _World())
+        assert len(npc.autopilot) == 3
+
+    def test_resumed_before_start_it_is_handed_over_at_start(self) -> None:
+        npc = _Actor(2)
+        backend = TrafficManagerBackend(client=_Client())
+        backend.release(_stand_in(npc), _World())
+        backend.resume(_stand_in(npc), _World())
+        backend.start(_World([npc]))
+        assert npc.autopilot == [(True, backend.port)]
+
+    def test_a_vehicle_never_released_is_left_alone(self) -> None:
+        npc = _Actor(2)
+        backend = TrafficManagerBackend(client=_Client())
+        backend.start(_World([npc]))
+        backend.resume(_stand_in(npc), _World())
+        assert npc.autopilot == [(True, backend.port)]
+
+    def test_the_entity_asks_its_own_backend(self) -> None:
+        resumed: List[Any] = []
+
+        class _Backend(NullTrafficBackend):
+            def resume(self, entity: Any, world: Any) -> None:
+                resumed.append(entity)
+
+        entity = VehicleEntity(
+            VehicleEntityConfig(role_name="npc1", spawn_location=SpawnPointIndex(0))
+        )
+        entity.set_traffic_backend(_Backend())
+        entity.resume_traffic(_World())
+        assert resumed == [entity]
+
+    def test_the_base_backend_resumes_quietly(self) -> None:
+        NullTrafficBackend().resume(_stand_in(_Actor(1), role_name=None), _World())
+
+
 class TestVehicleEntityDestroy:
     def test_it_holds_no_map_past_its_run(self) -> None:
         """A finished run's scenarios stay in the queue, and their entities with

@@ -449,6 +449,34 @@ def test_a_released_vehicle_is_published_rather_than_driven(
 
 
 @needs_sumo
+def test_a_resumed_vehicle_is_driven_by_sumo_again(
+    crossroads: Path, tmp_path: Path
+) -> None:
+    """Handed back, the NPC is SUMO's again, from where CARLA left it."""
+    backend, world, npc, _ego = _prepared(crossroads, tmp_path)
+    entity = backend._driven[next(iter(backend._driven))]
+    sumo_id = next(iter(backend._driven))
+    try:
+        backend.tick(world, 0.0)
+        backend.release(entity, world)
+        for i in range(5):
+            backend.tick(world, (i + 1) * 0.05)
+        held = npc.transform.location.x
+        backend.resume(entity, world)
+        assert backend._driven[sumo_id] is entity
+        assert sumo_id not in backend._external
+        assert backend._traci.vehicle.getSpeedMode(sumo_id) == 31
+        for i in range(60):
+            backend.tick(world, (i + 6) * 0.05)
+        # SUMO moves it on from where it was held.
+        assert npc.transform.location.x > held + 1.0
+        backend.resume(entity, world)  # and saying it twice is harmless
+        assert backend._driven[sumo_id] is entity
+    finally:
+        backend.close()
+
+
+@needs_sumo
 def test_manoeuvres_become_sumo_commands(crossroads: Path, tmp_path: Path) -> None:
     backend, world, npc, _ego = _prepared(crossroads, tmp_path)
     entity = backend._driven[next(iter(backend._driven))]

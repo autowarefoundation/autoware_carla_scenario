@@ -468,6 +468,21 @@ class TrafficManagerBackend(TrafficBackend):
             actor.set_autopilot(False, self.port)
             logger.info("%s: autopilot released", _entity_name(entity))
 
+    def resume(self, entity: DrivenEntity, world: "carla.World") -> None:
+        """Put *entity*'s vehicle back on autopilot, and on it at :meth:`start`.
+
+        The TrafficManager keeps a vehicle's settings (its desired speed, its
+        lane-change rules) across autopilot switches, so it drives on as it
+        did before it was released.
+        """
+        actor = _require_actor(entity, "resume")
+        if actor is None or actor.id not in self._released:
+            return
+        self._released.discard(actor.id)
+        if self._started:
+            actor.set_autopilot(True, self.port)
+            logger.info("%s: autopilot resumed", _entity_name(entity))
+
     # ------------------------------------------------------------------
     # Internals
     # ------------------------------------------------------------------
