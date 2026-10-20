@@ -140,7 +140,7 @@ Generate types from the schema with the generator for your language:
 | Language | Generator | Notes |
 |---|---|---|
 | TypeScript | [json-schema-to-typescript](https://github.com/bcherny/json-schema-to-typescript) | A discriminated union on `type`, with tuple types |
-| Python | [datamodel-code-generator](https://github.com/koxudaxi/datamodel-code-generator) | Pydantic models; tuples become length-checked lists |
+| Python | [datamodel-code-generator](https://github.com/datamodel-code-generator/datamodel-code-generator) | Pydantic models; tuples become length-checked lists |
 | Rust | [typify](https://github.com/oxidecomputer/typify) | Reads 2020-12; an enum on `type` (the schema's `discriminator`), tuples as tuples |
 | C++, Go, Rust, C#, ... | [quicktype](https://github.com/glideapps/quicktype) | Reads the draft-07 copy; merges the records into one type with optional fields; tuples become arrays |
 
