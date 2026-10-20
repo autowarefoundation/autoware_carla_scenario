@@ -115,6 +115,7 @@ own hooks:
 | `start(world, skip_actor_ids=…)` | After warm-up and the init phase, immediately before the scenario clock starts. |
 | `tick(world, elapsed)` | Once per `world.tick()`. A backend driving a second simulator steps it exactly once here. |
 | `release(entity, world)` | When an action takes a vehicle over (a `FollowTrajectoryAction`). Stop driving it; may come before or after `start`. |
+| `resume(entity, world)` | When an action that took a vehicle over hands it back (an adversarial manoeuvre is over). Drive it again from where it is; undoes `release`, may come before or after `start`. |
 | `close()` | During teardown, while the world is still alive. Called even when the run failed. |
 
 One backend serves a whole queue: `ScenarioQueue` builds one runner, so over a
@@ -212,6 +213,16 @@ the backend to stop driving it first. The TrafficManager takes it off autopilot
 (and never puts it on, if `start` has not run yet); SUMO keeps it in its own
 simulation but publishes it from CARLA, as it does the ego. The base class does
 nothing, which is right for a backend that never drives the scenario's vehicles.
+
+`resume(entity, world)` undoes it, for an action that hands the vehicle back
+when it is done (`entity.resume_traffic(world)`; `FollowTrajectoryAction`
+leaves its vehicle where the trajectory ends and does not): the TrafficManager
+puts it back on autopilot, keeping the desired speed and lane-change settings
+it had; SUMO drives it again from the pose it was published at, with the speed
+and lane-change modes and the desired speed it had before. A vehicle never
+released, or driven elsewhere from the start (an ego: `ExternallyDrivenEgo`
+refuses `resume_traffic`, and both backends ignore it), is left as it is, and
+saying it twice is harmless.
 
 ## Using a backend from Python
 

@@ -97,6 +97,7 @@ class TrafficManagerBackend(TrafficBackend):
     _background_count: int
     _started: bool
     _released: set[int]
+    _skipped: set[int]
     _lane_changed: List[DrivenEntity]
 
     def __init__(
@@ -123,6 +124,8 @@ class TrafficManagerBackend(TrafficBackend):
         self._started = False
         #: Actors taken back with :meth:`release`, never handed to autopilot.
         self._released = set()
+        #: Actors :meth:`start` was told are driven elsewhere (an ego).
+        self._skipped = set()
         #: The vehicles this backend left lane change state on (a map with
         #: it), forgotten when the run closes: the queue keeps a finished
         #: run's scenarios, and their entities with them.
@@ -165,6 +168,7 @@ class TrafficManagerBackend(TrafficBackend):
         """Hand every vehicle that is not driven elsewhere to the TrafficManager."""
         self._started = True
         skip = set(skip_actor_ids)
+        self._skipped = skip
         enabled = 0
         for actor in world.get_actors().filter("vehicle.*"):
             if actor.id in skip or actor.id in self._released:
@@ -199,6 +203,7 @@ class TrafficManagerBackend(TrafficBackend):
         self._background_count = 0
         self._started = False
         self._released = set()
+        self._skipped = set()
         if self._closed or self._client is None:
             return
         self._closed = True
@@ -467,6 +472,24 @@ class TrafficManagerBackend(TrafficBackend):
         if self._started:
             actor.set_autopilot(False, self.port)
             logger.info("%s: autopilot released", _entity_name(entity))
+
+    def resume(self, entity: DrivenEntity, world: "carla.World") -> None:
+        """Put *entity*'s vehicle back on autopilot, and on it at :meth:`start`.
+
+        The TrafficManager keeps a vehicle's settings (its desired speed, its
+        lane-change rules) across autopilot switches, so it drives on as it
+        did before it was released.
+        """
+        actor = _require_actor(entity, "resume")
+        if actor is None or actor.id not in self._released:
+            return
+        if actor.id in self._skipped:
+            # Driven elsewhere from the start (an ego's stack): never ours.
+            return
+        self._released.discard(actor.id)
+        if self._started:
+            actor.set_autopilot(True, self.port)
+            logger.info("%s: autopilot resumed", _entity_name(entity))
 
     # ------------------------------------------------------------------
     # Internals

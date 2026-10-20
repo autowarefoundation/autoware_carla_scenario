@@ -114,5 +114,8 @@ class VehicleEntity:
     def release_from_traffic(self, world: carla.World) -> None:
         raise NotImplementedError()
 
+    def resume_traffic(self, world: carla.World) -> None:
+        raise NotImplementedError()
+
     def forget_lane_change(self) -> None:
         raise NotImplementedError()
