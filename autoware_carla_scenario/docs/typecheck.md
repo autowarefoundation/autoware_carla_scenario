@@ -1261,8 +1261,8 @@ For a scenario's own `Enum` class (any of `Enum`, `IntEnum`, `StrEnum`,
 
 - `for m in Mode` and a comprehension over `Mode`, and `*Mode`;
 - `list(Mode)`, `tuple`, `set`, `frozenset`, `sorted`, `len`, `reversed`,
-  `enumerate`, `iter`, `min`, `max`, `sum`, `any`, `all`, `zip`, `map` and
-  `filter` of `Mode`;
+  `enumerate`, `iter`, `min`, `max`, `zip`, `map` and `filter` (with a
+  function) of `Mode`;
 - `x in Mode` and `x not in Mode`;
 - `Mode["A"]`, a member looked up by name.
 
@@ -1275,9 +1275,14 @@ What does not work (Flag operators and the model enums are tracked in #437):
 
 - the framework's own model enums (`TurnDirection`, ...) are not iterable;
 - the class passed as a value, `f(Mode)`, or `Mode.__members__`: both stay as
-  written, which Codon does not resolve;
-- the operators of a `Flag` (`A | B`, `in` on a combined value);
-- an enum with no member.
+  written, which Codon does not resolve (`no function 'List.__init__' with
+  arguments (List[T], type[Mode])` for `list(e)` in `f`, and `'Mode' object
+  has no attribute '__members__'`);
+- `sum`, `any` and `all` of the class, and `filter(None, Mode)`: Codon needs
+  `__bool__` or `+` on the member (`sum(int(m) for m in Mode)`, `any(m == x
+  for m in Mode)`);
+- the operators of a `Flag` (`A | B`: `unsupported operand type(s) for |`);
+- an enum with no member (`'Empty' object has no attribute '_acs_members'`).
 
 ## What the check does not catch
 
