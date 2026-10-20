@@ -598,7 +598,11 @@ def adversity_command(
         beyond: Optional[SideLane] = None
         right = seen.right
         if right is not None:
-            beyond = scene.lane_beside(name, right.lanelet, "right")
+            # Who is two lanes over is worth looking for only where that
+            # lane merges (a cached map answer); nearly everywhere it does not.
+            far = scene.features.neighbour(right.lanelet, "right")
+            if far is not None and scene.features.merges(far):
+                beyond = scene.lane_beside(name, right.lanelet, "right")
         return merge(seen, beyond, scene.features, limits)
     if kind is AdversityKind.HEAD_ON:
         leader = seen.leader

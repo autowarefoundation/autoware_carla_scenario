@@ -428,10 +428,10 @@ class MapFeatures:
             return False
         # A typed local: Codon unwraps the Optional here, not at each use.
         beside: ConstLanelet = left
-        goes_on = {int(ll.id) for ll in self.following(beside)}
+        goes_on = {int(ll.id) for ll in self.graph.following(beside)}
         if not goes_on:
             return False
-        own = self.following(lanelet)
+        own = self.graph.following(lanelet)
         return not own or any(int(ll.id) in goes_on for ll in own)
 
     def merges(self, lanelet: ConstLanelet) -> bool:
@@ -449,7 +449,7 @@ class MapFeatures:
         current: ConstLanelet = lanelet
         travelled = 0.0
         seen = {key}
-        while not found:
+        while True:
             found = self._ends_into_left(current)
             travelled += self.length(current)
             following = self.straightest_following(current)
