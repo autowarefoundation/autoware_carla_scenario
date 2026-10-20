@@ -1152,6 +1152,47 @@ in step:
   `Generic`, and write a `@dataclass` (or a `Dict[str, X]`) instead of a
   `TypedDict`.
 
+### Standard library names Codon lacks
+
+Codon ships its own `functools` (only `partial`), `itertools` and
+`collections`, and a name it lacks fails with a bare "cannot import name".
+The check supplies these (#378); `test_stdlib_names` keeps this list, the
+check's additions and the tests in step:
+
+<!-- stdlib-names:start -->
+`functools.reduce`, `functools.lru_cache`, `functools.cache`,
+`functools.cached_property`, `itertools.pairwise`, `collections.OrderedDict`
+<!-- stdlib-names:end -->
+
+- `functools.reduce` (with or without an initial value) is a function of the
+  model, which the check puts in place of the name.
+- `lru_cache` (with or without arguments), `cache` and `cached_property` are
+  decorators the check drops, as caching changes no type; `cached_property`
+  becomes a `property`. Nothing is cached, so `f.cache_clear()` and
+  `f.cache_info()` are refused.
+- `itertools.pairwise` is added to Codon's `itertools`, and
+  `collections.OrderedDict` is a `dict`, which keeps its insertion order;
+  `move_to_end()` and `popitem(last=...)` are not declared.
+
+These are refused at the import line, with a hint saying what to write
+instead:
+
+<!-- stdlib-refused:start -->
+`dataclasses.asdict`, `functools.wraps`, `contextlib`, `warnings`, `json`,
+`types`, `textwrap`
+<!-- stdlib-refused:end -->
+
+- `dataclasses.asdict` returns a `dict[str, Any]`: build the dict from the
+  fields you need. The `dataclasses` shim declares only `dataclass`, `field`
+  and `replace`.
+- `functools.wraps` (and any other name of `functools`, `itertools` or
+  `collections` not listed above) is not modelled.
+- `contextlib`: write a class with `__enter__` and `__exit__` for
+  `contextmanager`, and `try/except X: pass` for `suppress`. `warnings`: log
+  with `logger.warning`. `json`: read into a `@dataclass`. `types`: name the
+  type itself. `textwrap`: build the string with `str` methods. `traceback`
+  and `io` are refused likewise.
+
 ## What the check does not catch
 
 The check compiles the scenario and never runs it, so it says nothing of

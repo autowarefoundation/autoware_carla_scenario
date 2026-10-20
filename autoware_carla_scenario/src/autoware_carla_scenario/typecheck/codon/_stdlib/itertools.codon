@@ -1,0 +1,12 @@
+# What the checker adds to Codon's itertools (docs/typecheck.md). The workspace
+# gets Codon's own stdlib/itertools.codon followed by this file
+# (typecheck/check.py, _base_workspace), so every name Codon has stays.
+
+
+def pairwise(iterable):
+    """itertools.pairwise (Python 3.10): the overlapping pairs of iterable."""
+    it = iter(iterable)
+    a = next(it)
+    for b in it:
+        yield (a, b)
+        a = b

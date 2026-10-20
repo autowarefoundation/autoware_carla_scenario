@@ -2166,3 +2166,97 @@ def test_cast_is_kept_for_a_codon_type_and_dropped_for_any_other() -> None:
     assert _transform('y = cast("int", x)\n') == "y = cast(int, x)\n"
     assert _transform("y = cast(Callable[[int], int], f)(2)\n") == "y = (f)(2)\n"
     assert _transform("y = typing.cast(Any, x)\n") == "y = (x)\n"
+
+
+def test_functools_caching_decorators_are_dropped() -> None:
+    source = textwrap.dedent(
+        """
+        import functools
+        from functools import cache as memo, lru_cache
+
+        @lru_cache(maxsize=8)
+        def a(x: int) -> int:
+            return x
+
+        @functools.lru_cache()
+        def b(x: int) -> int:
+            return x
+
+        @lru_cache
+        def c(x: int) -> int:
+            return x
+
+        @functools.cache
+        def d(x: int) -> int:
+            return x
+
+        class K:
+            @memo
+            def e(self, x: int) -> int:
+                return x
+
+            @lru_cache(
+                maxsize=None,
+            )
+            def f(self, x: int) -> int:
+                return x
+        """
+    )
+    out = _transform(source)
+    assert out.count("\n") == source.count("\n")
+    assert "@" not in out
+    assert "lru_cache" not in out.replace("import functools\n", "")
+    assert out.count("def ") == 6
+
+
+def test_functools_cached_property_becomes_a_property() -> None:
+    source = textwrap.dedent(
+        """
+        import functools
+        from functools import cached_property
+
+        class K:
+            @cached_property
+            def a(self) -> int:
+                return 1
+
+            @functools.cached_property
+            def b(self) -> int:
+                return 2
+        """
+    )
+    out = _transform(source)
+    assert out.count("@property") == 2
+    assert "cached_property" not in out
+
+
+def test_functools_reduce_becomes_the_models() -> None:
+    source = textwrap.dedent(
+        """
+        import functools as ft
+        from functools import partial, reduce as fold
+
+        def total(xs: list[int]) -> int:
+            return fold(lambda a, b: a + b, xs, 0) + ft.reduce(max, xs)
+        """
+    )
+    out = _transform(source)
+    assert "_acs_reduce(lambda a, b: a + b, xs, 0) + _acs_reduce(max, xs)" in out
+    # Only the names Codon lacks leave the import; partial stays.
+    assert "from functools import partial\n" in out
+    assert "fold" not in out.replace("_acs_reduce", "")
+
+
+def test_a_functools_import_of_only_stubbed_names_is_dropped() -> None:
+    source = "from functools import (\n    cache,\n    reduce,\n)\nx = 1\n"
+    out = _transform(source)
+    assert out.count("\n") == source.count("\n")
+    assert "from functools" not in out
+    assert "pass" in out
+
+
+def test_another_modules_reduce_and_cache_are_left_alone() -> None:
+    source = "from mylib import reduce, cache\n\n\ndef f(xs):\n    return reduce(xs)\n"
+    out = _transform(source)
+    assert "from mylib import reduce, cache" in out
+    assert "_acs_reduce(xs)" not in out

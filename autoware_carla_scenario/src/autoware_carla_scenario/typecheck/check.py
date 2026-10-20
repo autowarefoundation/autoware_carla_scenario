@@ -141,6 +141,30 @@ _LLVM_CLASS = re.compile(
 _DRIVER_LABEL = "<the scenario as register_scenario() builds it>"
 
 
+#: The model's directory of additions to Codon's own stdlib modules (#378):
+#: ``itertools.codon`` there is appended to Codon's ``itertools.codon``, so the
+#: workspace's module has every name Codon's has and the additions.  (A module
+#: that replaced Codon's would lose what the compiler finds by name, such as
+#: ``functools.partial``; the names of ``functools`` are the transform's.)
+_STDLIB_EXTENSIONS = "_stdlib"
+
+#: Why a module Codon has no model for is refused, and what to write instead
+#: (#378): appended to the refusal at the import line.
+_UNMODELLED_HINTS = {
+    "contextlib": "write a class with __enter__ and __exit__ for contextmanager, "
+    "and try/except X: pass for suppress",
+    "warnings": "log with logger.warning(...) instead of warnings.warn(...)",
+    "json": "the check has no dict[str, Any] to load or dump: read the "
+    "configuration into a @dataclass, and leave serialisation to a module the "
+    "check does not compile",
+    "types": "name the type itself (SimpleNamespace is a @dataclass or a plain "
+    "class; MappingProxyType is a dict)",
+    "textwrap": "build the string with str methods and join()",
+    "traceback": "log the exception with logger.exception(...)",
+    "io": "use a str, or a pathlib.Path opened with open()",
+}
+
+
 def model_dir() -> Path:
     """The directory holding the Codon model (the workspace's base)."""
     return Path(__file__).resolve().parent / "codon"
@@ -199,6 +223,7 @@ def _shims() -> frozenset[str]:
     """Modules the model directory provides besides the framework's own."""
     return frozenset(p.name.split(".")[0] for p in model_dir().iterdir()) - {
         _PACKAGE,
+        _STDLIB_EXTENSIONS,
         "__pycache__",
     }
 
@@ -636,6 +661,8 @@ def _collect(roots: list[str], tc: Toolchain, codon_path: Path) -> _Sources:
                 what = _unmodelled_module(imported, names)
             else:
                 what = f"{imported} has no Codon model, so a scenario importing it cannot be checked"
+                if top in _UNMODELLED_HINTS:
+                    what += f": {_UNMODELLED_HINTS[top]}"
             out.problems.append(Diagnostic(what, str(path), lineno))
     return out
 
@@ -673,6 +700,13 @@ class _Workspace:
 def _base_workspace(root: Path, driver: Any, codon_path: Path) -> _Workspace:
     """The model, the shims and the CARLA API, in *root*."""
     shutil.copytree(model_dir(), root, dirs_exist_ok=True)
+    extensions = root / _STDLIB_EXTENSIONS
+    stdlib = find_codon().codon_dir / "lib" / "codon" / "stdlib"
+    for extension in sorted(extensions.glob("*.codon")):
+        (root / extension.name).write_text(
+            (stdlib / extension.name).read_text() + "\n\n" + extension.read_text(),
+        )
+    shutil.rmtree(extensions)
     # The CARLA API: typesafe_carla's CODON_PATH directory (the library and
     # the compile-time switches it reads), linked in, as Codon reads only one.
     for entry in codon_path.iterdir():
@@ -811,6 +845,24 @@ _VARIADIC_LIMITS = (
         re.compile(r"cannot import name 'TypedDict' from 'typing'"),
         "typing.TypedDict is not available in the check: write a @dataclass "
         "(or a plain class with annotated fields), or a Dict[str, X]",
+    ),
+    (
+        re.compile(r"cannot import name 'asdict' from 'dataclasses'"),
+        "dataclasses.asdict returns a dict[str, Any], which the check cannot "
+        "type: build the dict from the fields you need "
+        '({"x": point.x, "y": point.y})',
+    ),
+    (
+        re.compile(r"cannot import name '\w+' from 'dataclasses'"),
+        "the check models only dataclass, field and replace of dataclasses: "
+        'docs/typecheck.md ("standard library names") lists the names',
+    ),
+    (
+        re.compile(
+            r"cannot import name '\w+' from '(functools|itertools|collections)'"
+        ),
+        "the check adds only some names to Codon's functools, itertools and "
+        'collections: docs/typecheck.md ("standard library names") lists them',
     ),
     (
         re.compile(r"cannot import name '\w+' from 'typing'"),

@@ -131,6 +131,24 @@ def _acs_tuple(values):
         return list(values)
 
 
+def _acs_reduce(function, iterable, *initial):
+    """What the checker puts in place of functools.reduce(function, iterable[,
+    initial]) (typecheck/transform.py): Codon's functools has only partial."""
+    if static.len(initial) == 0:
+        it = iter(iterable)
+        acc = next(it)
+        for x in it:
+            acc = function(acc, x)
+        return acc
+    elif static.len(initial) == 1:
+        acc = initial[0]
+        for x in iterable:
+            acc = function(acc, x)
+        return acc
+    else:
+        compile_error("functools.reduce takes at most three arguments")
+
+
 def _acs_callable(value) -> bool:
     """What the checker puts in place of callable(value): Codon 0.19 has no
     callable(), and decides it from the type when it compiles."""
