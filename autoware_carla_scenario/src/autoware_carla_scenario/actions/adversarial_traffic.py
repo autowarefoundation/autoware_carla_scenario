@@ -37,7 +37,7 @@ from ..utils.turn_indicator import TurnIndicatorState, is_vehicle, turn_indicato
 from ._adversarial_execution import AdversarialExecution, drivable, start_execution
 from .background_traffic import _Never
 from .base import BaseAction, TickTiming
-from .events import AdversityEvent
+from ..adversity_event import AdversityEvent
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
@@ -123,7 +123,7 @@ class AdversarialTrafficAction(BaseAction):
     @property
     def importance_sampling_weight(self) -> float:
         """:attr:`weight`, as every action reports its weight to the scenario."""
-        return self._sampler.weight
+        return self.weight
 
     def take_adversity_events(self) -> list[AdversityEvent]:
         """The adversities sampled since last asked, for the run's log."""

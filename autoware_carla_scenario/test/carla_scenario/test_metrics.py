@@ -211,12 +211,12 @@ def test_the_metrics_are_alpasim_s() -> None:
         # Not AlpaSim's: NADE's weight, its last value the run's (#397).
         "importance_sampling_weight",
     }
+    weight = BUILT_IN_METRICS["importance_sampling_weight"]
+    assert (weight.unit, weight.aggregation) == ("ratio", "last")
     for key, metric in BUILT_IN_METRICS.items():
         assert metric.key == key
-        if key == "importance_sampling_weight":
-            assert (metric.unit, metric.aggregation) == ("ratio", "last")
-            continue
-        assert metric.aggregation == ("min" if metric.unit == "m" else "max")
+        if metric is not weight:
+            assert metric.aggregation == ("min" if metric.unit == "m" else "max")
     assert read_metric("no_such_metric", _world()) is None  # type: ignore[arg-type]
 
 

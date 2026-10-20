@@ -1,8 +1,8 @@
 """What an action reports for the run's log, beside its lifecycle (#397).
 
-Kept apart from :mod:`.base`, with nothing to import, so the trajectory
-recorder and the runner can read it without pulling in what an action
-needs to act.
+A module of its own at the package's top, importing nothing, so the
+trajectory recorder, the runner and every action read it without pulling
+in the actions or the adversity package.
 """
 
 from __future__ import annotations

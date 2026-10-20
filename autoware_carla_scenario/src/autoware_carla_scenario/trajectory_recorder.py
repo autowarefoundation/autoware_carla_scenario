@@ -62,6 +62,7 @@ never fails the scenario.
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import logging
 from pathlib import Path
@@ -70,7 +71,7 @@ from typing import IO, Any, Optional
 import orjson
 import typesafe_carla.carla as carla
 
-from .actions.events import AdversityEvent
+from .adversity_event import AdversityEvent
 from .coordinate.map_manager import MapManager, run_carla_map
 from .utils.traffic_light import traffic_light_state_name
 
@@ -398,15 +399,8 @@ class TrajectoryRecorder:
                     "frame": self._frame,
                     "t": _r(self._t),
                     "label": label,
-                    "agent": event.agent,
-                    "kind": event.kind,
-                    "location": event.location,
-                    "probability": event.probability,
-                    "is_probability": event.is_probability,
-                    "weight": event.weight,
-                    "avoidable": event.avoidable,
-                    "victims": list(event.victims),
-                    "response": event.response,
+                    # Every field of the event, so none can be left out.
+                    **dataclasses.asdict(event),
                 }
             ),
         )

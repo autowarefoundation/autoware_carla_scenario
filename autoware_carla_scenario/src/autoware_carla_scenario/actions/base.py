@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, ClassVar, Optional
 from ..action_state import ActionState
 from ..conditions.base import BaseCondition
 from ..conditions.always_true import AlwaysTrueCondition
-from .events import AdversityEvent
+from ..adversity_event import AdversityEvent
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla

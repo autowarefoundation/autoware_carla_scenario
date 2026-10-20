@@ -592,7 +592,7 @@ def test_actions_are_written_when_first_seen_and_when_their_state_changes(
 
 
 def test_an_adversity_nade_sampled_is_written_on_its_tick(tmp_path) -> None:
-    from autoware_carla_scenario.actions.events import AdversityEvent
+    from autoware_carla_scenario.adversity_event import AdversityEvent
 
     recorder, world = _run(tmp_path)
     world.snapshot = [_ActorSnapshot(1, 0.0, 0.0)]
