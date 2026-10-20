@@ -1169,10 +1169,16 @@ check's additions and the tests in step:
 - `lru_cache` (with or without arguments), `cache` and `cached_property` are
   decorators the check drops, as caching changes no type; `cached_property`
   becomes a `property`. Nothing is cached, so `f.cache_clear()` and
-  `f.cache_info()` are refused.
+  `f.cache_info()` are refused, and so is assigning to a `cached_property`
+  attribute (`self.area = 3` is legal in Python, not on a `property`). A name
+  the module binds again (a parameter `reduce`, a `def cache`) is left alone.
+  The names are handled where the module imports them, not in a function.
+- The initial value of `reduce` must have the type of the accumulator the
+  function returns: `reduce(add, [1.5, 2.5], 0)` is refused (write `0.0`).
 - `itertools.pairwise` is added to Codon's `itertools`, and
   `collections.OrderedDict` is a `dict`, which keeps its insertion order;
-  `move_to_end()` and `popitem(last=...)` are not declared.
+  `move_to_end()` and `popitem(last=...)` are not declared, and are
+  refused when called.
 
 These are refused at the import line, with a hint saying what to write
 instead:

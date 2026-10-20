@@ -2340,3 +2340,16 @@ def test_another_modules_reduce_and_cache_are_left_alone() -> None:
     out = _transform(source)
     assert "from mylib import reduce, cache" in out
     assert "_acs_reduce(xs)" not in out
+
+
+def test_a_rebound_functools_name_is_left_alone() -> None:
+    source = (
+        "from functools import reduce, cache\n\n\n"
+        "def f(reduce, xs):\n    return reduce(xs)\n\n\n"
+        "def cache(g):\n    return g\n\n\n"
+        "@cache\ndef h():\n    pass\n"
+    )
+    out = _transform(source)
+    assert "_acs_reduce(xs)" not in out
+    assert "return reduce(xs)" in out
+    assert "@cache\ndef h()" in out

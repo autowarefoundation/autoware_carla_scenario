@@ -950,6 +950,26 @@ class _Rewriter(ast.NodeVisitor):
                 for alias in stmt.names:
                     if alias.name == "functools":
                         self._functools_modules.add(alias.asname or alias.name)
+        # A name the module binds again (a parameter ``reduce``, a ``def cache``)
+        # is no longer functools's: leave it, and Codon refuses what is missing.
+        rebound = (
+            {
+                n.id
+                for n in ast.walk(node)
+                if isinstance(n, ast.Name) and not isinstance(n.ctx, ast.Load)
+            }
+            | {
+                n.name
+                for n in ast.walk(node)
+                if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+            }
+            | {n.arg for n in ast.walk(node) if isinstance(n, ast.arg)}
+        )
+        self._functools_names = {
+            local: name
+            for local, name in self._functools_names.items()
+            if local not in rebound
+        }
         later = {stmt.name for stmt in node.body if isinstance(stmt, ast.ClassDef)}
         self._type_vars = {
             target.id
