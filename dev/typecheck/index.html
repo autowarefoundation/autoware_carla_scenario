@@ -1681,6 +1681,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#python-constructs-codon-refuses-379" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Python constructs Codon refuses (#379)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#standard-library-names-codon-lacks" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2065,6 +2076,17 @@
     <span class="md-ellipsis">
       
         The names of typing a scenario may import
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#python-constructs-codon-refuses-379" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Python constructs Codon refuses (#379)
       
     </span>
   </a>
@@ -3344,6 +3366,57 @@ in step:</p>
   <code>Generic</code>, and write a <code>@dataclass</code> (or a <code>Dict[str, X]</code>) instead of a
   <code>TypedDict</code>.</li>
 </ul>
+<h3 id="python-constructs-codon-refuses-379">Python constructs Codon refuses (#379)<a class="headerlink" href="#python-constructs-codon-refuses-379" title="Permanent link">&para;</a></h3>
+<p>Each of these is valid, mypy-clean Python that Codon 0.19 cannot compile and
+that the check cannot cheaply rewrite. The check refuses it at its line with a
+hint, and the working spelling is below. What runs is your code as written; only
+the check needs the other spelling.</p>
+<table>
+<thead>
+<tr>
+<th>You write</th>
+<th>Codon says</th>
+<th>Write instead</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>case int(n):</code>, <code>case Pt(x=x, y=y):</code>, <code>case Pt(a, b):</code> (a class pattern with arguments), or <code>case Pt():</code> of a class of your own</td>
+<td><code>name 'n' is not defined</code>, or it reads the pattern as a call of <code>Pt</code> (<code>__init__() missing 1 required positional argument</code>)</td>
+<td><code>if isinstance(v, Pt):</code>, then read the attributes (<code>v.x</code>, <code>v.y</code>); <code>case int():</code>, <code>case str():</code> and the other builtin types compile</td>
+</tr>
+<tr>
+<td><code>case {"k": v}:</code>, <code>case {"k": _}:</code>, <code>case {**rest}:</code> (any name or <code>_</code> inside the mapping)</td>
+<td><code>name 'v' is not defined</code></td>
+<td><code>if "k" in d:</code> and read <code>d["k"]</code>; a mapping pattern whose values are literals, values or or-patterns (<code>case {"k": 1 \| 2}:</code>) compiles</td>
+</tr>
+<tr>
+<td><code>case [a, *rest]:</code>, <code>case [*_]:</code></td>
+<td><code>unexpected star expression</code></td>
+<td>a fixed length (<code>case [a, b]:</code>), or test <code>len(xs)</code> and slice</td>
+</tr>
+<tr>
+<td><code>case [a, b] as whole:</code></td>
+<td><code>unexpected indentation</code></td>
+<td>match without <code>as</code> and use the name the subject already has</td>
+</tr>
+<tr>
+<td><code>def show(h: HasArea)</code> called with a class that has <code>area()</code> but does not derive from the <code>Protocol</code> <code>HasArea</code></td>
+<td><code>'Sq[float]' does not match expected type 'HasArea'</code> (also <code>List[Sq]</code> against <code>List[HasArea]</code>)</td>
+<td>derive from it (<code>class Sq(HasArea):</code>), give the classes a common base class, or annotate <code>Union[Sq, Circle]</code>; Codon lists are invariant: annotate a list with the class it holds (<code>list[Sq]</code>)</td>
+</tr>
+<tr>
+<td><code>f(*xs)</code> with a list, <code>f(**d)</code> with a dict</td>
+<td><code>argument after * must be a tuple, not 'List[int]'</code> / <code>argument after ** must be a named tuple, not 'Dict[str,int]'</code></td>
+<td>pass the elements (<code>f(xs[0], xs[1])</code>, <code>f(a=d["a"], b=d["b"])</code>), or make the parameter a list or dict; a tuple (<code>f(*(1, 2))</code>) is accepted</td>
+</tr>
+</tbody>
+</table>
+<p>Plain value, or-pattern, guard, sequence (without <code>*</code>) and enum-member
+(<code>case Mode.A:</code>) patterns compile, as does <code>case int():</code> of a builtin type.</p>
+<p>A <code>Protocol</code> is not structural in the check: Codon compares class names, so a
+class is a <code>HasArea</code> only if it lists <code>HasArea</code> among its bases. Python runs
+the same code either way, because a <code>Protocol</code> base is only a marker there.</p>
 <h3 id="standard-library-names-codon-lacks">Standard library names Codon lacks<a class="headerlink" href="#standard-library-names-codon-lacks" title="Permanent link">&para;</a></h3>
 <p>Codon ships its own <code>functools</code> (only <code>partial</code>), <code>itertools</code> and
 <code>collections</code>, and a name it lacks fails with a bare "cannot import name".
@@ -5187,7 +5260,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 20, 2026 16:36:40 UTC"><span class="timeago" datetime="2026-10-20T16:36:40+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 20, 2026 16:36:40 UTC">2026-10-20</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 20, 2026 17:08:36 UTC"><span class="timeago" datetime="2026-10-20T17:08:36+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 20, 2026 17:08:36 UTC">2026-10-20</span>
   </span>
 
     
