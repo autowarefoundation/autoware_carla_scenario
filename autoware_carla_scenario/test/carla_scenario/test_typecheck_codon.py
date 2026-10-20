@@ -4789,3 +4789,278 @@ def test_typing_names() -> None:
     assert documented <= set(dir(typing))
     # Every name the shim adds beyond Codon is compiled by a test above.
     assert set(_TYPING_CASES) <= documented
+
+
+# ---------------------------------------------------------------------------
+# Valid Python the transform rewrites for Codon (#376)
+# ---------------------------------------------------------------------------
+
+_REWRITE_CLASSES = """
+from functools import total_ordering
+
+
+class Marker: ...
+
+
+class Failure(Exception): ...
+
+
+class Detailed(Failure): ...
+
+
+class ByLt:
+    x: int
+
+    def __init__(self, x: int) -> None:
+        self.x = x
+
+    def __lt__(self, other: "ByLt") -> bool:
+        return self.x < other.x
+
+
+@total_ordering
+class ByLe:
+    x: int
+
+    def __init__(self, x: int) -> None:
+        self.x = x
+
+    def __le__(self, other: "ByLe") -> bool:
+        return self.x <= other.x
+
+    def __eq__(self, other: "ByLe") -> bool:
+        return self.x == other.x
+
+
+@total_ordering
+class ByLtAndEq:
+    x: int
+
+    def __init__(self, x: int) -> None:
+        self.x = x
+
+    def __lt__(self, other: "ByLtAndEq") -> bool:
+        return self.x < other.x
+
+    def __eq__(self, other: "ByLtAndEq") -> bool:
+        return self.x == other.x
+
+
+class Unordered:
+    x: int
+
+    def __init__(self, x: int) -> None:
+        self.x = x
+"""
+
+
+def test_an_ellipsis_class_body_compiles(tmp_path: Path) -> None:
+    setup = """
+        marker = Marker()
+        try:
+            raise Detailed("why")
+        except Failure:
+            pass
+    """
+    scenario, config, _ = _data_case(tmp_path, _REWRITE_CLASSES, setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_an_ellipsis_class_is_still_an_empty_class(tmp_path: Path) -> None:
+    scenario, config, path = _data_case(
+        tmp_path, _REWRITE_CLASSES, "r = Marker().missing\n"
+    )
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "no attribute 'missing'" in error.message, error.format()
+    assert error.line == _line_of(path, "r = Marker().missing")
+
+
+def test_a_dict_display_with_double_star_compiles(tmp_path: Path) -> None:
+    setup = """
+        a = {"x": 1}
+        b = {"y": 2}
+        merged = {**a, **b}
+        copy = {**a}
+        copy["z"] = 3
+        mixed = {"w": 0, **a, "v": 5, **b}
+        assert len(merged) == 2 and len(a) == 1 and len(mixed) == 4
+        assert merged["y"] == 2 and mixed["v"] == 5
+    """
+    scenario, config, _ = _data_case(tmp_path, "", setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_a_dict_display_merging_other_value_types_is_refused(tmp_path: Path) -> None:
+    line = 'r = {**{"a": 1}, **{"b": "x"}}'
+    scenario, config, path = _data_case(tmp_path, "", line + "\n")
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "'str' does not match expected type 'int'" in error.message, error.format()
+    assert error.line == _line_of(path, line)
+
+
+def test_str_format_on_a_literal_compiles(tmp_path: Path) -> None:
+    setup = """
+        n = 7
+        s = "{:>5}|{}".format(1, 2)
+        t = "{a}-{b:.2f} {{x}} {0}".format(n, a="q", b=2.0)
+        u = "{!r} {:,}".format("s", 1000000)
+        v = "{0}{0}{1}".format(len([1, 2]), "k")
+        w = "no fields".format()
+        x = ("multi {} "
+             "line {}").format(
+            1, 2
+        )
+        assert s == "    1|2" and t == "q-2.00 {x} 7" and v == "22k"
+        assert w == "no fields" and x == "multi 1 line 2"
+    """
+    scenario, config, _ = _data_case(tmp_path, "", setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+@pytest.mark.parametrize(
+    ("setup", "hint"),
+    [
+        ('r = "{:>{}}".format(5, 3)', "a format spec with a field inside it"),
+        ('r = "{} {}".format(1)', "positional argument 1 but only 1 given"),
+        ('r = "{k}".format(j=1)', "keyword 'k'"),
+        ('r = "{} {1}".format(1, 2)', "mixes automatic and manual"),
+        ('r = "{}".format(*[1])', "*args or **kwargs"),
+        ('fmt = "{}"\nr = fmt.format(1)', "write an f-string"),
+    ],
+    ids=["nested-spec", "missing", "keyword", "mixed", "starred", "not-a-literal"],
+)
+def test_str_format_that_cannot_be_rewritten_is_refused(
+    tmp_path: Path, setup: str, hint: str
+) -> None:
+    scenario, config, path = _data_case(tmp_path, "", setup + "\n")
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert hint in error.message, error.format()
+    assert error.line == _line_of(path, setup.splitlines()[-1])
+
+
+def test_zip_with_strict_compiles(tmp_path: Path) -> None:
+    setup = """
+        xs = [1, 2]
+        ys = [3.0, 4.0]
+        total = 0.0
+        for a, b in zip(xs, ys, strict=True):
+            total += a + b
+        for a, b in zip(
+            xs,
+            ys,
+            strict=False,
+        ):
+            total += a * b
+        assert total > 0.0
+    """
+    scenario, config, _ = _data_case(tmp_path, "", setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_zip_with_strict_still_needs_iterables(tmp_path: Path) -> None:
+    line = "r = zip(5, strict=True)"
+    scenario, config, path = _data_case(tmp_path, "", line + "\n")
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "'int' object has no attribute '__iter__'" in error.message, error.format()
+    assert error.line == _line_of(path, line)
+
+
+def test_a_class_with_only_lt_sorts(tmp_path: Path) -> None:
+    setup = """
+        items = [ByLt(2), ByLt(1), ByLt(3)]
+        ordered = sorted(items)
+        items.sort()
+        items.sort(reverse=True)
+        keyed = sorted([ByLt(2), ByLt(1)], key=lambda v: v)
+        assert ordered[0].x == 1 and min(items).x == 1 and max(items).x == 3
+        assert ByLt(2) > ByLt(1) and keyed[0].x == 1
+    """
+    scenario, config, _ = _data_case(tmp_path, _REWRITE_CLASSES, setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_total_ordering_gives_every_comparison(tmp_path: Path) -> None:
+    setup = """
+        les = sorted([ByLe(2), ByLe(1)])
+        lts = sorted([ByLtAndEq(2), ByLtAndEq(1)])
+        assert ByLe(1) < ByLe(2) and ByLe(2) > ByLe(1) and ByLe(1) >= ByLe(1)
+        assert ByLtAndEq(1) <= ByLtAndEq(1) and ByLtAndEq(2) >= ByLtAndEq(1)
+        assert les[0].x == 1 and lts[0].x == 1
+    """
+    scenario, config, _ = _data_case(tmp_path, _REWRITE_CLASSES, setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_sorting_a_class_with_no_ordering_is_refused_with_a_hint(
+    tmp_path: Path,
+) -> None:
+    line = "r = sorted([Unordered(1), Unordered(0)])"
+    scenario, config, path = _data_case(tmp_path, _REWRITE_CLASSES, line + "\n")
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "define __lt__" in error.message, error.format()
+    assert error.line == _line_of(path, line)
+
+
+def test_total_ordering_on_a_nested_class_is_refused(tmp_path: Path) -> None:
+    definitions = """
+from functools import total_ordering
+
+
+def make():
+    @total_ordering
+    class Inner:
+        def __lt__(self, other: "Inner") -> bool:
+            return True
+
+    return Inner
+"""
+    scenario, config, path = _data_case(tmp_path, definitions, "r = make()\n")
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "not at module level" in error.message, error.format()
+    assert error.line == _line_of(path, "@total_ordering")
+
+
+def test_a_lambda_capturing_a_default_in_a_comprehension_compiles(
+    tmp_path: Path,
+) -> None:
+    setup = """
+        fs = [lambda x, k=k: x + k for k in range(3)]
+        gs = {j: (lambda x, k=j, m=len([1]): x + k + m) for j in range(2)}
+        plain = lambda a, b=2: a + b
+        assert fs[1](1) == 2 and gs[1](1) == 3 and plain(1) == 3
+    """
+    scenario, config, _ = _data_case(tmp_path, "", setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_a_lambda_capturing_a_default_is_still_typed(tmp_path: Path) -> None:
+    setup = """
+        fs = [lambda x, k=k: x + k for k in range(3)]
+        r = fs[0]("x")
+    """
+    scenario, config, path = _data_case(tmp_path, "", setup)
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "for +: 'str' and 'int'" in error.message, error.format()
+    call = _line_of(path, 'r = fs[0]("x")')
+    assert any(f"scenario.py:{call}]" in frame for frame in error.trace), error.format()
+
+
+@pytest.mark.parametrize("call", ["fs[0](1, k=5)", "fs[0](1, 5)"])
+def test_passing_a_captured_lambda_default_is_refused_with_a_hint(
+    tmp_path: Path, call: str
+) -> None:
+    setup = f"""
+        fs = [lambda x, k=k: x + k for k in range(3)]
+        r = {call}
+    """
+    scenario, config, path = _data_case(tmp_path, "", setup)
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "binds that default once" in error.message, error.format()
+    assert error.line == _line_of(path, f"r = {call}")
