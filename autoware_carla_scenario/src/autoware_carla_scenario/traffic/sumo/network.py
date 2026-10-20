@@ -43,6 +43,7 @@ __all__ = [
     "SumoNetwork",
     "build_network",
     "generate_trips",
+    "generate_walks",
     "sanitize_opendrive",
     "sumo_home",
 ]
@@ -295,5 +296,55 @@ def generate_trips(
     if proc.returncode != 0 or not out.is_file():
         raise TrafficBackendError(
             f"randomTrips.py failed ({proc.returncode}): {proc.stderr.strip()[-2000:]}"
+        )
+    return out
+
+
+def generate_walks(
+    network: SumoNetwork,
+    out: Path,
+    *,
+    seed: int,
+    period: float,
+    end: float,
+    max_distance: float,
+) -> Path:
+    """Pedestrian demand for *network*, written to *out* (a ``.rou.xml``).
+
+    Unweighted: roadgen's weights are for cars, and say nothing of where
+    people walk.
+    """
+    tool = sumo_home() / "tools" / "randomTrips.py"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    cmd = [
+        sys.executable,
+        str(tool),
+        "-n",
+        str(network.net_file),
+        "-o",
+        str(out.with_suffix(".trips.xml")),
+        "-r",
+        str(out),
+        "-b",
+        "0",
+        "-e",
+        str(end),
+        "-p",
+        str(period),
+        "--seed",
+        str(seed),
+        "--validate",
+        "--pedestrians",
+        "--max-distance",
+        f"{max_distance:g}",
+        "--prefix",
+        "sumoped",
+    ]
+    env = dict(os.environ, SUMO_HOME=str(sumo_home()))
+    proc = subprocess.run(cmd, capture_output=True, text=True, env=env, check=False)  # noqa: S603
+    if proc.returncode != 0 or not out.is_file():
+        raise TrafficBackendError(
+            f"randomTrips.py --pedestrians failed ({proc.returncode}): "
+            f"{proc.stderr.strip()[-2000:]}"
         )
     return out
