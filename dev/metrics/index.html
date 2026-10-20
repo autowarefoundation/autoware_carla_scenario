@@ -1957,6 +1957,12 @@ value with the aggregation in the last column (<code>Metric.aggregation</code>).
 <td>From the ego's box to the edge of the driving lanes around it (lanes beside its own count while their near edge is within 6 m of its centre); <code>0</code> off the road</td>
 <td>min</td>
 </tr>
+<tr>
+<td><code>importance_sampling_weight</code></td>
+<td>ratio</td>
+<td>Not AlpaSim's: the run's importance-sampling weight so far, the product of NADE's <code>p/q</code> and <code>(1-p)/(1-q)</code> (<code>AdversarialTrafficAction</code>); <code>1</code> without NADE. Weight a batch of runs by its last value to estimate the naturalistic rate of what they count</td>
+<td>last</td>
+</tr>
 </tbody>
 </table>
 <p>Where AlpaSim's geometry is not CARLA's, the reading follows CARLA: AlpaSim
@@ -2090,7 +2096,7 @@ refuses one that returns anything but a <code>float</code> or an <code>Optional[
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 17, 2026 00:17:15 UTC"><span class="timeago" datetime="2026-10-17T00:17:15+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 17, 2026 00:17:15 UTC">2026-10-17</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 20, 2026 13:10:33 UTC"><span class="timeago" datetime="2026-10-20T13:10:33+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 20, 2026 13:10:33 UTC">2026-10-20</span>
   </span>
 
     
