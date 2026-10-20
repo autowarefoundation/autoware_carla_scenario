@@ -4915,6 +4915,127 @@ def test_typing_names() -> None:
 
 
 # ---------------------------------------------------------------------------
+# The names of Codon's functools, itertools and collections (#378)
+# ---------------------------------------------------------------------------
+
+#: Each name the check adds to a standard library module that Codon's lacks:
+#: the import line and the module-level code that uses it, and a call from
+#: setup().  The cases cover every documented name (``test_stdlib_names``).
+_STDLIB_CASES: dict[str, tuple[str, str, str]] = {
+    "functools.reduce": (
+        "import operator\nfrom functools import reduce\n",
+        "def total(xs: list[int]) -> int:\n    return reduce(operator.add, xs)\n"
+        "def total_from(xs: list[int]) -> int:\n"
+        "    return reduce(lambda a, b: a + b, xs, 10)\n",
+        "logger.info('%d %d', total([1, 2]), total_from([1, 2]))\n",
+    ),
+    "functools.reduce (module)": (
+        "import functools\nimport operator\n",
+        "def total(xs: list[int]) -> int:\n"
+        "    return functools.reduce(operator.add, xs)\n",
+        "logger.info('%d', total([1, 2]))\n",
+    ),
+    "functools.lru_cache": (
+        "import functools\nfrom functools import lru_cache\n",
+        "@lru_cache(maxsize=8)\ndef square(x: int) -> int:\n    return x * x\n"
+        "@functools.lru_cache()\ndef cube(x: int) -> int:\n    return x * x * x\n"
+        "@lru_cache\ndef fourth(x: int) -> int:\n    return x * x * x * x\n"
+        "class Memo:\n"
+        "    @lru_cache(maxsize=None)\n"
+        "    def twice(self, x: int) -> int:\n        return 2 * x\n",
+        "logger.info('%d %d %d %d', square(2), cube(2), fourth(2), Memo().twice(2))\n",
+    ),
+    "functools.cache": (
+        "import functools\nfrom functools import cache\n",
+        "@cache\ndef square(x: int) -> int:\n    return x * x\n"
+        "@functools.cache\ndef cube(x: int) -> int:\n    return x * x * x\n",
+        "logger.info('%d %d', square(2), cube(2))\n",
+    ),
+    "functools.cached_property": (
+        "from functools import cached_property\n",
+        "class Box:\n    side: int\n\n    def __init__(self, side: int):\n        self.side = side\n\n"
+        "    @cached_property\n    def area(self) -> int:\n"
+        "        return self.side * self.side\n",
+        "logger.info('%d', Box(2).area)\n",
+    ),
+    "itertools.pairwise": (
+        "from itertools import chain, pairwise\n",
+        "def gaps(xs: list[int]) -> list[int]:\n"
+        "    return [b - a for a, b in pairwise(xs)]\n"
+        "def flat(xs: list[int]) -> list[int]:\n"
+        "    return list(chain(xs, xs))\n",
+        "logger.info('%d %d', len(gaps([1, 3, 6])), len(flat([1])))\n",
+    ),
+    "collections.OrderedDict": (
+        "from collections import Counter, OrderedDict\n",
+        "def ordered() -> OrderedDict[str, int]:\n"
+        "    d: OrderedDict[str, int] = OrderedDict()\n"
+        '    d["a"] = 1\n    d["b"] = 2\n    return d\n'
+        "def tally() -> Counter[str]:\n    c: Counter[str] = Counter()\n"
+        '    c["a"] += 1\n    return c\n',
+        "logger.info('%d %d', len(ordered()), len(tally()))\n",
+    ),
+}
+
+#: Each name or module refused with a hint: the import line, the code using
+#: it, the error Codon gives, and the hint the check adds.
+_STDLIB_REFUSALS: dict[str, tuple[str, str, str, str]] = {
+    "dataclasses.asdict": (
+        "from dataclasses import asdict\n",
+        "",
+        "cannot import name 'asdict' from 'dataclasses'",
+        "build the dict from the fields you need",
+    ),
+    "functools.wraps": (
+        "from functools import wraps\n",
+        "",
+        "cannot import name 'wraps' from 'functools'",
+        "docs/typecheck.md",
+    ),
+    "contextlib": (
+        "from contextlib import suppress\n",
+        "",
+        "contextlib has no Codon model",
+        "try/except X: pass for suppress",
+    ),
+    "warnings": (
+        "import warnings\n",
+        "",
+        "warnings has no Codon model",
+        "logger.warning",
+    ),
+    "json": (
+        "import json\n",
+        "",
+        "json has no Codon model",
+        "@dataclass",
+    ),
+    "types": ("import types\n", "", "types has no Codon model", "@dataclass"),
+    "textwrap": ("import textwrap\n", "", "textwrap has no Codon model", "join()"),
+}
+
+
+def _stdlib_header(imports: str) -> str:
+    return _HEADER.replace(
+        "from .configs import CaseConfig\n",
+        f"{imports}\nfrom .configs import CaseConfig\n",
+        1,
+    )
+
+
+@pytest.mark.parametrize("name", sorted(_STDLIB_CASES))
+def test_a_supported_stdlib_name_compiles_in_a_scenario(
+    tmp_path: Path, name: str
+) -> None:
+    imports, helper, call = _STDLIB_CASES[name]
+    scenario, config, _ = _write_case(
+        tmp_path,
+        _TIMEOUT_SETUP + call,
+        "\n\n" + helper,
+        header=_stdlib_header(imports),
+    )
+
+
 # Valid Python the transform rewrites for Codon (#376)
 # ---------------------------------------------------------------------------
 
@@ -4988,6 +5109,68 @@ def test_an_ellipsis_class_body_compiles(tmp_path: Path) -> None:
     scenario, config, _ = _data_case(tmp_path, _REWRITE_CLASSES, setup)
     result = typecheck_scenario(scenario, config)
     assert result.ok, result.format()
+
+
+@pytest.mark.parametrize("name", sorted(_STDLIB_REFUSALS))
+def test_an_unsupported_stdlib_name_is_refused_with_a_hint(
+    tmp_path: Path, name: str
+) -> None:
+    imports, usage, message, hint = _STDLIB_REFUSALS[name]
+    scenario, config, path = _write_case(
+        tmp_path, _TIMEOUT_SETUP, "\n\n" + usage, header=_stdlib_header(imports)
+    )
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert message in error.message, error.format()
+    assert hint in error.message, error.format()
+    assert error.path == str(path)
+    first = imports.strip().splitlines()[0]
+    assert error.line == path.read_text().splitlines().index(first) + 1
+
+
+def test_stdlib_names() -> None:
+    # The documented lists, the transform, the extensions and the cases agree.
+    import itertools
+    import collections
+    import functools
+
+    from autoware_carla_scenario.typecheck.transform import FUNCTOOLS_NAMES
+
+    root = Path(__file__).resolve().parents[2]
+    docs = (root / "docs" / "typecheck.md").read_text()
+
+    def listed(marker: str) -> set[str]:
+        block = docs.split(f"<!-- {marker}:start -->")[1].split(
+            f"<!-- {marker}:end -->"
+        )[0]
+        return set(re.findall(r"`([\w.]+)`", block))
+
+    declared = {f"functools.{name}" for name in FUNCTOOLS_NAMES}
+    extensions = root / "src/autoware_carla_scenario/typecheck/codon/_stdlib"
+    for path in extensions.glob("*.codon"):
+        for node in ast.parse(path.read_text()).body:
+            if isinstance(node, (ast.FunctionDef, ast.ClassDef)):
+                declared.add(f"{path.stem}.{node.name}")
+            elif isinstance(node, ast.Assign):
+                declared |= {
+                    f"{path.stem}.{t.id}"
+                    for t in node.targets
+                    if isinstance(t, ast.Name)
+                }
+    assert listed("stdlib-names") == declared
+    for name in declared:
+        module, _, attribute = name.partition(".")
+        assert hasattr(
+            {
+                "functools": functools,
+                "itertools": itertools,
+                "collections": collections,
+            }[module],
+            attribute,
+        ), name
+    covered = {name.split(" ")[0] for name in _STDLIB_CASES}
+    assert covered == declared
+    # Every refusal documented is tested, and the other way round.
+    assert listed("stdlib-refused") == {name for name in _STDLIB_REFUSALS}
 
 
 def test_an_ellipsis_class_is_still_an_empty_class(tmp_path: Path) -> None:
@@ -5187,3 +5370,28 @@ def test_passing_a_captured_lambda_default_is_refused_with_a_hint(
     error = _only_error(typecheck_scenario(scenario, config))
     assert "binds that default once" in error.message, error.format()
     assert error.line == _line_of(path, f"r = {call}")
+
+
+def test_total_ordering_composes_with_the_stubbed_functools_names(
+    tmp_path: Path,
+) -> None:
+    imports = (
+        "from functools import total_ordering, reduce, lru_cache\nimport operator\n"
+    )
+    helper = (
+        "@total_ordering\nclass Rank:\n    n: int\n\n"
+        "    def __init__(self, n: int):\n        self.n = n\n\n"
+        "    def __lt__(self, other: Rank) -> bool:\n        return self.n < other.n\n\n"
+        "    def __eq__(self, other: Rank) -> bool:\n        return self.n == other.n\n\n\n"
+        "@lru_cache(maxsize=4)\ndef total(xs: list[int]) -> int:\n"
+        "    return reduce(operator.add, xs)\n"
+    )
+    call = "logger.info('%d %d', total([1, 2]), " "1 if Rank(1) <= Rank(2) else 0)\n"
+    scenario, config, _ = _write_case(
+        tmp_path,
+        _TIMEOUT_SETUP + call,
+        "\n\n" + helper,
+        header=_stdlib_header(imports),
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
