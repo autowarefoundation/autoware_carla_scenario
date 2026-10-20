@@ -753,9 +753,10 @@ class AdversarialTrafficAction(BaseAction):
                  timing: TickTiming = TickTiming("pre_tick"), *_kw,
                  label: str = "adversarial_traffic", seed: int = 0,
                  settings: NadeSettings = NadeSettings(), thresholds = None,
-                 following_mode: TrajectoryFollowingMode = TrajectoryFollowingMode("follow")):
-        _keyword_only(_kw, "AdversarialTrafficAction(): label, seed, settings, thresholds "
-                           "and following_mode")
+                 following_mode: TrajectoryFollowingMode = TrajectoryFollowingMode("follow"),
+                 drive_background: bool = True):
+        _keyword_only(_kw, "AdversarialTrafficAction(): label, seed, settings, thresholds, "
+                           "following_mode and drive_background")
         super().__init__(label, condition, timing)
 
     @property

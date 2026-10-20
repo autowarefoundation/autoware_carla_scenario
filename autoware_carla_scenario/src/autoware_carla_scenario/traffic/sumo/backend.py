@@ -194,6 +194,9 @@ class SumoTrafficBackend(TrafficBackend):
         #: ``id()`` of an entity released while SUMO drove it -> its SUMO id
         #: and the speed and lane-change modes resume() puts back.
         self._handed: dict[int, tuple[str, int, int]] = {}
+        #: id(entity) -> the SUMO id, speed mode and lane-change mode of an
+        #: ambient vehicle released to an adversity (#417), and its actor.
+        self._handed_ambient: dict[int, tuple[str, int, int, Any]] = {}
         #: SUMO id -> the speed (m/s) set_desired_speed() last held it at.
         self._commanded: dict[str, float] = {}
         #: SUMO id -> the entity SUMO drives.
@@ -498,12 +501,18 @@ class SumoTrafficBackend(TrafficBackend):
         self._signal_states = {}
         self._edge_shapes = {}
         self._level_changes = [0, 0]
-        for actor in [*self._ambient.values(), *self._persons.values()]:
+        handed_ambient = [handed[3] for handed in self._handed_ambient.values()]
+        for actor in [
+            *self._ambient.values(),
+            *self._persons.values(),
+            *handed_ambient,
+        ]:
             try:
                 actor.destroy()
             except RuntimeError:
                 pass
         self._persons = {}
+        self._handed_ambient = {}
         for entity in self._driven.values():
             actor = getattr(entity, "actor", None)
             if actor is not None:
@@ -721,6 +730,8 @@ class SumoTrafficBackend(TrafficBackend):
         but as one CARLA drives, like the ego: its pose is pushed in every tick
         rather than pulled out.
         """
+        if self._release_ambient(entity):
+            return
         if self._tm_drives_scenario:
             self._tm.release(entity, world)
             return
@@ -762,6 +773,8 @@ class SumoTrafficBackend(TrafficBackend):
         lane-change modes it had and the speed set_desired_speed() last held
         it at; its pose is pulled out each tick again.
         """
+        if self._resume_ambient(entity):
+            return
         if self._tm_drives_scenario:
             self._tm.resume(entity, world)
             return
@@ -783,6 +796,77 @@ class SumoTrafficBackend(TrafficBackend):
             logger.warning("SUMO could not take %s back: %s", sumo_id, exc)
         self._driven[sumo_id] = entity
         logger.info("SUMO: %s resumed; SUMO drives it again", sumo_id)
+
+    def background_actors(self, world: Any) -> dict[str, Any]:
+        """The CARLA mirror of every ambient SUMO vehicle, by its role name
+        (``sumo:<id>``): what an adversity may take over (#417)."""
+        del world
+        if not self._running:
+            return {}
+        return {f"sumo:{sumo_id}": actor for sumo_id, actor in self._ambient.items()}
+
+    def _release_ambient(self, entity: Any) -> bool:
+        """Take an ambient vehicle's mirror over for CARLA; whether *entity*
+        was one.  It stays in SUMO, published like a released entity, and
+        is no longer followed nor removed by the ambient sync."""
+        actor = getattr(entity, "actor", None)
+        sumo_id = next(
+            (i for i, mirror in self._ambient.items() if mirror is actor), None
+        )
+        if sumo_id is None or actor is None:
+            return False
+        self._ambient.pop(sumo_id)
+        self._physics.pop(actor.id, None)
+        self._constant_speed.pop(actor.id, None)
+        try:
+            actor.disable_constant_velocity()
+        except RuntimeError:
+            pass
+        try:
+            tc = self._traci
+            self._handed_ambient[id(entity)] = (
+                sumo_id,
+                int(tc.vehicle.getSpeedMode(sumo_id)),
+                int(tc.vehicle.getLaneChangeMode(sumo_id)),
+                actor,
+            )
+            self._publish(sumo_id, actor)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("SUMO could not hand %s over: %s", sumo_id, exc)
+            self._handed_ambient[id(entity)] = (sumo_id, -1, -1, actor)
+            self._external[sumo_id] = actor
+        logger.info(
+            "SUMO: ambient %s released; it is published from CARLA now", sumo_id
+        )
+        return True
+
+    def _resume_ambient(self, entity: Any) -> bool:
+        """Give a released ambient vehicle back to SUMO; whether *entity* was
+        one.  SUMO drives it on from where CARLA has it, with its modes as
+        they were, and the ambient sync follows (or removes) its mirror again."""
+        handed = self._handed_ambient.pop(id(entity), None)
+        if handed is None:
+            return False
+        sumo_id, speed_mode, lane_change_mode, actor = handed
+        self._external.pop(sumo_id, None)
+        try:
+            tc = self._traci
+            if speed_mode >= 0:
+                tc.vehicle.setSpeedMode(sumo_id, speed_mode)
+                tc.vehicle.setLaneChangeMode(sumo_id, lane_change_mode)
+            tc.vehicle.setSpeed(sumo_id, -1.0)
+        except Exception as exc:  # noqa: BLE001
+            # Gone from SUMO while CARLA drove it (its route ended): the
+            # mirror has nothing left to follow.
+            logger.warning("SUMO could not take ambient %s back: %s", sumo_id, exc)
+            try:
+                actor.destroy()
+            except RuntimeError:
+                pass
+            return True
+        self._ambient[sumo_id] = actor
+        logger.info("SUMO: ambient %s resumed; SUMO drives it again", sumo_id)
+        return True
 
     def _publish(self, sumo_id: str, actor: Any) -> None:
         """Have SUMO stop driving *sumo_id*: CARLA's *actor* is pushed into it."""

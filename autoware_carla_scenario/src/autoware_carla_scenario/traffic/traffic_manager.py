@@ -326,6 +326,15 @@ class TrafficManagerBackend(TrafficBackend):
             out[handle] = (location.x, location.y)
         return out
 
+    def background_actors(self, world: "carla.World") -> dict[str, "carla.Actor"]:
+        """Every background vehicle still in the world, by its handle, which is
+        its ``role_name``."""
+        return {
+            handle: actor
+            for handle, actor in self._background.items()
+            if actor.is_alive
+        }
+
     def remove_background(self, world: "carla.World", handle: str) -> None:
         """Destroy the background vehicle *handle*."""
         if handle not in self._background:

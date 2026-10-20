@@ -277,6 +277,32 @@ class TestTrafficManagerResume:
         assert npc.autopilot == [(True, backend.port)]
 
 
+class TestTrafficManagerBackgroundVehicles:
+    """An adversity takes a background vehicle over by its actor alone (#417)."""
+
+    def test_the_live_background_vehicles_are_offered_by_role_name(self) -> None:
+        live, gone = _Actor(2), _Actor(3)
+        live.is_alive, gone.is_alive = True, False  # type: ignore[attr-defined]
+        backend = TrafficManagerBackend(client=_Client())
+        backend._background = {"background1": live, "background2": gone}  # type: ignore[dict-item]
+        assert backend.background_actors(_World()) == {"background1": live}
+        assert NullTrafficBackend().background_actors(_World()) == {}
+
+    def test_a_wrapped_background_vehicle_comes_off_and_back_on_autopilot(self) -> None:
+        from autoware_carla_scenario.entity.background_vehicle import BackgroundVehicle
+
+        npc = _Actor(2)
+        backend = TrafficManagerBackend(
+            TrafficManagerBackendConfig(port=8123), client=_Client()
+        )
+        backend.start(_World([npc]))
+        vehicle = BackgroundVehicle("background1", npc, backend)  # type: ignore[arg-type]
+        assert vehicle.use_autopilot and vehicle.role_name == "background1"
+        vehicle.release_from_traffic(_World())
+        vehicle.resume_traffic(_World())
+        assert npc.autopilot == [(True, 8123), (False, 8123), (True, 8123)]
+
+
 @pytest.mark.parametrize(
     ("intent", "entity_method"),
     [("release", "release_from_traffic"), ("resume", "resume_traffic")],

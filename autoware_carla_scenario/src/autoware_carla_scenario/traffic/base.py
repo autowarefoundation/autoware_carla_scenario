@@ -564,6 +564,14 @@ class TrafficBackend:
     def remove_background(self, world: "carla.World", handle: str) -> None:
         """Take the background vehicle *handle* off the road."""
 
+    def background_actors(self, world: "carla.World") -> dict[str, "carla.Actor"]:
+        """The CARLA actor of every background vehicle this backend drives in
+        the world now, by its ``role_name``: what an adversity may take over
+        for a while (:meth:`release` and :meth:`resume` take a
+        :class:`~autoware_carla_scenario.entity.background_vehicle.BackgroundVehicle`
+        of one, #417).  None by default."""
+        return {}
+
     # ------------------------------------------------------------------
     # Internals
     # ------------------------------------------------------------------

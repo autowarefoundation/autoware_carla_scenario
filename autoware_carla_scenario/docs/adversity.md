@@ -139,8 +139,14 @@ self.register_pre_tick(
 )
 ```
 
-It drives the NPCs and pedestrians a scenario registers. A traffic backend's
-background vehicles have no entity to drive them through yet (#417).
+It drives the NPCs and pedestrians a scenario registers, and with
+`drive_background` (the default) the traffic backend's background vehicles in
+the world too (#417): the TrafficManager's background traffic
+(`background<N>`), SUMO's ambient vehicles (`sumo:<id>`). One that carries out
+an adversity, or responds to one, is taken over for as long as its path lasts
+-- off autopilot, or published into SUMO from CARLA like a released entity --
+and handed back to the backend after. SUMO's mesoscopic vehicles have no actor
+to take over, and SUMO's pedestrians are not driven.
 
 ### The weight
 
@@ -214,5 +220,5 @@ for crashed in collision_objects(
 | A person's SUMO `maxSpeed` | `pedestrian_max_speed`, 2.8 m/s (the fastest jaywalker) |
 | StopCrossing counts steps at dt = 0.1 | The wait is in seconds |
 | Merge skips a vehicle that is already changing lanes | No lane-change state is read; this check is left out |
-| Background vehicles are adversarial | Only registered entities are driven (#417) |
+| Background vehicles are adversarial | So are they, with `drive_background` (default): the backend's background vehicles in the world (#417) |
 | Construction zones | Out of scope (#402) |

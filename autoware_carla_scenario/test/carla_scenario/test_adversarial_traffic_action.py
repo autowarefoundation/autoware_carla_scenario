@@ -39,6 +39,7 @@ class _Execution:
 
     def __init__(self, name: str, path: Any, mode: Any, label: str) -> None:
         self.name, self.path, self.label = name, path, label
+        self.entity_name = name
         self.ticks = 0
         self.closed = False
         made.append(self)
@@ -117,6 +118,53 @@ def test_only_a_registered_entity_is_driven() -> None:
     action = AdversarialTrafficAction([BRAKE], settings=ALWAYS)
     _run(action, 3, npc="background_7")
     assert made == [] and action.weight == 1.0
+
+
+class _Backend:
+    """Offers one background vehicle, as a traffic backend does (#417)."""
+
+    def __init__(self, actors: dict[str, Any]) -> None:
+        self.actors = actors
+
+    def background_actors(self, world: Any) -> dict[str, Any]:
+        return dict(self.actors)
+
+
+def test_a_background_vehicle_is_driven_while_it_carries_one_out() -> None:
+    from autoware_carla_scenario.entity.background_vehicle import BackgroundVehicle
+    from autoware_carla_scenario.entity.registry import find_vehicle_entity
+
+    actor = SimpleNamespace(id=7)
+    backend = _Backend({"background_7": actor})
+    action = AdversarialTrafficAction([BRAKE], settings=ALWAYS)
+    action.set_traffic_backend(backend)  # type: ignore[arg-type]
+    _run(action, 1, npc="background_7")
+    (run,) = made
+    assert run.name == "background_7"
+    adopted = find_vehicle_entity("background_7")
+    assert isinstance(adopted, BackgroundVehicle)
+    assert adopted.actor is actor and adopted.role_name == "background_7"
+    assert adopted._resolve_backend() is backend
+    _run(action, 3, start=2, npc="background_7")  # driven to its end
+    assert run.done and find_vehicle_entity("background_7") is None
+
+
+def test_background_vehicles_can_be_left_alone() -> None:
+    action = AdversarialTrafficAction([BRAKE], settings=ALWAYS, drive_background=False)
+    action.set_traffic_backend(_Backend({"background_7": SimpleNamespace(id=7)}))  # type: ignore[arg-type]
+    _run(action, 3, npc="background_7")
+    assert made == []
+
+
+def test_closing_forgets_a_background_vehicle_still_driven() -> None:
+    from autoware_carla_scenario.entity.registry import find_vehicle_entity
+
+    action = AdversarialTrafficAction([BRAKE], settings=ALWAYS)
+    action.set_traffic_backend(_Backend({"background_7": SimpleNamespace(id=7)}))  # type: ignore[arg-type]
+    _run(action, 1, npc="background_7")
+    assert find_vehicle_entity("background_7") is not None
+    action.close()
+    assert find_vehicle_entity("background_7") is None
 
 
 def test_no_ego_no_adversity() -> None:
