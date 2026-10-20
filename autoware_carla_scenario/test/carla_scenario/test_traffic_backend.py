@@ -280,12 +280,13 @@ class TestTrafficManagerResume:
 class TestTrafficManagerBackgroundVehicles:
     """An adversity takes a background vehicle over by its actor alone (#417)."""
 
-    def test_the_live_background_vehicles_are_offered_by_role_name(self) -> None:
+    def test_the_background_vehicles_are_offered_by_role_name(self) -> None:
         live, gone = _Actor(2), _Actor(3)
         live.is_alive, gone.is_alive = True, False  # type: ignore[attr-defined]
         backend = TrafficManagerBackend(client=_Client())
         backend._background = {"background1": live, "background2": gone}  # type: ignore[dict-item]
-        assert backend.background_actors(_World()) == {"background1": live}
+        # The dead one is no agent of the scene, so never chosen.
+        assert backend.background_actors(_World()) == backend._background
         assert NullTrafficBackend().background_actors(_World()) == {}
 
     def test_a_wrapped_background_vehicle_comes_off_and_back_on_autopilot(self) -> None:

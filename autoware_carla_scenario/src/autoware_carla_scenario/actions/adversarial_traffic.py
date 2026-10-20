@@ -178,9 +178,13 @@ class AdversarialTrafficAction(BaseAction):
             self._executions = []
         for running in self._executions:
             running.tick(world, self._elapsed)
-        for finished in [run for run in self._executions if run.done]:
-            self._forget(finished.entity_name)
-        self._executions = [run for run in self._executions if not run.done]
+        unfinished: list[AdversarialExecution] = []
+        for execution in self._executions:
+            if execution.done:
+                self._forget(execution.entity_name)
+            else:
+                unfinished.append(execution)
+        self._executions = unfinished
         if self._executions:
             return
         if self._sampler.cooling(self._elapsed):
@@ -267,8 +271,10 @@ class AdversarialTrafficAction(BaseAction):
 
     def _adopt(self, name: str) -> None:
         """Register background vehicle *name* as an entity while it is driven."""
-        if drivable(name) or name not in self._background or self._backend is None:
+        if name not in self._background or name in self._adopted:
             return
+        if drivable(name) or self._backend is None:
+            return  # a registered entity of the same name: that one
         backend: TrafficBackend = self._backend
         register_vehicle_entity(
             name, BackgroundVehicle(name, self._background[name], backend)
