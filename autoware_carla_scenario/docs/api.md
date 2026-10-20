@@ -148,6 +148,7 @@ trigger is asked on that tick: when it does not hold, nothing is done.
 | `AdversarialBrakeAction` | Brake hard in front of a follower that keeps coming (`BRAKE_CHECK`). |
 | `IgnoreLeaderAction` | Drive on as if the close, slower leader were not there (`IGNORE_LEADER`). |
 | `AdversarialCutInAction` | Change lane in front of a vehicle too close behind in the next lane (`CUT_IN`). |
+| `AdversarialMergeAction` | Beside a merging lane with traffic on it (`MapFeatures.merges`: a lane that ends into the lane on its left, there or within 100 m), cut a merging vehicle off: one lane over, speed up as if it were not there, when that beats giving way by more than 1.5 m/s², for 2 s; two lanes over, change into the lane between in 1 s when nobody there is within 2 s of headway (`MERGE`). |
 | `LaneChangeAbortAction` | Start into the next lane in front of a vehicle too close behind there, drifting half a lane toward it, and swerve back, within 1 s (`LANE_CHANGE_ABORT`). |
 | `HeadOnAction` | Drive on at a leader coming the other way: `IgnoreLeaderAction`'s command, where the lanelets the vehicle and its leader are on start more than 120 degrees apart (`HEAD_ON`). |
 | `RunTrafficRuleAction` | Run the red or yellow light the vehicle is stopping for (`TRAFFIC_RULE`). |

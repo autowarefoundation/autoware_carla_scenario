@@ -3090,6 +3090,7 @@ _ADVERSARIAL_SETUP = """
 from autoware_carla_scenario import (
     AdversarialBrakeAction,
     AdversarialCutInAction,
+    AdversarialMergeAction,
     AdversityFeasibleCondition,
     AdversityKind,
     AdversityLocation,
@@ -3104,6 +3105,7 @@ from autoware_carla_scenario import (
 )
 self.register_pre_tick(AdversarialBrakeAction("npc1", AdversityLocation.ANY))
 self.register_pre_tick(LaneChangeAbortAction("npc2", AdversityLocation.HIGHWAY))
+self.register_pre_tick(AdversarialMergeAction("npc2", AdversityLocation.HIGHWAY))
 self.register_pre_tick(HeadOnAction("npc3", AdversityLocation.ANY, label="head_on"))
 self.register_pre_tick(
     IgnoreLeaderAction(
@@ -3129,11 +3131,12 @@ feasible = AdversityFeasibleCondition(
     "npc1", AdversityKind.CUT_IN, AdversityLocation.ANY, label="may_cut_in", seed=1
 )
 logger.info(
-    "%s %s %s %s",
+    "%s %s %s %s %s",
     feasible.kind.name,
     feasible.location.value,
     AdversityKind.HEAD_ON.name,
     AdversityKind.STOP_CROSSING.value,
+    AdversityKind.MERGE.name,
 )
 self.register_fail_condition(feasible)
 """

@@ -789,6 +789,7 @@ class AdversityKind:
     HEAD_ON: ClassVar[AdversityKind] = AdversityKind("head_on")
     RUNNING_RED_LIGHT: ClassVar[AdversityKind] = AdversityKind("running_red_light")
     STOP_CROSSING: ClassVar[AdversityKind] = AdversityKind("stop_crossing")
+    MERGE: ClassVar[AdversityKind] = AdversityKind("merge")
 
     # Enum's name (#307): Codon has no Enum to give a framework enum one.
     @property
@@ -811,6 +812,8 @@ class AdversityKind:
             return "RUNNING_RED_LIGHT"
         if self == AdversityKind.STOP_CROSSING:
             return "STOP_CROSSING"
+        if self == AdversityKind.MERGE:
+            return "MERGE"
         raise ValueError("not a member of AdversityKind")
 
 
