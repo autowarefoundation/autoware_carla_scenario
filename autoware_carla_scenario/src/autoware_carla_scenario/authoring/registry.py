@@ -1379,6 +1379,91 @@ register_action_spec(
     )
 )
 
+#: Mirrors ``AdversityLocation``; the codegen refuses an option that names no
+#: member.  No default: an adversity fires anywhere only when told so.
+_ADVERSITY_LOCATIONS: tuple[SelectOption, ...] = (
+    SelectOption("any", "Anywhere"),
+    SelectOption("intersection", "In or 25 m before a junction"),
+    SelectOption("highway", "On a highway"),
+    SelectOption("roundabout", "In or 25 m before a roundabout"),
+)
+
+
+#: Every adversarial action's fields: where it may fire, how it drives.
+_ADVERSITY_FIELDS: tuple[FieldSpec, ...] = (
+    FieldSpec(
+        name="location",
+        label="Where",
+        kind="select",
+        options=_ADVERSITY_LOCATIONS,
+        help="Where the adversity may fire; 'Anywhere' has to be chosen.",
+    ),
+    FieldSpec(
+        name="following_mode",
+        label="Following mode",
+        kind="select",
+        default="follow",
+        options=_FOLLOWING_MODES,
+    ),
+)
+
+
+_ADVERSITY_NOTE = (
+    "  Fires when its trigger holds at the chosen location (TeraSim's "
+    "numbers), drives the planned path, then hands the entity back to traffic."
+)
+
+for _type_id, _title, _target, _kinds, _description in (
+    (
+        "adversarial_brake",
+        "Adversarial Brake",
+        "AdversarialBrakeAction",
+        ("vehicle",),
+        "Brake hard in front of a follower that keeps coming.",
+    ),
+    (
+        "ignore_leader",
+        "Ignore Leader",
+        "IgnoreLeaderAction",
+        ("vehicle",),
+        "Drive on as if the close, slower leader were not there.",
+    ),
+    (
+        "adversarial_cut_in",
+        "Adversarial Cut-in",
+        "AdversarialCutInAction",
+        ("vehicle",),
+        "Change lane in front of a vehicle too close behind in the next lane.",
+    ),
+    (
+        "run_traffic_rule",
+        "Run Traffic Rule",
+        "RunTrafficRuleAction",
+        ("vehicle",),
+        "Run the red or yellow light the vehicle is stopping for.",
+    ),
+    (
+        "jaywalk",
+        "Jaywalk",
+        "JaywalkAction",
+        ("pedestrian",),
+        "Walk straight across the nearest road, off any crosswalk.",
+    ),
+):
+    register_action_spec(
+        ActionSpec(
+            type_id=_type_id,
+            title=_title,
+            category="Adversity",
+            builder=f"build_{_type_id}_action",
+            target=f"..actions.adversarial:{_target}",
+            actor_kinds=_kinds,
+            visual_kind="continuous",
+            fields=_ADVERSITY_FIELDS,
+            description=_description + _ADVERSITY_NOTE,
+        )
+    )
+
 register_action_spec(
     ActionSpec(
         type_id="set_speed",

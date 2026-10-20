@@ -216,6 +216,10 @@ class TestSelectFieldDefaults:
                 for field_spec in spec.fields:
                     if field_spec.kind != "select":
                         continue
+                    if field_spec.default is None and field_spec.required:
+                        # A choice the author has to make (an adversity's
+                        # location): the validator reports it missing.
+                        continue
                     allowed = {o.value for o in field_spec.options}
                     assert field_spec.default in allowed, (
                         f"{spec.type_id}.{field_spec.name} defaults to "

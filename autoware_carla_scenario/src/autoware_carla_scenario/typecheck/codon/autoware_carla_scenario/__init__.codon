@@ -6,15 +6,18 @@
 # here runs. test_typecheck_model.py keeps each declaration in step with the
 # Python one it models.
 
-from .actions import (BaseAction, EnvironmentAction, FollowTrajectoryAction,
-                      LaneChangeAction, RoutingAction,
+from .actions import (AdversarialBrakeAction, AdversarialCutInAction, BaseAction,
+                      EnvironmentAction, FollowTrajectoryAction, IgnoreLeaderAction,
+                      JaywalkAction, LaneChangeAction, RunTrafficRuleAction, RoutingAction,
                       SetSpeedAction, TickTiming, TrafficLightTarget, TrafficSignalAction,
                       TrafficSignalControllerAction, TurnAction, TurnIndicatorAction,
                       WalkStraightAction,
                       TrafficSourceAction, TrafficSinkAction)
 from ._bridge_pose import BridgePose
 from .autoware_bridge.grpc_server import GrpcAutowareBridgeServer
-from .conditions import (AccelerationCondition, AccelerationDirection, AlwaysTrueCondition,
+from .conditions import (AccelerationCondition, AccelerationDirection,
+                         AdversityFeasibleCondition, AdversityKind, AdversityLocation,
+                         AlwaysTrueCondition,
                          AndCondition, BaseCondition, CollisionCondition, CollisionTargetType,
                          ComparisonRule, DistanceCoordinateSystem, ElapsedTimeCondition,
                          MetricCondition,
