@@ -78,6 +78,7 @@ from autoware_carla_scenario.odd import route as odd_route
 from autoware_carla_scenario.route import active as route_active
 from autoware_carla_scenario.route import frame as route_frame
 from autoware_carla_scenario.route import model as route_model
+from autoware_carla_scenario.traffic import base as traffic_base
 from autoware_carla_scenario.traffic import context as traffic_context
 from autoware_carla_scenario.traffic import registry as traffic_registry
 from autoware_carla_scenario.trajectory import model as trajectory_model
@@ -335,6 +336,9 @@ _BOUNDARY: dict[str, tuple[str, Any]] = {
         for name in ("_parse_geo_reference", "map_origin", "resolve_projector")
     },
     "TrafficContext": ("traffic", traffic_context.TrafficContext),
+    # The type of a vehicle entity's simulation_fidelity, which the traffic
+    # package exports (and the package does not).
+    "SimulationFidelity": ("traffic", traffic_base.SimulationFidelity),
     **{
         name: ("traffic", getattr(traffic_registry, name))
         for name in (

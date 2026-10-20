@@ -459,8 +459,9 @@ NOT_MODELLED_MEMBERS: dict[str, dict[str, str]] = {
         "actor attaches_to_existing_actor carried_actor_ids change_lane client "
         "config debug_markers debug_state destroy drive_count forget_lane_change "
         "handshake is_initialized lane_change_finished on_scenario_end "
-        "on_scenario_start on_tick release_from_traffic requires_goal resume_traffic route_to "
-        "set_client set_desired_speed set_initial_speeds set_traffic_backend "
+        "on_scenario_start on_tick release_from_traffic require_microscopic "
+        "requires_goal resume_traffic route_to set_client set_desired_speed "
+        "set_initial_speeds set_traffic_backend simulation_fidelity "
         "spawn stack_name termination_reason termination_requested "
         "turn_at_junction turn_indicator use_autopilot",
         _BY_NAME,
