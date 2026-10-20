@@ -863,6 +863,19 @@ class BaseScenario(ABC):
             return None
 
     @property
+    def importance_sampling_weight(self) -> float:
+        """The run's importance-sampling weight: the product of its actions'
+        (:attr:`BaseAction.importance_sampling_weight`), ``1`` when none
+        samples what happens.  A batch of runs weighted by it estimates the
+        naturalistic rate of what it counts."""
+        weight = 1.0
+        for action in (
+            self._init_actions + self._pre_tick_actions + self._post_tick_actions
+        ):
+            weight *= action.importance_sampling_weight
+        return weight
+
+    @property
     def measures(self) -> dict[str, Measure]:
         """The scenario's measures, built-in and its own, by key."""
         return dict(self._measures)

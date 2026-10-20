@@ -193,6 +193,10 @@ class BaseScenario:
         raise NotImplementedError()
 
     @property
+    def importance_sampling_weight(self) -> float:
+        raise NotImplementedError()
+
+    @property
     def measures(self) -> Dict[str, Measure]:
         raise NotImplementedError()
 
@@ -249,6 +253,8 @@ class BaseScenario:
         check checks (_acs_hook_return in _tc.codon, #238)."""
         if name == "goal_pose":
             _acs_expect_return(r, Optional[Lanelet2Pose], "BaseScenario.goal_pose returns Optional[Lanelet2Pose]")
+        elif name == "importance_sampling_weight":
+            _acs_expect_return(r, float, "BaseScenario.importance_sampling_weight returns float")
         elif name == "waypoint_poses":
             _acs_expect_return(r, List[Lanelet2Pose], "BaseScenario.waypoint_poses returns List[Lanelet2Pose]")
         elif name == "create_ego":

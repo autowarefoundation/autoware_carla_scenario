@@ -40,6 +40,7 @@ value with the aggregation in the last column (`Metric.aggregation`).
 | `wrong_lane` | | The ego heads more than 120 degrees away from the driving lane under its centre; nothing off the road | max |
 | `min_distance_to_obstacle_m` | m | Box to box, to the nearest other vehicle or pedestrian; `0` touching, nothing when the ego is alone | min |
 | `min_distance_to_lane_boundary_m` | m | From the ego's box to the edge of the driving lanes around it (lanes beside its own count while their near edge is within 6 m of its centre); `0` off the road | min |
+| `importance_sampling_weight` | ratio | Not AlpaSim's: the run's importance-sampling weight so far, the product of NADE's `p/q` and `(1-p)/(1-q)` (`AdversarialTrafficAction`); `1` without NADE. Weight a batch of runs by its last value to estimate the naturalistic rate of what they count | last |
 
 Where AlpaSim's geometry is not CARLA's, the reading follows CARLA: AlpaSim
 asks whether the union of the lane polygons around the ego covers its box,

@@ -591,6 +591,37 @@ def test_actions_are_written_when_first_seen_and_when_their_state_changes(
     }
 
 
+def test_an_adversity_nade_sampled_is_written_on_its_tick(tmp_path) -> None:
+    from autoware_carla_scenario.actions.events import AdversityEvent
+
+    recorder, world = _run(tmp_path)
+    world.snapshot = [_ActorSnapshot(1, 0.0, 0.0)]
+    world.frame = 140
+    recorder.record(world, 2.0)
+    event = AdversityEvent(
+        "npc1", "brake_check", "any", 0.01, 0.2, 0.05, True, ["npc2"], "avoid"
+    )
+    recorder.record_adversity("nade", event)
+    recorder.close()
+
+    (written,) = [r for r in _lines(recorder.path) if r["type"] == "adversity"]
+    assert written == {
+        "type": "adversity",
+        "frame": 140,
+        "t": 2.0,
+        "label": "nade",
+        "agent": "npc1",
+        "kind": "brake_check",
+        "location": "any",
+        "probability": 0.01,
+        "is_probability": 0.2,
+        "weight": 0.05,
+        "avoidable": True,
+        "victims": ["npc2"],
+        "response": "avoid",
+    }
+
+
 def test_conditions_are_written_when_first_checked_and_when_they_change(
     tmp_path,
 ) -> None:

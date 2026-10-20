@@ -29,7 +29,7 @@ from ..adversity.nade import (
 )
 from ..adversity.observation import Scene
 from ..adversity.snapshot import scene_at
-from ..adversity.triggers import DEFAULT_THRESHOLDS, TriggerThresholds
+from ..adversity.triggers import DEFAULT_THRESHOLDS, AdversityKind, TriggerThresholds
 from ..conditions.base import BaseCondition, find_actor_by_role_name
 from ..constants import EGO_ROLE_NAME
 from ..trajectory.model import TrajectoryFollowingMode
@@ -37,6 +37,7 @@ from ..utils.turn_indicator import TurnIndicatorState, is_vehicle, turn_indicato
 from ._adversarial_execution import AdversarialExecution, drivable, start_execution
 from .background_traffic import _Never
 from .base import BaseAction, TickTiming
+from .events import AdversityEvent
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
@@ -75,6 +76,8 @@ class AdversarialTrafficAction(BaseAction):
     _following_mode: TrajectoryFollowingMode
     _executions: list[AdversarialExecution]
     _choices: list[NadeChoice]
+    _events: list[AdversityEvent]
+    _sampled_now: Optional[AdversityKind]
     _elapsed: float
 
     def __init__(
@@ -108,12 +111,31 @@ class AdversarialTrafficAction(BaseAction):
         self._following_mode = following_mode
         self._executions = []
         self._choices = []
+        self._events = []
+        self._sampled_now = None
         self._elapsed = 0.0
 
     @property
     def weight(self) -> float:
         """The run's importance-sampling weight so far: 1 until a challenger."""
         return self._sampler.weight
+
+    @property
+    def importance_sampling_weight(self) -> float:
+        """:attr:`weight`, as every action reports its weight to the scenario."""
+        return self._sampler.weight
+
+    def take_adversity_events(self) -> list[AdversityEvent]:
+        """The adversities sampled since last asked, for the run's log."""
+        events = self._events
+        self._events = []
+        return events
+
+    def sampled_kind(self, world: "carla.World") -> Optional[AdversityKind]:
+        """The kind of the adversity sampled this tick, else None: a cover
+        item's expression (``scenario.register_cover("adversity.kind",
+        nade.sampled_kind, values=AdversityKind, event=SamplingEvent.TICK)``)."""
+        return self._sampled_now
 
     @property
     def choices(self) -> list[NadeChoice]:
@@ -127,6 +149,7 @@ class AdversarialTrafficAction(BaseAction):
 
     def execute(self, world: "carla.World") -> None:
         """Drive the adversity under way, or sample the next one."""
+        self._sampled_now = None
         if self.state is ActionState.STANDBY:
             self._executions = []
         for running in self._executions:
@@ -149,6 +172,20 @@ class AdversarialTrafficAction(BaseAction):
             return
         sampled: NadeChoice = choice
         self._choices.append(sampled)
+        self._sampled_now = sampled.adversity.kind
+        self._events.append(
+            AdversityEvent(
+                sampled.name,
+                sampled.adversity.kind.value,
+                sampled.adversity.location.value,
+                sampled.probability,
+                sampled.is_probability,
+                self.weight,
+                sampled.avoidable,
+                [victim for victim, _ in sampled.responses],
+                sampled.response,
+            )
+        )
         logger.info(
             "%s: '%s' carries out %s (q=%.3g, p=%.3g), weight %.6g",
             self.label,

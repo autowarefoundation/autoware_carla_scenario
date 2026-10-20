@@ -44,6 +44,31 @@ class TrafficLightTarget:
         raise ValueError("not a member of TrafficLightTarget")
 
 
+class AdversityEvent:
+    agent: str
+    kind: str
+    location: str
+    probability: float
+    is_probability: float
+    weight: float
+    avoidable: bool
+    victims: List[str]
+    response: str
+
+    def __init__(self, agent: str, kind: str, location: str, probability: float,
+                 is_probability: float, weight: float, avoidable: bool,
+                 victims: List[str], response: str):
+        self.agent = agent
+        self.kind = kind
+        self.location = location
+        self.probability = probability
+        self.is_probability = is_probability
+        self.weight = weight
+        self.avoidable = avoidable
+        self.victims = victims
+        self.response = response
+
+
 class BaseAction:
     # Codon also builds a class by its fields, by position: a subclass with
     # its inherited label alone (`TurnAction("npc1")`). Each subclass declares
@@ -77,6 +102,11 @@ class BaseAction:
             _acs_expect_return(r, ActionState, "BaseAction.state returns ActionState")
         elif name == "sets_tire_friction":
             _acs_expect_return(r, bool, "BaseAction.sets_tire_friction returns bool")
+        elif name == "importance_sampling_weight":
+            _acs_expect_return(r, float, "BaseAction.importance_sampling_weight returns float")
+        elif name == "take_adversity_events":
+            _acs_expect_return(r, List[AdversityEvent],
+                               "BaseAction.take_adversity_events() returns List[AdversityEvent]")
         elif name == "reissues_while_running":
             _acs_expect_return(r, bool, "BaseAction.reissues_while_running returns bool")
         elif name == "execute":
@@ -98,6 +128,13 @@ class BaseAction:
 
     @property
     def sets_tire_friction(self) -> bool:
+        raise NotImplementedError()
+
+    @property
+    def importance_sampling_weight(self) -> float:
+        raise NotImplementedError()
+
+    def take_adversity_events(self) -> List[AdversityEvent]:
         raise NotImplementedError()
 
     @property
@@ -550,6 +587,9 @@ class AdversarialTrafficAction(BaseAction):
 
     @property
     def weight(self) -> float:
+        raise NotImplementedError()
+
+    def sampled_kind(self, world: carla.World) -> Optional[AdversityKind]:
         raise NotImplementedError()
 
 # As conditions.codon builds a BaseCondition: so `Optional[BaseAction]` None

@@ -32,6 +32,7 @@ from .coordinate.map_manager import run_carla_map
 from .coordinate.poses import CarlaWorldPose
 from .coverage.collector import CoverageCollector, prepare_measures
 from .measures import set_measured_scenario
+from .metrics import set_importance_sampling_weight
 from .odd import OddCase, OddDefinition, reset_probes, resolve_odd
 from .coordinate.transform import to_opendrive
 from .entity.vehicle_entity import _set_warmup_done
@@ -1297,6 +1298,7 @@ class ScenarioRunner:
                 pass
             else:
                 set_measured_scenario(scenario)
+            set_importance_sampling_weight(scenario.importance_sampling_weight)
             coverage = CoverageCollector(
                 scenario._cover_items, scenario._cross_items, odd=self.odd
             )
@@ -1363,6 +1365,13 @@ class ScenarioRunner:
                             type(action).__name__,
                             action.state.value,
                         )
+                        # What it sampled this tick (NADE's adversities).
+                        for event in action.take_adversity_events():
+                            trajectory.record_adversity(action.label, event)
+
+                # The weight the actions above leave the run with, for the
+                # metric that reads it.
+                set_importance_sampling_weight(scenario.importance_sampling_weight)
 
                 # Coverage samples the world the hooks above have acted on.
                 coverage.tick(world, elapsed)
@@ -1473,6 +1482,7 @@ class ScenarioRunner:
 
         finally:
             set_measured_scenario(None)
+            set_importance_sampling_weight(None)
             logger.info("[%s] === Cleanup start ===", scenario_name)
             _set_warmup_done(False)
 

@@ -67,6 +67,7 @@ each condition that changed and an `action` line for each action that moved on. 
 | `markers` (2) | after a tick on which the ego's debug markers changed | `frame`, `t`, `actor` (the ego, or null), `polylines` `[{points [[x,y,z]], color [r,g,b], thickness, point_size}]`; they hold until the next `markers` line, and none (`[]`) clears them |
 | `condition` (2) | when a condition is first checked, and when it changes | `frame`, `t`, `role` (`pass`/`fail`), `index` (in its list), `label`, `satisfied` |
 | `action` (2) | on the first tick of the loop, and when the action's state changes | `frame`, `t`, `phase` (`pre_tick`/`post_tick`), `index` (in its list), `label`, `action_type` (its class), `state` (`standbyState`, `startTransition`, `runningState`, `endTransition`, `completeState`: OpenSCENARIO's, `ActionState`) |
+| `adversity` (2) | on the tick NADE samples an adversity (`AdversarialTrafficAction`) | `frame`, `t`, `label` (the action's), `agent`, `kind` (`AdversityKind`), `location` (`AdversityLocation`), `probability` (`p`, cut for an unavoidable one), `is_probability` (`q`), `weight` (the run's, once sampled), `avoidable`, `victims`, `response` (`avoid`, `accept` or empty) |
 | `result` (2) | last, when the run reached a verdict | `passed`, `message`, `elapsed_seconds`, `conditions` `[{label, role, condition_type, satisfied, message}]` (_result.json's, without the details) |
 
 Fixed-length arrays are tuples: the schema gives each position its meaning, and

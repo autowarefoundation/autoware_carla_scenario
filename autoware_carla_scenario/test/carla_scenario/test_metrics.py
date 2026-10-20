@@ -6,8 +6,8 @@ along +x with driving lanes side by side, and boxes on it.
 
 from __future__ import annotations
 
-from types import SimpleNamespace
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Optional
 
 import pytest
@@ -208,11 +208,27 @@ def test_the_metrics_are_alpasim_s() -> None:
         "wrong_lane",
         "min_distance_to_obstacle_m",
         "min_distance_to_lane_boundary_m",
+        # Not AlpaSim's: NADE's weight, its last value the run's (#397).
+        "importance_sampling_weight",
     }
     for key, metric in BUILT_IN_METRICS.items():
         assert metric.key == key
+        if key == "importance_sampling_weight":
+            assert (metric.unit, metric.aggregation) == ("ratio", "last")
+            continue
         assert metric.aggregation == ("min" if metric.unit == "m" else "max")
     assert read_metric("no_such_metric", _world()) is None  # type: ignore[arg-type]
+
+
+def test_the_importance_sampling_weight_is_the_one_the_runner_publishes() -> None:
+    from autoware_carla_scenario.metrics import set_importance_sampling_weight
+
+    assert read_metric("importance_sampling_weight", _world()) is None  # no run
+    set_importance_sampling_weight(0.125)
+    try:
+        assert read_metric("importance_sampling_weight", _world()) == 0.125  # type: ignore[arg-type]
+    finally:
+        set_importance_sampling_weight(None)
 
 
 def test_a_metric_is_not_a_measure() -> None:
