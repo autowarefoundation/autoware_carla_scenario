@@ -5022,6 +5022,13 @@ _STDLIB_REFUSALS: dict[str, tuple[str, str, str, str]] = {
     ),
     "types": ("import types\n", "", "types has no Codon model", "@dataclass"),
     "textwrap": ("import textwrap\n", "", "textwrap has no Codon model", "join()"),
+    "traceback": (
+        "import traceback\n",
+        "",
+        "traceback has no Codon model",
+        "logger.exception",
+    ),
+    "io": ("import io\n", "", "io has no Codon model", "pathlib.Path"),
 }
 
 
@@ -5181,6 +5188,12 @@ def test_stdlib_names() -> None:
     assert covered == declared
     # Every refusal documented is tested, and the other way round.
     assert listed("stdlib-refused") == {name for name in _STDLIB_REFUSALS}
+    # Every module refused with a hint is documented and tested (#438).
+    from autoware_carla_scenario.typecheck.check import _UNMODELLED_HINTS
+
+    assert {name for name in _STDLIB_REFUSALS if "." not in name} == set(
+        _UNMODELLED_HINTS
+    )
 
 
 def test_an_ellipsis_class_is_still_an_empty_class(tmp_path: Path) -> None:
