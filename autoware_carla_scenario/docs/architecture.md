@@ -593,6 +593,12 @@ through the OpenSCENARIO storyboard element states held in `ActionState`
 when *this* run ends, `reissues_while_running` says whether the command repeats
 while it does, and `once` says whether another run may begin.
 
+The adversarial actions (TeraSim's adversities, one entity each), NADE
+(`AdversarialTrafficAction`, which picks which agent carries out which
+adversity, with its importance-sampling weight) and the scheduled stalled
+objects build on this lifecycle: see
+[Adversarial Actions and NADE](adversity.md).
+
 `ActionStateCondition` observes these states, which is what lets one actor react
 to another *finishing* a manoeuvre rather than to the command having gone out
 (`done` only reports the latter).
