@@ -663,16 +663,6 @@ class MapFeatures:
                     ids.append(key)
         return ids
 
-    @staticmethod
-    def speed_limit(lanelet: ConstLanelet) -> Optional[float]:
-        """Its ``speed_limit`` tag in km/h, or ``None`` untagged or not a number."""
-        if "speed_limit" not in lanelet.attributes:
-            return None
-        try:
-            return float(str(lanelet.attributes["speed_limit"]))
-        except ValueError:
-            return None
-
     # -- junctions -----------------------------------------------------------
 
     def conflicting(self, lanelet: ConstLanelet) -> list[ConstLanelet]:

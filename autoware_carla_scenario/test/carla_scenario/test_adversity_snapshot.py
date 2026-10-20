@@ -39,6 +39,7 @@ def _actor(
     )
     return SimpleNamespace(
         type_id=type_id,
+        get_speed_limit=lambda: 40.0,
         bounding_box=SimpleNamespace(extent=extent, location=_vector(box_x, 0.0)),
         get_transform=lambda: transform,
         get_velocity=lambda: velocity,
@@ -81,6 +82,7 @@ def test_an_actor_is_read_into_the_lanelet2_frame() -> None:
     assert agent.acceleration == pytest.approx(2.0)
     assert (agent.footprint.length, agent.footprint.width) == pytest.approx((4.8, 2.0))
     assert agent.footprint.is_vehicle
+    assert agent.speed_limit == 40.0
 
 
 @pytest.mark.usefixtures("offset_map")
@@ -96,6 +98,7 @@ def test_a_walker_is_no_vehicle() -> None:
     )
     agent = snapshot.snapshot_actor(walker, "p1")
     assert not agent.footprint.is_vehicle
+    assert agent.speed_limit is None
     assert agent.acceleration == pytest.approx(-1.0)
 
 

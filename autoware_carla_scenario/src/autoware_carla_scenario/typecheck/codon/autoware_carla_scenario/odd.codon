@@ -505,6 +505,18 @@ def lanelet_speed_limit_kph(world: carla.World) -> Optional[float]:
     raise NotImplementedError()
 
 
+def lanelet_in_junction(lanelet: lanelet2.core.ConstLanelet) -> bool:
+    raise NotImplementedError()
+
+
+def lanelet_road_type(lanelet: lanelet2.core.ConstLanelet) -> Optional[str]:
+    raise NotImplementedError()
+
+
+def lanelet_speed_limit(lanelet: lanelet2.core.ConstLanelet) -> Optional[float]:
+    raise NotImplementedError()
+
+
 def illumination(world: carla.World) -> Optional[str]:
     raise NotImplementedError()
 

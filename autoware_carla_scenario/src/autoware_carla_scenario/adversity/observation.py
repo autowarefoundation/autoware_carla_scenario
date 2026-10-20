@@ -31,6 +31,7 @@ from typing import TYPE_CHECKING, Optional
 import lanelet2.core
 import lanelet2.geometry
 
+from ..odd.probes import lanelet_speed_limit
 from ..route.geometry import LaneSpan, MapFeatures
 from ..trajectory.relative_lane import _arc, _centreline, _point_at, reference_lane_pose
 from .geometry import AgentFootprint
@@ -91,6 +92,8 @@ class AgentSnapshot:
         speed: Speed (m/s).
         acceleration: Acceleration along its heading (m/s²).
         footprint: Its size; ``is_vehicle`` tells a vehicle from a pedestrian.
+        speed_limit: The simulator's speed limit for it (km/h), if any: the
+            desired speed where the lanelet has no ``speed_limit`` tag.
     """
 
     name: str
@@ -100,6 +103,7 @@ class AgentSnapshot:
     speed: float
     acceleration: float
     footprint: AgentFootprint
+    speed_limit: Optional[float] = None
 
 
 @dataclass(frozen=True)
@@ -171,8 +175,9 @@ class VehicleObservation:
         agent: The vehicle.
         lane: Where it is, or None off every lane (nothing else is then
             observed).
-        desired_speed: The lane's speed limit (m/s), else
-            :data:`DEFAULT_DESIRED_SPEED`.
+        desired_speed: The speed limit (m/s), read as the ODD's
+            ``speed_limit_kph`` reads it -- the lanelet's tag, else the
+            agent's own -- else :data:`DEFAULT_DESIRED_SPEED`.
         leader: The nearest vehicle ahead along its lanes.
         follower: The nearest vehicle behind.
         left: The lane on its left, if any.
@@ -348,7 +353,11 @@ class Scene:
         lane = self.lane_of(name)
         if lane is None:
             return VehicleObservation(agent, None, DEFAULT_DESIRED_SPEED)
-        limit = MapFeatures.speed_limit(lane.lanelet)
+        # As the ODD's speed_limit_kph: the lanelet's tag, else the
+        # simulator's limit for the vehicle, else a default.
+        limit = lanelet_speed_limit(lane.lanelet)
+        if limit is None:
+            limit = agent.speed_limit
         desired = DEFAULT_DESIRED_SPEED if limit is None else limit / 3.6
         chain = self.features.lane_chain(lane.lanelet, lane.s, self.search, self.search)
         leader, follower = self._neighbours(agent, chain)

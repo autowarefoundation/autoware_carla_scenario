@@ -10,7 +10,7 @@ names it.  Requires :class:`~..coordinate.map_manager.MapManager`.
 from __future__ import annotations
 
 import math
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 from ..coordinate.poses import CarlaWorldPose
 from ..coordinate.traffic_light import find_traffic_lights_for_lanelet2_id
@@ -31,12 +31,26 @@ _STATES = {
 }
 
 
+def _speed_limit(actor: carla.Actor) -> Optional[float]:
+    """The simulator's speed limit for a vehicle (km/h), as the ODD's
+    ``speed_limit_kph`` falls back to it; None where it reports none."""
+    # The speed limit is a vehicle's: a plain carla.Actor does not have it.
+    if TYPE_CHECKING:
+        vehicle = actor.as_vehicle()
+    else:
+        vehicle = actor.as_vehicle() if hasattr(actor, "as_vehicle") else actor
+    limit = float(vehicle.get_speed_limit() or 0.0)
+    if limit > 0.0:
+        return limit
+    return None
+
+
 def snapshot_actor(actor: carla.Actor, name: str) -> AgentSnapshot:
     """*actor*'s state now, as *name*, in the Lanelet2 map frame.
 
     The position is the centre of its bounding box, which a vehicle's origin
     is often behind; the speed is the horizontal one; the acceleration is
-    along its heading.  A ``vehicle.*`` blueprint is a vehicle, anything else
+    along its heading; a vehicle's speed limit is CARLA's for it.  A ``vehicle.*`` blueprint is a vehicle, anything else
     (a ``walker.*``) is approximated by one circle.
     """
     transform = actor.get_transform()
@@ -52,6 +66,7 @@ def snapshot_actor(actor: carla.Actor, name: str) -> AgentSnapshot:
         + float(acceleration.y) * float(forward.y)
         + float(acceleration.z) * float(forward.z)
     )
+    is_vehicle = str(actor.type_id).startswith("vehicle.")
     return AgentSnapshot(
         name,
         x + ahead * math.cos(yaw),
@@ -60,10 +75,9 @@ def snapshot_actor(actor: carla.Actor, name: str) -> AgentSnapshot:
         math.hypot(float(velocity.x), float(velocity.y)),
         along,
         AgentFootprint(
-            2.0 * float(box.extent.x),
-            2.0 * float(box.extent.y),
-            str(actor.type_id).startswith("vehicle."),
+            2.0 * float(box.extent.x), 2.0 * float(box.extent.y), is_vehicle
         ),
+        _speed_limit(actor) if is_vehicle else None,
     )
 
 

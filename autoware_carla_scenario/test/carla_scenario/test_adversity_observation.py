@@ -8,6 +8,7 @@ line at x = -12) on W_IN2.
 
 from __future__ import annotations
 
+import dataclasses
 import math
 
 import pytest
@@ -139,6 +140,16 @@ def test_the_desired_speed_is_the_speed_limit() -> None:
     assert (
         Scene(features, [_car("ego", -100.0)], {}).vehicle("ego").desired_speed
         == DEFAULT_DESIRED_SPEED
+    )
+    # Untagged, the simulator's limit for the vehicle, as the ODD reads it.
+    carla_limited = dataclasses.replace(_car("ego", -100.0), speed_limit=60.0)
+    assert Scene(features, [carla_limited], {}).vehicle(
+        "ego"
+    ).desired_speed == pytest.approx(60.0 / 3.6)
+    # The lanelet's tag wins over it.
+    tagged = dataclasses.replace(_car("ego", -40.0), speed_limit=60.0)
+    assert Scene(features, [tagged], {}).vehicle("ego").desired_speed == pytest.approx(
+        30.0 / 3.6
     )
 
 
