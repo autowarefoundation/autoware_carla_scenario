@@ -1181,6 +1181,29 @@ in step:
   `Generic`, and write a `@dataclass` (or a `Dict[str, X]`) instead of a
   `TypedDict`.
 
+### Python constructs Codon refuses (#379)
+
+Each of these is valid, mypy-clean Python that Codon 0.19 cannot compile and
+that the check cannot cheaply rewrite. The check refuses it at its line with a
+hint, and the working spelling is below. What runs is your code as written; only
+the check needs the other spelling.
+
+| You write | Codon says | Write instead |
+| --- | --- | --- |
+| `case int(n):`, `case Pt(x=x, y=y):`, `case Pt(a, b):` (a class pattern with arguments), or `case Pt():` of a class of your own | `name 'n' is not defined`, or it reads the pattern as a call of `Pt` (`__init__() missing 1 required positional argument`) | `if isinstance(v, Pt):`, then read the attributes (`v.x`, `v.y`); `case int():`, `case str():` and the other builtin types compile |
+| `case {"k": v}:`, `case {"k": _}:`, `case {**rest}:` (any name or `_` inside the mapping) | `name 'v' is not defined` | `if "k" in d:` and read `d["k"]`; a mapping pattern whose values are literals, values or or-patterns (`case {"k": 1 \| 2}:`) compiles |
+| `case [a, *rest]:`, `case [*_]:` | `unexpected star expression` | a fixed length (`case [a, b]:`), or test `len(xs)` and slice |
+| `case [a, b] as whole:` | `unexpected indentation` | match without `as` and use the name the subject already has |
+| `def show(h: HasArea)` called with a class that has `area()` but does not derive from the `Protocol` `HasArea` | `'Sq[float]' does not match expected type 'HasArea'` (also `List[Sq]` against `List[HasArea]`) | derive from it (`class Sq(HasArea):`), give the classes a common base class, or annotate `Union[Sq, Circle]`; Codon lists are invariant: annotate a list with the class it holds (`list[Sq]`) |
+| `f(*xs)` with a list, `f(**d)` with a dict | `argument after * must be a tuple, not 'List[int]'` / `argument after ** must be a named tuple, not 'Dict[str,int]'` | pass the elements (`f(xs[0], xs[1])`, `f(a=d["a"], b=d["b"])`), or make the parameter a list or dict; a tuple (`f(*(1, 2))`) is accepted |
+
+Plain value, or-pattern, guard, sequence (without `*`) and enum-member
+(`case Mode.A:`) patterns compile, as does `case int():` of a builtin type.
+
+A `Protocol` is not structural in the check: Codon compares class names, so a
+class is a `HasArea` only if it lists `HasArea` among its bases. Python runs
+the same code either way, because a `Protocol` base is only a marker there.
+
 ### Standard library names Codon lacks
 
 Codon ships its own `functools` (only `partial`), `itertools` and

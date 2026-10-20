@@ -5382,6 +5382,218 @@ def test_passing_a_captured_lambda_default_is_refused_with_a_hint(
     assert error.line == _line_of(path, f"r = {call}")
 
 
+# ---------------------------------------------------------------------------
+# Codon-only refusals of valid Python: a hint and the line (#379)
+# ---------------------------------------------------------------------------
+
+_POINT = "@dataclass\nclass Pt:\n    x: int\n    y: int\n"
+
+_PROTOCOL = """
+class HasArea(typing.Protocol):
+    def area(self) -> float: ...
+
+
+class Sq:
+    side: float
+
+    def __init__(self, side: float) -> None:
+        self.side = side
+
+    def area(self) -> float:
+        return self.side * self.side
+
+
+class SqBased(HasArea):
+    side: float
+
+    def __init__(self, side: float) -> None:
+        self.side = side
+
+    def area(self) -> float:
+        return self.side * self.side
+
+
+def show(h: HasArea) -> float:
+    return h.area()
+
+
+def total(hs: list[HasArea]) -> float:
+    return sum([h.area() for h in hs])
+
+
+def total_of_sq(hs: list[SqBased]) -> float:
+    return sum([h.area() for h in hs])
+
+
+def two(a: int, b: int) -> int:
+    return a + b
+"""
+
+
+@pytest.mark.parametrize(
+    ("definitions", "subject", "pattern", "hint"),
+    [
+        ("", "x: int | str = 3", "int(n)", "isinstance(v, Pt)"),
+        (_POINT, "x = Pt(1, 2)", "Pt()", "isinstance(v, Pt)"),
+        (_POINT, "x = Pt(1, 2)", "Pt(x=a, y=b)", "isinstance(v, Pt)"),
+        ("", 'x = {"k": 1}', '{"k": v}', "test `'k' in d`"),
+        ("", 'x = {"k": 1}', "{**r}", "test `'k' in d`"),
+        ("", 'x = {"k": [1, 2]}', '{"k": [1, b]}', "test `'k' in d`"),
+        ("", "x = [1, 2]", "[a, *rest]", "test len(xs)"),
+        ("", "x = [1, 2]", "[a, b] as whole", "match the subject unnamed"),
+    ],
+    ids=[
+        "class",
+        "own-class",
+        "dataclass",
+        "mapping",
+        "mapping-rest",
+        "mapping-nested",
+        "star",
+        "as",
+    ],
+)
+def test_a_match_pattern_codon_cannot_bind_is_refused_with_a_hint(
+    tmp_path: Path, definitions: str, subject: str, pattern: str, hint: str
+) -> None:
+    setup = f"""
+        {subject}
+        match x:
+            case {pattern}:
+                logger.info("%s", "hit")
+            case _:
+                pass
+    """
+    scenario, config, path = _data_case(tmp_path, definitions, setup)
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert hint in error.message, error.format()
+    assert error.line == _line_of(path, f"case {pattern}:")
+
+
+def test_the_match_patterns_codon_compiles_still_compile(tmp_path: Path) -> None:
+    setup = """
+        n = 3
+        d = {"k": 1}
+        pair = [1, 2]
+        match n:
+            case 1 | 2:
+                logger.info("%s", "small")
+            case _ if n > 5:
+                logger.info("%s", "big")
+            case _:
+                pass
+        match d:
+            case {"k": 1}:
+                logger.info("%s", "one")
+            case _:
+                pass
+        match d:
+            case {"k": 1 | 2}:
+                logger.info("%s", "one or two")
+            case {"k": [1, 2]}:
+                logger.info("%s", "pair")
+            case _:
+                pass
+        match pair:
+            case [a, b]:
+                logger.info("%d", a + b)
+            case _:
+                pass
+        match n:
+            case int():
+                logger.info("%d", n)
+            case _:
+                pass
+    """
+    scenario, config, _ = _data_case(tmp_path, _POINT, setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_isinstance_and_attribute_reads_replace_a_capture_pattern(
+    tmp_path: Path,
+) -> None:
+    setup = """
+        v: int | str = 3
+        if isinstance(v, int):
+            logger.info("%d", v)
+        d = {"k": 1}
+        if "k" in d:
+            logger.info("%d", d["k"])
+        xs = [1, 2, 3]
+        if len(xs) > 0:
+            logger.info("%d %d", xs[0], len(xs[1:]))
+        p = Pt(1, 2)
+        if isinstance(p, Pt) and p.x < p.y:
+            logger.info("%d", p.y)
+    """
+    scenario, config, _ = _data_case(tmp_path, _POINT, setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+@pytest.mark.parametrize(
+    ("call", "hint"),
+    [
+        ("show(Sq(1.0))", "is a typing.Protocol"),
+        ("total([Sq(1.0)])", "is a typing.Protocol"),
+        ("two(*[1, 2])", "pass the elements"),
+        ('two(**{"a": 1, "b": 2})', "pass the keywords"),
+    ],
+    ids=["protocol", "protocol-list", "star-list", "star-star-dict"],
+)
+def test_protocol_and_unpacking_refusals_say_what_to_write(
+    tmp_path: Path, call: str, hint: str
+) -> None:
+    scenario, config, path = _data_case(
+        tmp_path, _PROTOCOL, f'logger.info("%s", {call})\n'
+    )
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert hint in error.message, error.format()
+    line = _line_of(path, call)
+    assert error.line == line or any(
+        f"scenario.py:{line}]" in frame for frame in error.trace
+    ), error.format()
+
+
+def test_the_documented_protocol_and_unpacking_spellings_compile(
+    tmp_path: Path,
+) -> None:
+    setup = """
+        logger.info("%f", show(SqBased(1.0)))
+        logger.info("%f", total_of_sq([SqBased(2.0)]))
+        logger.info("%d", two(*(1, 2)))
+        xs = [1, 2]
+        logger.info("%d", two(xs[0], xs[1]))
+    """
+    scenario, config, _ = _data_case(tmp_path, _PROTOCOL, setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_a_class_mismatch_that_is_no_protocol_gets_no_protocol_hint(
+    tmp_path: Path,
+) -> None:
+    definitions = (
+        _PROTOCOL
+        + """
+
+class Other:
+    pass
+
+
+def take(o: Other) -> int:
+    return 1
+"""
+    )
+    scenario, config, _ = _data_case(
+        tmp_path, definitions, 'logger.info("%d", take(Sq(1.0)))\n'
+    )
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "does not match expected type" in error.message, error.format()
+    assert "Protocol" not in error.message, error.format()
+
+
 def test_total_ordering_composes_with_the_stubbed_functools_names(
     tmp_path: Path,
 ) -> None:
