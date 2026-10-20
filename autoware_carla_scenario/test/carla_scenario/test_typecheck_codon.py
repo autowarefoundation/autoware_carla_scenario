@@ -5050,3 +5050,17 @@ def test_a_lambda_capturing_a_default_is_still_typed(tmp_path: Path) -> None:
     assert "for +: 'str' and 'int'" in error.message, error.format()
     call = _line_of(path, 'r = fs[0]("x")')
     assert any(f"scenario.py:{call}]" in frame for frame in error.trace), error.format()
+
+
+@pytest.mark.parametrize("call", ["fs[0](1, k=5)", "fs[0](1, 5)"])
+def test_passing_a_captured_lambda_default_is_refused_with_a_hint(
+    tmp_path: Path, call: str
+) -> None:
+    setup = f"""
+        fs = [lambda x, k=k: x + k for k in range(3)]
+        r = {call}
+    """
+    scenario, config, path = _data_case(tmp_path, "", setup)
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "binds that default once" in error.message, error.format()
+    assert error.line == _line_of(path, f"r = {call}")

@@ -48,6 +48,16 @@ REWRITE_HINTS: tuple[tuple[re.Pattern[str], str], ...] = (
         "literal with plain arguments; write an f-string instead",
     ),
     (
+        # A lambda rewritten for a non-literal default no longer takes it.
+        re.compile(
+            r"%_lambda_\d+\(\) takes \d+ arguments|"
+            r"is an invalid keyword argument for %_lambda_\d+\(\)"
+        ),
+        "if this lambda has a default that is not a literal (`k=k`), the check "
+        "binds that default once and the lambda no longer takes it: do not "
+        "pass it, or use functools.partial",
+    ),
+    (
         re.compile(r"unsupported operand type\(s\) for (?:<|>=): '(\w+)' and '\1'"),
         "this class has no ordering, which sorted(), .sort() and min() need: "
         "define __lt__ (the check adds the __gt__ and __ge__ Codon's sort "
@@ -243,7 +253,6 @@ class _Pass(ast.NodeVisitor):
         for name, value in named.items():
             params[f"_acs_k_{name}"] = value
         inline = all(_plain(v) for v in params.values())
-        used: dict[str, str] = {}
         parts: list[str] = []  # plain strings and f-string chunks, to join
         chunk = ""  # the f-string being built
         auto = 0
@@ -331,7 +340,6 @@ class _Pass(ast.NodeVisitor):
                 expression = self._text(value)
             else:
                 expression = key
-                used[key] = self._text(value)
             if "\n" in expression:
                 expression = "(" + expression + ")"
             body = expression + access
@@ -455,8 +463,7 @@ def _ordering_blocks(
             )
         )
         equal = "self == other" if has_eq else "self is other"
-        roots = [name for name in _ORDERING if name in own]
-        if ordered and not roots and not any(defines(node, n) for n in _ORDERING):
+        if ordered and not any(defines(node, n) for n in _ORDERING):
             refused.append(
                 (
                     node.lineno,
@@ -467,9 +474,9 @@ def _ordering_blocks(
             continue
         bodies: dict[str, str] = {}
         if ordered:
-            root = next((n for n in _ORDERING if n in own), None)
-            if root is None:
-                continue
+            # Python's root is the greatest of the comparisons the class has,
+            # inherited ones included.
+            root = next(n for n in _ORDERING if defines(node, n))
             table = {
                 "__lt__": {
                     "__gt__": f"not (self < other or {equal})",

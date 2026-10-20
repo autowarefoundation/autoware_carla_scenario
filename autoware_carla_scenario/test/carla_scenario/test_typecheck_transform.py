@@ -2458,6 +2458,19 @@ def test_total_ordering_without_eq_compares_identity() -> None:
     assert "total_ordering" not in text
 
 
+def test_total_ordering_takes_its_root_from_a_base() -> None:
+    source = (
+        "from functools import total_ordering\n"
+        "class B:\n    def __lt__(self, o): ...\n"
+        "@total_ordering\nclass V(B): ...\n"
+    )
+    _, blocks = python_rewrites(source)
+    block = dict(blocks)["V"]
+    assert "def __le__(self, other: V)" in block
+    assert "def __ge__(self, other: V)" in block
+    assert "def __lt__(" not in block
+
+
 def test_the_total_ordering_import_loses_only_its_name() -> None:
     text = _rewritten(
         "from functools import partial, total_ordering as to\n@to\nclass V: ...\n"

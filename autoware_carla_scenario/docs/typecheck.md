@@ -1141,7 +1141,7 @@ Notes:
   (`a >= b` is a `TypeError` there): the check accepts it because Codon's sort
   needs it. It does not change what runs.
 - A rewritten lambda no longer takes the captured parameter: `fs[0](1, 5)`,
-  which passes `k`, is refused. A default after a non-literal one is bound the
+  which passes `k`, is refused (with a hint naming this). A default after a non-literal one is bound the
   same way, so positional calls keep their meaning. Use `functools.partial`
   where you pass the captured value.
 - Codon's f-strings have no `{{` / `}}`: a literal brace becomes a string
