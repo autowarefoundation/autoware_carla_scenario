@@ -29,7 +29,7 @@
   {% elif selected_kind == 'action' %}
     {% set spec = get_action_spec(target.type) %}
     <form hx-post="/draft/{{ draft.id }}/action/{{ target.id }}"
-          hx-trigger="change delay:200ms" hx-target="#editor-body" hx-swap="innerHTML">
+          hx-trigger="change delay:200ms, submit" hx-target="#editor-body" hx-swap="innerHTML">
       <p class="ed-kicker">{{ spec.category if spec else 'Action' }}</p>
       <h3 class="ed-heading">{{ spec.title if spec else target.type }}</h3>
       {% if spec and spec.description %}<p class="ed-help" style="margin-bottom:14px">{{ spec.description }}</p>{% endif %}
@@ -114,7 +114,7 @@
       </p>
     {% endif %}
     <form hx-post="/draft/{{ draft.id }}/condition/{{ target.id }}"
-          hx-trigger="change delay:200ms" hx-target="#editor-body" hx-swap="innerHTML">
+          hx-trigger="change delay:200ms, submit" hx-target="#editor-body" hx-swap="innerHTML">
       <p class="ed-kicker">{{ spec.category if spec else 'Predicate' }}</p>
       <h3 class="ed-heading">{{ spec.title if spec else target.type }}</h3>
       {% if spec and spec.description %}<p class="ed-help" style="margin-bottom:14px">{{ spec.description }}</p>{% endif %}

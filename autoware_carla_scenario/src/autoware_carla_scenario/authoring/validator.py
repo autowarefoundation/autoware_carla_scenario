@@ -164,7 +164,9 @@ def _check_field(
     """Validate one parameter against its :class:`FieldSpec`."""
     value = params.get(spec.name, spec.default)
 
-    if _is_blank(value):
+    # A record list with no records is blank too: an empty list is what an
+    # unset one holds, so a required one needs a record.
+    if _is_blank(value) or (spec.kind == "record_list" and value in ([], ())):
         if spec.required:
             out.error(f"{path}.{spec.name}", f"{spec.label} is required.", object_id)
         return
@@ -225,6 +227,8 @@ def _check_field(
             parse_route_vertices(value)
         except ValueError as exc:
             out.error(f"{path}.{spec.name}", f"{spec.label}: {exc}.", object_id)
+    elif spec.kind == "record_list":
+        _check_records(out, f"{path}.{spec.name}", spec, value, refs, object_id)
     elif spec.kind == "int_list_or_ref":
         if value != MAP_EXCLUSION_REF and not _is_int_list(value):
             out.error(
@@ -232,6 +236,28 @@ def _check_field(
                 f"{spec.label} must be a list of whole numbers or {MAP_EXCLUSION_REF}.",
                 object_id,
             )
+
+
+def _check_records(
+    out: _Collector,
+    path: str,
+    spec: FieldSpec,
+    value: Any,
+    refs: _Refs,
+    object_id: str | None,
+) -> None:
+    """Validate a ``record_list``: a list of mappings, each checked against
+    the field's :attr:`~FieldSpec.item_fields` as a node's params are."""
+    if not isinstance(value, (list, tuple)) or not all(
+        isinstance(row, dict) for row in value
+    ):
+        out.error(path, f"{spec.label} must be a list of records.", object_id)
+        return
+    for index, row in enumerate(value):
+        row_path = f"{path}[{index}]"
+        for item in spec.item_fields:
+            _check_field(out, row_path, item, row, refs, object_id)
+        _check_unknown_params(out, row_path, spec.item_fields, row, object_id)
 
 
 def _coercible_int(value: Any) -> bool:

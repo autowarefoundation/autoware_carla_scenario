@@ -718,6 +718,84 @@ def test_background_vehicles_are_sumo_traffic_mirrored_into_carla(
 
 
 @needs_sumo
+def test_sumo_traffic_drives_no_faster_than_its_drivers_see(
+    crossroads: Path, tmp_path: Path
+) -> None:
+    from autoware_carla_scenario.visibility import (
+        forget_visibility,
+        set_world_visibility,
+        sight_speed,
+    )
+
+    forget_visibility()
+    backend, world, _npc, _ego = _prepared(crossroads, tmp_path)
+    world.id = 11  # type: ignore[attr-defined]
+    tc = backend._traci
+    try:
+        handle = backend.spawn_background(
+            world, _carla_transform(-60.0, 5.25, 0.0), speed_kmh=60.0
+        )
+        assert handle is not None
+        backend.tick(world, 0.0)
+        assert tc.vehicle.getMaxSpeed(handle) == pytest.approx(60.0 / 3.6)
+
+        # Fog: 20 m, so held to what a car stops from within 20 m.
+        set_world_visibility(11, 20.0)
+        backend.tick(world, 0.05)
+        held = sight_speed(20.0, tc.vehicle.getDecel(handle), tc.vehicle.getTau(handle))
+        assert held < 60.0 / 3.6
+        assert tc.vehicle.getMaxSpeed(handle) == pytest.approx(held)
+        # The scenario's own vehicle is the scenario's.
+        (npc_id,) = backend._driven
+        assert tc.vehicle.getMaxSpeed(npc_id) > held
+        # A vehicle that departs in the fog is held to it too.
+        later = backend.spawn_background(
+            world, _carla_transform(-75.0, 1.75, 0.0), speed_kmh=60.0
+        )
+        assert later is not None
+        backend.tick(world, 0.1)
+        assert tc.vehicle.getMaxSpeed(later) == pytest.approx(held)
+        assert backend.describe()["visibility_m"] == 20.0
+
+        # The fog lifts: each gets its own speed back.
+        forget_visibility()
+        backend.tick(world, 0.15)
+        assert tc.vehicle.getMaxSpeed(handle) == pytest.approx(60.0 / 3.6)
+        assert tc.vehicle.getMaxSpeed(later) == pytest.approx(60.0 / 3.6)
+    finally:
+        backend.close()
+        forget_visibility()
+
+
+@needs_sumo
+def test_sumo_traffic_can_ignore_the_visibility(
+    crossroads: Path, tmp_path: Path
+) -> None:
+    from autoware_carla_scenario.visibility import (
+        forget_visibility,
+        set_world_visibility,
+    )
+
+    backend, world, _npc, _ego = _prepared(
+        crossroads, tmp_path, follow_visibility=False
+    )
+    world.id = 12  # type: ignore[attr-defined]
+    tc = backend._traci
+    try:
+        handle = backend.spawn_background(
+            world, _carla_transform(-60.0, 5.25, 0.0), speed_kmh=60.0
+        )
+        assert handle is not None
+        set_world_visibility(12, 20.0)
+        backend.tick(world, 0.0)
+        backend.tick(world, 0.05)
+        assert tc.vehicle.getMaxSpeed(handle) == pytest.approx(60.0 / 3.6)
+    finally:
+        backend.close()
+        forget_visibility()
+
+
+@needs_sumo
 def test_a_background_vehicle_off_the_road_is_refused(
     crossroads: Path, tmp_path: Path
 ) -> None:

@@ -48,6 +48,11 @@ was at the start of the step and given SUMO's speed as a constant velocity
 (``enable_constant_velocity``), which carries it to where SUMO is at the end of
 the step.  Height, pitch and roll stay CARLA's, so the car sits on CARLA's road.
 
+SUMO's own traffic sees only as far as the run's weather lets its drivers see
+(``follow_visibility``, :mod:`autoware_carla_scenario.visibility`): night,
+rain and fog hold each vehicle to the speed it can stop from within that
+distance.  The TrafficManager has no notion of sight, and only logs it.
+
 The CARLA coupling is one step behind SUMO, as in TeraSim: SUMO steps after
 the world has ticked, and its new state is applied to the actors for the next
 tick.
@@ -65,6 +70,8 @@ from typing import Any, ClassVar, Collection, Optional
 from ...constants import EGO_ROLE_NAME
 from ...coordinate.map_manager import run_carla_map
 from ...utils.traffic_light import traffic_light_state_name
+from ...visibility import sight_speed, world_visibility
+from ...world_reset import episode_of
 from ..base import (
     LaneChangeDirection,
     SimulationFidelity,
@@ -245,6 +252,11 @@ class SumoTrafficBackend(TrafficBackend):
         #: SUMO person id -> the CARLA walker mirroring one of SUMO's own
         #: pedestrians.
         self._persons: dict[str, Any] = {}
+        #: How far drivers see, m, as last applied; ``None``: as far as SUMO lets them.
+        self._visibility: Optional[float] = None
+        #: SUMO id -> its maximum speed (m/s) before the visibility held it
+        #: down, its deceleration (m/s²) and its tau (s): read once.
+        self._max_speeds: dict[str, tuple[float, float, float]] = {}
 
     @property
     def port(self) -> int:
@@ -419,6 +431,7 @@ class SumoTrafficBackend(TrafficBackend):
             if self._config.traffic_light_authority == "carla":
                 self._signals_to_sumo()
             self._traci.simulationStep()
+            self._follow_visibility(world)
             if self._clock_log is not None:
                 stamp = world.get_snapshot().timestamp
                 self._clock_log.write(
@@ -516,6 +529,8 @@ class SumoTrafficBackend(TrafficBackend):
         self._commands = []
         self._constant_speed = {}
         self._feedback_count = 0
+        self._visibility = None
+        self._max_speeds = {}
 
     def describe(self) -> dict[str, Any]:
         """The backend, its seed, network and demand, for the result record."""
@@ -542,6 +557,8 @@ class SumoTrafficBackend(TrafficBackend):
                 "meso_radius_m": meso.demote_radius_m,
                 "scenario_vehicles": meso.scenario_vehicles,
             }
+        out["follow_visibility"] = self._config.follow_visibility
+        out["visibility_m"] = self._visibility
         return out
 
     def fidelity_census(self) -> dict[str, int]:
@@ -2013,6 +2030,60 @@ class SumoTrafficBackend(TrafficBackend):
             walker.apply_control(control)
 
     # ------------------------------------------------------------------
+    # Internals: what drivers see
+    # ------------------------------------------------------------------
+
+    def _follow_visibility(self, world: Any) -> None:
+        """Hold SUMO's own traffic to the speed it stops from within what its
+        drivers see: every vehicle when the visibility changes, and the ones
+        that have just departed otherwise."""
+        if not self._config.follow_visibility:
+            return
+        seen = world_visibility(episode_of(world))
+        if seen is None and self._visibility is None:
+            return  # nothing set, nothing held: no TraCI call at all
+        tc = self._traci
+        if self._max_speeds:
+            for sumo_id in tc.simulation.getArrivedIDList():
+                self._max_speeds.pop(sumo_id, None)
+        if seen == self._visibility:
+            ids = list(tc.simulation.getDepartedIDList())
+        elif seen is None:
+            self._visibility = None
+            logger.info("SUMO: drivers see as far as SUMO lets them again")
+            # Only the held ones have anything to get back, if still there.
+            present = set(tc.vehicle.getIDList())
+            ids = [i for i in self._max_speeds if i in present]
+            self._max_speeds = {i: self._max_speeds[i] for i in ids}
+        else:
+            self._visibility = seen
+            logger.info("SUMO: drivers see %.0f m; traffic is held to it", seen)
+            ids = list(tc.vehicle.getIDList())
+        for sumo_id in ids:
+            if sumo_id not in self._driven and sumo_id not in self._external:
+                self._hold_to_sight(sumo_id, seen)
+
+    def _hold_to_sight(self, sumo_id: str, seen: Optional[float]) -> None:
+        """Cap *sumo_id*'s maximum speed at the one it stops from within
+        *seen* metres; ``None`` gives it its own back."""
+        vehicle = self._traci.vehicle
+        if seen is None:
+            if sumo_id in self._max_speeds:
+                vehicle.setMaxSpeed(sumo_id, self._max_speeds.pop(sumo_id)[0])
+            return
+        held = self._max_speeds.get(sumo_id)
+        if held is None:
+            held = self._max_speeds[sumo_id] = (
+                vehicle.getMaxSpeed(sumo_id),
+                vehicle.getDecel(sumo_id),
+                vehicle.getTau(sumo_id),
+            )
+        own, decel, tau = held
+        limit = sight_speed(seen, decel, tau)
+        # Never to a standstill: a car in thick fog still creeps on.
+        vehicle.setMaxSpeed(sumo_id, max(min(own, limit), 1.0))
+
+    # ------------------------------------------------------------------
     # Internals: traffic lights
     # ------------------------------------------------------------------
 
@@ -2139,6 +2210,7 @@ class SumoTrafficBackend(TrafficBackend):
             if self._config.traffic_light_authority == "carla":
                 self._signals_to_sumo()
             tc.simulationStep()
+            self._follow_visibility(world)
             if self._meso is not None:
                 # Not the scenario's vehicles: they are held still for now.
                 self._step_mesoscopic(world, entities=False)

@@ -472,6 +472,25 @@ How a CARLA vehicle follows its SUMO vehicle is `vehicle_control`:
   speed only when it is not the one the car already has (a standing car, in a
   queue at a light say, is given its zero once).
 
+**Visibility** (`follow_visibility`, on by default): SUMO's traffic sees only
+as far as the run's weather lets a driver see. The TrafficManager has no
+notion of sight -- its vehicles know where every actor is whatever the fog --
+so night, rain and fog change nothing about how it drives: the
+`traffic_manager` backend logs each visibility a run sets, with the speed
+SUMO's default car would be held to, and does nothing else. An
+`EnvironmentAction` that sets the fog, the rain or the sun records how far
+drivers see in the weather it leaves
+([Visibility follows the weather](odd.md#visibility-follows-the-weather)),
+and the backend holds each of SUMO's own vehicles (ambient and background)
+to the speed it stops from within that distance: `v * tau + v² / (2 *
+decel)`, with the vehicle's own `tau` as its reaction time and its `decel` as
+its braking -- a default car in 50 m of fog drives at most about 62 km/h, at
+night under a dipped beam (50 m) the same. A vehicle that departs later is
+held as it departs, and when the weather lifts each gets its own maximum speed
+back. The scenario's own vehicles, driven by SUMO or not, are left to the
+scenario. `follow_visibility=false` ignores the visibility, as the
+TrafficManager does.
+
 **Traffic lights** (`traffic_light_authority`): `carla` (default) gives SUMO's
 signals the states of CARLA's lights every step, so a scenario that sets the
 lights sets them for SUMO's traffic too; `sumo` drives CARLA's lights from

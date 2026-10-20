@@ -32,6 +32,13 @@ from .base import (
     _entity_name,
 )
 from .config import TrafficManagerBackendConfig
+from ..world_reset import episode_of
+from ..visibility import (
+    DEFAULT_DECEL,
+    DEFAULT_REACTION_S,
+    sight_speed,
+    world_visibility,
+)
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
@@ -99,6 +106,7 @@ class TrafficManagerBackend(TrafficBackend):
     _released: set[int]
     _skipped: set[int]
     _lane_changed: List[DrivenEntity]
+    _visibility: Optional[float]
 
     def __init__(
         self,
@@ -130,6 +138,8 @@ class TrafficManagerBackend(TrafficBackend):
         #: it), forgotten when the run closes: the queue keeps a finished
         #: run's scenarios, and their entities with them.
         self._lane_changed = []
+        #: How far drivers see, m, as last reported; ``None``: nothing set.
+        self._visibility = None
 
     # ------------------------------------------------------------------
     # Properties
@@ -183,6 +193,34 @@ class TrafficManagerBackend(TrafficBackend):
                 ", ".join(str(actor_id) for actor_id in sorted(skip)),
             )
 
+    def tick(self, world: "carla.World", elapsed: float) -> None:
+        """Report how far drivers see, when it changes, and do nothing about it.
+
+        The TrafficManager rides the CARLA tick, and has no notion of sight:
+        its vehicles know where every actor is, fog or not
+        (:mod:`autoware_carla_scenario.visibility`).  So a visibility the
+        run's weather set is logged with the speed a backend that models
+        sight would hold a car to (:func:`~autoware_carla_scenario.visibility.sight_speed`,
+        for SUMO's default car), and the traffic drives as it did.
+        """
+        seen = world_visibility(episode_of(world))
+        if seen == self._visibility:
+            return
+        self._visibility = seen
+        if seen is None:
+            logger.info("TrafficManager: no visibility set any more; nothing to undo")
+            return
+        limit_kmh = sight_speed(seen, DEFAULT_DECEL, DEFAULT_REACTION_S) * 3.6
+        logger.info(
+            "TrafficManager: drivers see %.0f m, so traffic that models sight "
+            "would drive at most %.0f km/h (braking at %.1f m/s² after %.1f s); "
+            "the TrafficManager models none, and its vehicles drive as before",
+            seen,
+            limit_kmh,
+            DEFAULT_DECEL,
+            DEFAULT_REACTION_S,
+        )
+
     def close(self) -> None:
         """Shut the TrafficManager down so the next run gets a fresh one.
 
@@ -204,6 +242,7 @@ class TrafficManagerBackend(TrafficBackend):
         self._started = False
         self._released = set()
         self._skipped = set()
+        self._visibility = None
         if self._closed or self._client is None:
             return
         self._closed = True
