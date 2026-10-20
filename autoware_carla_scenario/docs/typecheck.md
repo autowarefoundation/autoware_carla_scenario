@@ -516,11 +516,12 @@ What `test_typecheck_model.py` compares, model by model:
 - **`constants.codon`**: every constant, by value (`EGO_ROLE_NAME` as
   `EntityRole.ego()`), and no name `constants.py` lacks.
 - **`route.codon`**: every name it declares -- `parse_anchor`,
-  `scenario_route`, `scenario_route_frame`, `RouteFrame`, `RouteMatch`, and
-  `APPROACHES`, `CROSSWALK_LEGS` and `SIDES` by value. `RouteMatch`'s
-  constructor is generic: Python's is a frozen dataclass of variadic tuples
-  (`tuple[int, ...]`), which Codon cannot express, but the model's takes the
-  same parameters, and an overload of none is a `compile_error` (Codon builds
+  `scenario_route`, `scenario_route_frame`, `RouteFrame`, `RouteMatch`,
+  `RouteSegmentMatch`, and `APPROACHES`, `CROSSWALK_LEGS` and `SIDES` by
+  value. The constructors of `RouteSegmentMatch` and `RouteMatch` are
+  generic: Python's are frozen dataclasses of tuples (`tuple[int, ...]`, a
+  `List[int]` here), which the model's take untyped, but they take the same
+  parameters, and an overload of none is a `compile_error` (Codon builds
   a class without fields with no arguments otherwise; see *What Codon builds
   by the fields* below), so a call Python refuses fails the check too.
 - **`trajectory.codon`**: beside its exports, `ResolvedTrajectory`,
@@ -571,7 +572,8 @@ What `test_typecheck_model.py` compares, model by model:
   constructor's parameter it is compared as (#298): the model declares it as
   a field or, where a field would change the constructor Codon generates
   (*What Codon builds by the fields*, below), as a read-only property
-  (`RouteMatch.lanelet_ids`, a `List[int]` for Python's `tuple[int, ...]`;
+  (`RouteMatch.lanelet_ids`, a `List[int]` for Python's `tuple[int, ...]`, and
+  `segments` and `junctions`, `List[RouteSegmentMatch]`;
   `TrajectoryVertex.position`, the union of the ten poses, which narrows
   with `isinstance` and passes on to a new `TrajectoryVertex`, and which
   the None check's pass refuses un-narrowed where one pose is expected,
@@ -609,8 +611,7 @@ What `test_typecheck_model.py` compares, model by model:
   `dict[str, Any]`: a condition's `get_details()` and `to_summary_dict()`,
   `to_dict()`, `describe()`, `RouteMatch.to_config()` and `from_config()`),
   the run's traffic backend (`set_traffic_backend()`, `traffic_backend`),
-  `RouteMatch.junction()`, `junctions` and `segments` (a
-  `RouteSegmentMatch`), a field of `Any` (`ConditionStatus.details`,
+  a field of `Any` (`ConditionStatus.details`,
   `RouteLanelet.values`, `OddModule.metadata`, `SweepConfig`'s Hydra
   mappings, `CoverItem`'s `expression`, `ignore` and `values`,
   `OddAttribute.probe`), a class held as a value (`BaseScenario.ego_type`:
