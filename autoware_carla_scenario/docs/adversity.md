@@ -39,7 +39,7 @@ The numbers are TeraSim's defaults; each can be overridden in
 | `LANE_CHANGE_ABORT` | `LaneChangeAbortAction` | LanechangeAbort | Blocked as for `CUT_IN`. The agent is moving, and its lanelet lasts at least 1 s more at its speed. | Drifts half a lane toward that side and back in 1 s. |
 | `HEAD_ON` | `HeadOnAction` | Headon | As for `IGNORE_LEADER`, but the agent's lanelet and its leader's start more than 120° apart. | Uses `IGNORE_LEADER`'s command. |
 | `TRAFFIC_RULE` | `RunTrafficRuleAction` | TrafficRule | It is stopping for a red or yellow light rather than for its leader. | Drives on through at the free-flow rate for 2 s. |
-| `MERGE` | `AdversarialMergeAction` | Merge | It is beside a merging lane with traffic on it. | One lane over: speeds up as if the merging vehicle ahead were not there, when that beats giving way by more than 1.5 m/s², for 2 s. Two lanes over: changes into the lane between in 1 s, when nobody there is within 2 s of headway. |
+| `MERGE` | `AdversarialMergeAction` | Merge | It is beside a merging lane with traffic on it, and not already changing lanes (turned 5° or more off its lane). | One lane over: speeds up as if the merging vehicle ahead were not there, when that beats giving way by more than 1.5 m/s², for 2 s. Two lanes over: changes into the lane between in 1 s, when nobody there is within 2 s of headway. |
 | `JAYWALKING` | `JaywalkAction` | Jaywalking | A pedestrian is off any crosswalk, with a road within 10 m. | Walks straight across at its speed (1.4 m/s if it stands) × U(0.5, 2.0), for up to 5 s. |
 | `RUNNING_RED_LIGHT` | `PedestrianRunRedLightAction` | RunningRedLight | A pedestrian is waiting (at most 0.2 m/s) within 3 m of a crosswalk whose light is red. | Crosses it end to end at 2.8 m/s. |
 | `STOP_CROSSING` | `StopCrossingAction` | StopCrossing | A pedestrian is on a crosswalk. | Stands still for N(2 s, 0.5 s), then walks a crosswalk's length on along its heading at 2.8 m/s. |
@@ -219,6 +219,6 @@ for crashed in collision_objects(
 | A walking area controlled by a TLS link | The crosswalk lanelet's own traffic light |
 | A person's SUMO `maxSpeed` | `pedestrian_max_speed`, 2.8 m/s (the fastest jaywalker) |
 | StopCrossing counts steps at dt = 0.1 | The wait is in seconds |
-| Merge skips a vehicle that is already changing lanes | No lane-change state is read; this check is left out |
+| `is_lane_changing`: heading 5° or more off the SUMO lane's angle | The same, off the Lanelet2 lanelet's direction (`LanePosition.heading`) |
 | Background vehicles are adversarial | So are they, with `drive_background` (default): the backend's background vehicles in the world (#417) |
 | Construction zones | Out of scope (#402) |
