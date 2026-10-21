@@ -1155,15 +1155,15 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#lidar-sweeps-in-the-recording" class="md-nav__link">
+  <a href="#sensors-in-the-recording" class="md-nav__link">
     <span class="md-ellipsis">
       
-        LiDAR sweeps in the recording
+        Sensors in the recording
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="LiDAR sweeps in the recording">
+    <nav class="md-nav" aria-label="Sensors in the recording">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -2715,15 +2715,15 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#lidar-sweeps-in-the-recording" class="md-nav__link">
+  <a href="#sensors-in-the-recording" class="md-nav__link">
     <span class="md-ellipsis">
       
-        LiDAR sweeps in the recording
+        Sensors in the recording
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="LiDAR sweeps in the recording">
+    <nav class="md-nav" aria-label="Sensors in the recording">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -3737,13 +3737,19 @@ beside the log, and open that in the Rerun viewer. The conversion is the
 <td><code>rerun.lidar</code></td>
 <td>bool</td>
 <td><code>false</code></td>
-<td>Put the LiDAR sweeps the ego's driver policy gets into the recording too (<a href="#lidar-sweeps-in-the-recording">LiDAR sweeps</a>)</td>
+<td>Put the LiDAR sweeps the ego's driver policy gets into the recording too (<a href="#sensors-in-the-recording">Sensors</a>)</td>
 </tr>
 <tr>
 <td><code>rerun.lidar_max_points</code></td>
 <td>int</td>
 <td><code>65536</code></td>
 <td>At most this many points of a sweep (an even subsample); <code>0</code> keeps them all</td>
+</tr>
+<tr>
+<td><code>rerun.cameras</code></td>
+<td>bool</td>
+<td><code>false</code></td>
+<td>Put the camera frames the ego's driver policy gets into the recording too (<a href="#sensors-in-the-recording">Sensors</a>)</td>
 </tr>
 </tbody>
 </table>
@@ -3768,23 +3774,31 @@ beside the log, and open that in the Rerun viewer. The conversion is the
   its own cases, and <code>scenario-slurm collect</code> reports their recordings as a
   local batch does.</li>
 </ul>
-<h3 id="lidar-sweeps-in-the-recording">LiDAR sweeps in the recording<a class="headerlink" href="#lidar-sweeps-in-the-recording" title="Permanent link">&para;</a></h3>
-<p>The trajectory log holds no point clouds. With <code>rerun.lidar=true</code> (and
-<code>rerun.enabled=true</code>) the sweeps each driver LiDAR sends the ego's policy
-(<code>driver.lidars</code>) are written during the run, in the world frame of the
-recording, into <code>{ScenarioName}.lidar.rrd</code>; once the log is converted they are
-merged into <code>{ScenarioName}.rrd</code> (<code>rerun rrd merge</code>) and that file is removed.
-Each LiDAR is <code>world/lidar/&lt;logical id&gt;</code>, points coloured by height above the
-ego, in the recording's 3D view; a sweep is drawn where the ego's pose put it
-when the policy got it. It needs the Rerun SDK of the converter's version:</p>
+<h3 id="sensors-in-the-recording">Sensors in the recording<a class="headerlink" href="#sensors-in-the-recording" title="Permanent link">&para;</a></h3>
+<p>The trajectory log holds no sensor data. With <code>rerun.enabled=true</code> and:</p>
+<ul>
+<li><code>rerun.lidar=true</code>, the sweeps each driver LiDAR sends the ego's policy
+  (<code>driver.lidars</code>) are recorded as <code>world/lidar/&lt;logical id&gt;</code>: points in the
+  recording's world frame, coloured by height above the ego, drawn where the
+  ego's pose put them when the policy got them;</li>
+<li><code>rerun.cameras=true</code>, the frames each driver camera sends it
+  (<code>driver.cameras</code>) are recorded as <code>world/ego/pose/cameras/&lt;logical id&gt;</code>:
+  the camera's mount on the ego and a pinhole of its field of view, so the 3D
+  view draws its frustum with the frame in it, and the JPEG frames the policy
+  got (a 2D view of the entity shows them).</li>
+</ul>
+<p>They are written during the run into <code>{ScenarioName}.sensors.rrd</code>; once the log
+is converted they are merged into <code>{ScenarioName}.rrd</code> (<code>rerun rrd merge</code>) and
+that file is removed. It needs the Rerun SDK of the converter's version:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s1">'autoware-carla-scenario[rerun-lidar]'</span>
-<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>cut_in/cut_in<span class="w"> </span><span class="nv">driver</span><span class="o">=</span>...<span class="w"> </span>rerun.enabled<span class="o">=</span><span class="nb">true</span><span class="w"> </span>rerun.lidar<span class="o">=</span><span class="nb">true</span>
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>cut_in/cut_in<span class="w"> </span><span class="nv">driver</span><span class="o">=</span>...<span class="w"> </span>rerun.enabled<span class="o">=</span><span class="nb">true</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a><span class="w">    </span>rerun.lidar<span class="o">=</span><span class="nb">true</span><span class="w"> </span>rerun.cameras<span class="o">=</span><span class="nb">true</span>
 </code></pre></div>
-<p>Points are most of a recording: about 0.8 MB a sweep at the default 65,536.
-A merge that fails keeps <code>{ScenarioName}.lidar.rrd</code> beside the recording
-(logged; not a failed conversion). The two cannot be opened together instead:
-the viewer registers a file by its recording id, and the second replaces the
-first.</p>
+<p>Points are most of a recording: about 0.8 MB a sweep at the default 65,536;
+a camera frame is its JPEG (<code>driver.image_quality</code>). A merge that fails keeps
+<code>{ScenarioName}.sensors.rrd</code> beside the recording (logged; not a failed
+conversion). The two cannot be opened together instead: the viewer registers a
+file by its recording id, and the second replaces the first.</p>
 <p>A run made without it (or by a version before it) can be converted afterwards,
 the same way:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="c1"># Every run of a session (a sweep's directory works the same), or one log:</span>
@@ -4951,7 +4965,7 @@ mapping).</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 21, 2026 14:05:38 UTC"><span class="timeago" datetime="2026-10-21T14:05:38+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 21, 2026 14:05:38 UTC">2026-10-21</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 21, 2026 23:33:01 UTC"><span class="timeago" datetime="2026-10-21T23:33:01+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 21, 2026 23:33:01 UTC">2026-10-21</span>
   </span>
 
     
