@@ -59,9 +59,15 @@ which :func:`transform_source_lines` maps back onto the handler):
   ``auto()``), and each member ``RED = "red"`` becomes the class variable
   ``RED: ClassVar[C] = C("RED", "red")``.  After the module, each such class
   is given a constructor by value (``C("red")``) with ``@extend``.
-  An ``IntEnum`` / ``IntFlag`` / ``(int, Enum)`` derives from the shim's
-  ``IntEnum[int]`` (ordering, ``int()``), a ``StrEnum`` / ``(str, Enum)`` from
-  ``StrEnum[str]`` (equality with its string); no other enum has either.
+  An ``IntEnum`` / ``(int, Enum)`` derives from the shim's ``IntEnum[int]``
+  (ordering, ``int()``), a ``StrEnum`` / ``(str, Enum)`` from ``StrEnum[str]``
+  (equality with its string); no other enum has either.  An ``IntFlag`` /
+  ``(int, Flag)`` derives from ``IntFlag[int]`` (an ``IntEnum``'s, and a truth
+  value), a ``Flag`` from ``Flag[int]``; the ``@extend`` of each also declares
+  its ``|``, ``&``, ``^``, ``~`` and ``in`` (:func:`_flag_operators`), typed by
+  the class, which a method of the shim could not name.  A flag's value that
+  is an expression of its members (``RW = R | W``, ``auto()``) is worked out
+  (:func:`flag_member_values`); iteration skips composites, as Python 3.11+.
 * A class deriving from an exception (a built-in one, one defined above it in
   the module, or a name ending in ``Error`` / ``Exception``) derives from
   ``Static[Base]``, as Codon 0.19 derives exceptions.
@@ -147,8 +153,10 @@ from __future__ import annotations
 
 import ast
 import builtins
+import functools
 from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass, field
+from pathlib import Path
 
 __all__ = [
     "MISSING_BUILTIN_EXCEPTIONS",
@@ -157,6 +165,7 @@ __all__ = [
     "class_declarations",
     "classes_with_init",
     "enum_class_names",
+    "model_enum_names",
     "inherited_inits",
     "redirect_imports",
     "relative_module_imports",
@@ -189,7 +198,8 @@ PRELUDE = (
     "_acs_dict_into\n"
     "from autoware_carla_scenario._tc import _Required as _acs_Required, "
     "_acs_Returning, _acs_callable, _acs_tuple, _acs_reduce\n"
-    "from enum import IntEnum as _acs_IntEnum, StrEnum as _acs_StrEnum\n"
+    "from enum import IntEnum as _acs_IntEnum, IntFlag as _acs_IntFlag, "
+    "StrEnum as _acs_StrEnum\n"
     "from autoware_carla_scenario._exceptions import "
     + ", ".join(MISSING_BUILTIN_EXCEPTIONS)
     + "\n"
@@ -1394,40 +1404,76 @@ class _Rewriter(ast.NodeVisitor):
         last = 0
         seen_values: set[str] = set()
         listed: list[str] = []
+        #: A flag's value of each member so far, for a composite
+        #: (``RW = R | W``) to be worked out, and the bits of the listed ones.
+        known: dict[str, int] = {}
+        numbers = flag_member_values(node.body) if flag else {}
+        mask: int | None = 0 if flag else None
         for stmt, name, value in members:
+            number: int | None = None
             if is_auto(value):
                 if value_type == "str":
                     text = repr(name.lower())
+                elif flag:
+                    number = numbers[name]
+                    text = str(number)
                 else:
-                    last = (last * 2 if last else 1) if flag else last + 1
+                    last += 1
                     text = str(last)
             else:
+                if flag:
+                    number = numbers[name]
+                if number is not None:
+                    text = str(number)
+                else:
+                    text = self.edits.text(*self.edits.node_span(value))
                 if isinstance(value, ast.Constant) and isinstance(value.value, int):
                     last = value.value
-                text = self.edits.text(*self.edits.node_span(value))
-            # A member whose value repeats an earlier one is an alias, which
-            # iterating over the enum skips.
-            if text not in seen_values or is_auto(value):
+            if number is not None:
+                known[name] = number
+            if flag and number is not None:
+                # Python 3.11+ iterates a Flag's single-bit members, in
+                # definition order: not an alias of one, not a composite
+                # (``RW = R | W``), not zero.
+                single = number > 0 and number & (number - 1) == 0
+                if single and text not in seen_values:
+                    listed.append(name)
+                    assert mask is not None
+                    mask |= number
+            elif text not in seen_values or is_auto(value):
+                # A member whose value repeats an earlier one is an alias,
+                # which iterating over the enum skips.
                 listed.append(name)
             seen_values.add(text)
             self.edits.replace(
                 *self.edits.node_span(stmt),
                 f"{name}: ClassVar[{node.name}] = {node.name}({name!r}, {text})",
             )
+        if flag and len(known) != len(members):
+            mask = None  # a value that is not worked out: `~` is left to Codon
         first_start = self.edits.node_span(node.bases[0])[0]
         last_end = self.edits.node_span(node.bases[-1])[1]
         # Only an int-valued IntEnum / IntFlag / (int, Enum) orders and
         # converts like its value, and a StrEnum / (str, Enum) equals its
         # string: the shim has a class for each, a plain Enum has neither.
         shim = enum_base
-        if kind in {"IntEnum", "IntFlag"} or "int" in bases:
+        if kind == "IntFlag" or (kind == "Flag" and "int" in bases):
+            shim = "_acs_IntFlag"
+        elif kind == "IntEnum" or "int" in bases:
             shim = "_acs_IntEnum"
         elif kind == "StrEnum" or "str" in bases:
             shim = "_acs_StrEnum"
         self.edits.replace(first_start, last_end, f"{shim}[{value_type}]")
         if self._class_depth == 0 and self._function_depth == 0:
             self.enums.append(
-                _EnumInfo(node.name, value_type, listed, [n for _, n, _ in members])
+                _EnumInfo(
+                    node.name,
+                    value_type,
+                    listed,
+                    [n for _, n, _ in members],
+                    mask,
+                    ("int" if shim == "_acs_IntFlag" else "flag") if flag else None,
+                )
             )
         return [stmt for stmt, _, _ in members]
 
@@ -1994,7 +2040,13 @@ def transform_source_lines(
     exceptions = _exception_classes(tree)
     rewriter = _Rewriter(edits, exceptions, dropped_decorators)
     rewriter.visit(tree)
-    enum_iteration(tree, edits, {e.name for e in rewriter.enums} | set(enum_classes))
+    own = {e.name for e in rewriter.enums} | set(enum_classes)
+    # The model's enums too (#437), unless the module defines a class of that
+    # name which is no enum.
+    other = {
+        n.name for n in tree.body if isinstance(n, ast.ClassDef) and n.name not in own
+    }
+    enum_iteration(tree, edits, own | (model_enum_names() - other))
     repeated_imports(tree, edits)
     lines = {
         node.name: origin[node.lineno - 1]
@@ -2218,6 +2270,78 @@ class _EnumInfo:
     value_type: str
     members: list[str]
     names: list[str]
+    #: A Flag's bits of its members (what ``~`` flips), when all are known.
+    mask: int | None = None
+    #: ``"flag"`` for a ``Flag``, ``"int"`` for an ``IntFlag`` (whose operators
+    #: take an int too), ``None`` for any other enum.
+    flag: str | None = None
+
+
+_FLAG_OPERATORS: dict[type, Callable[[int, int], int]] = {
+    ast.BitOr: lambda a, b: a | b,
+    ast.BitAnd: lambda a, b: a & b,
+    ast.BitXor: lambda a, b: a ^ b,
+    ast.LShift: lambda a, b: a << b if 0 <= b < 64 else 0,
+    ast.Add: lambda a, b: a + b,
+    ast.Sub: lambda a, b: a - b,
+    ast.Mult: lambda a, b: a * b,
+}
+
+
+def flag_member_values(body: list[ast.stmt]) -> dict[str, int | None]:
+    """The int of each member of a Flag class body (``None`` if not worked out).
+
+    A member ``auto()`` is the power of two above the highest bit so far, as
+    in Python 3.11+; any other value is worked out by :func:`_flag_value`.
+    """
+    known: dict[str, int] = {}
+    out: dict[str, int | None] = {}
+    for stmt in body:
+        if not (
+            isinstance(stmt, ast.Assign)
+            and len(stmt.targets) == 1
+            and isinstance(stmt.targets[0], ast.Name)
+            and not stmt.targets[0].id.startswith("_")
+        ):
+            continue
+        name = stmt.targets[0].id
+        value = stmt.value
+        if isinstance(value, ast.Call) and _dotted(value.func) in _AUTO:
+            number: int | None = 1 << max([0, *known.values()]).bit_length()
+        else:
+            number = _flag_value(value, known)
+        out[name] = number
+        if number is not None:
+            known[name] = number
+    return out
+
+
+def _flag_value(value: ast.expr, known: Mapping[str, int]) -> int | None:
+    """The int a Flag member's value works out to, or ``None``.
+
+    A literal, an earlier member of the class and the bit operators of them
+    (``RW = R | W``, ``ALL = ~0``, ``HIGH = 1 << 4``); what the class body
+    computes in Python, where an earlier member is still an int.
+    """
+    if isinstance(value, ast.Constant):
+        number = value.value
+        return (
+            number if isinstance(number, int) and not isinstance(number, bool) else None
+        )
+    if isinstance(value, ast.Name):
+        return known.get(value.id)
+    if isinstance(value, ast.UnaryOp) and isinstance(value.op, (ast.Invert, ast.USub)):
+        operand = _flag_value(value.operand, known)
+        if operand is None:
+            return None
+        return ~operand if isinstance(value.op, ast.Invert) else -operand
+    if isinstance(value, ast.BinOp) and type(value.op) in _FLAG_OPERATORS:
+        left = _flag_value(value.left, known)
+        right = _flag_value(value.right, known)
+        if left is None or right is None:
+            return None
+        return _FLAG_OPERATORS[type(value.op)](left, right)
+    return None
 
 
 #: Builtins whose argument may be an enum class, which they iterate over.
@@ -2240,6 +2364,26 @@ _ITERATING_BUILTINS = {
     "map",
     "filter",
 }
+
+
+@functools.lru_cache(maxsize=None)
+def model_enum_names() -> frozenset[str]:
+    """The names of the framework's enums in the model (``typecheck/codon``).
+
+    A model enum is a ``@tuple`` class that declares ``_acs_members()`` (what
+    iterating over it reads) and ``_acs_by_name()``; the names come from the
+    model files, so a new enum is iterable as soon as it declares them.
+    """
+    root = Path(__file__).resolve().parent / "codon" / "autoware_carla_scenario"
+    names = set()
+    for path in sorted(root.rglob("*.codon")):
+        for node in ast.parse(path.read_text(encoding="utf-8")).body:
+            if isinstance(node, ast.ClassDef) and any(
+                isinstance(stmt, ast.FunctionDef) and stmt.name == "_acs_members"
+                for stmt in node.body
+            ):
+                names.add(node.name)
+    return frozenset(names)
 
 
 def enum_class_names(classes: Mapping[str, ast.ClassDef]) -> set[str]:
@@ -2359,6 +2503,42 @@ def enum_iteration(tree: ast.Module, edits: _Edits, enums: Collection[str]) -> N
         _EnumIteration(edits, enums).visit(tree)
 
 
+def _flag_operators(info: _EnumInfo) -> str:
+    """The methods ``|``, ``&``, ``^``, ``~`` and ``in`` of a Flag class (#437).
+
+    Each returns the class, built from the combined int (any int is a value of
+    the constructor by value, so a combination of members is representable
+    though no member).  An ``IntFlag`` takes an int on either side too.  ``in``
+    is true when every bit of the other is set.  ``~`` flips the bits of the
+    members (Python's complement), and is left out when a member's value is not
+    worked out.
+    """
+    name = info.name
+    out = ""
+    for method, symbol in (("or", "|"), ("and", "&"), ("xor", "^")):
+        out += (
+            f"\n    def __{method}__(self, other: {name}) -> {name}:\n"
+            f"        return {name}(self._value_ {symbol} other._value_)\n"
+        )
+        if info.flag == "int":
+            out += (
+                f"\n    def __{method}__(self, other: int) -> {name}:\n"
+                f"        return {name}(self._value_ {symbol} other)\n"
+                f"\n    def __r{method}__(self, other: int) -> {name}:\n"
+                f"        return {name}(other {symbol} self._value_)\n"
+            )
+    out += (
+        f"\n    def __contains__(self, other: {name}) -> bool:\n"
+        f"        return (self._value_ & other._value_) == other._value_\n"
+    )
+    if info.mask is not None:
+        out += (
+            f"\n    def __invert__(self) -> {name}:\n"
+            f"        return {name}({info.mask} & ~self._value_)\n"
+        )
+    return out
+
+
 def _enum_lookups(enums: list[_EnumInfo]) -> list[tuple[str, str]]:
     """A constructor by value (``Color("red")``) for each rewritten Enum class.
 
@@ -2381,6 +2561,7 @@ def _enum_lookups(enums: list[_EnumInfo]) -> list[tuple[str, str]]:
             f"        if name == {n!r}:\n            return {name}.{n}\n"
             for n in info.names
         )
+        operators = _flag_operators(info) if info.flag else ""
         out.append(
             (
                 name,
@@ -2396,6 +2577,7 @@ def _enum_lookups(enums: list[_EnumInfo]) -> list[tuple[str, str]]:
                     f"    def _acs_by_name(name: str) -> {name}:\n"
                     f"{lookups}"
                     f"        raise KeyError(name)\n"
+                    f"{operators}"
                 ),
             )
         )

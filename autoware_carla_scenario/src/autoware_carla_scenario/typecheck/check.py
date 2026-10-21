@@ -1063,6 +1063,18 @@ def _data_model_hint(
     operand = _OPERAND.match(message)
     if operand is not None:
         cls = _python_class(operand["cls"], sources)
+        if cls is not None and issubclass(cls, enum.Flag):
+            # Python's IntFlag adds ints (to an int, not to a flag), a Flag
+            # adds nothing; both combine with | & ^ ~ and `in`.
+            return (
+                f"a {cls.__name__} member combines with `|`, `&`, `^`, `~` "
+                f"and `in` in the check, and does no other arithmetic"
+                + (
+                    " (only comparisons and int()): use its .value"
+                    if issubclass(cls, int)
+                    else ""
+                )
+            )
         if cls is not None and issubclass(cls, enum.Enum) and issubclass(cls, int):
             return (
                 f"an {cls.__name__} member does no arithmetic in the check "

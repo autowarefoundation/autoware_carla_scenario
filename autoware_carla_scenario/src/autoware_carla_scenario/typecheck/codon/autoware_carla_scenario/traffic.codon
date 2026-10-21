@@ -30,6 +30,22 @@ class TurnDirection:
             return "STRAIGHT"
         raise ValueError("not a member of TurnDirection")
 
+    # What `for m in E`, `list(E)` and `E["A"]` read: the checker rewrites
+    # them (#437). Declared in Python's order, as the test checks.
+    @staticmethod
+    def _acs_members() -> List[TurnDirection]:
+        return [TurnDirection.LEFT, TurnDirection.RIGHT, TurnDirection.STRAIGHT]
+
+    @staticmethod
+    def _acs_by_name(name: str) -> TurnDirection:
+        if name == "LEFT":
+            return TurnDirection.LEFT
+        if name == "RIGHT":
+            return TurnDirection.RIGHT
+        if name == "STRAIGHT":
+            return TurnDirection.STRAIGHT
+        raise KeyError(name)
+
 
 @tuple
 class LaneChangeDirection:
@@ -49,6 +65,20 @@ class LaneChangeDirection:
     def to_carla_bool(self) -> bool:
         return self == LaneChangeDirection.RIGHT
 
+    # What `for m in E`, `list(E)` and `E["A"]` read: the checker rewrites
+    # them (#437). Declared in Python's order, as the test checks.
+    @staticmethod
+    def _acs_members() -> List[LaneChangeDirection]:
+        return [LaneChangeDirection.LEFT, LaneChangeDirection.RIGHT]
+
+    @staticmethod
+    def _acs_by_name(name: str) -> LaneChangeDirection:
+        if name == "LEFT":
+            return LaneChangeDirection.LEFT
+        if name == "RIGHT":
+            return LaneChangeDirection.RIGHT
+        raise KeyError(name)
+
 
 @tuple
 class SimulationFidelity:
@@ -64,6 +94,20 @@ class SimulationFidelity:
         if self == SimulationFidelity.MESOSCOPIC:
             return "MESOSCOPIC"
         raise ValueError("not a member of SimulationFidelity")
+
+    # What `for m in E`, `list(E)` and `E["A"]` read: the checker rewrites
+    # them (#437). Declared in Python's order, as the test checks.
+    @staticmethod
+    def _acs_members() -> List[SimulationFidelity]:
+        return [SimulationFidelity.MICROSCOPIC, SimulationFidelity.MESOSCOPIC]
+
+    @staticmethod
+    def _acs_by_name(name: str) -> SimulationFidelity:
+        if name == "MICROSCOPIC":
+            return SimulationFidelity.MICROSCOPIC
+        if name == "MESOSCOPIC":
+            return SimulationFidelity.MESOSCOPIC
+        raise KeyError(name)
 
 
 # traffic.context: a path is its str here, as in scenario_config.codon.

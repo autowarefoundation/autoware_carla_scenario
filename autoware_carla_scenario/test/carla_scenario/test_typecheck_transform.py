@@ -832,17 +832,20 @@ def test_only_an_int_or_str_enum_derives_from_the_value_comparing_classes() -> N
                 X = 1
             class G(enum.Flag):
                 X = 1
+            class H(int, enum.Flag):
+                X = 1
             """
         )
     )
     for line in (
         "class A(_acs_IntEnum[int]):",
         "class B(_acs_IntEnum[int]):",
-        "class C(_acs_IntEnum[int]):",
+        "class C(_acs_IntFlag[int]):",
         "class D(_acs_StrEnum[str]):",
         "class E(_acs_StrEnum[str]):",
         "class F(enum.Enum[int]):",
         "class G(enum.Flag[int]):",
+        "class H(_acs_IntFlag[int]):",
     ):
         assert line in out
 
@@ -925,6 +928,83 @@ def test_an_enum_is_given_its_members_and_a_lookup_by_name() -> None:
     )
     assert "if name == 'ALIAS':\n            return Turn.ALIAS" in out
     assert out.rstrip().endswith("raise KeyError(name)")
+
+
+_FLAGS = """
+class Perm(enum.IntFlag):
+    NONE = 0
+    R = 1
+    W = 2
+    RW = R | W
+    X = enum.auto()
+    BOTH = 3
+    HIGH = 1 << 4
+    Y = enum.auto()
+    ALL = ~0
+"""
+
+
+def test_a_flag_s_composite_values_are_worked_out_and_skipped_by_iteration() -> None:
+    # Python 3.11+ iterates the single-bit members: not zero, not a composite
+    # (`RW`), not an alias of one.
+    out = _transform(_FLAGS)
+    assert "RW: ClassVar[Perm] = Perm('RW', 3)" in out
+    assert "X: ClassVar[Perm] = Perm('X', 4)" in out  # above the highest bit (3)
+    assert "HIGH: ClassVar[Perm] = Perm('HIGH', 16)" in out
+    assert "Y: ClassVar[Perm] = Perm('Y', 32)" in out
+    assert "ALL: ClassVar[Perm] = Perm('ALL', -1)" in out
+    assert (
+        "return [Perm.R, Perm.W, Perm.X, Perm.HIGH, Perm.Y]" in out
+    ), "NONE, RW, BOTH and ALL are not iterated"
+    for name in ("NONE", "RW", "BOTH", "ALL"):
+        assert f"if name == '{name}':\n            return Perm.{name}" in out
+
+
+def test_a_flag_is_given_its_operators_after_the_module() -> None:
+    out = _transform(_FLAGS)
+    extension = out.partition("\n\n@extend\n")[2]
+    for method in ("or", "and", "xor"):
+        assert f"def __{method}__(self, other: Perm) -> Perm:" in extension
+        assert f"def __{method}__(self, other: int) -> Perm:" in extension
+        assert f"def __r{method}__(self, other: int) -> Perm:" in extension
+    assert "def __contains__(self, other: Perm) -> bool:" in extension
+    # `~` flips the bits of the members: 1 | 2 | 4 | 16 | 32.
+    assert "return Perm(55 & ~self._value_)" in extension
+    plain = _transform("class Bits(enum.Flag):\n    A = 1\n    B = 2\n")
+    assert "def __or__(self, other: Bits) -> Bits:" in plain
+    assert "other: int" not in plain  # only an IntFlag takes an int
+    assert "return Bits(3 & ~self._value_)" in plain
+
+
+def test_no_other_enum_is_given_flag_operators() -> None:
+    out = _transform(
+        "class A(enum.IntEnum):\n    X = 1\nclass B(enum.Enum):\n    X = 1\n"
+    )
+    assert "__or__" not in out and "__invert__" not in out
+
+
+def test_a_flag_value_that_is_not_worked_out_leaves_the_complement_to_codon() -> None:
+    out = _transform("class P(enum.Flag):\n    A = 1\n    B = compute()\n")
+    assert "B: ClassVar[P] = P('B', compute())" in out
+    assert "__or__" in out and "__invert__" not in out
+
+
+def test_the_framework_s_enums_are_iterated_without_being_named() -> None:
+    from autoware_carla_scenario.typecheck.transform import model_enum_names
+
+    assert {"TurnDirection", "ComparisonRule"} <= model_enum_names()
+    out = _transform(
+        "def f():\n    return list(TurnDirection), ComparisonRule['LESS_THAN']\n"
+    )
+    assert "list(TurnDirection._acs_members())" in out
+    assert "ComparisonRule._acs_by_name('LESS_THAN')" in out
+
+
+def test_a_class_of_a_model_enum_s_name_that_is_no_enum_is_not_iterated() -> None:
+    out = _transform(
+        "class TurnDirection:\n    pass\ndef f():\n    return list(TurnDirection)\n"
+    )
+    assert "list(TurnDirection)" in out
 
 
 def test_iterating_over_an_enum_class_and_looking_up_a_member_by_name() -> None:
@@ -2020,11 +2100,7 @@ def test_a_name_read_before_it_is_rebound_is_reported_at_the_later_import() -> N
 
 def test_a_rebound_name_nothing_read_drops_the_earlier_import() -> None:
     text = (
-        "from a import X, Z\n"
-        "def f():\n"
-        "    return X\n"
-        "from b import X\n"
-        "from a import X\n"
+        "from a import X, Z\ndef f():\n    return X\nfrom b import X\nfrom a import X\n"
     )
     assert _body(text) == (
         "from a import Z\ndef f():\n    return X\npass\nfrom a import X\n"
@@ -2490,7 +2566,7 @@ def test_str_format_on_something_else_is_left_alone() -> None:
         # ast.unparse spells a lambda "lambda : 1" before Python 3.11.
         (
             'f"{(lambda: 1)():+d}"',
-            f'((({ast.unparse(ast.parse("lambda: 1", mode="eval").body)})())'
+            f"((({ast.unparse(ast.parse('lambda: 1', mode='eval').body)})())"
             '.__format__("+d"))',
         ),
     ],

@@ -4605,6 +4605,116 @@ def test_an_enum_class_is_iterated_and_looked_up_by_name(tmp_path: Path) -> None
     assert result.ok, result.format()
 
 
+def test_the_framework_enums_are_iterated_and_looked_up_by_name(
+    tmp_path: Path,
+) -> None:
+    # The model's enums read the same rewrite as a scenario's own (#437).
+    setup = """
+        assert [m.name for m in TurnDirection] == ["LEFT", "RIGHT", "STRAIGHT"]
+        assert len(list(TurnDirection)) == 3 and len(TurnDirection) == 3
+        assert TurnDirection["LEFT"] == TurnDirection.LEFT
+        assert ComparisonRule["LESS_THAN"] == ComparisonRule.LESS_THAN
+        assert TurnDirection.RIGHT in TurnDirection
+        assert {m.value: m for m in TickTiming}["pre_tick"] == TickTiming.PRE_TICK
+        for rule in ComparisonRule:
+            assert rule.name != ""
+        try:
+            TurnDirection["NOPE"]
+            assert False
+        except KeyError:
+            pass
+    """
+    scenario, config, _ = _write_case(tmp_path, _TIMEOUT_SETUP + textwrap.dedent(setup))
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "TurnDirection.LEFT | TurnDirection.RIGHT",
+        "TurnDirection.LEFT in TurnDirection.RIGHT",
+        "~TurnDirection.LEFT",
+    ],
+)
+def test_a_framework_enum_that_is_no_flag_has_no_flag_operators(
+    tmp_path: Path, line: str
+) -> None:
+    scenario, config, path = _write_case(tmp_path, _TIMEOUT_SETUP + f"r = {line}\n")
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert error.line == _line_of(path, f"r = {line}"), error.format()
+
+
+_FLAGS = """
+class Perm(enum.IntFlag):
+    NONE = 0
+    R = 1
+    W = 2
+    RW = R | W
+    X = enum.auto()
+
+
+class Bits(enum.Flag):
+    A = 1
+    B = 2
+    AB = A | B
+    C = enum.auto()
+    ALL = A | B | C
+"""
+
+
+def test_flag_and_intflag_members_combine(tmp_path: Path) -> None:
+    setup = """
+        rw: Perm = Perm.R | Perm.W
+        assert rw == Perm.RW and rw == 3 and int(rw) == 3 and rw.value == 3
+        assert Perm.R in rw and Perm.X not in rw and Perm.RW in rw
+        assert (rw & Perm.W) == Perm.W and (rw ^ Perm.R) == Perm.W
+        assert (rw | 4).value == 7 and (4 | rw).value == 7
+        assert (~Perm.R).value == 6 and bool(rw) and not Perm.NONE
+        both: Bits = Bits.A | Bits.B
+        assert both == Bits.AB and Bits.A in both and Bits.C not in both
+        assert (both & Bits.A) == Bits.A and (both ^ Bits.A) == Bits.B
+        assert (~Bits.A).value == 6 and bool(both) and not (Bits.A & Bits.B)
+        assert Bits.ALL.value == 7 and both != Bits.A
+        mask = Perm.NONE
+        for p in Perm:
+            mask = mask | p
+        assert mask.value == 7
+        assert [p.name for p in Bits] == ["A", "B", "C"]
+        assert Perm["RW"] == Perm.RW and len(Perm) == 3
+        assert {rw: 1}[Perm.RW] == 1
+    """
+    scenario, config, _ = _data_case(tmp_path, _FLAGS, setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+@pytest.mark.parametrize(
+    ("line", "hint"),
+    [
+        ("Perm.R + Perm.W", "combines with `|`, `&`, `^`, `~` and `in`"),
+        ("Perm.R + Perm.W", "use its .value"),
+        ("Bits.A + Bits.B", "combines with `|`, `&`, `^`, `~` and `in`"),
+    ],
+)
+def test_the_hint_for_flag_arithmetic_names_the_operators_it_has(
+    tmp_path: Path, line: str, hint: str
+) -> None:
+    scenario, config, _ = _data_case(tmp_path, _FLAGS, f"r = {line}\n")
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert hint in error.message, error.format()
+
+
+@pytest.mark.parametrize(
+    "line",
+    ["Perm.R | Bits.A + 1", "Bits.A < Bits.B", "int(Bits.A)", "Bits.A + Bits.B"],
+)
+def test_a_flag_does_not_order_convert_or_add(tmp_path: Path, line: str) -> None:
+    scenario, config, path = _data_case(tmp_path, _FLAGS, f"r = {line}\n")
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert error.line == _line_of(path, f"r = {line}"), error.format()
+
+
 def test_an_error_in_an_iterated_enum_keeps_its_line(tmp_path: Path) -> None:
     line = "r = [m.nope for m in Plain]"
     scenario, config, path = _data_case(tmp_path, _ITERATED_ENUMS, f"{line}\n")
@@ -5766,7 +5876,7 @@ def test_total_ordering_composes_with_the_stubbed_functools_names(
         "@lru_cache(maxsize=4)\ndef total(xs: list[int]) -> int:\n"
         "    return reduce(operator.add, xs)\n"
     )
-    call = "logger.info('%d %d', total([1, 2]), " "1 if Rank(1) <= Rank(2) else 0)\n"
+    call = "logger.info('%d %d', total([1, 2]), 1 if Rank(1) <= Rank(2) else 0)\n"
     scenario, config, _ = _write_case(
         tmp_path,
         _TIMEOUT_SETUP + call,

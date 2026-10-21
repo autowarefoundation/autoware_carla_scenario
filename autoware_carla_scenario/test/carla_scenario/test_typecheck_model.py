@@ -314,6 +314,26 @@ def test_an_exported_name_is_declared_as_in_python(name: str) -> None:
     _assert_declared_as_in_python(name, _EXPORTS[name], getattr(acs, name))
 
 
+def test_every_exported_enum_is_named_by_the_model_as_iterable() -> None:
+    # The checker rewrites `for m in E` and `E["A"]` for the names the model
+    # declares `_acs_members()` for (#437): exactly the exported enums, none
+    # of them left out, none that is no enum.
+    from autoware_carla_scenario.typecheck.transform import model_enum_names
+
+    declared = {
+        **{name: getattr(acs, name) for name in _EXPORTS},
+        **{name: python for name, (_, python) in _BOUNDARY.items()},
+        "ActionState": action_state.ActionState,
+    }
+    exported = {
+        name
+        for name, python in declared.items()
+        if inspect.isclass(python) and issubclass(python, enum.Enum)
+    }
+    assert exported
+    assert model_enum_names() == exported
+
+
 #: Names the model declares for the modules the library check compiles
 #: (typecheck/library.py), or that a scenario imports from a submodule,
 #: though the package does not export them: name -> (model module, the
@@ -585,6 +605,50 @@ def _enum_names(node: ast.ClassDef) -> list[tuple[str, str]]:
     return out
 
 
+def _enum_iteration(node: ast.ClassDef) -> tuple[list[str], list[str]]:
+    """(the members `_acs_members()` returns, the names `_acs_by_name()` looks
+    up) of a model enum (#437): what `for m in E`, `list(E)` and `E["A"]` read
+    once the checker rewrites them. Both are static methods of a fixed shape:
+    `return [E.A, E.B]` and a chain of `if name == "A": return E.A`, ending in
+    `raise KeyError(name)`."""
+    methods = _methods(node)
+    listing, lookup = methods.get("_acs_members"), methods.get("_acs_by_name")
+    assert listing is not None, f"{node.name} has no _acs_members()"
+    assert lookup is not None, f"{node.name} has no _acs_by_name()"
+    for method in (listing, lookup):
+        assert "staticmethod" in _decorators(method), f"{node.name}.{method.name}"
+    assert listing.returns is not None and lookup.returns is not None
+    assert ast.unparse(listing.returns) == f"List[{node.name}]"
+    assert ast.unparse(lookup.returns) == node.name
+    assert [a.arg for a in lookup.args.args] == ["name"]
+    (ret,) = listing.body
+    assert isinstance(ret, ast.Return) and isinstance(ret.value, ast.List)
+    members = []
+    for element in ret.value.elts:
+        assert isinstance(element, ast.Attribute)
+        assert ast.unparse(element.value) == node.name, ast.unparse(element)
+        members.append(element.attr)
+    names: list[str] = []
+    *chain, last = lookup.body
+    for stmt in chain:
+        assert isinstance(stmt, ast.If) and not stmt.orelse, ast.unparse(stmt)
+        test = stmt.test
+        assert (
+            isinstance(test, ast.Compare)
+            and ast.unparse(test.left) == "name"
+            and isinstance(test.ops[0], ast.Eq)
+            and isinstance(test.comparators[0], ast.Constant)
+            and isinstance(test.comparators[0].value, str)
+        ), ast.unparse(test)
+        member = test.comparators[0].value
+        (ret,) = stmt.body
+        assert isinstance(ret, ast.Return) and isinstance(ret.value, ast.Attribute)
+        assert ast.unparse(ret.value) == f"{node.name}.{member}"
+        names.append(member)
+    assert isinstance(last, ast.Raise) and ast.unparse(last) == "raise KeyError(name)"
+    return members, names
+
+
 def _assert_enum_as_in_python(name: str, node: ast.ClassDef, python: Any) -> None:
     """A model enum (a `@tuple` of its value, #307) builds each member from
     Python's value, of Python's type, and its `name` property returns each
@@ -600,6 +664,13 @@ def _assert_enum_as_in_python(name: str, node: ast.ClassDef, python: Any) -> Non
     assert _enum_names(node) == [
         (member.name, member.name) for member in python
     ], f"{name}.name: not each member's name, in Python's order"
+    members, by_name = _enum_iteration(node)
+    assert members == [
+        member.name for member in python
+    ], f"{name}._acs_members(): not Python's iteration order (aliases skipped)"
+    assert by_name == list(
+        python.__members__
+    ), f"{name}._acs_by_name(): not each member, aliases included, in Python's order"
 
 
 def _union_member_name(member: Any) -> str:
