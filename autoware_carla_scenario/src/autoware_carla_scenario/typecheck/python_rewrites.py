@@ -18,6 +18,15 @@ so a rewrite has to keep the *types*, not the values, of what it replaces.
   separate string joined with ``+`` (Codon's f-strings have no ``{{``).  A
   template the rewrite cannot express (``*args`` / ``**kwargs``, a field
   inside a format spec, a missing argument) is refused.
+* An f-string field whose format spec Codon's parser refuses (a sign,
+  ``f"{x:+.2f}"``; a field inside the spec, ``f"{x:>{w}.2f}"``; anything its
+  grammar does not know) becomes the value's own ``__format__`` call, and the
+  f-string a ``+`` of its parts: ``((x).__format__("+.2f"))``, a ``str``
+  as before.  A nested field is ``str(w)`` (``repr`` for ``!r``).  The spec
+  is parsed at run time, so a spec Python rejects (``{x:q}``) is accepted by
+  the check.  An f-string with a brace or a nested f-string inside an
+  expression (``f"{'{}'.format(x)}"``, ``f"{len({1, 2})}"``) is refused:
+  Codon's f-string parser loses the position there.
 * ``zip(..., strict=...)`` becomes ``zip(...)``.
 * Builtins and str methods Codon lacks (#439), each with the type of what it
   replaces: ``s.startswith((a, b))`` (also ``endswith``, and with a ``start``
@@ -111,6 +120,13 @@ REWRITE_HINTS: tuple[tuple[re.Pattern[str], str], ...] = (
         re.compile(r"'str' object has no attribute '(?:decode|hex)'"),
         "Codon's bytes is a str, so it has no decode() / hex(): a bytes value "
         'is already text there; format with f"{b:02x}" per byte if needed',
+    ),
+    (
+        re.compile(r"object has no attribute '__format__'"),
+        "Codon's int, float and str take a format spec, and the check calls "
+        "their __format__ for a spec its f-strings cannot parse (a sign, a "
+        "nested width): a bool or a class has none, so convert it first "
+        "(`int(flag)`, `str(obj)`) or define __format__",
     ),
     (
         # A lambda rewritten for a non-literal default no longer takes it.
@@ -212,6 +228,163 @@ def _match_refusal(pattern: ast.AST) -> str | None:
             "unnamed, and read the name it already has"
         )
     return None
+
+
+class _Refused(Exception):
+    """An f-string the rewrite cannot express; the message says what to write."""
+
+
+#: A format spec Codon's f-string parser takes, as Python's grammar has it
+#: without the sign: [[fill]align][#][0][width][,|_][.precision][type].
+_CODON_SPEC = re.compile(
+    r"(?:[^\n{}\"'\\]?[<>^=])?#?0?\d*[,_]?(?:\.\d+)?[bcdeEfFgGnosxX%]?"
+)
+
+
+def _fstring_hazard(node: ast.JoinedStr) -> str | None:
+    """Why an expression of the f-string cannot be passed to Codon, or ``None``.
+
+    Codon's f-string parser does not nest: a brace or a quote of the
+    expression's own ends the field, and the error it reports has no usable
+    position.
+    """
+    for field in ast.walk(node):
+        if not isinstance(field, ast.FormattedValue):
+            continue
+        for sub in ast.walk(field.value):
+            if isinstance(sub, (ast.Dict, ast.Set, ast.DictComp, ast.SetComp)) or (
+                isinstance(sub, ast.Constant)
+                and isinstance(sub.value, str)
+                and any(c in sub.value for c in "{}")
+            ):
+                return (
+                    "an f-string with a brace in an expression (a dict or set "
+                    "display or comprehension, a string holding `{` or `}`, "
+                    "such as `'{}'.format(x)`) cannot be checked: Codon's "
+                    "parser ends the field at it. Bind the value to a local "
+                    "first and put the local in the f-string"
+                )
+            if isinstance(sub, ast.JoinedStr):
+                return (
+                    "an f-string inside an f-string expression cannot be "
+                    "checked (Codon's parser ends the field at its quote or "
+                    "brace): bind the inner string to a local first"
+                )
+    return None
+
+
+def _spec_text(spec: ast.expr | None) -> str | None:
+    """The spec when it is plain text, ``None`` with none or with fields in it."""
+    if spec is None:
+        return ""
+    if not isinstance(spec, ast.JoinedStr):
+        return None
+    if all(isinstance(v, ast.Constant) for v in spec.values):
+        return "".join(str(v.value) for v in spec.values if isinstance(v, ast.Constant))
+    return None
+
+
+def _field_needs_rewrite(field: ast.FormattedValue) -> bool:
+    text = _spec_text(field.format_spec)
+    return text is None or _CODON_SPEC.fullmatch(text) is None
+
+
+def _fstring_needs_rewrite(node: ast.JoinedStr) -> bool:
+    return any(
+        isinstance(v, ast.FormattedValue) and _field_needs_rewrite(v)
+        for v in node.values
+    )
+
+
+def _string_literal(text: str) -> str:
+    return f'"{_escaped(text)}"'
+
+
+def _expression_text(expression: ast.expr) -> str:
+    text = ast.unparse(expression)
+    if isinstance(expression, (ast.Lambda, ast.NamedExpr, ast.Yield, ast.YieldFrom)):
+        text = f"({text})"
+    return text
+
+
+def _converted(field: ast.FormattedValue) -> str:
+    """The field's value as the expression ``!r`` / ``!s`` makes of it."""
+    text = _expression_text(field.value)
+    if field.conversion == ord("r"):
+        return f"repr({text})"
+    if field.conversion == ord("s"):
+        return f"str({text})"
+    if field.conversion == ord("a"):
+        raise _Refused(
+            "!a together with a format spec the check rewrites is not "
+            "supported (Codon has no ascii()): use !r"
+        )
+    return f"({text})"
+
+
+def _formatted(field: ast.FormattedValue) -> str:
+    """A ``str`` expression formatting *field* with its spec, at run time."""
+    value = _converted(field)
+    if field.format_spec is None:
+        return value if field.conversion in (ord("r"), ord("s")) else f"str{value}"
+    return f"{value}.__format__({_spec_expression(field.format_spec)})"
+
+
+def _spec_expression(spec: ast.expr) -> str:
+    """The spec as a ``str`` expression: its text, its nested fields formatted."""
+    values = spec.values if isinstance(spec, ast.JoinedStr) else []
+    parts = [
+        _string_literal(str(v.value)) if isinstance(v, ast.Constant) else _formatted(v)
+        for v in values
+        if isinstance(v, ast.FormattedValue)
+        or (isinstance(v, ast.Constant) and v.value != "")
+    ]
+    return " + ".join(parts) if parts else '""'
+
+
+def _fstring_rewrite(node: ast.JoinedStr) -> str:
+    """*node* as ``str`` parts joined by ``+``; raises :class:`_Refused`.
+
+    A field Codon's parser takes stays in an f-string of its own; the others
+    are ``value.__format__(spec)``, as Python's ``format`` calls it.
+    """
+    parts: list[str] = []
+    chunk = ""
+
+    def flush() -> None:
+        nonlocal chunk
+        if chunk:
+            parts.append(f'f"{chunk}"' if "{" in chunk else f'"{chunk}"')
+            chunk = ""
+
+    for value in node.values:
+        if isinstance(value, ast.Constant):
+            for piece in re.split(r"([{}])", str(value.value)):
+                if piece in ("{", "}"):
+                    flush()
+                    parts.append(f'"{piece}"')
+                else:
+                    chunk += _escaped(piece)
+        elif isinstance(value, ast.FormattedValue):
+            if _field_needs_rewrite(value):
+                flush()
+                parts.append(_formatted(value))
+                continue
+            body = _expression_text(value.value)
+            if any(c in body for c in '"\\{}'):
+                raise _Refused(
+                    "an f-string expression holding a double quote, a "
+                    "backslash or a brace cannot be rewritten: bind it to a "
+                    "local first"
+                )
+            if value.conversion in (ord("r"), ord("s"), ord("a")):
+                body += "!" + chr(value.conversion)
+            spec = _spec_text(value.format_spec)
+            if spec:
+                body += ":" + spec
+            chunk += "{" + body + "}"
+    flush()
+    return " + ".join(parts) if parts else '""'
 
 
 def _scope_names(node: ast.AST) -> Iterator[ast.Name]:
@@ -641,6 +814,29 @@ class _Pass(ast.NodeVisitor):
                 "exception types one handler each",
             )
         self.generic_visit(node)
+
+    # -- f"{x:+.2f}", f"{x:>{w}}" --------------------------------------------
+
+    def visit_JoinedStr(self, node: ast.JoinedStr) -> None:
+        problem = _fstring_hazard(node)
+        if problem is not None:
+            self._refuse(node, problem)
+            return
+        if _fstring_needs_rewrite(node):
+            try:
+                text = _fstring_rewrite(node)
+            except _Refused as error:
+                self._refuse(node, str(error))
+                return
+            start, end = self.edits.node_span(node)
+            # The line breaks of a triple-quoted string stay inside the
+            # brackets of the replacement.
+            lost = self.edits.text(start, end).count("\n") - text.count("\n")
+            self.edits.replace(start, end, f"({text}{chr(10) * max(lost, 0)})")
+            return
+        for value in node.values:  # not the specs: they are no expressions
+            if isinstance(value, ast.FormattedValue):
+                self.visit(value.value)
 
     # -- zip(strict=), "...".format(...) ------------------------------------
 

@@ -32,6 +32,7 @@ from .base import (
     _entity_name,
 )
 from .config import TrafficManagerBackendConfig
+from .parameters import VehicleParameters
 from ..world_reset import episode_of
 from ..visibility import (
     DEFAULT_DECEL,
@@ -86,6 +87,14 @@ class TrafficManagerBackend(TrafficBackend):
     scenario spawned are handed to the TrafficManager after warm-up, and the
     manoeuvres a scenario asks for become TrafficManager calls.
 
+    How its vehicles drive is :class:`~autoware_carla_scenario.traffic.parameters.VehicleParameters`
+    (those :data:`~autoware_carla_scenario.traffic.parameters.VEHICLE_PARAMETER_BACKENDS`
+    gives ``traffic_manager``; it has no reaction time, braking or
+    acceleration of a driver to set, nor any notion of sight): the speed and
+    the gap are the TrafficManager's global settings, set in :meth:`prepare`; the rest are set
+    on each vehicle as it is put on autopilot.  Every vehicle it drives gets
+    them, the scenario's own as well as its background traffic.
+
     The client is injected rather than passed to each call, from either of the
     two places that already hold one: :meth:`prepare`, when
     :class:`~autoware_carla_scenario.ScenarioRunner` builds the run's context,
@@ -113,6 +122,7 @@ class TrafficManagerBackend(TrafficBackend):
         config: Optional[TrafficManagerBackendConfig] = None,
         *,
         client: Optional["carla.Client"] = None,
+        vehicles: Optional[VehicleParameters] = None,
     ) -> None:
         """Create the backend.
 
@@ -121,6 +131,13 @@ class TrafficManagerBackend(TrafficBackend):
             client: The CARLA client the TrafficManager is reached through, for
                 a caller that already holds one.  :meth:`prepare` supplies it
                 otherwise.
+            vehicles: How its vehicles drive; the TrafficManager's defaults
+                when omitted.  It drives no pedestrians, so has no pedestrian
+                parameters.
+
+        Raises:
+            TrafficParameterError: If *vehicles* sets a field the
+                TrafficManager does not support.
         """
         self._config = config or TrafficManagerBackendConfig()
         self._client = client
@@ -140,6 +157,8 @@ class TrafficManagerBackend(TrafficBackend):
         self._lane_changed = []
         #: How far drivers see, m, as last reported; ``None``: nothing set.
         self._visibility = None
+        if vehicles is not None:
+            self.set_vehicle_parameters(vehicles)
 
     # ------------------------------------------------------------------
     # Properties
@@ -171,6 +190,14 @@ class TrafficManagerBackend(TrafficBackend):
             return
         tm.set_synchronous_mode(True)
         tm.set_random_device_seed(context.random_seed)
+        parameters = self.vehicle_parameters
+        if parameters.speed_factor is not None:
+            # The TrafficManager's is a percentage *under* the limit.
+            tm.global_percentage_speed_difference(
+                (1.0 - parameters.speed_factor) * 100.0
+            )
+        if parameters.min_gap_m is not None:
+            tm.set_global_distance_to_leading_vehicle(parameters.min_gap_m)
 
     def start(
         self, world: "carla.World", *, skip_actor_ids: Collection[int] = ()
@@ -183,7 +210,7 @@ class TrafficManagerBackend(TrafficBackend):
         for actor in world.get_actors().filter("vehicle.*"):
             if actor.id in skip or actor.id in self._released:
                 continue
-            actor.set_autopilot(True, self.port)
+            self._autopilot(actor)
             enabled += 1
         if enabled:
             logger.info("Autopilot enabled on %d vehicle(s)", enabled)
@@ -201,7 +228,8 @@ class TrafficManagerBackend(TrafficBackend):
         (:mod:`autoware_carla_scenario.visibility`).  So a visibility the
         run's weather set is logged with the speed a backend that models
         sight would hold a car to (:func:`~autoware_carla_scenario.visibility.sight_speed`,
-        for SUMO's default car), and the traffic drives as it did.
+        for SUMO's default car), and the traffic drives as it did --
+        which is why ``follow_visibility`` is refused here.
         """
         seen = world_visibility(episode_of(world))
         if seen == self._visibility:
@@ -255,11 +283,10 @@ class TrafficManagerBackend(TrafficBackend):
 
     def describe(self) -> dict[str, Any]:
         """Return the backend name, its port and the seed it was given."""
-        return {
-            "backend": self.name,
-            "port": self.port,
-            "random_seed": self._random_seed,
-        }
+        out = super().describe()
+        out["port"] = self.port
+        out["random_seed"] = self._random_seed
+        return out
 
     # ------------------------------------------------------------------
     # Background traffic
@@ -306,7 +333,7 @@ class TrafficManagerBackend(TrafficBackend):
             carla.Vector3D(forward.x * speed, forward.y * speed, 0.0)
         )
         if self._started:
-            actor.set_autopilot(True, self.port)
+            self._autopilot(actor)
         tm = self._require_tm("spawn_background")
         if tm is not None:
             tm.set_desired_speed(_vehicle(actor), max(speed_kmh, 1.0))
@@ -546,12 +573,38 @@ class TrafficManagerBackend(TrafficBackend):
             return
         self._released.discard(actor.id)
         if self._started:
-            actor.set_autopilot(True, self.port)
+            self._autopilot(actor)
             logger.info("%s: autopilot resumed", _actor_name(actor))
 
     # ------------------------------------------------------------------
     # Internals
     # ------------------------------------------------------------------
+
+    def _autopilot(self, actor: "carla.Actor") -> None:
+        """Put *actor* on autopilot, with the per-vehicle parameters set."""
+        actor.set_autopilot(True, self.port)
+        parameters = self.vehicle_parameters
+        if not _sets_per_vehicle(parameters):
+            return  # the speed and the gap are global, set in prepare()
+        tm = self._require_tm("autopilot")
+        if tm is None:
+            return
+        vehicle = _vehicle(actor)
+        if parameters.lane_changes is not None:
+            tm.auto_lane_change(vehicle, parameters.lane_changes)
+        # The TrafficManager's are percentages, the parameters' probabilities.
+        if parameters.ignore_lights is not None:
+            tm.ignore_lights_percentage(vehicle, parameters.ignore_lights * 100.0)
+        if parameters.ignore_signs is not None:
+            tm.ignore_signs_percentage(vehicle, parameters.ignore_signs * 100.0)
+        if parameters.ignore_vehicles is not None:
+            tm.ignore_vehicles_percentage(vehicle, parameters.ignore_vehicles * 100.0)
+        if parameters.ignore_walkers is not None:
+            tm.ignore_walkers_percentage(vehicle, parameters.ignore_walkers * 100.0)
+        if parameters.random_lane_changes is not None:
+            chance = parameters.random_lane_changes * 100.0
+            tm.random_left_lanechange_percentage(vehicle, chance)
+            tm.random_right_lanechange_percentage(vehicle, chance)
 
     def _require_tm(self, what: str) -> Optional["carla.TrafficManager"]:
         """Return the TrafficManager handle, or ``None`` with a warning."""
@@ -565,6 +618,19 @@ class TrafficManagerBackend(TrafficBackend):
             )
             return None
         return self._client.get_trafficmanager(self.port)
+
+
+def _sets_per_vehicle(parameters: VehicleParameters) -> bool:
+    """Whether *parameters* set a field the TrafficManager sets on each
+    vehicle, rather than globally."""
+    return (
+        parameters.lane_changes is not None
+        or parameters.ignore_lights is not None
+        or parameters.ignore_signs is not None
+        or parameters.ignore_vehicles is not None
+        or parameters.ignore_walkers is not None
+        or parameters.random_lane_changes is not None
+    )
 
 
 def _actor_of(entity: DrivenEntity) -> Optional["carla.Actor"]:

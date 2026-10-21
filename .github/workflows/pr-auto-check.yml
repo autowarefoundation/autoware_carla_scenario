@@ -9,7 +9,11 @@ jobs:
   workflow-yaml-check:
     name: Workflow YAML Syntax Check
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
+    # `labeled` and `unlabeled` are here for the version bump label check; a
+    # label changes no file, so the file checks do not run again for one.
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.action != 'labeled' && github.event.action != 'unlabeled'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -58,7 +62,9 @@ jobs:
   end-of-file-fixer:
     name: Auto-fix End of File
     runs-on: ubuntu-latest
-    if: github.actor != 'github-actions[bot]'
+    if: >-
+      github.actor != 'github-actions[bot]' &&
+      github.event.action != 'labeled' && github.event.action != 'unlabeled'
     permissions:
       contents: write
       pull-requests: write

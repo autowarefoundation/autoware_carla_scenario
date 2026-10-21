@@ -5291,6 +5291,130 @@ def test_str_format_that_cannot_be_rewritten_is_refused(
     assert error.line == _line_of(path, setup.splitlines()[-1])
 
 
+def test_fstring_format_specs_compile(tmp_path: Path) -> None:
+    """Every spec form compiles: Codon's own, and those the check rewrites (#434)."""
+    setup = """
+        x = 3.14159
+        n = 255
+        w = 8
+        name = "ab"
+        # Codon's parser takes these as written.
+        a = f"{x:.2f}|{x:e}|{x:g}|{x:.1%}|{x:010.3f}|{n:#x}|{n:08b}|{n:,}|{n:_x}"
+        b = f"{n:>8}|{n:<8}|{n:^8}|{n:*^8}|{name!r:>8}|{name!s:^6}|{x=}|{x=:.2f}"
+        # A sign, a field in the spec, a spec Codon does not know: rewritten.
+        c = f"{x:+.2f}|{x: .2f}|{x:-.2f}|{n:+d}|{n:+}|{n:=+8d}|{x:^+10.2f}|{x:*<+10.2f}"
+        d = f"{x:>{w}.2f}|{x:{w}.2f}|{n:{w}d}|{x:.{w}f}|{name:>{w}}|{name!r:{w}}"
+        e = f"{x=:+.2f}|{n!r:+}|{x:q}|{x:{w}{w}}|{{lit}} {x:+.1f} {{lit}}"
+        f = "{:+.2f}|{:>5}".format(x, x)
+        g = "{:+.2f} {:+d} {!r:>5}".format(x, n, name)
+        h = f'''multi
+        {x:+.2f}
+        line {n:{w}d}'''
+        for text in (a, b, c, d, e, f, g, h):
+            assert len(text) > 0
+        k: str = f"{x:+.2f}"
+        m: str = f"{x:>{w}}"
+        assert len(k) + len(m) > 0
+    """
+    scenario, config, _ = _data_case(tmp_path, "", setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_fstring_specs_in_a_class_level_default_compile(tmp_path: Path) -> None:
+    """The driver's copy of a class-level default is rewritten too (#434, #433)."""
+    definitions = """
+        W = 6
+
+
+        class Labels:
+            SIGNED: str = f"{3.5:+.1f}"
+            PADDED: str = f"{7:>{W}}"
+            TEXT: str = "{:+.1f}".format(2.5)
+    """
+    scenario, config, _ = _data_case(
+        tmp_path, textwrap.dedent(definitions), "assert len(Labels().SIGNED) > 0\n"
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+@pytest.mark.parametrize(
+    ("line", "message"),
+    [
+        ('r: int = f"{3.5:+.2f}"', "int"),
+        ('r: int = f"{3.5:>{4}.2f}"', "int"),
+        ('r: float = "{:+.2f}".format(3.5)', "float"),
+        ('r = f"{3.5:+.2f}" + 1', "str"),
+    ],
+    ids=["sign", "nested", "format", "operand"],
+)
+def test_a_rewritten_fstring_is_still_a_str(
+    tmp_path: Path, line: str, message: str
+) -> None:
+    scenario, config, path = _data_case(tmp_path, "", line + "\n")
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert message in error.message, error.format()
+    assert error.line == _line_of(path, line)
+
+
+@pytest.mark.parametrize(
+    ("line", "hint"),
+    [
+        ("r = f\"{'{}'.format(3)}\"", "a brace in an expression"),
+        ('r = f"{len({1, 2})}"', "a brace in an expression"),
+        ('r = f"{ {1: 2}[1] :>3}"', "a brace in an expression"),
+        ("r = f\"{f'{3}'}\"", "f-string inside an f-string"),
+        ('r = f"{3.5!a:+.2f}"', "!a together with a format spec"),
+    ],
+    ids=["format", "set", "dict", "nested", "ascii"],
+)
+def test_an_fstring_codon_cannot_parse_is_refused_at_its_line(
+    tmp_path: Path, line: str, hint: str
+) -> None:
+    scenario, config, path = _data_case(tmp_path, "", "pad = 1\n" + line + "\n")
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert hint in error.message, error.format()
+    assert error.line == _line_of(path, line)
+
+
+@pytest.mark.parametrize(
+    ("message", "column"),
+    [
+        ("syntax error, unexpected '.'", 4),
+        ("syntax error, expecting <format_spec>.", 4),
+    ],
+)
+def test_a_syntax_error_in_an_fstring_field_is_reported_at_its_line(
+    tmp_path: Path, message: str, column: int
+) -> None:
+    """Codon puts it at line 1 of the field: -3 once the prelude is subtracted."""
+    from autoware_carla_scenario.typecheck import check
+
+    source = "a = 1\nb = 2\n\nr = f'{a} {b:+.2f}'\n"
+    prelude = check.PRELUDE
+    rel = "pkg/scenario.py"
+    (tmp_path / "pkg").mkdir()
+    (tmp_path / rel).write_text(prelude + source)
+    ws = check._Workspace(tmp_path, None)
+    ws.files[rel] = "/user/scenario.py"
+    ws.origins[rel] = [1, 2, 3, 4]
+    output = f"{rel}:1 ({column}): error: {message}\n"
+    (diagnostic,) = check._parse_output(output, ws)
+    assert diagnostic.path == "/user/scenario.py"
+    assert diagnostic.line == 4
+    assert diagnostic.message == message
+
+
+def test_a_format_spec_on_a_bool_is_hinted(tmp_path: Path) -> None:
+    line = 'r = f"{True:+d}"'
+    scenario, config, path = _data_case(tmp_path, "", line + "\n")
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "has no attribute '__format__'" in error.message, error.format()
+    assert "int(flag)" in error.message, error.format()
+    assert error.line == _line_of(path, line)
+
+
 def test_zip_with_strict_compiles(tmp_path: Path) -> None:
     setup = """
         xs = [1, 2]
@@ -5435,6 +5559,41 @@ def test_except_star_is_refused_at_its_line(tmp_path: Path) -> None:
     assert "exception groups" in error.message, result.format()
     assert "use `except`" in error.message, result.format()
     assert error.line == _line_of(path, "except* ValueError")
+
+
+def test_the_439_rewrites_compose_with_fstring_specs_and_class_constants(
+    tmp_path: Path,
+) -> None:
+    definitions = """
+class Names:
+    A = "ab"
+    B = "cd"
+    HIT = "abc".startswith((A, B))
+    LABEL = f"{len(A):+d}"
+
+    def check(self, s: str = "abx") -> bool:
+        return s.startswith((Names.A, Names.B))
+"""
+    setup = """
+        n = 5
+        s = "abc"
+        signed = format(n, "+d") + f"{n:+d}" + format(2.5, "+.1f")
+        inside = f"{s.startswith(('a', 'z'))}-{format(n, '>4')}-{n:+d}"
+        names = Names()
+        assert names.check() and Names.HIT and len(signed) + len(inside) > 0
+        logger.info("%s %s %s", signed, inside, Names.LABEL)
+    """
+    scenario, config, _ = _data_case(tmp_path, definitions, setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_a_bytes_method_codon_lacks_is_refused_with_a_hint(tmp_path: Path) -> None:
+    setup = "r = b'ab'.hex()\n"
+    scenario, config, path = _data_case(tmp_path, "", setup)
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "already text" in error.message, error.format()
+    assert error.line == _line_of(path, "r = b'ab'.hex()")
 
 
 def test_a_class_with_only_lt_sorts(tmp_path: Path) -> None:

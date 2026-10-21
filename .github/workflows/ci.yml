@@ -8,10 +8,18 @@ on:
 
 # A new push to a pull request makes its running CI moot: cancel it rather than
 # let it hold runners that the organisation's other runs are queued behind.
-# Pushes to a branch are never cancelled -- each commit on master keeps its run.
+# Pushes to a branch share one group per branch and are not cancelled: the run
+# in progress finishes, and of the pushes queued behind it only the latest
+# runs -- a burst of merges does not run once per commit.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# A push to master is a merge whose pull request already ran this suite, so it
+# does not repeat those verdicts. It runs only the jobs whose caches the next
+# pull requests restore -- the Codon check verdicts and the scenario image's
+# build cache -- and none at all for the release workflow's "chore: bump
+# version to X" commit, which changes nothing but the version.
 
 jobs:
   test:
@@ -19,6 +27,9 @@ jobs:
     # that is what Autoware's own environment is.
     name: test (${{ matrix.python-version }})
     runs-on: ubuntu-latest
+    if: >-
+      github.event_name != 'push' ||
+      !startsWith(github.event.head_commit.message, 'chore: bump version to ')
     strategy:
       fail-fast: false
       matrix:
@@ -76,6 +87,8 @@ jobs:
     # ceiling, this leg from the middle.
     name: slow tests (3.12)
     runs-on: ubuntu-latest
+    # Repeats the pull request's verdict and seeds no cache: see the top.
+    if: github.event_name == 'pull_request'
 
     steps:
     - uses: actions/checkout@v4
@@ -100,6 +113,9 @@ jobs:
     # stand in for the interpreters between them.
     name: test (${{ matrix.python-version }}, arm64)
     runs-on: ubuntu-24.04-arm
+    if: >-
+      github.event_name != 'push' ||
+      !startsWith(github.event.head_commit.message, 'chore: bump version to ')
     strategy:
       fail-fast: false
       matrix:
@@ -140,7 +156,9 @@ jobs:
         find "${RUNNER_TEMP}/typecheck-cache" -type f \
           ! -newer "${RUNNER_TEMP}/typecheck-started" -delete 2>/dev/null || true
 
+    # Repeats the pull request's verdict and seeds no cache: see the top.
     - name: Run the slow tests
+      if: github.event_name == 'pull_request'
       run: uv run pytest -v --tb=short -o addopts= -m slow
 
   build:
@@ -149,6 +167,8 @@ jobs:
     # reported one break as three red jobs.
     name: build the package
     runs-on: ubuntu-latest
+    # Repeats the pull request's verdict and seeds no cache: see the top.
+    if: github.event_name == 'pull_request'
     steps:
     - uses: actions/checkout@v4
 
@@ -163,6 +183,8 @@ jobs:
 
   lint-and-format:
     runs-on: ubuntu-latest
+    # Repeats the pull request's verdict and seeds no cache: see the top.
+    if: github.event_name == 'pull_request'
     env:
       # The pytest hook runs the whole fast suite again (for a contributor's
       # commit); here the test jobs already do, and it made this the slowest
@@ -221,6 +243,9 @@ jobs:
 
   docs:
     runs-on: ubuntu-latest
+    # Repeats the pull request's verdict and seeds no cache: see the top. The
+    # Docs workflow builds and deploys master's documentation.
+    if: github.event_name == 'pull_request'
     steps:
     - uses: actions/checkout@v4
       with:
@@ -256,6 +281,9 @@ jobs:
     # own platform. The x86_64 leg keeps the job's original name.
     name: scenario image${{ matrix.arch == 'arm64' && ' (arm64)' || '' }}
     runs-on: ${{ matrix.runner }}
+    if: >-
+      github.event_name != 'push' ||
+      !startsWith(github.event.head_commit.message, 'chore: bump version to ')
     strategy:
       fail-fast: false
       matrix:
