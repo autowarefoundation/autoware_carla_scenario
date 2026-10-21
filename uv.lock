@@ -169,7 +169,7 @@ wheels = [
 
 [[package]]
 name = "autoware-carla-scenario"
-version = "15.35.0"
+version = "17.1.1"
 source = { editable = "autoware_carla_scenario" }
 dependencies = [
     { name = "carla-driver-interface" },
@@ -208,6 +208,10 @@ map = [
 rerun = [
     { name = "autoware-carla-scenario-rerun" },
 ]
+rerun-lidar = [
+    { name = "autoware-carla-scenario-rerun" },
+    { name = "rerun-sdk" },
+]
 ros2 = [
     { name = "cyclonedds", marker = "python_full_version < '3.14' and platform_machine == 'x86_64' and sys_platform == 'linux'" },
 ]
@@ -225,6 +229,7 @@ viewer = [
 [package.metadata]
 requires-dist = [
     { name = "autoware-carla-scenario-rerun", marker = "extra == 'rerun'", specifier = ">=0.1,<0.2" },
+    { name = "autoware-carla-scenario-rerun", marker = "extra == 'rerun-lidar'", specifier = ">=0.1,<0.2" },
     { name = "autoware-carla-scenario-rerun", extras = ["viewer"], marker = "extra == 'viewer'", specifier = ">=0.1,<0.2" },
     { name = "carla-driver-interface", specifier = ">=2.3,<3" },
     { name = "cyclonedds", marker = "python_full_version < '3.14' and platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'ros2'", specifier = ">=11.0.1" },
@@ -248,6 +253,7 @@ requires-dist = [
     { name = "python-multipart", specifier = ">=0.0.9" },
     { name = "pyxodr", specifier = ">=0.1.0" },
     { name = "pyyaml", specifier = ">=6.0" },
+    { name = "rerun-sdk", marker = "extra == 'rerun-lidar'", specifier = ">=0.38.1,<0.39" },
     { name = "roadgen", marker = "extra == 'map'", specifier = ">=0.36.0" },
     { name = "roadgen", marker = "extra == 'sumo'", specifier = ">=0.36.0" },
     { name = "simple-lanelet2", specifier = ">=1.2.3" },
@@ -258,7 +264,7 @@ requires-dist = [
     { name = "typesafe-carla", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux')", specifier = ">=0.8.1,<0.9" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.34.0" },
 ]
-provides-extras = ["sumo", "map", "ros2", "rerun", "viewer"]
+provides-extras = ["sumo", "map", "ros2", "rerun", "rerun-lidar", "viewer"]
 
 [[package]]
 name = "autoware-carla-scenario-rerun"

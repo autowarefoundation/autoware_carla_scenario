@@ -75,6 +75,7 @@ from collections.abc import Collection, Mapping
 from dataclasses import dataclass, field
 
 from .driver import Driver
+from .python_rewrites import python_rewrites
 from .transform import (
     PRELUDE,
     _ENUM_BASES,
@@ -794,7 +795,9 @@ class _Renderer:
             typed = codon_annotation(annotation, class_level=True)
             if typed is None:
                 continue
-            value = ast.unparse(assigned)
+            # The driver is no module the transform rewrites: an f-string with a
+            # sign in its spec, a `.format` call, would reach Codon as written.
+            value = python_rewrites(ast.unparse(assigned) + "\n")[0].strip()
             if typed == "bool":
                 # Codon converts any value assigned to a `bool` with its
                 # `__bool__` (`x: bool = "x"` compiles); a call does not.
