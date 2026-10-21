@@ -104,6 +104,8 @@ class BaseAction:
             _acs_expect_return(r, bool, "BaseAction.sets_tire_friction returns bool")
         elif name == "importance_sampling_weight":
             _acs_expect_return(r, float, "BaseAction.importance_sampling_weight returns float")
+        elif name == "importance_sampled":
+            _acs_expect_return(r, bool, "BaseAction.importance_sampled returns bool")
         elif name == "take_adversity_events":
             _acs_expect_return(r, List[AdversityEvent],
                                "BaseAction.take_adversity_events() returns List[AdversityEvent]")
@@ -132,6 +134,10 @@ class BaseAction:
 
     @property
     def importance_sampling_weight(self) -> float:
+        raise NotImplementedError()
+
+    @property
+    def importance_sampled(self) -> bool:
         raise NotImplementedError()
 
     def take_adversity_events(self) -> List[AdversityEvent]:

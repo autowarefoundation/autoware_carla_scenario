@@ -166,10 +166,18 @@ product of every action's weight, which is 1.0 without NADE. You can read it:
 - in the trajectory log, where each sampled adversity is an `adversity`
   record with its `p`, its `q`, the weight at that point, the victims and the
   response (see [Trajectory Log](trajectory_log.md)).
+- in the run's coverage file, as `outcome.weight`: a run is importance
+  sampled when one of its actions is (`BaseScenario.outcome_weight`; NADE
+  is), and only such a run records a weight.
 
 To count which kinds were sampled, register a coverage item on
 `AdversarialTrafficAction.sampled_kind` (see [Coverage](coverage.md)).
-Weighted aggregation over a batch belongs in openodd_py (#403).
+Merging a batch's coverage files (`scenario-coverage`) then estimates the
+naturalistic failure rate per scenario and environment: the mean of the
+weighted failures with its 95% interval, the relative half width it has
+converged to (TeraSim's NADE stops below 0.3), the self-normalised rate and
+the effective number of runs (openodd's weighted outcomes, see
+[Coverage](coverage.md)).
 
 ## Stalled objects and collisions
 
