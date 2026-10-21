@@ -140,6 +140,106 @@ uv run scenario traffic.parameters.ignore_lights=0.1
 | `imperfection` | Driver imperfection, 0-1 | — | `sigma` |
 | `follow_visibility` | Slow to what the drivers see in the weather | — | ✓ (on by default) |
 
+### Parameter reference
+
+Each parameter, with its type, the values it accepts, and what it becomes in
+each backend. Unset (`null`) means the backend's own default, which is given
+where it is fixed. A value outside the range is refused when the config is
+read, before the backend is built.
+
+**Shared by `traffic_manager` and `sumo`**
+
+- `speed_factor` — float, `> 0`
+    - The speed drivers aim for, as a multiple of the speed limit: `1.0` drives at
+      the limit, `0.8` 20 % under it, `1.1` 10 % over it.
+    - `traffic_manager`: `global_percentage_speed_difference((1 - speed_factor) * 100)`,
+      set once when the run is prepared. Unset, the TrafficManager's own default
+      (30 % under the limit). A speed set on one vehicle wins over it: a
+      background vehicle's spawn speed, or a `SetSpeedAction`.
+    - `sumo`: each vehicle's own speed factor, which SUMO draws around 1.0 (spread
+      0.1), multiplied by it as the vehicle departs, so the drivers' spread is kept
+      and its mean becomes `speed_factor`. Unset, SUMO's draw.
+
+- `min_gap_m` — float, metres, `>= 0`
+    - The gap a driver leaves to the vehicle ahead when standing in a queue.
+    - `traffic_manager`: `set_global_distance_to_leading_vehicle(min_gap_m)`.
+    - `sumo`: `minGap` of each vehicle (SUMO's default 2.5 m).
+
+- `lane_changes` — bool
+    - Whether drivers change lanes of their own accord: to overtake, to keep right,
+      to make room.
+    - `traffic_manager`: `auto_lane_change(vehicle, lane_changes)` on each vehicle
+      as it goes on autopilot (default `true`).
+    - `sumo`: `false` sets each vehicle's lane-change mode to 1537 — the
+      changes its route needs only, still respecting other drivers' gaps — instead
+      of SUMO's 1621; `true` leaves SUMO's default. A lane change a scenario asks
+      for (`LaneChangeAction`) still happens.
+
+**`traffic_manager` only**
+
+Each is a probability, float in `[0, 1]`, set per vehicle as it goes on
+autopilot as the TrafficManager's percentage (`× 100`). Unset, `0`: drivers
+obey everything and never change lanes at random.
+
+- `ignore_lights`
+    - Chance of driving through a red light (`ignore_lights_percentage`).
+
+- `ignore_signs`
+    - Chance of ignoring a stop sign (`ignore_signs_percentage`).
+
+- `ignore_vehicles`
+    - Chance of ignoring the vehicles in the way, i.e. of colliding with them
+      (`ignore_vehicles_percentage`).
+
+- `ignore_walkers`
+    - Chance of ignoring pedestrians (`ignore_walkers_percentage`).
+
+- `random_lane_changes`
+    - Chance of a lane change for no reason, to either side
+      (`random_left_lanechange_percentage` and `random_right_lanechange_percentage`,
+      both set to it).
+
+**`sumo` only**
+
+Set on each vehicle SUMO drives as it departs (`traci.vehicle.set*`), the
+scenario's vehicles SUMO drives (`scenario_vehicles=sumo`) included; a vehicle
+CARLA's side drives (the ego, and the scenario's vehicles under
+`scenario_vehicles=traffic_manager`) is only placed in SUMO and keeps SUMO's
+defaults.
+
+- `accel` — float, m/s², `> 0`
+    - The acceleration drivers use (`setAccel`; SUMO's default 2.6).
+
+- `decel` — float, m/s², `> 0`
+    - The braking drivers use (`setDecel`; SUMO's default 4.5). Also the braking
+      `follow_visibility` works the sight speed out from.
+
+- `reaction_time_s` — float, seconds, `>= 0`
+    - Drivers' reaction time, SUMO's `tau` (`setTau`; default 1.0), which also
+      sets the time headway they keep. Also the reaction time `follow_visibility`
+      works the sight speed out from.
+
+- `imperfection` — float in `[0, 1]`
+    - Driver imperfection, SUMO's `sigma` (`setImperfection`; default 0.5): how
+      much a driver dawdles below the speed it could drive. `0` is a perfect
+      driver.
+
+- `follow_visibility` — bool
+    - Hold SUMO's own traffic (ambient and background vehicles) to the speed it
+      stops from within what its drivers see in the run's weather, `v * tau + v² /
+      (2 * decel)` = the visibility, and give each its own speed back when the
+      weather lifts. Unset, `true`; `false` ignores the visibility, as the
+      TrafficManager does. See **Visibility** under
+      [The SUMO backend](#the-sumo-backend).
+
+The same in Python, where every field is a keyword of `TrafficParameters`:
+
+```python
+from autoware_carla_scenario import TrafficParameters
+
+TrafficParameters(speed_factor=0.9, min_gap_m=3.0, reaction_time_s=1.5)
+```
+
 A field set for a backend that cannot honour it fails the run before anything is
 spawned, naming the backends it can be used with — a run that asked for drivers
 who react in 1.5 s and silently got the TrafficManager's, which has no reaction
