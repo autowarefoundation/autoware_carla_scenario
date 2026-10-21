@@ -535,12 +535,19 @@ NOT_MODELLED_MEMBERS: dict[str, dict[str, str]] = {
         "from_config": _FROM_MAPPING,
         "to_config": _AS_DICT,
     },
-    "RerunConverter": _members(
-        "close strict wait",
-        "waits for the conversions and reports them, which the runner's "
-        "caller (examples.run) does once the runs are over, not the checked "
-        "runner, which only submits each log",
-    ),
+    "RerunConverter": {
+        **_members(
+            "close strict wait",
+            "waits for the conversions and reports them, which the runner's "
+            "caller (examples.run) does once the runs are over, not the checked "
+            "runner, which only submits each log",
+        ),
+        "records_lidar": (
+            "whether rerun.lidar is set, which the converter's start_lidar "
+            "checks itself; the checked runner calls start_lidar and "
+            "stop_lidar whatever it is"
+        ),
+    },
     "RunEnvironment": _members(
         "by_name implementation lock machine packages pins platform python "
         "scenario_package summary to_dict",
