@@ -76,6 +76,7 @@ __all__ = [
     "build_run_traffic_rule_action",
     "build_stalled_object_action",
     "build_stop_crossing_action",
+    "build_prop_action",
     "build_traffic_signal_controller_action",
     "build_traffic_signal_action",
     "build_environment_action",
@@ -1140,6 +1141,36 @@ def build_stop_crossing_action(
         label=compiled.label,
         once=compiled.node.once,
         following_mode=TrajectoryFollowingMode[str(params["following_mode"]).upper()],
+    )
+
+
+def build_prop_action(
+    compiled: "CompiledAction",
+    condition: "BaseCondition | None",
+    timing: Any,
+    ctx: "BuildContext",
+) -> "BaseAction":
+    """Build a :class:`PropAction`."""
+    from ..actions.prop import PropAction  # noqa: PLC0415
+    from ..coordinate import Lanelet2Pose  # noqa: PLC0415
+    from ..actions.prop import PropOperation  # noqa: PLC0415
+
+    params = compiled.params
+    position = Lanelet2Pose(
+        lanelet_id=params["lanelet_id"],
+        s=params["s"],
+        t=params["t"],
+        heading=params["heading"],
+    )
+    return PropAction(
+        name=str(params["name"]),
+        operation=PropOperation[str(params["operation"]).upper()],
+        position=position,
+        blueprint=str(params["blueprint"]),
+        on_ground=params["on_ground"],
+        condition=condition,
+        timing=timing,
+        label=compiled.label,
     )
 
 

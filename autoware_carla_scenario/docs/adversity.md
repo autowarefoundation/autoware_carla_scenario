@@ -212,8 +212,9 @@ s-curve). The zone closes in from `side`, `"right"` by default; TeraSim instead
 picked the side from the SUMO lane's index.
 
 From `start_time` to `end_time` (`None`: never removed) the objects stand in
-the world as CARLA props. Unlike a vehicle, a prop may appear while a run is
-under way. When the zone appears, two things happen:
+the world as CARLA props, each added by a `PropAction` and named
+`<label>/<zone>/<n>` (`docs/api.md`). Unlike a vehicle, a prop may appear
+while a run is under way. When the zone appears, two things happen:
 
 - `clear_traffic` takes the backend's background vehicles in the zone off the
   road;
@@ -223,8 +224,9 @@ under way. When the zone appears, two things happen:
   the zone keeps its traffic out.
 
 TeraSim's `full_lane` mode places no object. Here the objects are always
-placed: a closure Autoware cannot see is one it drives into. At `end_time`, or
-when the run ends, the props are destroyed and the lane is reopened.
+placed: a closure Autoware cannot see is one it drives into. At `end_time` the
+props are removed and the lane is reopened; when the run ends, the lane is
+reopened and the runner takes the props away with every other.
 
 ```python
 from autoware_carla_scenario import ConstructionSettings, ConstructionZoneAction

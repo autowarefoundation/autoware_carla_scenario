@@ -1390,6 +1390,7 @@ class TestEnvironmentTrack:
             "adversarial_traffic",
             "construction_zone",
             "environment",
+            "prop",
             "traffic_signal",
             "traffic_signal_controller",
             "traffic_sink",

@@ -5,8 +5,8 @@
 ``start_s`` to ``end_s`` metres along it -- past its lanelet's end, on along
 the straightest successors -- and from ``start_time`` to ``end_time``
 (scenario seconds; ``None`` for good) it stands the objects there as CARLA
-props (``static.prop.*``, which, unlike a vehicle, may appear while a run is
-under way).  Then, as TeraSim's ``initialize``:
+props, each added and removed by a :class:`~.prop.PropAction` (named
+``<label>/<zone>/<n>``).  Then, as TeraSim's ``initialize``:
 
 * the traffic backend's background vehicles in the zone are taken off the
   road (``clear_traffic``);
@@ -16,15 +16,16 @@ under way).  Then, as TeraSim's ``initialize``:
 
 TeraSim's ``full_lane`` places no object, only closes the lane; in CARLA a
 closure nobody sees is one Autoware drives into, so the objects are always
-placed.  At ``end_time`` -- or when the run ends -- the props are destroyed and
-the lane reopened.
+placed.  At ``end_time`` the props are removed and the lane reopened; when the
+run ends, the lane is reopened and the runner takes the props away with every
+other (:func:`~.prop.clear_props`).
 """
 
 from __future__ import annotations
 
 import logging
 import math
-from typing import TYPE_CHECKING, Callable, Optional
+from typing import TYPE_CHECKING, Optional
 
 import lanelet2.core
 import lanelet2.geometry
@@ -47,6 +48,7 @@ from ..trajectory.relative_lane import _centreline, _point_at, advance_along_lan
 from ..trajectory.resolve import road_height
 from .background_traffic import _BackendAction
 from .base import BaseAction, TickTiming
+from .prop import PropAction, PropOperation
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
@@ -104,7 +106,7 @@ class ConstructionZoneAction(_BackendAction):
     _close_lane: bool
     _clear_traffic: bool
     _blueprints: dict[str, str]
-    _props: list["carla.Actor"]
+    _props: list[str]
     _closed: list[str]
     _placed: bool
     _cleared: bool
@@ -161,7 +163,7 @@ class ConstructionZoneAction(_BackendAction):
 
     @property
     def prop_count(self) -> int:
-        """How many props stand in the world now."""
+        """How many of the zone's props stand in the world now."""
         return len(self._props)
 
     def tick(self, world: "carla.World", elapsed: float) -> None:
@@ -181,9 +183,11 @@ class ConstructionZoneAction(_BackendAction):
             self._clear(world)
 
     def close(self) -> None:
-        """Clear the zone away if the run ends with it standing."""
+        """Reopen the lane if the run ends with the zone standing; the runner
+        takes its props away with every other."""
         BaseAction.close(self)  # named, as in tick
-        self._teardown(None)
+        self._props = []
+        self._reopen(None)
 
     # -- placing -------------------------------------------------------------
 
@@ -208,19 +212,19 @@ class ConstructionZoneAction(_BackendAction):
                 self._close(
                     world, driver, _spans(features, start, min(closed), max(closed))
                 )
+        # Fetched once for every prop of the zone, and a missing prop said once.
         library = world.get_blueprint_library()
-        found: dict[str, "carla.ActorBlueprint"] = {}
+        ground = road_height(run_carla_map(world))
+        available: set[str] = set()
         for kind, name in self._blueprints.items():
-            matches = library.filter(name)
-            if len(matches) == 0:  # A BlueprintLibrary has no truth value in Codon.
+            if len(library.filter(name)) == 0:  # no truth value in Codon
                 logger.warning(
                     "%s: CARLA has no prop %r for a %s", self.label, name, kind
                 )
             else:
-                found[kind] = matches[0]
-        height = road_height(run_carla_map(world))
-        for item in objects:
-            if item.kind not in found:
+                available.add(kind)
+        for index, item in enumerate(objects):
+            if item.kind not in available:
                 continue
             try:
                 lanelet_id, along = advance_along_lane(
@@ -232,11 +236,16 @@ class ConstructionZoneAction(_BackendAction):
                 )
             except ValueError:
                 continue  # past the lane's last lanelet
-            pose = to_carla_world(Lanelet2Pose(lanelet_id, along, item.t))
-            spawned = _spawn(world, found[item.kind], pose, height)
-            if spawned is not None:
-                actor: "carla.Actor" = spawned
-                self._props.append(actor)
+            name = f"{self.label}/{item.zone}/{index}"
+            added = PropAction(
+                name,
+                PropOperation.ADD,
+                Lanelet2Pose(lanelet_id, along, item.t),
+                blueprint=self._blueprints[item.kind],
+                label=self.label,
+            )
+            if added.apply(world, library, ground):
+                self._props.append(name)
         logger.info(
             "%s: %d of %d objects placed on lanelet %d from s=%.1f to %.1f",
             self.label,
@@ -287,14 +296,14 @@ class ConstructionZoneAction(_BackendAction):
         self._cleared = True
         logger.info("%s: cleared away", self.label)
 
-    def _teardown(self, world: Optional["carla.World"]) -> None:
-        """Destroy the props and reopen the lane."""
-        for actor in self._props:
-            try:
-                actor.destroy()
-            except RuntimeError:
-                pass  # gone with the world already
+    def _teardown(self, world: "carla.World") -> None:
+        """Remove the props and reopen the lane."""
+        for name in self._props:
+            PropAction(name, PropOperation.REMOVE, label=self.label).apply(world)
         self._props = []
+        self._reopen(world)
+
+    def _reopen(self, world: Optional["carla.World"]) -> None:
         if self._backend is not None:
             backend: TrafficBackend = self._backend
             for handle in self._closed:
@@ -348,27 +357,6 @@ def _spans(
         begins += length
         lanelet = ahead
     return spans
-
-
-def _spawn(
-    world: "carla.World",
-    blueprint: "carla.ActorBlueprint",
-    pose: CarlaWorldPose,
-    height: Callable[[float, float], Optional[float]],
-) -> Optional["carla.Actor"]:
-    """A prop of *blueprint* at *pose*, on the road surface; None if the spot
-    is taken."""
-    import typesafe_carla.carla as carla  # noqa: PLC0415
-
-    z = pose.z
-    ground = height(pose.x, pose.y)
-    if ground is not None:
-        z = float(ground)
-    transform = carla.Transform(
-        carla.Location(x=pose.x, y=pose.y, z=z + 0.05),
-        carla.Rotation(yaw=pose.yaw),
-    )
-    return world.try_spawn_actor(blueprint, transform)
 
 
 def _bound_distance(

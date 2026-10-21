@@ -11,10 +11,13 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import Any, Optional
 
+from collections.abc import Iterator
+
 import pytest
 
 from autoware_carla_scenario import ConstructionSettings, ConstructionZoneAction
 from autoware_carla_scenario.action_state import ActionState
+from autoware_carla_scenario.actions import prop as prop_module
 from autoware_carla_scenario.adversity.construction import (
     BARRIER,
     CONE,
@@ -132,6 +135,13 @@ def test_what_the_layout_refuses() -> None:
 # -- the action -------------------------------------------------------------------
 
 
+@pytest.fixture(autouse=True)
+def _no_props_standing() -> Iterator[None]:
+    prop_module.clear_props()
+    yield
+    prop_module.clear_props()
+
+
 class _Prop:
     def __init__(self, blueprint: str, transform: Any) -> None:
         self.blueprint, self.transform = blueprint, transform
@@ -234,7 +244,13 @@ def test_a_zone_for_good_is_cleared_away_when_the_run_ends() -> None:
     )
     _run(action, world, [0.0, 10.0, 100.0])
     assert action.prop_count == 11 and not action.cleared
+    # Its props are PropAction's, named by the zone; the runner takes them
+    # away when the run ends, after closing the action.
+    assert len(prop_module.standing_props()) == 11
+    assert "construction_zone/taper_in/2" in prop_module.standing_props()
     action.close()
+    assert action.prop_count == 0
+    prop_module.clear_props()
     assert all(p.destroyed for p in world.spawned)
 
 

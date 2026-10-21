@@ -1500,6 +1500,105 @@ register_action_spec(
     )
 )
 
+register_action_spec(
+    ActionSpec(
+        type_id="prop",
+        title="Prop",
+        category="Environment",
+        builder="build_prop_action",
+        target="..actions.prop:PropAction",
+        scope="environment",
+        builds=(
+            BuiltArgument(
+                kwarg="position",
+                target="..coordinate:Lanelet2Pose",
+                parts=(
+                    BuiltPart(
+                        args=(
+                            ("lanelet_id", "lanelet_id"),
+                            ("s", "s"),
+                            ("t", "t"),
+                            ("heading", "heading"),
+                        )
+                    ),
+                ),
+            ),
+        ),
+        fields=(
+            FieldSpec(
+                name="name",
+                label="Name",
+                kind="text",
+                default="prop",
+                help="The prop's name; a later Prop card removes it by this name.",
+            ),
+            FieldSpec(
+                name="operation",
+                label="Operation",
+                kind="select",
+                default="add",
+                options=(
+                    SelectOption("add", "Add"),
+                    SelectOption("remove", "Remove"),
+                ),
+            ),
+            FieldSpec(
+                name="blueprint",
+                label="Prop",
+                kind="text",
+                default="static.prop.constructioncone",
+                required=False,
+                help="The CARLA prop (static.prop.*) an added one is.",
+            ),
+            FieldSpec(
+                name="lanelet_id",
+                label="Lanelet",
+                kind="lanelet",
+                default=0,
+                help="The lanelet an added prop stands on.",
+            ),
+            FieldSpec(
+                name="s",
+                label="s",
+                kind="number",
+                default=0.0,
+                unit="m",
+                help="Along the lanelet from its start.",
+            ),
+            FieldSpec(
+                name="t",
+                label="t",
+                kind="number",
+                default=0.0,
+                required=False,
+                unit="m",
+                help="Off the centreline, positive to the left.",
+            ),
+            FieldSpec(
+                name="heading",
+                label="Heading",
+                kind="number",
+                default=0.0,
+                required=False,
+                unit="rad",
+                help="Turned from the lane's direction, counter-clockwise.",
+            ),
+            FieldSpec(
+                name="on_ground",
+                label="On the road surface",
+                kind="bool",
+                default=True,
+                required=False,
+            ),
+        ),
+        description=(
+            "Add a CARLA prop (a cone, a barrier, a sign) to the world at a "
+            "lanelet position, or remove the one of a name.  A prop added is "
+            "taken away when the run ends."
+        ),
+    )
+)
+
 #: Mirrors ``AdversityLocation``; the codegen refuses an option that names no
 #: member.  No default: an adversity fires anywhere only when told so.
 _ADVERSITY_LOCATIONS: tuple[SelectOption, ...] = (
