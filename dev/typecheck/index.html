@@ -3802,7 +3802,7 @@ method of a checked module.</p>
 </ol>
 <h3 id="what-is-checked-of-the-framework">What is checked of the framework<a class="headerlink" href="#what-is-checked-of-the-framework" title="Permanent link">&para;</a></h3>
 <p>Every module now has an entry other than <code>"not yet checked (#45)"</code>. 196 of
-the package's 290 modules (68%; about 47,300 of 84,200 lines) are <code>CHECKED</code>:
+the package's 291 modules (67%; about 47,300 of 84,200 lines) are <code>CHECKED</code>:
 the kinematics, the coordinate frames and poses, the conversions between
 Lanelet2, OpenDRIVE and CARLA world poses (<code>coordinate.transform</code>), the stop
 lines read off a Lanelet2 map (<code>utils.stop_line</code>, <code>coordinate.stop_line</code>)
@@ -3861,8 +3861,8 @@ driver's configs and client interface, trajectory follower and observations
 <code>driver.geometry</code>), and the <code>autoware_bridge</code>, <code>autoware_stack</code>, <code>entity</code>,
 <code>driver</code>, <code>maps</code> and <code>coverage</code> packages themselves, whose <code>__init__</code> re-exports what is not checked
 through models of it (see <em>A class a checked package only re-exports</em>
-below). 97
-functions and methods of those modules are <code>UNCALLED</code> (21 of them
+below). 100
+functions and methods of those modules are <code>UNCALLED</code> (24 of them
 protected helpers, see <em>What is compiled</em> below): most of them a
 condition's <code>get_details()</code> or a backend's <code>describe()</code>, what takes a traffic
 backend's options node (<code>Mapping[str, Any]</code>), what reads a route search, a
@@ -3898,12 +3898,12 @@ a <code>TrajectoryVertex</code> call's arguments, each of any type (<code>Any</c
 binds a sweeper constraint of any kind, builds a condition's status (its
 details), or takes the list a plain tick callback goes into
 (<code>BaseScenario._register_tick()</code>, a <code>List[Callable[[carla.World], None]]</code>,
-which the check has no value of). The 94 <code>EXCLUDED</code> modules fall in
-four groups. Many fit more than one (about 71 import what Codon cannot
+which the check has no value of). The 95 <code>EXCLUDED</code> modules fall in
+four groups. Many fit more than one (about 72 import what Codon cannot
 compile, 29 build on an excluded module and 20 hold values Codon has no type
 for), so each is counted once, in the first group that fits it:</p>
 <ul>
-<li><strong>71 import what Codon cannot compile</strong>: pyxodr,
+<li><strong>72 import what Codon cannot compile</strong>: pyxodr,
   pydantic, pickle, lxml, grpc, omegaconf and hydra, yaml, openodd (a Rust extension),
   cyclonedds (<code>ros2.cyclone</code> and <code>ros2.messages</code>, the ROS 2 ego's DDS
   transport and its message types), or
@@ -5439,7 +5439,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 21, 2026 17:05:50 UTC"><span class="timeago" datetime="2026-10-21T17:05:50+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 21, 2026 17:05:50 UTC">2026-10-21</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 21, 2026 18:48:04 UTC"><span class="timeago" datetime="2026-10-21T18:48:04+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 21, 2026 18:48:04 UTC">2026-10-21</span>
   </span>
 
     

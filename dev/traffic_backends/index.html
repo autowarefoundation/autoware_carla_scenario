@@ -2276,22 +2276,32 @@ exported scenario packages still set — keeps deciding the port when
 parameter spaces every backend reads: <code>traffic.vehicles</code> (<code>VehicleParameters</code>)
 for how vehicles drive, and <code>traffic.pedestrians</code> (<code>PedestrianParameters</code>) for
 how pedestrians walk. Every field is <code>null</code> by default, which leaves the
-backend's own default:</p>
+backend's own default.</p>
+<p>Every numeric parameter is a <strong>spread</strong>, a mean and a standard deviation
+(<code>{mean, std}</code>, <code>Spread</code> in Python): each vehicle and each pedestrian draws
+its own value from a normal distribution of that mean and std, cut to the
+parameter's bounds (drawn again until it is inside them -- a truncated
+normal). The traffic is a population of drivers, not one driver copied. A
+plain number, or a <code>std</code> of 0, gives every road user the same value. The
+draws come from the run's seed: the same seed, the same drivers.</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nt">traffic</span><span class="p">:</span>
 <a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span><span class="nt">backend</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">sumo</span>
 <a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">  </span><span class="nt">vehicles</span><span class="p">:</span>
-<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">    </span><span class="nt">speed_factor</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.9</span><span class="w">        </span><span class="c1"># 10 % under the speed limit</span>
-<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">    </span><span class="nt">min_gap_m</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">3.0</span>
-<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="w">    </span><span class="nt">reaction_time_s</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1.5</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">    </span><span class="nt">speed_factor</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">mean</span><span class="p">:</span><span class="w"> </span><span class="nv">0.9</span><span class="p p-Indicator">,</span><span class="nt"> std</span><span class="p">:</span><span class="w"> </span><span class="nv">0.1</span><span class="p p-Indicator">}</span><span class="w">   </span><span class="c1"># around 10 % under the limit</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">    </span><span class="nt">min_gap_m</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">3.0</span><span class="w">                        </span><span class="c1"># every vehicle 3 m</span>
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="w">    </span><span class="nt">reaction_time_s</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">mean</span><span class="p">:</span><span class="w"> </span><span class="nv">1.5</span><span class="p p-Indicator">,</span><span class="nt"> std</span><span class="p">:</span><span class="w"> </span><span class="nv">0.3</span><span class="p p-Indicator">}</span>
 <a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="w">    </span><span class="nt">follow_visibility</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
 <a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="w">  </span><span class="nt">pedestrians</span><span class="p">:</span>
-<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="w">    </span><span class="nt">walking_speed_mps</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1.2</span>
-<a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="w">    </span><span class="nt">red_light_violation_s</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">5.0</span>
+<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="w">    </span><span class="nt">walking_speed_mps</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">mean</span><span class="p">:</span><span class="w"> </span><span class="nv">1.2</span><span class="p p-Indicator">,</span><span class="nt"> std</span><span class="p">:</span><span class="w"> </span><span class="nv">0.2</span><span class="p p-Indicator">}</span>
+<a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="w">    </span><span class="nt">red_light_violation_s</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">mean</span><span class="p">:</span><span class="w"> </span><span class="nv">5.0</span><span class="p p-Indicator">,</span><span class="nt"> std</span><span class="p">:</span><span class="w"> </span><span class="nv">5.0</span><span class="p p-Indicator">}</span>
 </code></pre></div>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">traffic</span><span class="o">=</span>sumo<span class="w"> </span>traffic.vehicles.reaction_time_s<span class="o">=</span><span class="m">1</span>.5
-<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>traffic.vehicles.ignore_lights<span class="o">=</span><span class="m">0</span>.1
-<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">traffic</span><span class="o">=</span>sumo<span class="w"> </span>traffic.pedestrians.walking_speed_mps<span class="o">=</span><span class="m">1</span>.0
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">traffic</span><span class="o">=</span>sumo<span class="w"> </span>traffic.vehicles.reaction_time_s.mean<span class="o">=</span><span class="m">1</span>.5<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">    </span>traffic.vehicles.reaction_time_s.std<span class="o">=</span><span class="m">0</span>.3
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>traffic.vehicles.ignore_lights<span class="o">=</span><span class="m">0</span>.1
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">traffic</span><span class="o">=</span>sumo<span class="w"> </span>traffic.pedestrians.walking_speed_mps.mean<span class="o">=</span><span class="m">1</span>.0
 </code></pre></div>
+<p>An ODD can draw both the mean and the std of each, per case
+(<a href="../odd/#traffic-parameters-from-the-odd">Traffic parameters from the ODD</a>).</p>
 <p><code>traffic.vehicles</code>:</p>
 <table>
 <thead>
@@ -2306,8 +2316,8 @@ backend's own default:</p>
 <tr>
 <td><code>speed_factor</code></td>
 <td>Desired speed as a multiple of the limit</td>
-<td>global speed difference</td>
-<td>each vehicle's speed factor, scaled</td>
+<td>vehicle speed difference</td>
+<td>each vehicle's speed factor</td>
 </tr>
 <tr>
 <td><code>min_gap_m</code></td>
@@ -2402,12 +2412,6 @@ own walk as the scenario steers them — so every field is <code>sumo</code>'s):
 <td><code>maxSpeed</code></td>
 </tr>
 <tr>
-<td><code>speed_deviation</code></td>
-<td>Spread of walking speeds between people</td>
-<td>—</td>
-<td><code>speedDev</code></td>
-</tr>
-<tr>
 <td><code>min_gap_m</code></td>
 <td>Gap to the person ahead, m</td>
 <td>—</td>
@@ -2424,30 +2428,32 @@ own walk as the scenario steers them — so every field is <code>sumo</code>'s):
 <h3 id="parameter-reference">Parameter reference<a class="headerlink" href="#parameter-reference" title="Permanent link">&para;</a></h3>
 <p>Each parameter, with its type, the values it accepts, and what it becomes in
 each backend. Unset (<code>null</code>) means the backend's own default, which is given
-where it is fixed. A value outside the range is refused when the config is
-read, before the backend is built.</p>
+where it is fixed. A numeric one is a spread whose mean must lie in the range
+given, which is also what each road user's draw is cut to; a mean outside it,
+or a negative std, is refused when the config is read, before the backend is
+built. Each vehicle draws once, when it is first put on autopilot
+(TrafficManager) or departs (SUMO), and keeps its draws.</p>
 <h4 id="trafficvehicles"><code>traffic.vehicles</code><a class="headerlink" href="#trafficvehicles" title="Permanent link">&para;</a></h4>
 <p><strong>Shared by <code>traffic_manager</code> and <code>sumo</code></strong></p>
 <ul>
 <li>
-<p><code>speed_factor</code> — float, <code>&gt; 0</code></p>
+<p><code>speed_factor</code> — spread, mean <code>&gt;= 0.05</code></p>
 <ul>
 <li>The speed drivers aim for, as a multiple of the speed limit: <code>1.0</code> drives at
   the limit, <code>0.8</code> 20 % under it, <code>1.1</code> 10 % over it.</li>
-<li><code>traffic_manager</code>: <code>global_percentage_speed_difference((1 - speed_factor) * 100)</code>,
-  set once when the run is prepared. Unset, the TrafficManager's own default
-  (30 % under the limit). A speed set on one vehicle wins over it: a
-  background vehicle's spawn speed, or a <code>SetSpeedAction</code>.</li>
-<li><code>sumo</code>: each vehicle's own speed factor, which SUMO draws around 1.0 (spread
-  0.1), multiplied by it as the vehicle departs, so the drivers' spread is kept
-  and its mean becomes <code>speed_factor</code>. Unset, SUMO's draw.</li>
+<li><code>traffic_manager</code>: <code>vehicle_percentage_speed_difference(vehicle, (1 - draw) * 100)</code>.
+  Unset, the TrafficManager's own default (30 % under the limit). A speed
+  set on one vehicle wins over it: a background vehicle's spawn speed, or a
+  <code>SetSpeedAction</code>.</li>
+<li><code>sumo</code>: the vehicle's speed factor (<code>setSpeedFactor</code>). Unset, SUMO's own
+  draw around 1.0 (spread 0.1).</li>
 </ul>
 </li>
 <li>
-<p><code>min_gap_m</code> — float, metres, <code>&gt;= 0</code></p>
+<p><code>min_gap_m</code> — spread, metres, mean <code>&gt;= 0</code></p>
 <ul>
 <li>The gap a driver leaves to the vehicle ahead when standing in a queue.</li>
-<li><code>traffic_manager</code>: <code>set_global_distance_to_leading_vehicle(min_gap_m)</code>.</li>
+<li><code>traffic_manager</code>: <code>distance_to_leading_vehicle(vehicle, draw)</code>.</li>
 <li><code>sumo</code>: <code>minGap</code> of each vehicle (SUMO's default 2.5 m).</li>
 </ul>
 </li>
@@ -2466,9 +2472,11 @@ read, before the backend is built.</p>
 </li>
 </ul>
 <p><strong><code>traffic_manager</code> only</strong></p>
-<p>Each is a probability, float in <code>[0, 1]</code>, set per vehicle as it goes on
-autopilot as the TrafficManager's percentage (<code>× 100</code>). Unset, <code>0</code>: drivers
-obey everything and never change lanes at random.</p>
+<p>Each is a probability, a spread with its mean in <code>[0, 1]</code> and each draw cut
+to it, set per vehicle as it goes on autopilot as the TrafficManager's
+percentage (<code>× 100</code>): with a std, some drivers run red lights more often than
+others. Unset, <code>0</code>: drivers obey everything and never change lanes at
+random.</p>
 <ul>
 <li>
 <p><code>ignore_lights</code></p>
@@ -2512,20 +2520,20 @@ CARLA's side drives (the ego, and the scenario's vehicles under
 defaults.</p>
 <ul>
 <li>
-<p><code>accel</code> — float, m/s², <code>&gt; 0</code></p>
+<p><code>accel</code> — spread, m/s², mean <code>&gt;= 0.05</code></p>
 <ul>
 <li>The acceleration drivers use (<code>setAccel</code>; SUMO's default 2.6).</li>
 </ul>
 </li>
 <li>
-<p><code>decel</code> — float, m/s², <code>&gt; 0</code></p>
+<p><code>decel</code> — spread, m/s², mean <code>&gt;= 0.05</code></p>
 <ul>
 <li>The braking drivers use (<code>setDecel</code>; SUMO's default 4.5). Also the braking
   <code>follow_visibility</code> works the sight speed out from.</li>
 </ul>
 </li>
 <li>
-<p><code>reaction_time_s</code> — float, seconds, <code>&gt;= 0</code></p>
+<p><code>reaction_time_s</code> — spread, seconds, mean <code>&gt;= 0</code></p>
 <ul>
 <li>Drivers' reaction time, SUMO's <code>tau</code> (<code>setTau</code>; default 1.0), which also
   sets the time headway they keep. Also the reaction time <code>follow_visibility</code>
@@ -2533,7 +2541,7 @@ defaults.</p>
 </ul>
 </li>
 <li>
-<p><code>imperfection</code> — float in <code>[0, 1]</code></p>
+<p><code>imperfection</code> — spread, mean in <code>[0, 1]</code></p>
 <ul>
 <li>Driver imperfection, SUMO's <code>sigma</code> (<code>setImperfection</code>; default 0.5): how
   much a driver dawdles below the speed it could drive. <code>0</code> is a perfect
@@ -2553,29 +2561,27 @@ defaults.</p>
 </li>
 </ul>
 <h4 id="trafficpedestrians-sumo-only"><code>traffic.pedestrians</code> (<code>sumo</code> only)<a class="headerlink" href="#trafficpedestrians-sumo-only" title="Permanent link">&para;</a></h4>
-<p>SUMO's default pedestrian type is defined with them, in
-<code>&lt;output&gt;/sumo/pedestrian_type.add.xml</code> loaded before the demand, so they
-apply to SUMO's own pedestrians (<code>traffic.options.pedestrians</code>) and to a
-<code>route_path</code> demand's that names no type of its own. On the type, not on each
+<p>SUMO's default pedestrian type is redefined as a distribution of 100 types,
+each its own draw of them (<code>vTypeDistribution</code>, in
+<code>&lt;output&gt;/sumo/pedestrian_type.add.xml</code> loaded before the demand); SUMO gives
+each person one of them as it is added, so each walks as its own draw says.
+They apply to SUMO's own pedestrians (<code>traffic.options.pedestrians</code>) and to a
+<code>route_path</code> demand's that names no type of its own. On types, not on each
 person: SUMO reads <code>jmDriveAfterRedTime</code> off the type only, and TraCI cannot
 set it on a person. <code>traffic.options.pedestrians</code> says how many SUMO
 generates; <code>traffic.pedestrians</code> how they walk.</p>
 <ul>
-<li><code>walking_speed_mps</code> — float, m/s, <code>&gt; 0</code><ul>
-<li>The speed people walk at before each one's own factor (SUMO's
-  <code>maxSpeed</code>; default 1.39).</li>
+<li><code>walking_speed_mps</code> — spread, m/s, mean <code>&gt; 0</code><ul>
+<li>The speed a person walks at (SUMO's <code>maxSpeed</code>, with SUMO's own spread
+  <code>speedDev</code> set to 0 so the draw is the speed). Unset, SUMO's 1.39 m/s
+  with its spread of 0.1.</li>
 </ul>
 </li>
-<li><code>speed_deviation</code> — float, <code>&gt;= 0</code><ul>
-<li>The spread of each person's speed factor (SUMO's <code>speedDev</code>; default
-  0.1). <code>0</code> has everyone walk at exactly <code>walking_speed_mps</code>.</li>
-</ul>
-</li>
-<li><code>min_gap_m</code> — float, metres, <code>&gt;= 0</code><ul>
+<li><code>min_gap_m</code> — spread, metres, mean <code>&gt;= 0</code><ul>
 <li>The gap kept to the person ahead (SUMO's <code>minGap</code>; default 0.25).</li>
 </ul>
 </li>
-<li><code>red_light_violation_s</code> — float, seconds, <code>&gt;= 0</code><ul>
+<li><code>red_light_violation_s</code> — spread, seconds, mean <code>&gt;= 0</code><ul>
 <li>A pedestrian walks onto a crossing whose light has been red for less
   than this (SUMO's junction model <code>jmDriveAfterRedTime</code>) when the way is
   free; a large value has people cross on red whenever they can. Unset,
@@ -2588,10 +2594,12 @@ generates; <code>traffic.pedestrians</code> how they walk.</p>
 <p>The TrafficManager drives no pedestrians, so it refuses every field here.</p>
 <p>The same in Python, where every field is a keyword of <code>VehicleParameters</code> or
 <code>PedestrianParameters</code>:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario</span><span class="w"> </span><span class="kn">import</span> <span class="n">PedestrianParameters</span><span class="p">,</span> <span class="n">VehicleParameters</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario</span><span class="w"> </span><span class="kn">import</span> <span class="n">PedestrianParameters</span><span class="p">,</span> <span class="n">Spread</span><span class="p">,</span> <span class="n">VehicleParameters</span>
 <a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>
-<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="n">VehicleParameters</span><span class="p">(</span><span class="n">speed_factor</span><span class="o">=</span><span class="mf">0.9</span><span class="p">,</span> <span class="n">min_gap_m</span><span class="o">=</span><span class="mf">3.0</span><span class="p">,</span> <span class="n">reaction_time_s</span><span class="o">=</span><span class="mf">1.5</span><span class="p">)</span>
-<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="n">PedestrianParameters</span><span class="p">(</span><span class="n">walking_speed_mps</span><span class="o">=</span><span class="mf">1.2</span><span class="p">,</span> <span class="n">red_light_violation_s</span><span class="o">=</span><span class="mf">5.0</span><span class="p">)</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="n">VehicleParameters</span><span class="p">(</span>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>    <span class="n">speed_factor</span><span class="o">=</span><span class="n">Spread</span><span class="p">(</span><span class="mf">0.9</span><span class="p">,</span> <span class="mf">0.1</span><span class="p">),</span> <span class="n">min_gap_m</span><span class="o">=</span><span class="n">Spread</span><span class="p">(</span><span class="mf">3.0</span><span class="p">),</span> <span class="n">reaction_time_s</span><span class="o">=</span><span class="n">Spread</span><span class="p">(</span><span class="mf">1.5</span><span class="p">,</span> <span class="mf">0.3</span><span class="p">)</span>
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="p">)</span>
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="n">PedestrianParameters</span><span class="p">(</span><span class="n">walking_speed_mps</span><span class="o">=</span><span class="n">Spread</span><span class="p">(</span><span class="mf">1.2</span><span class="p">,</span> <span class="mf">0.2</span><span class="p">))</span>
 </code></pre></div>
 <p>A field set for a backend that cannot honour it fails the run before anything is
 spawned, naming the backends it can be used with — a run that asked for drivers
@@ -2601,11 +2609,10 @@ time, would test something other than what it says:</p>
 <a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>traffic.vehicles.reaction_time_s can only be used with the 'sumo' backend.
 <a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>Leave the field unset (null) or select a backend that supports it.
 </code></pre></div>
-<p>The TrafficManager sets the speed and the gap globally when the run is
-prepared (a speed set on one vehicle, a background vehicle's or a
-<code>SetSpeedAction</code>'s, wins over it) and the rest on each vehicle as it goes on
-autopilot, the scenario's own included. SUMO sets them on each vehicle it
-drives as it departs, and hands the shared ones to the TrafficManager driving
+<p>The TrafficManager sets each vehicle's draws as the vehicle is first put on
+autopilot, the scenario's own included (a speed set on one vehicle, a
+background vehicle's or a <code>SetSpeedAction</code>'s, wins over its speed). SUMO sets
+them on each vehicle it drives as it departs, and hands the shared ones to the TrafficManager driving
 the scenario's vehicles under <code>scenario_vehicles=traffic_manager</code>. The
 visibility is one of them: see <strong>Visibility</strong> under
 <a href="#the-sumo-backend">The SUMO backend</a>.</p>
@@ -3171,7 +3178,7 @@ CARLA co-simulation; its adversarial behaviour generation is left to scenarios.<
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 21, 2026 12:57:38 UTC"><span class="timeago" datetime="2026-10-21T12:57:38+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 21, 2026 12:57:38 UTC">2026-10-21</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 21, 2026 18:48:04 UTC"><span class="timeago" datetime="2026-10-21T18:48:04+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 21, 2026 18:48:04 UTC">2026-10-21</span>
   </span>
 
     
