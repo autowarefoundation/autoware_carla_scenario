@@ -1131,7 +1131,8 @@ cannot express is refused at its line, with what to write instead.
 | --- | --- | --- |
 | `class MyError(Exception): ...` | the same with `pass` for `...` | |
 | `{**a, "k": v, **b}` | `(a \| {"k": v} \| b)`; `{**a}` is `dict(a)` | the values of the parts have other types (`Dict[str, int]` and `Dict[str, str]`) |
-| `"{:>5}\|{a}".format(1, a=x)` on a string literal | the f-string `f"{1:>5}\|{x}"` (a complex argument is bound once by a lambda) | `*args` / `**kwargs`, a field inside a format spec (`{:>{}}`), a missing argument, mixed auto and manual numbering, a template that is not a literal (write an f-string) |
+| `"{:>5}\|{a}".format(1, a=x)` on a string literal | the f-string `f"{1:>5}\|{x}"` (a complex argument is bound once by a lambda) | `*args` / `**kwargs`, a field inside a format spec (`{:>{}}`: write the f-string, which is rewritten), a missing argument, mixed auto and manual numbering, a template that is not a literal (write an f-string) |
+| `f"{x:+.2f}"`, `f"{n:>{w}d}"`, a spec Codon's f-string parser does not know | the value's own `__format__`, the f-string a `+` of its parts: `(x).__format__("+.2f")`, `(n).__format__(">" + str(w) + "d")`. A nested field is `str(w)` (`repr(w)` for `!r`); the result is a `str`, as before. `"{:+.2f}".format(x)` is rewritten to the f-string first, so it gets the same | a brace or a nested f-string inside an expression of the f-string (below); `!a` together with a rewritten spec |
 | `zip(a, b, strict=True)` | `zip(a, b)`: the check types the loop, it does not run it | |
 | `sorted(xs)`, `xs.sort()`, `min` / `max` of a class that defines `__lt__` only | the class gets `__gt__` (`other < self`) and `__ge__` (`not self < other`), which Codon's sort calls | the class defines no ordering (use `@dataclass(order=True)` or `key=`) |
 | `@functools.total_ordering` | the decorator and its import are dropped, and the class gets the comparisons it would add from its `__lt__`, `__le__`, `__gt__` or `__ge__` (and `==`, or identity without `__eq__`) | the class is not at module level, or defines none of the four |
@@ -1148,6 +1149,26 @@ Notes:
   where you pass the captured value.
 - Codon's f-strings have no `{{` / `}}`: a literal brace becomes a string
   joined with `+`.
+- **F-string format specs (#434).** Codon's parser takes a fill and align,
+  `#`, `0`, a width, `,` / `_`, a precision and a type (`f"{x:>8.3f}"`,
+  `f"{n:#010x}"`, `f"{n:,}"`, `f"{x!r:^10}"`, `f"{x=:.2f}"`) as they are. It
+  has no sign (`+`, space, `-`), no field inside the spec (`{x:>{w}}`), and
+  it refuses a spec it does not know (`{x:q}`). Those fields are rewritten
+  as above; the other fields of the same f-string stay f-string fields. The
+  rewrite calls `__format__` on `int`, `float`, `str` and a class that
+  defines it: a `bool` or a class without `__format__` has none in Codon (the
+  error is hinted: `int(flag)`). The spec is read at run time, so a spec
+  Python rejects (`{x:q}` on a float, a sign on a `str`) compiles in the
+  check, which does not run; Python raises its `ValueError` when the scenario
+  runs. Only the checked copy changes.
+- **A brace or a nested f-string inside an f-string expression is refused**, at the
+  line of the f-string: a dict or set display or comprehension
+  (`f"{len({1, 2})}"`), a string holding `{` or `}` (`f"{'{}'.format(x)}"`)
+  and an f-string inside an f-string. Codon's parser ends the field there
+  and reports a position that is no line of your file. Bind the value to a
+  local first (`label = "{:>3}".format(x)`, then `f"{label}"`).
+  A syntax error Codon still reports inside an f-string field is shown at
+  the line of the f-string that has it, not at a line before the file.
 
 ### The names of `typing` a scenario may import
 
@@ -2808,9 +2829,6 @@ What Codon 0.19 needs that Python does not, beyond
   calls them under an `isinstance` test on its parameter's own class, which
   Codon decides as true, and hands anything else (a test double) to
   `register_entity`, so at run time it is registered as before.
-- **No sign in an f-string format spec**: Codon's parser rejects
-  `f"{x:+.1f}"`. Format the value first (`x.__format__("+.1f")`) and put the
-  string in the f-string.
 - **`carla.TrafficLightState` is a value in the check**, not a type: its
   members are ints, as `get_state()` returns. The check reads an annotation
   naming one of typesafe_carla's integer enumerations
