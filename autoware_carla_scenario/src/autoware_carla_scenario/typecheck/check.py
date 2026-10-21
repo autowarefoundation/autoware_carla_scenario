@@ -1155,13 +1155,59 @@ def _original_line(origin: list[int] | None, line: int) -> int:
     return line - len(origin) + max(origin)
 
 
+_UNEXPECTED_TOKEN = re.compile(r"unexpected '(?P<token>[^']+)'")
+
+
+def _fstring_line(
+    text: str, origin: list[int] | None, column: int | None, message: str
+) -> int | None:
+    """The line of the original of the f-string Codon's parser failed on.
+
+    Codon parses an f-string field on its own and reports a syntax error in
+    it at the line *within the field* (1), so the line comes out before the
+    file's first one; the column is within the field's text
+    (``{x:+.2f}``).  The f-strings of the file are searched for the field
+    whose character at that column is the unexpected token, else the first
+    field with a format spec; ``None`` if the file holds none.
+    """
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return None
+    token = _UNEXPECTED_TOKEN.search(message)
+    fields: list[tuple[int, str]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.JoinedStr):
+            for value in node.values:
+                if isinstance(value, ast.FormattedValue) and value.format_spec:
+                    inner = value.format_spec
+                    spec = "".join(
+                        str(v.value) if isinstance(v, ast.Constant) else "{}"
+                        for v in (
+                            inner.values if isinstance(inner, ast.JoinedStr) else []
+                        )
+                    )
+                    shown = f"{{{ast.unparse(value.value)}:{spec}}}"
+                    fields.append((node.lineno, shown))
+    fields.sort()
+    if not fields:
+        return None
+    if token is not None and column is not None:
+        for line, shown in fields:
+            if column < len(shown) and shown[column] == token["token"]:
+                return _original_line(origin, line)
+    return _original_line(origin, fields[0][0])
+
+
 def _parse_output(output: str, ws: _Workspace) -> list[Diagnostic]:
     """Codon's errors, each located at its innermost frame in the scenario's files."""
     by_basename: dict[str, list[str]] = {}
     for rel in ws.files:
         by_basename.setdefault(Path(rel).name, []).append(rel)
 
-    def locate(file: str, line: int) -> tuple[str, int, bool, str | None] | None:
+    def locate(
+        file: str, line: int, column: int | None = None, message: str = ""
+    ) -> tuple[str, int, bool, str | None] | None:
         """(path to show, line, is the scenario's own file, the appended call)."""
         if file == DRIVER_MODULE:
             key = ws.driver.config_lines.get(line)
@@ -1181,7 +1227,19 @@ def _parse_output(output: str, ws: _Workspace) -> list[Diagnostic]:
             if origin is not None:
                 return (ws.files[rel], origin, True, note)
             return (note, 0, False, None)
-        return (ws.files[rel], _original_line(ws.origins.get(rel), line), True, None)
+        original = _original_line(ws.origins.get(rel), line)
+        if (
+            original < 1
+            and line <= _PRELUDE_LINES
+            and message.startswith("syntax error")
+        ):
+            # Codon's position inside an f-string field: not a line of the file.
+            found = _fstring_line(
+                (ws.root / rel).read_text(), ws.origins.get(rel), column, message
+            )
+            if found is not None:
+                original = found
+        return (ws.files[rel], original, True, None)
 
     errors: list[tuple[str, list[tuple[str, int, int | None, str]]]] = []
     for raw in output.splitlines():
@@ -1211,7 +1269,9 @@ def _parse_output(output: str, ws: _Workspace) -> list[Diagnostic]:
 
     diagnostics: list[Diagnostic] = []
     for message, frames in errors:
-        located = [(f, locate(f[0], f[1])) if f[0] else (f, None) for f in frames]
+        located = [
+            (f, locate(f[0], f[1], f[2], f[3])) if f[0] else (f, None) for f in frames
+        ]
         pf, primary = next(
             ((f, loc) for f, loc in located if loc and loc[2]), None
         ) or next(((f, loc) for f, loc in located if loc), (None, None))

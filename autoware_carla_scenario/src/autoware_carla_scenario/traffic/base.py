@@ -48,11 +48,21 @@ from typing import (
 )
 
 from .context import TrafficContext
+from .parameters import (
+    PEDESTRIAN_PARAMETER_BACKENDS,
+    VEHICLE_PARAMETER_BACKENDS,
+    PedestrianParameters,
+    VehicleParameters,
+)
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
 
 logger = logging.getLogger(__name__)
+
+#: The parameters of a backend that was given none: every field unset.
+_NO_VEHICLE_PARAMETERS = VehicleParameters()
+_NO_PEDESTRIAN_PARAMETERS = PedestrianParameters()
 
 __all__ = [
     "LaneChangeDirection",
@@ -337,6 +347,83 @@ class TrafficBackend:
     name: ClassVar[str] = "unnamed"
     #: Whether :meth:`close_lane` has said this backend cannot close a lane.
     _warned_lane_closure: bool = False
+    #: What :meth:`set_vehicle_parameters` was given; ``None``: every default.
+    _vehicle_parameters: Optional[VehicleParameters] = None
+    #: What :meth:`set_pedestrian_parameters` was given; ``None``: every default.
+    _pedestrian_parameters: Optional[PedestrianParameters] = None
+
+    # ------------------------------------------------------------------
+    # Parameters
+    # ------------------------------------------------------------------
+
+    def supported_vehicle_parameters(self) -> set[str]:
+        """The :class:`~autoware_carla_scenario.traffic.parameters.VehicleParameters`
+        fields this backend honours.
+
+        What :data:`~autoware_carla_scenario.traffic.parameters.VEHICLE_PARAMETER_BACKENDS`
+        says of this backend's :attr:`name`: none for a backend it does not
+        name, which refuses every one set rather than run as if it had.  A
+        backend from another package overrides this with the fields it applies.
+        """
+        return {
+            field
+            for field, backends in VEHICLE_PARAMETER_BACKENDS.items()
+            if self.name in backends
+        }
+
+    def supported_pedestrian_parameters(self) -> set[str]:
+        """The :class:`~autoware_carla_scenario.traffic.parameters.PedestrianParameters`
+        fields this backend honours, as :meth:`supported_vehicle_parameters`
+        (:data:`~autoware_carla_scenario.traffic.parameters.PEDESTRIAN_PARAMETER_BACKENDS`).
+        """
+        return {
+            field
+            for field, backends in PEDESTRIAN_PARAMETER_BACKENDS.items()
+            if self.name in backends
+        }
+
+    def set_vehicle_parameters(self, parameters: VehicleParameters) -> None:
+        """Drive the vehicles with *parameters* from the next :meth:`prepare` on.
+
+        :func:`~autoware_carla_scenario.traffic.registry.build_backend` calls
+        this with the ``traffic.vehicles`` node; a backend built in Python
+        takes them in its constructor or here.
+
+        Raises:
+            TrafficParameterError: If a field is set that this backend does not
+                support (:meth:`supported_vehicle_parameters`), naming the
+                backends that do.  Raised before the run, as :meth:`prepare`
+                refuses.
+        """
+        parameters.check_supported(self.name, self.supported_vehicle_parameters())
+        self._vehicle_parameters = parameters
+
+    def set_pedestrian_parameters(self, parameters: PedestrianParameters) -> None:
+        """Have the pedestrians behave as *parameters* say, from the next
+        :meth:`prepare` on (the ``traffic.pedestrians`` node).
+
+        Raises:
+            TrafficParameterError: As :meth:`set_vehicle_parameters`, for
+                :meth:`supported_pedestrian_parameters`.
+        """
+        parameters.check_supported(self.name, self.supported_pedestrian_parameters())
+        self._pedestrian_parameters = parameters
+
+    @property
+    def vehicle_parameters(self) -> VehicleParameters:
+        """The parameters this backend drives vehicles with (every field
+        ``None`` when none were set)."""
+        if self._vehicle_parameters is None:
+            return _NO_VEHICLE_PARAMETERS
+        return self._vehicle_parameters
+
+    @property
+    def pedestrian_parameters(self) -> PedestrianParameters:
+        """The parameters of this backend's pedestrians (every field ``None``
+        when none were set)."""
+        if self._pedestrian_parameters is None:
+            return _NO_PEDESTRIAN_PARAMETERS
+        return self._pedestrian_parameters
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -411,9 +498,17 @@ class TrafficBackend:
         """Return what drove this run, for the result record.
 
         Subclasses add their seed, their process version, whatever makes a run
-        reproducible from its record alone.
+        reproducible from its record alone.  The parameters that were set
+        are there under ``vehicles`` and ``pedestrians``.
         """
-        return {"backend": self.name}
+        out: dict[str, Any] = {"backend": self.name}
+        vehicles = self.vehicle_parameters.describe()
+        if vehicles:
+            out["vehicles"] = vehicles
+        pedestrians = self.pedestrian_parameters.describe()
+        if pedestrians:
+            out["pedestrians"] = pedestrians
+        return out
 
     # ------------------------------------------------------------------
     # Manoeuvres -- the intents entities delegate here

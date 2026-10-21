@@ -60,11 +60,13 @@ from ..driver.observation import (
 )
 from carla_driver_interface.driver import TurnIndicator
 from carla_driver_interface.protocol import LidarSweep, pack_lidar_sweep
+from ..rerun_lidar import active_recorder
 from ._policy_warmup import PolicyWarmup
 from .bridged_ego import BridgeHandshake
 from .externally_driven import ExternallyDrivenEgo
 
 if TYPE_CHECKING:
+    import numpy as np
     import typesafe_carla.carla as carla
 
     from ..autoware_bridge.base import AutowareBridge, AutowareBridgeConfig
@@ -72,6 +74,7 @@ if TYPE_CHECKING:
     from ..coordinate import CarlaWorldPose, GroundProjectionConfig, Lanelet2Pose
 
     from ..sensor.carla_camera import CarlaCameraSensor
+    from ..rerun_lidar import LidarRecorder
     from ..sensor.carla_lidar import CarlaLidarSensor
 
 
@@ -158,6 +161,8 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
         self._cameras: List[Tuple[str, "CarlaCameraSensor"]] = []
         #: ``(logical_id, sensor, mount in the rig frame)`` per LiDAR.
         self._lidars: List[Tuple[str, "CarlaLidarSensor", Pose]] = []
+        #: The frame of the sweep last written into the LiDAR recording, by LiDAR.
+        self._recorded_lidar: Dict[str, int] = {}
         self._world: Optional["carla.World"] = None
         self._plan: Trajectory = Trajectory.empty()
         #: The plan as debug markers, built once per plan.
@@ -482,31 +487,57 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
             lanelet2_path=self._config.lanelet2_path,
         )
 
-    def _lidar_sweeps(self) -> List[LidarSweep]:
+    def _lidar_sweeps(self, pose: Optional[Pose] = None) -> List[LidarSweep]:
         """Every LiDAR's newest sweep, in the rig frame, stamped with when it was taken.
 
         A LiDAR sweeps once a policy step, which need not be this very tick: a
-        sweep from an earlier tick carries that tick's time.
+        sweep from an earlier tick carries that tick's time.  With *pose*, the
+        ego's in the local frame, a run recording its LiDARs
+        (``rerun.lidar``) is handed each new sweep too.
         """
         if not self._lidars or self._world is None:
             return []
         frame = int(self._world.get_snapshot().frame)
         tick_us = int(round(_FIXED_DELTA_S * _US_PER_S))
+        recorder = active_recorder() if pose is not None else None
         sweeps = []
         for logical_id, lidar, mount in self._lidars:
             sweep = lidar.latest_sweep(frame)
             if sweep is None:
                 continue
             age_ticks = max(frame - sweep[0], 0)
+            points = lidar_points_to_rig(sweep[1], mount)
             sweeps.append(
                 pack_lidar_sweep(
                     logical_id,
                     self._sim_time_us - age_ticks * tick_us,
-                    lidar_points_to_rig(sweep[1], mount),
+                    points,
                     mount.to_proto(),
                 )
             )
+            if recorder is not None and pose is not None:
+                self._record_lidar(recorder, logical_id, sweep[0], points, pose)
         return sweeps
+
+    def _record_lidar(
+        self,
+        recorder: "LidarRecorder",
+        logical_id: str,
+        frame: int,
+        points: "np.ndarray[tuple[int, int], np.dtype[np.float32]]",
+        pose: Pose,
+    ) -> None:
+        """Write a sweep into the run's LiDAR recording, once (a sweep is read
+        again on the ticks before the next)."""
+        if self._recorded_lidar.get(logical_id) == frame:
+            return
+        self._recorded_lidar[logical_id] = frame
+        try:
+            recorder.log_sweep(
+                logical_id, frame, points, pose.rotation_matrix, pose.position
+            )
+        except Exception:  # noqa: BLE001 - a lost sweep must not stop the run
+            logger.exception("recording LiDAR %s's sweep failed", logical_id)
 
     def _ego_observation(self, actor: "carla.Actor") -> EgoObservation:
         """Return the ego's state at the current simulation time."""
@@ -635,7 +666,9 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
         if self._renderer is None:
             return b""
         return self._renderer.build(
-            self._sim_time_us, observation.pose, lidar=self._lidar_sweeps()
+            self._sim_time_us,
+            observation.pose,
+            lidar=self._lidar_sweeps(observation.pose),
         )
 
     def _submit_camera_frames(self) -> None:

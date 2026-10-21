@@ -102,7 +102,7 @@ def get_backend_factory(name: str):
     raise NotImplementedError()
 
 
-def build_backend(name: str, options = None):
+def build_backend(name: str, options = None, vehicles = None, pedestrians = None):
     raise NotImplementedError()
 
 

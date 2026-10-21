@@ -2467,6 +2467,84 @@ def test_str_format_on_something_else_is_left_alone() -> None:
     assert python_rewrite_refusals(text) == []
 
 
+@pytest.mark.parametrize(
+    ("field", "expected"),
+    [
+        ('f"{x:+.2f}"', '((x).__format__("+.2f"))'),
+        ('f"{x: .2f}|{n:-d}"', '((x).__format__(" .2f") + "|" + (n).__format__("-d"))'),
+        ('f"{x:^+10.2f}"', '((x).__format__("^+10.2f"))'),
+        ('f"{x:>{w}.2f}"', '((x).__format__(">" + str(w) + ".2f"))'),
+        ('f"{n:{w}d}"', '((n).__format__(str(w) + "d"))'),
+        ('f"{s!r:{w}}"', "(repr(s).__format__(str(w)))"),
+        ('f"{s!s:>{w!r}}"', '(str(s).__format__(">" + repr(w)))'),
+        ('f"{x:{w:+d}}"', '((x).__format__((w).__format__("+d")))'),
+        ('f"{x:q}"', '((x).__format__("q"))'),
+        ('f"{x=:+.2f}"', '("x=" + (x).__format__("+.2f"))'),
+        ('f"a {n} {x:+.1f} b"', '(f"a {n} " + (x).__format__("+.1f") + " b")'),
+        ('f"{{{x:+d}}}"', '("{" + (x).__format__("+d") + "}")'),
+        ('f"{f(a, b)[0]:+d}"', '((f(a, b)[0]).__format__("+d"))'),
+        # ast.unparse spells a lambda "lambda : 1" before Python 3.11.
+        (
+            'f"{(lambda: 1)():+d}"',
+            f'((({ast.unparse(ast.parse("lambda: 1", mode="eval").body)})())'
+            '.__format__("+d"))',
+        ),
+    ],
+)
+def test_an_fstring_spec_codon_cannot_parse_becomes_a_format_call(
+    field: str, expected: str
+) -> None:
+    assert _rewritten(f"r = {field}\n") == f"r = {expected}\n"
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        'f"{x:.2f}|{x:e}|{x:g}|{x:.1%}|{x:010.3f}|{n:#x}|{n:08b}|{n:,}|{n:_x}"',
+        'f"{n:>8}|{n:<8}|{n:^8}|{n:*^8}|{s!r:>8}|{s!s:^6}|{x=}|{x=:.2f}"',
+        'f"{x}{y!r}"',
+        "f\"{d['k']:>5}\"",
+    ],
+)
+def test_an_fstring_codon_parses_is_left_alone(field: str) -> None:
+    assert _rewritten(f"r = {field}\n") == f"r = {field}\n"
+
+
+def test_a_rewritten_fstring_keeps_its_lines() -> None:
+    source = 'r = f"""a\n{x:+.2f}\nb"""\nz = 1\nt = (f"{x:+d}"\n     f"{y}")\n'
+    text, _ = python_rewrites(source)
+    assert text.count("\n") == source.count("\n")
+    assert "\nz = 1\n" in text
+    assert '(x).__format__("+d")' in text
+
+
+def test_str_format_with_a_sign_composes_with_the_fstring_rewrite() -> None:
+    assert _rewritten('s = "{:+.2f}".format(x)\n') == ('s = ((x).__format__("+.2f"))\n')
+    text = _rewritten('s = "{:+.2f}|{!r:>5}".format(f(x), y)\n')
+    assert ".format(" not in text and '__format__("+.2f")' in text
+    assert python_rewrite_refusals('s = "{:+.2f}".format(x)\n') == []
+
+
+@pytest.mark.parametrize(
+    ("field", "hint"),
+    [
+        ("f\"{'{}'.format(x)}\"", "a brace in an expression"),
+        ("f\"{'{:>3}'.format(x):+d}\"", "a brace in an expression"),
+        ('f"{len({1, 2})}"', "a brace in an expression"),
+        ('f"{ {k: 1 for k in a}[1] }"', "a brace in an expression"),
+        ('f"{ {**a}[1] }"', "a brace in an expression"),
+        ("f\"{f'{x}'}\"", "f-string inside an f-string"),
+        ('f"{x!a:+d}"', "!a together with a format spec"),
+    ],
+)
+def test_an_fstring_with_a_brace_in_an_expression_is_refused(
+    field: str, hint: str
+) -> None:
+    refused = python_rewrite_refusals(f"x = 1\nr = {field}\n")
+    assert [line for line, _ in refused] == [2]
+    assert hint in refused[0][1]
+
+
 def test_zip_strict_is_dropped() -> None:
     assert _rewritten("zip(a, b, strict=True)\n") == "zip(a, b)\n"
     assert _rewritten("zip(strict=False)\n") == "zip()\n"

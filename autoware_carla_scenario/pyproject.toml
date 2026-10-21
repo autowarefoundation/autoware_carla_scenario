@@ -1,6 +1,6 @@
 [project]
 name = "autoware-carla-scenario"
-version = "15.34.0"
+version = "17.1.1"
 description = "CARLA scenario testing framework for Autoware"
 readme = "README.md"
 license = "Apache-2.0"
@@ -130,6 +130,13 @@ ros2 = [
 # ends. Its minor version follows the trajectory log's format.
 rerun = [
     "autoware-carla-scenario-rerun>=0.1,<0.2",
+]
+# The LiDAR sweeps of each run as a Rerun recording too (`rerun.lidar=true`):
+# the converter, and the Rerun SDK of the minor version its recordings are
+# written with, which writes the sweeps.
+rerun-lidar = [
+    "autoware-carla-scenario-rerun>=0.1,<0.2",
+    "rerun-sdk>=0.38.1,<0.39",
 ]
 # The Rerun viewer the recordings are opened with (`rerun X.rrd`): the
 # converter's own `viewer` extra, which pins the Rerun minor version its

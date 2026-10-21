@@ -173,7 +173,8 @@ NOT_MODELLED: dict[str, dict[str, str]] = {
         **_each(
             "NullTrafficBackend TrafficBackend TrafficBackendError "
             "TrafficBackendUnavailable TrafficConfig TrafficManagerBackend "
-            "TrafficManagerBackendConfig",
+            "TrafficManagerBackendConfig TrafficParameterError PedestrianParameters "
+            "VehicleParameters",
             _TRAFFIC_BACKEND,
         ),
         "load_openodd": _OPENODD,
@@ -251,14 +252,18 @@ NOT_MODELLED: dict[str, dict[str, str]] = {
         "logger": "the module's logger; a scenario logs with its own",
     },
     f"{_PACKAGE}.scenario_config": _each(
-        "TrafficConfig TrafficManagerBackendConfig", _TRAFFIC_BACKEND
+        "TrafficConfig TrafficManagerBackendConfig PedestrianParameters "
+        "VehicleParameters",
+        _TRAFFIC_BACKEND,
     ),
     f"{_PACKAGE}.traffic": {
         **_each(
             "NullTrafficBackend TrafficBackend TrafficBackendError "
             "TrafficBackendUnavailable TrafficConfig TrafficManagerBackend "
-            "TrafficManagerBackendConfig build_none build_sumo "
-            "build_traffic_manager register_builtin_backends",
+            "TrafficManagerBackendConfig TrafficParameterError VehicleParameters "
+            "PedestrianParameters VEHICLE_PARAMETER_BACKENDS "
+            "PEDESTRIAN_PARAMETER_BACKENDS build_none build_sumo build_traffic_manager "
+            "register_builtin_backends",
             _TRAFFIC_BACKEND,
         ),
         **_each(
@@ -530,12 +535,19 @@ NOT_MODELLED_MEMBERS: dict[str, dict[str, str]] = {
         "from_config": _FROM_MAPPING,
         "to_config": _AS_DICT,
     },
-    "RerunConverter": _members(
-        "close strict wait",
-        "waits for the conversions and reports them, which the runner's "
-        "caller (examples.run) does once the runs are over, not the checked "
-        "runner, which only submits each log",
-    ),
+    "RerunConverter": {
+        **_members(
+            "close strict wait",
+            "waits for the conversions and reports them, which the runner's "
+            "caller (examples.run) does once the runs are over, not the checked "
+            "runner, which only submits each log",
+        ),
+        "records_lidar": (
+            "whether rerun.lidar is set, which the converter's start_lidar "
+            "checks itself; the checked runner calls start_lidar and "
+            "stop_lidar whatever it is"
+        ),
+    },
     "RunEnvironment": _members(
         "by_name implementation lock machine packages pins platform python "
         "scenario_package summary to_dict",

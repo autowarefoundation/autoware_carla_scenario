@@ -48,10 +48,20 @@ was at the start of the step and given SUMO's speed as a constant velocity
 (``enable_constant_velocity``), which carries it to where SUMO is at the end of
 the step.  Height, pitch and roll stay CARLA's, so the car sits on CARLA's road.
 
-SUMO's own traffic sees only as far as the run's weather lets its drivers see
-(``follow_visibility``, :mod:`autoware_carla_scenario.visibility`): night,
-rain and fog hold each vehicle to the speed it can stop from within that
-distance.  The TrafficManager has no notion of sight, and only logs it.
+How SUMO's drivers behave is the run's
+:class:`~autoware_carla_scenario.traffic.parameters.VehicleParameters`
+(those :data:`~autoware_carla_scenario.traffic.parameters.VEHICLE_PARAMETER_BACKENDS`
+gives ``sumo``): each vehicle SUMO drives is given them as it
+departs, and the TrafficManager driving the scenario's vehicles is given the
+ones it shares.  How its pedestrians walk is the run's
+:class:`~autoware_carla_scenario.traffic.parameters.PedestrianParameters`:
+SUMO's default pedestrian type is defined with them, which every pedestrian
+of SUMO's own demand is.  SUMO's own traffic sees only as far as the run's weather lets
+its drivers see (``follow_visibility``, on by default,
+:mod:`autoware_carla_scenario.visibility`): night, rain and fog hold each
+vehicle to the speed it can stop from within that distance, worked out from
+its ``reaction_time_s`` and ``decel``.  The TrafficManager has no notion of
+sight, and only logs it.
 
 The CARLA coupling is one step behind SUMO, as in TeraSim: SUMO steps after
 the world has ticked, and its new state is applied to the actors for the next
@@ -83,6 +93,7 @@ from ..base import (
 )
 from ..config import TrafficManagerBackendConfig
 from ..fidelity import FidelityCandidate, MesoscopicConfig, plan_fidelity
+from ..parameters import PedestrianParameters, VehicleParameters
 from ..mesoscopic import MesoLink, MesoscopicTraffic
 from ..traffic_manager import TrafficManagerBackend
 from .config import SumoBackendConfig
@@ -119,6 +130,10 @@ TURN_SEARCH_EDGES: int = 8
 _SPEED_MODE_EXTERNAL = 0
 #: Lane-change mode bits of a vehicle SUMO does not control (none).
 _LANE_CHANGE_MODE_EXTERNAL = 0
+#: Lane-change mode bits of a vehicle that changes lane only where its route
+#: needs it: SUMO's default (1621) without the cooperative, speed-gain and
+#: keep-right changes.
+_LANE_CHANGE_MODE_STRATEGIC = 1537
 #: SUMO connection directions that count as each turn, by TurnDirection value.
 _TURNS = {"left": ("l", "L"), "right": ("r", "R"), "straight": ("s",)}
 #: How the run's own vehicles look in sumo-gui, apart from SUMO's traffic.
@@ -179,7 +194,26 @@ class SumoTrafficBackend(TrafficBackend):
 
     name: ClassVar[str] = "sumo"
 
-    def __init__(self, config: Optional[SumoBackendConfig] = None) -> None:
+    def __init__(
+        self,
+        config: Optional[SumoBackendConfig] = None,
+        *,
+        vehicles: Optional[VehicleParameters] = None,
+        pedestrians: Optional[PedestrianParameters] = None,
+    ) -> None:
+        """Create the backend.
+
+        Args:
+            config: Backend options; defaults are used when omitted.
+            vehicles: How SUMO's drivers behave; SUMO's defaults (and
+                ``follow_visibility``) when omitted.
+            pedestrians: How SUMO's pedestrians walk; SUMO's defaults when
+                omitted.
+
+        Raises:
+            TrafficParameterError: If *vehicles* or *pedestrians* sets a field
+                SUMO does not support.
+        """
         self._config = config or SumoBackendConfig()
         #: Drives the scenario's own vehicles with scenario_vehicles=traffic_manager.
         self._tm = TrafficManagerBackend(
@@ -270,6 +304,41 @@ class SumoTrafficBackend(TrafficBackend):
         #: SUMO id -> its maximum speed (m/s) before the visibility held it
         #: down, its deceleration (m/s²) and its tau (s): read once.
         self._max_speeds: dict[str, tuple[float, float, float]] = {}
+        #: The vehicles that departed in this step, read once per step.
+        self._departed: Optional[list[str]] = None
+        if vehicles is not None:
+            self.set_vehicle_parameters(vehicles)
+        if pedestrians is not None:
+            self.set_pedestrian_parameters(pedestrians)
+
+    def set_vehicle_parameters(self, parameters: VehicleParameters) -> None:
+        """Drive SUMO's vehicles with *parameters*, and the scenario's that
+        the TrafficManager drives with the ones it shares: SUMO's own (a
+        reaction time, a braking) have no TrafficManager counterpart, and the
+        scenario's vehicles under ``scenario_vehicles=traffic_manager`` drive
+        as they would under the ``traffic_manager`` backend."""
+        super().set_vehicle_parameters(parameters)
+        shared = parameters.restricted_to(self._tm.supported_vehicle_parameters())
+        self._tm.set_vehicle_parameters(shared)
+        dropped = sorted(set(parameters.set_fields()) - set(shared.set_fields()))
+        if dropped and self._tm_drives_scenario:
+            logger.info(
+                "SUMO: %s apply to SUMO's vehicles only; the scenario's, which "
+                "the TrafficManager drives, do without them",
+                ", ".join(dropped),
+            )
+
+    def _departed_ids(self) -> list[str]:
+        """The vehicles that departed in the step SUMO just made."""
+        if self._departed is None:
+            self._departed = list(self._traci.simulation.getDepartedIDList())
+        return self._departed
+
+    @property
+    def _follows_visibility(self) -> bool:
+        """Whether SUMO's own traffic is held to what its drivers see."""
+        follow = self.vehicle_parameters.follow_visibility
+        return True if follow is None else follow
 
     @property
     def port(self) -> int:
@@ -366,6 +435,11 @@ class SumoTrafficBackend(TrafficBackend):
             )
         if self._config.route_path:
             routes.append(Path(self._config.route_path).expanduser())
+        pedestrian_type = self._pedestrian_type(out)
+        if pedestrian_type is not None:
+            # Before the demand: SUMO's default type is redefined only before
+            # anything uses it.
+            cmd += ["-a", str(pedestrian_type)]
         if routes:
             cmd += ["-r", ",".join(str(r) for r in routes)]
         if self._config.fcd_output:
@@ -447,6 +521,8 @@ class SumoTrafficBackend(TrafficBackend):
             if self._config.traffic_light_authority == "carla":
                 self._signals_to_sumo()
             self._traci.simulationStep()
+            self._departed = None
+            self._apply_parameters()
             self._follow_visibility(world)
             if self._clock_log is not None:
                 stamp = world.get_snapshot().timestamp
@@ -562,7 +638,7 @@ class SumoTrafficBackend(TrafficBackend):
 
     def describe(self) -> dict[str, Any]:
         """The backend, its seed, network and demand, for the result record."""
-        out: dict[str, Any] = {"backend": self.name}
+        out = super().describe()
         if self._context is not None:
             out["random_seed"] = self._context.random_seed
         if self._network is not None:
@@ -589,7 +665,7 @@ class SumoTrafficBackend(TrafficBackend):
                 "to_mesoscopic": self._level_changes[0],
                 "to_microscopic": self._level_changes[1],
             }
-        out["follow_visibility"] = self._config.follow_visibility
+        out["follow_visibility"] = self._follows_visibility
         out["visibility_m"] = self._visibility
         return out
 
@@ -2203,6 +2279,85 @@ class SumoTrafficBackend(TrafficBackend):
             walker.apply_control(control)
 
     # ------------------------------------------------------------------
+    # Internals: how drivers drive, and pedestrians walk
+    # ------------------------------------------------------------------
+
+    def _pedestrian_type(self, out: Path) -> Optional[Path]:
+        """Write SUMO's default pedestrian type with the run's pedestrian
+        parameters into *out*, or ``None`` when none are set.
+
+        A type, not each person: SUMO reads the junction model's
+        ``jmDriveAfterRedTime`` off the type alone, and TraCI cannot set it on
+        a person.  SUMO's own pedestrians (``pedestrians``, and a
+        ``route_path`` demand's that names no type of its own) are of this one.
+        """
+        parameters = self.pedestrian_parameters
+        if not parameters.set_fields():
+            return None
+        attributes = {
+            "maxSpeed": parameters.walking_speed_mps,
+            "speedDev": parameters.speed_deviation,
+            "minGap": parameters.min_gap_m,
+            "jmDriveAfterRedTime": parameters.red_light_violation_s,
+        }
+        written = " ".join(
+            f'{key}="{value:g}"'
+            for key, value in attributes.items()
+            if value is not None
+        )
+        path = out / "pedestrian_type.add.xml"
+        path.write_text(
+            "<additional>\n"
+            f'    <vType id="DEFAULT_PEDTYPE" vClass="pedestrian" {written}/>\n'
+            "</additional>\n"
+        )
+        return path
+
+    def _apply_parameters(self) -> None:
+        """Give each vehicle that has just departed, and that SUMO drives,
+        the run's parameters.
+
+        On the vehicle, not its type: a demand file (``route_path``) brings
+        types of its own, and its vehicles are SUMO's to drive all the same.
+        Before :meth:`_follow_visibility` reads the vehicle's ``decel`` and
+        ``tau``, so the sight speed is worked out from the parameters'.
+        """
+        parameters = self.vehicle_parameters
+        if not parameters.set_fields():
+            return
+        tc = self._traci
+        vehicle = tc.vehicle
+        for sumo_id in self._departed_ids():
+            if sumo_id in self._external:
+                continue  # CARLA's side drives it; SUMO only places it
+            try:
+                if parameters.speed_factor is not None:
+                    # Scaled, not replaced: SUMO drew this vehicle's factor
+                    # around 1.0, and that spread is its drivers'.
+                    vehicle.setSpeedFactor(
+                        sumo_id,
+                        vehicle.getSpeedFactor(sumo_id) * parameters.speed_factor,
+                    )
+                if parameters.min_gap_m is not None:
+                    vehicle.setMinGap(sumo_id, parameters.min_gap_m)
+                if parameters.lane_changes is False:
+                    vehicle.setLaneChangeMode(sumo_id, _LANE_CHANGE_MODE_STRATEGIC)
+                if parameters.accel is not None:
+                    vehicle.setAccel(sumo_id, parameters.accel)
+                if parameters.decel is not None:
+                    vehicle.setDecel(sumo_id, parameters.decel)
+                if parameters.reaction_time_s is not None:
+                    vehicle.setTau(sumo_id, parameters.reaction_time_s)
+                if parameters.imperfection is not None:
+                    vehicle.setImperfection(sumo_id, parameters.imperfection)
+            except Exception as exc:  # noqa: BLE001 - one vehicle must not end the run
+                logger.warning(
+                    "SUMO could not set the traffic parameters of %s: %s",
+                    sumo_id,
+                    exc,
+                )
+
+    # ------------------------------------------------------------------
     # Internals: what drivers see
     # ------------------------------------------------------------------
 
@@ -2210,7 +2365,7 @@ class SumoTrafficBackend(TrafficBackend):
         """Hold SUMO's own traffic to the speed it stops from within what its
         drivers see: every vehicle when the visibility changes, and the ones
         that have just departed otherwise."""
-        if not self._config.follow_visibility:
+        if not self._follows_visibility:
             return
         seen = world_visibility(episode_of(world))
         if seen is None and self._visibility is None:
@@ -2220,7 +2375,7 @@ class SumoTrafficBackend(TrafficBackend):
             for sumo_id in tc.simulation.getArrivedIDList():
                 self._max_speeds.pop(sumo_id, None)
         if seen == self._visibility:
-            ids = list(tc.simulation.getDepartedIDList())
+            ids = self._departed_ids()
         elif seen is None:
             self._visibility = None
             logger.info("SUMO: drivers see as far as SUMO lets them again")
@@ -2246,10 +2401,16 @@ class SumoTrafficBackend(TrafficBackend):
             return
         held = self._max_speeds.get(sumo_id)
         if held is None:
+            # The parameters' when set: _apply_parameters gave them the vehicle.
+            parameters = self.vehicle_parameters
             held = self._max_speeds[sumo_id] = (
                 vehicle.getMaxSpeed(sumo_id),
-                vehicle.getDecel(sumo_id),
-                vehicle.getTau(sumo_id),
+                parameters.decel
+                if parameters.decel is not None
+                else vehicle.getDecel(sumo_id),
+                parameters.reaction_time_s
+                if parameters.reaction_time_s is not None
+                else vehicle.getTau(sumo_id),
             )
         own, decel, tau = held
         limit = sight_speed(seen, decel, tau)
@@ -2432,6 +2593,8 @@ class SumoTrafficBackend(TrafficBackend):
             if self._config.traffic_light_authority == "carla":
                 self._signals_to_sumo()
             tc.simulationStep()
+            self._departed = None
+            self._apply_parameters()
             self._follow_visibility(world)
             if self._meso is not None:
                 # Not the scenario's vehicles: they are held still for now.
