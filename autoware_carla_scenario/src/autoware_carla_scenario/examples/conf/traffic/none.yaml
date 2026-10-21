@@ -6,3 +6,30 @@ traffic:
   # an empty road.
   backend: none
   options: {}
+  # How the traffic drives, in the terms every backend shares
+  # (TrafficParameters, docs/traffic_backends.md). null: the backend's own
+  # default. A field this backend does not support is an error naming the
+  # backends that do.
+  parameters:
+    # Desired speed as a multiple of the speed limit (traffic_manager, sumo).
+    speed_factor: null
+    # Gap kept to the vehicle ahead when standing, m (traffic_manager, sumo).
+    min_gap_m: null
+    # Change lanes of their own accord (traffic_manager, sumo).
+    lane_changes: null
+    # Probabilities (0-1) of ignoring lights, signs, vehicles and
+    # walkers, and of a random lane change (traffic_manager only).
+    ignore_lights: null
+    ignore_signs: null
+    ignore_vehicles: null
+    ignore_walkers: null
+    random_lane_changes: null
+    # Acceleration and braking, m/s^2, reaction time, s, and driver
+    # imperfection, 0-1 (sumo only).
+    accel: null
+    decel: null
+    reaction_time_s: null
+    imperfection: null
+    # Hold the traffic to the speed it stops from within what its
+    # drivers see in the run's weather (sumo only; on by default there).
+    follow_visibility: null

@@ -7,6 +7,12 @@ Selecting one is a name::
 
     uv run scenario traffic.backend=none
 
+and how its traffic drives is :class:`~autoware_carla_scenario.traffic.parameters.TrafficParameters`,
+one type every backend reads, which refuses a field the selected backend
+cannot honour::
+
+    uv run scenario traffic=sumo traffic.parameters.reaction_time_s=1.5
+
 The seam has two halves: :class:`~autoware_carla_scenario.traffic.base.TrafficBackend`
 is what a traffic model must provide, and
 :class:`~autoware_carla_scenario.traffic.driven.BackendDriven` is what a vehicle
@@ -49,6 +55,7 @@ from .base import (
     TurningAtJunctions,
 )
 from .config import TrafficConfig, TrafficManagerBackendConfig
+from .parameters import PARAMETER_BACKENDS, TrafficParameterError, TrafficParameters
 from .driven import BackendDriven
 from .traffic_manager import TrafficManagerBackend
 from .registry import (
@@ -78,6 +85,9 @@ __all__ = [
     "TrafficContext",
     "TrafficManagerBackend",
     "TrafficManagerBackendConfig",
+    "TrafficParameterError",
+    "TrafficParameters",
+    "PARAMETER_BACKENDS",
     "TurnDirection",
     "build_traffic_manager",
     "build_none",

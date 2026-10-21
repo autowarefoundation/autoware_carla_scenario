@@ -117,6 +117,12 @@ class PedestrianConfig:
 class SumoBackendConfig:
     """Options of the ``sumo`` traffic backend.
 
+    How SUMO's drivers behave -- their speed, gap, reaction and braking, and
+    whether they follow the visibility -- is not here but in the parameters
+    every backend shares
+    (:class:`~autoware_carla_scenario.traffic.parameters.TrafficParameters`,
+    ``traffic.parameters``).
+
     Attributes:
         scenario_vehicles: What drives the scenario's own vehicles (its
             authored NPCs, and an ego with ``ego.entity=autopilot``).
@@ -159,16 +165,6 @@ class SumoBackendConfig:
             they stand, every step, so SUMO traffic sees them: a SUMO vehicle
             brakes for a pedestrian on its lane -- on a crossing or anywhere
             else on the road -- or changes lanes round it.
-        follow_visibility: Hold SUMO's own traffic (its ambient and background
-            vehicles) to the speed each can stop from within what its driver
-            sees, once the run's weather says how far that is
-            (:mod:`autoware_carla_scenario.visibility`, set by the
-            ``EnvironmentAction``): the reaction time is the vehicle's
-            ``tau`` and the braking its ``decel``, so 50 m of fog holds a
-            default car to about 62 km/h.  When the weather lifts, each gets
-            its own maximum speed back.  The scenario's own vehicles are left
-            to the scenario.  ``false`` ignores the visibility, as the
-            TrafficManager does.
         curve_lateral_acceleration: Lateral acceleration (m/s²) SUMO traffic is
             held to in bends when the world's OpenDRIVE is converted: roadgen
             cuts each edge at its bends and gives every piece, and every path
@@ -222,7 +218,6 @@ class SumoBackendConfig:
     traffic_light_authority: str = "carla"
     publish_walkers: bool = True
     pedestrian_crossings: bool = True
-    follow_visibility: bool = True
     curve_lateral_acceleration: Optional[float] = 3.0
     net_path: Optional[str] = None
     route_path: Optional[str] = None
@@ -268,6 +263,12 @@ class SumoBackendConfig:
         """Return a config built from a plain mapping (e.g. a Hydra node)."""
         from ...utils.config import checked_options  # noqa: PLC0415
 
+        if "follow_visibility" in mapping:
+            raise ValueError(
+                "traffic.options.follow_visibility has moved to "
+                "traffic.parameters.follow_visibility, with the other traffic "
+                "parameters every backend shares (TrafficParameters)"
+            )
         checked = checked_options(cls, mapping)
         if isinstance(checked.get("ambient"), Mapping):
             checked["ambient"] = AmbientTrafficConfig.from_mapping(checked["ambient"])

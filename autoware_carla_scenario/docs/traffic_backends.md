@@ -103,6 +103,73 @@ uv run scenario traffic.options.port=8101
 exported scenario packages still set — keeps deciding the port when
 `traffic.options.port` is left unset.
 
+## Traffic parameters
+
+How the traffic *drives* is not a backend's own option but one type every
+backend reads, `TrafficParameters`, under `traffic.parameters`. Every field is
+`null` by default, which leaves the backend's own default:
+
+```yaml
+traffic:
+  backend: sumo
+  parameters:
+    speed_factor: 0.9        # 10 % under the speed limit
+    min_gap_m: 3.0
+    reaction_time_s: 1.5
+    follow_visibility: true
+```
+
+```bash
+uv run scenario traffic=sumo traffic.parameters.reaction_time_s=1.5
+uv run scenario traffic.parameters.ignore_lights=0.1
+```
+
+| Field | Meaning | `traffic_manager` | `sumo` |
+| --- | --- | --- | --- |
+| `speed_factor` | Desired speed as a multiple of the limit | global speed difference | each vehicle's speed factor, scaled |
+| `min_gap_m` | Gap to the vehicle ahead when standing, m | distance to leading vehicle | `minGap` |
+| `lane_changes` | Change lanes of their own accord | `auto_lane_change` | lane-change mode (route changes kept) |
+| `ignore_lights` | Probability (0-1) of running a red light | ✓ | — |
+| `ignore_signs` | Probability (0-1) of ignoring a stop sign | ✓ | — |
+| `ignore_vehicles` | Probability (0-1) of ignoring vehicles | ✓ | — |
+| `ignore_walkers` | Probability (0-1) of ignoring pedestrians | ✓ | — |
+| `random_lane_changes` | Probability (0-1) of a lane change for no reason | ✓ | — |
+| `accel` | Acceleration, m/s² | — | `accel` |
+| `decel` | Braking, m/s² (also the visibility's) | — | `decel` |
+| `reaction_time_s` | Reaction time, s (also the visibility's) | — | `tau` |
+| `imperfection` | Driver imperfection, 0-1 | — | `sigma` |
+| `follow_visibility` | Slow to what the drivers see in the weather | — | ✓ (on by default) |
+
+A field set for a backend that cannot honour it fails the run before anything is
+spawned, naming the backends it can be used with — a run that asked for drivers
+who react in 1.5 s and silently got the TrafficManager's, which has no reaction
+time, would test something other than what it says:
+
+```text
+TrafficParameterError: The 'traffic_manager' traffic backend does not support
+traffic.parameters.reaction_time_s can only be used with the 'sumo' backend.
+Leave the field unset (null) or select a backend that supports it.
+```
+
+The TrafficManager sets the speed and the gap globally when the run is
+prepared (a speed set on one vehicle, a background vehicle's or a
+`SetSpeedAction`'s, wins over it) and the rest on each vehicle as it goes on
+autopilot, the scenario's own included. SUMO sets them on each vehicle it
+drives as it departs, and hands the shared ones to the TrafficManager driving
+the scenario's vehicles under `scenario_vehicles=traffic_manager`. The
+visibility is one of them: see **Visibility** under
+[The SUMO backend](#the-sumo-backend).
+
+A backend from another package supports none of them until it says so:
+
+```python
+class MySimulatorBackend(TrafficBackend):
+    def supported_parameters(self) -> set[str]:
+        return {"speed_factor", "min_gap_m"}
+```
+
+and reads them from `self.parameters` in `prepare()`.
+
 ## The lifecycle
 
 `ScenarioRunner` calls these at fixed points of a run, beside the ego entity's
@@ -282,6 +349,17 @@ A scenario run built in code takes the backend the same way it takes the ego:
 from autoware_carla_scenario import NullTrafficBackend, ScenarioQueue
 
 queue = ScenarioQueue(map_name="Town10HD_Opt", traffic_backend=NullTrafficBackend())
+```
+
+and its [parameters](#traffic-parameters) in the backend's constructor, or by
+name through the registry:
+
+```python
+from autoware_carla_scenario import TrafficManagerBackend, TrafficParameters
+from autoware_carla_scenario.traffic import build_backend
+
+backend = TrafficManagerBackend(parameters=TrafficParameters(speed_factor=0.8))
+backend = build_backend("sumo", {}, TrafficParameters(reaction_time_s=1.5))
 ```
 
 `ScenarioQueue` passes it to the `ScenarioRunner` it builds, and one backend
@@ -486,7 +564,7 @@ How a CARLA vehicle follows its SUMO vehicle is `vehicle_control`:
   speed only when it is not the one the car already has (a standing car, in a
   queue at a light say, is given its zero once).
 
-**Visibility** (`follow_visibility`, on by default): SUMO's traffic sees only
+**Visibility** (`traffic.parameters.follow_visibility`, on by default): SUMO's traffic sees only
 as far as the run's weather lets a driver see. The TrafficManager has no
 notion of sight -- its vehicles know where every actor is whatever the fog --
 so night, rain and fog change nothing about how it drives: the
@@ -498,12 +576,14 @@ drivers see in the weather it leaves
 and the backend holds each of SUMO's own vehicles (ambient and background)
 to the speed it stops from within that distance: `v * tau + v² / (2 *
 decel)`, with the vehicle's own `tau` as its reaction time and its `decel` as
-its braking -- a default car in 50 m of fog drives at most about 62 km/h, at
+its braking (`traffic.parameters.reaction_time_s` and `decel` when set) -- a default car in 50 m of fog drives at most about 62 km/h, at
 night under a dipped beam (50 m) the same. A vehicle that departs later is
 held as it departs, and when the weather lifts each gets its own maximum speed
 back. The scenario's own vehicles, driven by SUMO or not, are left to the
-scenario. `follow_visibility=false` ignores the visibility, as the
-TrafficManager does.
+scenario. `traffic.parameters.follow_visibility=false` ignores the visibility,
+as the TrafficManager does; set for the `traffic_manager` backend, the field is
+refused. It used to be `traffic.options.follow_visibility`, which is now an
+error pointing here.
 
 **Traffic lights** (`traffic_light_authority`): `carla` (default) gives SUMO's
 signals the states of CARLA's lights every step, so a scenario that sets the

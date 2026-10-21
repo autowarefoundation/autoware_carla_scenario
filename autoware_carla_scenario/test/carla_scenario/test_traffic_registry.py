@@ -185,3 +185,35 @@ class TestSelectingFromTheRealConfig:
 
     def test_a_group_selects_the_backend(self) -> None:
         assert isinstance(self._build(["traffic=none"]), NullTrafficBackend)
+
+    def test_the_traffic_parameters_reach_the_backend(self) -> None:
+        backend = self._build(
+            [
+                "traffic.parameters.speed_factor=0.8",
+                "traffic.parameters.ignore_lights=0.1",
+            ]
+        )
+        assert backend.parameters.speed_factor == 0.8
+        assert backend.parameters.ignore_lights == 0.1
+
+    def test_a_parameter_the_backend_cannot_honour_fails_the_run(self) -> None:
+        from autoware_carla_scenario.traffic import TrafficParameterError
+
+        with pytest.raises(
+            TrafficParameterError,
+            match="reaction_time_s can only be used with the 'sumo' backend",
+        ):
+            self._build(["traffic.parameters.reaction_time_s=1.5"])
+
+    def test_every_group_declares_every_parameter(self) -> None:
+        """So that `traffic.parameters.x=y` overrides work under struct mode."""
+        from hydra import compose, initialize_config_dir
+
+        from autoware_carla_scenario.examples import conf as conf_package
+        from autoware_carla_scenario.traffic import PARAMETER_BACKENDS
+
+        conf_dir = str(Path(conf_package.__file__).parent.resolve())
+        for group in ("traffic_manager", "sumo", "none"):
+            with initialize_config_dir(config_dir=conf_dir, version_base=None):
+                cfg = compose(config_name="config", overrides=[f"traffic={group}"])
+            assert set(cfg.traffic.parameters) == set(PARAMETER_BACKENDS), group
