@@ -1457,7 +1457,7 @@ To check one more module:
 ### What is checked of the framework
 
 Every module now has an entry other than `"not yet checked (#45)"`. 193 of
-the package's 285 modules (68%; about 46,850 of 83,700 lines) are `CHECKED`:
+the package's 285 modules (68%; about 46,900 of 83,800 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the conversions between
 Lanelet2, OpenDRIVE and CARLA world poses (`coordinate.transform`), the stop
 lines read off a Lanelet2 map (`utils.stop_line`, `coordinate.stop_line`)

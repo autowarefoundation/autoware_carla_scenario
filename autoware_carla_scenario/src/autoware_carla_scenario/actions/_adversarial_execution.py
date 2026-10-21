@@ -10,6 +10,11 @@ the backend (:meth:`~..traffic.driven.BackendDriven.resume_traffic`) still
 moving (``stop_at_end=False``) and rejoins traffic from there, as TeraSim's
 controller turns SUMO's checks back on; a pedestrian is left standing where
 the path ended.
+
+A traffic backend's background vehicle has no entity (#417): its actor is
+driven directly (:class:`_ActorFollow`), taken from the backend with
+:meth:`~..traffic.base.TrafficBackend.release_actor` and handed back with
+:meth:`~..traffic.base.TrafficBackend.resume_actor`.
 """
 
 from __future__ import annotations
@@ -24,6 +29,7 @@ from ..adversity.observation import Scene
 from ..conditions.base import BaseCondition
 from ..conditions.trajectory_time import TrajectoryTimeCondition
 from ..entity.registry import find_pedestrian_entity, find_vehicle_entity
+from ..traffic.base import TrafficBackend
 from ..trajectory.model import (
     MapPose,
     ReferenceContext,
@@ -57,6 +63,48 @@ def path_trajectory(name: str, path: list[PredictedState]) -> Trajectory:
     return Trajectory(name, vertices)
 
 
+class _ActorFollow(FollowTrajectoryAction):
+    """A follow action on a background vehicle's *actor*, which no entity
+    stands for: taken from *backend* when its run begins."""
+
+    _actor: "carla.Actor"
+    _backend: TrafficBackend
+
+    def __init__(
+        self,
+        name: str,
+        actor: "carla.Actor",
+        backend: TrafficBackend,
+        trajectory: Trajectory,
+        following_mode: TrajectoryFollowingMode,
+        label: str,
+    ) -> None:
+        super().__init__(
+            name,
+            trajectory,
+            time_reference=TrajectoryTiming(ReferenceContext.RELATIVE),
+            following_mode=following_mode,
+            timing=TickTiming.PRE_TICK,
+            label=label,
+            stop_at_end=False,
+        )
+        self._actor = actor
+        self._backend = backend
+
+    def _drive_target(self, world: "carla.World") -> None:
+        """Move the actor one tick; take it from its backend first."""
+        if self._resolved is None:
+            self._resolved = self._resolve(world)
+            if self._resolved is None:
+                return
+        if not self._begun:
+            self._begin(world, self._actor)
+            if not self._released:
+                self._backend.release_actor(world, self._actor)
+                self._released = True
+        self._advance(world, self._actor)
+
+
 class AdversarialExecution:
     """One planned command, driven on *entity_name* from its first tick.
 
@@ -65,11 +113,15 @@ class AdversarialExecution:
         path: The planned path, in the Lanelet2 map frame.
         following_mode: ``FOLLOW`` (default) or ``POSITION``.
         label: For the logs and the follow action's label.
+        actor: For a background vehicle no entity stands for, its actor...
+        backend: ...and the traffic backend that drives it otherwise.
     """
 
     entity_name: str
     _follow: FollowTrajectoryAction
     _handed_back: bool
+    _actor: Optional["carla.Actor"]
+    _backend: Optional[TrafficBackend]
 
     def __init__(
         self,
@@ -77,17 +129,31 @@ class AdversarialExecution:
         path: list[PredictedState],
         following_mode: TrajectoryFollowingMode = TrajectoryFollowingMode.FOLLOW,
         label: str = "adversity",
+        actor: Optional["carla.Actor"] = None,
+        backend: Optional[TrafficBackend] = None,
     ) -> None:
         self.entity_name = str(entity_name)
-        self._follow = FollowTrajectoryAction(
+        trajectory = path_trajectory(label, path)
+        follow: FollowTrajectoryAction = FollowTrajectoryAction(
             self.entity_name,
-            path_trajectory(label, path),
+            trajectory,
             time_reference=TrajectoryTiming(ReferenceContext.RELATIVE),
             following_mode=following_mode,
             timing=TickTiming.PRE_TICK,
             label=label,
             stop_at_end=False,
         )
+        if actor is not None and backend is not None:
+            # Typed locals: Codon unwraps the Optionals here.
+            vehicle: "carla.Actor" = actor
+            driver: TrafficBackend = backend
+            direct: FollowTrajectoryAction = _ActorFollow(
+                self.entity_name, vehicle, driver, trajectory, following_mode, label
+            )
+            follow = direct
+        self._follow = follow
+        self._actor = actor
+        self._backend = backend
         self._handed_back = False
 
     @property
@@ -103,12 +169,20 @@ class AdversarialExecution:
         if self._follow.state is not ActionState.COMPLETE:
             return
         self._handed_back = True
-        vehicle = find_vehicle_entity(self.entity_name)
-        if vehicle is not None:
+        actor = self._actor
+        backend = self._backend
+        if actor is not None and backend is not None:
+            driver: TrafficBackend = backend
+            released: "carla.Actor" = actor
+            driver.resume_actor(world, released)
+        else:
+            vehicle = find_vehicle_entity(self.entity_name)
+            if vehicle is None:
+                return
             vehicle.resume_traffic(world)
-            logger.info(
-                "%s: '%s' handed back to traffic", self._follow.label, self.entity_name
-            )
+        logger.info(
+            "%s: '%s' handed back to traffic", self._follow.label, self.entity_name
+        )
 
     def close(self) -> None:
         """Close the follow action's conditions."""
@@ -129,12 +203,15 @@ def start_execution(
     command: AdversarialCommand,
     following_mode: TrajectoryFollowingMode,
     label: str,
+    actor: Optional["carla.Actor"] = None,
+    backend: Optional[TrafficBackend] = None,
 ) -> Optional[AdversarialExecution]:
-    """*command* planned for *name* on *scene*, ready to drive; None, with a
-    warning, when it cannot be planned (off the lanes, no lane to change to)."""
+    """*command* planned for *name* on *scene*, ready to drive -- a background
+    vehicle's *actor* through its *backend* when given; None, with a warning,
+    when it cannot be planned (off the lanes, no lane to change to)."""
     try:
         path = plan_command(scene.features, scene.vehicle(name), command)
     except ValueError as error:
         logger.warning("%s: %s; nothing done", label, error)
         return None
-    return AdversarialExecution(name, path, following_mode, label)
+    return AdversarialExecution(name, path, following_mode, label, actor, backend)

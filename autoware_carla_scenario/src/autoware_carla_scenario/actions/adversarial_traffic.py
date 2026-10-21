@@ -7,10 +7,14 @@ made to carry it out -- with the importance-sampling probability rather
 than the naturalistic one -- and :attr:`~AdversarialTrafficAction.weight`
 keeps the likelihood ratio that makes the run's statistics unbiased.
 
-What it drives is what a scenario registers: named NPCs and pedestrians.
-A traffic backend's background vehicles have no entity to drive them
-through yet (#417).  The ego is never driven; its turn indicators say
-whether it is predicted to change lane.
+What it drives is what a scenario registers -- named NPCs and pedestrians
+-- and, with ``drive_background`` (the default), the traffic backend's
+background vehicles in the world (#417,
+:meth:`~..traffic.base.TrafficBackend.background_actors`): no entity stands
+for one, so its actor is driven directly, taken from the backend
+(:meth:`~..traffic.base.TrafficBackend.release_actor`) and handed back to it
+when its path is done.  The ego is never
+driven; its turn indicators say whether it is predicted to change lane.
 """
 
 from __future__ import annotations
@@ -32,6 +36,7 @@ from ..adversity.snapshot import scene_at
 from ..adversity.triggers import DEFAULT_THRESHOLDS, AdversityKind, TriggerThresholds
 from ..conditions.base import BaseCondition, find_actor_by_role_name
 from ..constants import EGO_ROLE_NAME
+from ..traffic.base import TrafficBackend
 from ..trajectory.model import TrajectoryFollowingMode
 from ..utils.turn_indicator import TurnIndicatorState, is_vehicle, turn_indicators_of
 from ._adversarial_execution import AdversarialExecution, drivable, start_execution
@@ -66,6 +71,9 @@ class AdversarialTrafficAction(BaseAction):
         thresholds: The triggers' numbers; TeraSim's by default.
         following_mode: How a sampled adversity is driven: ``FOLLOW`` (the
             vehicle's own motion, default) or ``POSITION``.
+        drive_background: Whether the traffic backend's background vehicles
+            may carry out adversities (and respond to them) too, beside the
+            registered entities.
     """
 
     REISSUES_BY_DEFAULT = True
@@ -79,6 +87,9 @@ class AdversarialTrafficAction(BaseAction):
     _events: list[AdversityEvent]
     _sampled_now: Optional[AdversityKind]
     _elapsed: float
+    _drive_background: bool
+    _backend: Optional[TrafficBackend]
+    _background: dict[str, "carla.Actor"]
 
     def __init__(
         self,
@@ -91,6 +102,7 @@ class AdversarialTrafficAction(BaseAction):
         settings: NadeSettings = DEFAULT_NADE,
         thresholds: TriggerThresholds = DEFAULT_THRESHOLDS,
         following_mode: TrajectoryFollowingMode = TrajectoryFollowingMode.FOLLOW,
+        drive_background: bool = True,
     ) -> None:
         for adversity in adversities:
             if not 0.0 <= adversity.probability <= 1.0:
@@ -114,6 +126,14 @@ class AdversarialTrafficAction(BaseAction):
         self._events = []
         self._sampled_now = None
         self._elapsed = 0.0
+        self._drive_background = drive_background
+        self._backend = None
+        self._background = {}
+
+    def set_traffic_backend(self, backend: TrafficBackend) -> None:
+        """The run's traffic backend, whose background vehicles it may drive;
+        the scenario hands it over when the action is registered."""
+        self._backend = backend
 
     @property
     def weight(self) -> float:
@@ -160,11 +180,16 @@ class AdversarialTrafficAction(BaseAction):
         if self._sampler.cooling(self._elapsed):
             return  # nothing to sample: no need to read the world
         scene = scene_at(world)
+        self._background = self._background_actors(world)
         choice = self._sampler.step(
             scene,
             str(EGO_ROLE_NAME),
             _indicator(world),
-            {name for name in scene.agents if drivable(name)},
+            {
+                name
+                for name in scene.agents
+                if drivable(name) or name in self._background
+            },
             self._adversities,
             self._elapsed,
         )
@@ -207,9 +232,19 @@ class AdversarialTrafficAction(BaseAction):
         name: str,
         command: AdversarialCommand,
     ) -> None:
-        """Start driving *command* on *name*, from this tick."""
+        """Start driving *command* on *name*, from this tick: a registered
+        entity, or a background vehicle's actor through the backend."""
+        actor: Optional["carla.Actor"] = None
+        if not drivable(name) and name in self._background:
+            actor = self._background[name]
         started = start_execution(
-            scene, name, command, self._following_mode, f"{self.label}:{name}"
+            scene,
+            name,
+            command,
+            self._following_mode,
+            f"{self.label}:{name}",
+            actor,
+            self._backend,
         )
         if started is None:
             return
@@ -222,6 +257,13 @@ class AdversarialTrafficAction(BaseAction):
         super().close()
         for running in self._executions:
             running.close()
+
+    def _background_actors(self, world: "carla.World") -> dict[str, "carla.Actor"]:
+        """The backend's background vehicles it may drive, by role name."""
+        if not self._drive_background or self._backend is None:
+            return {}
+        backend: TrafficBackend = self._backend
+        return backend.background_actors(world)
 
 
 def _indicator(world: "carla.World") -> str:
