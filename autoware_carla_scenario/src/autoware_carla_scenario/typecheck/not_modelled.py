@@ -422,6 +422,7 @@ NOT_MODELLED_MEMBERS: dict[str, dict[str, str]] = {
             "scenario does not import; read its weight instead (#397 makes it a "
             "metric)"
         ),
+        "set_traffic_backend": _SET_TRAFFIC_BACKEND,
     },
     "StalledObjectAction": {
         "pose": (

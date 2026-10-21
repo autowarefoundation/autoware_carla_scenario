@@ -609,6 +609,58 @@ def test_ambient_traffic_is_mirrored_into_carla_and_cleaned_up(
 
 
 @needs_sumo
+def test_an_ambient_vehicle_can_be_taken_over_and_handed_back(
+    crossroads: Path, tmp_path: Path
+) -> None:
+    """An adversity takes an ambient vehicle's mirror over (#417): SUMO stops
+    following it, keeps it published from CARLA, and drives it again once
+    handed back."""
+    backend, world, _npc, _ego = _prepared(
+        crossroads, tmp_path, period_s=1.0, max_vehicles=3
+    )
+    try:
+        for i in range(200):
+            backend.tick(world, i * 0.05)
+        offered = backend.background_actors(world)
+        assert offered and all(name.startswith("sumo:") for name in offered)
+        name, actor = next(iter(offered.items()))
+        sumo_id = name[len("sumo:") :]
+        backend.release_actor(world, actor)
+        assert sumo_id not in backend._ambient and backend._external[sumo_id] is actor
+        assert name not in backend.background_actors(world)
+        held = actor.transform.location.x
+        for i in range(20):
+            backend.tick(world, (200 + i) * 0.05)
+        # Neither followed nor removed: the pose it has is CARLA's own.
+        assert not actor.destroyed
+        assert actor.transform.location.x == pytest.approx(held)
+        backend.resume_actor(world, actor)
+        assert sumo_id not in backend._external
+        assert backend._ambient.get(sumo_id) is actor
+        backend.resume_actor(world, actor)  # and saying it twice is harmless
+    finally:
+        backend.close()
+    assert actor.destroyed
+
+
+@needs_sumo
+def test_a_taken_over_ambient_vehicle_is_cleaned_up_at_close(
+    crossroads: Path, tmp_path: Path
+) -> None:
+    backend, world, _npc, _ego = _prepared(
+        crossroads, tmp_path, period_s=1.0, max_vehicles=3
+    )
+    try:
+        for i in range(200):
+            backend.tick(world, i * 0.05)
+        _name, actor = next(iter(backend.background_actors(world).items()))
+        backend.release_actor(world, actor)
+    finally:
+        backend.close()
+    assert actor.destroyed and backend._handed_ambient == {}
+
+
+@needs_sumo
 def test_by_default_the_scenarios_vehicles_stay_with_the_traffic_manager(
     crossroads: Path, tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
