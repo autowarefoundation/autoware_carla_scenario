@@ -3099,6 +3099,8 @@ from autoware_carla_scenario import (
     JaywalkAction,
     LaneChangeAbortAction,
     PedestrianRunRedLightAction,
+    PropAction,
+    PropOperation,
     RunTrafficRuleAction,
     Lanelet2Pose,
     MapPose,
@@ -3133,6 +3135,18 @@ self.register_pre_tick(PedestrianRunRedLightAction("p1", AdversityLocation.INTER
 self.register_pre_tick(StopCrossingAction("p1", AdversityLocation.ANY, seed=3))
 self.register_pre_tick(StalledObjectAction("npc3", Lanelet2Pose(1, 2.0), 1.0, 5.0))
 self.register_pre_tick(StalledObjectAction("npc4", MapPose(1.0, 2.0, 0.5), label="stalled"))
+self.register_pre_tick(
+    PropAction("cone1", PropOperation.ADD, Lanelet2Pose(1, 4.0), blueprint="static.prop.streetbarrier")
+)
+self.register_pre_tick(PropAction("box", position=MapPose(1.0, 2.0), on_ground=False))
+self.register_pre_tick(
+    PropAction(
+        "cone1",
+        PropOperation.REMOVE,
+        condition=ElapsedTimeCondition(8.0, label="gone"),
+        label="clear",
+    )
+)
 for crashed in collision_objects(
     "npc1", "npc2", Lanelet2Pose(1, 2.0), Lanelet2Pose(1, 6.0), end_time=9.0
 ):
