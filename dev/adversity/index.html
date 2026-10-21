@@ -1553,6 +1553,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#construction-zones" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Construction zones
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#coordinate-conventions" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2006,6 +2017,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#construction-zones" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Construction zones
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#coordinate-conventions" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2334,6 +2356,82 @@ in <code>setup</code>, preferably out of the world (<code>spawn.hidden</code>). 
 <a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="p">):</span>
 <a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a>    <span class="bp">self</span><span class="o">.</span><span class="n">register_pre_tick</span><span class="p">(</span><span class="n">crashed</span><span class="p">)</span>
 </code></pre></div>
+<h2 id="construction-zones">Construction zones<a class="headerlink" href="#construction-zones" title="Permanent link">&para;</a></h2>
+<p><code>ConstructionZoneAction</code> lays out TeraSim's <code>ConstructionAdversity</code> along a
+lane (<code>adversity.construction</code>): from <code>start_s</code> to <code>end_s</code> metres along it,
+past its lanelet's end on along the straightest successors. These are the zones:</p>
+<table>
+<thead>
+<tr>
+<th>Zone</th>
+<th>Where</th>
+<th>Objects</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>warning</td>
+<td><code>warning_zone_length</code> (100 m) before the start</td>
+<td>signs on the shoulder, every <code>warning_zone_spacing</code> (30 m)</td>
+</tr>
+<tr>
+<td>taper_in</td>
+<td><code>taper_length_in</code> (60 m) from the start</td>
+<td>cones, from 0.3 m inside the lane's edge to the work zone's offset</td>
+</tr>
+<tr>
+<td>buffer</td>
+<td><code>buffer_zone_length</code> (10 m)</td>
+<td>cone, cone, barrier</td>
+</tr>
+<tr>
+<td>work</td>
+<td>to <code>taper_length_out</code> (30 m) before the end</td>
+<td><code>construction_type</code>: cone, barrier, or mixed</td>
+</tr>
+<tr>
+<td>taper_out</td>
+<td>to the end</td>
+<td>cones, back to the edge</td>
+</tr>
+<tr>
+<td>termination</td>
+<td><code>termination_zone_length</code> (30 m) after the end</td>
+<td>signs</td>
+</tr>
+</tbody>
+</table>
+<p><code>spacing</code> (20 m) is the distance between objects, scaled by 0.7 in a taper
+and 0.8 in the buffer. With <code>use_dynamic_spacing</code> and <code>speed_limit_mph</code>,
+MUTCD's spacings apply instead. A taper can be <code>linear</code> or <code>curved</code> (an
+s-curve). The zone closes in from <code>side</code>, <code>"right"</code> by default; TeraSim instead
+picked the side from the SUMO lane's index.</p>
+<p>From <code>start_time</code> to <code>end_time</code> (<code>None</code>: never removed) the objects stand in
+the world as CARLA props, each added by a <code>PropAction</code> and named
+<code>&lt;label&gt;/&lt;zone&gt;/&lt;n&gt;</code> (<code>docs/api.md</code>). Unlike a vehicle, a prop may appear
+while a run is under way. When the zone appears, two things happen:</p>
+<ul>
+<li><code>clear_traffic</code> takes the backend's background vehicles in the zone off the
+  road;</li>
+<li><code>close_lane</code> tells the backend the lane is closed. SUMO then disallows
+  every vehicle class on it, as TeraSim's <code>full_lane</code> mode does. The
+  TrafficManager cannot close a lane, and says so; a <code>TrafficSinkAction</code> on
+  the zone keeps its traffic out.</li>
+</ul>
+<p>TeraSim's <code>full_lane</code> mode places no object. Here the objects are always
+placed: a closure Autoware cannot see is one it drives into. At <code>end_time</code> the
+props are removed and the lane is reopened; when the run ends, the lane is
+reopened and the runner takes the props away with every other.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario</span><span class="w"> </span><span class="kn">import</span> <span class="n">ConstructionSettings</span><span class="p">,</span> <span class="n">ConstructionZoneAction</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="bp">self</span><span class="o">.</span><span class="n">register_pre_tick</span><span class="p">(</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>    <span class="n">ConstructionZoneAction</span><span class="p">(</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>        <span class="mi">1043</span><span class="p">,</span> <span class="n">start_s</span><span class="o">=</span><span class="mf">120.0</span><span class="p">,</span> <span class="n">end_s</span><span class="o">=</span><span class="mf">260.0</span><span class="p">,</span>
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>        <span class="n">settings</span><span class="o">=</span><span class="n">ConstructionSettings</span><span class="p">(</span><span class="n">construction_type</span><span class="o">=</span><span class="s2">"mixed"</span><span class="p">,</span> <span class="n">side</span><span class="o">=</span><span class="s2">"right"</span><span class="p">),</span>
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>        <span class="n">start_time</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span>
+<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a>    <span class="p">)</span>
+<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="p">)</span>
+</code></pre></div>
 <h2 id="coordinate-conventions">Coordinate conventions<a class="headerlink" href="#coordinate-conventions" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>Triggers and NADE</strong>: everything is in the Lanelet2 map frame: x East,
@@ -2392,8 +2490,8 @@ in <code>setup</code>, preferably out of the world (<code>spawn.hidden</code>). 
 <td>So are they, with <code>drive_background</code> (default): the backend's background vehicles in the world (#417)</td>
 </tr>
 <tr>
-<td>Construction zones</td>
-<td>Out of scope (#402)</td>
+<td>Construction zones: SUMO vtypes for cones, barriers and signs; full_lane only closes the lane</td>
+<td>CARLA props (<code>static.prop.*</code>), always placed, plus the lane closed to the backend (#402)</td>
 </tr>
 </tbody>
 </table>
@@ -2419,7 +2517,7 @@ in <code>setup</code>, preferably out of the world (<code>spawn.hidden</code>). 
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 21, 2026 02:19:41 UTC"><span class="timeago" datetime="2026-10-21T02:19:41+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 21, 2026 02:19:41 UTC">2026-10-21</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 21, 2026 02:26:47 UTC"><span class="timeago" datetime="2026-10-21T02:26:47+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 21, 2026 02:26:47 UTC">2026-10-21</span>
   </span>
 
     
