@@ -2333,7 +2333,11 @@ world from one that is gone. Three rules keep the flag honest:</p>
   since whatever takes a vehicle over drives it in CARLA.</li>
 </ul>
 <p><code>backend.fidelity_census()</code> counts the vehicles a backend simulates at each
-level. The parts that are the same for every backend are reusable:</p>
+level. A run's result (<code>&lt;output&gt;/&lt;scenario&gt;_result.json</code>) records it under
+<code>traffic.fidelity</code>, read when the run ends, beside the backend's <code>describe()</code>
+(for SUMO, how many vehicles changed level during the run). A condition that
+looks an entity up by role name while it is mesoscopic finds no actor, and the
+log says why, once each time the entity becomes mesoscopic. The parts that are the same for every backend are reusable:</p>
 <ul>
 <li><code>traffic.fidelity.MesoscopicConfig</code> is the policy: the radii around the
   <em>focus points</em> (the ego and every vehicle CARLA drives) inside which traffic
@@ -2687,7 +2691,7 @@ CARLA co-simulation; its adversarial behaviour generation is left to scenarios.<
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 20, 2026 21:13:05 UTC"><span class="timeago" datetime="2026-10-20T21:13:05+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 20, 2026 21:13:05 UTC">2026-10-20</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 21, 2026 00:47:16 UTC"><span class="timeago" datetime="2026-10-21T00:47:16+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 21, 2026 00:47:16 UTC">2026-10-21</span>
   </span>
 
     
