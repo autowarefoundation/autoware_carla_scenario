@@ -3367,7 +3367,12 @@ cannot express is refused at its line, with what to write instead.</p>
 <tr>
 <td><code>"{:&gt;5}\|{a}".format(1, a=x)</code> on a string literal</td>
 <td>the f-string <code>f"{1:&gt;5}\|{x}"</code> (a complex argument is bound once by a lambda)</td>
-<td><code>*args</code> / <code>**kwargs</code>, a field inside a format spec (<code>{:&gt;{}}</code>), a missing argument, mixed auto and manual numbering, a template that is not a literal (write an f-string)</td>
+<td><code>*args</code> / <code>**kwargs</code>, a field inside a format spec (<code>{:&gt;{}}</code>: write the f-string, which is rewritten), a missing argument, mixed auto and manual numbering, a template that is not a literal (write an f-string)</td>
+</tr>
+<tr>
+<td><code>f"{x:+.2f}"</code>, <code>f"{n:&gt;{w}d}"</code>, a spec Codon's f-string parser does not know</td>
+<td>the value's own <code>__format__</code>, the f-string a <code>+</code> of its parts: <code>(x).__format__("+.2f")</code>, <code>(n).__format__("&gt;" + str(w) + "d")</code>. A nested field is <code>str(w)</code> (<code>repr(w)</code> for <code>!r</code>); the result is a <code>str</code>, as before. <code>"{:+.2f}".format(x)</code> is rewritten to the f-string first, so it gets the same</td>
+<td>a brace or a nested f-string inside an expression of the f-string (below); <code>!a</code> together with a rewritten spec</td>
 </tr>
 <tr>
 <td><code>zip(a, b, strict=True)</code></td>
@@ -3407,6 +3412,26 @@ cannot express is refused at its line, with what to write instead.</p>
   where you pass the captured value.</li>
 <li>Codon's f-strings have no <code>{{</code> / <code>}}</code>: a literal brace becomes a string
   joined with <code>+</code>.</li>
+<li><strong>F-string format specs (#434).</strong> Codon's parser takes a fill and align,
+  <code>#</code>, <code>0</code>, a width, <code>,</code> / <code>_</code>, a precision and a type (<code>f"{x:&gt;8.3f}"</code>,
+  <code>f"{n:#010x}"</code>, <code>f"{n:,}"</code>, <code>f"{x!r:^10}"</code>, <code>f"{x=:.2f}"</code>) as they are. It
+  has no sign (<code>+</code>, space, <code>-</code>), no field inside the spec (<code>{x:&gt;{w}}</code>), and
+  it refuses a spec it does not know (<code>{x:q}</code>). Those fields are rewritten
+  as above; the other fields of the same f-string stay f-string fields. The
+  rewrite calls <code>__format__</code> on <code>int</code>, <code>float</code>, <code>str</code> and a class that
+  defines it: a <code>bool</code> or a class without <code>__format__</code> has none in Codon (the
+  error is hinted: <code>int(flag)</code>). The spec is read at run time, so a spec
+  Python rejects (<code>{x:q}</code> on a float, a sign on a <code>str</code>) compiles in the
+  check, which does not run; Python raises its <code>ValueError</code> when the scenario
+  runs. Only the checked copy changes.</li>
+<li><strong>A brace or a nested f-string inside an f-string expression is refused</strong>, at the
+  line of the f-string: a dict or set display or comprehension
+  (<code>f"{len({1, 2})}"</code>), a string holding <code>{</code> or <code>}</code> (<code>f"{'{}'.format(x)}"</code>)
+  and an f-string inside an f-string. Codon's parser ends the field there
+  and reports a position that is no line of your file. Bind the value to a
+  local first (<code>label = "{:&gt;3}".format(x)</code>, then <code>f"{label}"</code>).
+  A syntax error Codon still reports inside an f-string field is shown at
+  the line of the f-string that has it, not at a line before the file.</li>
 <li>A class constant read in the class body (#433): Python resolves the name in
   the class scope, Codon in the module's (<code>name 'LIMIT' is not defined</code>), so
   the check writes <code>Class.LIMIT</code>. It rewrites exactly what Python resolves
@@ -5048,9 +5073,6 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   calls them under an <code>isinstance</code> test on its parameter's own class, which
   Codon decides as true, and hands anything else (a test double) to
   <code>register_entity</code>, so at run time it is registered as before.
-- <strong>No sign in an f-string format spec</strong>: Codon's parser rejects
-  <code>f"{x:+.1f}"</code>. Format the value first (<code>x.__format__("+.1f")</code>) and put the
-  string in the f-string.
 - <strong><code>carla.TrafficLightState</code> is a value in the check</strong>, not a type: its
   members are ints, as <code>get_state()</code> returns. The check reads an annotation
   naming one of typesafe_carla's integer enumerations
@@ -5384,7 +5406,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 21, 2026 14:05:38 UTC"><span class="timeago" datetime="2026-10-21T14:05:38+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 21, 2026 14:05:38 UTC">2026-10-21</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 21, 2026 14:33:17 UTC"><span class="timeago" datetime="2026-10-21T14:33:17+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 21, 2026 14:33:17 UTC">2026-10-21</span>
   </span>
 
     
