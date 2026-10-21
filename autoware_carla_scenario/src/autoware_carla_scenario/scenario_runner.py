@@ -1314,13 +1314,21 @@ class ScenarioRunner:
             # this loop steps -- in-process, so no second client has to follow
             # the world from outside.
             trajectory.start(world)
+            clock_start_frame = int(world.get_snapshot().frame)
             # The file starts where the clock does; the recording, warmup_ticks
             # frames earlier.
             trajectory.record_warmup(
                 warmup_ticks,
                 recording_start_frame if recording_started else -1,
-                int(world.get_snapshot().frame),
+                clock_start_frame,
             )
+            if self.rerun is not None:
+                # The ego's LiDAR sweeps, from the clock's first frame, beside
+                # the trajectory log (rerun.lidar; nothing otherwise).
+                lidar_converter: RerunConverter = self.rerun
+                lidar_converter.start_lidar(
+                    trajectory.path, file_stem, clock_start_frame
+                )
             trajectory.record(world, clock.simulated)
             trajectory.record_markers(_ego_markers(ego))
             # What the run covers: the attributes of the run's ODD, sampled
@@ -1575,6 +1583,9 @@ class ScenarioRunner:
                         scenario_name,
                         exc_info=True,
                     )
+            if self.rerun is not None:
+                lidar_recording: RerunConverter = self.rerun
+                lidar_recording.stop_lidar()
             if trajectory.active:
                 if result is not None:
                     trajectory.record_result(result)

@@ -332,6 +332,8 @@ rerun outputs/2026-10-18/08-48-12/CutInScenario-3.rrd     # the Rerun viewer
 |-----------|------|---------|-------------|
 | `rerun.enabled` | bool | `false` | Convert each run's trajectory log into `{ScenarioName}.rrd` as soon as the run ends |
 | `rerun.strict` | bool | `false` | Fail the conversion of a log with a record type or a field the converter does not know, rather than skip it with a warning |
+| `rerun.lidar` | bool | `false` | Put the LiDAR sweeps the ego's driver policy gets into the recording too ([LiDAR sweeps](#lidar-sweeps-in-the-recording)) |
+| `rerun.lidar_max_points` | int | `65536` | At most this many points of a sweep (an even subsample); `0` keeps them all |
 
 With `rerun.enabled=true`:
 
@@ -353,6 +355,28 @@ With `rerun.enabled=true`:
   SLURM (`launcher=slurm`, [Running a Batch on SLURM](slurm.md)): it converts
   its own cases, and `scenario-slurm collect` reports their recordings as a
   local batch does.
+
+### LiDAR sweeps in the recording
+
+The trajectory log holds no point clouds. With `rerun.lidar=true` (and
+`rerun.enabled=true`) the sweeps each driver LiDAR sends the ego's policy
+(`driver.lidars`) are written during the run, in the world frame of the
+recording, into `{ScenarioName}.lidar.rrd`; once the log is converted they are
+merged into `{ScenarioName}.rrd` (`rerun rrd merge`) and that file is removed.
+Each LiDAR is `world/lidar/<logical id>`, points coloured by height above the
+ego, in the recording's 3D view; a sweep is drawn where the ego's pose put it
+when the policy got it. It needs the Rerun SDK of the converter's version:
+
+```bash
+pip install 'autoware-carla-scenario[rerun-lidar]'
+uv run scenario scenario=cut_in/cut_in driver=... rerun.enabled=true rerun.lidar=true
+```
+
+Points are most of a recording: about 0.8 MB a sweep at the default 65,536.
+A merge that fails keeps `{ScenarioName}.lidar.rrd` beside the recording
+(logged; not a failed conversion). The two cannot be opened together instead:
+the viewer registers a file by its recording id, and the second replaces the
+first.
 
 A run made without it (or by a version before it) can be converted afterwards,
 the same way:
@@ -618,6 +642,37 @@ uv run scenario ego.entity=carla_driver \
 ```
 
 See [External Driver Interface](driver_interface.md) for the full reference.
+
+### Rendering sensors with carla_canvas
+
+[carla_canvas](https://github.com/hakuturu583/carla_canvas) renders cameras and
+LiDARs behind the CARLA API instead of the CARLA server: a configuration file
+names a renderer service (3D Gaussian splatting, a LiDAR world model such as
+[LidarVerse](https://github.com/hakuturu583/lidarverse), ...) and the sensor
+types it renders, and typesafe_carla's sensor plugin hands those sensors'
+measurements over from the service. `canvas.config` points a run at such a
+file; nothing else about the run changes -- the scenario, the driver and the
+measurements they read are the same:
+
+```bash
+pip install 'carla-canvas[client]>=0.2'
+uv run scenario scenario=cut_in/cut_in ego.entity=carla_driver \
+    canvas.config=path/to/lidarverse.yaml
+```
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `canvas.config` | str | `null` | A carla_canvas configuration: its sensors are rendered by its renderer; `null` leaves every sensor to CARLA |
+
+The run sets `CARLA_CANVAS_CONFIG` and `TYPESAFE_CARLA_SENSOR_PLUGIN` before
+any sensor listens, which is when typesafe_carla loads the plugin, once for
+the process: the cases of a batch name one file (a batch naming two is
+refused). The renderer is the configuration's: started by the plugin when
+nothing answers at `renderer.endpoint` and the file gives a
+`renderer.command`, or run by hand (`carla-canvas serve --config ...`).
+carla_canvas is not an extra of this package: it needs protobuf 7, and the
+vendored alpasim modules are regenerated on protobuf 4. Under SLURM the file is
+the nodes' path.
 
 ---
 

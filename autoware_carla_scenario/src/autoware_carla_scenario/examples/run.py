@@ -64,6 +64,7 @@ from autoware_carla_scenario import (
 )
 from autoware_carla_scenario.autoware_stack.launcher import AutowareLauncher
 from autoware_carla_scenario.batch_report import print_summary as _print_summary
+from autoware_carla_scenario.canvas import use_canvas
 from autoware_carla_scenario.conditions import ScenarioResult
 from autoware_carla_scenario.constants import DEFAULT_TM_PORT
 from autoware_carla_scenario.maps import resolve_map_paths
@@ -738,21 +739,70 @@ def _rerun_settings(cfg: DictConfig) -> tuple[bool, bool]:
     return bool(rerun_cfg.get("enabled", False)), bool(rerun_cfg.get("strict", False))
 
 
+def _rerun_lidar_max_points(cfg: DictConfig) -> int | None:
+    """``rerun.lidar_max_points`` when ``rerun.lidar`` is set; ``None`` otherwise."""
+    rerun_cfg = cfg.get("rerun") or {}
+    if not rerun_cfg.get("lidar", False):
+        return None
+    return int(rerun_cfg.get("lidar_max_points", 0) or 0)
+
+
 def build_rerun_converter(*cfgs: DictConfig) -> RerunConverter | None:
     """What converts each run's trajectory log into a Rerun recording, when
     any of *cfgs* sets ``rerun.enabled`` (strict when any sets
-    ``rerun.strict``); ``None`` otherwise.
+    ``rerun.strict``); ``None`` otherwise.  With ``rerun.lidar`` it records
+    each run's LiDAR sweeps too (the largest ``rerun.lidar_max_points`` of
+    those asking, 0 being all).
 
     Called before anything runs, so a run asking for recordings without the
     ``rerun`` extra installed is refused at once.
 
     Raises:
         RerunUnavailableError: The extra is not installed.
+        LidarRerunUnavailableError: ``rerun.lidar`` is set and the Rerun SDK
+            is not installed.
     """
     settings = [_rerun_settings(cfg) for cfg in cfgs]
     if not any(enabled for enabled, _ in settings):
         return None
-    return RerunConverter(strict=any(strict for _, strict in settings))
+    lidar = [
+        points
+        for cfg, (enabled, _) in zip(cfgs, settings)
+        if enabled and (points := _rerun_lidar_max_points(cfg)) is not None
+    ]
+    strict = any(strict for _, strict in settings)
+    if not lidar:
+        return RerunConverter(strict=strict)
+    return RerunConverter(
+        strict=strict, lidar_max_points=0 if 0 in lidar else max(lidar)
+    )
+
+
+def canvas_config(*cfgs: DictConfig) -> str | None:
+    """The carla_canvas configuration *cfgs* name (``canvas.config``), or ``None``.
+
+    Raises:
+        ValueError: They name more than one: a process loads one.
+    """
+    names = {
+        str(value) for cfg in cfgs if (value := (cfg.get("canvas") or {}).get("config"))
+    }
+    if len(names) > 1:
+        raise ValueError(
+            f"the cases name {len(names)} canvas.config files ({sorted(names)}); "
+            "the sensors of one process are rendered by one"
+        )
+    return next(iter(names), None)
+
+
+def apply_canvas(*cfgs: DictConfig) -> Path | None:
+    """Have the sensors *cfgs*' ``canvas.config`` names rendered by carla_canvas
+    (:func:`autoware_carla_scenario.canvas.use_canvas`); its path, or ``None``.
+
+    Called before anything runs: typesafe_carla loads the plugin when the
+    first sensor listens.
+    """
+    return use_canvas(canvas_config(*cfgs))
 
 
 def rerun_errors(
@@ -1214,6 +1264,11 @@ def run_batch(
     if rerun is not None and launcher == "slurm":
         rerun.close()
         rerun = None
+    # Under SLURM the file is the nodes' (slurm/worker.py): only one is named.
+    if launcher == "slurm":
+        canvas_config(*configs)
+    else:
+        apply_canvas(*configs)
 
     # Log detailed execution plan before building anything.
     _log_batch_plan(
@@ -1493,6 +1548,7 @@ def run_scenario(
     # Before anything is built: refused at once without the extra.
     rerun = build_rerun_converter(cfg)
     try:
+        apply_canvas(cfg)
         return _run_scenario(cfg, rerun, build_scenario_fn=build_scenario_fn)
     finally:
         _finish_rerun(rerun)
