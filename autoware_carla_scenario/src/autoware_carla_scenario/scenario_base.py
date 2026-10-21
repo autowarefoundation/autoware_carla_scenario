@@ -876,6 +876,19 @@ class BaseScenario(ABC):
         return weight
 
     @property
+    def importance_sampled(self) -> bool:
+        """Whether one of the run's actions samples what happens
+        importance-sampled (:attr:`BaseAction.importance_sampled`): then its
+        coverage file records :attr:`importance_sampling_weight` with the
+        outcome, for the merged report's naturalistic failure rate."""
+        for action in (
+            self._init_actions + self._pre_tick_actions + self._post_tick_actions
+        ):
+            if action.importance_sampled:
+                return True
+        return False
+
+    @property
     def measures(self) -> dict[str, Measure]:
         """The scenario's measures, built-in and its own, by key."""
         return dict(self._measures)

@@ -331,7 +331,10 @@ def _write_result(
 
 
 def _record_run(
-    coverage: CoverageCollector, case: Optional[OddCase], result: ScenarioResult
+    coverage: CoverageCollector,
+    case: Optional[OddCase],
+    result: ScenarioResult,
+    weight: Optional[float] = None,
 ) -> None:
     """Record in *coverage* the case the run ran, if it was drawn from the ODD,
     and its outcome: what the merged report assesses the flakiness of and a
@@ -345,6 +348,10 @@ def _record_run(
     environment's id (what ``{stem}_requirements.lock`` pins, the id its
     header and the result carry): the report never pools runs of different
     environments, where a regression would read as flakiness.
+
+    An importance-sampled run (:attr:`BaseScenario.importance_sampled`) also
+    records its likelihood ratio, *weight*, from which the merged report
+    estimates the naturalistic failure rate (openodd's weighted outcomes).
     """
     from .environment import capture  # noqa: PLC0415
 
@@ -359,6 +366,7 @@ def _record_run(
         result.passed,
         failed_at=None if result.passed else result.elapsed_seconds,
         environment=environment,
+        weight=weight,
     )
 
 
@@ -1624,7 +1632,14 @@ class ScenarioRunner:
                 )
             logger.info("[%s] Result JSON written to: %s", scenario_name, json_path)
             if coverage is not None:
-                _record_run(coverage, case, result)
+                _record_run(
+                    coverage,
+                    case,
+                    result,
+                    scenario.importance_sampling_weight
+                    if scenario.importance_sampled
+                    else None,
+                )
                 coverage_path = self.output_dir / f"{file_stem}_coverage.json"
                 coverage.write(coverage_path, scenario_name)
                 logger.info(
