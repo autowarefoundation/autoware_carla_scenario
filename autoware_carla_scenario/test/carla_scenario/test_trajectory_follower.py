@@ -586,6 +586,22 @@ def test_a_stop_point_nearer_than_half_a_metre_does_not_depart() -> None:
     assert follower.control_state == STOPPED
 
 
+def test_a_crawling_pull_away_gets_the_throttle_that_moves_the_car() -> None:
+    """Pulling away at 0.1 m/s², the lookahead feedback asks a standing car for less
+    than CARLA's MKZ moves at (0.25): the throttle is floored, or the car and the
+    plan stand for good."""
+    plan = _accelerating_from_rest(0.1)
+    floored = _follower()
+    command = _run(floored, plan, 0.0, 20)
+    assert floored.control_state == DRIVE
+    assert command.throttle == pytest.approx(floored.config.throttle_deadband)
+    assert command.brake == pytest.approx(0.0)
+    bare = _follower(ControlConfig(throttle_deadband=0.0))
+    assert _run(bare, plan, 0.0, 20).throttle < 0.25
+    # Rolling, the floor is off.
+    assert _run(_follower(), plan, 1.0, 20).throttle < floored.config.throttle_deadband
+
+
 def _plan_to_stop(
     x_m: float, speed_mps: float, stop_m: float, now_us: int
 ) -> Trajectory:
