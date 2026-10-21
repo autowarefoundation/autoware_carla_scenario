@@ -43,6 +43,7 @@ from autoware_carla_scenario.traffic.traffic_manager import TrafficManagerBacken
 class _Actor:
     def __init__(self, actor_id: int) -> None:
         self.id = actor_id
+        self.attributes: dict = {}
         self.autopilot: List[Tuple[bool, int]] = []
 
     def set_autopilot(self, enabled: bool, port: int) -> None:
@@ -275,6 +276,31 @@ class TestTrafficManagerResume:
         backend.start(_World([npc]))
         backend.resume(_stand_in(npc), _World())
         assert npc.autopilot == [(True, backend.port)]
+
+
+class TestTrafficManagerBackgroundVehicles:
+    """An adversity takes a background vehicle over by its actor alone (#417)."""
+
+    def test_the_background_vehicles_are_offered_by_role_name(self) -> None:
+        live, gone = _Actor(2), _Actor(3)
+        live.is_alive, gone.is_alive = True, False  # type: ignore[attr-defined]
+        backend = TrafficManagerBackend(client=_Client())
+        backend._background = {"background1": live, "background2": gone}  # type: ignore[dict-item]
+        # The dead one is no agent of the scene, so never chosen.
+        assert backend.background_actors(_World()) == backend._background
+        assert NullTrafficBackend().background_actors(_World()) == {}
+
+    def test_a_background_vehicle_comes_off_and_back_on_autopilot(self) -> None:
+        npc = _Actor(2)
+        npc.attributes = {"role_name": "background1"}
+        backend = TrafficManagerBackend(
+            TrafficManagerBackendConfig(port=8123), client=_Client()
+        )
+        backend.start(_World([npc]))
+        backend.release_actor(_World(), npc)  # type: ignore[arg-type]
+        backend.resume_actor(_World(), npc)  # type: ignore[arg-type]
+        assert npc.autopilot == [(True, 8123), (False, 8123), (True, 8123)]
+        assert NullTrafficBackend().release_actor(_World(), npc) is None  # type: ignore[arg-type,func-returns-value]
 
 
 @pytest.mark.parametrize(

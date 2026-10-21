@@ -91,6 +91,7 @@ from .network import (
     SignalTable,
     SumoNetwork,
     build_network,
+    crossing_edges,
     generate_trips,
     generate_walks,
     sumo_home,
@@ -122,6 +123,9 @@ _LANE_CHANGE_MODE_EXTERNAL = 0
 _TURNS = {"left": ("l", "L"), "right": ("r", "R"), "straight": ("s",)}
 #: How the run's own vehicles look in sumo-gui, apart from SUMO's traffic.
 _PUBLISHED_COLOR = (220, 30, 40, 255)
+#: The role name of an ambient SUMO vehicle's (or person's) CARLA mirror
+#: begins with this, then its SUMO id.
+_MIRROR_PREFIX = "sumo:"
 _DRIVEN_COLOR = (30, 90, 220, 255)
 #: moveToXY's keepRoute for a person: placed exactly where it is (2), on
 #: whatever lane is there whoever may use it (4).  Without the 4 a pedestrian
@@ -193,6 +197,10 @@ class SumoTrafficBackend(TrafficBackend):
         #: ``id()`` of an entity released while SUMO drove it -> its SUMO id
         #: and the speed and lane-change modes resume() puts back.
         self._handed: dict[int, tuple[str, int, int]] = {}
+        #: SUMO id -> the speed and lane-change modes of an ambient vehicle
+        #: released to an adversity (#417); its actor is in ``_external``
+        #: meanwhile.
+        self._handed_ambient: dict[str, tuple[int, int]] = {}
         #: SUMO id -> the speed (m/s) set_desired_speed() last held it at.
         self._commanded: dict[str, float] = {}
         #: SUMO id -> the entity SUMO drives.
@@ -214,6 +222,9 @@ class SumoTrafficBackend(TrafficBackend):
         self._lane_targets: dict[str, int] = {}
         #: (tls id, link index) -> the CARLA traffic light controlling it.
         self._signals: dict[tuple[str, int], Any] = {}
+        #: tls id -> each pedestrian crossing link it controls, with the
+        #: vehicle links into or out of a road the crossing crosses.
+        self._crossing_links: dict[str, list[tuple[int, list[int]]]] = {}
         self._ego_actor: Any = None
         self._running = False
         self._failures = 0
@@ -287,6 +298,7 @@ class SumoTrafficBackend(TrafficBackend):
                 self._opendrive(context),
                 self._config.resolved_cache_dir(),
                 self._config.curve_lateral_acceleration,
+                pedestrian_crossings=self._config.pedestrian_crossings,
             )
         self._offset = _net_offset(self._network.net_file)
         try:
@@ -414,6 +426,8 @@ class SumoTrafficBackend(TrafficBackend):
         )
         if self._config.traffic_light_authority != "none":
             self._signals = self._match_signals(world)
+            if self._config.traffic_light_authority == "carla":
+                self._crossing_links = self._match_crossings()
             if self._config.traffic_light_authority == "sumo":
                 for light in {id(tl): tl for tl in self._signals.values()}.values():
                     light.freeze(True)
@@ -491,12 +505,22 @@ class SumoTrafficBackend(TrafficBackend):
         self._signal_states = {}
         self._edge_shapes = {}
         self._level_changes = [0, 0]
-        for actor in [*self._ambient.values(), *self._persons.values()]:
+        handed_ambient = [
+            self._external[sumo_id]
+            for sumo_id in self._handed_ambient
+            if sumo_id in self._external
+        ]
+        for actor in [
+            *self._ambient.values(),
+            *self._persons.values(),
+            *handed_ambient,
+        ]:
             try:
                 actor.destroy()
             except RuntimeError:
                 pass
         self._persons = {}
+        self._handed_ambient = {}
         for entity in self._driven.values():
             actor = getattr(entity, "actor", None)
             if actor is not None:
@@ -518,6 +542,7 @@ class SumoTrafficBackend(TrafficBackend):
         self._ambient = {}
         self._lane_targets = {}
         self._signals = {}
+        self._crossing_links = {}
         self._ego_actor = None
         self._failures = 0
         if self._feedback_count:
@@ -542,6 +567,7 @@ class SumoTrafficBackend(TrafficBackend):
         out["scenario_vehicles"] = self._config.scenario_vehicles
         out["vehicle_control"] = self._config.vehicle_control
         out["publish_walkers"] = self._config.publish_walkers
+        out["pedestrian_crossings"] = self._config.pedestrian_crossings
         if self._config.vehicle_control == "physics":
             out["feedback_distance_m"] = self._config.feedback_distance_m
         out["ambient_period_s"] = (
@@ -556,6 +582,9 @@ class SumoTrafficBackend(TrafficBackend):
                 "micro_radius_m": meso.micro_radius_m,
                 "meso_radius_m": meso.demote_radius_m,
                 "scenario_vehicles": meso.scenario_vehicles,
+                # So far this run: what a result read at its end records.
+                "to_mesoscopic": self._level_changes[0],
+                "to_microscopic": self._level_changes[1],
             }
         out["follow_visibility"] = self._config.follow_visibility
         out["visibility_m"] = self._visibility
@@ -727,22 +756,9 @@ class SumoTrafficBackend(TrafficBackend):
         actor = getattr(entity, "actor", None)
         if actor is None:
             return
-        self._constant_speed.pop(actor.id, None)
-        try:
-            actor.disable_constant_velocity()
-        except RuntimeError:
-            pass
-        try:
-            tc = self._traci
-            self._handed[id(entity)] = (
-                sumo_id,
-                int(tc.vehicle.getSpeedMode(sumo_id)),
-                int(tc.vehicle.getLaneChangeMode(sumo_id)),
-            )
-            self._publish(sumo_id, actor)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("SUMO could not hand %s over: %s", sumo_id, exc)
-            self._external[sumo_id] = actor
+        modes = self._hand_over(sumo_id, actor)
+        if modes is not None:
+            self._handed[id(entity)] = (sumo_id, modes[0], modes[1])
         logger.info("SUMO: %s released; it is published from CARLA now", sumo_id)
 
     def resume(self, entity: Any, world: Any) -> None:
@@ -763,17 +779,121 @@ class SumoTrafficBackend(TrafficBackend):
             # was never SUMO's to drive.
             return
         sumo_id, speed_mode, lane_change_mode = handed
+        self._take_back(
+            sumo_id,
+            (speed_mode, lane_change_mode),
+            self._commanded.get(sumo_id, -1.0),
+            _DRIVEN_COLOR,
+        )
+        self._driven[sumo_id] = entity
+        logger.info("SUMO: %s resumed; SUMO drives it again", sumo_id)
+
+    def background_actors(self, world: Any) -> dict[str, Any]:
+        """The CARLA mirror of every ambient SUMO vehicle, by its role name
+        (``sumo:<id>``): what an adversity may take over (#417)."""
+        del world
+        if not self._running:
+            return {}
+        return {
+            f"{_MIRROR_PREFIX}{sumo_id}": actor
+            for sumo_id, actor in self._ambient.items()
+        }
+
+    def _hand_over(self, sumo_id: str, actor: Any) -> Optional[tuple[int, int]]:
+        """Have CARLA drive *sumo_id*'s *actor* from now on, published into
+        SUMO; the speed and lane-change modes it had, or None when SUMO
+        could not say (it is published all the same)."""
+        self._constant_speed.pop(actor.id, None)
+        try:
+            actor.disable_constant_velocity()
+        except RuntimeError:
+            pass
+        try:
+            tc = self._traci
+            modes = (
+                int(tc.vehicle.getSpeedMode(sumo_id)),
+                int(tc.vehicle.getLaneChangeMode(sumo_id)),
+            )
+            self._publish(sumo_id, actor)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("SUMO could not hand %s over: %s", sumo_id, exc)
+            self._external[sumo_id] = actor
+            return None
+        return modes
+
+    def _take_back(
+        self,
+        sumo_id: str,
+        modes: tuple[int, int],
+        speed: float,
+        color: Optional[tuple[int, int, int, int]] = None,
+    ) -> bool:
+        """Have SUMO drive *sumo_id* again with *modes* (``-1`` keeps them)
+        at *speed*; whether it could (the vehicle may have left SUMO)."""
         self._external.pop(sumo_id, None)
         try:
             tc = self._traci
-            tc.vehicle.setSpeedMode(sumo_id, speed_mode)
-            tc.vehicle.setLaneChangeMode(sumo_id, lane_change_mode)
-            tc.vehicle.setSpeed(sumo_id, self._commanded.get(sumo_id, -1.0))
-            tc.vehicle.setColor(sumo_id, _DRIVEN_COLOR)
+            if modes[0] >= 0:
+                tc.vehicle.setSpeedMode(sumo_id, modes[0])
+                tc.vehicle.setLaneChangeMode(sumo_id, modes[1])
+            tc.vehicle.setSpeed(sumo_id, speed)
+            if color is not None:
+                tc.vehicle.setColor(sumo_id, color)
         except Exception as exc:  # noqa: BLE001
             logger.warning("SUMO could not take %s back: %s", sumo_id, exc)
-        self._driven[sumo_id] = entity
-        logger.info("SUMO: %s resumed; SUMO drives it again", sumo_id)
+            return False
+        return True
+
+    def release_actor(self, world: Any, actor: Any) -> None:
+        """Take an ambient vehicle's mirror over for CARLA (#417).  It stays
+        in SUMO, published like a released entity, and is no longer followed
+        nor removed by the ambient sync."""
+        del world
+        sumo_id = self._ambient_id_of(actor)
+        if sumo_id is None:
+            return
+        self._ambient.pop(sumo_id)
+        self._physics.pop(actor.id, None)
+        modes = self._hand_over(sumo_id, actor)
+        self._handed_ambient[sumo_id] = (-1, -1) if modes is None else modes
+        logger.info(
+            "SUMO: ambient %s released; it is published from CARLA now", sumo_id
+        )
+
+    def resume_actor(self, world: Any, actor: Any) -> None:
+        """Give a released ambient vehicle back to SUMO, which drives it on
+        from where CARLA has it with its modes as they were; the ambient sync
+        follows (or removes) its mirror again."""
+        del world
+        sumo_id = self._mirrored_id(actor)
+        if sumo_id is None or sumo_id not in self._handed_ambient:
+            return
+        modes = self._handed_ambient.pop(sumo_id)
+        if not self._take_back(sumo_id, modes, -1.0):
+            # Gone from SUMO while CARLA drove it (its route ended): the
+            # mirror has nothing left to follow.
+            try:
+                actor.destroy()
+            except RuntimeError:
+                pass
+            return
+        self._ambient[sumo_id] = actor
+        logger.info("SUMO: ambient %s resumed; SUMO drives it again", sumo_id)
+
+    @staticmethod
+    def _mirrored_id(actor: Any) -> Optional[str]:
+        """The SUMO id a mirror's role name names, if it is one."""
+        role = str(actor.attributes.get("role_name", ""))
+        if not role.startswith(_MIRROR_PREFIX):
+            return None
+        return role[len(_MIRROR_PREFIX) :]
+
+    def _ambient_id_of(self, actor: Any) -> Optional[str]:
+        """*actor*'s SUMO id, if it is an ambient vehicle's mirror now."""
+        sumo_id = self._mirrored_id(actor)
+        if sumo_id is None or self._ambient.get(sumo_id) is not actor:
+            return None
+        return sumo_id
 
     def _publish(self, sumo_id: str, actor: Any) -> None:
         """Have SUMO stop driving *sumo_id*: CARLA's *actor* is pushed into it."""
@@ -1514,7 +1634,7 @@ class SumoTrafficBackend(TrafficBackend):
                     self._blueprints.get(sumo_id, self._config.blueprint)
                 )
                 if blueprint.has_attribute("role_name"):
-                    blueprint.set_attribute("role_name", f"sumo:{sumo_id}")
+                    blueprint.set_attribute("role_name", f"{_MIRROR_PREFIX}{sumo_id}")
                 # A little above the road: at road height the wheels touch the
                 # kerb and the spawn is refused.  Retried next tick if refused.
                 actor = world.try_spawn_actor(
@@ -1989,7 +2109,7 @@ class SumoTrafficBackend(TrafficBackend):
 
         blueprint = library.find(self._config.pedestrians.blueprint)
         if blueprint.has_attribute("role_name"):
-            blueprint.set_attribute("role_name", f"sumo:{person}")
+            blueprint.set_attribute("role_name", f"{_MIRROR_PREFIX}{person}")
         if blueprint.has_attribute("is_invincible"):
             blueprint.set_attribute("is_invincible", "false")
         # A little above the footway, as CARLA's own walker spawns are.
@@ -2164,7 +2284,56 @@ class SumoTrafficBackend(TrafficBackend):
                 if char == "G" and state[index] == "g":
                     char = "g"  # a permissive green stays one
                 state[index] = char
+            # A crossing walks while nothing drives over the road it crosses:
+            # the CARLA lights decide the vehicles, and with them the people.
+            for index, foes in self._crossing_links.get(tls, ()):
+                clear = all(state[foe] in "rR" for foe in foes)
+                state[index] = "G" if clear else "r"
             tc.trafficlight.setRedYellowGreenState(tls, "".join(state))
+
+    def _match_crossings(self) -> dict[str, list[tuple[int, list[int]]]]:
+        """Each signalled pedestrian crossing, and the vehicle links it waits for.
+
+        netconvert appends a crossing's link to its junction's program after
+        the vehicle links (``pedestrian_crossings``), so the vehicle links keep
+        the indices CARLA's lights are matched to and only the crossings' are
+        left without a CARLA light: each takes its state from the vehicle links
+        into or out of a road it crosses.
+        """
+        if self._network is None:
+            return {}
+        crossings = crossing_edges(self._network.net_file)
+        if not crossings:
+            return {}
+        tc = self._traci
+        out: dict[str, list[tuple[int, list[int]]]] = {}
+        for tls in tc.trafficlight.getIDList():
+            vehicles: list[tuple[int, str, str]] = []
+            walks: list[tuple[int, frozenset[str]]] = []
+            for index, controlled in enumerate(tc.trafficlight.getControlledLinks(tls)):
+                for in_lane, out_lane, _via in controlled:
+                    to_edge = out_lane.rsplit("_", 1)[0]
+                    if to_edge in crossings:
+                        walks.append((index, crossings[to_edge]))
+                    else:
+                        vehicles.append((index, in_lane.rsplit("_", 1)[0], to_edge))
+            links = [
+                (
+                    index,
+                    sorted(
+                        {i for i, src, dst in vehicles if src in roads or dst in roads}
+                    ),
+                )
+                for index, roads in walks
+            ]
+            if links:
+                out[tls] = links
+        if out:
+            logger.info(
+                "SUMO: %d signalled pedestrian crossing(s) follow CARLA's lights",
+                sum(len(links) for links in out.values()),
+            )
+        return out
 
     def _signals_to_carla(self) -> None:
         import typesafe_carla.carla as carla  # noqa: PLC0415

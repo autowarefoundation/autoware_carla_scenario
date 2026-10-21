@@ -300,12 +300,13 @@ class _Entity:
         self.role_name = role_name
 
 
-def _crossroads(directory: Path, *, sidewalks: bool) -> Path:
+def _crossroads(directory: Path, *, sidewalks: bool, signals: bool = False) -> Path:
     """A four-arm crossroads, two lanes each way, as OpenDRIVE.
 
     Arm 0 comes from the west, arm 1 from the east, 2 from OpenDRIVE's south
     and 3 from its north; each ends 15 m from the centre.  With *sidewalks*,
-    a 2 m footway runs outside each carriageway.
+    a 2 m footway runs outside each carriageway.  With *signals*, a traffic
+    light controls the two lanes of each arm into the junction.
     """
     import roadgen
 
@@ -338,6 +339,13 @@ def _crossroads(directory: Path, *, sidewalks: bool) -> Path:
     junction = road_map.add_junction("x")
     for a, b in itertools.combinations(arms, 2):
         road_map.connect(a, b, junction=junction, ends=("end", "end"))
+    if signals:
+        first = 3 if sidewalks else 2  # the lanes into the junction
+        for arm in arms:
+            entering = [arm.lane(first), arm.lane(first + 1)]
+            light = road_map.add_traffic_light(entering[0], end="end")
+            stop = road_map.add_stop_line(entering[0], end="end")
+            road_map.add_traffic_light_rule([light], entering, stop_line=stop)
     path = directory / "crossroads.xodr"
     road_map.export_opendrive(str(path))
     return path
@@ -349,6 +357,14 @@ def crossroads(tmp_path_factory: pytest.TempPathFactory) -> Path:
     if not _HAS_SUMO:
         pytest.skip("the `sumo` extra is not installed")
     return _crossroads(tmp_path_factory.mktemp("sumo"), sidewalks=False)
+
+
+@pytest.fixture(scope="module")
+def signalled_crossroads(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """The crossroads with footways and a traffic light on every arm."""
+    if not _HAS_SUMO:
+        pytest.skip("the `sumo` extra is not installed")
+    return _crossroads(tmp_path_factory.mktemp("sumo"), sidewalks=True, signals=True)
 
 
 @pytest.fixture(scope="module")
@@ -567,6 +583,58 @@ def test_ambient_traffic_is_mirrored_into_carla_and_cleaned_up(
         backend.close()
     assert all(a.destroyed for a in world.spawned)
     assert backend._ambient == {} and backend._driven == {}
+
+
+@needs_sumo
+def test_an_ambient_vehicle_can_be_taken_over_and_handed_back(
+    crossroads: Path, tmp_path: Path
+) -> None:
+    """An adversity takes an ambient vehicle's mirror over (#417): SUMO stops
+    following it, keeps it published from CARLA, and drives it again once
+    handed back."""
+    backend, world, _npc, _ego = _prepared(
+        crossroads, tmp_path, period_s=1.0, max_vehicles=3
+    )
+    try:
+        for i in range(200):
+            backend.tick(world, i * 0.05)
+        offered = backend.background_actors(world)
+        assert offered and all(name.startswith("sumo:") for name in offered)
+        name, actor = next(iter(offered.items()))
+        sumo_id = name[len("sumo:") :]
+        backend.release_actor(world, actor)
+        assert sumo_id not in backend._ambient and backend._external[sumo_id] is actor
+        assert name not in backend.background_actors(world)
+        held = actor.transform.location.x
+        for i in range(20):
+            backend.tick(world, (200 + i) * 0.05)
+        # Neither followed nor removed: the pose it has is CARLA's own.
+        assert not actor.destroyed
+        assert actor.transform.location.x == pytest.approx(held)
+        backend.resume_actor(world, actor)
+        assert sumo_id not in backend._external
+        assert backend._ambient.get(sumo_id) is actor
+        backend.resume_actor(world, actor)  # and saying it twice is harmless
+    finally:
+        backend.close()
+    assert actor.destroyed
+
+
+@needs_sumo
+def test_a_taken_over_ambient_vehicle_is_cleaned_up_at_close(
+    crossroads: Path, tmp_path: Path
+) -> None:
+    backend, world, _npc, _ego = _prepared(
+        crossroads, tmp_path, period_s=1.0, max_vehicles=3
+    )
+    try:
+        for i in range(200):
+            backend.tick(world, i * 0.05)
+        _name, actor = next(iter(backend.background_actors(world).items()))
+        backend.release_actor(world, actor)
+    finally:
+        backend.close()
+    assert actor.destroyed and backend._handed_ambient == {}
 
 
 @needs_sumo
@@ -1123,6 +1191,7 @@ def test_carla_light_states_reach_sumo_as_typesafe_carla_reports_them() -> None:
 
     backend = SumoTrafficBackend.__new__(SumoTrafficBackend)
     backend._traci = SimpleNamespace(trafficlight=_Lights())
+    backend._crossing_links = {}
     backend._signals = {
         ("tls", 0): light(carla.TrafficLightState.Green),
         ("tls", 1): light(carla.TrafficLightState.Yellow),
@@ -1130,6 +1199,34 @@ def test_carla_light_states_reach_sumo_as_typesafe_carla_reports_them() -> None:
     }
     backend._signals_to_sumo()
     assert backend._traci.trafficlight.states["tls"] == "Gyrr"
+
+
+def test_a_crossing_walks_only_while_the_roads_it_crosses_are_red() -> None:
+    """A crossing's link has no CARLA light: it is green while every vehicle
+    link over a road it crosses is red, and red otherwise."""
+    import typesafe_carla.carla as carla
+
+    from autoware_carla_scenario.traffic.sumo.backend import SumoTrafficBackend
+
+    states = {"tls": "rrrrGG"}
+    lights = SimpleNamespace(
+        getRedYellowGreenState=lambda tls: states[tls],
+        setRedYellowGreenState=lambda tls, state: states.__setitem__(tls, state),
+    )
+    green = SimpleNamespace(get_state=lambda: int(carla.TrafficLightState.Green))
+    red = SimpleNamespace(get_state=lambda: int(carla.TrafficLightState.Red))
+    backend = SumoTrafficBackend.__new__(SumoTrafficBackend)
+    backend._traci = SimpleNamespace(trafficlight=lights)
+    # Links 0-1 drive over the road crossing 4 crosses, 2-3 over crossing 5's.
+    backend._crossing_links = {"tls": [(4, [0, 1]), (5, [2, 3])]}
+    backend._signals = {
+        ("tls", 0): green,
+        ("tls", 1): red,
+        ("tls", 2): red,
+        ("tls", 3): red,
+    }
+    backend._signals_to_sumo()
+    assert states["tls"] == "GrrrrG"
 
 
 def test_sumo_light_states_are_sent_to_carla_only_when_they_change() -> None:
@@ -1595,5 +1692,107 @@ def test_only_the_pedestrians_near_the_ego_are_in_carla(
             assert len(limited._persons) == 1
         finally:
             limited.close()
+    finally:
+        backend.close()
+
+
+# ---------------------------------------------------------------------------
+# Pedestrian crossings
+# ---------------------------------------------------------------------------
+
+
+def _vehicle_links(net_file: Path) -> list[tuple[str, int, str, str]]:
+    import sumolib
+
+    net = sumolib.net.readNet(str(net_file), withInternal=True)
+    return sorted(
+        (tls.getID(), index, in_lane.getID(), out_lane.getID())
+        for tls in net.getTrafficLights()
+        for in_lane, out_lane, index in tls.getConnections()
+        if out_lane.getEdge().getFunction() == ""
+    )
+
+
+@needs_sumo
+def test_the_network_has_crossings_and_walking_areas(
+    signalled_crossroads: Path, tmp_path: Path
+) -> None:
+    import sumolib
+
+    from autoware_carla_scenario.traffic.sumo.network import (
+        build_network,
+        crossing_edges,
+    )
+
+    opendrive = signalled_crossroads.read_text()
+    plain = build_network(opendrive, tmp_path / "cache")
+    walking = build_network(opendrive, tmp_path / "cache", pedestrian_crossings=True)
+    assert plain.net_file != walking.net_file  # cached apart
+    assert crossing_edges(plain.net_file) == {}
+    crossings = crossing_edges(walking.net_file)
+    assert crossings and all(crossings.values())
+    net = sumolib.net.readNet(str(walking.net_file), withInternal=True)
+    assert any(e.getFunction() == "walkingarea" for e in net.getEdges())
+    # The vehicle links keep the indices CARLA's lights are matched to.
+    assert _vehicle_links(walking.net_file) == _vehicle_links(plain.net_file)
+
+
+@needs_sumo
+def test_each_signalled_crossing_waits_for_the_traffic_over_its_road(
+    signalled_crossroads: Path, tmp_path: Path
+) -> None:
+    from autoware_carla_scenario.traffic.sumo.backend import SumoTrafficBackend
+    from autoware_carla_scenario.traffic.sumo.config import AmbientTrafficConfig
+
+    backend = SumoTrafficBackend(
+        SumoBackendConfig(
+            warmup_s=0.0,
+            vehicle_control="teleport",
+            cache_dir=str(tmp_path / "cache"),
+            ambient=AmbientTrafficConfig(enabled=False),
+        )
+    )
+    backend.prepare(
+        TrafficContext(
+            xodr_path=signalled_crossroads,
+            fixed_delta_seconds=0.05,
+            random_seed=3,
+            output_dir=tmp_path / "out",
+        )
+    )
+    try:
+        backend.start(_FakeWorld([]))
+        ((tls, links),) = backend._crossing_links.items()
+        assert backend._network is not None
+        vehicle_count = len(_vehicle_links(backend._network.net_file))
+        assert len(links) >= 4
+        for index, foes in links:
+            # After the vehicle links, and waiting for some of them only.
+            assert index >= vehicle_count
+            assert foes and all(foe < vehicle_count for foe in foes)
+            assert len(foes) < vehicle_count
+        assert tls in backend._traci.trafficlight.getIDList()
+    finally:
+        backend.close()
+    assert backend._crossing_links == {}
+
+
+@needs_sumo
+def test_sumos_pedestrians_cross_roads_on_crossings(
+    signalled_crossroads: Path, tmp_path: Path
+) -> None:
+    from autoware_carla_scenario.traffic.sumo.network import crossing_edges
+
+    backend, world, _ego = _walking(signalled_crossroads, tmp_path, warmup_s=10.0)
+    tc = backend._traci
+    try:
+        crossings = set(crossing_edges(backend._network.net_file))
+        seen: set[str] = set()
+        for i in range(1200):
+            backend.tick(world, i * 0.05)
+            seen |= {tc.person.getRoadID(p) for p in tc.person.getIDList()}
+            if seen & crossings:
+                break
+        assert seen & crossings, "no pedestrian walked over a crossing"
     finally:
         backend.close()

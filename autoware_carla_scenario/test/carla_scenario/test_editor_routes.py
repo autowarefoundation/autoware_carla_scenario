@@ -1389,6 +1389,7 @@ class TestEnvironmentTrack:
         assert offers[""] == {
             "adversarial_traffic",
             "environment",
+            "prop",
             "traffic_signal",
             "traffic_signal_controller",
             "traffic_sink",

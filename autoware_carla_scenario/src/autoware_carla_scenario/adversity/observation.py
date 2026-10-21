@@ -110,11 +110,20 @@ class AgentSnapshot:
 
 @dataclass(frozen=True)
 class LanePosition:
-    """Where on a lanelet an agent is."""
+    """Where on a lanelet an agent is.
+
+    Attributes:
+        lanelet: The lanelet.
+        s: Along its centreline (m).
+        t: Off it, positive to the left (m).
+        heading: The agent's heading off the lanelet's direction there (rad,
+            counter-clockwise, in ``[-pi, pi)``).
+    """
 
     lanelet: ConstLanelet
     s: float
     t: float
+    heading: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -300,7 +309,7 @@ class Scene:
                 and abs(pose.heading) <= _MAX_HEADING_RAD
                 and MapFeatures.is_road(lanelet)
             ):
-                found = LanePosition(lanelet, pose.s, pose.t)
+                found = LanePosition(lanelet, pose.s, pose.t, pose.heading)
         self._lanes[name] = found
         return found
 

@@ -62,6 +62,7 @@ __all__ = [
     "SettingSpeed",
     "TurningAtJunctions",
     "TrafficBackend",
+    "warn_if_mesoscopic",
     "TrafficBackendError",
     "TrafficBackendUnavailable",
     "TrafficContext",
@@ -144,6 +145,35 @@ class SimulationFidelity(enum.Enum):
 
     MICROSCOPIC = "microscopic"
     MESOSCOPIC = "mesoscopic"
+
+
+#: Role names of the entities a traffic backend simulates mesoscopically now
+#: (kept by :meth:`TrafficBackend._mark_fidelity`), and those a lookup of their
+#: actor has been warned about since they became mesoscopic.
+_MESOSCOPIC_ROLES: set[str] = set()
+_WARNED_ROLES: set[str] = set()
+
+
+def warn_if_mesoscopic(role_name: str) -> bool:
+    """Whether *role_name* names an entity a backend simulates mesoscopically.
+
+    Called by a lookup that found no actor for *role_name*: such an entity has
+    none while it is far, which is not the entity being gone, and a condition
+    that reads it reads nothing.  Says so in a warning, the first time after
+    the entity became mesoscopic.
+    """
+    if role_name not in _MESOSCOPIC_ROLES:
+        return False
+    if role_name not in _WARNED_ROLES:
+        _WARNED_ROLES.add(role_name)
+        logger.warning(
+            "%s has no actor: its traffic backend simulates it mesoscopically "
+            "while it is far, out of CARLA. A condition reading it reads "
+            "nothing meanwhile; check entity.simulation_fidelity, or call "
+            "entity.require_microscopic(world) to bring it back.",
+            role_name,
+        )
+    return True
 
 
 @runtime_checkable
@@ -519,6 +549,17 @@ class TrafficBackend:
         and ``entity.actor`` always agree.
         """
         entity.simulation_fidelity = fidelity
+        # What a lookup of the entity's actor by role name asks
+        # (warn_if_mesoscopic): kept here, the one writer of the flag.
+        if hasattr(entity, "role_name"):
+            role_name = entity.role_name
+            if role_name is not None:
+                name = str(role_name)
+                if fidelity is SimulationFidelity.MESOSCOPIC:
+                    _MESOSCOPIC_ROLES.add(name)
+                else:
+                    _MESOSCOPIC_ROLES.discard(name)
+                    _WARNED_ROLES.discard(name)
 
     # ------------------------------------------------------------------
     # Background traffic -- vehicles no scenario entity stands for
@@ -563,6 +604,20 @@ class TrafficBackend:
 
     def remove_background(self, world: "carla.World", handle: str) -> None:
         """Take the background vehicle *handle* off the road."""
+
+    def background_actors(self, world: "carla.World") -> dict[str, "carla.Actor"]:
+        """The CARLA actor of every background vehicle this backend drives in
+        the world now, by its ``role_name``: what an adversity may take over
+        for a while, by its actor (:meth:`release_actor`, #417).  None by
+        default."""
+        return {}
+
+    def release_actor(self, world: "carla.World", actor: "carla.Actor") -> None:
+        """Stop driving the background vehicle *actor*; the caller drives it
+        now (:meth:`release` for a vehicle no entity stands for)."""
+
+    def resume_actor(self, world: "carla.World", actor: "carla.Actor") -> None:
+        """Drive the background vehicle *actor* again, from where it is now."""
 
     # ------------------------------------------------------------------
     # Internals

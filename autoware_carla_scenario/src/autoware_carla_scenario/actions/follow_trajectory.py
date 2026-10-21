@@ -374,6 +374,10 @@ class FollowTrajectoryAction(BaseAction):
                 # Placed against where the reference entities are now, at
                 # every start of a run rather than once for all of them.
                 self._resolved = None
+        self._drive_target(world)
+
+    def _drive_target(self, world: "carla.World") -> None:
+        """Move what this action drives one tick: the entity its role names."""
         # The entity of any kind the role names: a vehicle first, then a
         # pedestrian, as find_entity_by_role_name finds it.  Looked up by
         # kind, so the static check knows its type (docs/typecheck.md).
@@ -421,7 +425,31 @@ class FollowTrajectoryAction(BaseAction):
         if not self._begun:
             # The trigger's call begins a run -- or, when the entity was not
             # there to begin it with, the first call that finds it.
-            self._begin(world, entity, actor)
+            self._begin(world, actor)
+            self._take_over(world, entity)
+        self._advance(world, actor)
+
+    def _take_over(
+        self, world: "carla.World", entity: Union[BackendDriven, PedestrianEntity]
+    ) -> None:
+        """Take *entity* from its traffic backend, once for the action."""
+        if self._released:
+            return
+        if TYPE_CHECKING:
+            # Codon decides hasattr by the static type: a vehicle has the
+            # method, a pedestrian does not.
+            if hasattr(entity, "release_from_traffic"):
+                entity.release_from_traffic(world)
+        else:
+            # At run time an entity may also have it as None, which
+            # releases nothing (Codon has no getattr default).
+            release = getattr(entity, "release_from_traffic", None)
+            if release is not None:
+                release(world)
+        self._released = True
+
+    def _advance(self, world: "carla.World", actor: "carla.Actor") -> None:
+        """Move *actor* one tick along the trajectory of the run begun."""
         if self._finished:
             return
 
@@ -484,13 +512,8 @@ class FollowTrajectoryAction(BaseAction):
         found: carla.Actor = actor
         return CarlaWorldPose.from_carla_transform(found.get_transform())
 
-    def _begin(
-        self,
-        world: "carla.World",
-        entity: Union[BackendDriven, PedestrianEntity],
-        actor: "carla.Actor",
-    ) -> None:
-        """Start a run: take the entity over and set the clock or the distance."""
+    def _begin(self, world: "carla.World", actor: "carla.Actor") -> None:
+        """Start a run: set the clock or the distance, and the follower."""
         assert self._resolved is not None
         self._begun = True
         self._finished = False
@@ -535,19 +558,6 @@ class FollowTrajectoryAction(BaseAction):
         self._waiting = False
         if self._gated:
             self._begin_timeline()
-        if not self._released:
-            if TYPE_CHECKING:
-                # Codon decides hasattr by the static type: a vehicle has the
-                # method, a pedestrian does not.
-                if hasattr(entity, "release_from_traffic"):
-                    entity.release_from_traffic(world)
-            else:
-                # At run time an entity may also have it as None, which
-                # releases nothing (Codon has no getattr default).
-                release = getattr(entity, "release_from_traffic", None)
-                if release is not None:
-                    release(world)
-            self._released = True
         if self._following_mode is TrajectoryFollowingMode.FOLLOW and not _is_walker(
             actor
         ):

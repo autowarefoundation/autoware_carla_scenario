@@ -254,7 +254,11 @@ world from one that is gone. Three rules keep the flag honest:
   since whatever takes a vehicle over drives it in CARLA.
 
 `backend.fidelity_census()` counts the vehicles a backend simulates at each
-level. The parts that are the same for every backend are reusable:
+level. A run's result (`<output>/<scenario>_result.json`) records it under
+`traffic.fidelity`, read when the run ends, beside the backend's `describe()`
+(for SUMO, how many vehicles changed level during the run). A condition that
+looks an entity up by role name while it is mesoscopic finds no actor, and the
+log says why, once each time the entity becomes mesoscopic. The parts that are the same for every backend are reusable:
 
 - `traffic.fidelity.MesoscopicConfig` is the policy: the radii around the
   *focus points* (the ego and every vehicle CARLA drives) inside which traffic
@@ -424,9 +428,19 @@ nearest first. With `radius_m: null` the radii are `mesoscopic`'s when that is
 enabled; otherwise every one is mirrored. The rest walk on in SUMO only, where
 SUMO's traffic still sees them. A walker is put where its person was at the
 start of the step and walked at its speed (`WalkerControl`), so CARLA animates
-it; it is never published back into SUMO as one of CARLA's pedestrians. How
-well they cross roads is the network's: a network built without crossings and
-walking areas has its pedestrians jump between footways at junctions.
+it; it is never published back into SUMO as one of CARLA's pedestrians.
+
+**Pedestrian crossings** (`pedestrian_crossings`, on by default): the network
+is built with a crossing across each road at a junction where footways meet it,
+and walking areas joining footways and crossings (netconvert's
+`--crossings.guess`), so pedestrians cross roads on crossings — where SUMO's
+vehicles yield to them — instead of jumping between footways. At a signalised
+junction netconvert appends the crossings' links after the vehicle links, so the
+vehicle links keep the indices CARLA's lights are matched to. With
+`traffic_light_authority=carla` a crossing is green while every vehicle link
+into or out of a road it crosses is red, and red otherwise; with `sumo`, SUMO's
+own program (which netconvert gives a pedestrian phase) drives it. A network
+given as `net_path` is used as it is.
 
 ```bash
 uv run scenario ... traffic=sumo traffic.options.pedestrians.enabled=true \

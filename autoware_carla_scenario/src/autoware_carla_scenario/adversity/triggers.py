@@ -22,8 +22,9 @@ adversarial thing now, else None:
   half a lane toward that side and back, in 1 s;
 * :attr:`AdversityKind.HEAD_ON` (Headon): IGNORE_LEADER's command, where the
   leader's lanelet starts more than 120 degrees off the agent's;
-* :attr:`AdversityKind.MERGE` (Merge): beside a merging lane with traffic
-  on it (:meth:`~..route.geometry.MapFeatures.merges`) -- one lane over,
+* :attr:`AdversityKind.MERGE` (Merge): not already changing lanes (turned
+  5 degrees or more off its lane), beside a merging lane with traffic on it
+  (:meth:`~..route.geometry.MapFeatures.merges`) -- one lane over,
   speed up as if the vehicle merging ahead were not there, when that beats
   giving way by more than 1.5 m/s², for 2 s; two lanes over, change into
   the lane between in 1 s when nobody there is within 2 s of headway;
@@ -147,6 +148,9 @@ class TriggerThresholds:
         moving_speed: LANE_CHANGE_ABORT's least speed (m/s): TeraSim's
             "moving at all", not the ``standstill_speed`` the others use.
         abort_resolution: The time step (s) of a lane-change abort's path.
+        lane_changing_angle: MERGE leaves alone a vehicle turned this many
+            degrees or more off its lane (TeraSim's ``is_lane_changing``):
+            one already changing lanes.
         merge_headway: MERGE's least time headway (s) to a vehicle in the
             lane it changes into, closing in ahead or behind.
         head_on_angle: HEAD_ON's least difference (degrees) between the
@@ -177,6 +181,7 @@ class TriggerThresholds:
     moving_speed: float = 0.01
     abort_resolution: float = 0.1
     head_on_angle: float = 120.0
+    lane_changing_angle: float = 5.0
     merge_headway: float = 2.0
     pedestrian_speed: float = 1.4
     pedestrian_speed_factor: tuple[float, float] = (0.5, 2.0)
@@ -380,10 +385,14 @@ def merge(
     *beyond*, the lane right of that one (two lanes over).
     """
     right = seen.right
-    if right is None:
+    lane = seen.lane
+    if right is None or lane is None:
         return None
-    # A typed local: Codon unwraps the Optional here, not at each use.
+    # Typed locals: Codon unwraps the Optionals here, not at each use.
     beside: SideLane = right
+    on: LanePosition = lane
+    if abs(math.degrees(on.heading)) >= limits.lane_changing_angle:
+        return None  # already changing lanes
     agent = seen.agent
     if _merging(features, beside):
         # MergeSpeedUp: drive as its own leader lets it, ignoring the

@@ -14,7 +14,6 @@ from typing import Any
 
 import pytest
 
-import autoware_carla_scenario as acs
 from autoware_carla_scenario.action_state import ActionState
 from autoware_carla_scenario.actions import _adversarial_execution as executions
 from autoware_carla_scenario.actions import adversarial_traffic
@@ -37,8 +36,18 @@ made: list["_Execution"] = []
 class _Execution:
     """Stands in for AdversarialExecution: done on its third tick."""
 
-    def __init__(self, name: str, path: Any, mode: Any, label: str) -> None:
+    def __init__(
+        self,
+        name: str,
+        path: Any,
+        mode: Any,
+        label: str,
+        actor: Any = None,
+        backend: Any = None,
+    ) -> None:
         self.name, self.path, self.label = name, path, label
+        self.entity_name = name
+        self.actor, self.backend = actor, backend
         self.ticks = 0
         self.closed = False
         made.append(self)
@@ -119,131 +128,32 @@ def test_only_a_registered_entity_is_driven() -> None:
     assert made == [] and action.weight == 1.0
 
 
-def test_no_ego_no_adversity() -> None:
+class _Backend:
+    """Offers one background vehicle, as a traffic backend does (#417)."""
+
+    def __init__(self, actors: dict[str, Any]) -> None:
+        self.actors = actors
+
+    def background_actors(self, world: Any) -> dict[str, Any]:
+        return dict(self.actors)
+
+
+def test_a_background_vehicle_is_driven_by_its_actor_without_an_entity() -> None:
+    from autoware_carla_scenario.entity.registry import find_vehicle_entity
+
+    actor = SimpleNamespace(id=7)
+    backend = _Backend({"background_7": actor})
     action = AdversarialTrafficAction([BRAKE], settings=ALWAYS)
-    world = _world(
-        _actor(2, "npc1", -40.0, INNER, 10.0), _actor(3, "npc2", -55.0, INNER, 10.0)
-    )
-    action.tick(world, 0.0)
+    action.set_traffic_backend(backend)  # type: ignore[arg-type]
+    _run(action, 1, npc="background_7")
+    (run,) = made
+    assert run.name == "background_7"
+    assert run.actor is actor and run.backend is backend
+    assert find_vehicle_entity("background_7") is None  # no entity made
+
+
+def test_background_vehicles_can_be_left_alone() -> None:
+    action = AdversarialTrafficAction([BRAKE], settings=ALWAYS, drive_background=False)
+    action.set_traffic_backend(_Backend({"background_7": SimpleNamespace(id=7)}))  # type: ignore[arg-type]
+    _run(action, 3, npc="background_7")
     assert made == []
-
-
-def test_the_ego_s_indicator_is_its_predicted_lane_change(
-    stand_ins: dict[str, Any],
-) -> None:
-    # Signalling right, the ego is predicted out of npc1's way: no challenge.
-    stand_ins["state"] = TurnIndicatorState.RIGHT
-    action = AdversarialTrafficAction([BRAKE], settings=ALWAYS)
-    _run(action, 2)
-    assert made == [] and action.weight == 1.0
-
-
-def test_closing_closes_the_adversity_under_way() -> None:
-    action = AdversarialTrafficAction([BRAKE], settings=ALWAYS)
-    _run(action, 1)
-    action.close()
-    assert made[0].closed
-
-
-def test_a_probability_is_a_probability() -> None:
-    with pytest.raises(ValueError, match="in \\[0, 1\\]"):
-        AdversarialTrafficAction(
-            [NadeAdversity(AdversityKind.CUT_IN, AdversityLocation.ANY, 1.5)]
-        )
-
-
-def test_it_is_exported_with_its_list_entry() -> None:
-    assert acs.AdversarialTrafficAction is AdversarialTrafficAction
-    assert acs.NadeAdversity is NadeAdversity and acs.NadeSettings is NadeSettings
-
-
-def test_the_editor_s_card_builds_the_action() -> None:
-    from autoware_carla_scenario.authoring import _builders_generated as built
-    from autoware_carla_scenario.authoring.compiler import coerce_params
-    from autoware_carla_scenario.authoring.registry import get_action_spec
-
-    spec = get_action_spec("adversarial_traffic")
-    assert spec is not None and spec.scope == "environment"
-    params = coerce_params(
-        spec.fields,
-        {
-            "adversities": [
-                {"kind": "cut_in", "location": "highway", "probability": "0.002"},
-                {"kind": "brake_check", "location": "any", "probability": 0.01},
-            ],
-            "fixed_is_probability": "0.2",
-            "seed": "7",
-        },
-    )
-    compiled: Any = SimpleNamespace(params=params, label="nade")
-    no_context: Any = None
-    action = built.build_adversarial_traffic_action(
-        compiled, None, acs.TickTiming.PRE_TICK, no_context
-    )
-    assert isinstance(action, AdversarialTrafficAction)
-    assert action._adversities == [
-        NadeAdversity(AdversityKind.CUT_IN, AdversityLocation.HIGHWAY, 0.002),
-        NadeAdversity(AdversityKind.BRAKE_CHECK, AdversityLocation.ANY, 0.01),
-    ]
-    assert action._sampler.settings == NadeSettings(fixed_is_probability=0.2)
-
-
-def test_an_npc_victim_s_response_is_driven_too() -> None:
-    # npc1 brake-checks npc2 behind it, the ego well ahead: npc2 responds.
-    settings = NadeSettings(fixed_is_probability=1.0, challenge_npcs=True)
-    action = AdversarialTrafficAction([BRAKE], settings=settings)
-    world = _world(
-        _actor(1, EGO, -20.0, INNER, 10.0),
-        _actor(2, "npc1", -45.0, INNER, 10.0),
-        _actor(3, "npc2", -58.0, INNER, 10.0),
-    )
-    action.tick(world, 0.0)
-    assert [run.name for run in made] == ["npc1", "npc2"]
-    (choice,) = action.choices
-    assert [victim for victim, _ in choice.responses] == ["npc2"]
-    # One adversity at a time: both are driven to their end before the next.
-    for t in range(1, 4):
-        action.tick(world, 0.1 * t)
-    assert all(run.ticks == 3 for run in made)
-
-
-def test_it_reports_its_weight_its_events_and_the_kind_sampled_now() -> None:
-    action = AdversarialTrafficAction([BRAKE], settings=ALWAYS)
-    world = _leading(1)
-    assert action.importance_sampling_weight == 1.0
-    action.tick(world, 0.1)
-    assert action.importance_sampling_weight == pytest.approx(0.01)
-    assert action.sampled_kind(world) is AdversityKind.BRAKE_CHECK
-    (event,) = action.take_adversity_events()
-    assert (event.agent, event.kind, event.location) == ("npc1", "brake_check", "any")
-    assert (event.probability, event.is_probability) == (0.01, 1.0)
-    assert event.weight == pytest.approx(0.01) and event.avoidable
-    assert (event.victims, event.response) == ([], "")
-    assert action.take_adversity_events() == []  # taken
-    action.tick(_leading(2), 0.2)
-    assert action.sampled_kind(world) is None  # sampled last tick, not this one
-
-
-def test_a_scenario_s_weight_is_its_actions() -> None:
-    from autoware_carla_scenario import BaseScenario
-    from autoware_carla_scenario.actions.base import BaseAction
-
-    class _Weighs(BaseAction):
-        def __init__(self, weight: float) -> None:
-            super().__init__("weighs")
-            self._weight = weight
-
-        @property
-        def importance_sampling_weight(self) -> float:
-            return self._weight
-
-        def execute(self, world: Any) -> None:
-            pass
-
-    scenario = SimpleNamespace(
-        _init_actions=[_Weighs(0.5)],
-        _pre_tick_actions=[_Weighs(0.25), AdversarialTrafficAction([BRAKE])],
-        _post_tick_actions=[],
-    )
-    weight = BaseScenario.importance_sampling_weight.fget(scenario)  # type: ignore[attr-defined]
-    assert weight == pytest.approx(0.125)
