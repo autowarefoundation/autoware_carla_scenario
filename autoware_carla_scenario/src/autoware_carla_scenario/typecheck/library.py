@@ -64,6 +64,7 @@ CHECKED: tuple[str, ...] = (
     "autoware_carla_scenario.actions.environment",
     "autoware_carla_scenario.actions.follow_trajectory",
     "autoware_carla_scenario.actions.lane_change",
+    "autoware_carla_scenario.actions.prop",
     "autoware_carla_scenario.actions.routing",
     "autoware_carla_scenario.actions.set_speed",
     "autoware_carla_scenario.actions.stalled_object",

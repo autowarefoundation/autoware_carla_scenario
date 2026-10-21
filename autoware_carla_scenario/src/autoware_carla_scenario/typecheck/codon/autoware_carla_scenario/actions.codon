@@ -12,7 +12,7 @@ from .coordinate import (Lanelet2Pose, CarlaWorldPose, GroundProjectionConfig,
 from .entity_role import EntityRole, _expect_role
 from .traffic import TurnDirection, LaneChangeDirection
 from .trajectory import (Trajectory, TrajectoryFollowingMode, TrajectoryTiming,
-                         _expect_optional_timing)
+                         _expect_optional_timing, _expect_trajectory_position)
 
 
 @tuple
@@ -333,6 +333,48 @@ class StalledObjectAction(BaseAction):
     @property
     def held_vertex(self) -> Optional[int]:
         raise NotImplementedError()
+
+
+@tuple
+class PropOperation:
+    value: str
+    ADD: ClassVar[PropOperation] = PropOperation("add")
+    REMOVE: ClassVar[PropOperation] = PropOperation("remove")
+
+    # Enum's name (#307): Codon has no Enum to give a framework enum one.
+    @property
+    def name(self) -> str:
+        if self == PropOperation.ADD:
+            return "ADD"
+        if self == PropOperation.REMOVE:
+            return "REMOVE"
+        raise ValueError("not a member of PropOperation")
+
+
+class PropAction(BaseAction):
+    def __init__(self, label):
+        compile_error("PropAction(): no constructor takes these arguments (required: name)")
+
+    def __init__(self, name: str, operation: PropOperation = PropOperation("add"), position = None,
+                 *_kw, blueprint: str = "static.prop.constructioncone", on_ground: bool = True,
+                 condition = None, timing: TickTiming = TickTiming("pre_tick"),
+                 label: str = "prop"):
+        _keyword_only(_kw, "PropAction(): blueprint, on_ground, condition, timing and label")
+        if position is not None:
+            _expect_trajectory_position(position)
+        super().__init__(label, condition, timing)
+
+    def apply(self, world: carla.World, library: Optional[carla.BlueprintLibrary] = None,
+              ground = None) -> bool:
+        raise NotImplementedError()
+
+
+def standing_props() -> List[str]:
+    raise NotImplementedError()
+
+
+def clear_props() -> None:
+    raise NotImplementedError()
 
 
 def collision_objects(first, second, first_pose, second_pose, start_time: float = 0.0,

@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any, Collection, Optional
 
 import typesafe_carla.carla as carla
 
+from .actions.prop import clear_props
 from .entity.ego import EgoVehicle
 from .entity.registry import (
     clear_entities,
@@ -1058,8 +1059,9 @@ class ScenarioRunner:
         # A batch runs several scenarios against one world, so the entities of
         # the previous one are cleared before this one registers its own -- an
         # entity from the last run still answering to "npc1" would be worse
-        # than no entity at all.
+        # than no entity at all.  So are the props a PropAction placed.
         clear_entities()
+        clear_props()
 
         # The ego is built before the cleanup, not after it: an entity that
         # attaches to an actor someone else spawned has to be able to say so
@@ -1538,6 +1540,9 @@ class ScenarioRunner:
                     scenario_name,
                     exc_info=True,
                 )
+            # And the props a PropAction placed: the leftovers' sweep takes
+            # vehicles, walkers and sensors, not static props.
+            clear_props()
 
             # Explicitly destroy the ego vehicle so it does not persist
             # if the map reload fails later.
