@@ -167,7 +167,7 @@ product of every action's weight, which is 1.0 without NADE. You can read it:
   record with its `p`, its `q`, the weight at that point, the victims and the
   response (see [Trajectory Log](trajectory_log.md)).
 - in the run's coverage file, as `outcome.weight`: a run is importance
-  sampled when one of its actions is (`BaseScenario.importance_sampled`; NADE
+  sampled when one of its actions is (`BaseScenario.outcome_weight`; NADE
   is), and only such a run records a weight.
 
 To count which kinds were sampled, register a coverage item on

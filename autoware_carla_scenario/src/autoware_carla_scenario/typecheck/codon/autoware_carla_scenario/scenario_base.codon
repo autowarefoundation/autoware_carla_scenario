@@ -197,7 +197,7 @@ class BaseScenario:
         raise NotImplementedError()
 
     @property
-    def importance_sampled(self) -> bool:
+    def outcome_weight(self) -> Optional[float]:
         raise NotImplementedError()
 
     @property
@@ -259,8 +259,8 @@ class BaseScenario:
             _acs_expect_return(r, Optional[Lanelet2Pose], "BaseScenario.goal_pose returns Optional[Lanelet2Pose]")
         elif name == "importance_sampling_weight":
             _acs_expect_return(r, float, "BaseScenario.importance_sampling_weight returns float")
-        elif name == "importance_sampled":
-            _acs_expect_return(r, bool, "BaseScenario.importance_sampled returns bool")
+        elif name == "outcome_weight":
+            _acs_expect_return(r, Optional[float], "BaseScenario.outcome_weight returns Optional[float]")
         elif name == "waypoint_poses":
             _acs_expect_return(r, List[Lanelet2Pose], "BaseScenario.waypoint_poses returns List[Lanelet2Pose]")
         elif name == "create_ego":

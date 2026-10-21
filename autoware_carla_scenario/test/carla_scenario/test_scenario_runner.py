@@ -638,21 +638,22 @@ class TestRecordRun:
         )
 
 
-def test_a_scenario_is_importance_sampled_when_an_action_is() -> None:
+def test_only_an_importance_sampled_run_has_an_outcome_weight() -> None:
     from types import SimpleNamespace
 
     from autoware_carla_scenario import AdversarialTrafficAction, BaseScenario
     from autoware_carla_scenario.actions import SetSpeedAction
 
-    sampled = BaseScenario.importance_sampled.fget  # type: ignore[attr-defined]
+    outcome_weight = BaseScenario.outcome_weight.fget  # type: ignore[attr-defined]
     actions = SimpleNamespace(
         _init_actions=[],
         _pre_tick_actions=[SetSpeedAction("npc1", 1.0)],
         _post_tick_actions=[],
     )
-    assert not sampled(actions)
+    assert outcome_weight(actions) is None
+    # NADE samples, even before it has sampled anything (weight 1).
     actions._post_tick_actions.append(AdversarialTrafficAction([]))
-    assert sampled(actions)
+    assert outcome_weight(actions) == 1.0
 
 
 def test_what_the_odds_measures_read_is_built_before_the_first_tick(

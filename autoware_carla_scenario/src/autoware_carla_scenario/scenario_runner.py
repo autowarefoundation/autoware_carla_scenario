@@ -349,8 +349,8 @@ def _record_run(
     header and the result carry): the report never pools runs of different
     environments, where a regression would read as flakiness.
 
-    An importance-sampled run (:attr:`BaseScenario.importance_sampled`) also
-    records its likelihood ratio, *weight*, from which the merged report
+    An importance-sampled run also records its likelihood ratio, *weight*
+    (:attr:`BaseScenario.outcome_weight`), from which the merged report
     estimates the naturalistic failure rate (openodd's weighted outcomes).
     """
     from .environment import capture  # noqa: PLC0415
@@ -1632,14 +1632,7 @@ class ScenarioRunner:
                 )
             logger.info("[%s] Result JSON written to: %s", scenario_name, json_path)
             if coverage is not None:
-                _record_run(
-                    coverage,
-                    case,
-                    result,
-                    scenario.importance_sampling_weight
-                    if scenario.importance_sampled
-                    else None,
-                )
+                _record_run(coverage, case, result, scenario.outcome_weight)
                 coverage_path = self.output_dir / f"{file_stem}_coverage.json"
                 coverage.write(coverage_path, scenario_name)
                 logger.info(
