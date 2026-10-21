@@ -48,11 +48,15 @@ from typing import (
 )
 
 from .context import TrafficContext
+from .parameters import PARAMETER_BACKENDS, TrafficParameters
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
 
 logger = logging.getLogger(__name__)
+
+#: The parameters of a backend that was given none: every field unset.
+_NO_PARAMETERS = TrafficParameters()
 
 __all__ = [
     "LaneChangeDirection",
@@ -337,6 +341,50 @@ class TrafficBackend:
     name: ClassVar[str] = "unnamed"
     #: Whether :meth:`close_lane` has said this backend cannot close a lane.
     _warned_lane_closure: bool = False
+    #: What :meth:`set_parameters` was given; ``None``: every default.
+    _parameters: Optional[TrafficParameters] = None
+
+    # ------------------------------------------------------------------
+    # Parameters
+    # ------------------------------------------------------------------
+
+    def supported_parameters(self) -> set[str]:
+        """The :class:`~autoware_carla_scenario.traffic.parameters.TrafficParameters`
+        fields this backend honours.
+
+        What :data:`~autoware_carla_scenario.traffic.parameters.PARAMETER_BACKENDS`
+        says of this backend's :attr:`name`: none for a backend it does not
+        name, which refuses every one set rather than run as if it had.  A
+        backend from another package overrides this with the fields it applies.
+        """
+        return {
+            field
+            for field, backends in PARAMETER_BACKENDS.items()
+            if self.name in backends
+        }
+
+    def set_parameters(self, parameters: TrafficParameters) -> None:
+        """Drive the traffic with *parameters* from the next :meth:`prepare` on.
+
+        :func:`~autoware_carla_scenario.traffic.registry.build_backend` calls
+        this with the ``traffic.parameters`` node; a backend built in Python
+        takes them in its constructor or here.
+
+        Raises:
+            TrafficParameterError: If a field is set that this backend does not
+                support (:meth:`supported_parameters`), naming the backends that
+                do.  Raised before the run, as :meth:`prepare` refuses.
+        """
+        parameters.check_supported(self.name, self.supported_parameters())
+        self._parameters = parameters
+
+    @property
+    def parameters(self) -> TrafficParameters:
+        """The parameters this backend drives with (every field ``None``
+        when none were set)."""
+        if self._parameters is None:
+            return _NO_PARAMETERS
+        return self._parameters
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -411,9 +459,14 @@ class TrafficBackend:
         """Return what drove this run, for the result record.
 
         Subclasses add their seed, their process version, whatever makes a run
-        reproducible from its record alone.
+        reproducible from its record alone.  The parameters that were set
+        are there under ``parameters``.
         """
-        return {"backend": self.name}
+        out: dict[str, Any] = {"backend": self.name}
+        parameters = self.parameters.describe()
+        if parameters:
+            out["parameters"] = parameters
+        return out
 
     # ------------------------------------------------------------------
     # Manoeuvres -- the intents entities delegate here

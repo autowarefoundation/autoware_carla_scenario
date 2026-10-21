@@ -22,6 +22,7 @@ import logging
 from typing import Any, Callable, Mapping
 
 from .base import TrafficBackend
+from .parameters import TrafficParameters
 
 logger = logging.getLogger(__name__)
 
@@ -96,18 +97,28 @@ def get_backend_factory(name: str) -> TrafficBackendFactory:
 
 
 def build_backend(
-    name: str, options: Mapping[str, Any] | None = None
+    name: str,
+    options: Mapping[str, Any] | None = None,
+    parameters: TrafficParameters | None = None,
 ) -> TrafficBackend:
-    """Build the backend *name* from its *options*.
+    """Build the backend *name* from its *options*, driving with *parameters*.
 
     Args:
         name: Registered backend name.
         options: The backend's own options node; ``None`` means its defaults.
+        parameters: How its traffic drives
+            (:class:`~autoware_carla_scenario.traffic.parameters.TrafficParameters`);
+            ``None`` means the backend's defaults.
 
     Raises:
         ValueError: If no backend answers to *name*.
+        TrafficParameterError: If *parameters* sets a field the backend does not
+            support; the message names the backends that do.
     """
-    return get_backend_factory(name)(dict(options or {}))
+    backend = get_backend_factory(name)(dict(options or {}))
+    if parameters is not None:
+        backend.set_parameters(parameters)
+    return backend
 
 
 def load_traffic_backend_plugins() -> None:

@@ -394,6 +394,7 @@ def _prepared(
     from autoware_carla_scenario.traffic.sumo.backend import SumoTrafficBackend
     from autoware_carla_scenario.traffic.sumo.config import AmbientTrafficConfig
 
+    parameters = options.pop("parameters", None)
     config = SumoBackendConfig(
         scenario_vehicles=options.pop("scenario_vehicles", "sumo"),
         ambient=AmbientTrafficConfig(
@@ -405,7 +406,7 @@ def _prepared(
         cache_dir=str(tmp_path / "cache"),
         **options,
     )
-    backend = SumoTrafficBackend(config)
+    backend = SumoTrafficBackend(config, parameters=parameters)
     backend.prepare(
         TrafficContext(
             client=_CLIENT.get("client"),
@@ -866,9 +867,10 @@ def test_sumo_traffic_can_ignore_the_visibility(
         forget_visibility,
         set_world_visibility,
     )
+    from autoware_carla_scenario.traffic.parameters import TrafficParameters
 
     backend, world, _npc, _ego = _prepared(
-        crossroads, tmp_path, follow_visibility=False
+        crossroads, tmp_path, parameters=TrafficParameters(follow_visibility=False)
     )
     world.id = 12  # type: ignore[attr-defined]
     tc = backend._traci
@@ -884,6 +886,98 @@ def test_sumo_traffic_can_ignore_the_visibility(
     finally:
         backend.close()
         forget_visibility()
+
+
+@needs_sumo
+def test_sumo_drives_its_vehicles_with_the_traffic_parameters(
+    crossroads: Path, tmp_path: Path
+) -> None:
+    from autoware_carla_scenario.traffic.parameters import TrafficParameters
+    from autoware_carla_scenario.visibility import (
+        forget_visibility,
+        set_world_visibility,
+        sight_speed,
+    )
+
+    forget_visibility()
+    parameters = TrafficParameters(
+        speed_factor=0.5,
+        min_gap_m=4.0,
+        lane_changes=False,
+        accel=1.5,
+        decel=3.0,
+        reaction_time_s=2.0,
+        imperfection=0.0,
+    )
+    backend, world, _npc, ego = _prepared(crossroads, tmp_path, parameters=parameters)
+    world.id = 13  # type: ignore[attr-defined]
+    tc = backend._traci
+    try:
+        handle = backend.spawn_background(
+            world, _carla_transform(-60.0, 5.25, 0.0), speed_kmh=60.0
+        )
+        assert handle is not None
+        (npc_id,) = backend._driven
+        (ego_id,) = backend._external
+        before = {}
+        backend.tick(world, 0.0)
+        for sumo_id in (handle, npc_id):
+            assert tc.vehicle.getMinGap(sumo_id) == pytest.approx(4.0)
+            assert tc.vehicle.getAccel(sumo_id) == pytest.approx(1.5)
+            assert tc.vehicle.getDecel(sumo_id) == pytest.approx(3.0)
+            assert tc.vehicle.getTau(sumo_id) == pytest.approx(2.0)
+            assert tc.vehicle.getImperfection(sumo_id) == pytest.approx(0.0)
+            assert tc.vehicle.getLaneChangeMode(sumo_id) == 1537
+            # SUMO's own draw around 1.0, halved.
+            before[sumo_id] = tc.vehicle.getSpeedFactor(sumo_id)
+            assert 0.3 < before[sumo_id] < 0.7
+        # Given once, as it departs: not scaled again on the next step.
+        backend.tick(world, 0.05)
+        assert tc.vehicle.getSpeedFactor(handle) == pytest.approx(before[handle])
+        # What CARLA's side drives is only placed in SUMO.
+        assert tc.vehicle.getTau(ego_id) != pytest.approx(2.0)
+        assert backend.describe()["parameters"]["reaction_time_s"] == 2.0
+
+        # The sight speed is worked out from the parameters' braking and reaction.
+        set_world_visibility(13, 20.0)
+        backend.tick(world, 0.1)
+        assert tc.vehicle.getMaxSpeed(handle) == pytest.approx(
+            max(sight_speed(20.0, 3.0, 2.0), 1.0)
+        )
+    finally:
+        backend.close()
+        forget_visibility()
+
+
+def test_follow_visibility_is_a_traffic_parameter_now() -> None:
+    with pytest.raises(ValueError, match="traffic.parameters.follow_visibility"):
+        SumoBackendConfig.from_mapping({"follow_visibility": False})
+
+
+def test_sumo_refuses_the_traffic_managers_parameters() -> None:
+    from autoware_carla_scenario.traffic.parameters import (
+        TrafficParameterError,
+        TrafficParameters,
+    )
+    from autoware_carla_scenario.traffic.sumo.backend import SumoTrafficBackend
+
+    with pytest.raises(
+        TrafficParameterError,
+        match="ignore_lights can only be used with the 'traffic_manager' backend",
+    ):
+        SumoTrafficBackend(parameters=TrafficParameters(ignore_lights=0.5))
+
+
+def test_sumo_hands_the_shared_parameters_to_its_traffic_manager() -> None:
+    from autoware_carla_scenario.traffic.parameters import TrafficParameters
+    from autoware_carla_scenario.traffic.sumo.backend import SumoTrafficBackend
+
+    backend = SumoTrafficBackend(
+        parameters=TrafficParameters(speed_factor=0.9, reaction_time_s=1.5)
+    )
+    assert backend.parameters.reaction_time_s == 1.5
+    # The TrafficManager driving the scenario's vehicles gets what it can do.
+    assert backend._tm.parameters == TrafficParameters(speed_factor=0.9)
 
 
 @needs_sumo

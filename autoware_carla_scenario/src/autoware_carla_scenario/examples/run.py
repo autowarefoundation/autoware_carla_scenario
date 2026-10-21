@@ -577,7 +577,7 @@ def build_traffic_backend(cfg: DictConfig) -> TrafficBackend:
     # interpolation that resolved to nothing leaves the backend's default alone.
     options = {key: value for key, value in config.options.items() if value is not None}
 
-    backend = build_backend(config.backend, options)
+    backend = build_backend(config.backend, options, config.parameters)
     logger.info(
         "Traffic backend: %s (registered: %s)", config.backend, available_backends()
     )
