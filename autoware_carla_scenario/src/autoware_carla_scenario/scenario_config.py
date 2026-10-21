@@ -30,7 +30,7 @@ from dataclasses import dataclass, field
 from typing import Any, List
 
 from .traffic.config import TrafficConfig, TrafficManagerBackendConfig
-from .traffic.parameters import PedestrianParameters, VehicleParameters
+from .traffic.parameters import PedestrianParameters, Spread, VehicleParameters
 
 __all__ = [
     "ServerConfig",
@@ -49,6 +49,7 @@ __all__ = [
     "TrafficManagerBackendConfig",
     "VehicleParameters",
     "PedestrianParameters",
+    "Spread",
 ]
 
 #: OmegaConf's mandatory-value marker (``omegaconf.MISSING``), spelled out so

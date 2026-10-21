@@ -16,10 +16,18 @@ has two parameter spaces of its own:
     traffic:
       backend: sumo
       vehicles:
-        speed_factor: 0.9
-        reaction_time_s: 1.5
+        speed_factor: {mean: 0.9, std: 0.1}
+        reaction_time_s: {mean: 1.5, std: 0.3}
       pedestrians:
-        walking_speed_mps: 1.2
+        walking_speed_mps: {mean: 1.2, std: 0.2}
+
+Every numeric parameter is a :class:`Spread` -- a mean and a standard
+deviation -- and each road user draws its own value from it, a normal
+distribution cut to the parameter's bounds (:data:`VEHICLE_BOUNDS`,
+:data:`PEDESTRIAN_BOUNDS`): a population of drivers, not one driver copied.
+A plain number is a spread of no width.  An ODD bounds the mean and the
+spread of each like any other attribute it samples
+(:mod:`autoware_carla_scenario.odd.traffic_probes`).
 
 Not every backend can do everything, and a parameter one cannot honour must not
 be dropped in silence: a run that asked for drivers who react in 1.5 s and got
@@ -54,7 +62,6 @@ run starts.  A field left at ``None`` is the backend's own default.
 ``traffic.pedestrians``    ``traffic_manager``    ``sumo``
 ========================== ====================== =============================
 ``walking_speed_mps``      --                     ``maxSpeed``
-``speed_deviation``        --                     ``speedDev``
 ``min_gap_m``              --                     ``minGap``
 ``red_light_violation_s``  --                     ``jmDriveAfterRedTime``
 ========================== ====================== =============================
@@ -73,11 +80,17 @@ library, so the config layer and the editor can name it.
 
 from __future__ import annotations
 
+import random
 from dataclasses import dataclass
 from typing import Any, Mapping, Optional
 
 __all__ = [
+    "PEDESTRIAN_BOUNDS",
     "PEDESTRIAN_PARAMETER_BACKENDS",
+    "Spread",
+    "VEHICLE_BOUNDS",
+    "record_run_parameters",
+    "run_parameters",
     "PedestrianParameters",
     "TrafficParameterError",
     "VEHICLE_PARAMETER_BACKENDS",
@@ -108,7 +121,6 @@ VEHICLE_PARAMETER_BACKENDS: dict[str, list[str]] = {
 #: traffic: the TrafficManager drives vehicles alone.
 PEDESTRIAN_PARAMETER_BACKENDS: dict[str, list[str]] = {
     "walking_speed_mps": ["sumo"],
-    "speed_deviation": ["sumo"],
     "min_gap_m": ["sumo"],
     "red_light_violation_s": ["sumo"],
 }
@@ -165,19 +177,111 @@ def check_supported(
         )
 
 
-def _check_fraction(name: str, value: Optional[float]) -> None:
-    if value is not None and not (0.0 <= value <= 1.0):
-        raise ValueError(f"{name} must be within [0, 1] (got {value!r})")
+#: The values a numeric parameter may take, ``(low, high)``: what a value is
+#: checked against, and what each draw from its spread is cut to.
+INF = float("inf")
+VEHICLE_BOUNDS: dict[str, tuple[float, float]] = {
+    "speed_factor": (0.05, INF),
+    "min_gap_m": (0.0, INF),
+    "ignore_lights": (0.0, 1.0),
+    "ignore_signs": (0.0, 1.0),
+    "ignore_vehicles": (0.0, 1.0),
+    "ignore_walkers": (0.0, 1.0),
+    "random_lane_changes": (0.0, 1.0),
+    "accel": (0.05, INF),
+    "decel": (0.05, INF),
+    "reaction_time_s": (0.0, INF),
+    "imperfection": (0.0, 1.0),
+}
+PEDESTRIAN_BOUNDS: dict[str, tuple[float, float]] = {
+    "walking_speed_mps": (0.05, INF),
+    "min_gap_m": (0.0, INF),
+    "red_light_violation_s": (0.0, INF),
+}
+
+#: How many draws a spread tries for one inside its bounds before it settles
+#: for its mean.
+_DRAW_TRIES = 32
 
 
-def _check_positive(name: str, value: Optional[float]) -> None:
-    if value is not None and not value > 0.0:
-        raise ValueError(f"{name} must be positive (got {value!r})")
+@dataclass(frozen=True)
+class Spread:
+    """A numeric parameter as each road user draws it: a normal distribution
+    of *mean* and standard deviation *std*, cut to the parameter's bounds.
+
+    ``std`` 0 (the default) gives every road user *mean*.
+    """
+
+    mean: float
+    std: float = 0.0
+
+    def __post_init__(self) -> None:
+        if not self.std >= 0.0:
+            raise ValueError(f"std must not be negative (got {self.std!r})")
+
+    def draw(self, rng: random.Random, bounds: tuple[float, float]) -> float:
+        """One road user's value: from the normal distribution, cut to
+        *bounds* by drawing again (a truncated normal); the mean when the
+        bounds keep refusing."""
+        low, high = bounds
+        if self.std > 0.0:
+            for _ in range(_DRAW_TRIES):
+                value = rng.gauss(self.mean, self.std)
+                if low <= value <= high:
+                    return value
+        return min(max(self.mean, low), high)
+
+    def describe(self) -> dict[str, float]:
+        """``{"mean": ..., "std": ...}``, for a result record."""
+        return {"mean": self.mean, "std": self.std}
 
 
-def _check_non_negative(name: str, value: Optional[float]) -> None:
-    if value is not None and not value >= 0.0:
-        raise ValueError(f"{name} must not be negative (got {value!r})")
+def _check(
+    name: str, value: Optional[Spread], bounds: dict[str, tuple[float, float]]
+) -> None:
+    if value is None:
+        return
+    low, high = bounds[name]
+    if not (low <= value.mean <= high):
+        raise ValueError(
+            f"{name} must be within [{low:g}, {high:g}] (got a mean of {value.mean!r})"
+        )
+
+
+def _spread_of(name: str, value: Any) -> Optional[Spread]:
+    """A config value as a :class:`Spread`: a number is a spread of no width;
+    ``{mean, std}`` is one; ``{mean: null}`` (what the Hydra groups declare)
+    or ``null`` is none."""
+    if value is None or isinstance(value, Spread):
+        return value
+    if isinstance(value, Mapping):
+        unknown = sorted(set(value) - {"mean", "std"})
+        if unknown:
+            raise ValueError(f"{name}: unknown key(s) {unknown}; expected mean and std")
+        mean = value.get("mean")
+        std = value.get("std")
+        if mean is None:
+            if std is not None:
+                raise ValueError(f"{name}: a std needs a mean")
+            return None
+        return Spread(float(mean), float(std or 0.0))
+    return Spread(float(value))
+
+
+def _spreads_from(
+    cls: type, mapping: Mapping[str, Any], numeric: dict[str, tuple[float, float]]
+) -> dict[str, Any]:
+    from ..utils.config import checked_options  # noqa: PLC0415
+
+    checked = checked_options(cls, mapping)
+    return {
+        key: _spread_of(key, value) if key in numeric else value
+        for key, value in checked.items()
+    }
+
+
+def _described(value: Any) -> Any:
+    return value.describe() if isinstance(value, Spread) else value
 
 
 @dataclass(frozen=True)
@@ -185,15 +289,17 @@ class VehicleParameters:
     """How the vehicles a traffic backend drives behave (``traffic.vehicles``).
 
     Every field is optional: ``None`` leaves the backend's own default.  Which
-    backend supports which field is :data:`VEHICLE_PARAMETER_BACKENDS`.
+    backend supports which field is :data:`VEHICLE_PARAMETER_BACKENDS`.  Each
+    numeric field is a :class:`Spread`: every vehicle draws its own value from
+    it (a truncated normal, cut to :data:`VEHICLE_BOUNDS`), so a spread of no
+    width gives all of them the same.
 
     Attributes:
         speed_factor: Desired speed as a multiple of the speed limit (1.0: at
-            the limit, 0.8: 20 % under it).  TrafficManager: its global speed
-            difference, which a speed set on a vehicle (a background vehicle's
-            or a scenario's ``SetSpeedAction``) overrides.  SUMO: each
-            vehicle's own speed factor, drawn by SUMO around 1.0, scaled by it
-            -- so the spread SUMO's drivers have is kept.
+            the limit, 0.8: 20 % under it).  TrafficManager: the vehicle's
+            speed difference, which a speed set on it (a background vehicle's
+            or a scenario's ``SetSpeedAction``) overrides.  SUMO: the
+            vehicle's speed factor.
         min_gap_m: Gap kept to the vehicle ahead when standing, metres.
         lane_changes: Whether vehicles change lanes of their own accord (to
             overtake, to keep right).  ``False`` under SUMO still lets a
@@ -220,32 +326,32 @@ class VehicleParameters:
             weather lifts.  The SUMO backend does so by default.
     """
 
-    speed_factor: Optional[float] = None
-    min_gap_m: Optional[float] = None
+    speed_factor: Optional[Spread] = None
+    min_gap_m: Optional[Spread] = None
     lane_changes: Optional[bool] = None
-    ignore_lights: Optional[float] = None
-    ignore_signs: Optional[float] = None
-    ignore_vehicles: Optional[float] = None
-    ignore_walkers: Optional[float] = None
-    random_lane_changes: Optional[float] = None
-    accel: Optional[float] = None
-    decel: Optional[float] = None
-    reaction_time_s: Optional[float] = None
-    imperfection: Optional[float] = None
+    ignore_lights: Optional[Spread] = None
+    ignore_signs: Optional[Spread] = None
+    ignore_vehicles: Optional[Spread] = None
+    ignore_walkers: Optional[Spread] = None
+    random_lane_changes: Optional[Spread] = None
+    accel: Optional[Spread] = None
+    decel: Optional[Spread] = None
+    reaction_time_s: Optional[Spread] = None
+    imperfection: Optional[Spread] = None
     follow_visibility: Optional[bool] = None
 
     def __post_init__(self) -> None:
-        _check_positive("speed_factor", self.speed_factor)
-        _check_non_negative("min_gap_m", self.min_gap_m)
-        _check_fraction("ignore_lights", self.ignore_lights)
-        _check_fraction("ignore_signs", self.ignore_signs)
-        _check_fraction("ignore_vehicles", self.ignore_vehicles)
-        _check_fraction("ignore_walkers", self.ignore_walkers)
-        _check_fraction("random_lane_changes", self.random_lane_changes)
-        _check_positive("accel", self.accel)
-        _check_positive("decel", self.decel)
-        _check_non_negative("reaction_time_s", self.reaction_time_s)
-        _check_fraction("imperfection", self.imperfection)
+        _check("speed_factor", self.speed_factor, VEHICLE_BOUNDS)
+        _check("min_gap_m", self.min_gap_m, VEHICLE_BOUNDS)
+        _check("ignore_lights", self.ignore_lights, VEHICLE_BOUNDS)
+        _check("ignore_signs", self.ignore_signs, VEHICLE_BOUNDS)
+        _check("ignore_vehicles", self.ignore_vehicles, VEHICLE_BOUNDS)
+        _check("ignore_walkers", self.ignore_walkers, VEHICLE_BOUNDS)
+        _check("random_lane_changes", self.random_lane_changes, VEHICLE_BOUNDS)
+        _check("accel", self.accel, VEHICLE_BOUNDS)
+        _check("decel", self.decel, VEHICLE_BOUNDS)
+        _check("reaction_time_s", self.reaction_time_s, VEHICLE_BOUNDS)
+        _check("imperfection", self.imperfection, VEHICLE_BOUNDS)
 
     def set_fields(self) -> list[str]:
         """The names of the fields that are not ``None``, in declared order."""
@@ -290,20 +396,20 @@ class VehicleParameters:
             lane_changes=self.lane_changes if "lane_changes" in supported else None,
             ignore_lights=self.ignore_lights if "ignore_lights" in supported else None,
             ignore_signs=self.ignore_signs if "ignore_signs" in supported else None,
-            ignore_vehicles=self.ignore_vehicles
-            if "ignore_vehicles" in supported
-            else None,
-            ignore_walkers=self.ignore_walkers
-            if "ignore_walkers" in supported
-            else None,
+            ignore_vehicles=(
+                self.ignore_vehicles if "ignore_vehicles" in supported else None
+            ),
+            ignore_walkers=(
+                self.ignore_walkers if "ignore_walkers" in supported else None
+            ),
             random_lane_changes=(
                 self.random_lane_changes if "random_lane_changes" in supported else None
             ),
             accel=self.accel if "accel" in supported else None,
             decel=self.decel if "decel" in supported else None,
-            reaction_time_s=self.reaction_time_s
-            if "reaction_time_s" in supported
-            else None,
+            reaction_time_s=(
+                self.reaction_time_s if "reaction_time_s" in supported else None
+            ),
             imperfection=self.imperfection if "imperfection" in supported else None,
             follow_visibility=(
                 self.follow_visibility if "follow_visibility" in supported else None
@@ -311,7 +417,8 @@ class VehicleParameters:
         )
 
     def describe(self) -> dict[str, Any]:
-        """The fields that are set, for a run's result record."""
+        """The fields that are set, for a run's result record: a spread as
+        ``{"mean": ..., "std": ...}``."""
         values: dict[str, Any] = {
             "speed_factor": self.speed_factor,
             "min_gap_m": self.min_gap_m,
@@ -327,17 +434,17 @@ class VehicleParameters:
             "imperfection": self.imperfection,
             "follow_visibility": self.follow_visibility,
         }
-        return {name: value for name, value in values.items() if value is not None}
+        return {
+            name: _described(value)
+            for name, value in values.items()
+            if value is not None
+        }
 
     @classmethod
     def from_mapping(cls, mapping: Mapping[str, Any]) -> "VehicleParameters":
-        """Return parameters built from a plain mapping (e.g. a Hydra node)."""
-        # Imported here: utils.config reads a dataclass's fields from its class,
-        # which Codon cannot express, and the library check compiles no import
-        # in a function it does not call (typecheck/library.py, UNCALLED).
-        from ..utils.config import checked_options  # noqa: PLC0415
-
-        return cls(**checked_options(cls, mapping))
+        """Return parameters built from a plain mapping (e.g. a Hydra node):
+        a numeric field is a number or ``{mean, std}``."""
+        return cls(**_spreads_from(cls, mapping, VEHICLE_BOUNDS))
 
 
 @dataclass(frozen=True)
@@ -347,13 +454,12 @@ class PedestrianParameters:
 
     Every field is optional: ``None`` leaves the backend's own default.  Which
     backend supports which field is :data:`PEDESTRIAN_PARAMETER_BACKENDS`.
+    Each field is a :class:`Spread`: every pedestrian draws its own value
+    from it (cut to :data:`PEDESTRIAN_BOUNDS`).
 
     Attributes:
-        walking_speed_mps: The speed people walk at, m/s, before each one's
-            own factor (SUMO's ``maxSpeed``; 1.39 by default).
-        speed_deviation: The spread of that factor between people (SUMO's
-            ``speedDev``; 0.1 by default): 0 has everyone walk at the same
-            speed.
+        walking_speed_mps: The speed people walk at, m/s (SUMO's
+            ``maxSpeed``; 1.39 by default, with SUMO's own spread of 0.1).
         min_gap_m: Gap kept to the person ahead, metres (SUMO's ``minGap``;
             0.25 by default).
         red_light_violation_s: Walk onto a crossing whose light has been red
@@ -362,22 +468,19 @@ class PedestrianParameters:
             ``None``: they wait for green.
     """
 
-    walking_speed_mps: Optional[float] = None
-    speed_deviation: Optional[float] = None
-    min_gap_m: Optional[float] = None
-    red_light_violation_s: Optional[float] = None
+    walking_speed_mps: Optional[Spread] = None
+    min_gap_m: Optional[Spread] = None
+    red_light_violation_s: Optional[Spread] = None
 
     def __post_init__(self) -> None:
-        _check_positive("walking_speed_mps", self.walking_speed_mps)
-        _check_non_negative("speed_deviation", self.speed_deviation)
-        _check_non_negative("min_gap_m", self.min_gap_m)
-        _check_non_negative("red_light_violation_s", self.red_light_violation_s)
+        _check("walking_speed_mps", self.walking_speed_mps, PEDESTRIAN_BOUNDS)
+        _check("min_gap_m", self.min_gap_m, PEDESTRIAN_BOUNDS)
+        _check("red_light_violation_s", self.red_light_violation_s, PEDESTRIAN_BOUNDS)
 
     def set_fields(self) -> list[str]:
         """The names of the fields that are not ``None``, in declared order."""
         values: list[tuple[str, bool]] = [
             ("walking_speed_mps", self.walking_speed_mps is not None),
-            ("speed_deviation", self.speed_deviation is not None),
             ("min_gap_m", self.min_gap_m is not None),
             ("red_light_violation_s", self.red_light_violation_s is not None),
         ]
@@ -398,15 +501,38 @@ class PedestrianParameters:
         """The fields that are set, for a run's result record."""
         values: dict[str, Any] = {
             "walking_speed_mps": self.walking_speed_mps,
-            "speed_deviation": self.speed_deviation,
             "min_gap_m": self.min_gap_m,
             "red_light_violation_s": self.red_light_violation_s,
         }
-        return {name: value for name, value in values.items() if value is not None}
+        return {
+            name: _described(value)
+            for name, value in values.items()
+            if value is not None
+        }
 
     @classmethod
     def from_mapping(cls, mapping: Mapping[str, Any]) -> "PedestrianParameters":
-        """Return parameters built from a plain mapping (e.g. a Hydra node)."""
-        from ..utils.config import checked_options  # noqa: PLC0415
+        """Return parameters built from a plain mapping (e.g. a Hydra node):
+        each field is a number or ``{mean, std}``."""
+        return cls(**_spreads_from(cls, mapping, PEDESTRIAN_BOUNDS))
 
-        return cls(**checked_options(cls, mapping))
+
+#: The parameters the current run's traffic backend was given, for the ODD's
+#: probes to read (:func:`record_run_parameters`).
+_RUN_PARAMETERS: list[tuple[VehicleParameters, PedestrianParameters]] = []
+
+
+def record_run_parameters(
+    vehicles: VehicleParameters, pedestrians: PedestrianParameters
+) -> None:
+    """Record the parameters the run's traffic is driven with; the runner
+    calls this for every run, after the backend is prepared."""
+    _RUN_PARAMETERS.clear()
+    _RUN_PARAMETERS.append((vehicles, pedestrians))
+
+
+def run_parameters() -> Optional[tuple[VehicleParameters, PedestrianParameters]]:
+    """What :func:`record_run_parameters` last recorded, or ``None``."""
+    if not _RUN_PARAMETERS:
+        return None
+    return _RUN_PARAMETERS[0]

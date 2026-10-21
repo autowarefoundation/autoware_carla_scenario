@@ -892,7 +892,7 @@ def test_sumo_traffic_can_ignore_the_visibility(
 def test_sumo_drives_its_vehicles_with_the_traffic_parameters(
     crossroads: Path, tmp_path: Path
 ) -> None:
-    from autoware_carla_scenario.traffic.parameters import VehicleParameters
+    from autoware_carla_scenario.traffic.parameters import Spread, VehicleParameters
     from autoware_carla_scenario.visibility import (
         forget_visibility,
         set_world_visibility,
@@ -901,13 +901,13 @@ def test_sumo_drives_its_vehicles_with_the_traffic_parameters(
 
     forget_visibility()
     parameters = VehicleParameters(
-        speed_factor=0.5,
-        min_gap_m=4.0,
+        speed_factor=Spread(0.5),
+        min_gap_m=Spread(4.0),
         lane_changes=False,
-        accel=1.5,
-        decel=3.0,
-        reaction_time_s=2.0,
-        imperfection=0.0,
+        accel=Spread(1.5),
+        decel=Spread(3.0),
+        reaction_time_s=Spread(2.0, 0.5),
+        imperfection=Spread(0.0),
     )
     backend, world, _npc, ego = _prepared(crossroads, tmp_path, vehicles=parameters)
     world.id = 13  # type: ignore[attr-defined]
@@ -919,30 +919,34 @@ def test_sumo_drives_its_vehicles_with_the_traffic_parameters(
         assert handle is not None
         (npc_id,) = backend._driven
         (ego_id,) = backend._external
-        before = {}
         backend.tick(world, 0.0)
         for sumo_id in (handle, npc_id):
             assert tc.vehicle.getMinGap(sumo_id) == pytest.approx(4.0)
             assert tc.vehicle.getAccel(sumo_id) == pytest.approx(1.5)
             assert tc.vehicle.getDecel(sumo_id) == pytest.approx(3.0)
-            assert tc.vehicle.getTau(sumo_id) == pytest.approx(2.0)
             assert tc.vehicle.getImperfection(sumo_id) == pytest.approx(0.0)
             assert tc.vehicle.getLaneChangeMode(sumo_id) == 1537
-            # SUMO's own draw around 1.0, halved.
-            before[sumo_id] = tc.vehicle.getSpeedFactor(sumo_id)
-            assert 0.3 < before[sumo_id] < 0.7
-        # Given once, as it departs: not scaled again on the next step.
+            assert tc.vehicle.getSpeedFactor(sumo_id) == pytest.approx(0.5)
+        # Each vehicle draws its own reaction time from the spread.
+        taus = [tc.vehicle.getTau(i) for i in (handle, npc_id)]
+        assert taus[0] != pytest.approx(taus[1])
+        assert all(0.5 < t < 3.5 for t in taus)
+        # Drawn once, as it departs: not again on the next step.
         backend.tick(world, 0.05)
-        assert tc.vehicle.getSpeedFactor(handle) == pytest.approx(before[handle])
+        assert tc.vehicle.getTau(handle) == pytest.approx(taus[0])
         # What CARLA's side drives is only placed in SUMO.
-        assert tc.vehicle.getTau(ego_id) != pytest.approx(2.0)
-        assert backend.describe()["vehicles"]["reaction_time_s"] == 2.0
+        assert tc.vehicle.getTau(ego_id) == pytest.approx(1.0)
+        assert backend.describe()["vehicles"]["reaction_time_s"] == {
+            "mean": 2.0,
+            "std": 0.5,
+        }
 
-        # The sight speed is worked out from the parameters' braking and reaction.
+        # The sight speed is worked out from the vehicle's own braking and
+        # reaction.
         set_world_visibility(13, 20.0)
         backend.tick(world, 0.1)
         assert tc.vehicle.getMaxSpeed(handle) == pytest.approx(
-            max(sight_speed(20.0, 3.0, 2.0), 1.0)
+            max(sight_speed(20.0, 3.0, taus[0]), 1.0)
         )
     finally:
         backend.close()
@@ -956,6 +960,7 @@ def test_follow_visibility_is_a_traffic_parameter_now() -> None:
 
 def test_sumo_refuses_the_traffic_managers_parameters() -> None:
     from autoware_carla_scenario.traffic.parameters import (
+        Spread,
         TrafficParameterError,
         VehicleParameters,
     )
@@ -965,19 +970,21 @@ def test_sumo_refuses_the_traffic_managers_parameters() -> None:
         TrafficParameterError,
         match="ignore_lights can only be used with the 'traffic_manager' backend",
     ):
-        SumoTrafficBackend(vehicles=VehicleParameters(ignore_lights=0.5))
+        SumoTrafficBackend(vehicles=VehicleParameters(ignore_lights=Spread(0.5)))
 
 
 def test_sumo_hands_the_shared_parameters_to_its_traffic_manager() -> None:
-    from autoware_carla_scenario.traffic.parameters import VehicleParameters
+    from autoware_carla_scenario.traffic.parameters import Spread, VehicleParameters
     from autoware_carla_scenario.traffic.sumo.backend import SumoTrafficBackend
 
     backend = SumoTrafficBackend(
-        vehicles=VehicleParameters(speed_factor=0.9, reaction_time_s=1.5)
+        vehicles=VehicleParameters(
+            speed_factor=Spread(0.9), reaction_time_s=Spread(1.5)
+        )
     )
-    assert backend.vehicle_parameters.reaction_time_s == 1.5
+    assert backend.vehicle_parameters.reaction_time_s == Spread(1.5)
     # The TrafficManager driving the scenario's vehicles gets what it can do.
-    assert backend._tm.vehicle_parameters == VehicleParameters(speed_factor=0.9)
+    assert backend._tm.vehicle_parameters == VehicleParameters(speed_factor=Spread(0.9))
 
 
 @needs_sumo
@@ -1901,23 +1908,29 @@ def test_each_signalled_crossing_waits_for_the_traffic_over_its_road(
 def test_sumos_pedestrians_walk_with_the_pedestrian_parameters(
     crossroads_with_sidewalks: Path, tmp_path: Path
 ) -> None:
-    from autoware_carla_scenario.traffic.parameters import PedestrianParameters
+    from autoware_carla_scenario.traffic.parameters import PedestrianParameters, Spread
 
     backend, world, _ego = _walking(
         crossroads_with_sidewalks,
         tmp_path,
-        PedestrianParameters(walking_speed_mps=0.8, speed_deviation=0.0, min_gap_m=0.6),
+        PedestrianParameters(walking_speed_mps=Spread(1.2, 0.3), min_gap_m=Spread(0.6)),
     )
     tc = backend._traci
     try:
-        for i in range(40):
+        for i in range(200):
             backend.tick(world, i * 0.05)
         people = tc.person.getIDList()
-        assert people
+        assert len(people) >= 5
+        speeds = [tc.person.getMaxSpeed(p) for p in people]
+        # Each person walks at their own draw: a spread, not one speed.
+        assert len({round(v, 3) for v in speeds}) > 1
+        assert all(0.05 <= v for v in speeds)
         for person in people:
-            assert tc.person.getMaxSpeed(person) == pytest.approx(0.8)
             assert tc.person.getMinGap(person) == pytest.approx(0.6)
-        assert backend.describe()["pedestrians"]["walking_speed_mps"] == 0.8
+        assert backend.describe()["pedestrians"]["walking_speed_mps"] == {
+            "mean": 1.2,
+            "std": 0.3,
+        }
     finally:
         backend.close()
 
@@ -1950,13 +1963,13 @@ def _steps_on_crossings_at_red(
 def test_sumos_pedestrians_cross_on_red_only_when_told_to(
     signalled_crossroads: Path, tmp_path: Path
 ) -> None:
-    from autoware_carla_scenario.traffic.parameters import PedestrianParameters
+    from autoware_carla_scenario.traffic.parameters import PedestrianParameters, Spread
 
     waiting = _steps_on_crossings_at_red(signalled_crossroads, tmp_path / "a", None)
     crossing = _steps_on_crossings_at_red(
         signalled_crossroads,
         tmp_path / "b",
-        PedestrianParameters(red_light_violation_s=1000.0),
+        PedestrianParameters(red_light_violation_s=Spread(1000.0)),
     )
     # A crossing's own green may still come up between the vehicle lights SUMO
     # holds red (pedestrian links can be green), so "never" is too strong:
