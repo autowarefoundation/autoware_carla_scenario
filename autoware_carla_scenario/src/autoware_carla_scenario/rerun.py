@@ -144,6 +144,7 @@ class RerunConverter:
     _pending: list[_Pending]
     _done: list[RerunConversion]
     _lidar_max_points: Optional[int]
+    _cameras: bool
     _lidar_sdk: Any
     _lidar: Any
 
@@ -154,6 +155,7 @@ class RerunConverter:
         converter: Any = None,
         lidar_max_points: Optional[int] = None,
         lidar_sdk: Any = None,
+        cameras: bool = False,
     ) -> None:
         """Args:
         strict: Refuse a log with a record type or a field the converter
@@ -165,20 +167,22 @@ class RerunConverter:
         lidar_max_points: Also record each run's LiDAR sweeps
             (``rerun.lidar``, :mod:`.rerun_lidar`), at most this many points
             a sweep (0: all); ``None`` records none.
-        lidar_sdk: The Rerun SDK the sweeps are written with; ``rerun``
+        lidar_sdk: The Rerun SDK the sensors are written with; ``rerun``
             when ``None``.
+        cameras: Also record each run's camera frames (``rerun.cameras``).
 
         Raises:
             RerunUnavailableError: *converter* is ``None`` and the package
                 is not installed.
-            LidarRerunUnavailableError: LiDAR sweeps are asked for and the
-                Rerun SDK is not installed.
+            LidarRerunUnavailableError: LiDAR sweeps or camera frames are
+                asked for and the Rerun SDK is not installed.
         """
         self._module = converter if converter is not None else require_converter()
         self._strict = strict
         self._lidar_max_points = lidar_max_points
+        self._cameras = bool(cameras)
         self._lidar_sdk = None
-        if lidar_max_points is not None:
+        if lidar_max_points is not None or self._cameras:
             from .rerun_lidar import require_sdk  # noqa: PLC0415
 
             self._lidar_sdk = lidar_sdk if lidar_sdk is not None else require_sdk()
@@ -197,39 +201,44 @@ class RerunConverter:
         return self._strict
 
     @property
-    def records_lidar(self) -> bool:
-        """Whether each run's LiDAR sweeps are recorded too (``rerun.lidar``)."""
-        return self._lidar_max_points is not None
+    def records_sensors(self) -> bool:
+        """Whether each run's LiDAR sweeps (``rerun.lidar``) or camera frames
+        (``rerun.cameras``) are recorded too."""
+        return self._lidar_max_points is not None or self._cameras
 
-    def start_lidar(self, trajectory: Path, label: str, start_frame: int) -> None:
-        """Record the LiDAR sweeps of the run *trajectory* is the log of, from
-        *start_frame* (the scenario clock's first), into ``{label}.lidar.rrd``
-        beside it -- when :attr:`records_lidar`; otherwise nothing.
+    def start_sensors(self, trajectory: Path, label: str, start_frame: int) -> None:
+        """Record the sensors of the run *trajectory* is the log of, from
+        *start_frame* (the scenario clock's first), into ``{label}.sensors.rrd``
+        beside it -- when :attr:`records_sensors`; otherwise nothing.
 
         The recording is the active one (:func:`.rerun_lidar.active_recorder`)
-        until :meth:`stop_lidar`.
+        until :meth:`stop_sensors`.
         """
-        if self._lidar_max_points is None:
+        if not self.records_sensors:
             return
-        self.stop_lidar()
+        self.stop_sensors()
         from .rerun_lidar import LidarRecorder, lidar_recording_path  # noqa: PLC0415
 
         self._lidar = LidarRecorder(
             lidar_recording_path(Path(trajectory).parent, label),
             label,
             start_frame,
-            self._lidar_max_points,
+            self._lidar_max_points or 0,
             sdk=self._lidar_sdk,
+            lidar=self._lidar_max_points is not None,
+            cameras=self._cameras,
         ).start()
 
-    def stop_lidar(self) -> None:
-        """Close the run's LiDAR recording, if one is open."""
+    def stop_sensors(self) -> None:
+        """Close the run's sensor recording, if one is open."""
         recorder, self._lidar = self._lidar, None
         if recorder is not None:
             try:
                 recorder.close()
             except Exception:  # noqa: BLE001 - a lost recording is not a lost run
-                logger.exception("closing the LiDAR recording %s failed", recorder.path)
+                logger.exception(
+                    "closing the sensor recording %s failed", recorder.path
+                )
 
     def submit(self, trajectory: Path, label: str) -> Path:
         """Convert *trajectory* in the background; return the recording it
@@ -238,7 +247,7 @@ class RerunConverter:
             raise RuntimeError("RerunConverter is closed")
         recording = recording_path(trajectory)
         lidar: Optional[Path] = None
-        if self._lidar_max_points is not None:
+        if self.records_sensors:
             from .rerun_lidar import lidar_recording_path  # noqa: PLC0415
 
             lidar = lidar_recording_path(Path(trajectory).parent, _label(trajectory))
@@ -258,9 +267,9 @@ class RerunConverter:
 
             try:
                 merge_into(recording, lidar)
-            except Exception:  # noqa: BLE001 - the sweeps stay in their own file
+            except Exception:  # noqa: BLE001 - the sensors stay in their own file
                 logger.exception(
-                    "merging the LiDAR sweeps %s into %s failed", lidar, recording
+                    "merging the sensors %s into %s failed", lidar, recording
                 )
         return stats
 
@@ -302,7 +311,7 @@ class RerunConverter:
 
     def close(self) -> list[RerunConversion]:
         """:meth:`wait`, then end the background thread."""
-        self.stop_lidar()
+        self.stop_sensors()
         conversions = self.wait()
         if self._executor is not None:
             self._executor.shutdown(wait=True)

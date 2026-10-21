@@ -11,15 +11,17 @@ from ._tc import _keyword_only as _acs_keyword_only
 class RerunConverter:
     # The converter package, which Python holds as `Any`: taken as it comes.
     def __init__(self, *_kw, strict: bool = False, converter = None,
-                 lidar_max_points: Optional[int] = None, lidar_sdk = None):
+                 lidar_max_points: Optional[int] = None, lidar_sdk = None,
+                 cameras: bool = False):
         _acs_keyword_only(
-            _kw, "RerunConverter(): strict, converter, lidar_max_points and lidar_sdk"
+            _kw,
+            "RerunConverter(): strict, converter, lidar_max_points, lidar_sdk and cameras",
         )
 
-    def start_lidar(self, trajectory: Path, label: str, start_frame: int) -> None:
+    def start_sensors(self, trajectory: Path, label: str, start_frame: int) -> None:
         raise NotImplementedError()
 
-    def stop_lidar(self) -> None:
+    def stop_sensors(self) -> None:
         raise NotImplementedError()
 
     def submit(self, trajectory: Path, label: str) -> Path:

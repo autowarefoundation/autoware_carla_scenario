@@ -754,7 +754,7 @@ def build_rerun_converter(*cfgs: DictConfig) -> RerunConverter | None:
     any of *cfgs* sets ``rerun.enabled`` (strict when any sets
     ``rerun.strict``); ``None`` otherwise.  With ``rerun.lidar`` it records
     each run's LiDAR sweeps too (the largest ``rerun.lidar_max_points`` of
-    those asking, 0 being all).
+    those asking, 0 being all), and with ``rerun.cameras`` its camera frames.
 
     Called before anything runs, so a run asking for recordings without the
     ``rerun`` extra installed is refused at once.
@@ -773,11 +773,16 @@ def build_rerun_converter(*cfgs: DictConfig) -> RerunConverter | None:
         if enabled and (points := _rerun_lidar_max_points(cfg)) is not None
     ]
     strict = any(strict for _, strict in settings)
-    if not lidar:
-        return RerunConverter(strict=strict)
-    return RerunConverter(
-        strict=strict, lidar_max_points=0 if 0 in lidar else max(lidar)
+    cameras = any(
+        enabled and bool((cfg.get("rerun") or {}).get("cameras", False))
+        for cfg, (enabled, _) in zip(cfgs, settings)
     )
+    sensors: dict[str, Any] = {}
+    if lidar:
+        sensors["lidar_max_points"] = 0 if 0 in lidar else max(lidar)
+    if cameras:
+        sensors["cameras"] = True
+    return RerunConverter(strict=strict, **sensors)
 
 
 def canvas_config(*cfgs: DictConfig) -> str | None:

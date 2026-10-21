@@ -542,10 +542,10 @@ NOT_MODELLED_MEMBERS: dict[str, dict[str, str]] = {
             "caller (examples.run) does once the runs are over, not the checked "
             "runner, which only submits each log",
         ),
-        "records_lidar": (
-            "whether rerun.lidar is set, which the converter's start_lidar "
-            "checks itself; the checked runner calls start_lidar and "
-            "stop_lidar whatever it is"
+        "records_sensors": (
+            "whether rerun.lidar or rerun.cameras is set, which the converter's "
+            "start_sensors checks itself; the checked runner calls "
+            "start_sensors and stop_sensors whatever it is"
         ),
     },
     "RunEnvironment": _members(
