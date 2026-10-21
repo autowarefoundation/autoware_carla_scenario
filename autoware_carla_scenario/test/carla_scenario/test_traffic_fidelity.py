@@ -271,3 +271,38 @@ def test_the_model_refuses_what_it_cannot_hold() -> None:
     assert _run(model, 1.0) == []
     model.add("x", ["a"], now=0.0, max_speed=0.0)
     assert math.isinf(model.vehicle("x").exit_s)
+
+
+def test_a_lookup_of_a_mesoscopic_entity_says_why_it_found_no_actor(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A mesoscopic entity has no actor while it is far: a condition looking
+    it up is told so, once, and again only after it has been back."""
+    from types import SimpleNamespace
+
+    from autoware_carla_scenario.conditions.base import find_actor_by_role_name
+
+    class _Actors(list):  # type: ignore[type-arg]
+        def filter(self, pattern: str) -> list[Any]:
+            return list(self)
+
+    world = SimpleNamespace(id=4242, get_actors=lambda: _Actors())
+    npc = VehicleEntity(VehicleEntityConfig("far_npc", SpawnPointIndex(0)))
+    backend = NullTrafficBackend()
+
+    assert find_actor_by_role_name(world, "far_npc") is None  # type: ignore[arg-type]
+    assert "mesoscopically" not in caplog.text  # gone, not far
+
+    backend._mark_fidelity(npc, MESO)
+    for _ in range(3):
+        assert find_actor_by_role_name(world, "far_npc") is None  # type: ignore[arg-type]
+    assert caplog.text.count("far_npc has no actor") == 1
+
+    backend._mark_fidelity(npc, MICRO)
+    caplog.clear()
+    assert find_actor_by_role_name(world, "far_npc") is None  # type: ignore[arg-type]
+    assert "mesoscopically" not in caplog.text
+    backend._mark_fidelity(npc, MESO)
+    find_actor_by_role_name(world, "far_npc")  # type: ignore[arg-type]
+    assert caplog.text.count("far_npc has no actor") == 1
+    backend._mark_fidelity(npc, MICRO)

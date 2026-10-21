@@ -7,10 +7,11 @@ import os
 import shutil
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Collection, Optional
+from typing import TYPE_CHECKING, Any, Collection, Optional
 
 import typesafe_carla.carla as carla
 
+from .actions.prop import clear_props
 from .entity.ego import EgoVehicle
 from .entity.registry import (
     clear_entities,
@@ -277,17 +278,43 @@ def _condition_statuses(
         return _collect_condition_statuses(scenario, world, elapsed, scenario_name)
 
 
+def _traffic_record(backend: TrafficBackend, scenario_name: str) -> Optional[Any]:
+    """What drove the run's traffic, as the result records it: the backend's
+    :meth:`~TrafficBackend.describe`, with how many vehicles it simulated at
+    each level when the run ended (:meth:`~TrafficBackend.fidelity_census`).
+
+    Read before the backend closes, which forgets both.  ``None`` when the
+    backend cannot say: a record must not end a run.  Dicts of mixed value
+    types, which Codon cannot express: the check (docs/typecheck.md) does not
+    compile it.
+    """
+    try:
+        record = dict(backend.describe())
+        census = backend.fidelity_census()
+    except Exception:  # noqa: BLE001 - a third party's backend
+        logger.warning(
+            "[%s] Could not read what drove the traffic", scenario_name, exc_info=True
+        )
+        return None
+    if census:
+        record["fidelity"] = dict(census)
+        logger.info("[%s] Traffic at the end: %s", scenario_name, census)
+    return record
+
+
 def _write_result(
     json_path: Path,
     output_dir: Path,
     file_stem: str,
     scenario: "BaseScenario",
     result: ScenarioResult,
+    traffic: Optional[Any] = None,
 ) -> None:
     """Write *result* to *json_path*, with the environment the run had.
 
     What it ran with: the lock and the environment beside the result, and
-    their summary (with the environment's id) in it.  With ``json`` and
+    their summary (with the environment's id) in it, and what drove the
+    traffic (*traffic*, :func:`_traffic_record`).  With ``json`` and
     :mod:`.environment` (platform, json), which Codon does not have: the check
     (docs/typecheck.md) does not compile it.
     """
@@ -299,6 +326,8 @@ def _write_result(
     data = json.loads(result.to_json())
     if environment is not None:
         data["environment"] = environment
+    if traffic is not None:
+        data["traffic"] = traffic
     json_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
@@ -1030,8 +1059,9 @@ class ScenarioRunner:
         # A batch runs several scenarios against one world, so the entities of
         # the previous one are cleared before this one registers its own -- an
         # entity from the last run still answering to "npc1" would be worse
-        # than no entity at all.
+        # than no entity at all.  So are the props a PropAction placed.
         clear_entities()
+        clear_props()
 
         # The ego is built before the cleanup, not after it: an entity that
         # attaches to an actor someone else spawned has to be able to say so
@@ -1510,6 +1540,9 @@ class ScenarioRunner:
                     scenario_name,
                     exc_info=True,
                 )
+            # And the props a PropAction placed: the leftovers' sweep takes
+            # vehicles, walkers and sensors, not static props.
+            clear_props()
 
             # Explicitly destroy the ego vehicle so it does not persist
             # if the map reload fails later.
@@ -1549,6 +1582,14 @@ class ScenarioRunner:
                     if result is not None:
                         result.rerun_recording = str(recording)
 
+            if TYPE_CHECKING:
+                # describe() and fidelity_census() are dicts of mixed value
+                # types, which Codon cannot express (UNCALLED in
+                # typecheck/library.py).
+                pass
+            else:
+                # Before close(), which forgets what it counts.
+                traffic_record = _traffic_record(backend, scenario_name)
             # Close the backend so the next run starts with a fresh one --
             # for the TrafficManager that resets its InMemoryMap cache and
             # internal state, for a backend with a process of its own it is
@@ -1578,7 +1619,14 @@ class ScenarioRunner:
                 # json and environment (platform, json): Codon has neither.
                 pass
             else:
-                _write_result(json_path, self.output_dir, file_stem, scenario, result)
+                _write_result(
+                    json_path,
+                    self.output_dir,
+                    file_stem,
+                    scenario,
+                    result,
+                    traffic_record,
+                )
             logger.info("[%s] Result JSON written to: %s", scenario_name, json_path)
             if coverage is not None:
                 _record_run(coverage, case, result)
