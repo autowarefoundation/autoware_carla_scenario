@@ -46,6 +46,22 @@ so a rewrite has to keep the *types*, not the values, of what it replaces.
   up in the lambda: "name '%_k_930' is not defined"), becomes
   ``(lambda k: lambda x: ...)(k)``: the default is bound by a call, as Python
   binds it once.  The captured parameter can then no longer be passed.
+* ``def __exit__(self, exc_type, exc, tb)``, which Codon calls with *no*
+  arguments whatever the block did (so it is "missing 1 required positional
+  argument"), is given a ``None`` default for each parameter without one, and
+  loses their annotations (``type[BaseException] | None`` and ``object``,
+  which Codon turns into ``NoneType``): such a parameter is ``None`` in the
+  check, so a branch ``if exc_type is not None:`` is not compiled (#435).  A
+  parameter annotated ``BaseException`` or ``Exception`` (with or without
+  ``| None``) keeps it as ``X | None``, so ``if exc is not None:`` stays
+  typed.  ``*args`` and parameters with a default of their own are left
+  alone.
+* A list or dict display of functions or lambdas assigned to a name annotated
+  with ``Callable[[A], R]`` elements (``fs: list[Callable[[int], int]] =
+  [inc, dbl]``, a dispatch table) gets each element wrapped in Codon's
+  ``Callable[[A], R](...)``: Codon gives every function a type of its own, so
+  two different ones in a container do not unify otherwise (#436).  So does a
+  ``return`` of such a display from a function annotated so.
 * A class constant read by a later statement of its own class body (#433):
   ``B = A * 2``, a dataclass field default ``x: int = A``, a method
   parameter default or decorator.  Python evaluates those in the class scope;
@@ -78,11 +94,14 @@ from collections.abc import Iterator
 
 from .transform import (
     _ENUM_BASES,
-    _is_named_tuple,
     _dataclass_options,
     _defined_methods,
     _dotted,
     _Edits,
+    _is_named_tuple,
+    _is_none,
+    callable_annotation,
+    codon_annotation,
 )
 
 __all__ = ["REWRITE_HINTS", "python_rewrites", "python_rewrite_refusals"]
@@ -145,6 +164,30 @@ REWRITE_HINTS: tuple[tuple[re.Pattern[str], str], ...] = (
         "calls), use @dataclass(order=True), or sort with key=",
     ),
     (
+        # Codon gives every function and lambda a type of its own: two that
+        # differ do not unify, nor does one with a converted Callable.
+        re.compile(
+            r"'(?:%_lambda_\d+(?:\[[^']*\]|\([^']*\))?|\w+\([^']*\.\.\.\))' does not match expected type '(?:(?:%_lambda_\d+(?:\[[^']*\]|\([^']*\))?|\w+\([^']*\.\.\.\))|Callable\[[^']*\])'"
+            r"|'Callable\[[^']*\]' does not match expected type '(?:%_lambda_\d+(?:\[[^']*\]|\([^']*\))?|\w+\([^']*\.\.\.\))'"
+        ),
+        "Codon gives every function and lambda a type of its own, so a list "
+        "or dict holding different ones (a dispatch table) does not compile "
+        "unless it is annotated with the shared signature where it is "
+        "assigned or returned (`fs: list[Callable[[int], int]] = [inc, dbl]`; "
+        "a class attribute, a computed display, a bound method "
+        "or a lambda using a local variable is not rewritten): write an "
+        "if/elif chain, or a `match` on the key, instead",
+    ),
+    (
+        re.compile(r"no function 'Callable\.__new__' with arguments"),
+        "an element of a table annotated Callable must have exactly the "
+        "annotated signature (parameter and return types) and be a function "
+        "or a lambda that captures nothing: a bound method (`self.run`) or a "
+        "lambda using a local variable cannot be converted to Codon's "
+        "Callable; use a module-level function that takes the object, or an "
+        "if/elif chain (a dispatch table of different functions)",
+    ),
+    (
         re.compile(r"argument after \* must be a tuple, not '(?:List|Set)\["),
         "Codon unpacks only a tuple with *: pass the elements "
         "(f(xs[0], xs[1])), or take the list as a parameter",
@@ -156,6 +199,10 @@ REWRITE_HINTS: tuple[tuple[re.Pattern[str], str], ...] = (
     ),
 )
 
+_SEQUENCES = frozenset({"list", "List", "Sequence", "MutableSequence"})
+_MAPPINGS = frozenset({"dict", "Dict", "Mapping", "MutableMapping"})
+
+_DISPLAYS = (ast.List, ast.Set, ast.Dict)
 _ORDERING = ("__lt__", "__le__", "__gt__", "__ge__")
 _MAX_PASSES = 20
 _FORMAT_REFERENCE = re.compile(r"(?:\.\w+|\[[^\]\[]+\])*")
@@ -166,6 +213,29 @@ def _literal(node: ast.AST) -> bool:
     if isinstance(node, ast.UnaryOp):
         node = node.operand
     return isinstance(node, ast.Constant)
+
+
+def _callable_type(annotation: ast.AST) -> str | None:
+    """Codon's spelling of a ``Callable[[A, B], R]`` annotation, or ``None``.
+
+    The argument types are a ``Tuple[A, B]``, not the list the annotation
+    has: the transform turns a display of different types (``[float, str]``)
+    into an ``_acs_list(...)`` call.
+    """
+    spelled = callable_annotation(annotation)
+    if spelled is None:
+        return None
+    if isinstance(annotation, ast.Constant):
+        annotation = ast.parse(str(annotation.value), mode="eval").body
+    assert isinstance(annotation, ast.Subscript)
+    assert isinstance(annotation.slice, ast.Tuple)
+    params, result = annotation.slice.elts
+    assert isinstance(params, ast.List)
+    if not params.elts:
+        return spelled
+    args = [codon_annotation(p, class_level=True) for p in params.elts]
+    ret = codon_annotation(result, class_level=True)
+    return f"Callable[Tuple[{', '.join(str(a) for a in args)}], {ret}]"
 
 
 def _plain(node: ast.AST) -> bool:
@@ -546,6 +616,12 @@ class _Pass(ast.NodeVisitor):
         self.refused: list[tuple[int, str]] = []
         self._depth = 0
         self._rebound: set[str] = set()
+        #: The functions being visited, innermost last, with their local names.
+        self._functions: list[tuple[ast.FunctionDef | ast.AsyncFunctionDef, set[str]]]
+        self._functions = []
+        self._class_body = False
+        #: The names ``import x`` / ``import x.y as z`` bind: ``x.f`` is a function.
+        self._modules: set[str] = set()
         #: Where each enclosing scope's class can be named from outside: the
         #: dotted path of a class, ``None`` for a function (a class defined in
         #: one has no name Codon can resolve there).
@@ -589,24 +665,169 @@ class _Pass(ast.NodeVisitor):
                 and stmt.value.value is Ellipsis
             ):
                 self.edits.replace(*self.edits.node_span(stmt), "pass")
+            elif isinstance(stmt, ast.FunctionDef) and stmt.name == "__exit__":
+                self._exit_parameters(stmt)
         for base in (*node.bases, *node.keywords):
             self.visit(base)
         self._depth += 1
+        outer, self._class_body = self._class_body, True
         self._paths.append(path)
         for stmt in node.body:
             self.visit(stmt)
         self._paths.pop()
+        self._class_body = outer
         self._depth -= 1
 
     def _function(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
         self._depth += 1
+        outer, self._class_body = self._class_body, False
+        names = {a.arg for a in ast.walk(node.args) if isinstance(a, ast.arg)}
+        names |= {
+            n.id
+            for n in ast.walk(node)
+            if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store)
+        }
+        self._functions.append((node, names))
         self._paths.append(None)
         self.generic_visit(node)
         self._paths.pop()
+        self._functions.pop()
+        self._class_body = outer
         self._depth -= 1
 
     visit_FunctionDef = _function  # noqa: N815
     visit_AsyncFunctionDef = _function  # noqa: N815
+
+    # -- def __exit__(self, exc_type, exc, tb) ------------------------------
+
+    def _exit_parameters(self, node: ast.FunctionDef) -> None:
+        """Give the parameters Codon passes nothing for a ``None`` default.
+
+        Codon calls ``__exit__()`` with no arguments, on an exception as well
+        (#435).  The annotations of those parameters go: ``type[BaseException]
+        | None`` and the like cannot be expressed, and the parameter is a
+        ``None`` in the check, whatever it is in Python.
+        """
+        args = node.args
+        positional = [*args.posonlyargs, *args.args]
+        first = len(positional) - len(args.defaults)
+        for index, arg in enumerate(positional):
+            if index == 0:
+                continue  # self
+            default = args.defaults[index - first] if index >= first else None
+            if default is not None and not _is_none(default):
+                continue
+            exception = self._exception_type(arg.annotation)
+            if exception is not None:
+                # Codon expresses `BaseException | None`: the parameter stays
+                # typed, so `if exc is not None:` is still compiled.
+                text = f"{arg.arg}: {exception} | None = None"
+                if default is not None:
+                    text = f"{arg.arg}: {exception} | None"
+            elif default is None:
+                text = f"{arg.arg}=None"
+            elif arg.annotation is not None:
+                text = arg.arg
+            else:
+                continue
+            self.edits.replace(*self.edits.node_span(arg), text)
+
+    @staticmethod
+    def _exception_type(annotation: ast.AST | None) -> str | None:
+        """``BaseException`` or ``Exception`` for an annotation of it, alone or
+        in a union with ``None`` (``Optional[...]`` included), else ``None``."""
+        if isinstance(annotation, ast.Constant) and isinstance(annotation.value, str):
+            try:
+                annotation = ast.parse(annotation.value, mode="eval").body
+            except SyntaxError:
+                return None
+        if isinstance(annotation, ast.Subscript) and (
+            (_dotted(annotation.value) or "").rpartition(".")[2] == "Optional"
+        ):
+            annotation = annotation.slice
+        members: list[ast.AST] = []
+        if annotation is None:
+            return None
+        pending: list[ast.AST] = [annotation]
+        while pending:
+            node = pending.pop()
+            if isinstance(node, ast.BinOp):
+                if not isinstance(node.op, ast.BitOr):
+                    return None
+                pending.extend([node.right, node.left])
+            else:
+                members.append(node)
+        kept = [m for m in members if not _is_none(m)]
+        if len(kept) != 1 or not isinstance(kept[0], (ast.Name, ast.Attribute)):
+            return None
+        name = (_dotted(kept[0]) or "").rpartition(".")[2]
+        return name if name in ("BaseException", "Exception") else None
+
+    # -- fs: list[Callable[[int], int]] = [inc, dbl] -------------------------
+
+    def _captures(self, node: ast.Lambda) -> bool:
+        """Whether *node* uses a local variable of a function around it, which
+        Codon cannot convert it to a ``Callable`` for."""
+        own = {a.arg for a in ast.walk(node.args) if isinstance(a, ast.arg)}
+        used = {
+            n.id
+            for n in ast.walk(node.body)
+            if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)
+        }
+        return any((used - own) & names for _, names in self._functions)
+
+    def _callables(self, annotation: ast.AST, value: ast.AST) -> None:
+        """Wrap the functions of the display *value* in the ``Callable`` that
+        *annotation* names for them (#436): ``[inc, dbl]`` under
+        ``list[Callable[[int], int]]`` becomes ``[Callable[[int], int](inc),
+        Callable[[int], int](dbl)]``, so they have one type."""
+        if isinstance(annotation, ast.Constant) and isinstance(annotation.value, str):
+            try:
+                annotation = ast.parse(annotation.value, mode="eval").body
+            except SyntaxError:
+                return
+        spelled = _callable_type(annotation)
+        if spelled is not None:
+            root = (_dotted(value) or "").partition(".")[0]
+            if (
+                isinstance(value, ast.Name)
+                or (isinstance(value, ast.Attribute) and root in self._modules)
+                or (isinstance(value, ast.Lambda) and not self._captures(value))
+            ):
+                self.edits.replace(
+                    *self.edits.node_span(value), f"{spelled}({self._text(value)})"
+                )
+            return
+        if not isinstance(annotation, ast.Subscript):
+            return
+        name = (_dotted(annotation.value) or "").rpartition(".")[2]
+        parts = (
+            annotation.slice.elts
+            if isinstance(annotation.slice, ast.Tuple)
+            else [annotation.slice]
+        )
+        if name in _SEQUENCES and len(parts) == 1:
+            if isinstance(value, ast.List):
+                for element in value.elts:
+                    self._callables(parts[0], element)
+        elif name in _MAPPINGS and len(parts) == 2 and isinstance(value, ast.Dict):
+            for key, element in zip(value.keys, value.values):
+                if key is not None:
+                    self._callables(parts[1], element)
+
+    def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
+        # A class attribute is left alone: Codon crashes on a class-level
+        # `Callable` list.
+        if isinstance(node.value, _DISPLAYS) and not self._class_body:
+            self._callables(node.annotation, node.value)
+        self.generic_visit(node)
+
+    def visit_Return(self, node: ast.Return) -> None:
+        if isinstance(node.value, _DISPLAYS) and self._functions:
+            returns = self._functions[-1][0].returns
+            if returns is not None:
+                self._callables(returns, node.value)
+        self.generic_visit(node)
 
     # -- class A: B = A_CONST * 2 ------------------------------------------
 
@@ -747,6 +968,10 @@ class _Pass(ast.NodeVisitor):
         walk(node.body, None, True)
 
     # -- from functools import total_ordering -----------------------------
+
+    def visit_Import(self, node: ast.Import) -> None:
+        for alias in node.names:
+            self._modules.add(alias.asname or alias.name.partition(".")[0])
 
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
         if node.module != "functools" or node.level:
