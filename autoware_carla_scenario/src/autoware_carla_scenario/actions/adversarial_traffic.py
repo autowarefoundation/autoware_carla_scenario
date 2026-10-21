@@ -145,6 +145,11 @@ class AdversarialTrafficAction(BaseAction):
         """:attr:`weight`, as every action reports its weight to the scenario."""
         return self.weight
 
+    @property
+    def importance_sampled(self) -> bool:
+        """Always: NADE samples the adversities importance-sampled."""
+        return True
+
     def take_adversity_events(self) -> list[AdversityEvent]:
         """The adversities sampled since last asked, for the run's log."""
         events = self._events

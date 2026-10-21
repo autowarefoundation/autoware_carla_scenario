@@ -3092,6 +3092,8 @@ from autoware_carla_scenario import (
     AdversarialCutInAction,
     AdversarialMergeAction,
     AdversityFeasibleCondition,
+    ConstructionSettings,
+    ConstructionZoneAction,
     AdversityKind,
     AdversityLocation,
     HeadOnAction,
@@ -3110,6 +3112,11 @@ from autoware_carla_scenario import (
     collision_objects,
 )
 self.register_pre_tick(AdversarialBrakeAction("npc1", AdversityLocation.ANY))
+self.register_pre_tick(
+    ConstructionZoneAction(
+        12, 20.0, 80.0, ConstructionSettings(construction_type="mixed"), end_time=30.0
+    )
+)
 self.register_pre_tick(LaneChangeAbortAction("npc2", AdversityLocation.HIGHWAY))
 self.register_pre_tick(AdversarialMergeAction("npc2", AdversityLocation.HIGHWAY))
 self.register_pre_tick(HeadOnAction("npc3", AdversityLocation.ANY, label="head_on"))
@@ -5750,3 +5757,240 @@ def test_total_ordering_composes_with_the_stubbed_functools_names(
     )
     result = typecheck_scenario(scenario, config)
     assert result.ok, result.format()
+
+
+# -- a class constant read in the class scope (#433) ---------------------------
+
+_CLASS_CONSTANTS = """
+import functools
+
+SCALE = 100
+
+
+class Helper:
+    LIMIT = 5
+    STEP: typing.Final = 2
+    DOUBLE = LIMIT * 2
+    TOTAL = DOUBLE + STEP
+
+    def f(self, n: int = LIMIT, *, m: int = STEP) -> int:
+        return n + m
+
+    def g(self, n: int = SCALE) -> int:
+        return n + Helper.LIMIT
+
+
+class Color(enum.Enum):
+    RED = 1
+    BLUE = 2
+
+
+class Painter:
+    DEFAULT = Color.RED
+    ALSO = DEFAULT
+
+    def paint(self, color: Color = DEFAULT) -> Color:
+        return color
+
+
+@dataclass(order=True, frozen=True)
+class Box:
+    SIZE = 5
+    width: int = SIZE
+    height: int = SIZE + 1
+
+    def grown(self, by: int = SIZE) -> int:
+        return self.width + by
+
+
+class Pt(typing.NamedTuple):
+    x: int = 1
+    ORIGIN = 7
+    FAR = ORIGIN * 2
+
+    def shift(self, by: int = ORIGIN) -> int:
+        return self.x + by
+
+
+class Outer:
+    class Inner:
+        A = 1
+        B = A + 1
+
+
+class Mode(enum.IntEnum):
+    LOW = 1
+    HIGH = LOW
+    _BASE = 3
+    START = _BASE
+
+    def plus(self, n: int = _BASE) -> int:
+        return n + 1
+
+
+@functools.total_ordering
+class Rank:
+    n: int
+    STEP = 2
+
+    def __init__(self, n: int = STEP):
+        self.n = n
+
+    def __lt__(self, other: Rank) -> bool:
+        return self.n < other.n
+
+    def __eq__(self, other: Rank) -> bool:
+        return self.n == other.n
+"""
+
+
+def test_a_class_constant_read_in_the_class_scope_compiles(tmp_path: Path) -> None:
+    setup = """
+        h = Helper()
+        total = Helper.DOUBLE + Helper.TOTAL + h.f() + h.g()
+        painted = Painter().paint() == Color.RED and Painter.ALSO == Color.RED
+        box = Box()
+        bigger = sorted([Box(7), box])
+        logger.info("%d %d %d", total, box.grown(), bigger[0].width)
+        pt = Pt()
+        logger.info("%d %d", pt.shift(), Pt.FAR + Outer.Inner.B)
+        logger.info("%d %d", Mode.HIGH.plus(), Mode.START.value)
+        ranks = sorted([Rank(), Rank(1)])
+        logger.info("%d %s", ranks[0].n, Rank() >= Rank(3))
+        assert painted
+    """
+    scenario, config, _ = _data_case(tmp_path, _CLASS_CONSTANTS, setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_a_method_body_reading_a_name_of_the_class_scope_is_not_rewritten(
+    tmp_path: Path,
+) -> None:
+    # In Python the body reads the module's LIMIT: it must keep compiling
+    # against it (a str here), not against the class attribute (an int).
+    definitions = """
+LIMIT = "module"
+
+
+class Helper:
+    LIMIT = 5
+    DOUBLE = LIMIT * 2
+
+    def label(self) -> str:
+        return LIMIT + "!"
+"""
+    scenario, config, _ = _data_case(
+        tmp_path, definitions, "text = Helper().label() + str(Helper.DOUBLE)\n"
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_an_annotated_class_attribute_read_in_the_class_scope_compiles(
+    tmp_path: Path,
+) -> None:
+    definitions = """
+@dataclass(order=True)
+class D:
+    X: int = 5
+    NEG: typing.Final[int] = -2
+    y: int = X
+    z: int = NEG
+
+    def f(self, n: int = X, m: int = NEG**2) -> int:
+        return n + m
+
+
+class Plain:
+    LIMIT: int = 3
+    NAME: str = "a"
+
+    def g(self, n: int = LIMIT, s: str = NAME) -> int:
+        return n
+"""
+    setup = """
+        d = D()
+        logger.info("%d %d %d %d", d.y, d.z, d.f(), Plain().g())
+    """
+    scenario, config, _ = _data_case(tmp_path, definitions, setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_an_annotated_computed_class_attribute_read_in_the_class_scope_is_refused(
+    tmp_path: Path,
+) -> None:
+    definitions = """
+class Helper:
+    LIMIT: int = 2 * 3
+
+    def f(self, n: int = LIMIT) -> int:
+        return n
+"""
+    scenario, config, path = _data_case(tmp_path, definitions, "x = Helper().f()\n")
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "`LIMIT: Final = ...`" in error.message, error.format()
+    assert error.line == _line_of(path, "def f(self, n: int = LIMIT)")
+
+
+def test_an_enum_alias_of_a_negative_member_is_skipped_by_iteration(
+    tmp_path: Path,
+) -> None:
+    definitions = """
+class Level(enum.IntEnum):
+    LOW = -1
+    ALIAS = LOW
+    HIGH = 2
+"""
+    setup = """
+        total = 0
+        for level in Level:
+            total += level.value
+        logger.info("%d", total)
+    """
+    scenario, config, _ = _data_case(tmp_path, definitions, setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_a_namedtuple_field_default_reading_a_class_constant_is_refused(
+    tmp_path: Path,
+) -> None:
+    definitions = """
+class Pt(typing.NamedTuple):
+    LIM = 5
+    x: int = LIM
+"""
+    scenario, config, path = _data_case(tmp_path, definitions, "p = Pt()\n")
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "NamedTuple" in error.message, error.format()
+    assert error.line == _line_of(path, "x: int = LIM")
+
+
+def test_a_class_constant_assigned_again_is_refused(tmp_path: Path) -> None:
+    definitions = """
+class Helper:
+    X = 1
+    Y = X
+    X = 2
+"""
+    scenario, config, path = _data_case(tmp_path, definitions, "y = Helper.Y\n")
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "assigned again later" in error.message, error.format()
+    assert error.line == _line_of(path, "Y = X")
+
+
+def test_a_class_constant_in_a_class_in_a_function_is_refused(tmp_path: Path) -> None:
+    definitions = """
+def make():
+    class Local:
+        Q = 1
+        R = Q * 2
+
+    return Local
+"""
+    scenario, config, path = _data_case(tmp_path, definitions, "k = make()\n")
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "defined in a function" in error.message, error.format()
+    assert error.line == _line_of(path, "R = Q * 2")

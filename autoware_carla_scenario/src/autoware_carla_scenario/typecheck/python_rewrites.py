@@ -37,9 +37,22 @@ so a rewrite has to keep the *types*, not the values, of what it replaces.
   up in the lambda: "name '%_k_930' is not defined"), becomes
   ``(lambda k: lambda x: ...)(k)``: the default is bound by a call, as Python
   binds it once.  The captured parameter can then no longer be passed.
+* A class constant read by a later statement of its own class body (#433):
+  ``B = A * 2``, a dataclass field default ``x: int = A``, a method
+  parameter default or decorator.  Python evaluates those in the class scope;
+  Codon in the module's ("name 'A' is not defined"), so the name becomes
+  ``Class.A``.  Only what Python resolves that way is rewritten: a name bound
+  earlier in that class body by an assignment, read where the class scope is
+  visible.  A method body, a lambda body and a comprehension (but for its
+  first iterable) do not see the class scope, so a bare name there is a module
+  global and is left alone; a nested class sees only its own body.  In an
+  Enum a member read by a later statement of the body is its value (an alias
+  in Python), so the literal is written in its place.
 
-Refused with a hint, as no cheap faithful rewrite exists (#379): a ``match``
-class, mapping (with a value pattern or ``**rest``), star or ``as`` pattern;
+Refused with a hint, as no cheap faithful rewrite exists (#379, #433): a
+class constant read in the body of a class defined in a function, or assigned
+again later in the class body (Codon reads the last value), or an Enum member
+without a literal value; a ``match`` class, mapping (with a value pattern or ``**rest``), star or ``as`` pattern;
 and Codon's own refusals of ``f(*list)`` / ``f(**dict)``.  (A class passed
 where a ``Protocol`` is expected is hinted in ``check.py``, which knows the
 scenario's classes.)
@@ -50,8 +63,16 @@ from __future__ import annotations
 import ast
 import re
 import string
+from collections.abc import Iterator
 
-from .transform import _dataclass_options, _defined_methods, _dotted, _Edits
+from .transform import (
+    _ENUM_BASES,
+    _is_named_tuple,
+    _dataclass_options,
+    _defined_methods,
+    _dotted,
+    _Edits,
+)
 
 __all__ = ["REWRITE_HINTS", "python_rewrites", "python_rewrite_refusals"]
 
@@ -328,6 +349,121 @@ def _fstring_rewrite(node: ast.JoinedStr) -> str:
     return " + ".join(parts) if parts else '""'
 
 
+def _scope_names(node: ast.AST) -> Iterator[ast.Name]:
+    """The names *node* loads in the scope it is written in.
+
+    A lambda body and the elements and conditions of a comprehension run in a
+    scope of their own, which Python does not give the class's names; the
+    defaults of a lambda and the first iterable of a comprehension run in the
+    enclosing one.
+    """
+    stack = [node]
+    while stack:
+        current = stack.pop()
+        if isinstance(current, ast.Name):
+            if isinstance(current.ctx, ast.Load):
+                yield current
+        elif isinstance(current, ast.Lambda):
+            stack.extend(current.args.defaults)
+            stack.extend(d for d in current.args.kw_defaults if d is not None)
+        elif isinstance(
+            current, (ast.ListComp, ast.SetComp, ast.GeneratorExp, ast.DictComp)
+        ):
+            stack.append(current.generators[0].iter)
+        else:
+            stack.extend(ast.iter_child_nodes(current))
+
+
+def _stores(stmt: ast.stmt) -> set[str]:
+    """Every name *stmt* binds in its own scope, nested statements included."""
+    names: set[str] = set()
+    stack: list[ast.AST] = [stmt]
+    while stack:
+        current = stack.pop()
+        if isinstance(current, ast.Name) and not isinstance(current.ctx, ast.Load):
+            names.add(current.id)
+        elif isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            names.add(current.name)
+            continue  # its body is a scope of its own
+        elif isinstance(current, (ast.Import, ast.ImportFrom)):
+            names.update(
+                (a.asname or a.name).partition(".")[0]
+                for a in current.names
+                if a.name != "*"
+            )
+        elif isinstance(current, ast.ExceptHandler) and current.name:
+            names.add(current.name)
+        elif isinstance(current, (ast.Lambda, ast.ListComp, ast.SetComp)):
+            continue
+        stack.extend(ast.iter_child_nodes(current))
+    return names
+
+
+def _assigned(stmt: ast.stmt) -> set[str] | None:
+    """The names a plain ``A = ...`` / ``A: T = ...`` binds, else ``None``."""
+    if isinstance(stmt, ast.Assign) and all(
+        isinstance(t, ast.Name) for t in stmt.targets
+    ):
+        return {t.id for t in stmt.targets}  # type: ignore[attr-defined]
+    if (
+        isinstance(stmt, ast.AnnAssign)
+        and stmt.value is not None
+        and isinstance(stmt.target, ast.Name)
+    ):
+        return {stmt.target.id}
+    return None
+
+
+def _bare_final(annotation: ast.expr) -> bool:
+    """``Final`` alone, which the check drops: the name stays a class attribute."""
+    return (_dotted(annotation) or "").removeprefix("typing.") == "Final"
+
+
+def _class_scope_exprs(stmt: ast.stmt) -> list[ast.AST]:
+    """The parts of *stmt* Python evaluates in the class scope, as it runs."""
+    if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        args = stmt.args
+        return [
+            *stmt.decorator_list,
+            *args.defaults,
+            *(d for d in args.kw_defaults if d is not None),
+        ]
+    if isinstance(stmt, ast.ClassDef):
+        return [*stmt.decorator_list, *stmt.bases, *(k.value for k in stmt.keywords)]
+    if isinstance(stmt, (ast.If, ast.While)):
+        return [stmt.test]
+    if isinstance(stmt, (ast.For, ast.AsyncFor)):
+        return [stmt.iter]
+    if isinstance(stmt, (ast.With, ast.AsyncWith)):
+        return [item.context_expr for item in stmt.items]
+    if isinstance(stmt, ast.Try):
+        return [h.type for h in stmt.handlers if h.type is not None]
+    if isinstance(stmt, ast.AnnAssign):  # the annotation is no value
+        return [n for n in (stmt.value, stmt.target) if n is not None]
+    if isinstance(stmt, ast.Match):
+        return [stmt.subject]
+    return [stmt]
+
+
+def _nested_bodies(stmt: ast.stmt) -> list[list[ast.stmt]]:
+    if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        return []
+    if isinstance(stmt, ast.Try):
+        return [
+            stmt.body,
+            *(h.body for h in stmt.handlers),
+            stmt.orelse,
+            stmt.finalbody,
+        ]
+    if isinstance(stmt, ast.Match):
+        return [case.body for case in stmt.cases]
+    return [
+        value
+        for name in ("body", "orelse")
+        if isinstance(value := getattr(stmt, name, None), list)
+    ]
+
+
 def _escaped(text: str) -> str:
     out = []
     for char in text:
@@ -352,6 +488,10 @@ class _Pass(ast.NodeVisitor):
         self.total_ordering = total_ordering
         self.refused: list[tuple[int, str]] = []
         self._depth = 0
+        #: Where each enclosing scope's class can be named from outside: the
+        #: dotted path of a class, ``None`` for a function (a class defined in
+        #: one has no name Codon can resolve there).
+        self._paths: list[str | None] = []
 
     def _text(self, node: ast.AST) -> str:
         return self.edits.text(*self.edits.node_span(node))
@@ -362,6 +502,14 @@ class _Pass(ast.NodeVisitor):
     # -- class X: ... ------------------------------------------------------
 
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        path = (
+            node.name
+            if not self._paths
+            else f"{self._paths[-1]}.{node.name}"
+            if self._paths[-1] is not None
+            else None
+        )
+        self._class_constants(node, path)
         for decorator in node.decorator_list:
             if _dotted(decorator) in self.total_ordering:
                 if self._depth:
@@ -386,17 +534,159 @@ class _Pass(ast.NodeVisitor):
         for base in (*node.bases, *node.keywords):
             self.visit(base)
         self._depth += 1
+        self._paths.append(path)
         for stmt in node.body:
             self.visit(stmt)
+        self._paths.pop()
         self._depth -= 1
 
     def _function(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
         self._depth += 1
+        self._paths.append(None)
         self.generic_visit(node)
+        self._paths.pop()
         self._depth -= 1
 
     visit_FunctionDef = _function  # noqa: N815
     visit_AsyncFunctionDef = _function  # noqa: N815
+
+    # -- class A: B = A_CONST * 2 ------------------------------------------
+
+    def _refuse_rebound(self, name: ast.Name, node: ast.ClassDef) -> None:
+        self._refuse(
+            name,
+            f"`{name.id}` is assigned again later in the body of class "
+            f"{node.name}: Codon reads a class attribute's last value, not "
+            "the one at this point; give the second assignment another name",
+        )
+
+    def _class_constants(self, node: ast.ClassDef, path: str | None) -> None:
+        """Write ``Class.X`` for a class constant read in the class scope (#433).
+
+        The names Python resolves in the class scope are those a statement of
+        the body, a method default or a decorator loads after an assignment
+        in the same body bound them.  Names bound by a ``def``, ``class``,
+        import, loop or ``if`` are left alone (a property setter decorator
+        ``@x.setter`` names the property, not an attribute to read).
+        """
+        enum = not node.keywords and any(
+            (_dotted(b) or "").rsplit(".", 1)[-1] in _ENUM_BASES for b in node.bases
+        )
+        later = [_stores(stmt) for stmt in node.body]
+        # name -> its value, for the names assigned once at the body's level
+        constants: dict[str, ast.expr | None] = {}
+        other: set[str] = set()  # bound some other way: not a constant to read
+        # name -> its value, for the annotated names: typed fields in Codon
+        fields: dict[str, ast.expr] = {}
+
+        def check(expr: ast.AST, index: int, field_default: bool = False) -> None:
+            for name in _scope_names(expr):
+                if (name.id not in constants and name.id not in fields) or (
+                    name.id in other
+                ):
+                    continue
+                span = self.edits.node_span(name)
+                if self.edits.text(*span) != name.id:
+                    continue  # a position inside an f-string, before 3.12
+                if name.id in fields:
+                    fvalue = fields[name.id]
+                    text = self._text(fvalue)
+                    if not _literal(fvalue) or "\n" in text:
+                        self._refuse(
+                            name,
+                            f"`{name.id}` is annotated in the body of class "
+                            f"{node.name}, which Codon makes a field of the "
+                            "instance, not a class attribute to read here, "
+                            "and its value is not a literal the check can "
+                            "write in its place: write "
+                            f"`{name.id}: Final = ...` (or no annotation) for "
+                            "a constant, or use a module-level constant",
+                        )
+                        continue
+                    # Python reads the value the body bound; a literal can be
+                    # written where the name is.
+                    if any(name.id in names for names in later[index + 1 :]):
+                        self._refuse_rebound(name, node)
+                        continue
+                    wrap = isinstance(fvalue, ast.UnaryOp) and not (
+                        expr is name or getattr(expr, "value", None) is name
+                    )
+                    self.edits.replace(*span, f"({text})" if wrap else text)
+                    continue
+                if any(name.id in names for names in later[index + 1 :]):
+                    self._refuse_rebound(name, node)
+                    continue
+                if field_default:
+                    self._refuse(
+                        name,
+                        f"`{name.id}` is a class constant read by a field "
+                        f"default of the NamedTuple {node.name}, which Codon "
+                        "cannot compile (no module named "
+                        f"'{node.name}'): write the value, or use a "
+                        "module-level constant",
+                    )
+                    continue
+                value = constants[name.id]
+                if enum and value is not None:
+                    if not _literal(value):
+                        self._refuse(
+                            name,
+                            f"`{name.id}` is an Enum member read in the body of "
+                            f"{node.name}, where Python gives its value, which "
+                            "the check can write only for a literal: write "
+                            "the value",
+                        )
+                        continue
+                    text = self._text(value)
+                    if "\n" in text:
+                        self._refuse(
+                            name,
+                            f"`{name.id}` is an Enum member whose value spans "
+                            "lines: write the value",
+                        )
+                        continue
+                    wrap = isinstance(value, ast.UnaryOp) and not (
+                        expr is name or getattr(expr, "value", None) is name
+                    )
+                    self.edits.replace(*span, f"({text})" if wrap else text)
+                elif path is None:
+                    self._refuse(
+                        name,
+                        f"`{name.id}` is a class constant read in the body of "
+                        f"class {node.name}, which is defined in a function: "
+                        "Codon cannot name the class from there, so make the "
+                        "class module-level or use a module-level constant",
+                    )
+                else:
+                    self.edits.replace(*span, f"{path}.{name.id}")
+
+        def walk(stmts: list[ast.stmt], index: int | None, level: bool) -> None:
+            for i, stmt in enumerate(stmts):
+                at = i if index is None else index
+                default = isinstance(stmt, ast.AnnAssign) and _is_named_tuple(node)
+                for expr in _class_scope_exprs(stmt):
+                    check(expr, at, default)
+                for body in _nested_bodies(stmt):
+                    walk(body, at, False)
+                assigned = _assigned(stmt)
+                if assigned is None or not level:
+                    other.update(_stores(stmt))
+                    continue
+                if isinstance(stmt, ast.AnnAssign) and not _bare_final(stmt.annotation):
+                    for name in assigned - other:
+                        constants.pop(name, None)
+                        fields[name] = stmt.value  # type: ignore[assignment]
+                    continue
+                member = enum and isinstance(stmt, ast.Assign)
+                value = stmt.value if isinstance(stmt, ast.Assign) else None
+                for name in assigned - other:
+                    fields.pop(name, None)
+                    # The last assignment before a read is the one it sees.
+                    constants[name] = (
+                        value if member and not name.startswith("_") else None
+                    )
+
+        walk(node.body, None, True)
 
     # -- from functools import total_ordering -----------------------------
 

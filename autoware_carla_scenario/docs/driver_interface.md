@@ -161,7 +161,7 @@ driver:
     yaw_rate_ki: 3.0            # integral trim on the measured yaw rate
     longitudinal_controller: pid  # Autoware's autoware_pid_longitudinal_controller
     delay_compensation_time: 0.17 # ... and any of its parameters, by name
-    throttle_deadband: 0.0      # vehicle interface: least throttle to pull away
+    throttle_deadband: 0.3      # vehicle interface: least throttle to pull away
 ```
 
 ### How the plan is tracked
@@ -193,10 +193,10 @@ behind an end-to-end planner:
 - **Vehicle interface.** The asked acceleration becomes pedals through the ego's
   powertrain model, read from its CARLA physics control, as Autoware's
   `raw_vehicle_cmd_converter` does with its accel and brake maps. The model lets a
-  standing car move at any throttle while CARLA 0.10's MKZ needs 0.25;
-  `throttle_deadband` can floor a standing car's throttle, but the `pid` controller
-  needs no floor (its jerk-limited pull-away gets there in a few tenths of a
-  second), so it is 0 by default.
+  standing car move at any throttle while CARLA 0.10's MKZ stays put below 0.25.
+  A plan pulling away at a crawl asks a standing car for a throttle near 0.23, so
+  `throttle_deadband` (0.3) floors the throttle of a standing car asked to speed up:
+  it moves as a real car would creep.
 
 What differs from Autoware, because CARLA or the plan has no counterpart:
 

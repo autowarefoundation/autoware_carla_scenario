@@ -6,7 +6,7 @@
 # here runs. test_typecheck_model.py keeps each declaration in step with the
 # Python one it models.
 
-from .actions import (AdversarialBrakeAction, AdversarialCutInAction, AdversarialMergeAction,
+from .actions import (ConstructionSettings, ConstructionZoneAction, AdversarialBrakeAction, AdversarialCutInAction, AdversarialMergeAction,
                       AdversarialTrafficAction, NadeAdversity, NadeSettings, BaseAction,
                       EnvironmentAction, FollowTrajectoryAction, HeadOnAction, IgnoreLeaderAction,
                       JaywalkAction, LaneChangeAbortAction, LaneChangeAction, PedestrianRunRedLightAction,
