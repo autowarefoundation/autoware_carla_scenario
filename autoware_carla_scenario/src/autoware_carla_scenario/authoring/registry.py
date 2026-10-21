@@ -3927,6 +3927,23 @@ register_constraint_spec(
         description="Match lanelets whose ID is in a given set.",
     )
 )
+register_constraint_spec(
+    ConstraintSpec(
+        type_id="on_route",
+        title="On route",
+        category="Identity",
+        fields=(
+            FieldSpec(
+                name="lanelet_ids",
+                label="Route lanelets",
+                kind="lanelet_list",
+                default=[],
+                help="The lanelets of the route. Empty: no route, every lanelet matches.",
+            ),
+        ),
+        description="Match the lanelets of a route; with none given, every lanelet.",
+    )
+)
 
 
 # ---------------------------------------------------------------------------
