@@ -2634,3 +2634,241 @@ def test_transform_source_lines_applies_the_rewrites_and_appends_the_ordering() 
     assert "@extend\nclass V:" in text
     assert len(origin) == text.count("\n") - PRELUDE.count("\n")
     assert origin[-1] == 2  # the appended methods map to their class
+
+
+# -- a class constant read in the class scope (#433) --------------------------
+
+
+def test_a_class_constant_in_another_class_attribute_is_qualified() -> None:
+    assert _rewritten(
+        """
+        class H:
+            LIMIT = 5
+            DOUBLE = LIMIT * 2
+            TABLE: list[int] = [LIMIT, LIMIT + 1]
+            STEP: Final = 3
+            TRIPLE: int = STEP * 3
+        """
+    ) == (
+        "\nclass H:\n    LIMIT = 5\n    DOUBLE = H.LIMIT * 2\n"
+        "    TABLE: list[int] = [H.LIMIT, H.LIMIT + 1]\n"
+        "    STEP: Final = 3\n    TRIPLE: int = H.STEP * 3\n"
+    )
+
+
+def test_a_class_constant_in_a_default_or_decorator_is_qualified() -> None:
+    text = _rewritten(
+        """
+        class H:
+            LIMIT = 5
+            @register(LIMIT)
+            def f(self, n: int = LIMIT, *, m: int = LIMIT) -> int:
+                return n
+            @staticmethod
+            def g(LIMIT=LIMIT):
+                return LIMIT
+        """
+    )
+    assert "@register(H.LIMIT)" in text
+    assert "def f(self, n: int = H.LIMIT, *, m: int = H.LIMIT)" in text
+    assert "def g(LIMIT=H.LIMIT):\n        return LIMIT" in text  # body untouched
+
+
+def test_a_dataclass_field_default_is_qualified() -> None:
+    text = _rewritten(
+        """
+        @dataclass
+        class D:
+            LIM = 5
+            x: int = LIM
+            y: list[int] = field(default_factory=lambda: [LIM])
+        """
+    )
+    assert "x: int = D.LIM" in text
+    assert "lambda: [LIM]" in text  # a lambda body does not see the class
+
+
+def test_a_method_body_reads_the_module_global() -> None:
+    source = (
+        "LIMIT = 9\nclass H:\n    LIMIT = 5\n    def f(self):\n"
+        "        return LIMIT + [LIMIT for _ in range(LIMIT)][0]\n"
+    )
+    assert _rewritten(source) == source
+
+
+def test_a_comprehension_sees_the_class_scope_only_in_its_first_iterable() -> None:
+    assert _rewritten(
+        """
+        class H:
+            N = 3
+            XS = [N for _ in range(N)]
+            YS = {k: N for k in range(N) if k < N}
+        """
+    ) == (
+        "\nclass H:\n    N = 3\n    XS = [N for _ in range(H.N)]\n"
+        "    YS = {k: N for k in range(H.N) if k < N}\n"
+    )
+
+
+def test_a_lambda_default_is_in_the_class_scope_its_body_is_not() -> None:
+    text = _rewritten("class H:\n    K = 2\n    F = lambda x, k=K: x + K\n")
+    assert text == ("class H:\n    K = 2\n    F = (lambda k: lambda x: x + K)(H.K)\n")
+
+
+def test_only_a_name_bound_earlier_in_the_body_is_qualified() -> None:
+    source = "LIMIT = 9\nclass H:\n    A = LIMIT\n    LIMIT = 5\n    B = LIMIT\n"
+    # A reads the global (LIMIT is not bound yet), B the class attribute; LIMIT
+    # is assigned after A reads it, but A does not read it.
+    assert _rewritten(source) == (
+        "LIMIT = 9\nclass H:\n    A = LIMIT\n    LIMIT = 5\n    B = H.LIMIT\n"
+    )
+
+
+def test_a_name_that_is_not_an_assigned_constant_is_left_alone() -> None:
+    source = (
+        "class H:\n"
+        "    @property\n    def x(self): ...\n"
+        "    @x.setter\n    def x(self, v): ...\n"
+        "    class In: ...\n    Y = In\n"
+        "    if True:\n        C = 1\n    D = C\n"
+        "    for i in range(2):\n        pass\n    E = i\n"
+    )
+    assert "H." not in _rewritten(source)
+
+
+def test_a_nested_class_sees_only_its_own_body() -> None:
+    text = _rewritten(
+        """
+        class O:
+            A = 1
+            class In:
+                B = A
+                C = 2
+                D = C
+                def f(self, x=C, y=A): ...
+            E = A
+        """
+    )
+    assert "B = A\n" in text  # the outer A is no name of the inner body
+    assert "D = O.In.C" in text
+    assert "def f(self, x=O.In.C, y=A)" in text
+    assert "E = O.A" in text
+
+
+def test_a_shadowing_parameter_or_comprehension_target_is_not_qualified() -> None:
+    text = _rewritten(
+        """
+        class H:
+            LIMIT = 5
+            F = lambda LIMIT=LIMIT: LIMIT
+            XS = [LIMIT for LIMIT in range(3)]
+            def f(self, LIMIT=LIMIT):
+                return LIMIT
+        """
+    )
+    assert "(lambda LIMIT: lambda: LIMIT)(H.LIMIT)" in text
+    assert "XS = [LIMIT for LIMIT in range(3)]" in text
+    assert "def f(self, LIMIT=H.LIMIT):\n        return LIMIT" in text
+
+
+def test_class_constants_keep_every_line_in_place() -> None:
+    source = (
+        "class H:\n    A = 1\n    B = (\n        A\n        + A\n    )\n"
+        "    def f(\n        self,\n        n=A,\n    ): ...\n"
+    )
+    text = _rewritten(source)
+    assert text.count("\n") == source.count("\n")
+    assert "        H.A\n        + H.A\n" in text
+    assert "        n=H.A,\n" in text
+
+
+def test_an_enum_member_read_in_its_body_is_its_value() -> None:
+    text = _rewritten(
+        """
+        class E(enum.IntEnum):
+            A = 1
+            B = A
+            _K = 3
+            C = _K
+        """
+    )
+    assert "B = 1" in text  # an alias of A, as in Python
+    assert "C = E._K" in text  # not a member: an attribute
+
+
+def test_a_class_constant_that_cannot_be_qualified_is_refused() -> None:
+    nested = "def make():\n    class L:\n        Q = 1\n        R = Q\n"
+    [(line, message)] = python_rewrite_refusals(nested)
+    assert line == 4 and "defined in a function" in message
+    again = "class H:\n    X = 1\n    Y = X\n    X = 2\n"
+    [(line, message)] = python_rewrite_refusals(again)
+    assert line == 3 and "assigned again later" in message
+    auto = "class E(enum.Enum):\n    A = enum.auto()\n    B = A\n"
+    [(line, message)] = python_rewrite_refusals(auto)
+    assert line == 3 and "write the value" in message
+
+
+def test_an_annotated_literal_read_in_the_class_scope_is_written_as_its_value() -> None:
+    # Codon makes `LIMIT: int = 5` a field of the instance, not an attribute
+    # of the class, so there is nothing to qualify the read with: Python reads
+    # the literal the body bound, and that is written in its place.
+    source = (
+        "class H:\n    LIMIT: int = 5\n    NEG: Final[int] = -2\n"
+        "    def f(self, n: int = LIMIT, m: int = NEG ** 2): ...\n"
+        "    X: int = NEG\n"
+    )
+    text = python_rewrites(source)[0]
+    assert "n: int = 5, m: int = (-2) ** 2" in text and "X: int = -2" in text
+    assert python_rewrite_refusals(source) == []
+    # A value the check cannot write, or a second binding, is refused.
+    computed = (
+        "class H:\n    LIMIT: int = 2 * 3\n    def f(self, n: int = LIMIT): ...\n"
+    )
+    [(line, message)] = python_rewrite_refusals(computed)
+    assert line == 3 and "Final" in message
+    again = "class H:\n    X: int = 1\n    Y = X\n    X: int = 2\n"
+    [(line, message)] = python_rewrite_refusals(again)
+    assert line == 3 and "assigned again later" in message
+    # A later plain assignment replaces the annotated value for the next read.
+    plain = "class H:\n    X: int = 1\n    X = 2\n    Y = X\n"
+    assert "Y = H.X" in python_rewrites(plain)[0]
+    final = "from typing import Final\nclass H:\n    LIMIT: Final = 5\n    X = LIMIT\n"
+    assert python_rewrite_refusals(final) == []
+
+
+def test_a_negative_enum_alias_keeps_the_literal_of_its_member() -> None:
+    source = "class E(enum.IntEnum):\n    A = -1\n    B = A\n"
+    assert "B = -1\n" in python_rewrites(source)[0]
+
+
+def test_a_namedtuple_field_default_reading_a_class_constant_is_refused() -> None:
+    source = (
+        "class P(NamedTuple):\n    LIM = 5\n    x: int = LIM\n"
+        "    DOUBLE = LIM * 2\n    def f(self, n: int = LIM): ...\n"
+    )
+    [(line, message)] = python_rewrite_refusals(source)
+    assert line == 3 and "NamedTuple" in message
+    text = python_rewrites(source)[0]
+    assert "DOUBLE = P.LIM * 2" in text and "n: int = P.LIM" in text
+
+
+def test_a_class_without_a_constant_read_is_unchanged() -> None:
+    source = (
+        "class H:\n    A = 1\n    B = 2\n    def f(self, n=1): return self.A\n"
+        "    C = [i for i in range(3)]\n"
+    )
+    assert python_rewrites(source) == (source, [])
+    assert python_rewrite_refusals(source) == []
+
+
+def test_class_constants_compose_with_the_other_rewrites() -> None:
+    source = (
+        "from dataclasses import dataclass\n"
+        "from functools import total_ordering\n"
+        "@total_ordering\n@dataclass\nclass V:\n    N = 2\n    x: int = N\n"
+        "    def __lt__(self, o): ...\n"
+        "    def f(self, a=N): return '{}'.format(a)\n"
+    )
+    text, [(name, block)] = python_rewrites(source)
+    assert "x: int = V.N" in text and "a=V.N" in text and name == "V"
+    assert "total_ordering" not in text and 'f"{a}"' in text
