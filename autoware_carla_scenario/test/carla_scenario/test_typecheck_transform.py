@@ -9,6 +9,7 @@ import ast
 import builtins
 import dataclasses
 import enum
+import sys
 import textwrap
 from typing import Any, Optional
 
@@ -2020,11 +2021,7 @@ def test_a_name_read_before_it_is_rebound_is_reported_at_the_later_import() -> N
 
 def test_a_rebound_name_nothing_read_drops_the_earlier_import() -> None:
     text = (
-        "from a import X, Z\n"
-        "def f():\n"
-        "    return X\n"
-        "from b import X\n"
-        "from a import X\n"
+        "from a import X, Z\ndef f():\n    return X\nfrom b import X\nfrom a import X\n"
     )
     assert _body(text) == (
         "from a import Z\ndef f():\n    return X\npass\nfrom a import X\n"
@@ -2480,6 +2477,124 @@ def test_zip_strict_is_dropped() -> None:
     assert text.count("\n") == source.count("\n")
     assert "strict" not in text
     assert _rewritten("other(a, strict=True)\n") == "other(a, strict=True)\n"
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        ('s.startswith(("a", "b"))', '(s.startswith("a") or s.startswith("b"))'),
+        ("self.p.endswith((x, y.z))", "(self.p.endswith(x) or self.p.endswith(y.z))"),
+        ("s.startswith((a, b), 2)", "(s.startswith(a, 2) or s.startswith(b, 2))"),
+        ('s.startswith(("a",))', '(s.startswith("a"))'),
+    ],
+)
+def test_startswith_with_a_tuple_becomes_an_or(source: str, expected: str) -> None:
+    assert _rewritten(source + "\n") == expected + "\n"
+
+
+def test_startswith_with_a_tuple_evaluates_each_part_once() -> None:
+    text = _rewritten("r = f(1).startswith((g(2), h(3)), k())\n")
+    assert text.count("f(1)") == text.count("g(2)") == text.count("h(3)") == 1
+    assert text.count("k()") == 1
+    assert text == (
+        "r = ((lambda _acs_a0, _acs_a1, _acs_a2, _acs_a3: "
+        "_acs_a0.startswith(_acs_a1, _acs_a3) or "
+        "_acs_a0.startswith(_acs_a2, _acs_a3))(f(1), g(2), h(3), k()))\n"
+    )
+
+
+def test_startswith_with_a_tuple_keeps_its_lines() -> None:
+    source = "r = (\n    f(s)\n    .startswith(\n        (g(), 'z'),\n    )\n    and q\n)\nz = 1\n"
+    text = _rewritten(source)
+    assert text.count("\n") == source.count("\n")
+    assert text.endswith("\nz = 1\n")
+    assert "and q" in text.splitlines()[-3]
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "s.startswith(prefixes)",
+        "s.startswith(('a', 'b'), *rest)",
+        "s.startswith(())",
+        "s.startswith(('a', 'b'), start=1)",
+        "s.startswith('a')",
+    ],
+)
+def test_startswith_it_cannot_rewrite_is_left_alone(source: str) -> None:
+    assert _rewritten(source + "\n") == source + "\n"
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        ("format(x, spec)", "x.__format__(spec)"),
+        ('format(3.14159, ".2f")', '(3.14159).__format__(".2f")'),
+        ('format(a + b, ">8")', '(a + b).__format__(">8")'),
+        ("format(self.v, f(1))", "self.v.__format__(f(1))"),
+        ("format(x)", "str(x)"),
+        ("format(f(1))", "str(f(1))"),
+        ("ascii(x)", "repr(x)"),
+        ('ascii("b")', 'repr("b")'),
+    ],
+)
+def test_format_and_ascii_are_rewritten(source: str, expected: str) -> None:
+    assert _rewritten(source + "\n") == expected + "\n"
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "format()",
+        "format(x, y, z)",
+        "format(*a)",
+        "format(x, spec=y)",
+        "ascii(x, y)",
+        "obj.format(x, y)",
+    ],
+)
+def test_format_and_ascii_with_other_arguments_are_left_alone(source: str) -> None:
+    assert _rewritten(source + "\n") == source + "\n"
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "def format(x, y):\n    return 1\nr = format(1, 2)",
+        "from mod import ascii\nr = ascii(1)",
+        "def f(format):\n    return format(1, 2)",
+        "ascii = repr\nr = ascii(1)",
+    ],
+)
+def test_format_and_ascii_bound_by_the_module_are_left_alone(source: str) -> None:
+    assert _rewritten(source + "\n") == source + "\n"
+
+
+def test_format_nested_in_startswith_is_rewritten_too() -> None:
+    text = _rewritten('r = f(1).startswith((format(x, "d"), ascii(y)))\n')
+    assert "format(" not in text and "ascii(" not in text
+    assert 'x.__format__("d")' in text and "repr(y)" in text
+
+
+def test_format_keeps_its_lines() -> None:
+    source = "r = format(\n    x,\n    spec,\n)\nz = 1\n"
+    text = _rewritten(source)
+    assert text.count("\n") == source.count("\n")
+    assert text.startswith("r = x.__format__(spec)")
+
+
+def test_except_star_is_refused_at_its_line() -> None:
+    if sys.version_info < (3, 11):
+        pytest.skip("except* needs Python 3.11")
+    source = "try:\n    f()\nexcept* ValueError as eg:\n    g()\nz = 1\n"
+    refused = python_rewrite_refusals(source)
+    assert [line for line, _ in refused] == [3]
+    assert "exception groups" in refused[0][1] and "use `except`" in refused[0][1]
+    two = source.replace("z = 1", "").replace(
+        "    g()\n", "    g()\nexcept* KeyError:\n    h()\n"
+    )
+    assert [line for line, _ in python_rewrite_refusals(two)] == [3, 5]
+    assert python_rewrite_refusals("try:\n    f()\nexcept ValueError:\n    g()\n") == []
 
 
 _LT_ONLY = """

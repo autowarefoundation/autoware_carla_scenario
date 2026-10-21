@@ -1133,6 +1133,9 @@ cannot express is refused at its line, with what to write instead.
 | `{**a, "k": v, **b}` | `(a \| {"k": v} \| b)`; `{**a}` is `dict(a)` | the values of the parts have other types (`Dict[str, int]` and `Dict[str, str]`) |
 | `"{:>5}\|{a}".format(1, a=x)` on a string literal | the f-string `f"{1:>5}\|{x}"` (a complex argument is bound once by a lambda) | `*args` / `**kwargs`, a field inside a format spec (`{:>{}}`), a missing argument, mixed auto and manual numbering, a template that is not a literal (write an f-string) |
 | `zip(a, b, strict=True)` | `zip(a, b)`: the check types the loop, it does not run it | |
+| `s.startswith((a, b))`, `s.endswith((a, b), start)` with the tuple written in the call (#439) | `(s.startswith(a) or s.startswith(b))`; a receiver or item that is not a name, attribute or constant is bound once by a lambda | the tuple is held in a name (`s.startswith(PREFIXES)`), is empty, or the call has `*args` / keywords; each item is still checked as a `str` |
+| `format(x, spec)`, `format(x)` (#439) | `x.__format__(spec)`, `str(x)` | a module that binds the name `format` itself is left alone |
+| `ascii(x)` (#439) | `repr(x)`: the same `str` type; the check does not run it, so the escaping of non-ASCII characters is unchanged at run time | a module that binds the name `ascii` itself is left alone |
 | `sorted(xs)`, `xs.sort()`, `min` / `max` of a class that defines `__lt__` only | the class gets `__gt__` (`other < self`) and `__ge__` (`not self < other`), which Codon's sort calls | the class defines no ordering (use `@dataclass(order=True)` or `key=`) |
 | `@functools.total_ordering` | the decorator and its import are dropped, and the class gets the comparisons it would add from its `__lt__`, `__le__`, `__gt__` or `__ge__` (and `==`, or identity without `__eq__`) | the class is not at module level, or defines none of the four |
 | `lambda x, k=k: x + k` (a default that is not a literal) | `(lambda k: lambda x: x + k)(k)`: the default is bound by a call, once, as in Python | |
@@ -1221,6 +1224,12 @@ the check needs the other spelling.
 | `case [a, b] as whole:` | `unexpected indentation` | match without `as` and use the name the subject already has |
 | `def show(h: HasArea)` called with a class that has `area()` but does not derive from the `Protocol` `HasArea` | `'Sq[float]' does not match expected type 'HasArea'` (also `List[Sq]` against `List[HasArea]`) | derive from it (`class Sq(HasArea):`), give the classes a common base class, or annotate `Union[Sq, Circle]`; Codon lists are invariant: annotate a list with the class it holds (`list[Sq]`) |
 | `f(*xs)` with a list, `f(**d)` with a dict | `argument after * must be a tuple, not 'List[int]'` / `argument after ** must be a named tuple, not 'Dict[str,int]'` | pass the elements (`f(xs[0], xs[1])`, `f(a=d["a"], b=d["b"])`), or make the parameter a list or dict; a tuple (`f(*(1, 2))`) is accepted |
+| `try: ... except* ValueError as eg:` (exception groups, #439) | `scenario.py:70:1: error: unexpected dedent`, at the line after the handler | `except ValueError:` (one handler per exception type); Codon has no syntax for `except*` |
+| `s.startswith(PREFIXES)` with a tuple held in a name (#439) | `'Tuple[str,str]' does not match expected type 'str'` | `any(s.startswith(p) for p in PREFIXES)`; a tuple written in the call is rewritten |
+| `d.update(c=3)` (#439) | `no function 'Dict.update' with arguments (Dict[str,int], int)` | `d.update({"c": 3})` (the check cannot rewrite it: it does not know `d` is a dict, and `obj.update(dt=1)` of your own class is valid) |
+| `int.from_bytes(b, "big")`, `n.to_bytes(2, "big")` (#439) | `'int' object has no attribute 'from_bytes'` | shifts and masks (`n = (n << 8) \| byte`); Codon's `bytes` is a `str` |
+| `"{a}".format_map(d)` (#439) | `'{a}' object has no attribute 'format_map'` | an f-string, or `"{a}".format(a=d["a"])` |
+| `b.decode()`, `b.hex()` on a bytes value (#439) | `'str' object has no attribute 'decode'` | Codon's `bytes` is a `str`: it is already text |
 
 Plain value, or-pattern, guard, sequence (without `*`) and enum-member
 (`case Mode.A:`) patterns compile, as does `case int():` of a builtin type.
