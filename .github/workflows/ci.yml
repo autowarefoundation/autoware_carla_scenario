@@ -185,11 +185,6 @@ jobs:
     runs-on: ubuntu-latest
     # Repeats the pull request's verdict and seeds no cache: see the top.
     if: github.event_name == 'pull_request'
-    env:
-      # The pytest hook runs the whole fast suite again (for a contributor's
-      # commit); here the test jobs already do, and it made this the slowest
-      # job of the run.
-      SKIP: pytest-carla
     steps:
     - uses: actions/checkout@v4
 
@@ -224,9 +219,6 @@ jobs:
           run-precommit: "false"
 
       - name: Run pre-commit auto-fix
-        env:
-          # Fixes nothing; see lint-and-format.
-          SKIP: pytest-carla
         run: uv run pre-commit run --all-files || true
 
       - name: Commit and push if changes were made
