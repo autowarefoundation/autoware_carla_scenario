@@ -2724,6 +2724,10 @@ trigger is asked on that tick: when it does not hold, nothing is done.
 <td>Stand a pedestrian on a crosswalk still for N(2 s, 0.5 s), then walk it a crosswalk's length on along its heading (<code>STOP_CROSSING</code>); <code>seed</code> seeds the wait.</td>
 </tr>
 <tr>
+<td><code>PropAction</code>, <code>PropOperation</code></td>
+<td>An operation on the environment (<code>autoware_carla_scenario.actions.prop</code>): <code>PropOperation.ADD</code> places a CARLA prop (<code>static.prop.*</code>; <code>blueprint</code>, a construction cone by default) named <em>name</em> at a <code>position</code> in any frame a trajectory vertex takes (<code>CarlaWorldPose</code>, <code>Lanelet2Pose</code>, <code>OpenDrivePose</code>, <code>MapPose</code>, <code>RelativeLanePose</code> against an entity, or a <code>Route*Pose</code>), on the road surface unless <code>on_ground=False</code>; a name already standing is replaced. <code>PropOperation.REMOVE</code> takes the prop of a name away. Props are kept by name, not as entities; the runner takes them all away (<code>clear_props</code>) when a run ends and before the next starts. <code>apply(world, library, ground)</code> does it at once, for an action built on it that places many props in one tick.</td>
+</tr>
+<tr>
 <td><code>StalledObjectAction</code>, <code>collision_objects</code></td>
 <td>TeraSim's scheduled static adversities (<code>autoware_carla_scenario.actions.stalled_object</code>): a vehicle the scenario spawned (out of the world, <code>spawn.hidden</code>, best) stands still at a pose -- a <code>Lanelet2Pose</code>, or an xy+yaw <code>MapPose</code> / <code>CarlaWorldPose</code> -- from <code>start_time</code> to <code>end_time</code> (scenario seconds; <code>None</code>: never removed), and is out of the world before and after. A <code>FollowTrajectoryAction</code> of a held pose with <code>hidden_outside_trajectory</code>. <code>collision_objects</code> is two of them, for a collision's aftermath.</td>
 </tr>
@@ -3406,7 +3410,7 @@ imports the other.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 21, 2026 00:29:25 UTC"><span class="timeago" datetime="2026-10-21T00:29:25+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 21, 2026 00:29:25 UTC">2026-10-21</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 21, 2026 01:13:42 UTC"><span class="timeago" datetime="2026-10-21T01:13:42+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 21, 2026 01:13:42 UTC">2026-10-21</span>
   </span>
 
     
