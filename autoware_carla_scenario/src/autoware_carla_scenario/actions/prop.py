@@ -8,15 +8,16 @@ Unlike a vehicle, a prop may be spawned while a run is under way.
 :class:`PropAction` adds a prop at a position written in any frame a
 trajectory vertex takes (:data:`~..trajectory.model.TrajectoryPosition`:
 CARLA's, Lanelet2's, OpenDRIVE's, Autoware's ``map``, relative to an entity's
-lane, or along the ego's route), or removes the prop of a name.  A prop an
-action added is taken away when the run ends.
+lane, or along the ego's route), or removes the prop of a name.  The runner
+takes every prop away (:func:`clear_props`) when a run ends and before the
+next one starts, as it clears the entities.
 """
 
 from __future__ import annotations
 
 import logging
 from enum import Enum
-from typing import TYPE_CHECKING, Optional, Union
+from typing import TYPE_CHECKING, Callable, Optional, Union
 
 from ..conditions.base import BaseCondition, find_actor_by_role_name
 from ..coordinate.map_manager import run_carla_map
@@ -32,7 +33,7 @@ from ..trajectory.model import (
     RouteRoadsidePose,
     TrajectoryVertex,
 )
-from ..trajectory.resolve import position_resolver, road_height
+from ..trajectory.resolve import resolve_position, road_height
 from .base import BaseAction, TickTiming
 
 if TYPE_CHECKING:
@@ -40,7 +41,13 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["DEFAULT_PROP_BLUEPRINT", "PropAction", "PropOperation", "standing_props"]
+__all__ = [
+    "DEFAULT_PROP_BLUEPRINT",
+    "PropAction",
+    "PropOperation",
+    "clear_props",
+    "standing_props",
+]
 
 #: The prop :class:`PropAction` adds when no blueprint is given.
 DEFAULT_PROP_BLUEPRINT = "static.prop.constructioncone"
@@ -60,6 +67,7 @@ def standing_props() -> list[str]:
 
 def _take_away(name: str) -> bool:
     """Destroy the prop *name*; whether there was one."""
+    # Looked up first: Codon's dict.pop takes no default.
     if name not in _STANDING:
         return False
     actor = _STANDING.pop(name)
@@ -68,6 +76,13 @@ def _take_away(name: str) -> bool:
     except RuntimeError:
         pass  # gone with the world already
     return True
+
+
+def clear_props() -> None:
+    """Take every prop away.  Called by the runner when a run ends and before
+    the next starts: a batch runs several scenarios against one world."""
+    for name in list(_STANDING.keys()):
+        _take_away(name)
 
 
 class PropOperation(Enum):
@@ -124,7 +139,6 @@ class PropAction(BaseAction):
     _at: Optional[TrajectoryVertex]
     _blueprint: str
     _on_ground: bool
-    _added: Optional["carla.Actor"]
 
     def __init__(
         self,
@@ -154,25 +168,14 @@ class PropAction(BaseAction):
         if operation is PropOperation.ADD and position is None:
             raise ValueError(f"{label}: adding prop '{name}' needs a position")
         super().__init__(label=label, condition=condition, timing=timing, once=True)
-        self._name = str(name)
+        self._name = name
         self._operation = operation
         at: Optional[TrajectoryVertex] = None
         if position is not None:
             at = TrajectoryVertex(position)
         self._at = at
-        self._blueprint = str(blueprint)
+        self._blueprint = blueprint
         self._on_ground = on_ground
-        self._added = None
-
-    @property
-    def name(self) -> str:
-        """The prop's name."""
-        return self._name
-
-    @property
-    def operation(self) -> PropOperation:
-        """What the action does."""
-        return self._operation
 
     def execute(self, world: "carla.World") -> None:
         """Add or remove the prop."""
@@ -182,12 +185,15 @@ class PropAction(BaseAction):
         self,
         world: "carla.World",
         library: Optional["carla.BlueprintLibrary"] = None,
+        ground: Optional[Callable[[float, float], Optional[float]]] = None,
     ) -> bool:
         """Add or remove the prop now; whether it was done.
 
         For an action built on this one, which applies it itself rather than
-        registering it.  *library* is the world's blueprint library, if
-        already fetched.
+        registering it, and may place many props in one tick: *library* is
+        the world's blueprint library and *ground* the road height under a
+        point (:func:`~..trajectory.resolve.road_height`), fetched once for
+        them all.
         """
         if self._operation is PropOperation.REMOVE:
             if not _take_away(self._name):
@@ -195,20 +201,13 @@ class PropAction(BaseAction):
                 return False
             logger.info("%s: prop '%s' removed", self.label, self._name)
             return True
-        return self._add(world, library)
-
-    def close(self) -> None:
-        """Take away the prop this action added, if it still stands."""
-        super().close()
-        added = self._added
-        self._added = None
-        if added is None:
-            return
-        if self._name in _STANDING and _STANDING[self._name] is added:
-            _take_away(self._name)
+        return self._add(world, library, ground)
 
     def _add(
-        self, world: "carla.World", library: Optional["carla.BlueprintLibrary"]
+        self,
+        world: "carla.World",
+        library: Optional["carla.BlueprintLibrary"],
+        ground: Optional[Callable[[float, float], Optional[float]]],
     ) -> bool:
         import typesafe_carla.carla as carla  # noqa: PLC0415
 
@@ -216,7 +215,7 @@ class PropAction(BaseAction):
         vertex: TrajectoryVertex = self._at
         reference = _ReferencePose(world)
         try:
-            x, y, z, yaw = position_resolver(reference.pose)(vertex.position)
+            x, y, z, yaw = resolve_position(vertex.position, reference.pose)
         except ValueError as exc:
             logger.warning(
                 "%s: prop '%s' has no position: %s", self.label, self._name, exc
@@ -224,9 +223,14 @@ class PropAction(BaseAction):
             return False
         height = z if z is not None else 0.0
         if self._on_ground:
-            ground = road_height(run_carla_map(world))(x, y)
-            if ground is not None:
-                height = float(ground) + _LIFT_M
+            # Branched: Codon types no conditional expression of the two.
+            if ground is None:
+                surface = road_height(run_carla_map(world))(x, y)
+            else:
+                given: Callable[[float, float], Optional[float]] = ground
+                surface = given(x, y)
+            if surface is not None:
+                height = float(surface) + _LIFT_M
         blueprints = world.get_blueprint_library() if library is None else library
         found = blueprints.filter(self._blueprint)
         if len(found) == 0:  # A BlueprintLibrary has no truth value in Codon.
@@ -251,7 +255,6 @@ class PropAction(BaseAction):
             return False
         spawned: "carla.Actor" = actor
         _STANDING[self._name] = spawned
-        self._added = spawned
         logger.info(
             "%s: prop '%s' (%s) added at (%.1f, %.1f)",
             self.label,

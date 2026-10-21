@@ -107,18 +107,32 @@ def test_a_lanelet2_position_is_placed_on_its_lane(crossroads: Any) -> None:  # 
 
 def test_a_name_added_again_is_replaced() -> None:
     world = _World()
-    first = _add("cone", CarlaWorldPose(0.0, 0.0, 0.0, 0.0))
-    second = _add("cone", CarlaWorldPose(5.0, 0.0, 0.0, 0.0))
-    first.apply(world)  # type: ignore[arg-type]
-    second.apply(world)  # type: ignore[arg-type]
+    _add("cone", CarlaWorldPose(0.0, 0.0, 0.0)).apply(world)  # type: ignore[arg-type]
+    _add("cone", CarlaWorldPose(5.0, 0.0, 0.0)).apply(world)  # type: ignore[arg-type]
     old, new = world.spawned
     assert old.destroyed and not new.destroyed
-    # Closing the first leaves the second's prop standing; closing the
-    # second takes it away.
-    first.close()
-    assert not new.destroyed
-    second.close()
-    assert new.destroyed and prop_module.standing_props() == []
+    assert prop_module.standing_props() == ["cone"]
+
+
+def test_the_runner_clears_every_prop_away() -> None:
+    world = _World()
+    for name in ("a", "b"):
+        _add(name, CarlaWorldPose(0.0, 0.0, 0.0)).apply(world)  # type: ignore[arg-type]
+    prop_module.clear_props()
+    assert all(p.destroyed for p in world.spawned)
+    assert prop_module.standing_props() == []
+
+
+def test_many_props_share_the_library_and_the_ground() -> None:
+    world = _World(ground=None)
+    library = world.get_blueprint_library()
+    for i in range(3):
+        _add(f"c{i}", CarlaWorldPose(float(i), 0.0, 0.0)).apply(
+            world,  # type: ignore[arg-type]
+            library,
+            ground=lambda x, y: 2.0,
+        )
+    assert [p.transform.location.z for p in world.spawned] == pytest.approx([2.05] * 3)
 
 
 def test_what_cannot_be_added() -> None:

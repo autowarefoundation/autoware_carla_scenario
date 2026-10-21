@@ -364,19 +364,16 @@ class PropAction(BaseAction):
             _expect_trajectory_position(position)
         super().__init__(label, condition, timing)
 
-    @property
-    def name(self) -> str:
-        raise NotImplementedError()
-
-    @property
-    def operation(self) -> PropOperation:
-        raise NotImplementedError()
-
-    def apply(self, world: carla.World, library: Optional[carla.BlueprintLibrary] = None) -> bool:
+    def apply(self, world: carla.World, library: Optional[carla.BlueprintLibrary] = None,
+              ground = None) -> bool:
         raise NotImplementedError()
 
 
 def standing_props() -> List[str]:
+    raise NotImplementedError()
+
+
+def clear_props() -> None:
     raise NotImplementedError()
 
 
