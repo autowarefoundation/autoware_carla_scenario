@@ -2487,7 +2487,12 @@ def test_str_format_on_something_else_is_left_alone() -> None:
         ('f"a {n} {x:+.1f} b"', '(f"a {n} " + (x).__format__("+.1f") + " b")'),
         ('f"{{{x:+d}}}"', '("{" + (x).__format__("+d") + "}")'),
         ('f"{f(a, b)[0]:+d}"', '((f(a, b)[0]).__format__("+d"))'),
-        ('f"{(lambda: 1)():+d}"', '(((lambda: 1)()).__format__("+d"))'),
+        # ast.unparse spells a lambda "lambda : 1" before Python 3.11.
+        (
+            'f"{(lambda: 1)():+d}"',
+            f'((({ast.unparse(ast.parse("lambda: 1", mode="eval").body)})())'
+            '.__format__("+d"))',
+        ),
     ],
 )
 def test_an_fstring_spec_codon_cannot_parse_becomes_a_format_call(
