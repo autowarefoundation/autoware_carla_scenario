@@ -102,6 +102,12 @@ if TYPE_CHECKING:
         StalledObjectAction as StalledObjectAction,
         collision_objects as collision_objects,
     )
+    from .actions.construction_zone import (
+        ConstructionZoneAction as ConstructionZoneAction,
+    )
+    from .adversity.construction import (
+        ConstructionSettings as ConstructionSettings,
+    )
     from .actions.adversarial_traffic import (
         AdversarialTrafficAction as AdversarialTrafficAction,
     )
@@ -475,6 +481,8 @@ __all__ = [
     "BaseAction",
     "EnvironmentAction",
     "FollowTrajectoryAction",
+    "ConstructionSettings",
+    "ConstructionZoneAction",
     "PropAction",
     "PropOperation",
     "StalledObjectAction",
@@ -543,6 +551,8 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "BaseAction": (".actions", "BaseAction"),
     "EnvironmentAction": (".actions", "EnvironmentAction"),
     "FollowTrajectoryAction": (".actions", "FollowTrajectoryAction"),
+    "ConstructionSettings": (".adversity.construction", "ConstructionSettings"),
+    "ConstructionZoneAction": (".actions.construction_zone", "ConstructionZoneAction"),
     "StalledObjectAction": (".actions.stalled_object", "StalledObjectAction"),
     "PropAction": (".actions.prop", "PropAction"),
     "PropOperation": (".actions.prop", "PropOperation"),

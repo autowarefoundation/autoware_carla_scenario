@@ -166,10 +166,18 @@ product of every action's weight, which is 1.0 without NADE. You can read it:
 - in the trajectory log, where each sampled adversity is an `adversity`
   record with its `p`, its `q`, the weight at that point, the victims and the
   response (see [Trajectory Log](trajectory_log.md)).
+- in the run's coverage file, as `outcome.weight`: a run is importance
+  sampled when one of its actions is (`BaseScenario.outcome_weight`; NADE
+  is), and only such a run records a weight.
 
 To count which kinds were sampled, register a coverage item on
 `AdversarialTrafficAction.sampled_kind` (see [Coverage](coverage.md)).
-Weighted aggregation over a batch belongs in openodd_py (#403).
+Merging a batch's coverage files (`scenario-coverage`) then estimates the
+naturalistic failure rate per scenario and environment: the mean of the
+weighted failures with its 95% interval, the relative half width it has
+converged to (TeraSim's NADE stops below 0.3), the self-normalised rate and
+the effective number of runs (openodd's weighted outcomes, see
+[Coverage](coverage.md)).
 
 ## Stalled objects and collisions
 
@@ -194,6 +202,56 @@ for crashed in collision_objects(
     start_time=0.0, end_time=60.0,
 ):
     self.register_pre_tick(crashed)
+```
+
+## Construction zones
+
+`ConstructionZoneAction` lays out TeraSim's `ConstructionAdversity` along a
+lane (`adversity.construction`): from `start_s` to `end_s` metres along it,
+past its lanelet's end on along the straightest successors. These are the zones:
+
+| Zone | Where | Objects |
+|---|---|---|
+| warning | `warning_zone_length` (100 m) before the start | signs on the shoulder, every `warning_zone_spacing` (30 m) |
+| taper_in | `taper_length_in` (60 m) from the start | cones, from 0.3 m inside the lane's edge to the work zone's offset |
+| buffer | `buffer_zone_length` (10 m) | cone, cone, barrier |
+| work | to `taper_length_out` (30 m) before the end | `construction_type`: cone, barrier, or mixed |
+| taper_out | to the end | cones, back to the edge |
+| termination | `termination_zone_length` (30 m) after the end | signs |
+
+`spacing` (20 m) is the distance between objects, scaled by 0.7 in a taper
+and 0.8 in the buffer. With `use_dynamic_spacing` and `speed_limit_mph`,
+MUTCD's spacings apply instead. A taper can be `linear` or `curved` (an
+s-curve). The zone closes in from `side`, `"right"` by default; TeraSim instead
+picked the side from the SUMO lane's index.
+
+From `start_time` to `end_time` (`None`: never removed) the objects stand in
+the world as CARLA props, each added by a `PropAction` and named
+`<label>/<zone>/<n>` (`docs/api.md`). Unlike a vehicle, a prop may appear
+while a run is under way. When the zone appears, two things happen:
+
+- `clear_traffic` takes the backend's background vehicles in the zone off the
+  road;
+- `close_lane` tells the backend the lane is closed. SUMO then disallows
+  every vehicle class on it, as TeraSim's `full_lane` mode does. The
+  TrafficManager cannot close a lane, and says so; a `TrafficSinkAction` on
+  the zone keeps its traffic out.
+
+TeraSim's `full_lane` mode places no object. Here the objects are always
+placed: a closure Autoware cannot see is one it drives into. At `end_time` the
+props are removed and the lane is reopened; when the run ends, the lane is
+reopened and the runner takes the props away with every other.
+
+```python
+from autoware_carla_scenario import ConstructionSettings, ConstructionZoneAction
+
+self.register_pre_tick(
+    ConstructionZoneAction(
+        1043, start_s=120.0, end_s=260.0,
+        settings=ConstructionSettings(construction_type="mixed", side="right"),
+        start_time=0.0,
+    )
+)
 ```
 
 ## Coordinate conventions
@@ -221,4 +279,4 @@ for crashed in collision_objects(
 | StopCrossing counts steps at dt = 0.1 | The wait is in seconds |
 | `is_lane_changing`: heading 5° or more off the SUMO lane's angle | The same, off the Lanelet2 lanelet's direction (`LanePosition.heading`) |
 | Background vehicles are adversarial | So are they, with `drive_background` (default): the backend's background vehicles in the world (#417) |
-| Construction zones | Out of scope (#402) |
+| Construction zones: SUMO vtypes for cones, barriers and signs; full_lane only closes the lane | CARLA props (`static.prop.*`), always placed, plus the lane closed to the backend (#402) |

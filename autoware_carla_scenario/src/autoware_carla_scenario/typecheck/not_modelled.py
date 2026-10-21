@@ -372,7 +372,7 @@ _ODD_ARCHIVE = (
 )
 _REPORT_ROWS = (
     "openodd's rows of a merged report (MergedEntry, CaseRun, CellFlakiness, "
-    "CellRow, OddExposure), which have no model: the report tools read them, "
+    "CellRow, OddExposure, WeightedOutcome), which have no model: the report tools read them, "
     "not a scenario or an ODD"
 )
 _RUN_ENVIRONMENT = (
@@ -470,7 +470,10 @@ NOT_MODELLED_MEMBERS: dict[str, dict[str, str]] = {
     "ConditionStatus": {"details": _CONDITION_DETAILS, "to_dict": _AS_DICT},
     "CoverageCollector": {"to_dict": _AS_DICT},
     "CoverageReport": {
-        **_members("cases cell_flakiness entries entry flaky_cells odds", _REPORT_ROWS),
+        **_members(
+            "cases cell_flakiness entries entry flaky_cells odds weighted_outcomes",
+            _REPORT_ROWS,
+        ),
         "to_dict": _AS_DICT,
     },
     "CoverItem": {
@@ -548,6 +551,7 @@ NOT_MODELLED_MEMBERS: dict[str, dict[str, str]] = {
     "ScenarioResult": {"to_dict": _AS_DICT},
     "SweepConfig": _members("bindings constraints odd_sample", _SWEEP_FIELD),
     "TrafficSinkAction": {"set_traffic_backend": _SET_TRAFFIC_BACKEND},
+    "ConstructionZoneAction": {"set_traffic_backend": _SET_TRAFFIC_BACKEND},
     "TrafficSourceAction": {"set_traffic_backend": _SET_TRAFFIC_BACKEND},
 }
 

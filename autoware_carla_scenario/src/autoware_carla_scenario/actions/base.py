@@ -161,6 +161,14 @@ class BaseAction(ABC):
         scenario's weight is the product of its actions'."""
         return 1.0
 
+    @property
+    def importance_sampled(self) -> bool:
+        """Whether the action samples what happens importance-sampled, so that
+        its run's outcome is recorded with :attr:`importance_sampling_weight`;
+        ``False`` but for NADE's
+        :class:`~autoware_carla_scenario.AdversarialTrafficAction`."""
+        return False
+
     def take_adversity_events(self) -> list[AdversityEvent]:
         """The adversities the action sampled since it was last asked, for
         the run's log; none unless it samples them."""

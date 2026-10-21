@@ -587,7 +587,7 @@ class TestRecordRun:
         _record_run(coverage, None, result)
         coverage.record_case.assert_not_called()
         coverage.record_outcome.assert_called_once_with(
-            False, failed_at=123.45, environment=capture().id
+            False, failed_at=123.45, environment=capture().id, weight=None
         )
 
     def test_a_passed_run_records_no_failure_time(self) -> None:
@@ -604,7 +604,7 @@ class TestRecordRun:
         )
         coverage.record_case.assert_called_once_with(*case)
         coverage.record_outcome.assert_called_once_with(
-            True, failed_at=None, environment=capture().id
+            True, failed_at=None, environment=capture().id, weight=None
         )
 
     def test_an_unreadable_environment_is_none(self) -> None:
@@ -622,8 +622,38 @@ class TestRecordRun:
                 ScenarioResult(passed=False, message="x", elapsed_seconds=1.0),
             )
         coverage.record_outcome.assert_called_once_with(
-            False, failed_at=1.0, environment=None
+            False, failed_at=1.0, environment=None, weight=None
         )
+
+    def test_an_importance_sampled_run_records_its_weight(self) -> None:
+        from autoware_carla_scenario.conditions import ScenarioResult
+        from autoware_carla_scenario.environment import capture
+        from autoware_carla_scenario.scenario_runner import _record_run
+
+        coverage = MagicMock()
+        result = ScenarioResult(passed=False, message="crash", elapsed_seconds=2.0)
+        _record_run(coverage, None, result, 0.0125)
+        coverage.record_outcome.assert_called_once_with(
+            False, failed_at=2.0, environment=capture().id, weight=0.0125
+        )
+
+
+def test_only_an_importance_sampled_run_has_an_outcome_weight() -> None:
+    from types import SimpleNamespace
+
+    from autoware_carla_scenario import AdversarialTrafficAction, BaseScenario
+    from autoware_carla_scenario.actions import SetSpeedAction
+
+    outcome_weight = BaseScenario.outcome_weight.fget  # type: ignore[attr-defined]
+    actions = SimpleNamespace(
+        _init_actions=[],
+        _pre_tick_actions=[SetSpeedAction("npc1", 1.0)],
+        _post_tick_actions=[],
+    )
+    assert outcome_weight(actions) is None
+    # NADE samples, even before it has sampled anything (weight 1).
+    actions._post_tick_actions.append(AdversarialTrafficAction([]))
+    assert outcome_weight(actions) == 1.0
 
 
 def test_what_the_odds_measures_read_is_built_before_the_first_tick(

@@ -1138,6 +1138,7 @@ cannot express is refused at its line, with what to write instead.
 | `lambda x, k=k: x + k` (a default that is not a literal) | `(lambda k: lambda x: x + k)(k)`: the default is bound by a call, once, as in Python | |
 | `def __exit__(self, exc_type, exc, tb)` (annotated `type[BaseException] \| None`, `BaseException \| None`, `object`, ... or not) | each parameter without a default gets `=None` and loses its annotation: Codon calls `__exit__()` with no arguments, even when the block raised (#435) | |
 | `fs: list[Callable[[int], int]] = [inc, lambda x: x * 2]`, `table: dict[str, Callable[[int], int]] = {"a": inc, "b": dbl}`, or a `return` of such a display from a function annotated so (a dispatch table) | each function, module function (`mod.f`) or lambda element is wrapped in Codon's `Callable[Tuple[int], int](...)`, so they share one type (#436) | the element is a bound method, a lambda using a local variable of its function, or a call (not wrapped, then Codon's own refusal and a hint); the table is an attribute of a class, is unannotated, or is built another way than a display |
+| a class constant read in its own class body (#433): `DOUBLE = LIMIT * 2`, `x: int = SIZE` (a dataclass default), `def f(self, n=LIMIT)`, `@register(LIMIT)` | `Class.LIMIT` (`Outer.Inner.LIMIT` in a nested class) | the constant is annotated and not a single-line literal (`LIMIT: int = 2 * 3`), it is assigned again later in the body, the class is defined in a function, the read is a `NamedTuple` field default, or it is an Enum member with a non-literal value |
 
 Notes:
 
@@ -1164,6 +1165,28 @@ Notes:
   where you pass the captured value.
 - Codon's f-strings have no `{{` / `}}`: a literal brace becomes a string
   joined with `+`.
+- A class constant read in the class body (#433): Python resolves the name in
+  the class scope, Codon in the module's (`name 'LIMIT' is not defined`), so
+  the check writes `Class.LIMIT`. It rewrites exactly what Python resolves
+  there: a name an earlier assignment of the same body bound, read by another
+  statement of the body, a dataclass field default, a method's parameter
+  default or a decorator. A method body, a lambda body and a comprehension
+  (but for its first iterable) do not see the class scope, so a bare `LIMIT`
+  there is the module's and stays; a nested class sees only its own body; a
+  parameter or comprehension variable named `LIMIT` shadows nothing at the
+  default, which is read in the class scope. In an Enum a member read by a
+  later statement is its value in Python (`B = A` makes an alias), so the check
+  writes the literal; any other name of the body is qualified as above.
+- The constant has to be a class attribute in Codon. A name annotated at class
+  level (`LIMIT: int = 5`, `Final[int]`, `ClassVar[int]`) is a typed field of
+  the instance, not an attribute of the class, so a read of it cannot be
+  qualified: when its value is a single-line literal the check writes that
+  literal where the name is (`n: int = 5`; Python reads the same value), and
+  otherwise the read is refused with a hint: write `LIMIT: Final = 5` (a bare
+  `Final` is dropped, leaving a class attribute) or no annotation, or use a
+  module-level constant.
+  A `NamedTuple` field default cannot read its own class constant either
+  (`x: int = LIM` is "no module named"): its other statements and methods can.
 
 ### The names of `typing` a scenario may import
 
@@ -1473,8 +1496,8 @@ To check one more module:
 
 ### What is checked of the framework
 
-Every module now has an entry other than `"not yet checked (#45)"`. 193 of
-the package's 285 modules (68%; about 46,900 of 83,800 lines) are `CHECKED`:
+Every module now has an entry other than `"not yet checked (#45)"`. 195 of
+the package's 287 modules (68%; about 47,300 of 84,200 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the conversions between
 Lanelet2, OpenDRIVE and CARLA world poses (`coordinate.transform`), the stop
 lines read off a Lanelet2 map (`utils.stop_line`, `coordinate.stop_line`)
