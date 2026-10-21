@@ -3092,6 +3092,8 @@ from autoware_carla_scenario import (
     AdversarialCutInAction,
     AdversarialMergeAction,
     AdversityFeasibleCondition,
+    ConstructionSettings,
+    ConstructionZoneAction,
     AdversityKind,
     AdversityLocation,
     HeadOnAction,
@@ -3110,6 +3112,11 @@ from autoware_carla_scenario import (
     collision_objects,
 )
 self.register_pre_tick(AdversarialBrakeAction("npc1", AdversityLocation.ANY))
+self.register_pre_tick(
+    ConstructionZoneAction(
+        12, 20.0, 80.0, ConstructionSettings(construction_type="mixed"), end_time=30.0
+    )
+)
 self.register_pre_tick(LaneChangeAbortAction("npc2", AdversityLocation.HIGHWAY))
 self.register_pre_tick(AdversarialMergeAction("npc2", AdversityLocation.HIGHWAY))
 self.register_pre_tick(HeadOnAction("npc3", AdversityLocation.ANY, label="head_on"))

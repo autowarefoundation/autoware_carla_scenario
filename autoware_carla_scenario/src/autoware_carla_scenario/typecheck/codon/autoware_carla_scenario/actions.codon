@@ -766,6 +766,64 @@ class NadeAdversity:
         self.probability = probability
 
 
+class ConstructionSettings:
+    construction_type: str
+    spacing: float
+    work_zone_offset: float
+    speed_limit_mph: float
+    use_dynamic_spacing: bool
+    taper_length_in: float
+    taper_length_out: float
+    taper_type: str
+    warning_zone_length: float
+    warning_zone_spacing: float
+    buffer_zone_length: float
+    termination_zone_length: float
+    warning_sign_offset: float
+    side: str
+
+    def __init__(self, construction_type: str = "cone", spacing: float = 20.0, work_zone_offset: float = 0.0, speed_limit_mph: float = 0.0, use_dynamic_spacing: bool = False, taper_length_in: float = 60.0, taper_length_out: float = 30.0, taper_type: str = "linear", warning_zone_length: float = 100.0, warning_zone_spacing: float = 30.0, buffer_zone_length: float = 10.0, termination_zone_length: float = 30.0, warning_sign_offset: float = 2.5, side: str = "right"):
+        self.construction_type = construction_type
+        self.spacing = spacing
+        self.work_zone_offset = work_zone_offset
+        self.speed_limit_mph = speed_limit_mph
+        self.use_dynamic_spacing = use_dynamic_spacing
+        self.taper_length_in = taper_length_in
+        self.taper_length_out = taper_length_out
+        self.taper_type = taper_type
+        self.warning_zone_length = warning_zone_length
+        self.warning_zone_spacing = warning_zone_spacing
+        self.buffer_zone_length = buffer_zone_length
+        self.termination_zone_length = termination_zone_length
+        self.warning_sign_offset = warning_sign_offset
+        self.side = side
+
+
+class ConstructionZoneAction(BaseAction):
+    def __init__(self, label):
+        compile_error("ConstructionZoneAction(): no constructor takes these arguments "
+                      "(required: lanelet_id, start_s, end_s)")
+
+    def __init__(self, lanelet_id: int, start_s: float, end_s: float,
+                 settings: ConstructionSettings = ConstructionSettings(),
+                 start_time: float = 0.0, end_time = None, *_kw,
+                 close_lane: bool = True, clear_traffic: bool = True, blueprints = None,
+                 condition = None, timing: TickTiming = TickTiming("pre_tick"),
+                 label: str = "construction_zone"):
+        _keyword_only(_kw, "ConstructionZoneAction(): close_lane, clear_traffic, "
+                           "blueprints, condition, timing and label")
+        _expect_optional_float(end_time)
+        super().__init__(label, condition, timing)
+
+    @property
+    def cleared(self) -> bool:
+        raise NotImplementedError()
+
+    @property
+    def prop_count(self) -> int:
+        raise NotImplementedError()
+
+
 class NadeSettings:
     max_controlled: int
     control_radius: float
