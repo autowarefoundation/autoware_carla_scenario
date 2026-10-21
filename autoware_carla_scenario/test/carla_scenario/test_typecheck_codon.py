@@ -5321,6 +5321,24 @@ def test_fstring_format_specs_compile(tmp_path: Path) -> None:
     assert result.ok, result.format()
 
 
+def test_fstring_specs_in_a_class_level_default_compile(tmp_path: Path) -> None:
+    """The driver's copy of a class-level default is rewritten too (#434, #433)."""
+    definitions = """
+        W = 6
+
+
+        class Labels:
+            SIGNED: str = f"{3.5:+.1f}"
+            PADDED: str = f"{7:>{W}}"
+            TEXT: str = "{:+.1f}".format(2.5)
+    """
+    scenario, config, _ = _data_case(
+        tmp_path, textwrap.dedent(definitions), "assert len(Labels().SIGNED) > 0\n"
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
 @pytest.mark.parametrize(
     ("line", "message"),
     [
