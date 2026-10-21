@@ -118,10 +118,13 @@ class SumoBackendConfig:
     """Options of the ``sumo`` traffic backend.
 
     How SUMO's drivers behave -- their speed, gap, reaction and braking, and
-    whether they follow the visibility -- is not here but in the parameters
-    every backend shares
-    (:class:`~autoware_carla_scenario.traffic.parameters.TrafficParameters`,
-    ``traffic.parameters``).
+    whether they follow the visibility -- and how its pedestrians walk is not
+    here but in the parameters every backend shares
+    (:class:`~autoware_carla_scenario.traffic.parameters.VehicleParameters`,
+    ``traffic.vehicles``;
+    :class:`~autoware_carla_scenario.traffic.parameters.PedestrianParameters`,
+    ``traffic.pedestrians``).  ``pedestrians`` here is how many SUMO
+    generates.
 
     Attributes:
         scenario_vehicles: What drives the scenario's own vehicles (its
@@ -266,8 +269,8 @@ class SumoBackendConfig:
         if "follow_visibility" in mapping:
             raise ValueError(
                 "traffic.options.follow_visibility has moved to "
-                "traffic.parameters.follow_visibility, with the other traffic "
-                "parameters every backend shares (TrafficParameters)"
+                "traffic.vehicles.follow_visibility, with the other vehicle "
+                "parameters every backend shares (VehicleParameters)"
             )
         checked = checked_options(cls, mapping)
         if isinstance(checked.get("ambient"), Mapping):

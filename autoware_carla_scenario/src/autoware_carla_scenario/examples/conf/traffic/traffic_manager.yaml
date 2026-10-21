@@ -9,11 +9,11 @@ traffic:
     # `oc.select` so that a config composing this group without that one still
     # resolves, leaving the backend's own default in play.
     port: ${oc.select:traffic_manager.port,null}
-  # How the traffic drives, in the terms every backend shares
-  # (TrafficParameters, docs/traffic_backends.md). null: the backend's own
-  # default. A field this backend does not support is an error naming the
-  # backends that do.
-  parameters:
+  # How vehicles drive and pedestrians walk, in the terms every backend
+  # shares (VehicleParameters / PedestrianParameters,
+  # docs/traffic_backends.md). null: the backend's own default. A field this
+  # backend does not support is an error naming the backends that do.
+  vehicles:
     # Desired speed as a multiple of the speed limit (traffic_manager, sumo).
     speed_factor: null
     # Gap kept to the vehicle ahead when standing, m (traffic_manager, sumo).
@@ -36,3 +36,12 @@ traffic:
     # Hold the traffic to the speed it stops from within what its
     # drivers see in the run's weather (sumo only; on by default there).
     follow_visibility: null
+  # SUMO's pedestrians (sumo only: the TrafficManager drives no pedestrians).
+  pedestrians:
+    # Walking speed, m/s, and its spread between people (speedDev).
+    walking_speed_mps: null
+    speed_deviation: null
+    # Gap kept to the person ahead, m.
+    min_gap_m: null
+    # Walk onto a crossing whose light has been red for less than this, s.
+    red_light_violation_s: null

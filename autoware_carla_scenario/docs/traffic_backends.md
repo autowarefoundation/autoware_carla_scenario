@@ -105,24 +105,32 @@ exported scenario packages still set — keeps deciding the port when
 
 ## Traffic parameters
 
-How the traffic *drives* is not a backend's own option but one type every
-backend reads, `TrafficParameters`, under `traffic.parameters`. Every field is
-`null` by default, which leaves the backend's own default:
+How the traffic's road users *behave* is not a backend's own option but two
+parameter spaces every backend reads: `traffic.vehicles` (`VehicleParameters`)
+for how vehicles drive, and `traffic.pedestrians` (`PedestrianParameters`) for
+how pedestrians walk. Every field is `null` by default, which leaves the
+backend's own default:
 
 ```yaml
 traffic:
   backend: sumo
-  parameters:
+  vehicles:
     speed_factor: 0.9        # 10 % under the speed limit
     min_gap_m: 3.0
     reaction_time_s: 1.5
     follow_visibility: true
+  pedestrians:
+    walking_speed_mps: 1.2
+    red_light_violation_s: 5.0
 ```
 
 ```bash
-uv run scenario traffic=sumo traffic.parameters.reaction_time_s=1.5
-uv run scenario traffic.parameters.ignore_lights=0.1
+uv run scenario traffic=sumo traffic.vehicles.reaction_time_s=1.5
+uv run scenario traffic.vehicles.ignore_lights=0.1
+uv run scenario traffic=sumo traffic.pedestrians.walking_speed_mps=1.0
 ```
+
+`traffic.vehicles`:
 
 | Field | Meaning | `traffic_manager` | `sumo` |
 | --- | --- | --- | --- |
@@ -140,12 +148,24 @@ uv run scenario traffic.parameters.ignore_lights=0.1
 | `imperfection` | Driver imperfection, 0-1 | — | `sigma` |
 | `follow_visibility` | Slow to what the drivers see in the weather | — | ✓ (on by default) |
 
+`traffic.pedestrians` (the TrafficManager drives no pedestrians — a scenario's
+own walk as the scenario steers them — so every field is `sumo`'s):
+
+| Field | Meaning | `traffic_manager` | `sumo` |
+| --- | --- | --- | --- |
+| `walking_speed_mps` | Walking speed, m/s | — | `maxSpeed` |
+| `speed_deviation` | Spread of walking speeds between people | — | `speedDev` |
+| `min_gap_m` | Gap to the person ahead, m | — | `minGap` |
+| `red_light_violation_s` | Cross on red if it has been red for less than this, s | — | `jmDriveAfterRedTime` |
+
 ### Parameter reference
 
 Each parameter, with its type, the values it accepts, and what it becomes in
 each backend. Unset (`null`) means the backend's own default, which is given
 where it is fixed. A value outside the range is refused when the config is
 read, before the backend is built.
+
+#### `traffic.vehicles`
 
 **Shared by `traffic_manager` and `sumo`**
 
@@ -232,12 +252,42 @@ defaults.
       TrafficManager does. See **Visibility** under
       [The SUMO backend](#the-sumo-backend).
 
-The same in Python, where every field is a keyword of `TrafficParameters`:
+#### `traffic.pedestrians` (`sumo` only)
+
+SUMO's default pedestrian type is defined with them, in
+`<output>/sumo/pedestrian_type.add.xml` loaded before the demand, so they
+apply to SUMO's own pedestrians (`traffic.options.pedestrians`) and to a
+`route_path` demand's that names no type of its own. On the type, not on each
+person: SUMO reads `jmDriveAfterRedTime` off the type only, and TraCI cannot
+set it on a person. `traffic.options.pedestrians` says how many SUMO
+generates; `traffic.pedestrians` how they walk.
+
+- `walking_speed_mps` — float, m/s, `> 0`
+    - The speed people walk at before each one's own factor (SUMO's
+      `maxSpeed`; default 1.39).
+- `speed_deviation` — float, `>= 0`
+    - The spread of each person's speed factor (SUMO's `speedDev`; default
+      0.1). `0` has everyone walk at exactly `walking_speed_mps`.
+- `min_gap_m` — float, metres, `>= 0`
+    - The gap kept to the person ahead (SUMO's `minGap`; default 0.25).
+- `red_light_violation_s` — float, seconds, `>= 0`
+    - A pedestrian walks onto a crossing whose light has been red for less
+      than this (SUMO's junction model `jmDriveAfterRedTime`) when the way is
+      free; a large value has people cross on red whenever they can. Unset,
+      they wait for green. Measured on a signalled crossroads held red for
+      120 s: unset, 1,347 person-steps on a crossing (crossings whose own
+      signal SUMO keeps green); `1000`, 29,386.
+
+The TrafficManager drives no pedestrians, so it refuses every field here.
+
+The same in Python, where every field is a keyword of `VehicleParameters` or
+`PedestrianParameters`:
 
 ```python
-from autoware_carla_scenario import TrafficParameters
+from autoware_carla_scenario import PedestrianParameters, VehicleParameters
 
-TrafficParameters(speed_factor=0.9, min_gap_m=3.0, reaction_time_s=1.5)
+VehicleParameters(speed_factor=0.9, min_gap_m=3.0, reaction_time_s=1.5)
+PedestrianParameters(walking_speed_mps=1.2, red_light_violation_s=5.0)
 ```
 
 A field set for a backend that cannot honour it fails the run before anything is
@@ -247,7 +297,7 @@ time, would test something other than what it says:
 
 ```text
 TrafficParameterError: The 'traffic_manager' traffic backend does not support
-traffic.parameters.reaction_time_s can only be used with the 'sumo' backend.
+traffic.vehicles.reaction_time_s can only be used with the 'sumo' backend.
 Leave the field unset (null) or select a backend that supports it.
 ```
 
@@ -264,11 +314,15 @@ A backend from another package supports none of them until it says so:
 
 ```python
 class MySimulatorBackend(TrafficBackend):
-    def supported_parameters(self) -> set[str]:
+    def supported_vehicle_parameters(self) -> set[str]:
         return {"speed_factor", "min_gap_m"}
+
+    def supported_pedestrian_parameters(self) -> set[str]:
+        return {"walking_speed_mps"}
 ```
 
-and reads them from `self.parameters` in `prepare()`.
+and reads them from `self.vehicle_parameters` and `self.pedestrian_parameters`
+in `prepare()`.
 
 ## The lifecycle
 
@@ -455,11 +509,20 @@ and its [parameters](#traffic-parameters) in the backend's constructor, or by
 name through the registry:
 
 ```python
-from autoware_carla_scenario import TrafficManagerBackend, TrafficParameters
+from autoware_carla_scenario import (
+    PedestrianParameters,
+    TrafficManagerBackend,
+    VehicleParameters,
+)
 from autoware_carla_scenario.traffic import build_backend
 
-backend = TrafficManagerBackend(parameters=TrafficParameters(speed_factor=0.8))
-backend = build_backend("sumo", {}, TrafficParameters(reaction_time_s=1.5))
+backend = TrafficManagerBackend(vehicles=VehicleParameters(speed_factor=0.8))
+backend = build_backend(
+    "sumo",
+    {},
+    vehicles=VehicleParameters(reaction_time_s=1.5),
+    pedestrians=PedestrianParameters(walking_speed_mps=1.2),
+)
 ```
 
 `ScenarioQueue` passes it to the `ScenarioRunner` it builds, and one backend
@@ -606,7 +669,8 @@ nearest first. With `radius_m: null` the radii are `mesoscopic`'s when that is
 enabled; otherwise every one is mirrored. The rest walk on in SUMO only, where
 SUMO's traffic still sees them. A walker is put where its person was at the
 start of the step and walked at its speed (`WalkerControl`), so CARLA animates
-it; it is never published back into SUMO as one of CARLA's pedestrians.
+it; it is never published back into SUMO as one of CARLA's pedestrians. How
+they walk is `traffic.pedestrians` ([Traffic parameters](#traffic-parameters)).
 
 **Pedestrian crossings** (`pedestrian_crossings`, on by default): the network
 is built with a crossing across each road at a junction where footways meet it,
@@ -664,7 +728,7 @@ How a CARLA vehicle follows its SUMO vehicle is `vehicle_control`:
   speed only when it is not the one the car already has (a standing car, in a
   queue at a light say, is given its zero once).
 
-**Visibility** (`traffic.parameters.follow_visibility`, on by default): SUMO's traffic sees only
+**Visibility** (`traffic.vehicles.follow_visibility`, on by default): SUMO's traffic sees only
 as far as the run's weather lets a driver see. The TrafficManager has no
 notion of sight -- its vehicles know where every actor is whatever the fog --
 so night, rain and fog change nothing about how it drives: the
@@ -676,11 +740,11 @@ drivers see in the weather it leaves
 and the backend holds each of SUMO's own vehicles (ambient and background)
 to the speed it stops from within that distance: `v * tau + v² / (2 *
 decel)`, with the vehicle's own `tau` as its reaction time and its `decel` as
-its braking (`traffic.parameters.reaction_time_s` and `decel` when set) -- a default car in 50 m of fog drives at most about 62 km/h, at
+its braking (`traffic.vehicles.reaction_time_s` and `decel` when set) -- a default car in 50 m of fog drives at most about 62 km/h, at
 night under a dipped beam (50 m) the same. A vehicle that departs later is
 held as it departs, and when the weather lifts each gets its own maximum speed
 back. The scenario's own vehicles, driven by SUMO or not, are left to the
-scenario. `traffic.parameters.follow_visibility=false` ignores the visibility,
+scenario. `traffic.vehicles.follow_visibility=false` ignores the visibility,
 as the TrafficManager does; set for the `traffic_manager` backend, the field is
 refused. It used to be `traffic.options.follow_visibility`, which is now an
 error pointing here.

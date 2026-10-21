@@ -394,7 +394,7 @@ def _prepared(
     from autoware_carla_scenario.traffic.sumo.backend import SumoTrafficBackend
     from autoware_carla_scenario.traffic.sumo.config import AmbientTrafficConfig
 
-    parameters = options.pop("parameters", None)
+    vehicles = options.pop("vehicles", None)
     config = SumoBackendConfig(
         scenario_vehicles=options.pop("scenario_vehicles", "sumo"),
         ambient=AmbientTrafficConfig(
@@ -406,7 +406,7 @@ def _prepared(
         cache_dir=str(tmp_path / "cache"),
         **options,
     )
-    backend = SumoTrafficBackend(config, parameters=parameters)
+    backend = SumoTrafficBackend(config, vehicles=vehicles)
     backend.prepare(
         TrafficContext(
             client=_CLIENT.get("client"),
@@ -867,10 +867,10 @@ def test_sumo_traffic_can_ignore_the_visibility(
         forget_visibility,
         set_world_visibility,
     )
-    from autoware_carla_scenario.traffic.parameters import TrafficParameters
+    from autoware_carla_scenario.traffic.parameters import VehicleParameters
 
     backend, world, _npc, _ego = _prepared(
-        crossroads, tmp_path, parameters=TrafficParameters(follow_visibility=False)
+        crossroads, tmp_path, vehicles=VehicleParameters(follow_visibility=False)
     )
     world.id = 12  # type: ignore[attr-defined]
     tc = backend._traci
@@ -892,7 +892,7 @@ def test_sumo_traffic_can_ignore_the_visibility(
 def test_sumo_drives_its_vehicles_with_the_traffic_parameters(
     crossroads: Path, tmp_path: Path
 ) -> None:
-    from autoware_carla_scenario.traffic.parameters import TrafficParameters
+    from autoware_carla_scenario.traffic.parameters import VehicleParameters
     from autoware_carla_scenario.visibility import (
         forget_visibility,
         set_world_visibility,
@@ -900,7 +900,7 @@ def test_sumo_drives_its_vehicles_with_the_traffic_parameters(
     )
 
     forget_visibility()
-    parameters = TrafficParameters(
+    parameters = VehicleParameters(
         speed_factor=0.5,
         min_gap_m=4.0,
         lane_changes=False,
@@ -909,7 +909,7 @@ def test_sumo_drives_its_vehicles_with_the_traffic_parameters(
         reaction_time_s=2.0,
         imperfection=0.0,
     )
-    backend, world, _npc, ego = _prepared(crossroads, tmp_path, parameters=parameters)
+    backend, world, _npc, ego = _prepared(crossroads, tmp_path, vehicles=parameters)
     world.id = 13  # type: ignore[attr-defined]
     tc = backend._traci
     try:
@@ -936,7 +936,7 @@ def test_sumo_drives_its_vehicles_with_the_traffic_parameters(
         assert tc.vehicle.getSpeedFactor(handle) == pytest.approx(before[handle])
         # What CARLA's side drives is only placed in SUMO.
         assert tc.vehicle.getTau(ego_id) != pytest.approx(2.0)
-        assert backend.describe()["parameters"]["reaction_time_s"] == 2.0
+        assert backend.describe()["vehicles"]["reaction_time_s"] == 2.0
 
         # The sight speed is worked out from the parameters' braking and reaction.
         set_world_visibility(13, 20.0)
@@ -950,14 +950,14 @@ def test_sumo_drives_its_vehicles_with_the_traffic_parameters(
 
 
 def test_follow_visibility_is_a_traffic_parameter_now() -> None:
-    with pytest.raises(ValueError, match="traffic.parameters.follow_visibility"):
+    with pytest.raises(ValueError, match="traffic.vehicles.follow_visibility"):
         SumoBackendConfig.from_mapping({"follow_visibility": False})
 
 
 def test_sumo_refuses_the_traffic_managers_parameters() -> None:
     from autoware_carla_scenario.traffic.parameters import (
         TrafficParameterError,
-        TrafficParameters,
+        VehicleParameters,
     )
     from autoware_carla_scenario.traffic.sumo.backend import SumoTrafficBackend
 
@@ -965,19 +965,19 @@ def test_sumo_refuses_the_traffic_managers_parameters() -> None:
         TrafficParameterError,
         match="ignore_lights can only be used with the 'traffic_manager' backend",
     ):
-        SumoTrafficBackend(parameters=TrafficParameters(ignore_lights=0.5))
+        SumoTrafficBackend(vehicles=VehicleParameters(ignore_lights=0.5))
 
 
 def test_sumo_hands_the_shared_parameters_to_its_traffic_manager() -> None:
-    from autoware_carla_scenario.traffic.parameters import TrafficParameters
+    from autoware_carla_scenario.traffic.parameters import VehicleParameters
     from autoware_carla_scenario.traffic.sumo.backend import SumoTrafficBackend
 
     backend = SumoTrafficBackend(
-        parameters=TrafficParameters(speed_factor=0.9, reaction_time_s=1.5)
+        vehicles=VehicleParameters(speed_factor=0.9, reaction_time_s=1.5)
     )
-    assert backend.parameters.reaction_time_s == 1.5
+    assert backend.vehicle_parameters.reaction_time_s == 1.5
     # The TrafficManager driving the scenario's vehicles gets what it can do.
-    assert backend._tm.parameters == TrafficParameters(speed_factor=0.9)
+    assert backend._tm.vehicle_parameters == VehicleParameters(speed_factor=0.9)
 
 
 @needs_sumo
@@ -1709,10 +1709,13 @@ def test_the_pedestrian_options_are_checked() -> None:
 
 
 def _walking(
-    crossroads: Path, tmp_path: Path, **pedestrians: Any
+    crossroads: Path,
+    tmp_path: Path,
+    walkers: Any = None,
+    **pedestrians: Any,
 ) -> tuple[Any, _FakeWorld, _FakeActor]:
     """A started backend generating SUMO pedestrians, with an ego published
-    from the west arm."""
+    from the west arm; *walkers* are its pedestrian parameters."""
     from autoware_carla_scenario.traffic.sumo.backend import SumoTrafficBackend
     from autoware_carla_scenario.traffic.sumo.config import AmbientTrafficConfig
 
@@ -1724,7 +1727,7 @@ def _walking(
         ambient=AmbientTrafficConfig(enabled=False),
         pedestrians=PedestrianConfig(enabled=True, period_s=0.5, **pedestrians),
     )
-    backend = SumoTrafficBackend(config)
+    backend = SumoTrafficBackend(config, pedestrians=walkers)
     backend.prepare(
         TrafficContext(
             xodr_path=crossroads,
@@ -1892,6 +1895,73 @@ def test_each_signalled_crossing_waits_for_the_traffic_over_its_road(
     finally:
         backend.close()
     assert backend._crossing_links == {}
+
+
+@needs_sumo
+def test_sumos_pedestrians_walk_with_the_pedestrian_parameters(
+    crossroads_with_sidewalks: Path, tmp_path: Path
+) -> None:
+    from autoware_carla_scenario.traffic.parameters import PedestrianParameters
+
+    backend, world, _ego = _walking(
+        crossroads_with_sidewalks,
+        tmp_path,
+        PedestrianParameters(walking_speed_mps=0.8, speed_deviation=0.0, min_gap_m=0.6),
+    )
+    tc = backend._traci
+    try:
+        for i in range(40):
+            backend.tick(world, i * 0.05)
+        people = tc.person.getIDList()
+        assert people
+        for person in people:
+            assert tc.person.getMaxSpeed(person) == pytest.approx(0.8)
+            assert tc.person.getMinGap(person) == pytest.approx(0.6)
+        assert backend.describe()["pedestrians"]["walking_speed_mps"] == 0.8
+    finally:
+        backend.close()
+
+
+def _steps_on_crossings_at_red(
+    signalled_crossroads: Path, tmp_path: Path, walkers: Any
+) -> int:
+    """Person-steps spent on a crossing while every light is held red."""
+    from autoware_carla_scenario.traffic.sumo.network import crossing_edges
+
+    backend, _world, _ego = _walking(signalled_crossroads, tmp_path, walkers)
+    tc = backend._traci
+    try:
+        crossings = set(crossing_edges(backend._network.net_file))
+        on = 0
+        for _ in range(2400):  # 120 s
+            for light in tc.trafficlight.getIDList():
+                state = tc.trafficlight.getRedYellowGreenState(light)
+                tc.trafficlight.setRedYellowGreenState(light, "r" * len(state))
+            tc.simulationStep()
+            on += sum(
+                1 for p in tc.person.getIDList() if tc.person.getRoadID(p) in crossings
+            )
+        return on
+    finally:
+        backend.close()
+
+
+@needs_sumo
+def test_sumos_pedestrians_cross_on_red_only_when_told_to(
+    signalled_crossroads: Path, tmp_path: Path
+) -> None:
+    from autoware_carla_scenario.traffic.parameters import PedestrianParameters
+
+    waiting = _steps_on_crossings_at_red(signalled_crossroads, tmp_path / "a", None)
+    crossing = _steps_on_crossings_at_red(
+        signalled_crossroads,
+        tmp_path / "b",
+        PedestrianParameters(red_light_violation_s=1000.0),
+    )
+    # A crossing's own green may still come up between the vehicle lights SUMO
+    # holds red (pedestrian links can be green), so "never" is too strong:
+    # crossing on red is several times as common.
+    assert crossing > 3 * max(waiting, 1)
 
 
 @needs_sumo

@@ -32,7 +32,7 @@ from .base import (
     _entity_name,
 )
 from .config import TrafficManagerBackendConfig
-from .parameters import TrafficParameters
+from .parameters import VehicleParameters
 from ..world_reset import episode_of
 from ..visibility import (
     DEFAULT_DECEL,
@@ -87,11 +87,11 @@ class TrafficManagerBackend(TrafficBackend):
     scenario spawned are handed to the TrafficManager after warm-up, and the
     manoeuvres a scenario asks for become TrafficManager calls.
 
-    How its vehicles drive is :class:`~autoware_carla_scenario.traffic.parameters.TrafficParameters`
-    (those :data:`~autoware_carla_scenario.traffic.parameters.PARAMETER_BACKENDS`
+    How its vehicles drive is :class:`~autoware_carla_scenario.traffic.parameters.VehicleParameters`
+    (those :data:`~autoware_carla_scenario.traffic.parameters.VEHICLE_PARAMETER_BACKENDS`
     gives ``traffic_manager``; it has no reaction time, braking or
-    acceleration of a driver to set, nor any notion of sight): the speed and the gap are the
-    TrafficManager's global settings, set in :meth:`prepare`; the rest are set
+    acceleration of a driver to set, nor any notion of sight): the speed and
+    the gap are the TrafficManager's global settings, set in :meth:`prepare`; the rest are set
     on each vehicle as it is put on autopilot.  Every vehicle it drives gets
     them, the scenario's own as well as its background traffic.
 
@@ -122,7 +122,7 @@ class TrafficManagerBackend(TrafficBackend):
         config: Optional[TrafficManagerBackendConfig] = None,
         *,
         client: Optional["carla.Client"] = None,
-        parameters: Optional[TrafficParameters] = None,
+        vehicles: Optional[VehicleParameters] = None,
     ) -> None:
         """Create the backend.
 
@@ -131,11 +131,12 @@ class TrafficManagerBackend(TrafficBackend):
             client: The CARLA client the TrafficManager is reached through, for
                 a caller that already holds one.  :meth:`prepare` supplies it
                 otherwise.
-            parameters: How its vehicles drive; the TrafficManager's defaults
-                when omitted.
+            vehicles: How its vehicles drive; the TrafficManager's defaults
+                when omitted.  It drives no pedestrians, so has no pedestrian
+                parameters.
 
         Raises:
-            TrafficParameterError: If *parameters* sets a field the
+            TrafficParameterError: If *vehicles* sets a field the
                 TrafficManager does not support.
         """
         self._config = config or TrafficManagerBackendConfig()
@@ -156,8 +157,8 @@ class TrafficManagerBackend(TrafficBackend):
         self._lane_changed = []
         #: How far drivers see, m, as last reported; ``None``: nothing set.
         self._visibility = None
-        if parameters is not None:
-            self.set_parameters(parameters)
+        if vehicles is not None:
+            self.set_vehicle_parameters(vehicles)
 
     # ------------------------------------------------------------------
     # Properties
@@ -189,7 +190,7 @@ class TrafficManagerBackend(TrafficBackend):
             return
         tm.set_synchronous_mode(True)
         tm.set_random_device_seed(context.random_seed)
-        parameters = self.parameters
+        parameters = self.vehicle_parameters
         if parameters.speed_factor is not None:
             # The TrafficManager's is a percentage *under* the limit.
             tm.global_percentage_speed_difference(
@@ -582,7 +583,7 @@ class TrafficManagerBackend(TrafficBackend):
     def _autopilot(self, actor: "carla.Actor") -> None:
         """Put *actor* on autopilot, with the per-vehicle parameters set."""
         actor.set_autopilot(True, self.port)
-        parameters = self.parameters
+        parameters = self.vehicle_parameters
         if not _sets_per_vehicle(parameters):
             return  # the speed and the gap are global, set in prepare()
         tm = self._require_tm("autopilot")
@@ -619,7 +620,7 @@ class TrafficManagerBackend(TrafficBackend):
         return self._client.get_trafficmanager(self.port)
 
 
-def _sets_per_vehicle(parameters: TrafficParameters) -> bool:
+def _sets_per_vehicle(parameters: VehicleParameters) -> bool:
     """Whether *parameters* set a field the TrafficManager sets on each
     vehicle, rather than globally."""
     return (

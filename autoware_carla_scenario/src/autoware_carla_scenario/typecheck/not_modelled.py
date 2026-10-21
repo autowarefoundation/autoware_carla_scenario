@@ -173,7 +173,8 @@ NOT_MODELLED: dict[str, dict[str, str]] = {
         **_each(
             "NullTrafficBackend TrafficBackend TrafficBackendError "
             "TrafficBackendUnavailable TrafficConfig TrafficManagerBackend "
-            "TrafficManagerBackendConfig TrafficParameterError TrafficParameters",
+            "TrafficManagerBackendConfig TrafficParameterError PedestrianParameters "
+            "VehicleParameters",
             _TRAFFIC_BACKEND,
         ),
         "load_openodd": _OPENODD,
@@ -251,15 +252,17 @@ NOT_MODELLED: dict[str, dict[str, str]] = {
         "logger": "the module's logger; a scenario logs with its own",
     },
     f"{_PACKAGE}.scenario_config": _each(
-        "TrafficConfig TrafficManagerBackendConfig TrafficParameters",
+        "TrafficConfig TrafficManagerBackendConfig PedestrianParameters "
+        "VehicleParameters",
         _TRAFFIC_BACKEND,
     ),
     f"{_PACKAGE}.traffic": {
         **_each(
             "NullTrafficBackend TrafficBackend TrafficBackendError "
             "TrafficBackendUnavailable TrafficConfig TrafficManagerBackend "
-            "TrafficManagerBackendConfig TrafficParameterError TrafficParameters "
-            "PARAMETER_BACKENDS build_none build_sumo build_traffic_manager "
+            "TrafficManagerBackendConfig TrafficParameterError VehicleParameters "
+            "PedestrianParameters VEHICLE_PARAMETER_BACKENDS "
+            "PEDESTRIAN_PARAMETER_BACKENDS build_none build_sumo build_traffic_manager "
             "register_builtin_backends",
             _TRAFFIC_BACKEND,
         ),
