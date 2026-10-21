@@ -13,13 +13,15 @@ from typing import Any, List, Tuple
 import pytest
 
 from autoware_carla_scenario.traffic import (
-    PARAMETER_BACKENDS,
+    PEDESTRIAN_PARAMETER_BACKENDS,
+    PedestrianParameters,
+    VEHICLE_PARAMETER_BACKENDS,
     NullTrafficBackend,
     TrafficConfig,
     TrafficContext,
     TrafficManagerBackend,
     TrafficParameterError,
-    TrafficParameters,
+    VehicleParameters,
     build_backend,
 )
 
@@ -73,14 +75,14 @@ class _World:
 
 
 def test_every_field_names_the_backends_that_support_it() -> None:
-    assert set(PARAMETER_BACKENDS) == set(
-        TrafficParameters.__dataclass_fields__  # type: ignore[attr-defined]
+    assert set(VEHICLE_PARAMETER_BACKENDS) == set(
+        VehicleParameters.__dataclass_fields__  # type: ignore[attr-defined]
     )
 
 
 def test_nothing_set_is_every_default() -> None:
-    assert TrafficParameters().set_fields() == []
-    assert TrafficParameters().describe() == {}
+    assert VehicleParameters().set_fields() == []
+    assert VehicleParameters().describe() == {}
 
 
 @pytest.mark.parametrize(
@@ -97,29 +99,38 @@ def test_nothing_set_is_every_default() -> None:
 )
 def test_an_impossible_value_is_refused(field: str, value: float) -> None:
     with pytest.raises(ValueError, match=field):
-        TrafficParameters(**{field: value})  # type: ignore[arg-type]
+        VehicleParameters(**{field: value})  # type: ignore[arg-type]
 
 
 def test_a_mapping_with_an_unknown_key_is_refused() -> None:
     with pytest.raises(ValueError, match="reaction_time"):
-        TrafficParameters.from_mapping({"reaction_time": 1.0})
+        VehicleParameters.from_mapping({"reaction_time": 1.0})
 
 
-def test_the_traffic_config_reads_its_parameters_node() -> None:
+def test_the_traffic_config_reads_its_vehicles_and_pedestrians_nodes() -> None:
     config = TrafficConfig.from_mapping(
         {
             "backend": "sumo",
             "options": {},
-            "parameters": {"speed_factor": 0.8, "follow_visibility": None},
+            "vehicles": {"speed_factor": 0.8, "follow_visibility": None},
+            "pedestrians": {"walking_speed_mps": 1.2},
         }
     )
-    assert config.parameters == TrafficParameters(speed_factor=0.8)
-    assert TrafficConfig.from_mapping({}).parameters == TrafficParameters()
+    assert config.vehicles == VehicleParameters(speed_factor=0.8)
+    assert config.pedestrians == PedestrianParameters(walking_speed_mps=1.2)
+    empty = TrafficConfig.from_mapping({})
+    assert empty.vehicles == VehicleParameters()
+    assert empty.pedestrians == PedestrianParameters()
+
+
+def test_the_old_parameters_node_points_to_the_new_ones() -> None:
+    with pytest.raises(ValueError, match="traffic.vehicles.*traffic.pedestrians"):
+        TrafficConfig.from_mapping({"parameters": {"speed_factor": 0.8}})
 
 
 def test_restricting_keeps_only_what_is_supported() -> None:
-    parameters = TrafficParameters(speed_factor=0.8, reaction_time_s=1.5)
-    assert parameters.restricted_to({"speed_factor"}) == TrafficParameters(
+    parameters = VehicleParameters(speed_factor=0.8, reaction_time_s=1.5)
+    assert parameters.restricted_to({"speed_factor"}) == VehicleParameters(
         speed_factor=0.8
     )
 
@@ -130,18 +141,18 @@ def test_restricting_keeps_only_what_is_supported() -> None:
 
 
 def test_a_field_another_backend_supports_is_refused_naming_it() -> None:
-    parameters = TrafficParameters(
+    parameters = VehicleParameters(
         speed_factor=0.9, reaction_time_s=1.5, follow_visibility=True
     )
     with pytest.raises(TrafficParameterError) as raised:
-        TrafficManagerBackend(parameters=parameters)
+        TrafficManagerBackend(vehicles=parameters)
     message = str(raised.value)
     assert "'traffic_manager' traffic backend does not support" in message
     assert (
-        "traffic.parameters.reaction_time_s can only be used with the 'sumo' backend"
+        "traffic.vehicles.reaction_time_s can only be used with the 'sumo' backend"
         in message
     )
-    assert "traffic.parameters.follow_visibility can only be used with" in message
+    assert "traffic.vehicles.follow_visibility can only be used with" in message
     # A field it does support is not named.
     assert "speed_factor" not in message
 
@@ -152,22 +163,22 @@ def test_a_backend_that_reads_no_parameters_refuses_every_one() -> None:
         match="speed_factor can only be used with the 'traffic_manager' or "
         "'sumo' backends",
     ):
-        NullTrafficBackend().set_parameters(TrafficParameters(speed_factor=1.0))
+        NullTrafficBackend().set_vehicle_parameters(VehicleParameters(speed_factor=1.0))
     # Nothing set is nothing refused.
-    NullTrafficBackend().set_parameters(TrafficParameters())
+    NullTrafficBackend().set_vehicle_parameters(VehicleParameters())
 
 
 def test_building_a_backend_checks_its_parameters() -> None:
     with pytest.raises(TrafficParameterError, match="'sumo' backend"):
-        build_backend("traffic_manager", {}, TrafficParameters(follow_visibility=False))
-    backend = build_backend("traffic_manager", {}, TrafficParameters(min_gap_m=3.0))
-    assert backend.parameters.min_gap_m == 3.0
+        build_backend("traffic_manager", {}, VehicleParameters(follow_visibility=False))
+    backend = build_backend("traffic_manager", {}, VehicleParameters(min_gap_m=3.0))
+    assert backend.vehicle_parameters.min_gap_m == 3.0
 
 
 def test_each_backend_supports_what_the_table_says() -> None:
     from autoware_carla_scenario.traffic.sumo.backend import SumoTrafficBackend
 
-    assert TrafficManagerBackend().supported_parameters() == {
+    assert TrafficManagerBackend().supported_vehicle_parameters() == {
         "speed_factor",
         "min_gap_m",
         "lane_changes",
@@ -177,7 +188,7 @@ def test_each_backend_supports_what_the_table_says() -> None:
         "ignore_walkers",
         "random_lane_changes",
     }
-    assert SumoTrafficBackend().supported_parameters() == {
+    assert SumoTrafficBackend().supported_vehicle_parameters() == {
         "speed_factor",
         "min_gap_m",
         "lane_changes",
@@ -187,13 +198,13 @@ def test_each_backend_supports_what_the_table_says() -> None:
         "imperfection",
         "follow_visibility",
     }
-    assert NullTrafficBackend().supported_parameters() == set()
+    assert NullTrafficBackend().supported_vehicle_parameters() == set()
 
 
 def test_every_hand_written_field_list_names_every_field() -> None:
     """Codon has no field reflection, so the methods spell the fields out."""
-    fields = set(TrafficParameters.__dataclass_fields__)  # type: ignore[attr-defined]
-    everything = TrafficParameters(
+    fields = set(VehicleParameters.__dataclass_fields__)  # type: ignore[attr-defined]
+    everything = VehicleParameters(
         speed_factor=1.0,
         min_gap_m=1.0,
         lane_changes=True,
@@ -222,20 +233,20 @@ def test_the_traffic_manager_sets_its_global_parameters_when_prepared() -> None:
     client = _Client()
     backend = TrafficManagerBackend(
         client=client,
-        parameters=TrafficParameters(speed_factor=0.8, min_gap_m=3.5),
+        vehicles=VehicleParameters(speed_factor=0.8, min_gap_m=3.5),
     )
     backend.prepare(TrafficContext(client=client, random_seed=1))
     (difference,) = client.tm.called("global_percentage_speed_difference")
     assert difference[0] == pytest.approx(20.0)
     assert client.tm.called("set_global_distance_to_leading_vehicle") == [(3.5,)]
-    assert backend.describe()["parameters"] == {"speed_factor": 0.8, "min_gap_m": 3.5}
+    assert backend.describe()["vehicles"] == {"speed_factor": 0.8, "min_gap_m": 3.5}
 
 
 def test_the_traffic_manager_sets_each_vehicles_parameters_on_autopilot() -> None:
     client = _Client()
     backend = TrafficManagerBackend(
         client=client,
-        parameters=TrafficParameters(
+        vehicles=VehicleParameters(
             lane_changes=False,
             ignore_lights=0.25,
             ignore_signs=0.5,
@@ -269,4 +280,61 @@ def test_the_traffic_manager_without_parameters_sets_nothing_more() -> None:
         "set_synchronous_mode",
         "set_random_device_seed",
     }
-    assert "parameters" not in backend.describe()
+    assert "vehicles" not in backend.describe()
+
+
+# ---------------------------------------------------------------------------
+# Pedestrians
+# ---------------------------------------------------------------------------
+
+
+def test_every_pedestrian_field_names_the_backends_that_support_it() -> None:
+    assert set(PEDESTRIAN_PARAMETER_BACKENDS) == set(
+        PedestrianParameters.__dataclass_fields__  # type: ignore[attr-defined]
+    )
+    everything = PedestrianParameters(
+        walking_speed_mps=1.0,
+        speed_deviation=0.0,
+        min_gap_m=0.5,
+        red_light_violation_s=10.0,
+    )
+    assert set(everything.set_fields()) == set(PEDESTRIAN_PARAMETER_BACKENDS)
+    assert set(everything.describe()) == set(PEDESTRIAN_PARAMETER_BACKENDS)
+
+
+@pytest.mark.parametrize(
+    "field, value",
+    [
+        ("walking_speed_mps", 0.0),
+        ("speed_deviation", -0.1),
+        ("min_gap_m", -1.0),
+        ("red_light_violation_s", -1.0),
+    ],
+)
+def test_an_impossible_pedestrian_value_is_refused(field: str, value: float) -> None:
+    with pytest.raises(ValueError, match=field):
+        PedestrianParameters(**{field: value})
+
+
+def test_the_traffic_manager_refuses_pedestrian_parameters() -> None:
+    """It drives no pedestrians, so it can honour none of them."""
+    assert TrafficManagerBackend().supported_pedestrian_parameters() == set()
+    with pytest.raises(
+        TrafficParameterError,
+        match="traffic.pedestrians.walking_speed_mps can only be used with the "
+        "'sumo' backend",
+    ):
+        build_backend(
+            "traffic_manager",
+            {},
+            pedestrians=PedestrianParameters(walking_speed_mps=1.2),
+        )
+
+
+def test_the_pedestrian_parameters_are_recorded() -> None:
+    from autoware_carla_scenario.traffic.sumo.backend import SumoTrafficBackend
+
+    backend = SumoTrafficBackend(
+        pedestrians=PedestrianParameters(red_light_violation_s=30.0)
+    )
+    assert backend.describe()["pedestrians"] == {"red_light_violation_s": 30.0}

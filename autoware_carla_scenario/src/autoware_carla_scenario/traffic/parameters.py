@@ -1,31 +1,39 @@
-"""How a run's traffic drives, in words every traffic backend reads.
+"""How a run's traffic behaves, in words every traffic backend reads.
 
 A backend's own options (:mod:`.config`, :mod:`.sumo.config`) say how the
-simulator behind it is set up -- a port, a network, a step.  How its drivers
-behave is a different question, asked of every backend alike: how fast
-against the limit, how close behind the car ahead, whether they change lanes,
-whether they slow for what they cannot see.  :class:`TrafficParameters` is that
-question's one type, read from the ``traffic.parameters`` node::
+simulator behind it is set up -- a port, a network, a step.  How its road
+users behave is a different question, asked of every backend alike, and it
+has two parameter spaces of its own:
+
+* :class:`VehicleParameters`, ``traffic.vehicles``: how fast against the
+  limit, how close behind the car ahead, whether drivers change lanes,
+  whether they slow for what they cannot see;
+* :class:`PedestrianParameters`, ``traffic.pedestrians``: how fast people
+  walk, how close they keep, whether they cross on red.
+
+::
 
     traffic:
       backend: sumo
-      parameters:
+      vehicles:
         speed_factor: 0.9
         reaction_time_s: 1.5
-        follow_visibility: true
+      pedestrians:
+        walking_speed_mps: 1.2
 
 Not every backend can do everything, and a parameter one cannot honour must not
 be dropped in silence: a run that asked for drivers who react in 1.5 s and got
 the TrafficManager's, which has no reaction time, is a run that tested
 something other than what it says.  So each field names the backends that
-support it (:data:`PARAMETER_BACKENDS`), each backend names the fields it
-supports (:meth:`~autoware_carla_scenario.traffic.base.TrafficBackend.supported_parameters`),
+support it (:data:`VEHICLE_PARAMETER_BACKENDS`,
+:data:`PEDESTRIAN_PARAMETER_BACKENDS`), each backend names the fields it
+supports (:meth:`~autoware_carla_scenario.traffic.base.TrafficBackend.supported_vehicle_parameters`,
+:meth:`~autoware_carla_scenario.traffic.base.TrafficBackend.supported_pedestrian_parameters`),
 and a field set for a backend that does not support it is an error before the
-run starts (:meth:`TrafficParameters.check_supported`).  A field left at
-``None`` is the backend's own default.
+run starts.  A field left at ``None`` is the backend's own default.
 
 ========================== ====================== =============================
-Field                      ``traffic_manager``    ``sumo``
+``traffic.vehicles``       ``traffic_manager``    ``sumo``
 ========================== ====================== =============================
 ``speed_factor``           global speed diff.     each vehicle's ``speedFactor``
 ``min_gap_m``              distance to leader     ``minGap``
@@ -42,10 +50,22 @@ Field                      ``traffic_manager``    ``sumo``
 ``follow_visibility``      --                     held to sight
 ========================== ====================== =============================
 
-The visibility (:mod:`autoware_carla_scenario.visibility`) is one of them:
-``follow_visibility`` holds the traffic to the speed it stops from within what
-its drivers see, with ``reaction_time_s`` and ``decel`` as the reaction and the
-braking that speed is worked out from.
+========================== ====================== =============================
+``traffic.pedestrians``    ``traffic_manager``    ``sumo``
+========================== ====================== =============================
+``walking_speed_mps``      --                     ``maxSpeed``
+``speed_deviation``        --                     ``speedDev``
+``min_gap_m``              --                     ``minGap``
+``red_light_violation_s``  --                     ``jmDriveAfterRedTime``
+========================== ====================== =============================
+
+The TrafficManager drives no pedestrians: a scenario's own walk as the
+scenario steers them, and it has no pedestrian traffic of its own.
+
+The visibility (:mod:`autoware_carla_scenario.visibility`) is a vehicle
+parameter: ``follow_visibility`` holds the traffic to the speed it stops from
+within what its drivers see, with ``reaction_time_s`` and ``decel`` as the
+reaction and the braking that speed is worked out from.
 
 Like :mod:`.config`, this module imports nothing heavier than the standard
 library, so the config layer and the editor can name it.
@@ -57,16 +77,18 @@ from dataclasses import dataclass
 from typing import Any, Mapping, Optional
 
 __all__ = [
-    "PARAMETER_BACKENDS",
+    "PEDESTRIAN_PARAMETER_BACKENDS",
+    "PedestrianParameters",
     "TrafficParameterError",
-    "TrafficParameters",
+    "VEHICLE_PARAMETER_BACKENDS",
+    "VehicleParameters",
 ]
 
-#: Each parameter, and the built-in backends that support it.  A third-party
-#: backend states its own support
-#: (:meth:`~autoware_carla_scenario.traffic.base.TrafficBackend.supported_parameters`);
-#: this table is what the error a backend raises names as the alternatives.
-PARAMETER_BACKENDS: dict[str, list[str]] = {
+#: Each vehicle parameter, and the built-in backends that support it.  A
+#: built-in backend's support is read off it; a third-party backend states its
+#: own (:meth:`~autoware_carla_scenario.traffic.base.TrafficBackend.supported_vehicle_parameters`).
+#: This table is what an error names as the alternatives.
+VEHICLE_PARAMETER_BACKENDS: dict[str, list[str]] = {
     "speed_factor": ["traffic_manager", "sumo"],
     "min_gap_m": ["traffic_manager", "sumo"],
     "lane_changes": ["traffic_manager", "sumo"],
@@ -82,6 +104,15 @@ PARAMETER_BACKENDS: dict[str, list[str]] = {
     "follow_visibility": ["sumo"],
 }
 
+#: The same for each pedestrian parameter.  Only SUMO simulates pedestrian
+#: traffic: the TrafficManager drives vehicles alone.
+PEDESTRIAN_PARAMETER_BACKENDS: dict[str, list[str]] = {
+    "walking_speed_mps": ["sumo"],
+    "speed_deviation": ["sumo"],
+    "min_gap_m": ["sumo"],
+    "red_light_violation_s": ["sumo"],
+}
+
 
 class TrafficParameterError(ValueError):
     """A traffic parameter was set for a backend that cannot honour it."""
@@ -90,6 +121,48 @@ class TrafficParameterError(ValueError):
     # its constructor to the built-in base.
     def __init__(self, message: str) -> None:
         super().__init__(message)
+
+
+def check_supported(
+    node: str,
+    backend: str,
+    set_fields: list[str],
+    supported: set[str],
+    table: dict[str, list[str]],
+) -> None:
+    """Refuse every field of *set_fields* that *backend* does not support.
+
+    Args:
+        node: The config node the fields are under (``traffic.vehicles``).
+        backend: The backend's name, for the message.
+        set_fields: The fields that are set.
+        supported: The fields the backend supports.
+        table: Each field and the built-in backends that support it.
+
+    Raises:
+        TrafficParameterError: Naming each unsupported field and the backends
+            it can be used with.
+    """
+    problems: list[str] = []
+    for name in set_fields:
+        if name in supported:
+            continue
+        others = table.get(name, [])
+        if others:
+            where = " or ".join(f"'{b}'" for b in others)
+            plural = "s" if len(others) > 1 else ""
+            problems.append(
+                f"{node}.{name} can only be used with the {where} backend{plural}"
+            )
+        else:
+            problems.append(f"{node}.{name} is supported by no built-in backend")
+    if problems:
+        raise TrafficParameterError(
+            f"The '{backend}' traffic backend does not support "
+            + "; ".join(problems)
+            + ". Leave the field unset (null) or select a backend that "
+            "supports it."
+        )
 
 
 def _check_fraction(name: str, value: Optional[float]) -> None:
@@ -108,11 +181,11 @@ def _check_non_negative(name: str, value: Optional[float]) -> None:
 
 
 @dataclass(frozen=True)
-class TrafficParameters:
-    """How the vehicles a traffic backend drives behave.
+class VehicleParameters:
+    """How the vehicles a traffic backend drives behave (``traffic.vehicles``).
 
     Every field is optional: ``None`` leaves the backend's own default.  Which
-    backend supports which field is :data:`PARAMETER_BACKENDS`.
+    backend supports which field is :data:`VEHICLE_PARAMETER_BACKENDS`.
 
     Attributes:
         speed_factor: Desired speed as a multiple of the speed limit (1.0: at
@@ -194,48 +267,24 @@ class TrafficParameters:
         return [name for name, is_set in values if is_set]
 
     def check_supported(self, backend: str, supported: set[str]) -> None:
-        """Refuse every field set here that *backend* does not support.
+        """Refuse every field set here that *backend* does not support
+        (:func:`check_supported`, under ``traffic.vehicles``)."""
+        check_supported(
+            "traffic.vehicles",
+            backend,
+            self.set_fields(),
+            supported,
+            VEHICLE_PARAMETER_BACKENDS,
+        )
 
-        Args:
-            backend: The backend's name, for the message.
-            supported: The fields it supports.
-
-        Raises:
-            TrafficParameterError: Naming each unsupported field and the
-                backends it can be used with.
-        """
-        problems: list[str] = []
-        for name in self.set_fields():
-            if name in supported:
-                continue
-            others = PARAMETER_BACKENDS.get(name, [])
-            if others:
-                where = " or ".join(f"'{b}'" for b in others)
-                plural = "s" if len(others) > 1 else ""
-                problems.append(
-                    f"traffic.parameters.{name} can only be used with the "
-                    f"{where} backend{plural}"
-                )
-            else:
-                problems.append(
-                    f"traffic.parameters.{name} is supported by no built-in backend"
-                )
-        if problems:
-            raise TrafficParameterError(
-                f"The '{backend}' traffic backend does not support "
-                + "; ".join(problems)
-                + ". Leave the field unset (null) or select a backend that "
-                "supports it."
-            )
-
-    def restricted_to(self, supported: set[str]) -> "TrafficParameters":
+    def restricted_to(self, supported: set[str]) -> "VehicleParameters":
         """These parameters with every field outside *supported* unset.
 
         For a backend that hands part of its traffic to another (the SUMO
         backend's scenario vehicles, driven by the TrafficManager): what that
         one can honour of them.
         """
-        return TrafficParameters(
+        return VehicleParameters(
             speed_factor=self.speed_factor if "speed_factor" in supported else None,
             min_gap_m=self.min_gap_m if "min_gap_m" in supported else None,
             lane_changes=self.lane_changes if "lane_changes" in supported else None,
@@ -281,11 +330,83 @@ class TrafficParameters:
         return {name: value for name, value in values.items() if value is not None}
 
     @classmethod
-    def from_mapping(cls, mapping: Mapping[str, Any]) -> "TrafficParameters":
+    def from_mapping(cls, mapping: Mapping[str, Any]) -> "VehicleParameters":
         """Return parameters built from a plain mapping (e.g. a Hydra node)."""
         # Imported here: utils.config reads a dataclass's fields from its class,
         # which Codon cannot express, and the library check compiles no import
         # in a function it does not call (typecheck/library.py, UNCALLED).
+        from ..utils.config import checked_options  # noqa: PLC0415
+
+        return cls(**checked_options(cls, mapping))
+
+
+@dataclass(frozen=True)
+class PedestrianParameters:
+    """How the pedestrians a traffic backend simulates behave
+    (``traffic.pedestrians``).
+
+    Every field is optional: ``None`` leaves the backend's own default.  Which
+    backend supports which field is :data:`PEDESTRIAN_PARAMETER_BACKENDS`.
+
+    Attributes:
+        walking_speed_mps: The speed people walk at, m/s, before each one's
+            own factor (SUMO's ``maxSpeed``; 1.39 by default).
+        speed_deviation: The spread of that factor between people (SUMO's
+            ``speedDev``; 0.1 by default): 0 has everyone walk at the same
+            speed.
+        min_gap_m: Gap kept to the person ahead, metres (SUMO's ``minGap``;
+            0.25 by default).
+        red_light_violation_s: Walk onto a crossing whose light has been red
+            for less than this, seconds (SUMO's ``jmDriveAfterRedTime``): a
+            large value has people cross on red whenever the way is free.
+            ``None``: they wait for green.
+    """
+
+    walking_speed_mps: Optional[float] = None
+    speed_deviation: Optional[float] = None
+    min_gap_m: Optional[float] = None
+    red_light_violation_s: Optional[float] = None
+
+    def __post_init__(self) -> None:
+        _check_positive("walking_speed_mps", self.walking_speed_mps)
+        _check_non_negative("speed_deviation", self.speed_deviation)
+        _check_non_negative("min_gap_m", self.min_gap_m)
+        _check_non_negative("red_light_violation_s", self.red_light_violation_s)
+
+    def set_fields(self) -> list[str]:
+        """The names of the fields that are not ``None``, in declared order."""
+        values: list[tuple[str, bool]] = [
+            ("walking_speed_mps", self.walking_speed_mps is not None),
+            ("speed_deviation", self.speed_deviation is not None),
+            ("min_gap_m", self.min_gap_m is not None),
+            ("red_light_violation_s", self.red_light_violation_s is not None),
+        ]
+        return [name for name, is_set in values if is_set]
+
+    def check_supported(self, backend: str, supported: set[str]) -> None:
+        """Refuse every field set here that *backend* does not support
+        (:func:`check_supported`, under ``traffic.pedestrians``)."""
+        check_supported(
+            "traffic.pedestrians",
+            backend,
+            self.set_fields(),
+            supported,
+            PEDESTRIAN_PARAMETER_BACKENDS,
+        )
+
+    def describe(self) -> dict[str, Any]:
+        """The fields that are set, for a run's result record."""
+        values: dict[str, Any] = {
+            "walking_speed_mps": self.walking_speed_mps,
+            "speed_deviation": self.speed_deviation,
+            "min_gap_m": self.min_gap_m,
+            "red_light_violation_s": self.red_light_violation_s,
+        }
+        return {name: value for name, value in values.items() if value is not None}
+
+    @classmethod
+    def from_mapping(cls, mapping: Mapping[str, Any]) -> "PedestrianParameters":
+        """Return parameters built from a plain mapping (e.g. a Hydra node)."""
         from ..utils.config import checked_options  # noqa: PLC0415
 
         return cls(**checked_options(cls, mapping))

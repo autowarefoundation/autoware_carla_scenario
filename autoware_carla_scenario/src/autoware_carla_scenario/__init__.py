@@ -324,7 +324,8 @@ if TYPE_CHECKING:
         TrafficManagerBackend as TrafficManagerBackend,
         TrafficManagerBackendConfig as TrafficManagerBackendConfig,
         TrafficParameterError as TrafficParameterError,
-        TrafficParameters as TrafficParameters,
+        PedestrianParameters as PedestrianParameters,
+        VehicleParameters as VehicleParameters,
         register_backend as register_backend,
     )
 
@@ -365,7 +366,8 @@ __all__ = [
     "TrafficManagerBackend",
     "TrafficManagerBackendConfig",
     "TrafficParameterError",
-    "TrafficParameters",
+    "PedestrianParameters",
+    "VehicleParameters",
     "register_backend",
     "AccelerationCondition",
     "AccelerationDirection",
@@ -776,7 +778,8 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "TrafficManagerBackend": (".traffic.traffic_manager", "TrafficManagerBackend"),
     "TrafficManagerBackendConfig": (".traffic", "TrafficManagerBackendConfig"),
     "TrafficParameterError": (".traffic", "TrafficParameterError"),
-    "TrafficParameters": (".traffic", "TrafficParameters"),
+    "PedestrianParameters": (".traffic", "PedestrianParameters"),
+    "VehicleParameters": (".traffic", "VehicleParameters"),
     "register_backend": (".traffic", "register_backend"),
     # autoware bridge
     "AutowareBridge": (".autoware_bridge", "AutowareBridge"),
