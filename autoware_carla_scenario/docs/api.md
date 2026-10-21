@@ -265,9 +265,9 @@ directly from Python:
 |--------|-------------|
 | `LaneletConstraintSweeper` | The Hydra `Sweeper` implementation (also re-exposed via `hydra_plugins.autoware_scenario_sweeper`). |
 | `Constraint` (ABC) | Base class of the constraints above, with an abstract `evaluate(lanelet)`. A constraint of your own may derive from it or only define `evaluate()`: the matching takes either. |
-| `EqualsConstraint`, `InSetConstraint`, `LaneletLengthConstraint`, `HasStopLineConstraint`, `HasTrafficLightStopLineConstraint`, `HasAdjacentConstraint`, `IsJunctionConstraint`, `PreviousOfConstraint`, `FollowingOfConstraint` | Atomic constraints. |
+| `EqualsConstraint`, `InSetConstraint`, `OnRouteConstraint`, `LaneletLengthConstraint`, `HasStopLineConstraint`, `HasTrafficLightStopLineConstraint`, `HasAdjacentConstraint`, `IsJunctionConstraint`, `PreviousOfConstraint`, `FollowingOfConstraint` | Atomic constraints. |
 | `AndConstraint`, `OrConstraint`, `NotConstraint` | Combinators. |
-| `parse_constraint`, `find_matching_lanelets` | YAML-to-`Constraint` parsing and lanelet matching. The corresponding YAML `type:` keys for the atomics above are `equals`, `in_set`, `lanelet_length`, `has_stop_line`, `has_traffic_light_stop_line`, `has_adjacent`, `is_junction`, `previous_of`, `following_of`. |
+| `parse_constraint`, `find_matching_lanelets` | YAML-to-`Constraint` parsing and lanelet matching. The corresponding YAML `type:` keys for the atomics above are `equals`, `in_set`, `on_route`, `lanelet_length`, `has_stop_line`, `has_traffic_light_stop_line`, `has_adjacent`, `is_junction`, `previous_of`, `following_of`. |
 | `Binding` (Protocol), `StopLineOffsetBinding`, `parse_binding` | Per-match parameter derivation (e.g. compute `ego.spawn_s` from a stop-line offset). |
 | `load_lanelet2_map` | Lightweight Lanelet2 loader used outside of CARLA. |
 

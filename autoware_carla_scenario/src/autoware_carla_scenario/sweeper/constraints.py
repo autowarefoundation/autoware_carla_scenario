@@ -192,6 +192,31 @@ class InSetConstraint(Constraint):
 
 
 @dataclass(frozen=True)
+class OnRouteConstraint(Constraint):
+    """Matches the lanelets of a route: those a drive runs along, by ID.
+
+    Where a scenario is to be tried only along a route -- the legs of a reference
+    drive, say -- its lanelets are given here.  No lanelets is no route, and sets
+    no constraint: every lanelet matches, so a scenario can carry the constraint
+    and leave the route to whoever runs it::
+
+        - type: on_route
+          lanelet_ids: ${sweep.route_lanelet_ids}   # [] by default
+
+    Unlike ``in_set``, whose empty set matches nothing.
+    """
+
+    lanelet_ids: tuple[int, ...] = field(default_factory=tuple)
+    _lookup: frozenset[int] = field(init=False, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "_lookup", frozenset(self.lanelet_ids))
+
+    def evaluate(self, lanelet: ConstLanelet) -> bool:
+        return not self._lookup or lanelet.id in self._lookup
+
+
+@dataclass(frozen=True)
 class HasTrafficLightStopLineConstraint(Constraint):
     """Matches lanelets whose stop line originates from a traffic-light RE.
 
@@ -617,6 +642,7 @@ else:
         "lanelet_length": LaneletLengthConstraint,
         "equals": EqualsConstraint,
         "in_set": InSetConstraint,
+        "on_route": OnRouteConstraint,
     }
 
 
