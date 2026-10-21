@@ -3395,6 +3395,16 @@ cannot express is refused at its line, with what to write instead.</p>
 <td></td>
 </tr>
 <tr>
+<td><code>def __exit__(self, exc_type, exc, tb)</code> (annotated <code>type[BaseException] \| None</code>, <code>BaseException \| None</code>, <code>object</code>, ... or not)</td>
+<td>each parameter without a default gets <code>=None</code>: Codon calls <code>__exit__()</code> with no arguments, even when the block raised (#435). An annotation of <code>BaseException</code> or <code>Exception</code> (alone or <code>\| None</code>, <code>Optional[...]</code>) is kept as <code>X \| None</code>; any other annotation is dropped</td>
+<td></td>
+</tr>
+<tr>
+<td><code>fs: list[Callable[[int], int]] = [inc, lambda x: x * 2]</code>, <code>table: dict[str, Callable[[int], int]] = {"a": inc, "b": dbl}</code>, or a <code>return</code> of such a display from a function annotated so (a dispatch table)</td>
+<td>each function, module function (<code>mod.f</code>) or lambda element is wrapped in Codon's <code>Callable[Tuple[int], int](...)</code>, so they share one type (#436)</td>
+<td>the element is a bound method, a lambda using a local variable of its function, or a call (not wrapped, then Codon's own refusal and a hint); the table is a <code>set</code>, an attribute of a class, is unannotated, or is built another way than a display (a comprehension)</td>
+</tr>
+<tr>
 <td>a class constant read in its own class body (#433): <code>DOUBLE = LIMIT * 2</code>, <code>x: int = SIZE</code> (a dataclass default), <code>def f(self, n=LIMIT)</code>, <code>@register(LIMIT)</code></td>
 <td><code>Class.LIMIT</code> (<code>Outer.Inner.LIMIT</code> in a nested class)</td>
 <td>the constant is annotated and not a single-line literal (<code>LIMIT: int = 2 * 3</code>), it is assigned again later in the body, the class is defined in a function, the read is a <code>NamedTuple</code> field default, or it is an Enum member with a non-literal value</td>
@@ -3403,6 +3413,28 @@ cannot express is refused at its line, with what to write instead.</p>
 </table>
 <p>Notes:</p>
 <ul>
+<li>Codon calls <code>__exit__()</code> with no arguments, so a parameter is <code>None</code> in the
+  check. A branch on a parameter annotated <code>type[...]</code>, <code>object</code> or
+  <code>TracebackType</code> (<code>if exc_type is not None:</code>, <code>if tb is not None:</code>) is
+  therefore dead code to Codon, <strong>not compiled and not type-checked</strong>: Python
+  runs it as written. Annotate the exception parameter <code>exc:
+  BaseException | None</code> (or <code>Exception | None</code>) and test that one
+  (<code>if exc is not None:</code>): its annotation is kept, so the branch is compiled
+  and checked (<code>str(exc)</code>). <code>from types import
+  TracebackType</code> is refused (<code>types</code> has no model): annotate <code>tb</code> as <code>object</code>.
+  <code>__enter__</code> returning <code>self</code> (<code>-&gt; "Ctx"</code>, or no annotation) compiles as it
+  is, and so does <code>-&gt; bool</code> (suppression). <code>__exit__(self, *args: object)</code>
+  needs no rewrite.</li>
+<li>Codon gives every function and lambda a type of its own, so a list or dict
+  of different ones does not compile without the annotation, even if you
+  annotate nothing else. Annotate where the table is assigned or returned; an
+  element of another signature than the annotation is refused, a <code>set</code> of functions is
+  refused whatever the annotation (Codon cannot hash a function). An
+  unannotated <code>fs = [inc, dbl]</code> or a class attribute is
+  refused with a hint: write an <code>if</code>/<code>elif</code> chain or a <code>match</code> on the key
+  instead (<code>if key == "a": return inc(x)</code>). A bound method (<code>self.run</code>) or a
+  lambda using a local variable cannot be converted: use a module-level
+  function that takes the object, or the chain.</li>
 <li><code>__ge__</code> of a class that defines <code>__lt__</code> only is more than Python gives it
   (<code>a &gt;= b</code> is a <code>TypeError</code> there): the check accepts it because Codon's sort
   needs it. It does not change what runs.</li>
@@ -3579,8 +3611,9 @@ instead:</p>
   and <code>replace</code>.</li>
 <li><code>functools.wraps</code> (and any other name of <code>functools</code>, <code>itertools</code> or
   <code>collections</code> not listed above) is not modelled.</li>
-<li><code>contextlib</code>: write a class with <code>__enter__</code> and <code>__exit__</code> for
-  <code>contextmanager</code>, and <code>try/except X: pass</code> for <code>suppress</code>. <code>warnings</code>: log
+<li><code>contextlib</code>: write a class with <code>__enter__</code> and
+  <code>__exit__(self, exc_type, exc, tb)</code> for <code>contextmanager</code> (the check rewrites
+  the signature, see "Python the check rewrites for Codon"), and <code>try/except X: pass</code> for <code>suppress</code>. <code>warnings</code>: log
   with <code>logger.warning</code>. <code>json</code>: read into a <code>@dataclass</code>. <code>types</code>: name the
   type itself. <code>textwrap</code>: build the string with <code>str</code> methods.
   <code>traceback</code>: log with <code>logger.exception</code>. <code>io</code>: use a <code>str</code>, or a
@@ -5406,7 +5439,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 21, 2026 14:33:17 UTC"><span class="timeago" datetime="2026-10-21T14:33:17+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 21, 2026 14:33:17 UTC">2026-10-21</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 21, 2026 17:05:50 UTC"><span class="timeago" datetime="2026-10-21T17:05:50+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 21, 2026 17:05:50 UTC">2026-10-21</span>
   </span>
 
     
