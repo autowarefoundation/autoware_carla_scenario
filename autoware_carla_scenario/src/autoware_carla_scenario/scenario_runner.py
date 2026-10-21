@@ -46,6 +46,7 @@ from .traffic.config import TrafficManagerBackendConfig
 from .traffic.traffic_manager import TrafficManagerBackend
 from .rerun import RerunConverter
 from .visibility import forget_visibility
+from .traffic.parameters import record_run_parameters
 from .trajectory_recorder import TrajectoryRecorder
 
 logger = logging.getLogger(__name__)
@@ -1155,6 +1156,11 @@ class ScenarioRunner:
                     random_seed=scenario.random_seed,
                     output_dir=self.output_dir,
                 )
+            )
+            # What the run's road users draw their parameters from, for the
+            # ODD's probes of them (odd.traffic_probes).
+            record_run_parameters(
+                backend.vehicle_parameters, backend.pedestrian_parameters
             )
             if TYPE_CHECKING:
                 # describe() is a dict of mixed value types, which Codon

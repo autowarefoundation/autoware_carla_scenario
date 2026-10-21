@@ -15,6 +15,7 @@ action that asks or to the entity that is asked.
 from __future__ import annotations
 
 import logging
+import random
 from typing import TYPE_CHECKING, Any, ClassVar, Collection, List, Optional, Tuple
 
 from ..constants import (
@@ -32,7 +33,7 @@ from .base import (
     _entity_name,
 )
 from .config import TrafficManagerBackendConfig
-from .parameters import VehicleParameters
+from .parameters import VEHICLE_BOUNDS, Spread, VehicleParameters
 from ..world_reset import episode_of
 from ..visibility import (
     DEFAULT_DECEL,
@@ -90,10 +91,11 @@ class TrafficManagerBackend(TrafficBackend):
     How its vehicles drive is :class:`~autoware_carla_scenario.traffic.parameters.VehicleParameters`
     (those :data:`~autoware_carla_scenario.traffic.parameters.VEHICLE_PARAMETER_BACKENDS`
     gives ``traffic_manager``; it has no reaction time, braking or
-    acceleration of a driver to set, nor any notion of sight): the speed and
-    the gap are the TrafficManager's global settings, set in :meth:`prepare`; the rest are set
-    on each vehicle as it is put on autopilot.  Every vehicle it drives gets
-    them, the scenario's own as well as its background traffic.
+    acceleration of a driver to set, nor any notion of sight): each vehicle
+    draws its own value of each from the parameter's spread as it is first
+    put on autopilot, and the TrafficManager is told it for that vehicle.
+    Every vehicle it drives gets them, the scenario's own as well as its
+    background traffic.
 
     The client is injected rather than passed to each call, from either of the
     two places that already hold one: :meth:`prepare`, when
@@ -116,6 +118,8 @@ class TrafficManagerBackend(TrafficBackend):
     _skipped: set[int]
     _lane_changed: List[DrivenEntity]
     _visibility: Optional[float]
+    _draws: Optional[random.Random]
+    _drawn: set[int]
 
     def __init__(
         self,
@@ -157,6 +161,10 @@ class TrafficManagerBackend(TrafficBackend):
         self._lane_changed = []
         #: How far drivers see, m, as last reported; ``None``: nothing set.
         self._visibility = None
+        #: Each vehicle's parameter draws, reseeded by prepare(); the actors
+        #: that have theirs.
+        self._draws = None
+        self._drawn = set()
         if vehicles is not None:
             self.set_vehicle_parameters(vehicles)
 
@@ -190,14 +198,9 @@ class TrafficManagerBackend(TrafficBackend):
             return
         tm.set_synchronous_mode(True)
         tm.set_random_device_seed(context.random_seed)
-        parameters = self.vehicle_parameters
-        if parameters.speed_factor is not None:
-            # The TrafficManager's is a percentage *under* the limit.
-            tm.global_percentage_speed_difference(
-                (1.0 - parameters.speed_factor) * 100.0
-            )
-        if parameters.min_gap_m is not None:
-            tm.set_global_distance_to_leading_vehicle(parameters.min_gap_m)
+        # Each vehicle's draws, from the run's seed: the same seed, the same
+        # drivers, in the order the vehicles are put on autopilot.
+        self._draws = None
 
     def start(
         self, world: "carla.World", *, skip_actor_ids: Collection[int] = ()
@@ -271,6 +274,8 @@ class TrafficManagerBackend(TrafficBackend):
         self._released = set()
         self._skipped = set()
         self._visibility = None
+        self._drawn = set()
+        self._draws = None
         if self._closed or self._client is None:
             return
         self._closed = True
@@ -581,28 +586,59 @@ class TrafficManagerBackend(TrafficBackend):
     # ------------------------------------------------------------------
 
     def _autopilot(self, actor: "carla.Actor") -> None:
-        """Put *actor* on autopilot, with the per-vehicle parameters set."""
+        """Put *actor* on autopilot, with its own draw of each parameter.
+
+        Drawn once per vehicle: one taken back (:meth:`release_actor`) and
+        resumed keeps the draws the TrafficManager holds for it.
+        """
         actor.set_autopilot(True, self.port)
         parameters = self.vehicle_parameters
-        if not _sets_per_vehicle(parameters):
-            return  # the speed and the gap are global, set in prepare()
+        if not parameters.set_fields() or actor.id in self._drawn:
+            return
         tm = self._require_tm("autopilot")
         if tm is None:
             return
+        self._drawn.add(actor.id)
+        if self._draws is None:
+            self._draws = random.Random(self._random_seed)
+        rng: random.Random = self._draws
         vehicle = _vehicle(actor)
+        speed_factor = parameters.speed_factor
+        if speed_factor is not None:
+            # The TrafficManager's is a percentage *under* the limit.
+            factor = speed_factor.draw(rng, VEHICLE_BOUNDS["speed_factor"])
+            tm.vehicle_percentage_speed_difference(vehicle, (1.0 - factor) * 100.0)
+        min_gap = parameters.min_gap_m
+        if min_gap is not None:
+            tm.distance_to_leading_vehicle(
+                vehicle, min_gap.draw(rng, VEHICLE_BOUNDS["min_gap_m"])
+            )
         if parameters.lane_changes is not None:
             tm.auto_lane_change(vehicle, parameters.lane_changes)
         # The TrafficManager's are percentages, the parameters' probabilities.
-        if parameters.ignore_lights is not None:
-            tm.ignore_lights_percentage(vehicle, parameters.ignore_lights * 100.0)
-        if parameters.ignore_signs is not None:
-            tm.ignore_signs_percentage(vehicle, parameters.ignore_signs * 100.0)
-        if parameters.ignore_vehicles is not None:
-            tm.ignore_vehicles_percentage(vehicle, parameters.ignore_vehicles * 100.0)
-        if parameters.ignore_walkers is not None:
-            tm.ignore_walkers_percentage(vehicle, parameters.ignore_walkers * 100.0)
-        if parameters.random_lane_changes is not None:
-            chance = parameters.random_lane_changes * 100.0
+        ignore_lights = parameters.ignore_lights
+        if ignore_lights is not None:
+            tm.ignore_lights_percentage(
+                vehicle, _percent(ignore_lights, rng, "ignore_lights")
+            )
+        ignore_signs = parameters.ignore_signs
+        if ignore_signs is not None:
+            tm.ignore_signs_percentage(
+                vehicle, _percent(ignore_signs, rng, "ignore_signs")
+            )
+        ignore_vehicles = parameters.ignore_vehicles
+        if ignore_vehicles is not None:
+            tm.ignore_vehicles_percentage(
+                vehicle, _percent(ignore_vehicles, rng, "ignore_vehicles")
+            )
+        ignore_walkers = parameters.ignore_walkers
+        if ignore_walkers is not None:
+            tm.ignore_walkers_percentage(
+                vehicle, _percent(ignore_walkers, rng, "ignore_walkers")
+            )
+        random_lane_changes = parameters.random_lane_changes
+        if random_lane_changes is not None:
+            chance = _percent(random_lane_changes, rng, "random_lane_changes")
             tm.random_left_lanechange_percentage(vehicle, chance)
             tm.random_right_lanechange_percentage(vehicle, chance)
 
@@ -620,17 +656,9 @@ class TrafficManagerBackend(TrafficBackend):
         return self._client.get_trafficmanager(self.port)
 
 
-def _sets_per_vehicle(parameters: VehicleParameters) -> bool:
-    """Whether *parameters* set a field the TrafficManager sets on each
-    vehicle, rather than globally."""
-    return (
-        parameters.lane_changes is not None
-        or parameters.ignore_lights is not None
-        or parameters.ignore_signs is not None
-        or parameters.ignore_vehicles is not None
-        or parameters.ignore_walkers is not None
-        or parameters.random_lane_changes is not None
-    )
+def _percent(spread: Spread, rng: random.Random, name: str) -> float:
+    """One vehicle's draw of the probability *name*, as a percentage."""
+    return spread.draw(rng, VEHICLE_BOUNDS[name]) * 100.0
 
 
 def _actor_of(entity: DrivenEntity) -> Optional["carla.Actor"]:

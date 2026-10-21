@@ -55,8 +55,9 @@ gives ``sumo``): each vehicle SUMO drives is given them as it
 departs, and the TrafficManager driving the scenario's vehicles is given the
 ones it shares.  How its pedestrians walk is the run's
 :class:`~autoware_carla_scenario.traffic.parameters.PedestrianParameters`:
-SUMO's default pedestrian type is defined with them, which every pedestrian
-of SUMO's own demand is.  SUMO's own traffic sees only as far as the run's weather lets
+SUMO's default pedestrian type is a distribution of types, each its own draw
+of them, which every pedestrian of SUMO's own demand is.  Every numeric
+parameter is drawn per vehicle and per pedestrian from its spread.  SUMO's own traffic sees only as far as the run's weather lets
 its drivers see (``follow_visibility``, on by default,
 :mod:`autoware_carla_scenario.visibility`): night, rain and fog hold each
 vehicle to the speed it can stop from within that distance, worked out from
@@ -93,7 +94,12 @@ from ..base import (
 )
 from ..config import TrafficManagerBackendConfig
 from ..fidelity import FidelityCandidate, MesoscopicConfig, plan_fidelity
-from ..parameters import PedestrianParameters, VehicleParameters
+from ..parameters import (
+    PEDESTRIAN_BOUNDS,
+    VEHICLE_BOUNDS,
+    PedestrianParameters,
+    VehicleParameters,
+)
 from ..mesoscopic import MesoLink, MesoscopicTraffic
 from ..traffic_manager import TrafficManagerBackend
 from .config import SumoBackendConfig
@@ -134,6 +140,18 @@ _LANE_CHANGE_MODE_EXTERNAL = 0
 #: needs it: SUMO's default (1621) without the cooperative, speed-gain and
 #: keep-right changes.
 _LANE_CHANGE_MODE_STRATEGIC = 1537
+#: Vehicle parameter -> the TraCI setter that gives a vehicle its draw.
+_VEHICLE_SETTERS = {
+    "speed_factor": "setSpeedFactor",
+    "min_gap_m": "setMinGap",
+    "accel": "setAccel",
+    "decel": "setDecel",
+    "reaction_time_s": "setTau",
+    "imperfection": "setImperfection",
+}
+#: How many pedestrian types, each its own draw of the pedestrian
+#: parameters, SUMO's default pedestrian type is a distribution of.
+PEDESTRIAN_TYPES = 100
 #: SUMO connection directions that count as each turn, by TurnDirection value.
 _TURNS = {"left": ("l", "L"), "right": ("r", "R"), "straight": ("s",)}
 #: How the run's own vehicles look in sumo-gui, apart from SUMO's traffic.
@@ -225,6 +243,7 @@ class SumoTrafficBackend(TrafficBackend):
         self._net: Any = None  # sumolib's view of the network, for routes
         self._offset: tuple[float, float] = (0.0, 0.0)
         self._rng = random.Random(0)
+        self._draws = random.Random(1)
         self._entities: list[Any] = []
         #: ``id()`` of the entities taken back with release(): published, not driven.
         self._released: set[int] = set()
@@ -359,6 +378,9 @@ class SumoTrafficBackend(TrafficBackend):
         self._context = context
         self._traci = _load_traci(self._config.use_libsumo)
         self._rng = random.Random(context.random_seed)
+        # The road users' parameter draws, apart from the routes' stream so
+        # that setting a parameter does not change where traffic goes.
+        self._draws = random.Random(context.random_seed + 1)
         if self._config.net_path:
             net_file = Path(self._config.net_path).expanduser()
             if not net_file.is_file():
@@ -2283,73 +2305,87 @@ class SumoTrafficBackend(TrafficBackend):
     # ------------------------------------------------------------------
 
     def _pedestrian_type(self, out: Path) -> Optional[Path]:
-        """Write SUMO's default pedestrian type with the run's pedestrian
-        parameters into *out*, or ``None`` when none are set.
+        """Write SUMO's default pedestrian type as a distribution of
+        :data:`PEDESTRIAN_TYPES` types, each with its own draw of the run's
+        pedestrian parameters, into *out*; ``None`` when none are set.
 
         A type, not each person: SUMO reads the junction model's
         ``jmDriveAfterRedTime`` off the type alone, and TraCI cannot set it on
-        a person.  SUMO's own pedestrians (``pedestrians``, and a
-        ``route_path`` demand's that names no type of its own) are of this one.
+        a person.  SUMO gives each person one of the distribution's types as
+        it is added, so each walks as its own draw says.  SUMO's own
+        pedestrians (``pedestrians``, and a ``route_path`` demand's that names
+        no type of its own) are of it.
         """
         parameters = self.pedestrian_parameters
         if not parameters.set_fields():
             return None
-        attributes = {
-            "maxSpeed": parameters.walking_speed_mps,
-            "speedDev": parameters.speed_deviation,
-            "minGap": parameters.min_gap_m,
-            "jmDriveAfterRedTime": parameters.red_light_violation_s,
-        }
-        written = " ".join(
-            f'{key}="{value:g}"'
-            for key, value in attributes.items()
-            if value is not None
-        )
+        members = []
+        for index in range(PEDESTRIAN_TYPES):
+            attributes: dict[str, Optional[float]] = {}
+            walking = parameters.walking_speed_mps
+            if walking is not None:
+                attributes["maxSpeed"] = walking.draw(
+                    self._draws, PEDESTRIAN_BOUNDS["walking_speed_mps"]
+                )
+                # The draw is the person's speed: no second spread of SUMO's.
+                attributes["speedDev"] = 0.0
+            gap = parameters.min_gap_m
+            if gap is not None:
+                attributes["minGap"] = gap.draw(
+                    self._draws, PEDESTRIAN_BOUNDS["min_gap_m"]
+                )
+            red = parameters.red_light_violation_s
+            if red is not None:
+                attributes["jmDriveAfterRedTime"] = red.draw(
+                    self._draws, PEDESTRIAN_BOUNDS["red_light_violation_s"]
+                )
+            written = " ".join(
+                f'{key}="{value:.4g}"' for key, value in attributes.items()
+            )
+            members.append(
+                f'        <vType id="pedestrian{index}" vClass="pedestrian" {written}/>'
+            )
         path = out / "pedestrian_type.add.xml"
         path.write_text(
             "<additional>\n"
-            f'    <vType id="DEFAULT_PEDTYPE" vClass="pedestrian" {written}/>\n'
+            '    <vTypeDistribution id="DEFAULT_PEDTYPE">\n'
+            + "\n".join(members)
+            + "\n    </vTypeDistribution>\n"
             "</additional>\n"
         )
         return path
 
     def _apply_parameters(self) -> None:
         """Give each vehicle that has just departed, and that SUMO drives,
-        the run's parameters.
+        its own draw of the run's parameters.
 
         On the vehicle, not its type: a demand file (``route_path``) brings
         types of its own, and its vehicles are SUMO's to drive all the same.
         Before :meth:`_follow_visibility` reads the vehicle's ``decel`` and
-        ``tau``, so the sight speed is worked out from the parameters'.
+        ``tau``, so the sight speed is worked out from its draws.
         """
         parameters = self.vehicle_parameters
         if not parameters.set_fields():
             return
-        tc = self._traci
-        vehicle = tc.vehicle
+        vehicle = self._traci.vehicle
+        rng = self._draws
         for sumo_id in self._departed_ids():
             if sumo_id in self._external:
                 continue  # CARLA's side drives it; SUMO only places it
             try:
-                if parameters.speed_factor is not None:
-                    # Scaled, not replaced: SUMO drew this vehicle's factor
-                    # around 1.0, and that spread is its drivers'.
-                    vehicle.setSpeedFactor(
-                        sumo_id,
-                        vehicle.getSpeedFactor(sumo_id) * parameters.speed_factor,
-                    )
-                if parameters.min_gap_m is not None:
-                    vehicle.setMinGap(sumo_id, parameters.min_gap_m)
+                for name, value in (
+                    ("speed_factor", parameters.speed_factor),
+                    ("min_gap_m", parameters.min_gap_m),
+                    ("accel", parameters.accel),
+                    ("decel", parameters.decel),
+                    ("reaction_time_s", parameters.reaction_time_s),
+                    ("imperfection", parameters.imperfection),
+                ):
+                    if value is not None:
+                        setter = getattr(vehicle, _VEHICLE_SETTERS[name])
+                        setter(sumo_id, value.draw(rng, VEHICLE_BOUNDS[name]))
                 if parameters.lane_changes is False:
                     vehicle.setLaneChangeMode(sumo_id, _LANE_CHANGE_MODE_STRATEGIC)
-                if parameters.accel is not None:
-                    vehicle.setAccel(sumo_id, parameters.accel)
-                if parameters.decel is not None:
-                    vehicle.setDecel(sumo_id, parameters.decel)
-                if parameters.reaction_time_s is not None:
-                    vehicle.setTau(sumo_id, parameters.reaction_time_s)
-                if parameters.imperfection is not None:
-                    vehicle.setImperfection(sumo_id, parameters.imperfection)
             except Exception as exc:  # noqa: BLE001 - one vehicle must not end the run
                 logger.warning(
                     "SUMO could not set the traffic parameters of %s: %s",
@@ -2401,16 +2437,11 @@ class SumoTrafficBackend(TrafficBackend):
             return
         held = self._max_speeds.get(sumo_id)
         if held is None:
-            # The parameters' when set: _apply_parameters gave them the vehicle.
-            parameters = self.vehicle_parameters
+            # The vehicle's own: its draws of the parameters, when set.
             held = self._max_speeds[sumo_id] = (
                 vehicle.getMaxSpeed(sumo_id),
-                parameters.decel
-                if parameters.decel is not None
-                else vehicle.getDecel(sumo_id),
-                parameters.reaction_time_s
-                if parameters.reaction_time_s is not None
-                else vehicle.getTau(sumo_id),
+                vehicle.getDecel(sumo_id),
+                vehicle.getTau(sumo_id),
             )
         own, decel, tau = held
         limit = sight_speed(seen, decel, tau)
