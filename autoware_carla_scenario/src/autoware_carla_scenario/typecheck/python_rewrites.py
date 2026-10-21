@@ -31,10 +31,13 @@ so a rewrite has to keep the *types*, not the values, of what it replaces.
 * ``def __exit__(self, exc_type, exc, tb)``, which Codon calls with *no*
   arguments whatever the block did (so it is "missing 1 required positional
   argument"), is given a ``None`` default for each parameter without one, and
-  loses their annotations (``type[BaseException] | None`` and the like, which
-  Codon cannot express): the parameters are ``None`` in the check, so a
-  branch ``if exc_type is not None:`` is not compiled (#435).  ``*args`` and
-  parameters with a default of their own are left alone.
+  loses their annotations (``type[BaseException] | None`` and ``object``,
+  which Codon turns into ``NoneType``): such a parameter is ``None`` in the
+  check, so a branch ``if exc_type is not None:`` is not compiled (#435).  A
+  parameter annotated ``BaseException`` or ``Exception`` (with or without
+  ``| None``) keeps it as ``X | None``, so ``if exc is not None:`` stays
+  typed.  ``*args`` and parameters with a default of their own are left
+  alone.
 * A list or dict display of functions or lambdas assigned to a name annotated
   with ``Callable[[A], R]`` elements (``fs: list[Callable[[int], int]] =
   [inc, dbl]``, a dispatch table) gets each element wrapped in Codon's
@@ -107,11 +110,11 @@ REWRITE_HINTS: tuple[tuple[re.Pattern[str], str], ...] = (
         "calls), use @dataclass(order=True), or sort with key=",
     ),
     (
-        # Codon gives every function and lambda a type of its own.
+        # Codon gives every function and lambda a type of its own: two that
+        # differ do not unify, nor does one with a converted Callable.
         re.compile(
-            r"'(?:%_lambda_\d+(?:\[[^']*\]|\([^']*\))?|\w+\([^']*\.\.\.\))' "
-            r"does not match expected type "
-            r"'(?:%_lambda_\d+(?:\[[^']*\]|\([^']*\))?|\w+\([^']*\.\.\.\))'"
+            r"'(?:%_lambda_\d+(?:\[[^']*\]|\([^']*\))?|\w+\([^']*\.\.\.\))' does not match expected type '(?:(?:%_lambda_\d+(?:\[[^']*\]|\([^']*\))?|\w+\([^']*\.\.\.\))|Callable\[[^']*\])'"
+            r"|'Callable\[[^']*\]' does not match expected type '(?:%_lambda_\d+(?:\[[^']*\]|\([^']*\))?|\w+\([^']*\.\.\.\))'"
         ),
         "Codon gives every function and lambda a type of its own, so a list "
         "or dict holding different ones (a dispatch table) does not compile "
@@ -123,11 +126,12 @@ REWRITE_HINTS: tuple[tuple[re.Pattern[str], str], ...] = (
     ),
     (
         re.compile(r"no function 'Callable\.__new__' with arguments"),
-        "a dispatch table can hold functions and lambdas that capture "
-        "nothing: a bound method (`self.run`) or a lambda using a local "
-        "variable cannot be converted to Codon's Callable; use a "
-        "module-level function that takes the object, or an if/elif chain "
-        "(a dispatch table of different functions)",
+        "an element of a table annotated Callable must have exactly the "
+        "annotated signature (parameter and return types) and be a function "
+        "or a lambda that captures nothing: a bound method (`self.run`) or a "
+        "lambda using a local variable cannot be converted to Codon's "
+        "Callable; use a module-level function that takes the object, or an "
+        "if/elif chain (a dispatch table of different functions)",
     ),
     (
         re.compile(r"argument after \* must be a tuple, not '(?:List|Set)\["),
@@ -141,7 +145,7 @@ REWRITE_HINTS: tuple[tuple[re.Pattern[str], str], ...] = (
     ),
 )
 
-_SEQUENCES = frozenset({"list", "List", "set", "Set", "Sequence", "MutableSequence"})
+_SEQUENCES = frozenset({"list", "List", "Sequence", "MutableSequence"})
 _MAPPINGS = frozenset({"dict", "Dict", "Mapping", "MutableMapping"})
 
 _DISPLAYS = (ast.List, ast.Set, ast.Dict)
@@ -480,10 +484,53 @@ class _Pass(ast.NodeVisitor):
             if index == 0:
                 continue  # self
             default = args.defaults[index - first] if index >= first else None
-            if default is None:
-                self.edits.replace(*self.edits.node_span(arg), f"{arg.arg}=None")
-            elif arg.annotation is not None and _is_none(default):
-                self.edits.replace(*self.edits.node_span(arg), arg.arg)
+            if default is not None and not _is_none(default):
+                continue
+            exception = self._exception_type(arg.annotation)
+            if exception is not None:
+                # Codon expresses `BaseException | None`: the parameter stays
+                # typed, so `if exc is not None:` is still compiled.
+                text = f"{arg.arg}: {exception} | None = None"
+                if default is not None:
+                    text = f"{arg.arg}: {exception} | None"
+            elif default is None:
+                text = f"{arg.arg}=None"
+            elif arg.annotation is not None:
+                text = arg.arg
+            else:
+                continue
+            self.edits.replace(*self.edits.node_span(arg), text)
+
+    @staticmethod
+    def _exception_type(annotation: ast.AST | None) -> str | None:
+        """``BaseException`` or ``Exception`` for an annotation of it, alone or
+        in a union with ``None`` (``Optional[...]`` included), else ``None``."""
+        if isinstance(annotation, ast.Constant) and isinstance(annotation.value, str):
+            try:
+                annotation = ast.parse(annotation.value, mode="eval").body
+            except SyntaxError:
+                return None
+        if isinstance(annotation, ast.Subscript) and (
+            (_dotted(annotation.value) or "").rpartition(".")[2] == "Optional"
+        ):
+            annotation = annotation.slice
+        members: list[ast.AST] = []
+        if annotation is None:
+            return None
+        pending: list[ast.AST] = [annotation]
+        while pending:
+            node = pending.pop()
+            if isinstance(node, ast.BinOp):
+                if not isinstance(node.op, ast.BitOr):
+                    return None
+                pending.extend([node.right, node.left])
+            else:
+                members.append(node)
+        kept = [m for m in members if not _is_none(m)]
+        if len(kept) != 1 or not isinstance(kept[0], (ast.Name, ast.Attribute)):
+            return None
+        name = (_dotted(kept[0]) or "").rpartition(".")[2]
+        return name if name in ("BaseException", "Exception") else None
 
     # -- fs: list[Callable[[int], int]] = [inc, dbl] -------------------------
 
@@ -529,7 +576,7 @@ class _Pass(ast.NodeVisitor):
             else [annotation.slice]
         )
         if name in _SEQUENCES and len(parts) == 1:
-            if isinstance(value, (ast.List, ast.Set)):
+            if isinstance(value, ast.List):
                 for element in value.elts:
                     self._callables(parts[0], element)
         elif name in _MAPPINGS and len(parts) == 2 and isinstance(value, ast.Dict):

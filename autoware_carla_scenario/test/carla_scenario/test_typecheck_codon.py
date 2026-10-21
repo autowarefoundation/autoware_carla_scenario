@@ -5642,7 +5642,7 @@ def test_total_ordering_composes_with_the_stubbed_functools_names(
         "@lru_cache(maxsize=4)\ndef total(xs: list[int]) -> int:\n"
         "    return reduce(operator.add, xs)\n"
     )
-    call = "logger.info('%d %d', total([1, 2]), " "1 if Rank(1) <= Rank(2) else 0)\n"
+    call = "logger.info('%d %d', total([1, 2]), 1 if Rank(1) <= Rank(2) else 0)\n"
     scenario, config, _ = _write_case(
         tmp_path,
         _TIMEOUT_SETUP + call,
@@ -5687,6 +5687,8 @@ def test_a_context_manager_with_the_usual_exit_compiles(tmp_path: Path) -> None:
         logger.info("%d %d", n, c.n)
     """
     scenario, config, _ = _data_case(tmp_path, _CONTEXT_MANAGER, setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
 
 
 # -- a class constant read in the class scope (#433) ---------------------------
@@ -5840,6 +5842,20 @@ def test_the_body_of_an_exit_is_still_typed(tmp_path: Path) -> None:
     assert error.line == _line_of(path, 'self.n = "two"')
 
 
+def test_an_exception_branch_of_an_exit_is_still_typed(tmp_path: Path) -> None:
+    # `exc` keeps its BaseException | None annotation, so the branch is live.
+    definitions = _CONTEXT_MANAGER.replace(
+        "exc_type.__name__", "exc.no_such_attribute"
+    ).replace("if exc_type is not None:", "if exc is not None:")
+    setup = """
+        with Ctx() as c:
+            n = c.n
+    """
+    scenario, config, path = _data_case(tmp_path, definitions, setup)
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "no_such_attribute" in error.message, error.format()
+
+
 _TABLE = """
 def inc(x: int) -> int:
     return x + 1
@@ -5941,6 +5957,35 @@ class Ops:
     scenario, config, path = _data_case(tmp_path, definitions, setup)
     error = _only_error(typecheck_scenario(scenario, config))
     assert "dispatch table" in error.message and "bound method" in error.message
+    assert error.line == _line_of(path, "fs: list")
+
+
+def test_a_table_mixing_a_bound_method_and_a_function_gets_the_hint(
+    tmp_path: Path,
+) -> None:
+    # The bound method is not wrapped: Codon's raw text names a Callable.
+    definitions = (
+        _TABLE + "\nclass K:\n    def m(self, x: int) -> int:\n        return x\n"
+    )
+    setup = """
+        k = K()
+        fs: list[typing.Callable[[int], int]] = [k.m, inc]
+    """
+    scenario, config, _ = _data_case(tmp_path, definitions, setup)
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "dispatch table" in error.message, error.format()
+
+
+def test_a_function_of_another_signature_is_refused_with_a_hint(
+    tmp_path: Path,
+) -> None:
+    definitions = _TABLE + "\ndef two(x: int, y: int) -> int:\n    return x + y\n"
+    setup = """
+        fs: list[typing.Callable[[int], int]] = [inc, two]
+    """
+    scenario, config, path = _data_case(tmp_path, definitions, setup)
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "signature" in error.message, error.format()
     assert error.line == _line_of(path, "fs: list")
 
 

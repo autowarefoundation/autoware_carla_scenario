@@ -2020,11 +2020,7 @@ def test_a_name_read_before_it_is_rebound_is_reported_at_the_later_import() -> N
 
 def test_a_rebound_name_nothing_read_drops_the_earlier_import() -> None:
     text = (
-        "from a import X, Z\n"
-        "def f():\n"
-        "    return X\n"
-        "from b import X\n"
-        "from a import X\n"
+        "from a import X, Z\ndef f():\n    return X\nfrom b import X\nfrom a import X\n"
     )
     assert _body(text) == (
         "from a import Z\ndef f():\n    return X\npass\nfrom a import X\n"
@@ -2660,9 +2656,28 @@ def test_exit_parameters_get_a_none_default_and_lose_their_annotation() -> None:
     )
     text, _ = python_rewrites(source)
     _line_stable(source, text)
-    assert "exc_type=None," in text and "exc=None," in text and "tb=None," in text
-    assert "BaseException" not in text.replace("-> bool | None", "")
+    # type[...] and TracebackType are NoneType in Codon: dropped.  An exception
+    # annotation stays, so `if exc is not None:` is still compiled.
+    assert "exc_type=None," in text and "tb=None," in text
+    assert "exc: BaseException | None = None," in text
+    assert "type[BaseException]" not in text and "TracebackType" not in text
     assert "if exc_type is not None:" in text
+
+
+def test_exit_exception_annotations_are_kept_as_optional() -> None:
+    source = (
+        "class C:\n"
+        "    def __exit__(self, t, e: Optional[Exception], b: 'BaseException', "
+        "m: ValueError | None = None, n: Exception | None = None) -> None:\n"
+        "        pass\n"
+    )
+    text, _ = python_rewrites(source)
+    assert "e: Exception | None = None," in text
+    assert "b: BaseException | None = None," in text
+    assert "m = None" in text  # any other annotation goes
+    assert "n: Exception | None = None)" in text
+    again, _ = python_rewrites(text)
+    assert again == text
 
 
 def test_exit_parameters_with_a_default_are_kept() -> None:
@@ -2727,6 +2742,8 @@ def test_what_a_table_does_not_cover_is_left_alone() -> None:
         "class C:\n    fs: list[Callable[[int], int]] = [inc, dbl]\n",
         "def f(o):\n    fs: list[Callable[[int], int]] = [o.inc, o.dbl]\n",
         "def f(k):\n    fs: list[Callable[[int], int]] = [lambda x: x + k]\n",
+        # a set (a Callable has no __hash__ in Codon)
+        "fs: set[Callable[[int], int]] = {inc}\n",
         # a signature Codon cannot express
         "fs: list[Callable[..., int]] = [inc, dbl]\n",
         "fs: list[Callable[[Any], int]] = [inc, dbl]\n",
