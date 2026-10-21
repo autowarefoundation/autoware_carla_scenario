@@ -1329,10 +1329,10 @@ class ScenarioRunner:
                 clock_start_frame,
             )
             if self.rerun is not None:
-                # The ego's LiDAR sweeps, from the clock's first frame, beside
-                # the trajectory log (rerun.lidar; nothing otherwise).
+                # The ego's sensors, from the clock's first frame, beside the
+                # trajectory log (rerun.lidar / rerun.cameras; nothing otherwise).
                 lidar_converter: RerunConverter = self.rerun
-                lidar_converter.start_lidar(
+                lidar_converter.start_sensors(
                     trajectory.path, file_stem, clock_start_frame
                 )
             trajectory.record(world, clock.simulated)
@@ -1591,7 +1591,7 @@ class ScenarioRunner:
                     )
             if self.rerun is not None:
                 lidar_recording: RerunConverter = self.rerun
-                lidar_recording.stop_lidar()
+                lidar_recording.stop_sensors()
             if trajectory.active:
                 if result is not None:
                     trajectory.record_result(result)
