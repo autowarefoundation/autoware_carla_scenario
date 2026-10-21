@@ -62,6 +62,7 @@ from .parameters import (
     PEDESTRIAN_PARAMETER_BACKENDS,
     VEHICLE_PARAMETER_BACKENDS,
     PedestrianParameters,
+    Spread,
     TrafficParameterError,
     VehicleParameters,
 )
@@ -97,6 +98,7 @@ __all__ = [
     "TrafficParameterError",
     "VehicleParameters",
     "PedestrianParameters",
+    "Spread",
     "VEHICLE_PARAMETER_BACKENDS",
     "PEDESTRIAN_PARAMETER_BACKENDS",
     "TurnDirection",

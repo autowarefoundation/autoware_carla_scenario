@@ -230,6 +230,7 @@ These live in `autoware_carla_scenario.odd`:
 | `visibility` | float, m | How far drivers see, as the run's weather left it ([Visibility follows the weather](#visibility-follows-the-weather)); nothing when the run set none |
 | `traffic_density` | `TRAFFIC_DENSITY_LEVELS` | Other vehicles within `NEARBY_RADIUS_M` |
 | `pedestrian_nearby` | bool | A walker within `NEARBY_RADIUS_M` |
+| `vehicle_<field>_mean`, `vehicle_<field>_std`, `pedestrian_<field>_mean`, `pedestrian_<field>_std` | float | The mean and std of a traffic parameter's spread, as the run set it ([Traffic parameters from the ODD](#traffic-parameters-from-the-odd)); nothing when the run set none |
 The Lanelet2 probes need the run to have a Lanelet2 map (`map.lanelet2_path`).
 Without one they return nothing.
 
@@ -1032,6 +1033,61 @@ traffic to the speed it stops from within it
 ([Visibility](traffic_backends.md#the-sumo-backend)); the TrafficManager has no notion of
 sight, so the `traffic_manager` backend logs the speed it would hold traffic
 to whenever the visibility changes, and its vehicles drive as before.
+
+### Traffic parameters from the ODD
+
+How the traffic behaves -- how fast drivers go against the limit, how they
+react, how often they run a red light, how fast pedestrians walk -- is the
+run's traffic parameters ([Traffic parameters](traffic_backends.md#traffic-parameters)).
+Each numeric one is a spread, a mean and a standard deviation, that every
+vehicle or pedestrian draws its own value from (a normal distribution cut to
+the parameter's bounds). An ODD bounds the spread: the mean and the std of
+each are built-in probes, with knobs, so an ODD that names them makes a sweep
+draw both per case, and every road user of the case then draws its own value
+from them.
+
+| Probe | Knob (written) | Knob range |
+|---|---|---|
+| `vehicle_<field>_mean` | `traffic.vehicles.<field>.mean` | the field's mean range below |
+| `vehicle_<field>_std` | `traffic.vehicles.<field>.std` | the field's std range below |
+| `pedestrian_<field>_mean` | `traffic.pedestrians.<field>.mean` | likewise |
+| `pedestrian_<field>_std` | `traffic.pedestrians.<field>.std` | likewise |
+
+| Parameter | Unit | Mean range | Std range |
+|---|---|---|---|
+| `vehicles.speed_factor` | | 0.5-1.5 | 0-0.3 |
+| `vehicles.min_gap_m` | m | 0.5-10 | 0-3 |
+| `vehicles.ignore_lights`, `ignore_signs`, `ignore_vehicles`, `ignore_walkers`, `random_lane_changes` | | 0-1 | 0-0.5 |
+| `vehicles.accel` | m/s^2 | 0.5-5 | 0-1.5 |
+| `vehicles.decel` | m/s^2 | 1-9 | 0-2 |
+| `vehicles.reaction_time_s` | s | 0.3-3 | 0-1 |
+| `vehicles.imperfection` | | 0-1 | 0-0.5 |
+| `pedestrians.walking_speed_mps` | m/s | 0.5-2.5 | 0-0.5 |
+| `pedestrians.min_gap_m` | m | 0.1-2 | 0-0.5 |
+| `pedestrians.red_light_violation_s` | s | 0-60 | 0-30 |
+
+A bucket of the ODD's attribute narrows the range, as for any knob. In a
+binding file:
+
+```yaml
+# binding.yaml
+behaviour.speed_factor: {probe: vehicle_speed_factor_mean}
+behaviour.speed_spread: {probe: vehicle_speed_factor_std}
+behaviour.reaction_time: {probe: vehicle_reaction_time_s_mean}
+behaviour.walking_speed: {probe: pedestrian_walking_speed_mps_mean}
+```
+
+A case drawn with `behaviour.speed_factor` in `[0.8, 0.9)` and
+`behaviour.speed_spread` in `[0.05, 0.1)` writes
+`traffic.vehicles.speed_factor.mean` and `.std`, and each vehicle of its run
+draws its own speed factor from that normal distribution. The probes read
+what the run set, every tick, so the run's coverage records the mean and std
+it drove with; a run that set none reads a missing value.
+
+A parameter the run's backend does not support is still refused: an ODD that
+draws a reaction time is an ODD for the `sumo` backend, and a case of it run
+on the `traffic_manager` backend fails before it starts
+([Traffic parameters](traffic_backends.md#traffic-parameters)).
 
 ### The road a case is on
 

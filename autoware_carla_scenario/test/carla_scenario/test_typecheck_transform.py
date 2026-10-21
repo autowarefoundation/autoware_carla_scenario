@@ -2790,6 +2790,126 @@ def test_transform_source_lines_applies_the_rewrites_and_appends_the_ordering() 
     assert origin[-1] == 2  # the appended methods map to their class
 
 
+# ---------------------------------------------------------------------------
+# __exit__ parameters (#435) and tables of functions (#436)
+# ---------------------------------------------------------------------------
+
+
+def _line_stable(source: str, text: str) -> None:
+    assert len(text.splitlines()) == len(source.splitlines())
+    ast.parse(text)
+
+
+def test_exit_parameters_get_a_none_default_and_lose_their_annotation() -> None:
+    source = (
+        "class C:\n"
+        "    def __exit__(\n"
+        "        self,\n"
+        "        exc_type: type[BaseException] | None,\n"
+        "        exc: BaseException | None,\n"
+        "        tb: TracebackType | None,\n"
+        "    ) -> bool | None:\n"
+        "        if exc_type is not None:\n"
+        "            return False\n"
+    )
+    text, _ = python_rewrites(source)
+    _line_stable(source, text)
+    # type[...] and TracebackType are NoneType in Codon: dropped.  An exception
+    # annotation stays, so `if exc is not None:` is still compiled.
+    assert "exc_type=None," in text and "tb=None," in text
+    assert "exc: BaseException | None = None," in text
+    assert "type[BaseException]" not in text and "TracebackType" not in text
+    assert "if exc_type is not None:" in text
+
+
+def test_exit_exception_annotations_are_kept_as_optional() -> None:
+    source = (
+        "class C:\n"
+        "    def __exit__(self, t, e: Optional[Exception], b: 'BaseException', "
+        "m: ValueError | None = None, n: Exception | None = None) -> None:\n"
+        "        pass\n"
+    )
+    text, _ = python_rewrites(source)
+    assert "e: Exception | None = None," in text
+    assert "b: BaseException | None = None," in text
+    assert "m = None" in text  # any other annotation goes
+    assert "n: Exception | None = None)" in text
+    again, _ = python_rewrites(text)
+    assert again == text
+
+
+def test_exit_parameters_with_a_default_are_kept() -> None:
+    source = (
+        "class C:\n"
+        "    def __exit__(self, et, ev: object | None = None, flag: bool = True) -> None:\n"
+        "        pass\n"
+        "    def __exit__2(self, *args: object) -> None:\n"
+        "        pass\n"
+    )
+    text, _ = python_rewrites(source)
+    assert "(self, et=None, ev = None, flag: bool = True)" in text
+    assert "*args: object" in text
+
+
+def test_exit_outside_a_class_is_left_alone() -> None:
+    source = "def __exit__(self, a, b):\n    pass\n"
+    assert python_rewrites(source) == (source, [])
+
+
+def test_a_table_of_functions_is_wrapped_in_the_annotated_callable() -> None:
+    source = (
+        "import helpers\n"
+        "def f(k):\n"
+        "    fs: list[Callable[[int], int]] = [inc, helpers.dbl, lambda x: x + 1]\n"
+        '    d: Dict[str, Callable[[int], int]] = {"a": inc, "b": lambda x: x}\n'
+        "    return fs, d\n"
+    )
+    text, _ = python_rewrites(source)
+    _line_stable(source, text)
+    wrap = "Callable[Tuple[int], int]"
+    assert f"[{wrap}(inc), {wrap}(helpers.dbl), {wrap}(lambda x: x + 1)]" in text
+    assert f'{{"a": {wrap}(inc), "b": {wrap}(lambda x: x)}}' in text
+
+
+def test_a_returned_table_and_a_nested_one_are_wrapped() -> None:
+    source = (
+        "def f() -> dict[str, list[Callable[[float, str], None]]]:\n"
+        '    return {"a": [g, h], "b": [g]}\n'
+    )
+    text, _ = python_rewrites(source)
+    wrap = "Callable[Tuple[float, str], None]"
+    assert f'{{"a": [{wrap}(g), {wrap}(h)], "b": [{wrap}(g)]}}' in text
+
+
+def test_a_rewritten_table_is_idempotent_and_keeps_inner_rewrites() -> None:
+    source = (
+        "def f():\n"
+        "    fs: list[Callable[[int], int]] = [lambda x, k=len('a'): x + k, g]\n"
+    )
+    text, _ = python_rewrites(source)
+    again, _ = python_rewrites(text)
+    assert again == text
+    assert "(lambda k: lambda x: x + k)(len('a'))" in text
+    assert "Callable[Tuple[int], int](" in text
+
+
+def test_what_a_table_does_not_cover_is_left_alone() -> None:
+    cases = [
+        # not annotated, a class attribute, a bound method, a capture
+        "fs = [inc, dbl]\n",
+        "class C:\n    fs: list[Callable[[int], int]] = [inc, dbl]\n",
+        "def f(o):\n    fs: list[Callable[[int], int]] = [o.inc, o.dbl]\n",
+        "def f(k):\n    fs: list[Callable[[int], int]] = [lambda x: x + k]\n",
+        # a set (a Callable has no __hash__ in Codon)
+        "fs: set[Callable[[int], int]] = {inc}\n",
+        # a signature Codon cannot express
+        "fs: list[Callable[..., int]] = [inc, dbl]\n",
+        "fs: list[Callable[[Any], int]] = [inc, dbl]\n",
+    ]
+    for source in cases:
+        assert python_rewrites(source) == (source, []), source
+
+
 # -- a class constant read in the class scope (#433) --------------------------
 
 

@@ -13,6 +13,7 @@ from typing import Any, List, Tuple
 import pytest
 
 from autoware_carla_scenario.traffic import (
+    Spread,
     PEDESTRIAN_PARAMETER_BACKENDS,
     PedestrianParameters,
     VEHICLE_PARAMETER_BACKENDS,
@@ -99,7 +100,7 @@ def test_nothing_set_is_every_default() -> None:
 )
 def test_an_impossible_value_is_refused(field: str, value: float) -> None:
     with pytest.raises(ValueError, match=field):
-        VehicleParameters(**{field: value})  # type: ignore[arg-type]
+        VehicleParameters(**{field: Spread(value)})  # type: ignore[arg-type]
 
 
 def test_a_mapping_with_an_unknown_key_is_refused() -> None:
@@ -116,8 +117,8 @@ def test_the_traffic_config_reads_its_vehicles_and_pedestrians_nodes() -> None:
             "pedestrians": {"walking_speed_mps": 1.2},
         }
     )
-    assert config.vehicles == VehicleParameters(speed_factor=0.8)
-    assert config.pedestrians == PedestrianParameters(walking_speed_mps=1.2)
+    assert config.vehicles == VehicleParameters(speed_factor=Spread(0.8))
+    assert config.pedestrians == PedestrianParameters(walking_speed_mps=Spread(1.2))
     empty = TrafficConfig.from_mapping({})
     assert empty.vehicles == VehicleParameters()
     assert empty.pedestrians == PedestrianParameters()
@@ -129,9 +130,11 @@ def test_the_old_parameters_node_points_to_the_new_ones() -> None:
 
 
 def test_restricting_keeps_only_what_is_supported() -> None:
-    parameters = VehicleParameters(speed_factor=0.8, reaction_time_s=1.5)
+    parameters = VehicleParameters(
+        speed_factor=Spread(0.8), reaction_time_s=Spread(1.5)
+    )
     assert parameters.restricted_to({"speed_factor"}) == VehicleParameters(
-        speed_factor=0.8
+        speed_factor=Spread(0.8)
     )
 
 
@@ -142,7 +145,7 @@ def test_restricting_keeps_only_what_is_supported() -> None:
 
 def test_a_field_another_backend_supports_is_refused_naming_it() -> None:
     parameters = VehicleParameters(
-        speed_factor=0.9, reaction_time_s=1.5, follow_visibility=True
+        speed_factor=Spread(0.9), reaction_time_s=Spread(1.5), follow_visibility=True
     )
     with pytest.raises(TrafficParameterError) as raised:
         TrafficManagerBackend(vehicles=parameters)
@@ -163,7 +166,9 @@ def test_a_backend_that_reads_no_parameters_refuses_every_one() -> None:
         match="speed_factor can only be used with the 'traffic_manager' or "
         "'sumo' backends",
     ):
-        NullTrafficBackend().set_vehicle_parameters(VehicleParameters(speed_factor=1.0))
+        NullTrafficBackend().set_vehicle_parameters(
+            VehicleParameters(speed_factor=Spread(1.0))
+        )
     # Nothing set is nothing refused.
     NullTrafficBackend().set_vehicle_parameters(VehicleParameters())
 
@@ -171,8 +176,10 @@ def test_a_backend_that_reads_no_parameters_refuses_every_one() -> None:
 def test_building_a_backend_checks_its_parameters() -> None:
     with pytest.raises(TrafficParameterError, match="'sumo' backend"):
         build_backend("traffic_manager", {}, VehicleParameters(follow_visibility=False))
-    backend = build_backend("traffic_manager", {}, VehicleParameters(min_gap_m=3.0))
-    assert backend.vehicle_parameters.min_gap_m == 3.0
+    backend = build_backend(
+        "traffic_manager", {}, VehicleParameters(min_gap_m=Spread(3.0))
+    )
+    assert backend.vehicle_parameters.min_gap_m == Spread(3.0)
 
 
 def test_each_backend_supports_what_the_table_says() -> None:
@@ -205,18 +212,18 @@ def test_every_hand_written_field_list_names_every_field() -> None:
     """Codon has no field reflection, so the methods spell the fields out."""
     fields = set(VehicleParameters.__dataclass_fields__)  # type: ignore[attr-defined]
     everything = VehicleParameters(
-        speed_factor=1.0,
-        min_gap_m=1.0,
+        speed_factor=Spread(1.0),
+        min_gap_m=Spread(1.0),
         lane_changes=True,
-        ignore_lights=0.5,
-        ignore_signs=0.5,
-        ignore_vehicles=0.5,
-        ignore_walkers=0.5,
-        random_lane_changes=0.5,
-        accel=1.0,
-        decel=1.0,
-        reaction_time_s=1.0,
-        imperfection=0.5,
+        ignore_lights=Spread(0.5),
+        ignore_signs=Spread(0.5),
+        ignore_vehicles=Spread(0.5),
+        ignore_walkers=Spread(0.5),
+        random_lane_changes=Spread(0.5),
+        accel=Spread(1.0),
+        decel=Spread(1.0),
+        reaction_time_s=Spread(1.0),
+        imperfection=Spread(0.5),
         follow_visibility=True,
     )
     assert set(everything.set_fields()) == fields
@@ -229,17 +236,22 @@ def test_every_hand_written_field_list_names_every_field() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_the_traffic_manager_sets_its_global_parameters_when_prepared() -> None:
+def test_the_traffic_manager_sets_the_speed_and_gap_on_each_vehicle() -> None:
     client = _Client()
     backend = TrafficManagerBackend(
         client=client,
-        vehicles=VehicleParameters(speed_factor=0.8, min_gap_m=3.5),
+        vehicles=VehicleParameters(speed_factor=Spread(0.8), min_gap_m=Spread(3.5)),
     )
+    npc = _Actor(1)
     backend.prepare(TrafficContext(client=client, random_seed=1))
-    (difference,) = client.tm.called("global_percentage_speed_difference")
-    assert difference[0] == pytest.approx(20.0)
-    assert client.tm.called("set_global_distance_to_leading_vehicle") == [(3.5,)]
-    assert backend.describe()["vehicles"] == {"speed_factor": 0.8, "min_gap_m": 3.5}
+    backend.start(_World([npc]))
+    (difference,) = client.tm.called("vehicle_percentage_speed_difference")
+    assert difference[0] is npc and difference[1] == pytest.approx(20.0)
+    assert client.tm.called("distance_to_leading_vehicle") == [(npc, 3.5)]
+    assert backend.describe()["vehicles"] == {
+        "speed_factor": {"mean": 0.8, "std": 0.0},
+        "min_gap_m": {"mean": 3.5, "std": 0.0},
+    }
 
 
 def test_the_traffic_manager_sets_each_vehicles_parameters_on_autopilot() -> None:
@@ -248,11 +260,11 @@ def test_the_traffic_manager_sets_each_vehicles_parameters_on_autopilot() -> Non
         client=client,
         vehicles=VehicleParameters(
             lane_changes=False,
-            ignore_lights=0.25,
-            ignore_signs=0.5,
-            ignore_vehicles=0.0,
-            ignore_walkers=1.0,
-            random_lane_changes=0.1,
+            ignore_lights=Spread(0.25),
+            ignore_signs=Spread(0.5),
+            ignore_vehicles=Spread(0.0),
+            ignore_walkers=Spread(1.0),
+            random_lane_changes=Spread(0.1),
         ),
     )
     npc, ego = _Actor(1), _Actor(2)
@@ -293,10 +305,9 @@ def test_every_pedestrian_field_names_the_backends_that_support_it() -> None:
         PedestrianParameters.__dataclass_fields__  # type: ignore[attr-defined]
     )
     everything = PedestrianParameters(
-        walking_speed_mps=1.0,
-        speed_deviation=0.0,
-        min_gap_m=0.5,
-        red_light_violation_s=10.0,
+        walking_speed_mps=Spread(1.0),
+        min_gap_m=Spread(0.5),
+        red_light_violation_s=Spread(10.0),
     )
     assert set(everything.set_fields()) == set(PEDESTRIAN_PARAMETER_BACKENDS)
     assert set(everything.describe()) == set(PEDESTRIAN_PARAMETER_BACKENDS)
@@ -306,14 +317,13 @@ def test_every_pedestrian_field_names_the_backends_that_support_it() -> None:
     "field, value",
     [
         ("walking_speed_mps", 0.0),
-        ("speed_deviation", -0.1),
         ("min_gap_m", -1.0),
         ("red_light_violation_s", -1.0),
     ],
 )
 def test_an_impossible_pedestrian_value_is_refused(field: str, value: float) -> None:
     with pytest.raises(ValueError, match=field):
-        PedestrianParameters(**{field: value})
+        PedestrianParameters(**{field: Spread(value)})  # type: ignore[arg-type]
 
 
 def test_the_traffic_manager_refuses_pedestrian_parameters() -> None:
@@ -327,7 +337,7 @@ def test_the_traffic_manager_refuses_pedestrian_parameters() -> None:
         build_backend(
             "traffic_manager",
             {},
-            pedestrians=PedestrianParameters(walking_speed_mps=1.2),
+            pedestrians=PedestrianParameters(walking_speed_mps=Spread(1.2)),
         )
 
 
@@ -335,6 +345,8 @@ def test_the_pedestrian_parameters_are_recorded() -> None:
     from autoware_carla_scenario.traffic.sumo.backend import SumoTrafficBackend
 
     backend = SumoTrafficBackend(
-        pedestrians=PedestrianParameters(red_light_violation_s=30.0)
+        pedestrians=PedestrianParameters(red_light_violation_s=Spread(30.0))
     )
-    assert backend.describe()["pedestrians"] == {"red_light_violation_s": 30.0}
+    assert backend.describe()["pedestrians"] == {
+        "red_light_violation_s": {"mean": 30.0, "std": 0.0}
+    }
