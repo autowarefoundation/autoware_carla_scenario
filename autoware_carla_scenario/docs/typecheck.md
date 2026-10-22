@@ -1128,7 +1128,11 @@ Two things Python does that Codon 0.19 does not are filled in for you:
     the object yourself (`OpenDrivePose` and `DevContainer` have the methods in their
     models, as the framework uses `replace` on them). The object goes by position and the fields by keyword:
     `replace(obj, **changes)` and `replace(obj, 3.0)` are refused. The fields
-    change one after the other, so a `__post_init__` is not run between them.
+    change one after the other, so a `__post_init__` is not run between them,
+    and `replace(obj)` with no change returns `obj` itself, not a copy (both
+    only matter to the types). A `replace` that is not `dataclasses`' (a
+    parameter, a local or another import of that name, `str.replace`) is left
+    alone.
   - An `IntEnum` (also `IntFlag`, `class M(int, Enum)`) member compares with
     its value (`M.A == 1`), orders against a member or an `int`
     (`M.A < M.B`) and converts with `int()` and `float()`. A `StrEnum` or

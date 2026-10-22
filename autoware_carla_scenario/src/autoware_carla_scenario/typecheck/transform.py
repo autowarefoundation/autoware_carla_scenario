@@ -3700,36 +3700,86 @@ def _dataclass_dunders(tree: ast.Module, exceptions: set[str]) -> list[tuple[str
 
 def _replace_spellings(tree: ast.Module) -> tuple[set[str], set[str]]:
     """The names ``dataclasses.replace`` is bound to, and those ``dataclasses``
-    is: ``from dataclasses import replace as r`` and ``import dataclasses as d``."""
+    is: ``from dataclasses import replace as r`` and ``import dataclasses as d``.
+
+    A name another import, a ``def``, a ``class`` or an assignment of the module
+    also binds is left out: it is not known to be ``dataclasses``'s.
+    """
     functions: set[str] = set()
     modules: set[str] = set()
+    other: set[str] = set()
     for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom) and node.module == "dataclasses":
-            functions |= {a.asname or a.name for a in node.names if a.name == "replace"}
-        elif isinstance(node, ast.Import):
-            modules |= {
-                a.asname or a.name for a in node.names if a.name == "dataclasses"
-            }
-    return functions, modules
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            for a in node.names:
+                bound = a.asname or a.name.split(".")[0]
+                if isinstance(node, ast.ImportFrom) and node.module == "dataclasses":
+                    if a.name == "replace":
+                        functions.add(bound)
+                        continue
+                elif isinstance(node, ast.Import) and a.name == "dataclasses":
+                    modules.add(bound)
+                    continue
+                other.add(bound)
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            other.add(node.name)
+        elif isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            other.update(
+                n.id for t in targets for n in ast.walk(t) if isinstance(n, ast.Name)
+            )
+    return functions - other, modules - other
+
+
+class _ReplaceCalls(ShadowScopes):
+    """The ``dataclasses.replace`` calls of a module, where the name is not
+    rebound by a parameter, a local or a nested definition (``def f(replace)``)."""
+
+    def __init__(self, functions: set[str], modules: set[str]) -> None:
+        super().__init__()
+        self.functions = functions
+        self.modules = modules
+        self.calls: list[ast.Call] = []
+        self.imported_locally: set[str] = set()
+
+    def _rebound(self, name: str) -> bool:
+        # The import of ``replace`` inside a function binds it there too.
+        if name in self.imported_locally:
+            return False
+        return any(name in bound for bound, _is_class in self._local_bound)
+
+    def visit_Call(self, node: ast.Call) -> None:
+        func = node.func
+        if isinstance(func, ast.Name):
+            hit = func.id in self.functions and not self._rebound(func.id)
+        else:
+            hit = (
+                isinstance(func, ast.Attribute)
+                and func.attr == "replace"
+                and isinstance(func.value, ast.Name)
+                and func.value.id in self.modules
+                and not self._rebound(func.value.id)
+            )
+        if hit:
+            self.calls.append(node)
+        self.generic_visit(node)
 
 
 def _replace_calls(tree: ast.Module) -> list[ast.Call]:
     functions, modules = _replace_spellings(tree)
     if not functions and not modules:
         return []
-    calls = []
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
-            continue
-        func = node.func
-        if (isinstance(func, ast.Name) and func.id in functions) or (
-            isinstance(func, ast.Attribute)
-            and func.attr == "replace"
-            and isinstance(func.value, ast.Name)
-            and func.value.id in modules
-        ):
-            calls.append(node)
-    return calls
+    visitor = _ReplaceCalls(functions, modules)
+    visitor.enter_module(tree)
+    top = {id(n) for n in tree.body}
+    visitor.imported_locally = {
+        a.asname or a.name
+        for n in ast.walk(tree)
+        if isinstance(n, (ast.Import, ast.ImportFrom)) and id(n) not in top
+        for a in n.names
+    } & (functions | modules)
+    visitor.visit(tree)
+    return visitor.calls
 
 
 def _replace_problem(call: ast.Call) -> str | None:

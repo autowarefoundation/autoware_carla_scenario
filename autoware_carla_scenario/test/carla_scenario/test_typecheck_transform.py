@@ -4207,3 +4207,26 @@ def test_replace_that_is_not_dataclasses_replace_is_left_alone() -> None:
     source = "s = 'a'.replace('a', 'b')\n\ndef replace(a, b=1):\n    return a\n\nx = replace(1, b=2)\n"
     assert python_rewrite_refusals(source) == []
     assert "_acs_with__" not in transform_source(source)
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "from dataclasses import replace\ns = 'a'\nt = s.replace('a', 'b')\n",
+        "from dataclasses import replace\ndef f(replace):\n    return replace(1, a=2)\n",
+        "from dataclasses import replace\ndef f():\n    replace = lambda o, a: o\n    return replace(1, a=2)\n",
+        "from dataclasses import replace\nfrom mine import replace\nx = replace(1, a=2)\n",
+        "import dataclasses\ndef f(dataclasses):\n    return dataclasses.replace(1, a=2)\n",
+        "from mine import replace\nx = replace(1, a=2)\n",
+    ],
+)
+def test_a_shadowed_replace_is_not_dataclasses_replace(source: str) -> None:
+    assert python_rewrite_refusals(source) == []
+    assert "_acs_with__" not in transform_source(source)
+
+
+def test_replace_imported_inside_a_function_is_lowered() -> None:
+    source = (
+        "def f(w):\n    from dataclasses import replace\n    return replace(w, a=2)\n"
+    )
+    assert "replace(w)._acs_with__a(a=2)" in transform_source(source)
