@@ -880,11 +880,33 @@ _VARIADIC_LIMITS = (
 )
 
 
+_LIST_DISPLAY_FRAME = re.compile(r"during the realization of _acs_list(?:_into)?\(")
+_LIST_DISPLAY_HINT = (
+    "a list display is typed by its first element, so its elements must share "
+    "a class of the scenario's own: annotate the target as the common base "
+    "(`rules: list[Base] = [A(), B()]`, a `-> list[Base]` return, a `list[Base]` "
+    "parameter), or declare a local `list[Base]` and `append()` each element; "
+    "an element that is no subclass of the base is refused"
+)
+
+
 def _variadic_hints(diagnostics: list[Diagnostic]) -> list[Diagnostic]:
     """*diagnostics*, each refusal of a Codon limit on ``**kwargs``, on
     ``*args`` or on a tuple saying why and what to write instead (#266)."""
     out = []
     for diagnostic in diagnostics:
+        if any(_LIST_DISPLAY_FRAME.match(frame) for frame in diagnostic.trace):
+            # A list display `_acs_list` could not make one list (#480): the
+            # helper is the check's, so the refusal names the display.
+            diagnostic = dataclasses.replace(
+                diagnostic,
+                message=f"{diagnostic.message}: {_LIST_DISPLAY_HINT}",
+                trace=tuple(
+                    f for f in diagnostic.trace if not _LIST_DISPLAY_FRAME.match(f)
+                ),
+            )
+            out.append(diagnostic)
+            continue
         for pattern, hint in (*_VARIADIC_LIMITS, *REWRITE_HINTS):
             if pattern.search(diagnostic.message):
                 diagnostic = dataclasses.replace(

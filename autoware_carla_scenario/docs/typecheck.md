@@ -2601,7 +2601,22 @@ What Codon 0.19 needs that Python does not, beyond
   `list[EntityLanePositionCondition]` where a `list[BaseCondition]` is
   expected, and `extend()` does not upcast either. Build the list in a local
   declared `list[BaseCondition]`, appending each element
-  (`composition/temporary_stop.py`). An element of a `Sequence[AnyPose]` is
+  (`composition/temporary_stop.py`). The same holds for a scenario's own
+  classes, and for the display itself, not just `extend()`
+  (`rules: list[Rule] = [Dbl(), Neg()]`). The check makes a list display a
+  list of the base wherever the base is known, as `_acs_list_into(List[Rule](),
+  Dbl(), Neg())` appends each element: an annotated target (a module-level,
+  local or class-level `x: list[Rule] = [...]`, a dataclass
+  `field(default_factory=lambda: [...])`, a `-> list[Rule]` return, an
+  argument of a parameter annotated `list[Rule]` of a function or class
+  defined in the same module), or, with no annotation, the nearest class of
+  the module that the constructed elements (`[Dbl(), Neg()]`) share. A
+  display whose target is not known and whose classes share no base, or an
+  argument of an imported function, is refused with a hint: annotate the
+  target `list[Base]`, or declare a local `list[Base]` and `append()` each
+  element. An element that is no subclass of the base is refused, and so is a
+  method only a subclass has, as in Python. A set or a tuple display is not
+  rewritten. An element of a `Sequence[AnyPose]` is
   a `Union` of poses; the model's `_expect_pose` takes one, reading its
   members with `static.vars_types(pose, with_index=True)` (without
   `with_index`, Codon 0.19 does not bind the loop variable).
