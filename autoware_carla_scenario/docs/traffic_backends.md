@@ -340,6 +340,78 @@ class MySimulatorBackend(TrafficBackend):
 and reads them from `self.vehicle_parameters` and `self.pedestrian_parameters`
 in `prepare()`.
 
+### Changing the parameters during a run
+
+`TrafficParametersAction` changes the parameters from the tick it fires on,
+like any action, on a condition:
+
+```python
+from autoware_carla_scenario import (
+    ElapsedTimeCondition,
+    PedestrianParameters,
+    Spread,
+    TrafficParametersAction,
+    VehicleParameters,
+)
+
+# From 20 s on, drivers slow down and keep their distance.
+scenario.register_post_tick(
+    TrafficParametersAction(
+        vehicles=VehicleParameters(
+            speed_factor=Spread(0.8, 0.05), min_gap_m=Spread(4.0, 1.0)
+        ),
+        condition=ElapsedTimeCondition(20.0, label="after_20s"),
+    )
+)
+
+# The NPC ahead turns reckless (traffic_manager).
+scenario.register_post_tick(
+    TrafficParametersAction(
+        vehicles=VehicleParameters(
+            speed_factor=Spread(1.3), ignore_lights=Spread(1.0)
+        ),
+        entity_name="npc1",
+    )
+)
+
+# Pedestrians hurry (sumo).
+scenario.register_post_tick(
+    TrafficParametersAction(
+        pedestrians=PedestrianParameters(walking_speed_mps=Spread(1.8, 0.2))
+    )
+)
+```
+
+- **Field by field.** The fields the action sets replace the run's; the ones it
+  leaves unset keep their values, whether they came from the config or from
+  the ODD.
+- **Everyone draws again.** Without `entity_name`, every vehicle (or pedestrian)
+  already in the run draws its value of the changed fields again from the new
+  spread, and every one that joins later draws from the merged parameters.
+  The ODD's probes read the merged parameters from then on.
+- **One vehicle.** With `entity_name` (a `role_name`), only that vehicle draws the
+  changed fields again; the run's parameters stay as they were. An entity is a
+  vehicle, so `pedestrians` cannot be given with it.
+- **Refused before the run.** A field the backend cannot change during a run
+  is refused when the action is registered on the scenario, with a
+  `TrafficParameterError`:
+    - the TrafficManager can change every vehicle parameter it supports, and no
+      pedestrian one;
+    - SUMO can change every vehicle parameter it supports, and a pedestrian's
+      `walking_speed_mps` and `min_gap_m`. It cannot change
+      `red_light_violation_s`, which SUMO reads off the pedestrian types it is
+      started with: set it in `traffic.pedestrians` instead.
+- **Under SUMO,** a scenario vehicle the TrafficManager drives
+  (`scenario_vehicles=traffic_manager`) gets the shared fields, with a warning
+  naming the others. A visibility already held is held anew, from the new
+  draws.
+- **One run only.** The change lasts until the run ends: the next run of a
+  queue starts from its own config.
+- **In the scenario editor** it is two cards: *Traffic Parameters* on the
+  environment track (the whole run's traffic) and *Vehicle Parameters* on an
+  NPC's track (that vehicle alone), with a mean and a std field per
+  parameter; an empty field keeps the run's value.
+
 ## The lifecycle
 
 `ScenarioRunner` calls these at fixed points of a run, beside the ego entity's

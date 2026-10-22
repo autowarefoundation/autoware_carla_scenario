@@ -1,6 +1,6 @@
 # Model of the parts of autoware_carla_scenario.traffic a scenario names
-# (docs/typecheck.md): the manoeuvre directions and the level a vehicle is
-# simulated at. Traffic backends are the runner's business and are not
+# (docs/typecheck.md): the manoeuvre directions, the level a vehicle is
+# simulated at, and the traffic parameters a TrafficParametersAction sets. Traffic backends are the runner's business and are not
 # modelled for a scenario.
 #
 # The library check compiles traffic.base, traffic.config, traffic.driven,
@@ -108,3 +108,75 @@ def build_backend(name: str, options = None, vehicles = None, pedestrians = None
 
 def load_traffic_backend_plugins() -> None:
     pass
+
+
+# The traffic parameters a scenario hands a TrafficParametersAction
+# (traffic/parameters.py): each numeric one a spread every road user draws its
+# own value from.
+class Spread:
+    mean: float
+    std: float
+
+    def __init__(self, mean: float, std: float = 0.0):
+        self.mean = mean
+        self.std = std
+
+
+# traffic.vehicles: how the vehicles drive.
+class VehicleParameters:
+    speed_factor: Optional[Spread]
+    min_gap_m: Optional[Spread]
+    lane_changes: Optional[bool]
+    ignore_lights: Optional[Spread]
+    ignore_signs: Optional[Spread]
+    ignore_vehicles: Optional[Spread]
+    ignore_walkers: Optional[Spread]
+    random_lane_changes: Optional[Spread]
+    accel: Optional[Spread]
+    decel: Optional[Spread]
+    reaction_time_s: Optional[Spread]
+    imperfection: Optional[Spread]
+    follow_visibility: Optional[bool]
+
+    def __init__(self,
+                 speed_factor: Optional[Spread] = None,
+                 min_gap_m: Optional[Spread] = None,
+                 lane_changes: Optional[bool] = None,
+                 ignore_lights: Optional[Spread] = None,
+                 ignore_signs: Optional[Spread] = None,
+                 ignore_vehicles: Optional[Spread] = None,
+                 ignore_walkers: Optional[Spread] = None,
+                 random_lane_changes: Optional[Spread] = None,
+                 accel: Optional[Spread] = None,
+                 decel: Optional[Spread] = None,
+                 reaction_time_s: Optional[Spread] = None,
+                 imperfection: Optional[Spread] = None,
+                 follow_visibility: Optional[bool] = None):
+        self.speed_factor = speed_factor
+        self.min_gap_m = min_gap_m
+        self.lane_changes = lane_changes
+        self.ignore_lights = ignore_lights
+        self.ignore_signs = ignore_signs
+        self.ignore_vehicles = ignore_vehicles
+        self.ignore_walkers = ignore_walkers
+        self.random_lane_changes = random_lane_changes
+        self.accel = accel
+        self.decel = decel
+        self.reaction_time_s = reaction_time_s
+        self.imperfection = imperfection
+        self.follow_visibility = follow_visibility
+
+
+# traffic.pedestrians: how the pedestrians walk.
+class PedestrianParameters:
+    walking_speed_mps: Optional[Spread]
+    min_gap_m: Optional[Spread]
+    red_light_violation_s: Optional[Spread]
+
+    def __init__(self,
+                 walking_speed_mps: Optional[Spread] = None,
+                 min_gap_m: Optional[Spread] = None,
+                 red_light_violation_s: Optional[Spread] = None):
+        self.walking_speed_mps = walking_speed_mps
+        self.min_gap_m = min_gap_m
+        self.red_light_violation_s = red_light_violation_s

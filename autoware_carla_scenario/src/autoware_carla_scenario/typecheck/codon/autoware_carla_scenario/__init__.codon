@@ -14,7 +14,7 @@ from .actions import (ConstructionSettings, ConstructionZoneAction, AdversarialB
                       SetSpeedAction, StalledObjectAction, PropAction, PropOperation, TickTiming, collision_objects, TrafficLightTarget, TrafficSignalAction,
                       TrafficSignalControllerAction, TurnAction, TurnIndicatorAction,
                       WalkStraightAction,
-                      TrafficSourceAction, TrafficSinkAction)
+                      TrafficParametersAction, TrafficSourceAction, TrafficSinkAction)
 from ._bridge_pose import BridgePose
 from .autoware_bridge.grpc_server import GrpcAutowareBridgeServer
 from .conditions import (AccelerationCondition, AccelerationDirection,
@@ -63,7 +63,8 @@ from .scenario_base import BaseScenario, EgoConfig
 from .scenario_config import (DriverCameraSpec, DriverConfig, DriverControlSpec, DriverLidarSpec,
                               EgoVehicleConfig, EntityConfig, MapConfig, NpcVehicleConfig,
                               ServerConfig, SweepConfig)
-from .traffic import LaneChangeDirection, TrafficContext, TurnDirection, register_backend
+from .traffic import (LaneChangeDirection, PedestrianParameters, Spread, TrafficContext,
+                      TurnDirection, VehicleParameters, register_backend)
 from .trajectory import (MapPose, ReferenceContext, RelativeLanePose, RouteCrossingPose,
                          RouteCrosswalkPose, RouteLanePose, RouteOppositePose,
                          RouteRoadsidePose, Trajectory, TrajectoryFollowingMode,

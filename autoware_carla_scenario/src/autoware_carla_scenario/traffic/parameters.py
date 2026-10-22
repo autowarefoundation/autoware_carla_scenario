@@ -141,6 +141,8 @@ def check_supported(
     set_fields: list[str],
     supported: set[str],
     table: dict[str, list[str]],
+    during_run: bool = False,
+    before_run: Optional[set[str]] = None,
 ) -> None:
     """Refuse every field of *set_fields* that *backend* does not support.
 
@@ -150,6 +152,13 @@ def check_supported(
         set_fields: The fields that are set.
         supported: The fields the backend supports.
         table: Each field and the built-in backends that support it.
+        during_run: Whether the fields are to change during a run (a
+            :class:`~autoware_carla_scenario.TrafficParametersAction`), which
+            the message says, as *supported* is then what the backend can
+            change then.
+        before_run: With *during_run*, the fields the backend supports in its
+            config, before the run: such a field is refused as one to set
+            there instead.
 
     Raises:
         TrafficParameterError: Naming each unsupported field and the backends
@@ -158,6 +167,11 @@ def check_supported(
     problems: list[str] = []
     for name in set_fields:
         if name in supported:
+            continue
+        if before_run is not None and name in before_run:
+            problems.append(
+                f"{node}.{name} can only be set before the run, in its config"
+            )
             continue
         others = table.get(name, [])
         if others:
@@ -169,8 +183,9 @@ def check_supported(
         else:
             problems.append(f"{node}.{name} is supported by no built-in backend")
     if problems:
+        what = "cannot change during a run:" if during_run else "does not support"
         raise TrafficParameterError(
-            f"The '{backend}' traffic backend does not support "
+            f"The '{backend}' traffic backend {what} "
             + "; ".join(problems)
             + ". Leave the field unset (null) or select a backend that "
             "supports it."
@@ -416,6 +431,69 @@ class VehicleParameters:
             ),
         )
 
+    def overridden_by(self, overrides: "VehicleParameters") -> "VehicleParameters":
+        """These parameters with every field *overrides* sets replaced by its
+        value; the rest kept (a :class:`~autoware_carla_scenario.TrafficParametersAction`)."""
+        return VehicleParameters(
+            speed_factor=(
+                overrides.speed_factor
+                if overrides.speed_factor is not None
+                else self.speed_factor
+            ),
+            min_gap_m=(
+                overrides.min_gap_m
+                if overrides.min_gap_m is not None
+                else self.min_gap_m
+            ),
+            lane_changes=(
+                overrides.lane_changes
+                if overrides.lane_changes is not None
+                else self.lane_changes
+            ),
+            ignore_lights=(
+                overrides.ignore_lights
+                if overrides.ignore_lights is not None
+                else self.ignore_lights
+            ),
+            ignore_signs=(
+                overrides.ignore_signs
+                if overrides.ignore_signs is not None
+                else self.ignore_signs
+            ),
+            ignore_vehicles=(
+                overrides.ignore_vehicles
+                if overrides.ignore_vehicles is not None
+                else self.ignore_vehicles
+            ),
+            ignore_walkers=(
+                overrides.ignore_walkers
+                if overrides.ignore_walkers is not None
+                else self.ignore_walkers
+            ),
+            random_lane_changes=(
+                overrides.random_lane_changes
+                if overrides.random_lane_changes is not None
+                else self.random_lane_changes
+            ),
+            accel=(overrides.accel if overrides.accel is not None else self.accel),
+            decel=(overrides.decel if overrides.decel is not None else self.decel),
+            reaction_time_s=(
+                overrides.reaction_time_s
+                if overrides.reaction_time_s is not None
+                else self.reaction_time_s
+            ),
+            imperfection=(
+                overrides.imperfection
+                if overrides.imperfection is not None
+                else self.imperfection
+            ),
+            follow_visibility=(
+                overrides.follow_visibility
+                if overrides.follow_visibility is not None
+                else self.follow_visibility
+            ),
+        )
+
     def describe(self) -> dict[str, Any]:
         """The fields that are set, for a run's result record: a spread as
         ``{"mean": ..., "std": ...}``."""
@@ -495,6 +573,29 @@ class PedestrianParameters:
             self.set_fields(),
             supported,
             PEDESTRIAN_PARAMETER_BACKENDS,
+        )
+
+    def overridden_by(
+        self, overrides: "PedestrianParameters"
+    ) -> "PedestrianParameters":
+        """These parameters with every field *overrides* sets replaced by its
+        value; the rest kept (a :class:`~autoware_carla_scenario.TrafficParametersAction`)."""
+        return PedestrianParameters(
+            walking_speed_mps=(
+                overrides.walking_speed_mps
+                if overrides.walking_speed_mps is not None
+                else self.walking_speed_mps
+            ),
+            min_gap_m=(
+                overrides.min_gap_m
+                if overrides.min_gap_m is not None
+                else self.min_gap_m
+            ),
+            red_light_violation_s=(
+                overrides.red_light_violation_s
+                if overrides.red_light_violation_s is not None
+                else self.red_light_violation_s
+            ),
         )
 
     def describe(self) -> dict[str, Any]:

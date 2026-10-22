@@ -11,6 +11,7 @@ from .traffic_signal_controller import TrafficSignalControllerAction
 from .turn import TurnAction, TurnDirection
 from .turn_indicator import TurnIndicatorAction
 from .background_traffic import TrafficSinkAction, TrafficSourceAction
+from .traffic_parameters import TrafficParametersAction
 from .walk_straight import WalkStraightAction
 
 __all__ = [
@@ -28,6 +29,7 @@ __all__ = [
     "TurnAction",
     "TurnDirection",
     "TurnIndicatorAction",
+    "TrafficParametersAction",
     "TrafficSinkAction",
     "TrafficSourceAction",
     "WalkStraightAction",

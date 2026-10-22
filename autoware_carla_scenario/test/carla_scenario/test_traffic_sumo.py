@@ -988,6 +988,84 @@ def test_sumo_hands_the_shared_parameters_to_its_traffic_manager() -> None:
 
 
 @needs_sumo
+def test_an_override_redraws_every_vehicle_sumo_drives(
+    crossroads: Path, tmp_path: Path
+) -> None:
+    from autoware_carla_scenario.traffic.parameters import Spread, VehicleParameters
+
+    configured = VehicleParameters(reaction_time_s=Spread(1.0), decel=Spread(4.0))
+    backend, world, npc, ego = _prepared(crossroads, tmp_path, vehicles=configured)
+    tc = backend._traci
+    try:
+        handle = backend.spawn_background(
+            world, _carla_transform(-60.0, 5.25, 0.0), speed_kmh=60.0
+        )
+        assert handle is not None
+        backend.tick(world, 0.0)
+        (npc_id,) = backend._driven
+        (ego_id,) = backend._external
+        assert tc.vehicle.getTau(handle) == pytest.approx(1.0)
+
+        backend.override_vehicle_parameters(
+            world, VehicleParameters(reaction_time_s=Spread(2.5))
+        )
+        for sumo_id in (handle, npc_id):
+            assert tc.vehicle.getTau(sumo_id) == pytest.approx(2.5)
+            assert tc.vehicle.getDecel(sumo_id) == pytest.approx(4.0)  # kept
+        assert tc.vehicle.getTau(ego_id) == pytest.approx(1.0)  # CARLA's
+        later = backend.spawn_background(
+            world, _carla_transform(-75.0, 1.75, 0.0), speed_kmh=60.0
+        )
+        assert later is not None
+        backend.tick(world, 0.05)
+        assert tc.vehicle.getTau(later) == pytest.approx(2.5)
+
+        # One vehicle alone: the others, and the run, keep theirs.
+        backend.override_entity_parameters(
+            world, VehicleParameters(reaction_time_s=Spread(0.5)), _Entity(npc, "npc")
+        )
+        assert tc.vehicle.getTau(npc_id) == pytest.approx(0.5)
+        assert tc.vehicle.getTau(handle) == pytest.approx(2.5)
+    finally:
+        backend.close()
+    assert backend.vehicle_parameters == configured
+
+
+@needs_sumo
+def test_an_override_redraws_every_pedestrian_sumo_walks(
+    crossroads_with_sidewalks: Path, tmp_path: Path
+) -> None:
+    from autoware_carla_scenario.traffic.parameters import (
+        PedestrianParameters,
+        Spread,
+    )
+
+    backend, world, _ego = _walking(crossroads_with_sidewalks, tmp_path)
+    tc = backend._traci
+    try:
+        for i in range(100):
+            backend.tick(world, i * 0.05)
+        assert tc.person.getIDList()
+        backend.override_pedestrian_parameters(
+            world,
+            PedestrianParameters(walking_speed_mps=Spread(0.7), min_gap_m=Spread(0.9)),
+        )
+        for person in tc.person.getIDList():
+            assert tc.person.getMaxSpeed(person) == pytest.approx(0.7)
+            assert tc.person.getMinGap(person) == pytest.approx(0.9)
+        before = set(tc.person.getIDList())
+        for i in range(100, 200):
+            backend.tick(world, i * 0.05)
+        joined = set(tc.person.getIDList()) - before
+        assert joined
+        for person in joined:
+            assert tc.person.getMaxSpeed(person) == pytest.approx(0.7)
+    finally:
+        backend.close()
+    assert backend.pedestrian_parameters == PedestrianParameters()
+
+
+@needs_sumo
 def test_a_background_vehicle_off_the_road_is_refused(
     crossroads: Path, tmp_path: Path
 ) -> None:

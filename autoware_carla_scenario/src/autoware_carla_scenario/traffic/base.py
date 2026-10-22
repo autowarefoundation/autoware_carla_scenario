@@ -351,6 +351,11 @@ class TrafficBackend:
     _vehicle_parameters: Optional[VehicleParameters] = None
     #: What :meth:`set_pedestrian_parameters` was given; ``None``: every default.
     _pedestrian_parameters: Optional[PedestrianParameters] = None
+    #: The parameters the run started with, while an override changed them;
+    #: :meth:`_restore_parameters` puts them back when the run closes.
+    _configured_vehicles: Optional[VehicleParameters] = None
+    _configured_pedestrians: Optional[PedestrianParameters] = None
+    _overridden: bool = False
 
     # ------------------------------------------------------------------
     # Parameters
@@ -424,6 +429,71 @@ class TrafficBackend:
         if self._pedestrian_parameters is None:
             return _NO_PEDESTRIAN_PARAMETERS
         return self._pedestrian_parameters
+
+    # ------------------------------------------------------------------
+    # Parameters changed during a run
+    # ------------------------------------------------------------------
+
+    def _remember_parameters(self) -> None:
+        """Keep the run's own parameters before an override changes them: one
+        backend serves a whole queue, and the next run starts from its config,
+        not from where this one's actions left it."""
+        if not self._overridden:
+            self._overridden = True
+            self._configured_vehicles = self._vehicle_parameters
+            self._configured_pedestrians = self._pedestrian_parameters
+
+    def _restore_parameters(self) -> None:
+        """Put back what :meth:`_remember_parameters` kept; :meth:`close` calls it."""
+        if self._overridden:
+            self._overridden = False
+            self._vehicle_parameters = self._configured_vehicles
+            self._pedestrian_parameters = self._configured_pedestrians
+
+    def supported_vehicle_overrides(self) -> set[str]:
+        """The vehicle parameters this backend can change during a run
+        (:meth:`override_vehicle_parameters`).
+
+        None by default: a backend that cannot refuses the
+        :class:`~autoware_carla_scenario.TrafficParametersAction` that asks,
+        when it is registered, rather than leave the run as it was.
+        """
+        return set()
+
+    def supported_pedestrian_overrides(self) -> set[str]:
+        """The pedestrian parameters this backend can change during a run
+        (:meth:`override_pedestrian_parameters`); none by default."""
+        return set()
+
+    def override_vehicle_parameters(
+        self, world: "carla.World", overrides: VehicleParameters
+    ) -> None:
+        """Change the vehicles' parameters from now on: the fields *overrides*
+        sets replace the ones the run had, and every vehicle draws its value
+        of them again.
+
+        Only the fields of :meth:`supported_vehicle_overrides` reach here; the
+        action checked them when it was registered.
+        """
+        logger.warning("%s: cannot change vehicle parameters during a run", self.name)
+
+    def override_entity_parameters(
+        self, world: "carla.World", overrides: VehicleParameters, entity: DrivenEntity
+    ) -> None:
+        """Give *entity*'s vehicle alone a new draw of the fields *overrides*
+        sets; the run's parameters stay as they were."""
+        logger.warning(
+            "%s: cannot change a vehicle's parameters during a run", self.name
+        )
+
+    def override_pedestrian_parameters(
+        self, world: "carla.World", overrides: PedestrianParameters
+    ) -> None:
+        """Change the pedestrians' parameters from now on, as
+        :meth:`override_vehicle_parameters` does the vehicles'."""
+        logger.warning(
+            "%s: cannot change pedestrian parameters during a run", self.name
+        )
 
     # ------------------------------------------------------------------
     # Lifecycle
