@@ -286,14 +286,8 @@ class SumoBackendConfig:
                 "vehicle_control must be one of "
                 f"{', '.join(_VEHICLE_CONTROLS)} (got {self.vehicle_control!r})"
             )
-        if self.curve_lateral_acceleration is not None and not (
-            self.curve_lateral_acceleration > 0.0
-        ):
-            raise ValueError(
-                "curve_lateral_acceleration must be positive or null "
-                f"(got {self.curve_lateral_acceleration!r})"
-            )
         for name, value in (
+            ("curve_lateral_acceleration", self.curve_lateral_acceleration),
             ("lateral_resolution_m", self.lateral_resolution_m),
             ("lane_change_duration_s", self.lane_change_duration_s),
             ("step_length_s", self.step_length_s),

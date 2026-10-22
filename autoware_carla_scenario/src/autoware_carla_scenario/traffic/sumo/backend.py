@@ -166,6 +166,9 @@ _VEHICLE_SETTERS = {
     "imperfection": "setImperfection",
     "max_lateral_speed_mps": "setMaxSpeedLat",
 }
+#: Vehicle parameter -> the lane-change model parameter that gives a vehicle
+#: its draw, for one with no setter of its own (``laneChangeModel.<name>``).
+_LANE_CHANGE_MODEL_PARAMETERS = {"max_lateral_accel": "lcAccelLat"}
 #: How many pedestrian types, each its own draw of the pedestrian
 #: parameters, SUMO's default pedestrian type is a distribution of.
 PEDESTRIAN_TYPES = 100
@@ -407,12 +410,22 @@ class SumoTrafficBackend(TrafficBackend):
             )
 
     def supported_vehicle_parameters(self) -> set[str]:
-        """SUMO's, but a lateral acceleration only with the sublane model
-        (``lateral_resolution_m``): SUMO's lane-based model has none."""
-        supported = super().supported_vehicle_parameters()
-        if self._config.lateral_resolution_m is None:
-            supported.discard("max_lateral_accel")
-        return supported
+        """SUMO's, but those of :meth:`parameter_requirements`."""
+        return super().supported_vehicle_parameters() - set(
+            self.parameter_requirements()
+        )
+
+    def parameter_requirements(self) -> dict[str, str]:
+        """A lateral acceleration only with the sublane model: SUMO's
+        lane-based model has none."""
+        if self._config.lateral_resolution_m is not None:
+            return {}
+        return {
+            "max_lateral_accel": (
+                "traffic.options.lateral_resolution_m (SUMO's sublane model, the "
+                "only one with a lateral acceleration), which is null"
+            )
+        }
 
     def supported_vehicle_overrides(self) -> set[str]:
         """Every vehicle parameter it supports: each is set per vehicle."""
@@ -2737,18 +2750,18 @@ class SumoTrafficBackend(TrafficBackend):
                 ("reaction_time_s", parameters.reaction_time_s),
                 ("imperfection", parameters.imperfection),
                 ("max_lateral_speed_mps", parameters.max_lateral_speed_mps),
+                ("max_lateral_accel", parameters.max_lateral_accel),
             ):
-                if value is not None:
-                    setter = getattr(vehicle, _VEHICLE_SETTERS[name])
-                    setter(sumo_id, value.draw(rng, VEHICLE_BOUNDS[name]))
-            lateral_accel = parameters.max_lateral_accel
-            if lateral_accel is not None:
-                # No setter of its own: a parameter of the sublane model.
-                vehicle.setParameter(
-                    sumo_id,
-                    "laneChangeModel.lcAccelLat",
-                    f"{lateral_accel.draw(rng, VEHICLE_BOUNDS['max_lateral_accel']):g}",
-                )
+                if value is None:
+                    continue
+                draw = value.draw(rng, VEHICLE_BOUNDS[name])
+                model = _LANE_CHANGE_MODEL_PARAMETERS.get(name)
+                if model is not None:
+                    vehicle.setParameter(
+                        sumo_id, f"laneChangeModel.{model}", f"{draw:g}"
+                    )
+                else:
+                    getattr(vehicle, _VEHICLE_SETTERS[name])(sumo_id, draw)
             if parameters.lane_changes is not None:
                 vehicle.setLaneChangeMode(
                     sumo_id,

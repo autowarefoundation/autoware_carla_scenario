@@ -134,6 +134,7 @@ class TrafficParametersAction(BaseAction):
                 VEHICLE_PARAMETER_BACKENDS,
                 during_run=True,
                 before_run=backend.supported_vehicle_parameters(),
+                requirements=backend.parameter_requirements(),
             )
         pedestrians = self._pedestrians
         if pedestrians is not None:

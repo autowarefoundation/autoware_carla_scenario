@@ -99,7 +99,6 @@ __all__ = [
     "PedestrianParameters",
     "TrafficParameterError",
     "VEHICLE_PARAMETER_BACKENDS",
-    "VEHICLE_PARAMETER_REQUIREMENTS",
     "VehicleParameters",
 ]
 
@@ -123,15 +122,6 @@ VEHICLE_PARAMETER_BACKENDS: dict[str, list[str]] = {
     "max_lateral_speed_mps": ["sumo"],
     "max_lateral_accel": ["sumo"],
     "follow_visibility": ["sumo"],
-}
-
-#: A vehicle parameter a built-in backend supports only with one of its options
-#: set, and that option: what an error names when the option is not set.
-VEHICLE_PARAMETER_REQUIREMENTS: dict[str, str] = {
-    "max_lateral_accel": (
-        "traffic.options.lateral_resolution_m (SUMO's sublane model, the only "
-        "one with a lateral acceleration)"
-    ),
 }
 
 #: The same for each pedestrian parameter.  Only SUMO simulates pedestrian
@@ -160,6 +150,7 @@ def check_supported(
     table: dict[str, list[str]],
     during_run: bool = False,
     before_run: Optional[set[str]] = None,
+    requirements: Optional[dict[str, str]] = None,
 ) -> None:
     """Refuse every field of *set_fields* that *backend* does not support.
 
@@ -176,6 +167,9 @@ def check_supported(
         before_run: With *during_run*, the fields the backend supports in its
             config, before the run: such a field is refused as one to set
             there instead.
+        requirements: The fields the backend would support with an option
+            set that is not, and what to set
+            (:meth:`~autoware_carla_scenario.traffic.base.TrafficBackend.parameter_requirements`).
 
     Raises:
         TrafficParameterError: Naming each unsupported field and the backends
@@ -190,12 +184,10 @@ def check_supported(
                 f"{node}.{name} can only be set before the run, in its config"
             )
             continue
-        others = table.get(name, [])
-        if backend in others and name in VEHICLE_PARAMETER_REQUIREMENTS:
-            problems.append(
-                f"{node}.{name} needs {VEHICLE_PARAMETER_REQUIREMENTS[name]}"
-            )
+        if requirements is not None and name in requirements:
+            problems.append(f"{node}.{name} needs {requirements[name]}")
             continue
+        others = table.get(name, [])
         if others:
             where = " or ".join(f"'{b}'" for b in others)
             plural = "s" if len(others) > 1 else ""
@@ -476,7 +468,12 @@ class VehicleParameters:
         ]
         return [name for name, is_set in values if is_set]
 
-    def check_supported(self, backend: str, supported: set[str]) -> None:
+    def check_supported(
+        self,
+        backend: str,
+        supported: set[str],
+        requirements: Optional[dict[str, str]] = None,
+    ) -> None:
         """Refuse every field set here that *backend* does not support
         (:func:`check_supported`, under ``traffic.vehicles``)."""
         check_supported(
@@ -485,6 +482,7 @@ class VehicleParameters:
             self.set_fields(),
             supported,
             VEHICLE_PARAMETER_BACKENDS,
+            requirements=requirements,
         )
 
     def restricted_to(self, supported: set[str]) -> "VehicleParameters":
