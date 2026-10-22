@@ -1164,6 +1164,136 @@ def test_iterating_over_an_enum_class_and_looking_up_a_member_by_name() -> None:
     assert "h = {m: 1 for m in Mode._acs_members()}" in out
 
 
+def test_cls_of_an_enum_s_classmethod_is_the_enum() -> None:
+    source = textwrap.dedent(
+        """
+        class Mode(Enum):
+            A = 1
+            @classmethod
+            def f(cls, n):
+                for m in cls:
+                    pass
+                return list(cls), len(cls), 1 in cls, cls[n], cls.A
+            @classmethod
+            def g(cls):
+                return [m for m in cls], (*cls,)
+        """
+    )
+    out = _without_extensions(_transform(source))
+    assert "for m in Mode._acs_members():" in out
+    assert "list(Mode._acs_members()), len(Mode._acs_members())" in out
+    assert "1 in Mode._acs_members(), Mode._acs_by_name(n), Mode.A" in out
+    assert "[m for m in Mode._acs_members()], (*Mode._acs_members(),)" in out
+
+
+def test_cls_is_the_enum_in_its_classmethod_only() -> None:
+    source = textwrap.dedent(
+        """
+        class Mode(Enum):
+            A = 1
+            def inst(self, cls):
+                return list(cls)
+            @staticmethod
+            def st(cls):
+                return list(cls)
+            @classmethod
+            def ok(klass):
+                return list(klass)
+        def free(cls):
+            return list(cls)
+        cls = Mode
+        x = list(cls)
+        """
+    )
+    out = _without_extensions(_transform(source))
+    assert out.count("list(cls)") == 4
+    assert "return list(Mode._acs_members())" in out
+
+
+def test_cls_shadowed_in_a_classmethod_is_not_the_enum() -> None:
+    source = textwrap.dedent(
+        """
+        class Mode(Enum):
+            A = 1
+            @classmethod
+            def lam(cls):
+                return list(cls), (lambda cls: list(cls))([1])
+            @classmethod
+            def nested(cls):
+                def inner(cls):
+                    return list(cls)
+                return inner([1]), [list(cls) for cls in [[1]]]
+            @classmethod
+            def rebound(cls):
+                cls = [1]
+                return list(cls)
+            @classmethod
+            def loop(cls):
+                for cls in [[1]]:
+                    pass
+                return list(cls)
+            @classmethod
+            def closure(cls):
+                return (lambda: list(cls))()
+        """
+    )
+    out = _without_extensions(_transform(source))
+    assert "return list(Mode._acs_members()), (lambda cls: list(cls))([1])" in out
+    assert "return list(cls)\n" in out  # inner(cls)
+    assert "[list(cls) for cls in [[1]]]" in out
+    assert "(lambda: list(Mode._acs_members()))()" in out
+    # A rebound `cls` is no alias anywhere in the method.
+    assert out.count("list(Mode._acs_members())") == 2
+
+
+def test_cls_of_a_class_that_is_no_enum_is_untouched() -> None:
+    source = textwrap.dedent(
+        """
+        class Plain:
+            @classmethod
+            def f(cls):
+                return list(cls), cls["A"]
+            def g(self):
+                return list(type(self)), list(self.__class__)
+        """
+    )
+    out = _transform(source)
+    assert 'list(Plain), Plain["A"]' in out
+    assert "list(type(self)), list(self.__class__)" in out
+    assert "_acs_members" not in out
+
+
+def test_type_of_self_and_dunder_class_are_the_enum_in_an_instance_method() -> None:
+    source = textwrap.dedent(
+        """
+        class Mode(Enum):
+            A = 1
+            def peers(self):
+                return list(type(self)), [m for m in self.__class__], type(self)["A"]
+            def other(self, o):
+                return list(type(o)), list(type(self, 1)), list(self.__class__.x)
+            def shadow(self):
+                type = len
+                return list(type(self))
+            def rebound(self):
+                self = 3
+                return list(type(self))
+            @staticmethod
+            def st(self):
+                return list(type(self))
+        def free(self):
+            return list(type(self))
+        """
+    )
+    out = _without_extensions(_transform(source))
+    assert "list(Mode._acs_members()), [m for m in Mode._acs_members()]," in out
+    assert 'Mode._acs_by_name("A")' in out
+    assert "list(type(o)), list(type(self, 1)), list(self.__class__.x)" in out
+    # Only `peers`: `type` bound, `self` rebound, a staticmethod, a function.
+    assert out.count("list(Mode._acs_members())") == 1
+    assert out.count("list(type(self))") == 4
+
+
 def test_an_enum_of_another_module_is_iterated_when_named() -> None:
     source = "def f():\n    return list(Rule), Rule['A']\n"
     assert "list(Rule)" in _transform(source)

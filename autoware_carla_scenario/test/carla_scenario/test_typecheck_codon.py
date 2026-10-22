@@ -4676,6 +4676,163 @@ def test_an_enum_class_is_iterated_and_looked_up_by_name(tmp_path: Path) -> None
     assert result.ok, result.format()
 
 
+_CLS_ENUMS = """
+class Gear(enum.Enum):
+    P = "p"
+    D = "d"
+
+    @classmethod
+    def names(cls) -> typing.List[str]:
+        return [g.name for g in cls]
+
+    @classmethod
+    def everything(cls) -> typing.List["Gear"]:
+        return list(cls)
+
+    @classmethod
+    def count(cls) -> int:
+        return len(cls)
+
+    @classmethod
+    def known(cls, g: "Gear") -> bool:
+        return g in cls
+
+    @classmethod
+    def parse(cls, name: str) -> "Gear":
+        return cls[name]
+
+    def peers(self) -> typing.List["Gear"]:
+        return [m for m in type(self) if m != self]
+
+    def siblings(self) -> int:
+        return len(self.__class__) + len(list(type(self))) + type(self)["P"].value.__len__()
+
+
+class Speed(enum.IntEnum):
+    LOW = 1
+    HIGH = 2
+
+    @classmethod
+    def fastest(cls) -> "Speed":
+        return max(cls)
+
+    @classmethod
+    def total(cls) -> int:
+        return sum([int(s) for s in cls]) + len(list(cls)) + (1 if cls["LOW"] in cls else 0)
+
+
+class Bits(enum.Flag):
+    A = 1
+    B = 2
+    AB = A | B
+
+    @classmethod
+    def singles(cls) -> typing.List["Bits"]:
+        return list(cls)
+
+    @classmethod
+    def has(cls, b: "Bits") -> bool:
+        return b in cls and len(cls) == 2 and cls["AB"] == cls.A | cls.B
+
+
+class Tag(enum.StrEnum):
+    X = "x"
+    Y = "y"
+
+    @classmethod
+    def values(cls) -> typing.List[str]:
+        return [t.value for t in cls]
+
+    @classmethod
+    def parse(cls, s: str) -> "Tag":
+        for t in cls:
+            if t.value == s:
+                return t
+        return cls["X"]
+"""
+
+
+def test_an_enum_class_is_iterated_through_cls_in_its_own_methods(
+    tmp_path: Path,
+) -> None:
+    # `cls` in a classmethod, `type(self)` and `self.__class__` in an instance
+    # method (#481).
+    setup = """
+        assert Gear.names() == ["P", "D"] and Gear.count() == 2
+        assert Gear.everything()[1] == Gear.D and Gear.known(Gear.P)
+        assert Gear.parse("D") == Gear.D and Gear.D.peers() == [Gear.P]
+        assert Gear.P.siblings() == 5
+        assert Speed.fastest() == Speed.HIGH and Speed.total() == 6
+        assert Bits.singles() == [Bits.A, Bits.B] and Bits.has(Bits.A)
+        assert Tag.values() == ["x", "y"] and Tag.parse("y") == Tag.Y
+    """
+    scenario, config, _ = _data_case(tmp_path, _CLS_ENUMS, setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+_CLS_MISUSE = """
+class Gear(enum.Enum):
+    P = 0
+    D = 1
+
+    @classmethod
+    def lambda_shadow(cls) -> int:
+        f = lambda cls: len(cls)
+        return f([1, 2])
+
+    @classmethod
+    def rebound(cls) -> typing.List[str]:
+        cls = [1, 2]
+        return [str(g) for g in cls]
+"""
+
+
+def test_a_lambdas_own_cls_and_a_rebound_cls_are_not_the_enum(
+    tmp_path: Path,
+) -> None:
+    setup = """
+        assert Gear.lambda_shadow() == 2 and Gear.rebound() == ["1", "2"]
+    """
+    scenario, config, _ = _data_case(tmp_path, _CLS_MISUSE, setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+@pytest.mark.parametrize(
+    ("body", "message"),
+    [
+        ("return [g for g in cls.__members__]", "no attribute '__members__'"),
+        ("return [g for g in _rows(cls)]", "does not match expected type 'int'"),
+        # Another name for the class: refused, with the hint (#481).
+        (
+            "k = cls\n        return [str(g) for g in k]",
+            "write the class's name (`for m in Gear`)",
+        ),
+    ],
+)
+def test_an_enum_class_held_by_another_name_is_refused(
+    tmp_path: Path, body: str, message: str
+) -> None:
+    definitions = f"""
+def _rows(c: int) -> typing.List[int]:
+    return [1]
+
+
+class Gear(enum.Enum):
+    P = 0
+    D = 1
+
+    @classmethod
+    def names(cls) -> typing.List[str]:
+        {body}
+"""
+    scenario, config, path = _data_case(tmp_path, definitions, "Gear.names()\n")
+    result = typecheck_scenario(scenario, config)
+    assert not result.ok, result.format()
+    assert message in result.format()
+
+
 def test_the_framework_enums_are_iterated_and_looked_up_by_name(
     tmp_path: Path,
 ) -> None:
