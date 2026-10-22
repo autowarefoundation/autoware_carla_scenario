@@ -64,7 +64,7 @@ from .sensor.carla_lidar import CarlaLidarSensor, CarlaLidarSensorConfig
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
 
-    from .driver.base import DriverClientConfig
+    from .driver.base import DriverCameraLens, DriverClientConfig
 
 __all__ = [
     "DATASET_SUFFIX",
@@ -78,6 +78,7 @@ __all__ = [
     "camera_channel",
     "category_of",
     "dataset_path",
+    "opencv_of_ftheta",
     "offer_driver_sensors",
     "require_writer",
     "withdraw_driver_sensors",
@@ -184,6 +185,9 @@ class T4Settings:
     lidars: tuple[CarlaLidarSensorConfig, ...] = ()
     #: The cameras, ``(logical id, sensor)``, as ``driver.cameras``.
     cameras: tuple[tuple[str, CarlaCameraSensorConfig], ...] = ()
+    #: The cameras whose frames are drawn through a lens of their own, not
+    #: CARLA's pinhole: ``(logical id, lens)``, as ``driver.cameras[].lens``.
+    lenses: tuple[tuple[str, "DriverCameraLens"], ...] = ()
     #: Seconds between key frames, ``driver.policy_timestep_s``.
     timestep_s: float = 0.1
     #: The JPEG quality of the frames the recorder encodes itself
@@ -240,11 +244,83 @@ class T4Settings:
                 (camera.logical_id, camera.to_sensor_config())
                 for camera in driver.cameras
             ),
+            lenses=tuple(
+                (camera.logical_id, camera.lens)
+                for camera in driver.cameras
+                if camera.lens is not None
+            ),
             timestep_s=float(driver.policy_timestep_s),
             jpeg_quality=int(driver.image_quality),
             rear_axle_offset_m=driver.rear_axle_offset_m,
             **values,
         )
+
+
+#: The largest angle from the optical axis a pinhole model, OpenCV's rational
+#: one included, can hold: it projects through tan(theta).
+_PINHOLE_MAX_ANGLE_RAD = np.radians(85.0)
+
+
+def opencv_of_ftheta(
+    lens: "DriverCameraLens", width: int, height: int, *, samples: int = 2000
+) -> tuple[list[list[float]], list[float], float, float]:
+    """OpenCV's rational camera model fitted to the F-theta *lens* of a
+    *width* x *height* image: T4's cameras are OpenCV's (``camera_intrinsic``
+    and the ``camera_distortion`` ``[k1, k2, p1, p2, k3, k4, k5, k6]``), and
+    have no F-theta model.
+
+    In normalised coordinates both models are radial, so the fit is of one
+    curve: the distorted radius ``angle_to_pixeldist_poly(theta) / f`` against
+    the pinhole's ``tan(theta)``, ``f`` being the lens' pixels per radian at
+    its centre (the focal lengths: ``linear_cde``'s ``c`` and ``d`` scale and
+    skew the columns). The radial terms are fitted by least squares, linear
+    in them, weighted to pixels, at angles out to the image's farthest corner
+    within the lens (``max_angle``, and 85 degrees, short of a pinhole's 90).
+
+    Returns:
+        ``(intrinsic, distortion, mean error, max error)``: the errors are the
+        pixels between the fitted model and the lens along that curve.
+
+    Raises:
+        ValueError: If the lens is skewed in its rows (``linear_cde``'s ``e``
+            is not 0), which OpenCV's intrinsic matrix cannot hold, or no
+            rational model fits it (its denominator would pass through 0).
+    """
+    poly = np.polynomial.polynomial
+    c, d, e = (float(v) for v in lens.linear_cde)
+    if abs(e) > 1e-12:
+        raise ValueError("an F-theta lens with linear_cde e != 0 has no OpenCV model")
+    cx, cy = (float(v) for v in lens.principal_point)
+    to_angle = np.asarray(lens.pixeldist_to_angle_poly, np.float64)
+    to_radius = np.asarray(lens.angle_to_pixeldist_poly, np.float64)
+    focal = float(poly.polyder(to_radius)[0])
+
+    # The farthest the image reaches from the principal point, as a radius in
+    # the lens (linear_cde undone), and its angle, within the lens.
+    corners_x = np.array([-0.5, width - 0.5, -0.5, width - 0.5]) - cx
+    corners_y = np.array([-0.5, -0.5, height - 0.5, height - 0.5]) - cy
+    corner_radius = float(np.hypot((corners_x - d * corners_y) / c, corners_y).max())
+    max_angle = min(float(lens.max_angle), _PINHOLE_MAX_ANGLE_RAD)
+    radius = min(corner_radius, float(poly.polyval(max_angle, to_radius)))
+    reach = min(float(poly.polyval(radius, to_angle)), max_angle)
+
+    theta = np.linspace(1e-4, reach, samples)
+    r = np.tan(theta)
+    r2 = r * r
+    ratio = poly.polyval(theta, to_radius) / focal / r
+    weight = (r * focal)[:, None]
+    a = np.stack([r2, r2**2, r2**3, -ratio * r2, -ratio * r2**2, -ratio * r2**3], 1)
+    k1, k2, k3, k4, k5, k6 = np.linalg.lstsq(
+        a * weight, (ratio - 1.0) * weight[:, 0], rcond=None
+    )[0]
+    numerator = 1 + k1 * r2 + k2 * r2**2 + k3 * r2**3
+    denominator = 1 + k4 * r2 + k5 * r2**2 + k6 * r2**3
+    if not (denominator > 0.0).all():
+        raise ValueError("no OpenCV rational model fits this F-theta lens")
+    error = np.abs(focal * r * (numerator / denominator - ratio))
+    intrinsic = [[c * focal, d * focal, cx], [0.0, focal, cy], [0.0, 0.0, 1.0]]
+    distortion = [float(k) for k in (k1, k2, 0.0, 0.0, k3, k4, k5, k6)]
+    return intrinsic, distortion, float(error.mean()), float(error.max())
 
 
 def category_of(type_id: str, base_type: str = "", wheels: int = 0) -> str:
@@ -466,7 +542,26 @@ class T4Recording:
             self._writer.add_sensor(
                 LIDAR_CHANNEL, "lidar", (0.0, 0.0, 0.0), (1.0, 0.0, 0.0, 0.0)
             )
+        lenses = dict(self._settings.lenses)
         for logical_id, cam in self._settings.cameras:
+            intrinsic = [
+                [cam.fx, 0.0, cam.image_width / 2.0],
+                [0.0, cam.fx, cam.image_height / 2.0],
+                [0.0, 0.0, 1.0],
+            ]
+            distortion = [0.0, 0.0, 0.0, 0.0, 0.0]
+            lens = lenses.get(logical_id)
+            if lens is not None:
+                intrinsic, distortion, mean_px, max_px = opencv_of_ftheta(
+                    lens, cam.image_width, cam.image_height
+                )
+                logger.info(
+                    "T4: camera %s is an F-theta lens; written as OpenCV's rational "
+                    "model fitted to it (%.3f px on average, %.2f px at most)",
+                    logical_id,
+                    mean_px,
+                    max_px,
+                )
             body = sensor_pose_in_rig(
                 cam.position_x,
                 cam.position_y,
@@ -482,12 +577,8 @@ class T4Recording:
                 "camera",
                 _xyz(optical.position),
                 _wxyz(optical.quat_xyzw),
-                camera_intrinsic=[
-                    [cam.fx, 0.0, cam.image_width / 2.0],
-                    [0.0, cam.fx, cam.image_height / 2.0],
-                    [0.0, 0.0, 1.0],
-                ],
-                camera_distortion=[0.0, 0.0, 0.0, 0.0, 0.0],
+                camera_intrinsic=intrinsic,
+                camera_distortion=distortion,
             )
 
     def _attach_sensors(self, world: "carla.World", ego: "carla.Actor") -> None:

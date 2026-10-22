@@ -295,6 +295,7 @@ if TYPE_CHECKING:
         EgoConfig as EgoConfig,
     )
     from .scenario_config import (
+        DriverCameraLensSpec as DriverCameraLensSpec,
         DriverCameraSpec as DriverCameraSpec,
         DriverConfig as DriverConfig,
         DriverControlSpec as DriverControlSpec,
@@ -432,6 +433,7 @@ __all__ = [
     "CarlaDriverEntity",
     "ControlConfig",
     "DriverCameraConfig",
+    "DriverCameraLensSpec",
     "DriverCameraSpec",
     "DriverClientConfig",
     "DriverConfig",
@@ -770,6 +772,7 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "NpcVehicleConfig": (".scenario_config", "NpcVehicleConfig"),
     "SweepConfig": (".scenario_config", "SweepConfig"),
     "DriverConfig": (".scenario_config", "DriverConfig"),
+    "DriverCameraLensSpec": (".scenario_config", "DriverCameraLensSpec"),
     "DriverCameraSpec": (".scenario_config", "DriverCameraSpec"),
     "DriverControlSpec": (".scenario_config", "DriverControlSpec"),
     "DriverLidarSpec": (".scenario_config", "DriverLidarSpec"),

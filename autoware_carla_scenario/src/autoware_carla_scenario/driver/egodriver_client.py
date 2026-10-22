@@ -21,7 +21,7 @@ import logging
 import os
 import shutil
 import tempfile
-from typing import Optional, Sequence
+from typing import Any, Optional, Sequence
 
 import grpc
 import numpy as np
@@ -55,7 +55,13 @@ from carla_driver_interface.protocol import (
     sensorsim_pb2,
 )
 
-from .base import BaseEgoDriverClient, DriveOutcome, DriverClientConfig, EgoObservation
+from .base import (
+    BaseEgoDriverClient,
+    DriveOutcome,
+    DriverCameraLens,
+    DriverClientConfig,
+    EgoObservation,
+)
 from .geometry import Trajectory, waypoints_to_proto
 from .observation import camera_extrinsics_to_rig
 
@@ -133,18 +139,23 @@ class EgoDriverGrpcClient(BaseEgoDriverClient):
         """
         cameras = []
         for camera in self._config.cameras:
-            sensor = camera.to_sensor_config()
             spec = sensorsim_pb2.CameraSpec(
-                opencv_pinhole_param=sensorsim_pb2.OpenCVPinholeCameraParam(
-                    principal_point_x=sensor.cx,
-                    principal_point_y=sensor.cy,
-                    focal_length_x=sensor.fx,
-                    focal_length_y=sensor.fy,
-                ),
                 logical_id=camera.logical_id,
                 resolution_h=camera.image_height,
                 resolution_w=camera.image_width,
             )
+            if camera.lens is None:
+                sensor = camera.to_sensor_config()
+                spec.opencv_pinhole_param.CopyFrom(
+                    sensorsim_pb2.OpenCVPinholeCameraParam(
+                        principal_point_x=sensor.cx,
+                        principal_point_y=sensor.cy,
+                        focal_length_x=sensor.fx,
+                        focal_length_y=sensor.fy,
+                    )
+                )
+            else:
+                spec.ftheta_param.CopyFrom(_ftheta_param(camera.lens))
             cameras.append(
                 sensorsim_pb2.AvailableCamerasReturn.AvailableCamera(
                     intrinsics=spec,
@@ -528,3 +539,22 @@ def _in_process_channel(spec: str) -> grpc.Channel:
     add_EgodriverServiceServicer_to_server(servicer, channel)
     add_CarlaVehicleServiceServicer_to_server(servicer, channel)
     return channel
+
+
+def _ftheta_param(lens: DriverCameraLens) -> Any:
+    """alpasim's ``FthetaCameraParam`` of *lens*: the camera's frames are drawn
+    through it, not through the pinhole of its ``fov``."""
+    c, d, e = lens.linear_cde
+    return sensorsim_pb2.FthetaCameraParam(
+        principal_point_x=lens.principal_point[0],
+        principal_point_y=lens.principal_point[1],
+        reference_poly=(
+            sensorsim_pb2.FthetaCameraParam.PolynomialType.PIXELDIST_TO_ANGLE
+            if lens.reference_poly == "pixeldist_to_angle"
+            else sensorsim_pb2.FthetaCameraParam.PolynomialType.ANGLE_TO_PIXELDIST
+        ),
+        pixeldist_to_angle_poly=list(lens.pixeldist_to_angle_poly),
+        angle_to_pixeldist_poly=list(lens.angle_to_pixeldist_poly),
+        max_angle=lens.max_angle,
+        linear_cde=sensorsim_pb2.LinearCde(linear_c=c, linear_d=d, linear_e=e),
+    )
