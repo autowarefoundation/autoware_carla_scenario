@@ -2610,7 +2610,9 @@ What Codon 0.19 needs that Python does not, beyond
   `field(default_factory=lambda: [...])`, a `-> list[Rule]` return, an
   argument of a parameter annotated `list[Rule]` of a function or class
   defined in the same module), or, with no annotation, the nearest class of
-  the module that the constructed elements (`[Dbl(), Neg()]`) share. A
+  the module that the constructed elements (`[Dbl(), Neg()]`) share, when
+  that class and its bases are all defined in the module (a base imported from
+  elsewhere may be a condition or an action, left to `_acs_list`). A
   display whose target is not known and whose classes share no base, or an
   argument of an imported function, is refused with a hint: annotate the
   target `list[Base]`, or declare a local `list[Base]` and `append()` each

@@ -277,6 +277,8 @@ _DICT_ANNOTATIONS = {
 _NDARRAY_NAMES = {"np.ndarray", "numpy.ndarray"}
 _DTYPE_NAMES = {"np.dtype", "numpy.dtype"}
 _LIST_ANNOTATIONS = {"list", "List", "typing.List"}
+#: Bases that make a class no framework condition or action.
+_PLAIN_BASES = {"object", "ABC", "abc.ABC"}
 #: Types Codon displays on its own: a ``list[float]`` is not rewritten.
 _SCALAR_NAMES = {"int", "float", "str", "bool", "bytes", "complex"}
 _UNEXPRESSIBLE = {
@@ -1130,6 +1132,16 @@ class _Rewriter(ShadowScopes):
         shared = set.intersection(*(set(line) for line in lines))
         for ancestor in lines[0]:
             if ancestor in shared and ancestor not in self._later_classes:
+                # A base from elsewhere may be a framework condition or action,
+                # whose displays `_acs_list` upcasts to BaseCondition /
+                # BaseAction: leave those to it, a List[Mid] is no
+                # List[BaseCondition].
+                if any(
+                    base not in self._class_bases and base not in _PLAIN_BASES
+                    for line in self._ancestors(ancestor)
+                    for base in self._class_bases[line]
+                ):
+                    return None
                 return ancestor
         return None
 

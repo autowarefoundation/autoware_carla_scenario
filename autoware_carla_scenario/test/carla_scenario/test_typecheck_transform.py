@@ -340,6 +340,28 @@ def test_an_unannotated_list_display_of_own_classes_takes_their_common_base() ->
     assert "f: list[float] = _acs_list(x, y)" in out
 
 
+def test_a_display_of_classes_with_a_foreign_base_stays_an_acs_list() -> None:
+    # A base from elsewhere may be BaseCondition: `_acs_list` makes those a
+    # List[BaseCondition], a List[Mid] would be none (#480).
+    out = _transform(
+        textwrap.dedent(
+            """
+            from lib import BaseCondition
+            class Mid(BaseCondition): ...
+            class A(Mid): ...
+            class B(Mid): ...
+            class P: ...
+            class Q(P): ...
+            class R(P): ...
+            x = [A(), B()]
+            y = [Q(), R()]
+            """
+        )
+    )
+    assert "x = _acs_list(A(), B())" in out
+    assert "y = _acs_list_into(List[P](), Q(), R())" in out
+
+
 def test_a_dict_display_of_mixed_values_wraps_them_in_acs_base() -> None:
     # Codon types a dict display by its first item (#250): each value that may
     # be a condition or an action becomes its base class; the display, and
