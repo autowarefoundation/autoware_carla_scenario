@@ -2180,19 +2180,24 @@ _BARE_COLLECTIONS = {
 
 
 def bare_collection_refusals(tree: ast.Module) -> list[tuple[int, str]]:
-    """The dataclass fields annotated with a bare ``list``, ``dict``, ``set`` or
+    """The class attributes annotated with a bare ``list``, ``dict``, ``set`` or
     ``tuple``, as (line, message) (#482).
 
-    Codon types a field from its annotation and cannot infer the elements of a
-    bare one ("type of attribute 'xs' of object 'Cfg' cannot be inferred", or
-    a bare ``Tuple`` that matches no tuple), whatever the default is.
+    Codon types an attribute declared in a class body (a dataclass field, a
+    NamedTuple field, a plain ``xs: list = []``, or a bare ``xs: list``
+    declaration) from its annotation and cannot infer the elements of a bare
+    one ("type of attribute 'xs' of object 'Cfg' cannot be inferred", or a
+    bare ``Tuple`` that matches no tuple), whatever the default is.  An
+    annotation on ``self.xs: list = []`` inside a method is fine.
     """
     refused: list[tuple[int, str]] = []
     for node in ast.walk(tree):
-        if not isinstance(node, ast.ClassDef) or not _is_dataclass_node(node):
+        if not isinstance(node, ast.ClassDef):
             continue
         for stmt in node.body:
-            if not isinstance(stmt, ast.AnnAssign):
+            if not isinstance(stmt, ast.AnnAssign) or not isinstance(
+                stmt.target, ast.Name
+            ):
                 continue
             annotation = stmt.annotation
             if isinstance(annotation, ast.Constant) and isinstance(
@@ -2207,7 +2212,7 @@ def bare_collection_refusals(tree: ast.Module) -> list[tuple[int, str]]:
                 refused.append(
                     (
                         stmt.lineno,
-                        f"field `{ast.unparse(stmt.target)}` of dataclass "
+                        f"attribute `{ast.unparse(stmt.target)}` of class "
                         f"{node.name} is annotated with a bare `{spelled}`, "
                         "whose elements Codon cannot infer: write "
                         f"`{_BARE_COLLECTIONS[spelled]}`",

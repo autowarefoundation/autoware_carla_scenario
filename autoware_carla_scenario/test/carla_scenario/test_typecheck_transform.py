@@ -3854,12 +3854,23 @@ def test_a_bare_collection_field_of_a_dataclass_is_refused(
     assert line == 5 and advice in message and "`xs`" in message
 
 
-def test_a_parametrized_or_plain_class_field_is_not_a_bare_collection() -> None:
+def test_a_bare_collection_in_a_plain_class_body_is_refused() -> None:
+    from autoware_carla_scenario.typecheck.transform import class_body_refusals
+
+    # Codon cannot infer it in any class (#482), declared or assigned.
+    for body in ("xs: list = []", "xs: list", "d: dict = {}"):
+        [(line, message)] = class_body_refusals(f"class P:\n    {body}\n")
+        assert line == 2 and "bare" in message, body
+    source = "class P:\n    def __init__(self) -> None:\n        self.xs: list = []\n"
+    assert class_body_refusals(source) == []
+
+
+def test_a_parametrized_class_field_is_not_a_bare_collection() -> None:
     from autoware_carla_scenario.typecheck.transform import class_body_refusals
 
     source = (
         "from dataclasses import dataclass\n@dataclass\nclass C:\n"
         "    xs: list[int]\n    t: tuple[float, ...] = ()\n"
-        "class P:\n    xs: list = []\n"
+        "class P:\n    xs: list[int] = []\n"
     )
     assert class_body_refusals(source) == []

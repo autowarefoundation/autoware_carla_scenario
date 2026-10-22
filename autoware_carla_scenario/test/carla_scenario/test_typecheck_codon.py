@@ -7039,6 +7039,20 @@ class Cfg:
     assert f"bare `{annotation}`" in error.message
 
 
+def test_a_bare_collection_in_a_plain_class_is_refused_at_its_line(
+    tmp_path: Path,
+) -> None:
+    definitions = """
+class Cfg:
+    name = "a"
+    xs: list = []
+"""
+    scenario, config, path = _data_case(tmp_path, definitions, "x = Cfg()\n")
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert error.line == _line_of(path, "xs: list"), error.format()
+    assert "bare `list`" in error.message
+
+
 def test_a_bare_tuple_return_gets_a_hint(tmp_path: Path) -> None:
     definitions = """
 def pt() -> tuple:
