@@ -43,27 +43,13 @@ repos:
           - autoware_carla_scenario/src
           - autoware_carla_scenario/test
         pass_filenames: false
-        always_run: true
+        # Not `always_run`: a commit that touches no Python and no
+        # configuration cannot change mypy's verdict.
+        files: '(\.pyi?|^pyproject\.toml|^uv\.lock)$'
 
-  - repo: local
-    hooks:
-      # Not `always_run`: running the suite on every commit meant a one-line
-      # docs fix paid for minutes of end-to-end conversion and wheelhouse
-      # builds. `files` scopes it to the changes that can actually break it:
-      # the package itself, `pyproject.toml` and `uv.lock` (which move every
-      # dependency), and the fixture map under `data/`.
-      #
-      # It leaves out `slow` like CI's fast job does (CI runs them in their own
-      # job): the one export self-check that builds a wheelhouse took ~10 of a
-      # commit's ~10 minutes, the other ~1300 tests seconds.
-      #
-      # `pass_filenames: false` because pytest is given the test directory
-      # rather than the changed files: a change anywhere in the package can
-      # break any of its tests, not just a test file that happens to have been
-      # edited.
-      - id: pytest-carla
-        name: pytest (autoware_carla_scenario)
-        entry: uv run pytest --no-testmon -m "not integration and not slow" autoware_carla_scenario/test
-        language: system
-        pass_filenames: false
-        files: '^(autoware_carla_scenario/|data/|pyproject\.toml$|uv\.lock$)'
+  # There is no pytest hook. The fast suite compiles ~260 scenarios with
+  # Codon (~13 s each), and their cached verdicts are keyed by the whole
+  # package's source (typecheck/check.py's _python_digest), so any commit that
+  # touched the package recompiled every one of them: minutes per commit. The
+  # CI `test` jobs run the suite on every pull request; run it locally with
+  # `uv run pytest` (see CLAUDE.md).

@@ -76,9 +76,8 @@ uv run pytest -v autoware_carla_scenario/test/
 The repository defines a single custom pytest marker in the workspace
 `pyproject.toml`:
 
-- `integration` — tests that need a live CARLA server. The pre-commit
-  hook `pytest-carla` and the CI `test` job both run with
-  `-m "not integration"`.
+- `integration` — tests that need a live CARLA server. The CI `test` job
+  runs with `-m "not integration"`.
 
 Local verification is the same command CI runs — no container involved:
 
@@ -108,9 +107,12 @@ at the repository root and runs the following hooks:
   `check-added-large-files`, `check-merge-conflict`, `debug-statements`,
   `mixed-line-ending`
 - `ruff` (with `--fix`) and `ruff-format` (`astral-sh/ruff-pre-commit`)
-- `mypy` (local hook, runs over both packages)
-- `pytest-lanelet2` and `pytest-carla` (local hooks; the carla suite
-  runs with `-m "not integration"`)
+- `mypy` (local hook over `src/` and `test/`, run when a commit touches
+  Python or the project configuration)
+
+pre-commit runs no tests: the fast suite compiles some 260 scenarios with
+Codon, which took minutes on every commit. Run `uv run pytest` yourself; CI
+runs it on every pull request.
 
 ## Building Documentation Locally
 
