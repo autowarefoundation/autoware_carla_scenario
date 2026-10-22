@@ -4663,6 +4663,25 @@ class Bits(enum.Flag):
 """
 
 
+_FLAG_USERS = """
+
+MODULE_DEFAULT = Perm.R | Perm.W
+
+
+class Holder:
+    mode: Perm
+    DEFAULT = Perm.R | Perm.W
+
+    def __init__(self) -> None:
+        self.mode: Perm = Holder.DEFAULT
+
+
+def pick(TurnDirection: typing.List[int]) -> int:
+    # A parameter called like a framework enum is not that enum.
+    return len(TurnDirection) + sum([t for t in TurnDirection])
+"""
+
+
 def test_flag_and_intflag_members_combine(tmp_path: Path) -> None:
     setup = """
         rw: Perm = Perm.R | Perm.W
@@ -4683,8 +4702,11 @@ def test_flag_and_intflag_members_combine(tmp_path: Path) -> None:
         assert [p.name for p in Bits] == ["A", "B", "C"]
         assert Perm["RW"] == Perm.RW and len(Perm) == 3
         assert {rw: 1}[Perm.RW] == 1
+        assert Perm.R < Perm.W and int(Perm.W) == 2
+        assert Holder().mode == Perm.R | Perm.W == Holder.DEFAULT == MODULE_DEFAULT
+        assert pick([1, 2]) == 5
     """
-    scenario, config, _ = _data_case(tmp_path, _FLAGS, setup)
+    scenario, config, _ = _data_case(tmp_path, _FLAGS + _FLAG_USERS, setup)
     result = typecheck_scenario(scenario, config)
     assert result.ok, result.format()
 
@@ -4707,10 +4729,25 @@ def test_the_hint_for_flag_arithmetic_names_the_operators_it_has(
 
 @pytest.mark.parametrize(
     "line",
-    ["Perm.R | Bits.A + 1", "Bits.A < Bits.B", "int(Bits.A)", "Bits.A + Bits.B"],
+    [
+        "Perm.R | Bits.A + 1",
+        "Bits.A < Bits.B",
+        "int(Bits.A)",
+        "Bits.A + Bits.B",
+        "Bits.A + 1",
+        "Bits.A | 1",
+        "Bits.A | Perm.R",
+        "Plain.A | Plain.B",
+        "Plain.A in Plain.B",
+        "~Plain.A",
+    ],
 )
 def test_a_flag_does_not_order_convert_or_add(tmp_path: Path, line: str) -> None:
-    scenario, config, path = _data_case(tmp_path, _FLAGS, f"r = {line}\n")
+    scenario, config, path = _data_case(
+        tmp_path,
+        _FLAGS + "\n\nclass Plain(enum.Enum):\n    A = 1\n    B = 2\n",
+        f"r = {line}\n",
+    )
     error = _only_error(typecheck_scenario(scenario, config))
     assert error.line == _line_of(path, f"r = {line}"), error.format()
 

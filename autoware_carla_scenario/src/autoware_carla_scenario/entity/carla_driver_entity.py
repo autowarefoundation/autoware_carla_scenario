@@ -60,7 +60,7 @@ from ..driver.observation import (
 )
 from carla_driver_interface.driver import TurnIndicator
 from carla_driver_interface.protocol import LidarSweep, pack_lidar_sweep
-from ..rerun_lidar import active_recorder
+from ..rerun_lidar import CameraMount, active_recorder
 from ._policy_warmup import PolicyWarmup
 from .bridged_ego import BridgeHandshake
 from .externally_driven import ExternallyDrivenEgo
@@ -74,7 +74,7 @@ if TYPE_CHECKING:
     from ..coordinate import CarlaWorldPose, GroundProjectionConfig, Lanelet2Pose
 
     from ..sensor.carla_camera import CarlaCameraSensor
-    from ..rerun_lidar import LidarRecorder
+    from ..rerun_lidar import SensorRecorder
     from ..sensor.carla_lidar import CarlaLidarSensor
 
 
@@ -163,6 +163,8 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
         self._lidars: List[Tuple[str, "CarlaLidarSensor", Pose]] = []
         #: The frame of the sweep last written into the LiDAR recording, by LiDAR.
         self._recorded_lidar: Dict[str, int] = {}
+        #: Each camera's mount, for the run's recording (``rerun.cameras``).
+        self._camera_mounts: Dict[str, CameraMount] = {}
         self._world: Optional["carla.World"] = None
         self._plan: Trajectory = Trajectory.empty()
         #: The plan as debug markers, built once per plan.
@@ -447,6 +449,17 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
             camera = CarlaCameraSensor(sensor_config)
             camera.attach(world, actor)
             self._cameras.append((logical_id, camera))
+            self._camera_mounts[logical_id] = CameraMount(
+                sensor_config.image_width,
+                sensor_config.image_height,
+                sensor_config.fov,
+                (
+                    sensor_config.position_x,
+                    sensor_config.position_y,
+                    sensor_config.position_z,
+                ),
+                (sensor_config.roll, sensor_config.pitch, sensor_config.yaw),
+            )
         logger.info("Attached %d driver camera(s) to the ego", len(self._cameras))
 
     def _attach_lidars(self, world: "carla.World", actor: "carla.Actor") -> None:
@@ -500,6 +513,8 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
         frame = int(self._world.get_snapshot().frame)
         tick_us = int(round(_FIXED_DELTA_S * _US_PER_S))
         recorder = active_recorder() if pose is not None else None
+        if recorder is not None and not recorder.records_lidar:
+            recorder = None
         sweeps = []
         for logical_id, lidar, mount in self._lidars:
             sweep = lidar.latest_sweep(frame)
@@ -521,7 +536,7 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
 
     def _record_lidar(
         self,
-        recorder: "LidarRecorder",
+        recorder: "SensorRecorder",
         logical_id: str,
         frame: int,
         points: "np.ndarray[tuple[int, int], np.dtype[np.float32]]",
@@ -687,6 +702,22 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
                 self._sim_time_us,
                 encoded,
             )
+            self._record_camera(logical_id, encoded)
+
+    def _record_camera(self, logical_id: str, encoded: bytes) -> None:
+        """Write a frame the policy got into the run's recording, when it
+        records its cameras (``rerun.cameras``)."""
+        recorder = active_recorder()
+        mount = self._camera_mounts.get(logical_id)
+        if recorder is None or not recorder.records_cameras or mount is None:
+            return
+        if self._world is None:
+            return
+        try:
+            frame = int(self._world.get_snapshot().frame)
+            recorder.log_camera_frame(logical_id, frame, encoded, mount)
+        except Exception:  # noqa: BLE001 - a lost frame must not stop the run
+            logger.exception("recording camera %s's frame failed", logical_id)
 
     def _apply_control(self, actor: "carla.Actor", observation: EgoObservation) -> None:
         """Track the cached plan and push the resulting control to CARLA."""

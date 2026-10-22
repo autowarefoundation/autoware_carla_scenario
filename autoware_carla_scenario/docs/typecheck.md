@@ -1373,7 +1373,10 @@ too (`P.R | 4`, `4 | P.R`), and `bool(x)` is false for no bit set. Two
 combinations of the same members are equal, hash alike and compare equal to
 the member that has their value (`P.R | P.W == P.RW`). A `Flag` does no
 other arithmetic, order or `int()`; an `IntFlag` compares, orders and converts
-as an `IntEnum` does, and `P.R + P.W` is refused (use `.value`).
+as an `IntEnum` does, and `P.R + P.W` is refused (use `.value`). `~x` flips the
+bits of the single-bit members for a `Flag`, and every bit up to the highest
+of any member for an `IntFlag`, as Python 3.11+ does. The operators are usable
+at module level and in a class body or default (`RW = P.R | P.W`).
 
 A combination is no member: the check builds it from the combined int, so it
 has an empty `name`, and `P.R | P.W is P.RW` is not modelled (compare with

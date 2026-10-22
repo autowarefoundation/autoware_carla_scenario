@@ -1409,6 +1409,7 @@ class _Rewriter(ast.NodeVisitor):
         known: dict[str, int] = {}
         numbers = flag_member_values(node.body) if flag else {}
         mask: int | None = 0 if flag else None
+        every = 0  # the bits of all the members, composites too
         for stmt, name, value in members:
             number: int | None = None
             if is_auto(value):
@@ -1431,6 +1432,7 @@ class _Rewriter(ast.NodeVisitor):
                     last = value.value
             if number is not None:
                 known[name] = number
+                every |= max(number, 0)
             if flag and number is not None:
                 # Python 3.11+ iterates a Flag's single-bit members, in
                 # definition order: not an alias of one, not a composite
@@ -1451,6 +1453,11 @@ class _Rewriter(ast.NodeVisitor):
             )
         if flag and len(known) != len(members):
             mask = None  # a value that is not worked out: `~` is left to Codon
+        elif kind == "IntFlag":
+            # An IntFlag (boundary KEEP) flips every bit below the highest one
+            # of any member, composites included; a Flag only those of its
+            # single-bit members.
+            mask = (1 << every.bit_length()) - 1
         first_start = self.edits.node_span(node.bases[0])[0]
         last_end = self.edits.node_span(node.bases[-1])[1]
         # Only an int-valued IntEnum / IntFlag / (int, Enum) orders and
@@ -2053,14 +2060,36 @@ def transform_source_lines(
         for node in tree.body
         if isinstance(node, ast.ClassDef)
     }
+    # A Flag's extension (its operators, which module-level code such as
+    # ``RW = P.R | P.W`` or a class-level default needs while Codon reads the
+    # module) follows its class instead of the module: its lines come from
+    # the class's line (#437).
+    flags = {e.name for e in rewriter.enums if e.flag}
+    after_class: dict[int, tuple[str, str]] = {}
+    at_end = []
+    for name, block in _enum_lookups(rewriter.enums):
+        if name in flags:
+            end = next(
+                n.end_lineno
+                for n in tree.body
+                if isinstance(n, ast.ClassDef) and n.name == name
+            )
+            assert end is not None
+            after_class[end] = (name, block)
+        else:
+            at_end.append((name, block))
     appended = [
-        *_enum_lookups(rewriter.enums),
+        *at_end,
         *_inherited_init_extensions(_inherited_bases(tree, init_classes, exceptions)),
         *_dataclass_dunders(tree, exceptions),
         *ordering,
     ]
-    text = PRELUDE + edits.apply()
     origin = list(origin)
+    for end, (name, block) in sorted(after_class.items(), reverse=True):
+        at = edits.starts[end] if end < len(edits.starts) else len(edits.data)
+        edits.replace(at, at, block[1:])
+        origin[end:end] = [lines[name]] * (block.count("\n") - 1)
+    text = PRELUDE + edits.apply()
     for name, block in appended:
         text += block
         origin += [lines[name]] * block.count("\n")

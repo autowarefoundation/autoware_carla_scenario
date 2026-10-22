@@ -9,6 +9,8 @@ import ast
 import builtins
 import dataclasses
 import enum
+import re
+import sys
 import textwrap
 from typing import Any, Optional
 
@@ -26,6 +28,7 @@ from autoware_carla_scenario.typecheck.transform import (
     classes_with_init,
     codon_annotation,
     conflicting_imports,
+    flag_member_values,
     inherited_inits,
     relative_module_imports,
     split_tuple_excepts,
@@ -968,12 +971,90 @@ def test_a_flag_is_given_its_operators_after_the_module() -> None:
         assert f"def __{method}__(self, other: int) -> Perm:" in extension
         assert f"def __r{method}__(self, other: int) -> Perm:" in extension
     assert "def __contains__(self, other: Perm) -> bool:" in extension
-    # `~` flips the bits of the members: 1 | 2 | 4 | 16 | 32.
-    assert "return Perm(55 & ~self._value_)" in extension
+    # `~` flips every bit below the highest (32), as IntFlag does.
+    assert "return Perm(63 & ~self._value_)" in extension
     plain = _transform("class Bits(enum.Flag):\n    A = 1\n    B = 2\n")
     assert "def __or__(self, other: Bits) -> Bits:" in plain
     assert "other: int" not in plain  # only an IntFlag takes an int
     assert "return Bits(3 & ~self._value_)" in plain
+
+
+_FLAG_DEFINITIONS = [
+    ("Flag", "A = auto()\nB = 4\nC = auto()\nD = 1\nE = auto()"),
+    ("Flag", "A = 1\nB = 2\nAB = A | B\nC = auto()"),
+    ("Flag", "R = 1\nW = 2\nRW = R | W\nX = 4"),
+    ("Flag", "N = 0\nR = 1\nW = 2"),
+    ("Flag", "R = 1\nW = 2\nREAD = 1\nX = 4"),
+    ("Flag", "A = 3\nB = auto()"),
+    ("Flag", "A = 1\nB = 2 * 2\nC = A + 6"),
+    ("Flag", "A = 1\nB = 2\nC = 4\nAB = A ^ B\nBC = (A | B | C) & ~A"),
+    ("Flag", "RW = 3\nR = 1\nW = 2"),
+    ("Flag", "A = 1\nB = 2\nC = 3\nD = 3"),
+    ("Flag", "A = 1\nB = 2\nBC = 6\nC = auto()"),
+    ("IntFlag", "R = 1\nW = 2\nALL = ~0"),
+    ("IntFlag", "R = 1\nW = 2\nM = -1"),
+    ("IntFlag", "R = 1\nW = 2\nT = 3\nF = 5\nX = 8"),
+    ("IntFlag", "A = 6\nB = 1\nC = 8"),
+    ("IntFlag", "A = 1 << 3\nB = 1 << 5\nC = auto()"),
+    ("IntFlag", "A = 16\nB = auto()\nC = auto()"),
+    ("IntFlag", "A = 1\nB = -4\nC = auto()"),
+    ("IntFlag", "R = 1\nW = 2\nBIG = 12"),
+    ("IntFlag", "N = 0\nR = 2\nW = 4"),
+]
+
+
+@pytest.mark.skipif(
+    sys.version_info < (3, 11), reason="Python 3.11 changed Flag iteration and ~"
+)
+@pytest.mark.parametrize(("kind", "body"), _FLAG_DEFINITIONS)
+def test_a_flag_s_values_iteration_and_complement_are_python_s(
+    kind: str, body: str
+) -> None:
+    # A differential test against CPython's own enum.Flag / IntFlag (#437).
+    source = f"class P(enum.{kind}):\n" + textwrap.indent(body, "    ") + "\n"
+    namespace: dict[str, Any] = {"enum": enum, "auto": enum.auto}
+    exec(source, namespace)  # noqa: S102
+    flag = namespace["P"]
+    assert flag_member_values(ast.parse(source).body[0].body) == {  # type: ignore[attr-defined]
+        name: member.value for name, member in flag.__members__.items()
+    }
+    out = _transform("import enum\nfrom enum import auto\n" + source)
+    listed = re.search(r"return \[(.*?)\]", out.partition("_acs_members")[2])
+    assert listed is not None
+    assert [m.strip().split(".")[1] for m in listed[1].split(",") if m] == [
+        member.name for member in flag
+    ]
+    flipped = re.search(r"return P\((-?\d+) & ~self\._value_\)", out)
+    assert flipped is not None
+    for member in flag.__members__.values():
+        assert int(flipped[1]) & ~member.value == (~member).value, member
+
+
+def test_a_flag_s_operators_follow_its_class_and_keep_the_lines_after_it() -> None:
+    # Module-level code (`RW = P.R | P.W`) needs them while Codon reads the
+    # module, so they cannot wait for its end; the lines after the class map
+    # to their own (#437).
+    source = textwrap.dedent(
+        """
+        import enum
+        class P(enum.Flag):
+            R = 1
+            W = 2
+        RW = P.R | P.W  # line 6
+        class Q(enum.Enum):
+            A = 1
+        LAST = 1  # line 9
+        """
+    )
+    text, origin = transform_source_lines(source)
+    lines = text[len(PRELUDE) :].splitlines()
+    assert len(origin) == len(lines)
+    at = lines.index("RW = P.R | P.W  # line 6")
+    assert origin[at] == 6
+    assert any("def __or__" in line for line in lines[:at])
+    assert origin[lines.index("LAST = 1  # line 9")] == 9
+    # a plain Enum's extension still waits for the end of the module
+    assert text.rstrip().endswith("raise KeyError(name)")
 
 
 def test_no_other_enum_is_given_flag_operators() -> None:

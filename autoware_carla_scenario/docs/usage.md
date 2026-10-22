@@ -332,8 +332,9 @@ rerun outputs/2026-10-18/08-48-12/CutInScenario-3.rrd     # the Rerun viewer
 |-----------|------|---------|-------------|
 | `rerun.enabled` | bool | `false` | Convert each run's trajectory log into `{ScenarioName}.rrd` as soon as the run ends |
 | `rerun.strict` | bool | `false` | Fail the conversion of a log with a record type or a field the converter does not know, rather than skip it with a warning |
-| `rerun.lidar` | bool | `false` | Put the LiDAR sweeps the ego's driver policy gets into the recording too ([LiDAR sweeps](#lidar-sweeps-in-the-recording)) |
+| `rerun.lidar` | bool | `false` | Put the LiDAR sweeps the ego's driver policy gets into the recording too ([Sensors](#sensors-in-the-recording)) |
 | `rerun.lidar_max_points` | int | `65536` | At most this many points of a sweep (an even subsample); `0` keeps them all |
+| `rerun.cameras` | bool | `false` | Put the camera frames the ego's driver policy gets into the recording too ([Sensors](#sensors-in-the-recording)) |
 
 With `rerun.enabled=true`:
 
@@ -356,27 +357,35 @@ With `rerun.enabled=true`:
   its own cases, and `scenario-slurm collect` reports their recordings as a
   local batch does.
 
-### LiDAR sweeps in the recording
+### Sensors in the recording
 
-The trajectory log holds no point clouds. With `rerun.lidar=true` (and
-`rerun.enabled=true`) the sweeps each driver LiDAR sends the ego's policy
-(`driver.lidars`) are written during the run, in the world frame of the
-recording, into `{ScenarioName}.lidar.rrd`; once the log is converted they are
-merged into `{ScenarioName}.rrd` (`rerun rrd merge`) and that file is removed.
-Each LiDAR is `world/lidar/<logical id>`, points coloured by height above the
-ego, in the recording's 3D view; a sweep is drawn where the ego's pose put it
-when the policy got it. It needs the Rerun SDK of the converter's version:
+The trajectory log holds no sensor data. With `rerun.enabled=true` and:
+
+- `rerun.lidar=true`, the sweeps each driver LiDAR sends the ego's policy
+  (`driver.lidars`) are recorded as `world/lidar/<logical id>`: points in the
+  recording's world frame, coloured by height above the ego, drawn where the
+  ego's pose put them when the policy got them;
+- `rerun.cameras=true`, the frames each driver camera sends it
+  (`driver.cameras`) are recorded as `world/ego/pose/cameras/<logical id>`:
+  the camera's mount on the ego and a pinhole of its field of view, so the 3D
+  view draws its frustum with the frame in it, and the JPEG frames the policy
+  got (a 2D view of the entity shows them).
+
+They are written during the run into `{ScenarioName}.sensors.rrd`; once the log
+is converted they are merged into `{ScenarioName}.rrd` (`rerun rrd merge`) and
+that file is removed. It needs the Rerun SDK of the converter's version:
 
 ```bash
 pip install 'autoware-carla-scenario[rerun-lidar]'
-uv run scenario scenario=cut_in/cut_in driver=... rerun.enabled=true rerun.lidar=true
+uv run scenario scenario=cut_in/cut_in driver=... rerun.enabled=true \
+    rerun.lidar=true rerun.cameras=true
 ```
 
-Points are most of a recording: about 0.8 MB a sweep at the default 65,536.
-A merge that fails keeps `{ScenarioName}.lidar.rrd` beside the recording
-(logged; not a failed conversion). The two cannot be opened together instead:
-the viewer registers a file by its recording id, and the second replaces the
-first.
+Points are most of a recording: about 0.8 MB a sweep at the default 65,536;
+a camera frame is its JPEG (`driver.image_quality`). A merge that fails keeps
+`{ScenarioName}.sensors.rrd` beside the recording (logged; not a failed
+conversion). The two cannot be opened together instead: the viewer registers a
+file by its recording id, and the second replaces the first.
 
 A run made without it (or by a version before it) can be converted afterwards,
 the same way:
