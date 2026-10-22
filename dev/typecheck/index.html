@@ -3132,7 +3132,19 @@ scenario has to do itself:</p>
   without declaring it, at its line, with the type to declare:</p>
 <p><div class="highlight"><pre><span></span><code><a id="__codelineno-23-1" name="__codelineno-23-1" href="#__codelineno-23-1"></a>scenario.py:34: error: GapTracker._samples is assigned without a type: declare it in the class body, e.g. `_samples: list[...]` ...
 </code></pre></div>
-- <strong>Use only the public API</strong> from <code>autoware_carla_scenario</code> and its listed
+- <strong>Write the element types of a class attribute</strong> (#482): <code>xs: list[int] =
+  field(default_factory=list)</code>, <code>d: dict[str, float]</code>, <code>ids: set[int]</code>,
+  <code>xy: tuple[float, float] = (0.0, 0.0)</code> or <code>tuple[X, ...]</code>. Codon types a
+  dataclass field, a NamedTuple field and any other attribute declared in a
+  class body (<code>xs: list = []</code>, or a bare <code>xs: list</code>) from its annotation and
+  cannot infer the elements of a bare <code>list</code>,
+  <code>dict</code>, <code>set</code> or <code>tuple</code> ("type of attribute 'xs' of object 'Cfg' cannot be
+  inferred", or a bare <code>Tuple</code> that matches no tuple), whatever the default
+  is. The check refuses the field at its line and names what to write; a bare
+  <code>list</code> or <code>dict</code> in a function's parameter or return annotation compiles,
+  and a bare <code>tuple</code> there gets a hint with the error.</p>
+<ul>
+<li><strong>Use only the public API</strong> from <code>autoware_carla_scenario</code> and its listed
   subpackages, and the <code>BaseScenario</code> attributes meant for subclasses
   (<code>ego_config</code>, <code>ego_entity</code>, <code>world</code>, <code>_ground_projection</code>, ...).
   An import from a modelled framework module must also work in Python
@@ -3143,7 +3155,8 @@ scenario has to do itself:</p>
   an import of one inside a function would compile and raise <code>ImportError</code>
   when the function first runs. So the check imports each modelled module
   a scenario imports from, in Python, and refuses each name it lacks, as an
-  attribute and as a submodule, at the import's line:</p>
+  attribute and as a submodule, at the import's line:</li>
+</ul>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-24-1" name="__codelineno-24-1" href="#__codelineno-24-1"></a>scenario.py:118: error: autoware_carla_scenario.coordinate has no RoadNetwork in Python, whatever its Codon model declares: `from autoware_carla_scenario.coordinate import RoadNetwork` raises ImportError when the scenario runs
 </code></pre></div>
 <p>An import under <code>if TYPE_CHECKING:</code> is exempt: Python never runs it.
@@ -3502,7 +3515,22 @@ cannot express is refused at its line, with what to write instead.</p>
 <tr>
 <td>a comprehension or generator in a class body (#469): <code>SQ = [i * i for i in range(3)]</code>, <code>field(default_factory=lambda: [d.name for d in Mode])</code>, <code>lambda: tuple(gen)</code>, <code>lambda: list(Mode)</code></td>
 <td>a module-level function above the class (<code>def _acs_hoist_Q_2(): return (...)</code>) that the attribute or field default calls, on the same lines (Codon does not bind a comprehension's variable in a class body, and crashes on an Enum iterated there)</td>
-<td>the expression reads its own class (<code>range(LIMIT)</code> with <code>LIMIT</code> a constant of the class): build it in a module-level function</td>
+<td>the expression reads its own class, or an enclosing one (<code>range(LIMIT)</code> with <code>LIMIT</code> a constant of the class): build it in a module-level function. A class nested in a class is hoisted too (#482, <code>_acs_hoist_Outer_Inner_5</code>, above the outermost class); one inside a function is not</td>
+</tr>
+<tr>
+<td>a lambda assigned in a class body (#482): <code>f = lambda self, v: v * 2</code>, <code>key = lambda v: str(v) + "!"</code></td>
+<td><code>def f(self, v): return (v * 2)</code> on the same line, as Python makes it a method. A lambda whose first parameter is not <code>self</code> / <code>cls</code> is a <code>@staticmethod</code> (a decorator line is added, mapped to the lambda's line): it is called as <code>C.key(3)</code>, and Codon would otherwise bind <code>v</code> to the instance (Codon cannot call a method through the class with an explicit instance for this, <code>T.f(3)</code> is refused for a plain def). Python binds the instance to <code>v</code> on <code>T().f(3)</code> and raises a TypeError, which the check accepts: write <code>self</code> when the lambda is meant as a method. In a nested class too</td>
+<td>a lambda on the line of its class (<code>class C: f = lambda: 1</code>) or a multi-target assignment is left as written</td>
+</tr>
+<tr>
+<td><code>staticmethod(lambda a, b=2: a + b)</code>, <code>classmethod(lambda cls: ...)</code> in a class body (#482)</td>
+<td>an <code>@staticmethod</code> / <code>@classmethod</code> def of the same name</td>
+<td></td>
+</tr>
+<tr>
+<td>a lambda default of a method (#482): <code>def sort(self, xs: list[int], key=lambda v: -v)</code></td>
+<td>a module-level function above the outermost class (<code>def _acs_lambda_P_3_27(v): return (-v)</code>) that the default names; Python evaluates a default once and the lambda reads only globals, so it is the same value</td>
+<td>the class is inside a function or a block, or the lambda has defaults that are not literals: write a module-level <code>def</code> and name it as the default</td>
 </tr>
 <tr>
 <td><code>dict(a=1)</code></td>
@@ -3524,7 +3552,10 @@ cannot express is refused at its line, with what to write instead.</p>
   TracebackType</code> is refused (<code>types</code> has no model): annotate <code>tb</code> as <code>object</code>.
   <code>__enter__</code> returning <code>self</code> (<code>-&gt; "Ctx"</code>, or no annotation) compiles as it
   is, and so does <code>-&gt; bool</code> (suppression). <code>__exit__(self, *args: object)</code>
-  needs no rewrite.</li>
+  needs no rewrite. The canonical signature <code>__exit__(self, exc_type:
+  type[BaseException] | None, exc: BaseException | None, tb: object) -&gt; bool</code>
+  raises no "Codon cannot express" warning: the dropped parameters are the
+  ones the check leaves to their <code>None</code> default (#482).</li>
 <li>Codon gives every function and lambda a type of its own, so a list or dict
   of different ones does not compile without the annotation, even if you
   annotate nothing else. Annotate where the table is assigned or returned; an
@@ -5636,7 +5667,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 22, 2026 14:43:58 UTC"><span class="timeago" datetime="2026-10-22T14:43:58+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 22, 2026 14:43:58 UTC">2026-10-22</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 22, 2026 15:16:05 UTC"><span class="timeago" datetime="2026-10-22T15:16:05+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 22, 2026 15:16:05 UTC">2026-10-22</span>
   </span>
 
     
