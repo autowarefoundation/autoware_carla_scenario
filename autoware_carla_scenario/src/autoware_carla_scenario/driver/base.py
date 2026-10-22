@@ -29,6 +29,7 @@ __all__ = [
     "BaseEgoDriverClient",
     "DriveOutcome",
     "DriverCameraConfig",
+    "DriverCameraLens",
     "DriverClientConfig",
     "DriverLidarConfig",
     "EgoObservation",
@@ -40,6 +41,93 @@ DRIVER_TRANSPORTS: Tuple[str, ...] = ("tcp", "unix", "direct")
 #: Logical camera id used by alpasim's reference rig for the forward-facing camera.
 #: Policies look their inputs up by this string, so it must match what the policy expects.
 DEFAULT_CAMERA_LOGICAL_ID: str = "camera_front_wide_120fov"
+
+
+#: The lens models a camera's frames may be drawn through (:class:`DriverCameraLens`).
+CAMERA_LENS_MODELS: Tuple[str, ...] = ("ftheta",)
+
+#: Which of an F-theta lens' two polynomials is its definition, the other its inverse.
+FTHETA_REFERENCE_POLYS: Tuple[str, ...] = ("pixeldist_to_angle", "angle_to_pixeldist")
+
+
+@dataclass(frozen=True)
+class DriverCameraLens:
+    """The lens a camera's frames are drawn through, when they are not CARLA's
+    pinhole of the camera's ``fov``: a carla_canvas renderer's own camera, such as
+    the Cosmos3 world model's fisheye Hyperion cameras.
+
+    Only NVIDIA's F-theta model, as alpasim's ``FthetaCameraParam`` carries it: a
+    ray at angle *theta* from the optical axis lands at the radius
+    ``angle_to_pixeldist_poly(theta)`` pixels from the principal point, and
+    ``linear_cde`` (``[[c, d], [e, 1]]``) maps that radial offset to pixels.  The
+    polynomials' coefficients go up from the constant term; pixels are OpenCV's
+    (the centre of the top-left pixel is (0, 0)).
+
+    The policy is sent the lens as it is (:class:`~.egodriver_client.EgodriverClient`);
+    a T4 dataset, whose cameras are OpenCV's, gets the OpenCV rational model fitted
+    to it (:mod:`autoware_carla_scenario.t4`).
+
+    Raises:
+        ValueError: If a field is out of its domain.
+    """
+
+    model: str = "ftheta"
+    #: ``[x, y]`` in pixels.
+    principal_point: List[float] = field(default_factory=list)
+    #: Radius (pixels) -> angle (radians).
+    pixeldist_to_angle_poly: List[float] = field(default_factory=list)
+    #: Angle (radians) -> radius (pixels).
+    angle_to_pixeldist_poly: List[float] = field(default_factory=list)
+    #: The largest angle from the optical axis the lens sees, in radians.
+    max_angle: float = 0.0
+    #: ``[c, d, e]``.
+    linear_cde: List[float] = field(default_factory=lambda: [1.0, 0.0, 0.0])
+    #: Which polynomial defines the lens (:data:`FTHETA_REFERENCE_POLYS`).
+    reference_poly: str = "pixeldist_to_angle"
+
+    def __post_init__(self) -> None:
+        if self.model not in CAMERA_LENS_MODELS:
+            raise ValueError(
+                f"lens.model must be one of {CAMERA_LENS_MODELS}, got {self.model!r}"
+            )
+        if len(self.principal_point) != 2:
+            raise ValueError("lens.principal_point must be [x, y]")
+        if not self.pixeldist_to_angle_poly or not self.angle_to_pixeldist_poly:
+            raise ValueError(
+                "lens: an F-theta lens needs both pixeldist_to_angle_poly and "
+                "angle_to_pixeldist_poly"
+            )
+        if not self.max_angle > 0.0:
+            raise ValueError("lens.max_angle must be positive (radians)")
+        if len(self.linear_cde) != 3:
+            raise ValueError("lens.linear_cde must be [c, d, e]")
+        if self.reference_poly not in FTHETA_REFERENCE_POLYS:
+            raise ValueError(
+                f"lens.reference_poly must be one of {FTHETA_REFERENCE_POLYS}, "
+                f"got {self.reference_poly!r}"
+            )
+
+    @classmethod
+    def from_mapping(cls, mapping: Mapping[str, Any]) -> "DriverCameraLens":
+        """Return a lens built from a plain mapping (e.g. a Hydra node).
+
+        Raises:
+            ValueError: If *mapping* holds a key this config does not define.
+        """
+        # Imported here: the Codon check does not compile this method, and
+        # utils.config reads a dataclass's fields from its class (docs/typecheck.md).
+        from ..utils.config import checked_options as _checked  # noqa: PLC0415
+
+        values = _checked(cls, mapping)
+        for key in (
+            "principal_point",
+            "pixeldist_to_angle_poly",
+            "angle_to_pixeldist_poly",
+            "linear_cde",
+        ):
+            if key in values:
+                values[key] = [float(v) for v in values[key]]
+        return cls(**values)
 
 
 @dataclass(frozen=True)
@@ -65,6 +153,9 @@ class DriverCameraConfig:
     roll: float = 0.0
     pitch: float = 0.0
     yaw: float = 0.0
+    #: The lens the frames are drawn through; ``None`` is CARLA's pinhole of
+    #: :attr:`fov`.
+    lens: Optional[DriverCameraLens] = None
 
     @classmethod
     def from_mapping(cls, mapping: Mapping[str, Any]) -> "DriverCameraConfig":
@@ -77,7 +168,11 @@ class DriverCameraConfig:
         # utils.config reads a dataclass's fields from its class (docs/typecheck.md).
         from ..utils.config import checked_options as _checked  # noqa: PLC0415
 
-        return cls(**_checked(cls, mapping))
+        values = _checked(cls, mapping)
+        lens = values.pop("lens", None)
+        if lens is not None:
+            values["lens"] = DriverCameraLens.from_mapping(lens)
+        return cls(**values)
 
     def to_sensor_config(self) -> CarlaCameraSensorConfig:
         """Return the CARLA sensor configuration for this camera."""

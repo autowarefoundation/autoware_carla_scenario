@@ -165,6 +165,55 @@ def test_start_session_sends_the_camera_rig(policy: _StubPolicy) -> None:
     assert intrinsics.opencv_pinhole_param.principal_point_x == pytest.approx(480.0)
 
 
+def test_a_camera_with_a_lens_is_advertised_as_its_ftheta_lens(
+    policy: _StubPolicy,
+) -> None:
+    """A carla_canvas renderer's fisheye camera reaches the policy as its lens,
+    not as the pinhole of its fov."""
+    from autoware_carla_scenario.driver.base import DriverCameraLens
+
+    from ._ftheta_lens import COSMOS3_FRONT_WIDE
+
+    lens = DriverCameraLens.from_mapping(COSMOS3_FRONT_WIDE)
+    camera = DriverCameraConfig(
+        logical_id="camera_front_wide_120fov",
+        image_width=832,
+        image_height=480,
+        lens=lens,
+    )
+    config = DriverClientConfig(
+        address=f"localhost:{policy.port}",  # type: ignore[attr-defined]
+        timeout_s=10.0,
+        cameras=(camera,),
+    )
+    client = EgoDriverGrpcClient(
+        config,
+        channel=grpc.insecure_channel(config.address, options=channel_options()),
+    )
+    try:
+        client.start_session("session-1", "Town10HD_Opt")
+    finally:
+        client.close_session()
+
+    (advertised,) = policy.sessions[0].rollout_spec.vehicle.available_cameras
+    spec = advertised.intrinsics
+    assert spec.WhichOneof("camera_param") == "ftheta_param"
+    assert (spec.resolution_w, spec.resolution_h) == (832, 480)
+    param = spec.ftheta_param
+    assert (param.principal_point_x, param.principal_point_y) == pytest.approx(
+        (412.641208, 242.790324)
+    )
+    assert param.reference_poly == param.PolynomialType.PIXELDIST_TO_ANGLE
+    assert list(param.angle_to_pixeldist_poly) == pytest.approx(
+        COSMOS3_FRONT_WIDE["angle_to_pixeldist_poly"]
+    )
+    assert list(param.pixeldist_to_angle_poly) == pytest.approx(
+        COSMOS3_FRONT_WIDE["pixeldist_to_angle_poly"]
+    )
+    assert param.max_angle == pytest.approx(1.226783919)
+    assert param.linear_cde.linear_c == pytest.approx(1.00234926)
+
+
 def test_start_session_advertises_the_camera_extrinsics(policy: _StubPolicy) -> None:
     """The advertised ``rig_to_camera`` must carry the configured mount, not the
     protobuf default (identity at the origin).
