@@ -2668,7 +2668,11 @@ What Codon 0.19 needs that Python does not, beyond
   when it is first called, after the whole module), so the displays above
   work with it; a class body, a default or a module-level statement runs at
   once and cannot name it (`name 'Rule' is not defined`): define the class
-  above, as the hint says. An element of a `Sequence[AnyPose]` is
+  above, as the hint says. The check is more permissive than Python here: a
+  function that names a class defined further down passes, although calling it
+  at module level before that class is defined raises `NameError`. A name
+  rebound by a loop, a `with`, a comprehension or a lambda is no longer the
+  tracked `list[Base]`. An element of a `Sequence[AnyPose]` is
   a `Union` of poses; the model's `_expect_pose` takes one, reading its
   members with `static.vars_types(pose, with_index=True)` (without
   `with_index`, Codon 0.19 does not bind the loop variable).

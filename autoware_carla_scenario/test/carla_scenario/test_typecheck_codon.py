@@ -3861,6 +3861,40 @@ def test_a_display_the_check_cannot_type_is_refused_with_a_hint(
     assert error.line == _line_of(path, needle), error.format()
 
 
+@pytest.mark.parametrize(
+    ("setup", "needle"),
+    [
+        ('d = {1: Circle(), "b": Square()}\n', "d = {1: Circle()"),
+        ("a: list[Shape] = [Circle()]\nb = [Other()] + a\n", "b = [Other()] + a"),
+        ("a: list[Shape] = [Circle()]\na += [Other()]\n", "a += [Other()]"),
+        ("a: list[Shape] = [Circle()]\na.extend([Other()])\n", "a.extend("),
+        (
+            "a: list[Shape] = [Circle()]\nfor a in [[Circle()]]:\n    b = a + [Square()]\n",
+            "b = a + [Square()]",
+        ),
+    ],
+    ids=[
+        "mixed-keys",
+        "display-plus-list",
+        "augmented",
+        "extend",
+        "loop-variable",
+    ],
+)
+def test_a_dict_or_a_sum_that_is_no_list_of_the_base_is_refused(
+    tmp_path: Path, setup: str, needle: str
+) -> None:
+    # #489: the rewrite must not make a wrong value acceptable, or one of a
+    # variable that merely shares the tracked name.
+    scenario, config, path = _own_shapes_case(tmp_path, setup)
+    result = typecheck_scenario(scenario, config)
+    assert not result.ok
+    assert any(
+        d.path == str(path) and d.line == _line_of(path, needle)
+        for d in result.diagnostics
+    ), result.format()
+
+
 def test_a_base_defined_below_a_class_level_display_is_named_in_the_hint(
     tmp_path: Path,
 ) -> None:

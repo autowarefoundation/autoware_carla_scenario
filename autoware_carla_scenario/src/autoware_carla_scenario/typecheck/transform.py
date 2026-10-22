@@ -949,7 +949,13 @@ class _Rewriter(ShadowScopes):
         #: ``None`` when it is no list of a known class) of the module and of
         #: each function being visited, innermost last: a list display added
         #: to one (``a + [Sub()]``) is a list of that class (#489).
-        self._list_scopes: list[dict[str, str | None]] = [{}]
+        #: Each with the names the scope binds in any way and the depth of
+        #: ``_local_bound`` it opens, so a name bound by a loop, a ``with``, a
+        #: comprehension or a lambda is no tracked list.
+        self._noted_targets: set[int] = set()
+        self._list_scopes: list[tuple[dict[str, str | None], set[str] | None, int]] = [
+            ({}, None, 0)
+        ]
         #: The element class of the ``-> list[B]`` of each function being
         #: visited (``None``: no such return annotation).
         self._return_elements: list[str | None] = []
@@ -977,6 +983,9 @@ class _Rewriter(ShadowScopes):
         return None
 
     def visit_Name(self, node: ast.Name) -> None:
+        # A loop variable, a `with` or tuple target, a walrus: no tracked list.
+        if isinstance(node.ctx, ast.Store) and id(node) not in self._noted_targets:
+            self._note_list_local(node.id, None)
         if (
             isinstance(node.ctx, ast.Load)
             and self._functools_names.get(node.id) == "reduce"
@@ -1195,9 +1204,21 @@ class _Rewriter(ShadowScopes):
         """The element class of the list *node* when it is a local known to be
         a ``list[B]`` (or a sum of such), else ``None``."""
         if isinstance(node, ast.Name):
-            for scope in reversed(self._list_scopes):
-                if node.id in scope:
-                    return scope[node.id]
+            name = node.id
+            if any(
+                name in bound
+                for bound, _ in self._local_bound[self._list_scopes[-1][2] :]
+            ):
+                return None  # a comprehension, lambda or class binds it
+            for known, bound, _ in reversed(self._list_scopes):
+                if name in known:
+                    return known[name]
+                if (
+                    (name in bound)
+                    if bound is not None
+                    else (name in self._module_bound)
+                ):
+                    return None  # bound otherwise: a loop, a `with`, ...
         elif isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
             return self._list_scope_base(node.left) or self._list_scope_base(node.right)
         return None
@@ -1219,13 +1240,19 @@ class _Rewriter(ShadowScopes):
 
     def visit_AugAssign(self, node: ast.AugAssign) -> None:
         if isinstance(node.op, ast.Add):
+            self._noted_targets.add(id(node.target))  # `a += [..]` is still a list
+        if isinstance(node.op, ast.Add):
             self._mark_added(self._list_scope_base(node.target), node.value)
         self.generic_visit(node)
 
-    def _note_list_local(self, name: str, base: str | None) -> None:
+    def _note_list_local(
+        self, name: str, base: str | None, target: ast.AST | None = None
+    ) -> None:
         """Note that the local *name* is a list of *base* (``None``: unknown)."""
+        if target is not None:
+            self._noted_targets.add(id(target))
         if self._class_depth == 0:
-            self._list_scopes[-1][name] = base
+            self._list_scopes[-1][0][name] = base
 
     def _common_base(self, elements: list[ast.expr]) -> str | None:
         """The nearest class of the module that the classes constructed by
@@ -1571,10 +1598,14 @@ class _Rewriter(ShadowScopes):
             self._method_class = class_name
         self._function_depth += 1
         self._list_scopes.append(
-            {
-                name: self._list_element(annotation)
-                for name, annotation in _parameters(node.args, skip_first=False)
-            }
+            (
+                {
+                    name: self._list_element(annotation)
+                    for name, annotation in _parameters(node.args, skip_first=False)
+                },
+                _scope_bindings(node),
+                len(self._local_bound),
+            )
         )
         self._return_elements.append(
             None
@@ -1885,7 +1916,9 @@ class _Rewriter(ShadowScopes):
             self.generic_visit(value)
             value = None
         if isinstance(node.target, ast.Name):
-            self._note_list_local(node.target.id, self._list_element(node.annotation))
+            self._note_list_local(
+                node.target.id, self._list_element(node.annotation), node.target
+            )
         converted = self._rewrite_annotation(node.annotation, class_level=class_level)
         if (
             converted is None
@@ -2059,7 +2092,7 @@ class _Rewriter(ShadowScopes):
                 base = None
                 if isinstance(value, ast.List) and listable_display(value):
                     base = self._common_base(value.elts)
-                self._note_list_local(target.id, base)
+                self._note_list_local(target.id, base, target)
         literal = _literal_type(value)
         if self._class_depth == 0 and self._function_depth == 0 and literal:
             # A Literal alias, `Tristate = Literal["any", "yes", "no"]`: the

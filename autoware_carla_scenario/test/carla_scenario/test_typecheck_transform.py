@@ -412,6 +412,38 @@ def test_a_list_display_added_to_a_list_of_the_base_is_a_list_of_it() -> None:
     assert "i = a + _acs_list_into" not in out  # `a` is no longer known
 
 
+def test_a_tracked_list_is_forgotten_where_the_name_is_bound_otherwise() -> None:
+    # #489: only the local annotated `list[Rule]` is the one added to; a
+    # same-named variable of another function, a loop, a comprehension or a
+    # lambda is not.
+    out = _transform_own(
+        """
+        def g(a: list[Rule]):
+            return a + [Dbl()]
+        def h(a: list[float]):
+            return a + [Dbl()]
+        def i(items: list[list[float]]):
+            a: list[Rule] = [Dbl()]
+            for a in items:
+                b = a + [Dbl()]
+            c = [a + [Dbl()] for a in items]
+            d = lambda a: a + [Dbl()]
+            return b, c, d
+        def j():
+            a: list[Rule] = [Dbl()]
+            def inner(a):
+                return a + [Dbl()]
+            return inner
+        """
+    )
+    assert "return a + _acs_list_into(List[Rule](), Dbl())" in out
+    assert "return a + [Dbl()]" in out  # h
+    assert "b = a + [Dbl()]" in out
+    assert "c = [a + [Dbl()] for a in items]" in out
+    assert "d = lambda a: a + [Dbl()]" in out
+    assert out.count("return a + [Dbl()]") == 2  # h and inner
+
+
 def test_a_base_defined_below_is_named_in_a_function_body_only() -> None:
     # #489: a function body is typed when it is first called, after the whole
     # module, so it may name a class defined further down; a class body, a
