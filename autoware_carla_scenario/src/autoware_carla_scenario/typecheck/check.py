@@ -895,24 +895,29 @@ def _variadic_hints(diagnostics: list[Diagnostic]) -> list[Diagnostic]:
     ``*args`` or on a tuple saying why and what to write instead (#266)."""
     out = []
     for diagnostic in diagnostics:
-        if any(_LIST_DISPLAY_FRAME.match(frame) for frame in diagnostic.trace):
+        in_display = any(_LIST_DISPLAY_FRAME.match(frame) for frame in diagnostic.trace)
+        if in_display:
             # A list display `_acs_list` could not make one list (#480): the
-            # helper is the check's, so the refusal names the display.
+            # helper is the check's, so the refusal does not name it.
             diagnostic = dataclasses.replace(
                 diagnostic,
-                message=f"{diagnostic.message}: {_LIST_DISPLAY_HINT}",
                 trace=tuple(
                     f for f in diagnostic.trace if not _LIST_DISPLAY_FRAME.match(f)
                 ),
             )
-            out.append(diagnostic)
-            continue
         for pattern, hint in (*_VARIADIC_LIMITS, *REWRITE_HINTS):
             if pattern.search(diagnostic.message):
                 diagnostic = dataclasses.replace(
                     diagnostic, message=f"{diagnostic.message}: {hint}"
                 )
                 break
+        else:
+            if in_display:
+                # No other hint fits (a table of functions has its own, #462).
+                diagnostic = dataclasses.replace(
+                    diagnostic,
+                    message=f"{diagnostic.message}: {_LIST_DISPLAY_HINT}",
+                )
         out.append(diagnostic)
     return out
 
