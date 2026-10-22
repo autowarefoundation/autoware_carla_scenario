@@ -187,14 +187,18 @@ class TestSelectingFromTheRealConfig:
         assert isinstance(self._build(["traffic=none"]), NullTrafficBackend)
 
     def test_the_traffic_parameters_reach_the_backend(self) -> None:
+        from autoware_carla_scenario.traffic import Spread
+
         backend = self._build(
             [
-                "traffic.vehicles.speed_factor=0.8",
+                "traffic.vehicles.speed_factor.mean=0.8",
+                "traffic.vehicles.speed_factor.std=0.1",
                 "traffic.vehicles.ignore_lights=0.1",
             ]
         )
-        assert backend.vehicle_parameters.speed_factor == 0.8
-        assert backend.vehicle_parameters.ignore_lights == 0.1
+        assert backend.vehicle_parameters.speed_factor == Spread(0.8, 0.1)
+        # A plain number is a spread of no width.
+        assert backend.vehicle_parameters.ignore_lights == Spread(0.1)
 
     def test_a_parameter_the_backend_cannot_honour_fails_the_run(self) -> None:
         from autoware_carla_scenario.traffic import TrafficParameterError
