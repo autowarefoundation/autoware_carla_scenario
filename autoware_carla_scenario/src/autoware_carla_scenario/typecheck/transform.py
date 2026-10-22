@@ -154,9 +154,11 @@ from __future__ import annotations
 import ast
 import builtins
 import functools
-from collections.abc import Callable, Collection, Mapping
+from collections.abc import Callable, Collection, Iterator, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
+
+from .scopes import ShadowScopes
 
 __all__ = [
     "MISSING_BUILTIN_EXCEPTIONS",
@@ -165,6 +167,8 @@ __all__ = [
     "class_declarations",
     "classes_with_init",
     "enum_class_names",
+    "class_body_refusals",
+    "hoist_class_bodies",
     "model_enum_names",
     "inherited_inits",
     "redirect_imports",
@@ -887,13 +891,14 @@ def _builtin_generic(node: ast.AST) -> str | None:
     return _TYPING_GENERICS.get(name, name) if name is not None else None
 
 
-class _Rewriter(ast.NodeVisitor):
+class _Rewriter(ShadowScopes):
     def __init__(
         self,
         edits: _Edits,
         exceptions: set[str],
         dropped_decorators: Collection[str] = (),
     ) -> None:
+        super().__init__()
         self.edits = edits
         #: Function decorators dropped besides :data:`_DROPPED_FUNCTION_DECORATORS`.
         self._dropped_decorators = set(dropped_decorators)
@@ -951,6 +956,7 @@ class _Rewriter(ast.NodeVisitor):
     # -- annotations -----------------------------------------------------
 
     def visit_Module(self, node: ast.Module) -> None:
+        self.enter_module(node)
         for stmt in node.body:
             if isinstance(stmt, ast.ImportFrom) and _is_functools_import(stmt):
                 for alias in stmt.names:
@@ -1617,6 +1623,25 @@ class _Rewriter(ast.NodeVisitor):
             start, end = self.edits.node_span(node.func)
             self.edits.replace(start, end, "set")
         elif (
+            isinstance(node.func, ast.Name)
+            and node.func.id == "dict"
+            # A ``dict`` the code binds itself is not Codon's concern.
+            and not self._shadowed(node.func.id)
+            and not node.args
+            and node.keywords
+            and all(kw.arg is not None for kw in node.keywords)
+        ):
+            # `dict(a=1)`: Codon's dict takes no keywords (#469); the display
+            # `{"a": 1}` is the same dict.
+            start, end = self.edits.node_span(node)
+            self.edits.replace(start, self.edits.node_span(node.keywords[0])[0], "{")
+            for kw in node.keywords:
+                kw_start = self.edits.node_span(kw)[0]
+                value_start = self.edits.node_span(kw.value)[0]
+                self.edits.replace(kw_start, value_start, f'"{kw.arg}": ')
+            last = self.edits.node_span(node.keywords[-1].value)[1]
+            self.edits.replace(last, end, "}")
+        elif (
             isinstance(node.func, ast.Subscript)
             and isinstance(node.func.value, ast.Name)
             and node.func.value.id == "frozenset"
@@ -1999,6 +2024,164 @@ def split_tuple_excepts(source: str) -> tuple[str, list[int]]:
         origin[first - 1 : last] = origin[first - 1 : last] * len(copies)
 
 
+_COMPREHENSIONS = (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
+#: Built-ins that build a collection from an argument (``list(Color)``,
+#: ``tuple(gen)``, ``dict(a=1)``).
+_COLLECTION_CALLS = {"list", "tuple", "set", "dict", "frozenset", "sorted"}
+
+
+def _walk_eager(node: ast.AST) -> Iterator[ast.AST]:
+    """*node* and what it evaluates itself: a lambda's body is left out."""
+    yield node
+    if isinstance(node, ast.Lambda):
+        return
+    for child in ast.iter_child_nodes(node):
+        yield from _walk_eager(child)
+
+
+def _factory_needs_hoist(body: ast.expr, enum_names: Collection[str]) -> bool:
+    """Whether a ``default_factory`` lambda body is one Codon compiles only
+    in a function: a comprehension, a collection built from an argument, or
+    an Enum class (iterated)."""
+    for sub in ast.walk(body):
+        if isinstance(sub, _COMPREHENSIONS):
+            return True
+        if (
+            isinstance(sub, ast.Call)
+            and isinstance(sub.func, ast.Name)
+            and sub.func.id in _COLLECTION_CALLS
+            and (sub.args or sub.keywords)
+        ):
+            return True
+        if isinstance(sub, ast.Name) and sub.id in enum_names:
+            return True
+    return False
+
+
+def _class_body_hoists(
+    tree: ast.Module, enum_names: Collection[str] = ()
+) -> tuple[
+    list[tuple[ast.ClassDef, ast.expr, str, ast.Lambda | None]],
+    list[tuple[int, str]],
+]:
+    """The class-body expressions to move into module-level functions (#469).
+
+    Codon realizes a class body in the class's scope, where it does not bind
+    the target of a comprehension ("name '%_i_945' is not defined"), and
+    crashes on an Enum iterated there.  A function has neither problem, and
+    Python evaluates a class body once, so a call of a function is the same
+    value.  Each item is (the class, the expression, its function name,
+    the ``default_factory`` lambda it is the body of, if it is); the second
+    value is what cannot be moved, as (line, message).
+    """
+    hoists: list[tuple[ast.ClassDef, ast.expr, str, ast.Lambda | None]] = []
+    refused: list[tuple[int, str]] = []
+    for node in tree.body:
+        if not isinstance(node, ast.ClassDef) or any(
+            (_dotted(b) or "").rsplit(".", 1)[-1] in _ENUM_BASES for b in node.bases
+        ):
+            continue
+        for stmt in node.body:
+            if not isinstance(stmt, (ast.Assign, ast.AnnAssign)) or stmt.value is None:
+                continue
+            value = stmt.value
+            factory: ast.Lambda | None = None
+            if isinstance(value, ast.Call) and _dotted(value.func) in _FIELD_FUNCTIONS:
+                lam = next(
+                    (
+                        kw.value
+                        for kw in value.keywords
+                        if kw.arg == "default_factory"
+                        and isinstance(kw.value, ast.Lambda)
+                        and not kw.value.args.args
+                        and not kw.value.args.posonlyargs
+                        and not kw.value.args.kwonlyargs
+                        and kw.value.args.vararg is None
+                        and kw.value.args.kwarg is None
+                    ),
+                    None,
+                )
+                if lam is None or not _factory_needs_hoist(lam.body, enum_names):
+                    continue
+                expr: ast.expr = lam.body
+                factory = lam
+            elif any(isinstance(n, _COMPREHENSIONS) for n in _walk_eager(value)):
+                expr = value
+            else:
+                continue
+            reads = {
+                n.id
+                for n in ast.walk(expr)
+                if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)
+            }
+            if node.name in reads:
+                refused.append(
+                    (
+                        stmt.lineno,
+                        f"this expression in the body of class {node.name} "
+                        f"reads {node.name} itself, which Codon has not "
+                        "defined while it runs the body, and it needs a "
+                        "function of its own (a comprehension or an Enum "
+                        "iteration cannot run in a class body): build it in "
+                        "a module-level function that does not read the "
+                        "class",
+                    )
+                )
+                continue
+            hoists.append(
+                (node, expr, f"_acs_hoist_{node.name}_{stmt.lineno}", factory)
+            )
+    return hoists, refused
+
+
+def class_body_refusals(source: str) -> list[tuple[int, str]]:
+    """What :func:`hoist_class_bodies` cannot move, as (line, message)."""
+    return _class_body_hoists(ast.parse(source))[1]
+
+
+def hoist_class_bodies(
+    source: str, origin: list[int], enum_names: Collection[str] = ()
+) -> tuple[str, list[int]]:
+    """Move class-body comprehensions and ``default_factory`` lambdas that
+    need a function into module-level functions placed above their class
+    (#469).
+
+    ``SQ = [i * i for i in range(3)]`` becomes ``SQ = _acs_hoist_Q_2()`` and
+    ``field(default_factory=lambda: [...])`` ``field(default_factory=
+    _acs_hoist_D_5)``, with ``def _acs_hoist_...(): return (...)`` above the
+    class (above its decorators).  The expression keeps its statement's
+    line; the two new lines map to the line of the expression (*origin* is
+    extended the same way as :func:`tuple_named_tuples`'s).  A function is
+    typed from what it returns, so nothing is lost.
+    """
+    tree = ast.parse(source)
+    hoists, _ = _class_body_hoists(tree, enum_names)
+    if not hoists:
+        return source, origin
+    edits = _Edits(source.encode().splitlines(keepends=True))
+    inserts: dict[int, list[tuple[str, int]]] = {}
+    for cls, expr, name, factory in hoists:
+        body = edits.text(*edits.node_span(expr))
+        if factory is None:
+            edits.replace(*edits.node_span(expr), f"{name}()")
+        else:
+            edits.replace(*edits.node_span(factory), name)
+        first = min([cls.lineno, *(d.lineno for d in cls.decorator_list)])
+        inserts.setdefault(first, []).append(
+            (f"def {name}():\n    return ({body})\n", origin[expr.lineno - 1])
+        )
+    lines = edits.apply().encode().splitlines(keepends=True)
+    origin = list(origin)
+    for first, items in sorted(inserts.items(), reverse=True):
+        for text, line in reversed(items):
+            new = text.encode().splitlines(keepends=True)
+            # The body may span lines: keep each of the function's lines
+            # on the line its text came from.
+            lines[first - 1 : first - 1] = new
+            origin[first - 1 : first - 1] = [line] * len(new)
+    return b"".join(lines).decode(), origin
+
+
 def transform_source(
     source: str,
     dropped_decorators: Collection[str] = (),
@@ -2042,6 +2225,20 @@ def transform_source_lines(
     source, ordering = python_rewrites(source)
     source, origin = split_tuple_excepts(source)
     source, origin = tuple_named_tuples(source, origin)
+    source, origin = hoist_class_bodies(
+        source,
+        origin,
+        {
+            n.name
+            for n in ast.parse(source).body
+            if isinstance(n, ast.ClassDef)
+            and any(
+                (_dotted(b) or "").rsplit(".", 1)[-1] in _ENUM_BASES for b in n.bases
+            )
+        }
+        | set(enum_classes)
+        | model_enum_names(),
+    )
     tree = ast.parse(source)
     edits = _Edits(source.encode().splitlines(keepends=True))
     exceptions = _exception_classes(tree)
@@ -2058,24 +2255,26 @@ def transform_source_lines(
         for node in tree.body
         if isinstance(node, ast.ClassDef)
     }
-    # A Flag's extension (its operators, which module-level code such as
-    # ``RW = P.R | P.W`` or a class-level default needs while Codon reads the
-    # module) follows its class instead of the module: its lines come from
-    # the class's line (#437).
-    flags = {e.name for e in rewriter.enums if e.flag}
+    # An Enum's extension (its members list, its lookups and, for a Flag, its
+    # operators) follows its class instead of the module: module-level and
+    # class-body code such as ``RW = P.R | P.W`` or a comprehension over the
+    # class reads them while Codon reads the module (#437, #469).  Its lines
+    # come from the class's line.
     after_class: dict[int, tuple[str, str]] = {}
     at_end = []
     for name, block in _enum_lookups(rewriter.enums):
-        if name in flags:
-            end = next(
+        end = next(
+            (
                 n.end_lineno
                 for n in tree.body
                 if isinstance(n, ast.ClassDef) and n.name == name
-            )
-            assert end is not None
-            after_class[end] = (name, block)
-        else:
+            ),
+            None,
+        )
+        if end is None:  # nested in something: after the module
             at_end.append((name, block))
+        else:
+            after_class[end] = (name, block)
     appended = [
         *at_end,
         *_inherited_init_extensions(_inherited_bases(tree, init_classes, exceptions)),

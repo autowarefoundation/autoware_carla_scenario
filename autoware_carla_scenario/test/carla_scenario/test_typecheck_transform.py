@@ -67,6 +67,11 @@ def _transform(source: str) -> str:
     return out[len(PRELUDE) :]
 
 
+def _without_extensions(out: str) -> str:
+    """*out* without its ``@extend`` blocks (each follows its class)."""
+    return re.sub(r"\n@extend\nclass \w+:\n(?:(?:[ ].*)?\n)*", "", out)
+
+
 def _annotation(text: str, *, class_level: bool = False) -> str | None:
     return codon_annotation(ast.parse(text, mode="eval").body, class_level=class_level)
 
@@ -878,7 +883,7 @@ def test_an_enum_becomes_a_subclass_of_the_enum_shim() -> None:
         """
     )
     out = _transform(source)
-    body = out.partition("\n\n@extend\n")[0]  # the constructors by value follow
+    body = _without_extensions(out)  # the constructors by value follow
     assert body.count("\n") == source.count("\n")
     assert "@unique" not in out
     assert "class Turn(_acs_StrEnum[str]):" in out
@@ -906,11 +911,11 @@ def test_an_enum_is_given_a_constructor_by_value_after_the_module() -> None:
         """
     )
     out = _transform(source)
-    body, _, lookups = out.partition("\n\n@extend\n")
+    body = _without_extensions(out)
     assert body.count("\n") == source.count("\n")  # no line of the source moves
     assert "@extend\nclass Turn:\n    def __init__(self, value: str):" in out
     assert "@extend\nclass Level:\n    def __init__(self, value: int):" in out
-    assert "class Local" not in lookups  # the module's top-level enums only
+    assert "@extend\nclass Local:" not in out  # the module's top-level enums only
 
 
 def test_an_enum_is_given_its_members_and_a_lookup_by_name() -> None:
@@ -1053,8 +1058,12 @@ def test_a_flag_s_operators_follow_its_class_and_keep_the_lines_after_it() -> No
     assert origin[at] == 6
     assert any("def __or__" in line for line in lines[:at])
     assert origin[lines.index("LAST = 1  # line 9")] == 9
-    # a plain Enum's extension still waits for the end of the module
-    assert text.rstrip().endswith("raise KeyError(name)")
+    # so does a plain Enum's (#469): a class body or module-level comprehension
+    # over it reads its members while Codon reads the module
+    assert any(
+        "def _acs_by_name" in line
+        for line in lines[: lines.index("LAST = 1  # line 9")]
+    )
 
 
 def test_no_other_enum_is_given_flag_operators() -> None:
@@ -1143,7 +1152,7 @@ def test_iterating_over_an_enum_class_and_looking_up_a_member_by_name() -> None:
         """
     )
     out = _transform(source)
-    body = out.partition("\n\n@extend\n")[0]
+    body = _without_extensions(out)
     assert body.count("\n") == source.count("\n")  # no line moves
     assert "for m in Mode._acs_members():" in out
     assert "[x for x in Mode._acs_members() if x in Mode._acs_members()]" in out
@@ -1176,7 +1185,7 @@ def test_a_name_that_is_not_the_enum_class_is_left_alone() -> None:
             return list(Mode), self.Mode["A"]
         """
     )
-    out = _transform(source).partition("\n\n@extend\n")[0]
+    out = _without_extensions(_transform(source))
     assert 'list(Mode), Mode["A"], 1 in Mode' in out
     assert "[m for m in Mode], Mode[1]" in out
     assert "_acs_by_name(int)" not in out
@@ -3499,3 +3508,225 @@ def test_class_constants_compose_with_the_other_rewrites() -> None:
     text, [(name, block)] = python_rewrites(source)
     assert "x: int = V.N" in text and "a=V.N" in text and name == "V"
     assert "total_ordering" not in text and 'f"{a}"' in text
+
+
+# -- a comprehension in a class body or a default_factory (#469) --------------
+
+
+def test_a_class_body_comprehension_is_hoisted_above_its_class() -> None:
+    out = transform_source(
+        textwrap.dedent(
+            """
+            class Q:
+                SQ = [i * i for i in range(3)]
+            """
+        )
+    )
+    assert (
+        "def _acs_hoist_Q_3():\n    return ([i * i for i in range(3)])\n"
+        "class Q:\n    SQ = _acs_hoist_Q_3()\n"
+    ) in out
+
+
+def test_a_default_factory_with_a_comprehension_is_hoisted() -> None:
+    out = transform_source(
+        textwrap.dedent(
+            """
+            from dataclasses import dataclass, field
+            @dataclass
+            class D:
+                a: list[str] = field(default_factory=lambda: [str(i) for i in range(3)])
+                b: tuple = field(default_factory=lambda: tuple(i for i in range(3)))
+                c: dict = field(default_factory=lambda: dict(a=1))
+                e: list = field(default_factory=lambda: [1, 2])
+            """
+        )
+    )
+    assert "a: list[str] = _acs_hoist_D_5()" in out
+    assert "b: tuple = _acs_hoist_D_6()" in out
+    assert "c: dict = _acs_hoist_D_7()" in out
+    assert "e: list = ([1, 2])" in out  # nothing to hoist
+
+
+def test_hoisting_keeps_the_lines_of_the_class_and_maps_the_new_ones() -> None:
+    from autoware_carla_scenario.typecheck.transform import (
+        PRELUDE,
+        transform_source_lines,
+    )
+
+    source = "x = 1\nclass Q:\n    SQ = [i for i in range(3)]\n    Y = 2\n"
+    text, origin = transform_source_lines(source)
+    lines = text[len(PRELUDE) :].splitlines()
+    assert len(lines) == len(origin)
+    assert origin[lines.index("    SQ = _acs_hoist_Q_3()")] == 3
+    assert origin[lines.index("    Y = 2")] == 4
+    assert origin[lines.index("def _acs_hoist_Q_3():")] == 3
+
+
+def test_an_enum_extension_follows_its_class() -> None:
+    out = transform_source(
+        "import enum\nclass C(enum.Enum):\n    A = 1\nX = [c for c in C]\n"
+    )
+    assert out.index("def _acs_members") < out.index("X = [c for c in C._acs")
+
+
+def test_a_comprehension_reading_its_class_is_refused() -> None:
+    refused = python_rewrite_refusals(
+        "class Q:\n    B = 3\n    SQ = [i * 2 for i in range(B)]\n"
+    )
+    assert refused and "module-level function" in refused[0][1]
+    assert refused[0][0] == 3
+
+
+def test_dict_with_keywords_becomes_a_display() -> None:
+    out = transform_source("d = dict(a=1, b = 2,)\ne = dict(**x)\nf = dict()\n")
+    assert 'd = {"a": 1, "b": 2}' in out
+    assert "e = dict(**x)" in out and "f = dict()" in out
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "def f(dict):\n    return dict(a=1)",
+        "def f():\n    dict = g\n    return dict(a=1)",
+        "def f():\n    global dict\n    dict = g\ndef h():\n    return dict(a=1)",
+        "dict = g\nx = dict(a=1)",
+        "class A:\n    dict = g\n    x = dict(a=1)",
+    ],
+)
+def test_dict_with_keywords_is_left_alone_where_dict_is_bound(source: str) -> None:
+    out = transform_source(source + "\n")
+    assert "dict(a=1)" in out
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "def f(dict):\n    return dict\nx = dict(a=1)",
+        "class A:\n    dict = g\n    def m(self):\n        return dict(a=1)",
+        "class A:\n    def dict(self):\n        return 1\nx = dict(a=1)",
+    ],
+)
+def test_dict_with_keywords_is_rewritten_where_dict_is_the_builtin(
+    source: str,
+) -> None:
+    assert "dict(a=1)" not in transform_source(source + "\n")
+
+
+def test_dict_with_keywords_is_left_alone_where_the_module_binds_dict() -> None:
+    out = transform_source("def f(dict):\n    return dict(a=1)\nx = dict(b=2, **y)\n")
+    assert "return dict(a=1)" in out and "x = dict(b=2, **y)" in out
+
+
+# ---------------------------------------------------------------------------
+# An f-string in a lambda that reads a captured name (#470)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        ('f = lambda v: f"{v}{p}"', "f = lambda v: (str(v) + str(p))"),
+        (
+            'f = lambda v: f"a{v}-{p}!"',
+            'f = lambda v: ("a" + str(v) + "-" + str(p) + "!")',
+        ),
+        ('f = lambda v: f"{p!r}"', "f = lambda v: (repr(p))"),
+        ('f = lambda v: f"{p:.2f}"', 'f = lambda v: ((p).__format__(".2f"))'),
+        (
+            'f = lambda v: f"{p!r:>{v}}"',
+            'f = lambda v: (repr(p).__format__(">" + str(v)))',
+        ),
+        ('f = lambda: f"{p=:.2f}"', 'f = lambda: ("p=" + (p).__format__(".2f"))'),
+        ('f = lambda: f"{p=}"', 'f = lambda: ("p=" + repr(p))'),
+        ('f = lambda e: "{}{}".format(e, p)', "f = lambda e: (str(e) + str(p))"),
+        (
+            'f = lambda v, lab=cfg.name: f"{v}{lab}"',
+            "f = (lambda lab: lambda v: (str(v) + str(lab)))(cfg.name)",
+        ),
+        (
+            'g = (lambda lab: lambda v: f"{lab}")("a")',
+            'g = (lambda lab: lambda v: (str(lab)))("a")',
+        ),
+        (
+            's = sorted(xs, key=lambda e: f"{e}{p}")',
+            "s = sorted(xs, key=lambda e: (str(e) + str(p)))",
+        ),
+    ],
+)
+def test_a_lambda_fstring_reading_a_captured_name_is_lowered(
+    source: str, expected: str
+) -> None:
+    assert _rewritten(source + "\n") == expected + "\n"
+    assert python_rewrite_refusals(source + "\n") == []
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        'f = lambda v: f"{v}"',
+        'f = lambda v, w: f"{v}{w:>5}"',
+        'f = lambda: f"{3}"',
+        'p = 1\nf = f"{p}"',
+        'def g(p):\n    return f"{p}"',
+        'def g(p):\n    return (lambda v: p)(1), f"{p}"',
+    ],
+)
+def test_a_lambda_fstring_of_its_own_names_is_left_alone(source: str) -> None:
+    assert _rewritten(source + "\n") == source + "\n"
+
+
+def test_a_lambda_fstring_lowering_keeps_the_lines() -> None:
+    source = 'f = lambda v: f"""a\n{v}\n{p}"""\nz = 1\n'
+    text = _rewritten(source)
+    assert text.count("\n") == source.count("\n")
+    assert text.splitlines()[-1] == "z = 1"
+    ast.parse(text)
+
+
+def test_a_lambda_fstring_with_ascii_conversion_is_lowered_to_repr() -> None:
+    assert _rewritten('f = lambda v: f"{p!a}"\n') == "f = lambda v: (repr(p))\n"
+    assert (
+        _rewritten('f = lambda v: f"{p!a:>5}"\n')
+        == 'f = lambda v: (repr(p).__format__(">5"))\n'
+    )
+
+
+@pytest.mark.parametrize(
+    "template",
+    [
+        'lambda v: f"{v}{p}"',
+        'lambda v: f"<{v!r}|{p!r}|{p!s}|{p!s:>8}|{p!a}|{v!a:>9}>"',
+        'lambda v: f"{p:{w}.{w}}|{p:>{w}}|{v:{w}}"',
+        'lambda v: f"""a\\n{v}\\n{p}"""',
+        'lambda v: (lambda u: f"{u}{v}{p}")(v)',
+        'lambda v: [f"{u}{v}" for u in range(2)]',
+        'lambda v: (y := v, f"{y}{p}")',
+        'lambda v: f"{v:>6}|{p:.2f}|{p:+.1f}|{v:{w}}"',
+        'lambda v: f"{p=}|{p=:.1f}|{v=}"',
+        'lambda v: "{}-{:>4}-{!r}".format(v, p, p)',
+        'lambda v: f"{{lit}} {v} {p}"',
+        'lambda v, lab="q": f"{v}{lab}{p}"',
+        'lambda v, lab=side(): f"{v}{lab}{p}"',
+        '(lambda lab: lambda v: f"{v}{lab}{p}")(side())',
+        'lambda v: f"{note(v)}{note(p)}{note(w)}"',
+        'lambda v: [f"{i}{p}" for i in range(v)]',
+    ],
+)
+def test_a_lowered_lambda_fstring_equals_the_original(template: str) -> None:
+    results = []
+    for code in (
+        f"f = {template}\n",
+        _rewritten(f"f = {template}\n"),
+    ):
+        log: list[str] = []
+
+        def note(value: Any, log: list[str] = log) -> Any:
+            log.append(repr(value))
+            return value
+
+        scope: dict[str, Any] = {"p": 2.5, "w": 7, "side": lambda: "S", "note": note}
+        exec(code, scope)  # noqa: S102
+        samples = (3,) if "range" in code else (1, 3.25)
+        results.append(([scope["f"](v) for v in samples], log))
+    assert results[0] == results[1], template

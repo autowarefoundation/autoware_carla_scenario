@@ -1135,6 +1135,7 @@ cannot express is refused at its line, with what to write instead.
 | `{**a, "k": v, **b}` | `(a \| {"k": v} \| b)`; `{**a}` is `dict(a)` | the values of the parts have other types (`Dict[str, int]` and `Dict[str, str]`) |
 | `"{:>5}\|{a}".format(1, a=x)` on a string literal | the f-string `f"{1:>5}\|{x}"` (a complex argument is bound once by a lambda) | `*args` / `**kwargs`, a field inside a format spec (`{:>{}}`: write the f-string, which is rewritten), a missing argument, mixed auto and manual numbering, a template that is not a literal (write an f-string) |
 | `f"{x:+.2f}"`, `f"{n:>{w}d}"`, a spec Codon's f-string parser does not know | the value's own `__format__`, the f-string a `+` of its parts: `(x).__format__("+.2f")`, `(n).__format__(">" + str(w) + "d")`. A nested field is `str(w)` (`repr(w)` for `!r`); the result is a `str`, as before. `"{:+.2f}".format(x)` is rewritten to the f-string first, so it gets the same | a brace or a nested f-string inside an expression of the f-string (below); `!a` together with a rewritten spec |
+| An f-string (or `"{}".format(...)`, `{x=}`) in the body of a lambda that reads a name the lambda does not bind: `lambda v: f"{v}{p}"`, `sorted(xs, key=lambda e: f"{e}{p}")`, `lambda v, lab=cfg.name: f"{v}{lab}"` (#470) | `str()` parts joined by `+`: `str(v) + str(p)`; `repr(p)` for `!r`, `(p).__format__(spec)` for a spec, `"p=" + repr(p)` for `{p=}`, `repr(p)` for `!a` (as for `ascii()`). Each value is evaluated once, in order, and the result is a `str`. Codon looks the names of an f-string up in the lambda's own scope ("name 'p' is not defined"); a `def` or a comprehension does not have that limit. An f-string of the lambda's own parameters is left as written | a brace or a nested f-string inside an expression (as above) |
 | `zip(a, b, strict=True)` | `zip(a, b)`: the check types the loop, it does not run it | |
 | `s.startswith((a, b))`, `s.endswith((a, b), start)` with the tuple written in the call (#439) | `(s.startswith(a) or s.startswith(b))`; a receiver or item that is not a name, attribute or constant is bound once by a lambda | the tuple is held in a name (`s.startswith(PREFIXES)`), is empty, or the call has `*args` / keywords; each item is still checked as a `str` |
 | `format(x, spec)`, `format(x)` (#439) | `x.__format__(spec)`, `str(x)` | `format` is bound where the call is: by the module (an assignment, import, `def` or `class` at module level) or by an enclosing function or lambda (a parameter or local); a method named `format` or a class attribute binds nothing there, so it does not disable the rewrite (#471) |
@@ -1145,6 +1146,8 @@ cannot express is refused at its line, with what to write instead.
 | `def __exit__(self, exc_type, exc, tb)` (annotated `type[BaseException] \| None`, `BaseException \| None`, `object`, ... or not) | each parameter without a default gets `=None`: Codon calls `__exit__()` with no arguments, even when the block raised (#435). An annotation of `BaseException` or `Exception` (alone or `\| None`, `Optional[...]`) is kept as `X \| None`; any other annotation is dropped | |
 | `fs: list[Callable[[int], int]] = [inc, lambda x: x * 2]`, `table: dict[str, Callable[[int], int]] = {"a": inc, "b": dbl}`, or a `return` of such a display from a function annotated so (a dispatch table) | each function, module function (`mod.f`) or lambda element is wrapped in Codon's `Callable[Tuple[int], int](...)`, so they share one type (#436) | the element is a bound method, a lambda using a local variable of its function, or a call (not wrapped, then Codon's own refusal and a hint); the table is a `set`, an attribute of a class, is unannotated, or is built another way than a display (a comprehension) |
 | a class constant read in its own class body (#433): `DOUBLE = LIMIT * 2`, `x: int = SIZE` (a dataclass default), `def f(self, n=LIMIT)`, `@register(LIMIT)` | `Class.LIMIT` (`Outer.Inner.LIMIT` in a nested class) | the constant is annotated and not a single-line literal (`LIMIT: int = 2 * 3`), it is assigned again later in the body, the class is defined in a function, the read is a `NamedTuple` field default, or it is an Enum member with a non-literal value |
+| a comprehension or generator in a class body (#469): `SQ = [i * i for i in range(3)]`, `field(default_factory=lambda: [d.name for d in Mode])`, `lambda: tuple(gen)`, `lambda: list(Mode)` | a module-level function above the class (`def _acs_hoist_Q_2(): return (...)`) that the attribute or field default calls, on the same lines (Codon does not bind a comprehension's variable in a class body, and crashes on an Enum iterated there) | the expression reads its own class (`range(LIMIT)` with `LIMIT` a constant of the class): build it in a module-level function |
+| `dict(a=1)` | `{"a": 1}` (Codon's `dict` takes no keywords) | |
 
 Notes:
 
@@ -2220,12 +2223,31 @@ What Codon 0.19 needs that Python does not, beyond
   the frame's waypoint, weather, lanelet tags, ... each `Optional`, and
   `read`, so a read that failed is still kept as `None` for the frame, as
   before.
-- Standard modules Codon does not have (`json`, `inspect`, `tempfile`,
-  ...) are not available to a checked module; the `typing`,
-  `dataclasses`, `enum`, `logging`, `abc`, `queue`, `pathlib`, `hashlib`,
-  `os`, `shutil`, `subprocess`, `signal`, `atexit`, `shlex`, `sys`,
-  `threading`, `importlib.metadata`, `urllib.parse` and `__future__` shims
-  of `codon/` are. Each takes the
+- Standard modules Codon does not have (`json`, `inspect`,
+  `concurrent.futures`, ...) are not available to a checked module; the
+  shims of `codon/` are. They are these (`test_shim_list` keeps the list
+  and the files of `codon/` in step):
+
+  <!-- shims:start -->
+  `__future__`, `abc`, `atexit`, `dataclasses`, `enum`, `hashlib`,
+  `importlib.metadata`, `logging`, `os`, `os.path`, `pathlib`, `queue`,
+  `shlex`, `shutil`, `signal`, `subprocess`, `sys`, `tempfile`, `threading`,
+  `typing` and `urllib.parse`
+  <!-- shims:end -->
+
+  `tempfile` declares `mkstemp(suffix=None, prefix=None, dir=None,
+  text=False)` only, with CPython 3.10's signature (a `str` or an
+  `os.PathLike` directory; bytes affixes are not declared). The check only
+  compiles it, so its body is a stub that makes no file (it is typed to give
+  `(int, str)`, the descriptor and the name). `mkdtemp()`,
+  `NamedTemporaryFile()`, `TemporaryDirectory()`, `gettempdir()` and the
+  rest are not declared and fail the check. Two more modules are not
+  shims but extensions of Codon's own `collections` and `itertools`, in
+  `codon/_stdlib/` (#422): they add
+  `collections.OrderedDict` and `itertools.pairwise`, as listed under
+  "Standard library names Codon lacks".
+
+  Each shim takes the
   arguments CPython takes, so the check accepts what CPython accepts and
   refuses the rest; where Python versions differ, it takes what Python 3.10,
   the oldest the package supports, takes. `pathlib` declares `Path(*parts)`,

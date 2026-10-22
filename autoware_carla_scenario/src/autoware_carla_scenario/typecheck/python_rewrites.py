@@ -27,6 +27,12 @@ so a rewrite has to keep the *types*, not the values, of what it replaces.
   the check.  An f-string with a brace or a nested f-string inside an
   expression (``f"{'{}'.format(x)}"``, ``f"{len({1, 2})}"``) is refused:
   Codon's f-string parser loses the position there.
+* An f-string in the body of a lambda that reads a name the lambda does not
+  bind (a captured variable, or the parameter of a lambda around it) becomes
+  ``str(v) + str(p)`` (#470): Codon resolves the names of an f-string in the
+  lambda's own scope ("name 'p' is not defined").  ``!r`` is ``repr(p)``, a
+  spec ``(p).__format__(spec)``, ``{p=}`` ``"p=" + repr(p)``; ``.format`` is
+  an f-string first, so it ends up lowered too.  ``!a`` there is ``repr``.
 * ``zip(..., strict=...)`` becomes ``zip(...)``.
 * Builtins and str methods Codon lacks (#439), each with the type of what it
   replaces: ``s.startswith((a, b))`` (also ``endswith``, and with a ``start``
@@ -92,6 +98,7 @@ import re
 import string
 from collections.abc import Iterator
 
+from .scopes import ShadowScopes
 from .transform import (
     _ENUM_BASES,
     _dataclass_options,
@@ -109,6 +116,14 @@ __all__ = ["REWRITE_HINTS", "python_rewrites", "python_rewrite_refusals"]
 
 #: Codon's refusals of what this pass leaves alone, and what to write.
 REWRITE_HINTS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (
+        re.compile(r"name '%_\w+_\d+' is not defined"),
+        "Codon does not bind the variable of a comprehension that runs in a "
+        "class body (a class attribute, a default of a dataclass field): "
+        "the check moves the ones it can into a module-level function; "
+        "otherwise build the value in a module-level function and call it "
+        "from the class",
+    ),
     (
         re.compile(r"^'(?:str|'.*')' object has no attribute 'format'"),
         "Codon's str has no .format(): the check rewrites it only on a string "
@@ -469,6 +484,54 @@ def _fstring_rewrite(node: ast.JoinedStr) -> str:
     return " + ".join(parts) if parts else '""'
 
 
+def _lambda_fstring_rewrite(node: ast.JoinedStr) -> str:
+    """*node* as ``str(x) + "lit" + ...``: every field a call, never an f-string.
+
+    For the body of a lambda that reads a captured name (#470): Codon looks
+    the names of an f-string up in the lambda's own scope, so ``f"{v}{p}"``
+    is "name 'p' is not defined" there while ``str(v) + str(p)`` is not.
+    A field is ``str(x)``, ``repr(x)`` for ``!r``, and ``x.__format__(spec)``
+    with a spec, as Python's ``format`` calls it; ``{x=}`` is already a text
+    part and a ``!r`` field in the tree.  Each value is evaluated once, in order.
+    """
+    parts: list[str] = []
+    chunk = ""
+    for value in node.values:
+        if isinstance(value, ast.Constant):
+            chunk += str(value.value)
+            continue
+        if not isinstance(value, ast.FormattedValue):
+            continue
+        if chunk:
+            parts.append(_string_literal(chunk))
+            chunk = ""
+        if value.conversion == ord("a"):
+            # Codon has no ascii(); repr() has the same type (as for ascii()).
+            value = ast.FormattedValue(
+                value=value.value,
+                conversion=ord("r"),
+                format_spec=value.format_spec,
+            )
+        parts.append(_formatted(value))
+    if chunk:
+        parts.append(_string_literal(chunk))
+    return " + ".join(parts) if parts else '""'
+
+
+def _reads_outside(node: ast.JoinedStr, own: set[str]) -> bool:
+    """Whether a field of *node* reads a name other than *own* (a parameter of
+    the lambda around it) or one it binds itself (a comprehension variable)."""
+    bound = set(own)
+    names: set[str] = set()
+    for field in ast.walk(node):
+        if isinstance(field, ast.Name):
+            if isinstance(field.ctx, ast.Load):
+                names.add(field.id)
+            else:
+                bound.add(field.id)
+    return bool(names - bound)
+
+
 def _scope_names(node: ast.AST) -> Iterator[ast.Name]:
     """The names *node* loads in the scope it is written in.
 
@@ -602,69 +665,19 @@ def _escaped(text: str) -> str:
     return "".join(out)
 
 
-_COMPREHENSIONS = (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
-
-
-def _scope_bindings(scope: ast.AST) -> set[str]:
-    """The names *scope* (a module, function or lambda) binds in its own
-    scope: its parameters, variables, imports, and the names of the functions
-    and classes it defines.  The bodies of nested functions, lambdas and
-    classes are other scopes (a method name never binds in the scope of its
-    class's module, a class attribute is not read from a method as a name)."""
-    names: set[str] = set()
-    stack = list(ast.iter_child_nodes(scope))
-    while stack:
-        node = stack.pop()
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            names.add(node.name)
-            continue
-        if isinstance(node, ast.Lambda):
-            continue
-        if isinstance(node, _COMPREHENSIONS):
-            # Its loop targets are its own; a walrus binds in *scope*.
-            names.update(
-                n.target.id
-                for n in ast.walk(node)
-                if isinstance(n, ast.NamedExpr) and isinstance(n.target, ast.Name)
-            )
-            continue
-        if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
-            names.add(node.id)
-        elif isinstance(node, ast.arg):
-            names.add(node.arg)
-        elif isinstance(node, (ast.Import, ast.ImportFrom)):
-            for alias in node.names:
-                names.add((alias.asname or alias.name).split(".")[0])
-        elif isinstance(node, ast.ExceptHandler) and node.name:
-            names.add(node.name)
-        elif isinstance(node, (ast.Global, ast.Nonlocal)):
-            names.update(node.names)
-        else:
-            for attr in ("name", "rest"):  # match: `case x`, `case *x`, `case {**x}`
-                value = getattr(node, attr, None)
-                if isinstance(value, str) and type(node).__name__.startswith("Match"):
-                    names.add(value)
-        stack.extend(ast.iter_child_nodes(node))
-    return names
-
-
-class _Pass(ast.NodeVisitor):
+class _Pass(ShadowScopes):
     def __init__(self, edits: _Edits, total_ordering: set[str]) -> None:
+        super().__init__()
         self.edits = edits
         self.total_ordering = total_ordering
         self.refused: list[tuple[int, str]] = []
         self._depth = 0
-        #: The names the module binds at its own level, and those each
-        #: enclosing function or lambda binds: a builtin of that name is
-        #: shadowed only where one of them is in scope (#471).
-        self._module_bound: set[str] = set()
-        #: Each with whether it is a class body, whose names only its own
-        #: statements read: a method or a comprehension in it skips it.
-        self._local_bound: list[tuple[set[str], bool]] = []
         #: The functions being visited, innermost last, with their local names.
         self._functions: list[tuple[ast.FunctionDef | ast.AsyncFunctionDef, set[str]]]
         self._functions = []
         self._class_body = False
+        #: The parameter names of the lambdas being visited, innermost last.
+        self._lambdas: list[set[str]] = []
         #: The names ``import x`` / ``import x.y as z`` bind: ``x.f`` is a function.
         self._modules: set[str] = set()
         #: Where each enclosing scope's class can be named from outside: the
@@ -674,41 +687,6 @@ class _Pass(ast.NodeVisitor):
 
     def _text(self, node: ast.AST) -> str:
         return self.edits.text(*self.edits.node_span(node))
-
-    def _shadowed(self, name: str) -> bool:
-        """Whether *name* is bound by the module or an enclosing function, so
-        a builtin of that name is not the one in scope."""
-        if name in self._module_bound:
-            return True
-        for index, (bound, is_class) in enumerate(reversed(self._local_bound)):
-            if name in bound and (index == 0 or not is_class):
-                return True
-        return False
-
-    def visit(self, node: ast.AST) -> None:
-        scope: tuple[set[str], bool] | None = None
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
-            scope = (_scope_bindings(node), False)
-        elif isinstance(node, ast.ClassDef):
-            scope = (_scope_bindings(node), True)
-        elif isinstance(node, _COMPREHENSIONS):
-            scope = (
-                {
-                    n.id
-                    for g in node.generators
-                    for n in ast.walk(g.target)
-                    if isinstance(n, ast.Name)
-                },
-                False,
-            )
-        if scope is not None:
-            self._local_bound.append(scope)
-            try:
-                super().visit(node)
-            finally:
-                self._local_bound.pop()
-        else:
-            super().visit(node)
 
     def _refuse(self, node: ast.AST, message: str) -> None:
         self.refused.append((node.lineno, message))  # type: ignore[attr-defined]
@@ -1120,11 +1098,7 @@ class _Pass(ast.NodeVisitor):
         self.edits.replace(*self.edits.node_span(node), text)
 
     def visit_Module(self, node: ast.Module) -> None:
-        self._module_bound = _scope_bindings(node)
-        # `global format` in a function binds the module's name.
-        for inner in ast.walk(node):
-            if isinstance(inner, ast.Global):
-                self._module_bound.update(inner.names)
+        self.enter_module(node)
         self.generic_visit(node)
 
     # -- except* -------------------------------------------------------------
@@ -1147,9 +1121,14 @@ class _Pass(ast.NodeVisitor):
         if problem is not None:
             self._refuse(node, problem)
             return
-        if _fstring_needs_rewrite(node):
+        lambda_lowered = bool(self._lambdas) and _reads_outside(node, self._lambdas[-1])
+        if lambda_lowered or _fstring_needs_rewrite(node):
             try:
-                text = _fstring_rewrite(node)
+                text = (
+                    _lambda_fstring_rewrite(node)
+                    if lambda_lowered
+                    else _fstring_rewrite(node)
+                )
             except _Refused as error:
                 self._refuse(node, str(error))
                 return
@@ -1435,7 +1414,13 @@ class _Pass(ast.NodeVisitor):
                 inner.kwonlyargs.append(arg)
                 inner.kw_defaults.append(kw_default)
         if not moved:
-            self.generic_visit(node)
+            for outer in (*args.defaults, *args.kw_defaults):
+                if outer is not None:
+                    self.visit(outer)
+            own = {a.arg for a in ast.walk(args) if isinstance(a, ast.arg)}
+            self._lambdas.append(own)
+            self.visit(node.body)
+            self._lambdas.pop()
             return
         names = ", ".join(name for name, _ in moved)
         values = ", ".join(self._text(default) for _, default in moved)
@@ -1580,6 +1565,9 @@ def _run(source: str) -> tuple[str, list[tuple[str, str]], list[tuple[int, str]]
         if not edits.edits:
             break
         source = edits.apply()
+    from .transform import class_body_refusals
+
+    refused += [r for r in class_body_refusals(source) if r not in refused]
     return source, blocks, sorted(refused)
 
 

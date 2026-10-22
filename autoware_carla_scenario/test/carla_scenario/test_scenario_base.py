@@ -670,6 +670,20 @@ class TestEntityRegistration:
         assert find_pedestrian_entity("walker1") is walker
         assert find_vehicle_entity("walker1") is None
 
+    def test_a_pedestrian_is_handed_the_runs_traffic_backend(self) -> None:
+        walker = PedestrianEntity(
+            PedestrianEntityConfig(
+                role_name="walker1", spawn_location=SpawnTransform(carla.Transform())
+            )
+        )
+        backend = MagicMock()
+        scenario = _SimpleScenario(_make_ego_config())
+        scenario.set_traffic_backend(backend)
+        scenario.register_pedestrian(walker)
+
+        backend.adopt_pedestrian.assert_called_once_with(walker)
+        assert walker._traffic_backend is backend
+
     @pytest.mark.parametrize("method", ["register_entity", "register_pedestrian"])
     def test_a_double_of_neither_kind_is_found_by_every_lookup(
         self, method: str

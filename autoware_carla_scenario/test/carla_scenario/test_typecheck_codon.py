@@ -6616,6 +6616,195 @@ def make():
     assert error.line == _line_of(path, "R = Q * 2")
 
 
+def test_fstrings_in_lambdas_that_capture_compile(tmp_path: Path) -> None:
+    """Every form of #470: Codon cannot see a captured name in a lambda's f-string."""
+    setup = """
+        p = cfg.name
+        x = 3.14159
+        a = lambda v: f"{v}{p}"
+        b = sorted(["b", "a"], key=lambda e: f"{e}{p}")
+        c = lambda e: "{}{}".format(e, p)
+        d = lambda v, lab=cfg.name: f"{v}{lab}"
+        e = lambda v, lab=f"{x}": f"{v}{lab}"
+        f = lambda: f"{x=:.2f}"
+        g = (lambda lab: lambda v: f"{lab}")("a")
+        h = lambda v: f"{v:+.2f}|{x:>10.3f}|{p!r}|{x=}|{{lit}}"
+        i = lambda v: [f"{k}{p}" for k in range(v)]
+
+        def inner(name):
+            return (lambda v: f"{v}{name}")(1)
+
+        r: str = a(1) + c(2) + d(3) + e(4) + f() + g(5) + h(6.5) + inner("n")
+        assert len(r) > 0 and len(b) == 2 and len(i(2)) == 2
+    """
+    scenario, config, _ = _data_case(tmp_path, "", setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+@pytest.mark.parametrize(
+    ("line", "message"),
+    [
+        ('r: int = (lambda v: f"{v}{p}")(1)', "int"),
+        ('r = (lambda v: f"{v}{p.nope}")(1)', "nope"),
+        ('r = (lambda v: f"{v.nope}{p}")(1)', "nope"),
+        ('r = (lambda v: "{}{}".format(v, p) + 1)(1)', "str"),
+    ],
+    ids=["result", "capture-attribute", "param-attribute", "format"],
+)
+def test_a_lowered_lambda_fstring_is_still_type_checked(
+    tmp_path: Path, line: str, message: str
+) -> None:
+    scenario, config, path = _data_case(tmp_path, "", 'p = "a"\n' + line + "\n")
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert message in error.message, error.format()
+    assert error.line == _line_of(path, line)
+
+
+_LAMBDA_FSTRING_TYPES = (
+    _FLAGS
+    + """
+class Color(enum.Enum):
+    RED = 1
+    BLUE = 2
+
+
+class Shown:
+    n: int
+
+    def __init__(self, n: int) -> None:
+        self.n = n
+
+    def __str__(self) -> str:
+        return "shown"
+
+    def __repr__(self) -> str:
+        return "Shown()"
+
+
+class Holder:
+    prefix = "h"
+
+
+MULTILINE = lambda v, p: f\"\"\"a
+{v}
+{p}{Holder.prefix}\"\"\"
+"""
+)
+
+
+def test_fstrings_in_lambdas_accept_the_types_a_scenario_uses(tmp_path: Path) -> None:
+    """``str(x)`` / ``repr(x)`` exist for enums, flags, framework and user types."""
+    setup = """
+        p = cfg.name
+        loc = carla.Location(x=1.0, y=2.0, z=3.0)
+        col = Color.RED
+        sh = Shown(1)
+        a = lambda v: f"{v}{loc}{col}{Perm.R | Perm.W}{Bits.A}{sh}{p}"
+        b = lambda v: f"{loc!r}{col!r}{sh!r}{sh!s}{sh!a}{p!s:>5}{p!a:>5}"
+        c = lambda v: f"{p:>{v}}|{v:{len(p)}}|{v:>{v}d}"
+        d = lambda v: (y := v, f"{y}{p}")[1]
+        e = lambda v: [f"{k}{v}{p}" for k in range(v)]
+        f = lambda v: (lambda u: [lambda w: f"{u}{v}{w}{p}" for _ in range(2)])(v)
+        g = lambda v, h=lambda w: f"{w}{p}": h(v)
+        i = MULTILINE
+        r: str = a(1) + b(2) + c(3) + d(4) + e(2)[0] + f(5)[0](6) + g(7) + i(8, p)
+        assert len(r) > 0
+    """
+    scenario, config, _ = _data_case(tmp_path, _LAMBDA_FSTRING_TYPES, setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+# -- a comprehension in a class body or a default_factory (#469) ---------------
+
+_CLASS_BODY_COMPREHENSIONS = """
+class Color(enum.Enum):
+    RED = 1
+    BLUE = 2
+
+
+class Q:
+    SQ = [i * i for i in range(3)]
+    NAMES = [n.upper() for n in ["a", "b"]]
+    TABLE = {k: len(k) for k in ["a", "bb"]}
+    COLORS = [c.name for c in Color]
+    DIRS = [d.name for d in TurnDirection]
+
+
+@dataclass
+class D:
+    names: list[str] = dataclasses.field(
+        default_factory=lambda: [str(i) for i in range(3)]
+    )
+    ds: list[TurnDirection] = dataclasses.field(
+        default_factory=lambda: list(TurnDirection)
+    )
+    dnames: list[str] = dataclasses.field(
+        default_factory=lambda: [d.name for d in TurnDirection]
+    )
+    cnames: list[str] = dataclasses.field(
+        default_factory=lambda: [c.name for c in Color]
+    )
+    squares: tuple[int, ...] = dataclasses.field(
+        default_factory=lambda: tuple(i for i in range(3))
+    )
+    opts: dict[str, int] = dataclasses.field(default_factory=lambda: dict(a=1))
+"""
+
+
+def test_class_body_comprehensions_and_factories_compile(tmp_path: Path) -> None:
+    setup = """
+        d = D()
+        logger.info("%s %s %s", Q.SQ, Q.NAMES, Q.TABLE)
+        logger.info("%s %s", Q.COLORS, Q.DIRS)
+        logger.info("%s %s %s %s", d.names, d.ds, d.dnames, d.cnames)
+        logger.info("%s %s", d.squares, d.opts)
+    """
+    scenario, config, _ = _data_case(tmp_path, _CLASS_BODY_COMPREHENSIONS, setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_a_hoisted_class_body_comprehension_is_still_type_checked(
+    tmp_path: Path,
+) -> None:
+    definitions = """
+class Q:
+    BAD = [i.nope for i in range(0)]
+"""
+    scenario, config, path = _data_case(tmp_path, definitions, "x = Q.BAD\n")
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert error.line == _line_of(path, "BAD = ")
+
+
+def test_a_hoisted_default_factory_is_still_type_checked(tmp_path: Path) -> None:
+    definitions = """
+@dataclass
+class D:
+    names: list[str] = dataclasses.field(
+        default_factory=lambda: [i + "a" for i in range(3)]
+    )
+"""
+    scenario, config, path = _data_case(tmp_path, definitions, "x = D().names\n")
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert error.line == _line_of(path, "default_factory=lambda"), error.format()
+
+
+def test_a_class_body_comprehension_reading_its_class_is_refused(
+    tmp_path: Path,
+) -> None:
+    definitions = """
+class Q:
+    BASE = 3
+    SQ = [i * 2 for i in range(BASE)]
+"""
+    scenario, config, path = _data_case(tmp_path, definitions, "x = Q.SQ\n")
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "module-level function" in error.message, error.format()
+    assert error.line == _line_of(path, "SQ = ")
+
+
 def test_format_with_a_method_or_parameter_of_that_name_compiles(
     tmp_path: Path,
 ) -> None:

@@ -266,7 +266,8 @@ NOT_MODELLED: dict[str, dict[str, str]] = {
             _TRAFFIC_BACKEND,
         ),
         **_each(
-            "BackendDriven DrivenEntity LaneChanging SettingSpeed TurningAtJunctions",
+            "BackendDriven DrivenEntity LaneChanging SettingSpeed TurningAtJunctions "
+            "WalkedEntity",
             _TRAFFIC_PROTOCOL,
         ),
     },
@@ -460,6 +461,7 @@ NOT_MODELLED_MEMBERS: dict[str, dict[str, str]] = {
         "compiles them from their source",
     ),
     "BackendDriven": {"set_traffic_backend": _SET_TRAFFIC_BACKEND},
+    "PedestrianEntity": {"set_traffic_backend": _SET_TRAFFIC_BACKEND},
     "BaseAction": {"close": _RUN_CLEANUP},
     "BaseCondition": {
         **_members("get_details to_summary_dict", _CONDITION_DETAILS),
