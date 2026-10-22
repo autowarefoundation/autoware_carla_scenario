@@ -2995,10 +2995,10 @@ same action means "every lane outside a junction" on any map:</p>
 <a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a><span class="c1"># Keep adding for the first 20 s only:</span>
 <a id="__codelineno-15-6" name="__codelineno-15-6" href="#__codelineno-15-6"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>...<span class="w"> </span>background_traffic.enabled<span class="o">=</span><span class="nb">true</span><span class="w"> </span>background_traffic.source.stop_after_seconds<span class="o">=</span><span class="m">20</span>
 </code></pre></div>
-<p><code>background_traffic</code> (in <code>examples/conf/config.yaml</code>) is off by default, and the
-SUMO backend's own <code>ambient</code> randomTrips demand is off in
-<code>conf/traffic/sumo.yaml</code>, so an example runs with no traffic but its own unless
-asked.</p>
+<p><code>background_traffic</code> (in <code>examples/conf/config.yaml</code>) is off by default, and so
+are the SUMO backend's own <code>ambient</code> randomTrips demand and its <code>pedestrians</code>
+(<code>SumoBackendConfig</code>'s defaults, and <code>conf/traffic/sumo.yaml</code>'s), so a run has
+no traffic but its own and its traffic sources' unless asked.</p>
 <h2 id="why-this-exists">Why this exists<a class="headerlink" href="#why-this-exists" title="Permanent link">&para;</a></h2>
 <p>CARLA's TrafficManager is a good default for a handful of scripted NPCs and the
 wrong tool for dense, demand-driven flow. Microscopic traffic simulators model
@@ -3016,7 +3016,8 @@ before anything is spawned.</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>lane_change/left<span class="w"> </span><span class="nv">map</span><span class="o">=</span>town10hd_opt<span class="w"> </span><span class="nv">traffic</span><span class="o">=</span>sumo
 <a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>...<span class="w"> </span><span class="nv">traffic</span><span class="o">=</span>sumo<span class="w"> </span>traffic.options.ambient.vehicles_per_hour<span class="o">=</span><span class="m">1800</span>
 <a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>...<span class="w"> </span><span class="nv">traffic</span><span class="o">=</span>sumo<span class="w"> </span>traffic.options.scenario_vehicles<span class="o">=</span>sumo
-<a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>...<span class="w"> </span><span class="nv">traffic</span><span class="o">=</span>sumo<span class="w"> </span>traffic.options.fcd_output<span class="o">=</span><span class="nb">true</span><span class="w">   </span><span class="c1"># &lt;output&gt;/sumo/fcd.xml</span>
+<a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>...<span class="w"> </span><span class="nv">traffic</span><span class="o">=</span>sumo<span class="w"> </span>traffic.options.scenario_pedestrians<span class="o">=</span>sumo
+<a id="__codelineno-16-5" name="__codelineno-16-5" href="#__codelineno-16-5"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>...<span class="w"> </span><span class="nv">traffic</span><span class="o">=</span>sumo<span class="w"> </span>traffic.options.fcd_output<span class="o">=</span><span class="nb">true</span><span class="w">   </span><span class="c1"># &lt;output&gt;/sumo/fcd.xml</span>
 </code></pre></div>
 <p><strong>The network</strong> is the world's own road network. The backend takes the
 OpenDRIVE the world runs (the file the run installed, or
@@ -3057,12 +3058,17 @@ by roadgen's validation.</p>
 <td>published, or driven</td>
 </tr>
 <tr>
-<td>Ambient traffic (<code>randomTrips.py</code>)</td>
+<td>Ambient traffic (<code>randomTrips.py</code>, <code>ambient.enabled</code>, off by default)</td>
 <td>SUMO</td>
 <td>native; mirrored into CARLA</td>
 </tr>
 <tr>
-<td>Pedestrians (<code>walker.pedestrian.*</code>, e.g. <code>WalkStraightAction</code>)</td>
+<td>Scenario pedestrians (<code>PedestrianEntity</code>, e.g. <code>WalkStraightAction</code>)</td>
+<td>CARLA (<code>scenario_pedestrians=traffic_manager</code>, default), or SUMO (<code>scenario_pedestrians=sumo</code>)</td>
+<td>published, or walked</td>
+</tr>
+<tr>
+<td>Other CARLA pedestrians (<code>walker.pedestrian.*</code>)</td>
 <td>CARLA</td>
 <td>published as SUMO persons (<code>publish_walkers</code>, on by default)</td>
 </tr>
@@ -3084,6 +3090,20 @@ crossing or anywhere else, or changes lanes round it. A person has to be added
 on an edge with a footway -- SUMO aborts the whole simulation when one is moved
 off an edge without -- so a pedestrian with no footway within 50 m (or on a
 network with none) is left out, with a warning.</p>
+<p><strong>The scenario's pedestrians walked by SUMO</strong> (<code>scenario_pedestrians=sumo</code>):
+each <code>PedestrianEntity</code> the scenario registers is a SUMO person from the start
+of the run, and its CARLA walker follows that person, as a mirrored walker
+follows one of SUMO's own. Standing, the person is put where its walker
+stands every tick. A <code>WalkStraightAction</code> walks the person straight on, the
+way its walker faces, through TraCI: each step it is moved on along the line
+at the action's speed (<code>moveToXY</code>, <code>keepRoute</code> 6, so off the kerb it is on the
+road lanes, where SUMO's traffic brakes for it), until a second action stops
+it (<code>speed_ms: 0</code>). This is TraCI's walk, not SUMO's pedestrian model, which
+walks footways and crossings to a destination and so has no way to step off
+the kerb where a pedestrian stands. An action that moves the walker itself
+(<code>FollowTrajectoryAction</code>, an adversity) takes it back from SUMO, which
+publishes it from then on. A pedestrian with no footway within 50 m stays
+CARLA's, as a published one would.</p>
 <p><strong>SUMO's own pedestrians</strong> (<code>pedestrians</code>, off by default) walk the network's
 footways (<code>randomTrips.py --pedestrians</code>, unweighted, up to <code>max_distance_m</code>
 each) and are mirrored into CARLA as walkers (<code>blueprint</code>, with the role name
@@ -3273,7 +3293,7 @@ CARLA co-simulation; its adversarial behaviour generation is left to scenarios.<
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 22, 2026 04:05:39 UTC"><span class="timeago" datetime="2026-10-22T04:05:39+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 22, 2026 04:05:39 UTC">2026-10-22</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 22, 2026 07:55:55 UTC"><span class="timeago" datetime="2026-10-22T07:55:55+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 22, 2026 07:55:55 UTC">2026-10-22</span>
   </span>
 
     
