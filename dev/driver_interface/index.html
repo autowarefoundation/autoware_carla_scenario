@@ -1388,6 +1388,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#a-camera-with-a-lens-of-its-own-drivercameraslens" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A camera with a lens of its own: driver.cameras[].lens
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#how-the-plan-is-tracked" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2108,6 +2119,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#a-camera-with-a-lens-of-its-own-drivercameraslens" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A camera with a lens of its own: driver.cameras[].lens
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#how-the-plan-is-tracked" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2470,6 +2492,70 @@ and sweeps all behave exactly as they do for a TrafficManager-driven ego.</p>
 <a id="__codelineno-4-32" name="__codelineno-4-32" href="#__codelineno-4-32"></a><span class="w">    </span><span class="nt">delay_compensation_time</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.17</span><span class="w"> </span><span class="c1"># ... and any of its parameters, by name</span>
 <a id="__codelineno-4-33" name="__codelineno-4-33" href="#__codelineno-4-33"></a><span class="w">    </span><span class="nt">throttle_deadband</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.3</span><span class="w">      </span><span class="c1"># vehicle interface: least throttle to pull away</span>
 </code></pre></div>
+<h3 id="a-camera-with-a-lens-of-its-own-drivercameraslens">A camera with a lens of its own: <code>driver.cameras[].lens</code><a class="headerlink" href="#a-camera-with-a-lens-of-its-own-drivercameraslens" title="Permanent link">&para;</a></h3>
+<p>A camera's frames are CARLA's pinhole of its <code>fov</code> unless it says otherwise. A
+<a href="../usage/#rendering-sensors-with-carla_canvas">carla_canvas</a> renderer may draw
+a camera through another lens: the Cosmos3 world model
+(<a href="https://github.com/hakuturu583/cosmos3-canvas">cosmos3-canvas</a>) draws only its
+Hyperion 8 cameras, each through its F-theta fisheye lens. Such a camera carries
+its <code>lens</code>, so the policy and a <a href="../t4_dataset/">T4 dataset</a> are told what the
+frames are:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="nt">driver</span><span class="p">:</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">  </span><span class="nt">cameras</span><span class="p">:</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">    </span><span class="c1"># python -m cosmos3_canvas.camera camera_front_wide_120fov</span>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">logical_id</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">camera_front_wide_120fov</span>
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="w">      </span><span class="nt">image_width</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">832</span>
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="w">      </span><span class="nt">image_height</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">480</span>
+<a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="w">      </span><span class="nt">fov</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">120.0</span>
+<a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a><span class="w">      </span><span class="nt">lens</span><span class="p">:</span>
+<a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a><span class="w">        </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ftheta</span>
+<a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a><span class="w">        </span><span class="nt">principal_point</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">412.641208</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">242.790324</span><span class="p p-Indicator">]</span>
+<a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a><span class="w">        </span><span class="nt">pixeldist_to_angle_poly</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">0.0</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">0.00243165382</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">-4.05625414e-08</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">6.10818843e-10</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">-9.93181484e-13</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">8.73787714e-16</span><span class="p p-Indicator">]</span>
+<a id="__codelineno-5-12" name="__codelineno-5-12" href="#__codelineno-5-12"></a><span class="w">        </span><span class="nt">angle_to_pixeldist_poly</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">0.0</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">411.286296</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">2.40299018</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">-16.2530848</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">10.3586782</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">-3.39986006</span><span class="p p-Indicator">]</span>
+<a id="__codelineno-5-13" name="__codelineno-5-13" href="#__codelineno-5-13"></a><span class="w">        </span><span class="nt">max_angle</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1.226783919</span>
+<a id="__codelineno-5-14" name="__codelineno-5-14" href="#__codelineno-5-14"></a><span class="w">        </span><span class="nt">linear_cde</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">1.00234926</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">0.0</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">0.0</span><span class="p p-Indicator">]</span>
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>model</code></td>
+<td><code>ftheta</code>, NVIDIA's F-theta model: the only one</td>
+</tr>
+<tr>
+<td><code>principal_point</code></td>
+<td><code>[x, y]</code> in pixels (the centre of the top-left pixel is (0, 0))</td>
+</tr>
+<tr>
+<td><code>pixeldist_to_angle_poly</code></td>
+<td>Radius from the principal point (pixels) to the angle from the optical axis (radians); coefficients from the constant term up</td>
+</tr>
+<tr>
+<td><code>angle_to_pixeldist_poly</code></td>
+<td>Its inverse, the angle to the radius</td>
+</tr>
+<tr>
+<td><code>max_angle</code></td>
+<td>The largest angle the lens sees (radians)</td>
+</tr>
+<tr>
+<td><code>linear_cde</code></td>
+<td><code>[c, d, e]</code>: <code>[[c, d], [e, 1]]</code> maps the radial offset to pixels</td>
+</tr>
+<tr>
+<td><code>reference_poly</code></td>
+<td>Which polynomial defines the lens: <code>pixeldist_to_angle</code> (default) or <code>angle_to_pixeldist</code></td>
+</tr>
+</tbody>
+</table>
+<p>The policy is sent the lens as alpasim's <code>FthetaCameraParam</code>, in place of the
+pinhole. The CARLA camera is still made with <code>image_width</code>, <code>image_height</code> and
+<code>fov</code>: what the renderer reads to know which of its cameras it is.</p>
 <h3 id="how-the-plan-is-tracked">How the plan is tracked<a class="headerlink" href="#how-the-plan-is-tracked" title="Permanent link">&para;</a></h3>
 <p><code>TrajectoryFollower</code> (<code>driver/control.py</code>) does what Autoware's control stack does
 behind an end-to-end planner:</p>
@@ -2595,8 +2681,8 @@ along with the rest of the group. <code>driver=vision_pilot</code> is
 <a href="https://github.com/autowarefoundation/vision_pilot">VisionPilot</a>'s: a Lincoln MKZ with
 one 1920×1280, 50° front camera at 10 Hz (its own CARLA rig), and it hands the ego to the
 policy (<code>ego.entity: carla_driver</code>):</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>uv<span class="w"> </span>run<span class="w"> </span>vision-pilot-driver<span class="w"> </span>--model-dir<span class="w"> </span>&lt;weights&gt;<span class="w"> </span>--port<span class="w"> </span><span class="m">50051</span><span class="w">   </span><span class="c1"># in vision_pilot</span>
-<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">driver</span><span class="o">=</span>vision_pilot
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>uv<span class="w"> </span>run<span class="w"> </span>vision-pilot-driver<span class="w"> </span>--model-dir<span class="w"> </span>&lt;weights&gt;<span class="w"> </span>--port<span class="w"> </span><span class="m">50051</span><span class="w">   </span><span class="c1"># in vision_pilot</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">driver</span><span class="o">=</span>vision_pilot
 </code></pre></div>
 <p>A preset extends <code>driver/default</code> (<code>defaults: [default, _self_]</code>) and may set <code>ego.*</code>,
 since the <code>driver</code> group is composed after <code>ego</code>.</p>
@@ -2611,10 +2697,10 @@ know where the run goes. <code>driver.bridge</code> gives the ego the same
 framework hosts the bridge, the stack's interface node dials it, pulls the
 scenario's mission (initial pose, goal, waypoints, at its <code>base_link</code>) and reports
 when it is ready.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="nt">driver</span><span class="p">:</span>
-<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="w">  </span><span class="nt">bridge</span><span class="p">:</span>
-<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="w">    </span><span class="nt">address</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.0.0.0:50052</span><span class="w">     </span><span class="c1"># AutowareBridgeConfig's fields</span>
-<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="w">    </span><span class="nt">ready_timeout_ticks</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1200</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="nt">driver</span><span class="p">:</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="w">  </span><span class="nt">bridge</span><span class="p">:</span>
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="w">    </span><span class="nt">address</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.0.0.0:50052</span><span class="w">     </span><span class="c1"># AutowareBridgeConfig's fields</span>
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="w">    </span><span class="nt">ready_timeout_ticks</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1200</span>
 </code></pre></div>
 <p>With a bridge the scenario needs a goal (<code>ego.goal_lanelet_id</code>, or one the scenario
 derives), handed over when the scenario starts. Until the stack reports ready the
@@ -2627,17 +2713,17 @@ launcher=...)</code>; a <code>launcher</code> starts and stops the stack per sce
 Autoware.</p>
 <h2 id="using-it-from-python">Using it from Python<a class="headerlink" href="#using-it-from-python" title="Permanent link">&para;</a></h2>
 <p>Scenarios that build their ego themselves can attach the entity directly:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario</span><span class="w"> </span><span class="kn">import</span> <span class="n">CarlaDriverEntity</span><span class="p">,</span> <span class="n">DriverClientConfig</span>
-<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>
-<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="n">scenario</span><span class="o">.</span><span class="n">ego_entity</span> <span class="o">=</span> <span class="n">CarlaDriverEntity</span><span class="p">(</span>
-<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>    <span class="n">DriverClientConfig</span><span class="p">(</span><span class="n">address</span><span class="o">=</span><span class="s2">"localhost:50051"</span><span class="p">,</span> <span class="n">policy_timestep_s</span><span class="o">=</span><span class="mf">0.1</span><span class="p">)</span>
-<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="p">)</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario</span><span class="w"> </span><span class="kn">import</span> <span class="n">CarlaDriverEntity</span><span class="p">,</span> <span class="n">DriverClientConfig</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="n">scenario</span><span class="o">.</span><span class="n">ego_entity</span> <span class="o">=</span> <span class="n">CarlaDriverEntity</span><span class="p">(</span>
+<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a>    <span class="n">DriverClientConfig</span><span class="p">(</span><span class="n">address</span><span class="o">=</span><span class="s2">"localhost:50051"</span><span class="p">,</span> <span class="n">policy_timestep_s</span><span class="o">=</span><span class="mf">0.1</span><span class="p">)</span>
+<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="p">)</span>
 </code></pre></div>
 <p><code>ScenarioRunner</code> calls <code>BaseScenario.create_ego()</code>, which returns <code>ego_entity</code> when one
 is set and otherwise instantiates <code>ego_type</code>. Assigning <code>ego_entity</code> is the supported
 way to supply an entity that needs constructor arguments.</p>
 <p>To test against a fake policy, pass a <code>BaseEgoDriverClient</code> implementation:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="n">CarlaDriverEntity</span><span class="p">(</span><span class="n">config</span><span class="p">,</span> <span class="n">client</span><span class="o">=</span><span class="n">MyFakeDriverClient</span><span class="p">(</span><span class="n">config</span><span class="p">))</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="n">CarlaDriverEntity</span><span class="p">(</span><span class="n">config</span><span class="p">,</span> <span class="n">client</span><span class="o">=</span><span class="n">MyFakeDriverClient</span><span class="p">(</span><span class="n">config</span><span class="p">))</span>
 </code></pre></div>
 <h2 id="carla-ground-truth">CARLA ground truth<a class="headerlink" href="#carla-ground-truth" title="Permanent link">&para;</a></h2>
 <p>The alpasim contract has no field for a traffic light and none for other vehicles.
@@ -2717,9 +2803,9 @@ a <code>LidarFrame</code> in <code>session.frame_history</code>, beside the came
 through <code>on_frame</code> -- the one path every sensor takes. <code>frame_history_length</code> applies to
 both, and <code>session.latest_frame("lidar_top").as_array()</code> unpacks the <code>[N, 4]</code> points as
 <code>latest_frame("camera_front").as_array()</code> decodes an image.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="nt">driver</span><span class="p">:</span>
-<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="w">  </span><span class="nt">lidars</span><span class="p">:</span>
-<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">logical_id</span><span class="p">:</span><span class="w"> </span><span class="nv">lidar_top</span><span class="p p-Indicator">,</span><span class="nt"> channels</span><span class="p">:</span><span class="w"> </span><span class="nv">64</span><span class="p p-Indicator">,</span><span class="nt"> range_m</span><span class="p">:</span><span class="w"> </span><span class="nv">100.0</span><span class="p p-Indicator">,</span><span class="nt"> position_z</span><span class="p">:</span><span class="w"> </span><span class="nv">2.0</span><span class="p p-Indicator">}</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="nt">driver</span><span class="p">:</span>
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="w">  </span><span class="nt">lidars</span><span class="p">:</span>
+<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">logical_id</span><span class="p">:</span><span class="w"> </span><span class="nv">lidar_top</span><span class="p p-Indicator">,</span><span class="nt"> channels</span><span class="p">:</span><span class="w"> </span><span class="nv">64</span><span class="p p-Indicator">,</span><span class="nt"> range_m</span><span class="p">:</span><span class="w"> </span><span class="nv">100.0</span><span class="p p-Indicator">,</span><span class="nt"> position_z</span><span class="p">:</span><span class="w"> </span><span class="nv">2.0</span><span class="p p-Indicator">}</span>
 </code></pre></div>
 <p>CARLA's ray-cast LiDAR ignores the weather, so the sweep sent has the world's rain
 (<code>precipitation</code>) and fog (<code>fog_density</code>, beyond <code>fog_distance</code>) put on it, read when the
@@ -2770,13 +2856,13 @@ its own takes it. A server already running keeps the scale it was started with (
 warns), so start it with the same one. Built without the runner, pass
 <code>fog_density_scale_args(scale)</code> (<code>autoware_carla_scenario.server</code>) as the server's
 <code>extra_args</code> and the same scale to each LiDAR.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="nt">driver</span><span class="p">:</span>
-<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="w">  </span><span class="nt">lidars</span><span class="p">:</span>
-<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">logical_id</span><span class="p">:</span><span class="w"> </span><span class="nv">lidar_top</span><span class="p p-Indicator">,</span><span class="nt"> weather_noise</span><span class="p">:</span><span class="w"> </span><span class="nv">1.5</span><span class="p p-Indicator">}</span>
-<a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a><span class="nt">environment</span><span class="p">:</span>
-<a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a><span class="w">  </span><span class="nt">rain</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">80</span><span class="w">        </span><span class="c1"># heavy rain: sparser, noisier sweeps</span>
-<a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a><span class="nt">server</span><span class="p">:</span>
-<a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a><span class="w">  </span><span class="nt">fog_density_scale</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.01</span><span class="w">   </span><span class="c1"># fog the cameras and the LiDARs both see</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="nt">driver</span><span class="p">:</span>
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="w">  </span><span class="nt">lidars</span><span class="p">:</span>
+<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a><span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">logical_id</span><span class="p">:</span><span class="w"> </span><span class="nv">lidar_top</span><span class="p p-Indicator">,</span><span class="nt"> weather_noise</span><span class="p">:</span><span class="w"> </span><span class="nv">1.5</span><span class="p p-Indicator">}</span>
+<a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a><span class="nt">environment</span><span class="p">:</span>
+<a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a><span class="w">  </span><span class="nt">rain</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">80</span><span class="w">        </span><span class="c1"># heavy rain: sparser, noisier sweeps</span>
+<a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a><span class="nt">server</span><span class="p">:</span>
+<a id="__codelineno-11-7" name="__codelineno-11-7" href="#__codelineno-11-7"></a><span class="w">  </span><span class="nt">fog_density_scale</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.01</span><span class="w">   </span><span class="c1"># fog the cameras and the LiDARs both see</span>
 </code></pre></div>
 <h3 id="the-map-as-files">The map, as files<a class="headerlink" href="#the-map-as-files" title="Permanent link">&para;</a></h3>
 <p>alpasim's services read a scene's map from its artifact, never off the wire; this is the
@@ -2792,18 +2878,18 @@ own copy of the directory) gets the set opened as <code>ctx.map</code>, and <cod
 resolves the lights through roadgen's traces into its format's own elements -- for
 Lanelet2, the approach lanelet, the traffic-light regulatory element and the light's
 line strings:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="k">class</span><span class="w"> </span><span class="nc">MyPolicy</span><span class="p">(</span><span class="n">BaseDriver</span><span class="p">):</span>
-<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>    <span class="n">map_dir</span> <span class="o">=</span> <span class="s2">"/shared/maps"</span>   <span class="c1"># the runtime's driver.map_dir, as this process sees it</span>
-<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>
-<a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">drive</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">ctx</span><span class="p">):</span>
-<a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a>        <span class="k">for</span> <span class="n">stop</span> <span class="ow">in</span> <span class="n">ctx</span><span class="o">.</span><span class="n">stop_lines</span><span class="p">():</span>
-<a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a>            <span class="n">stop</span><span class="o">.</span><span class="n">state</span><span class="p">,</span> <span class="n">stop</span><span class="o">.</span><span class="n">lane_ids</span><span class="p">,</span> <span class="n">stop</span><span class="o">.</span><span class="n">position_local</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="k">class</span><span class="w"> </span><span class="nc">MyPolicy</span><span class="p">(</span><span class="n">BaseDriver</span><span class="p">):</span>
+<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>    <span class="n">map_dir</span> <span class="o">=</span> <span class="s2">"/shared/maps"</span>   <span class="c1"># the runtime's driver.map_dir, as this process sees it</span>
+<a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a>
+<a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">drive</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">ctx</span><span class="p">):</span>
+<a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a>        <span class="k">for</span> <span class="n">stop</span> <span class="ow">in</span> <span class="n">ctx</span><span class="o">.</span><span class="n">stop_lines</span><span class="p">():</span>
+<a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a>            <span class="n">stop</span><span class="o">.</span><span class="n">state</span><span class="p">,</span> <span class="n">stop</span><span class="o">.</span><span class="n">lane_ids</span><span class="p">,</span> <span class="n">stop</span><span class="o">.</span><span class="n">position_local</span>
 </code></pre></div>
 <p>To hand the policy a Lanelet2 map of your own instead of roadgen's conversion, name it
 with <code>driver.lanelet2_path</code>:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="nt">driver</span><span class="p">:</span>
-<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a><span class="w">  </span><span class="nt">map_dir</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/shared/maps</span>
-<a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a><span class="w">  </span><span class="nt">lanelet2_path</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/path/to/lanelet2_map.osm</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="nt">driver</span><span class="p">:</span>
+<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a><span class="w">  </span><span class="nt">map_dir</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/shared/maps</span>
+<a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a><span class="w">  </span><span class="nt">lanelet2_path</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/path/to/lanelet2_map.osm</span>
 </code></pre></div>
 <p>The file is copied into the set as <code>lanelet2_map.osm</code>, as it is (with the
 <code>map_projector_info.yaml</code> beside it, if any), and its content is part
@@ -2845,17 +2931,17 @@ runtime does not know is logged and ignored.</p>
 <code>TurnIndicatorCondition</code> -- the policy signals left before it turns, say -- and sets
 another vehicle's with <code>TurnIndicatorAction</code> (a car ahead signalling that it pulls
 out). An action aimed at the policy's ego holds only until the policy's next command.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
-<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a>    <span class="n">EntityRole</span><span class="p">,</span>
-<a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a>    <span class="n">TurnIndicatorAction</span><span class="p">,</span>
-<a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a>    <span class="n">TurnIndicatorCondition</span><span class="p">,</span>
-<a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a>    <span class="n">TurnIndicatorState</span><span class="p">,</span>
-<a id="__codelineno-13-6" name="__codelineno-13-6" href="#__codelineno-13-6"></a><span class="p">)</span>
-<a id="__codelineno-13-7" name="__codelineno-13-7" href="#__codelineno-13-7"></a>
-<a id="__codelineno-13-8" name="__codelineno-13-8" href="#__codelineno-13-8"></a><span class="n">signals_left</span> <span class="o">=</span> <span class="n">TurnIndicatorCondition</span><span class="p">(</span>
-<a id="__codelineno-13-9" name="__codelineno-13-9" href="#__codelineno-13-9"></a>    <span class="n">EntityRole</span><span class="o">.</span><span class="n">ego</span><span class="p">(),</span> <span class="n">TurnIndicatorState</span><span class="o">.</span><span class="n">LEFT</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">"ego_signals_left"</span>
-<a id="__codelineno-13-10" name="__codelineno-13-10" href="#__codelineno-13-10"></a><span class="p">)</span>
-<a id="__codelineno-13-11" name="__codelineno-13-11" href="#__codelineno-13-11"></a><span class="n">npc_signals_right</span> <span class="o">=</span> <span class="n">TurnIndicatorAction</span><span class="p">(</span><span class="n">EntityRole</span><span class="o">.</span><span class="n">npc</span><span class="p">(</span><span class="mi">1</span><span class="p">),</span> <span class="n">TurnIndicatorState</span><span class="o">.</span><span class="n">RIGHT</span><span class="p">)</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+<a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a>    <span class="n">EntityRole</span><span class="p">,</span>
+<a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a>    <span class="n">TurnIndicatorAction</span><span class="p">,</span>
+<a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a>    <span class="n">TurnIndicatorCondition</span><span class="p">,</span>
+<a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a>    <span class="n">TurnIndicatorState</span><span class="p">,</span>
+<a id="__codelineno-14-6" name="__codelineno-14-6" href="#__codelineno-14-6"></a><span class="p">)</span>
+<a id="__codelineno-14-7" name="__codelineno-14-7" href="#__codelineno-14-7"></a>
+<a id="__codelineno-14-8" name="__codelineno-14-8" href="#__codelineno-14-8"></a><span class="n">signals_left</span> <span class="o">=</span> <span class="n">TurnIndicatorCondition</span><span class="p">(</span>
+<a id="__codelineno-14-9" name="__codelineno-14-9" href="#__codelineno-14-9"></a>    <span class="n">EntityRole</span><span class="o">.</span><span class="n">ego</span><span class="p">(),</span> <span class="n">TurnIndicatorState</span><span class="o">.</span><span class="n">LEFT</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">"ego_signals_left"</span>
+<a id="__codelineno-14-10" name="__codelineno-14-10" href="#__codelineno-14-10"></a><span class="p">)</span>
+<a id="__codelineno-14-11" name="__codelineno-14-11" href="#__codelineno-14-11"></a><span class="n">npc_signals_right</span> <span class="o">=</span> <span class="n">TurnIndicatorAction</span><span class="p">(</span><span class="n">EntityRole</span><span class="o">.</span><span class="n">npc</span><span class="p">(</span><span class="mi">1</span><span class="p">),</span> <span class="n">TurnIndicatorState</span><span class="o">.</span><span class="n">RIGHT</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="coordinate-frames">Coordinate frames<a class="headerlink" href="#coordinate-frames" title="Permanent link">&para;</a></h2>
 <p>Two conversions sit between CARLA and the contract, both handled in
@@ -2889,18 +2975,18 @@ termination</code>, because the scenario never satisfied its pass condition.</p>
 <p>A policy subclasses <code>BaseDriver</code> and returns a plan in the rig frame (x forward, y left,
 origin on the ground below the rear axle); the servicer handles sessions, frame
 retention, ego history and the rig/local conversion:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">carla_driver_interface.driver</span><span class="w"> </span><span class="kn">import</span> <span class="n">BaseDriver</span><span class="p">,</span> <span class="n">DriveContext</span><span class="p">,</span> <span class="n">DriveResult</span>
-<a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">carla_driver_interface.server</span><span class="w"> </span><span class="kn">import</span> <span class="n">run_server</span>
-<a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a>
-<a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a>
-<a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a><span class="k">class</span><span class="w"> </span><span class="nc">MyPolicy</span><span class="p">(</span><span class="n">BaseDriver</span><span class="p">):</span>
-<a id="__codelineno-14-6" name="__codelineno-14-6" href="#__codelineno-14-6"></a>    <span class="n">name</span> <span class="o">=</span> <span class="s2">"my_policy"</span>
-<a id="__codelineno-14-7" name="__codelineno-14-7" href="#__codelineno-14-7"></a>
-<a id="__codelineno-14-8" name="__codelineno-14-8" href="#__codelineno-14-8"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">drive</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">ctx</span><span class="p">:</span> <span class="n">DriveContext</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">DriveResult</span><span class="p">:</span>
-<a id="__codelineno-14-9" name="__codelineno-14-9" href="#__codelineno-14-9"></a>        <span class="o">...</span>
-<a id="__codelineno-14-10" name="__codelineno-14-10" href="#__codelineno-14-10"></a>
-<a id="__codelineno-14-11" name="__codelineno-14-11" href="#__codelineno-14-11"></a>
-<a id="__codelineno-14-12" name="__codelineno-14-12" href="#__codelineno-14-12"></a><span class="n">run_server</span><span class="p">(</span><span class="n">MyPolicy</span><span class="p">(),</span> <span class="n">port</span><span class="o">=</span><span class="mi">50051</span><span class="p">)</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">carla_driver_interface.driver</span><span class="w"> </span><span class="kn">import</span> <span class="n">BaseDriver</span><span class="p">,</span> <span class="n">DriveContext</span><span class="p">,</span> <span class="n">DriveResult</span>
+<a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">carla_driver_interface.server</span><span class="w"> </span><span class="kn">import</span> <span class="n">run_server</span>
+<a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a>
+<a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a>
+<a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a><span class="k">class</span><span class="w"> </span><span class="nc">MyPolicy</span><span class="p">(</span><span class="n">BaseDriver</span><span class="p">):</span>
+<a id="__codelineno-15-6" name="__codelineno-15-6" href="#__codelineno-15-6"></a>    <span class="n">name</span> <span class="o">=</span> <span class="s2">"my_policy"</span>
+<a id="__codelineno-15-7" name="__codelineno-15-7" href="#__codelineno-15-7"></a>
+<a id="__codelineno-15-8" name="__codelineno-15-8" href="#__codelineno-15-8"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">drive</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">ctx</span><span class="p">:</span> <span class="n">DriveContext</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">DriveResult</span><span class="p">:</span>
+<a id="__codelineno-15-9" name="__codelineno-15-9" href="#__codelineno-15-9"></a>        <span class="o">...</span>
+<a id="__codelineno-15-10" name="__codelineno-15-10" href="#__codelineno-15-10"></a>
+<a id="__codelineno-15-11" name="__codelineno-15-11" href="#__codelineno-15-11"></a>
+<a id="__codelineno-15-12" name="__codelineno-15-12" href="#__codelineno-15-12"></a><span class="n">run_server</span><span class="p">(</span><span class="n">MyPolicy</span><span class="p">(),</span> <span class="n">port</span><span class="o">=</span><span class="mi">50051</span><span class="p">)</span>
 </code></pre></div>
 <p>Without CARLA, <code>carla_driver_interface.testing.FakeLoop</code> drives a policy server over
 real gRPC on a straight road, rendering each declared pinhole camera, which is what a
@@ -2937,7 +3023,7 @@ Apache-2.0) and compiled locally:</p>
 <p>Field numbers, package names, and import paths are preserved exactly, which is what
 keeps the messages wire compatible.</p>
 <p>Regenerate the committed modules after updating the vendored protos:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a>uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>autoware_carla_scenario/scripts/compile_protos.py
+<div class="highlight"><pre><span></span><code><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a>uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>autoware_carla_scenario/scripts/compile_protos.py
 </code></pre></div>
 <p><code>test_proto_generated.py</code> fails if the committed output drifts from the <code>.proto</code> files.
 See <code>carla_driver_interface/proto/README.md</code> for the full provenance.</p>
@@ -2979,7 +3065,7 @@ See <code>carla_driver_interface/proto/README.md</code> for the full provenance.
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 21, 2026 02:45:30 UTC"><span class="timeago" datetime="2026-10-21T02:45:30+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 21, 2026 02:45:30 UTC">2026-10-21</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 22, 2026 14:07:42 UTC"><span class="timeago" datetime="2026-10-22T14:07:42+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 22, 2026 14:07:42 UTC">2026-10-22</span>
   </span>
 
     

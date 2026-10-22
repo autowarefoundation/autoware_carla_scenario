@@ -2116,7 +2116,7 @@ costs the run's thread about 0.3 ms.</p>
 </tr>
 <tr>
 <td><code>sensor</code>, <code>calibrated_sensor</code></td>
-<td><code>LIDAR_CONCAT</code> at the ego's origin, and each camera (its logical id upper-cased) with its mount and pinhole</td>
+<td><code>LIDAR_CONCAT</code> at the ego's origin, and each camera (its logical id upper-cased) with its mount and pinhole (or its lens, see <a href="#frames">Frames</a>)</td>
 </tr>
 <tr>
 <td><code>sample_data</code></td>
@@ -2158,7 +2158,15 @@ step apart.</p>
 <li>The <strong>ego</strong> frame (<code>base_link</code>) is at its rear axle, x forward, y left,
   z up: the driver policy's rig frame. <code>LIDAR_CONCAT</code>'s points are in it.</li>
 <li>A <strong>camera</strong>'s frame is the optical one (x right, y down, z forward); its
-  intrinsics are the pinhole of its <code>fov</code> and resolution, with no distortion.</li>
+  intrinsics are the pinhole of its <code>fov</code> and resolution, with no distortion.
+  A camera with a <code>lens</code> of its own (<a href="../driver_interface/#a-camera-with-a-lens-of-its-own-drivercameraslens">F-theta</a>)
+  is written as OpenCV's rational model fitted to the lens: its focal lengths
+  and principal point, and <code>camera_distortion</code>
+  <code>[k1, k2, p1, p2, k3, k4, k5, k6]</code>, T4 having no F-theta model. The fit is
+  logged; for Cosmos3's front wide camera it is within 0.05 px out to the
+  image's corners. t4-devkit v0.8.0's own projection (<code>view_points</code>) applies
+  the distortion before dividing by depth, so project with OpenCV
+  (<code>cv2.projectPoints</code>).</li>
 <li>A <strong>box</strong> is its centre and orientation in the map frame, and its size
   <code>(width, length, height)</code>; velocities are in the map frame too.</li>
 </ul>
@@ -2217,7 +2225,7 @@ releases are <a href="https://github.com/hakuturu583/autoware_carla_scenario_t4"
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 22, 2026 11:19:37 UTC"><span class="timeago" datetime="2026-10-22T11:19:37+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 22, 2026 11:19:37 UTC">2026-10-22</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 22, 2026 14:07:42 UTC"><span class="timeago" datetime="2026-10-22T14:07:42+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 22, 2026 14:07:42 UTC">2026-10-22</span>
   </span>
 
     
