@@ -1444,6 +1444,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#changing-the-parameters-during-a-run" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Changing the parameters during a run
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -2039,6 +2050,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#changing-the-parameters-during-a-run" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Changing the parameters during a run
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -2281,8 +2303,9 @@ backend's own default.</p>
 (<code>{mean, std}</code>, <code>Spread</code> in Python): each vehicle and each pedestrian draws
 its own value from a normal distribution of that mean and std, cut to the
 parameter's bounds (drawn again until it is inside them -- a truncated
-normal). The traffic is a population of drivers, not one driver copied. A
-plain number, or a <code>std</code> of 0, gives every road user the same value. The
+normal). The traffic is a population of drivers, not one driver copied. Every
+numeric parameter also takes a plain value instead, in a config and in Python
+alike: a number (or a <code>std</code> of 0) gives every road user exactly that value. The
 draws come from the run's seed: the same seed, the same drivers.</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nt">traffic</span><span class="p">:</span>
 <a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span><span class="nt">backend</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">sumo</span>
@@ -2593,13 +2616,16 @@ generates; <code>traffic.pedestrians</code> how they walk.</p>
 </ul>
 <p>The TrafficManager drives no pedestrians, so it refuses every field here.</p>
 <p>The same in Python, where every field is a keyword of <code>VehicleParameters</code> or
-<code>PedestrianParameters</code>:</p>
+<code>PedestrianParameters</code>, and a numeric one takes a <code>Spread</code> (a distribution) or
+a plain number (a value):</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario</span><span class="w"> </span><span class="kn">import</span> <span class="n">PedestrianParameters</span><span class="p">,</span> <span class="n">Spread</span><span class="p">,</span> <span class="n">VehicleParameters</span>
 <a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>
 <a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="n">VehicleParameters</span><span class="p">(</span>
-<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>    <span class="n">speed_factor</span><span class="o">=</span><span class="n">Spread</span><span class="p">(</span><span class="mf">0.9</span><span class="p">,</span> <span class="mf">0.1</span><span class="p">),</span> <span class="n">min_gap_m</span><span class="o">=</span><span class="n">Spread</span><span class="p">(</span><span class="mf">3.0</span><span class="p">),</span> <span class="n">reaction_time_s</span><span class="o">=</span><span class="n">Spread</span><span class="p">(</span><span class="mf">1.5</span><span class="p">,</span> <span class="mf">0.3</span><span class="p">)</span>
-<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="p">)</span>
-<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="n">PedestrianParameters</span><span class="p">(</span><span class="n">walking_speed_mps</span><span class="o">=</span><span class="n">Spread</span><span class="p">(</span><span class="mf">1.2</span><span class="p">,</span> <span class="mf">0.2</span><span class="p">))</span>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>    <span class="n">speed_factor</span><span class="o">=</span><span class="n">Spread</span><span class="p">(</span><span class="mf">0.9</span><span class="p">,</span> <span class="mf">0.1</span><span class="p">),</span>  <span class="c1"># a distribution: each vehicle draws its own</span>
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>    <span class="n">min_gap_m</span><span class="o">=</span><span class="mf">3.0</span><span class="p">,</span>                  <span class="c1"># a value: every vehicle 3 m</span>
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>    <span class="n">reaction_time_s</span><span class="o">=</span><span class="n">Spread</span><span class="p">(</span><span class="mf">1.5</span><span class="p">,</span> <span class="mf">0.3</span><span class="p">),</span>
+<a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="p">)</span>
+<a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a><span class="n">PedestrianParameters</span><span class="p">(</span><span class="n">walking_speed_mps</span><span class="o">=</span><span class="mf">1.2</span><span class="p">)</span>
 </code></pre></div>
 <p>A field set for a backend that cannot honour it fails the run before anything is
 spawned, naming the backends it can be used with — a run that asked for drivers
@@ -2626,6 +2652,75 @@ visibility is one of them: see <strong>Visibility</strong> under
 </code></pre></div>
 <p>and reads them from <code>self.vehicle_parameters</code> and <code>self.pedestrian_parameters</code>
 in <code>prepare()</code>.</p>
+<h3 id="changing-the-parameters-during-a-run">Changing the parameters during a run<a class="headerlink" href="#changing-the-parameters-during-a-run" title="Permanent link">&para;</a></h3>
+<p><code>TrafficParametersAction</code> changes the parameters from the tick it fires on,
+like any action, on a condition:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>    <span class="n">ElapsedTimeCondition</span><span class="p">,</span>
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>    <span class="n">PedestrianParameters</span><span class="p">,</span>
+<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a>    <span class="n">Spread</span><span class="p">,</span>
+<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a>    <span class="n">TrafficParametersAction</span><span class="p">,</span>
+<a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a>    <span class="n">VehicleParameters</span><span class="p">,</span>
+<a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a><span class="p">)</span>
+<a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a>
+<a id="__codelineno-8-9" name="__codelineno-8-9" href="#__codelineno-8-9"></a><span class="c1"># From 20 s on, drivers slow down and keep their distance.</span>
+<a id="__codelineno-8-10" name="__codelineno-8-10" href="#__codelineno-8-10"></a><span class="n">scenario</span><span class="o">.</span><span class="n">register_post_tick</span><span class="p">(</span>
+<a id="__codelineno-8-11" name="__codelineno-8-11" href="#__codelineno-8-11"></a>    <span class="n">TrafficParametersAction</span><span class="p">(</span>
+<a id="__codelineno-8-12" name="__codelineno-8-12" href="#__codelineno-8-12"></a>        <span class="n">vehicles</span><span class="o">=</span><span class="n">VehicleParameters</span><span class="p">(</span>
+<a id="__codelineno-8-13" name="__codelineno-8-13" href="#__codelineno-8-13"></a>            <span class="n">speed_factor</span><span class="o">=</span><span class="n">Spread</span><span class="p">(</span><span class="mf">0.8</span><span class="p">,</span> <span class="mf">0.05</span><span class="p">),</span> <span class="n">min_gap_m</span><span class="o">=</span><span class="n">Spread</span><span class="p">(</span><span class="mf">4.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">)</span>
+<a id="__codelineno-8-14" name="__codelineno-8-14" href="#__codelineno-8-14"></a>        <span class="p">),</span>
+<a id="__codelineno-8-15" name="__codelineno-8-15" href="#__codelineno-8-15"></a>        <span class="n">condition</span><span class="o">=</span><span class="n">ElapsedTimeCondition</span><span class="p">(</span><span class="mf">20.0</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">"after_20s"</span><span class="p">),</span>
+<a id="__codelineno-8-16" name="__codelineno-8-16" href="#__codelineno-8-16"></a>    <span class="p">)</span>
+<a id="__codelineno-8-17" name="__codelineno-8-17" href="#__codelineno-8-17"></a><span class="p">)</span>
+<a id="__codelineno-8-18" name="__codelineno-8-18" href="#__codelineno-8-18"></a>
+<a id="__codelineno-8-19" name="__codelineno-8-19" href="#__codelineno-8-19"></a><span class="c1"># The NPC ahead turns reckless (traffic_manager): values, not distributions.</span>
+<a id="__codelineno-8-20" name="__codelineno-8-20" href="#__codelineno-8-20"></a><span class="n">scenario</span><span class="o">.</span><span class="n">register_post_tick</span><span class="p">(</span>
+<a id="__codelineno-8-21" name="__codelineno-8-21" href="#__codelineno-8-21"></a>    <span class="n">TrafficParametersAction</span><span class="p">(</span>
+<a id="__codelineno-8-22" name="__codelineno-8-22" href="#__codelineno-8-22"></a>        <span class="n">vehicles</span><span class="o">=</span><span class="n">VehicleParameters</span><span class="p">(</span><span class="n">speed_factor</span><span class="o">=</span><span class="mf">1.3</span><span class="p">,</span> <span class="n">ignore_lights</span><span class="o">=</span><span class="mf">1.0</span><span class="p">),</span>
+<a id="__codelineno-8-23" name="__codelineno-8-23" href="#__codelineno-8-23"></a>        <span class="n">entity_name</span><span class="o">=</span><span class="s2">"npc1"</span><span class="p">,</span>
+<a id="__codelineno-8-24" name="__codelineno-8-24" href="#__codelineno-8-24"></a>    <span class="p">)</span>
+<a id="__codelineno-8-25" name="__codelineno-8-25" href="#__codelineno-8-25"></a><span class="p">)</span>
+<a id="__codelineno-8-26" name="__codelineno-8-26" href="#__codelineno-8-26"></a>
+<a id="__codelineno-8-27" name="__codelineno-8-27" href="#__codelineno-8-27"></a><span class="c1"># Pedestrians hurry (sumo).</span>
+<a id="__codelineno-8-28" name="__codelineno-8-28" href="#__codelineno-8-28"></a><span class="n">scenario</span><span class="o">.</span><span class="n">register_post_tick</span><span class="p">(</span>
+<a id="__codelineno-8-29" name="__codelineno-8-29" href="#__codelineno-8-29"></a>    <span class="n">TrafficParametersAction</span><span class="p">(</span>
+<a id="__codelineno-8-30" name="__codelineno-8-30" href="#__codelineno-8-30"></a>        <span class="n">pedestrians</span><span class="o">=</span><span class="n">PedestrianParameters</span><span class="p">(</span><span class="n">walking_speed_mps</span><span class="o">=</span><span class="n">Spread</span><span class="p">(</span><span class="mf">1.8</span><span class="p">,</span> <span class="mf">0.2</span><span class="p">))</span>
+<a id="__codelineno-8-31" name="__codelineno-8-31" href="#__codelineno-8-31"></a>    <span class="p">)</span>
+<a id="__codelineno-8-32" name="__codelineno-8-32" href="#__codelineno-8-32"></a><span class="p">)</span>
+</code></pre></div>
+<ul>
+<li><strong>Field by field.</strong> The fields the action sets replace the run's; the ones it
+  leaves unset keep their values, whether they came from the config or from
+  the ODD.</li>
+<li><strong>Everyone draws again.</strong> Without <code>entity_name</code>, every vehicle (or pedestrian)
+  already in the run draws its value of the changed fields again from the new
+  spread, and every one that joins later draws from the merged parameters.
+  The ODD's probes read the merged parameters from then on.</li>
+<li><strong>One vehicle.</strong> With <code>entity_name</code> (a <code>role_name</code>), only that vehicle draws the
+  changed fields again; the run's parameters stay as they were. An entity is a
+  vehicle, so <code>pedestrians</code> cannot be given with it.</li>
+<li><strong>Refused before the run.</strong> A field the backend cannot change during a run
+  is refused when the action is registered on the scenario, with a
+  <code>TrafficParameterError</code>:<ul>
+<li>the TrafficManager can change every vehicle parameter it supports, and no
+  pedestrian one;</li>
+<li>SUMO can change every vehicle parameter it supports, and a pedestrian's
+  <code>walking_speed_mps</code> and <code>min_gap_m</code>. It cannot change
+  <code>red_light_violation_s</code>, which SUMO reads off the pedestrian types it is
+  started with: set it in <code>traffic.pedestrians</code> instead.</li>
+</ul>
+</li>
+<li><strong>Under SUMO,</strong> a scenario vehicle the TrafficManager drives
+  (<code>scenario_vehicles=traffic_manager</code>) gets the shared fields, with a warning
+  naming the others. A visibility already held is held anew, from the new
+  draws.</li>
+<li><strong>One run only.</strong> The change lasts until the run ends: the next run of a
+  queue starts from its own config.</li>
+<li><strong>In the scenario editor</strong> it is two cards: <em>Traffic Parameters</em> on the
+  environment track (the whole run's traffic) and <em>Vehicle Parameters</em> on an
+  NPC's track (that vehicle alone), with a mean and a std field per
+  parameter; an empty field keeps the run's value.</li>
+</ul>
 <h2 id="the-lifecycle">The lifecycle<a class="headerlink" href="#the-lifecycle" title="Permanent link">&para;</a></h2>
 <p><code>ScenarioRunner</code> calls these at fixed points of a run, beside the ego entity's
 own hooks:</p>
@@ -2688,51 +2783,51 @@ to line itself up with the CARLA one.</p>
 <h2 id="writing-a-backend">Writing a backend<a class="headerlink" href="#writing-a-backend" title="Permanent link">&para;</a></h2>
 <p>Subclass <code>TrafficBackend</code>, override what you actually do, and register a factory
 under a name:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Any</span><span class="p">,</span> <span class="n">Collection</span><span class="p">,</span> <span class="n">Mapping</span>
-<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>
-<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario</span><span class="w"> </span><span class="kn">import</span> <span class="n">TrafficBackend</span><span class="p">,</span> <span class="n">TrafficContext</span><span class="p">,</span> <span class="n">register_backend</span>
-<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a>
-<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a>
-<a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a><span class="k">class</span><span class="w"> </span><span class="nc">MySimulatorBackend</span><span class="p">(</span><span class="n">TrafficBackend</span><span class="p">):</span>
-<a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a>    <span class="n">name</span> <span class="o">=</span> <span class="s2">"my_simulator"</span>
-<a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a>
-<a id="__codelineno-8-9" name="__codelineno-8-9" href="#__codelineno-8-9"></a>    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">options</span><span class="p">:</span> <span class="n">Mapping</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-<a id="__codelineno-8-10" name="__codelineno-8-10" href="#__codelineno-8-10"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">_address</span> <span class="o">=</span> <span class="n">options</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"address"</span><span class="p">,</span> <span class="s2">"localhost:9999"</span><span class="p">)</span>
-<a id="__codelineno-8-11" name="__codelineno-8-11" href="#__codelineno-8-11"></a>
-<a id="__codelineno-8-12" name="__codelineno-8-12" href="#__codelineno-8-12"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">prepare</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">context</span><span class="p">:</span> <span class="n">TrafficContext</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-<a id="__codelineno-8-13" name="__codelineno-8-13" href="#__codelineno-8-13"></a>        <span class="c1"># Match the simulation step so the two clocks cannot drift, and derive</span>
-<a id="__codelineno-8-14" name="__codelineno-8-14" href="#__codelineno-8-14"></a>        <span class="c1"># the road network from the OpenDRIVE the CARLA world is running.</span>
-<a id="__codelineno-8-15" name="__codelineno-8-15" href="#__codelineno-8-15"></a>        <span class="c1"># The map of the run: `xodr_path` is the OpenDRIVE CARLA is running, and Phase B</span>
-<a id="__codelineno-8-16" name="__codelineno-8-16" href="#__codelineno-8-16"></a>        <span class="c1"># adds `lanelet2_path` for a backend whose own network is built from Lanelet2.</span>
-<a id="__codelineno-8-17" name="__codelineno-8-17" href="#__codelineno-8-17"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">_connect</span><span class="p">(</span><span class="n">context</span><span class="o">.</span><span class="n">fixed_delta_seconds</span><span class="p">,</span> <span class="n">context</span><span class="o">.</span><span class="n">xodr_path</span><span class="p">,</span> <span class="n">context</span><span class="o">.</span><span class="n">random_seed</span><span class="p">)</span>
-<a id="__codelineno-8-18" name="__codelineno-8-18" href="#__codelineno-8-18"></a>
-<a id="__codelineno-8-19" name="__codelineno-8-19" href="#__codelineno-8-19"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">start</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">world</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">skip_actor_ids</span><span class="p">:</span> <span class="n">Collection</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="p">())</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-<a id="__codelineno-8-20" name="__codelineno-8-20" href="#__codelineno-8-20"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">_externally_driven</span> <span class="o">=</span> <span class="nb">set</span><span class="p">(</span><span class="n">skip_actor_ids</span><span class="p">)</span>
-<a id="__codelineno-8-21" name="__codelineno-8-21" href="#__codelineno-8-21"></a>
-<a id="__codelineno-8-22" name="__codelineno-8-22" href="#__codelineno-8-22"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">tick</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">world</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span> <span class="n">elapsed</span><span class="p">:</span> <span class="nb">float</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-<a id="__codelineno-8-23" name="__codelineno-8-23" href="#__codelineno-8-23"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">_publish_carla_vehicles</span><span class="p">(</span><span class="n">world</span><span class="p">)</span>   <span class="c1"># so my traffic reacts to the ego</span>
-<a id="__codelineno-8-24" name="__codelineno-8-24" href="#__codelineno-8-24"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">_step_once</span><span class="p">()</span>                      <span class="c1"># exactly one step per world tick</span>
-<a id="__codelineno-8-25" name="__codelineno-8-25" href="#__codelineno-8-25"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">_mirror_into_carla</span><span class="p">(</span><span class="n">world</span><span class="p">)</span>
-<a id="__codelineno-8-26" name="__codelineno-8-26" href="#__codelineno-8-26"></a>
-<a id="__codelineno-8-27" name="__codelineno-8-27" href="#__codelineno-8-27"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">close</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-<a id="__codelineno-8-28" name="__codelineno-8-28" href="#__codelineno-8-28"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">_disconnect</span><span class="p">()</span>
-<a id="__codelineno-8-29" name="__codelineno-8-29" href="#__codelineno-8-29"></a>
-<a id="__codelineno-8-30" name="__codelineno-8-30" href="#__codelineno-8-30"></a>
-<a id="__codelineno-8-31" name="__codelineno-8-31" href="#__codelineno-8-31"></a><span class="k">def</span><span class="w"> </span><span class="nf">register</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-<a id="__codelineno-8-32" name="__codelineno-8-32" href="#__codelineno-8-32"></a>    <span class="n">register_backend</span><span class="p">(</span><span class="s2">"my_simulator"</span><span class="p">,</span> <span class="n">MySimulatorBackend</span><span class="p">)</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Any</span><span class="p">,</span> <span class="n">Collection</span><span class="p">,</span> <span class="n">Mapping</span>
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>
+<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario</span><span class="w"> </span><span class="kn">import</span> <span class="n">TrafficBackend</span><span class="p">,</span> <span class="n">TrafficContext</span><span class="p">,</span> <span class="n">register_backend</span>
+<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a>
+<a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a>
+<a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a><span class="k">class</span><span class="w"> </span><span class="nc">MySimulatorBackend</span><span class="p">(</span><span class="n">TrafficBackend</span><span class="p">):</span>
+<a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a>    <span class="n">name</span> <span class="o">=</span> <span class="s2">"my_simulator"</span>
+<a id="__codelineno-9-8" name="__codelineno-9-8" href="#__codelineno-9-8"></a>
+<a id="__codelineno-9-9" name="__codelineno-9-9" href="#__codelineno-9-9"></a>    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">options</span><span class="p">:</span> <span class="n">Mapping</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<a id="__codelineno-9-10" name="__codelineno-9-10" href="#__codelineno-9-10"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">_address</span> <span class="o">=</span> <span class="n">options</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"address"</span><span class="p">,</span> <span class="s2">"localhost:9999"</span><span class="p">)</span>
+<a id="__codelineno-9-11" name="__codelineno-9-11" href="#__codelineno-9-11"></a>
+<a id="__codelineno-9-12" name="__codelineno-9-12" href="#__codelineno-9-12"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">prepare</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">context</span><span class="p">:</span> <span class="n">TrafficContext</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<a id="__codelineno-9-13" name="__codelineno-9-13" href="#__codelineno-9-13"></a>        <span class="c1"># Match the simulation step so the two clocks cannot drift, and derive</span>
+<a id="__codelineno-9-14" name="__codelineno-9-14" href="#__codelineno-9-14"></a>        <span class="c1"># the road network from the OpenDRIVE the CARLA world is running.</span>
+<a id="__codelineno-9-15" name="__codelineno-9-15" href="#__codelineno-9-15"></a>        <span class="c1"># The map of the run: `xodr_path` is the OpenDRIVE CARLA is running, and Phase B</span>
+<a id="__codelineno-9-16" name="__codelineno-9-16" href="#__codelineno-9-16"></a>        <span class="c1"># adds `lanelet2_path` for a backend whose own network is built from Lanelet2.</span>
+<a id="__codelineno-9-17" name="__codelineno-9-17" href="#__codelineno-9-17"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">_connect</span><span class="p">(</span><span class="n">context</span><span class="o">.</span><span class="n">fixed_delta_seconds</span><span class="p">,</span> <span class="n">context</span><span class="o">.</span><span class="n">xodr_path</span><span class="p">,</span> <span class="n">context</span><span class="o">.</span><span class="n">random_seed</span><span class="p">)</span>
+<a id="__codelineno-9-18" name="__codelineno-9-18" href="#__codelineno-9-18"></a>
+<a id="__codelineno-9-19" name="__codelineno-9-19" href="#__codelineno-9-19"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">start</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">world</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">skip_actor_ids</span><span class="p">:</span> <span class="n">Collection</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="p">())</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<a id="__codelineno-9-20" name="__codelineno-9-20" href="#__codelineno-9-20"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">_externally_driven</span> <span class="o">=</span> <span class="nb">set</span><span class="p">(</span><span class="n">skip_actor_ids</span><span class="p">)</span>
+<a id="__codelineno-9-21" name="__codelineno-9-21" href="#__codelineno-9-21"></a>
+<a id="__codelineno-9-22" name="__codelineno-9-22" href="#__codelineno-9-22"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">tick</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">world</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span> <span class="n">elapsed</span><span class="p">:</span> <span class="nb">float</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<a id="__codelineno-9-23" name="__codelineno-9-23" href="#__codelineno-9-23"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">_publish_carla_vehicles</span><span class="p">(</span><span class="n">world</span><span class="p">)</span>   <span class="c1"># so my traffic reacts to the ego</span>
+<a id="__codelineno-9-24" name="__codelineno-9-24" href="#__codelineno-9-24"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">_step_once</span><span class="p">()</span>                      <span class="c1"># exactly one step per world tick</span>
+<a id="__codelineno-9-25" name="__codelineno-9-25" href="#__codelineno-9-25"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">_mirror_into_carla</span><span class="p">(</span><span class="n">world</span><span class="p">)</span>
+<a id="__codelineno-9-26" name="__codelineno-9-26" href="#__codelineno-9-26"></a>
+<a id="__codelineno-9-27" name="__codelineno-9-27" href="#__codelineno-9-27"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">close</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<a id="__codelineno-9-28" name="__codelineno-9-28" href="#__codelineno-9-28"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">_disconnect</span><span class="p">()</span>
+<a id="__codelineno-9-29" name="__codelineno-9-29" href="#__codelineno-9-29"></a>
+<a id="__codelineno-9-30" name="__codelineno-9-30" href="#__codelineno-9-30"></a>
+<a id="__codelineno-9-31" name="__codelineno-9-31" href="#__codelineno-9-31"></a><span class="k">def</span><span class="w"> </span><span class="nf">register</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<a id="__codelineno-9-32" name="__codelineno-9-32" href="#__codelineno-9-32"></a>    <span class="n">register_backend</span><span class="p">(</span><span class="s2">"my_simulator"</span><span class="p">,</span> <span class="n">MySimulatorBackend</span><span class="p">)</span>
 </code></pre></div>
 <p>From your own package, advertise it so <code>traffic.backend=my_simulator</code> resolves
 without an import anywhere in this repository:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="k">[project.entry-points.</span><span class="s2">"autoware_carla_scenario.traffic_backends"</span><span class="k">]</span>
-<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="n">my_simulator</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"my_package:register"</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="k">[project.entry-points.</span><span class="s2">"autoware_carla_scenario.traffic_backends"</span><span class="k">]</span>
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="n">my_simulator</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"my_package:register"</span>
 </code></pre></div>
 <h3 id="answering-manoeuvre-intents">Answering manoeuvre intents<a class="headerlink" href="#answering-manoeuvre-intents" title="Permanent link">&para;</a></h3>
 <p>A backend that can steer the vehicles it drives overrides the three intent
 methods. They receive the entity, so a backend can read the actor and record its
 own bookkeeping on the vehicle rather than in a table of its own:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">change_lane</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">entity</span><span class="p">,</span> <span class="n">world</span><span class="p">,</span> <span class="n">direction</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span> <span class="o">...</span>
-<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">lane_change_finished</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">entity</span><span class="p">,</span> <span class="n">world</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span> <span class="o">...</span>
-<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">turn_at_junction</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">entity</span><span class="p">,</span> <span class="n">world</span><span class="p">,</span> <span class="n">direction</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span> <span class="o">...</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">change_lane</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">entity</span><span class="p">,</span> <span class="n">world</span><span class="p">,</span> <span class="n">direction</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span> <span class="o">...</span>
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">lane_change_finished</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">entity</span><span class="p">,</span> <span class="n">world</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span> <span class="o">...</span>
+<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">turn_at_junction</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">entity</span><span class="p">,</span> <span class="n">world</span><span class="p">,</span> <span class="n">direction</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span> <span class="o">...</span>
 </code></pre></div>
 <p><code>direction</code> is <code>LaneChangeDirection</code> or <code>TurnDirection</code> — intents, not CARLA
 values. A backend that has no answer for one simply does not override it: the
@@ -2822,26 +2917,26 @@ log says why, once each time the entity becomes mesoscopic. The parts that are t
 </ul>
 <h2 id="using-a-backend-from-python">Using a backend from Python<a class="headerlink" href="#using-a-backend-from-python" title="Permanent link">&para;</a></h2>
 <p>A scenario run built in code takes the backend the same way it takes the ego:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario</span><span class="w"> </span><span class="kn">import</span> <span class="n">NullTrafficBackend</span><span class="p">,</span> <span class="n">ScenarioQueue</span>
-<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>
-<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a><span class="n">queue</span> <span class="o">=</span> <span class="n">ScenarioQueue</span><span class="p">(</span><span class="n">map_name</span><span class="o">=</span><span class="s2">"Town10HD_Opt"</span><span class="p">,</span> <span class="n">traffic_backend</span><span class="o">=</span><span class="n">NullTrafficBackend</span><span class="p">())</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario</span><span class="w"> </span><span class="kn">import</span> <span class="n">NullTrafficBackend</span><span class="p">,</span> <span class="n">ScenarioQueue</span>
+<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>
+<a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a><span class="n">queue</span> <span class="o">=</span> <span class="n">ScenarioQueue</span><span class="p">(</span><span class="n">map_name</span><span class="o">=</span><span class="s2">"Town10HD_Opt"</span><span class="p">,</span> <span class="n">traffic_backend</span><span class="o">=</span><span class="n">NullTrafficBackend</span><span class="p">())</span>
 </code></pre></div>
 <p>and its <a href="#traffic-parameters">parameters</a> in the backend's constructor, or by
 name through the registry:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
-<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>    <span class="n">PedestrianParameters</span><span class="p">,</span>
-<a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a>    <span class="n">TrafficManagerBackend</span><span class="p">,</span>
-<a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a>    <span class="n">VehicleParameters</span><span class="p">,</span>
-<a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a><span class="p">)</span>
-<a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario.traffic</span><span class="w"> </span><span class="kn">import</span> <span class="n">build_backend</span>
-<a id="__codelineno-12-7" name="__codelineno-12-7" href="#__codelineno-12-7"></a>
-<a id="__codelineno-12-8" name="__codelineno-12-8" href="#__codelineno-12-8"></a><span class="n">backend</span> <span class="o">=</span> <span class="n">TrafficManagerBackend</span><span class="p">(</span><span class="n">vehicles</span><span class="o">=</span><span class="n">VehicleParameters</span><span class="p">(</span><span class="n">speed_factor</span><span class="o">=</span><span class="mf">0.8</span><span class="p">))</span>
-<a id="__codelineno-12-9" name="__codelineno-12-9" href="#__codelineno-12-9"></a><span class="n">backend</span> <span class="o">=</span> <span class="n">build_backend</span><span class="p">(</span>
-<a id="__codelineno-12-10" name="__codelineno-12-10" href="#__codelineno-12-10"></a>    <span class="s2">"sumo"</span><span class="p">,</span>
-<a id="__codelineno-12-11" name="__codelineno-12-11" href="#__codelineno-12-11"></a>    <span class="p">{},</span>
-<a id="__codelineno-12-12" name="__codelineno-12-12" href="#__codelineno-12-12"></a>    <span class="n">vehicles</span><span class="o">=</span><span class="n">VehicleParameters</span><span class="p">(</span><span class="n">reaction_time_s</span><span class="o">=</span><span class="mf">1.5</span><span class="p">),</span>
-<a id="__codelineno-12-13" name="__codelineno-12-13" href="#__codelineno-12-13"></a>    <span class="n">pedestrians</span><span class="o">=</span><span class="n">PedestrianParameters</span><span class="p">(</span><span class="n">walking_speed_mps</span><span class="o">=</span><span class="mf">1.2</span><span class="p">),</span>
-<a id="__codelineno-12-14" name="__codelineno-12-14" href="#__codelineno-12-14"></a><span class="p">)</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a>    <span class="n">PedestrianParameters</span><span class="p">,</span>
+<a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a>    <span class="n">TrafficManagerBackend</span><span class="p">,</span>
+<a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a>    <span class="n">VehicleParameters</span><span class="p">,</span>
+<a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a><span class="p">)</span>
+<a id="__codelineno-13-6" name="__codelineno-13-6" href="#__codelineno-13-6"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario.traffic</span><span class="w"> </span><span class="kn">import</span> <span class="n">build_backend</span>
+<a id="__codelineno-13-7" name="__codelineno-13-7" href="#__codelineno-13-7"></a>
+<a id="__codelineno-13-8" name="__codelineno-13-8" href="#__codelineno-13-8"></a><span class="n">backend</span> <span class="o">=</span> <span class="n">TrafficManagerBackend</span><span class="p">(</span><span class="n">vehicles</span><span class="o">=</span><span class="n">VehicleParameters</span><span class="p">(</span><span class="n">speed_factor</span><span class="o">=</span><span class="mf">0.8</span><span class="p">))</span>
+<a id="__codelineno-13-9" name="__codelineno-13-9" href="#__codelineno-13-9"></a><span class="n">backend</span> <span class="o">=</span> <span class="n">build_backend</span><span class="p">(</span>
+<a id="__codelineno-13-10" name="__codelineno-13-10" href="#__codelineno-13-10"></a>    <span class="s2">"sumo"</span><span class="p">,</span>
+<a id="__codelineno-13-11" name="__codelineno-13-11" href="#__codelineno-13-11"></a>    <span class="p">{},</span>
+<a id="__codelineno-13-12" name="__codelineno-13-12" href="#__codelineno-13-12"></a>    <span class="n">vehicles</span><span class="o">=</span><span class="n">VehicleParameters</span><span class="p">(</span><span class="n">reaction_time_s</span><span class="o">=</span><span class="mf">1.5</span><span class="p">),</span>
+<a id="__codelineno-13-13" name="__codelineno-13-13" href="#__codelineno-13-13"></a>    <span class="n">pedestrians</span><span class="o">=</span><span class="n">PedestrianParameters</span><span class="p">(</span><span class="n">walking_speed_mps</span><span class="o">=</span><span class="mf">1.2</span><span class="p">),</span>
+<a id="__codelineno-13-14" name="__codelineno-13-14" href="#__codelineno-13-14"></a><span class="p">)</span>
 </code></pre></div>
 <p><code>ScenarioQueue</code> passes it to the <code>ScenarioRunner</code> it builds, and one backend
 serves every scenario in the queue — the same way one CARLA server does.</p>
@@ -2851,30 +2946,30 @@ modelled on OpenSCENARIO's <code>TrafficSourceAction</code> and <code>TrafficSin
 OpenSCENARIO gives a source or sink a position and a radius, these take
 <strong>lanelet constraints</strong> -- the vocabulary a sweep picks its cases with -- so the
 same action means "every lane outside a junction" on any map:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario</span><span class="w"> </span><span class="kn">import</span> <span class="n">ElapsedTimeCondition</span><span class="p">,</span> <span class="n">TrafficSinkAction</span><span class="p">,</span> <span class="n">TrafficSourceAction</span>
-<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a>
-<a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a><span class="n">not_in_junction</span> <span class="o">=</span> <span class="p">[{</span><span class="s2">"type"</span><span class="p">:</span> <span class="s2">"not"</span><span class="p">,</span> <span class="s2">"constraint"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"type"</span><span class="p">:</span> <span class="s2">"is_junction"</span><span class="p">}}]</span>
-<a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a>
-<a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a><span class="c1"># Placed during initialization, then no more: register_init runs once.</span>
-<a id="__codelineno-13-6" name="__codelineno-13-6" href="#__codelineno-13-6"></a><span class="bp">self</span><span class="o">.</span><span class="n">register_init</span><span class="p">(</span><span class="n">TrafficSourceAction</span><span class="p">(</span><span class="n">not_in_junction</span><span class="p">,</span> <span class="n">initial_vehicles</span><span class="o">=</span><span class="mi">20</span><span class="p">))</span>
-<a id="__codelineno-13-7" name="__codelineno-13-7" href="#__codelineno-13-7"></a>
-<a id="__codelineno-13-8" name="__codelineno-13-8" href="#__codelineno-13-8"></a><span class="c1"># Six a minute during the first 30 s of the run, at most 30 on the road.</span>
-<a id="__codelineno-13-9" name="__codelineno-13-9" href="#__codelineno-13-9"></a><span class="bp">self</span><span class="o">.</span><span class="n">register_pre_tick</span><span class="p">(</span>
-<a id="__codelineno-13-10" name="__codelineno-13-10" href="#__codelineno-13-10"></a>    <span class="n">TrafficSourceAction</span><span class="p">(</span>
-<a id="__codelineno-13-11" name="__codelineno-13-11" href="#__codelineno-13-11"></a>        <span class="n">not_in_junction</span><span class="p">,</span>
-<a id="__codelineno-13-12" name="__codelineno-13-12" href="#__codelineno-13-12"></a>        <span class="n">vehicles_per_minute</span><span class="o">=</span><span class="mf">6.0</span><span class="p">,</span>
-<a id="__codelineno-13-13" name="__codelineno-13-13" href="#__codelineno-13-13"></a>        <span class="n">max_vehicles</span><span class="o">=</span><span class="mi">30</span><span class="p">,</span>
-<a id="__codelineno-13-14" name="__codelineno-13-14" href="#__codelineno-13-14"></a>        <span class="n">until</span><span class="o">=</span><span class="n">ElapsedTimeCondition</span><span class="p">(</span><span class="mf">30.0</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">"first_30s"</span><span class="p">),</span>
-<a id="__codelineno-13-15" name="__codelineno-13-15" href="#__codelineno-13-15"></a>    <span class="p">)</span>
-<a id="__codelineno-13-16" name="__codelineno-13-16" href="#__codelineno-13-16"></a><span class="p">)</span>
-<a id="__codelineno-13-17" name="__codelineno-13-17" href="#__codelineno-13-17"></a>
-<a id="__codelineno-13-18" name="__codelineno-13-18" href="#__codelineno-13-18"></a><span class="c1"># Removed at the ends of the map's roads for the whole run.</span>
-<a id="__codelineno-13-19" name="__codelineno-13-19" href="#__codelineno-13-19"></a><span class="bp">self</span><span class="o">.</span><span class="n">register_pre_tick</span><span class="p">(</span>
-<a id="__codelineno-13-20" name="__codelineno-13-20" href="#__codelineno-13-20"></a>    <span class="n">TrafficSinkAction</span><span class="p">(</span>
-<a id="__codelineno-13-21" name="__codelineno-13-21" href="#__codelineno-13-21"></a>        <span class="p">[{</span><span class="s2">"type"</span><span class="p">:</span> <span class="s2">"not"</span><span class="p">,</span> <span class="s2">"constraint"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"type"</span><span class="p">:</span> <span class="s2">"previous_of"</span><span class="p">,</span>
-<a id="__codelineno-13-22" name="__codelineno-13-22" href="#__codelineno-13-22"></a>          <span class="s2">"constraints"</span><span class="p">:</span> <span class="p">[{</span><span class="s2">"type"</span><span class="p">:</span> <span class="s2">"lanelet_length"</span><span class="p">,</span> <span class="s2">"value"</span><span class="p">:</span> <span class="mf">0.0</span><span class="p">}]}}]</span>
-<a id="__codelineno-13-23" name="__codelineno-13-23" href="#__codelineno-13-23"></a>    <span class="p">)</span>
-<a id="__codelineno-13-24" name="__codelineno-13-24" href="#__codelineno-13-24"></a><span class="p">)</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario</span><span class="w"> </span><span class="kn">import</span> <span class="n">ElapsedTimeCondition</span><span class="p">,</span> <span class="n">TrafficSinkAction</span><span class="p">,</span> <span class="n">TrafficSourceAction</span>
+<a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a>
+<a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a><span class="n">not_in_junction</span> <span class="o">=</span> <span class="p">[{</span><span class="s2">"type"</span><span class="p">:</span> <span class="s2">"not"</span><span class="p">,</span> <span class="s2">"constraint"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"type"</span><span class="p">:</span> <span class="s2">"is_junction"</span><span class="p">}}]</span>
+<a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a>
+<a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a><span class="c1"># Placed during initialization, then no more: register_init runs once.</span>
+<a id="__codelineno-14-6" name="__codelineno-14-6" href="#__codelineno-14-6"></a><span class="bp">self</span><span class="o">.</span><span class="n">register_init</span><span class="p">(</span><span class="n">TrafficSourceAction</span><span class="p">(</span><span class="n">not_in_junction</span><span class="p">,</span> <span class="n">initial_vehicles</span><span class="o">=</span><span class="mi">20</span><span class="p">))</span>
+<a id="__codelineno-14-7" name="__codelineno-14-7" href="#__codelineno-14-7"></a>
+<a id="__codelineno-14-8" name="__codelineno-14-8" href="#__codelineno-14-8"></a><span class="c1"># Six a minute during the first 30 s of the run, at most 30 on the road.</span>
+<a id="__codelineno-14-9" name="__codelineno-14-9" href="#__codelineno-14-9"></a><span class="bp">self</span><span class="o">.</span><span class="n">register_pre_tick</span><span class="p">(</span>
+<a id="__codelineno-14-10" name="__codelineno-14-10" href="#__codelineno-14-10"></a>    <span class="n">TrafficSourceAction</span><span class="p">(</span>
+<a id="__codelineno-14-11" name="__codelineno-14-11" href="#__codelineno-14-11"></a>        <span class="n">not_in_junction</span><span class="p">,</span>
+<a id="__codelineno-14-12" name="__codelineno-14-12" href="#__codelineno-14-12"></a>        <span class="n">vehicles_per_minute</span><span class="o">=</span><span class="mf">6.0</span><span class="p">,</span>
+<a id="__codelineno-14-13" name="__codelineno-14-13" href="#__codelineno-14-13"></a>        <span class="n">max_vehicles</span><span class="o">=</span><span class="mi">30</span><span class="p">,</span>
+<a id="__codelineno-14-14" name="__codelineno-14-14" href="#__codelineno-14-14"></a>        <span class="n">until</span><span class="o">=</span><span class="n">ElapsedTimeCondition</span><span class="p">(</span><span class="mf">30.0</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">"first_30s"</span><span class="p">),</span>
+<a id="__codelineno-14-15" name="__codelineno-14-15" href="#__codelineno-14-15"></a>    <span class="p">)</span>
+<a id="__codelineno-14-16" name="__codelineno-14-16" href="#__codelineno-14-16"></a><span class="p">)</span>
+<a id="__codelineno-14-17" name="__codelineno-14-17" href="#__codelineno-14-17"></a>
+<a id="__codelineno-14-18" name="__codelineno-14-18" href="#__codelineno-14-18"></a><span class="c1"># Removed at the ends of the map's roads for the whole run.</span>
+<a id="__codelineno-14-19" name="__codelineno-14-19" href="#__codelineno-14-19"></a><span class="bp">self</span><span class="o">.</span><span class="n">register_pre_tick</span><span class="p">(</span>
+<a id="__codelineno-14-20" name="__codelineno-14-20" href="#__codelineno-14-20"></a>    <span class="n">TrafficSinkAction</span><span class="p">(</span>
+<a id="__codelineno-14-21" name="__codelineno-14-21" href="#__codelineno-14-21"></a>        <span class="p">[{</span><span class="s2">"type"</span><span class="p">:</span> <span class="s2">"not"</span><span class="p">,</span> <span class="s2">"constraint"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"type"</span><span class="p">:</span> <span class="s2">"previous_of"</span><span class="p">,</span>
+<a id="__codelineno-14-22" name="__codelineno-14-22" href="#__codelineno-14-22"></a>          <span class="s2">"constraints"</span><span class="p">:</span> <span class="p">[{</span><span class="s2">"type"</span><span class="p">:</span> <span class="s2">"lanelet_length"</span><span class="p">,</span> <span class="s2">"value"</span><span class="p">:</span> <span class="mf">0.0</span><span class="p">}]}}]</span>
+<a id="__codelineno-14-23" name="__codelineno-14-23" href="#__codelineno-14-23"></a>    <span class="p">)</span>
+<a id="__codelineno-14-24" name="__codelineno-14-24" href="#__codelineno-14-24"></a><span class="p">)</span>
 </code></pre></div>
 <ul>
 <li><strong>When they act</strong> is the trigger (<code>condition</code>) and the end condition
@@ -2893,12 +2988,12 @@ same action means "every lane outside a junction" on any map:</p>
   every background vehicle on the road, whichever source made it.</li>
 </ul>
 <p>The examples take all of this from the config, for any scenario:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>intersection_passing/left_turn<span class="w"> </span><span class="nv">map</span><span class="o">=</span>town10hd_opt<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a><span class="w">  </span><span class="nv">traffic</span><span class="o">=</span>sumo<span class="w"> </span>background_traffic.enabled<span class="o">=</span><span class="nb">true</span>
-<a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a><span class="c1"># Only what initialization places:</span>
-<a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>...<span class="w"> </span>background_traffic.enabled<span class="o">=</span><span class="nb">true</span><span class="w"> </span>background_traffic.source.vehicles_per_minute<span class="o">=</span><span class="m">0</span>
-<a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a><span class="c1"># Keep adding for the first 20 s only:</span>
-<a id="__codelineno-14-6" name="__codelineno-14-6" href="#__codelineno-14-6"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>...<span class="w"> </span>background_traffic.enabled<span class="o">=</span><span class="nb">true</span><span class="w"> </span>background_traffic.source.stop_after_seconds<span class="o">=</span><span class="m">20</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>intersection_passing/left_turn<span class="w"> </span><span class="nv">map</span><span class="o">=</span>town10hd_opt<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a><span class="w">  </span><span class="nv">traffic</span><span class="o">=</span>sumo<span class="w"> </span>background_traffic.enabled<span class="o">=</span><span class="nb">true</span>
+<a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a><span class="c1"># Only what initialization places:</span>
+<a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>...<span class="w"> </span>background_traffic.enabled<span class="o">=</span><span class="nb">true</span><span class="w"> </span>background_traffic.source.vehicles_per_minute<span class="o">=</span><span class="m">0</span>
+<a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a><span class="c1"># Keep adding for the first 20 s only:</span>
+<a id="__codelineno-15-6" name="__codelineno-15-6" href="#__codelineno-15-6"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>...<span class="w"> </span>background_traffic.enabled<span class="o">=</span><span class="nb">true</span><span class="w"> </span>background_traffic.source.stop_after_seconds<span class="o">=</span><span class="m">20</span>
 </code></pre></div>
 <p><code>background_traffic</code> (in <code>examples/conf/config.yaml</code>) is off by default, and the
 SUMO backend's own <code>ambient</code> randomTrips demand is off in
@@ -2918,10 +3013,10 @@ swapped.</p>
 world. It needs the <code>sumo</code> extra (<code>autoware-carla-scenario[sumo]</code>: SUMO,
 libsumo and roadgen, all wheels); without it the run is refused in <code>prepare()</code>,
 before anything is spawned.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>lane_change/left<span class="w"> </span><span class="nv">map</span><span class="o">=</span>town10hd_opt<span class="w"> </span><span class="nv">traffic</span><span class="o">=</span>sumo
-<a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>...<span class="w"> </span><span class="nv">traffic</span><span class="o">=</span>sumo<span class="w"> </span>traffic.options.ambient.vehicles_per_hour<span class="o">=</span><span class="m">1800</span>
-<a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>...<span class="w"> </span><span class="nv">traffic</span><span class="o">=</span>sumo<span class="w"> </span>traffic.options.scenario_vehicles<span class="o">=</span>sumo
-<a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>...<span class="w"> </span><span class="nv">traffic</span><span class="o">=</span>sumo<span class="w"> </span>traffic.options.fcd_output<span class="o">=</span><span class="nb">true</span><span class="w">   </span><span class="c1"># &lt;output&gt;/sumo/fcd.xml</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>lane_change/left<span class="w"> </span><span class="nv">map</span><span class="o">=</span>town10hd_opt<span class="w"> </span><span class="nv">traffic</span><span class="o">=</span>sumo
+<a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>...<span class="w"> </span><span class="nv">traffic</span><span class="o">=</span>sumo<span class="w"> </span>traffic.options.ambient.vehicles_per_hour<span class="o">=</span><span class="m">1800</span>
+<a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>...<span class="w"> </span><span class="nv">traffic</span><span class="o">=</span>sumo<span class="w"> </span>traffic.options.scenario_vehicles<span class="o">=</span>sumo
+<a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>...<span class="w"> </span><span class="nv">traffic</span><span class="o">=</span>sumo<span class="w"> </span>traffic.options.fcd_output<span class="o">=</span><span class="nb">true</span><span class="w">   </span><span class="c1"># &lt;output&gt;/sumo/fcd.xml</span>
 </code></pre></div>
 <p><strong>The network</strong> is the world's own road network. The backend takes the
 OpenDRIVE the world runs (the file the run installed, or
@@ -3011,8 +3106,8 @@ vehicle links keep the indices CARLA's lights are matched to. With
 into or out of a road it crosses is red, and red otherwise; with <code>sumo</code>, SUMO's
 own program (which netconvert gives a pedestrian phase) drives it. A network
 given as <code>net_path</code> is used as it is.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>...<span class="w"> </span><span class="nv">traffic</span><span class="o">=</span>sumo<span class="w"> </span>traffic.options.pedestrians.enabled<span class="o">=</span><span class="nb">true</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a><span class="w">    </span>traffic.options.pedestrians.radius_m<span class="o">=</span><span class="m">80</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>...<span class="w"> </span><span class="nv">traffic</span><span class="o">=</span>sumo<span class="w"> </span>traffic.options.pedestrians.enabled<span class="o">=</span><span class="nb">true</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a><span class="w">    </span>traffic.options.pedestrians.radius_m<span class="o">=</span><span class="m">80</span>
 </code></pre></div>
 <p><strong>Stepping</strong>: one SUMO step per CARLA tick, with the step length set to the
 world's <code>fixed_delta_seconds</code> and the seed to the scenario's. CARLA poses are
@@ -3097,8 +3192,8 @@ on the best lane for its route, and into CARLA -- when it is within
 <code>micro_radius_m</code> of one again. SUMO then steps only the traffic near what CARLA
 drives, and CARLA holds an actor only for that, so a large demand costs what
 the traffic around the ego costs.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>...<span class="w"> </span><span class="nv">traffic</span><span class="o">=</span>sumo<span class="w"> </span>traffic.options.mesoscopic.enabled<span class="o">=</span><span class="nb">true</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a><span class="w">    </span>traffic.options.mesoscopic.micro_radius_m<span class="o">=</span><span class="m">150</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>...<span class="w"> </span><span class="nv">traffic</span><span class="o">=</span>sumo<span class="w"> </span>traffic.options.mesoscopic.enabled<span class="o">=</span><span class="nb">true</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a><span class="w">    </span>traffic.options.mesoscopic.micro_radius_m<span class="o">=</span><span class="m">150</span>
 </code></pre></div>
 <table>
 <thead>
@@ -3178,7 +3273,7 @@ CARLA co-simulation; its adversarial behaviour generation is left to scenarios.<
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 21, 2026 18:48:04 UTC"><span class="timeago" datetime="2026-10-21T18:48:04+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 21, 2026 18:48:04 UTC">2026-10-21</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 22, 2026 04:05:39 UTC"><span class="timeago" datetime="2026-10-22T04:05:39+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 22, 2026 04:05:39 UTC">2026-10-22</span>
   </span>
 
     
