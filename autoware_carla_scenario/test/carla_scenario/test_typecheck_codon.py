@@ -6616,6 +6616,106 @@ def make():
     assert error.line == _line_of(path, "R = Q * 2")
 
 
+def test_fstrings_in_lambdas_that_capture_compile(tmp_path: Path) -> None:
+    """Every form of #470: Codon cannot see a captured name in a lambda's f-string."""
+    setup = """
+        p = cfg.name
+        x = 3.14159
+        a = lambda v: f"{v}{p}"
+        b = sorted(["b", "a"], key=lambda e: f"{e}{p}")
+        c = lambda e: "{}{}".format(e, p)
+        d = lambda v, lab=cfg.name: f"{v}{lab}"
+        e = lambda v, lab=f"{x}": f"{v}{lab}"
+        f = lambda: f"{x=:.2f}"
+        g = (lambda lab: lambda v: f"{lab}")("a")
+        h = lambda v: f"{v:+.2f}|{x:>10.3f}|{p!r}|{x=}|{{lit}}"
+        i = lambda v: [f"{k}{p}" for k in range(v)]
+
+        def inner(name):
+            return (lambda v: f"{v}{name}")(1)
+
+        r: str = a(1) + c(2) + d(3) + e(4) + f() + g(5) + h(6.5) + inner("n")
+        assert len(r) > 0 and len(b) == 2 and len(i(2)) == 2
+    """
+    scenario, config, _ = _data_case(tmp_path, "", setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+@pytest.mark.parametrize(
+    ("line", "message"),
+    [
+        ('r: int = (lambda v: f"{v}{p}")(1)', "int"),
+        ('r = (lambda v: f"{v}{p.nope}")(1)', "nope"),
+        ('r = (lambda v: f"{v.nope}{p}")(1)', "nope"),
+        ('r = (lambda v: "{}{}".format(v, p) + 1)(1)', "str"),
+    ],
+    ids=["result", "capture-attribute", "param-attribute", "format"],
+)
+def test_a_lowered_lambda_fstring_is_still_type_checked(
+    tmp_path: Path, line: str, message: str
+) -> None:
+    scenario, config, path = _data_case(tmp_path, "", 'p = "a"\n' + line + "\n")
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert message in error.message, error.format()
+    assert error.line == _line_of(path, line)
+
+
+_LAMBDA_FSTRING_TYPES = (
+    _FLAGS
+    + """
+class Color(enum.Enum):
+    RED = 1
+    BLUE = 2
+
+
+class Shown:
+    n: int
+
+    def __init__(self, n: int) -> None:
+        self.n = n
+
+    def __str__(self) -> str:
+        return "shown"
+
+    def __repr__(self) -> str:
+        return "Shown()"
+
+
+class Holder:
+    prefix = "h"
+
+
+MULTILINE = lambda v, p: f\"\"\"a
+{v}
+{p}{Holder.prefix}\"\"\"
+"""
+)
+
+
+def test_fstrings_in_lambdas_accept_the_types_a_scenario_uses(tmp_path: Path) -> None:
+    """``str(x)`` / ``repr(x)`` exist for enums, flags, framework and user types."""
+    setup = """
+        p = cfg.name
+        loc = carla.Location(x=1.0, y=2.0, z=3.0)
+        col = Color.RED
+        sh = Shown(1)
+        a = lambda v: f"{v}{loc}{col}{Perm.R | Perm.W}{Bits.A}{sh}{p}"
+        b = lambda v: f"{loc!r}{col!r}{sh!r}{sh!s}{sh!a}{p!s:>5}{p!a:>5}"
+        c = lambda v: f"{p:>{v}}|{v:{len(p)}}|{v:>{v}d}"
+        d = lambda v: (y := v, f"{y}{p}")[1]
+        e = lambda v: [f"{k}{v}{p}" for k in range(v)]
+        f = lambda v: (lambda u: [lambda w: f"{u}{v}{w}{p}" for _ in range(2)])(v)
+        g = lambda v, h=lambda w: f"{w}{p}": h(v)
+        i = MULTILINE
+        r: str = a(1) + b(2) + c(3) + d(4) + e(2)[0] + f(5)[0](6) + g(7) + i(8, p)
+        assert len(r) > 0
+    """
+    scenario, config, _ = _data_case(tmp_path, _LAMBDA_FSTRING_TYPES, setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
 # -- a comprehension in a class body or a default_factory (#469) ---------------
 
 _CLASS_BODY_COMPREHENSIONS = """

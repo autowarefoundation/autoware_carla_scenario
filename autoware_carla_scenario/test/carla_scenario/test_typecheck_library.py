@@ -3711,3 +3711,55 @@ def test_the_os_pathlib_and_popen_shims_refuse_what_cpython_refuses(
     located = [d for d in result.diagnostics if d.path and d.path.endswith(".py")]
     assert located, result.format()
     assert located[0].line == line, result.format()
+
+
+# Directories of codon/ that model a third-party package, not the standard
+# library; the rest of codon/ (bar _stdlib) is a shim the docs must list.
+_THIRD_PARTY_MODELS = {
+    "autoware_carla_scenario",
+    "autoware_lanelet2_extension_python",
+    "carla_driver_interface",
+    "dotenv",
+    "lanelet2",
+    "lxml",
+    "pyxodr",
+}
+
+
+def _shim_modules() -> set[str]:
+    root = model_dir()
+    names = set()
+    for path in root.rglob("*.codon"):
+        parts = path.relative_to(root).with_suffix("").parts
+        if parts[0] in _THIRD_PARTY_MODELS or parts[0] == "_stdlib":
+            continue
+        if parts[-1] == "__init__":
+            parts = parts[:-1]
+            body = ast.parse(path.read_text()).body
+            # A package whose __init__ only imports or is empty names no module.
+            imports = (ast.Import, ast.ImportFrom)
+            only_imports = all(isinstance(n, imports) for n in body)
+            # ... unless there is no submodule to stand for it: then it is a shim.
+            has_submodule = any(p != path for p in path.parent.rglob("*.codon"))
+            if only_imports and has_submodule:
+                continue
+        names.add(".".join(parts))
+    return names
+
+
+def test_shim_list() -> None:
+    # The docs list every standard-library shim of codon/ (#472), so a new
+    # one cannot go undocumented, nor a removed one stay listed.
+    docs = (Path(__file__).resolve().parents[2] / "docs" / "typecheck.md").read_text()
+    block = docs.split("<!-- shims:start -->")[1].split("<!-- shims:end -->")[0]
+    listed = set(re.findall(r"`([\w.]+)`", block))
+    assert listed == _shim_modules()
+    assert "tempfile" in listed
+    # The shim of tempfile declares mkstemp() and nothing else.
+    tempfile = ast.parse((model_dir() / "tempfile.codon").read_text())
+    assert [n.name for n in tempfile.body if isinstance(n, ast.FunctionDef)] == [
+        "mkstemp"
+    ]
+    # The standard modules the docs call missing are not shimmed.
+    unavailable = {"json", "inspect", "concurrent.futures"}
+    assert not unavailable & listed
