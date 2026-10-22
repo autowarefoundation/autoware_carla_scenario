@@ -2695,14 +2695,34 @@ class SumoTrafficBackend(TrafficBackend):
         ``tau``, so the sight speed is worked out from its draws.
         """
         parameters = self.vehicle_parameters
-        if parameters.set_fields():
+        draws = bool(parameters.set_fields())
+        sublane = self._config.lateral_resolution_m is not None
+        if draws or sublane:
             for sumo_id in self._departed_ids():
-                if sumo_id not in self._external:  # CARLA's side drives those
+                if sumo_id in self._external:  # CARLA's side drives those
+                    continue
+                if sublane:
+                    self._no_sidestep_standing(sumo_id)
+                if draws:
                     self._draw_vehicle(sumo_id, parameters)
         overrides = self._pedestrian_overrides
         if overrides is not None:
             for person in self._traci.simulation.getDepartedPersonIDList():
                 self._draw_person(person, overrides)
+
+    def _no_sidestep_standing(self, sumo_id: str) -> None:
+        """Keep *sumo_id* from moving sideways while it stands.
+
+        The sublane model lets a standing vehicle crab sideways at its full
+        lateral speed: held behind a pedestrian, it edges round them a hand's
+        breadth away, and no car under CARLA's physics can follow that.
+        """
+        try:
+            self._traci.vehicle.setParameter(
+                sumo_id, "laneChangeModel.lcMaxSpeedLatStanding", "0"
+            )
+        except Exception as exc:  # noqa: BLE001 - one vehicle must not end the run
+            logger.warning("SUMO could not hold %s sideways: %s", sumo_id, exc)
 
     def _draw_vehicle(self, sumo_id: str, parameters: VehicleParameters) -> None:
         """Give *sumo_id* its own draw of each field *parameters* sets."""

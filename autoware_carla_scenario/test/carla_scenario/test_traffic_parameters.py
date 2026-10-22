@@ -207,12 +207,13 @@ def test_each_backend_supports_what_the_table_says() -> None:
         "reaction_time_s",
         "imperfection",
         "max_lateral_speed_mps",
+        "max_lateral_accel",
         "follow_visibility",
     }
-    # A lateral acceleration only with SUMO's sublane model.
-    sublane = SumoTrafficBackend(SumoBackendConfig(lateral_resolution_m=0.4))
-    assert sublane.supported_vehicle_parameters() == (
-        SumoTrafficBackend().supported_vehicle_parameters() | {"max_lateral_accel"}
+    # A lateral acceleration only with SUMO's sublane model, its default.
+    lane_based = SumoTrafficBackend(SumoBackendConfig(lateral_resolution_m=None))
+    assert lane_based.supported_vehicle_parameters() == (
+        SumoTrafficBackend().supported_vehicle_parameters() - {"max_lateral_accel"}
     )
     assert NullTrafficBackend().supported_vehicle_parameters() == set()
 

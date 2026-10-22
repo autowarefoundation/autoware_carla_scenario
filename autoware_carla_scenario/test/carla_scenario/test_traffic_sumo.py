@@ -108,17 +108,20 @@ def test_curve_speeds_are_on_by_default_and_must_be_positive() -> None:
 
 def test_the_lane_change_options_are_checked() -> None:
     config = SumoBackendConfig()
+    # The sublane model by default: no lane change in one step.
+    assert config.lateral_resolution_m == pytest.approx(0.4)
     assert config.lane_change_duration_s is None
-    assert config.lateral_resolution_m is None
     assert config.step_length_s is None
     for name in ("lane_change_duration_s", "lateral_resolution_m", "step_length_s"):
         with pytest.raises(ValueError, match=name):
             SumoBackendConfig.from_mapping({name: 0.0})
     # SUMO takes one or the other.
-    with pytest.raises(ValueError, match="cannot both be set"):
-        SumoBackendConfig.from_mapping(
-            {"lane_change_duration_s": 2.0, "lateral_resolution_m": 0.4}
-        )
+    with pytest.raises(ValueError, match="lateral_resolution_m: null"):
+        SumoBackendConfig.from_mapping({"lane_change_duration_s": 2.0})
+    lane_based = SumoBackendConfig.from_mapping(
+        {"lane_change_duration_s": 2.0, "lateral_resolution_m": None}
+    )
+    assert lane_based.lane_change_duration_s == pytest.approx(2.0)
 
 
 def test_a_sumo_step_divides_the_carla_tick() -> None:
@@ -146,11 +149,11 @@ def test_a_lateral_acceleration_needs_the_sublane_model() -> None:
         TrafficParameterError,
         match="max_lateral_accel needs traffic.options.lateral_resolution_m",
     ):
-        SumoTrafficBackend(vehicles=VehicleParameters(max_lateral_accel=0.5))
-    backend = SumoTrafficBackend(
-        SumoBackendConfig(lateral_resolution_m=0.4),
-        vehicles=VehicleParameters(max_lateral_accel=0.5),
-    )
+        SumoTrafficBackend(
+            SumoBackendConfig(lateral_resolution_m=None),
+            vehicles=VehicleParameters(max_lateral_accel=0.5),
+        )
+    backend = SumoTrafficBackend(vehicles=VehicleParameters(max_lateral_accel=0.5))
     assert backend.vehicle_parameters.max_lateral_accel is not None
 
 
@@ -629,7 +632,7 @@ def test_a_lane_change_takes_as_long_as_its_lateral_speed_allows(
 ) -> None:
     from autoware_carla_scenario.traffic.parameters import VehicleParameters
 
-    options: dict[str, Any] = {"lateral_resolution_m": 0.4} if sublane else {}
+    options: dict[str, Any] = {} if sublane else {"lateral_resolution_m": None}
     backend, world, _npc, _ego = _prepared(
         crossroads,
         tmp_path,
@@ -1053,7 +1056,7 @@ def test_sumo_gives_its_vehicles_their_lateral_speed_and_acceleration(
         max_lateral_accel=Spread(0.4) if sublane else None,
     )
     options: dict[str, Any] = (
-        {"lateral_resolution_m": 0.4} if sublane else {"lane_change_duration_s": 2.0}
+        {} if sublane else {"lateral_resolution_m": None, "lane_change_duration_s": 2.0}
     )
     backend, world, _npc, _ego = _prepared(
         crossroads, tmp_path, vehicles=parameters, step_length_s=0.01, **options

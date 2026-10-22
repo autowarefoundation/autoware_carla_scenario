@@ -160,7 +160,7 @@ An ODD can draw both the mean and the std of each, per case
 | `reaction_time_s` | Reaction time, s (also the visibility's) | — | `tau` |
 | `imperfection` | Driver imperfection, 0-1 | — | `sigma` |
 | `max_lateral_speed_mps` | Most lateral speed, m/s | — | `maxSpeedLat` |
-| `max_lateral_accel` | Most lateral acceleration, m/s² | — | `lcAccelLat` (sublane model only) |
+| `max_lateral_accel` | Most lateral acceleration, m/s² | — | `lcAccelLat` (sublane model, the default) |
 | `follow_visibility` | Slow to what the drivers see in the weather | — | ✓ (on by default) |
 
 `traffic.pedestrians` (the TrafficManager drives no pedestrians — a scenario's
@@ -265,14 +265,13 @@ defaults.
 - `max_lateral_speed_mps` — spread, m/s, mean `>= 0.05`
     - The fastest a vehicle moves sideways, SUMO's `maxSpeedLat`
       (`setMaxSpeedLat`; default 1.0). A lane change takes at least the lane's
-      width over it: with the default 3 s `lane_change_duration_s`, a 3.5 m lane
-      and `0.5` here, about 7 s.
+      width over it: a 3.5 m lane at `0.5` here takes about 7 s.
 
 - `max_lateral_accel` — spread, m/s², mean `>= 0.05`
     - The hardest a vehicle accelerates sideways, SUMO's `lcAccelLat` (set as
       the `laneChangeModel.lcAccelLat` parameter; default 1.0). Only SUMO's
-      sublane model has one, so it needs `traffic.options.lateral_resolution_m`;
-      set without it, it is an error before the run.
+      sublane model, the backend's default, has one: with
+      `traffic.options.lateral_resolution_m: null` it is an error before the run.
 
 - `follow_visibility` — bool
     - Hold SUMO's own traffic (ambient and background vehicles) to the speed it
@@ -818,20 +817,23 @@ milliseconds, as SUMO's clock counts them (0.01 or 0.025 for a 0.05 s tick, not
 0.0125), and SUMO then makes that many steps per tick, with the CARLA poses it
 sees held for all of them.
 
-**Lane changes**: by default a lane change takes 3 s, SUMO moving the vehicle
-across continuously (`--lanechange.duration`) rather than jumping it to the new
-lane in one step; `lane_change_duration_s` sets another duration, and
-`traffic.vehicles.max_lateral_speed_mps` caps how fast it moves sideways.
-`lateral_resolution_m` switches SUMO to its sublane model instead
-(`--lateral-resolution`, the width of a sublane): a vehicle's lateral position
-is continuous, it can drift within its lane, and it changes lanes at its own
-`max_lateral_speed_mps` and `max_lateral_accel`. SUMO takes one or the other,
-so setting both is an error.
+**Lane changes**: SUMO runs its sublane model (`lateral_resolution_m`, 0.4 m
+by default, `--lateral-resolution`): a vehicle's lateral position is
+continuous, so it never jumps to the new lane in one step but moves across at
+its own `traffic.vehicles.max_lateral_speed_mps` and `max_lateral_accel`.
+A vehicle SUMO drives does not move sideways while it stands
+(`lcMaxSpeedLatStanding` 0): left to SUMO's default, one held behind a
+pedestrian edges round them a hand's breadth away, which no car under CARLA's
+physics could do.
+`lateral_resolution_m: null` falls back to SUMO's lane-based model, where a lane
+change still moves across continuously, over `lane_change_duration_s` (3 s
+unset, `--lanechange.duration`) and no faster than `max_lateral_speed_mps`.
+SUMO takes one or the other, so `lane_change_duration_s` with a sublane width
+is an error.
 
 ```bash
-# Smooth lane changes: the sublane model, five SUMO steps per 0.05 s tick.
-uv run scenario ... traffic=sumo traffic.options.lateral_resolution_m=0.4 \
-    traffic.options.step_length_s=0.01 \
+# Gentler lane changes, five SUMO steps per 0.05 s tick.
+uv run scenario ... traffic=sumo traffic.options.step_length_s=0.01 \
     traffic.vehicles.max_lateral_speed_mps.mean=0.8 \
     traffic.vehicles.max_lateral_accel.mean=0.6
 ```

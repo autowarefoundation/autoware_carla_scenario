@@ -378,7 +378,8 @@ class VehicleParameters:
             ``traffic.options.lane_change_duration_s`` says.
         max_lateral_accel: The hardest a vehicle accelerates sideways, m/s²
             (SUMO's ``lcAccelLat``; 1.0 by default).  Only SUMO's sublane
-            model has one: it needs ``traffic.options.lateral_resolution_m``.
+            model, its default, has one: it is refused with
+            ``traffic.options.lateral_resolution_m: null``.
         follow_visibility: Hold the backend's own traffic to the speed it stops
             from within what its drivers see, once the run's weather says how
             far that is (:mod:`autoware_carla_scenario.visibility`, set by the

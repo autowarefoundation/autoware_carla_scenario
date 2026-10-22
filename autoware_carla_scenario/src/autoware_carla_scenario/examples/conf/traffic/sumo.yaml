@@ -37,13 +37,13 @@ traffic:
     # map is converted (roadgen cuts edges at bends and slows each piece and
     # each junction turn); null converts the map as it is.
     curve_lateral_acceleration: 3.0
-    # How long a lane change takes, s (--lanechange.duration); null: 3 s, or
-    # none with lateral_resolution_m.
-    lane_change_duration_s: null
     # Sublane width, m (--lateral-resolution): SUMO's sublane model, where
-    # vehicles move sideways continuously at traffic.vehicles'
-    # max_lateral_speed_mps and max_lateral_accel. null: lane-based.
-    lateral_resolution_m: null
+    # vehicles change lanes smoothly at traffic.vehicles' max_lateral_speed_mps
+    # and max_lateral_accel. null: SUMO's lane-based model.
+    lateral_resolution_m: 0.4
+    # With lateral_resolution_m: null only, how long a lane change takes, s
+    # (--lanechange.duration); null: 3 s.
+    lane_change_duration_s: null
     # SUMO's step, s (--step-length); null: the world's fixed_delta_seconds.
     # A shorter one must divide it in whole ms: SUMO steps that many times
     # per tick.
