@@ -3457,17 +3457,24 @@ def test_a_lambda_fstring_lowering_keeps_the_lines() -> None:
     ast.parse(text)
 
 
-def test_a_lambda_fstring_with_ascii_conversion_is_refused_at_its_line() -> None:
-    refused = python_rewrite_refusals('x = 1\nf = lambda v: f"{p!a}"\n')
-    assert [line for line, _ in refused] == [2]
-    assert "use !r, or write a def" in refused[0][1]
+def test_a_lambda_fstring_with_ascii_conversion_is_lowered_to_repr() -> None:
+    assert _rewritten('f = lambda v: f"{p!a}"\n') == "f = lambda v: (repr(p))\n"
+    assert (
+        _rewritten('f = lambda v: f"{p!a:>5}"\n')
+        == 'f = lambda v: (repr(p).__format__(">5"))\n'
+    )
 
 
 @pytest.mark.parametrize(
     "template",
     [
         'lambda v: f"{v}{p}"',
-        'lambda v: f"<{v!r}|{p!r}|{p!s}>"',
+        'lambda v: f"<{v!r}|{p!r}|{p!s}|{p!s:>8}|{p!a}|{v!a:>9}>"',
+        'lambda v: f"{p:{w}.{w}}|{p:>{w}}|{v:{w}}"',
+        'lambda v: f"""a\\n{v}\\n{p}"""',
+        'lambda v: (lambda u: f"{u}{v}{p}")(v)',
+        'lambda v: [f"{u}{v}" for u in range(2)]',
+        'lambda v: (y := v, f"{y}{p}")',
         'lambda v: f"{v:>6}|{p:.2f}|{p:+.1f}|{v:{w}}"',
         'lambda v: f"{p=}|{p=:.1f}|{v=}"',
         'lambda v: "{}-{:>4}-{!r}".format(v, p, p)',

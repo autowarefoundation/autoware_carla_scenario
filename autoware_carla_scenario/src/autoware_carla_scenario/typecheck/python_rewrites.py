@@ -32,7 +32,7 @@ so a rewrite has to keep the *types*, not the values, of what it replaces.
   ``str(v) + str(p)`` (#470): Codon resolves the names of an f-string in the
   lambda's own scope ("name 'p' is not defined").  ``!r`` is ``repr(p)``, a
   spec ``(p).__format__(spec)``, ``{p=}`` ``"p=" + repr(p)``; ``.format`` is
-  an f-string first, so it ends up lowered too.  ``!a`` there is refused.
+  an f-string first, so it ends up lowered too.  ``!a`` there is ``repr``.
 * ``zip(..., strict=...)`` becomes ``zip(...)``.
 * Builtins and str methods Codon lacks (#439), each with the type of what it
   replaces: ``s.startswith((a, b))`` (also ``endswith``, and with a ``start``
@@ -486,10 +486,11 @@ def _lambda_fstring_rewrite(node: ast.JoinedStr) -> str:
             parts.append(_string_literal(chunk))
             chunk = ""
         if value.conversion == ord("a"):
-            raise _Refused(
-                "!a in an f-string in a lambda that reads a captured name "
-                "cannot be rewritten (Codon has no ascii()): use !r, or write "
-                "a def"
+            # Codon has no ascii(); repr() has the same type (as for ascii()).
+            value = ast.FormattedValue(
+                value=value.value,
+                conversion=ord("r"),
+                format_spec=value.format_spec,
             )
         parts.append(_formatted(value))
     if chunk:

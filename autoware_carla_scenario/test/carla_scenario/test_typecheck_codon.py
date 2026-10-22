@@ -6659,3 +6659,58 @@ def test_a_lowered_lambda_fstring_is_still_type_checked(
     error = _only_error(typecheck_scenario(scenario, config))
     assert message in error.message, error.format()
     assert error.line == _line_of(path, line)
+
+
+_LAMBDA_FSTRING_TYPES = (
+    _FLAGS
+    + """
+class Color(enum.Enum):
+    RED = 1
+    BLUE = 2
+
+
+class Shown:
+    n: int
+
+    def __init__(self, n: int) -> None:
+        self.n = n
+
+    def __str__(self) -> str:
+        return "shown"
+
+    def __repr__(self) -> str:
+        return "Shown()"
+
+
+class Holder:
+    prefix = "h"
+
+
+MULTILINE = lambda v, p: f\"\"\"a
+{v}
+{p}{Holder.prefix}\"\"\"
+"""
+)
+
+
+def test_fstrings_in_lambdas_accept_the_types_a_scenario_uses(tmp_path: Path) -> None:
+    """``str(x)`` / ``repr(x)`` exist for enums, flags, framework and user types."""
+    setup = """
+        p = cfg.name
+        loc = carla.Location(x=1.0, y=2.0, z=3.0)
+        col = Color.RED
+        sh = Shown(1)
+        a = lambda v: f"{v}{loc}{col}{Perm.R | Perm.W}{Bits.A}{sh}{p}"
+        b = lambda v: f"{loc!r}{col!r}{sh!r}{sh!s}{sh!a}{p!s:>5}{p!a:>5}"
+        c = lambda v: f"{p:>{v}}|{v:{len(p)}}|{v:>{v}d}"
+        d = lambda v: (y := v, f"{y}{p}")[1]
+        e = lambda v: [f"{k}{v}{p}" for k in range(v)]
+        f = lambda v: (lambda u: [lambda w: f"{u}{v}{w}{p}" for _ in range(2)])(v)
+        g = lambda v, h=lambda w: f"{w}{p}": h(v)
+        i = MULTILINE
+        r: str = a(1) + b(2) + c(3) + d(4) + e(2)[0] + f(5)[0](6) + g(7) + i(8, p)
+        assert len(r) > 0
+    """
+    scenario, config, _ = _data_case(tmp_path, _LAMBDA_FSTRING_TYPES, setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
