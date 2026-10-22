@@ -19,7 +19,7 @@ changed fields again -- or, given an *entity_name*, only that vehicle does::
 
     # The NPC ahead becomes a reckless driver.
     TrafficParametersAction(
-        vehicles=VehicleParameters(speed_factor=Spread(1.3), ignore_lights=Spread(1.0)),
+        vehicles=VehicleParameters(speed_factor=1.3, ignore_lights=1.0),
         entity_name="npc1",
     )
 

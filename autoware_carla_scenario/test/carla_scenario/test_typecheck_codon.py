@@ -358,12 +358,31 @@ def test_a_traffic_parameters_action_compiles(tmp_path: Path) -> None:
     assert result.ok, result.format()
 
 
-def test_a_traffic_parameters_action_refuses_a_number_for_a_spread(
-    tmp_path: Path,
-) -> None:
+def test_a_traffic_parameter_takes_a_value_or_a_spread(tmp_path: Path) -> None:
+    """A plain number is a spread of no width."""
     setup = """
         self.register_post_tick(
-            TrafficParametersAction(VehicleParameters(speed_factor=0.8))
+            TrafficParametersAction(
+                VehicleParameters(speed_factor=0.8, min_gap_m=3, decel=Spread(4.0, 0.5))
+            )
+        )
+"""
+    header = _HEADER.replace(
+        "import logging\n",
+        "import logging\n"
+        "from autoware_carla_scenario import (Spread, TrafficParametersAction,\n"
+        "    VehicleParameters)\n",
+        1,
+    )
+    scenario, config, _ = _write_case(tmp_path, setup, header=header)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_a_traffic_parameter_refuses_what_is_neither(tmp_path: Path) -> None:
+    setup = """
+        self.register_post_tick(
+            TrafficParametersAction(VehicleParameters(speed_factor="fast"))
         )
 """
     header = _HEADER.replace(

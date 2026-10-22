@@ -115,8 +115,9 @@ Every numeric parameter is a **spread**, a mean and a standard deviation
 (`{mean, std}`, `Spread` in Python): each vehicle and each pedestrian draws
 its own value from a normal distribution of that mean and std, cut to the
 parameter's bounds (drawn again until it is inside them -- a truncated
-normal). The traffic is a population of drivers, not one driver copied. A
-plain number, or a `std` of 0, gives every road user the same value. The
+normal). The traffic is a population of drivers, not one driver copied. Every
+numeric parameter also takes a plain value instead, in a config and in Python
+alike: a number (or a `std` of 0) gives every road user exactly that value. The
 draws come from the run's seed: the same seed, the same drivers.
 
 ```yaml
@@ -296,15 +297,18 @@ generates; `traffic.pedestrians` how they walk.
 The TrafficManager drives no pedestrians, so it refuses every field here.
 
 The same in Python, where every field is a keyword of `VehicleParameters` or
-`PedestrianParameters`:
+`PedestrianParameters`, and a numeric one takes a `Spread` (a distribution) or
+a plain number (a value):
 
 ```python
 from autoware_carla_scenario import PedestrianParameters, Spread, VehicleParameters
 
 VehicleParameters(
-    speed_factor=Spread(0.9, 0.1), min_gap_m=Spread(3.0), reaction_time_s=Spread(1.5, 0.3)
+    speed_factor=Spread(0.9, 0.1),  # a distribution: each vehicle draws its own
+    min_gap_m=3.0,                  # a value: every vehicle 3 m
+    reaction_time_s=Spread(1.5, 0.3),
 )
-PedestrianParameters(walking_speed_mps=Spread(1.2, 0.2))
+PedestrianParameters(walking_speed_mps=1.2)
 ```
 
 A field set for a backend that cannot honour it fails the run before anything is
@@ -364,12 +368,10 @@ scenario.register_post_tick(
     )
 )
 
-# The NPC ahead turns reckless (traffic_manager).
+# The NPC ahead turns reckless (traffic_manager): values, not distributions.
 scenario.register_post_tick(
     TrafficParametersAction(
-        vehicles=VehicleParameters(
-            speed_factor=Spread(1.3), ignore_lights=Spread(1.0)
-        ),
+        vehicles=VehicleParameters(speed_factor=1.3, ignore_lights=1.0),
         entity_name="npc1",
     )
 )

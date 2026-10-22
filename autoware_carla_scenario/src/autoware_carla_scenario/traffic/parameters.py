@@ -25,7 +25,8 @@ Every numeric parameter is a :class:`Spread` -- a mean and a standard
 deviation -- and each road user draws its own value from it, a normal
 distribution cut to the parameter's bounds (:data:`VEHICLE_BOUNDS`,
 :data:`PEDESTRIAN_BOUNDS`): a population of drivers, not one driver copied.
-A plain number is a spread of no width.  An ODD bounds the mean and the
+A plain number -- in a config or a constructor -- is a spread of no width:
+every road user takes that value.  An ODD bounds the mean and the
 spread of each like any other attribute it samples
 (:mod:`autoware_carla_scenario.odd.traffic_probes`).
 
@@ -82,12 +83,14 @@ from __future__ import annotations
 
 import random
 from dataclasses import dataclass
-from typing import Any, Mapping, Optional
+from typing import Any, Mapping, Optional, Union
 
 __all__ = [
     "PEDESTRIAN_BOUNDS",
     "PEDESTRIAN_PARAMETER_BACKENDS",
     "Spread",
+    "SpreadOrValue",
+    "as_spread",
     "VEHICLE_BOUNDS",
     "record_run_parameters",
     "run_parameters",
@@ -251,6 +254,20 @@ class Spread:
         return {"mean": self.mean, "std": self.std}
 
 
+#: A numeric traffic parameter as given: a :class:`Spread`, or a plain number,
+#: which every road user takes as it is (a spread of no width).
+SpreadOrValue = Union[Spread, float]
+
+
+def as_spread(value: Optional[SpreadOrValue]) -> Optional[Spread]:
+    """*value* as a :class:`Spread`: a number is a spread of no width."""
+    if value is None:
+        return None
+    if isinstance(value, Spread):
+        return value
+    return Spread(float(value))
+
+
 def _check(
     name: str, value: Optional[Spread], bounds: dict[str, tuple[float, float]]
 ) -> None:
@@ -299,7 +316,7 @@ def _described(value: Any) -> Any:
     return value.describe() if isinstance(value, Spread) else value
 
 
-@dataclass(frozen=True)
+@dataclass(init=False)
 class VehicleParameters:
     """How the vehicles a traffic backend drives behave (``traffic.vehicles``).
 
@@ -354,6 +371,39 @@ class VehicleParameters:
     reaction_time_s: Optional[Spread] = None
     imperfection: Optional[Spread] = None
     follow_visibility: Optional[bool] = None
+
+    def __init__(
+        self,
+        speed_factor: Optional[SpreadOrValue] = None,
+        min_gap_m: Optional[SpreadOrValue] = None,
+        lane_changes: Optional[bool] = None,
+        ignore_lights: Optional[SpreadOrValue] = None,
+        ignore_signs: Optional[SpreadOrValue] = None,
+        ignore_vehicles: Optional[SpreadOrValue] = None,
+        ignore_walkers: Optional[SpreadOrValue] = None,
+        random_lane_changes: Optional[SpreadOrValue] = None,
+        accel: Optional[SpreadOrValue] = None,
+        decel: Optional[SpreadOrValue] = None,
+        reaction_time_s: Optional[SpreadOrValue] = None,
+        imperfection: Optional[SpreadOrValue] = None,
+        follow_visibility: Optional[bool] = None,
+    ) -> None:
+        # Written out rather than generated, to take a plain number as well as
+        # a spread (as_spread) and keep the fields themselves spreads.
+        self.speed_factor = as_spread(speed_factor)
+        self.min_gap_m = as_spread(min_gap_m)
+        self.lane_changes = lane_changes
+        self.ignore_lights = as_spread(ignore_lights)
+        self.ignore_signs = as_spread(ignore_signs)
+        self.ignore_vehicles = as_spread(ignore_vehicles)
+        self.ignore_walkers = as_spread(ignore_walkers)
+        self.random_lane_changes = as_spread(random_lane_changes)
+        self.accel = as_spread(accel)
+        self.decel = as_spread(decel)
+        self.reaction_time_s = as_spread(reaction_time_s)
+        self.imperfection = as_spread(imperfection)
+        self.follow_visibility = follow_visibility
+        self.__post_init__()
 
     def __post_init__(self) -> None:
         _check("speed_factor", self.speed_factor, VEHICLE_BOUNDS)
@@ -525,7 +575,7 @@ class VehicleParameters:
         return cls(**_spreads_from(cls, mapping, VEHICLE_BOUNDS))
 
 
-@dataclass(frozen=True)
+@dataclass(init=False)
 class PedestrianParameters:
     """How the pedestrians a traffic backend simulates behave
     (``traffic.pedestrians``).
@@ -549,6 +599,19 @@ class PedestrianParameters:
     walking_speed_mps: Optional[Spread] = None
     min_gap_m: Optional[Spread] = None
     red_light_violation_s: Optional[Spread] = None
+
+    def __init__(
+        self,
+        walking_speed_mps: Optional[SpreadOrValue] = None,
+        min_gap_m: Optional[SpreadOrValue] = None,
+        red_light_violation_s: Optional[SpreadOrValue] = None,
+    ) -> None:
+        # Written out rather than generated, to take a plain number as well as
+        # a spread (as_spread) and keep the fields themselves spreads.
+        self.walking_speed_mps = as_spread(walking_speed_mps)
+        self.min_gap_m = as_spread(min_gap_m)
+        self.red_light_violation_s = as_spread(red_light_violation_s)
+        self.__post_init__()
 
     def __post_init__(self) -> None:
         _check("walking_speed_mps", self.walking_speed_mps, PEDESTRIAN_BOUNDS)

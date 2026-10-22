@@ -275,3 +275,36 @@ def test_the_editors_fields_become_parameters() -> None:
     ) == PedestrianParameters(min_gap_m=Spread(0.5))
     with pytest.raises(ValueError, match="a std needs a mean"):
         authored_vehicle_parameters(decel_std=1.0)
+
+
+# ---------------------------------------------------------------------------
+# A value or a spread
+# ---------------------------------------------------------------------------
+
+
+def test_a_plain_value_is_a_spread_of_no_width() -> None:
+    assert VehicleParameters(
+        speed_factor=0.9, min_gap_m=3, reaction_time_s=Spread(1.5, 0.3)
+    ) == VehicleParameters(
+        speed_factor=Spread(0.9),
+        min_gap_m=Spread(3.0),
+        reaction_time_s=Spread(1.5, 0.3),
+    )
+    assert PedestrianParameters(walking_speed_mps=1.2) == PedestrianParameters(
+        walking_speed_mps=Spread(1.2)
+    )
+    with pytest.raises(ValueError, match="ignore_lights must be within"):
+        VehicleParameters(ignore_lights=1.5)
+
+
+def test_an_action_sets_a_value_every_vehicle_takes() -> None:
+    backend, client, world = _started(VehicleParameters(speed_factor=Spread(0.9, 0.1)))
+    client.tm.calls.clear()
+    action = TrafficParametersAction(VehicleParameters(speed_factor=0.5))
+    action.set_traffic_backend(backend)
+    action.execute(world)  # type: ignore[arg-type]
+    assert sorted(_speed_calls(client)) == [
+        (1, pytest.approx(50.0)),
+        (2, pytest.approx(50.0)),
+        (3, pytest.approx(50.0)),
+    ]

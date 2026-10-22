@@ -112,7 +112,7 @@ def load_traffic_backend_plugins() -> None:
 
 # The traffic parameters a scenario hands a TrafficParametersAction
 # (traffic/parameters.py): each numeric one a spread every road user draws its
-# own value from.
+# own value from, or a plain number every one takes as it is.
 class Spread:
     mean: float
     std: float
@@ -120,6 +120,24 @@ class Spread:
     def __init__(self, mean: float, std: float = 0.0):
         self.mean = mean
         self.std = std
+
+
+def _as_spread(x) -> Optional[Spread]:
+    """A numeric traffic parameter as given: a Spread, a number, or None."""
+    if isinstance(x, None):
+        return None
+    elif isinstance(x, Optional[NoneType]):
+        return None
+    elif isinstance(x, Spread):
+        return x
+    elif isinstance(x, Optional[Spread]):
+        return x
+    elif isinstance(x, float):
+        return Spread(x)
+    elif isinstance(x, int):
+        return Spread(float(x))
+    else:
+        compile_error("expected a Spread or a number")
 
 
 # traffic.vehicles: how the vehicles drive.
@@ -139,31 +157,31 @@ class VehicleParameters:
     follow_visibility: Optional[bool]
 
     def __init__(self,
-                 speed_factor: Optional[Spread] = None,
-                 min_gap_m: Optional[Spread] = None,
+                 speed_factor = None,
+                 min_gap_m = None,
                  lane_changes: Optional[bool] = None,
-                 ignore_lights: Optional[Spread] = None,
-                 ignore_signs: Optional[Spread] = None,
-                 ignore_vehicles: Optional[Spread] = None,
-                 ignore_walkers: Optional[Spread] = None,
-                 random_lane_changes: Optional[Spread] = None,
-                 accel: Optional[Spread] = None,
-                 decel: Optional[Spread] = None,
-                 reaction_time_s: Optional[Spread] = None,
-                 imperfection: Optional[Spread] = None,
+                 ignore_lights = None,
+                 ignore_signs = None,
+                 ignore_vehicles = None,
+                 ignore_walkers = None,
+                 random_lane_changes = None,
+                 accel = None,
+                 decel = None,
+                 reaction_time_s = None,
+                 imperfection = None,
                  follow_visibility: Optional[bool] = None):
-        self.speed_factor = speed_factor
-        self.min_gap_m = min_gap_m
+        self.speed_factor = _as_spread(speed_factor)
+        self.min_gap_m = _as_spread(min_gap_m)
         self.lane_changes = lane_changes
-        self.ignore_lights = ignore_lights
-        self.ignore_signs = ignore_signs
-        self.ignore_vehicles = ignore_vehicles
-        self.ignore_walkers = ignore_walkers
-        self.random_lane_changes = random_lane_changes
-        self.accel = accel
-        self.decel = decel
-        self.reaction_time_s = reaction_time_s
-        self.imperfection = imperfection
+        self.ignore_lights = _as_spread(ignore_lights)
+        self.ignore_signs = _as_spread(ignore_signs)
+        self.ignore_vehicles = _as_spread(ignore_vehicles)
+        self.ignore_walkers = _as_spread(ignore_walkers)
+        self.random_lane_changes = _as_spread(random_lane_changes)
+        self.accel = _as_spread(accel)
+        self.decel = _as_spread(decel)
+        self.reaction_time_s = _as_spread(reaction_time_s)
+        self.imperfection = _as_spread(imperfection)
         self.follow_visibility = follow_visibility
 
 
@@ -174,9 +192,9 @@ class PedestrianParameters:
     red_light_violation_s: Optional[Spread]
 
     def __init__(self,
-                 walking_speed_mps: Optional[Spread] = None,
-                 min_gap_m: Optional[Spread] = None,
-                 red_light_violation_s: Optional[Spread] = None):
-        self.walking_speed_mps = walking_speed_mps
-        self.min_gap_m = min_gap_m
-        self.red_light_violation_s = red_light_violation_s
+                 walking_speed_mps = None,
+                 min_gap_m = None,
+                 red_light_violation_s = None):
+        self.walking_speed_mps = _as_spread(walking_speed_mps)
+        self.min_gap_m = _as_spread(min_gap_m)
+        self.red_light_violation_s = _as_spread(red_light_violation_s)
