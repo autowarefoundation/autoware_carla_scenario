@@ -2212,12 +2212,29 @@ What Codon 0.19 needs that Python does not, beyond
   the frame's waypoint, weather, lanelet tags, ... each `Optional`, and
   `read`, so a read that failed is still kept as `None` for the frame, as
   before.
-- Standard modules Codon does not have (`json`, `inspect`, `tempfile`,
-  ...) are not available to a checked module; the `typing`,
-  `dataclasses`, `enum`, `logging`, `abc`, `queue`, `pathlib`, `hashlib`,
-  `os`, `shutil`, `subprocess`, `signal`, `atexit`, `shlex`, `sys`,
-  `threading`, `importlib.metadata`, `urllib.parse` and `__future__` shims
-  of `codon/` are. Each takes the
+- Standard modules Codon does not have (`json`, `inspect`,
+  `concurrent.futures`, ...) are not available to a checked module; the
+  shims of `codon/` are. They are these (`test_shim_list` keeps the list
+  and the files of `codon/` in step):
+
+  <!-- shims:start -->
+  `__future__`, `abc`, `atexit`, `dataclasses`, `enum`, `hashlib`,
+  `importlib.metadata`, `logging`, `os`, `os.path`, `pathlib`, `queue`,
+  `shlex`, `shutil`, `signal`, `subprocess`, `sys`, `tempfile`, `threading`,
+  `typing` and `urllib.parse`
+  <!-- shims:end -->
+
+  `tempfile` declares `mkstemp(suffix=None, prefix=None, dir=None,
+  text=False)` only, with CPython 3.10's signature (a `str` or an
+  `os.PathLike` directory; bytes affixes are not declared) and nothing runs:
+  it returns `(-1, "")`. `mkdtemp()`, `NamedTemporaryFile()`,
+  `TemporaryDirectory()`, `gettempdir()` and the rest are not declared and
+  fail the check. Two more modules are not shims but extensions of Codon's
+  own `collections` and `itertools`, in `codon/_stdlib/` (#422): they add
+  `collections.OrderedDict` and `itertools.pairwise`, as listed under
+  "Standard library names Codon lacks".
+
+  Each shim takes the
   arguments CPython takes, so the check accepts what CPython accepts and
   refuses the rest; where Python versions differ, it takes what Python 3.10,
   the oldest the package supports, takes. `pathlib` declares `Path(*parts)`,
