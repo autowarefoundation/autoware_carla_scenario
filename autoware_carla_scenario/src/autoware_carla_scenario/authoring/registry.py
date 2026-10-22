@@ -2146,6 +2146,167 @@ register_action_spec(
     )
 )
 
+# The traffic's parameters (TrafficParametersAction): one field per number, a
+# mean and a std per parameter, assembled into the parameter objects the action
+# takes by traffic.authoring.
+_VEHICLE_SPREADS: tuple[tuple[str, str, str, str], ...] = (
+    ("speed_factor", "Speed factor", "", "Desired speed as a multiple of the limit."),
+    ("min_gap_m", "Gap when standing", "m", "Gap kept to the vehicle ahead."),
+    ("ignore_lights", "Run red lights", "", "Probability (0-1); traffic_manager."),
+    ("ignore_signs", "Ignore stop signs", "", "Probability (0-1); traffic_manager."),
+    ("ignore_vehicles", "Ignore vehicles", "", "Probability (0-1); traffic_manager."),
+    ("ignore_walkers", "Ignore pedestrians", "", "Probability (0-1); traffic_manager."),
+    (
+        "random_lane_changes",
+        "Random lane changes",
+        "",
+        "Probability (0-1); traffic_manager.",
+    ),
+    ("accel", "Acceleration", "m/s^2", "sumo."),
+    ("decel", "Braking", "m/s^2", "sumo; also the visibility's."),
+    ("reaction_time_s", "Reaction time", "s", "sumo; also the visibility's."),
+    ("imperfection", "Imperfection", "", "Driver imperfection (0-1); sumo."),
+)
+_PEDESTRIAN_SPREADS: tuple[tuple[str, str, str, str], ...] = (
+    ("walking_speed_mps", "Walking speed", "m/s", "sumo."),
+    ("pedestrian_min_gap_m", "Pedestrian gap", "m", "Gap to the person ahead; sumo."),
+    (
+        "red_light_violation_s",
+        "Cross on red within",
+        "s",
+        "Set before the run only (traffic.pedestrians); sumo.",
+    ),
+)
+
+
+def _spread_fields(
+    spreads: "tuple[tuple[str, str, str, str], ...]",
+) -> "tuple[FieldSpec, ...]":
+    """A mean and a std field per parameter, both optional."""
+    fields: list[FieldSpec] = []
+    for name, label, unit, note in spreads:
+        fields.append(
+            FieldSpec(
+                name=f"{name}_mean",
+                label=f"{label} (mean)",
+                kind="number",
+                default=None,
+                required=False,
+                unit=unit,
+                help=f"{note}  Leave empty to keep the run's.",
+            )
+        )
+        fields.append(
+            FieldSpec(
+                name=f"{name}_std",
+                label=f"{label} (std)",
+                kind="number",
+                default=None,
+                required=False,
+                unit=unit,
+                help="Spread between road users; empty or 0: all the same.",
+            )
+        )
+    return tuple(fields)
+
+
+def _spread_args(
+    spreads: "tuple[tuple[str, str, str, str], ...]",
+) -> "tuple[tuple[str, str], ...]":
+    return tuple(
+        (f"{name}_{stat}", f"{name}_{stat}")
+        for name, _, _, _ in spreads
+        for stat in ("mean", "std")
+    )
+
+
+_TRAFFIC_BOOLEANS = (
+    FieldSpec(
+        name="lane_changes",
+        label="Lane changes of their own accord",
+        kind="bool",
+        default=None,
+        required=False,
+        help="Empty: keep the run's.",
+    ),
+    FieldSpec(
+        name="follow_visibility",
+        label="Slow to what drivers see",
+        kind="bool",
+        default=None,
+        required=False,
+        help="sumo.  Empty: keep the run's.",
+    ),
+)
+_VEHICLES_ARGUMENT = BuiltArgument(
+    kwarg="vehicles",
+    target="..traffic.authoring:authored_vehicle_parameters",
+    parts=(
+        BuiltPart(
+            args=_spread_args(_VEHICLE_SPREADS)
+            + (
+                ("lane_changes", "lane_changes"),
+                ("follow_visibility", "follow_visibility"),
+            ),
+        ),
+    ),
+)
+_TRAFFIC_PARAMETERS_HELP = (
+    "Each road user draws its own value of a parameter from a normal "
+    "distribution of the mean and std given; the fields left empty keep their "
+    "values. A field the run's traffic backend cannot change during a run is "
+    "refused before the run starts."
+)
+
+register_action_spec(
+    ActionSpec(
+        type_id="traffic_parameters",
+        title="Traffic Parameters",
+        category="Traffic",
+        builder="build_traffic_parameters_action",
+        target="..actions:TrafficParametersAction",
+        scope="environment",
+        visual_kind="instant",
+        builds=(
+            _VEHICLES_ARGUMENT,
+            BuiltArgument(
+                kwarg="pedestrians",
+                target="..traffic.authoring:authored_pedestrian_parameters",
+                parts=(BuiltPart(args=_spread_args(_PEDESTRIAN_SPREADS)),),
+            ),
+        ),
+        fields=_spread_fields(_VEHICLE_SPREADS)
+        + _TRAFFIC_BOOLEANS
+        + _spread_fields(_PEDESTRIAN_SPREADS),
+        description=(
+            "Change the run's traffic -- every vehicle and pedestrian -- from "
+            "this point on: they draw the changed parameters again. "
+            + _TRAFFIC_PARAMETERS_HELP
+        ),
+    )
+)
+
+register_action_spec(
+    ActionSpec(
+        type_id="vehicle_parameters",
+        title="Vehicle Parameters",
+        category="Vehicle / Motion",
+        builder="build_vehicle_parameters_action",
+        target="..actions:TrafficParametersAction",
+        # An NPC: the ego is driven by what it is (Autoware, a policy), not by
+        # the traffic backend's driver model.
+        actor_kinds=("vehicle",),
+        visual_kind="instant",
+        builds=(_VEHICLES_ARGUMENT,),
+        fields=_spread_fields(_VEHICLE_SPREADS) + _TRAFFIC_BOOLEANS,
+        description=(
+            "Change one vehicle's driving from this point on: it draws the "
+            "changed parameters again, and the rest of the traffic keeps its. "
+            + _TRAFFIC_PARAMETERS_HELP
+        ),
+    )
+)
+
 register_action_spec(
     ActionSpec(
         type_id="routing",

@@ -115,8 +115,9 @@ Every numeric parameter is a **spread**, a mean and a standard deviation
 (`{mean, std}`, `Spread` in Python): each vehicle and each pedestrian draws
 its own value from a normal distribution of that mean and std, cut to the
 parameter's bounds (drawn again until it is inside them -- a truncated
-normal). The traffic is a population of drivers, not one driver copied. A
-plain number, or a `std` of 0, gives every road user the same value. The
+normal). The traffic is a population of drivers, not one driver copied. Every
+numeric parameter also takes a plain value instead, in a config and in Python
+alike: a number (or a `std` of 0) gives every road user exactly that value. The
 draws come from the run's seed: the same seed, the same drivers.
 
 ```yaml
@@ -296,15 +297,18 @@ generates; `traffic.pedestrians` how they walk.
 The TrafficManager drives no pedestrians, so it refuses every field here.
 
 The same in Python, where every field is a keyword of `VehicleParameters` or
-`PedestrianParameters`:
+`PedestrianParameters`, and a numeric one takes a `Spread` (a distribution) or
+a plain number (a value):
 
 ```python
 from autoware_carla_scenario import PedestrianParameters, Spread, VehicleParameters
 
 VehicleParameters(
-    speed_factor=Spread(0.9, 0.1), min_gap_m=Spread(3.0), reaction_time_s=Spread(1.5, 0.3)
+    speed_factor=Spread(0.9, 0.1),  # a distribution: each vehicle draws its own
+    min_gap_m=3.0,                  # a value: every vehicle 3 m
+    reaction_time_s=Spread(1.5, 0.3),
 )
-PedestrianParameters(walking_speed_mps=Spread(1.2, 0.2))
+PedestrianParameters(walking_speed_mps=1.2)
 ```
 
 A field set for a backend that cannot honour it fails the run before anything is
@@ -339,6 +343,76 @@ class MySimulatorBackend(TrafficBackend):
 
 and reads them from `self.vehicle_parameters` and `self.pedestrian_parameters`
 in `prepare()`.
+
+### Changing the parameters during a run
+
+`TrafficParametersAction` changes the parameters from the tick it fires on,
+like any action, on a condition:
+
+```python
+from autoware_carla_scenario import (
+    ElapsedTimeCondition,
+    PedestrianParameters,
+    Spread,
+    TrafficParametersAction,
+    VehicleParameters,
+)
+
+# From 20 s on, drivers slow down and keep their distance.
+scenario.register_post_tick(
+    TrafficParametersAction(
+        vehicles=VehicleParameters(
+            speed_factor=Spread(0.8, 0.05), min_gap_m=Spread(4.0, 1.0)
+        ),
+        condition=ElapsedTimeCondition(20.0, label="after_20s"),
+    )
+)
+
+# The NPC ahead turns reckless (traffic_manager): values, not distributions.
+scenario.register_post_tick(
+    TrafficParametersAction(
+        vehicles=VehicleParameters(speed_factor=1.3, ignore_lights=1.0),
+        entity_name="npc1",
+    )
+)
+
+# Pedestrians hurry (sumo).
+scenario.register_post_tick(
+    TrafficParametersAction(
+        pedestrians=PedestrianParameters(walking_speed_mps=Spread(1.8, 0.2))
+    )
+)
+```
+
+- **Field by field.** The fields the action sets replace the run's; the ones it
+  leaves unset keep their values, whether they came from the config or from
+  the ODD.
+- **Everyone draws again.** Without `entity_name`, every vehicle (or pedestrian)
+  already in the run draws its value of the changed fields again from the new
+  spread, and every one that joins later draws from the merged parameters.
+  The ODD's probes read the merged parameters from then on.
+- **One vehicle.** With `entity_name` (a `role_name`), only that vehicle draws the
+  changed fields again; the run's parameters stay as they were. An entity is a
+  vehicle, so `pedestrians` cannot be given with it.
+- **Refused before the run.** A field the backend cannot change during a run
+  is refused when the action is registered on the scenario, with a
+  `TrafficParameterError`:
+    - the TrafficManager can change every vehicle parameter it supports, and no
+      pedestrian one;
+    - SUMO can change every vehicle parameter it supports, and a pedestrian's
+      `walking_speed_mps` and `min_gap_m`. It cannot change
+      `red_light_violation_s`, which SUMO reads off the pedestrian types it is
+      started with: set it in `traffic.pedestrians` instead.
+- **Under SUMO,** a scenario vehicle the TrafficManager drives
+  (`scenario_vehicles=traffic_manager`) gets the shared fields, with a warning
+  naming the others. A visibility already held is held anew, from the new
+  draws.
+- **One run only.** The change lasts until the run ends: the next run of a
+  queue starts from its own config.
+- **In the scenario editor** it is two cards: *Traffic Parameters* on the
+  environment track (the whole run's traffic) and *Vehicle Parameters* on an
+  NPC's track (that vehicle alone), with a mean and a std field per
+  parameter; an empty field keeps the run's value.
 
 ## The lifecycle
 

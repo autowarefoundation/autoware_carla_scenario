@@ -140,6 +140,12 @@ _LANE_CHANGE_MODE_EXTERNAL = 0
 #: needs it: SUMO's default (1621) without the cooperative, speed-gain and
 #: keep-right changes.
 _LANE_CHANGE_MODE_STRATEGIC = 1537
+#: SUMO's own lane-change mode bits, which ``lane_changes: true`` puts back.
+_LANE_CHANGE_MODE_DEFAULT = 1621
+#: The pedestrian parameters a run can change: the walking speed and the gap
+#: are set on each person, but ``jmDriveAfterRedTime`` only on a type, and
+#: the types are written before SUMO starts.
+_PEDESTRIAN_OVERRIDES = ("walking_speed_mps", "min_gap_m")
 #: Vehicle parameter -> the TraCI setter that gives a vehicle its draw.
 _VEHICLE_SETTERS = {
     "speed_factor": "setSpeedFactor",
@@ -325,6 +331,9 @@ class SumoTrafficBackend(TrafficBackend):
         self._max_speeds: dict[str, tuple[float, float, float]] = {}
         #: The vehicles that departed in this step, read once per step.
         self._departed: Optional[list[str]] = None
+        #: The pedestrian parameters changed during the run, which each
+        #: person who departs from then on draws.
+        self._pedestrian_overrides: Optional[PedestrianParameters] = None
         if vehicles is not None:
             self.set_vehicle_parameters(vehicles)
         if pedestrians is not None:
@@ -344,6 +353,78 @@ class SumoTrafficBackend(TrafficBackend):
             logger.info(
                 "SUMO: %s apply to SUMO's vehicles only; the scenario's, which "
                 "the TrafficManager drives, do without them",
+                ", ".join(dropped),
+            )
+
+    def supported_vehicle_overrides(self) -> set[str]:
+        """Every vehicle parameter it supports: each is set per vehicle."""
+        return self.supported_vehicle_parameters()
+
+    def supported_pedestrian_overrides(self) -> set[str]:
+        """The walking speed and the gap; the red light only before the run."""
+        return set(_PEDESTRIAN_OVERRIDES)
+
+    def override_entity_parameters(
+        self, world: Any, overrides: VehicleParameters, entity: Any
+    ) -> None:
+        """Give *entity*'s vehicle alone a new draw of the fields *overrides*
+        sets: in SUMO when SUMO drives it, else through the TrafficManager."""
+        sumo_id = self._id_of(entity)
+        if sumo_id is not None:
+            self._draw_vehicle(sumo_id, overrides)
+        elif self._tm_drives_scenario:
+            shared = overrides.restricted_to(self._tm.supported_vehicle_parameters())
+            self._warn_dropped(overrides, shared)
+            self._tm.override_entity_parameters(world, shared, entity)
+
+    def override_vehicle_parameters(
+        self, world: Any, overrides: VehicleParameters
+    ) -> None:
+        """Give every vehicle SUMO drives (and the TrafficManager drives for
+        the scenario) a new draw of the fields *overrides* sets, and the ones
+        that depart later the new parameters."""
+        shared = overrides.restricted_to(self._tm.supported_vehicle_parameters())
+        self._remember_parameters()
+        self._vehicle_parameters = self.vehicle_parameters.overridden_by(overrides)
+        if self._tm_drives_scenario:
+            self._warn_dropped(overrides, shared)
+            self._tm.override_vehicle_parameters(world, shared)
+        if not self._running:
+            return
+        for sumo_id in self._traci.vehicle.getIDList():
+            if sumo_id not in self._external:
+                self._draw_vehicle(sumo_id, overrides)
+        # The visibility is held anew, from the new draws (or not at all).
+        for sumo_id in list(self._max_speeds):
+            self._hold_to_sight(sumo_id, None)
+        self._visibility = None
+
+    def override_pedestrian_parameters(
+        self, world: Any, overrides: PedestrianParameters
+    ) -> None:
+        """Give every pedestrian of SUMO's own a new draw of the fields
+        *overrides* sets, and those who depart later too."""
+        del world
+        self._remember_parameters()
+        self._pedestrian_parameters = self.pedestrian_parameters.overridden_by(
+            overrides
+        )
+        previous = self._pedestrian_overrides
+        self._pedestrian_overrides = (
+            overrides if previous is None else previous.overridden_by(overrides)
+        )
+        if not self._running:
+            return
+        for person in self._traci.person.getIDList():
+            self._draw_person(person, overrides)
+
+    @staticmethod
+    def _warn_dropped(overrides: VehicleParameters, shared: VehicleParameters) -> None:
+        dropped = sorted(set(overrides.set_fields()) - set(shared.set_fields()))
+        if dropped:
+            logger.warning(
+                "SUMO: %s do not reach the scenario's vehicles the TrafficManager "
+                "drives",
                 ", ".join(dropped),
             )
 
@@ -573,6 +654,9 @@ class SumoTrafficBackend(TrafficBackend):
     def close(self) -> None:
         """Stop SUMO, destroy the ambient actors and forget the run."""
         self._tm.close()
+        # The next run starts from its config, not from this one's overrides.
+        self._restore_parameters()
+        self._pedestrian_overrides = None
         if self._clock_log is not None:
             self._clock_log.close()
             self._clock_log = None
@@ -2365,33 +2449,66 @@ class SumoTrafficBackend(TrafficBackend):
         ``tau``, so the sight speed is worked out from its draws.
         """
         parameters = self.vehicle_parameters
-        if not parameters.set_fields():
-            return
+        if parameters.set_fields():
+            for sumo_id in self._departed_ids():
+                if sumo_id not in self._external:  # CARLA's side drives those
+                    self._draw_vehicle(sumo_id, parameters)
+        overrides = self._pedestrian_overrides
+        if overrides is not None:
+            for person in self._traci.simulation.getDepartedPersonIDList():
+                self._draw_person(person, overrides)
+
+    def _draw_vehicle(self, sumo_id: str, parameters: VehicleParameters) -> None:
+        """Give *sumo_id* its own draw of each field *parameters* sets."""
         vehicle = self._traci.vehicle
         rng = self._draws
-        for sumo_id in self._departed_ids():
-            if sumo_id in self._external:
-                continue  # CARLA's side drives it; SUMO only places it
-            try:
-                for name, value in (
-                    ("speed_factor", parameters.speed_factor),
-                    ("min_gap_m", parameters.min_gap_m),
-                    ("accel", parameters.accel),
-                    ("decel", parameters.decel),
-                    ("reaction_time_s", parameters.reaction_time_s),
-                    ("imperfection", parameters.imperfection),
-                ):
-                    if value is not None:
-                        setter = getattr(vehicle, _VEHICLE_SETTERS[name])
-                        setter(sumo_id, value.draw(rng, VEHICLE_BOUNDS[name]))
-                if parameters.lane_changes is False:
-                    vehicle.setLaneChangeMode(sumo_id, _LANE_CHANGE_MODE_STRATEGIC)
-            except Exception as exc:  # noqa: BLE001 - one vehicle must not end the run
-                logger.warning(
-                    "SUMO could not set the traffic parameters of %s: %s",
+        try:
+            for name, value in (
+                ("speed_factor", parameters.speed_factor),
+                ("min_gap_m", parameters.min_gap_m),
+                ("accel", parameters.accel),
+                ("decel", parameters.decel),
+                ("reaction_time_s", parameters.reaction_time_s),
+                ("imperfection", parameters.imperfection),
+            ):
+                if value is not None:
+                    setter = getattr(vehicle, _VEHICLE_SETTERS[name])
+                    setter(sumo_id, value.draw(rng, VEHICLE_BOUNDS[name]))
+            if parameters.lane_changes is not None:
+                vehicle.setLaneChangeMode(
                     sumo_id,
-                    exc,
+                    _LANE_CHANGE_MODE_DEFAULT
+                    if parameters.lane_changes
+                    else _LANE_CHANGE_MODE_STRATEGIC,
                 )
+        except Exception as exc:  # noqa: BLE001 - one vehicle must not end the run
+            logger.warning(
+                "SUMO could not set the traffic parameters of %s: %s", sumo_id, exc
+            )
+
+    def _draw_person(self, person: str, parameters: PedestrianParameters) -> None:
+        """Give SUMO's pedestrian *person* its own draw of the fields
+        *parameters* sets that a person can be given during a run."""
+        if person in self._walkers.values():
+            return  # one of CARLA's, placed in SUMO where it stands
+        tc = self._traci
+        try:
+            walking = parameters.walking_speed_mps
+            if walking is not None:
+                tc.person.setMaxSpeed(
+                    person,
+                    walking.draw(self._draws, PEDESTRIAN_BOUNDS["walking_speed_mps"]),
+                )
+                tc.person.setSpeedFactor(person, 1.0)  # the draw is the speed
+            gap = parameters.min_gap_m
+            if gap is not None:
+                tc.person.setMinGap(
+                    person, gap.draw(self._draws, PEDESTRIAN_BOUNDS["min_gap_m"])
+                )
+        except Exception as exc:  # noqa: BLE001 - one person must not end the run
+            logger.warning(
+                "SUMO could not set the pedestrian parameters of %s: %s", person, exc
+            )
 
     # ------------------------------------------------------------------
     # Internals: what drivers see

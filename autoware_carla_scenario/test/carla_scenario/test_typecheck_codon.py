@@ -324,6 +324,77 @@ def test_turn_indicators_compile(tmp_path: Path) -> None:
     assert result.ok, result.format()
 
 
+def test_a_traffic_parameters_action_compiles(tmp_path: Path) -> None:
+    """The run's traffic, and one vehicle, draw new parameters."""
+    setup = """
+        self.register_post_tick(
+            TrafficParametersAction(
+                VehicleParameters(speed_factor=Spread(0.8, 0.05), lane_changes=False),
+                condition=ElapsedTimeCondition(20.0, label="after_20s"),
+            )
+        )
+        self.register_post_tick(
+            TrafficParametersAction(
+                vehicles=VehicleParameters(ignore_lights=Spread(1.0)),
+                entity_name="npc1",
+                label="reckless",
+            )
+        )
+        self.register_post_tick(
+            TrafficParametersAction(
+                pedestrians=PedestrianParameters(walking_speed_mps=Spread(1.8, 0.2))
+            )
+        )
+"""
+    header = _HEADER.replace(
+        "import logging\n",
+        "import logging\n"
+        "from autoware_carla_scenario import (PedestrianParameters, Spread,\n"
+        "    TrafficParametersAction, VehicleParameters)\n",
+        1,
+    )
+    scenario, config, _ = _write_case(tmp_path, setup, header=header)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_a_traffic_parameter_takes_a_value_or_a_spread(tmp_path: Path) -> None:
+    """A plain number is a spread of no width."""
+    setup = """
+        self.register_post_tick(
+            TrafficParametersAction(
+                VehicleParameters(speed_factor=0.8, min_gap_m=3, decel=Spread(4.0, 0.5))
+            )
+        )
+"""
+    header = _HEADER.replace(
+        "import logging\n",
+        "import logging\n"
+        "from autoware_carla_scenario import (Spread, TrafficParametersAction,\n"
+        "    VehicleParameters)\n",
+        1,
+    )
+    scenario, config, _ = _write_case(tmp_path, setup, header=header)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_a_traffic_parameter_refuses_what_is_neither(tmp_path: Path) -> None:
+    setup = """
+        self.register_post_tick(
+            TrafficParametersAction(VehicleParameters(speed_factor="fast"))
+        )
+"""
+    header = _HEADER.replace(
+        "import logging\n",
+        "import logging\n"
+        "from autoware_carla_scenario import TrafficParametersAction, VehicleParameters\n",
+        1,
+    )
+    scenario, config, _ = _write_case(tmp_path, setup, header=header)
+    assert not typecheck_scenario(scenario, config).ok
+
+
 def test_cover_items_compile(tmp_path: Path) -> None:
     scenario, config, _ = _write_case(tmp_path, _COVER_SETUP, _COVER_EXTRA)
     result = typecheck_scenario(scenario, config)

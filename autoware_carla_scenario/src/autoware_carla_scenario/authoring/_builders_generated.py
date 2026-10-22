@@ -83,12 +83,14 @@ __all__ = [
     "build_traffic_sink_action",
     "build_traffic_source_action",
     "build_walk_straight_action",
+    "build_traffic_parameters_action",
     "build_turn_indicator_action",
     "build_follow_trajectory_action",
     "build_lane_change_action",
     "build_routing_action",
     "build_set_speed_action",
     "build_turn_action",
+    "build_vehicle_parameters_action",
 ]
 
 
@@ -1324,6 +1326,62 @@ def build_walk_straight_action(
     )
 
 
+def build_traffic_parameters_action(
+    compiled: "CompiledAction",
+    condition: "BaseCondition | None",
+    timing: Any,
+    ctx: "BuildContext",
+) -> "BaseAction":
+    """Build a :class:`TrafficParametersAction`."""
+    from ..actions import TrafficParametersAction  # noqa: PLC0415
+    from ..traffic.authoring import authored_vehicle_parameters  # noqa: PLC0415
+    from ..traffic.authoring import authored_pedestrian_parameters  # noqa: PLC0415
+
+    params = compiled.params
+    vehicles = authored_vehicle_parameters(
+        speed_factor_mean=params["speed_factor_mean"],
+        speed_factor_std=params["speed_factor_std"],
+        min_gap_m_mean=params["min_gap_m_mean"],
+        min_gap_m_std=params["min_gap_m_std"],
+        ignore_lights_mean=params["ignore_lights_mean"],
+        ignore_lights_std=params["ignore_lights_std"],
+        ignore_signs_mean=params["ignore_signs_mean"],
+        ignore_signs_std=params["ignore_signs_std"],
+        ignore_vehicles_mean=params["ignore_vehicles_mean"],
+        ignore_vehicles_std=params["ignore_vehicles_std"],
+        ignore_walkers_mean=params["ignore_walkers_mean"],
+        ignore_walkers_std=params["ignore_walkers_std"],
+        random_lane_changes_mean=params["random_lane_changes_mean"],
+        random_lane_changes_std=params["random_lane_changes_std"],
+        accel_mean=params["accel_mean"],
+        accel_std=params["accel_std"],
+        decel_mean=params["decel_mean"],
+        decel_std=params["decel_std"],
+        reaction_time_s_mean=params["reaction_time_s_mean"],
+        reaction_time_s_std=params["reaction_time_s_std"],
+        imperfection_mean=params["imperfection_mean"],
+        imperfection_std=params["imperfection_std"],
+        lane_changes=params["lane_changes"],
+        follow_visibility=params["follow_visibility"],
+    )
+    pedestrians = authored_pedestrian_parameters(
+        walking_speed_mps_mean=params["walking_speed_mps_mean"],
+        walking_speed_mps_std=params["walking_speed_mps_std"],
+        pedestrian_min_gap_m_mean=params["pedestrian_min_gap_m_mean"],
+        pedestrian_min_gap_m_std=params["pedestrian_min_gap_m_std"],
+        red_light_violation_s_mean=params["red_light_violation_s_mean"],
+        red_light_violation_s_std=params["red_light_violation_s_std"],
+    )
+    return TrafficParametersAction(
+        vehicles=vehicles,
+        pedestrians=pedestrians,
+        condition=condition,
+        timing=timing,
+        label=compiled.label,
+        once=compiled.node.once,
+    )
+
+
 def build_turn_indicator_action(
     compiled: "CompiledAction",
     condition: "BaseCondition | None",
@@ -1483,4 +1541,52 @@ def build_turn_action(
         label=compiled.label,
         once=compiled.node.once,
         search_distance=params["search_distance"],
+    )
+
+
+def build_vehicle_parameters_action(
+    compiled: "CompiledAction",
+    condition: "BaseCondition | None",
+    timing: Any,
+    ctx: "BuildContext",
+) -> "BaseAction":
+    """Build a :class:`TrafficParametersAction`."""
+    from ..actions import TrafficParametersAction  # noqa: PLC0415
+    from ..traffic.authoring import authored_vehicle_parameters  # noqa: PLC0415
+
+    assert compiled.actor_role is not None  # noqa: S101 -- required by the spec
+    params = compiled.params
+    vehicles = authored_vehicle_parameters(
+        speed_factor_mean=params["speed_factor_mean"],
+        speed_factor_std=params["speed_factor_std"],
+        min_gap_m_mean=params["min_gap_m_mean"],
+        min_gap_m_std=params["min_gap_m_std"],
+        ignore_lights_mean=params["ignore_lights_mean"],
+        ignore_lights_std=params["ignore_lights_std"],
+        ignore_signs_mean=params["ignore_signs_mean"],
+        ignore_signs_std=params["ignore_signs_std"],
+        ignore_vehicles_mean=params["ignore_vehicles_mean"],
+        ignore_vehicles_std=params["ignore_vehicles_std"],
+        ignore_walkers_mean=params["ignore_walkers_mean"],
+        ignore_walkers_std=params["ignore_walkers_std"],
+        random_lane_changes_mean=params["random_lane_changes_mean"],
+        random_lane_changes_std=params["random_lane_changes_std"],
+        accel_mean=params["accel_mean"],
+        accel_std=params["accel_std"],
+        decel_mean=params["decel_mean"],
+        decel_std=params["decel_std"],
+        reaction_time_s_mean=params["reaction_time_s_mean"],
+        reaction_time_s_std=params["reaction_time_s_std"],
+        imperfection_mean=params["imperfection_mean"],
+        imperfection_std=params["imperfection_std"],
+        lane_changes=params["lane_changes"],
+        follow_visibility=params["follow_visibility"],
+    )
+    return TrafficParametersAction(
+        vehicles=vehicles,
+        entity_name=compiled.actor_role,
+        condition=condition,
+        timing=timing,
+        label=compiled.label,
+        once=compiled.node.once,
     )

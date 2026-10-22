@@ -276,6 +276,7 @@ class TrafficManagerBackend(TrafficBackend):
         self._visibility = None
         self._drawn = set()
         self._draws = None
+        self._restore_parameters()
         if self._closed or self._client is None:
             return
         self._closed = True
@@ -592,13 +593,18 @@ class TrafficManagerBackend(TrafficBackend):
         resumed keeps the draws the TrafficManager holds for it.
         """
         actor.set_autopilot(True, self.port)
-        parameters = self.vehicle_parameters
-        if not parameters.set_fields() or actor.id in self._drawn:
-            return
-        tm = self._require_tm("autopilot")
-        if tm is None:
+        if actor.id in self._drawn:
             return
         self._drawn.add(actor.id)
+        self._draw_for(actor, self.vehicle_parameters)
+
+    def _draw_for(self, actor: "carla.Actor", parameters: VehicleParameters) -> None:
+        """Give *actor* its own draw of each field *parameters* sets."""
+        if not parameters.set_fields():
+            return
+        tm = self._require_tm("traffic parameters")
+        if tm is None:
+            return
         if self._draws is None:
             self._draws = random.Random(self._random_seed)
         rng: random.Random = self._draws
@@ -641,6 +647,38 @@ class TrafficManagerBackend(TrafficBackend):
             chance = _percent(random_lane_changes, rng, "random_lane_changes")
             tm.random_left_lanechange_percentage(vehicle, chance)
             tm.random_right_lanechange_percentage(vehicle, chance)
+
+    # ------------------------------------------------------------------
+    # Parameters changed during a run
+    # ------------------------------------------------------------------
+
+    def supported_vehicle_overrides(self) -> set[str]:
+        """Every vehicle parameter it supports: each is set per vehicle."""
+        return self.supported_vehicle_parameters()
+
+    def override_vehicle_parameters(
+        self, world: "carla.World", overrides: VehicleParameters
+    ) -> None:
+        """Give every vehicle it drives a new draw of the fields *overrides*
+        sets; the vehicles put on autopilot later draw from the new
+        parameters too."""
+        self._remember_parameters()
+        self._vehicle_parameters = self.vehicle_parameters.overridden_by(overrides)
+        for driven in world.get_actors().filter("vehicle.*"):
+            # The ones that drew already: a vehicle not yet on autopilot draws
+            # from the new parameters when it is put on it.
+            if driven.id in self._drawn:
+                self._draw_for(driven, overrides)
+
+    def override_entity_parameters(
+        self, world: "carla.World", overrides: VehicleParameters, entity: DrivenEntity
+    ) -> None:
+        """Give *entity*'s vehicle alone a new draw of the fields *overrides* sets."""
+        actor = _require_actor(entity, "override_entity_parameters")
+        if actor is not None:
+            # A typed local: Codon unwraps the Optional here.
+            vehicle: "carla.Actor" = actor
+            self._draw_for(vehicle, overrides)
 
     def _require_tm(self, what: str) -> Optional["carla.TrafficManager"]:
         """Return the TrafficManager handle, or ``None`` with a warning."""
