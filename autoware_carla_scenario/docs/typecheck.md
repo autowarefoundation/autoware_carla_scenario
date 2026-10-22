@@ -1298,6 +1298,16 @@ in step:
   takes no arguments (`lambda: None`; it is refused at its line after the
   crash, with the hint to pass a named function). A parameter the
   body only calls, or passes on, stays dropped, so a closure still checks.
+  An optional callback (`Optional[Callable[[A], R]]`, `Callable[[A], R] | None`)
+  is kept the same way when the body stores it, written as the plain
+  `Callable[Tuple[A], R]` (Codon converts a function, a lambda and `None` to
+  it, but a function or a lambda to an `Optional` of it not), the `= None`
+  default staying. The class-level attribute is written `Optional[Callable[...]]`
+  (the `|` between a `Callable` and `None` cannot be evaluated by Codon when it
+  imports the class, #495), so `if self.cb is not None: self.cb(v)` checks.
+  Codon accepts a call of it without that test; the check does not refuse it.
+  A lambda's type, which Codon names `%_lambda_N`, shows in a message as "a
+  lambda".
 - A Codon abort with `std::bad_alloc` names the `Callable` attributes of the
   checked modules at their lines; a function passed where a `Callable` of
   another signature is expected is named at the call that passes it (Codon

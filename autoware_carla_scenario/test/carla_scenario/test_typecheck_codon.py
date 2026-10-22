@@ -7244,6 +7244,116 @@ def test_a_callback_of_the_wrong_signature_is_refused(
     assert "without a diagnostic" not in error.message, error.format()
 
 
+_OPTIONAL_CALLBACKS = """
+class Hooks:
+    on_value: typing.Callable[[int], int] | None = None
+    on_text: typing.Optional[typing.Callable[[str], str]]
+    on_done: typing.Callable[[], None] | None
+
+    def __init__(
+        self,
+        on_text: typing.Optional[typing.Callable[[str], str]] = None,
+        on_done: typing.Callable[[], None] | None = None,
+    ) -> None:
+        self.on_text = on_text
+        self.on_done = on_done
+
+    def set_value(self, cb: typing.Callable[[int], int] | None) -> None:
+        self.on_value = cb
+
+    def apply(self, v: int) -> int:
+        if self.on_value is not None:
+            return self.on_value(v)
+        return v
+
+    def text(self, v: str) -> str:
+        if self.on_text is not None:
+            return self.on_text(v)
+        return v
+
+    def done(self) -> None:
+        if self.on_done is not None:
+            self.on_done()
+
+
+def noop() -> None:
+    pass
+
+
+def inc(v: int) -> int:
+    return v + 1
+
+
+def shout(v: str) -> str:
+    return v + "!"
+
+
+def bad(v: str) -> str:
+    return v
+"""
+
+
+def test_an_optional_callback_attribute_compiles(tmp_path: Path) -> None:
+    # `cb: Callable[...] | None` failed at import, and an Optional attribute
+    # filled from a parameter refused a lambda with "%_lambda_N" (#495).
+    setup = """
+        plain = Hooks()
+        plain.set_value(None)
+        named = Hooks(shout, noop)
+        named.set_value(inc)
+        lam = Hooks(on_text=lambda s: s + "?")
+        lam.set_value(lambda v: v * 2)
+        none = Hooks(None, None)
+        total = plain.apply(1) + named.apply(1) + lam.apply(1) + none.apply(1)
+        self.register_fail_condition(TimeoutCondition(float(total), label="t"))
+        logger.info("%s %s", named.text("a"), lam.text("b"))
+        named.done()
+        lam.done()
+    """
+    scenario, config, _ = _data_case(tmp_path, _OPTIONAL_CALLBACKS, setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        "Hooks().set_value(bad)",
+        "Hooks().set_value(lambda v, w: v)",
+        "Hooks(on_text=inc)",
+        "Hooks(on_done=inc)",
+    ],
+)
+def test_an_optional_callback_of_the_wrong_signature_is_refused(
+    tmp_path: Path, call: str
+) -> None:
+    setup = f"""
+        {call}
+        self.register_fail_condition(TimeoutCondition(1.0, label="t"))
+    """
+    scenario, config, path = _data_case(tmp_path, _OPTIONAL_CALLBACKS, setup)
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert error.line == _line_of(path, call.split("(")[0]), error.format()
+    assert "without a diagnostic" not in error.message, error.format()
+    assert "%_lambda" not in error.message, error.format()
+
+
+def test_an_optional_callback_called_without_a_none_test_compiles(
+    tmp_path: Path,
+) -> None:
+    # Codon only unwraps the Optional when the call runs; nothing to refuse.
+    definitions = """
+class Bare:
+    cb: typing.Callable[[int], int] | None = None
+
+    def go(self, v: int) -> int:
+        return self.cb(v)
+"""
+    scenario, config, _ = _data_case(tmp_path, definitions, "x = Bare().go(1)\n")
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
 def test_a_method_body_reading_a_name_of_the_class_scope_is_not_rewritten(
     tmp_path: Path,
 ) -> None:
@@ -8052,3 +8162,12 @@ def test_replace_of_a_class_the_check_has_no_fields_of_is_refused(
     error = _only_error(typecheck_scenario(scenario, config))
     assert error.line == _line_of(path, "x = replace(carla.Location()")
     assert "failed without a diagnostic" not in error.format()
+
+
+def test_codons_lambda_type_names_are_not_shown() -> None:
+    from autoware_carla_scenario.typecheck import check
+
+    text = "'Optional[%_lambda_981(...)]' does not match; cb: %_lambda_88[T1]"
+    assert check._plain_lambda_names(text) == (
+        "'Optional[a lambda]' does not match; cb: a lambda"
+    )
