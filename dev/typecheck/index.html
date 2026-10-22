@@ -4504,12 +4504,30 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   the frame's waypoint, weather, lanelet tags, ... each <code>Optional</code>, and
   <code>read</code>, so a read that failed is still kept as <code>None</code> for the frame, as
   before.</li>
-<li>Standard modules Codon does not have (<code>json</code>, <code>inspect</code>, <code>tempfile</code>,
-  ...) are not available to a checked module; the <code>typing</code>,
-  <code>dataclasses</code>, <code>enum</code>, <code>logging</code>, <code>abc</code>, <code>queue</code>, <code>pathlib</code>, <code>hashlib</code>,
-  <code>os</code>, <code>shutil</code>, <code>subprocess</code>, <code>signal</code>, <code>atexit</code>, <code>shlex</code>, <code>sys</code>,
-  <code>threading</code>, <code>importlib.metadata</code>, <code>urllib.parse</code> and <code>__future__</code> shims
-  of <code>codon/</code> are. Each takes the
+<li>Standard modules Codon does not have (<code>json</code>, <code>inspect</code>,
+  <code>concurrent.futures</code>, ...) are not available to a checked module; the
+  shims of <code>codon/</code> are. They are these (<code>test_shim_list</code> keeps the list
+  and the files of <code>codon/</code> in step):</li>
+</ul>
+<!-- shims:start -->
+<p><code>__future__</code>, <code>abc</code>, <code>atexit</code>, <code>dataclasses</code>, <code>enum</code>, <code>hashlib</code>,
+  <code>importlib.metadata</code>, <code>logging</code>, <code>os</code>, <code>os.path</code>, <code>pathlib</code>, <code>queue</code>,
+  <code>shlex</code>, <code>shutil</code>, <code>signal</code>, <code>subprocess</code>, <code>sys</code>, <code>tempfile</code>, <code>threading</code>,
+  <code>typing</code> and <code>urllib.parse</code>
+  <!-- shims:end -->
+</p>
+<p><code>tempfile</code> declares <code>mkstemp(suffix=None, prefix=None, dir=None,
+  text=False)</code> only, with CPython 3.10's signature (a <code>str</code> or an
+  <code>os.PathLike</code> directory; bytes affixes are not declared). The check only
+  compiles it, so its body is a stub that makes no file (it is typed to give
+  <code>(int, str)</code>, the descriptor and the name). <code>mkdtemp()</code>,
+  <code>NamedTemporaryFile()</code>, <code>TemporaryDirectory()</code>, <code>gettempdir()</code> and the
+  rest are not declared and fail the check. Two more modules are not
+  shims but extensions of Codon's own <code>collections</code> and <code>itertools</code>, in
+  <code>codon/_stdlib/</code> (#422): they add
+  <code>collections.OrderedDict</code> and <code>itertools.pairwise</code>, as listed under
+  "Standard library names Codon lacks".</p>
+<p>Each shim takes the
   arguments CPython takes, so the check accepts what CPython accepts and
   refuses the rest; where Python versions differ, it takes what Python 3.10,
   the oldest the package supports, takes. <code>pathlib</code> declares <code>Path(*parts)</code>,
@@ -4688,8 +4706,8 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   (the same branch, written the other way round): <code>scenario_queue</code> imports
   tqdm in an <code>else</code> branch, at module level, and waits without the progress
   bar in the first branch. The <code>logging</code> shim's
-  methods take <code>exc_info</code> as a <code>bool</code>.</li>
-<li><strong>pyxodr's road network is the model's</strong>: <code>codon/pyxodr/</code> names the
+  methods take <code>exc_info</code> as a <code>bool</code>.
+- <strong>pyxodr's road network is the model's</strong>: <code>codon/pyxodr/</code> names the
   <code>RoadNetwork</code>, <code>Road</code>, <code>LaneSection</code> and <code>Lane</code> that <code>coordinate.codon</code>
   declares (what the framework reads of them, down to the XML elements, and
   how <code>MapManager</code> loads one: <code>RoadNetwork(xodr_file_path, resolution)</code> and
@@ -4703,8 +4721,8 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   <code>TYPE_CHECKING</code>, since Codon does not find <code>etree</code> with
   <code>from lxml import etree</code>).
   <code>test_typecheck_model.py</code> compares the constructor and <code>get_roads()</code> with
-  pyxodr's and loads the fixture map's OpenDRIVE with them.</li>
-<li><strong>lanelet2 is modelled</strong>: <code>codon/lanelet2/</code> and
+  pyxodr's and loads the fixture map's OpenDRIVE with them.
+- <strong>lanelet2 is modelled</strong>: <code>codon/lanelet2/</code> and
   <code>codon/autoware_lanelet2_extension_python/</code> declare the classes and
   functions of simple-lanelet2's Python API the checked modules use, with
   its parameter names: <code>lanelet2.core</code>'s map, lanelet layer, lanelets, line
@@ -4736,8 +4754,8 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   the installed package, that its parameters are the ones the package's
   stubs (<code>lanelet2/*.pyi</code>) name, and that each declared call, made on the
   fixture map, returns what the model says. What the model has to say about
-  lanelet2 that Python does not:</li>
-<li><strong>A mutable class derives from its Const twin</strong> (<code>Lanelet</code> from
+  lanelet2 that Python does not:
+  - <strong>A mutable class derives from its Const twin</strong> (<code>Lanelet</code> from
     <code>ConstLanelet</code>, <code>LineString3d</code> from <code>ConstLineString3d</code>, <code>Point3d</code> from
     <code>ConstPoint3d</code>): in Python they are unrelated classes, but every function
     that takes the Const one takes the mutable one, which has all its
@@ -4758,14 +4776,14 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <code>Projector</code> to the check, which <code>load()</code> takes.
     (Codon 0.19 does not convert an <code>Optional</code> of a subclass to its base in
     one step, <code>Optional[LineString3d]</code> into a <code>list[ConstLineString3d]</code>:
-    that would take an annotated local of the subclass first.)</li>
-<li><strong>An overloaded function dispatches on its argument</strong>: Codon 0.19 cannot
+    that would take an annotated local of the subclass first.)
+  - <strong>An overloaded function dispatches on its argument</strong>: Codon 0.19 cannot
     overload a module-level function, so <code>to2D()</code> and <code>length()</code> are generic
     and declare the overloads the framework calls (of a line string); any
     other argument is a compile error. Codon decides <code>isinstance</code> by the
     static type, and <code>isinstance(Lanelet, ConstLanelet)</code> is false there as
-    in Python, so each overload names both twins.</li>
-<li><strong>A regulatory element is its own class</strong>: lanelet2 hands each one out as
+    in Python, so each overload names both twins.
+  - <strong>A regulatory element is its own class</strong>: lanelet2 hands each one out as
     the class of what it is (<code>TrafficLight</code>, <code>RightOfWay</code>, <code>TrafficSign</code>, or
     Autoware's), all derived from <code>RegulatoryElement</code>, as the model declares
     them, and a lanelet's <code>regulatoryElements</code> is a list of the base. Codon
@@ -4776,8 +4794,8 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     reads (<code>Union[TrafficLight, AutowareTrafficLight, RightOfWay,
     TrafficSign, RoadMarking, RegulatoryElement]</code>), which the library check
     calls once per member, so each branch is compiled for each class that
-    takes it. At run time it still asks the element, as before.</li>
-<li><strong>A rule parameter is declared by its role</strong>: lanelet2 holds a point, a
+    takes it. At run time it still asks the element, as before.
+  - <strong>A rule parameter is declared by its role</strong>: lanelet2 holds a point, a
     line string, a polygon, a lanelet or an area in a regulatory element's
     <code>parameters[role]</code>, and Codon has no type for "one of five classes".
     <code>ref_line</code>, <code>cancel_line</code> and <code>light_bulbs</code> hold line strings
@@ -4790,8 +4808,8 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     refers to is therefore not checked: <code>utils/stop_line.py</code> reads it in a
     function called in the <code>else</code> branch of <code>if TYPE_CHECKING:</code> (<code>UNCALLED</code>).
     <code>test_typecheck_lanelet2_model.py</code> reads the roles off the model and
-    checks each against what the fixture map's elements hold.</li>
-<li><strong>carla_driver_interface's geometry is modelled</strong>:
+    checks each against what the fixture map's elements hold.
+- <strong>carla_driver_interface's geometry is modelled</strong>:
   <code>codon/carla_driver_interface/geometry.codon</code> declares the <code>Pose</code> and
   <code>Trajectory</code> the driver modules use (and <code>waypoints_to_proto</code>, which
   <code>driver.geometry</code> re-exports, with its protobuf result left untyped), with
@@ -4808,28 +4826,28 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   therefore use <code>Pose</code> and <code>Trajectory</code> of <code>carla_driver_interface.geometry</code>
   now; a name the model lacks fails its check (<code>Pose.to_proto()</code> has no
   attribute), and so does any other module of the package (<code>no module named
-  'carla_driver_interface.protocol'</code>).</li>
-<li><strong>python-dotenv is modelled</strong> as far as <code>server</code> uses it, with the
+  'carla_driver_interface.protocol'</code>).
+- <strong>python-dotenv is modelled</strong> as far as <code>server</code> uses it, with the
   installed package's signatures, which <code>test_typecheck_model.py</code> compares:
   <code>codon/dotenv/</code> declares
   <code>load_dotenv(dotenv_path=None, stream=None, verbose=False, override=False,
   interpolate=True, encoding="utf-8")</code>, of a path that is <code>None</code>, a <code>str</code> or
   an <code>os.PathLike</code> (a stream, an <code>IO[str]</code> Codon has no type for, is not
   taken). Nothing else of the package is declared (<code>dotenv_values()</code>), and
-  a scenario may use what is, as it may the shims.</li>
-<li><strong>No <code>bytes</code></strong>: Codon 0.19 has none, and reads a <code>b"..."</code> literal as a
+  a scenario may use what is, as it may the shims.
+- <strong>No <code>bytes</code></strong>: Codon 0.19 has none, and reads a <code>b"..."</code> literal as a
   <code>str</code>, so the check reads an annotation naming <code>bytes</code> as <code>str</code>
   (<code>DriveOutcome.debug_info: bytes = b""</code>). What a process writes is a <code>str</code>
   in the check, which has no <code>decode()</code>: decode it in the <code>else</code> branch of
-  <code>if TYPE_CHECKING:</code> and take the <code>str</code> in the first.</li>
-<li><strong><code>dataclasses.fields()</code> is not in the shim</strong>: a function that reads a
+  <code>if TYPE_CHECKING:</code> and take the <code>str</code> in the first.
+- <strong><code>dataclasses.fields()</code> is not in the shim</strong>: a function that reads a
   dataclass's fields from its class takes a free-form mapping anyway, so it
-  is <code>UNCALLED</code> and imports <code>fields</code> inside it (<code>ControlConfig.from_mapping</code>).</li>
-<li><strong>Codon's numpy appends an array of the same dimensions</strong>:
+  is <code>UNCALLED</code> and imports <code>fields</code> inside it (<code>ControlConfig.from_mapping</code>).
+- <strong>Codon's numpy appends an array of the same dimensions</strong>:
   <code>np.append(yaws, yaws[-1:])</code>, not <code>np.append(yaws, yaws[-1])</code>, which numpy
   answers the same. Nor does Codon unpack an array into arguments
-  (<code>f(*row)</code>): pass <code>row[0], row[1], row[2]</code>.</li>
-<li><strong>numpy is Codon's own</strong>, so <code>import numpy as np</code> compiles
+  (<code>f(*row)</code>): pass <code>row[0], row[1], row[2]</code>.
+- <strong>numpy is Codon's own</strong>, so <code>import numpy as np</code> compiles
   (<code>utils/powertrain.py</code>). Codon compares no <code>np.float32</code> with a Python
   <code>float</code>: convert the float (<code>x &lt;= np.float32(max_rpm)</code>), which is what
   numpy 2 does anyway (NEP 50), so nothing changes at run time. Codon's
@@ -4841,15 +4859,15 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   ("cannot typecheck '_reach_m(_acs_value(np.ndarray))'"): the protected
   geometry helpers of <code>coordinate.transform</code> and <code>driver.control</code> take
   <code>np.ndarray[tuple[int, int], np.dtype[np.float64]]</code> and their points
-  <code>np.ndarray[tuple[int], np.dtype[np.float64]]</code>.</li>
-<li><strong>An overridden method takes concrete types</strong>: Codon 0.19 cannot call a
+  <code>np.ndarray[tuple[int], np.dtype[np.float64]]</code>.
+- <strong>An overridden method takes concrete types</strong>: Codon 0.19 cannot call a
   method a subclass overrides when one of its parameters is generic, which an
   abstract collection (<code>Sequence[X]</code>) or an unannotated parameter is.
   <code>AutowareBridge.configure()</code> takes <code>waypoints: Optional[list[BridgePose]]
   = None</code> in the base class and in the checked <code>FakeAutowareBridge</code>, and its
   caller passes a list. (<code>None</code>, not <code>[]</code>: a mutable default is shared by
-  every call.)</li>
-<li><strong>A call to an overridden method passes every argument, by position, of
+  every call.)
+- <strong>A call to an overridden method passes every argument, by position, of
   the parameter's own type</strong>: Codon 0.19 calls it through a dispatch thunk,
   which fills in no default, takes no keyword argument and no <code>**kwargs</code>,
   and does not upcast. Hand a subclass over through a local of the
@@ -4858,32 +4876,31 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   <code>BackendDriven.turn_at_junction()</code>, which <code>actions.turn</code> calls, hands the
   backend its <code>**kwargs</code> only in the <code>else</code> branch of <code>if TYPE_CHECKING:</code>
   (see below), and the check calls each backend's <code>turn_at_junction()</code>
-  through its class instead.</li>
-<li><strong>A list of a subclass is not a list of its base</strong>: Codon 0.19 refuses a
+  through its class instead.
+- <strong>A list of a subclass is not a list of its base</strong>: Codon 0.19 refuses a
   <code>list[EntityLanePositionCondition]</code> where a <code>list[BaseCondition]</code> is
   expected, and <code>extend()</code> does not upcast either. Build the list in a local
   declared <code>list[BaseCondition]</code>, appending each element
   (<code>composition/temporary_stop.py</code>). An element of a <code>Sequence[AnyPose]</code> is
   a <code>Union</code> of poses; the model's <code>_expect_pose</code> takes one, reading its
   members with <code>static.vars_types(pose, with_index=True)</code> (without
-  <code>with_index</code>, Codon 0.19 does not bind the loop variable).</li>
-<li><strong>A class cannot be named before it is defined or imported</strong>, in a
+  <code>with_index</code>, Codon 0.19 does not bind the loop variable).
+- <strong>A class cannot be named before it is defined or imported</strong>, in a
   signature or a class-level declaration, and an import cycle resolves only
   with the names already defined. Two classes whose signatures name each
   other across modules (a backend's methods take the entity, the entity holds
   the backend) need a base class the first module defines: the backends take
   a <code>traffic.base.DrivenEntity</code>, which <code>traffic.driven.BackendDriven</code> derives
-  from.</li>
-<li><strong>A part of a module that needs what Codon lacks moves out</strong>: the
+  from.
+- <strong>A part of a module that needs what Codon lacks moves out</strong>: the
   backend interface of <code>traffic/base.py</code> is checked, and <code>TrafficContext</code>,
   which holds <code>pathlib.Path</code>s, lives in <code>traffic/context.py</code> (re-exported by
-  <code>base</code>), which is checked on its own with the <code>pathlib</code> shim.</li>
-<li><strong>A <code>carla.Actor</code> where the CARLA API takes a <code>carla.Vehicle</code></strong>
+  <code>base</code>), which is checked on its own with the <code>pathlib</code> shim.
+- <strong>A <code>carla.Actor</code> where the CARLA API takes a <code>carla.Vehicle</code></strong>
   (<code>TrafficManager.set_desired_speed()</code>): typesafe_carla's Python API takes
   the actor as it is, and its Codon library wants the checked conversion.
   Convert under <code>if TYPE_CHECKING:</code>, which Codon reads as true and Python as
-  false, so nothing changes at run time (<code>traffic_manager._vehicle()</code>):</li>
-</ul>
+  false, so nothing changes at run time (<code>traffic_manager._vehicle()</code>):</p>
 <p><div class="highlight"><pre><span></span><code><a id="__codelineno-41-1" name="__codelineno-41-1" href="#__codelineno-41-1"></a><span class="k">if</span> <span class="n">TYPE_CHECKING</span><span class="p">:</span>
 <a id="__codelineno-41-2" name="__codelineno-41-2" href="#__codelineno-41-2"></a>    <span class="k">return</span> <span class="n">actor</span><span class="o">.</span><span class="n">as_vehicle</span><span class="p">()</span>
 <a id="__codelineno-41-3" name="__codelineno-41-3" href="#__codelineno-41-3"></a><span class="k">else</span><span class="p">:</span>
@@ -5540,7 +5557,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 22, 2026 07:13:13 UTC"><span class="timeago" datetime="2026-10-22T07:13:13+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 22, 2026 07:13:13 UTC">2026-10-22</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 22, 2026 07:17:53 UTC"><span class="timeago" datetime="2026-10-22T07:17:53+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 22, 2026 07:17:53 UTC">2026-10-22</span>
   </span>
 
     
