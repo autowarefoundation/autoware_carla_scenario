@@ -76,7 +76,7 @@ from collections.abc import Collection, Mapping
 from dataclasses import dataclass, field
 
 from .driver import Driver
-from .python_rewrites import python_rewrites
+from .python_rewrites import _Pass, python_rewrites
 from .transform import (
     PRELUDE,
     _SCALAR_NAMES,
@@ -331,6 +331,13 @@ class _Renderer:
         function is called only leaving it out (:meth:`calls`).
         """
         annotation = arg.annotation
+        if defaulted and where.rsplit(".", 1)[-1] == "__exit__":
+            # Codon calls `__exit__()` with no arguments; the transform gives
+            # each parameter a `None` default and drops its annotation unless
+            # it is BaseException / Exception (#435, #462), so there is
+            # nothing to call it with (#482).
+            if _Pass._exception_type(annotation) is None:
+                return _LEFT_TO_DEFAULT
         if annotation is None:
             self.problems.append(
                 (arg.lineno, f"{where}: parameter `{arg.arg}` has no annotation")
@@ -1071,6 +1078,9 @@ def _defaulted(func: ast.FunctionDef | ast.AsyncFunctionDef) -> set[str]:
     args = func.args
     every = [*args.posonlyargs, *args.args]
     defaulted = {a.arg for a in every[len(every) - len(args.defaults) :]}
+    if func.name == "__exit__":
+        # Codon calls it with no arguments: the transform defaults them all.
+        defaulted |= {a.arg for a in every[1:]}
     defaulted |= {
         a.arg for a, d in zip(args.kwonlyargs, args.kw_defaults) if d is not None
     }

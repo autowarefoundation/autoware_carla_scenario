@@ -227,6 +227,28 @@ REWRITE_HINTS: tuple[tuple[re.Pattern[str], str], ...] = (
         "(f(xs[0], xs[1])), or take the list as a parameter",
     ),
     (
+        re.compile(r"cannot typecheck 'lambda"),
+        "if this lambda is a class attribute or a default of a method, Codon "
+        "cannot realize it: the check rewrites the ones it can (a class-body lambda "
+        "becomes a def, a method's lambda default a module-level function); "
+        "write a def yourself (and a module-level one for a default) when the "
+        "class is inside a function or the lambda has defaults that are not "
+        "literals",
+    ),
+    (
+        re.compile(r"name 'staticmethod' is not defined"),
+        "Codon has no staticmethod() to call: write @staticmethod above a def "
+        "(the check rewrites staticmethod(lambda ...) itself)",
+    ),
+    (
+        re.compile(
+            r"'Tuple' does not match expected type 'Tuple\[[^']*\]'"
+            r"|'Tuple\[[^']*\]' does not match expected type 'Tuple'"
+        ),
+        "a bare `tuple` annotation matches no tuple in Codon: write the "
+        "element types, `tuple[float, float]` or `tuple[X, ...]`",
+    ),
+    (
         re.compile(r"argument after \*\* must be a named tuple, not 'Dict\["),
         "Codon unpacks only a named tuple with **: pass the keywords "
         "(f(a=d['a'], b=d['b'])), or take the dict as a parameter",
