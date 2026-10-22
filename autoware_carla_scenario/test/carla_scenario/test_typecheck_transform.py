@@ -4096,6 +4096,119 @@ def test_a_parametrized_class_field_is_not_a_bare_collection() -> None:
     assert class_body_refusals(source) == []
 
 
+def test_a_callable_parameter_codon_can_express_and_the_body_stores_is_kept() -> None:
+    # A parameter stored in a Callable-typed attribute must be typed the same
+    # way, or Codon aborts with std::bad_alloc (#488).
+    out = _transform(
+        """
+        class Registry:
+            handlers: list[Callable[[float], float]]
+
+            def register(self, fn: Callable[[float], float]) -> None:
+                self.handlers.append(fn)
+
+            def on(self, name: str, fn: "Callable[[float, str], None]") -> None:
+                self.named[name] = fn
+
+            def tick(self, fn: Callable[[], None]) -> None:
+                self.ticker = fn
+        """
+    )
+    assert "def register(self, fn: Callable[Tuple[float], float]) -> None:" in out
+    assert (
+        "def on(self, name: str, fn: Callable[Tuple[float, str], None]) -> None:" in out
+    )
+    assert "def tick(self, fn: Callable[[], None]) -> None:" in out
+    assert "    handlers: list[Callable[[float], float]]" in out
+
+
+@pytest.mark.parametrize(
+    "annotation",
+    [
+        "Callable[..., int]",
+        "Callable[[Any], int]",
+        "Callable[[Union[A, B]], int]",
+        "Optional[Callable[[int], int]]",
+        "Callable[[int], Any]",
+        "Callable[[Later], int]",
+        "Callable",
+    ],
+)
+def test_a_callable_parameter_codon_cannot_express_is_still_dropped(
+    annotation: str,
+) -> None:
+    out = _transform(
+        f"def f(fn: {annotation}) -> None:\n    pass\n\nclass Later: ...\n"
+    )
+    assert "def f(fn) -> None:" in out
+
+
+def test_a_callable_parameter_the_body_only_calls_stays_generic() -> None:
+    # A closure reading a local variable of its function cannot become a
+    # Codon Callable, so a parameter only called (or passed on) stays generic.
+    out = _transform(
+        """
+        def apply(fn: Callable[[float], float], v: float) -> float:
+            return fn(v)
+
+        def forward(fn: Callable[[float], float]) -> float:
+            return apply(fn, 1.0)
+        """
+    )
+    assert "def apply(fn, v: float) -> float:" in out
+    assert "def forward(fn) -> float:" in out
+
+
+@pytest.mark.parametrize(
+    "store",
+    [
+        "self.cb = fn",
+        "self.cbs[0] = fn",
+        "self.cbs.append(fn)",
+        "self.cbs.insert(0, fn)",
+        "self.cb: Callable[[float], float] = fn",
+    ],
+)
+def test_every_way_of_storing_a_callable_parameter_keeps_it(store: str) -> None:
+    out = _transform(
+        f"""
+        class R:
+            def keep(self, fn: Callable[[float], float]) -> None:
+                {store}
+        """
+    )
+    assert "fn: Callable[Tuple[float], float]" in out
+
+
+def test_a_callable_parameter_handed_to_a_storing_method_is_kept() -> None:
+    # `register` only passes `fn` on to the method that stores it: the
+    # attribute is typed, so the generic parameter would abort Codon (#488).
+    out = _transform(
+        """
+        class R:
+            def _add(self, fn: Callable[[float], float]) -> None:
+                self.cbs.append(fn)
+
+            def register(self, fn: Callable[[float], float]) -> None:
+                self._add(fn)
+
+            def register_all(self, a: Callable[[float], float], b: int) -> None:
+                self._add(fn=a)
+
+            def call(self, fn: Callable[[float], float]) -> float:
+                return self.run(fn)
+
+            def run(self, fn: Callable[[float], float]) -> float:
+                return fn(1.0)
+        """
+    )
+    assert "def _add(self, fn: Callable[Tuple[float], float])" in out
+    assert "def register(self, fn: Callable[Tuple[float], float])" in out
+    assert "def register_all(self, a: Callable[Tuple[float], float], b: int)" in out
+    assert "def call(self, fn) -> float:" in out
+    assert "def run(self, fn) -> float:" in out
+
+
 # dataclasses.replace lowered to typed copies (#487)
 
 _REPLACE_DEFS = """
