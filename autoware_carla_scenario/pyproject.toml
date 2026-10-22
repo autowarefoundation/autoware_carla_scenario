@@ -139,9 +139,9 @@ rerun-lidar = [
     "rerun-sdk>=0.38.1,<0.39",
 ]
 # A T4 dataset of each run (`t4.enabled=true`, docs/t4_dataset.md): the
-# writer (autoware_carla_scenario_t4/ in this repository, a Rust core in one
-# abi3 wheel), which the runner hands the ego's poses, the boxes of the road
-# users and the sweeps and frames of the sensors it puts on the ego.
+# writer (hakuturu583/autoware_carla_scenario_t4, a Rust core in one abi3
+# wheel), which the runner hands the ego's poses, the boxes of the road
+# users and the sweeps and frames of the driver policy's sensors.
 t4 = [
     "autoware-carla-scenario-t4>=0.1,<0.2",
 ]

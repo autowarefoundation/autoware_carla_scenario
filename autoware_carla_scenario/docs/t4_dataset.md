@@ -27,7 +27,7 @@ Where the data comes from:
   frames.
 
 The dataset is written by `autoware-carla-scenario-t4`, a Rust writer with a
-PyO3 binding (`autoware_carla_scenario_t4/` in this repository), installed
+PyO3 binding ([autoware_carla_scenario_t4](https://github.com/hakuturu583/autoware_carla_scenario_t4)), installed
 with the `t4` extra. A run asking for a dataset without it is refused before
 anything starts (exit code 2), saying how to install it. Recording is best
 effort, like the [trajectory log](trajectory_log.md): an error is logged and
@@ -150,5 +150,5 @@ print(w.finish())
 Poses are right-handed and quaternions `(w, x, y, z)`; `begin_frame_carla`,
 `register_actor` and `add_carla_boxes` take CARLA's states instead. Tokens are
 derived from `token_seed` (the scene name by default), so the same frames
-written twice are the same dataset. Its sources are
-`autoware_carla_scenario_t4/src/` (`cargo test` runs the writer's own tests).
+written twice are the same dataset. Its sources, its own tests and its
+releases are [hakuturu583/autoware_carla_scenario_t4](https://github.com/hakuturu583/autoware_carla_scenario_t4).

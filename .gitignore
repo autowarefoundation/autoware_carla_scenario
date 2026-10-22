@@ -37,7 +37,3 @@ scenario_outputs
 scenario_drafts/
 scenario_packages/
 .lycheecache
-
-# Cargo build output of the T4 writer
-autoware_carla_scenario_t4/target/
-autoware_carla_scenario_t4/python/autoware_carla_scenario_t4/*.so
