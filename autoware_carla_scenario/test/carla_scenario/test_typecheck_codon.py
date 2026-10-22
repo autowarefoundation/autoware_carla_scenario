@@ -3602,6 +3602,334 @@ def test_a_list_display_of_unrelated_classes_is_refused_with_a_hint(
     assert error.line == _line_of(path, "mixed = [Dbl(), Other()]"), error.format()
 
 
+_OWN_SHAPES = """
+class Shape:
+    def area(self) -> float:
+        return 0.0
+
+
+class Circle(Shape):
+    def area(self) -> float:
+        return 3.0
+
+
+class Square(Shape):
+    def area(self) -> float:
+        return 1.0
+
+
+class Other:
+    def area(self) -> float:
+        return 5.0
+
+
+def total_list(shapes: list[Shape]) -> float:
+    out = 0.0
+    for shape in shapes:
+        out += shape.area()
+    return out
+
+
+def total_dict(shapes: dict[str, Shape]) -> float:
+    out = 0.0
+    for shape in shapes.values():
+        out += shape.area()
+    return out
+
+
+def more(shapes: list[Shape]) -> float:
+    return total_list(shapes + [Square()])
+
+
+def unknown() -> list[Shape]:
+    return [Circle()]
+"""
+
+
+def _own_shapes_case(tmp_path: Path, setup: str) -> tuple[type, type, Path]:
+    # The classes are defined in the scenario's module, above its class: the
+    # check reads the bases of one module at a time.
+    header = _HEADER.replace(
+        "\n\nclass CaseScenario", "\n" + _OWN_SHAPES + "\n\nclass CaseScenario", 1
+    )
+    return _write_case(tmp_path, setup, header=header)
+
+
+@pytest.mark.parametrize(
+    "setup",
+    [
+        """
+        d = {"a": Circle(), "b": Square()}
+        logger.info("%f", d["a"].area() + d["b"].area())
+        """,
+        """
+        d = {1: Square(), 2: Circle()}
+        logger.info("%f", d[1].area() + total_dict({"x": d[2]}))
+        """,
+        """
+        d: dict[str, Shape] = {"a": Circle()}
+        logger.info("%f", total_dict(d))
+        """,
+        """
+        d: dict[str, Shape] = {"a": Circle(), "b": Square()}
+        logger.info("%f", total_dict(d))
+        """,
+        'logger.info("%f", total_dict({"a": Circle(), "b": Square()}))\n',
+        'logger.info("%f", total_dict(shapes={"a": Circle(), "b": Square()}))\n',
+        'logger.info("%f", total_dict({"a": Square()}))\n',
+        """
+        a: list[Shape] = [Circle()]
+        b = a + [Square()]
+        logger.info("%f", total_list(b))
+        """,
+        """
+        a: list[Shape] = [Circle()]
+        b = [Square(), Circle()] + a
+        logger.info("%f", total_list(b))
+        """,
+        """
+        a: list[Shape] = [Circle()]
+        a += [Square(), Circle()]
+        logger.info("%f", total_list(a))
+        """,
+        """
+        a: list[Shape] = [Circle()]
+        a.extend([Square(), Circle()])
+        logger.info("%f", total_list(a))
+        """,
+        """
+        a = [Circle(), Square()]
+        a += [Square()]
+        logger.info("%f", total_list(a) + more(a))
+        """,
+        'logger.info("%f", more([Circle()]))\n',
+    ],
+    ids=[
+        "dict-common-base",
+        "dict-int-keys",
+        "dict-annotated-single",
+        "dict-annotated",
+        "dict-argument",
+        "dict-keyword-argument",
+        "dict-argument-single",
+        "list-plus-display",
+        "display-plus-list",
+        "list-augmented",
+        "list-extend",
+        "inferred-list-augmented",
+        "parameter-plus-display",
+    ],
+)
+def test_a_dict_or_a_sum_of_the_scenarios_own_subclasses_compiles(
+    tmp_path: Path, setup: str
+) -> None:
+    # #489: a dict display of subclasses, and a list display added to a
+    # list[Base] (`a + [Sub()]`, `a += [Sub()]`, `a.extend([Sub()])`), was
+    # typed by its first element: `'Square' does not match expected type
+    # 'Circle'`, `unsupported operand type(s) for +: 'List[Shape]' and
+    # 'List[Square]'`.
+    scenario, config, _ = _own_shapes_case(tmp_path, setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+@pytest.mark.parametrize(
+    "setup",
+    [
+        """
+        rules: list[Rule] = [Low(), High()]
+        logger.info("%f", total(rules))
+        """,
+        """
+        rules = [Low(), High()]
+        logger.info("%f", total(rules))
+        """,
+        'logger.info("%f", total([Low(), High()]))\n',
+        """
+        d = {"a": Low(), "b": High()}
+        e: dict[str, Rule] = {"a": Low()}
+        logger.info("%f", d["a"].weigh() + e["a"].weigh() + total_map({"a": Low()}))
+        """,
+        """
+        rules: list[Rule] = [Low()]
+        rules += [High()]
+        logger.info("%f", total(rules))
+        """,
+    ],
+    ids=["annotated", "common-base", "argument", "dicts", "augmented"],
+)
+def test_a_base_defined_below_the_scenario_class_is_named_in_a_body(
+    tmp_path: Path, setup: str
+) -> None:
+    # #489: the annotation naming a class defined further down is dropped, and
+    # the display was refused although it was annotated. A function body is
+    # typed when it is first called, after the whole module, so the display
+    # may name the class.
+    extra = """
+
+
+class Rule:
+    def weigh(self) -> float:
+        return 1.0
+
+
+class Low(Rule):
+    def weigh(self) -> float:
+        return 0.5
+
+
+class High(Rule):
+    def weigh(self) -> float:
+        return 2.0
+
+
+def total(rules: list[Rule]) -> float:
+    out = 0.0
+    for rule in rules:
+        out += rule.weigh()
+    return out
+
+
+def total_map(rules: dict[str, Rule]) -> float:
+    return total(list(rules.values()))
+"""
+    scenario, config, _ = _write_case(tmp_path, setup, extra=extra)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+@pytest.mark.parametrize(
+    ("setup", "needle", "message"),
+    [
+        (
+            'd = {"a": Circle(), "b": Other()}\n',
+            'd = {"a": Circle()',
+            "'Other' does not match expected type 'Circle'",
+        ),
+        (
+            'd: dict[str, Shape] = {"a": Circle(), "b": Other()}\n',
+            "d: dict[str, Shape]",
+            "'Other' does not match expected type 'Shape'",
+        ),
+        (
+            'total_dict({"a": Circle(), "b": Other()})\n',
+            "total_dict({",
+            "'Other' does not match expected type 'Shape'",
+        ),
+        (
+            "a: list[Shape] = [Circle()]\nb = a + [Other()]\n",
+            "b = a + [Other()]",
+            "'Other' does not match expected type 'Shape'",
+        ),
+    ],
+    ids=["unrelated", "annotated", "argument", "list-plus-display"],
+)
+def test_a_dict_or_a_sum_with_a_non_subclass_is_still_refused(
+    tmp_path: Path, setup: str, needle: str, message: str
+) -> None:
+    scenario, config, path = _own_shapes_case(tmp_path, setup)
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert message in error.message, error.format()
+    assert "_acs_dict_into" not in error.message, error.format()
+    assert error.path == str(path), error.format()
+    assert error.line == _line_of(path, needle), error.format()
+
+
+@pytest.mark.parametrize(
+    ("setup", "needle", "hint"),
+    [
+        (
+            'k = "a"\nd = {k: Circle(), "b": Square()}\n',
+            "d = {k:",
+            "dict[str, Base]",
+        ),
+        (
+            "b = unknown() + [Square()]\n",
+            "b = unknown() + [Square()]",
+            "list[Base]",
+        ),
+    ],
+    ids=["dict-keys-not-literal", "sum-of-unknown-list"],
+)
+def test_a_display_the_check_cannot_type_is_refused_with_a_hint(
+    tmp_path: Path, setup: str, needle: str, hint: str
+) -> None:
+    scenario, config, path = _own_shapes_case(tmp_path, setup)
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert hint in error.message, error.format()
+    assert error.path == str(path), error.format()
+    assert error.line == _line_of(path, needle), error.format()
+
+
+@pytest.mark.parametrize(
+    ("setup", "needle"),
+    [
+        ('d = {1: Circle(), "b": Square()}\n', "d = {1: Circle()"),
+        ("a: list[Shape] = [Circle()]\nb = [Other()] + a\n", "b = [Other()] + a"),
+        ("a: list[Shape] = [Circle()]\na += [Other()]\n", "a += [Other()]"),
+        ("a: list[Shape] = [Circle()]\na.extend([Other()])\n", "a.extend("),
+        (
+            "a: list[Shape] = [Circle()]\nfor a in [[Circle()]]:\n    b = a + [Square()]\n",
+            "b = a + [Square()]",
+        ),
+    ],
+    ids=[
+        "mixed-keys",
+        "display-plus-list",
+        "augmented",
+        "extend",
+        "loop-variable",
+    ],
+)
+def test_a_dict_or_a_sum_that_is_no_list_of_the_base_is_refused(
+    tmp_path: Path, setup: str, needle: str
+) -> None:
+    # #489: the rewrite must not make a wrong value acceptable, or one of a
+    # variable that merely shares the tracked name.
+    scenario, config, path = _own_shapes_case(tmp_path, setup)
+    result = typecheck_scenario(scenario, config)
+    assert not result.ok
+    assert any(
+        d.path == str(path) and d.line == _line_of(path, needle)
+        for d in result.diagnostics
+    ), result.format()
+
+
+def test_a_base_defined_below_a_class_level_display_is_named_in_the_hint(
+    tmp_path: Path,
+) -> None:
+    # A class body runs at once: Codon cannot name a class defined further
+    # down, whatever the annotation (Python reads the factory's lambda later),
+    # so the hint says where to define it rather than telling the author to
+    # annotate what is annotated.
+    extra = """
+
+
+@dataclass
+class Holder:
+    rules: list[Rule] = field(default_factory=lambda: [Low(), High()])
+
+
+class Rule: ...
+
+
+class Low(Rule): ...
+
+
+class High(Rule): ...
+"""
+    header = _HEADER.replace(
+        "import logging\n",
+        "import logging\nfrom dataclasses import dataclass, field\n",
+        1,
+    )
+    scenario, config, path = _write_case(tmp_path, "pass\n", extra=extra, header=header)
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "define `Rule` above" in error.message, error.format()
+    assert "annotate the target" not in error.message, error.format()
+    assert error.path == str(path), error.format()
+
+
 @pytest.mark.parametrize(
     ("setup", "needle"),
     [
