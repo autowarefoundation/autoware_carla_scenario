@@ -2050,9 +2050,7 @@ def transform_source_lines(
     own = {e.name for e in rewriter.enums} | set(enum_classes)
     # The model's enums too (#437), unless the module defines a class of that
     # name which is no enum.
-    other = {
-        n.name for n in tree.body if isinstance(n, ast.ClassDef) and n.name not in own
-    }
+    other = _module_level_bindings(tree) - own
     enum_iteration(tree, edits, own | (model_enum_names() - other))
     repeated_imports(tree, edits)
     lines = {
@@ -2426,6 +2424,40 @@ def enum_class_names(classes: Mapping[str, ast.ClassDef]) -> set[str]:
         for name, node in classes.items()
         if any((_dotted(b) or "").rsplit(".", 1)[-1] in _ENUM_BASES for b in node.bases)
     }
+
+
+def _module_level_bindings(tree: ast.Module) -> set[str]:
+    """The names *tree* binds at its own level other than by importing them
+    from the framework: an assignment, a loop or ``with`` target, a ``def``,
+    a ``class``, any other import, a ``global`` declaration (#471).  A name
+    the module binds so is not the model's enum of that name.  The bodies of
+    functions, lambdas and classes are other scopes."""
+    names: set[str] = set()
+    stack: list[ast.AST] = list(tree.body)
+    while stack:
+        node = stack.pop()
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            names.add(node.name)
+            continue
+        if isinstance(node, ast.Lambda):
+            continue
+        if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
+            names.add(node.id)
+        elif isinstance(node, ast.Import):
+            names.update((a.asname or a.name).split(".")[0] for a in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            framework = not node.level and (node.module or "").split(".")[0] == (
+                "autoware_carla_scenario"
+            )
+            for alias in node.names:
+                if not framework or alias.asname not in (None, alias.name):
+                    names.add(alias.asname or alias.name)
+        elif isinstance(node, ast.ExceptHandler) and node.name:
+            names.add(node.name)
+        elif isinstance(node, ast.Global):
+            names.update(node.names)
+        stack.extend(ast.iter_child_nodes(node))
+    return names
 
 
 class _EnumIteration(ast.NodeVisitor):

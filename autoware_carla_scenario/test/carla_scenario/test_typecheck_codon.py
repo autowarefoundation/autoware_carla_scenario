@@ -6614,3 +6614,112 @@ def make():
     error = _only_error(typecheck_scenario(scenario, config))
     assert "defined in a function" in error.message, error.format()
     assert error.line == _line_of(path, "R = Q * 2")
+
+
+def test_format_with_a_method_or_parameter_of_that_name_compiles(
+    tmp_path: Path,
+) -> None:
+    # #471: only a binding in scope shadows the builtin.
+    definitions = """
+class Rep:
+    def format(self) -> str:
+        return "r"
+
+    def ascii(self, x: int) -> str:
+        return str(x)
+
+
+def render(x: int, format: str) -> str:
+    return format + str(x)
+"""
+    setup = """
+        logger.info("%s", Rep().format() + Rep().ascii(1) + render(1, "n"))
+        logger.info("%s %s", format(3, "05d"), ascii(7))
+    """
+    scenario, config, _ = _data_case(tmp_path, definitions, setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_format_in_the_function_that_binds_it_is_still_the_locals(
+    tmp_path: Path,
+) -> None:
+    definitions = """
+def render(x: int, format: int) -> int:
+    return format(x, 2)
+"""
+    scenario, config, path = _data_case(tmp_path, definitions, "render(1, 2)\n")
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert error.line == _line_of(path, "return format(x, 2)")
+
+
+def test_a_module_variable_named_like_a_model_enum_compiles(tmp_path: Path) -> None:
+    # #471: not rewritten into `_acs_members()`.
+    definitions = """
+SpeedDirection = ["a", "b"]
+"""
+    setup = """
+        n = 0
+        for d in SpeedDirection:
+            n += len(d)
+        logger.info("%d", n)
+    """
+    scenario, config, _ = _data_case(tmp_path, definitions, setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+_FUNCTIONS = """
+def inc(x: int) -> int:
+    return x + 1
+
+
+def dbl(x: int) -> int:
+    return x * 2
+"""
+
+
+@pytest.mark.parametrize(
+    "line", ["fs = {inc, dbl}", "fs = {inc: 1}", "fs: set = {inc, dbl}"]
+)
+def test_a_set_or_dict_key_of_functions_gets_a_hint(tmp_path: Path, line: str) -> None:
+    scenario, config, path = _data_case(tmp_path, _FUNCTIONS, line + "\n")
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "cannot hash a function" in error.message, error.format()
+    assert error.line == _line_of(path, line)
+
+
+def test_a_dict_of_functions_by_name_compiles(tmp_path: Path) -> None:
+    scenario, config, _ = _data_case(
+        tmp_path, _FUNCTIONS, 'fs = {"inc": inc}\nlogger.info("%d", fs["inc"](1))\n'
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_an_annotated_class_attribute_read_from_outside_gets_a_hint(
+    tmp_path: Path,
+) -> None:
+    definitions = """
+class Q:
+    LIMIT: int = 5
+"""
+    scenario, config, path = _data_case(
+        tmp_path, definitions, 'logger.info("%d", Q.LIMIT)\n'
+    )
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "LIMIT: Final = ..." in error.message, error.format()
+    assert error.line == _line_of(path, "Q.LIMIT")
+
+
+def test_a_final_class_attribute_read_from_outside_compiles(tmp_path: Path) -> None:
+    definitions = """
+class Q:
+    LIMIT: typing.Final = 5
+    OTHER = 6
+"""
+    scenario, config, _ = _data_case(
+        tmp_path, definitions, 'logger.info("%d", Q.LIMIT + Q.OTHER)\n'
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()

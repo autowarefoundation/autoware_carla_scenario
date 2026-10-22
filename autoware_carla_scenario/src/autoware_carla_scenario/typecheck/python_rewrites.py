@@ -180,6 +180,17 @@ REWRITE_HINTS: tuple[tuple[re.Pattern[str], str], ...] = (
         "if/elif chain, or a `match` on the key, instead",
     ),
     (
+        # A set element or a dict key must be hashable; Codon's function is not.
+        re.compile(
+            r"^'(?:%_lambda_\d+(?:\[[^']*\]|\([^']*\))?|\w+\([^']*\.\.\.\))' "
+            r"object has no attribute '__hash__'"
+        ),
+        "Codon cannot hash a function, so a set of functions, or a dict keyed "
+        "by one, does not compile in the check (a dict with functions as "
+        "values is fine): use a list, or a dict keyed by the function's name "
+        '(`{"inc": inc}`) or by an enum',
+    ),
+    (
         re.compile(r"no function 'Callable\.__new__' with arguments"),
         "an element of a table annotated Callable must have exactly the "
         "annotated signature (parameter and return types) and be a function "
@@ -591,15 +602,23 @@ def _escaped(text: str) -> str:
     return "".join(out)
 
 
-def _rebound_names(tree: ast.AST) -> set[str]:
-    """Every name the module binds anywhere (a variable, parameter, function,
-    class or import), so a builtin of the same name is not taken for it."""
+def _scope_bindings(scope: ast.AST) -> set[str]:
+    """The names *scope* (a module, function or lambda) binds in its own
+    scope: its parameters, variables, imports, and the names of the functions
+    and classes it defines.  The bodies of nested functions, lambdas and
+    classes are other scopes (a method name never binds in the scope of its
+    class's module, a class attribute is not read from a method as a name)."""
     names: set[str] = set()
-    for node in ast.walk(tree):
+    stack = list(ast.iter_child_nodes(scope))
+    while stack:
+        node = stack.pop()
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            names.add(node.name)
+            continue
+        if isinstance(node, ast.Lambda):
+            continue
         if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
             names.add(node.id)
-        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            names.add(node.name)
         elif isinstance(node, ast.arg):
             names.add(node.arg)
         elif isinstance(node, (ast.Import, ast.ImportFrom)):
@@ -607,6 +626,14 @@ def _rebound_names(tree: ast.AST) -> set[str]:
                 names.add((alias.asname or alias.name).split(".")[0])
         elif isinstance(node, ast.ExceptHandler) and node.name:
             names.add(node.name)
+        elif isinstance(node, (ast.Global, ast.Nonlocal)):
+            names.update(node.names)
+        else:
+            for attr in ("name", "rest"):  # match: `case x`, `case *x`, `case {**x}`
+                value = getattr(node, attr, None)
+                if isinstance(value, str) and type(node).__name__.startswith("Match"):
+                    names.add(value)
+        stack.extend(ast.iter_child_nodes(node))
     return names
 
 
@@ -616,7 +643,11 @@ class _Pass(ast.NodeVisitor):
         self.total_ordering = total_ordering
         self.refused: list[tuple[int, str]] = []
         self._depth = 0
-        self._rebound: set[str] = set()
+        #: The names the module binds at its own level, and those each
+        #: enclosing function or lambda binds: a builtin of that name is
+        #: shadowed only where one of them is in scope (#471).
+        self._module_bound: set[str] = set()
+        self._local_bound: list[set[str]] = []
         #: The functions being visited, innermost last, with their local names.
         self._functions: list[tuple[ast.FunctionDef | ast.AsyncFunctionDef, set[str]]]
         self._functions = []
@@ -630,6 +661,23 @@ class _Pass(ast.NodeVisitor):
 
     def _text(self, node: ast.AST) -> str:
         return self.edits.text(*self.edits.node_span(node))
+
+    def _shadowed(self, name: str) -> bool:
+        """Whether *name* is bound by the module or an enclosing function, so
+        a builtin of that name is not the one in scope."""
+        return name in self._module_bound or any(
+            name in bound for bound in self._local_bound
+        )
+
+    def visit(self, node: ast.AST) -> None:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            self._local_bound.append(_scope_bindings(node))
+            try:
+                super().visit(node)
+            finally:
+                self._local_bound.pop()
+        else:
+            super().visit(node)
 
     def _refuse(self, node: ast.AST, message: str) -> None:
         self.refused.append((node.lineno, message))  # type: ignore[attr-defined]
@@ -1041,7 +1089,7 @@ class _Pass(ast.NodeVisitor):
         self.edits.replace(*self.edits.node_span(node), text)
 
     def visit_Module(self, node: ast.Module) -> None:
-        self._rebound = _rebound_names(node)
+        self._module_bound = _scope_bindings(node)
         self.generic_visit(node)
 
     # -- except* -------------------------------------------------------------
@@ -1136,7 +1184,7 @@ class _Pass(ast.NodeVisitor):
         plain_call = (
             not any(isinstance(a, ast.Starred) for a in node.args) and not node.keywords
         )
-        if isinstance(func, ast.Name) and func.id not in self._rebound:
+        if isinstance(func, ast.Name) and not self._shadowed(func.id):
             if func.id == "format" and plain_call and len(node.args) in (1, 2):
                 value = self._operand(node.args[0])
                 if len(node.args) == 1:

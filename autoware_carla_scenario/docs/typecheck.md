@@ -1137,8 +1137,8 @@ cannot express is refused at its line, with what to write instead.
 | `f"{x:+.2f}"`, `f"{n:>{w}d}"`, a spec Codon's f-string parser does not know | the value's own `__format__`, the f-string a `+` of its parts: `(x).__format__("+.2f")`, `(n).__format__(">" + str(w) + "d")`. A nested field is `str(w)` (`repr(w)` for `!r`); the result is a `str`, as before. `"{:+.2f}".format(x)` is rewritten to the f-string first, so it gets the same | a brace or a nested f-string inside an expression of the f-string (below); `!a` together with a rewritten spec |
 | `zip(a, b, strict=True)` | `zip(a, b)`: the check types the loop, it does not run it | |
 | `s.startswith((a, b))`, `s.endswith((a, b), start)` with the tuple written in the call (#439) | `(s.startswith(a) or s.startswith(b))`; a receiver or item that is not a name, attribute or constant is bound once by a lambda | the tuple is held in a name (`s.startswith(PREFIXES)`), is empty, or the call has `*args` / keywords; each item is still checked as a `str` |
-| `format(x, spec)`, `format(x)` (#439) | `x.__format__(spec)`, `str(x)` | a module that binds the name `format` itself is left alone |
-| `ascii(x)` (#439) | `repr(x)`: the same `str` type; the check does not run it, so the escaping of non-ASCII characters is unchanged at run time | a module that binds the name `ascii` itself is left alone |
+| `format(x, spec)`, `format(x)` (#439) | `x.__format__(spec)`, `str(x)` | `format` is bound where the call is: by the module (an assignment, import, `def` or `class` at module level) or by an enclosing function or lambda (a parameter or local); a method named `format` or a class attribute binds nothing there, so it does not disable the rewrite (#471) |
+| `ascii(x)` (#439) | `repr(x)`: the same `str` type; the check does not run it, so the escaping of non-ASCII characters is unchanged at run time | `ascii` is bound where the call is, as for `format` (#471) |
 | `sorted(xs)`, `xs.sort()`, `min` / `max` of a class that defines `__lt__` only | the class gets `__gt__` (`other < self`) and `__ge__` (`not self < other`), which Codon's sort calls | the class defines no ordering (use `@dataclass(order=True)` or `key=`) |
 | `@functools.total_ordering` | the decorator and its import are dropped, and the class gets the comparisons it would add from its `__lt__`, `__le__`, `__gt__` or `__ge__` (and `==`, or identity without `__eq__`) | the class is not at module level, or defines none of the four |
 | `lambda x, k=k: x + k` (a default that is not a literal) | `(lambda k: lambda x: x + k)(k)`: the default is bound by a call, once, as in Python | |
@@ -1164,7 +1164,9 @@ Notes:
   of different ones does not compile without the annotation, even if you
   annotate nothing else. Annotate where the table is assigned or returned; an
   element of another signature than the annotation is refused, a `set` of functions is
-  refused whatever the annotation (Codon cannot hash a function). An
+  refused whatever the annotation (Codon cannot hash a function), as is a
+  dict keyed by functions (a dict with functions as values is fine): the error
+  carries a hint to use a list or a dict keyed by name. An
   unannotated `fs = [inc, dbl]` or a class attribute is
   refused with a hint: write an `if`/`elif` chain or a `match` on the key
   instead (`if key == "a": return inc(x)`). A bound method (`self.run`) or a
@@ -1247,7 +1249,11 @@ in step:
   further down) it is `x` as it is.
 - A class-level `Y: Final[int] = 4` stays a typed field, not a class
   attribute, as any annotated class-level name does; write `Y: Final = 4` for
-  a class attribute read as `C.Y`.
+  a class attribute read as `C.Y`. A read from outside the class (`Q.LIMIT`
+  with `LIMIT: int = 5` or `ClassVar[int]`) gets Codon's `'Q' object has no
+  attribute 'LIMIT'` with a hint to write `LIMIT: Final = 5` (#471); the
+  check does not rewrite it, since in a @dataclass the annotated name is an
+  instance field in Python too.
 - `Iterator` is Codon's generator type, and `Deque`, `DefaultDict` and
   `Counter` are `collections.deque`, `defaultdict` and `Counter`.
 - Any other name is refused at its import line. `Generic` and `TypedDict`
@@ -1360,7 +1366,9 @@ The framework's enums are `@tuple` classes in the model
 the check takes the enums to rewrite from the model files, so a new model enum
 is iterable once it declares them. `test_typecheck_model.py` keeps both equal
 to the Python enum's members, in its order. A scenario class of the same name
-as a model enum that is no enum is left alone.
+as a model enum that is no enum is left alone, and so is a module-level
+variable, function or non-framework import of that name (#471); a parameter or
+local of the name shadows it only inside its function.
 
 What does not work:
 
