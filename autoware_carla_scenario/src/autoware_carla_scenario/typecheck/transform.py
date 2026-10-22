@@ -2438,6 +2438,10 @@ def _module_level_bindings(tree: ast.Module) -> set[str]:
         node = stack.pop()
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             names.add(node.name)
+            # `global X` anywhere in it binds the module's X.
+            for inner in ast.walk(node):
+                if isinstance(inner, ast.Global):
+                    names.update(inner.names)
             continue
         if isinstance(node, ast.Lambda):
             continue

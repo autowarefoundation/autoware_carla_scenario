@@ -602,6 +602,9 @@ def _escaped(text: str) -> str:
     return "".join(out)
 
 
+_COMPREHENSIONS = (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
+
+
 def _scope_bindings(scope: ast.AST) -> set[str]:
     """The names *scope* (a module, function or lambda) binds in its own
     scope: its parameters, variables, imports, and the names of the functions
@@ -616,6 +619,14 @@ def _scope_bindings(scope: ast.AST) -> set[str]:
             names.add(node.name)
             continue
         if isinstance(node, ast.Lambda):
+            continue
+        if isinstance(node, _COMPREHENSIONS):
+            # Its loop targets are its own; a walrus binds in *scope*.
+            names.update(
+                n.target.id
+                for n in ast.walk(node)
+                if isinstance(n, ast.NamedExpr) and isinstance(n.target, ast.Name)
+            )
             continue
         if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
             names.add(node.id)
@@ -647,7 +658,9 @@ class _Pass(ast.NodeVisitor):
         #: enclosing function or lambda binds: a builtin of that name is
         #: shadowed only where one of them is in scope (#471).
         self._module_bound: set[str] = set()
-        self._local_bound: list[set[str]] = []
+        #: Each with whether it is a class body, whose names only its own
+        #: statements read: a method or a comprehension in it skips it.
+        self._local_bound: list[tuple[set[str], bool]] = []
         #: The functions being visited, innermost last, with their local names.
         self._functions: list[tuple[ast.FunctionDef | ast.AsyncFunctionDef, set[str]]]
         self._functions = []
@@ -665,13 +678,31 @@ class _Pass(ast.NodeVisitor):
     def _shadowed(self, name: str) -> bool:
         """Whether *name* is bound by the module or an enclosing function, so
         a builtin of that name is not the one in scope."""
-        return name in self._module_bound or any(
-            name in bound for bound in self._local_bound
-        )
+        if name in self._module_bound:
+            return True
+        for index, (bound, is_class) in enumerate(reversed(self._local_bound)):
+            if name in bound and (index == 0 or not is_class):
+                return True
+        return False
 
     def visit(self, node: ast.AST) -> None:
+        scope: tuple[set[str], bool] | None = None
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
-            self._local_bound.append(_scope_bindings(node))
+            scope = (_scope_bindings(node), False)
+        elif isinstance(node, ast.ClassDef):
+            scope = (_scope_bindings(node), True)
+        elif isinstance(node, _COMPREHENSIONS):
+            scope = (
+                {
+                    n.id
+                    for g in node.generators
+                    for n in ast.walk(g.target)
+                    if isinstance(n, ast.Name)
+                },
+                False,
+            )
+        if scope is not None:
+            self._local_bound.append(scope)
             try:
                 super().visit(node)
             finally:
@@ -1090,6 +1121,10 @@ class _Pass(ast.NodeVisitor):
 
     def visit_Module(self, node: ast.Module) -> None:
         self._module_bound = _scope_bindings(node)
+        # `global format` in a function binds the module's name.
+        for inner in ast.walk(node):
+            if isinstance(inner, ast.Global):
+                self._module_bound.update(inner.names)
         self.generic_visit(node)
 
     # -- except* -------------------------------------------------------------

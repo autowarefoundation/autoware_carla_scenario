@@ -2879,6 +2879,45 @@ def test_a_parameter_shadows_the_builtin_only_in_its_function() -> None:
     assert "r = (3).__format__('05d')" in text
 
 
+@pytest.mark.parametrize(
+    "source",
+    [
+        "def f():\n    global format\n    format = g\ndef h():\n    return format(1, 2)",
+        "def f(xs):\n    return [format(1, 2) for format in xs]",
+        "class A:\n    r = [format(1, 2) for format in FS]",
+        "def f(xs):\n    [(format := x) for x in xs]\n    return format(1, 2)",
+        "def f(x):\n    match x:\n        case [format, *_]:\n            pass\n"
+        "    return format(1, 2)",
+        "def f():\n    try:\n        pass\n    except E as format:\n        pass\n"
+        "    return format(1, 2)",
+        "def f(x):\n    if x:\n        format = g\n    return format(1, 2)",
+    ],
+)
+def test_format_follows_python_scoping_where_it_is_bound(source: str) -> None:
+    assert _rewritten(source + "\n") == source + "\n"
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "class A:\n    format = 1\n    def m(self):\n        return format(1, 2)",
+        "def f(xs):\n    a = [format for format in xs]\n    return format(1, 2)",
+    ],
+)
+def test_format_is_rewritten_where_python_resolves_it_to_the_builtin(
+    source: str,
+) -> None:
+    assert "format(1, 2)" not in _rewritten(source + "\n")
+
+
+def test_a_global_declaration_of_a_model_enum_s_name_shadows_it() -> None:
+    out = _transform(
+        "def f():\n    global TurnDirection\n    TurnDirection = [1]\n"
+        "def g():\n    return list(TurnDirection)\n"
+    )
+    assert "list(TurnDirection)\n" in out
+
+
 def test_format_nested_in_startswith_is_rewritten_too() -> None:
     text = _rewritten('r = f(1).startswith((format(x, "d"), ascii(y)))\n')
     assert "format(" not in text and "ascii(" not in text
