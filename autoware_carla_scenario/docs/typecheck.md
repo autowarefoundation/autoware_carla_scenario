@@ -836,6 +836,16 @@ scenario has to do itself:
   ```text
   scenario.py:34: error: GapTracker._samples is assigned without a type: declare it in the class body, e.g. `_samples: list[...]` ...
   ```
+- **Write the element types of a dataclass field** (#482): `xs: list[int] =
+  field(default_factory=list)`, `d: dict[str, float]`, `ids: set[int]`,
+  `xy: tuple[float, float] = (0.0, 0.0)` or `tuple[X, ...]`. Codon types a
+  field from its annotation and cannot infer the elements of a bare `list`,
+  `dict`, `set` or `tuple` ("type of attribute 'xs' of object 'Cfg' cannot be
+  inferred", or a bare `Tuple` that matches no tuple), whatever the default
+  is. The check refuses the field at its line and names what to write; a bare
+  `list` or `dict` in a function's parameter or return annotation compiles,
+  and a bare `tuple` there gets a hint with the error.
+
 - **Use only the public API** from `autoware_carla_scenario` and its listed
   subpackages, and the `BaseScenario` attributes meant for subclasses
   (`ego_config`, `ego_entity`, `world`, `_ground_projection`, ...).
@@ -1146,7 +1156,10 @@ cannot express is refused at its line, with what to write instead.
 | `def __exit__(self, exc_type, exc, tb)` (annotated `type[BaseException] \| None`, `BaseException \| None`, `object`, ... or not) | each parameter without a default gets `=None`: Codon calls `__exit__()` with no arguments, even when the block raised (#435). An annotation of `BaseException` or `Exception` (alone or `\| None`, `Optional[...]`) is kept as `X \| None`; any other annotation is dropped | |
 | `fs: list[Callable[[int], int]] = [inc, lambda x: x * 2]`, `table: dict[str, Callable[[int], int]] = {"a": inc, "b": dbl}`, or a `return` of such a display from a function annotated so (a dispatch table) | each function, module function (`mod.f`) or lambda element is wrapped in Codon's `Callable[Tuple[int], int](...)`, so they share one type (#436) | the element is a bound method, a lambda using a local variable of its function, or a call (not wrapped, then Codon's own refusal and a hint); the table is a `set`, an attribute of a class, is unannotated, or is built another way than a display (a comprehension) |
 | a class constant read in its own class body (#433): `DOUBLE = LIMIT * 2`, `x: int = SIZE` (a dataclass default), `def f(self, n=LIMIT)`, `@register(LIMIT)` | `Class.LIMIT` (`Outer.Inner.LIMIT` in a nested class) | the constant is annotated and not a single-line literal (`LIMIT: int = 2 * 3`), it is assigned again later in the body, the class is defined in a function, the read is a `NamedTuple` field default, or it is an Enum member with a non-literal value |
-| a comprehension or generator in a class body (#469): `SQ = [i * i for i in range(3)]`, `field(default_factory=lambda: [d.name for d in Mode])`, `lambda: tuple(gen)`, `lambda: list(Mode)` | a module-level function above the class (`def _acs_hoist_Q_2(): return (...)`) that the attribute or field default calls, on the same lines (Codon does not bind a comprehension's variable in a class body, and crashes on an Enum iterated there) | the expression reads its own class (`range(LIMIT)` with `LIMIT` a constant of the class): build it in a module-level function |
+| a comprehension or generator in a class body (#469): `SQ = [i * i for i in range(3)]`, `field(default_factory=lambda: [d.name for d in Mode])`, `lambda: tuple(gen)`, `lambda: list(Mode)` | a module-level function above the class (`def _acs_hoist_Q_2(): return (...)`) that the attribute or field default calls, on the same lines (Codon does not bind a comprehension's variable in a class body, and crashes on an Enum iterated there) | the expression reads its own class, or an enclosing one (`range(LIMIT)` with `LIMIT` a constant of the class): build it in a module-level function. A class nested in a class is hoisted too (#482, `_acs_hoist_Outer_Inner_5`, above the outermost class); one inside a function is not |
+| a lambda assigned in a class body (#482): `f = lambda self, v: v * 2`, `key = lambda v: str(v) + "!"` | `def f(self, v): return (v * 2)` on the same line, as Python makes it a method. A lambda whose first parameter is not `self` / `cls` is a `@staticmethod` (a decorator line is added, mapped to the lambda's line): it is called as `C.key(3)`, and Codon would otherwise bind `v` to the instance. In a nested class too | a lambda on the line of its class (`class C: f = lambda: 1`) or a multi-target assignment is left as written |
+| `staticmethod(lambda a, b=2: a + b)`, `classmethod(lambda cls: ...)` in a class body (#482) | an `@staticmethod` / `@classmethod` def of the same name | |
+| a lambda default of a method (#482): `def sort(self, xs: list[int], key=lambda v: -v)` | a module-level function above the outermost class (`def _acs_lambda_P_3_27(v): return (-v)`) that the default names; Python evaluates a default once and the lambda reads only globals, so it is the same value | the class is inside a function or a block, or the lambda has defaults that are not literals: write a module-level `def` and name it as the default |
 | `dict(a=1)` | `{"a": 1}` (Codon's `dict` takes no keywords) | |
 
 Notes:
@@ -1162,7 +1175,10 @@ Notes:
   TracebackType` is refused (`types` has no model): annotate `tb` as `object`.
   `__enter__` returning `self` (`-> "Ctx"`, or no annotation) compiles as it
   is, and so does `-> bool` (suppression). `__exit__(self, *args: object)`
-  needs no rewrite.
+  needs no rewrite. The canonical signature `__exit__(self, exc_type:
+  type[BaseException] | None, exc: BaseException | None, tb: object) -> bool`
+  raises no "Codon cannot express" warning: the dropped parameters are the
+  ones the check leaves to their `None` default (#482).
 - Codon gives every function and lambda a type of its own, so a list or dict
   of different ones does not compile without the annotation, even if you
   annotate nothing else. Annotate where the table is assigned or returned; an

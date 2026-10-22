@@ -3730,3 +3730,136 @@ def test_a_lowered_lambda_fstring_equals_the_original(template: str) -> None:
         samples = (3,) if "range" in code else (1, 3.25)
         results.append(([scope["f"](v) for v in samples], log))
     assert results[0] == results[1], template
+
+
+# -- a class-body lambda, a method's lambda default, nested classes (#482) -----
+
+
+def _lines(source: str) -> tuple[list[str], list[int]]:
+    from autoware_carla_scenario.typecheck.transform import (
+        PRELUDE,
+        transform_source_lines,
+    )
+
+    text, origin = transform_source_lines(source)
+    lines = text[len(PRELUDE) :].splitlines()
+    assert len(lines) == len(origin)
+    return lines, origin
+
+
+def test_a_class_body_lambda_with_self_becomes_a_method() -> None:
+    out = transform_source("class T:\n    f = lambda self, v: v * 2\n")
+    assert "    def f(self, v): return (v * 2)\n" in out
+    assert "staticmethod" not in out
+
+
+def test_a_class_body_lambda_without_self_becomes_a_static_method() -> None:
+    lines, origin = _lines("class T:\n    key = lambda v: str(v) + 'x'\n    Y = 1\n")
+    at = lines.index("    def key(v): return (str(v) + 'x')")
+    assert lines[at - 1] == "    @staticmethod"
+    # The decorator maps to the lambda's line, and the rest keeps its line.
+    assert origin[at - 1] == origin[at] == 2
+    assert origin[lines.index("    Y = 1")] == 3
+
+
+def test_staticmethod_of_a_lambda_becomes_a_decorated_def() -> None:
+    out = transform_source(
+        "class T:\n    f = staticmethod(lambda a, b=2: a + b)\n    g = lambda: 1\n"
+    )
+    assert "    @staticmethod\n    def f(a, b=2): return (a + b)\n" in out
+    assert "    @staticmethod\n    def g(): return (1)\n" in out
+
+
+def test_a_multiline_class_body_lambda_keeps_its_lines() -> None:
+    source = "class T:\n    f = lambda self, v: (\n        v + 1\n    )\n    Y = 1\n"
+    lines, origin = _lines(source)
+    assert origin[lines.index("    Y = 1")] == 5
+    assert lines.index("    Y = 1") == lines.index("class T:") + 4
+
+
+def test_a_lambda_in_a_nested_class_is_rewritten() -> None:
+    out = transform_source(
+        "class Outer:\n    class Inner:\n        f = lambda self, v: v * 2\n"
+    )
+    assert "        def f(self, v): return (v * 2)\n" in out
+
+
+def test_a_lambda_on_the_line_of_its_class_is_left_alone() -> None:
+    out = transform_source("class T: f = lambda self: 1\n")
+    assert "class T: f = lambda self: 1\n" in out
+
+
+def test_a_lambda_default_of_a_method_is_hoisted_above_the_class() -> None:
+    lines, origin = _lines(
+        "@dec\nclass P:\n    def sort(self, xs, key=lambda v: -v, *, k=lambda: 1): ...\n"
+    )
+    first = next(
+        i for i, line in enumerate(lines) if line.startswith("def _acs_lambda")
+    )
+    assert lines[first] == "def _acs_lambda_P_3_27(v): return (-v)"
+    assert lines.index("@dec") > first
+    assert origin[first] == 3
+    assert "key=_acs_lambda_P_3_27" in lines[lines.index("class P:") + 1]
+
+
+def test_a_lambda_default_of_a_method_in_a_function_is_refused() -> None:
+    from autoware_carla_scenario.typecheck.transform import class_body_refusals
+
+    source = "def build():\n    class P:\n        def m(self, key=lambda v: v): ...\n"
+    [(line, message)] = class_body_refusals(source)
+    assert line == 3 and "module-level `def`" in message
+
+
+def test_a_comprehension_in_a_nested_class_is_hoisted() -> None:
+    lines, origin = _lines(
+        "class Outer:\n    class Inner:\n        XS = [i for i in range(3)]\n"
+    )
+    first = lines.index("def _acs_hoist_Outer_Inner_3():")
+    assert first < lines.index("class Outer:")
+    assert origin[first] == 3
+    assert "        XS = _acs_hoist_Outer_Inner_3()" in lines
+
+
+def test_a_nested_class_comprehension_reading_an_outer_class_is_refused() -> None:
+    from autoware_carla_scenario.typecheck.transform import class_body_refusals
+
+    source = "class Outer:\n    N = 3\n    class Inner:\n        XS = [i for i in range(N)]\n"
+    assert class_body_refusals(source) == []  # N is read, not a class name
+    source = "class Outer:\n    class Inner:\n        XS = [Outer for i in range(3)]\n"
+    [(line, message)] = class_body_refusals(source)
+    assert line == 3 and "reads Outer itself" in message
+
+
+@pytest.mark.parametrize(
+    ("annotation", "advice"),
+    [
+        ("list", "list[X]"),
+        ("dict", "dict[K, V]"),
+        ("set", "set[X]"),
+        ("tuple", "tuple[X, ...]"),
+        ("typing.List", "List[X]"),
+        ("'list'", "list[X]"),
+    ],
+)
+def test_a_bare_collection_field_of_a_dataclass_is_refused(
+    annotation: str, advice: str
+) -> None:
+    from autoware_carla_scenario.typecheck.transform import class_body_refusals
+
+    source = (
+        f"from dataclasses import dataclass\n@dataclass\nclass C:\n"
+        f"    a: int = 1\n    xs: {annotation}\n"
+    )
+    [(line, message)] = class_body_refusals(source)
+    assert line == 5 and advice in message and "`xs`" in message
+
+
+def test_a_parametrized_or_plain_class_field_is_not_a_bare_collection() -> None:
+    from autoware_carla_scenario.typecheck.transform import class_body_refusals
+
+    source = (
+        "from dataclasses import dataclass\n@dataclass\nclass C:\n"
+        "    xs: list[int]\n    t: tuple[float, ...] = ()\n"
+        "class P:\n    xs: list = []\n"
+    )
+    assert class_body_refusals(source) == []
