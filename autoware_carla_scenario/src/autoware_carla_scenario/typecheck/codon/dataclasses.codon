@@ -15,6 +15,8 @@ def field(default):
     return default
 
 
-def replace(obj, **changes):
-    """dataclasses.replace(obj, **changes): a copy of obj; its type is obj's."""
+def replace(obj):
+    """dataclasses.replace(obj, a=x): the checker lowers the call to
+    `replace(obj)._acs_with__a(a=x)` (typecheck/transform.py), where this
+    returns obj and the dataclass's own method makes the typed copy."""
     return obj

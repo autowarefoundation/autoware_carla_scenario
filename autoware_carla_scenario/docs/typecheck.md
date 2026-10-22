@@ -1114,6 +1114,25 @@ Two things Python does that Codon 0.19 does not are filled in for you:
     modelled either: write `a is b`. Python refuses `<` without `order=True`
     and `hash()` of a non-frozen dataclass, and so does the check, with a
     hint naming the flag.
+  - `dataclasses.replace(obj, a=x, b=y)` is checked as the typed copy it is
+    (#487): the check appends to each dataclass of the module one
+    `_acs_with__<field>` method per field the constructor takes, and writes
+    the call as `replace(obj)._acs_with__a(a=x)._acs_with__b(b=y)`. An unknown
+    field, a value of the wrong type (`replace(w, speed="fast")`) and a
+    field declared `field(init=False)` (which Python refuses too) are
+    refused at the call, and `replace(plan, best=None)` of an `Optional`
+    field works. It holds for a dataclass the scenario package defines, in
+    any of its modules, whose bases are dataclasses of the same module (or
+    none) and which has no `__init__` of its own; for any other class (a
+    framework or library dataclass) the call is refused with a hint to build
+    the object yourself (`OpenDrivePose` and `DevContainer` have the methods in their
+    models, as the framework uses `replace` on them). The object goes by position and the fields by keyword:
+    `replace(obj, **changes)` and `replace(obj, 3.0)` are refused. The fields
+    change one after the other, so a `__post_init__` is not run between them,
+    and `replace(obj)` with no change returns `obj` itself, not a copy (both
+    only matter to the types). A `replace` that is not `dataclasses`' (a
+    parameter, a local or another import of that name, `str.replace`) is left
+    alone.
   - An `IntEnum` (also `IntFlag`, `class M(int, Enum)`) member compares with
     its value (`M.A == 1`), orders against a member or an `int`
     (`M.A < M.B`) and converts with `int()` and `float()`. A `StrEnum` or
@@ -1368,7 +1387,8 @@ instead:
 
 - `dataclasses.asdict` returns a `dict[str, Any]`: build the dict from the
   fields you need. The `dataclasses` shim declares only `dataclass`, `field`
-  and `replace`.
+  and `replace` (a call is rewritten and checked per field, see "Your own
+  dataclasses, enums and named tuples").
 - `functools.wraps` (and any other name of `functools`, `itertools` or
   `collections` not listed above) is not modelled.
 - `contextlib`: write a class with `__enter__` and

@@ -43,6 +43,17 @@ class DevContainer:
     workspace_mount: str = DEFAULT_WORKSPACE_MOUNT
     environment: Dict[str, str] = Dict[str, str]()
 
+    # dataclasses.replace(container, image=...): the check lowers it to these
+    # (typecheck/transform.py), as it does for a scenario's own dataclass.
+    def _acs_with__image(self, image: str) -> DevContainer:
+        return DevContainer(image, self.workspace_mount, self.environment)
+
+    def _acs_with__workspace_mount(self, workspace_mount: str) -> DevContainer:
+        return DevContainer(self.image, workspace_mount, self.environment)
+
+    def _acs_with__environment(self, environment: Dict[str, str]) -> DevContainer:
+        return DevContainer(self.image, self.workspace_mount, environment)
+
 
 def read_devcontainer(workspace: Path, variant: str, *_kw,
                       env: Optional[Dict[str, str]] = None) -> DevContainer:

@@ -117,6 +117,14 @@ __all__ = ["REWRITE_HINTS", "python_rewrites", "python_rewrite_refusals"]
 #: Codon's refusals of what this pass leaves alone, and what to write.
 REWRITE_HINTS: tuple[tuple[re.Pattern[str], str], ...] = (
     (
+        re.compile(r"object has no attribute '_acs_with__\w+'"),
+        "dataclasses.replace(obj, field=value) is checked for a dataclass the "
+        "scenario package defines: this one has no such field, declares it with "
+        "field(init=False) (which Python refuses too), is a class of the "
+        "framework or of a library, or has an __init__ of its own (build the "
+        "object yourself: Plan(points=plan.points, best=None))",
+    ),
+    (
         re.compile(r"name '%_\w+_\d+' is not defined"),
         "Codon does not bind the variable of a comprehension that runs in a "
         "class body (a class attribute, a default of a dataclass field): "
