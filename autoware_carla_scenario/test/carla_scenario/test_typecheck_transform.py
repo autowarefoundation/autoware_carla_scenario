@@ -3389,3 +3389,110 @@ def test_class_constants_compose_with_the_other_rewrites() -> None:
     text, [(name, block)] = python_rewrites(source)
     assert "x: int = V.N" in text and "a=V.N" in text and name == "V"
     assert "total_ordering" not in text and 'f"{a}"' in text
+
+
+# ---------------------------------------------------------------------------
+# An f-string in a lambda that reads a captured name (#470)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        ('f = lambda v: f"{v}{p}"', "f = lambda v: (str(v) + str(p))"),
+        (
+            'f = lambda v: f"a{v}-{p}!"',
+            'f = lambda v: ("a" + str(v) + "-" + str(p) + "!")',
+        ),
+        ('f = lambda v: f"{p!r}"', "f = lambda v: (repr(p))"),
+        ('f = lambda v: f"{p:.2f}"', 'f = lambda v: ((p).__format__(".2f"))'),
+        (
+            'f = lambda v: f"{p!r:>{v}}"',
+            'f = lambda v: (repr(p).__format__(">" + str(v)))',
+        ),
+        ('f = lambda: f"{p=:.2f}"', 'f = lambda: ("p=" + (p).__format__(".2f"))'),
+        ('f = lambda: f"{p=}"', 'f = lambda: ("p=" + repr(p))'),
+        ('f = lambda e: "{}{}".format(e, p)', "f = lambda e: (str(e) + str(p))"),
+        (
+            'f = lambda v, lab=cfg.name: f"{v}{lab}"',
+            "f = (lambda lab: lambda v: (str(v) + str(lab)))(cfg.name)",
+        ),
+        (
+            'g = (lambda lab: lambda v: f"{lab}")("a")',
+            'g = (lambda lab: lambda v: (str(lab)))("a")',
+        ),
+        (
+            's = sorted(xs, key=lambda e: f"{e}{p}")',
+            "s = sorted(xs, key=lambda e: (str(e) + str(p)))",
+        ),
+    ],
+)
+def test_a_lambda_fstring_reading_a_captured_name_is_lowered(
+    source: str, expected: str
+) -> None:
+    assert _rewritten(source + "\n") == expected + "\n"
+    assert python_rewrite_refusals(source + "\n") == []
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        'f = lambda v: f"{v}"',
+        'f = lambda v, w: f"{v}{w:>5}"',
+        'f = lambda: f"{3}"',
+        'p = 1\nf = f"{p}"',
+        'def g(p):\n    return f"{p}"',
+        'def g(p):\n    return (lambda v: p)(1), f"{p}"',
+    ],
+)
+def test_a_lambda_fstring_of_its_own_names_is_left_alone(source: str) -> None:
+    assert _rewritten(source + "\n") == source + "\n"
+
+
+def test_a_lambda_fstring_lowering_keeps_the_lines() -> None:
+    source = 'f = lambda v: f"""a\n{v}\n{p}"""\nz = 1\n'
+    text = _rewritten(source)
+    assert text.count("\n") == source.count("\n")
+    assert text.splitlines()[-1] == "z = 1"
+    ast.parse(text)
+
+
+def test_a_lambda_fstring_with_ascii_conversion_is_refused_at_its_line() -> None:
+    refused = python_rewrite_refusals('x = 1\nf = lambda v: f"{p!a}"\n')
+    assert [line for line, _ in refused] == [2]
+    assert "use !r, or write a def" in refused[0][1]
+
+
+@pytest.mark.parametrize(
+    "template",
+    [
+        'lambda v: f"{v}{p}"',
+        'lambda v: f"<{v!r}|{p!r}|{p!s}>"',
+        'lambda v: f"{v:>6}|{p:.2f}|{p:+.1f}|{v:{w}}"',
+        'lambda v: f"{p=}|{p=:.1f}|{v=}"',
+        'lambda v: "{}-{:>4}-{!r}".format(v, p, p)',
+        'lambda v: f"{{lit}} {v} {p}"',
+        'lambda v, lab="q": f"{v}{lab}{p}"',
+        'lambda v, lab=side(): f"{v}{lab}{p}"',
+        '(lambda lab: lambda v: f"{v}{lab}{p}")(side())',
+        'lambda v: f"{note(v)}{note(p)}{note(w)}"',
+        'lambda v: [f"{i}{p}" for i in range(v)]',
+    ],
+)
+def test_a_lowered_lambda_fstring_equals_the_original(template: str) -> None:
+    results = []
+    for code in (
+        f"f = {template}\n",
+        _rewritten(f"f = {template}\n"),
+    ):
+        log: list[str] = []
+
+        def note(value: Any, log: list[str] = log) -> Any:
+            log.append(repr(value))
+            return value
+
+        scope: dict[str, Any] = {"p": 2.5, "w": 7, "side": lambda: "S", "note": note}
+        exec(code, scope)  # noqa: S102
+        samples = (3,) if "range" in code else (1, 3.25)
+        results.append(([scope["f"](v) for v in samples], log))
+    assert results[0] == results[1], template
