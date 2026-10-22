@@ -48,6 +48,7 @@ class Formatter:
         datefmt: Optional[str] = None,
         style: str = "%",
         validate: bool = True,
+        defaults=None,
     ):
         self._fmt = fmt if fmt is not None else "%(message)s"
 
@@ -111,9 +112,11 @@ class Logger:
     level: int
     propagate: bool
     disabled: bool
+    handlers: List[Handler]
 
     def __init__(self, name: str, level=NOTSET):
         _level(level, "Logger()")
+        self.handlers = []
         self.name = name
         self.level = NOTSET
         self.propagate = True
@@ -241,8 +244,18 @@ class Logger:
         return Logger(self.name + "." + suffix)
 
 
-def getLogger(name: str = "root") -> Logger:
-    return Logger(name)
+def getLogger(name: Optional[str] = None) -> Logger:
+    return Logger(name if name is not None else "root")
+
+
+def getLevelName(level):
+    # CPython maps an int to its name and, still, a name back to its int.
+    if isinstance(level, int):
+        return "Level " + str(level)
+    elif isinstance(level, str):
+        return NOTSET
+    else:
+        compile_error("logging.getLevelName() takes a level as an int or a str")
 
 
 def debug(

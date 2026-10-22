@@ -5957,8 +5957,11 @@ def test_a_supported_stdlib_name_compiles_in_a_scenario(
         "\n\n" + helper,
         header=_stdlib_header(imports),
     )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
 
 
+# ---------------------------------------------------------------------------
 # Valid Python the transform rewrites for Codon (#376)
 # ---------------------------------------------------------------------------
 
@@ -6080,6 +6083,16 @@ _LOGGING_ACCEPTED: dict[str, str] = {
         "effective = logger.getEffectiveLevel() + logging.CRITICAL + logging.FATAL\n"
         "logger.getChild('sub').info('x %s %s %s', enabled, effective, logging.WARN)\n"
         "logger.hasHandlers()\n"
+        "n_handlers = len(logger.handlers)\n"
+        "root = logging.getLogger()\nroot2 = logging.getLogger(None)\n"
+        'name = logging.getLevelName(logging.INFO) + " " + str(n_handlers)\n'
+        'number = logging.getLevelName("INFO") + 1\n'
+        'logging.Formatter("%(message)s", defaults={"k": "v"})\n'
+    ),
+    "varargs of mixed types and exception in except": (
+        'logger.info("%s %d %.1f", "a", 1, 2.5)\n'
+        "try:\n    raise ValueError('x')\nexcept ValueError:\n"
+        '    logger.exception("x")\n'
     ),
 }
 

@@ -2477,7 +2477,6 @@ _LOGGING_NOT_MODELLED = {
     "disable",
     "getHandlerByName",
     "getHandlerNames",
-    "getLevelName",
     "getLevelNamesMapping",
     "getLogRecordFactory",
     "getLoggerClass",

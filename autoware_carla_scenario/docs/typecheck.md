@@ -2498,12 +2498,12 @@ What Codon 0.19 needs that Python does not, beyond
   (the same branch, written the other way round): `scenario_queue` imports
   tqdm in an `else` branch, at module level, and waits without the progress
   bar in the first branch. The `logging` shim covers, with CPython's
-  signatures: `getLogger`, the level constants (`NOTSET` to `CRITICAL`,
+  signatures: `getLogger`, `getLevelName`, the level constants (`NOTSET` to `CRITICAL`,
   `WARN`, `FATAL`) and `BASIC_FORMAT`; `Logger.debug`, `info`, `warning`,
   `warn` (the deprecated alias), `error`, `exception`, `critical`, `fatal` and
   `log(level, msg, ...)`, and the module-level functions of the same names;
   `setLevel`, `isEnabledFor`, `getEffectiveLevel`, `addHandler`,
-  `removeHandler`, `hasHandlers` and `getChild`; `Handler`, `StreamHandler`,
+  `removeHandler`, `hasHandlers`, `getChild` and the `handlers` list; `Handler`, `StreamHandler`,
   `FileHandler`, `NullHandler` and `Formatter`; and `basicConfig` with its
   keywords (`filename`, `filemode`, `format`, `datefmt`, `style`, `level`,
   `stream`, `handlers`, `force`, `encoding`, `errors`). Every logging call
@@ -2517,7 +2517,7 @@ What Codon 0.19 needs that Python does not, beyond
   as a dict display, so annotate it (`extra: dict[str, str]`) or convert
   the values to `str`. `exc_info` takes a `bool` only (not an exception or a
   tuple). Left out: `LogRecord`, `Filter`, `LoggerAdapter`, `disable`,
-  `shutdown`, `captureWarnings`, the record factory and logger class
+  `shutdown`, `captureWarnings`, `addLevelName`, the record factory and logger class
   functions, and the internals of `Logger` (`handle`, `makeRecord`,
   `callHandlers`, `findCaller`); `test_typecheck_model.py` lists them.
 - **pyxodr's road network is the model's**: `codon/pyxodr/` names the
