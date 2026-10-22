@@ -41,7 +41,7 @@ from .entity.registry import register_pedestrian_entity as _register_pedestrian_
 from .entity.registry import register_vehicle_entity as _register_vehicle_entity
 from .entity.vehicle_entity import VehicleEntity, VehicleEntityConfig
 from .measures import BUILT_IN_MEASURES, Measure, check_measure_key
-from .traffic.base import TrafficBackend
+from .traffic.base import TrafficBackend, WalkedEntity
 from .traffic.driven import BackendDriven
 
 logger = logging.getLogger(__name__)
@@ -277,8 +277,9 @@ class BaseScenario(ABC):
         """Inject what drives this run's traffic.
 
         Called by :class:`ScenarioRunner` before :meth:`setup`, because
-        :meth:`setup` is where a scenario spawns its NPCs and
-        :meth:`register_entity` passes the backend on to each of them.
+        :meth:`setup` is where a scenario spawns its NPCs and pedestrians, and
+        :meth:`register_entity` and :meth:`register_pedestrian` pass the
+        backend on to each of them.
 
         Args:
             backend: The run's traffic backend.
@@ -713,12 +714,13 @@ class BaseScenario(ABC):
         """Register a spawned pedestrian so actions can name it.
 
         A separate call from :meth:`register_entity` rather than a wider type
-        on it, because the two share only the lookup.  Registering a vehicle
-        also hands it the run's traffic backend and puts it on the list whose
-        initial speed is applied after warm-up; a walker is driven by nothing
-        and starts at rest, so both of those would be wrong for it -- and a
-        single method that skipped them for one kind would read as though the
-        skipping were an optimisation.
+        on it, because the two share only the lookup and the backend.
+        Registering a vehicle also puts it on the list whose initial speed is
+        applied after warm-up; a walker starts at rest, so that would be wrong
+        for it.  Like a vehicle, it is handed the run's traffic backend, which
+        walks it when it walks the scenario's pedestrians
+        (:meth:`~autoware_carla_scenario.traffic.base.TrafficBackend.adopt_pedestrian`,
+        :meth:`~autoware_carla_scenario.traffic.base.TrafficBackend.walk_straight`).
 
         Args:
             entity: A :class:`PedestrianEntity` spawned in :meth:`setup`.
@@ -727,6 +729,11 @@ class BaseScenario(ABC):
         # always kept it (see register_entity above).
         if isinstance(entity, PedestrianEntity):
             _register_pedestrian_entity(entity.role_name, entity)
+            backend = self._traffic_backend
+            if backend is not None:
+                entity.set_traffic_backend(backend)
+                walked: WalkedEntity = entity
+                backend.adopt_pedestrian(walked)
         else:
             _register_entity(entity.role_name, entity)
 

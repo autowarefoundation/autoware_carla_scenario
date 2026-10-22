@@ -56,6 +56,7 @@ from .base import (
     TrafficContext,
     TurnDirection,
     TurningAtJunctions,
+    WalkedEntity,
 )
 from .config import TrafficConfig, TrafficManagerBackendConfig
 from .parameters import (
@@ -107,6 +108,7 @@ __all__ = [
     "build_sumo",
     "register_builtin_backends",
     "TurningAtJunctions",
+    "WalkedEntity",
     "TRAFFIC_BACKEND_ENTRY_POINT_GROUP",
     "available_backends",
     "build_backend",
