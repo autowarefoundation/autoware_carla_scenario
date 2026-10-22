@@ -679,10 +679,10 @@ uv run scenario ... background_traffic.enabled=true background_traffic.source.ve
 uv run scenario ... background_traffic.enabled=true background_traffic.source.stop_after_seconds=20
 ```
 
-`background_traffic` (in `examples/conf/config.yaml`) is off by default, and the
-SUMO backend's own `ambient` randomTrips demand is off in
-`conf/traffic/sumo.yaml`, so an example runs with no traffic but its own unless
-asked.
+`background_traffic` (in `examples/conf/config.yaml`) is off by default, and so
+are the SUMO backend's own `ambient` randomTrips demand and its `pedestrians`
+(`SumoBackendConfig`'s defaults, and `conf/traffic/sumo.yaml`'s), so a run has
+no traffic but its own and its traffic sources' unless asked.
 
 ## Why this exists
 
@@ -706,6 +706,7 @@ before anything is spawned.
 uv run scenario scenario=lane_change/left map=town10hd_opt traffic=sumo
 uv run scenario ... traffic=sumo traffic.options.ambient.vehicles_per_hour=1800
 uv run scenario ... traffic=sumo traffic.options.scenario_vehicles=sumo
+uv run scenario ... traffic=sumo traffic.options.scenario_pedestrians=sumo
 uv run scenario ... traffic=sumo traffic.options.fcd_output=true   # <output>/sumo/fcd.xml
 ```
 
@@ -733,8 +734,9 @@ mirrored. `traffic.options.net_path` runs on an existing `.net.xml` instead.
 | --- | --- | --- |
 | Ego (`autoware`, `carla_driver`) | its entity | published: moved to its CARLA pose every tick |
 | Scenario NPCs, autopilot ego | the TrafficManager (`scenario_vehicles=traffic_manager`, default), or SUMO (`scenario_vehicles=sumo`) | published, or driven |
-| Ambient traffic (`randomTrips.py`) | SUMO | native; mirrored into CARLA |
-| Pedestrians (`walker.pedestrian.*`, e.g. `WalkStraightAction`) | CARLA | published as SUMO persons (`publish_walkers`, on by default) |
+| Ambient traffic (`randomTrips.py`, `ambient.enabled`, off by default) | SUMO | native; mirrored into CARLA |
+| Scenario pedestrians (`PedestrianEntity`, e.g. `WalkStraightAction`) | CARLA (`scenario_pedestrians=traffic_manager`, default), or SUMO (`scenario_pedestrians=sumo`) | published, or walked |
+| Other CARLA pedestrians (`walker.pedestrian.*`) | CARLA | published as SUMO persons (`publish_walkers`, on by default) |
 | SUMO's pedestrians (`randomTrips.py --pedestrians`, `pedestrians.enabled`) | SUMO | native; mirrored into CARLA as walkers near the ego |
 
 A published vehicle has SUMO's speed and lane-change control switched off, so
@@ -749,6 +751,21 @@ crossing or anywhere else, or changes lanes round it. A person has to be added
 on an edge with a footway -- SUMO aborts the whole simulation when one is moved
 off an edge without -- so a pedestrian with no footway within 50 m (or on a
 network with none) is left out, with a warning.
+
+**The scenario's pedestrians walked by SUMO** (`scenario_pedestrians=sumo`):
+each `PedestrianEntity` the scenario registers is a SUMO person from the start
+of the run, and its CARLA walker follows that person, as a mirrored walker
+follows one of SUMO's own. Standing, the person is put where its walker
+stands every tick. A `WalkStraightAction` walks the person straight on, the
+way its walker faces, through TraCI: each step it is moved on along the line
+at the action's speed (`moveToXY`, `keepRoute` 6, so off the kerb it is on the
+road lanes, where SUMO's traffic brakes for it), until a second action stops
+it (`speed_ms: 0`). This is TraCI's walk, not SUMO's pedestrian model, which
+walks footways and crossings to a destination and so has no way to step off
+the kerb where a pedestrian stands. An action that moves the walker itself
+(`FollowTrajectoryAction`, an adversity) takes it back from SUMO, which
+publishes it from then on. A pedestrian with no footway within 50 m stays
+CARLA's, as a published one would.
 
 **SUMO's own pedestrians** (`pedestrians`, off by default) walk the network's
 footways (`randomTrips.py --pedestrians`, unweighted, up to `max_distance_m`

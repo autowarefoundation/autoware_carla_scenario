@@ -248,6 +248,41 @@ class TestWalking:
         assert actor is not None
         assert actor.apply_control.call_args[0][0].speed == pytest.approx(0.0)
 
+    def test_a_backend_that_walks_it_takes_the_walk(
+        self, walker: PedestrianEntity
+    ) -> None:
+        backend = MagicMock()
+        backend.walk_straight.return_value = True
+        walker.set_traffic_backend(backend)
+        WalkStraightAction(entity_name="walker1", speed_ms=1.4).execute(MagicMock())
+
+        backend.walk_straight.assert_called_once_with(walker, 1.4)
+        actor = walker.actor
+        assert actor is not None
+        actor.apply_control.assert_not_called()
+
+    def test_a_backend_that_walks_no_pedestrians_leaves_the_walk_to_it(
+        self, walker: PedestrianEntity
+    ) -> None:
+        from autoware_carla_scenario.traffic import NullTrafficBackend
+
+        walker.set_traffic_backend(NullTrafficBackend())
+        WalkStraightAction(entity_name="walker1", speed_ms=1.4).execute(MagicMock())
+
+        actor = walker.actor
+        assert actor is not None
+        assert actor.apply_control.call_args[0][0].speed == pytest.approx(1.4 * 20.5)
+
+    def test_releasing_it_takes_it_back_from_its_backend(
+        self, walker: PedestrianEntity
+    ) -> None:
+        backend = MagicMock()
+        walker.set_traffic_backend(backend)
+        world = MagicMock()
+        walker.release_from_traffic(world)
+
+        backend.release_pedestrian.assert_called_once_with(walker, world)
+
     def test_a_negative_speed_is_refused_at_construction(self) -> None:
         with pytest.raises(ValueError, match="must not be negative"):
             WalkStraightAction(entity_name="walker1", speed_ms=-1.0)

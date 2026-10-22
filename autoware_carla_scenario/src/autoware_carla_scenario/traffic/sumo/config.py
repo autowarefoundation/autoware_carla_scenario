@@ -18,6 +18,7 @@ __all__ = ["AmbientTrafficConfig", "PedestrianConfig", "SumoBackendConfig"]
 
 _LIGHT_AUTHORITIES = ("carla", "sumo", "none")
 _SCENARIO_VEHICLE_DRIVERS = ("traffic_manager", "sumo")
+_SCENARIO_PEDESTRIAN_DRIVERS = ("traffic_manager", "sumo")
 _VEHICLE_CONTROLS = ("physics", "teleport")
 
 
@@ -26,8 +27,11 @@ class AmbientTrafficConfig:
     """SUMO's own traffic, generated with ``randomTrips.py``.
 
     Attributes:
-        enabled: Generate any at all.  Off, SUMO carries only the scenario's
-            vehicles (and a ``route_path`` demand, when one is given).
+        enabled: Generate any at all.  Off (the default), SUMO carries only
+            the scenario's vehicles, the background vehicles its traffic
+            sources add (``TrafficSourceAction``), and a ``route_path``
+            demand, when one is given: nothing joins the run that the run did
+            not ask for.
         vehicles_per_hour: Trips generated per hour of simulated time.
         period_s: Seconds between two trips; overrides ``vehicles_per_hour``.
         end_s: Seconds of demand to generate.
@@ -38,7 +42,7 @@ class AmbientTrafficConfig:
             keep trips off dead ends.
     """
 
-    enabled: bool = True
+    enabled: bool = False
     vehicles_per_hour: float = 900.0
     period_s: Optional[float] = None
     end_s: float = 3600.0
@@ -134,6 +138,17 @@ class SumoBackendConfig:
             same whichever backend fills the road -- they are published into
             SUMO, whose traffic reacts to them.  ``sumo``: SUMO drives them, and
             their manoeuvres become TraCI calls.
+        scenario_pedestrians: What walks the scenario's own pedestrians (the
+            ``PedestrianEntity`` it registers).  ``traffic_manager`` (the
+            default): CARLA's side, as under the ``traffic_manager`` backend
+            -- a ``WalkStraightAction`` walks the walker straight ahead with a
+            ``carla.WalkerControl`` -- and each is published into SUMO
+            (``publish_walkers``).  ``sumo``: each is a SUMO person, and its
+            CARLA walker follows it.  A ``WalkStraightAction`` walks the
+            person straight on through TraCI (``person.moveToXY`` each step,
+            onto the road where the line crosses it, so SUMO's traffic sees
+            it there), and the walker follows: the same walk as on CARLA's
+            side, with SUMO holding the pedestrian.
         tm_port: TrafficManager port, for ``scenario_vehicles=traffic_manager``.
         vehicle_control: How a CARLA vehicle SUMO drives follows its SUMO
             vehicle.  ``physics`` (the default): with CARLA's vehicle physics,
@@ -167,7 +182,9 @@ class SumoBackendConfig:
         publish_walkers: Put CARLA's pedestrians into SUMO as persons where
             they stand, every step, so SUMO traffic sees them: a SUMO vehicle
             brakes for a pedestrian on its lane -- on a crossing or anywhere
-            else on the road -- or changes lanes round it.
+            else on the road -- or changes lanes round it.  Not the scenario's
+            pedestrians SUMO walks (``scenario_pedestrians=sumo``): those are
+            in SUMO already.
         curve_lateral_acceleration: Lateral acceleration (m/s²) SUMO traffic is
             held to in bends when the world's OpenDRIVE is converted: roadgen
             cuts each edge at its bends and gives every piece, and every path
@@ -183,7 +200,7 @@ class SumoBackendConfig:
             ``netOffset``, as netconvert writes a network built from it.
         route_path: Explicit SUMO demand (``.rou.xml``), added to the ambient
             traffic.
-        ambient: SUMO's own generated traffic.
+        ambient: SUMO's own generated traffic.  Off by default.
         pedestrians: SUMO's own generated pedestrians, mirrored into CARLA
             near the ego.  Off by default.
         warmup_s: SUMO seconds simulated when the run starts, before the
@@ -214,6 +231,7 @@ class SumoBackendConfig:
     """
 
     scenario_vehicles: str = "traffic_manager"
+    scenario_pedestrians: str = "traffic_manager"
     tm_port: int = DEFAULT_TM_PORT
     vehicle_control: str = "physics"
     feedback_distance_m: float = 0.0
@@ -259,6 +277,12 @@ class SumoBackendConfig:
             raise ValueError(
                 "scenario_vehicles must be one of "
                 f"{', '.join(_SCENARIO_VEHICLE_DRIVERS)} (got {self.scenario_vehicles!r})"
+            )
+        if self.scenario_pedestrians not in _SCENARIO_PEDESTRIAN_DRIVERS:
+            raise ValueError(
+                "scenario_pedestrians must be one of "
+                f"{', '.join(_SCENARIO_PEDESTRIAN_DRIVERS)} "
+                f"(got {self.scenario_pedestrians!r})"
             )
 
     @classmethod

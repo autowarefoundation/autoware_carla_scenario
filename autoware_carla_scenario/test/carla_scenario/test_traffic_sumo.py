@@ -61,6 +61,7 @@ def test_sumo_is_a_built_in_backend_that_builds_without_sumo_loaded() -> None:
     assert backend.name == "sumo"
     assert backend.describe()["traffic_light_authority"] == "none"
     assert backend.describe()["scenario_vehicles"] == "traffic_manager"
+    assert backend.describe()["scenario_pedestrians"] == "traffic_manager"
     assert backend.describe()["vehicle_control"] == "physics"
 
 
@@ -73,6 +74,8 @@ def test_the_config_refuses_unknown_keys_and_light_modes() -> None:
         SumoBackendConfig.from_mapping({"traffic_light_authority": "both"})
     with pytest.raises(ValueError, match="scenario_vehicles"):
         SumoBackendConfig.from_mapping({"scenario_vehicles": "autoware"})
+    with pytest.raises(ValueError, match="scenario_pedestrians"):
+        SumoBackendConfig.from_mapping({"scenario_pedestrians": "carla"})
     config = SumoBackendConfig.from_mapping(
         {"sumo_args": ["--verbose", 1], "tm_port": None, "ambient": {"period_s": 2}}
     )
@@ -80,6 +83,14 @@ def test_the_config_refuses_unknown_keys_and_light_modes() -> None:
     assert config.tm_port == SumoBackendConfig().tm_port
     assert config.ambient.period() == 2.0
     assert SumoBackendConfig().ambient.period() == pytest.approx(4.0)
+
+
+def test_sumo_adds_nobody_the_run_did_not_ask_for_by_default() -> None:
+    config = SumoBackendConfig()
+    assert not config.ambient.enabled
+    assert not config.pedestrians.enabled
+    assert config.scenario_vehicles == "traffic_manager"
+    assert config.scenario_pedestrians == "traffic_manager"
 
 
 def test_curve_speeds_are_on_by_default_and_must_be_positive() -> None:
@@ -1897,6 +1908,249 @@ def test_only_the_pedestrians_near_the_ego_are_in_carla(
             assert len(limited._persons) == 1
         finally:
             limited.close()
+    finally:
+        backend.close()
+
+
+# ---------------------------------------------------------------------------
+# The scenario's pedestrians
+# ---------------------------------------------------------------------------
+
+
+def _scenario_pedestrian(
+    network: Path, tmp_path: Path, **options: Any
+) -> tuple[Any, _FakeWorld, Any]:
+    """A started backend with a scenario pedestrian at the south kerb of the
+    west arm, facing across its eastbound lanes (CARLA yaw -90: SUMO north)."""
+    from autoware_carla_scenario.entity.pedestrian_entity import (
+        PedestrianEntity,
+        PedestrianEntityConfig,
+    )
+    from autoware_carla_scenario.entity._spawn import SpawnTransform
+    from autoware_carla_scenario.traffic.sumo.backend import SumoTrafficBackend
+
+    backend = SumoTrafficBackend(
+        SumoBackendConfig(
+            traffic_light_authority="none",
+            warmup_s=0.0,
+            vehicle_control="teleport",
+            cache_dir=str(tmp_path / "cache"),
+            **options,
+        )
+    )
+    backend.prepare(
+        TrafficContext(
+            xodr_path=network,
+            fixed_delta_seconds=0.05,
+            random_seed=3,
+            output_dir=tmp_path / "out",
+        )
+    )
+    walker = _FakeActor(
+        _carla_transform(-50.0, 8.25, -90.0), "pedestrian1", "walker.pedestrian.0001"
+    )
+    walker.bounding_box.extent = _Extent(0.2, 0.2)
+    entity = PedestrianEntity(
+        PedestrianEntityConfig("pedestrian1", SpawnTransform(walker.transform))
+    )
+    entity._walker = walker  # type: ignore[assignment]
+    entity.set_traffic_backend(backend)
+    backend.adopt_pedestrian(entity)
+    world = _FakeWorld([walker])
+    backend.start(world)
+    for i in range(3):
+        backend.tick(world, i * 0.05)
+    return backend, world, entity
+
+
+@needs_sumo
+def test_by_default_the_scenarios_pedestrians_walk_in_carla(
+    crossroads_with_sidewalks: Path, tmp_path: Path
+) -> None:
+    from autoware_carla_scenario.entity.pedestrian_entity import walker_speed_command
+
+    backend, world, entity = _scenario_pedestrian(crossroads_with_sidewalks, tmp_path)
+    walker = entity.actor
+    try:
+        entity.walk_straight(1.5)
+        # Walked straight ahead in CARLA, and published into SUMO.
+        assert walker.control.speed == pytest.approx(walker_speed_command(1.5))
+        assert backend._walked == {}
+        assert list(backend._walkers) == [walker.id]
+    finally:
+        backend.close()
+
+
+@needs_sumo
+def test_sumo_walks_the_scenarios_pedestrian_straight_across_the_road(
+    crossroads_with_sidewalks: Path, tmp_path: Path
+) -> None:
+    backend, world, entity = _scenario_pedestrian(
+        crossroads_with_sidewalks, tmp_path, scenario_pedestrians="sumo"
+    )
+    tc = backend._traci
+    walker = entity.actor
+    try:
+        (person,) = backend._walked
+        assert backend._walkers == {}  # walked, not published
+        # Standing, the person stands where its walker does.
+        assert tc.person.getPosition(person) == pytest.approx((-50.0, -8.25), abs=0.1)
+        entity.walk_straight(1.5)
+        assert list(backend._walking) == [person]
+        lanes = set()
+        for i in range(80):  # 4 s
+            backend.tick(world, 1.0 + i * 0.05)
+            lanes.add(tc.person.getLaneID(person))
+            x, y = tc.person.getPosition(person)
+            location = walker.transform.location
+            # Where SUMO has it (CARLA's y mirrored), a step behind at most.
+            assert math.hypot(location.x - x, location.y + y) < 0.1
+            # CARLA 0.10's command for 1.5 m/s.
+            assert walker.control.speed == pytest.approx(1.5 * 20.5)
+        # Straight on across the eastbound lanes, at its speed, on the road
+        # lanes SUMO's traffic drives (and yields to it on).
+        assert tc.person.getPosition(person) == pytest.approx(
+            (-50.0, -8.25 + 1.5 * 4.0), abs=0.1
+        )
+        assert any(backend._net.getLane(lane).allows("passenger") for lane in lanes)
+        # Neither published nor mirrored back into CARLA.
+        assert backend._walkers == {} and world.spawned == []
+    finally:
+        backend.close()
+    assert backend._walked == {} and backend._pedestrian_entities == []
+
+
+@needs_sumo
+def test_sumo_traffic_stops_for_the_scenarios_pedestrian_sumo_walks(
+    crossroads_with_sidewalks: Path, tmp_path: Path
+) -> None:
+    from autoware_carla_scenario.entity._spawn import SpawnTransform
+    from autoware_carla_scenario.entity.pedestrian_entity import (
+        PedestrianEntity,
+        PedestrianEntityConfig,
+    )
+
+    backend, world, _npc, _ego = _prepared(
+        crossroads_with_sidewalks, tmp_path, scenario_pedestrians="sumo"
+    )
+    sumo_id = next(iter(backend._driven))
+    tc = backend._traci
+    # A pedestrian 30 m ahead of the NPC SUMO drives, at the kerb, facing
+    # across the NPC's lanes.
+    walker = _FakeActor(
+        _carla_transform(-50.0, 8.25, -90.0), "pedestrian1", "walker.pedestrian.0001"
+    )
+    walker.bounding_box.extent = _Extent(0.2, 0.2)
+    entity = PedestrianEntity(
+        PedestrianEntityConfig("pedestrian1", SpawnTransform(walker.transform))
+    )
+    entity._walker = walker  # type: ignore[assignment]
+    entity.set_traffic_backend(backend)
+    world.actors.append(walker)
+    # Taken on as start() takes on the pedestrians adopted before it.
+    backend._take_pedestrian(entity)
+    try:
+        backend.tick(world, 0.0)
+        entity.walk_straight(1.0)
+        # 3 s on, it stops in the middle of the NPC's lane (SUMO y -5.25).
+        for i in range(1, 61):
+            backend.tick(world, i * 0.05)
+        entity.walk_straight(0.0)
+        assert backend._traci.person.getLaneID(next(iter(backend._walked))) == (
+            tc.vehicle.getLaneID(sumo_id)
+        )
+        for i in range(61, 300):
+            backend.tick(world, i * 0.05)
+        # The NPC stopped short of it.
+        assert tc.vehicle.getSpeed(sumo_id) == pytest.approx(0.0, abs=0.05)
+        assert -60.0 < tc.vehicle.getPosition(sumo_id)[0] < -50.0
+    finally:
+        backend.close()
+
+
+@needs_sumo
+def test_a_scenario_pedestrian_sumo_walks_stops_at_zero_speed(
+    crossroads_with_sidewalks: Path, tmp_path: Path
+) -> None:
+    backend, world, entity = _scenario_pedestrian(
+        crossroads_with_sidewalks, tmp_path, scenario_pedestrians="sumo"
+    )
+    tc = backend._traci
+    try:
+        (person,) = backend._walked
+        entity.walk_straight(1.5)
+        for i in range(40):
+            backend.tick(world, 1.0 + i * 0.05)
+        moved = tc.person.getPosition(person)
+        assert moved == pytest.approx((-50.0, -8.25 + 3.0), abs=0.1)
+        entity.walk_straight(0.0)
+        assert backend._walking == {}
+        assert entity.actor.control.speed == 0.0
+        for i in range(40):
+            backend.tick(world, 3.0 + i * 0.05)
+        assert tc.person.getPosition(person) == pytest.approx(moved, abs=0.1)
+    finally:
+        backend.close()
+
+
+@needs_sumo
+def test_a_released_scenario_pedestrian_is_published_and_walks_in_carla(
+    crossroads_with_sidewalks: Path, tmp_path: Path
+) -> None:
+    from autoware_carla_scenario.entity.pedestrian_entity import walker_speed_command
+
+    backend, world, entity = _scenario_pedestrian(
+        crossroads_with_sidewalks, tmp_path, scenario_pedestrians="sumo"
+    )
+    walker = entity.actor
+    try:
+        (person,) = backend._walked
+        entity.release_from_traffic(world)
+        assert backend._walked == {} and backend._walkers == {walker.id: person}
+        entity.walk_straight(1.5)
+        assert walker.control.speed == pytest.approx(walker_speed_command(1.5))
+        # Its pose goes into SUMO every tick, as any CARLA pedestrian's.
+        walker.transform = _carla_transform(-50.0, 4.0, -90.0)
+        backend.tick(world, 1.0)
+        backend.tick(world, 1.05)
+        x, y = backend._traci.person.getPosition(person)
+        assert (x, y) == pytest.approx((-50.0, -4.0), abs=0.1)
+    finally:
+        backend.close()
+
+
+@needs_sumo
+def test_a_scenario_pedestrian_with_no_footway_near_walks_in_carla(
+    crossroads: Path, tmp_path: Path
+) -> None:
+    from autoware_carla_scenario.entity.pedestrian_entity import walker_speed_command
+
+    backend, world, entity = _scenario_pedestrian(
+        crossroads, tmp_path, scenario_pedestrians="sumo"
+    )
+    try:
+        assert backend._walked == {}
+        entity.walk_straight(1.5)
+        assert entity.actor.control.speed == pytest.approx(walker_speed_command(1.5))
+        assert backend._running
+    finally:
+        backend.close()
+
+
+@needs_sumo
+def test_a_scenario_pedestrian_gone_from_carla_leaves_sumo(
+    crossroads_with_sidewalks: Path, tmp_path: Path
+) -> None:
+    backend, world, entity = _scenario_pedestrian(
+        crossroads_with_sidewalks, tmp_path, scenario_pedestrians="sumo"
+    )
+    try:
+        entity.walk_straight(1.5)
+        world.actors.clear()
+        backend.tick(world, 1.0)
+        backend.tick(world, 1.05)
+        assert backend._walked == {} and backend._walking == {}
+        assert backend._traci.person.getIDList() == ()
     finally:
         backend.close()
 

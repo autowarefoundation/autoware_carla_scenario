@@ -95,6 +95,9 @@ class PedestrianEntity:
     def walk_straight(self, speed_ms: float) -> None:
         raise NotImplementedError()
 
+    def release_from_traffic(self, world: carla.World) -> None:
+        raise NotImplementedError()
+
 
 class EgoVehicle:
     use_autopilot: ClassVar[bool] = True

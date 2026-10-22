@@ -77,6 +77,7 @@ __all__ = [
     "TrafficBackendUnavailable",
     "TrafficContext",
     "DrivenEntity",
+    "WalkedEntity",
     "NullTrafficBackend",
 ]
 
@@ -289,6 +290,19 @@ class DrivenEntity:
         is the backend's, which knows where the vehicle is.
         """
         return False
+
+
+class WalkedEntity:
+    """What a backend's pedestrian calls take as the *entity* they walk.
+
+    The base of :class:`~autoware_carla_scenario.entity.pedestrian_entity.PedestrianEntity`,
+    as :class:`DrivenEntity` is of the vehicles: the type of every *entity*
+    parameter of :class:`TrafficBackend`'s pedestrian calls
+    (:meth:`TrafficBackend.adopt_pedestrian`, :meth:`TrafficBackend.walk_straight`,
+    :meth:`TrafficBackend.release_pedestrian`).  A backend keeps nothing on a
+    pedestrian, so it holds nothing; it reads the walker's ``actor`` and
+    ``role_name`` where the entity has them, as it reads a vehicle's.
+    """
 
 
 # ---------------------------------------------------------------------------
@@ -663,6 +677,54 @@ class TrafficBackend:
 
         Args:
             entity: The entity handed back.
+            world: The CARLA world.
+        """
+
+    # ------------------------------------------------------------------
+    # The scenario's pedestrians
+    # ------------------------------------------------------------------
+
+    def adopt_pedestrian(self, entity: WalkedEntity) -> None:
+        """Take note of a pedestrian the scenario owns.
+
+        Called for every pedestrian registered with
+        :meth:`~autoware_carla_scenario.scenario_base.BaseScenario.register_pedestrian`,
+        before :meth:`start`.  As with :meth:`adopt`, the walker stays the
+        scenario's: the backend does not spawn or destroy it.  A backend that
+        walks pedestrians (:meth:`walk_straight`) takes it on at :meth:`start`.
+
+        Args:
+            entity: The pedestrian joining the run.
+        """
+
+    def walk_straight(self, entity: WalkedEntity, speed_ms: float) -> bool:
+        """Walk *entity* on at *speed_ms* the way it faces, if this backend
+        walks it; *speed_ms* zero stops it where it is.
+
+        Answers whether it did.  ``False`` leaves the walk to the entity, which
+        walks its walker straight ahead itself (``carla.WalkerControl``): what
+        the base answers, since a backend that walks no pedestrians -- the
+        TrafficManager, which has none -- has nothing to send the walk to.
+
+        Args:
+            entity: The pedestrian a
+                :class:`~autoware_carla_scenario.actions.WalkStraightAction`
+                names.
+            speed_ms: Walking speed in metres per second.
+        """
+        return False
+
+    def release_pedestrian(self, entity: WalkedEntity, world: "carla.World") -> None:
+        """Stop walking *entity*: a scenario action moves it itself.
+
+        :meth:`release` for a pedestrian: a
+        :class:`~autoware_carla_scenario.actions.FollowTrajectoryAction` (an
+        adversity among them) puts the walker on its path every tick.  Must
+        hold before or after :meth:`start` and be safe to repeat.  The base does
+        nothing, which is right for a backend that walks no pedestrians.
+
+        Args:
+            entity: The pedestrian being taken over.
             world: The CARLA world.
         """
 

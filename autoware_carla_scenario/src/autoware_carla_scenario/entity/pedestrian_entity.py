@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Optional
 
 import typesafe_carla.carla as carla
 
+from ..traffic.base import TrafficBackend, WalkedEntity
 
 if TYPE_CHECKING:
     from ._spawn import SpawnTransform
@@ -64,17 +65,20 @@ class PedestrianEntityConfig:
         self.role_name = str(self.role_name)
 
 
-class PedestrianEntity:
+class PedestrianEntity(WalkedEntity):
     """Manages the lifecycle of a pedestrian actor in CARLA.
 
     Deliberately **not** a :class:`~autoware_carla_scenario.traffic.driven.BackendDriven`
-    entity.  A traffic backend drives vehicles; nothing in this framework
-    drives a walker, and inheriting the manoeuvres would offer ``change_lane``
-    on something that has no lane.  A pedestrian moves because a
+    entity: inheriting the vehicles' manoeuvres would offer ``change_lane`` on
+    something that has no lane.  A pedestrian moves because a
     :class:`~autoware_carla_scenario.actions.WalkStraightAction` tells it to,
-    and stands still otherwise.
+    and stands still otherwise.  The walk goes to the run's traffic backend
+    first (:meth:`~autoware_carla_scenario.traffic.base.TrafficBackend.walk_straight`):
+    one that walks the scenario's pedestrians -- SUMO, with
+    ``scenario_pedestrians=sumo`` -- takes it, and the walker follows that
+    backend's pedestrian.  Otherwise the entity walks its walker itself.
 
-    Walking is commanded with :class:`carla.WalkerControl` rather than through
+    Walking it itself is commanded with :class:`carla.WalkerControl` rather than through
     a ``controller.ai.walker``.  The AI controller exists to send a walker *to
     a destination*, which is a different scenario primitive and one nothing
     here asks for yet; using it to walk straight would mean inventing a
@@ -86,10 +90,18 @@ class PedestrianEntity:
     # attribute from its declaration; to Python it is a bare annotation.
     _config: PedestrianEntityConfig
     _walker: Optional["carla.Actor"]
+    _traffic_backend: Optional[TrafficBackend]
 
     def __init__(self, config: PedestrianEntityConfig) -> None:
         self._config = config
         self._walker: Optional["carla.Actor"] = None
+        self._traffic_backend: Optional[TrafficBackend] = None
+
+    def set_traffic_backend(self, backend: TrafficBackend) -> None:
+        """Hand this pedestrian's walks to *backend*, the run's traffic backend
+        (:meth:`~autoware_carla_scenario.scenario_base.BaseScenario.register_pedestrian`
+        calls it)."""
+        self._traffic_backend = backend
 
     # ------------------------------------------------------------------
     # Properties
@@ -189,6 +201,10 @@ class PedestrianEntity:
     def walk_straight(self, speed_ms: float) -> None:
         """Walk forward at *speed_ms*, holding the current heading.
 
+        The run's traffic backend walks it when it walks the scenario's
+        pedestrians (:meth:`~autoware_carla_scenario.traffic.base.TrafficBackend.walk_straight`);
+        otherwise the walker is walked here.
+
         Args:
             speed_ms: Walking speed in metres per second.  Zero stops the
                 walker where it stands.
@@ -199,10 +215,24 @@ class PedestrianEntity:
                 self._config.role_name,
             )
             return
+        backend = self._traffic_backend
+        if backend is not None:
+            walked: WalkedEntity = self
+            if backend.walk_straight(walked, speed_ms):
+                return
         forward = self._walker.get_transform().get_forward_vector()
         self._walker.apply_control(
             carla.WalkerControl(direction=forward, speed=walker_speed_command(speed_ms))
         )
+
+    def release_from_traffic(self, world: "carla.World") -> None:
+        """Take this pedestrian back from the traffic backend that walks it,
+        for an action that moves the walker itself
+        (:meth:`~autoware_carla_scenario.traffic.base.TrafficBackend.release_pedestrian`)."""
+        backend = self._traffic_backend
+        if backend is not None:
+            walked: WalkedEntity = self
+            backend.release_pedestrian(walked, world)
 
     # ------------------------------------------------------------------
     # Internals
