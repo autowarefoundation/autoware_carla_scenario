@@ -1107,7 +1107,9 @@ Two things Python does that Codon 0.19 does not are filled in for you:
     (`M.A < M.B`) and converts with `int()` and `float()`. A `StrEnum` or
     `class M(str, Enum)` member compares with its string (`M.A == "a"`) and
     does nothing more: ordering and `int()` are refused, as in Python for a
-    plain `Enum`, a `Flag` and a `(str, Enum)`. A plain `Enum` member equals
+    plain `Enum`, a `Flag` and a `(str, Enum)`. A `Flag` and an `IntFlag` also
+  combine with `|`, `&`, `^`, `~` and `in` ([Flag and
+  IntFlag](#flag-and-intflag)). A plain `Enum` member equals
     only members (`M.A == 1` is `False`, as in Python). An enum member is
     **not** an `int` or a `str` otherwise: passing it to an `int` / `str`
     parameter or doing arithmetic on it (`M.A + 1`) is refused with a hint.
@@ -1325,8 +1327,9 @@ instead:
 
 ### Iterating an enum
 
-For a scenario's own `Enum` class (any of `Enum`, `IntEnum`, `StrEnum`,
-`Flag`, `IntFlag`, `(str, Enum)`), the check rewrites, as Python reads it:
+For an `Enum` class, a scenario's own (any of `Enum`, `IntEnum`, `StrEnum`,
+`Flag`, `IntFlag`, `(str, Enum)`) or one of the framework's (`TurnDirection`,
+`ComparisonRule`, `TickTiming`, ...), the check rewrites, as Python reads it:
 
 - `for m in Mode` and a comprehension over `Mode`, and `*Mode`;
 - `list(Mode)`, `tuple`, `set`, `frozenset`, `sorted`, `len`, `reversed`,
@@ -1336,13 +1339,22 @@ For a scenario's own `Enum` class (any of `Enum`, `IntEnum`, `StrEnum`,
 - `Mode["A"]`, a member looked up by name.
 
 Iteration yields the members in definition order. A member whose value repeats
-an earlier one is an alias, and is skipped, as in Python. Only the bare name of
-the class is rewritten, so a parameter or local called like the class is left
-alone, and the enum may be defined in another module of the package.
+an earlier one is an alias, and is skipped, as in Python. A `Flag` or `IntFlag`
+yields its single-bit members only, as Python 3.11 and later do: a composite
+(`RW = R | W`, `BOTH = 3`), a zero member and an alias are skipped, though
+`Perm["RW"]` finds them. Only the bare name of the class is rewritten, so a
+parameter or local called like the class is left alone, and the enum may be
+defined in another module of the package.
 
-What does not work (Flag operators and the model enums are tracked in #437):
+The framework's enums are `@tuple` classes in the model
+(`typecheck/codon/`). Each declares `_acs_members()` and `_acs_by_name()`, and
+the check takes the enums to rewrite from the model files, so a new model enum
+is iterable once it declares them. `test_typecheck_model.py` keeps both equal
+to the Python enum's members, in its order. A scenario class of the same name
+as a model enum that is no enum is left alone.
 
-- the framework's own model enums (`TurnDirection`, ...) are not iterable;
+What does not work:
+
 - the class passed as a value, `f(Mode)`, or `Mode.__members__`: both stay as
   written, which Codon does not resolve (`no function 'List.__init__' with
   arguments (List[T], type[Mode])` for `list(e)` in `f`, and `'Mode' object
@@ -1350,8 +1362,30 @@ What does not work (Flag operators and the model enums are tracked in #437):
 - `sum`, `any` and `all` of the class, and `filter(None, Mode)`: Codon needs
   `__bool__` or `+` on the member (`sum(int(m) for m in Mode)`, `any(m == x
   for m in Mode)`);
-- the operators of a `Flag` (`A | B`: `unsupported operand type(s) for |`);
 - an enum with no member (`'Empty' object has no attribute '_acs_members'`).
+
+### Flag and IntFlag
+
+A scenario's own `Flag` or `IntFlag` (also `class M(int, Flag)`) combines as in
+Python: `A | B`, `&`, `^`, `~` and `A in x` (every bit of `A` is set in `x`)
+make a value of the same class, an `IntFlag` takes an `int` on either side
+too (`P.R | 4`, `4 | P.R`), and `bool(x)` is false for no bit set. Two
+combinations of the same members are equal, hash alike and compare equal to
+the member that has their value (`P.R | P.W == P.RW`). A `Flag` does no
+other arithmetic, order or `int()`; an `IntFlag` compares, orders and converts
+as an `IntEnum` does, and `P.R + P.W` is refused (use `.value`). `~x` flips the
+bits of the single-bit members for a `Flag`, and every bit up to the highest
+of any member for an `IntFlag`, as Python 3.11+ does. The operators are usable
+at module level and in a class body or default (`RW = P.R | P.W`).
+
+A combination is no member: the check builds it from the combined int, so it
+has an empty `name`, and `P.R | P.W is P.RW` is not modelled (compare with
+`==`). A value written as an expression of the class's own members, even a
+composite or an `auto()` one, is worked out when the check reads the class
+(`RW = R | W`, `ALL = A | B | C`, `HIGH = 1 << 4`, `ALL = ~0`); `auto()` is the
+power of two above the highest bit so far. Operators of two different flag
+classes, and of a framework enum such as `TurnDirection.LEFT |
+TurnDirection.RIGHT` (not a `Flag`, so Python refuses it too), are refused.
 
 ## What the check does not catch
 
@@ -3097,10 +3131,9 @@ What Codon 0.19 needs that Python does not, beyond
   only the uncalled parser reads it.
 - **An enum member looked up by name, or an enum iterated over**
   (`ComparisonRule[name]`, `list(ComparisonRule)`): write it as in Python.
-  The check rewrites both for an enum of the package being checked
-  ([Iterating an enum](#iterating-an-enum)), so `sweeper.constraints` has no
-  spelled-out member lists left. The framework's own model enums are the
-  exception: they are not iterable.
+  The check rewrites both for an enum of the package being checked and for the
+  framework's own enums ([Iterating an enum](#iterating-an-enum)), so
+  `sweeper.constraints` has no spelled-out member lists left.
 - **An exception class raised with no arguments** (`raise _Exhausted()` in
   `route.search`): Codon 0.19 raises no exception class without its own
   `__init__`, and its `Exception` takes a message where Python's takes none.

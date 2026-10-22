@@ -243,6 +243,20 @@ class ReferenceContext:
             return "RELATIVE"
         raise ValueError("not a member of ReferenceContext")
 
+    # What `for m in E`, `list(E)` and `E["A"]` read: the checker rewrites
+    # them (#437). Declared in Python's order, as the test checks.
+    @staticmethod
+    def _acs_members() -> List[ReferenceContext]:
+        return [ReferenceContext.ABSOLUTE, ReferenceContext.RELATIVE]
+
+    @staticmethod
+    def _acs_by_name(name: str) -> ReferenceContext:
+        if name == "ABSOLUTE":
+            return ReferenceContext.ABSOLUTE
+        if name == "RELATIVE":
+            return ReferenceContext.RELATIVE
+        raise KeyError(name)
+
 
 class TrajectoryTiming:
     domain: ReferenceContext
@@ -273,6 +287,20 @@ class TrajectoryFollowingMode:
         if self == TrajectoryFollowingMode.FOLLOW:
             return "FOLLOW"
         raise ValueError("not a member of TrajectoryFollowingMode")
+
+    # What `for m in E`, `list(E)` and `E["A"]` read: the checker rewrites
+    # them (#437). Declared in Python's order, as the test checks.
+    @staticmethod
+    def _acs_members() -> List[TrajectoryFollowingMode]:
+        return [TrajectoryFollowingMode.POSITION, TrajectoryFollowingMode.FOLLOW]
+
+    @staticmethod
+    def _acs_by_name(name: str) -> TrajectoryFollowingMode:
+        if name == "POSITION":
+            return TrajectoryFollowingMode.POSITION
+        if name == "FOLLOW":
+            return TrajectoryFollowingMode.FOLLOW
+        raise KeyError(name)
 
 
 def _expect_optional_timing(timing) -> Optional[TrajectoryTiming]:

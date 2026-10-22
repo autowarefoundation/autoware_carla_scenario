@@ -42,6 +42,26 @@ class ComparisonRule:
     def text(self) -> str:
         return self.name.lower().replace("_", " ")
 
+    # What `for m in E`, `list(E)` and `E["A"]` read: the checker rewrites
+    # them (#437). Declared in Python's order, as the test checks.
+    @staticmethod
+    def _acs_members() -> List[ComparisonRule]:
+        return [ComparisonRule.GREATER_THAN, ComparisonRule.LESS_THAN, ComparisonRule.EQUAL_TO, ComparisonRule.GREATER_THAN_OR_EQUAL, ComparisonRule.LESS_THAN_OR_EQUAL]
+
+    @staticmethod
+    def _acs_by_name(name: str) -> ComparisonRule:
+        if name == "GREATER_THAN":
+            return ComparisonRule.GREATER_THAN
+        if name == "LESS_THAN":
+            return ComparisonRule.LESS_THAN
+        if name == "EQUAL_TO":
+            return ComparisonRule.EQUAL_TO
+        if name == "GREATER_THAN_OR_EQUAL":
+            return ComparisonRule.GREATER_THAN_OR_EQUAL
+        if name == "LESS_THAN_OR_EQUAL":
+            return ComparisonRule.LESS_THAN_OR_EQUAL
+        raise KeyError(name)
+
 
 @tuple
 class AccelerationDirection:
@@ -61,6 +81,22 @@ class AccelerationDirection:
             return "MAGNITUDE"
         raise ValueError("not a member of AccelerationDirection")
 
+    # What `for m in E`, `list(E)` and `E["A"]` read: the checker rewrites
+    # them (#437). Declared in Python's order, as the test checks.
+    @staticmethod
+    def _acs_members() -> List[AccelerationDirection]:
+        return [AccelerationDirection.LONGITUDINAL, AccelerationDirection.LATERAL, AccelerationDirection.MAGNITUDE]
+
+    @staticmethod
+    def _acs_by_name(name: str) -> AccelerationDirection:
+        if name == "LONGITUDINAL":
+            return AccelerationDirection.LONGITUDINAL
+        if name == "LATERAL":
+            return AccelerationDirection.LATERAL
+        if name == "MAGNITUDE":
+            return AccelerationDirection.MAGNITUDE
+        raise KeyError(name)
+
 
 @tuple
 class SpeedDirection:
@@ -79,6 +115,22 @@ class SpeedDirection:
         if self == SpeedDirection.MAGNITUDE:
             return "MAGNITUDE"
         raise ValueError("not a member of SpeedDirection")
+
+    # What `for m in E`, `list(E)` and `E["A"]` read: the checker rewrites
+    # them (#437). Declared in Python's order, as the test checks.
+    @staticmethod
+    def _acs_members() -> List[SpeedDirection]:
+        return [SpeedDirection.LONGITUDINAL, SpeedDirection.LATERAL, SpeedDirection.MAGNITUDE]
+
+    @staticmethod
+    def _acs_by_name(name: str) -> SpeedDirection:
+        if name == "LONGITUDINAL":
+            return SpeedDirection.LONGITUDINAL
+        if name == "LATERAL":
+            return SpeedDirection.LATERAL
+        if name == "MAGNITUDE":
+            return SpeedDirection.MAGNITUDE
+        raise KeyError(name)
 
 
 @tuple
@@ -102,6 +154,24 @@ class TurnIndicatorState:
             return "HAZARD"
         raise ValueError("not a member of TurnIndicatorState")
 
+    # What `for m in E`, `list(E)` and `E["A"]` read: the checker rewrites
+    # them (#437). Declared in Python's order, as the test checks.
+    @staticmethod
+    def _acs_members() -> List[TurnIndicatorState]:
+        return [TurnIndicatorState.OFF, TurnIndicatorState.LEFT, TurnIndicatorState.RIGHT, TurnIndicatorState.HAZARD]
+
+    @staticmethod
+    def _acs_by_name(name: str) -> TurnIndicatorState:
+        if name == "OFF":
+            return TurnIndicatorState.OFF
+        if name == "LEFT":
+            return TurnIndicatorState.LEFT
+        if name == "RIGHT":
+            return TurnIndicatorState.RIGHT
+        if name == "HAZARD":
+            return TurnIndicatorState.HAZARD
+        raise KeyError(name)
+
 
 @tuple
 class SpeedCoordinateSystem:
@@ -118,6 +188,20 @@ class SpeedCoordinateSystem:
             return "ENTITY"
         raise ValueError("not a member of SpeedCoordinateSystem")
 
+    # What `for m in E`, `list(E)` and `E["A"]` read: the checker rewrites
+    # them (#437). Declared in Python's order, as the test checks.
+    @staticmethod
+    def _acs_members() -> List[SpeedCoordinateSystem]:
+        return [SpeedCoordinateSystem.WORLD, SpeedCoordinateSystem.ENTITY]
+
+    @staticmethod
+    def _acs_by_name(name: str) -> SpeedCoordinateSystem:
+        if name == "WORLD":
+            return SpeedCoordinateSystem.WORLD
+        if name == "ENTITY":
+            return SpeedCoordinateSystem.ENTITY
+        raise KeyError(name)
+
 
 @tuple
 class DistanceCoordinateSystem:
@@ -133,6 +217,20 @@ class DistanceCoordinateSystem:
         if self == DistanceCoordinateSystem.LANE:
             return "LANE"
         raise ValueError("not a member of DistanceCoordinateSystem")
+
+    # What `for m in E`, `list(E)` and `E["A"]` read: the checker rewrites
+    # them (#437). Declared in Python's order, as the test checks.
+    @staticmethod
+    def _acs_members() -> List[DistanceCoordinateSystem]:
+        return [DistanceCoordinateSystem.ENTITY, DistanceCoordinateSystem.LANE]
+
+    @staticmethod
+    def _acs_by_name(name: str) -> DistanceCoordinateSystem:
+        if name == "ENTITY":
+            return DistanceCoordinateSystem.ENTITY
+        if name == "LANE":
+            return DistanceCoordinateSystem.LANE
+        raise KeyError(name)
 
 
 @tuple
@@ -152,6 +250,22 @@ class RelativeDistanceType:
         if self == RelativeDistanceType.LATERAL:
             return "LATERAL"
         raise ValueError("not a member of RelativeDistanceType")
+
+    # What `for m in E`, `list(E)` and `E["A"]` read: the checker rewrites
+    # them (#437). Declared in Python's order, as the test checks.
+    @staticmethod
+    def _acs_members() -> List[RelativeDistanceType]:
+        return [RelativeDistanceType.EUCLIDEAN, RelativeDistanceType.LONGITUDINAL, RelativeDistanceType.LATERAL]
+
+    @staticmethod
+    def _acs_by_name(name: str) -> RelativeDistanceType:
+        if name == "EUCLIDEAN":
+            return RelativeDistanceType.EUCLIDEAN
+        if name == "LONGITUDINAL":
+            return RelativeDistanceType.LONGITUDINAL
+        if name == "LATERAL":
+            return RelativeDistanceType.LATERAL
+        raise KeyError(name)
 
 
 @tuple
@@ -182,6 +296,24 @@ class CollisionTargetType:
             return False
         return type_id.startswith(self.value)
 
+    # What `for m in E`, `list(E)` and `E["A"]` read: the checker rewrites
+    # them (#437). Declared in Python's order, as the test checks.
+    @staticmethod
+    def _acs_members() -> List[CollisionTargetType]:
+        return [CollisionTargetType.ANY, CollisionTargetType.VEHICLE, CollisionTargetType.PEDESTRIAN, CollisionTargetType.STATIC]
+
+    @staticmethod
+    def _acs_by_name(name: str) -> CollisionTargetType:
+        if name == "ANY":
+            return CollisionTargetType.ANY
+        if name == "VEHICLE":
+            return CollisionTargetType.VEHICLE
+        if name == "PEDESTRIAN":
+            return CollisionTargetType.PEDESTRIAN
+        if name == "STATIC":
+            return CollisionTargetType.STATIC
+        raise KeyError(name)
+
 
 @tuple
 class WaypointCheckType:
@@ -194,6 +326,18 @@ class WaypointCheckType:
         if self == WaypointCheckType.IS_EMPTY:
             return "IS_EMPTY"
         raise ValueError("not a member of WaypointCheckType")
+
+    # What `for m in E`, `list(E)` and `E["A"]` read: the checker rewrites
+    # them (#437). Declared in Python's order, as the test checks.
+    @staticmethod
+    def _acs_members() -> List[WaypointCheckType]:
+        return [WaypointCheckType.IS_EMPTY]
+
+    @staticmethod
+    def _acs_by_name(name: str) -> WaypointCheckType:
+        if name == "IS_EMPTY":
+            return WaypointCheckType.IS_EMPTY
+        raise KeyError(name)
 
 
 def compare(actual: float, rule: ComparisonRule, value: float,
@@ -816,6 +960,36 @@ class AdversityKind:
             return "MERGE"
         raise ValueError("not a member of AdversityKind")
 
+    # What `for m in E`, `list(E)` and `E["A"]` read: the checker rewrites
+    # them (#437). Declared in Python's order, as the test checks.
+    @staticmethod
+    def _acs_members() -> List[AdversityKind]:
+        return [AdversityKind.BRAKE_CHECK, AdversityKind.IGNORE_LEADER, AdversityKind.CUT_IN, AdversityKind.TRAFFIC_RULE, AdversityKind.JAYWALKING, AdversityKind.LANE_CHANGE_ABORT, AdversityKind.HEAD_ON, AdversityKind.RUNNING_RED_LIGHT, AdversityKind.STOP_CROSSING, AdversityKind.MERGE]
+
+    @staticmethod
+    def _acs_by_name(name: str) -> AdversityKind:
+        if name == "BRAKE_CHECK":
+            return AdversityKind.BRAKE_CHECK
+        if name == "IGNORE_LEADER":
+            return AdversityKind.IGNORE_LEADER
+        if name == "CUT_IN":
+            return AdversityKind.CUT_IN
+        if name == "TRAFFIC_RULE":
+            return AdversityKind.TRAFFIC_RULE
+        if name == "JAYWALKING":
+            return AdversityKind.JAYWALKING
+        if name == "LANE_CHANGE_ABORT":
+            return AdversityKind.LANE_CHANGE_ABORT
+        if name == "HEAD_ON":
+            return AdversityKind.HEAD_ON
+        if name == "RUNNING_RED_LIGHT":
+            return AdversityKind.RUNNING_RED_LIGHT
+        if name == "STOP_CROSSING":
+            return AdversityKind.STOP_CROSSING
+        if name == "MERGE":
+            return AdversityKind.MERGE
+        raise KeyError(name)
+
 
 @tuple
 class AdversityLocation:
@@ -837,6 +1011,24 @@ class AdversityLocation:
         if self == AdversityLocation.ROUNDABOUT:
             return "ROUNDABOUT"
         raise ValueError("not a member of AdversityLocation")
+
+    # What `for m in E`, `list(E)` and `E["A"]` read: the checker rewrites
+    # them (#437). Declared in Python's order, as the test checks.
+    @staticmethod
+    def _acs_members() -> List[AdversityLocation]:
+        return [AdversityLocation.ANY, AdversityLocation.INTERSECTION, AdversityLocation.HIGHWAY, AdversityLocation.ROUNDABOUT]
+
+    @staticmethod
+    def _acs_by_name(name: str) -> AdversityLocation:
+        if name == "ANY":
+            return AdversityLocation.ANY
+        if name == "INTERSECTION":
+            return AdversityLocation.INTERSECTION
+        if name == "HIGHWAY":
+            return AdversityLocation.HIGHWAY
+        if name == "ROUNDABOUT":
+            return AdversityLocation.ROUNDABOUT
+        raise KeyError(name)
 
 
 class AdversityFeasibleCondition(BaseCondition):

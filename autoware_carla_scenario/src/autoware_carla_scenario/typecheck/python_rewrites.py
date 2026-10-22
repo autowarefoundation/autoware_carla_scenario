@@ -86,6 +86,7 @@ from .transform import (
     _dataclass_options,
     _defined_methods,
     _dotted,
+    flag_member_values,
     _Edits,
     _is_named_tuple,
     _is_none,
@@ -793,6 +794,15 @@ class _Pass(ast.NodeVisitor):
         enum = not node.keywords and any(
             (_dotted(b) or "").rsplit(".", 1)[-1] in _ENUM_BASES for b in node.bases
         )
+        flag_numbers = (
+            flag_member_values(node.body)
+            if enum
+            and any(
+                (_dotted(b) or "").rsplit(".", 1)[-1] in {"Flag", "IntFlag"}
+                for b in node.bases
+            )
+            else {}
+        )
         later = [_stores(stmt) for stmt in node.body]
         # name -> its value, for the names assigned once at the body's level
         constants: dict[str, ast.expr | None] = {}
@@ -848,7 +858,14 @@ class _Pass(ast.NodeVisitor):
                     )
                     continue
                 value = constants[name.id]
-                if enum and value is not None:
+                number = flag_numbers.get(name.id)
+                if enum and value is not None and number is not None:
+                    # A Flag member is worked out, even a composite or an
+                    # auto() one (#437).
+                    self.edits.replace(
+                        *span, f"({number})" if number < 0 else str(number)
+                    )
+                elif enum and value is not None:
                     if not _literal(value):
                         self._refuse(
                             name,
