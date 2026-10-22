@@ -116,6 +116,14 @@ __all__ = ["REWRITE_HINTS", "python_rewrites", "python_rewrite_refusals"]
 #: Codon's refusals of what this pass leaves alone, and what to write.
 REWRITE_HINTS: tuple[tuple[re.Pattern[str], str], ...] = (
     (
+        re.compile(r"name '%_\w+_\d+' is not defined"),
+        "Codon does not bind the variable of a comprehension that runs in a "
+        "class body (a class attribute, a default of a dataclass field): "
+        "the check moves the ones it can into a module-level function; "
+        "otherwise build the value in a module-level function and call it "
+        "from the class",
+    ),
+    (
         re.compile(r"^'(?:str|'.*')' object has no attribute 'format'"),
         "Codon's str has no .format(): the check rewrites it only on a string "
         "literal with plain arguments; write an f-string instead",
@@ -1564,6 +1572,9 @@ def _run(source: str) -> tuple[str, list[tuple[str, str]], list[tuple[int, str]]
         if not edits.edits:
             break
         source = edits.apply()
+    from .transform import class_body_refusals
+
+    refused += [r for r in class_body_refusals(source) if r not in refused]
     return source, blocks, sorted(refused)
 
 

@@ -6714,3 +6714,92 @@ def test_fstrings_in_lambdas_accept_the_types_a_scenario_uses(tmp_path: Path) ->
     scenario, config, _ = _data_case(tmp_path, _LAMBDA_FSTRING_TYPES, setup)
     result = typecheck_scenario(scenario, config)
     assert result.ok, result.format()
+
+
+# -- a comprehension in a class body or a default_factory (#469) ---------------
+
+_CLASS_BODY_COMPREHENSIONS = """
+class Color(enum.Enum):
+    RED = 1
+    BLUE = 2
+
+
+class Q:
+    SQ = [i * i for i in range(3)]
+    NAMES = [n.upper() for n in ["a", "b"]]
+    TABLE = {k: len(k) for k in ["a", "bb"]}
+    COLORS = [c.name for c in Color]
+    DIRS = [d.name for d in TurnDirection]
+
+
+@dataclass
+class D:
+    names: list[str] = dataclasses.field(
+        default_factory=lambda: [str(i) for i in range(3)]
+    )
+    ds: list[TurnDirection] = dataclasses.field(
+        default_factory=lambda: list(TurnDirection)
+    )
+    dnames: list[str] = dataclasses.field(
+        default_factory=lambda: [d.name for d in TurnDirection]
+    )
+    cnames: list[str] = dataclasses.field(
+        default_factory=lambda: [c.name for c in Color]
+    )
+    squares: tuple[int, ...] = dataclasses.field(
+        default_factory=lambda: tuple(i for i in range(3))
+    )
+    opts: dict[str, int] = dataclasses.field(default_factory=lambda: dict(a=1))
+"""
+
+
+def test_class_body_comprehensions_and_factories_compile(tmp_path: Path) -> None:
+    setup = """
+        d = D()
+        logger.info("%s %s %s", Q.SQ, Q.NAMES, Q.TABLE)
+        logger.info("%s %s", Q.COLORS, Q.DIRS)
+        logger.info("%s %s %s %s", d.names, d.ds, d.dnames, d.cnames)
+        logger.info("%s %s", d.squares, d.opts)
+    """
+    scenario, config, _ = _data_case(tmp_path, _CLASS_BODY_COMPREHENSIONS, setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_a_hoisted_class_body_comprehension_is_still_type_checked(
+    tmp_path: Path,
+) -> None:
+    definitions = """
+class Q:
+    BAD = [i.nope for i in range(0)]
+"""
+    scenario, config, path = _data_case(tmp_path, definitions, "x = Q.BAD\n")
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert error.line == _line_of(path, "BAD = ")
+
+
+def test_a_hoisted_default_factory_is_still_type_checked(tmp_path: Path) -> None:
+    definitions = """
+@dataclass
+class D:
+    names: list[str] = dataclasses.field(
+        default_factory=lambda: [i + "a" for i in range(3)]
+    )
+"""
+    scenario, config, path = _data_case(tmp_path, definitions, "x = D().names\n")
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert error.line == _line_of(path, "default_factory=lambda"), error.format()
+
+
+def test_a_class_body_comprehension_reading_its_class_is_refused(
+    tmp_path: Path,
+) -> None:
+    definitions = """
+class Q:
+    BASE = 3
+    SQ = [i * 2 for i in range(BASE)]
+"""
+    scenario, config, path = _data_case(tmp_path, definitions, "x = Q.SQ\n")
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "module-level function" in error.message, error.format()
+    assert error.line == _line_of(path, "SQ = ")
