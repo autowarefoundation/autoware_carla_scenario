@@ -1401,17 +1401,25 @@ def _fstring_line(
     return _original_line(origin, fields[0][0])
 
 
-def _line_rewritten(
+def _rewritten_lines(
     checked: Path, line: int, original: str, original_line: int
-) -> bool:
-    """Whether line *line* of the file the check compiled differs from line
-    *original_line* of the author's *original*."""
+) -> tuple[str, str] | None:
+    """The (compiled, author's) text of line *line* of the file the check
+    compiled and line *original_line* of the author's *original*, when they
+    differ."""
     try:
         compiled = checked.read_text().splitlines()[line - 1]
         written = Path(original).read_text().splitlines()[original_line - 1]
     except (OSError, IndexError, ValueError):
-        return False
-    return compiled != written
+        return None
+    return None if compiled == written else (compiled, written)
+
+
+def _column_survives(column: int, compiled: str, written: str) -> bool:
+    """Whether *column* of the compiled line is also that of the author's:
+    what precedes it is the same text in both."""
+    before = max(column - 1, 0)
+    return before <= len(written) and compiled[:before] == written[:before]
 
 
 def _parse_output(output: str, ws: _Workspace) -> list[Diagnostic]:
@@ -1420,9 +1428,9 @@ def _parse_output(output: str, ws: _Workspace) -> list[Diagnostic]:
     for rel in ws.files:
         by_basename.setdefault(Path(rel).name, []).append(rel)
 
-    #: The (file, line) of Codon's whose text the check rewrote: its columns
-    #: are those of the rewritten line, not of the author's.
-    moved: set[tuple[str, int]] = set()
+    #: The (compiled, author's) text of each (file, line) of Codon's that the
+    #: check rewrote: a column after the rewrite is not the author's.
+    moved: dict[tuple[str, int], tuple[str, str]] = {}
 
     def locate(
         file: str, line: int, column: int | None = None, message: str = ""
@@ -1458,10 +1466,10 @@ def _parse_output(output: str, ws: _Workspace) -> list[Diagnostic]:
             )
             if found is not None:
                 original = found
-        if original >= 1 and _line_rewritten(
-            ws.root / rel, line, ws.files[rel], original
-        ):
-            moved.add((file, line))
+        if original >= 1:
+            texts = _rewritten_lines(ws.root / rel, line, ws.files[rel], original)
+            if texts is not None:
+                moved[(file, line)] = texts
         return (ws.files[rel], original, True, None)
 
     errors: list[tuple[str, list[tuple[str, int, int | None, str]]]] = []
@@ -1499,8 +1507,9 @@ def _parse_output(output: str, ws: _Workspace) -> list[Diagnostic]:
             ((f, loc) for f, loc in located if loc and loc[2]), None
         ) or next(((f, loc) for f, loc in located if loc), (None, None))
         column = pf[2] if pf is not None else None
-        if pf is not None and (pf[0], pf[1]) in moved:
-            column = None  # a column of the rewritten line (#494)
+        if column is not None and pf is not None and (pf[0], pf[1]) in moved:
+            if not _column_survives(column, *moved[(pf[0], pf[1])]):
+                column = None  # a column of the rewritten line (#494)
         trace = []
         if primary is not None and primary[3] is not None:
             # The error is on an appended line itself: say which call it is.

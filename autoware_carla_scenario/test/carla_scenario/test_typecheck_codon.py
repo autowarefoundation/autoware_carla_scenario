@@ -8147,3 +8147,14 @@ def test_replace_of_a_class_the_check_has_no_fields_of_is_refused(
     error = _only_error(typecheck_scenario(scenario, config))
     assert error.line == _line_of(path, "x = replace(carla.Location()")
     assert "failed without a diagnostic" not in error.format()
+
+
+def test_a_column_after_a_rewrite_is_dropped_and_one_before_it_kept() -> None:
+    # #494: a rewritten line keeps the columns that precede the rewrite.
+    from autoware_carla_scenario.typecheck.check import _column_survives
+
+    written = "x = replace(d, a=5)"
+    compiled = "x = replace(d)._acs_with__a(5)"
+    assert _column_survives(5, compiled, written)
+    assert not _column_survives(20, compiled, written)
+    assert not _column_survives(len(written) + 5, written, written[:5])
