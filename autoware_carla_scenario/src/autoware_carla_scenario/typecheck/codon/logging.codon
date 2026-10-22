@@ -1,43 +1,367 @@
 # The part of Python's logging a scenario calls, for the scenario checker
-# (docs/typecheck.md). Nothing here runs. `exc_info` takes a bool only.
+# (docs/typecheck.md), with CPython 3.10's signatures. Nothing here runs: no
+# record is emitted, no handler is attached.
+#
+# The level methods take `exc_info` as a bool (CPython also takes an exception
+# or a tuple), and `stack_info`, `stacklevel` and `extra`. `extra` is
+# untyped: CPython's is a Mapping[str, object], which Codon cannot name, so
+# the check reads no more of it than that it is passed. `Logger.log()` takes
+# the level as an int, as CPython does (a str raises TypeError there). A level
+# given to setLevel() or basicConfig() is an int or a str ("INFO").
 
+import internal.static as static
+
+NOTSET = 0
 DEBUG = 10
 INFO = 20
 WARNING = 30
+WARN = 30
 ERROR = 40
 CRITICAL = 50
+FATAL = 50
+
+BASIC_FORMAT = "%(levelname)s:%(name)s:%(message)s"
+
+
+def _keyword_only(extra, where: Literal[str]):
+    # Codon 0.19 has no `*,`: what follows `*_kw` is passed by keyword only.
+    if static.len(extra) > 0:
+        compile_error(where + " is keyword-only")
+
+
+def _level(level, where: Literal[str]):
+    # An omitted level is Optional[NoneType] here.
+    if not (
+        isinstance(level, int)
+        or isinstance(level, str)
+        or isinstance(level, Optional[NoneType])
+    ):
+        compile_error(where + " takes a level as an int or a str")
+
+
+class Formatter:
+    _fmt: str
+
+    def __init__(
+        self,
+        fmt: Optional[str] = None,
+        datefmt: Optional[str] = None,
+        style: str = "%",
+        validate: bool = True,
+    ):
+        self._fmt = fmt if fmt is not None else "%(message)s"
+
+    def format(self, record) -> str:
+        return ""
+
+
+class Handler:
+    level: int
+
+    def __init__(self, level=NOTSET):
+        _level(level, "Handler()")
+        self.level = NOTSET
+
+    def setLevel(self, level) -> None:
+        _level(level, "Handler.setLevel()")
+
+    def setFormatter(self, fmt: Optional[Formatter]) -> None:
+        pass
+
+    def flush(self) -> None:
+        pass
+
+    def close(self) -> None:
+        pass
+
+
+def _is_handler(handler: Handler) -> None:
+    pass
+
+
+class StreamHandler(Handler):
+    def __init__(self, stream=None):
+        super().__init__()
+
+
+class FileHandler(StreamHandler):
+    baseFilename: str
+    mode: str
+
+    def __init__(
+        self,
+        filename: str,
+        mode: str = "a",
+        encoding: Optional[str] = None,
+        delay: bool = False,
+        errors: Optional[str] = None,
+    ):
+        super().__init__()
+        self.baseFilename = filename
+        self.mode = mode
+
+
+class NullHandler(Handler):
+    def __init__(self):
+        super().__init__()
 
 
 class Logger:
     name: str
+    level: int
+    propagate: bool
+    disabled: bool
 
-    def __init__(self, name: str):
+    def __init__(self, name: str, level=NOTSET):
+        _level(level, "Logger()")
         self.name = name
+        self.level = NOTSET
+        self.propagate = True
+        self.disabled = False
 
-    def debug(self, msg, *args, exc_info: bool = False) -> None:
+    def debug(
+        self,
+        msg,
+        *args,
+        exc_info: bool = False,
+        stack_info: bool = False,
+        stacklevel: int = 1,
+        extra=None,
+    ) -> None:
         pass
 
-    def info(self, msg, *args, exc_info: bool = False) -> None:
+    def info(
+        self,
+        msg,
+        *args,
+        exc_info: bool = False,
+        stack_info: bool = False,
+        stacklevel: int = 1,
+        extra=None,
+    ) -> None:
         pass
 
-    def warning(self, msg, *args, exc_info: bool = False) -> None:
+    def warning(
+        self,
+        msg,
+        *args,
+        exc_info: bool = False,
+        stack_info: bool = False,
+        stacklevel: int = 1,
+        extra=None,
+    ) -> None:
         pass
 
-    def error(self, msg, *args, exc_info: bool = False) -> None:
+    def warn(
+        self,
+        msg,
+        *args,
+        exc_info: bool = False,
+        stack_info: bool = False,
+        stacklevel: int = 1,
+        extra=None,
+    ) -> None:
         pass
 
-    def exception(self, msg, *args, exc_info: bool = False) -> None:
+    def error(
+        self,
+        msg,
+        *args,
+        exc_info: bool = False,
+        stack_info: bool = False,
+        stacklevel: int = 1,
+        extra=None,
+    ) -> None:
         pass
 
-    def critical(self, msg, *args, exc_info: bool = False) -> None:
+    def exception(
+        self,
+        msg,
+        *args,
+        exc_info: bool = True,
+        stack_info: bool = False,
+        stacklevel: int = 1,
+        extra=None,
+    ) -> None:
         pass
 
-    def setLevel(self, level: int) -> None:
+    def critical(
+        self,
+        msg,
+        *args,
+        exc_info: bool = False,
+        stack_info: bool = False,
+        stacklevel: int = 1,
+        extra=None,
+    ) -> None:
         pass
+
+    def fatal(
+        self,
+        msg,
+        *args,
+        exc_info: bool = False,
+        stack_info: bool = False,
+        stacklevel: int = 1,
+        extra=None,
+    ) -> None:
+        pass
+
+    def log(
+        self,
+        level: int,
+        msg,
+        *args,
+        exc_info: bool = False,
+        stack_info: bool = False,
+        stacklevel: int = 1,
+        extra=None,
+    ) -> None:
+        pass
+
+    def setLevel(self, level) -> None:
+        _level(level, "Logger.setLevel()")
 
     def isEnabledFor(self, level: int) -> bool:
         return False
 
+    def getEffectiveLevel(self) -> int:
+        return NOTSET
+
+    def addHandler(self, hdlr: Handler) -> None:
+        pass
+
+    def removeHandler(self, hdlr: Handler) -> None:
+        pass
+
+    def hasHandlers(self) -> bool:
+        return False
+
+    def getChild(self, suffix: str) -> Logger:
+        return Logger(self.name + "." + suffix)
+
 
 def getLogger(name: str = "root") -> Logger:
     return Logger(name)
+
+
+def debug(
+    msg,
+    *args,
+    exc_info: bool = False,
+    stack_info: bool = False,
+    stacklevel: int = 1,
+    extra=None,
+) -> None:
+    pass
+
+
+def info(
+    msg,
+    *args,
+    exc_info: bool = False,
+    stack_info: bool = False,
+    stacklevel: int = 1,
+    extra=None,
+) -> None:
+    pass
+
+
+def warning(
+    msg,
+    *args,
+    exc_info: bool = False,
+    stack_info: bool = False,
+    stacklevel: int = 1,
+    extra=None,
+) -> None:
+    pass
+
+
+def warn(
+    msg,
+    *args,
+    exc_info: bool = False,
+    stack_info: bool = False,
+    stacklevel: int = 1,
+    extra=None,
+) -> None:
+    pass
+
+
+def error(
+    msg,
+    *args,
+    exc_info: bool = False,
+    stack_info: bool = False,
+    stacklevel: int = 1,
+    extra=None,
+) -> None:
+    pass
+
+
+def exception(
+    msg,
+    *args,
+    exc_info: bool = True,
+    stack_info: bool = False,
+    stacklevel: int = 1,
+    extra=None,
+) -> None:
+    pass
+
+
+def critical(
+    msg,
+    *args,
+    exc_info: bool = False,
+    stack_info: bool = False,
+    stacklevel: int = 1,
+    extra=None,
+) -> None:
+    pass
+
+
+def fatal(
+    msg,
+    *args,
+    exc_info: bool = False,
+    stack_info: bool = False,
+    stacklevel: int = 1,
+    extra=None,
+) -> None:
+    pass
+
+
+def log(
+    level: int,
+    msg,
+    *args,
+    exc_info: bool = False,
+    stack_info: bool = False,
+    stacklevel: int = 1,
+    extra=None,
+) -> None:
+    pass
+
+
+def basicConfig(
+    *args,
+    filename: Optional[str] = None,
+    filemode: str = "a",
+    format: str = BASIC_FORMAT,
+    datefmt: Optional[str] = None,
+    style: str = "%",
+    level=None,
+    stream=None,
+    handlers=None,
+    force: bool = False,
+    encoding: Optional[str] = None,
+    errors: Optional[str] = None,
+) -> None:
+    _keyword_only(args, "logging.basicConfig()")
+    _level(level, "logging.basicConfig()")
+    # Codon's lists are invariant: [StreamHandler()] is not a list[Handler].
+    if not isinstance(handlers, Optional[NoneType]):
+        for handler in handlers:
+            _is_handler(handler)
