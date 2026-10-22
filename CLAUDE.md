@@ -210,10 +210,14 @@ If pre-commit hooks fail:
 
 ## Project Structure
 
-- `autoware_carla_scenario/` - The framework package (the only uv workspace member)
+- `autoware_carla_scenario/` - The framework package (a uv workspace member)
   - `src/autoware_carla_scenario/` - Package sources
   - `test/` - pytest suite
   - `docs/`, `mkdocs.yml` - Documentation
+- `autoware_carla_scenario_t4/` - The T4 dataset writer (the `t4` extra, the
+  other workspace member): a Rust crate with a PyO3 binding, built by maturin
+  (`cargo test` runs its own tests; `uv sync` builds it, so a Rust toolchain
+  is needed)
 - `data/` - The nishishinjuku fixture map (Lanelet2 `.osm` and its committed OpenDRIVE `.xodr`) shared by the tests and the example configs
 - `examples/scenario_package_template/` - A standalone scenario package to copy
 - `.github/actions/pack-scenario-image/` - Composite action that packs a scenario package into an image

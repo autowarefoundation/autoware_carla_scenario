@@ -47,6 +47,37 @@ rerun:
   # (driver.cameras), as JPEG, in their frustums on the ego in the 3D view.
   cameras: false
 
+# A T4 dataset of each run ({Scenario}.t4/0/), TIER IV's nuScenes-style format
+# that t4-devkit reads (docs/t4_dataset.md): the recorder puts the LiDARs and
+# cameras below on the ego, whatever its entity, and writes a key frame of
+# every sweep -- the ego's pose, the sweeps, the camera frames, and the box of
+# every vehicle and pedestrian from CARLA's ground truth. Needs the extra:
+#   pip install 'autoware-carla-scenario[t4]'
+# and is refused before anything runs without it.
+t4:
+  enabled: false
+  # Key frames a second: 20 (every tick), 10, 5, 4, 2 or 1.
+  frequency_hz: 10.0
+  # Annotate the vehicles and pedestrians within this distance of the ego, in
+  # metres; null annotates all of them.
+  max_distance_m: 100.0
+  # The camera frames' JPEG quality, 1-100.
+  jpeg_quality: 90
+  # Each sensor is its T4 channel and the settings of a LiDAR
+  # (sensor.carla_lidar.CarlaLidarSensorConfig) or a camera
+  # (sensor.carla_camera.CarlaCameraSensorConfig), mounted relative to the
+  # vehicle actor in CARLA's convention (x forward, y right, z up, degrees).
+  lidars:
+    - channel: LIDAR_TOP
+      position_z: 2.2
+  cameras:
+    - channel: CAM_FRONT
+      image_width: 1280
+      image_height: 720
+      fov: 90.0
+      position_x: 1.0
+      position_z: 1.6
+
 # Sensors rendered by carla_canvas instead of the CARLA server
 # (docs/usage.md#rendering-sensors-with-carla_canvas): a carla_canvas
 # configuration naming the renderer and the sensor types it renders, e.g. the

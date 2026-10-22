@@ -1,7 +1,16 @@
 [tool.uv.workspace]
 members = [
     "autoware_carla_scenario",
+    # The T4 dataset writer (the `t4` extra): a Rust core with a PyO3 binding,
+    # built by maturin.
+    "autoware_carla_scenario_t4",
 ]
+
+[tool.uv.sources]
+autoware-carla-scenario-t4 = { workspace = true }
+# The T4 dataset reader the tests load each written dataset with, at its
+# latest release (it is not on PyPI under this name).
+t4-devkit = { git = "https://github.com/tier4/t4-devkit", tag = "v0.8.0" }
 
 [dependency-groups]
 dev = [
@@ -43,6 +52,13 @@ dev = [
     "autoware-carla-scenario-rerun>=0.1,<0.2",
     "hypothesis>=6.100",
     "jsonschema>=4.18",
+    # ...and the `t4` extra (T4 datasets of the runs) and its tests, which
+    # read every dataset back with t4-devkit, TIER IV's own reader. It
+    # supports Python 3.10-3.12, and its sanity checker imports colorama
+    # without declaring it.
+    "autoware-carla-scenario-t4",
+    "t4-devkit>=0.8.0,<0.9; python_version < '3.13'",
+    "colorama>=0.4.6; python_version < '3.13'",
 ]
 
 [tool.ruff]

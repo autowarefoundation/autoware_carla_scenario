@@ -1,0 +1,36 @@
+[project]
+name = "autoware-carla-scenario-t4"
+version = "0.1.0"
+description = "Writes T4 datasets of autoware_carla_scenario runs (a Rust core)"
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [
+    { name = "Masaya Kataoka", email = "ms.kataoka@gmail.com" }
+]
+# abi3: one wheel per platform for every CPython from 3.10, the range
+# autoware-carla-scenario itself supports.
+requires-python = ">=3.10"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Rust",
+    "Operating System :: POSIX :: Linux",
+    "Topic :: Scientific/Engineering",
+]
+dependencies = [
+    "numpy>=1.21",
+]
+
+[project.urls]
+Homepage = "https://github.com/autowarefoundation/autoware_carla_scenario"
+Repository = "https://github.com/autowarefoundation/autoware_carla_scenario"
+
+[build-system]
+requires = ["maturin>=1.7,<2.0"]
+build-backend = "maturin"
+
+[tool.maturin]
+python-source = "python"
+module-name = "autoware_carla_scenario_t4._core"
+features = ["extension-module"]

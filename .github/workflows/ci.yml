@@ -187,6 +187,45 @@ jobs:
     - name: Check package can be built
       run: uv build --package autoware-carla-scenario
 
+    - name: Check the T4 writer can be built
+      run: uv build --package autoware-carla-scenario-t4
+
+  t4-writer:
+    # The T4 dataset writer's Rust side: formatting, lints and its own tests.
+    # The Python suite (test_t4_dataset.py) drives it through its binding and
+    # reads what it writes back with t4-devkit.
+    name: T4 writer (Rust)
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name != 'push' ||
+      !startsWith(github.event.head_commit.message, 'chore: bump version to ')
+    defaults:
+      run:
+        working-directory: autoware_carla_scenario_t4
+    steps:
+    - uses: actions/checkout@v4
+
+    # `cargo test` links libpython (the extension-module feature is off).
+    - uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+
+    - name: Install the Rust toolchain
+      run: rustup toolchain install stable --profile minimal --component rustfmt,clippy
+
+    - uses: Swatinem/rust-cache@v2
+      with:
+        workspaces: autoware_carla_scenario_t4
+
+    - name: Check the formatting
+      run: cargo fmt --check
+
+    - name: Lint
+      run: cargo clippy --all-targets -- -D warnings
+
+    - name: Test
+      run: cargo test
+
   lint-and-format:
     runs-on: ubuntu-latest
     # Repeats the pull request's verdict and seeds no cache: see the top.

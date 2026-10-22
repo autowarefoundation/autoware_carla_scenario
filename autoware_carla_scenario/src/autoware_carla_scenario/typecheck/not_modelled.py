@@ -278,6 +278,14 @@ NOT_MODELLED: dict[str, dict[str, str]] = {
         "run (rerun.enabled), not a scenario; the model declares only the "
         "RerunConverter the checked runner hands each log to",
     ),
+    f"{_PACKAGE}.t4": _each(
+        "DATASET_SUFFIX INSTALL_HINT T4CameraConfig T4LidarConfig T4Settings "
+        "T4UnavailableError category_of dataset_path require_writer",
+        "writes a run as a T4 dataset with the autoware-carla-scenario-t4 "
+        "package, which the runner does (t4.enabled), not a scenario; the "
+        "model declares only the T4Recorder and T4Recording the checked "
+        "runner drives",
+    ),
     f"{_PACKAGE}.trajectory_recorder": {
         "SCHEMA_PATH": (
             "the path of the JSON Schema beside the Python module "
@@ -555,6 +563,13 @@ NOT_MODELLED_MEMBERS: dict[str, dict[str, str]] = {
             "whether rerun.lidar or rerun.cameras is set, which the converter's "
             "start_sensors checks itself; the checked runner calls "
             "start_sensors and stop_sensors whatever it is"
+        ),
+    },
+    "T4Recorder": {
+        "settings": (
+            "the T4Settings the recorder was made with (the sensors, the "
+            "rate), which only its own start() reads; the checked runner "
+            "calls start() whatever they are"
         ),
     },
     "RunEnvironment": _members(

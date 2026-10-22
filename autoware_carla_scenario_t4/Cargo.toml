@@ -1,0 +1,31 @@
+[package]
+name = "autoware_carla_scenario_t4"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "Writes T4 datasets (TIER IV's nuScenes-style format) of autoware_carla_scenario runs"
+repository = "https://github.com/autowarefoundation/autoware_carla_scenario"
+publish = false
+
+[lib]
+name = "autoware_carla_scenario_t4"
+# cdylib for the Python extension, rlib for `cargo test`.
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+jpeg-encoder = "0.7"
+numpy = "0.30"
+pyo3 = { version = "0.30", features = ["abi3-py310"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[features]
+# maturin turns this on for the wheel; `cargo test` links libpython instead.
+extension-module = ["pyo3/extension-module"]
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

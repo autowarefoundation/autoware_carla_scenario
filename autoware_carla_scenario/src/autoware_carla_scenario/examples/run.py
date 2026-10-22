@@ -77,6 +77,7 @@ from autoware_carla_scenario.rerun import (
 )
 from autoware_carla_scenario.rerun import report as rerun_report
 from autoware_carla_scenario.server import fog_density_scale_args
+from autoware_carla_scenario.t4 import T4Recorder, T4Settings, T4UnavailableError
 from autoware_carla_scenario.typecheck import ScenarioTypeError
 from autoware_carla_scenario.typecheck.mode import (
     check_odd,
@@ -648,6 +649,7 @@ def run_scenario_with_queue(
     server_extra_args: list[str] | None = None,
     map_source: str | None = None,
     rerun: RerunConverter | None = None,
+    t4: T4Recorder | None = None,
 ) -> ScenarioResult:
     """Run a single pre-built scenario using :class:`ScenarioQueue`.
 
@@ -658,6 +660,7 @@ def run_scenario_with_queue(
     ``CarlaUnreal.sh`` when the run starts the server (:func:`server_extra_args`).
     *rerun* converts the run's trajectory log into a Rerun recording once it
     is closed (:func:`build_rerun_converter`); the caller waits for it.
+    *t4* writes the run as a T4 dataset (:func:`build_t4_recorder`).
 
     This is the extracted orchestration logic that was previously embedded
     inside :func:`run_scenario`.  Downstream projects can use this to execute
@@ -690,6 +693,7 @@ def run_scenario_with_queue(
         server_extra_args=server_extra_args,
         map_source=map_source,
         rerun=rerun,
+        t4=t4,
     )
     queue.add(scenario, case=case)
     with queue:
@@ -783,6 +787,30 @@ def build_rerun_converter(*cfgs: DictConfig) -> RerunConverter | None:
     if cameras:
         sensors["cameras"] = True
     return RerunConverter(strict=strict, **sensors)
+
+
+def build_t4_recorder(*cfgs: DictConfig) -> T4Recorder | None:
+    """What writes each run as a T4 dataset, when the first of *cfgs* that
+    sets ``t4.enabled`` does (its ``t4`` settings: the sensors and the rate);
+    ``None`` otherwise.
+
+    Called before anything runs, so a run asking for datasets without the
+    ``t4`` extra installed is refused at once.
+
+    Raises:
+        T4UnavailableError: The extra is not installed.
+        ValueError: The ``t4`` settings are not valid.
+    """
+    for cfg in cfgs:
+        t4_cfg = cfg.get("t4") or {}
+        if not t4_cfg.get("enabled", False):
+            continue
+        settings = OmegaConf.to_container(t4_cfg, resolve=True)
+        assert isinstance(settings, dict)  # noqa: S101 - a config section
+        return T4Recorder(
+            T4Settings.from_config({str(k): v for k, v in settings.items()})
+        )
+    return None
 
 
 def canvas_config(*cfgs: DictConfig) -> str | None:
@@ -1105,7 +1133,8 @@ def _batch_queue(
     *map_paths* is what :func:`resolve_map_paths` gave for the batch's map;
     *extra_server_args* are added to the server's own (a SLURM task's ports);
     *rerun* converts each case's trajectory log as the case ends
-    (:func:`build_rerun_converter`).
+    (:func:`build_rerun_converter`); the first config's ``t4`` writes each
+    case as a T4 dataset (:func:`build_t4_recorder`).
     """
     cooldown = float(first_cfg.server.get("cooldown_seconds", 0.0))
     cooldown_max_retries = int(first_cfg.server.get("cooldown_max_retries", 0))
@@ -1129,6 +1158,7 @@ def _batch_queue(
         server_extra_args=[*server_extra_args(first_cfg), *(extra_server_args or [])],
         map_source=_map_source(first_cfg),
         rerun=rerun,
+        t4=build_t4_recorder(first_cfg),
     )
 
 
@@ -1268,6 +1298,8 @@ def run_batch(
     # SLURM each task converts its own cases (slurm/worker.py), so this only
     # checks.
     rerun = build_rerun_converter(*configs)
+    # Likewise a batch asking for T4 datasets without the `t4` extra.
+    build_t4_recorder(*configs)
     if rerun is not None and launcher == "slurm":
         rerun.close()
         rerun = None
@@ -1552,8 +1584,9 @@ def run_scenario(
     """
     logger.info("Resolved config:\n%s", OmegaConf.to_yaml(cfg))
     warn_if_video_set(cfg)
-    # Before anything is built: refused at once without the extra.
+    # Before anything is built: refused at once without the extras.
     rerun = build_rerun_converter(cfg)
+    build_t4_recorder(cfg)
     try:
         apply_canvas(cfg)
         return _run_scenario(cfg, rerun, build_scenario_fn=build_scenario_fn)
@@ -1605,6 +1638,7 @@ def _run_scenario(
         server_extra_args=server_extra_args(cfg),
         map_source=_map_source(cfg),
         rerun=rerun,
+        t4=build_t4_recorder(cfg),
     )
 
     status = "PASSED" if result.passed else "FAILED"
@@ -1623,7 +1657,7 @@ def _hydra_main(cfg: DictConfig) -> None:
     )
     try:
         result = run_scenario(cfg)
-    except (ScenarioTypeError, RerunUnavailableError) as exc:
+    except (ScenarioTypeError, RerunUnavailableError, T4UnavailableError) as exc:
         if _is_multirun():
             raise
         print(exc, file=sys.stderr)  # noqa: T201
@@ -1739,7 +1773,7 @@ def main() -> None:
                 run_batch(
                     scenario_names, remaining, expand=expand, resume_from=resume_from
                 )
-        except (ScenarioTypeError, RerunUnavailableError) as exc:
+        except (ScenarioTypeError, RerunUnavailableError, T4UnavailableError) as exc:
             print(exc, file=sys.stderr)  # noqa: T201
             sys.exit(2)
     else:

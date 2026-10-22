@@ -389,6 +389,55 @@ jobs:
           path: dist
           if-no-files-found: error
 
+  # The T4 dataset writer (autoware_carla_scenario_t4/, the `t4` extra): a Rust
+  # extension, so one abi3 wheel per platform (CPython 3.10 and later) and an
+  # sdist. Its version is its own (its pyproject.toml); a release whose writer
+  # version is already on PyPI uploads nothing new for it (skip-existing).
+  pypi-build-t4:
+    name: build the T4 writer (${{ matrix.target }})
+    needs: release
+    if: needs.release.outputs.release == 'true'
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64
+            runner: ubuntu-latest
+          - target: aarch64
+            runner: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release.outputs.sha }}
+
+      - name: Build the wheel
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          manylinux: auto
+          args: --release --out dist --manifest-path autoware_carla_scenario_t4/Cargo.toml
+
+      - name: Build the sdist
+        if: matrix.target == 'x86_64'
+        uses: PyO3/maturin-action@v1
+        with:
+          command: sdist
+          args: --out dist --manifest-path autoware_carla_scenario_t4/Cargo.toml
+
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Check the metadata
+        run: uvx twine check --strict dist/*
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pypi-dist-t4-${{ matrix.target }}
+          path: dist
+          if-no-files-found: error
+
   pypi-install:
     name: install on Python ${{ matrix.python-version }}
     needs: pypi-build
@@ -434,10 +483,12 @@ jobs:
   # `autowarefoundation`, repository `autoware_carla_scenario`, workflow
   # `release.yml`, environment `pypi` -- and create the `pypi` environment in
   # this repository's settings. Until then this job fails and the
-  # distributions remain available as the `pypi-dist` artifact.
+  # distributions remain available as the `pypi-dist` artifact. The T4 writer,
+  # `autoware-carla-scenario-t4`, is a PyPI project of its own: it needs the
+  # same (pending) publisher added for it.
   pypi-publish:
     name: publish to PyPI
-    needs: [release, pypi-build, pypi-install]
+    needs: [release, pypi-build, pypi-build-t4, pypi-install]
     if: needs.release.outputs.release == 'true'
     runs-on: ubuntu-latest
     environment:
@@ -448,7 +499,8 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: pypi-dist
+          pattern: pypi-dist*
+          merge-multiple: true
           path: dist
 
       # PyPI never replaces a file, so skipping what is already there makes a

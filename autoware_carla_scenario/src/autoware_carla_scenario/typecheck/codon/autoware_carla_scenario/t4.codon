@@ -1,0 +1,73 @@
+# Model of autoware_carla_scenario.t4 (docs/typecheck.md), which hands the
+# world and the sensors to the T4 writer, a Rust extension imported at run
+# time: what the checked scenario_runner and scenario_queue use of it, with
+# the signatures of the Python classes.
+
+from pathlib import Path
+from typing import Optional
+
+import typesafe_carla.carla as carla
+
+from ._tc import _keyword_only as _acs_keyword_only
+
+
+class T4Recording:
+    path: Path
+    start_frame: int
+
+    # The writer package and the T4Settings, which Python holds as a module
+    # and a dataclass of its own: taken as they come.
+    def __init__(
+        self,
+        writer_module,
+        settings,
+        path: Path,
+        world: carla.World,
+        ego: carla.Actor,
+        start_frame: int,
+        *_kw,
+        scene_name: str,
+        description: str = "",
+        location: str = "",
+        lanelet2_path: Optional[Path] = None,
+    ):
+        _acs_keyword_only(
+            _kw,
+            "T4Recording(): scene_name, description, location and lanelet2_path",
+        )
+        self.path = path
+        self.start_frame = start_frame
+
+    @property
+    def active(self) -> bool:
+        raise NotImplementedError()
+
+    @property
+    def frames(self) -> int:
+        raise NotImplementedError()
+
+    def record(self, world: carla.World) -> None:
+        raise NotImplementedError()
+
+    def close(self) -> Optional[Path]:
+        raise NotImplementedError()
+
+
+class T4Recorder:
+    # The settings (T4Settings) and the writer package, which Python holds as
+    # a module: taken as they come.
+    def __init__(self, settings = None, writer = None):
+        pass
+
+    def start(
+        self,
+        directory: Path,
+        stem: str,
+        world: carla.World,
+        ego: carla.Actor,
+        start_frame: int,
+        description: str = "",
+        location: str = "",
+        lanelet2_path: Optional[Path] = None,
+    ) -> Optional[T4Recording]:
+        raise NotImplementedError()
