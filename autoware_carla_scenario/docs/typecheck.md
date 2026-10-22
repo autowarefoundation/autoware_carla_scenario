@@ -1356,11 +1356,23 @@ For an `Enum` class, a scenario's own (any of `Enum`, `IntEnum`, `StrEnum`,
 - `x in Mode` and `x not in Mode`;
 - `Mode["A"]`, a member looked up by name.
 
+Inside the enum's own methods the class has other spellings, and the check
+reads them as the class (#481). In a `@classmethod`, the first parameter
+(`cls`, or whatever it is called) is the class, so `[g.name for g in cls]`,
+`list(cls)`, `len(cls)`, `x in cls` and `cls["A"]` work. In an instance
+method, `type(self)` and `self.__class__` are the class too
+(`for m in type(self)`). These hold only in a method written directly in the
+class body: a `@staticmethod`, a function outside the class and a class that
+is no enum are left alone, and so is a parameter the method rebinds (an
+assignment, a loop or comprehension variable, an import, a nested `def`), a
+nested function or lambda that declares a parameter of the same name, and a
+`type` the module or function binds.
+
 Iteration yields the members in definition order. A member whose value repeats
 an earlier one is an alias, and is skipped, as in Python. A `Flag` or `IntFlag`
 yields its single-bit members only, as Python 3.11 and later do: a composite
 (`RW = R | W`, `BOTH = 3`), a zero member and an alias are skipped, though
-`Perm["RW"]` finds them. Only the bare name of the class is rewritten, so a
+`Perm["RW"]` finds them. Only the name of the class (and the spellings above) is rewritten, so a
 parameter or local called like the class is left alone, and the enum may be
 defined in another module of the package.
 
@@ -1375,6 +1387,10 @@ local of the name shadows it only inside its function.
 
 What does not work:
 
+- the class under another name or as a value: `k = cls` and then `for m in
+  k`, or `f(cls)`, and `cls.__members__`. They stay as written (the first is
+  refused with a hint to write the class's name: `'Mode' object has no
+  attribute '__iter__'`);
 - the class passed as a value, `f(Mode)`, or `Mode.__members__`: both stay as
   written, which Codon does not resolve (`no function 'List.__init__' with
   arguments (List[T], type[Mode])` for `list(e)` in `f`, and `'Mode' object

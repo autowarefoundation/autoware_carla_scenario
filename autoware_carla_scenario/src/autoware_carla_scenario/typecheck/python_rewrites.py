@@ -157,6 +157,13 @@ REWRITE_HINTS: tuple[tuple[re.Pattern[str], str], ...] = (
         'is already text there; format with f"{b:02x}" per byte if needed',
     ),
     (
+        re.compile(r"^'\w+' object has no attribute '__iter__'"),
+        "if this iterates an Enum class, the check rewrites its own name and, "
+        "in its methods, `cls`, `type(self)` and `self.__class__` (not a "
+        "parameter or variable that holds the class, or one the method "
+        "rebinds): write the class's name (`for m in Gear`)",
+    ),
+    (
         re.compile(r"object has no attribute '__format__'"),
         "Codon's int, float and str take a format spec, and the check calls "
         "their __format__ for a spec its f-strings cannot parse (a sign, a "

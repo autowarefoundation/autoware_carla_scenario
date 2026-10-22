@@ -158,7 +158,7 @@ from collections.abc import Callable, Collection, Iterator, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .scopes import ShadowScopes
+from .scopes import ShadowScopes, _scope_bindings
 
 __all__ = [
     "MISSING_BUILTIN_EXCEPTIONS",
@@ -435,6 +435,12 @@ class _Edits:
         # statement it belonged to).
         lost = self.text(start, end).count("\n") - text.count("\n")
         self.edits.append((start, end, text + "\n" * max(lost, 0)))
+
+    def supersede(self, start: int, end: int, text: str) -> None:
+        """Like :meth:`replace`, but the edit wins over those already made on
+        exactly this span (the first one made on a span otherwise wins)."""
+        self.edits = [e for e in self.edits if (e[0], e[1]) != (start, end)]
+        self.replace(start, end, text)
 
     def apply(self) -> str:
         data = self.data
@@ -1485,10 +1491,8 @@ class _Rewriter(ShadowScopes):
             end += len(after[: comma + 1].encode())
             end += len(rest[: len(rest) - len(rest.lstrip(" "))].encode())
         self.edits.replace(start, end, "")
-        for stmt in node.body:
-            for name in ast.walk(stmt):
-                if isinstance(name, ast.Name) and name.id == first.arg:
-                    self.edits.replace(*self.edits.node_span(name), class_name)
+        for name in _parameter_reads(node.body, first.arg):
+            self.edits.replace(*self.edits.node_span(name), class_name)
 
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
         for decorator in node.decorator_list:
@@ -2902,6 +2906,64 @@ def _module_level_bindings(tree: ast.Module) -> set[str]:
     return names
 
 
+def _parameter_reads(body: list[ast.stmt], name: str) -> list[ast.Name]:
+    """The uses of the name *name* in *body* (a function's) that are the
+    function's own: not those of a nested function or lambda with a parameter
+    of that name, or a comprehension with a loop variable of it (#481)."""
+    found: list[ast.Name] = []
+    stack: list[ast.AST] = list(body)
+    while stack:
+        node = stack.pop()
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            args = node.args
+            declared = {
+                a.arg for a in (*args.posonlyargs, *args.args, *args.kwonlyargs)
+            }
+            declared.update(a.arg for a in (args.vararg, args.kwarg) if a is not None)
+            if name in declared:
+                # Its defaults and decorators are still read in this scope.
+                stack.extend(d for d in (*args.defaults, *args.kw_defaults) if d)
+                stack.extend(getattr(node, "decorator_list", []))
+                continue
+        if isinstance(
+            node, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
+        ):
+            targets = {
+                n.id
+                for g in node.generators
+                for n in ast.walk(g.target)
+                if isinstance(n, ast.Name)
+            }
+            if name in targets:
+                # Its loop variable is its own; only the first iterable is
+                # read in this scope.
+                stack.append(node.generators[0].iter)
+                continue
+        if isinstance(node, ast.Name) and node.id == name:
+            found.append(node)
+        stack.extend(ast.iter_child_nodes(node))
+    return found
+
+
+def _enum_alias_rebound(
+    function: ast.FunctionDef | ast.AsyncFunctionDef, name: str
+) -> bool:
+    """Whether *function* binds *name* other than as its parameter: an
+    assignment, a loop, ``with`` or comprehension target, an import, a nested
+    ``def`` or ``class``, ``global``/``nonlocal`` (#481).  Conservative: a
+    binding anywhere inside it, a nested scope's too, counts."""
+    body = ast.Module(body=function.body, type_ignores=[])
+    if name in _scope_bindings(body):
+        return True
+    for child in ast.walk(body):
+        if isinstance(child, ast.Name) and isinstance(child.ctx, (ast.Store, ast.Del)):
+            if child.id == name:
+                return True
+        elif isinstance(child, (ast.Global, ast.Nonlocal)) and name in child.names:
+            return True
+    return False
+
+
 class _EnumIteration(ast.NodeVisitor):
     """Rewrite the iteration over, and the lookup by name in, an Enum class.
 
@@ -2909,25 +2971,100 @@ class _EnumIteration(ast.NodeVisitor):
     ``Mode._acs_members()``, and ``Mode[name]`` is ``Mode._acs_by_name(name)``
     (:func:`_enum_lookups`).  Only a bare name of an Enum class is rewritten,
     in place, so no line moves.
+
+    Inside the Enum's own methods the class has other spellings (#481): the
+    first parameter of a ``@classmethod`` (``cls``), and, in an instance
+    method, ``type(self)`` and ``self.__class__``.  They read the same, unless
+    the function rebinds the parameter, or a nested function or lambda
+    declares one of the same name.
     """
+
+    #: What a name stands for: the Enum class itself (``cls``) or an instance
+    #: of it (``self``).
+    _CLASS = "class"
+    _INSTANCE = "instance"
 
     def __init__(self, edits: _Edits, enums: Collection[str]) -> None:
         self.edits = edits
         self.enums = enums
         #: The names bound inside each enclosing function or lambda: a
         #: parameter or local called like an Enum class is not that class.
-        self._bound: list[set[str]] = []
+        #: With, for a method of an Enum, its first parameter as (the Enum,
+        #: what it is).
+        self._bound: list[tuple[set[str], dict[str, tuple[str, str]]]] = []
+        #: The Enum whose body is being visited, for a function directly in it.
+        self._owner: str | None = None
+        self._module_bound: set[str] = set()
 
-    def _is_enum(self, node: ast.AST) -> bool:
-        return (
-            isinstance(node, ast.Name)
-            and node.id in self.enums
-            and not any(node.id in bound for bound in self._bound)
-        )
+    def visit_Module(self, node: ast.Module) -> None:
+        self._module_bound = _scope_bindings(node)
+        self.generic_visit(node)
+
+    def _resolve(self, name: str) -> tuple[str, str] | None:
+        """The Enum (and whether the class or an instance) *name* stands for."""
+        for bound, aliases in reversed(self._bound):
+            if name in aliases:
+                return aliases[name]
+            if name in bound:
+                return None
+        return (name, self._CLASS) if name in self.enums else None
+
+    def _enum_of(self, node: ast.AST) -> str | None:
+        """The Enum class *node* is: its name, or an alias of it in one of
+        its methods (``cls``, ``type(self)``, ``self.__class__``)."""
+        if isinstance(node, ast.Name):
+            resolved = self._resolve(node.id)
+            return resolved[0] if resolved and resolved[1] == self._CLASS else None
+        instance = None
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "type"
+            and len(node.args) == 1
+            and not node.keywords
+            and isinstance(node.args[0], ast.Name)
+            and "type" not in self._module_bound
+            and not any("type" in bound for bound, _ in self._bound)
+        ):
+            instance = node.args[0].id
+        elif (
+            isinstance(node, ast.Attribute)
+            and node.attr == "__class__"
+            and isinstance(node.value, ast.Name)
+        ):
+            instance = node.value.id
+        if instance is None:
+            return None
+        resolved = self._resolve(instance)
+        return resolved[0] if resolved and resolved[1] == self._INSTANCE else None
 
     def _members(self, node: ast.AST) -> None:
-        if isinstance(node, ast.Name) and self._is_enum(node):
-            self.edits.replace(*self.edits.node_span(node), f"{node.id}._acs_members()")
+        enum = self._enum_of(node)
+        if enum is not None:
+            # `cls` is already the class's name (`_Rewriter._rewrite_classmethod`).
+            self.edits.supersede(*self.edits.node_span(node), f"{enum}._acs_members()")
+
+    def _method_alias(
+        self, node: ast.FunctionDef | ast.AsyncFunctionDef, bound: set[str]
+    ) -> dict[str, tuple[str, str]]:
+        """The first parameter of a method of the Enum being visited, as an
+        alias, unless it is rebound or the Enum's name is (#481)."""
+        owner = self._owner
+        positional = [*node.args.posonlyargs, *node.args.args]
+        if owner is None or not positional:
+            return {}
+        decorators = {_dotted(d) for d in node.decorator_list}
+        if "staticmethod" in decorators:
+            return {}
+        kind = self._CLASS if "classmethod" in decorators else self._INSTANCE
+        param = positional[0].arg
+        if (
+            _enum_alias_rebound(node, param)
+            or owner in bound
+            or self._resolve(owner) != (owner, self._CLASS)
+        ):
+            return {}
+        return {param: (owner, kind)}
 
     def _scope(self, node: ast.AST, args: ast.arguments) -> None:
         bound = {a.arg for a in (*args.posonlyargs, *args.args, *args.kwonlyargs)}
@@ -2937,7 +3074,11 @@ class _EnumIteration(ast.NodeVisitor):
                 bound.add(child.id)
             elif isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 bound.add(child.name)
-        self._bound.append(bound)
+        aliases = {}
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            aliases = self._method_alias(node, bound)
+        self._owner = None  # a function nested in the method is no method
+        self._bound.append((bound, aliases))
         for attr, value in ast.iter_fields(node):
             if attr == "returns":
                 continue  # an annotation (`Mode[int]`), not an expression
@@ -2946,13 +3087,30 @@ class _EnumIteration(ast.NodeVisitor):
                     self.visit(item)
         self._bound.pop()
 
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        owner = self._owner
+        is_enum = node.name in self.enums and any(
+            (_dotted(b) or "").rsplit(".", 1)[-1] in _ENUM_BASES for b in node.bases
+        )
+        for stmt in node.body:
+            self._owner = node.name if is_enum else None
+            self.visit(stmt)
+        for expr in (*node.decorator_list, *node.bases):
+            self._owner = None
+            self.visit(expr)
+        self._owner = owner
+
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        owner = self._owner
         self._scope(node, node.args)
+        self._owner = owner
 
     visit_AsyncFunctionDef = visit_FunctionDef  # type: ignore[assignment]
 
     def visit_Lambda(self, node: ast.Lambda) -> None:
+        owner, self._owner = self._owner, None
         self._scope(node, node.args)
+        self._owner = owner
 
     def visit_arg(self, node: ast.arg) -> None:
         pass  # an annotation is not an expression to evaluate
@@ -2987,14 +3145,13 @@ class _EnumIteration(ast.NodeVisitor):
 
     def visit_Subscript(self, node: ast.Subscript) -> None:
         value = node.value
-        if (
-            isinstance(value, ast.Name)
-            and self._is_enum(value)
-            and isinstance(node.ctx, ast.Load)
-        ):
-            _, value_end = self.edits.node_span(value)
+        enum = self._enum_of(value)
+        if enum is not None and isinstance(node.ctx, ast.Load):
+            value_start, value_end = self.edits.node_span(value)
             slice_start, slice_end = self.edits.node_span(node.slice)
             _, end = self.edits.node_span(node)
+            if not isinstance(value, ast.Name):  # `type(self)`, `self.__class__`
+                self.edits.replace(value_start, value_end, enum)
             self.edits.replace(value_end, slice_start, "._acs_by_name(")
             self.edits.replace(slice_end, end, ")")
         self.generic_visit(node)
