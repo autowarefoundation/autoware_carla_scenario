@@ -15,6 +15,7 @@ action that asks or to the entity that is asked.
 from __future__ import annotations
 
 import logging
+import random
 from typing import TYPE_CHECKING, Any, ClassVar, Collection, List, Optional, Tuple
 
 from ..constants import (
@@ -32,6 +33,14 @@ from .base import (
     _entity_name,
 )
 from .config import TrafficManagerBackendConfig
+from .parameters import VEHICLE_BOUNDS, Spread, VehicleParameters
+from ..world_reset import episode_of
+from ..visibility import (
+    DEFAULT_DECEL,
+    DEFAULT_REACTION_S,
+    sight_speed,
+    world_visibility,
+)
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
@@ -79,6 +88,15 @@ class TrafficManagerBackend(TrafficBackend):
     scenario spawned are handed to the TrafficManager after warm-up, and the
     manoeuvres a scenario asks for become TrafficManager calls.
 
+    How its vehicles drive is :class:`~autoware_carla_scenario.traffic.parameters.VehicleParameters`
+    (those :data:`~autoware_carla_scenario.traffic.parameters.VEHICLE_PARAMETER_BACKENDS`
+    gives ``traffic_manager``; it has no reaction time, braking or
+    acceleration of a driver to set, nor any notion of sight): each vehicle
+    draws its own value of each from the parameter's spread as it is first
+    put on autopilot, and the TrafficManager is told it for that vehicle.
+    Every vehicle it drives gets them, the scenario's own as well as its
+    background traffic.
+
     The client is injected rather than passed to each call, from either of the
     two places that already hold one: :meth:`prepare`, when
     :class:`~autoware_carla_scenario.ScenarioRunner` builds the run's context,
@@ -99,12 +117,16 @@ class TrafficManagerBackend(TrafficBackend):
     _released: set[int]
     _skipped: set[int]
     _lane_changed: List[DrivenEntity]
+    _visibility: Optional[float]
+    _draws: Optional[random.Random]
+    _drawn: set[int]
 
     def __init__(
         self,
         config: Optional[TrafficManagerBackendConfig] = None,
         *,
         client: Optional["carla.Client"] = None,
+        vehicles: Optional[VehicleParameters] = None,
     ) -> None:
         """Create the backend.
 
@@ -113,6 +135,13 @@ class TrafficManagerBackend(TrafficBackend):
             client: The CARLA client the TrafficManager is reached through, for
                 a caller that already holds one.  :meth:`prepare` supplies it
                 otherwise.
+            vehicles: How its vehicles drive; the TrafficManager's defaults
+                when omitted.  It drives no pedestrians, so has no pedestrian
+                parameters.
+
+        Raises:
+            TrafficParameterError: If *vehicles* sets a field the
+                TrafficManager does not support.
         """
         self._config = config or TrafficManagerBackendConfig()
         self._client = client
@@ -130,6 +159,14 @@ class TrafficManagerBackend(TrafficBackend):
         #: it), forgotten when the run closes: the queue keeps a finished
         #: run's scenarios, and their entities with them.
         self._lane_changed = []
+        #: How far drivers see, m, as last reported; ``None``: nothing set.
+        self._visibility = None
+        #: Each vehicle's parameter draws, reseeded by prepare(); the actors
+        #: that have theirs.
+        self._draws = None
+        self._drawn = set()
+        if vehicles is not None:
+            self.set_vehicle_parameters(vehicles)
 
     # ------------------------------------------------------------------
     # Properties
@@ -161,6 +198,9 @@ class TrafficManagerBackend(TrafficBackend):
             return
         tm.set_synchronous_mode(True)
         tm.set_random_device_seed(context.random_seed)
+        # Each vehicle's draws, from the run's seed: the same seed, the same
+        # drivers, in the order the vehicles are put on autopilot.
+        self._draws = None
 
     def start(
         self, world: "carla.World", *, skip_actor_ids: Collection[int] = ()
@@ -173,7 +213,7 @@ class TrafficManagerBackend(TrafficBackend):
         for actor in world.get_actors().filter("vehicle.*"):
             if actor.id in skip or actor.id in self._released:
                 continue
-            actor.set_autopilot(True, self.port)
+            self._autopilot(actor)
             enabled += 1
         if enabled:
             logger.info("Autopilot enabled on %d vehicle(s)", enabled)
@@ -182,6 +222,35 @@ class TrafficManagerBackend(TrafficBackend):
                 "Autopilot skipped for %s — external control expected",
                 ", ".join(str(actor_id) for actor_id in sorted(skip)),
             )
+
+    def tick(self, world: "carla.World", elapsed: float) -> None:
+        """Report how far drivers see, when it changes, and do nothing about it.
+
+        The TrafficManager rides the CARLA tick, and has no notion of sight:
+        its vehicles know where every actor is, fog or not
+        (:mod:`autoware_carla_scenario.visibility`).  So a visibility the
+        run's weather set is logged with the speed a backend that models
+        sight would hold a car to (:func:`~autoware_carla_scenario.visibility.sight_speed`,
+        for SUMO's default car), and the traffic drives as it did --
+        which is why ``follow_visibility`` is refused here.
+        """
+        seen = world_visibility(episode_of(world))
+        if seen == self._visibility:
+            return
+        self._visibility = seen
+        if seen is None:
+            logger.info("TrafficManager: no visibility set any more; nothing to undo")
+            return
+        limit_kmh = sight_speed(seen, DEFAULT_DECEL, DEFAULT_REACTION_S) * 3.6
+        logger.info(
+            "TrafficManager: drivers see %.0f m, so traffic that models sight "
+            "would drive at most %.0f km/h (braking at %.1f m/s² after %.1f s); "
+            "the TrafficManager models none, and its vehicles drive as before",
+            seen,
+            limit_kmh,
+            DEFAULT_DECEL,
+            DEFAULT_REACTION_S,
+        )
 
     def close(self) -> None:
         """Shut the TrafficManager down so the next run gets a fresh one.
@@ -204,6 +273,9 @@ class TrafficManagerBackend(TrafficBackend):
         self._started = False
         self._released = set()
         self._skipped = set()
+        self._visibility = None
+        self._drawn = set()
+        self._draws = None
         if self._closed or self._client is None:
             return
         self._closed = True
@@ -216,11 +288,10 @@ class TrafficManagerBackend(TrafficBackend):
 
     def describe(self) -> dict[str, Any]:
         """Return the backend name, its port and the seed it was given."""
-        return {
-            "backend": self.name,
-            "port": self.port,
-            "random_seed": self._random_seed,
-        }
+        out = super().describe()
+        out["port"] = self.port
+        out["random_seed"] = self._random_seed
+        return out
 
     # ------------------------------------------------------------------
     # Background traffic
@@ -267,7 +338,7 @@ class TrafficManagerBackend(TrafficBackend):
             carla.Vector3D(forward.x * speed, forward.y * speed, 0.0)
         )
         if self._started:
-            actor.set_autopilot(True, self.port)
+            self._autopilot(actor)
         tm = self._require_tm("spawn_background")
         if tm is not None:
             tm.set_desired_speed(_vehicle(actor), max(speed_kmh, 1.0))
@@ -286,6 +357,11 @@ class TrafficManagerBackend(TrafficBackend):
                 continue
             out[handle] = (location.x, location.y)
         return out
+
+    def background_actors(self, world: "carla.World") -> dict[str, "carla.Actor"]:
+        """Every background vehicle, by its handle, which is its ``role_name``;
+        a destroyed one is no agent of the scene, so never chosen."""
+        return dict(self._background)
 
     def remove_background(self, world: "carla.World", handle: str) -> None:
         """Destroy the background vehicle *handle*."""
@@ -468,10 +544,16 @@ class TrafficManagerBackend(TrafficBackend):
         actor = _require_actor(entity, "release")
         if actor is None:
             return
+        # A typed local: Codon unwraps the Optional here.
+        vehicle: "carla.Actor" = actor
+        self.release_actor(world, vehicle)
+
+    def release_actor(self, world: "carla.World", actor: "carla.Actor") -> None:
+        """Take *actor* off autopilot, and keep it off at :meth:`start`."""
         self._released.add(actor.id)
         if self._started:
             actor.set_autopilot(False, self.port)
-            logger.info("%s: autopilot released", _entity_name(entity))
+            logger.info("%s: autopilot released", _actor_name(actor))
 
     def resume(self, entity: DrivenEntity, world: "carla.World") -> None:
         """Put *entity*'s vehicle back on autopilot, and on it at :meth:`start`.
@@ -481,19 +563,84 @@ class TrafficManagerBackend(TrafficBackend):
         did before it was released.
         """
         actor = _require_actor(entity, "resume")
-        if actor is None or actor.id not in self._released:
+        if actor is None:
+            return
+        # A typed local: Codon unwraps the Optional here.
+        vehicle: "carla.Actor" = actor
+        self.resume_actor(world, vehicle)
+
+    def resume_actor(self, world: "carla.World", actor: "carla.Actor") -> None:
+        """Put *actor* back on autopilot, and on it at :meth:`start`."""
+        if actor.id not in self._released:
             return
         if actor.id in self._skipped:
             # Driven elsewhere from the start (an ego's stack): never ours.
             return
         self._released.discard(actor.id)
         if self._started:
-            actor.set_autopilot(True, self.port)
-            logger.info("%s: autopilot resumed", _entity_name(entity))
+            self._autopilot(actor)
+            logger.info("%s: autopilot resumed", _actor_name(actor))
 
     # ------------------------------------------------------------------
     # Internals
     # ------------------------------------------------------------------
+
+    def _autopilot(self, actor: "carla.Actor") -> None:
+        """Put *actor* on autopilot, with its own draw of each parameter.
+
+        Drawn once per vehicle: one taken back (:meth:`release_actor`) and
+        resumed keeps the draws the TrafficManager holds for it.
+        """
+        actor.set_autopilot(True, self.port)
+        parameters = self.vehicle_parameters
+        if not parameters.set_fields() or actor.id in self._drawn:
+            return
+        tm = self._require_tm("autopilot")
+        if tm is None:
+            return
+        self._drawn.add(actor.id)
+        if self._draws is None:
+            self._draws = random.Random(self._random_seed)
+        rng: random.Random = self._draws
+        vehicle = _vehicle(actor)
+        speed_factor = parameters.speed_factor
+        if speed_factor is not None:
+            # The TrafficManager's is a percentage *under* the limit.
+            factor = speed_factor.draw(rng, VEHICLE_BOUNDS["speed_factor"])
+            tm.vehicle_percentage_speed_difference(vehicle, (1.0 - factor) * 100.0)
+        min_gap = parameters.min_gap_m
+        if min_gap is not None:
+            tm.distance_to_leading_vehicle(
+                vehicle, min_gap.draw(rng, VEHICLE_BOUNDS["min_gap_m"])
+            )
+        if parameters.lane_changes is not None:
+            tm.auto_lane_change(vehicle, parameters.lane_changes)
+        # The TrafficManager's are percentages, the parameters' probabilities.
+        ignore_lights = parameters.ignore_lights
+        if ignore_lights is not None:
+            tm.ignore_lights_percentage(
+                vehicle, _percent(ignore_lights, rng, "ignore_lights")
+            )
+        ignore_signs = parameters.ignore_signs
+        if ignore_signs is not None:
+            tm.ignore_signs_percentage(
+                vehicle, _percent(ignore_signs, rng, "ignore_signs")
+            )
+        ignore_vehicles = parameters.ignore_vehicles
+        if ignore_vehicles is not None:
+            tm.ignore_vehicles_percentage(
+                vehicle, _percent(ignore_vehicles, rng, "ignore_vehicles")
+            )
+        ignore_walkers = parameters.ignore_walkers
+        if ignore_walkers is not None:
+            tm.ignore_walkers_percentage(
+                vehicle, _percent(ignore_walkers, rng, "ignore_walkers")
+            )
+        random_lane_changes = parameters.random_lane_changes
+        if random_lane_changes is not None:
+            chance = _percent(random_lane_changes, rng, "random_lane_changes")
+            tm.random_left_lanechange_percentage(vehicle, chance)
+            tm.random_right_lanechange_percentage(vehicle, chance)
 
     def _require_tm(self, what: str) -> Optional["carla.TrafficManager"]:
         """Return the TrafficManager handle, or ``None`` with a warning."""
@@ -507,6 +654,11 @@ class TrafficManagerBackend(TrafficBackend):
             )
             return None
         return self._client.get_trafficmanager(self.port)
+
+
+def _percent(spread: Spread, rng: random.Random, name: str) -> float:
+    """One vehicle's draw of the probability *name*, as a percentage."""
+    return spread.draw(rng, VEHICLE_BOUNDS[name]) * 100.0
 
 
 def _actor_of(entity: DrivenEntity) -> Optional["carla.Actor"]:
@@ -533,6 +685,14 @@ def _vehicle(actor: "carla.Actor") -> "carla.Vehicle":
         return actor.as_vehicle()
     else:
         return actor
+
+
+def _actor_name(actor: "carla.Actor") -> str:
+    """*actor*'s role name, for the logs; its id when it has none."""
+    attributes = actor.attributes
+    if "role_name" in attributes:
+        return str(attributes["role_name"])
+    return f"actor {actor.id}"
 
 
 def _require_actor(entity: DrivenEntity, what: str) -> Optional["carla.Actor"]:

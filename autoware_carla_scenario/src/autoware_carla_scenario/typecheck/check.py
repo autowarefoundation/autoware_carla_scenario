@@ -88,6 +88,7 @@ from .library_driver import (
     uncalled_nodes,
     workspace_module,
 )
+from .python_rewrites import REWRITE_HINTS, python_rewrite_refusals
 from .transform import (
     PRELUDE,
     class_declarations,
@@ -140,6 +141,31 @@ _LLVM_CLASS = re.compile(
 #: Where an error in the generated driver is reported: the scenario does not
 #: build the way the runner builds it (its constructor, setup() or is_done()).
 _DRIVER_LABEL = "<the scenario as register_scenario() builds it>"
+
+
+#: The model's directory of additions to Codon's own stdlib modules (#378):
+#: ``itertools.codon`` there is appended to Codon's ``itertools.codon``, so the
+#: workspace's module has every name Codon's has and the additions.  (A module
+#: that replaced Codon's would lose what the compiler finds by name, such as
+#: ``functools.partial``; the names of ``functools`` are the transform's.)
+_STDLIB_EXTENSIONS = "_stdlib"
+
+#: Why a module Codon has no model for is refused, and what to write instead
+#: (#378): appended to the refusal at the import line.
+_UNMODELLED_HINTS = {
+    "contextlib": "write a class with __enter__ and __exit__(self, exc_type, "
+    "exc, tb) for contextmanager (the check calls __exit__ with no arguments, "
+    "so those parameters are None in it), and try/except X: pass for suppress",
+    "warnings": "log with logger.warning(...) instead of warnings.warn(...)",
+    "json": "the check has no dict[str, Any] to load or dump: read the "
+    "configuration into a @dataclass, and leave serialisation to a module the "
+    "check does not compile",
+    "types": "name the type itself (SimpleNamespace is a @dataclass or a plain "
+    "class; MappingProxyType is a dict; annotate the tb of __exit__ as object)",
+    "textwrap": "build the string with str methods and join()",
+    "traceback": "log the exception with logger.exception(...)",
+    "io": "use a str, or a pathlib.Path opened with open()",
+}
 
 
 def model_dir() -> Path:
@@ -200,6 +226,7 @@ def _shims() -> frozenset[str]:
     """Modules the model directory provides besides the framework's own."""
     return frozenset(p.name.split(".")[0] for p in model_dir().iterdir()) - {
         _PACKAGE,
+        _STDLIB_EXTENSIONS,
         "__pycache__",
     }
 
@@ -637,6 +664,8 @@ def _collect(roots: list[str], tc: Toolchain, codon_path: Path) -> _Sources:
                 what = _unmodelled_module(imported, names)
             else:
                 what = f"{imported} has no Codon model, so a scenario importing it cannot be checked"
+                if top in _UNMODELLED_HINTS:
+                    what += f": {_UNMODELLED_HINTS[top]}"
             out.problems.append(Diagnostic(what, str(path), lineno))
     return out
 
@@ -674,6 +703,13 @@ class _Workspace:
 def _base_workspace(root: Path, driver: Any, codon_path: Path) -> _Workspace:
     """The model, the shims and the CARLA API, in *root*."""
     shutil.copytree(model_dir(), root, dirs_exist_ok=True)
+    extensions = root / _STDLIB_EXTENSIONS
+    stdlib = find_codon().codon_dir / "lib" / "codon" / "stdlib"
+    for extension in sorted(extensions.glob("*.codon")):
+        (root / extension.name).write_text(
+            (stdlib / extension.name).read_text() + "\n\n" + extension.read_text(),
+        )
+    shutil.rmtree(extensions)
     # The CARLA API: typesafe_carla's CODON_PATH directory (the library and
     # the compile-time switches it reads), linked in, as Codon reads only one.
     for entry in codon_path.iterdir():
@@ -749,7 +785,10 @@ def _build_workspace(
         ]
         problems += [
             Diagnostic(message, str(module.path), line)
-            for line, message in conflicting_imports(source)
+            for line, message in [
+                *conflicting_imports(source),
+                *python_rewrite_refusals(source),
+            ]
         ]
         text, origin = transform_source_lines(
             source, init_classes=init_classes, enum_classes=enum_class_names(classes)
@@ -816,6 +855,24 @@ _VARIADIC_LIMITS = (
         "(or a plain class with annotated fields), or a Dict[str, X]",
     ),
     (
+        re.compile(r"cannot import name 'asdict' from 'dataclasses'"),
+        "dataclasses.asdict returns a dict[str, Any], which the check cannot "
+        "type: build the dict from the fields you need "
+        '({"x": point.x, "y": point.y})',
+    ),
+    (
+        re.compile(r"cannot import name '\w+' from 'dataclasses'"),
+        "the check models only dataclass, field and replace of dataclasses: "
+        'docs/typecheck.md ("standard library names") lists the names',
+    ),
+    (
+        re.compile(
+            r"cannot import name '\w+' from '(functools|itertools|collections)'"
+        ),
+        "the check adds only some names to Codon's functools, itertools and "
+        'collections: docs/typecheck.md ("standard library names") lists them',
+    ),
+    (
         re.compile(r"cannot import name '\w+' from 'typing'"),
         "the check models only some names of typing: docs/typecheck.md "
         '("typing names") lists them',
@@ -828,7 +885,7 @@ def _variadic_hints(diagnostics: list[Diagnostic]) -> list[Diagnostic]:
     ``*args`` or on a tuple saying why and what to write instead (#266)."""
     out = []
     for diagnostic in diagnostics:
-        for pattern, hint in _VARIADIC_LIMITS:
+        for pattern, hint in (*_VARIADIC_LIMITS, *REWRITE_HINTS):
             if pattern.search(diagnostic.message):
                 diagnostic = dataclasses.replace(
                     diagnostic, message=f"{diagnostic.message}: {hint}"
@@ -934,6 +991,10 @@ def _python_class(name: str, sources: _Sources) -> type | None:
 _EXPECTED_TYPE = re.compile(
     r"^'(?P<cls>\w+)' does not match expected type '(?P<want>str|int|float)'"
 )
+_PROTOCOL_EXPECTED = re.compile(
+    r"^'[^']+' does not match expected type "
+    r"'(?:(?:List|Set|Optional)\[)*(?P<cls>[A-Za-z_]\w*)"
+)
 _OPERAND = re.compile(
     r"^unsupported operand type\(s\) for (?P<op>[^:]+): '(?P<cls>\w+)' and"
 )
@@ -988,6 +1049,17 @@ def _data_model_hint(
                 f"an {cls.__name__} member is not a {expected['want']} in the "
                 f"check (only its comparisons and int() are modelled): pass "
                 f"its .value"
+            )
+    wanted = _PROTOCOL_EXPECTED.match(message)
+    if wanted is not None:
+        cls = _python_class(wanted["cls"], sources)
+        if cls is not None and getattr(cls, "_is_protocol", False):
+            return (
+                f"{cls.__name__} is a typing.Protocol, which Codon matches by "
+                f"class name, not by shape: derive from it (class Sq("
+                f"{cls.__name__})), give the classes a common base class, or "
+                f"annotate a Union of the classes (a list is invariant: "
+                f"annotate it with the class it holds)"
             )
     operand = _OPERAND.match(message)
     if operand is not None:
@@ -1083,13 +1155,59 @@ def _original_line(origin: list[int] | None, line: int) -> int:
     return line - len(origin) + max(origin)
 
 
+_UNEXPECTED_TOKEN = re.compile(r"unexpected '(?P<token>[^']+)'")
+
+
+def _fstring_line(
+    text: str, origin: list[int] | None, column: int | None, message: str
+) -> int | None:
+    """The line of the original of the f-string Codon's parser failed on.
+
+    Codon parses an f-string field on its own and reports a syntax error in
+    it at the line *within the field* (1), so the line comes out before the
+    file's first one; the column is within the field's text
+    (``{x:+.2f}``).  The f-strings of the file are searched for the field
+    whose character at that column is the unexpected token, else the first
+    field with a format spec; ``None`` if the file holds none.
+    """
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return None
+    token = _UNEXPECTED_TOKEN.search(message)
+    fields: list[tuple[int, str]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.JoinedStr):
+            for value in node.values:
+                if isinstance(value, ast.FormattedValue) and value.format_spec:
+                    inner = value.format_spec
+                    spec = "".join(
+                        str(v.value) if isinstance(v, ast.Constant) else "{}"
+                        for v in (
+                            inner.values if isinstance(inner, ast.JoinedStr) else []
+                        )
+                    )
+                    shown = f"{{{ast.unparse(value.value)}:{spec}}}"
+                    fields.append((node.lineno, shown))
+    fields.sort()
+    if not fields:
+        return None
+    if token is not None and column is not None:
+        for line, shown in fields:
+            if column < len(shown) and shown[column] == token["token"]:
+                return _original_line(origin, line)
+    return _original_line(origin, fields[0][0])
+
+
 def _parse_output(output: str, ws: _Workspace) -> list[Diagnostic]:
     """Codon's errors, each located at its innermost frame in the scenario's files."""
     by_basename: dict[str, list[str]] = {}
     for rel in ws.files:
         by_basename.setdefault(Path(rel).name, []).append(rel)
 
-    def locate(file: str, line: int) -> tuple[str, int, bool, str | None] | None:
+    def locate(
+        file: str, line: int, column: int | None = None, message: str = ""
+    ) -> tuple[str, int, bool, str | None] | None:
         """(path to show, line, is the scenario's own file, the appended call)."""
         if file == DRIVER_MODULE:
             key = ws.driver.config_lines.get(line)
@@ -1109,7 +1227,19 @@ def _parse_output(output: str, ws: _Workspace) -> list[Diagnostic]:
             if origin is not None:
                 return (ws.files[rel], origin, True, note)
             return (note, 0, False, None)
-        return (ws.files[rel], _original_line(ws.origins.get(rel), line), True, None)
+        original = _original_line(ws.origins.get(rel), line)
+        if (
+            original < 1
+            and line <= _PRELUDE_LINES
+            and message.startswith("syntax error")
+        ):
+            # Codon's position inside an f-string field: not a line of the file.
+            found = _fstring_line(
+                (ws.root / rel).read_text(), ws.origins.get(rel), column, message
+            )
+            if found is not None:
+                original = found
+        return (ws.files[rel], original, True, None)
 
     errors: list[tuple[str, list[tuple[str, int, int | None, str]]]] = []
     for raw in output.splitlines():
@@ -1139,7 +1269,9 @@ def _parse_output(output: str, ws: _Workspace) -> list[Diagnostic]:
 
     diagnostics: list[Diagnostic] = []
     for message, frames in errors:
-        located = [(f, locate(f[0], f[1])) if f[0] else (f, None) for f in frames]
+        located = [
+            (f, locate(f[0], f[1], f[2], f[3])) if f[0] else (f, None) for f in frames
+        ]
         pf, primary = next(
             ((f, loc) for f, loc in located if loc and loc[2]), None
         ) or next(((f, loc) for f, loc in located if loc), (None, None))
@@ -2188,7 +2320,11 @@ def _library_files(
         )
         uncalled = _uncalled(name)
         checks = render_library_checks(module.tree, uncalled, classes)
-        for line, message in [*problems, *checks.problems]:
+        for line, message in [
+            *problems,
+            *checks.problems,
+            *python_rewrite_refusals(redirected),
+        ]:
             sources.problems.append(Diagnostic(message, str(module.path), line))
         # A function the check never compiles cannot decorate one it does: a
         # run-time-only wrapper (trajectory.model's TrajectoryVertex.__init__)

@@ -94,6 +94,46 @@ if TYPE_CHECKING:
         TrafficSourceAction as TrafficSourceAction,
         WalkStraightAction as WalkStraightAction,
     )
+    from .actions.prop import (
+        PropAction as PropAction,
+        PropOperation as PropOperation,
+    )
+    from .actions.stalled_object import (
+        StalledObjectAction as StalledObjectAction,
+        collision_objects as collision_objects,
+    )
+    from .actions.construction_zone import (
+        ConstructionZoneAction as ConstructionZoneAction,
+    )
+    from .adversity.construction import (
+        ConstructionSettings as ConstructionSettings,
+    )
+    from .actions.adversarial_traffic import (
+        AdversarialTrafficAction as AdversarialTrafficAction,
+    )
+    from .adversity.nade import (
+        NadeAdversity as NadeAdversity,
+        NadeSettings as NadeSettings,
+    )
+    from .actions.adversarial import (
+        AdversarialBrakeAction as AdversarialBrakeAction,
+        AdversarialCutInAction as AdversarialCutInAction,
+        AdversarialMergeAction as AdversarialMergeAction,
+        HeadOnAction as HeadOnAction,
+        IgnoreLeaderAction as IgnoreLeaderAction,
+        JaywalkAction as JaywalkAction,
+        LaneChangeAbortAction as LaneChangeAbortAction,
+        PedestrianRunRedLightAction as PedestrianRunRedLightAction,
+        RunTrafficRuleAction as RunTrafficRuleAction,
+        StopCrossingAction as StopCrossingAction,
+    )
+    from .adversity import (
+        AdversityKind as AdversityKind,
+        AdversityLocation as AdversityLocation,
+    )
+    from .conditions.adversity_feasible import (
+        AdversityFeasibleCondition as AdversityFeasibleCondition,
+    )
     from .trajectory import (
         MapPose as MapPose,
         ReferenceContext as ReferenceContext,
@@ -283,6 +323,10 @@ if TYPE_CHECKING:
         TrafficContext as TrafficContext,
         TrafficManagerBackend as TrafficManagerBackend,
         TrafficManagerBackendConfig as TrafficManagerBackendConfig,
+        TrafficParameterError as TrafficParameterError,
+        PedestrianParameters as PedestrianParameters,
+        Spread as Spread,
+        VehicleParameters as VehicleParameters,
         register_backend as register_backend,
     )
 
@@ -322,6 +366,10 @@ __all__ = [
     "TrafficContext",
     "TrafficManagerBackend",
     "TrafficManagerBackendConfig",
+    "TrafficParameterError",
+    "PedestrianParameters",
+    "Spread",
+    "VehicleParameters",
     "register_backend",
     "AccelerationCondition",
     "AccelerationDirection",
@@ -441,6 +489,12 @@ __all__ = [
     "BaseAction",
     "EnvironmentAction",
     "FollowTrajectoryAction",
+    "ConstructionSettings",
+    "ConstructionZoneAction",
+    "PropAction",
+    "PropOperation",
+    "StalledObjectAction",
+    "collision_objects",
     "LaneChangeAction",
     "LaneChangeDirection",
     "TickTiming",
@@ -459,6 +513,23 @@ __all__ = [
     "TrafficSinkAction",
     "TrafficSourceAction",
     "WalkStraightAction",
+    # Adversarial actions (#393) and NADE (#395)
+    "AdversarialTrafficAction",
+    "NadeAdversity",
+    "NadeSettings",
+    "AdversarialBrakeAction",
+    "AdversarialCutInAction",
+    "AdversarialMergeAction",
+    "HeadOnAction",
+    "LaneChangeAbortAction",
+    "PedestrianRunRedLightAction",
+    "StopCrossingAction",
+    "IgnoreLeaderAction",
+    "JaywalkAction",
+    "RunTrafficRuleAction",
+    "AdversityFeasibleCondition",
+    "AdversityKind",
+    "AdversityLocation",
     # Trajectories
     "MapPose",
     "ReferenceContext",
@@ -488,10 +559,41 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "BaseAction": (".actions", "BaseAction"),
     "EnvironmentAction": (".actions", "EnvironmentAction"),
     "FollowTrajectoryAction": (".actions", "FollowTrajectoryAction"),
+    "ConstructionSettings": (".adversity.construction", "ConstructionSettings"),
+    "ConstructionZoneAction": (".actions.construction_zone", "ConstructionZoneAction"),
+    "StalledObjectAction": (".actions.stalled_object", "StalledObjectAction"),
+    "PropAction": (".actions.prop", "PropAction"),
+    "PropOperation": (".actions.prop", "PropOperation"),
+    "collision_objects": (".actions.stalled_object", "collision_objects"),
     "LaneChangeAction": (".actions", "LaneChangeAction"),
     "TurnIndicatorAction": (".actions", "TurnIndicatorAction"),
     "LaneChangeDirection": (".actions", "LaneChangeDirection"),
     "TickTiming": (".actions", "TickTiming"),
+    "AdversarialBrakeAction": (".actions.adversarial", "AdversarialBrakeAction"),
+    "AdversarialCutInAction": (".actions.adversarial", "AdversarialCutInAction"),
+    "AdversarialMergeAction": (".actions.adversarial", "AdversarialMergeAction"),
+    "HeadOnAction": (".actions.adversarial", "HeadOnAction"),
+    "LaneChangeAbortAction": (".actions.adversarial", "LaneChangeAbortAction"),
+    "PedestrianRunRedLightAction": (
+        ".actions.adversarial",
+        "PedestrianRunRedLightAction",
+    ),
+    "StopCrossingAction": (".actions.adversarial", "StopCrossingAction"),
+    "IgnoreLeaderAction": (".actions.adversarial", "IgnoreLeaderAction"),
+    "JaywalkAction": (".actions.adversarial", "JaywalkAction"),
+    "RunTrafficRuleAction": (".actions.adversarial", "RunTrafficRuleAction"),
+    "AdversityFeasibleCondition": (
+        ".conditions.adversity_feasible",
+        "AdversityFeasibleCondition",
+    ),
+    "AdversarialTrafficAction": (
+        ".actions.adversarial_traffic",
+        "AdversarialTrafficAction",
+    ),
+    "NadeAdversity": (".adversity.nade", "NadeAdversity"),
+    "NadeSettings": (".adversity.nade", "NadeSettings"),
+    "AdversityKind": (".adversity", "AdversityKind"),
+    "AdversityLocation": (".adversity", "AdversityLocation"),
     "TrafficLightTarget": (".actions", "TrafficLightTarget"),
     "RoutingAction": (".actions", "RoutingAction"),
     "SetSpeedAction": (".actions", "SetSpeedAction"),
@@ -677,6 +779,10 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "TrafficContext": (".traffic", "TrafficContext"),
     "TrafficManagerBackend": (".traffic.traffic_manager", "TrafficManagerBackend"),
     "TrafficManagerBackendConfig": (".traffic", "TrafficManagerBackendConfig"),
+    "TrafficParameterError": (".traffic", "TrafficParameterError"),
+    "PedestrianParameters": (".traffic", "PedestrianParameters"),
+    "Spread": (".traffic", "Spread"),
+    "VehicleParameters": (".traffic", "VehicleParameters"),
     "register_backend": (".traffic", "register_backend"),
     # autoware bridge
     "AutowareBridge": (".autoware_bridge", "AutowareBridge"),

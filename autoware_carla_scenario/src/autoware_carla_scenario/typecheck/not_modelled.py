@@ -173,7 +173,8 @@ NOT_MODELLED: dict[str, dict[str, str]] = {
         **_each(
             "NullTrafficBackend TrafficBackend TrafficBackendError "
             "TrafficBackendUnavailable TrafficConfig TrafficManagerBackend "
-            "TrafficManagerBackendConfig",
+            "TrafficManagerBackendConfig TrafficParameterError PedestrianParameters Spread "
+            "VehicleParameters",
             _TRAFFIC_BACKEND,
         ),
         "load_openodd": _OPENODD,
@@ -251,14 +252,18 @@ NOT_MODELLED: dict[str, dict[str, str]] = {
         "logger": "the module's logger; a scenario logs with its own",
     },
     f"{_PACKAGE}.scenario_config": _each(
-        "TrafficConfig TrafficManagerBackendConfig", _TRAFFIC_BACKEND
+        "TrafficConfig TrafficManagerBackendConfig PedestrianParameters Spread "
+        "VehicleParameters",
+        _TRAFFIC_BACKEND,
     ),
     f"{_PACKAGE}.traffic": {
         **_each(
             "NullTrafficBackend TrafficBackend TrafficBackendError "
             "TrafficBackendUnavailable TrafficConfig TrafficManagerBackend "
-            "TrafficManagerBackendConfig build_none build_sumo "
-            "build_traffic_manager register_builtin_backends",
+            "TrafficManagerBackendConfig TrafficParameterError VehicleParameters "
+            "PedestrianParameters Spread VEHICLE_PARAMETER_BACKENDS "
+            "PEDESTRIAN_PARAMETER_BACKENDS build_none build_sumo build_traffic_manager "
+            "register_builtin_backends",
             _TRAFFIC_BACKEND,
         ),
         **_each(
@@ -372,7 +377,7 @@ _ODD_ARCHIVE = (
 )
 _REPORT_ROWS = (
     "openodd's rows of a merged report (MergedEntry, CaseRun, CellFlakiness, "
-    "CellRow, OddExposure), which have no model: the report tools read them, "
+    "CellRow, OddExposure, WeightedOutcome), which have no model: the report tools read them, "
     "not a scenario or an ODD"
 )
 _RUN_ENVIRONMENT = (
@@ -415,6 +420,36 @@ def _members(names: str, reason: str) -> dict[str, str]:
 #: lists `get_details` for every condition), so a key need not be a modelled
 #: class itself (`BackendDriven`).
 NOT_MODELLED_MEMBERS: dict[str, dict[str, str]] = {
+    "AdversarialTrafficAction": {
+        "choices": (
+            "the adversities NADE sampled, as adversity.nade's NadeChoice, "
+            "which holds an AdversarialCommand of the adversity package that a "
+            "scenario does not import; read its weight instead (#397 makes it a "
+            "metric)"
+        ),
+        "set_traffic_backend": _SET_TRAFFIC_BACKEND,
+    },
+    "StalledObjectAction": {
+        "pose": (
+            "the pose the action was given, one of three pose classes, which "
+            "Codon has no union to return; a scenario keeps the pose it passed"
+        ),
+    },
+    "NadeSettings": {
+        "avoidance": (
+            "adversity.avoidance's AvoidanceSettings, TeraSim's avoidance "
+            "numbers, of the adversity package that a scenario does not import; "
+            "a scenario leaves them at TeraSim's (the library check compiles "
+            "them from their source)"
+        ),
+    },
+    "AdversityFeasibleCondition": _members(
+        "command scene",
+        "what the adversarial actions read off the condition they fire on: an "
+        "AdversarialCommand and the adversity Scene, of the adversity "
+        "package, which a scenario does not import; the library check "
+        "compiles them from their source",
+    ),
     "BackendDriven": {"set_traffic_backend": _SET_TRAFFIC_BACKEND},
     "BaseAction": {"close": _RUN_CLEANUP},
     "BaseCondition": {
@@ -430,8 +465,9 @@ NOT_MODELLED_MEMBERS: dict[str, dict[str, str]] = {
         "actor attaches_to_existing_actor carried_actor_ids change_lane client "
         "config debug_markers debug_state destroy drive_count forget_lane_change "
         "handshake is_initialized lane_change_finished on_scenario_end "
-        "on_scenario_start on_tick release_from_traffic requires_goal resume_traffic route_to "
-        "set_client set_desired_speed set_initial_speeds set_traffic_backend "
+        "on_scenario_start on_tick release_from_traffic require_microscopic "
+        "requires_goal resume_traffic route_to set_client set_desired_speed "
+        "set_initial_speeds set_traffic_backend simulation_fidelity "
         "spawn stack_name termination_reason termination_requested "
         "turn_at_junction turn_indicator use_autopilot",
         _BY_NAME,
@@ -439,7 +475,10 @@ NOT_MODELLED_MEMBERS: dict[str, dict[str, str]] = {
     "ConditionStatus": {"details": _CONDITION_DETAILS, "to_dict": _AS_DICT},
     "CoverageCollector": {"to_dict": _AS_DICT},
     "CoverageReport": {
-        **_members("cases cell_flakiness entries entry flaky_cells odds", _REPORT_ROWS),
+        **_members(
+            "cases cell_flakiness entries entry flaky_cells odds weighted_outcomes",
+            _REPORT_ROWS,
+        ),
         "to_dict": _AS_DICT,
     },
     "CoverItem": {
@@ -496,12 +535,19 @@ NOT_MODELLED_MEMBERS: dict[str, dict[str, str]] = {
         "from_config": _FROM_MAPPING,
         "to_config": _AS_DICT,
     },
-    "RerunConverter": _members(
-        "close strict wait",
-        "waits for the conversions and reports them, which the runner's "
-        "caller (examples.run) does once the runs are over, not the checked "
-        "runner, which only submits each log",
-    ),
+    "RerunConverter": {
+        **_members(
+            "close strict wait",
+            "waits for the conversions and reports them, which the runner's "
+            "caller (examples.run) does once the runs are over, not the checked "
+            "runner, which only submits each log",
+        ),
+        "records_sensors": (
+            "whether rerun.lidar or rerun.cameras is set, which the converter's "
+            "start_sensors checks itself; the checked runner calls "
+            "start_sensors and stop_sensors whatever it is"
+        ),
+    },
     "RunEnvironment": _members(
         "by_name implementation lock machine packages pins platform python "
         "scenario_package summary to_dict",
@@ -517,6 +563,7 @@ NOT_MODELLED_MEMBERS: dict[str, dict[str, str]] = {
     "ScenarioResult": {"to_dict": _AS_DICT},
     "SweepConfig": _members("bindings constraints odd_sample", _SWEEP_FIELD),
     "TrafficSinkAction": {"set_traffic_backend": _SET_TRAFFIC_BACKEND},
+    "ConstructionZoneAction": {"set_traffic_backend": _SET_TRAFFIC_BACKEND},
     "TrafficSourceAction": {"set_traffic_backend": _SET_TRAFFIC_BACKEND},
 }
 

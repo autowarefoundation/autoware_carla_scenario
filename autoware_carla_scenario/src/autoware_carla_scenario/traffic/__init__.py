@@ -7,6 +7,15 @@ Selecting one is a name::
 
     uv run scenario traffic.backend=none
 
+and how its road users behave is
+:class:`~autoware_carla_scenario.traffic.parameters.VehicleParameters` and
+:class:`~autoware_carla_scenario.traffic.parameters.PedestrianParameters`,
+types every backend reads, which refuse a field the selected backend cannot
+honour::
+
+    uv run scenario traffic=sumo traffic.vehicles.reaction_time_s=1.5
+    uv run scenario traffic=sumo traffic.pedestrians.walking_speed_mps=1.2
+
 The seam has two halves: :class:`~autoware_carla_scenario.traffic.base.TrafficBackend`
 is what a traffic model must provide, and
 :class:`~autoware_carla_scenario.traffic.driven.BackendDriven` is what a vehicle
@@ -40,6 +49,7 @@ from .base import (
     LaneChanging,
     SettingSpeed,
     NullTrafficBackend,
+    SimulationFidelity,
     TrafficBackend,
     TrafficBackendError,
     TrafficBackendUnavailable,
@@ -48,6 +58,14 @@ from .base import (
     TurningAtJunctions,
 )
 from .config import TrafficConfig, TrafficManagerBackendConfig
+from .parameters import (
+    PEDESTRIAN_PARAMETER_BACKENDS,
+    VEHICLE_PARAMETER_BACKENDS,
+    PedestrianParameters,
+    Spread,
+    TrafficParameterError,
+    VehicleParameters,
+)
 from .driven import BackendDriven
 from .traffic_manager import TrafficManagerBackend
 from .registry import (
@@ -68,6 +86,7 @@ __all__ = [
     "LaneChanging",
     "SettingSpeed",
     "NullTrafficBackend",
+    "SimulationFidelity",
     "TrafficBackend",
     "TrafficBackendError",
     "TrafficBackendFactory",
@@ -76,6 +95,12 @@ __all__ = [
     "TrafficContext",
     "TrafficManagerBackend",
     "TrafficManagerBackendConfig",
+    "TrafficParameterError",
+    "VehicleParameters",
+    "PedestrianParameters",
+    "Spread",
+    "VEHICLE_PARAMETER_BACKENDS",
+    "PEDESTRIAN_PARAMETER_BACKENDS",
     "TurnDirection",
     "build_traffic_manager",
     "build_none",

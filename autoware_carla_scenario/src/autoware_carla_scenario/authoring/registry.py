@@ -24,6 +24,7 @@ the editor process, which never talks to a simulator.
 
 from __future__ import annotations
 
+import copy
 import re
 
 # Free to import: `action_state` holds nothing but the enum, which is why it
@@ -37,6 +38,7 @@ from ..action_state import ActionState
 # is read, so the Metric card's options are the metrics themselves.
 from ..metrics import BUILT_IN_METRICS
 from dataclasses import dataclass
+from collections.abc import Iterator
 from typing import Any, Literal, Optional
 
 __all__ = [
@@ -55,6 +57,7 @@ __all__ = [
     "SEARCHABLE_LANELET_KINDS",
     "searchable_lanelet_fields",
     "FieldSpec",
+    "field_holders",
     "ConditionVisual",
     "REFERENCE_PATTERN",
     "SelectOption",
@@ -124,6 +127,12 @@ FieldKind = Literal[
     # :func:`autoware_carla_scenario.trajectory.authoring.parse_route_vertices`).
     # Edited as text, ``kind key=value ...`` per line.
     "route_trajectory",
+    # An ordered list of records, each a mapping of its own typed fields
+    # (:attr:`FieldSpec.item_fields`), edited as rows that can be added,
+    # removed and reordered.  For a list whose order means something and whose
+    # entries repeat -- NADE's adversities, the first to fire winning -- which
+    # one field per entry cannot say.
+    "record_list",
 ]
 
 #: Field kinds that hold one whole number, and those that hold a list of them.
@@ -199,6 +208,8 @@ class FieldSpec:
         place: For a lanelet field, what kind of place it names -- see
             :data:`LaneletPlace`.  Read by the editor's map, which draws a
             destination differently from a place merely watched.
+        item_fields: For a ``record_list`` field, the fields of each record,
+            checked and coerced as a primitive's own are.
     """
 
     name: str
@@ -210,6 +221,7 @@ class FieldSpec:
     help: str = ""
     required: bool = True
     place: LaneletPlace = "watched"
+    item_fields: tuple["FieldSpec", ...] = ()
 
 
 @dataclass(frozen=True)
@@ -383,6 +395,25 @@ class ActionSpec:
     def actor_required(self) -> bool:
         """Whether this action needs a vehicle to perform it."""
         return self.scope == "actor"
+
+
+def field_holders(
+    fields: "tuple[FieldSpec, ...]", params: "dict[str, Any]"
+) -> "Iterator[tuple[FieldSpec, dict[str, Any]]]":
+    """Yield every field of *fields* with the mapping that holds its value.
+
+    A ``record_list`` field is not yielded itself: each of its records yields
+    its own fields, with the record as the holder.  For whatever looks for a
+    kind of field -- entity references, action references -- so a reference
+    written in a record is found as one written at the top level is.
+    """
+    for spec in fields:
+        if spec.kind == "record_list":
+            for row in params.get(spec.name) or ():
+                if isinstance(row, dict):
+                    yield from field_holders(spec.item_fields, row)
+        else:
+            yield spec, params
 
 
 @dataclass(frozen=True)
@@ -785,8 +816,12 @@ def get_binding_spec(type_id: str) -> Optional[BindingSpec]:
 
 
 def default_params(fields: "tuple[FieldSpec, ...]") -> dict[str, Any]:
-    """Return a fresh params mapping seeded with each field's default."""
-    return {f.name: f.default for f in fields}
+    """Return a fresh params mapping seeded with each field's default.
+
+    Copied, so no two nodes share a default list -- or a record list's
+    records -- that one of them then edits in place.
+    """
+    return {f.name: copy.deepcopy(f.default) for f in fields}
 
 
 def searchable_lanelet_fields(
@@ -1375,6 +1410,696 @@ register_action_spec(
             "the end of it; while it runs, the action is the entity's only "
             "driver.  A vertex is departed on its time, on a waypoint "
             "condition, or on arrival."
+        ),
+    )
+)
+
+register_action_spec(
+    ActionSpec(
+        type_id="stalled_object",
+        title="Stalled Object",
+        category="Adversity",
+        builder="build_stalled_object_action",
+        target="..actions.stalled_object:StalledObjectAction",
+        actor_kinds=("vehicle",),
+        visual_kind="continuous",
+        builds=(
+            BuiltArgument(
+                kwarg="pose",
+                target="..coordinate:Lanelet2Pose",
+                parts=(
+                    BuiltPart(
+                        args=(
+                            ("lanelet_id", "lanelet_id"),
+                            ("s", "s"),
+                            ("t", "t"),
+                            ("heading", "heading"),
+                        )
+                    ),
+                ),
+            ),
+        ),
+        fields=(
+            FieldSpec(
+                name="lanelet_id",
+                label="Lanelet",
+                kind="lanelet",
+                default=0,
+                help="The lanelet the vehicle stands on.",
+            ),
+            FieldSpec(
+                name="s",
+                label="s",
+                kind="number",
+                default=0.0,
+                unit="m",
+                help="Along the lanelet from its start.",
+            ),
+            FieldSpec(
+                name="t",
+                label="t",
+                kind="number",
+                default=0.0,
+                required=False,
+                unit="m",
+                help="Off the centreline, positive to the left.",
+            ),
+            FieldSpec(
+                name="heading",
+                label="Heading",
+                kind="number",
+                default=0.0,
+                required=False,
+                unit="rad",
+                help="Turned from the lane's direction, counter-clockwise.",
+            ),
+            FieldSpec(
+                name="start_time",
+                label="Appears at",
+                kind="number",
+                default=0.0,
+                unit="s",
+                help="From the scenario's start.",
+            ),
+            FieldSpec(
+                name="end_time",
+                label="Removed at",
+                kind="number",
+                default=None,
+                required=False,
+                unit="s",
+                help="From the scenario's start; empty: never.",
+            ),
+        ),
+        description=(
+            "TeraSim's stalled object: the vehicle stands still at a pose "
+            "from one time to another, out of the world before and after.  "
+            "Spawn it out of the world; two of them make a collision's "
+            "aftermath."
+        ),
+    )
+)
+
+register_action_spec(
+    ActionSpec(
+        type_id="prop",
+        title="Prop",
+        category="Environment",
+        builder="build_prop_action",
+        target="..actions.prop:PropAction",
+        scope="environment",
+        builds=(
+            BuiltArgument(
+                kwarg="position",
+                target="..coordinate:Lanelet2Pose",
+                parts=(
+                    BuiltPart(
+                        args=(
+                            ("lanelet_id", "lanelet_id"),
+                            ("s", "s"),
+                            ("t", "t"),
+                            ("heading", "heading"),
+                        )
+                    ),
+                ),
+            ),
+        ),
+        fields=(
+            FieldSpec(
+                name="name",
+                label="Name",
+                kind="text",
+                default="prop",
+                help="The prop's name; a later Prop card removes it by this name.",
+            ),
+            FieldSpec(
+                name="operation",
+                label="Operation",
+                kind="select",
+                default="add",
+                options=(
+                    SelectOption("add", "Add"),
+                    SelectOption("remove", "Remove"),
+                ),
+            ),
+            FieldSpec(
+                name="blueprint",
+                label="Prop",
+                kind="text",
+                default="static.prop.constructioncone",
+                required=False,
+                help="The CARLA prop (static.prop.*) an added one is.",
+            ),
+            FieldSpec(
+                name="lanelet_id",
+                label="Lanelet",
+                kind="lanelet",
+                default=0,
+                help="The lanelet an added prop stands on.",
+            ),
+            FieldSpec(
+                name="s",
+                label="s",
+                kind="number",
+                default=0.0,
+                unit="m",
+                help="Along the lanelet from its start.",
+            ),
+            FieldSpec(
+                name="t",
+                label="t",
+                kind="number",
+                default=0.0,
+                required=False,
+                unit="m",
+                help="Off the centreline, positive to the left.",
+            ),
+            FieldSpec(
+                name="heading",
+                label="Heading",
+                kind="number",
+                default=0.0,
+                required=False,
+                unit="rad",
+                help="Turned from the lane's direction, counter-clockwise.",
+            ),
+            FieldSpec(
+                name="on_ground",
+                label="On the road surface",
+                kind="bool",
+                default=True,
+                required=False,
+            ),
+        ),
+        description=(
+            "Add a CARLA prop (a cone, a barrier, a sign) to the world at a "
+            "lanelet position, or remove the one of a name.  A prop added is "
+            "taken away when the run ends."
+        ),
+    )
+)
+
+#: Mirrors ``AdversityLocation``; the codegen refuses an option that names no
+#: member.  No default: an adversity fires anywhere only when told so.
+_ADVERSITY_LOCATIONS: tuple[SelectOption, ...] = (
+    SelectOption("any", "Anywhere"),
+    SelectOption("intersection", "In or 25 m before a junction"),
+    SelectOption("highway", "On a highway"),
+    SelectOption("roundabout", "In or 25 m before a roundabout"),
+)
+
+
+#: Every adversarial action's fields: where it may fire, how it drives.
+_ADVERSITY_FIELDS: tuple[FieldSpec, ...] = (
+    FieldSpec(
+        name="location",
+        label="Where",
+        kind="select",
+        options=_ADVERSITY_LOCATIONS,
+        help="Where the adversity may fire; 'Anywhere' has to be chosen.",
+    ),
+    FieldSpec(
+        name="following_mode",
+        label="Following mode",
+        kind="select",
+        default="follow",
+        options=_FOLLOWING_MODES,
+    ),
+)
+
+
+_ADVERSITY_NOTE = (
+    "  Fires when its trigger holds at the chosen location (TeraSim's "
+    "numbers), drives the planned path, then hands the entity back to traffic."
+)
+
+register_action_spec(
+    ActionSpec(
+        type_id="adversarial_brake",
+        title="Adversarial Brake",
+        category="Adversity",
+        builder="build_adversarial_brake_action",
+        target="..actions.adversarial:AdversarialBrakeAction",
+        actor_kinds=("vehicle",),
+        visual_kind="continuous",
+        fields=_ADVERSITY_FIELDS,
+        description="Brake hard in front of a follower that keeps coming."
+        + _ADVERSITY_NOTE,
+    )
+)
+
+register_action_spec(
+    ActionSpec(
+        type_id="ignore_leader",
+        title="Ignore Leader",
+        category="Adversity",
+        builder="build_ignore_leader_action",
+        target="..actions.adversarial:IgnoreLeaderAction",
+        actor_kinds=("vehicle",),
+        visual_kind="continuous",
+        fields=_ADVERSITY_FIELDS,
+        description="Drive on as if the close, slower leader were not there."
+        + _ADVERSITY_NOTE,
+    )
+)
+
+register_action_spec(
+    ActionSpec(
+        type_id="adversarial_cut_in",
+        title="Adversarial Cut-in",
+        category="Adversity",
+        builder="build_adversarial_cut_in_action",
+        target="..actions.adversarial:AdversarialCutInAction",
+        actor_kinds=("vehicle",),
+        visual_kind="continuous",
+        fields=_ADVERSITY_FIELDS,
+        description="Change lane in front of a vehicle too close behind in the next lane."
+        + _ADVERSITY_NOTE,
+    )
+)
+
+register_action_spec(
+    ActionSpec(
+        type_id="adversarial_merge",
+        title="Adversarial Merge",
+        category="Adversity",
+        builder="build_adversarial_merge_action",
+        target="..actions.adversarial:AdversarialMergeAction",
+        actor_kinds=("vehicle",),
+        visual_kind="continuous",
+        fields=_ADVERSITY_FIELDS,
+        description="Beside a merging lane, speed up or change in to cut a "
+        "merging vehicle off." + _ADVERSITY_NOTE,
+    )
+)
+
+register_action_spec(
+    ActionSpec(
+        type_id="lane_change_abort",
+        title="Lane-change Abort",
+        category="Adversity",
+        builder="build_lane_change_abort_action",
+        target="..actions.adversarial:LaneChangeAbortAction",
+        actor_kinds=("vehicle",),
+        visual_kind="continuous",
+        fields=_ADVERSITY_FIELDS,
+        description="Start into the next lane in front of a vehicle too close "
+        "behind there, then swerve back." + _ADVERSITY_NOTE,
+    )
+)
+
+register_action_spec(
+    ActionSpec(
+        type_id="head_on",
+        title="Head-on",
+        category="Adversity",
+        builder="build_head_on_action",
+        target="..actions.adversarial:HeadOnAction",
+        actor_kinds=("vehicle",),
+        visual_kind="continuous",
+        fields=_ADVERSITY_FIELDS,
+        description="Drive on at a leader coming the other way." + _ADVERSITY_NOTE,
+    )
+)
+
+register_action_spec(
+    ActionSpec(
+        type_id="run_traffic_rule",
+        title="Run Traffic Rule",
+        category="Adversity",
+        builder="build_run_traffic_rule_action",
+        target="..actions.adversarial:RunTrafficRuleAction",
+        actor_kinds=("vehicle",),
+        visual_kind="continuous",
+        fields=_ADVERSITY_FIELDS,
+        description="Run the red or yellow light the vehicle is stopping for."
+        + _ADVERSITY_NOTE,
+    )
+)
+
+register_action_spec(
+    ActionSpec(
+        type_id="jaywalk",
+        title="Jaywalk",
+        category="Adversity",
+        builder="build_jaywalk_action",
+        target="..actions.adversarial:JaywalkAction",
+        actor_kinds=("pedestrian",),
+        visual_kind="continuous",
+        fields=_ADVERSITY_FIELDS,
+        description="Walk straight across the nearest road, off any crosswalk."
+        + _ADVERSITY_NOTE,
+    )
+)
+
+register_action_spec(
+    ActionSpec(
+        type_id="pedestrian_run_red_light",
+        title="Pedestrian Runs a Red Light",
+        category="Adversity",
+        builder="build_pedestrian_run_red_light_action",
+        target="..actions.adversarial:PedestrianRunRedLightAction",
+        actor_kinds=("pedestrian",),
+        visual_kind="continuous",
+        fields=_ADVERSITY_FIELDS,
+        description="Cross on red at the crosswalk the pedestrian waits at."
+        + _ADVERSITY_NOTE,
+    )
+)
+
+register_action_spec(
+    ActionSpec(
+        type_id="stop_crossing",
+        title="Stop Crossing",
+        category="Adversity",
+        builder="build_stop_crossing_action",
+        target="..actions.adversarial:StopCrossingAction",
+        actor_kinds=("pedestrian",),
+        visual_kind="continuous",
+        fields=_ADVERSITY_FIELDS,
+        description="Stop on the crosswalk a moment, then hurry across."
+        + _ADVERSITY_NOTE,
+    )
+)
+
+#: Mirrors ``AdversityKind``; the codegen refuses an option that names no
+#: member.
+_ADVERSITY_KINDS: tuple[SelectOption, ...] = (
+    SelectOption("brake_check", "Brake check"),
+    SelectOption("ignore_leader", "Ignore leader"),
+    SelectOption("cut_in", "Cut in"),
+    SelectOption("traffic_rule", "Run a red light"),
+    SelectOption("jaywalking", "Jaywalk"),
+    SelectOption("lane_change_abort", "Abort a lane change"),
+    SelectOption("head_on", "Head-on"),
+    SelectOption("running_red_light", "Cross on red"),
+    SelectOption("stop_crossing", "Stop while crossing"),
+    SelectOption("merge", "Cut off a merge"),
+)
+
+_CONSTRUCTION_SETTINGS = (
+    "construction_type",
+    "spacing",
+    "work_zone_offset",
+    "taper_length_in",
+    "taper_length_out",
+    "taper_type",
+    "warning_zone_length",
+    "buffer_zone_length",
+    "termination_zone_length",
+    "side",
+)
+
+register_action_spec(
+    ActionSpec(
+        type_id="construction_zone",
+        title="Construction Zone",
+        category="Adversity",
+        builder="build_construction_zone_action",
+        target="..actions.construction_zone:ConstructionZoneAction",
+        scope="environment",
+        visual_kind="continuous",
+        builds=(
+            BuiltArgument(
+                kwarg="settings",
+                target="..adversity.construction:ConstructionSettings",
+                parts=(
+                    BuiltPart(
+                        args=tuple((name, name) for name in _CONSTRUCTION_SETTINGS)
+                    ),
+                ),
+            ),
+        ),
+        fields=(
+            FieldSpec(
+                name="lanelet_id",
+                label="Lanelet",
+                kind="lanelet",
+                default=0,
+                help="The lane the zone is on is measured from this lanelet's start.",
+            ),
+            FieldSpec(
+                name="start_s",
+                label="Work starts at",
+                kind="number",
+                default=100.0,
+                unit="m",
+                help="Along the lane; the warning signs stand before it.",
+            ),
+            FieldSpec(
+                name="end_s",
+                label="Work ends at",
+                kind="number",
+                default=250.0,
+                unit="m",
+                help="Along the lane, on past the lanelet's end if need be.",
+            ),
+            FieldSpec(
+                name="start_time",
+                label="Appears at",
+                kind="number",
+                default=0.0,
+                unit="s",
+                help="From the scenario's start.",
+            ),
+            FieldSpec(
+                name="end_time",
+                label="Cleared away at",
+                kind="number",
+                default=None,
+                required=False,
+                unit="s",
+                help="From the scenario's start; empty: never.",
+            ),
+            FieldSpec(
+                name="construction_type",
+                label="Work zone of",
+                kind="select",
+                default="cone",
+                options=(
+                    SelectOption("cone", "Cones"),
+                    SelectOption("barrier", "Barriers"),
+                    SelectOption("mixed", "Cones and barriers"),
+                ),
+            ),
+            FieldSpec(
+                name="side",
+                label="Closed from",
+                kind="select",
+                default="right",
+                options=(
+                    SelectOption("right", "The right"),
+                    SelectOption("left", "The left"),
+                ),
+            ),
+            FieldSpec(
+                name="spacing",
+                label="Spacing",
+                kind="number",
+                default=20.0,
+                unit="m",
+                help="Between the objects; 0.7 of it in a taper, 0.8 in the buffer.",
+            ),
+            FieldSpec(
+                name="work_zone_offset",
+                label="Work zone offset",
+                kind="number",
+                default=0.0,
+                required=False,
+                unit="m",
+                help="Off the lane's centreline, positive to the left.",
+            ),
+            FieldSpec(
+                name="taper_length_in",
+                label="Entry taper",
+                kind="number",
+                default=60.0,
+                required=False,
+                unit="m",
+            ),
+            FieldSpec(
+                name="taper_length_out",
+                label="Exit taper",
+                kind="number",
+                default=30.0,
+                required=False,
+                unit="m",
+            ),
+            FieldSpec(
+                name="taper_type",
+                label="Taper",
+                kind="select",
+                default="linear",
+                required=False,
+                options=(
+                    SelectOption("linear", "Linear"),
+                    SelectOption("curved", "Curved"),
+                ),
+            ),
+            FieldSpec(
+                name="warning_zone_length",
+                label="Warning zone",
+                kind="number",
+                default=100.0,
+                required=False,
+                unit="m",
+            ),
+            FieldSpec(
+                name="buffer_zone_length",
+                label="Buffer zone",
+                kind="number",
+                default=10.0,
+                required=False,
+                unit="m",
+            ),
+            FieldSpec(
+                name="termination_zone_length",
+                label="Termination zone",
+                kind="number",
+                default=30.0,
+                required=False,
+                unit="m",
+            ),
+            FieldSpec(
+                name="close_lane",
+                label="Close the lane to the traffic backend",
+                kind="bool",
+                default=True,
+                help="SUMO routes no traffic onto it; the TrafficManager cannot.",
+            ),
+            FieldSpec(
+                name="clear_traffic",
+                label="Take background traffic in the zone off the road",
+                kind="bool",
+                default=True,
+            ),
+        ),
+        description=(
+            "TeraSim's construction zone: warning signs, an entry taper of "
+            "cones, a buffer, the work zone, an exit taper and termination "
+            "signs along a lane, from one time to another."
+        ),
+    )
+)
+
+_NADE_SETTINGS = (
+    "max_controlled",
+    "control_radius",
+    "magnitude",
+    "max_is_probability",
+    "fixed_is_probability",
+    "cooldown",
+    "challenge_npcs",
+)
+
+register_action_spec(
+    ActionSpec(
+        type_id="adversarial_traffic",
+        title="Adversarial Traffic (NADE)",
+        category="Adversity",
+        builder="build_adversarial_traffic_action",
+        target="..actions.adversarial_traffic:AdversarialTrafficAction",
+        scope="environment",
+        visual_kind="continuous",
+        builds=(
+            BuiltArgument(
+                kwarg="settings",
+                target="..adversity.nade:NadeSettings",
+                parts=(BuiltPart(args=tuple((name, name) for name in _NADE_SETTINGS)),),
+            ),
+        ),
+        fields=(
+            FieldSpec(
+                name="adversities",
+                label="Adversities",
+                kind="record_list",
+                default=(),
+                help=(
+                    "In order: an agent carries out the first whose trigger "
+                    "fires where it is."
+                ),
+                item_fields=(
+                    FieldSpec(
+                        "kind", "Kind", "select", "brake_check", _ADVERSITY_KINDS
+                    ),
+                    FieldSpec(
+                        "location", "Where", "select", "any", _ADVERSITY_LOCATIONS
+                    ),
+                    FieldSpec(
+                        "probability",
+                        "Probability",
+                        "number",
+                        0.001,
+                        help="Naturalistic, a tick, when its trigger holds.",
+                    ),
+                ),
+            ),
+            FieldSpec(name="seed", label="Seed", kind="int", default=0),
+            FieldSpec(
+                name="max_controlled",
+                label="Vehicles considered",
+                kind="int",
+                default=5,
+                help="The nearest this many vehicles around the ego.",
+            ),
+            FieldSpec(
+                name="control_radius",
+                label="Around the ego",
+                kind="number",
+                default=50.0,
+                unit="m",
+            ),
+            FieldSpec(
+                name="magnitude",
+                label="IS magnitude",
+                kind="number",
+                default=20.0,
+                help="q = clip(p x magnitude, 0, the most q).",
+            ),
+            FieldSpec(
+                name="max_is_probability",
+                label="Most q",
+                kind="number",
+                default=0.05,
+            ),
+            FieldSpec(
+                name="fixed_is_probability",
+                label="Fixed q",
+                kind="number",
+                default=0.0,
+                help="Above 0, every adversity's q, in place of the clip.",
+            ),
+            FieldSpec(
+                name="cooldown",
+                label="Cooldown",
+                kind="number",
+                default=5.5,
+                unit="s",
+                help="After an adversity, how long before the next.",
+            ),
+            FieldSpec(
+                name="challenge_npcs",
+                label="Challenge NPCs too",
+                kind="bool",
+                default=False,
+                help=(
+                    "Not the ego only: an NPC victim avoids or accepts the "
+                    "adversity, its own weight on the run's."
+                ),
+            ),
+            FieldSpec(
+                name="following_mode",
+                label="Following mode",
+                kind="select",
+                default="follow",
+                options=_FOLLOWING_MODES,
+            ),
+        ),
+        description=(
+            "TeraSim's NADE: every tick, the NPC or pedestrian near the ego "
+            "whose adversity would challenge it carries it out, sampled with "
+            "an importance-sampling probability, and the run keeps the weight "
+            "that unbiases its statistics. One adversity at a time."
         ),
     )
 )
@@ -3200,6 +3925,23 @@ register_constraint_spec(
             ),
         ),
         description="Match lanelets whose ID is in a given set.",
+    )
+)
+register_constraint_spec(
+    ConstraintSpec(
+        type_id="on_route",
+        title="On route",
+        category="Identity",
+        fields=(
+            FieldSpec(
+                name="lanelet_ids",
+                label="Route lanelets",
+                kind="lanelet_list",
+                default=[],
+                help="The lanelets of the route. Empty: no route, every lanelet matches.",
+            ),
+        ),
+        description="Match the lanelets of a route; with none given, every lanelet.",
     )
 )
 

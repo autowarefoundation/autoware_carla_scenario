@@ -42,7 +42,9 @@ __all__ = [
     "SignalTable",
     "SumoNetwork",
     "build_network",
+    "crossing_edges",
     "generate_trips",
+    "generate_walks",
     "sanitize_opendrive",
     "sumo_home",
 ]
@@ -153,7 +155,11 @@ def _versions() -> str:
 
 
 def build_network(
-    opendrive: str, cache_dir: Path, curve_lateral_acceleration: float | None = None
+    opendrive: str,
+    cache_dir: Path,
+    curve_lateral_acceleration: float | None = None,
+    *,
+    pedestrian_crossings: bool = False,
 ) -> SumoNetwork:
     """The SUMO network of *opendrive* (OpenDRIVE text), built or cached.
 
@@ -161,6 +167,12 @@ def build_network(
         curve_lateral_acceleration: Hold traffic in bends to this lateral
             acceleration, m/s² (roadgen's option of the same name); ``None``
             converts the map as it is.
+        pedestrian_crossings: Have netconvert guess a pedestrian crossing
+            across each road at a junction where footways meet it
+            (``--crossings.guess``), and with them the walking areas joining
+            footways and crossings.  At a signalised junction netconvert
+            appends the crossings' links after the vehicle links, so those keep
+            the indices roadgen's trace gives them.
 
     Raises:
         TrafficBackendUnavailable: roadgen or SUMO is not installed.
@@ -173,6 +185,9 @@ def build_network(
             f"roadgen is not installed: {_INSTALL}"
         ) from exc
     options = f"curve_lateral_acceleration={curve_lateral_acceleration}"
+    if pedestrian_crossings:
+        # Only when on: a network built without keeps the key it had.
+        options += ";crossings.guess"
     key = hashlib.sha256(
         "\0".join((_versions(), options, opendrive)).encode()
     ).hexdigest()[:16]
@@ -198,7 +213,12 @@ def build_network(
         for warning in road_map.sumo_warnings():
             logger.debug("roadgen: %s", warning)
         proc = subprocess.run(  # noqa: S603 - a fixed tool invocation
-            [_binary("netconvert"), "-c", f"{prefix}.netccfg"],
+            [
+                _binary("netconvert"),
+                "-c",
+                f"{prefix}.netccfg",
+                *(["--crossings.guess"] if pedestrian_crossings else []),
+            ],
             cwd=tmp,
             capture_output=True,
             text=True,
@@ -296,4 +316,72 @@ def generate_trips(
         raise TrafficBackendError(
             f"randomTrips.py failed ({proc.returncode}): {proc.stderr.strip()[-2000:]}"
         )
+    return out
+
+
+def generate_walks(
+    network: SumoNetwork,
+    out: Path,
+    *,
+    seed: int,
+    period: float,
+    end: float,
+    max_distance: float,
+) -> Path:
+    """Pedestrian demand for *network*, written to *out* (a ``.rou.xml``).
+
+    Unweighted: roadgen's weights are for cars, and say nothing of where
+    people walk.
+    """
+    tool = sumo_home() / "tools" / "randomTrips.py"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    cmd = [
+        sys.executable,
+        str(tool),
+        "-n",
+        str(network.net_file),
+        "-o",
+        str(out.with_suffix(".trips.xml")),
+        "-r",
+        str(out),
+        "-b",
+        "0",
+        "-e",
+        str(end),
+        "-p",
+        str(period),
+        "--seed",
+        str(seed),
+        "--validate",
+        "--pedestrians",
+        "--max-distance",
+        f"{max_distance:g}",
+        "--prefix",
+        "sumoped",
+    ]
+    env = dict(os.environ, SUMO_HOME=str(sumo_home()))
+    proc = subprocess.run(cmd, capture_output=True, text=True, env=env, check=False)  # noqa: S603
+    if proc.returncode != 0 or not out.is_file():
+        raise TrafficBackendError(
+            f"randomTrips.py --pedestrians failed ({proc.returncode}): "
+            f"{proc.stderr.strip()[-2000:]}"
+        )
+    return out
+
+
+def crossing_edges(net_file: Path) -> dict[str, frozenset[str]]:
+    """Each pedestrian crossing of *net_file*, and the roads it crosses.
+
+    Read off the ``crossingEdges`` of each ``function="crossing"`` edge, which
+    sumolib does not keep.
+    """
+    from xml.etree import ElementTree  # noqa: PLC0415
+
+    out: dict[str, frozenset[str]] = {}
+    for _event, element in ElementTree.iterparse(str(net_file)):
+        if element.tag == "edge" and element.get("function") == "crossing":
+            out[str(element.get("id"))] = frozenset(
+                (element.get("crossingEdges") or "").split()
+            )
+        element.clear()
     return out

@@ -3086,6 +3086,160 @@ def test_the_public_names_the_model_now_declares_compile(tmp_path: Path) -> None
     assert result.ok, result.format()
 
 
+_ADVERSARIAL_SETUP = """
+from autoware_carla_scenario import (
+    AdversarialBrakeAction,
+    AdversarialCutInAction,
+    AdversarialMergeAction,
+    AdversityFeasibleCondition,
+    ConstructionSettings,
+    ConstructionZoneAction,
+    AdversityKind,
+    AdversityLocation,
+    HeadOnAction,
+    IgnoreLeaderAction,
+    JaywalkAction,
+    LaneChangeAbortAction,
+    PedestrianRunRedLightAction,
+    PropAction,
+    PropOperation,
+    RunTrafficRuleAction,
+    Lanelet2Pose,
+    MapPose,
+    StalledObjectAction,
+    StopCrossingAction,
+    TrajectoryFollowingMode,
+    collision_objects,
+)
+self.register_pre_tick(AdversarialBrakeAction("npc1", AdversityLocation.ANY))
+self.register_pre_tick(
+    ConstructionZoneAction(
+        12, 20.0, 80.0, ConstructionSettings(construction_type="mixed"), end_time=30.0
+    )
+)
+self.register_pre_tick(LaneChangeAbortAction("npc2", AdversityLocation.HIGHWAY))
+self.register_pre_tick(AdversarialMergeAction("npc2", AdversityLocation.HIGHWAY))
+self.register_pre_tick(HeadOnAction("npc3", AdversityLocation.ANY, label="head_on"))
+self.register_pre_tick(
+    IgnoreLeaderAction(
+        "npc1",
+        AdversityLocation.INTERSECTION,
+        following_mode=TrajectoryFollowingMode.POSITION,
+    )
+)
+self.register_pre_tick(
+    AdversarialCutInAction(
+        "npc2",
+        AdversityLocation.HIGHWAY,
+        ElapsedTimeCondition(3.0, label="later"),
+        label="cut",
+        once=False,
+    )
+)
+self.register_pre_tick(RunTrafficRuleAction("npc3", AdversityLocation.ROUNDABOUT))
+self.register_pre_tick(JaywalkAction("p1", AdversityLocation.ANY, seed=7))
+self.register_pre_tick(PedestrianRunRedLightAction("p1", AdversityLocation.INTERSECTION))
+self.register_pre_tick(StopCrossingAction("p1", AdversityLocation.ANY, seed=3))
+self.register_pre_tick(StalledObjectAction("npc3", Lanelet2Pose(1, 2.0), 1.0, 5.0))
+self.register_pre_tick(StalledObjectAction("npc4", MapPose(1.0, 2.0, 0.5), label="stalled"))
+self.register_pre_tick(
+    PropAction("cone1", PropOperation.ADD, Lanelet2Pose(1, 4.0), blueprint="static.prop.streetbarrier")
+)
+self.register_pre_tick(PropAction("box", position=MapPose(1.0, 2.0), on_ground=False))
+self.register_pre_tick(
+    PropAction(
+        "cone1",
+        PropOperation.REMOVE,
+        condition=ElapsedTimeCondition(8.0, label="gone"),
+        label="clear",
+    )
+)
+for crashed in collision_objects(
+    "npc1", "npc2", Lanelet2Pose(1, 2.0), Lanelet2Pose(1, 6.0), end_time=9.0
+):
+    self.register_pre_tick(crashed)
+feasible = AdversityFeasibleCondition(
+    "npc1", AdversityKind.CUT_IN, AdversityLocation.ANY, label="may_cut_in", seed=1
+)
+logger.info(
+    "%s %s %s %s %s",
+    feasible.kind.name,
+    feasible.location.value,
+    AdversityKind.HEAD_ON.name,
+    AdversityKind.STOP_CROSSING.value,
+    AdversityKind.MERGE.name,
+)
+self.register_fail_condition(feasible)
+"""
+
+
+_NADE_SETUP = """
+from autoware_carla_scenario import (
+    AdversarialTrafficAction,
+    AdversityKind,
+    AdversityLocation,
+    NadeAdversity,
+    NadeSettings,
+    SamplingEvent,
+)
+adversities = [
+    NadeAdversity(AdversityKind.CUT_IN, AdversityLocation.HIGHWAY, 0.002),
+    NadeAdversity(AdversityKind.BRAKE_CHECK, AdversityLocation.ANY, 0.01),
+]
+nade = AdversarialTrafficAction(
+    adversities, seed=3, settings=NadeSettings(max_controlled=3, fixed_is_probability=0.1)
+)
+self.register_pre_tick(nade)
+logger.info("%f %d", nade.weight, adversities[0].kind == AdversityKind.CUT_IN)
+# #397: the kind sampled, as a cover item; the run's weight.
+self.register_cover(
+    "adversity.kind", nade.sampled_kind, values=AdversityKind, event=SamplingEvent.TICK
+)
+logger.info("%f", self.importance_sampling_weight * nade.importance_sampling_weight)
+"""
+
+
+def test_the_nade_action_compiles(tmp_path: Path) -> None:
+    # #395: the action and its list's entries, from the top level.
+    scenario, config, _ = _write_case(
+        tmp_path, textwrap.dedent(_NADE_SETUP) + textwrap.dedent(_VALID_SETUP)
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_the_adversarial_actions_compile(tmp_path: Path) -> None:
+    # #393: the actions, their condition and its enums, from the top level.
+    scenario, config, _ = _write_case(
+        tmp_path, textwrap.dedent(_ADVERSARIAL_SETUP) + textwrap.dedent(_VALID_SETUP)
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+@pytest.mark.parametrize(
+    "setup",
+    [
+        'AdversarialBrakeAction("npc1")\n',  # the location is required
+        'JaywalkAction("p1", AdversityKind.JAYWALKING)\n',
+        'AdversityFeasibleCondition("npc1", AdversityKind.CUT_IN, AdversityLocation.ANY)\n',
+    ],
+)
+def test_an_adversarial_action_built_wrong_is_refused(
+    tmp_path: Path, setup: str
+) -> None:
+    imports = (
+        "from autoware_carla_scenario import (\n"
+        "    AdversarialBrakeAction, AdversityFeasibleCondition, AdversityKind,\n"
+        "    AdversityLocation, JaywalkAction,\n"
+        ")\n"
+    )
+    scenario, config, _ = _write_case(
+        tmp_path, imports + setup + textwrap.dedent(_VALID_SETUP)
+    )
+    assert not typecheck_scenario(scenario, config).ok
+
+
 @pytest.mark.parametrize(
     ("setup", "needle", "message"),
     [
@@ -4789,3 +4943,1303 @@ def test_typing_names() -> None:
     assert documented <= set(dir(typing))
     # Every name the shim adds beyond Codon is compiled by a test above.
     assert set(_TYPING_CASES) <= documented
+
+
+# ---------------------------------------------------------------------------
+# The names of Codon's functools, itertools and collections (#378)
+# ---------------------------------------------------------------------------
+
+#: Each name the check adds to a standard library module that Codon's lacks:
+#: the import line and the module-level code that uses it, and a call from
+#: setup().  The cases cover every documented name (``test_stdlib_names``).
+_STDLIB_CASES: dict[str, tuple[str, str, str]] = {
+    "functools.reduce": (
+        "import operator\nfrom functools import reduce\n",
+        "def total(xs: list[int]) -> int:\n    return reduce(operator.add, xs)\n"
+        "def total_from(xs: list[int]) -> int:\n"
+        "    return reduce(lambda a, b: a + b, xs, 10)\n",
+        "logger.info('%d %d', total([1, 2]), total_from([1, 2]))\n",
+    ),
+    "functools.reduce (module)": (
+        "import functools\nimport operator\n",
+        "def total(xs: list[int]) -> int:\n"
+        "    return functools.reduce(operator.add, xs)\n",
+        "logger.info('%d', total([1, 2]))\n",
+    ),
+    "functools.lru_cache": (
+        "import functools\nfrom functools import lru_cache\n",
+        "@lru_cache(maxsize=8)\ndef square(x: int) -> int:\n    return x * x\n"
+        "@functools.lru_cache()\ndef cube(x: int) -> int:\n    return x * x * x\n"
+        "@lru_cache\ndef fourth(x: int) -> int:\n    return x * x * x * x\n"
+        "class Memo:\n"
+        "    @lru_cache(maxsize=None)\n"
+        "    def twice(self, x: int) -> int:\n        return 2 * x\n",
+        "logger.info('%d %d %d %d', square(2), cube(2), fourth(2), Memo().twice(2))\n",
+    ),
+    "functools.cache": (
+        "import functools\nfrom functools import cache\n",
+        "@cache\ndef square(x: int) -> int:\n    return x * x\n"
+        "@functools.cache\ndef cube(x: int) -> int:\n    return x * x * x\n",
+        "logger.info('%d %d', square(2), cube(2))\n",
+    ),
+    "functools.cached_property": (
+        "from functools import cached_property\n",
+        "class Box:\n    side: int\n\n    def __init__(self, side: int):\n        self.side = side\n\n"
+        "    @cached_property\n    def area(self) -> int:\n"
+        "        return self.side * self.side\n",
+        "logger.info('%d', Box(2).area)\n",
+    ),
+    "itertools.pairwise": (
+        "from itertools import chain, pairwise\n",
+        "def gaps(xs: list[int]) -> list[int]:\n"
+        "    return [b - a for a, b in pairwise(xs)]\n"
+        "def flat(xs: list[int]) -> list[int]:\n"
+        "    return list(chain(xs, xs))\n",
+        "logger.info('%d %d', len(gaps([1, 3, 6])), len(flat([1])))\n",
+    ),
+    "collections.OrderedDict": (
+        "from collections import Counter, OrderedDict\n",
+        "def ordered() -> OrderedDict[str, int]:\n"
+        "    d: OrderedDict[str, int] = OrderedDict()\n"
+        '    d["a"] = 1\n    d["b"] = 2\n    return d\n'
+        "def tally() -> Counter[str]:\n    c: Counter[str] = Counter()\n"
+        '    c["a"] += 1\n    return c\n',
+        "logger.info('%d %d', len(ordered()), len(tally()))\n",
+    ),
+}
+
+#: Each name or module refused with a hint: the import line, the code using
+#: it, the error Codon gives, and the hint the check adds.
+_STDLIB_REFUSALS: dict[str, tuple[str, str, str, str]] = {
+    "dataclasses.asdict": (
+        "from dataclasses import asdict\n",
+        "",
+        "cannot import name 'asdict' from 'dataclasses'",
+        "build the dict from the fields you need",
+    ),
+    "functools.wraps": (
+        "from functools import wraps\n",
+        "",
+        "cannot import name 'wraps' from 'functools'",
+        "docs/typecheck.md",
+    ),
+    "contextlib": (
+        "from contextlib import suppress\n",
+        "",
+        "contextlib has no Codon model",
+        "try/except X: pass for suppress",
+    ),
+    "warnings": (
+        "import warnings\n",
+        "",
+        "warnings has no Codon model",
+        "logger.warning",
+    ),
+    "json": (
+        "import json\n",
+        "",
+        "json has no Codon model",
+        "@dataclass",
+    ),
+    "types": ("import types\n", "", "types has no Codon model", "@dataclass"),
+    "textwrap": ("import textwrap\n", "", "textwrap has no Codon model", "join()"),
+    "traceback": (
+        "import traceback\n",
+        "",
+        "traceback has no Codon model",
+        "logger.exception",
+    ),
+    "io": ("import io\n", "", "io has no Codon model", "pathlib.Path"),
+}
+
+
+def _stdlib_header(imports: str) -> str:
+    return _HEADER.replace(
+        "from .configs import CaseConfig\n",
+        f"{imports}\nfrom .configs import CaseConfig\n",
+        1,
+    )
+
+
+@pytest.mark.parametrize("name", sorted(_STDLIB_CASES))
+def test_a_supported_stdlib_name_compiles_in_a_scenario(
+    tmp_path: Path, name: str
+) -> None:
+    imports, helper, call = _STDLIB_CASES[name]
+    scenario, config, _ = _write_case(
+        tmp_path,
+        _TIMEOUT_SETUP + call,
+        "\n\n" + helper,
+        header=_stdlib_header(imports),
+    )
+
+
+# Valid Python the transform rewrites for Codon (#376)
+# ---------------------------------------------------------------------------
+
+_REWRITE_CLASSES = """
+from functools import total_ordering
+
+
+class Marker: ...
+
+
+class Failure(Exception): ...
+
+
+class Detailed(Failure): ...
+
+
+class ByLt:
+    x: int
+
+    def __init__(self, x: int) -> None:
+        self.x = x
+
+    def __lt__(self, other: "ByLt") -> bool:
+        return self.x < other.x
+
+
+@total_ordering
+class ByLe:
+    x: int
+
+    def __init__(self, x: int) -> None:
+        self.x = x
+
+    def __le__(self, other: "ByLe") -> bool:
+        return self.x <= other.x
+
+    def __eq__(self, other: "ByLe") -> bool:
+        return self.x == other.x
+
+
+@total_ordering
+class ByLtAndEq:
+    x: int
+
+    def __init__(self, x: int) -> None:
+        self.x = x
+
+    def __lt__(self, other: "ByLtAndEq") -> bool:
+        return self.x < other.x
+
+    def __eq__(self, other: "ByLtAndEq") -> bool:
+        return self.x == other.x
+
+
+class Unordered:
+    x: int
+
+    def __init__(self, x: int) -> None:
+        self.x = x
+"""
+
+
+def test_an_ellipsis_class_body_compiles(tmp_path: Path) -> None:
+    setup = """
+        marker = Marker()
+        try:
+            raise Detailed("why")
+        except Failure:
+            pass
+    """
+    scenario, config, _ = _data_case(tmp_path, _REWRITE_CLASSES, setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+@pytest.mark.parametrize("name", sorted(_STDLIB_REFUSALS))
+def test_an_unsupported_stdlib_name_is_refused_with_a_hint(
+    tmp_path: Path, name: str
+) -> None:
+    imports, usage, message, hint = _STDLIB_REFUSALS[name]
+    scenario, config, path = _write_case(
+        tmp_path, _TIMEOUT_SETUP, "\n\n" + usage, header=_stdlib_header(imports)
+    )
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert message in error.message, error.format()
+    assert hint in error.message, error.format()
+    assert error.path == str(path)
+    first = imports.strip().splitlines()[0]
+    assert error.line == path.read_text().splitlines().index(first) + 1
+
+
+def test_stdlib_names() -> None:
+    # The documented lists, the transform, the extensions and the cases agree.
+    import itertools
+    import collections
+    import functools
+
+    from autoware_carla_scenario.typecheck.transform import FUNCTOOLS_NAMES
+
+    root = Path(__file__).resolve().parents[2]
+    docs = (root / "docs" / "typecheck.md").read_text()
+
+    def listed(marker: str) -> set[str]:
+        block = docs.split(f"<!-- {marker}:start -->")[1].split(
+            f"<!-- {marker}:end -->"
+        )[0]
+        return set(re.findall(r"`([\w.]+)`", block))
+
+    declared = {f"functools.{name}" for name in FUNCTOOLS_NAMES}
+    extensions = root / "src/autoware_carla_scenario/typecheck/codon/_stdlib"
+    for path in extensions.glob("*.codon"):
+        for node in ast.parse(path.read_text()).body:
+            if isinstance(node, (ast.FunctionDef, ast.ClassDef)):
+                declared.add(f"{path.stem}.{node.name}")
+            elif isinstance(node, ast.Assign):
+                declared |= {
+                    f"{path.stem}.{t.id}"
+                    for t in node.targets
+                    if isinstance(t, ast.Name)
+                }
+    assert listed("stdlib-names") == declared
+    for name in declared:
+        module, _, attribute = name.partition(".")
+        assert hasattr(
+            {
+                "functools": functools,
+                "itertools": itertools,
+                "collections": collections,
+            }[module],
+            attribute,
+        ), name
+    covered = {name.split(" ")[0] for name in _STDLIB_CASES}
+    assert covered == declared
+    # Every refusal documented is tested, and the other way round.
+    assert listed("stdlib-refused") == {name for name in _STDLIB_REFUSALS}
+    # Every module refused with a hint is documented and tested (#438).
+    from autoware_carla_scenario.typecheck.check import _UNMODELLED_HINTS
+
+    assert {name for name in _STDLIB_REFUSALS if "." not in name} == set(
+        _UNMODELLED_HINTS
+    )
+
+
+def test_an_ellipsis_class_is_still_an_empty_class(tmp_path: Path) -> None:
+    scenario, config, path = _data_case(
+        tmp_path, _REWRITE_CLASSES, "r = Marker().missing\n"
+    )
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "no attribute 'missing'" in error.message, error.format()
+    assert error.line == _line_of(path, "r = Marker().missing")
+
+
+def test_a_dict_display_with_double_star_compiles(tmp_path: Path) -> None:
+    setup = """
+        a = {"x": 1}
+        b = {"y": 2}
+        merged = {**a, **b}
+        copy = {**a}
+        copy["z"] = 3
+        mixed = {"w": 0, **a, "v": 5, **b}
+        assert len(merged) == 2 and len(a) == 1 and len(mixed) == 4
+        assert merged["y"] == 2 and mixed["v"] == 5
+    """
+    scenario, config, _ = _data_case(tmp_path, "", setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_a_dict_display_merging_other_value_types_is_refused(tmp_path: Path) -> None:
+    line = 'r = {**{"a": 1}, **{"b": "x"}}'
+    scenario, config, path = _data_case(tmp_path, "", line + "\n")
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "'str' does not match expected type 'int'" in error.message, error.format()
+    assert error.line == _line_of(path, line)
+
+
+def test_str_format_on_a_literal_compiles(tmp_path: Path) -> None:
+    setup = """
+        n = 7
+        s = "{:>5}|{}".format(1, 2)
+        t = "{a}-{b:.2f} {{x}} {0}".format(n, a="q", b=2.0)
+        u = "{!r} {:,}".format("s", 1000000)
+        v = "{0}{0}{1}".format(len([1, 2]), "k")
+        w = "no fields".format()
+        x = ("multi {} "
+             "line {}").format(
+            1, 2
+        )
+        assert s == "    1|2" and t == "q-2.00 {x} 7" and v == "22k"
+        assert w == "no fields" and x == "multi 1 line 2"
+    """
+    scenario, config, _ = _data_case(tmp_path, "", setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+@pytest.mark.parametrize(
+    ("setup", "hint"),
+    [
+        ('r = "{:>{}}".format(5, 3)', "a format spec with a field inside it"),
+        ('r = "{} {}".format(1)', "positional argument 1 but only 1 given"),
+        ('r = "{k}".format(j=1)', "keyword 'k'"),
+        ('r = "{} {1}".format(1, 2)', "mixes automatic and manual"),
+        ('r = "{}".format(*[1])', "*args or **kwargs"),
+        ('fmt = "{}"\nr = fmt.format(1)', "write an f-string"),
+    ],
+    ids=["nested-spec", "missing", "keyword", "mixed", "starred", "not-a-literal"],
+)
+def test_str_format_that_cannot_be_rewritten_is_refused(
+    tmp_path: Path, setup: str, hint: str
+) -> None:
+    scenario, config, path = _data_case(tmp_path, "", setup + "\n")
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert hint in error.message, error.format()
+    assert error.line == _line_of(path, setup.splitlines()[-1])
+
+
+def test_fstring_format_specs_compile(tmp_path: Path) -> None:
+    """Every spec form compiles: Codon's own, and those the check rewrites (#434)."""
+    setup = """
+        x = 3.14159
+        n = 255
+        w = 8
+        name = "ab"
+        # Codon's parser takes these as written.
+        a = f"{x:.2f}|{x:e}|{x:g}|{x:.1%}|{x:010.3f}|{n:#x}|{n:08b}|{n:,}|{n:_x}"
+        b = f"{n:>8}|{n:<8}|{n:^8}|{n:*^8}|{name!r:>8}|{name!s:^6}|{x=}|{x=:.2f}"
+        # A sign, a field in the spec, a spec Codon does not know: rewritten.
+        c = f"{x:+.2f}|{x: .2f}|{x:-.2f}|{n:+d}|{n:+}|{n:=+8d}|{x:^+10.2f}|{x:*<+10.2f}"
+        d = f"{x:>{w}.2f}|{x:{w}.2f}|{n:{w}d}|{x:.{w}f}|{name:>{w}}|{name!r:{w}}"
+        e = f"{x=:+.2f}|{n!r:+}|{x:q}|{x:{w}{w}}|{{lit}} {x:+.1f} {{lit}}"
+        f = "{:+.2f}|{:>5}".format(x, x)
+        g = "{:+.2f} {:+d} {!r:>5}".format(x, n, name)
+        h = f'''multi
+        {x:+.2f}
+        line {n:{w}d}'''
+        for text in (a, b, c, d, e, f, g, h):
+            assert len(text) > 0
+        k: str = f"{x:+.2f}"
+        m: str = f"{x:>{w}}"
+        assert len(k) + len(m) > 0
+    """
+    scenario, config, _ = _data_case(tmp_path, "", setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_fstring_specs_in_a_class_level_default_compile(tmp_path: Path) -> None:
+    """The driver's copy of a class-level default is rewritten too (#434, #433)."""
+    definitions = """
+        W = 6
+
+
+        class Labels:
+            SIGNED: str = f"{3.5:+.1f}"
+            PADDED: str = f"{7:>{W}}"
+            TEXT: str = "{:+.1f}".format(2.5)
+    """
+    scenario, config, _ = _data_case(
+        tmp_path, textwrap.dedent(definitions), "assert len(Labels().SIGNED) > 0\n"
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+@pytest.mark.parametrize(
+    ("line", "message"),
+    [
+        ('r: int = f"{3.5:+.2f}"', "int"),
+        ('r: int = f"{3.5:>{4}.2f}"', "int"),
+        ('r: float = "{:+.2f}".format(3.5)', "float"),
+        ('r = f"{3.5:+.2f}" + 1', "str"),
+    ],
+    ids=["sign", "nested", "format", "operand"],
+)
+def test_a_rewritten_fstring_is_still_a_str(
+    tmp_path: Path, line: str, message: str
+) -> None:
+    scenario, config, path = _data_case(tmp_path, "", line + "\n")
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert message in error.message, error.format()
+    assert error.line == _line_of(path, line)
+
+
+@pytest.mark.parametrize(
+    ("line", "hint"),
+    [
+        ("r = f\"{'{}'.format(3)}\"", "a brace in an expression"),
+        ('r = f"{len({1, 2})}"', "a brace in an expression"),
+        ('r = f"{ {1: 2}[1] :>3}"', "a brace in an expression"),
+        ("r = f\"{f'{3}'}\"", "f-string inside an f-string"),
+        ('r = f"{3.5!a:+.2f}"', "!a together with a format spec"),
+    ],
+    ids=["format", "set", "dict", "nested", "ascii"],
+)
+def test_an_fstring_codon_cannot_parse_is_refused_at_its_line(
+    tmp_path: Path, line: str, hint: str
+) -> None:
+    scenario, config, path = _data_case(tmp_path, "", "pad = 1\n" + line + "\n")
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert hint in error.message, error.format()
+    assert error.line == _line_of(path, line)
+
+
+@pytest.mark.parametrize(
+    ("message", "column"),
+    [
+        ("syntax error, unexpected '.'", 4),
+        ("syntax error, expecting <format_spec>.", 4),
+    ],
+)
+def test_a_syntax_error_in_an_fstring_field_is_reported_at_its_line(
+    tmp_path: Path, message: str, column: int
+) -> None:
+    """Codon puts it at line 1 of the field: -3 once the prelude is subtracted."""
+    from autoware_carla_scenario.typecheck import check
+
+    source = "a = 1\nb = 2\n\nr = f'{a} {b:+.2f}'\n"
+    prelude = check.PRELUDE
+    rel = "pkg/scenario.py"
+    (tmp_path / "pkg").mkdir()
+    (tmp_path / rel).write_text(prelude + source)
+    ws = check._Workspace(tmp_path, None)
+    ws.files[rel] = "/user/scenario.py"
+    ws.origins[rel] = [1, 2, 3, 4]
+    output = f"{rel}:1 ({column}): error: {message}\n"
+    (diagnostic,) = check._parse_output(output, ws)
+    assert diagnostic.path == "/user/scenario.py"
+    assert diagnostic.line == 4
+    assert diagnostic.message == message
+
+
+def test_a_format_spec_on_a_bool_is_hinted(tmp_path: Path) -> None:
+    line = 'r = f"{True:+d}"'
+    scenario, config, path = _data_case(tmp_path, "", line + "\n")
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "has no attribute '__format__'" in error.message, error.format()
+    assert "int(flag)" in error.message, error.format()
+    assert error.line == _line_of(path, line)
+
+
+def test_zip_with_strict_compiles(tmp_path: Path) -> None:
+    setup = """
+        xs = [1, 2]
+        ys = [3.0, 4.0]
+        total = 0.0
+        for a, b in zip(xs, ys, strict=True):
+            total += a + b
+        for a, b in zip(
+            xs,
+            ys,
+            strict=False,
+        ):
+            total += a * b
+        assert total > 0.0
+    """
+    scenario, config, _ = _data_case(tmp_path, "", setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_zip_with_strict_still_needs_iterables(tmp_path: Path) -> None:
+    line = "r = zip(5, strict=True)"
+    scenario, config, path = _data_case(tmp_path, "", line + "\n")
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "'int' object has no attribute '__iter__'" in error.message, error.format()
+    assert error.line == _line_of(path, line)
+
+
+def test_a_class_with_only_lt_sorts(tmp_path: Path) -> None:
+    setup = """
+        items = [ByLt(2), ByLt(1), ByLt(3)]
+        ordered = sorted(items)
+        items.sort()
+        items.sort(reverse=True)
+        keyed = sorted([ByLt(2), ByLt(1)], key=lambda v: v)
+        assert ordered[0].x == 1 and min(items).x == 1 and max(items).x == 3
+        assert ByLt(2) > ByLt(1) and keyed[0].x == 1
+    """
+    scenario, config, _ = _data_case(tmp_path, _REWRITE_CLASSES, setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_total_ordering_gives_every_comparison(tmp_path: Path) -> None:
+    setup = """
+        les = sorted([ByLe(2), ByLe(1)])
+        lts = sorted([ByLtAndEq(2), ByLtAndEq(1)])
+        assert ByLe(1) < ByLe(2) and ByLe(2) > ByLe(1) and ByLe(1) >= ByLe(1)
+        assert ByLtAndEq(1) <= ByLtAndEq(1) and ByLtAndEq(2) >= ByLtAndEq(1)
+        assert les[0].x == 1 and lts[0].x == 1
+    """
+    scenario, config, _ = _data_case(tmp_path, _REWRITE_CLASSES, setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_sorting_a_class_with_no_ordering_is_refused_with_a_hint(
+    tmp_path: Path,
+) -> None:
+    line = "r = sorted([Unordered(1), Unordered(0)])"
+    scenario, config, path = _data_case(tmp_path, _REWRITE_CLASSES, line + "\n")
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "define __lt__" in error.message, error.format()
+    assert error.line == _line_of(path, line)
+
+
+def test_total_ordering_on_a_nested_class_is_refused(tmp_path: Path) -> None:
+    definitions = """
+from functools import total_ordering
+
+
+def make():
+    @total_ordering
+    class Inner:
+        def __lt__(self, other: "Inner") -> bool:
+            return True
+
+    return Inner
+"""
+    scenario, config, path = _data_case(tmp_path, definitions, "r = make()\n")
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "not at module level" in error.message, error.format()
+    assert error.line == _line_of(path, "@total_ordering")
+
+
+def test_a_lambda_capturing_a_default_in_a_comprehension_compiles(
+    tmp_path: Path,
+) -> None:
+    setup = """
+        fs = [lambda x, k=k: x + k for k in range(3)]
+        gs = {j: (lambda x, k=j, m=len([1]): x + k + m) for j in range(2)}
+        plain = lambda a, b=2: a + b
+        assert fs[1](1) == 2 and gs[1](1) == 3 and plain(1) == 3
+    """
+    scenario, config, _ = _data_case(tmp_path, "", setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_a_lambda_capturing_a_default_is_still_typed(tmp_path: Path) -> None:
+    setup = """
+        fs = [lambda x, k=k: x + k for k in range(3)]
+        r = fs[0]("x")
+    """
+    scenario, config, path = _data_case(tmp_path, "", setup)
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "for +: 'str' and 'int'" in error.message, error.format()
+    call = _line_of(path, 'r = fs[0]("x")')
+    assert any(f"scenario.py:{call}]" in frame for frame in error.trace), error.format()
+
+
+@pytest.mark.parametrize("call", ["fs[0](1, k=5)", "fs[0](1, 5)"])
+def test_passing_a_captured_lambda_default_is_refused_with_a_hint(
+    tmp_path: Path, call: str
+) -> None:
+    setup = f"""
+        fs = [lambda x, k=k: x + k for k in range(3)]
+        r = {call}
+    """
+    scenario, config, path = _data_case(tmp_path, "", setup)
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "binds that default once" in error.message, error.format()
+    assert error.line == _line_of(path, f"r = {call}")
+
+
+# ---------------------------------------------------------------------------
+# Codon-only refusals of valid Python: a hint and the line (#379)
+# ---------------------------------------------------------------------------
+
+_POINT = "@dataclass\nclass Pt:\n    x: int\n    y: int\n"
+
+_PROTOCOL = """
+class HasArea(typing.Protocol):
+    def area(self) -> float: ...
+
+
+class Sq:
+    side: float
+
+    def __init__(self, side: float) -> None:
+        self.side = side
+
+    def area(self) -> float:
+        return self.side * self.side
+
+
+class SqBased(HasArea):
+    side: float
+
+    def __init__(self, side: float) -> None:
+        self.side = side
+
+    def area(self) -> float:
+        return self.side * self.side
+
+
+def show(h: HasArea) -> float:
+    return h.area()
+
+
+def total(hs: list[HasArea]) -> float:
+    return sum([h.area() for h in hs])
+
+
+def total_of_sq(hs: list[SqBased]) -> float:
+    return sum([h.area() for h in hs])
+
+
+def two(a: int, b: int) -> int:
+    return a + b
+"""
+
+
+@pytest.mark.parametrize(
+    ("definitions", "subject", "pattern", "hint"),
+    [
+        ("", "x: int | str = 3", "int(n)", "isinstance(v, Pt)"),
+        (_POINT, "x = Pt(1, 2)", "Pt()", "isinstance(v, Pt)"),
+        (_POINT, "x = Pt(1, 2)", "Pt(x=a, y=b)", "isinstance(v, Pt)"),
+        ("", 'x = {"k": 1}', '{"k": v}', "test `'k' in d`"),
+        ("", 'x = {"k": 1}', "{**r}", "test `'k' in d`"),
+        ("", 'x = {"k": [1, 2]}', '{"k": [1, b]}', "test `'k' in d`"),
+        ("", "x = [1, 2]", "[a, *rest]", "test len(xs)"),
+        ("", "x = [1, 2]", "[a, b] as whole", "match the subject unnamed"),
+    ],
+    ids=[
+        "class",
+        "own-class",
+        "dataclass",
+        "mapping",
+        "mapping-rest",
+        "mapping-nested",
+        "star",
+        "as",
+    ],
+)
+def test_a_match_pattern_codon_cannot_bind_is_refused_with_a_hint(
+    tmp_path: Path, definitions: str, subject: str, pattern: str, hint: str
+) -> None:
+    setup = f"""
+        {subject}
+        match x:
+            case {pattern}:
+                logger.info("%s", "hit")
+            case _:
+                pass
+    """
+    scenario, config, path = _data_case(tmp_path, definitions, setup)
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert hint in error.message, error.format()
+    assert error.line == _line_of(path, f"case {pattern}:")
+
+
+def test_the_match_patterns_codon_compiles_still_compile(tmp_path: Path) -> None:
+    setup = """
+        n = 3
+        d = {"k": 1}
+        pair = [1, 2]
+        match n:
+            case 1 | 2:
+                logger.info("%s", "small")
+            case _ if n > 5:
+                logger.info("%s", "big")
+            case _:
+                pass
+        match d:
+            case {"k": 1}:
+                logger.info("%s", "one")
+            case _:
+                pass
+        match d:
+            case {"k": 1 | 2}:
+                logger.info("%s", "one or two")
+            case {"k": [1, 2]}:
+                logger.info("%s", "pair")
+            case _:
+                pass
+        match pair:
+            case [a, b]:
+                logger.info("%d", a + b)
+            case _:
+                pass
+        match n:
+            case int():
+                logger.info("%d", n)
+            case _:
+                pass
+    """
+    scenario, config, _ = _data_case(tmp_path, _POINT, setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_isinstance_and_attribute_reads_replace_a_capture_pattern(
+    tmp_path: Path,
+) -> None:
+    setup = """
+        v: int | str = 3
+        if isinstance(v, int):
+            logger.info("%d", v)
+        d = {"k": 1}
+        if "k" in d:
+            logger.info("%d", d["k"])
+        xs = [1, 2, 3]
+        if len(xs) > 0:
+            logger.info("%d %d", xs[0], len(xs[1:]))
+        p = Pt(1, 2)
+        if isinstance(p, Pt) and p.x < p.y:
+            logger.info("%d", p.y)
+    """
+    scenario, config, _ = _data_case(tmp_path, _POINT, setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+@pytest.mark.parametrize(
+    ("call", "hint"),
+    [
+        ("show(Sq(1.0))", "is a typing.Protocol"),
+        ("total([Sq(1.0)])", "is a typing.Protocol"),
+        ("two(*[1, 2])", "pass the elements"),
+        ('two(**{"a": 1, "b": 2})', "pass the keywords"),
+    ],
+    ids=["protocol", "protocol-list", "star-list", "star-star-dict"],
+)
+def test_protocol_and_unpacking_refusals_say_what_to_write(
+    tmp_path: Path, call: str, hint: str
+) -> None:
+    scenario, config, path = _data_case(
+        tmp_path, _PROTOCOL, f'logger.info("%s", {call})\n'
+    )
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert hint in error.message, error.format()
+    line = _line_of(path, call)
+    assert error.line == line or any(
+        f"scenario.py:{line}]" in frame for frame in error.trace
+    ), error.format()
+
+
+def test_the_documented_protocol_and_unpacking_spellings_compile(
+    tmp_path: Path,
+) -> None:
+    setup = """
+        logger.info("%f", show(SqBased(1.0)))
+        logger.info("%f", total_of_sq([SqBased(2.0)]))
+        logger.info("%d", two(*(1, 2)))
+        xs = [1, 2]
+        logger.info("%d", two(xs[0], xs[1]))
+    """
+    scenario, config, _ = _data_case(tmp_path, _PROTOCOL, setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_a_class_mismatch_that_is_no_protocol_gets_no_protocol_hint(
+    tmp_path: Path,
+) -> None:
+    definitions = (
+        _PROTOCOL
+        + """
+
+class Other:
+    pass
+
+
+def take(o: Other) -> int:
+    return 1
+"""
+    )
+    scenario, config, _ = _data_case(
+        tmp_path, definitions, 'logger.info("%d", take(Sq(1.0)))\n'
+    )
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "does not match expected type" in error.message, error.format()
+    assert "Protocol" not in error.message, error.format()
+
+
+def test_total_ordering_composes_with_the_stubbed_functools_names(
+    tmp_path: Path,
+) -> None:
+    imports = (
+        "from functools import total_ordering, reduce, lru_cache\nimport operator\n"
+    )
+    helper = (
+        "@total_ordering\nclass Rank:\n    n: int\n\n"
+        "    def __init__(self, n: int):\n        self.n = n\n\n"
+        "    def __lt__(self, other: Rank) -> bool:\n        return self.n < other.n\n\n"
+        "    def __eq__(self, other: Rank) -> bool:\n        return self.n == other.n\n\n\n"
+        "@lru_cache(maxsize=4)\ndef total(xs: list[int]) -> int:\n"
+        "    return reduce(operator.add, xs)\n"
+    )
+    call = "logger.info('%d %d', total([1, 2]), 1 if Rank(1) <= Rank(2) else 0)\n"
+    scenario, config, _ = _write_case(
+        tmp_path,
+        _TIMEOUT_SETUP + call,
+        "\n\n" + helper,
+        header=_stdlib_header(imports),
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+# ---------------------------------------------------------------------------
+# A context manager's __exit__ and a table of functions (#435, #436)
+# ---------------------------------------------------------------------------
+
+_CONTEXT_MANAGER = """
+class Ctx:
+    n: int
+
+    def __init__(self) -> None:
+        self.n = 1
+
+    def __enter__(self) -> "Ctx":
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: object | None,
+    ) -> bool | None:
+        if exc_type is not None:
+            logger.info("failed: %s", exc_type.__name__)
+        self.n = 2
+        return None
+"""
+
+
+def test_a_context_manager_with_the_usual_exit_compiles(tmp_path: Path) -> None:
+    setup = """
+        with Ctx() as c:
+            n = c.n
+        logger.info("%d %d", n, c.n)
+    """
+    scenario, config, _ = _data_case(tmp_path, _CONTEXT_MANAGER, setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+# -- a class constant read in the class scope (#433) ---------------------------
+
+_CLASS_CONSTANTS = """
+import functools
+
+SCALE = 100
+
+
+class Helper:
+    LIMIT = 5
+    STEP: typing.Final = 2
+    DOUBLE = LIMIT * 2
+    TOTAL = DOUBLE + STEP
+
+    def f(self, n: int = LIMIT, *, m: int = STEP) -> int:
+        return n + m
+
+    def g(self, n: int = SCALE) -> int:
+        return n + Helper.LIMIT
+
+
+class Color(enum.Enum):
+    RED = 1
+    BLUE = 2
+
+
+class Painter:
+    DEFAULT = Color.RED
+    ALSO = DEFAULT
+
+    def paint(self, color: Color = DEFAULT) -> Color:
+        return color
+
+
+@dataclass(order=True, frozen=True)
+class Box:
+    SIZE = 5
+    width: int = SIZE
+    height: int = SIZE + 1
+
+    def grown(self, by: int = SIZE) -> int:
+        return self.width + by
+
+
+class Pt(typing.NamedTuple):
+    x: int = 1
+    ORIGIN = 7
+    FAR = ORIGIN * 2
+
+    def shift(self, by: int = ORIGIN) -> int:
+        return self.x + by
+
+
+class Outer:
+    class Inner:
+        A = 1
+        B = A + 1
+
+
+class Mode(enum.IntEnum):
+    LOW = 1
+    HIGH = LOW
+    _BASE = 3
+    START = _BASE
+
+    def plus(self, n: int = _BASE) -> int:
+        return n + 1
+
+
+@functools.total_ordering
+class Rank:
+    n: int
+    STEP = 2
+
+    def __init__(self, n: int = STEP):
+        self.n = n
+
+    def __lt__(self, other: Rank) -> bool:
+        return self.n < other.n
+
+    def __eq__(self, other: Rank) -> bool:
+        return self.n == other.n
+"""
+
+
+def test_a_class_constant_read_in_the_class_scope_compiles(tmp_path: Path) -> None:
+    setup = """
+        h = Helper()
+        total = Helper.DOUBLE + Helper.TOTAL + h.f() + h.g()
+        painted = Painter().paint() == Color.RED and Painter.ALSO == Color.RED
+        box = Box()
+        bigger = sorted([Box(7), box])
+        logger.info("%d %d %d", total, box.grown(), bigger[0].width)
+        pt = Pt()
+        logger.info("%d %d", pt.shift(), Pt.FAR + Outer.Inner.B)
+        logger.info("%d %d", Mode.HIGH.plus(), Mode.START.value)
+        ranks = sorted([Rank(), Rank(1)])
+        logger.info("%d %s", ranks[0].n, Rank() >= Rank(3))
+        assert painted
+    """
+    scenario, config, _ = _data_case(tmp_path, _CLASS_CONSTANTS, setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_exit_parameters_unannotated_or_defaulted_compile(tmp_path: Path) -> None:
+    definitions = """
+class Plain:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, et, ev, tb):
+        return False
+
+
+class Half:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, et: object, ev: object = None, tb: object | None = None):
+        pass
+
+
+class Star:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args: object):
+        pass
+"""
+    setup = """
+        with Plain() as p, Half() as h, Star() as s:
+            logger.info("%s", "in")
+    """
+    scenario, config, _ = _data_case(tmp_path, definitions, setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_the_body_of_an_exit_is_still_typed(tmp_path: Path) -> None:
+    definitions = _CONTEXT_MANAGER.replace("self.n = 2", 'self.n = "two"')
+    setup = """
+        with Ctx() as c:
+            n = c.n
+    """
+    scenario, config, path = _data_case(tmp_path, definitions, setup)
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "str" in error.message, error.format()
+    assert error.line == _line_of(path, 'self.n = "two"')
+
+
+def test_an_exception_branch_of_an_exit_is_still_typed(tmp_path: Path) -> None:
+    # `exc` keeps its BaseException | None annotation, so the branch is live.
+    definitions = _CONTEXT_MANAGER.replace(
+        "exc_type.__name__", "exc.no_such_attribute"
+    ).replace("if exc_type is not None:", "if exc is not None:")
+    setup = """
+        with Ctx() as c:
+            n = c.n
+    """
+    scenario, config, path = _data_case(tmp_path, definitions, setup)
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "no_such_attribute" in error.message, error.format()
+
+
+_TABLE = """
+def inc(x: int) -> int:
+    return x + 1
+
+
+def dbl(x: int) -> int:
+    return x * 2
+"""
+
+
+def test_a_table_of_functions_annotated_callable_compiles(tmp_path: Path) -> None:
+    definitions = (
+        _TABLE
+        + """
+
+def table(k: int) -> dict[str, typing.Callable[[int], int]]:
+    return {"inc": inc, "dbl": dbl, "neg": lambda x: -x}
+
+
+def nested(k: int) -> int:
+    ops: dict[str, list[typing.Callable[[int], int]]] = {
+        "a": [inc, lambda x: x * 3],
+        "b": [dbl],
+    }
+    one: list[typing.Callable[[int], int]] = [lambda x: x + k]
+    return ops["a"][1](2) + ops["b"][0](1) + one[0](1)
+"""
+    )
+    setup = """
+        fs: list[typing.Callable[[int], int]] = [inc, dbl]
+        d: dict[str, typing.Callable[[int], int]] = {"a": inc, "b": lambda x: x - 1}
+        fns: list[typing.Callable[[float, str], None]] = [
+            lambda v, s: None,
+            lambda v, s: logger.info("%s", s),
+        ]
+        fns[1](1.0, "x")
+        logger.info("%d %d %d", fs[1](3), d["b"](3), table(1)["neg"](2) + nested(1))
+    """
+    scenario, config, _ = _data_case(tmp_path, definitions, setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_a_table_of_functions_is_still_typed(tmp_path: Path) -> None:
+    setup = """
+        fs: list[typing.Callable[[int], int]] = [inc, dbl]
+        r = fs[1]("x")
+    """
+    scenario, config, path = _data_case(tmp_path, _TABLE, setup)
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert error.line == _line_of(path, 'r = fs[1]("x")') or any(
+        f"scenario.py:{_line_of(path, 'r = fs[1](')}]" in f for f in error.trace
+    ), error.format()
+
+
+def test_a_table_of_functions_with_the_wrong_signature_is_refused(
+    tmp_path: Path,
+) -> None:
+    setup = """
+        fs: list[typing.Callable[[str], int]] = [inc, dbl]
+    """
+    scenario, config, _ = _data_case(tmp_path, _TABLE, setup)
+    assert not typecheck_scenario(scenario, config).ok
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "fs = [inc, dbl]",
+        'fs = {"a": inc, "b": dbl}',
+        "fs = [lambda x: x + 1, lambda x: x * 2]",
+    ],
+)
+def test_an_unannotated_table_of_functions_is_refused_with_a_hint(
+    tmp_path: Path, line: str
+) -> None:
+    scenario, config, path = _data_case(
+        tmp_path, _TABLE, f"        {line}\n        logger.info('%d', len(fs))\n"
+    )
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "dispatch table" in error.message, error.format()
+    assert "if/elif" in error.message, error.format()
+    assert error.line == _line_of(path, line)
+
+
+def test_a_table_of_bound_methods_is_refused_with_a_hint(tmp_path: Path) -> None:
+    definitions = """
+class Ops:
+    def inc(self, x: int) -> int:
+        return x + 1
+
+    def dbl(self, x: int) -> int:
+        return x * 2
+"""
+    setup = """
+        ops = Ops()
+        fs: list[typing.Callable[[int], int]] = [ops.inc, ops.dbl]
+    """
+    scenario, config, path = _data_case(tmp_path, definitions, setup)
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "dispatch table" in error.message and "bound method" in error.message
+    assert error.line == _line_of(path, "fs: list")
+
+
+def test_a_table_mixing_a_bound_method_and_a_function_gets_the_hint(
+    tmp_path: Path,
+) -> None:
+    # The bound method is not wrapped: Codon's raw text names a Callable.
+    definitions = (
+        _TABLE + "\nclass K:\n    def m(self, x: int) -> int:\n        return x\n"
+    )
+    setup = """
+        k = K()
+        fs: list[typing.Callable[[int], int]] = [k.m, inc]
+    """
+    scenario, config, _ = _data_case(tmp_path, definitions, setup)
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "dispatch table" in error.message, error.format()
+
+
+def test_a_function_of_another_signature_is_refused_with_a_hint(
+    tmp_path: Path,
+) -> None:
+    definitions = _TABLE + "\ndef two(x: int, y: int) -> int:\n    return x + y\n"
+    setup = """
+        fs: list[typing.Callable[[int], int]] = [inc, two]
+    """
+    scenario, config, path = _data_case(tmp_path, definitions, setup)
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "signature" in error.message, error.format()
+    assert error.line == _line_of(path, "fs: list")
+
+
+def test_a_method_body_reading_a_name_of_the_class_scope_is_not_rewritten(
+    tmp_path: Path,
+) -> None:
+    # In Python the body reads the module's LIMIT: it must keep compiling
+    # against it (a str here), not against the class attribute (an int).
+    definitions = """
+LIMIT = "module"
+
+
+class Helper:
+    LIMIT = 5
+    DOUBLE = LIMIT * 2
+
+    def label(self) -> str:
+        return LIMIT + "!"
+"""
+    scenario, config, _ = _data_case(
+        tmp_path, definitions, "text = Helper().label() + str(Helper.DOUBLE)\n"
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_an_annotated_class_attribute_read_in_the_class_scope_compiles(
+    tmp_path: Path,
+) -> None:
+    definitions = """
+@dataclass(order=True)
+class D:
+    X: int = 5
+    NEG: typing.Final[int] = -2
+    y: int = X
+    z: int = NEG
+
+    def f(self, n: int = X, m: int = NEG**2) -> int:
+        return n + m
+
+
+class Plain:
+    LIMIT: int = 3
+    NAME: str = "a"
+
+    def g(self, n: int = LIMIT, s: str = NAME) -> int:
+        return n
+"""
+    setup = """
+        d = D()
+        logger.info("%d %d %d %d", d.y, d.z, d.f(), Plain().g())
+    """
+    scenario, config, _ = _data_case(tmp_path, definitions, setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_an_annotated_computed_class_attribute_read_in_the_class_scope_is_refused(
+    tmp_path: Path,
+) -> None:
+    definitions = """
+class Helper:
+    LIMIT: int = 2 * 3
+
+    def f(self, n: int = LIMIT) -> int:
+        return n
+"""
+    scenario, config, path = _data_case(tmp_path, definitions, "x = Helper().f()\n")
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "`LIMIT: Final = ...`" in error.message, error.format()
+    assert error.line == _line_of(path, "def f(self, n: int = LIMIT)")
+
+
+def test_an_enum_alias_of_a_negative_member_is_skipped_by_iteration(
+    tmp_path: Path,
+) -> None:
+    definitions = """
+class Level(enum.IntEnum):
+    LOW = -1
+    ALIAS = LOW
+    HIGH = 2
+"""
+    setup = """
+        total = 0
+        for level in Level:
+            total += level.value
+        logger.info("%d", total)
+    """
+    scenario, config, _ = _data_case(tmp_path, definitions, setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_a_namedtuple_field_default_reading_a_class_constant_is_refused(
+    tmp_path: Path,
+) -> None:
+    definitions = """
+class Pt(typing.NamedTuple):
+    LIM = 5
+    x: int = LIM
+"""
+    scenario, config, path = _data_case(tmp_path, definitions, "p = Pt()\n")
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "NamedTuple" in error.message, error.format()
+    assert error.line == _line_of(path, "x: int = LIM")
+
+
+def test_a_class_constant_assigned_again_is_refused(tmp_path: Path) -> None:
+    definitions = """
+class Helper:
+    X = 1
+    Y = X
+    X = 2
+"""
+    scenario, config, path = _data_case(tmp_path, definitions, "y = Helper.Y\n")
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "assigned again later" in error.message, error.format()
+    assert error.line == _line_of(path, "Y = X")
+
+
+def test_a_class_constant_in_a_class_in_a_function_is_refused(tmp_path: Path) -> None:
+    definitions = """
+def make():
+    class Local:
+        Q = 1
+        R = Q * 2
+
+    return Local
+"""
+    scenario, config, path = _data_case(tmp_path, definitions, "k = make()\n")
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "defined in a function" in error.message, error.format()
+    assert error.line == _line_of(path, "R = Q * 2")

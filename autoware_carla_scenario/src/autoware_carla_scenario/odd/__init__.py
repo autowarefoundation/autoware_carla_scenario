@@ -46,6 +46,7 @@ from .probes import (
     reset_probes,
     speed_limit_kph,
     traffic_density,
+    visibility,
 )
 from .scenario_measure import ScenarioMeasure, scenario_measure
 from .route import (
@@ -140,6 +141,7 @@ __all__ = [
     "resolve_odd",
     "speed_limit_kph",
     "traffic_density",
+    "visibility",
     "ScenarioMeasure",
     "scenario_measure",
 ]

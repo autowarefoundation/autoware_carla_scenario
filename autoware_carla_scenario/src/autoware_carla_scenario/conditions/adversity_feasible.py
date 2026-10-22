@@ -14,7 +14,7 @@ every condition and action that asks (:func:`~..adversity.snapshot.scene_at`).
 Needs the :class:`~..coordinate.map_manager.MapManager` to hold the Lanelet2
 map.  Not re-exported from :mod:`autoware_carla_scenario.conditions`, which
 every scenario imports, because it pulls in the Lanelet2 map layer: import it
-from here (or with the adversarial actions).
+from here or from the package's top level.
 """
 
 from __future__ import annotations
@@ -45,12 +45,13 @@ class AdversityFeasibleCondition(BaseCondition):
     """Holds when *entity_name* may carry out a *kind* adversity at *location*.
 
     Args:
-        entity_name: ``role_name`` of the vehicle (or, for JAYWALKING, the
-            pedestrian).
+        entity_name: ``role_name`` of the vehicle (or, for a kind of
+            ``PEDESTRIAN_KINDS``, the pedestrian).
         kind: The adversity.
         location: Where it may fire; :attr:`AdversityLocation.ANY` anywhere.
         label: Human-readable identifier.
-        seed: Seeds the random draws a trigger makes (a jaywalker's speed).
+        seed: Seeds the random draws a trigger makes (a jaywalker's speed,
+            a stopped crosser's wait).
         thresholds: The triggers' numbers; TeraSim's by default.
     """
 

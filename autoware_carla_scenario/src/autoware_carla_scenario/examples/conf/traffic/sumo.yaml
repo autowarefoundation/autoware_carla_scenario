@@ -23,6 +23,10 @@ traffic:
     # Put CARLA's pedestrians into SUMO as persons, so SUMO traffic yields to
     # them on the road as well as on crossings.
     publish_walkers: true
+    # Build the network with pedestrian crossings and walking areas, so SUMO's
+    # pedestrians cross roads on crossings; at a light, a crossing is green
+    # while the traffic over its road is red.
+    pedestrian_crossings: true
     # Lateral acceleration (m/s^2) SUMO traffic is held to in bends when the
     # map is converted (roadgen cuts edges at bends and slows each piece and
     # each junction turn); null converts the map as it is.
@@ -35,11 +39,37 @@ traffic:
     ambient:
       enabled: false
       vehicles_per_hour: 900
+    # SUMO's own pedestrians (randomTrips --pedestrians), mirrored into CARLA
+    # as walkers within radius_m of the ego (null: mesoscopic's radii when
+    # enabled, everywhere otherwise).
+    pedestrians:
+      enabled: false
+      persons_per_hour: 600
+      max_distance_m: 500.0
+      radius_m: null
+      max_persons: null
+      blueprint: walker.pedestrian.0001
     # SUMO seconds simulated before the scenario clock starts.
     warmup_s: 30.0
     # Mirror only the nearest SUMO vehicles into CARLA (null: all of them).
     spawn_radius_m: null
     max_vehicles: null
+    # Simulate traffic far from what CARLA drives (the ego, and the scenario's
+    # vehicles the TrafficManager drives) in a mesoscopic queue model, out of
+    # SUMO and out of CARLA, and bring it back when it comes near.
+    mesoscopic:
+      enabled: false
+      # Back into SUMO and CARLA this close; out further than meso_radius_m
+      # (null: 1.25 x micro_radius_m).
+      micro_radius_m: 200.0
+      meso_radius_m: null
+      update_interval_s: 1.0
+      # Let the scenario's own vehicles SUMO drives leave CARLA too: such an
+      # entity has no actor while it is far (entity.simulation_fidelity).
+      scenario_vehicles: false
+      headway_s: 1.5
+      jam_spacing_m: 7.5
+      junction_control: true
     blueprint: vehicle.lincoln.mkz
     # An existing .net.xml instead of converting the world's OpenDRIVE, and
     # extra demand beside the ambient traffic.
@@ -50,3 +80,42 @@ traffic:
     use_libsumo: true
     binary: sumo
     sumo_args: []
+  # How vehicles drive and pedestrians walk, in the terms every backend
+  # shares (VehicleParameters / PedestrianParameters,
+  # docs/traffic_backends.md). Each numeric parameter is a spread, {mean,
+  # std}: every vehicle and every pedestrian draws its own value from a
+  # normal distribution cut to the parameter's bounds (std null or 0: all the
+  # same). An ODD can draw both (odd.traffic_probes). null: the backend's own
+  # default. A field this backend does not support is an error naming the
+  # backends that do.
+  vehicles:
+    # Desired speed as a multiple of the speed limit (traffic_manager, sumo).
+    speed_factor: {mean: null, std: null}
+    # Gap kept to the vehicle ahead when standing, m (traffic_manager, sumo).
+    min_gap_m: {mean: null, std: null}
+    # Change lanes of their own accord (traffic_manager, sumo).
+    lane_changes: null
+    # Probabilities (0-1) of ignoring lights, signs, vehicles and
+    # walkers, and of a random lane change (traffic_manager only).
+    ignore_lights: {mean: null, std: null}
+    ignore_signs: {mean: null, std: null}
+    ignore_vehicles: {mean: null, std: null}
+    ignore_walkers: {mean: null, std: null}
+    random_lane_changes: {mean: null, std: null}
+    # Acceleration and braking, m/s^2, reaction time, s, and driver
+    # imperfection, 0-1 (sumo only).
+    accel: {mean: null, std: null}
+    decel: {mean: null, std: null}
+    reaction_time_s: {mean: null, std: null}
+    imperfection: {mean: null, std: null}
+    # Hold the traffic to the speed it stops from within what its
+    # drivers see in the run's weather (sumo only; on by default there).
+    follow_visibility: null
+  # SUMO's pedestrians (sumo only: the TrafficManager drives no pedestrians).
+  pedestrians:
+    # Walking speed, m/s.
+    walking_speed_mps: {mean: null, std: null}
+    # Gap kept to the person ahead, m.
+    min_gap_m: {mean: null, std: null}
+    # Walk onto a crossing whose light has been red for less than this, s.
+    red_light_violation_s: {mean: null, std: null}

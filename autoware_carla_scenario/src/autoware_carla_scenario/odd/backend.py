@@ -8,8 +8,10 @@ attributes are measured and set. Here:
   speed_limit_kph``), each reading the CARLA world (:mod:`.probes`);
 * **readers** -- ``measure: <key>``: the running scenario's measure *key*
   (:func:`~.scenario_measure.scenario_measure`);
-* **knobs** -- how a run sets an attribute: the weather and the sun, through
-  the ``environment`` config, for the built-in probes that read them
+* **knobs** -- how a run sets an attribute: the weather, the sun and how far
+  drivers see, through the ``environment`` config, and the mean and spread
+  of each traffic parameter, through the ``traffic`` config
+  (:mod:`.traffic_probes`), for the built-in probes that read them
   (:data:`DEFAULT_KNOBS`), and a scenario's ``controls`` for the measures its
   parameters set;
 * **where the ego is** -- in the world (the metres a tick stands for in
@@ -33,6 +35,7 @@ from openodd.model import _missing
 
 from . import probes
 from .scenario_measure import ScenarioMeasure, scenario_measure
+from .traffic_probes import TRAFFIC_KNOBS, TRAFFIC_PROBES
 
 __all__ = [
     "BUILT_IN_PROBES",
@@ -48,6 +51,7 @@ _PROBE_UNITS: dict[str, str] = {
     "ego_speed_kph": "km/h",
     "speed_limit_kph": "km/h",
     "lanelet_speed_limit_kph": "km/h",
+    "visibility": "m",
     **{
         name: ""
         for name in (
@@ -71,15 +75,18 @@ class _BuiltInProbes(Mapping[str, tuple[Callable[[Any], Any], str]]):
     monkeypatch, a plugin) is the one an ODD read afterwards uses."""
 
     def __getitem__(self, name: str) -> tuple[Callable[[Any], Any], str]:
+        if name in TRAFFIC_PROBES:
+            return TRAFFIC_PROBES[name]
         if name not in _PROBE_UNITS:
             raise KeyError(name)
         return getattr(probes, name), _PROBE_UNITS[name]
 
     def __iter__(self) -> Iterator[str]:
-        return iter(_PROBE_UNITS)
+        yield from _PROBE_UNITS
+        yield from TRAFFIC_PROBES
 
     def __len__(self) -> int:
-        return len(_PROBE_UNITS)
+        return len(_PROBE_UNITS) + len(TRAFFIC_PROBES)
 
 
 #: Built-in probe name -> (probe, the unit it returns).
@@ -90,7 +97,12 @@ BUILT_IN_PROBES: Mapping[str, tuple[Callable[[Any], Any], str]] = _BuiltInProbes
 #: are the probes' own levels (:func:`~.probes.intensity_level`,
 #: :func:`~.probes.illumination_level`), read backwards.  The rain and fog
 #: knobs set the LiDARs' noise too
-#: (:mod:`autoware_carla_scenario.sensor.lidar_weather`).
+#: (:mod:`autoware_carla_scenario.sensor.lidar_weather`).  The rain, fog and
+#: illumination knobs set how far drivers see as well: the visibility follows
+#: the weather (:func:`~autoware_carla_scenario.visibility.visibility_range`),
+#: and a traffic backend that models drivers' sight (``sumo``) holds its
+#: traffic to it.  The visibility knob names it outright, in metres, whatever
+#: the weather.
 DEFAULT_KNOBS: dict[Callable[..., Any], OddKnob] = {
     # environment.rain rather than environment.precipitation: precipitation
     # alone barely shows in a camera image, so a "heavy rain" case would look
@@ -112,6 +124,12 @@ DEFAULT_KNOBS: dict[Callable[..., Any], OddKnob] = {
             "night": [-90, -6],
         },
     ),
+    probes.visibility: OddKnob(
+        "environment.visibility_m",
+        range=(15.0, 400.0),
+    ),
+    # The mean and spread of every traffic parameter (.traffic_probes).
+    **TRAFFIC_KNOBS,
 }
 
 

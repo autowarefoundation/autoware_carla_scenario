@@ -863,6 +863,38 @@ class BaseScenario(ABC):
             return None
 
     @property
+    def importance_sampling_weight(self) -> float:
+        """The run's importance-sampling weight: the product of its actions'
+        (:attr:`BaseAction.importance_sampling_weight`), ``1`` when none
+        samples what happens.  A batch of runs weighted by it estimates the
+        naturalistic rate of what it counts."""
+        weight = 1.0
+        for action in (
+            self._init_actions + self._pre_tick_actions + self._post_tick_actions
+        ):
+            weight *= action.importance_sampling_weight
+        return weight
+
+    @property
+    def outcome_weight(self) -> Optional[float]:
+        """The weight the run's coverage file records with its outcome, for
+        the merged report's naturalistic failure rate:
+        :attr:`importance_sampling_weight` when one of the run's actions
+        samples what happens importance-sampled
+        (:attr:`BaseAction.importance_sampled`), else ``None`` -- a run that
+        samples nothing is no weighted run, though its weight is 1."""
+        weight = 1.0
+        sampled = False
+        for action in (
+            self._init_actions + self._pre_tick_actions + self._post_tick_actions
+        ):
+            weight *= action.importance_sampling_weight
+            sampled = sampled or action.importance_sampled
+        if not sampled:
+            return None
+        return weight
+
+    @property
     def measures(self) -> dict[str, Measure]:
         """The scenario's measures, built-in and its own, by key."""
         return dict(self._measures)

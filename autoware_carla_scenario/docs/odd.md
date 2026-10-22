@@ -227,8 +227,10 @@ These live in `autoware_carla_scenario.odd`:
 | `lane_count` | int | Driving lanes in the ego's direction (CARLA, outside junctions) |
 | `illumination` | `ILLUMINATION_LEVELS` | Sun altitude |
 | `rain`, `fog` | `INTENSITY_LEVELS` | CARLA weather (0-100) |
+| `visibility` | float, m | How far drivers see, as the run's weather left it ([Visibility follows the weather](#visibility-follows-the-weather)); nothing when the run set none |
 | `traffic_density` | `TRAFFIC_DENSITY_LEVELS` | Other vehicles within `NEARBY_RADIUS_M` |
 | `pedestrian_nearby` | bool | A walker within `NEARBY_RADIUS_M` |
+| `vehicle_<field>_mean`, `vehicle_<field>_std`, `pedestrian_<field>_mean`, `pedestrian_<field>_std` | float | The mean and std of a traffic parameter's spread, as the run set it ([Traffic parameters from the ODD](#traffic-parameters-from-the-odd)); nothing when the run set none |
 The Lanelet2 probes need the run to have a Lanelet2 map (`map.lanelet2_path`).
 Without one they return nothing.
 
@@ -758,6 +760,7 @@ sweep:
     knobs: {}              # by ODD attribute, replacing the scenario's controls; see below
     flaky: null            # look for flaky cases; see "Finding flaky cases" below
     tire_friction: true    # draw each case's grip in the range its weather allows; see "Tire friction follows the weather"
+    visibility: true       # draw how far each case's drivers see in the range its weather allows; see "Visibility follows the weather"
 ```
 
 Each case is a list of Hydra overrides. A sweep that also has `constraints`
@@ -903,6 +906,7 @@ their own:
 | `rain` | `environment.rain` | `none` 0, `light` 1-30, `moderate` 30-70, `heavy` 70-100 |
 | `fog` | `environment.fog_density` | as `rain` |
 | `illumination` | `environment.sun_altitude_angle` | `day` 15-90, `low_sun` 0-15, `twilight` -6-0, `night` -90 to -6 |
+| `visibility` | `environment.visibility_m` | 15-400 m, whatever the weather |
 
 `environment.rain` sets the precipitation and, with it, the cloudiness,
 standing water and wetness of CARLA's rain presets (`EnvironmentAction`'s
@@ -992,6 +996,98 @@ and replaces anything above, attribute by attribute, for that sweep. It is for
 the command line -- one sweep against one ODD -- not for a scenario's config,
 which would then name the ODD's taxonomy: a scenario says `controls`. Controls set where a run starts;
 the measures read what it then drives, which is what coverage counts.
+
+### Visibility follows the weather
+
+CARLA draws the weather but its traffic never looks through it: the
+TrafficManager's vehicles know where every actor is, fog or not. A driver
+does not, and drives so as to stop within the road they see. So how far
+drivers see is a quantity of the run, in metres, which the weather bounds
+(`visibility_range`, in `autoware_carla_scenario.visibility`): each of the
+fog, the rain and the light gives a range, and the shortest holds.
+
+| Weather | Visibility, m |
+|---|---|
+| clear day | 250-400 |
+| `fog_density` 30 / 70 / 100 | 120-250 / 40-100 / 15-40 |
+| `precipitation` 30 / 70 / 100 | 180-320 / 100-220 / 60-150 |
+| night (`sun_altitude_angle` -6 and below) | 50-150 (a dipped beam to a main beam or a lit street) |
+
+Between the rows the bounds are interpolated; through civil twilight (0 to
+-6 degrees) the day's range shortens to the night's. An `EnvironmentAction`
+that sets the fog, the rain (`rain` or `precipitation`) or the sun records
+the visibility of the weather it leaves for its world, at
+`environment.visibility_quantile` in that range (0 its low end, 1 its high
+end; the middle when not set); `environment.visibility_m` fixes it whatever
+the weather. A `sweep.odd_sample` draws the quantile for every case, as it
+draws the grip, so the ODD's `rain`, `fog` and `illumination` knobs are what
+shorten it: a night case's drivers see 50-150 m, a heavy-fog case's 15-40 m.
+`visibility: false` in the `odd_sample` leaves every case at the middle of
+its range. An ODD that names the visibility itself (the `visibility` probe)
+sets it through its own knob, `environment.visibility_m`, and a case with one
+keeps it. A run that sets no weather records none, and its traffic sees as
+it always did; each run starts with none, whatever the last left.
+
+What follows it is the traffic backend's: the `sumo` backend holds its own
+traffic to the speed it stops from within it
+([Visibility](traffic_backends.md#the-sumo-backend)); the TrafficManager has no notion of
+sight, so the `traffic_manager` backend logs the speed it would hold traffic
+to whenever the visibility changes, and its vehicles drive as before.
+
+### Traffic parameters from the ODD
+
+How the traffic behaves -- how fast drivers go against the limit, how they
+react, how often they run a red light, how fast pedestrians walk -- is the
+run's traffic parameters ([Traffic parameters](traffic_backends.md#traffic-parameters)).
+Each numeric one is a spread, a mean and a standard deviation, that every
+vehicle or pedestrian draws its own value from (a normal distribution cut to
+the parameter's bounds). An ODD bounds the spread: the mean and the std of
+each are built-in probes, with knobs, so an ODD that names them makes a sweep
+draw both per case, and every road user of the case then draws its own value
+from them.
+
+| Probe | Knob (written) | Knob range |
+|---|---|---|
+| `vehicle_<field>_mean` | `traffic.vehicles.<field>.mean` | the field's mean range below |
+| `vehicle_<field>_std` | `traffic.vehicles.<field>.std` | the field's std range below |
+| `pedestrian_<field>_mean` | `traffic.pedestrians.<field>.mean` | likewise |
+| `pedestrian_<field>_std` | `traffic.pedestrians.<field>.std` | likewise |
+
+| Parameter | Unit | Mean range | Std range |
+|---|---|---|---|
+| `vehicles.speed_factor` | | 0.5-1.5 | 0-0.3 |
+| `vehicles.min_gap_m` | m | 0.5-10 | 0-3 |
+| `vehicles.ignore_lights`, `ignore_signs`, `ignore_vehicles`, `ignore_walkers`, `random_lane_changes` | | 0-1 | 0-0.5 |
+| `vehicles.accel` | m/s^2 | 0.5-5 | 0-1.5 |
+| `vehicles.decel` | m/s^2 | 1-9 | 0-2 |
+| `vehicles.reaction_time_s` | s | 0.3-3 | 0-1 |
+| `vehicles.imperfection` | | 0-1 | 0-0.5 |
+| `pedestrians.walking_speed_mps` | m/s | 0.5-2.5 | 0-0.5 |
+| `pedestrians.min_gap_m` | m | 0.1-2 | 0-0.5 |
+| `pedestrians.red_light_violation_s` | s | 0-60 | 0-30 |
+
+A bucket of the ODD's attribute narrows the range, as for any knob. In a
+binding file:
+
+```yaml
+# binding.yaml
+behaviour.speed_factor: {probe: vehicle_speed_factor_mean}
+behaviour.speed_spread: {probe: vehicle_speed_factor_std}
+behaviour.reaction_time: {probe: vehicle_reaction_time_s_mean}
+behaviour.walking_speed: {probe: pedestrian_walking_speed_mps_mean}
+```
+
+A case drawn with `behaviour.speed_factor` in `[0.8, 0.9)` and
+`behaviour.speed_spread` in `[0.05, 0.1)` writes
+`traffic.vehicles.speed_factor.mean` and `.std`, and each vehicle of its run
+draws its own speed factor from that normal distribution. The probes read
+what the run set, every tick, so the run's coverage records the mean and std
+it drove with; a run that set none reads a missing value.
+
+A parameter the run's backend does not support is still refused: an ODD that
+draws a reaction time is an ODD for the `sumo` backend, and a case of it run
+on the `traffic_manager` backend fails before it starts
+([Traffic parameters](traffic_backends.md#traffic-parameters)).
 
 ### The road a case is on
 

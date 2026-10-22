@@ -48,19 +48,31 @@ from typing import (
 )
 
 from .context import TrafficContext
+from .parameters import (
+    PEDESTRIAN_PARAMETER_BACKENDS,
+    VEHICLE_PARAMETER_BACKENDS,
+    PedestrianParameters,
+    VehicleParameters,
+)
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
 
 logger = logging.getLogger(__name__)
 
+#: The parameters of a backend that was given none: every field unset.
+_NO_VEHICLE_PARAMETERS = VehicleParameters()
+_NO_PEDESTRIAN_PARAMETERS = PedestrianParameters()
+
 __all__ = [
     "LaneChangeDirection",
+    "SimulationFidelity",
     "TurnDirection",
     "LaneChanging",
     "SettingSpeed",
     "TurningAtJunctions",
     "TrafficBackend",
+    "warn_if_mesoscopic",
     "TrafficBackendError",
     "TrafficBackendUnavailable",
     "TrafficContext",
@@ -121,6 +133,57 @@ class TurnDirection(enum.Enum):
     #: Straight on through the junction: what a vehicle left to choose for
     #: itself (the TrafficManager's autopilot) may not do.
     STRAIGHT = "straight"
+
+
+class SimulationFidelity(enum.Enum):
+    """How finely a traffic backend simulates a vehicle at the moment.
+
+    A backend may simulate the traffic far from anything that matters at a
+    coarser level than the traffic near it, because nobody there can see the
+    difference and the run is cheaper for it.  Two levels, named as traffic
+    engineering names them:
+
+    * **Microscopic** -- each vehicle on its own lane, following its leader and
+      changing lanes, and present in CARLA as an actor.  Every vehicle is this
+      under a backend with one level, which is all of them but one.
+    * **Mesoscopic** -- the vehicle is a place in a queue on a road: when it
+      reaches the end of the road is modelled, where on it is not, and it is
+      *not* in the CARLA world.  An entity that is mesoscopic has no actor
+      (``entity.actor`` is ``None``) until its backend makes it microscopic
+      again.
+    """
+
+    MICROSCOPIC = "microscopic"
+    MESOSCOPIC = "mesoscopic"
+
+
+#: Role names of the entities a traffic backend simulates mesoscopically now
+#: (kept by :meth:`TrafficBackend._mark_fidelity`), and those a lookup of their
+#: actor has been warned about since they became mesoscopic.
+_MESOSCOPIC_ROLES: set[str] = set()
+_WARNED_ROLES: set[str] = set()
+
+
+def warn_if_mesoscopic(role_name: str) -> bool:
+    """Whether *role_name* names an entity a backend simulates mesoscopically.
+
+    Called by a lookup that found no actor for *role_name*: such an entity has
+    none while it is far, which is not the entity being gone, and a condition
+    that reads it reads nothing.  Says so in a warning, the first time after
+    the entity became mesoscopic.
+    """
+    if role_name not in _MESOSCOPIC_ROLES:
+        return False
+    if role_name not in _WARNED_ROLES:
+        _WARNED_ROLES.add(role_name)
+        logger.warning(
+            "%s has no actor: its traffic backend simulates it mesoscopically "
+            "while it is far, out of CARLA. A condition reading it reads "
+            "nothing meanwhile; check entity.simulation_fidelity, or call "
+            "entity.require_microscopic(world) to bring it back.",
+            role_name,
+        )
+    return True
 
 
 @runtime_checkable
@@ -200,11 +263,32 @@ class DrivenEntity:
     _lane_change_target: Optional[Tuple[int, int]] = None
     _lane_change_map: Optional["carla.Map"] = None
 
+    #: How the backend driving this vehicle simulates it now
+    #: (:class:`SimulationFidelity`).  Written by that backend alone, through
+    #: :meth:`TrafficBackend._mark_fidelity`, and only once a change of level
+    #: is complete: a vehicle reading ``MESOSCOPIC`` has no actor in the world,
+    #: one reading ``MICROSCOPIC`` has one.  Read by anyone -- a condition about
+    #: a vehicle that may leave the world asks this before its actor.
+    simulation_fidelity: SimulationFidelity = SimulationFidelity.MICROSCOPIC
+
     def forget_lane_change(self) -> None:
         """Drop the lane change state, and the map it holds: a finished run's
         scenarios stay in the queue, and their entities with them."""
         self._lane_change_target = None
         self._lane_change_map = None
+
+    def _replace_actor(self, actor: Optional["carla.Actor"]) -> bool:
+        """Let a backend take this vehicle's actor out of the world, or give it
+        a new one: *actor* is ``None`` when the vehicle becomes mesoscopic.
+
+        Answers whether the entity accepted.  The base does not -- an entity
+        that owns its actor in a way a backend cannot see (an ego with a
+        bridge, a vehicle under a driver policy) must stay in the world -- so a
+        backend keeps a vehicle microscopic unless its entity says otherwise.
+        The entity only swaps the reference; spawning and destroying the actor
+        is the backend's, which knows where the vehicle is.
+        """
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -245,11 +329,101 @@ class TrafficBackend:
     map -- each time.  :meth:`close` is therefore the end of a *run*, not the end
     of the object: it must forget every vehicle the backend created and every
     entity it adopted, and leave the backend able to :meth:`prepare` again.
+
+    **Level of detail is the backend's.**  A backend may simulate the vehicles
+    far from what matters mesoscopically (:class:`SimulationFidelity`) and
+    only those near it microscopically, as actors in CARLA.  The policy --
+    which vehicles, how far -- is
+    :class:`~autoware_carla_scenario.traffic.fidelity.MesoscopicConfig`, and a
+    queue model any backend can run its far traffic on is
+    :class:`~autoware_carla_scenario.traffic.mesoscopic.MesoscopicTraffic`;
+    what the seam fixes is the entity's side: its flag says which level it is
+    at, only the backend writes it (:meth:`_mark_fidelity`), and an entity
+    leaves the world only if it agrees to (:meth:`DrivenEntity._replace_actor`).
     """
 
     #: The name this backend is selected by, and how it names itself in logs and
     #: in a run's result record.  Subclasses must set it.
     name: ClassVar[str] = "unnamed"
+    #: Whether :meth:`close_lane` has said this backend cannot close a lane.
+    _warned_lane_closure: bool = False
+    #: What :meth:`set_vehicle_parameters` was given; ``None``: every default.
+    _vehicle_parameters: Optional[VehicleParameters] = None
+    #: What :meth:`set_pedestrian_parameters` was given; ``None``: every default.
+    _pedestrian_parameters: Optional[PedestrianParameters] = None
+
+    # ------------------------------------------------------------------
+    # Parameters
+    # ------------------------------------------------------------------
+
+    def supported_vehicle_parameters(self) -> set[str]:
+        """The :class:`~autoware_carla_scenario.traffic.parameters.VehicleParameters`
+        fields this backend honours.
+
+        What :data:`~autoware_carla_scenario.traffic.parameters.VEHICLE_PARAMETER_BACKENDS`
+        says of this backend's :attr:`name`: none for a backend it does not
+        name, which refuses every one set rather than run as if it had.  A
+        backend from another package overrides this with the fields it applies.
+        """
+        return {
+            field
+            for field, backends in VEHICLE_PARAMETER_BACKENDS.items()
+            if self.name in backends
+        }
+
+    def supported_pedestrian_parameters(self) -> set[str]:
+        """The :class:`~autoware_carla_scenario.traffic.parameters.PedestrianParameters`
+        fields this backend honours, as :meth:`supported_vehicle_parameters`
+        (:data:`~autoware_carla_scenario.traffic.parameters.PEDESTRIAN_PARAMETER_BACKENDS`).
+        """
+        return {
+            field
+            for field, backends in PEDESTRIAN_PARAMETER_BACKENDS.items()
+            if self.name in backends
+        }
+
+    def set_vehicle_parameters(self, parameters: VehicleParameters) -> None:
+        """Drive the vehicles with *parameters* from the next :meth:`prepare` on.
+
+        :func:`~autoware_carla_scenario.traffic.registry.build_backend` calls
+        this with the ``traffic.vehicles`` node; a backend built in Python
+        takes them in its constructor or here.
+
+        Raises:
+            TrafficParameterError: If a field is set that this backend does not
+                support (:meth:`supported_vehicle_parameters`), naming the
+                backends that do.  Raised before the run, as :meth:`prepare`
+                refuses.
+        """
+        parameters.check_supported(self.name, self.supported_vehicle_parameters())
+        self._vehicle_parameters = parameters
+
+    def set_pedestrian_parameters(self, parameters: PedestrianParameters) -> None:
+        """Have the pedestrians behave as *parameters* say, from the next
+        :meth:`prepare` on (the ``traffic.pedestrians`` node).
+
+        Raises:
+            TrafficParameterError: As :meth:`set_vehicle_parameters`, for
+                :meth:`supported_pedestrian_parameters`.
+        """
+        parameters.check_supported(self.name, self.supported_pedestrian_parameters())
+        self._pedestrian_parameters = parameters
+
+    @property
+    def vehicle_parameters(self) -> VehicleParameters:
+        """The parameters this backend drives vehicles with (every field
+        ``None`` when none were set)."""
+        if self._vehicle_parameters is None:
+            return _NO_VEHICLE_PARAMETERS
+        return self._vehicle_parameters
+
+    @property
+    def pedestrian_parameters(self) -> PedestrianParameters:
+        """The parameters of this backend's pedestrians (every field ``None``
+        when none were set)."""
+        if self._pedestrian_parameters is None:
+            return _NO_PEDESTRIAN_PARAMETERS
+        return self._pedestrian_parameters
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -324,9 +498,17 @@ class TrafficBackend:
         """Return what drove this run, for the result record.
 
         Subclasses add their seed, their process version, whatever makes a run
-        reproducible from its record alone.
+        reproducible from its record alone.  The parameters that were set
+        are there under ``vehicles`` and ``pedestrians``.
         """
-        return {"backend": self.name}
+        out: dict[str, Any] = {"backend": self.name}
+        vehicles = self.vehicle_parameters.describe()
+        if vehicles:
+            out["vehicles"] = vehicles
+        pedestrians = self.pedestrian_parameters.describe()
+        if pedestrians:
+            out["pedestrians"] = pedestrians
+        return out
 
     # ------------------------------------------------------------------
     # Manoeuvres -- the intents entities delegate here
@@ -415,6 +597,68 @@ class TrafficBackend:
         """
 
     # ------------------------------------------------------------------
+    # Level of detail -- microscopic near what matters, mesoscopic elsewhere
+    # ------------------------------------------------------------------
+
+    def fidelity_of(self, entity: DrivenEntity) -> SimulationFidelity:
+        """How this backend simulates *entity* now.
+
+        The entity's own flag, which this backend keeps current
+        (:meth:`_mark_fidelity`).  A backend with one level never changes it,
+        so every vehicle it drives is microscopic.
+        """
+        return entity.simulation_fidelity
+
+    def require_microscopic(self, entity: DrivenEntity, world: "carla.World") -> bool:
+        """Make *entity* microscopic now, for something that needs its actor.
+
+        For an action that is about to drive the vehicle itself or read its
+        actor: a mesoscopic vehicle has none.  Answers whether *entity* is
+        microscopic afterwards.  The base has one level, so the answer is the
+        entity's flag; a backend with two brings the vehicle back into the
+        world here, where its mesoscopic model has it, and keeps it there for
+        the rest of the run -- whatever needed the actor may hold on to it.
+
+        Args:
+            entity: The entity that must be in the world.
+            world: The CARLA world.
+        """
+        return entity.simulation_fidelity is SimulationFidelity.MICROSCOPIC
+
+    def fidelity_census(self) -> dict[str, int]:
+        """How many vehicles this backend simulates at each level now.
+
+        Keyed by :class:`SimulationFidelity` value, and counting every vehicle
+        the backend simulates -- its own traffic as well as the scenario's.
+        Empty from a backend that does not keep the count.
+        """
+        return {}
+
+    def _mark_fidelity(
+        self, entity: DrivenEntity, fidelity: SimulationFidelity
+    ) -> None:
+        """Record that *entity* is simulated at *fidelity* from now on.
+
+        The one writer of :attr:`DrivenEntity.simulation_fidelity`.  Called by
+        a backend once a change of level is complete -- the actor destroyed
+        and the entity's reference dropped (:meth:`DrivenEntity._replace_actor`),
+        or a new actor spawned and handed over -- never before, so the flag
+        and ``entity.actor`` always agree.
+        """
+        entity.simulation_fidelity = fidelity
+        # What a lookup of the entity's actor by role name asks
+        # (warn_if_mesoscopic): kept here, the one writer of the flag.
+        if hasattr(entity, "role_name"):
+            role_name = entity.role_name
+            if role_name is not None:
+                name = str(role_name)
+                if fidelity is SimulationFidelity.MESOSCOPIC:
+                    _MESOSCOPIC_ROLES.add(name)
+                else:
+                    _MESOSCOPIC_ROLES.discard(name)
+                    _WARNED_ROLES.discard(name)
+
+    # ------------------------------------------------------------------
     # Background traffic -- vehicles no scenario entity stands for
     # ------------------------------------------------------------------
 
@@ -457,6 +701,43 @@ class TrafficBackend:
 
     def remove_background(self, world: "carla.World", handle: str) -> None:
         """Take the background vehicle *handle* off the road."""
+
+    def background_actors(self, world: "carla.World") -> dict[str, "carla.Actor"]:
+        """The CARLA actor of every background vehicle this backend drives in
+        the world now, by its ``role_name``: what an adversity may take over
+        for a while, by its actor (:meth:`release_actor`, #417).  None by
+        default."""
+        return {}
+
+    def release_actor(self, world: "carla.World", actor: "carla.Actor") -> None:
+        """Stop driving the background vehicle *actor*; the caller drives it
+        now (:meth:`release` for a vehicle no entity stands for)."""
+
+    def resume_actor(self, world: "carla.World", actor: "carla.Actor") -> None:
+        """Drive the background vehicle *actor* again, from where it is now."""
+
+    # ------------------------------------------------------------------
+    # Lane closures -- a construction zone (#402)
+    # ------------------------------------------------------------------
+
+    def close_lane(
+        self, world: "carla.World", transform: "carla.Transform"
+    ) -> Optional[str]:
+        """Keep this backend's traffic off the lane at *transform* until
+        :meth:`reopen_lane`; a handle naming the closure, or ``None`` when
+        this backend cannot close a lane (the default, with a warning once)."""
+        if not self._warned_lane_closure:
+            self._warned_lane_closure = True
+            logger.warning(
+                "%s: %r cannot close a lane; its traffic may drive into the "
+                "zone (a TrafficSinkAction there takes it off the road)",
+                type(self).__name__,
+                self.name,
+            )
+        return None
+
+    def reopen_lane(self, world: Optional["carla.World"], handle: str) -> None:
+        """Open the lane :meth:`close_lane` closed as *handle* again."""
 
     # ------------------------------------------------------------------
     # Internals

@@ -1486,3 +1486,9 @@ details > summary:hover { color: var(--ink-body); }
 }
 .ed-point-note { font-size: 10px; color: var(--ink-faint); }
 .ed-point-note.is-bound { color: var(--accent); }
+
+/* A record_list field: one bordered block per record, its row buttons in the
+   legend. */
+.ed-records { display: flex; flex-direction: column; gap: 8px; }
+.ed-record { border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 6px 10px 2px; margin: 0; }
+.ed-record-head { display: flex; align-items: center; gap: 4px; padding: 0 4px; font-size: 12px; }

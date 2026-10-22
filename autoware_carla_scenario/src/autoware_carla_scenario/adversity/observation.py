@@ -14,7 +14,8 @@ snapshot of the agents, so a trigger is a pure function of what it is given:
   follower along the lane chain (:meth:`~..route.geometry.MapFeatures.lane_chain`), the same for the
   lanes on either side, the desired speed, the next signal ahead;
 * :meth:`Scene.pedestrian` gives a :class:`PedestrianObservation`: whether it
-  is on a crosswalk, and the nearest point of a road within reach.
+  is on a crosswalk, the nearest crosswalk, and the nearest point of a road
+  within reach.
 
 Gaps are bumper to bumper, along the lanes.  Signal states come in by the
 id of the Lanelet2 traffic-light regulatory element (:mod:`.snapshot` reads
@@ -45,6 +46,7 @@ __all__ = [
     "DEFAULT_SEARCH_M",
     "AgentSnapshot",
     "LanePosition",
+    "NearCrosswalk",
     "Neighbour",
     "PedestrianObservation",
     "RoadPoint",
@@ -108,11 +110,20 @@ class AgentSnapshot:
 
 @dataclass(frozen=True)
 class LanePosition:
-    """Where on a lanelet an agent is."""
+    """Where on a lanelet an agent is.
+
+    Attributes:
+        lanelet: The lanelet.
+        s: Along its centreline (m).
+        t: Off it, positive to the left (m).
+        heading: The agent's heading off the lanelet's direction there (rad,
+            counter-clockwise, in ``[-pi, pi)``).
+    """
 
     lanelet: ConstLanelet
     s: float
     t: float
+    heading: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -213,6 +224,22 @@ class RoadPoint:
 
 
 @dataclass(frozen=True)
+class NearCrosswalk:
+    """The nearest crosswalk to a pedestrian.
+
+    Attributes:
+        lanelet: The crosswalk lanelet.
+        distance: From the pedestrian to it (m), 0 on it.
+        signal: The state of the Lanelet2 traffic light the crosswalk
+            carries: RED if any of its lights is red, UNKNOWN without one.
+    """
+
+    lanelet: ConstLanelet
+    distance: float
+    signal: SignalState = SignalState.UNKNOWN
+
+
+@dataclass(frozen=True)
 class PedestrianObservation:
     """What a pedestrian sees.
 
@@ -220,11 +247,14 @@ class PedestrianObservation:
         agent: The pedestrian.
         crosswalk: The crosswalk lanelet it stands on, if any.
         nearest_road: The nearest road centreline point within the radius.
+        nearest_crosswalk: The nearest crosswalk within the radius, on it or
+            not.
     """
 
     agent: AgentSnapshot
     crosswalk: Optional[ConstLanelet]
     nearest_road: Optional[RoadPoint]
+    nearest_crosswalk: Optional[NearCrosswalk] = None
 
 
 class Scene:
@@ -243,6 +273,8 @@ class Scene:
     signals: dict[int, SignalState]
     search: float
     _lanes: dict[str, Optional[LanePosition]]
+    _vehicles: dict[str, VehicleObservation]
+    _pedestrians: dict[str, PedestrianObservation]
     _by_lanelet: Optional[dict[int, list[str]]]
 
     def __init__(
@@ -257,6 +289,8 @@ class Scene:
         self.signals = signals
         self.search = search
         self._lanes = {}
+        self._vehicles = {}
+        self._pedestrians = {}
         self._by_lanelet = None
 
     # -- where the agents are ------------------------------------------------
@@ -275,7 +309,7 @@ class Scene:
                 and abs(pose.heading) <= _MAX_HEADING_RAD
                 and MapFeatures.is_road(lanelet)
             ):
-                found = LanePosition(lanelet, pose.s, pose.t)
+                found = LanePosition(lanelet, pose.s, pose.t, pose.heading)
         self._lanes[name] = found
         return found
 
@@ -333,6 +367,13 @@ class Scene:
         leader, follower = self._neighbours(agent, chain)
         return SideLane(neighbour, s, leader, follower)
 
+    def lane_beside(
+        self, name: str, lanelet: ConstLanelet, side: str
+    ) -> Optional[SideLane]:
+        """The lane on *side* of *lanelet*, abreast of agent *name*, and who
+        is on it: the lane beside the lane beside, say."""
+        return self._side(self.agents[name], lanelet, side)
+
     def _signal(self, chain: dict[int, LaneSpan]) -> Optional[SignalAhead]:
         best: Optional[SignalAhead] = None
         for span in chain.values():
@@ -348,7 +389,14 @@ class Scene:
         return best
 
     def vehicle(self, name: str) -> VehicleObservation:
-        """What vehicle *name* sees."""
+        """What vehicle *name* sees, worked out once a scene."""
+        if name in self._vehicles:
+            return self._vehicles[name]
+        seen = self._observe(name)
+        self._vehicles[name] = seen
+        return seen
+
+    def _observe(self, name: str) -> VehicleObservation:
         agent = self.agents[name]
         lane = self.lane_of(name)
         if lane is None:
@@ -377,30 +425,55 @@ class Scene:
     def pedestrian(
         self, name: str, road_radius: float = DEFAULT_ROAD_RADIUS_M
     ) -> PedestrianObservation:
-        """What pedestrian *name* sees."""
+        """What pedestrian *name* sees, worked out once a scene (at the
+        default radius)."""
+        if road_radius == DEFAULT_ROAD_RADIUS_M and name in self._pedestrians:
+            return self._pedestrians[name]
+        seen = self._look_around(name, road_radius)
+        if road_radius == DEFAULT_ROAD_RADIUS_M:
+            self._pedestrians[name] = seen
+        return seen
+
+    def _crosswalk_signal(self, crosswalk: ConstLanelet) -> SignalState:
+        """The state of *crosswalk*'s traffic light: RED if any is red."""
+        state = SignalState.UNKNOWN
+        for element in crosswalk.regulatoryElements:
+            key = int(element.id)
+            if MapFeatures.is_traffic_light(element) and key in self.signals:
+                state = self.signals[key]
+                if state is SignalState.RED:
+                    return state
+        return state
+
+    def _look_around(self, name: str, road_radius: float) -> PedestrianObservation:
         agent = self.agents[name]
         point = lanelet2.core.BasicPoint2d(agent.x, agent.y)
         crosswalk: Optional[ConstLanelet] = None
+        near: Optional[NearCrosswalk] = None
         road: Optional[RoadPoint] = None
+        # Sorted by distance: the first crosswalk is the nearest, and the
+        # one underfoot if any is.
         for distance, lanelet in lanelet2.geometry.findNearest(
             self.features.map.laneletLayer, point, 20
         ):
             if float(distance) > road_radius:
                 break
             if MapFeatures.is_crosswalk(lanelet):
-                if crosswalk is None and float(distance) <= 0.0:
+                if near is None:
                     # A typed local: Codon upcasts a Lanelet to a ConstLanelet,
                     # not to an Optional of one.
-                    on: ConstLanelet = lanelet
-                    crosswalk = on
-                continue
-            if road is not None:
-                if float(distance) > 0.0:
-                    break  # sorted by distance: no crosswalk underfoot either
-                continue
-            if not MapFeatures.is_road(lanelet):
-                continue
-            s, _t = _arc(lanelet, agent.x, agent.y)
-            cx, cy = _point_at(_centreline(lanelet), s)
-            road = RoadPoint(lanelet, cx, cy, math.hypot(cx - agent.x, cy - agent.y))
-        return PedestrianObservation(agent, crosswalk, road)
+                    nearest: ConstLanelet = lanelet
+                    near = NearCrosswalk(
+                        nearest, float(distance), self._crosswalk_signal(nearest)
+                    )
+                    if float(distance) <= 0.0:
+                        crosswalk = nearest
+            elif road is None and MapFeatures.is_road(lanelet):
+                s, _t = _arc(lanelet, agent.x, agent.y)
+                cx, cy = _point_at(_centreline(lanelet), s)
+                road = RoadPoint(
+                    lanelet, cx, cy, math.hypot(cx - agent.x, cy - agent.y)
+                )
+            if road is not None and near is not None:
+                break
+        return PedestrianObservation(agent, crosswalk, road, near)

@@ -200,3 +200,69 @@ def test_a_pedestrian_is_left_where_the_path_ends(
     )
     run.tick(object(), 0.0)
     assert run.done
+
+
+class _Backend:
+    """Records what a traffic backend is asked of a background vehicle (#417)."""
+
+    def __init__(self) -> None:
+        self.released: list[Any] = []
+        self.resumed: list[Any] = []
+
+    def release_actor(self, world: Any, actor: Any) -> None:
+        self.released.append(actor)
+
+    def resume_actor(self, world: Any, actor: Any) -> None:
+        self.resumed.append(actor)
+
+
+def test_a_background_vehicle_is_handed_back_to_its_backend(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(execution, "find_vehicle_entity", lambda name: None)
+    actor, backend = SimpleNamespace(id=7), _Backend()
+    run = execution.AdversarialExecution(
+        "background7",
+        TWO_STATES,
+        actor=actor,
+        backend=backend,  # type: ignore[arg-type]
+    )
+    assert isinstance(run._follow, execution._ActorFollow)
+    run._follow = SimpleNamespace(  # type: ignore[assignment]
+        state=ActionState.COMPLETE, label="adversity", tick=lambda world, elapsed: None
+    )
+    run.tick(object(), 0.0)
+    assert run.done and backend.resumed == [actor]
+
+
+def test_a_background_vehicle_s_actor_is_driven_without_an_entity() -> None:
+    from autoware_carla_scenario import CarlaWorldPose, Trajectory, TrajectoryVertex
+    from autoware_carla_scenario.conditions import TrajectoryTimeCondition
+    from autoware_carla_scenario.entity.registry import find_vehicle_entity
+
+    from .test_follow_trajectory_action import _Actor, _run
+
+    actor, backend = _Actor(), _Backend()
+    line = Trajectory(
+        "line",
+        [
+            TrajectoryVertex(
+                CarlaWorldPose(0.0, 0.0, 0.0), TrajectoryTimeCondition(0.0)
+            ),
+            TrajectoryVertex(
+                CarlaWorldPose(10.0, 0.0, 0.0), TrajectoryTimeCondition(1.0)
+            ),
+        ],
+    )
+    follow = execution._ActorFollow(
+        "background7",
+        actor,  # type: ignore[arg-type]
+        backend,  # type: ignore[arg-type]
+        line,
+        TrajectoryFollowingMode.POSITION,
+        "adversity",
+    )
+    _run(follow, actor, 0.5)
+    assert find_vehicle_entity("background7") is None
+    assert backend.released == [actor]  # once, when the run began
+    assert actor.x == pytest.approx(5.0, abs=0.6)

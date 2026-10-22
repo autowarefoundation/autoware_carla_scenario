@@ -1,6 +1,6 @@
 [project]
 name = "autoware-carla-scenario"
-version = "15.13.0"
+version = "18.1.0"
 description = "CARLA scenario testing framework for Autoware"
 readme = "README.md"
 license = "Apache-2.0"
@@ -64,7 +64,7 @@ dependencies = [
     # ASAM OpenODD: reading, judging, versioning and sampling ODDs, and coverage
     # -- collecting, merging, the COD export (a Rust core). This package is its
     # CARLA backend (odd/backend.py's CarlaBackend).
-    "openodd-py>=0.12.0",
+    "openodd-py>=0.13.0",
     # `authoring/wheelhouse.py` reads a scenario package's `requires-python`
     # to choose the interpreters its wheelhouse is built for.
     "packaging>=23.0",
@@ -105,13 +105,16 @@ sumo = [
     "libsumo>=1.23",
     "sumolib>=1.23",
     "traci>=1.23",
-    "roadgen>=0.16.0",
+    "roadgen>=0.36.0",
 ]
 # Map files for a driver policy (`driver.map_dir`): roadgen converts the
-# world's OpenDRIVE into Lanelet2 and friends, with the stop lines and the
-# traffic-light regulatory elements on the approach lanes (0.18).
+# world's OpenDRIVE into Lanelet2 and friends, with the stop lines CARLA
+# paints (0.33), each junction lanelet's `turn_direction` (0.34), the
+# traffic-light regulatory elements on the lanelets through the junction
+# with the stop line before them (0.35), and a stop sign's `traffic_sign`
+# element (0.36), as Autoware's maps have them.
 map = [
-    "roadgen>=0.18.0",
+    "roadgen>=0.36.0",
 ]
 # An ego driven by ROS 2 nodes over DDS (`ego.entity=ros2`, docs/ros2.md):
 # Cyclone DDS's Python binding, which speaks to rmw_cyclonedds_cpp nodes with
@@ -127,6 +130,13 @@ ros2 = [
 # ends. Its minor version follows the trajectory log's format.
 rerun = [
     "autoware-carla-scenario-rerun>=0.1,<0.2",
+]
+# The LiDAR sweeps of each run as a Rerun recording too (`rerun.lidar=true`):
+# the converter, and the Rerun SDK of the minor version its recordings are
+# written with, which writes the sweeps.
+rerun-lidar = [
+    "autoware-carla-scenario-rerun>=0.1,<0.2",
+    "rerun-sdk>=0.38.1,<0.39",
 ]
 # The Rerun viewer the recordings are opened with (`rerun X.rrd`): the
 # converter's own `viewer` extra, which pins the Rerun minor version its

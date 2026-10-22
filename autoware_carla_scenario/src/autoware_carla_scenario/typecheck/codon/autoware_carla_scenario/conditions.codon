@@ -776,6 +776,88 @@ class WaypointCondition(BaseCondition):
         super().__init__(_required_str(label, "WaypointCondition(): label"))
 
 
+
+@tuple
+class AdversityKind:
+    value: str
+    BRAKE_CHECK: ClassVar[AdversityKind] = AdversityKind("brake_check")
+    IGNORE_LEADER: ClassVar[AdversityKind] = AdversityKind("ignore_leader")
+    CUT_IN: ClassVar[AdversityKind] = AdversityKind("cut_in")
+    TRAFFIC_RULE: ClassVar[AdversityKind] = AdversityKind("traffic_rule")
+    JAYWALKING: ClassVar[AdversityKind] = AdversityKind("jaywalking")
+    LANE_CHANGE_ABORT: ClassVar[AdversityKind] = AdversityKind("lane_change_abort")
+    HEAD_ON: ClassVar[AdversityKind] = AdversityKind("head_on")
+    RUNNING_RED_LIGHT: ClassVar[AdversityKind] = AdversityKind("running_red_light")
+    STOP_CROSSING: ClassVar[AdversityKind] = AdversityKind("stop_crossing")
+    MERGE: ClassVar[AdversityKind] = AdversityKind("merge")
+
+    # Enum's name (#307): Codon has no Enum to give a framework enum one.
+    @property
+    def name(self) -> str:
+        if self == AdversityKind.BRAKE_CHECK:
+            return "BRAKE_CHECK"
+        if self == AdversityKind.IGNORE_LEADER:
+            return "IGNORE_LEADER"
+        if self == AdversityKind.CUT_IN:
+            return "CUT_IN"
+        if self == AdversityKind.TRAFFIC_RULE:
+            return "TRAFFIC_RULE"
+        if self == AdversityKind.JAYWALKING:
+            return "JAYWALKING"
+        if self == AdversityKind.LANE_CHANGE_ABORT:
+            return "LANE_CHANGE_ABORT"
+        if self == AdversityKind.HEAD_ON:
+            return "HEAD_ON"
+        if self == AdversityKind.RUNNING_RED_LIGHT:
+            return "RUNNING_RED_LIGHT"
+        if self == AdversityKind.STOP_CROSSING:
+            return "STOP_CROSSING"
+        if self == AdversityKind.MERGE:
+            return "MERGE"
+        raise ValueError("not a member of AdversityKind")
+
+
+@tuple
+class AdversityLocation:
+    value: str
+    ANY: ClassVar[AdversityLocation] = AdversityLocation("any")
+    INTERSECTION: ClassVar[AdversityLocation] = AdversityLocation("intersection")
+    HIGHWAY: ClassVar[AdversityLocation] = AdversityLocation("highway")
+    ROUNDABOUT: ClassVar[AdversityLocation] = AdversityLocation("roundabout")
+
+    # Enum's name (#307): Codon has no Enum to give a framework enum one.
+    @property
+    def name(self) -> str:
+        if self == AdversityLocation.ANY:
+            return "ANY"
+        if self == AdversityLocation.INTERSECTION:
+            return "INTERSECTION"
+        if self == AdversityLocation.HIGHWAY:
+            return "HIGHWAY"
+        if self == AdversityLocation.ROUNDABOUT:
+            return "ROUNDABOUT"
+        raise ValueError("not a member of AdversityLocation")
+
+
+class AdversityFeasibleCondition(BaseCondition):
+    def __init__(self, label):
+        compile_error("AdversityFeasibleCondition(): no constructor takes these arguments "
+                      "(required: entity_name, kind, location, keyword label)")
+
+    def __init__(self, entity_name, kind: AdversityKind, location: AdversityLocation,
+                 *_kw, label = _Required(), seed: int = 0, thresholds = None):
+        _keyword_only(_kw, "AdversityFeasibleCondition(): label, seed and thresholds")
+        _expect_role(entity_name)
+        super().__init__(_required_str(label, "AdversityFeasibleCondition(): label"))
+
+    @property
+    def kind(self) -> AdversityKind:
+        raise NotImplementedError()
+
+    @property
+    def location(self) -> AdversityLocation:
+        raise NotImplementedError()
+
 # Codon 0.19 lowers a class with subclasses to a plain pointer until an object
 # of it (or of a subclass) is built, while its Optional is already the pair a
 # class with subclasses needs: `Optional[BaseCondition]` None crashes its code

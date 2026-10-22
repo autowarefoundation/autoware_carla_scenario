@@ -130,6 +130,37 @@ tree internally:
 | `TrafficSignalAction`, `TrafficLightTarget` | Set traffic-light states (e.g. all RED, all GREEN, or a specific actor). |
 | `FollowTrajectoryAction` | Move a vehicle or pedestrian along a `Trajectory` (OpenSCENARIO `FollowTrajectoryAction`); `speed` paces the segments no time does; `held_vertex` names the vertex a waypoint condition is holding it at; `appear_on_start=True` brings a hidden entity in on its first vertex, moving at `speed`, when a run starts. See [Trajectories and Recorded-Scene Replay](trajectory.md). |
 
+### Adversarial actions (`autoware_carla_scenario.actions.adversarial`)
+
+TeraSim's adversities, on a named NPC (exported from the top-level
+package, not from `actions`, which would pull in the Lanelet2 map layer).
+Each takes the entity and a required `location` (`AdversityLocation`: `ANY`,
+`INTERSECTION`, `HIGHWAY`, `ROUNDABOUT`); its default trigger is an
+`AdversityFeasibleCondition` of its kind there. When it fires, the command is
+planned on the map and driven (`following_mode`: `FOLLOW` by default, or
+`POSITION`), and the vehicle is handed back to its traffic backend at the
+end. A `condition` given instead fires the action, and the adversity's
+trigger is asked on that tick: when it does not hold, nothing is done.
+`thresholds` overrides TeraSim's numbers.
+
+| Symbol | Description |
+|--------|-------------|
+| `AdversarialBrakeAction` | Brake hard in front of a follower that keeps coming (`BRAKE_CHECK`). |
+| `IgnoreLeaderAction` | Drive on as if the close, slower leader were not there (`IGNORE_LEADER`). |
+| `AdversarialCutInAction` | Change lane in front of a vehicle too close behind in the next lane (`CUT_IN`). |
+| `AdversarialMergeAction` | Beside a merging lane with traffic on it (`MapFeatures.merges`: a lane that ends into the lane on its left, there or within 100 m), cut a merging vehicle off: one lane over, speed up as if it were not there, when that beats giving way by more than 1.5 m/s², for 2 s; two lanes over, change into the lane between in 1 s when nobody there is within 2 s of headway (`MERGE`). |
+| `LaneChangeAbortAction` | Start into the next lane in front of a vehicle too close behind there, drifting half a lane toward it, and swerve back, within 1 s (`LANE_CHANGE_ABORT`). |
+| `HeadOnAction` | Drive on at a leader coming the other way: `IgnoreLeaderAction`'s command, where the lanelets the vehicle and its leader are on start more than 120 degrees apart (`HEAD_ON`). |
+| `RunTrafficRuleAction` | Run the red or yellow light the vehicle is stopping for (`TRAFFIC_RULE`). |
+| `JaywalkAction` | Walk a pedestrian straight across the nearest road, off any crosswalk (`JAYWALKING`); `seed` seeds its speed. |
+| `PedestrianRunRedLightAction` | Walk a pedestrian waiting at a crosswalk (at most 0.2 m/s, within 3 m) across it, end to end, when the crosswalk's Lanelet2 traffic light is red (`RUNNING_RED_LIGHT`). |
+| `StopCrossingAction` | Stand a pedestrian on a crosswalk still for N(2 s, 0.5 s), then walk it a crosswalk's length on along its heading (`STOP_CROSSING`); `seed` seeds the wait. |
+| `PropAction`, `PropOperation` | An operation on the environment (`autoware_carla_scenario.actions.prop`): `PropOperation.ADD` places a CARLA prop (`static.prop.*`; `blueprint`, a construction cone by default) named *name* at a `position` in any frame a trajectory vertex takes (`CarlaWorldPose`, `Lanelet2Pose`, `OpenDrivePose`, `MapPose`, `RelativeLanePose` against an entity, or a `Route*Pose`), on the road surface unless `on_ground=False`; a name already standing is replaced. `PropOperation.REMOVE` takes the prop of a name away. Props are kept by name, not as entities; the runner takes them all away (`clear_props`) when a run ends and before the next starts. `apply(world, library, ground)` does it at once, for an action built on it that places many props in one tick. |
+| `StalledObjectAction`, `collision_objects` | TeraSim's scheduled static adversities (`autoware_carla_scenario.actions.stalled_object`): a vehicle the scenario spawned (out of the world, `spawn.hidden`, best) stands still at a pose -- a `Lanelet2Pose`, or an xy+yaw `MapPose` / `CarlaWorldPose` -- from `start_time` to `end_time` (scenario seconds; `None`: never removed), and is out of the world before and after. A `FollowTrajectoryAction` of a held pose with `hidden_outside_trajectory`. `collision_objects` is two of them, for a collision's aftermath. |
+| `ConstructionZoneAction`, `ConstructionSettings` | TeraSim's construction zone (`autoware_carla_scenario.actions.construction_zone`): warning signs, an entry taper of cones, a buffer, the work zone, an exit taper and termination signs along a lane from `start_s` to `end_s`, as CARLA props from `start_time` to `end_time`; background traffic in it is taken off the road and the lane closed to the backend (SUMO). See [Adversarial Actions and NADE](adversity.md#construction-zones). |
+| `AdversarialTrafficAction`, `NadeAdversity`, `NadeSettings` | TeraSim's NADE as an environment action that runs for the whole run. Each tick, the NPC or pedestrian near the ego whose adversity (the first of `adversities` whose trigger fires) would challenge the ego carries it out, with the importance-sampling probability `q = clip(p x magnitude, 0, max_is_probability)`, or a fixed one. One adversity at a time, then a cooldown. An adversity no victim can brake out of is unavoidable: its `p` is cut by 3e-4 and its magnitude multiplied by 40 (`adversity.avoidance`). With `challenge_npcs`, an NPC victim avoids it (emergency brake) or accepts it, with its own IS weight. `weight` keeps the run's likelihood ratio. It drives the registered entities and, with `drive_background` (default), the traffic backend's background vehicles (`TrafficBackend.background_actors`: TrafficManager background traffic, SUMO's ambient vehicles), each taken over while it carries out an adversity or responds to one and handed back after (#417). |
+| `AdversityFeasibleCondition`, `AdversityKind`, `AdversityLocation` | Holds when the entity may carry out a `kind` adversity at `location` (`autoware_carla_scenario.conditions.adversity_feasible`). |
+
 ## Trajectories (`autoware_carla_scenario.trajectory`)
 
 See [Trajectories and Recorded-Scene Replay](trajectory.md).
@@ -234,9 +265,9 @@ directly from Python:
 |--------|-------------|
 | `LaneletConstraintSweeper` | The Hydra `Sweeper` implementation (also re-exposed via `hydra_plugins.autoware_scenario_sweeper`). |
 | `Constraint` (ABC) | Base class of the constraints above, with an abstract `evaluate(lanelet)`. A constraint of your own may derive from it or only define `evaluate()`: the matching takes either. |
-| `EqualsConstraint`, `InSetConstraint`, `LaneletLengthConstraint`, `HasStopLineConstraint`, `HasTrafficLightStopLineConstraint`, `HasAdjacentConstraint`, `IsJunctionConstraint`, `PreviousOfConstraint`, `FollowingOfConstraint` | Atomic constraints. |
+| `EqualsConstraint`, `InSetConstraint`, `OnRouteConstraint`, `LaneletLengthConstraint`, `HasStopLineConstraint`, `HasTrafficLightStopLineConstraint`, `HasAdjacentConstraint`, `IsJunctionConstraint`, `PreviousOfConstraint`, `FollowingOfConstraint` | Atomic constraints. |
 | `AndConstraint`, `OrConstraint`, `NotConstraint` | Combinators. |
-| `parse_constraint`, `find_matching_lanelets` | YAML-to-`Constraint` parsing and lanelet matching. The corresponding YAML `type:` keys for the atomics above are `equals`, `in_set`, `lanelet_length`, `has_stop_line`, `has_traffic_light_stop_line`, `has_adjacent`, `is_junction`, `previous_of`, `following_of`. |
+| `parse_constraint`, `find_matching_lanelets` | YAML-to-`Constraint` parsing and lanelet matching. The corresponding YAML `type:` keys for the atomics above are `equals`, `in_set`, `on_route`, `lanelet_length`, `has_stop_line`, `has_traffic_light_stop_line`, `has_adjacent`, `is_junction`, `previous_of`, `following_of`. |
 | `Binding` (Protocol), `StopLineOffsetBinding`, `parse_binding` | Per-match parameter derivation (e.g. compute `ego.spawn_s` from a stop-line offset). |
 | `load_lanelet2_map` | Lightweight Lanelet2 loader used outside of CARLA. |
 

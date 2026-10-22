@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, ClassVar, Optional
 from ..action_state import ActionState
 from ..conditions.base import BaseCondition
 from ..conditions.always_true import AlwaysTrueCondition
+from ..adversity_event import AdversityEvent
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
@@ -151,6 +152,28 @@ class BaseAction(ABC):
         holds the light state it sets there.
         """
         return self._lifecycle
+
+    @property
+    def importance_sampling_weight(self) -> float:
+        """The likelihood ratio the action has put on the run: ``1`` unless it
+        samples what happens importance-sampled (NADE's
+        :class:`~autoware_carla_scenario.AdversarialTrafficAction`).  A
+        scenario's weight is the product of its actions'."""
+        return 1.0
+
+    @property
+    def importance_sampled(self) -> bool:
+        """Whether the action samples what happens importance-sampled, so that
+        its run's outcome is recorded with :attr:`importance_sampling_weight`;
+        ``False`` but for NADE's
+        :class:`~autoware_carla_scenario.AdversarialTrafficAction`."""
+        return False
+
+    def take_adversity_events(self) -> list[AdversityEvent]:
+        """The adversities the action sampled since it was last asked, for
+        the run's log; none unless it samples them."""
+        none: list[AdversityEvent] = []
+        return none
 
     @property
     def sets_tire_friction(self) -> bool:

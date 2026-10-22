@@ -546,16 +546,16 @@ def condition_refs(node: "ConditionNode", kind: str) -> list[str]:
     Only this node is read, never its children, so a caller gets the leaf that
     actually names the id rather than the composition wrapped around it.
     """
-    from .registry import get_condition_spec  # noqa: PLC0415
+    from .registry import field_holders, get_condition_spec  # noqa: PLC0415
 
     spec = get_condition_spec(node.type)
     if spec is None:
         return []
     found: list[str] = []
-    for field in spec.fields:
+    for field, holder in field_holders(spec.fields, node.params):
         if field.kind != kind:
             continue
-        value = str(node.params.get(field.name) or "")
+        value = str(holder.get(field.name) or "")
         if value and value not in found:
             found.append(value)
     return found

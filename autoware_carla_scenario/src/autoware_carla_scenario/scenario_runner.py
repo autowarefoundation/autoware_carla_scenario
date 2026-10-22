@@ -7,10 +7,11 @@ import os
 import shutil
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Collection, Optional
+from typing import TYPE_CHECKING, Any, Collection, Optional
 
 import typesafe_carla.carla as carla
 
+from .actions.prop import clear_props
 from .entity.ego import EgoVehicle
 from .entity.registry import (
     clear_entities,
@@ -32,6 +33,7 @@ from .coordinate.map_manager import run_carla_map
 from .coordinate.poses import CarlaWorldPose
 from .coverage.collector import CoverageCollector, prepare_measures
 from .measures import set_measured_scenario
+from .metrics import set_importance_sampling_weight
 from .odd import OddCase, OddDefinition, reset_probes, resolve_odd
 from .coordinate.transform import to_opendrive
 from .entity.vehicle_entity import _set_warmup_done
@@ -43,6 +45,8 @@ from .world_reset import episode_of, reload_current_map, same_episode, short_map
 from .traffic.config import TrafficManagerBackendConfig
 from .traffic.traffic_manager import TrafficManagerBackend
 from .rerun import RerunConverter
+from .visibility import forget_visibility
+from .traffic.parameters import record_run_parameters
 from .trajectory_recorder import TrajectoryRecorder
 
 logger = logging.getLogger(__name__)
@@ -275,17 +279,43 @@ def _condition_statuses(
         return _collect_condition_statuses(scenario, world, elapsed, scenario_name)
 
 
+def _traffic_record(backend: TrafficBackend, scenario_name: str) -> Optional[Any]:
+    """What drove the run's traffic, as the result records it: the backend's
+    :meth:`~TrafficBackend.describe`, with how many vehicles it simulated at
+    each level when the run ended (:meth:`~TrafficBackend.fidelity_census`).
+
+    Read before the backend closes, which forgets both.  ``None`` when the
+    backend cannot say: a record must not end a run.  Dicts of mixed value
+    types, which Codon cannot express: the check (docs/typecheck.md) does not
+    compile it.
+    """
+    try:
+        record = dict(backend.describe())
+        census = backend.fidelity_census()
+    except Exception:  # noqa: BLE001 - a third party's backend
+        logger.warning(
+            "[%s] Could not read what drove the traffic", scenario_name, exc_info=True
+        )
+        return None
+    if census:
+        record["fidelity"] = dict(census)
+        logger.info("[%s] Traffic at the end: %s", scenario_name, census)
+    return record
+
+
 def _write_result(
     json_path: Path,
     output_dir: Path,
     file_stem: str,
     scenario: "BaseScenario",
     result: ScenarioResult,
+    traffic: Optional[Any] = None,
 ) -> None:
     """Write *result* to *json_path*, with the environment the run had.
 
     What it ran with: the lock and the environment beside the result, and
-    their summary (with the environment's id) in it.  With ``json`` and
+    their summary (with the environment's id) in it, and what drove the
+    traffic (*traffic*, :func:`_traffic_record`).  With ``json`` and
     :mod:`.environment` (platform, json), which Codon does not have: the check
     (docs/typecheck.md) does not compile it.
     """
@@ -297,11 +327,16 @@ def _write_result(
     data = json.loads(result.to_json())
     if environment is not None:
         data["environment"] = environment
+    if traffic is not None:
+        data["traffic"] = traffic
     json_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
 def _record_run(
-    coverage: CoverageCollector, case: Optional[OddCase], result: ScenarioResult
+    coverage: CoverageCollector,
+    case: Optional[OddCase],
+    result: ScenarioResult,
+    weight: Optional[float] = None,
 ) -> None:
     """Record in *coverage* the case the run ran, if it was drawn from the ODD,
     and its outcome: what the merged report assesses the flakiness of and a
@@ -315,6 +350,10 @@ def _record_run(
     environment's id (what ``{stem}_requirements.lock`` pins, the id its
     header and the result carry): the report never pools runs of different
     environments, where a regression would read as flakiness.
+
+    An importance-sampled run also records its likelihood ratio, *weight*
+    (:attr:`BaseScenario.outcome_weight`), from which the merged report
+    estimates the naturalistic failure rate (openodd's weighted outcomes).
     """
     from .environment import capture  # noqa: PLC0415
 
@@ -329,6 +368,7 @@ def _record_run(
         result.passed,
         failed_at=None if result.passed else result.elapsed_seconds,
         environment=environment,
+        weight=weight,
     )
 
 
@@ -1028,8 +1068,9 @@ class ScenarioRunner:
         # A batch runs several scenarios against one world, so the entities of
         # the previous one are cleared before this one registers its own -- an
         # entity from the last run still answering to "npc1" would be worse
-        # than no entity at all.
+        # than no entity at all.  So are the props a PropAction placed.
         clear_entities()
+        clear_props()
 
         # The ego is built before the cleanup, not after it: an entity that
         # attaches to an actor someone else spawned has to be able to say so
@@ -1099,6 +1140,9 @@ class ScenarioRunner:
             # autopilot call), and where a backend that cannot run at all -- a
             # simulator that is not installed -- refuses.  Inside the try, so a
             # refusal still gets the cleanup every other failure gets.
+            # How far drivers see is what this run's weather leaves, not what
+            # the last run's left in the same episode.
+            forget_visibility()
             backend.prepare(
                 TrafficContext(
                     client=self._client,
@@ -1112,6 +1156,11 @@ class ScenarioRunner:
                     random_seed=scenario.random_seed,
                     output_dir=self.output_dir,
                 )
+            )
+            # What the run's road users draw their parameters from, for the
+            # ODD's probes of them (odd.traffic_probes).
+            record_run_parameters(
+                backend.vehicle_parameters, backend.pedestrian_parameters
             )
             if TYPE_CHECKING:
                 # describe() is a dict of mixed value types, which Codon
@@ -1271,13 +1320,21 @@ class ScenarioRunner:
             # this loop steps -- in-process, so no second client has to follow
             # the world from outside.
             trajectory.start(world)
+            clock_start_frame = int(world.get_snapshot().frame)
             # The file starts where the clock does; the recording, warmup_ticks
             # frames earlier.
             trajectory.record_warmup(
                 warmup_ticks,
                 recording_start_frame if recording_started else -1,
-                int(world.get_snapshot().frame),
+                clock_start_frame,
             )
+            if self.rerun is not None:
+                # The ego's sensors, from the clock's first frame, beside the
+                # trajectory log (rerun.lidar / rerun.cameras; nothing otherwise).
+                lidar_converter: RerunConverter = self.rerun
+                lidar_converter.start_sensors(
+                    trajectory.path, file_stem, clock_start_frame
+                )
             trajectory.record(world, clock.simulated)
             trajectory.record_markers(_ego_markers(ego))
             # What the run covers: the attributes of the run's ODD, sampled
@@ -1293,6 +1350,7 @@ class ScenarioRunner:
                 pass
             else:
                 set_measured_scenario(scenario)
+            set_importance_sampling_weight(scenario.importance_sampling_weight)
             coverage = CoverageCollector(
                 scenario._cover_items, scenario._cross_items, odd=self.odd
             )
@@ -1359,6 +1417,13 @@ class ScenarioRunner:
                             type(action).__name__,
                             action.state.value,
                         )
+                        # What it sampled this tick (NADE's adversities).
+                        for event in action.take_adversity_events():
+                            trajectory.record_adversity(action.label, event)
+
+                # The weight the actions above leave the run with, for the
+                # metric that reads it.
+                set_importance_sampling_weight(scenario.importance_sampling_weight)
 
                 # Coverage samples the world the hooks above have acted on.
                 coverage.tick(world, elapsed)
@@ -1469,6 +1534,7 @@ class ScenarioRunner:
 
         finally:
             set_measured_scenario(None)
+            set_importance_sampling_weight(None)
             logger.info("[%s] === Cleanup start ===", scenario_name)
             _set_warmup_done(False)
 
@@ -1496,6 +1562,9 @@ class ScenarioRunner:
                     scenario_name,
                     exc_info=True,
                 )
+            # And the props a PropAction placed: the leftovers' sweep takes
+            # vehicles, walkers and sensors, not static props.
+            clear_props()
 
             # Explicitly destroy the ego vehicle so it does not persist
             # if the map reload fails later.
@@ -1520,6 +1589,9 @@ class ScenarioRunner:
                         scenario_name,
                         exc_info=True,
                     )
+            if self.rerun is not None:
+                lidar_recording: RerunConverter = self.rerun
+                lidar_recording.stop_sensors()
             if trajectory.active:
                 if result is not None:
                     trajectory.record_result(result)
@@ -1535,6 +1607,14 @@ class ScenarioRunner:
                     if result is not None:
                         result.rerun_recording = str(recording)
 
+            if TYPE_CHECKING:
+                # describe() and fidelity_census() are dicts of mixed value
+                # types, which Codon cannot express (UNCALLED in
+                # typecheck/library.py).
+                pass
+            else:
+                # Before close(), which forgets what it counts.
+                traffic_record = _traffic_record(backend, scenario_name)
             # Close the backend so the next run starts with a fresh one --
             # for the TrafficManager that resets its InMemoryMap cache and
             # internal state, for a backend with a process of its own it is
@@ -1564,10 +1644,17 @@ class ScenarioRunner:
                 # json and environment (platform, json): Codon has neither.
                 pass
             else:
-                _write_result(json_path, self.output_dir, file_stem, scenario, result)
+                _write_result(
+                    json_path,
+                    self.output_dir,
+                    file_stem,
+                    scenario,
+                    result,
+                    traffic_record,
+                )
             logger.info("[%s] Result JSON written to: %s", scenario_name, json_path)
             if coverage is not None:
-                _record_run(coverage, case, result)
+                _record_run(coverage, case, result, scenario.outcome_weight)
                 coverage_path = self.output_dir / f"{file_stem}_coverage.json"
                 coverage.write(coverage_path, scenario_name)
                 logger.info(

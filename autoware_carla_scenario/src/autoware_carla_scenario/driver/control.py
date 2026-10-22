@@ -419,18 +419,19 @@ class ControlConfig:
     request to stand still, and the vehicle is held on :attr:`stop_brake`."""
 
     # -- Vehicle interface ----------------------------------------------------------
-    throttle_deadband: float = 0.0
+    throttle_deadband: float = 0.3
     """The least throttle a standing vehicle (below :attr:`standstill_speed_mps`) is
     given when asked to speed up; ``0`` sets no floor.
 
     Part of the vehicle interface, not of the controller: the powertrain model, like
     an accel map, has a standing car move at any throttle, while a standing Lincoln
-    MKZ on flat road (CARLA 0.10) stays put at 0.2 and pulls away at 0.25.  The
-    ``pid`` controller needs no floor: its jerk-limited pull-away reaches the
-    throttle that moves the MKZ within a few tenths of a second (measured in CARLA
-    on a red light turning green), and a floor would turn the few cm/s² it asks of
-    a plan creeping on the spot into a pull-away.  The ``time_indexed`` controller
-    tracks crawling pull-aways of a few cm/s² and needs 0.25
+    MKZ (CARLA 0.10) stays put at up to 0.245 and pulls away from 0.26 (measured on
+    Town10's red lights turning green).  Autoware's velocity lookahead feedback asks a
+    standing car for as much as the plan's first metre accelerates, and a plan that
+    pulls away at a crawl asks for a throttle near 0.23: without a floor the car
+    never moves, so neither does the plan.  A real car creeps at any throttle, so a
+    plan asking to move does move, a plan asking to move on a red light included.
+    The ``time_indexed`` controller takes 0.25
     (:class:`~..actions.follow_trajectory.FollowTrajectoryAction` sets it).
     """
 

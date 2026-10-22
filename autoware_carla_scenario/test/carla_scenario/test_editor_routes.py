@@ -1387,7 +1387,10 @@ class TestEnvironmentTrack:
             "turn_indicator",
         }
         assert offers[""] == {
+            "adversarial_traffic",
+            "construction_zone",
             "environment",
+            "prop",
             "traffic_signal",
             "traffic_signal_controller",
             "traffic_sink",
@@ -1399,8 +1402,9 @@ class TestEnvironmentTrack:
     ) -> None:
         """The other half of the rule above, for the kind that has its own.
 
-        A pedestrian walks, or follows a trajectory -- a recorded one, say --
-        and is offered nothing a vehicle does to its lane.
+        A pedestrian walks, follows a trajectory -- a recorded one, say -- or
+        carries out a pedestrian's adversity, and is offered nothing a
+        vehicle does to its lane.
         """
         client.post(f"/draft/{draft_id}/entity", data={"kind": "pedestrian"})
         body = client.get(f"/draft/{draft_id}").text
@@ -1412,8 +1416,14 @@ class TestEnvironmentTrack:
             assert actor is not None
             offers[actor.group(1)] = set(re.findall(r'<option value="([^"]+)"', form))
 
-        assert offers["walker1"] == {"follow_trajectory", "walk_straight"}
-        assert "walk_straight" not in offers["ego"]
+        pedestrian_only = {
+            "jaywalk",
+            "pedestrian_run_red_light",
+            "stop_crossing",
+            "walk_straight",
+        }
+        assert offers["walker1"] == {"follow_trajectory"} | pedestrian_only
+        assert not pedestrian_only & offers["ego"]
 
     def test_an_environment_action_needs_no_actor(
         self, client: TestClient, draft_id: str

@@ -529,6 +529,10 @@ def fog(world: carla.World) -> Optional[str]:
     raise NotImplementedError()
 
 
+def visibility(world: carla.World) -> Optional[float]:
+    raise NotImplementedError()
+
+
 def traffic_density(world: carla.World) -> Optional[str]:
     raise NotImplementedError()
 

@@ -12,8 +12,9 @@ from pathlib import Path
 from typing import Any, Mapping, Optional
 
 from ...constants import DEFAULT_TM_PORT
+from ..fidelity import MesoscopicConfig
 
-__all__ = ["AmbientTrafficConfig", "SumoBackendConfig"]
+__all__ = ["AmbientTrafficConfig", "PedestrianConfig", "SumoBackendConfig"]
 
 _LIGHT_AUTHORITIES = ("carla", "sumo", "none")
 _SCENARIO_VEHICLE_DRIVERS = ("traffic_manager", "sumo")
@@ -62,8 +63,68 @@ class AmbientTrafficConfig:
 
 
 @dataclass
+class PedestrianConfig:
+    """SUMO's own pedestrians, generated with ``randomTrips.py --pedestrians``
+    and mirrored into CARLA as walkers.
+
+    Attributes:
+        enabled: Generate any at all.  They walk the network's footways, so a
+            network without any has none to walk.
+        persons_per_hour: Walks generated per hour of simulated time.
+        period_s: Seconds between two walks; overrides ``persons_per_hour``.
+        end_s: Seconds of demand to generate.
+        max_distance_m: The longest walk generated, metres.
+        radius_m: Mirror only the pedestrians this close to the ego (or to a
+            vehicle CARLA drives) into CARLA, and remove one that walks more
+            than 1.25 times as far away; the rest walk on in SUMO only, where
+            SUMO's traffic still sees them.  ``None``: the radii of
+            ``mesoscopic`` when that is enabled, everywhere otherwise.
+        max_persons: Most pedestrians mirrored into CARLA at once, the nearest
+            first; ``None`` for no limit.
+        blueprint: CARLA blueprint of a mirrored pedestrian.
+    """
+
+    enabled: bool = False
+    persons_per_hour: float = 600.0
+    period_s: Optional[float] = None
+    end_s: float = 3600.0
+    max_distance_m: float = 500.0
+    radius_m: Optional[float] = None
+    max_persons: Optional[int] = None
+    blueprint: str = "walker.pedestrian.0001"
+
+    def __post_init__(self) -> None:
+        if self.radius_m is not None and not self.radius_m > 0.0:
+            raise ValueError(
+                f"radius_m must be positive or null (got {self.radius_m!r})"
+            )
+
+    def period(self) -> float:
+        """Seconds between two generated walks."""
+        if self.period_s is not None:
+            return float(self.period_s)
+        return 3600.0 / max(float(self.persons_per_hour), 1e-6)
+
+    @classmethod
+    def from_mapping(cls, mapping: Mapping[str, Any]) -> "PedestrianConfig":
+        """Return a config built from a plain mapping (e.g. a Hydra node)."""
+        from ...utils.config import checked_options  # noqa: PLC0415
+
+        return cls(**checked_options(cls, mapping))
+
+
+@dataclass
 class SumoBackendConfig:
     """Options of the ``sumo`` traffic backend.
+
+    How SUMO's drivers behave -- their speed, gap, reaction and braking, and
+    whether they follow the visibility -- and how its pedestrians walk is not
+    here but in the parameters every backend shares
+    (:class:`~autoware_carla_scenario.traffic.parameters.VehicleParameters`,
+    ``traffic.vehicles``;
+    :class:`~autoware_carla_scenario.traffic.parameters.PedestrianParameters`,
+    ``traffic.pedestrians``).  ``pedestrians`` here is how many SUMO
+    generates.
 
     Attributes:
         scenario_vehicles: What drives the scenario's own vehicles (its
@@ -95,6 +156,14 @@ class SumoBackendConfig:
             that sets them (``TrafficSignalAction``) sets them for SUMO too.
             ``sumo``: CARLA's lights follow SUMO's programs.  ``none``: each
             keeps its own.
+        pedestrian_crossings: Build the network with a pedestrian crossing
+            across each road at a junction where footways meet it, and walking
+            areas joining them (netconvert's ``--crossings.guess``), so SUMO's
+            pedestrians cross roads on crossings, where SUMO's vehicles yield
+            to them.  At a signalised junction, with
+            ``traffic_light_authority=carla``, a crossing is green while every
+            vehicle movement into or out of a road it crosses is red.
+            Ignored with ``net_path``.
         publish_walkers: Put CARLA's pedestrians into SUMO as persons where
             they stand, every step, so SUMO traffic sees them: a SUMO vehicle
             brakes for a pedestrian on its lane -- on a crossing or anywhere
@@ -115,6 +184,8 @@ class SumoBackendConfig:
         route_path: Explicit SUMO demand (``.rou.xml``), added to the ambient
             traffic.
         ambient: SUMO's own generated traffic.
+        pedestrians: SUMO's own generated pedestrians, mirrored into CARLA
+            near the ego.  Off by default.
         warmup_s: SUMO seconds simulated when the run starts, before the
             scenario clock, so ambient traffic is already on the road; the
             scenario's vehicles are held still meanwhile.
@@ -122,6 +193,12 @@ class SumoBackendConfig:
             CARLA; ``None`` mirrors them wherever they are.
         max_vehicles: Most ambient vehicles mirrored into CARLA at once, the
             nearest to the ego first; ``None`` for no limit.
+        mesoscopic: Simulate SUMO's vehicles far from the ego (and from every
+            vehicle CARLA drives) in a mesoscopic queue model instead of in
+            SUMO, with no actor in CARLA, and put them back into SUMO -- and
+            CARLA -- when they come near
+            (:class:`~autoware_carla_scenario.traffic.fidelity.MesoscopicConfig`).
+            Off by default.
         blueprint: CARLA blueprint of an ambient vehicle.
         binary: SUMO executable, when not in-process (``sumo-gui`` to watch).
         use_libsumo: Run SUMO in-process through libsumo (faster, no GUI);
@@ -143,13 +220,16 @@ class SumoBackendConfig:
     resync_distance_m: float = 8.0
     traffic_light_authority: str = "carla"
     publish_walkers: bool = True
+    pedestrian_crossings: bool = True
     curve_lateral_acceleration: Optional[float] = 3.0
     net_path: Optional[str] = None
     route_path: Optional[str] = None
     ambient: AmbientTrafficConfig = field(default_factory=AmbientTrafficConfig)
+    pedestrians: PedestrianConfig = field(default_factory=PedestrianConfig)
     warmup_s: float = 30.0
     spawn_radius_m: Optional[float] = None
     max_vehicles: Optional[int] = None
+    mesoscopic: MesoscopicConfig = field(default_factory=MesoscopicConfig)
     blueprint: str = "vehicle.lincoln.mkz"
     binary: str = "sumo"
     use_libsumo: bool = True
@@ -186,9 +266,21 @@ class SumoBackendConfig:
         """Return a config built from a plain mapping (e.g. a Hydra node)."""
         from ...utils.config import checked_options  # noqa: PLC0415
 
+        if "follow_visibility" in mapping:
+            raise ValueError(
+                "traffic.options.follow_visibility has moved to "
+                "traffic.vehicles.follow_visibility, with the other vehicle "
+                "parameters every backend shares (VehicleParameters)"
+            )
         checked = checked_options(cls, mapping)
         if isinstance(checked.get("ambient"), Mapping):
             checked["ambient"] = AmbientTrafficConfig.from_mapping(checked["ambient"])
+        if isinstance(checked.get("pedestrians"), Mapping):
+            checked["pedestrians"] = PedestrianConfig.from_mapping(
+                checked["pedestrians"]
+            )
+        if isinstance(checked.get("mesoscopic"), Mapping):
+            checked["mesoscopic"] = MesoscopicConfig.from_mapping(checked["mesoscopic"])
         if "sumo_args" in checked:
             checked["sumo_args"] = [str(a) for a in checked["sumo_args"] or []]
         if checked.get("tm_port") is None:

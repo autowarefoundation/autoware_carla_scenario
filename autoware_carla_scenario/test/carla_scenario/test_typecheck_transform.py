@@ -16,6 +16,10 @@ import pytest
 
 from autoware_carla_scenario.typecheck import model_dir
 from autoware_carla_scenario.typecheck.driver import render_driver
+from autoware_carla_scenario.typecheck.python_rewrites import (
+    python_rewrite_refusals,
+    python_rewrites,
+)
 from autoware_carla_scenario.typecheck.transform import (
     MISSING_BUILTIN_EXCEPTIONS,
     PRELUDE,
@@ -297,7 +301,6 @@ def test_an_evidently_homogeneous_dict_display_is_left_as_written() -> None:
         b = {"a": Foo(1), "b": Foo(2)}
         c = {"a": f"{p}", "b": f"{q}"}
         d = {"l": Direction.LEFT, "r": Direction.RIGHT}
-        e = {**base, "b": c}
         f = {"a": p}
         g = {}
         h = {k: v for k, v in items}
@@ -2017,11 +2020,7 @@ def test_a_name_read_before_it_is_rebound_is_reported_at_the_later_import() -> N
 
 def test_a_rebound_name_nothing_read_drops_the_earlier_import() -> None:
     text = (
-        "from a import X, Z\n"
-        "def f():\n"
-        "    return X\n"
-        "from b import X\n"
-        "from a import X\n"
+        "from a import X, Z\ndef f():\n    return X\nfrom b import X\nfrom a import X\n"
     )
     assert _body(text) == (
         "from a import Z\ndef f():\n    return X\npass\nfrom a import X\n"
@@ -2246,3 +2245,824 @@ def test_cast_is_kept_for_a_codon_type_and_dropped_for_any_other() -> None:
     assert _transform('y = cast("int", x)\n') == "y = cast(int, x)\n"
     assert _transform("y = cast(Callable[[int], int], f)(2)\n") == "y = (f)(2)\n"
     assert _transform("y = typing.cast(Any, x)\n") == "y = (x)\n"
+
+
+def test_functools_caching_decorators_are_dropped() -> None:
+    source = textwrap.dedent(
+        """
+        import functools
+        from functools import cache as memo, lru_cache
+
+        @lru_cache(maxsize=8)
+        def a(x: int) -> int:
+            return x
+
+        @functools.lru_cache()
+        def b(x: int) -> int:
+            return x
+
+        @lru_cache
+        def c(x: int) -> int:
+            return x
+
+        @functools.cache
+        def d(x: int) -> int:
+            return x
+
+        class K:
+            @memo
+            def e(self, x: int) -> int:
+                return x
+
+            @lru_cache(
+                maxsize=None,
+            )
+            def f(self, x: int) -> int:
+                return x
+        """
+    )
+    out = _transform(source)
+    assert out.count("\n") == source.count("\n")
+    assert "@" not in out
+    assert "lru_cache" not in out.replace("import functools\n", "")
+    assert out.count("def ") == 6
+
+
+def test_functools_cached_property_becomes_a_property() -> None:
+    source = textwrap.dedent(
+        """
+        import functools
+        from functools import cached_property
+
+        class K:
+            @cached_property
+            def a(self) -> int:
+                return 1
+
+            @functools.cached_property
+            def b(self) -> int:
+                return 2
+        """
+    )
+    out = _transform(source)
+    assert out.count("@property") == 2
+    assert "cached_property" not in out
+
+
+def test_functools_reduce_becomes_the_models() -> None:
+    source = textwrap.dedent(
+        """
+        import functools as ft
+        from functools import partial, reduce as fold
+
+        def total(xs: list[int]) -> int:
+            return fold(lambda a, b: a + b, xs, 0) + ft.reduce(max, xs)
+        """
+    )
+    out = _transform(source)
+    assert "_acs_reduce(lambda a, b: a + b, xs, 0) + _acs_reduce(max, xs)" in out
+    # Only the names Codon lacks leave the import; partial stays.
+    assert "from functools import partial\n" in out
+    assert "fold" not in out.replace("_acs_reduce", "")
+
+
+def test_a_functools_import_of_only_stubbed_names_is_dropped() -> None:
+    source = "from functools import (\n    cache,\n    reduce,\n)\nx = 1\n"
+    out = _transform(source)
+    assert out.count("\n") == source.count("\n")
+    assert "from functools" not in out
+    assert "pass" in out
+
+
+def test_another_modules_reduce_and_cache_are_left_alone() -> None:
+    source = "from mylib import reduce, cache\n\n\ndef f(xs):\n    return reduce(xs)\n"
+    out = _transform(source)
+    assert "from mylib import reduce, cache" in out
+    assert "_acs_reduce(xs)" not in out
+
+
+def test_a_rebound_functools_name_is_left_alone() -> None:
+    source = (
+        "from functools import reduce, cache\n\n\n"
+        "def f(reduce, xs):\n    return reduce(xs)\n\n\n"
+        "def cache(g):\n    return g\n\n\n"
+        "@cache\ndef h():\n    pass\n"
+    )
+    out = _transform(source)
+    assert "_acs_reduce(xs)" not in out
+    assert "return reduce(xs)" in out
+    assert "@cache\ndef h()" in out
+
+
+# ---------------------------------------------------------------------------
+# Valid Python Codon refuses or crashes on (#376)
+# ---------------------------------------------------------------------------
+
+
+def _rewritten(source: str) -> str:
+    text, _ = python_rewrites(textwrap.dedent(source))
+    ast.parse(text)
+    return text
+
+
+def test_an_ellipsis_in_a_class_body_becomes_pass() -> None:
+    text = _rewritten(
+        """
+        class A: ...
+        class B(Exception):
+            ...
+        class C:
+            x: int
+            ...
+        def f() -> None: ...
+        """
+    )
+    assert "class A: pass" in text
+    assert text.count("pass") == 3
+    assert "def f() -> None: ..." in text
+
+
+def test_a_dict_display_with_double_star_becomes_a_union() -> None:
+    text = _rewritten(
+        """
+        d = {**a, **b}
+        e = {**a}
+        f = {"x": 1, **a, "y": 2, **(a or b)}
+        """
+    )
+    assert "d = (a | b)" in text
+    assert "e = dict(a)" in text
+    assert 'f = ({"x": 1} | a | {"y": 2} | (a or b))' in text
+
+
+def test_a_dict_display_with_double_star_keeps_its_lines() -> None:
+    source = "d = {\n    **a,\n    'k': 1,\n    **b,\n}\nz = 1\n"
+    text, _ = python_rewrites(source)
+    assert text.count("\n") == source.count("\n")
+    assert text.endswith("\nz = 1\n")
+    assert text.startswith("d = (a | {'k': 1} | b)")
+
+
+@pytest.mark.parametrize(
+    ("call", "expected"),
+    [
+        ('"{:>5}|{}".format(1, 2)', 'f"{1:>5}|{2}"'),
+        ('"{0}-{0}".format(x)', 'f"{x}-{x}"'),
+        ('"{a}-{b:.2f}".format(a=x, b=y)', 'f"{x}-{y:.2f}"'),
+        ('"{!r} {!s}".format(x, y)', 'f"{x!r} {y!s}"'),
+        ('"{0.size[1]}".format(x)', 'f"{x.size[1]}"'),
+        ('"{0[key]}".format(x)', "f\"{x['key']}\""),
+        ('"plain".format()', '"plain"'),
+        ('"{{}}".format()', '("{" + "}")'),
+        ('"a{{{}}}".format(x)', '("a" + "{" + f"{x}" + "}")'),
+    ],
+)
+def test_str_format_on_a_literal_becomes_an_fstring(call: str, expected: str) -> None:
+    assert _rewritten(f"s = {call}\n") == f"s = {expected}\n"
+
+
+def test_str_format_evaluates_a_complex_argument_once() -> None:
+    text = _rewritten('s = "{0}{0}{k}".format(f(1), k=g("q"))\n')
+    assert text == (
+        's = (lambda _acs_f0, _acs_k_k: f"{_acs_f0}{_acs_f0}{_acs_k_k}")'
+        '(f(1), g("q"))\n'
+    )
+    assert _rewritten('s = "x".format(f())\n') == 's = (lambda _acs_f0: "x")(f())\n'
+
+
+def test_str_format_keeps_its_lines() -> None:
+    source = 's = ("a {} "\n     "b {}").format(\n    1,\n    2,\n)\nz = 1\n'
+    text, _ = python_rewrites(source)
+    assert text.count("\n") == source.count("\n")
+    assert text.endswith("\nz = 1\n")
+
+
+def test_str_format_inside_str_format_is_rewritten_too() -> None:
+    text = _rewritten('s = "{}".format("[{}]".format(f(1)))\n')
+    assert ".format" not in text
+
+
+@pytest.mark.parametrize(
+    ("call", "hint"),
+    [
+        ('"{:>{}}".format(1, 2)', "a field inside it"),
+        ('"{} {}".format(1)', "positional argument 1 but only 1 given"),
+        ('"{k}".format(j=1)', "keyword 'k'"),
+        ('"{} {1}".format(1, 2)', "mixes automatic and manual"),
+        ('"{}".format(*a)', "*args or **kwargs"),
+        ('"{}".format(**a)', "*args or **kwargs"),
+        ('"{".format(1)', "invalid"),
+        ('"{0!x}".format(1)', "unknown conversion"),
+    ],
+)
+def test_str_format_that_cannot_be_expressed_is_refused(call: str, hint: str) -> None:
+    refused = python_rewrite_refusals(f"x = 1\ns = {call}\n")
+    assert [line for line, _ in refused] == [2]
+    assert hint in refused[0][1]
+
+
+def test_str_format_on_something_else_is_left_alone() -> None:
+    text = _rewritten("s = fmt.format(1)\nt = obj.format(1)\n")
+    assert text == "s = fmt.format(1)\nt = obj.format(1)\n"
+    assert python_rewrite_refusals(text) == []
+
+
+@pytest.mark.parametrize(
+    ("field", "expected"),
+    [
+        ('f"{x:+.2f}"', '((x).__format__("+.2f"))'),
+        ('f"{x: .2f}|{n:-d}"', '((x).__format__(" .2f") + "|" + (n).__format__("-d"))'),
+        ('f"{x:^+10.2f}"', '((x).__format__("^+10.2f"))'),
+        ('f"{x:>{w}.2f}"', '((x).__format__(">" + str(w) + ".2f"))'),
+        ('f"{n:{w}d}"', '((n).__format__(str(w) + "d"))'),
+        ('f"{s!r:{w}}"', "(repr(s).__format__(str(w)))"),
+        ('f"{s!s:>{w!r}}"', '(str(s).__format__(">" + repr(w)))'),
+        ('f"{x:{w:+d}}"', '((x).__format__((w).__format__("+d")))'),
+        ('f"{x:q}"', '((x).__format__("q"))'),
+        ('f"{x=:+.2f}"', '("x=" + (x).__format__("+.2f"))'),
+        ('f"a {n} {x:+.1f} b"', '(f"a {n} " + (x).__format__("+.1f") + " b")'),
+        ('f"{{{x:+d}}}"', '("{" + (x).__format__("+d") + "}")'),
+        ('f"{f(a, b)[0]:+d}"', '((f(a, b)[0]).__format__("+d"))'),
+        # ast.unparse spells a lambda "lambda : 1" before Python 3.11.
+        (
+            'f"{(lambda: 1)():+d}"',
+            f'((({ast.unparse(ast.parse("lambda: 1", mode="eval").body)})())'
+            '.__format__("+d"))',
+        ),
+    ],
+)
+def test_an_fstring_spec_codon_cannot_parse_becomes_a_format_call(
+    field: str, expected: str
+) -> None:
+    assert _rewritten(f"r = {field}\n") == f"r = {expected}\n"
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        'f"{x:.2f}|{x:e}|{x:g}|{x:.1%}|{x:010.3f}|{n:#x}|{n:08b}|{n:,}|{n:_x}"',
+        'f"{n:>8}|{n:<8}|{n:^8}|{n:*^8}|{s!r:>8}|{s!s:^6}|{x=}|{x=:.2f}"',
+        'f"{x}{y!r}"',
+        "f\"{d['k']:>5}\"",
+    ],
+)
+def test_an_fstring_codon_parses_is_left_alone(field: str) -> None:
+    assert _rewritten(f"r = {field}\n") == f"r = {field}\n"
+
+
+def test_a_rewritten_fstring_keeps_its_lines() -> None:
+    source = 'r = f"""a\n{x:+.2f}\nb"""\nz = 1\nt = (f"{x:+d}"\n     f"{y}")\n'
+    text, _ = python_rewrites(source)
+    assert text.count("\n") == source.count("\n")
+    assert "\nz = 1\n" in text
+    assert '(x).__format__("+d")' in text
+
+
+def test_str_format_with_a_sign_composes_with_the_fstring_rewrite() -> None:
+    assert _rewritten('s = "{:+.2f}".format(x)\n') == ('s = ((x).__format__("+.2f"))\n')
+    text = _rewritten('s = "{:+.2f}|{!r:>5}".format(f(x), y)\n')
+    assert ".format(" not in text and '__format__("+.2f")' in text
+    assert python_rewrite_refusals('s = "{:+.2f}".format(x)\n') == []
+
+
+@pytest.mark.parametrize(
+    ("field", "hint"),
+    [
+        ("f\"{'{}'.format(x)}\"", "a brace in an expression"),
+        ("f\"{'{:>3}'.format(x):+d}\"", "a brace in an expression"),
+        ('f"{len({1, 2})}"', "a brace in an expression"),
+        ('f"{ {k: 1 for k in a}[1] }"', "a brace in an expression"),
+        ('f"{ {**a}[1] }"', "a brace in an expression"),
+        ("f\"{f'{x}'}\"", "f-string inside an f-string"),
+        ('f"{x!a:+d}"', "!a together with a format spec"),
+    ],
+)
+def test_an_fstring_with_a_brace_in_an_expression_is_refused(
+    field: str, hint: str
+) -> None:
+    refused = python_rewrite_refusals(f"x = 1\nr = {field}\n")
+    assert [line for line, _ in refused] == [2]
+    assert hint in refused[0][1]
+
+
+def test_zip_strict_is_dropped() -> None:
+    assert _rewritten("zip(a, b, strict=True)\n") == "zip(a, b)\n"
+    assert _rewritten("zip(strict=False)\n") == "zip()\n"
+    assert _rewritten("zip(a, strict=x) + zip(b, strict=1)\n") == "zip(a) + zip(b)\n"
+    source = "zip(\n    a,\n    b,\n    strict=True,\n)\n"
+    text = _rewritten(source)
+    assert text.count("\n") == source.count("\n")
+    assert "strict" not in text
+    assert _rewritten("other(a, strict=True)\n") == "other(a, strict=True)\n"
+
+
+_LT_ONLY = """
+class V:
+    def __lt__(self, other: "V") -> bool:
+        return True
+"""
+
+
+def test_a_class_with_only_lt_gets_gt_and_ge() -> None:
+    text, blocks = python_rewrites(_LT_ONLY)
+    assert text == _LT_ONLY
+    [(name, block)] = blocks
+    assert name == "V"
+    assert "@extend\nclass V:" in block
+    assert (
+        "def __gt__(self, other: V) -> bool:\n        return other.__lt__(self)"
+        in block
+    )
+    assert "return not self.__lt__(other)" in block
+    assert "__le__" not in block
+
+
+def test_a_class_with_every_comparison_gets_none() -> None:
+    source = (
+        _LT_ONLY
+        + """
+    def __gt__(self, other: "V") -> bool:
+        return True
+
+    def __ge__(self, other: "V") -> bool:
+        return True
+"""
+    )
+    assert python_rewrites(source)[1] == []
+    ordered = "from dataclasses import dataclass\n@dataclass(order=True)\nclass D:\n    a: int\n    def __lt__(self, o): ...\n"
+    assert python_rewrites(ordered)[1] == []
+    assert python_rewrites("class N:\n    pass\n")[1] == []
+
+
+def test_a_subclass_does_not_repeat_what_its_base_defines() -> None:
+    source = (
+        _LT_ONLY
+        + "\nclass W(V):\n    def __lt__(self, other: V) -> bool:\n        return False\n"
+    )
+    blocks = dict(python_rewrites(source)[1])
+    # W's own __lt__ is the one its comparisons must call.
+    assert set(blocks) == {"V", "W"}
+
+
+@pytest.mark.parametrize(
+    ("root", "added", "absent"),
+    [
+        ("__lt__", ["__gt__", "__le__", "__ge__"], "__lt__"),
+        ("__le__", ["__lt__", "__gt__", "__ge__"], "__le__"),
+        ("__gt__", ["__lt__", "__le__", "__ge__"], "__gt__"),
+        ("__ge__", ["__lt__", "__le__", "__gt__"], "__ge__"),
+    ],
+)
+def test_total_ordering_adds_the_other_three_from_its_root(
+    root: str, added: list[str], absent: str
+) -> None:
+    source = (
+        "import functools\n"
+        "@functools.total_ordering\n"
+        f"class V:\n    def {root}(self, o): ...\n    def __eq__(self, o): ...\n"
+    )
+    text, [(name, block)] = python_rewrites(source)
+    assert "total_ordering" not in text.replace("import functools", "")
+    assert text.count("\n") == source.count("\n")
+    assert name == "V"
+    for dunder in added:
+        assert f"def {dunder}(self, other: V) -> bool:" in block
+    assert f"def {absent}(" not in block
+    assert "self == other" in block
+
+
+def test_total_ordering_without_eq_compares_identity() -> None:
+    source = "from functools import total_ordering\n@total_ordering\nclass V:\n    def __lt__(self, o): ...\n"
+    text, [(_, block)] = python_rewrites(source)
+    assert "self is other" in block
+    assert text.splitlines()[0] == "pass"
+    assert "total_ordering" not in text
+
+
+def test_total_ordering_takes_its_root_from_a_base() -> None:
+    source = (
+        "from functools import total_ordering\n"
+        "class B:\n    def __lt__(self, o): ...\n"
+        "@total_ordering\nclass V(B): ...\n"
+    )
+    _, blocks = python_rewrites(source)
+    block = dict(blocks)["V"]
+    assert "def __le__(self, other: V)" in block
+    assert "def __ge__(self, other: V)" in block
+    assert "def __lt__(" not in block
+
+
+def test_the_total_ordering_import_loses_only_its_name() -> None:
+    text = _rewritten(
+        "from functools import partial, total_ordering as to\n@to\nclass V: ...\n"
+    )
+    assert text.splitlines()[0] == "from functools import partial"
+    assert "@" not in text
+
+
+def test_total_ordering_that_cannot_be_expressed_is_refused() -> None:
+    nested = (
+        "from functools import total_ordering\n"
+        "def make():\n    @total_ordering\n    class V:\n"
+        "        def __lt__(self, o): ...\n    return V\n"
+    )
+    [(line, message)] = python_rewrite_refusals(nested)
+    assert line == 3 and "not at module level" in message
+    empty = "from functools import total_ordering\n@total_ordering\nclass V: ...\n"
+    [(line, message)] = python_rewrite_refusals(empty)
+    assert line == 3 and "one of __lt__" in message
+
+
+def test_a_lambda_default_that_is_not_a_literal_is_bound_by_a_call() -> None:
+    assert (
+        _rewritten("fs = [lambda x, k=k: x + k for k in range(3)]\n")
+        == "fs = [(lambda k: lambda x: x + k)(k) for k in range(3)]\n"
+    )
+    assert (
+        _rewritten("g = lambda a, b=1, *r, c=k, **kw: a\n")
+        == "g = (lambda c: lambda a, b=1, *r, **kw: a)(k)\n"
+    )
+    # A default after a bound one is bound too, so a positional call keeps
+    # meaning what it did.
+    assert (
+        _rewritten("g = lambda a, b=f(), c=2: a\n")
+        == "g = (lambda b, c: lambda a: a)(f(), 2)\n"
+    )
+    assert _rewritten("lambda: 0\n") == "lambda: 0\n"
+    assert _rewritten("g = lambda a, b=2, c=-1, d=None: a\n") == (
+        "g = lambda a, b=2, c=-1, d=None: a\n"
+    )
+
+
+def test_the_rewrites_leave_a_module_with_none_of_them_unchanged() -> None:
+    source = "class A:\n    x: int = 1\n\nd = {'a': 1}\ns = f'{d}'\nz = zip(d, d)\n"
+    assert python_rewrites(source) == (source, [])
+    assert python_rewrite_refusals(source) == []
+
+
+def test_transform_source_lines_applies_the_rewrites_and_appends_the_ordering() -> None:
+    source = _LT_ONLY + "x = {**a, **b}\nclass E(Exception): ...\n"
+    text, origin = transform_source_lines(source)
+    assert "x = (a | b)" in text
+    assert "class E(Static[Exception]): pass" in text
+    assert "@extend\nclass V:" in text
+    assert len(origin) == text.count("\n") - PRELUDE.count("\n")
+    assert origin[-1] == 2  # the appended methods map to their class
+
+
+# ---------------------------------------------------------------------------
+# __exit__ parameters (#435) and tables of functions (#436)
+# ---------------------------------------------------------------------------
+
+
+def _line_stable(source: str, text: str) -> None:
+    assert len(text.splitlines()) == len(source.splitlines())
+    ast.parse(text)
+
+
+def test_exit_parameters_get_a_none_default_and_lose_their_annotation() -> None:
+    source = (
+        "class C:\n"
+        "    def __exit__(\n"
+        "        self,\n"
+        "        exc_type: type[BaseException] | None,\n"
+        "        exc: BaseException | None,\n"
+        "        tb: TracebackType | None,\n"
+        "    ) -> bool | None:\n"
+        "        if exc_type is not None:\n"
+        "            return False\n"
+    )
+    text, _ = python_rewrites(source)
+    _line_stable(source, text)
+    # type[...] and TracebackType are NoneType in Codon: dropped.  An exception
+    # annotation stays, so `if exc is not None:` is still compiled.
+    assert "exc_type=None," in text and "tb=None," in text
+    assert "exc: BaseException | None = None," in text
+    assert "type[BaseException]" not in text and "TracebackType" not in text
+    assert "if exc_type is not None:" in text
+
+
+def test_exit_exception_annotations_are_kept_as_optional() -> None:
+    source = (
+        "class C:\n"
+        "    def __exit__(self, t, e: Optional[Exception], b: 'BaseException', "
+        "m: ValueError | None = None, n: Exception | None = None) -> None:\n"
+        "        pass\n"
+    )
+    text, _ = python_rewrites(source)
+    assert "e: Exception | None = None," in text
+    assert "b: BaseException | None = None," in text
+    assert "m = None" in text  # any other annotation goes
+    assert "n: Exception | None = None)" in text
+    again, _ = python_rewrites(text)
+    assert again == text
+
+
+def test_exit_parameters_with_a_default_are_kept() -> None:
+    source = (
+        "class C:\n"
+        "    def __exit__(self, et, ev: object | None = None, flag: bool = True) -> None:\n"
+        "        pass\n"
+        "    def __exit__2(self, *args: object) -> None:\n"
+        "        pass\n"
+    )
+    text, _ = python_rewrites(source)
+    assert "(self, et=None, ev = None, flag: bool = True)" in text
+    assert "*args: object" in text
+
+
+def test_exit_outside_a_class_is_left_alone() -> None:
+    source = "def __exit__(self, a, b):\n    pass\n"
+    assert python_rewrites(source) == (source, [])
+
+
+def test_a_table_of_functions_is_wrapped_in_the_annotated_callable() -> None:
+    source = (
+        "import helpers\n"
+        "def f(k):\n"
+        "    fs: list[Callable[[int], int]] = [inc, helpers.dbl, lambda x: x + 1]\n"
+        '    d: Dict[str, Callable[[int], int]] = {"a": inc, "b": lambda x: x}\n'
+        "    return fs, d\n"
+    )
+    text, _ = python_rewrites(source)
+    _line_stable(source, text)
+    wrap = "Callable[Tuple[int], int]"
+    assert f"[{wrap}(inc), {wrap}(helpers.dbl), {wrap}(lambda x: x + 1)]" in text
+    assert f'{{"a": {wrap}(inc), "b": {wrap}(lambda x: x)}}' in text
+
+
+def test_a_returned_table_and_a_nested_one_are_wrapped() -> None:
+    source = (
+        "def f() -> dict[str, list[Callable[[float, str], None]]]:\n"
+        '    return {"a": [g, h], "b": [g]}\n'
+    )
+    text, _ = python_rewrites(source)
+    wrap = "Callable[Tuple[float, str], None]"
+    assert f'{{"a": [{wrap}(g), {wrap}(h)], "b": [{wrap}(g)]}}' in text
+
+
+def test_a_rewritten_table_is_idempotent_and_keeps_inner_rewrites() -> None:
+    source = (
+        "def f():\n"
+        "    fs: list[Callable[[int], int]] = [lambda x, k=len('a'): x + k, g]\n"
+    )
+    text, _ = python_rewrites(source)
+    again, _ = python_rewrites(text)
+    assert again == text
+    assert "(lambda k: lambda x: x + k)(len('a'))" in text
+    assert "Callable[Tuple[int], int](" in text
+
+
+def test_what_a_table_does_not_cover_is_left_alone() -> None:
+    cases = [
+        # not annotated, a class attribute, a bound method, a capture
+        "fs = [inc, dbl]\n",
+        "class C:\n    fs: list[Callable[[int], int]] = [inc, dbl]\n",
+        "def f(o):\n    fs: list[Callable[[int], int]] = [o.inc, o.dbl]\n",
+        "def f(k):\n    fs: list[Callable[[int], int]] = [lambda x: x + k]\n",
+        # a set (a Callable has no __hash__ in Codon)
+        "fs: set[Callable[[int], int]] = {inc}\n",
+        # a signature Codon cannot express
+        "fs: list[Callable[..., int]] = [inc, dbl]\n",
+        "fs: list[Callable[[Any], int]] = [inc, dbl]\n",
+    ]
+    for source in cases:
+        assert python_rewrites(source) == (source, []), source
+
+
+# -- a class constant read in the class scope (#433) --------------------------
+
+
+def test_a_class_constant_in_another_class_attribute_is_qualified() -> None:
+    assert _rewritten(
+        """
+        class H:
+            LIMIT = 5
+            DOUBLE = LIMIT * 2
+            TABLE: list[int] = [LIMIT, LIMIT + 1]
+            STEP: Final = 3
+            TRIPLE: int = STEP * 3
+        """
+    ) == (
+        "\nclass H:\n    LIMIT = 5\n    DOUBLE = H.LIMIT * 2\n"
+        "    TABLE: list[int] = [H.LIMIT, H.LIMIT + 1]\n"
+        "    STEP: Final = 3\n    TRIPLE: int = H.STEP * 3\n"
+    )
+
+
+def test_a_class_constant_in_a_default_or_decorator_is_qualified() -> None:
+    text = _rewritten(
+        """
+        class H:
+            LIMIT = 5
+            @register(LIMIT)
+            def f(self, n: int = LIMIT, *, m: int = LIMIT) -> int:
+                return n
+            @staticmethod
+            def g(LIMIT=LIMIT):
+                return LIMIT
+        """
+    )
+    assert "@register(H.LIMIT)" in text
+    assert "def f(self, n: int = H.LIMIT, *, m: int = H.LIMIT)" in text
+    assert "def g(LIMIT=H.LIMIT):\n        return LIMIT" in text  # body untouched
+
+
+def test_a_dataclass_field_default_is_qualified() -> None:
+    text = _rewritten(
+        """
+        @dataclass
+        class D:
+            LIM = 5
+            x: int = LIM
+            y: list[int] = field(default_factory=lambda: [LIM])
+        """
+    )
+    assert "x: int = D.LIM" in text
+    assert "lambda: [LIM]" in text  # a lambda body does not see the class
+
+
+def test_a_method_body_reads_the_module_global() -> None:
+    source = (
+        "LIMIT = 9\nclass H:\n    LIMIT = 5\n    def f(self):\n"
+        "        return LIMIT + [LIMIT for _ in range(LIMIT)][0]\n"
+    )
+    assert _rewritten(source) == source
+
+
+def test_a_comprehension_sees_the_class_scope_only_in_its_first_iterable() -> None:
+    assert _rewritten(
+        """
+        class H:
+            N = 3
+            XS = [N for _ in range(N)]
+            YS = {k: N for k in range(N) if k < N}
+        """
+    ) == (
+        "\nclass H:\n    N = 3\n    XS = [N for _ in range(H.N)]\n"
+        "    YS = {k: N for k in range(H.N) if k < N}\n"
+    )
+
+
+def test_a_lambda_default_is_in_the_class_scope_its_body_is_not() -> None:
+    text = _rewritten("class H:\n    K = 2\n    F = lambda x, k=K: x + K\n")
+    assert text == ("class H:\n    K = 2\n    F = (lambda k: lambda x: x + K)(H.K)\n")
+
+
+def test_only_a_name_bound_earlier_in_the_body_is_qualified() -> None:
+    source = "LIMIT = 9\nclass H:\n    A = LIMIT\n    LIMIT = 5\n    B = LIMIT\n"
+    # A reads the global (LIMIT is not bound yet), B the class attribute; LIMIT
+    # is assigned after A reads it, but A does not read it.
+    assert _rewritten(source) == (
+        "LIMIT = 9\nclass H:\n    A = LIMIT\n    LIMIT = 5\n    B = H.LIMIT\n"
+    )
+
+
+def test_a_name_that_is_not_an_assigned_constant_is_left_alone() -> None:
+    source = (
+        "class H:\n"
+        "    @property\n    def x(self): ...\n"
+        "    @x.setter\n    def x(self, v): ...\n"
+        "    class In: ...\n    Y = In\n"
+        "    if True:\n        C = 1\n    D = C\n"
+        "    for i in range(2):\n        pass\n    E = i\n"
+    )
+    assert "H." not in _rewritten(source)
+
+
+def test_a_nested_class_sees_only_its_own_body() -> None:
+    text = _rewritten(
+        """
+        class O:
+            A = 1
+            class In:
+                B = A
+                C = 2
+                D = C
+                def f(self, x=C, y=A): ...
+            E = A
+        """
+    )
+    assert "B = A\n" in text  # the outer A is no name of the inner body
+    assert "D = O.In.C" in text
+    assert "def f(self, x=O.In.C, y=A)" in text
+    assert "E = O.A" in text
+
+
+def test_a_shadowing_parameter_or_comprehension_target_is_not_qualified() -> None:
+    text = _rewritten(
+        """
+        class H:
+            LIMIT = 5
+            F = lambda LIMIT=LIMIT: LIMIT
+            XS = [LIMIT for LIMIT in range(3)]
+            def f(self, LIMIT=LIMIT):
+                return LIMIT
+        """
+    )
+    assert "(lambda LIMIT: lambda: LIMIT)(H.LIMIT)" in text
+    assert "XS = [LIMIT for LIMIT in range(3)]" in text
+    assert "def f(self, LIMIT=H.LIMIT):\n        return LIMIT" in text
+
+
+def test_class_constants_keep_every_line_in_place() -> None:
+    source = (
+        "class H:\n    A = 1\n    B = (\n        A\n        + A\n    )\n"
+        "    def f(\n        self,\n        n=A,\n    ): ...\n"
+    )
+    text = _rewritten(source)
+    assert text.count("\n") == source.count("\n")
+    assert "        H.A\n        + H.A\n" in text
+    assert "        n=H.A,\n" in text
+
+
+def test_an_enum_member_read_in_its_body_is_its_value() -> None:
+    text = _rewritten(
+        """
+        class E(enum.IntEnum):
+            A = 1
+            B = A
+            _K = 3
+            C = _K
+        """
+    )
+    assert "B = 1" in text  # an alias of A, as in Python
+    assert "C = E._K" in text  # not a member: an attribute
+
+
+def test_a_class_constant_that_cannot_be_qualified_is_refused() -> None:
+    nested = "def make():\n    class L:\n        Q = 1\n        R = Q\n"
+    [(line, message)] = python_rewrite_refusals(nested)
+    assert line == 4 and "defined in a function" in message
+    again = "class H:\n    X = 1\n    Y = X\n    X = 2\n"
+    [(line, message)] = python_rewrite_refusals(again)
+    assert line == 3 and "assigned again later" in message
+    auto = "class E(enum.Enum):\n    A = enum.auto()\n    B = A\n"
+    [(line, message)] = python_rewrite_refusals(auto)
+    assert line == 3 and "write the value" in message
+
+
+def test_an_annotated_literal_read_in_the_class_scope_is_written_as_its_value() -> None:
+    # Codon makes `LIMIT: int = 5` a field of the instance, not an attribute
+    # of the class, so there is nothing to qualify the read with: Python reads
+    # the literal the body bound, and that is written in its place.
+    source = (
+        "class H:\n    LIMIT: int = 5\n    NEG: Final[int] = -2\n"
+        "    def f(self, n: int = LIMIT, m: int = NEG ** 2): ...\n"
+        "    X: int = NEG\n"
+    )
+    text = python_rewrites(source)[0]
+    assert "n: int = 5, m: int = (-2) ** 2" in text and "X: int = -2" in text
+    assert python_rewrite_refusals(source) == []
+    # A value the check cannot write, or a second binding, is refused.
+    computed = (
+        "class H:\n    LIMIT: int = 2 * 3\n    def f(self, n: int = LIMIT): ...\n"
+    )
+    [(line, message)] = python_rewrite_refusals(computed)
+    assert line == 3 and "Final" in message
+    again = "class H:\n    X: int = 1\n    Y = X\n    X: int = 2\n"
+    [(line, message)] = python_rewrite_refusals(again)
+    assert line == 3 and "assigned again later" in message
+    # A later plain assignment replaces the annotated value for the next read.
+    plain = "class H:\n    X: int = 1\n    X = 2\n    Y = X\n"
+    assert "Y = H.X" in python_rewrites(plain)[0]
+    final = "from typing import Final\nclass H:\n    LIMIT: Final = 5\n    X = LIMIT\n"
+    assert python_rewrite_refusals(final) == []
+
+
+def test_a_negative_enum_alias_keeps_the_literal_of_its_member() -> None:
+    source = "class E(enum.IntEnum):\n    A = -1\n    B = A\n"
+    assert "B = -1\n" in python_rewrites(source)[0]
+
+
+def test_a_namedtuple_field_default_reading_a_class_constant_is_refused() -> None:
+    source = (
+        "class P(NamedTuple):\n    LIM = 5\n    x: int = LIM\n"
+        "    DOUBLE = LIM * 2\n    def f(self, n: int = LIM): ...\n"
+    )
+    [(line, message)] = python_rewrite_refusals(source)
+    assert line == 3 and "NamedTuple" in message
+    text = python_rewrites(source)[0]
+    assert "DOUBLE = P.LIM * 2" in text and "n: int = P.LIM" in text
+
+
+def test_a_class_without_a_constant_read_is_unchanged() -> None:
+    source = (
+        "class H:\n    A = 1\n    B = 2\n    def f(self, n=1): return self.A\n"
+        "    C = [i for i in range(3)]\n"
+    )
+    assert python_rewrites(source) == (source, [])
+    assert python_rewrite_refusals(source) == []
+
+
+def test_class_constants_compose_with_the_other_rewrites() -> None:
+    source = (
+        "from dataclasses import dataclass\n"
+        "from functools import total_ordering\n"
+        "@total_ordering\n@dataclass\nclass V:\n    N = 2\n    x: int = N\n"
+        "    def __lt__(self, o): ...\n"
+        "    def f(self, a=N): return '{}'.format(a)\n"
+    )
+    text, [(name, block)] = python_rewrites(source)
+    assert "x: int = V.N" in text and "a=V.N" in text and name == "V"
+    assert "total_ordering" not in text and 'f"{a}"' in text

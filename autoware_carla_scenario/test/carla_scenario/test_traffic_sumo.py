@@ -20,13 +20,19 @@ import pytest
 
 from autoware_carla_scenario.constants import EGO_ROLE_NAME
 from autoware_carla_scenario.traffic import (
+    DrivenEntity,
     LaneChangeDirection,
+    SimulationFidelity,
     TrafficContext,
     TurnDirection,
     available_backends,
     build_backend,
 )
-from autoware_carla_scenario.traffic.sumo.config import SumoBackendConfig
+from autoware_carla_scenario.traffic.fidelity import MesoscopicConfig
+from autoware_carla_scenario.traffic.sumo.config import (
+    PedestrianConfig,
+    SumoBackendConfig,
+)
 from autoware_carla_scenario.traffic.sumo.geometry import (
     Pose2D,
     carla_to_sumo,
@@ -212,6 +218,9 @@ class _FakeActor:
     def disable_constant_velocity(self) -> None:
         self.constant_velocity = None
 
+    def apply_control(self, control: Any) -> None:
+        self.control = control
+
     def destroy(self) -> bool:
         self.destroyed = True
         return True
@@ -291,12 +300,13 @@ class _Entity:
         self.role_name = role_name
 
 
-def _crossroads(directory: Path, *, sidewalks: bool) -> Path:
+def _crossroads(directory: Path, *, sidewalks: bool, signals: bool = False) -> Path:
     """A four-arm crossroads, two lanes each way, as OpenDRIVE.
 
     Arm 0 comes from the west, arm 1 from the east, 2 from OpenDRIVE's south
     and 3 from its north; each ends 15 m from the centre.  With *sidewalks*,
-    a 2 m footway runs outside each carriageway.
+    a 2 m footway runs outside each carriageway.  With *signals*, a traffic
+    light controls the two lanes of each arm into the junction.
     """
     import roadgen
 
@@ -329,6 +339,13 @@ def _crossroads(directory: Path, *, sidewalks: bool) -> Path:
     junction = road_map.add_junction("x")
     for a, b in itertools.combinations(arms, 2):
         road_map.connect(a, b, junction=junction, ends=("end", "end"))
+    if signals:
+        first = 3 if sidewalks else 2  # the lanes into the junction
+        for arm in arms:
+            entering = [arm.lane(first), arm.lane(first + 1)]
+            light = road_map.add_traffic_light(entering[0], end="end")
+            stop = road_map.add_stop_line(entering[0], end="end")
+            road_map.add_traffic_light_rule([light], entering, stop_line=stop)
     path = directory / "crossroads.xodr"
     road_map.export_opendrive(str(path))
     return path
@@ -340,6 +357,14 @@ def crossroads(tmp_path_factory: pytest.TempPathFactory) -> Path:
     if not _HAS_SUMO:
         pytest.skip("the `sumo` extra is not installed")
     return _crossroads(tmp_path_factory.mktemp("sumo"), sidewalks=False)
+
+
+@pytest.fixture(scope="module")
+def signalled_crossroads(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """The crossroads with footways and a traffic light on every arm."""
+    if not _HAS_SUMO:
+        pytest.skip("the `sumo` extra is not installed")
+    return _crossroads(tmp_path_factory.mktemp("sumo"), sidewalks=True, signals=True)
 
 
 @pytest.fixture(scope="module")
@@ -369,6 +394,7 @@ def _prepared(
     from autoware_carla_scenario.traffic.sumo.backend import SumoTrafficBackend
     from autoware_carla_scenario.traffic.sumo.config import AmbientTrafficConfig
 
+    vehicles = options.pop("vehicles", None)
     config = SumoBackendConfig(
         scenario_vehicles=options.pop("scenario_vehicles", "sumo"),
         ambient=AmbientTrafficConfig(
@@ -380,7 +406,7 @@ def _prepared(
         cache_dir=str(tmp_path / "cache"),
         **options,
     )
-    backend = SumoTrafficBackend(config)
+    backend = SumoTrafficBackend(config, vehicles=vehicles)
     backend.prepare(
         TrafficContext(
             client=_CLIENT.get("client"),
@@ -538,6 +564,29 @@ def test_manoeuvres_become_sumo_commands(crossroads: Path, tmp_path: Path) -> No
 
 
 @needs_sumo
+def test_a_construction_zone_closes_and_reopens_the_lane(
+    crossroads: Path, tmp_path: Path
+) -> None:
+    """TeraSim's full-lane construction zone: setDisallowed, then the lane's
+    own permissions back (#402)."""
+    backend, world, _npc, _ego = _prepared(crossroads, tmp_path)
+    tc = backend._traci
+    try:
+        lane = backend.close_lane(world, _carla_transform(-60.0, 5.25, 0.0))
+        assert lane is not None
+        assert "passenger" in tc.lane.getDisallowed(lane)
+        # Asked again for the same lane: the one closure.
+        assert backend.close_lane(world, _carla_transform(-58.0, 5.25, 0.0)) == lane
+        # The lane beside stays open: a closed lane is still matched as itself.
+        assert "passenger" not in tc.lane.getDisallowed("0.fwd_1")
+        backend.reopen_lane(world, lane)
+        assert "passenger" not in tc.lane.getDisallowed(lane)
+        backend.reopen_lane(world, lane)  # and saying it twice is harmless
+    finally:
+        backend.close()
+
+
+@needs_sumo
 def test_ambient_traffic_is_mirrored_into_carla_and_cleaned_up(
     crossroads: Path, tmp_path: Path
 ) -> None:
@@ -558,6 +607,58 @@ def test_ambient_traffic_is_mirrored_into_carla_and_cleaned_up(
         backend.close()
     assert all(a.destroyed for a in world.spawned)
     assert backend._ambient == {} and backend._driven == {}
+
+
+@needs_sumo
+def test_an_ambient_vehicle_can_be_taken_over_and_handed_back(
+    crossroads: Path, tmp_path: Path
+) -> None:
+    """An adversity takes an ambient vehicle's mirror over (#417): SUMO stops
+    following it, keeps it published from CARLA, and drives it again once
+    handed back."""
+    backend, world, _npc, _ego = _prepared(
+        crossroads, tmp_path, period_s=1.0, max_vehicles=3
+    )
+    try:
+        for i in range(200):
+            backend.tick(world, i * 0.05)
+        offered = backend.background_actors(world)
+        assert offered and all(name.startswith("sumo:") for name in offered)
+        name, actor = next(iter(offered.items()))
+        sumo_id = name[len("sumo:") :]
+        backend.release_actor(world, actor)
+        assert sumo_id not in backend._ambient and backend._external[sumo_id] is actor
+        assert name not in backend.background_actors(world)
+        held = actor.transform.location.x
+        for i in range(20):
+            backend.tick(world, (200 + i) * 0.05)
+        # Neither followed nor removed: the pose it has is CARLA's own.
+        assert not actor.destroyed
+        assert actor.transform.location.x == pytest.approx(held)
+        backend.resume_actor(world, actor)
+        assert sumo_id not in backend._external
+        assert backend._ambient.get(sumo_id) is actor
+        backend.resume_actor(world, actor)  # and saying it twice is harmless
+    finally:
+        backend.close()
+    assert actor.destroyed
+
+
+@needs_sumo
+def test_a_taken_over_ambient_vehicle_is_cleaned_up_at_close(
+    crossroads: Path, tmp_path: Path
+) -> None:
+    backend, world, _npc, _ego = _prepared(
+        crossroads, tmp_path, period_s=1.0, max_vehicles=3
+    )
+    try:
+        for i in range(200):
+            backend.tick(world, i * 0.05)
+        _name, actor = next(iter(backend.background_actors(world).items()))
+        backend.release_actor(world, actor)
+    finally:
+        backend.close()
+    assert actor.destroyed and backend._handed_ambient == {}
 
 
 @needs_sumo
@@ -706,6 +807,184 @@ def test_background_vehicles_are_sumo_traffic_mirrored_into_carla(
         assert mirror.destroyed
     finally:
         backend.close()
+
+
+@needs_sumo
+def test_sumo_traffic_drives_no_faster_than_its_drivers_see(
+    crossroads: Path, tmp_path: Path
+) -> None:
+    from autoware_carla_scenario.visibility import (
+        forget_visibility,
+        set_world_visibility,
+        sight_speed,
+    )
+
+    forget_visibility()
+    backend, world, _npc, _ego = _prepared(crossroads, tmp_path)
+    world.id = 11  # type: ignore[attr-defined]
+    tc = backend._traci
+    try:
+        handle = backend.spawn_background(
+            world, _carla_transform(-60.0, 5.25, 0.0), speed_kmh=60.0
+        )
+        assert handle is not None
+        backend.tick(world, 0.0)
+        assert tc.vehicle.getMaxSpeed(handle) == pytest.approx(60.0 / 3.6)
+
+        # Fog: 20 m, so held to what a car stops from within 20 m.
+        set_world_visibility(11, 20.0)
+        backend.tick(world, 0.05)
+        held = sight_speed(20.0, tc.vehicle.getDecel(handle), tc.vehicle.getTau(handle))
+        assert held < 60.0 / 3.6
+        assert tc.vehicle.getMaxSpeed(handle) == pytest.approx(held)
+        # The scenario's own vehicle is the scenario's.
+        (npc_id,) = backend._driven
+        assert tc.vehicle.getMaxSpeed(npc_id) > held
+        # A vehicle that departs in the fog is held to it too.
+        later = backend.spawn_background(
+            world, _carla_transform(-75.0, 1.75, 0.0), speed_kmh=60.0
+        )
+        assert later is not None
+        backend.tick(world, 0.1)
+        assert tc.vehicle.getMaxSpeed(later) == pytest.approx(held)
+        assert backend.describe()["visibility_m"] == 20.0
+
+        # The fog lifts: each gets its own speed back.
+        forget_visibility()
+        backend.tick(world, 0.15)
+        assert tc.vehicle.getMaxSpeed(handle) == pytest.approx(60.0 / 3.6)
+        assert tc.vehicle.getMaxSpeed(later) == pytest.approx(60.0 / 3.6)
+    finally:
+        backend.close()
+        forget_visibility()
+
+
+@needs_sumo
+def test_sumo_traffic_can_ignore_the_visibility(
+    crossroads: Path, tmp_path: Path
+) -> None:
+    from autoware_carla_scenario.visibility import (
+        forget_visibility,
+        set_world_visibility,
+    )
+    from autoware_carla_scenario.traffic.parameters import VehicleParameters
+
+    backend, world, _npc, _ego = _prepared(
+        crossroads, tmp_path, vehicles=VehicleParameters(follow_visibility=False)
+    )
+    world.id = 12  # type: ignore[attr-defined]
+    tc = backend._traci
+    try:
+        handle = backend.spawn_background(
+            world, _carla_transform(-60.0, 5.25, 0.0), speed_kmh=60.0
+        )
+        assert handle is not None
+        set_world_visibility(12, 20.0)
+        backend.tick(world, 0.0)
+        backend.tick(world, 0.05)
+        assert tc.vehicle.getMaxSpeed(handle) == pytest.approx(60.0 / 3.6)
+    finally:
+        backend.close()
+        forget_visibility()
+
+
+@needs_sumo
+def test_sumo_drives_its_vehicles_with_the_traffic_parameters(
+    crossroads: Path, tmp_path: Path
+) -> None:
+    from autoware_carla_scenario.traffic.parameters import Spread, VehicleParameters
+    from autoware_carla_scenario.visibility import (
+        forget_visibility,
+        set_world_visibility,
+        sight_speed,
+    )
+
+    forget_visibility()
+    parameters = VehicleParameters(
+        speed_factor=Spread(0.5),
+        min_gap_m=Spread(4.0),
+        lane_changes=False,
+        accel=Spread(1.5),
+        decel=Spread(3.0),
+        reaction_time_s=Spread(2.0, 0.5),
+        imperfection=Spread(0.0),
+    )
+    backend, world, _npc, ego = _prepared(crossroads, tmp_path, vehicles=parameters)
+    world.id = 13  # type: ignore[attr-defined]
+    tc = backend._traci
+    try:
+        handle = backend.spawn_background(
+            world, _carla_transform(-60.0, 5.25, 0.0), speed_kmh=60.0
+        )
+        assert handle is not None
+        (npc_id,) = backend._driven
+        (ego_id,) = backend._external
+        backend.tick(world, 0.0)
+        for sumo_id in (handle, npc_id):
+            assert tc.vehicle.getMinGap(sumo_id) == pytest.approx(4.0)
+            assert tc.vehicle.getAccel(sumo_id) == pytest.approx(1.5)
+            assert tc.vehicle.getDecel(sumo_id) == pytest.approx(3.0)
+            assert tc.vehicle.getImperfection(sumo_id) == pytest.approx(0.0)
+            assert tc.vehicle.getLaneChangeMode(sumo_id) == 1537
+            assert tc.vehicle.getSpeedFactor(sumo_id) == pytest.approx(0.5)
+        # Each vehicle draws its own reaction time from the spread.
+        taus = [tc.vehicle.getTau(i) for i in (handle, npc_id)]
+        assert taus[0] != pytest.approx(taus[1])
+        assert all(0.5 < t < 3.5 for t in taus)
+        # Drawn once, as it departs: not again on the next step.
+        backend.tick(world, 0.05)
+        assert tc.vehicle.getTau(handle) == pytest.approx(taus[0])
+        # What CARLA's side drives is only placed in SUMO.
+        assert tc.vehicle.getTau(ego_id) == pytest.approx(1.0)
+        assert backend.describe()["vehicles"]["reaction_time_s"] == {
+            "mean": 2.0,
+            "std": 0.5,
+        }
+
+        # The sight speed is worked out from the vehicle's own braking and
+        # reaction.
+        set_world_visibility(13, 20.0)
+        backend.tick(world, 0.1)
+        assert tc.vehicle.getMaxSpeed(handle) == pytest.approx(
+            max(sight_speed(20.0, 3.0, taus[0]), 1.0)
+        )
+    finally:
+        backend.close()
+        forget_visibility()
+
+
+def test_follow_visibility_is_a_traffic_parameter_now() -> None:
+    with pytest.raises(ValueError, match="traffic.vehicles.follow_visibility"):
+        SumoBackendConfig.from_mapping({"follow_visibility": False})
+
+
+def test_sumo_refuses_the_traffic_managers_parameters() -> None:
+    from autoware_carla_scenario.traffic.parameters import (
+        Spread,
+        TrafficParameterError,
+        VehicleParameters,
+    )
+    from autoware_carla_scenario.traffic.sumo.backend import SumoTrafficBackend
+
+    with pytest.raises(
+        TrafficParameterError,
+        match="ignore_lights can only be used with the 'traffic_manager' backend",
+    ):
+        SumoTrafficBackend(vehicles=VehicleParameters(ignore_lights=Spread(0.5)))
+
+
+def test_sumo_hands_the_shared_parameters_to_its_traffic_manager() -> None:
+    from autoware_carla_scenario.traffic.parameters import Spread, VehicleParameters
+    from autoware_carla_scenario.traffic.sumo.backend import SumoTrafficBackend
+
+    backend = SumoTrafficBackend(
+        vehicles=VehicleParameters(
+            speed_factor=Spread(0.9), reaction_time_s=Spread(1.5)
+        )
+    )
+    assert backend.vehicle_parameters.reaction_time_s == Spread(1.5)
+    # The TrafficManager driving the scenario's vehicles gets what it can do.
+    assert backend._tm.vehicle_parameters == VehicleParameters(speed_factor=Spread(0.9))
 
 
 @needs_sumo
@@ -1036,6 +1315,7 @@ def test_carla_light_states_reach_sumo_as_typesafe_carla_reports_them() -> None:
 
     backend = SumoTrafficBackend.__new__(SumoTrafficBackend)
     backend._traci = SimpleNamespace(trafficlight=_Lights())
+    backend._crossing_links = {}
     backend._signals = {
         ("tls", 0): light(carla.TrafficLightState.Green),
         ("tls", 1): light(carla.TrafficLightState.Yellow),
@@ -1043,6 +1323,34 @@ def test_carla_light_states_reach_sumo_as_typesafe_carla_reports_them() -> None:
     }
     backend._signals_to_sumo()
     assert backend._traci.trafficlight.states["tls"] == "Gyrr"
+
+
+def test_a_crossing_walks_only_while_the_roads_it_crosses_are_red() -> None:
+    """A crossing's link has no CARLA light: it is green while every vehicle
+    link over a road it crosses is red, and red otherwise."""
+    import typesafe_carla.carla as carla
+
+    from autoware_carla_scenario.traffic.sumo.backend import SumoTrafficBackend
+
+    states = {"tls": "rrrrGG"}
+    lights = SimpleNamespace(
+        getRedYellowGreenState=lambda tls: states[tls],
+        setRedYellowGreenState=lambda tls, state: states.__setitem__(tls, state),
+    )
+    green = SimpleNamespace(get_state=lambda: int(carla.TrafficLightState.Green))
+    red = SimpleNamespace(get_state=lambda: int(carla.TrafficLightState.Red))
+    backend = SumoTrafficBackend.__new__(SumoTrafficBackend)
+    backend._traci = SimpleNamespace(trafficlight=lights)
+    # Links 0-1 drive over the road crossing 4 crosses, 2-3 over crossing 5's.
+    backend._crossing_links = {"tls": [(4, [0, 1]), (5, [2, 3])]}
+    backend._signals = {
+        ("tls", 0): green,
+        ("tls", 1): red,
+        ("tls", 2): red,
+        ("tls", 3): red,
+    }
+    backend._signals_to_sumo()
+    assert states["tls"] == "GrrrrG"
 
 
 def test_sumo_light_states_are_sent_to_carla_only_when_they_change() -> None:
@@ -1166,3 +1474,525 @@ def test_a_network_keeps_its_traces_whatever_its_map_is_called(
         path.name for path in network.net_file.parent.iterdir()
     )
     assert SignalTable.load(network) is not None
+
+
+# ---------------------------------------------------------------------------
+# Mesoscopic far traffic
+# ---------------------------------------------------------------------------
+
+
+class _LeavingEntity(DrivenEntity):
+    """A scenario vehicle that lets the backend take its actor away."""
+
+    def __init__(self, actor: _FakeActor, role_name: str) -> None:
+        self.actor: Any = actor
+        self.role_name = role_name
+
+    def _replace_actor(self, actor: Any) -> bool:
+        self.actor = actor
+        return True
+
+
+def _mesoscopic(
+    crossroads: Path, tmp_path: Path, **options: Any
+) -> tuple[Any, _FakeWorld, _LeavingEntity, _FakeActor]:
+    """A started backend whose NPC (SUMO's, and free to leave CARLA) drives
+    away east from an ego standing at the west end of arm 0."""
+    from autoware_carla_scenario.traffic.sumo.backend import SumoTrafficBackend
+    from autoware_carla_scenario.traffic.sumo.config import AmbientTrafficConfig
+
+    meso = {
+        "enabled": True,
+        "micro_radius_m": 40.0,
+        "meso_radius_m": 50.0,
+        "update_interval_s": 0.0,
+        "scenario_vehicles": True,
+        **options.pop("mesoscopic", {}),
+    }
+    ego_published = options.pop("ego_published", True)
+    config = SumoBackendConfig(
+        scenario_vehicles="sumo",
+        ambient=AmbientTrafficConfig(
+            enabled="period_s" in options, period_s=options.pop("period_s", None)
+        ),
+        traffic_light_authority="none",
+        warmup_s=options.pop("warmup_s", 0.0),
+        vehicle_control="teleport",
+        cache_dir=str(tmp_path / "cache"),
+        mesoscopic=MesoscopicConfig(**meso),
+        **options,
+    )
+    backend = SumoTrafficBackend(config)
+    backend.prepare(
+        TrafficContext(
+            xodr_path=crossroads,
+            fixed_delta_seconds=0.05,
+            random_seed=3,
+            output_dir=tmp_path / "out",
+        )
+    )
+    npc = _FakeActor(_carla_transform(-80.0, 5.25, 0.0), "npc", "vehicle.npc")
+    ego = _FakeActor(_carla_transform(-110.0, 1.75, 0.0), str(EGO_ROLE_NAME))
+    world = _FakeWorld([npc, ego])
+    entity = _LeavingEntity(npc, "npc")
+    backend.adopt(entity)
+    backend.adopt(_Entity(ego, str(EGO_ROLE_NAME)))
+    backend.start(world, skip_actor_ids={ego.id} if ego_published else ())
+    return backend, world, entity, ego
+
+
+def _tick_until(backend: Any, world: _FakeWorld, done: Any, ticks: int = 600) -> None:
+    for i in range(ticks):
+        backend.tick(world, i * 0.05)
+        if done():
+            return
+    raise AssertionError("never happened")
+
+
+@needs_sumo
+def test_a_far_vehicle_leaves_sumo_and_carla_and_comes_back_near(
+    crossroads: Path, tmp_path: Path
+) -> None:
+    backend, world, entity, ego = _mesoscopic(crossroads, tmp_path)
+    tc = backend._traci
+    npc = entity.actor
+    (sumo_id,) = backend._driven
+    try:
+        assert entity.simulation_fidelity is SimulationFidelity.MICROSCOPIC
+        # Driving east, away from the ego: more than 50 m off, it goes.
+        _tick_until(
+            backend,
+            world,
+            lambda: entity.simulation_fidelity is SimulationFidelity.MESOSCOPIC,
+        )
+        assert entity.actor is None and npc.destroyed
+        assert sumo_id not in tc.vehicle.getIDList() and sumo_id in backend._meso
+        assert backend.fidelity_census() == {"microscopic": 1, "mesoscopic": 1}
+        assert backend.fidelity_of(entity) is SimulationFidelity.MESOSCOPIC
+        # The queue model drives it on, east.
+        before = backend._meso_carla_pose(sumo_id, backend._now()).x
+        for i in range(40):
+            backend.tick(world, i * 0.05)
+        after = backend._meso_carla_pose(sumo_id, backend._now())
+        assert after.x > before + 5.0
+        assert after.y == pytest.approx(5.25, abs=2.0)  # an eastbound lane
+
+        # The ego comes near: it is back, in SUMO and as a new actor in CARLA.
+        ego.transform = _carla_transform(after.x - 20.0, 1.75, 0.0)
+        _tick_until(
+            backend,
+            world,
+            lambda: entity.simulation_fidelity is SimulationFidelity.MICROSCOPIC,
+            ticks=5,
+        )
+        back = entity.actor
+        assert back is not None and back in world.spawned
+        assert back.attributes["role_name"] == "npc"
+        assert backend._driven[sumo_id] is entity
+        assert sumo_id not in backend._meso
+        backend.tick(world, 0.0)
+        assert sumo_id in tc.vehicle.getIDList()
+        assert back.transform.location.x == pytest.approx(after.x, abs=15.0)
+    finally:
+        backend.close()
+
+
+@needs_sumo
+def test_a_mesoscopic_vehicle_takes_its_manoeuvres_as_far_as_it_can(
+    crossroads: Path, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    backend, world, entity, ego = _mesoscopic(crossroads, tmp_path)
+    (sumo_id,) = backend._driven
+    try:
+        _tick_until(
+            backend,
+            world,
+            lambda: entity.simulation_fidelity is SimulationFidelity.MESOSCOPIC,
+        )
+        backend.set_desired_speed(entity, world, 18.0)
+        assert backend._meso.vehicle(sumo_id).speed_cap == pytest.approx(5.0)
+        backend.change_lane(entity, world, LaneChangeDirection.LEFT)
+        assert "no lanes" in caplog.text
+        assert not backend.lane_change_finished(entity, world)
+
+        # An action that needs its actor has it at once, wherever it is.
+        assert backend.require_microscopic(entity, world)
+        assert entity.actor is not None
+        assert entity.simulation_fidelity is SimulationFidelity.MICROSCOPIC
+        backend.tick(world, 0.0)
+        assert backend._traci.vehicle.getSpeed(sumo_id) <= 5.0 + 0.1
+
+        # Released, CARLA drives it: published, and never mesoscopic again.
+        backend.release(entity, world)
+        assert backend._external[sumo_id] is entity.actor
+        for i in range(100):
+            backend.tick(world, i * 0.05)
+        assert entity.simulation_fidelity is SimulationFidelity.MICROSCOPIC
+    finally:
+        backend.close()
+    assert entity.simulation_fidelity is SimulationFidelity.MICROSCOPIC
+
+
+@needs_sumo
+def test_an_ego_sumo_drives_is_a_focus_point_too(
+    crossroads: Path, tmp_path: Path
+) -> None:
+    backend, world, entity, ego = _mesoscopic(crossroads, tmp_path, ego_published=False)
+    try:
+        assert backend._external == {} and len(backend._driven) == 2
+        ego_entity = next(e for e in backend._driven.values() if e.actor is ego)
+        backend.set_desired_speed(ego_entity, world, 0.0)
+        # The NPC, 30 m ahead of the ego, leaves once it is 50 m ahead.
+        _tick_until(
+            backend,
+            world,
+            lambda: entity.simulation_fidelity is SimulationFidelity.MESOSCOPIC,
+        )
+        # The ego itself never does: its entity keeps its actor.
+        assert not ego.destroyed and len(backend._driven) == 1
+    finally:
+        backend.close()
+
+
+@needs_sumo
+def test_the_scenarios_vehicles_stay_in_carla_unless_let_go(
+    crossroads: Path, tmp_path: Path
+) -> None:
+    backend, world, entity, _ego = _mesoscopic(
+        crossroads, tmp_path, mesoscopic={"scenario_vehicles": False}
+    )
+    try:
+        for i in range(300):
+            backend.tick(world, i * 0.05)
+        assert entity.simulation_fidelity is SimulationFidelity.MICROSCOPIC
+        assert entity.actor is not None and not entity.actor.destroyed
+        assert len(backend._meso) == 0
+    finally:
+        backend.close()
+
+
+@needs_sumo
+def test_only_the_traffic_near_the_ego_is_in_sumo_and_carla(
+    crossroads: Path, tmp_path: Path
+) -> None:
+    backend, world, _entity, ego = _mesoscopic(
+        crossroads, tmp_path, period_s=0.5, warmup_s=20.0
+    )
+    tc = backend._traci
+    try:
+        for i in range(100):
+            backend.tick(world, i * 0.05)
+        census = backend.fidelity_census()
+        assert census["mesoscopic"] > 0 and census["microscopic"] > 0
+        ego_pose = backend._carla_pose_to_sumo(ego)
+        ego_x, ego_y = ego_pose.x, ego_pose.y
+        own = set(backend._driven) | set(backend._external)
+        for sumo_id in tc.vehicle.getIDList():
+            if sumo_id not in own:
+                x, y = tc.vehicle.getPosition(sumo_id)
+                # 50 m, and what one decision's worth of driving adds to it.
+                assert math.hypot(x - ego_x, y - ego_y) < 55.0
+        alive = [a for a in world.spawned if not a.destroyed]
+        assert len(alive) == len([i for i in tc.vehicle.getIDList() if i not in own])
+    finally:
+        backend.close()
+    assert backend._meso is None
+
+
+# ---------------------------------------------------------------------------
+# SUMO's own pedestrians
+# ---------------------------------------------------------------------------
+
+
+def test_the_pedestrian_options_are_checked() -> None:
+    config = SumoBackendConfig.from_mapping(
+        {"pedestrians": {"enabled": True, "period_s": 2.0, "radius_m": 40.0}}
+    )
+    assert config.pedestrians.enabled and config.pedestrians.period() == 2.0
+    assert PedestrianConfig(persons_per_hour=1800).period() == pytest.approx(2.0)
+    assert not SumoBackendConfig().pedestrians.enabled
+    with pytest.raises(ValueError):
+        PedestrianConfig(radius_m=0.0)
+
+
+def _walking(
+    crossroads: Path,
+    tmp_path: Path,
+    walkers: Any = None,
+    **pedestrians: Any,
+) -> tuple[Any, _FakeWorld, _FakeActor]:
+    """A started backend generating SUMO pedestrians, with an ego published
+    from the west arm; *walkers* are its pedestrian parameters."""
+    from autoware_carla_scenario.traffic.sumo.backend import SumoTrafficBackend
+    from autoware_carla_scenario.traffic.sumo.config import AmbientTrafficConfig
+
+    config = SumoBackendConfig(
+        traffic_light_authority="none",
+        warmup_s=pedestrians.pop("warmup_s", 0.0),
+        vehicle_control="teleport",
+        cache_dir=str(tmp_path / "cache"),
+        ambient=AmbientTrafficConfig(enabled=False),
+        pedestrians=PedestrianConfig(enabled=True, period_s=0.5, **pedestrians),
+    )
+    backend = SumoTrafficBackend(config, pedestrians=walkers)
+    backend.prepare(
+        TrafficContext(
+            xodr_path=crossroads,
+            fixed_delta_seconds=0.05,
+            random_seed=3,
+            output_dir=tmp_path / "out",
+        )
+    )
+    ego = _FakeActor(_carla_transform(-100.0, 1.75, 0.0), str(EGO_ROLE_NAME))
+    world = _FakeWorld([ego])
+    backend.adopt(_Entity(ego, str(EGO_ROLE_NAME)))
+    backend.start(world, skip_actor_ids={ego.id})
+    return backend, world, ego
+
+
+def _mirrors(world: _FakeWorld) -> list[_FakeActor]:
+    return [
+        a
+        for a in world.spawned
+        if a.attributes["role_name"].startswith("sumo:sumoped") and not a.destroyed
+    ]
+
+
+@needs_sumo
+def test_sumos_pedestrians_walk_in_carla_as_walkers(
+    crossroads_with_sidewalks: Path, tmp_path: Path
+) -> None:
+    backend, world, _ego = _walking(crossroads_with_sidewalks, tmp_path, warmup_s=20.0)
+    tc = backend._traci
+    try:
+        assert (tmp_path / "out" / "sumo" / "pedestrians.rou.xml").is_file()
+        for i in range(40):
+            backend.tick(world, i * 0.05)
+        mirrors = _mirrors(world)
+        assert mirrors and len(mirrors) == len(backend._persons)
+        for person, walker in backend._persons.items():
+            x, y = tc.person.getPosition(person)
+            location = walker.transform.location
+            # Where SUMO has it (CARLA's y mirrored), a step behind at most.
+            assert math.hypot(location.x - x, location.y + y) < 0.5
+        walking = [w for w in mirrors if getattr(w, "control", None) is not None]
+        assert any(w.control.speed > 0.5 for w in walking)
+
+        # A mirror is CARLA's walker, but not one to publish back into SUMO.
+        for walker in mirrors:
+            walker.type_id = "walker.pedestrian.0001"
+        world.actors.extend(mirrors)
+        backend.tick(world, 2.0)
+        assert backend._walkers == {}
+    finally:
+        backend.close()
+    assert _mirrors(world) == []
+    assert backend._persons == {}
+
+
+@needs_sumo
+def test_only_the_pedestrians_near_the_ego_are_in_carla(
+    crossroads_with_sidewalks: Path, tmp_path: Path
+) -> None:
+    backend, world, ego = _walking(
+        crossroads_with_sidewalks, tmp_path, warmup_s=60.0, radius_m=40.0
+    )
+    tc = backend._traci
+    try:
+        for i in range(100):
+            backend.tick(world, i * 0.05)
+        assert backend._persons, "no pedestrian came near"
+        assert len(backend._persons) < tc.person.getIDCount()
+        focus = backend._carla_pose_to_sumo(ego)
+        for person in backend._persons:
+            x, y = tc.person.getPosition(person)
+            assert math.hypot(x - focus.x, y - focus.y) <= 50.0 + 1.0
+        limited, world2, _ = _walking(
+            crossroads_with_sidewalks,
+            tmp_path / "limited",
+            warmup_s=60.0,
+            max_persons=1,
+        )
+        try:
+            for i in range(10):
+                limited.tick(world2, i * 0.05)
+            assert len(limited._persons) == 1
+        finally:
+            limited.close()
+    finally:
+        backend.close()
+
+
+# ---------------------------------------------------------------------------
+# Pedestrian crossings
+# ---------------------------------------------------------------------------
+
+
+def _vehicle_links(net_file: Path) -> list[tuple[str, int, str, str]]:
+    import sumolib
+
+    net = sumolib.net.readNet(str(net_file), withInternal=True)
+    return sorted(
+        (tls.getID(), index, in_lane.getID(), out_lane.getID())
+        for tls in net.getTrafficLights()
+        for in_lane, out_lane, index in tls.getConnections()
+        if out_lane.getEdge().getFunction() == ""
+    )
+
+
+@needs_sumo
+def test_the_network_has_crossings_and_walking_areas(
+    signalled_crossroads: Path, tmp_path: Path
+) -> None:
+    import sumolib
+
+    from autoware_carla_scenario.traffic.sumo.network import (
+        build_network,
+        crossing_edges,
+    )
+
+    opendrive = signalled_crossroads.read_text()
+    plain = build_network(opendrive, tmp_path / "cache")
+    walking = build_network(opendrive, tmp_path / "cache", pedestrian_crossings=True)
+    assert plain.net_file != walking.net_file  # cached apart
+    assert crossing_edges(plain.net_file) == {}
+    crossings = crossing_edges(walking.net_file)
+    assert crossings and all(crossings.values())
+    net = sumolib.net.readNet(str(walking.net_file), withInternal=True)
+    assert any(e.getFunction() == "walkingarea" for e in net.getEdges())
+    # The vehicle links keep the indices CARLA's lights are matched to.
+    assert _vehicle_links(walking.net_file) == _vehicle_links(plain.net_file)
+
+
+@needs_sumo
+def test_each_signalled_crossing_waits_for_the_traffic_over_its_road(
+    signalled_crossroads: Path, tmp_path: Path
+) -> None:
+    from autoware_carla_scenario.traffic.sumo.backend import SumoTrafficBackend
+    from autoware_carla_scenario.traffic.sumo.config import AmbientTrafficConfig
+
+    backend = SumoTrafficBackend(
+        SumoBackendConfig(
+            warmup_s=0.0,
+            vehicle_control="teleport",
+            cache_dir=str(tmp_path / "cache"),
+            ambient=AmbientTrafficConfig(enabled=False),
+        )
+    )
+    backend.prepare(
+        TrafficContext(
+            xodr_path=signalled_crossroads,
+            fixed_delta_seconds=0.05,
+            random_seed=3,
+            output_dir=tmp_path / "out",
+        )
+    )
+    try:
+        backend.start(_FakeWorld([]))
+        ((tls, links),) = backend._crossing_links.items()
+        assert backend._network is not None
+        vehicle_count = len(_vehicle_links(backend._network.net_file))
+        assert len(links) >= 4
+        for index, foes in links:
+            # After the vehicle links, and waiting for some of them only.
+            assert index >= vehicle_count
+            assert foes and all(foe < vehicle_count for foe in foes)
+            assert len(foes) < vehicle_count
+        assert tls in backend._traci.trafficlight.getIDList()
+    finally:
+        backend.close()
+    assert backend._crossing_links == {}
+
+
+@needs_sumo
+def test_sumos_pedestrians_walk_with_the_pedestrian_parameters(
+    crossroads_with_sidewalks: Path, tmp_path: Path
+) -> None:
+    from autoware_carla_scenario.traffic.parameters import PedestrianParameters, Spread
+
+    backend, world, _ego = _walking(
+        crossroads_with_sidewalks,
+        tmp_path,
+        PedestrianParameters(walking_speed_mps=Spread(1.2, 0.3), min_gap_m=Spread(0.6)),
+    )
+    tc = backend._traci
+    try:
+        for i in range(200):
+            backend.tick(world, i * 0.05)
+        people = tc.person.getIDList()
+        assert len(people) >= 5
+        speeds = [tc.person.getMaxSpeed(p) for p in people]
+        # Each person walks at their own draw: a spread, not one speed.
+        assert len({round(v, 3) for v in speeds}) > 1
+        assert all(0.05 <= v for v in speeds)
+        for person in people:
+            assert tc.person.getMinGap(person) == pytest.approx(0.6)
+        assert backend.describe()["pedestrians"]["walking_speed_mps"] == {
+            "mean": 1.2,
+            "std": 0.3,
+        }
+    finally:
+        backend.close()
+
+
+def _steps_on_crossings_at_red(
+    signalled_crossroads: Path, tmp_path: Path, walkers: Any
+) -> int:
+    """Person-steps spent on a crossing while every light is held red."""
+    from autoware_carla_scenario.traffic.sumo.network import crossing_edges
+
+    backend, _world, _ego = _walking(signalled_crossroads, tmp_path, walkers)
+    tc = backend._traci
+    try:
+        crossings = set(crossing_edges(backend._network.net_file))
+        on = 0
+        for _ in range(2400):  # 120 s
+            for light in tc.trafficlight.getIDList():
+                state = tc.trafficlight.getRedYellowGreenState(light)
+                tc.trafficlight.setRedYellowGreenState(light, "r" * len(state))
+            tc.simulationStep()
+            on += sum(
+                1 for p in tc.person.getIDList() if tc.person.getRoadID(p) in crossings
+            )
+        return on
+    finally:
+        backend.close()
+
+
+@needs_sumo
+def test_sumos_pedestrians_cross_on_red_only_when_told_to(
+    signalled_crossroads: Path, tmp_path: Path
+) -> None:
+    from autoware_carla_scenario.traffic.parameters import PedestrianParameters, Spread
+
+    waiting = _steps_on_crossings_at_red(signalled_crossroads, tmp_path / "a", None)
+    crossing = _steps_on_crossings_at_red(
+        signalled_crossroads,
+        tmp_path / "b",
+        PedestrianParameters(red_light_violation_s=Spread(1000.0)),
+    )
+    # A crossing's own green may still come up between the vehicle lights SUMO
+    # holds red (pedestrian links can be green), so "never" is too strong:
+    # crossing on red is several times as common.
+    assert crossing > 3 * max(waiting, 1)
+
+
+@needs_sumo
+def test_sumos_pedestrians_cross_roads_on_crossings(
+    signalled_crossroads: Path, tmp_path: Path
+) -> None:
+    from autoware_carla_scenario.traffic.sumo.network import crossing_edges
+
+    backend, world, _ego = _walking(signalled_crossroads, tmp_path, warmup_s=10.0)
+    tc = backend._traci
+    try:
+        crossings = set(crossing_edges(backend._network.net_file))
+        seen: set[str] = set()
+        for i in range(1200):
+            backend.tick(world, i * 0.05)
+            seen |= {tc.person.getRoadID(p) for p in tc.person.getIDList()}
+            if seen & crossings:
+                break
+        assert seen & crossings, "no pedestrian walked over a crossing"
+    finally:
+        backend.close()

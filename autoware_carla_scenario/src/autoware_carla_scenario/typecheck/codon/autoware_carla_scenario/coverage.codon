@@ -307,8 +307,9 @@ class CoverageCollector:
         raise NotImplementedError()
 
     def record_outcome(self, passed: bool, *_kw, failed_at: Optional[float] = None,
-                       environment: Optional[str] = None) -> None:
-        _keyword_only(_kw, "CoverageCollector.record_outcome(): failed_at and environment")
+                       environment: Optional[str] = None,
+                       weight: Optional[float] = None) -> None:
+        _keyword_only(_kw, "CoverageCollector.record_outcome(): failed_at, environment and weight")
         raise NotImplementedError()
 
 

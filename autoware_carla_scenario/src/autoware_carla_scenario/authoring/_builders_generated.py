@@ -63,6 +63,20 @@ __all__ = [
     "build_timeout_condition",
     "build_traffic_signal_condition",
     "build_trajectory_time_condition",
+    "build_adversarial_brake_action",
+    "build_adversarial_cut_in_action",
+    "build_adversarial_merge_action",
+    "build_adversarial_traffic_action",
+    "build_construction_zone_action",
+    "build_head_on_action",
+    "build_ignore_leader_action",
+    "build_jaywalk_action",
+    "build_lane_change_abort_action",
+    "build_pedestrian_run_red_light_action",
+    "build_run_traffic_rule_action",
+    "build_stalled_object_action",
+    "build_stop_crossing_action",
+    "build_prop_action",
     "build_traffic_signal_controller_action",
     "build_traffic_signal_action",
     "build_environment_action",
@@ -775,6 +789,387 @@ def build_trajectory_time_condition(
     params = compiled.params
     return TrajectoryTimeCondition(
         time=params["time"],
+        label=compiled.label,
+    )
+
+
+def build_adversarial_brake_action(
+    compiled: "CompiledAction",
+    condition: "BaseCondition | None",
+    timing: Any,
+    ctx: "BuildContext",
+) -> "BaseAction":
+    """Build an :class:`AdversarialBrakeAction`."""
+    from ..actions.adversarial import AdversarialBrakeAction  # noqa: PLC0415
+    from ..actions.adversarial import AdversityLocation  # noqa: PLC0415
+    from ..actions.adversarial import TrajectoryFollowingMode  # noqa: PLC0415
+
+    assert compiled.actor_role is not None  # noqa: S101 -- required by the spec
+    params = compiled.params
+    return AdversarialBrakeAction(
+        entity_name=compiled.actor_role,
+        location=AdversityLocation[str(params["location"]).upper()],
+        condition=condition,
+        timing=timing,
+        label=compiled.label,
+        once=compiled.node.once,
+        following_mode=TrajectoryFollowingMode[str(params["following_mode"]).upper()],
+    )
+
+
+def build_adversarial_cut_in_action(
+    compiled: "CompiledAction",
+    condition: "BaseCondition | None",
+    timing: Any,
+    ctx: "BuildContext",
+) -> "BaseAction":
+    """Build an :class:`AdversarialCutInAction`."""
+    from ..actions.adversarial import AdversarialCutInAction  # noqa: PLC0415
+    from ..actions.adversarial import AdversityLocation  # noqa: PLC0415
+    from ..actions.adversarial import TrajectoryFollowingMode  # noqa: PLC0415
+
+    assert compiled.actor_role is not None  # noqa: S101 -- required by the spec
+    params = compiled.params
+    return AdversarialCutInAction(
+        entity_name=compiled.actor_role,
+        location=AdversityLocation[str(params["location"]).upper()],
+        condition=condition,
+        timing=timing,
+        label=compiled.label,
+        once=compiled.node.once,
+        following_mode=TrajectoryFollowingMode[str(params["following_mode"]).upper()],
+    )
+
+
+def build_adversarial_merge_action(
+    compiled: "CompiledAction",
+    condition: "BaseCondition | None",
+    timing: Any,
+    ctx: "BuildContext",
+) -> "BaseAction":
+    """Build an :class:`AdversarialMergeAction`."""
+    from ..actions.adversarial import AdversarialMergeAction  # noqa: PLC0415
+    from ..actions.adversarial import AdversityLocation  # noqa: PLC0415
+    from ..actions.adversarial import TrajectoryFollowingMode  # noqa: PLC0415
+
+    assert compiled.actor_role is not None  # noqa: S101 -- required by the spec
+    params = compiled.params
+    return AdversarialMergeAction(
+        entity_name=compiled.actor_role,
+        location=AdversityLocation[str(params["location"]).upper()],
+        condition=condition,
+        timing=timing,
+        label=compiled.label,
+        once=compiled.node.once,
+        following_mode=TrajectoryFollowingMode[str(params["following_mode"]).upper()],
+    )
+
+
+def build_adversarial_traffic_action(
+    compiled: "CompiledAction",
+    condition: "BaseCondition | None",
+    timing: Any,
+    ctx: "BuildContext",
+) -> "BaseAction":
+    """Build an :class:`AdversarialTrafficAction`."""
+    from ..actions.adversarial_traffic import AdversarialTrafficAction  # noqa: PLC0415
+    from ..adversity.nade import NadeSettings  # noqa: PLC0415
+    from ..actions.adversarial_traffic import AdversityKind  # noqa: PLC0415
+    from ..adversity.location import AdversityLocation  # noqa: PLC0415
+    from ..actions.adversarial_traffic import NadeAdversity  # noqa: PLC0415
+    from ..actions.adversarial_traffic import TrajectoryFollowingMode  # noqa: PLC0415
+
+    params = compiled.params
+    settings = NadeSettings(
+        max_controlled=params["max_controlled"],
+        control_radius=params["control_radius"],
+        magnitude=params["magnitude"],
+        max_is_probability=params["max_is_probability"],
+        fixed_is_probability=params["fixed_is_probability"],
+        cooldown=params["cooldown"],
+        challenge_npcs=params["challenge_npcs"],
+    )
+    adversities: list[Any] = []
+    for item in params["adversities"]:
+        adversities.append(
+            NadeAdversity(
+                kind=AdversityKind[str(item["kind"]).upper()],
+                location=AdversityLocation[str(item["location"]).upper()],
+                probability=item["probability"],
+            )
+        )
+    return AdversarialTrafficAction(
+        adversities=adversities,
+        condition=condition,
+        timing=timing,
+        label=compiled.label,
+        seed=params["seed"],
+        settings=settings,
+        following_mode=TrajectoryFollowingMode[str(params["following_mode"]).upper()],
+    )
+
+
+def build_construction_zone_action(
+    compiled: "CompiledAction",
+    condition: "BaseCondition | None",
+    timing: Any,
+    ctx: "BuildContext",
+) -> "BaseAction":
+    """Build a :class:`ConstructionZoneAction`."""
+    from ..actions.construction_zone import ConstructionZoneAction  # noqa: PLC0415
+    from ..adversity.construction import ConstructionSettings  # noqa: PLC0415
+
+    params = compiled.params
+    settings = ConstructionSettings(
+        construction_type=params["construction_type"],
+        spacing=params["spacing"],
+        work_zone_offset=params["work_zone_offset"],
+        taper_length_in=params["taper_length_in"],
+        taper_length_out=params["taper_length_out"],
+        taper_type=params["taper_type"],
+        warning_zone_length=params["warning_zone_length"],
+        buffer_zone_length=params["buffer_zone_length"],
+        termination_zone_length=params["termination_zone_length"],
+        side=params["side"],
+    )
+    return ConstructionZoneAction(
+        lanelet_id=params["lanelet_id"],
+        start_s=params["start_s"],
+        end_s=params["end_s"],
+        settings=settings,
+        start_time=params["start_time"],
+        end_time=params["end_time"],
+        close_lane=params["close_lane"],
+        clear_traffic=params["clear_traffic"],
+        condition=condition,
+        timing=timing,
+        label=compiled.label,
+    )
+
+
+def build_head_on_action(
+    compiled: "CompiledAction",
+    condition: "BaseCondition | None",
+    timing: Any,
+    ctx: "BuildContext",
+) -> "BaseAction":
+    """Build a :class:`HeadOnAction`."""
+    from ..actions.adversarial import HeadOnAction  # noqa: PLC0415
+    from ..actions.adversarial import AdversityLocation  # noqa: PLC0415
+    from ..actions.adversarial import TrajectoryFollowingMode  # noqa: PLC0415
+
+    assert compiled.actor_role is not None  # noqa: S101 -- required by the spec
+    params = compiled.params
+    return HeadOnAction(
+        entity_name=compiled.actor_role,
+        location=AdversityLocation[str(params["location"]).upper()],
+        condition=condition,
+        timing=timing,
+        label=compiled.label,
+        once=compiled.node.once,
+        following_mode=TrajectoryFollowingMode[str(params["following_mode"]).upper()],
+    )
+
+
+def build_ignore_leader_action(
+    compiled: "CompiledAction",
+    condition: "BaseCondition | None",
+    timing: Any,
+    ctx: "BuildContext",
+) -> "BaseAction":
+    """Build an :class:`IgnoreLeaderAction`."""
+    from ..actions.adversarial import IgnoreLeaderAction  # noqa: PLC0415
+    from ..actions.adversarial import AdversityLocation  # noqa: PLC0415
+    from ..actions.adversarial import TrajectoryFollowingMode  # noqa: PLC0415
+
+    assert compiled.actor_role is not None  # noqa: S101 -- required by the spec
+    params = compiled.params
+    return IgnoreLeaderAction(
+        entity_name=compiled.actor_role,
+        location=AdversityLocation[str(params["location"]).upper()],
+        condition=condition,
+        timing=timing,
+        label=compiled.label,
+        once=compiled.node.once,
+        following_mode=TrajectoryFollowingMode[str(params["following_mode"]).upper()],
+    )
+
+
+def build_jaywalk_action(
+    compiled: "CompiledAction",
+    condition: "BaseCondition | None",
+    timing: Any,
+    ctx: "BuildContext",
+) -> "BaseAction":
+    """Build a :class:`JaywalkAction`."""
+    from ..actions.adversarial import JaywalkAction  # noqa: PLC0415
+    from ..actions.adversarial import AdversityLocation  # noqa: PLC0415
+    from ..actions.adversarial import TrajectoryFollowingMode  # noqa: PLC0415
+
+    assert compiled.actor_role is not None  # noqa: S101 -- required by the spec
+    params = compiled.params
+    return JaywalkAction(
+        entity_name=compiled.actor_role,
+        location=AdversityLocation[str(params["location"]).upper()],
+        condition=condition,
+        timing=timing,
+        label=compiled.label,
+        once=compiled.node.once,
+        following_mode=TrajectoryFollowingMode[str(params["following_mode"]).upper()],
+    )
+
+
+def build_lane_change_abort_action(
+    compiled: "CompiledAction",
+    condition: "BaseCondition | None",
+    timing: Any,
+    ctx: "BuildContext",
+) -> "BaseAction":
+    """Build a :class:`LaneChangeAbortAction`."""
+    from ..actions.adversarial import LaneChangeAbortAction  # noqa: PLC0415
+    from ..actions.adversarial import AdversityLocation  # noqa: PLC0415
+    from ..actions.adversarial import TrajectoryFollowingMode  # noqa: PLC0415
+
+    assert compiled.actor_role is not None  # noqa: S101 -- required by the spec
+    params = compiled.params
+    return LaneChangeAbortAction(
+        entity_name=compiled.actor_role,
+        location=AdversityLocation[str(params["location"]).upper()],
+        condition=condition,
+        timing=timing,
+        label=compiled.label,
+        once=compiled.node.once,
+        following_mode=TrajectoryFollowingMode[str(params["following_mode"]).upper()],
+    )
+
+
+def build_pedestrian_run_red_light_action(
+    compiled: "CompiledAction",
+    condition: "BaseCondition | None",
+    timing: Any,
+    ctx: "BuildContext",
+) -> "BaseAction":
+    """Build a :class:`PedestrianRunRedLightAction`."""
+    from ..actions.adversarial import PedestrianRunRedLightAction  # noqa: PLC0415
+    from ..actions.adversarial import AdversityLocation  # noqa: PLC0415
+    from ..actions.adversarial import TrajectoryFollowingMode  # noqa: PLC0415
+
+    assert compiled.actor_role is not None  # noqa: S101 -- required by the spec
+    params = compiled.params
+    return PedestrianRunRedLightAction(
+        entity_name=compiled.actor_role,
+        location=AdversityLocation[str(params["location"]).upper()],
+        condition=condition,
+        timing=timing,
+        label=compiled.label,
+        once=compiled.node.once,
+        following_mode=TrajectoryFollowingMode[str(params["following_mode"]).upper()],
+    )
+
+
+def build_run_traffic_rule_action(
+    compiled: "CompiledAction",
+    condition: "BaseCondition | None",
+    timing: Any,
+    ctx: "BuildContext",
+) -> "BaseAction":
+    """Build a :class:`RunTrafficRuleAction`."""
+    from ..actions.adversarial import RunTrafficRuleAction  # noqa: PLC0415
+    from ..actions.adversarial import AdversityLocation  # noqa: PLC0415
+    from ..actions.adversarial import TrajectoryFollowingMode  # noqa: PLC0415
+
+    assert compiled.actor_role is not None  # noqa: S101 -- required by the spec
+    params = compiled.params
+    return RunTrafficRuleAction(
+        entity_name=compiled.actor_role,
+        location=AdversityLocation[str(params["location"]).upper()],
+        condition=condition,
+        timing=timing,
+        label=compiled.label,
+        once=compiled.node.once,
+        following_mode=TrajectoryFollowingMode[str(params["following_mode"]).upper()],
+    )
+
+
+def build_stalled_object_action(
+    compiled: "CompiledAction",
+    condition: "BaseCondition | None",
+    timing: Any,
+    ctx: "BuildContext",
+) -> "BaseAction":
+    """Build a :class:`StalledObjectAction`."""
+    from ..actions.stalled_object import StalledObjectAction  # noqa: PLC0415
+    from ..coordinate import Lanelet2Pose  # noqa: PLC0415
+
+    assert compiled.actor_role is not None  # noqa: S101 -- required by the spec
+    params = compiled.params
+    pose = Lanelet2Pose(
+        lanelet_id=params["lanelet_id"],
+        s=params["s"],
+        t=params["t"],
+        heading=params["heading"],
+    )
+    return StalledObjectAction(
+        entity_name=compiled.actor_role,
+        pose=pose,
+        start_time=params["start_time"],
+        end_time=params["end_time"],
+        condition=condition,
+        timing=timing,
+        label=compiled.label,
+    )
+
+
+def build_stop_crossing_action(
+    compiled: "CompiledAction",
+    condition: "BaseCondition | None",
+    timing: Any,
+    ctx: "BuildContext",
+) -> "BaseAction":
+    """Build a :class:`StopCrossingAction`."""
+    from ..actions.adversarial import StopCrossingAction  # noqa: PLC0415
+    from ..actions.adversarial import AdversityLocation  # noqa: PLC0415
+    from ..actions.adversarial import TrajectoryFollowingMode  # noqa: PLC0415
+
+    assert compiled.actor_role is not None  # noqa: S101 -- required by the spec
+    params = compiled.params
+    return StopCrossingAction(
+        entity_name=compiled.actor_role,
+        location=AdversityLocation[str(params["location"]).upper()],
+        condition=condition,
+        timing=timing,
+        label=compiled.label,
+        once=compiled.node.once,
+        following_mode=TrajectoryFollowingMode[str(params["following_mode"]).upper()],
+    )
+
+
+def build_prop_action(
+    compiled: "CompiledAction",
+    condition: "BaseCondition | None",
+    timing: Any,
+    ctx: "BuildContext",
+) -> "BaseAction":
+    """Build a :class:`PropAction`."""
+    from ..actions.prop import PropAction  # noqa: PLC0415
+    from ..coordinate import Lanelet2Pose  # noqa: PLC0415
+    from ..actions.prop import PropOperation  # noqa: PLC0415
+
+    params = compiled.params
+    position = Lanelet2Pose(
+        lanelet_id=params["lanelet_id"],
+        s=params["s"],
+        t=params["t"],
+        heading=params["heading"],
+    )
+    return PropAction(
+        name=str(params["name"]),
+        operation=PropOperation[str(params["operation"]).upper()],
+        position=position,
+        blueprint=str(params["blueprint"]),
+        on_ground=params["on_ground"],
+        condition=condition,
+        timing=timing,
         label=compiled.label,
     )
 

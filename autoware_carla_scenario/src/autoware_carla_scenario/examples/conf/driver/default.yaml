@@ -95,8 +95,8 @@ driver:
     min_jerk: -5.0
     # Vehicle interface: the controller's acceleration goes through the ego's powertrain
     # model (read from its CARLA physics control). A floor on a standing car's throttle
-    # (CARLA 0.10's MKZ pulls away at 0.25); the pid controller needs none.
-    throttle_deadband: 0.0
+    # asked to speed up: CARLA 0.10's MKZ stays put below 0.25, a real car creeps.
+    throttle_deadband: 0.3
     standstill_speed_mps: 0.5
     # Brake with no plan to track.
     stop_brake: 0.6

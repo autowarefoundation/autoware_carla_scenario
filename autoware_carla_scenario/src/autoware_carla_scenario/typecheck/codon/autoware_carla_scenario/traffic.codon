@@ -1,6 +1,7 @@
 # Model of the parts of autoware_carla_scenario.traffic a scenario names
-# (docs/typecheck.md): the manoeuvre directions. Traffic backends are the
-# runner's business and are not modelled for a scenario.
+# (docs/typecheck.md): the manoeuvre directions and the level a vehicle is
+# simulated at. Traffic backends are the runner's business and are not
+# modelled for a scenario.
 #
 # The library check compiles traffic.base, traffic.config, traffic.driven,
 # traffic.traffic_manager and the package itself from their source
@@ -49,6 +50,22 @@ class LaneChangeDirection:
         return self == LaneChangeDirection.RIGHT
 
 
+@tuple
+class SimulationFidelity:
+    value: str
+    MICROSCOPIC: ClassVar[SimulationFidelity] = SimulationFidelity("microscopic")
+    MESOSCOPIC: ClassVar[SimulationFidelity] = SimulationFidelity("mesoscopic")
+
+    # Enum's name (#307): Codon has no Enum to give a framework enum one.
+    @property
+    def name(self) -> str:
+        if self == SimulationFidelity.MICROSCOPIC:
+            return "MICROSCOPIC"
+        if self == SimulationFidelity.MESOSCOPIC:
+            return "MESOSCOPIC"
+        raise ValueError("not a member of SimulationFidelity")
+
+
 # traffic.context: a path is its str here, as in scenario_config.codon.
 class TrafficContext:
     client: Optional[carla.Client] = None
@@ -85,7 +102,7 @@ def get_backend_factory(name: str):
     raise NotImplementedError()
 
 
-def build_backend(name: str, options = None):
+def build_backend(name: str, options = None, vehicles = None, pedestrians = None):
     raise NotImplementedError()
 
 

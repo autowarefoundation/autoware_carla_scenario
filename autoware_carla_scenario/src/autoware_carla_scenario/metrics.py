@@ -57,6 +57,7 @@ __all__ = [
     "COLLISION_FRONT",
     "COLLISION_LATERAL",
     "COLLISION_REAR",
+    "IMPORTANCE_SAMPLING_WEIGHT",
     "MIN_DISTANCE_TO_LANE_BOUNDARY_M",
     "MIN_DISTANCE_TO_OBSTACLE_M",
     "Metric",
@@ -66,6 +67,7 @@ __all__ = [
     "WRONG_LANE",
     "is_metric",
     "read_metric",
+    "set_importance_sampling_weight",
 ]
 
 #: The ego's box overlaps another road user's, whichever side it is on.
@@ -90,6 +92,9 @@ WRONG_LANE = "wrong_lane"
 MIN_DISTANCE_TO_OBSTACLE_M = "min_distance_to_obstacle_m"
 #: Metres between the ego's box and the edge of the driving lanes around it.
 MIN_DISTANCE_TO_LANE_BOUNDARY_M = "min_distance_to_lane_boundary_m"
+#: The run's importance-sampling weight so far (NADE's), not AlpaSim's: the
+#: likelihood ratio a batch of runs is weighted by.
+IMPORTANCE_SAMPLING_WEIGHT = "importance_sampling_weight"
 
 #: How far the ego must turn from its lane's heading to be against it, in
 #: degrees: AlpaSim's 2/3 pi.
@@ -508,6 +513,25 @@ def _collision_at_fault(world: "carla.World") -> Optional[float]:
     return _event(world, _AT_FAULT)
 
 
+#: The running scenario's importance-sampling weight, which the runner
+#: publishes every tick (:func:`set_importance_sampling_weight`); None
+#: outside a run.  Published rather than read off the scenario, which this
+#: module, imported by everything that reads a metric, cannot import.
+_RUN: dict[str, Optional[float]] = {"weight": None}
+
+
+def set_importance_sampling_weight(weight: Optional[float]) -> None:
+    """Publish the running scenario's weight
+    (:attr:`BaseScenario.importance_sampling_weight`), or None when the run
+    ends."""
+    _RUN["weight"] = weight
+
+
+def _importance_sampling_weight(world: "carla.World") -> Optional[float]:
+    """The running scenario's weight, or None outside a run."""
+    return _RUN["weight"]
+
+
 def _offroad(world: "carla.World") -> Optional[float]:
     return _event(world, _OFFROAD)
 
@@ -702,6 +726,16 @@ BUILT_IN_METRICS: dict[str, Metric] = {
             text="From the ego's box to the edge of the driving lanes around "
             "it; 0 off the road (AlpaSim min_distance_to_lane_boundary_m)",
             aggregation="min",
+        ),
+        Metric(
+            IMPORTANCE_SAMPLING_WEIGHT,
+            _importance_sampling_weight,
+            title="Importance-sampling weight",
+            unit="ratio",
+            text="The run's likelihood ratio so far, the product of NADE's "
+            "p/q and (1-p)/(1-q) (1 without NADE); a batch of runs weighted "
+            "by its last value estimates the naturalistic rate",
+            aggregation="last",
         ),
     ]
 }

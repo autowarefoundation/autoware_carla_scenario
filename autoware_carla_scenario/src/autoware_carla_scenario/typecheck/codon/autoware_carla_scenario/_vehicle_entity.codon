@@ -11,7 +11,7 @@ import typesafe_carla.carla as carla
 
 from .constants import DEFAULT_TM_PORT
 from .coordinate import OpenDrivePose, GroundProjectionConfig, _expect_optional_ground_projection
-from .traffic import LaneChangeDirection, TurnDirection
+from .traffic import LaneChangeDirection, SimulationFidelity, TurnDirection
 from .entity_role import _expect_role_name
 
 
@@ -64,7 +64,10 @@ class VehicleEntityConfig:
 
 
 class VehicleEntity:
-    # No fields: Codon would build one with no arguments too (docs/typecheck.md).
+    # A class variable, not a field: Codon would build one with no arguments
+    # too (docs/typecheck.md). The traffic backend writes it on the instance.
+    simulation_fidelity: ClassVar[SimulationFidelity] = SimulationFidelity.MICROSCOPIC
+
     def __init__(self):
         compile_error("VehicleEntity(): no constructor takes these arguments (required: config)")
 
@@ -115,6 +118,9 @@ class VehicleEntity:
         raise NotImplementedError()
 
     def resume_traffic(self, world: carla.World) -> None:
+        raise NotImplementedError()
+
+    def require_microscopic(self, world: carla.World) -> bool:
         raise NotImplementedError()
 
     def forget_lane_change(self) -> None:

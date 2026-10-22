@@ -95,6 +95,21 @@ class CutInScenario(BaseScenario):
         self.register_cross("speed_x_gap", ["speed_at_cut_in", "gap_at_cut_in"])
 ```
 
+NADE's `AdversarialTrafficAction` says which adversity it sampled on a tick
+(`sampled_kind`), so a batch of NADE runs can be covered by adversity kind,
+and its weight is the `importance_sampling_weight` metric:
+
+```python
+        nade = AdversarialTrafficAction(adversities)
+        self.register_pre_tick(nade)
+        self.register_cover(
+            "adversity.kind",
+            nade.sampled_kind,
+            values=AdversityKind,
+            event=SamplingEvent.TICK,
+        )
+```
+
 ### `register_cover()` arguments
 
 | Argument | DSL | Meaning |

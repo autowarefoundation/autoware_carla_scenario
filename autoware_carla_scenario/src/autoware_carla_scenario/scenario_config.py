@@ -30,6 +30,7 @@ from dataclasses import dataclass, field
 from typing import Any, List
 
 from .traffic.config import TrafficConfig, TrafficManagerBackendConfig
+from .traffic.parameters import PedestrianParameters, Spread, VehicleParameters
 
 __all__ = [
     "ServerConfig",
@@ -46,6 +47,9 @@ __all__ = [
     # its configuration from one place keeps doing so.
     "TrafficConfig",
     "TrafficManagerBackendConfig",
+    "VehicleParameters",
+    "PedestrianParameters",
+    "Spread",
 ]
 
 #: OmegaConf's mandatory-value marker (``omegaconf.MISSING``), spelled out so
@@ -371,7 +375,7 @@ class DriverControlSpec:
     max_position_correction_mps: float = 6.0
     speed_preview_s: float = 1.0
     stop_distance_m: float = 0.5
-    throttle_deadband: float = 0.0
+    throttle_deadband: float = 0.3
     standstill_speed_mps: float = 0.5
     stop_brake: float = 0.6
 

@@ -36,6 +36,24 @@ rerun:
   # does not know, rather than skip it with a warning. Either way, a failed
   # conversion is reported at the end of the run; it does not change a verdict.
   strict: false
+  # Also record the LiDAR sweeps the ego's driver policy gets, in the world
+  # frame, into {Scenario}.rrd (written to {Scenario}.sensors.rrd during the run
+  # and merged in once the log is converted). Needs the Rerun SDK:
+  #   pip install 'autoware-carla-scenario[rerun-lidar]'
+  lidar: false
+  # At most this many points of a sweep (an even subsample); 0 keeps them all.
+  lidar_max_points: 65536
+  # Also record the frames of the cameras the ego's driver policy gets
+  # (driver.cameras), as JPEG, in their frustums on the ego in the 3D view.
+  cameras: false
+
+# Sensors rendered by carla_canvas instead of the CARLA server
+# (docs/usage.md#rendering-sensors-with-carla_canvas): a carla_canvas
+# configuration naming the renderer and the sensor types it renders, e.g. the
+# LiDARs by LidarVerse. Needs the client:
+#   pip install 'carla-canvas[client]>=0.2'
+canvas:
+  config: null
 
 # Removed in 15.0.0: runs no longer render a video. To see a run, make a Rerun
 # recording of it (rerun.enabled=true, above) and open it in the Rerun viewer;
@@ -204,6 +222,15 @@ controls: {}
 # about 0.65-0.85 of the dry grip, a flooded one 0.45-0.65 -- at
 # `tire_friction_quantile` (0-1, the middle when null; an odd_sample sweep
 # draws it per case). `tire_friction` fixes the share of the dry grip instead.
+#
+# How far drivers see follows the weather too (docs/odd.md): a run that sets
+# `rain`, `precipitation`, `fog_density` or `sun_altitude_angle` records the
+# visibility its weather leaves -- a clear day 250-400 m, night 50-150 m,
+# heavy fog 15-40 m -- at `visibility_quantile` (0-1, the middle when null; an
+# odd_sample sweep draws it per case). `visibility_m` fixes it instead. The
+# `sumo` traffic backend holds its traffic to the speed it can stop from
+# within it (traffic.vehicles.follow_visibility); the TrafficManager only
+# logs what it would do.
 environment:
   rain: null
   cloudiness: null
@@ -217,6 +244,8 @@ environment:
   sun_azimuth_angle: null
   tire_friction: null
   tire_friction_quantile: null
+  visibility_m: null
+  visibility_quantile: null
 
 entity:
   ground_projection_ray_distance_upper: 5.0
