@@ -47,6 +47,25 @@ rerun:
   # (driver.cameras), as JPEG, in their frustums on the ego in the 3D view.
   cameras: false
 
+# A T4 dataset of each run ({Scenario}.t4/0/), TIER IV's nuScenes-style format
+# that t4-devkit reads (docs/t4_dataset.md). Its sensors are the driver
+# policy's (driver.lidars, driver.cameras) and a key frame is a policy step
+# (driver.policy_timestep_s): the ego's pose, the LiDARs' sweeps as one
+# LIDAR_CONCAT cloud, a frame of every camera, and the box of every vehicle
+# and pedestrian from CARLA's ground truth. An ego driven by a driver policy
+# feeds it what the policy is sent; any other ego gets the same sensors put on
+# it. Needs the extra:
+#   pip install 'autoware-carla-scenario[t4]'
+# and is refused before anything runs without it.
+t4:
+  enabled: false
+  # Annotate the vehicles and pedestrians within this distance of the ego, in
+  # metres; null annotates all of them.
+  max_distance_m: 100.0
+  # Threads writing the files (and encoding the frames of the recorder's own
+  # cameras) while the run goes on.
+  workers: 4
+
 # Sensors rendered by carla_canvas instead of the CARLA server
 # (docs/usage.md#rendering-sensors-with-carla_canvas): a carla_canvas
 # configuration naming the renderer and the sensor types it renders, e.g. the

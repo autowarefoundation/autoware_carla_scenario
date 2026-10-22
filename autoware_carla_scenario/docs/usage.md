@@ -357,6 +357,14 @@ With `rerun.enabled=true`:
   its own cases, and `scenario-slurm collect` reports their recordings as a
   local batch does.
 
+#### A T4 dataset of a run
+
+With `t4.enabled=true` each run is also written as a T4 dataset,
+`{ScenarioName}.t4/`, which t4-devkit reads: the sweeps and frames of the
+driver policy's sensors (`driver.lidars`, `driver.cameras`) at each policy
+step, and the box of every vehicle and pedestrian from CARLA's ground truth
+(the `t4` extra; [T4 Dataset](t4_dataset.md)).
+
 ### Sensors in the recording
 
 The trajectory log holds no sensor data. With `rerun.enabled=true` and:

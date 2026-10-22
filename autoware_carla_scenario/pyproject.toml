@@ -138,6 +138,13 @@ rerun-lidar = [
     "autoware-carla-scenario-rerun>=0.1,<0.2",
     "rerun-sdk>=0.38.1,<0.39",
 ]
+# A T4 dataset of each run (`t4.enabled=true`, docs/t4_dataset.md): the
+# writer (hakuturu583/autoware_carla_scenario_t4, a Rust core in one abi3
+# wheel), which the runner hands the ego's poses, the boxes of the road
+# users and the sweeps and frames of the driver policy's sensors.
+t4 = [
+    "autoware-carla-scenario-t4>=0.1,<0.2",
+]
 # The Rerun viewer the recordings are opened with (`rerun X.rrd`): the
 # converter's own `viewer` extra, which pins the Rerun minor version its
 # recordings are written with.

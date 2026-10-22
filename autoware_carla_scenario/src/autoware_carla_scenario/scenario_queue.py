@@ -14,6 +14,7 @@ from .coordinate.map_manager import MapManager
 from .maps import capture_opendrive
 from .odd import OddCase, OddDefinition, resolve_odd
 from .rerun import RerunConverter
+from .t4 import T4Recorder
 from .scenario_base import BaseScenario
 from .server import CarlaServerManager
 from .traffic.base import TrafficBackend
@@ -78,6 +79,7 @@ class ScenarioQueue:
     _autoware_launcher: Optional["AutowareLauncher"]
     _map_source: Optional[str]
     _rerun: Optional[RerunConverter]
+    _t4: Optional[T4Recorder]
     _scenarios: List[BaseScenario]
     #: id(scenario) -> its own timeout, in place of ``timeout_seconds``.
     _timeouts: dict[int, float]
@@ -119,6 +121,7 @@ class ScenarioQueue:
         autoware_launcher: Optional["AutowareLauncher"] = None,
         map_source: Optional[str] = None,
         rerun: Optional[RerunConverter] = None,
+        t4: Optional[T4Recorder] = None,
     ) -> None:
         """Create a scenario queue.
 
@@ -192,6 +195,8 @@ class ScenarioQueue:
                 (``rerun.enabled``); *None* makes no recording.  The queue
                 does not wait for it: whoever made it waits
                 (:meth:`RerunConverter.wait`) once the runs are done.
+            t4: What writes each run as a T4 dataset, with sensors of its own
+                on the ego (``t4.enabled``); *None* writes none.
         """
         if server is not None:
             self._server = server
@@ -224,6 +229,7 @@ class ScenarioQueue:
         self._autoware_launcher = autoware_launcher
         self._map_source = map_source
         self._rerun = rerun
+        self._t4 = t4
 
         self._scenarios = []
         self._timeouts = {}
@@ -527,6 +533,7 @@ class ScenarioQueue:
         # What each run's trajectory log names as its map.
         self._runner.map_source = self._map_source
         self._runner.rerun = self._rerun
+        self._runner.t4 = self._t4
         self._runner.lanelet2_path = self._lanelet2_path
         self._runner.projector_type = self._projector_type
         # Always: the runs read the map the MapManager holds (run_carla_map),

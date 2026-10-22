@@ -45,6 +45,7 @@ from .world_reset import episode_of, reload_current_map, same_episode, short_map
 from .traffic.config import TrafficManagerBackendConfig
 from .traffic.traffic_manager import TrafficManagerBackend
 from .rerun import RerunConverter
+from .t4 import T4Recorder, T4Recording
 from .visibility import forget_visibility
 from .traffic.parameters import record_run_parameters
 from .trajectory_recorder import TrajectoryRecorder
@@ -389,6 +390,7 @@ def _run_file_stem(output_dir: Path, scenario_name: str) -> str:
             ".trajectory.jsonl",
             "_coverage.json",
             "_odd.tar.gz",
+            ".t4",
         )
     ):
         stem = f"{scenario_name}-{counter}"
@@ -574,6 +576,9 @@ class ScenarioRunner:
     #: the log is closed (``rerun.enabled``), or None for no recording.  The
     #: queue sets it.
     rerun: Optional[RerunConverter]
+    #: What writes each run as a T4 dataset, with sensors of its own on the
+    #: ego (``t4.enabled``), or None for no dataset.  The queue sets it.
+    t4: Optional[T4Recorder]
 
     def __init__(
         self,
@@ -620,6 +625,7 @@ class ScenarioRunner:
         self.lanelet2_path = None
         self.projector_type = None
         self.rerun = None
+        self.t4 = None
         self.odd = resolve_odd(odd)
         self.timeout_seconds = timeout_seconds
         self.output_dir = output_dir
@@ -1132,6 +1138,7 @@ class ScenarioRunner:
         tick_count = 0
         result: Optional[ScenarioResult] = None
         coverage: Optional[CoverageCollector] = None
+        t4_recording: Optional[T4Recording] = None
 
         try:
             # Let the traffic backend get ready before anything is spawned: this
@@ -1335,6 +1342,20 @@ class ScenarioRunner:
                 lidar_converter.start_sensors(
                     trajectory.path, file_stem, clock_start_frame
                 )
+            if self.t4 is not None:
+                # The run as a T4 dataset, from the clock's first frame, with
+                # sensors of its own on the ego (t4.enabled).
+                t4_recorder: T4Recorder = self.t4
+                t4_recording = t4_recorder.start(
+                    self.output_dir,
+                    file_stem,
+                    world,
+                    ego_actor,
+                    clock_start_frame,
+                    scenario_name,
+                    short_map_name(_map_name_of(world)),
+                    self.lanelet2_path,
+                )
             trajectory.record(world, clock.simulated)
             trajectory.record_markers(_ego_markers(ego))
             # What the run covers: the attributes of the run's ODD, sampled
@@ -1388,6 +1409,10 @@ class ScenarioRunner:
                 # Give the ego entity a chance to drive itself before the
                 # scenario's own post-tick hooks observe the new state.
                 ego.on_tick(world, elapsed)
+                # After the ego's tick: a driver policy's ego has just handed
+                # the dataset what its sensors took on it.
+                if t4_recording is not None:
+                    t4_recording.record(world)
                 trajectory.record_markers(_ego_markers(ego))
 
                 # Then the traffic, which reacts to where the ego now is.
@@ -1565,6 +1590,10 @@ class ScenarioRunner:
             # And the props a PropAction placed: the leftovers' sweep takes
             # vehicles, walkers and sensors, not static props.
             clear_props()
+
+            # The T4 dataset's sensors go before the ego they are on.
+            if t4_recording is not None:
+                t4_recording.close()
 
             # Explicitly destroy the ego vehicle so it does not persist
             # if the map reload fails later.

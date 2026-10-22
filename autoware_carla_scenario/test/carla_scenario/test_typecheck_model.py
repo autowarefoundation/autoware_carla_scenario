@@ -54,6 +54,7 @@ from autoware_carla_scenario import (
     trajectory_recorder,
 )
 from autoware_carla_scenario import rerun as rerun_module
+from autoware_carla_scenario import t4 as t4_module
 from autoware_carla_scenario.autoware_bridge import base as bridge_base
 from autoware_carla_scenario.autoware_bridge import grpc_server as bridge_grpc_server
 from autoware_carla_scenario.autoware_stack import devcontainer as stack_devcontainer
@@ -738,6 +739,8 @@ _MODULE_MODELS: dict[str, tuple[Any, tuple[str, ...]]] = {
     ),
     # What the checked scenario_runner and scenario_queue hold of it.
     "rerun": (rerun_module, ("RerunConverter",)),
+    # What the checked scenario_runner and scenario_queue hold of it.
+    "t4": (t4_module, ("T4Recorder", "T4Recording")),
     # What scenario_runner's _record_run reads of the unchecked environment.
     "environment": (
         environment,
