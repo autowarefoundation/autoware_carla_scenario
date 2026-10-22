@@ -28,6 +28,15 @@ so a rewrite has to keep the *types*, not the values, of what it replaces.
   expression (``f"{'{}'.format(x)}"``, ``f"{len({1, 2})}"``) is refused:
   Codon's f-string parser loses the position there.
 * ``zip(..., strict=...)`` becomes ``zip(...)``.
+* Builtins and str methods Codon lacks (#439), each with the type of what it
+  replaces: ``s.startswith((a, b))`` (also ``endswith``, and with a ``start``
+  / ``end``) becomes ``(s.startswith(a) or s.startswith(b))``, the receiver and
+  the items bound once by a lambda unless they are names, attributes or
+  constants; ``format(x, spec)`` becomes ``x.__format__(spec)`` and
+  ``format(x)`` ``str(x)``; ``ascii(x)`` becomes ``repr(x)`` (the same type: it
+  differs from ``ascii`` only in the characters it escapes, and only the
+  checked copy changes).  A name the module binds itself (``def format``) is
+  left alone.
 * A top-level class that defines ``__lt__`` (what ``sorted()``, ``.sort()``
   and ``heapq`` need in Python) is given the ``__gt__`` and ``__ge__`` Codon's
   timsort calls, with ``@extend``; ``@functools.total_ordering`` is removed
@@ -65,7 +74,9 @@ so a rewrite has to keep the *types*, not the values, of what it replaces.
   Enum a member read by a later statement of the body is its value (an alias
   in Python), so the literal is written in its place.
 
-Refused with a hint, as no cheap faithful rewrite exists (#379, #433): a
+Refused with a hint, as no cheap faithful rewrite exists (#379, #433, #439): an
+``except*`` handler (Codon has no exception groups and reports the line after
+it as "unexpected dedent"), a
 class constant read in the body of a class defined in a function, or assigned
 again later in the class body (Codon reads the last value), or an Enum member
 without a literal value; a ``match`` class, mapping (with a value pattern or ``**rest``), star or ``as`` pattern;
@@ -102,6 +113,33 @@ REWRITE_HINTS: tuple[tuple[re.Pattern[str], str], ...] = (
         re.compile(r"^'(?:str|'.*')' object has no attribute 'format'"),
         "Codon's str has no .format(): the check rewrites it only on a string "
         "literal with plain arguments; write an f-string instead",
+    ),
+    (
+        re.compile(r"'Tuple\[str(?:,str)*\]' does not match expected type 'str'"),
+        "if this is str.startswith / str.endswith with a tuple held in a name, "
+        "Codon takes one str: write any(s.startswith(p) for p in prefixes) (the "
+        "check rewrites a tuple written in the call)",
+    ),
+    (
+        re.compile(r"no function 'Dict\.update' with arguments"),
+        "Codon's dict.update takes a dict or pairs, not keywords: if it is "
+        'd.update(k=v), write d.update({"k": v})',
+    ),
+    (
+        re.compile(r"'int' object has no attribute '(?:from_bytes|to_bytes)'"),
+        "Codon's int has no from_bytes / to_bytes (and its bytes is a str): "
+        "build the value with shifts and masks (n = (n << 8) | byte), or keep "
+        "it out of the checked code",
+    ),
+    (
+        re.compile(r"object has no attribute 'format_map'"),
+        "Codon's str has no format_map(): write an f-string, or "
+        '"...".format(**d) spelled out ("{a}".format(a=d["a"]))',
+    ),
+    (
+        re.compile(r"'str' object has no attribute '(?:decode|hex)'"),
+        "Codon's bytes is a str, so it has no decode() / hex(): a bytes value "
+        'is already text there; format with f"{b:02x}" per byte if needed',
     ),
     (
         re.compile(r"object has no attribute '__format__'"),
@@ -553,12 +591,32 @@ def _escaped(text: str) -> str:
     return "".join(out)
 
 
+def _rebound_names(tree: ast.AST) -> set[str]:
+    """Every name the module binds anywhere (a variable, parameter, function,
+    class or import), so a builtin of the same name is not taken for it."""
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
+            names.add(node.id)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            names.add(node.name)
+        elif isinstance(node, ast.arg):
+            names.add(node.arg)
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            for alias in node.names:
+                names.add((alias.asname or alias.name).split(".")[0])
+        elif isinstance(node, ast.ExceptHandler) and node.name:
+            names.add(node.name)
+    return names
+
+
 class _Pass(ast.NodeVisitor):
     def __init__(self, edits: _Edits, total_ordering: set[str]) -> None:
         self.edits = edits
         self.total_ordering = total_ordering
         self.refused: list[tuple[int, str]] = []
         self._depth = 0
+        self._rebound: set[str] = set()
         #: The functions being visited, innermost last, with their local names.
         self._functions: list[tuple[ast.FunctionDef | ast.AsyncFunctionDef, set[str]]]
         self._functions = []
@@ -982,6 +1040,23 @@ class _Pass(ast.NodeVisitor):
             text = "(" + " | ".join(parts) + ")"
         self.edits.replace(*self.edits.node_span(node), text)
 
+    def visit_Module(self, node: ast.Module) -> None:
+        self._rebound = _rebound_names(node)
+        self.generic_visit(node)
+
+    # -- except* -------------------------------------------------------------
+
+    def visit_TryStar(self, node: ast.AST) -> None:  # ast.TryStar, Python 3.11+
+        for handler in node.handlers:  # type: ignore[attr-defined]
+            self._refuse(
+                handler,
+                "exception groups (`except*`) are not supported by the check "
+                "(Codon has no syntax for them and reports the line after the "
+                "handler as 'unexpected dedent'): use `except`, naming the "
+                "exception types one handler each",
+            )
+        self.generic_visit(node)
+
     # -- f"{x:+.2f}", f"{x:>{w}}" --------------------------------------------
 
     def visit_JoinedStr(self, node: ast.JoinedStr) -> None:
@@ -1040,7 +1115,84 @@ class _Pass(ast.NodeVisitor):
             if text is not None:
                 self.edits.replace(*self.edits.node_span(node), text)
                 return
+        text = self._missing_builtin(node)
+        if text is not None:
+            self.edits.replace(*self.edits.node_span(node), text)
+            return
         self.generic_visit(node)
+
+    # -- startswith((a, b)), format(), ascii() (#439) ------------------------
+
+    def _wrapped(self, node: ast.AST, inner: str) -> str:
+        """``(inner)``, with the line breaks of *node* kept inside the brackets
+        (a break after them could end the statement)."""
+        lost = self._text(node).count("\n") - inner.count("\n")
+        return "(" + inner + "\n" * max(lost, 0) + ")"
+
+    def _missing_builtin(self, node: ast.Call) -> str | None:
+        """What Codon 0.19 lacks, written with what it has; ``None`` if *node*
+        is none of them."""
+        func = node.func
+        plain_call = (
+            not any(isinstance(a, ast.Starred) for a in node.args) and not node.keywords
+        )
+        if isinstance(func, ast.Name) and func.id not in self._rebound:
+            if func.id == "format" and plain_call and len(node.args) in (1, 2):
+                value = self._operand(node.args[0])
+                if len(node.args) == 1:
+                    return f"str({self._text(node.args[0])})"
+                return f"{value}.__format__({self._text(node.args[1])})"
+            if func.id == "ascii" and plain_call and len(node.args) == 1:
+                return f"repr({self._text(node.args[0])})"
+            return None
+        if (
+            isinstance(func, ast.Attribute)
+            and func.attr in ("startswith", "endswith")
+            and node.args
+            and isinstance(node.args[0], ast.Tuple)
+            and node.args[0].elts
+            and plain_call
+            and len(node.args) <= 3
+            and not any(isinstance(e, ast.Starred) for e in node.args[0].elts)
+        ):
+            return self._affix_tuple(node, func)
+        return None
+
+    def _operand(self, node: ast.expr) -> str:
+        """The text of *node*, parenthesised where a ``.attr`` needs it."""
+        text = self._text(node)
+        if isinstance(node, (ast.Name, ast.Attribute, ast.Call, ast.Subscript)):
+            return text
+        return f"({text})"
+
+    def _affix_tuple(self, node: ast.Call, func: ast.Attribute) -> str:
+        """``(s.startswith(a) or s.startswith(b))`` for ``s.startswith((a, b))``,
+        the receiver, items and ``start`` / ``end`` evaluated once, in order."""
+        items = list(node.args[0].elts)  # type: ignore[attr-defined]
+        extra = list(node.args[1:])
+        parts = [func.value, *items, *extra]
+
+        def inline(part: ast.expr) -> bool:
+            return isinstance(part, ast.Constant) or _plain(part)
+
+        if all(inline(p) for p in parts):
+            receiver = self._operand(func.value)
+            names = {id(p): self._text(p) for p in parts}
+            call = ", ".join(names[id(e)] for e in extra)
+            tails = [
+                f"{receiver}.{func.attr}({', '.join([names[id(i)]] + ([call] if call else []))})"
+                for i in items
+            ]
+            return self._wrapped(node, " or ".join(tails))
+        params = {id(p): f"_acs_a{n}" for n, p in enumerate(parts)}
+        tail = "".join(f", {params[id(e)]}" for e in extra)
+        body = " or ".join(
+            f"{params[id(func.value)]}.{func.attr}({params[id(i)]}{tail})"
+            for i in items
+        )
+        lambda_params = ", ".join(params[id(p)] for p in parts)
+        values = ", ".join(self._text(p) for p in parts)
+        return self._wrapped(node, f"(lambda {lambda_params}: {body})({values})")
 
     def _format(self, node: ast.Call, template: str) -> str | None:
         """The f-string for ``template.format(...)``, or ``None`` if refused."""

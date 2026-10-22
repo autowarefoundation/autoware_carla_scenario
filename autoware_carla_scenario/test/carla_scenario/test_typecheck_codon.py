@@ -5661,6 +5661,159 @@ def test_zip_with_strict_still_needs_iterables(tmp_path: Path) -> None:
     assert error.line == _line_of(path, line)
 
 
+def test_builtins_codon_lacks_compile(tmp_path: Path) -> None:
+    # #439: startswith / endswith with a tuple, format(), ascii().
+    setup = """
+        s = "abc"
+        words = ["ab", "cd"]
+        spec = ".2f"
+        a = s.startswith(("a", "z"))
+        b = s.endswith(("c", "y"), 1)
+        c = words[0].startswith((words[1], "a"))
+        d = (
+            s.upper()
+            .startswith(
+                ("A", words[0].upper()),
+            )
+        )
+        e = format(3.14159, ".2f") + format(7, "04d") + format(2.5, spec)
+        f = format(3) + format(s) + ascii(s) + ascii(5)
+        g = format(1 + 2, "x") + format(len(words))
+        assert a and not b and c and d and len(e) + len(f) + len(g) > 0
+    """
+    scenario, config, _ = _data_case(tmp_path, "", setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+@pytest.mark.parametrize(
+    ("line", "message"),
+    [
+        ("r = s.startswith((1, 2))", "'int' does not match expected type 'str'"),
+        ("r = s.endswith(('a', 2))", "'int' does not match expected type 'str'"),
+        ("r = s.startswith(('a', 'b'), 'x')", "'str' does not match expected"),
+        ("r = format(s, 5)", "'int' does not match expected type 'str'"),
+        ("r: int = format(5)", "'int' does not match expected type 'str'"),
+        ("r: int = ascii(5)", "'int' does not match expected type 'str'"),
+    ],
+    ids=[
+        "startswith-ints",
+        "endswith-mixed",
+        "startswith-start",
+        "format-spec",
+        "format-type",
+        "ascii-type",
+    ],
+)
+def test_the_rewritten_builtins_are_still_type_checked(
+    tmp_path: Path, line: str, message: str
+) -> None:
+    scenario, config, path = _data_case(tmp_path, "", f's = "abc"\n{line}\n')
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert message in error.message, error.format()
+    assert error.line == _line_of(path, line)
+
+
+@pytest.mark.parametrize(
+    ("setup", "last", "hint"),
+    [
+        (
+            'prefixes = ("a", "b")\nr = "abc".startswith(prefixes)',
+            'r = "abc".startswith(prefixes)',
+            "any(s.startswith(p) for p in prefixes)",
+        ),
+        (
+            'd = {"a": 1}\nd.update(c=3)',
+            "d.update(c=3)",
+            'd.update({"k": v})',
+        ),
+        (
+            "r = int.from_bytes(b'a', 'big')",
+            "r = int.from_bytes(b'a', 'big')",
+            "shifts and masks",
+        ),
+        (
+            'r = "{a}".format_map({"a": 1})',
+            'r = "{a}".format_map({"a": 1})',
+            "write an f-string",
+        ),
+    ],
+    ids=["startswith-tuple-name", "dict-update-keywords", "from-bytes", "format-map"],
+)
+def test_a_builtin_codon_lacks_is_refused_with_a_hint(
+    tmp_path: Path, setup: str, last: str, hint: str
+) -> None:
+    scenario, config, path = _data_case(tmp_path, "", setup + "\n")
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert hint in error.message, error.format()
+    assert error.line == _line_of(path, last)
+
+
+def test_dict_update_with_a_dict_or_pairs_compiles(tmp_path: Path) -> None:
+    setup = """
+        d = {"a": 1}
+        d.update({"c": 3})
+        d.update([("e", 5)])
+        assert len(d) == 3
+    """
+    scenario, config, _ = _data_case(tmp_path, "", setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_except_star_is_refused_at_its_line(tmp_path: Path) -> None:
+    if sys.version_info < (3, 11):
+        pytest.skip("except* needs Python 3.11")
+    setup = """
+        try:
+            raise ValueError("x")
+        except* ValueError as eg:
+            n = len(eg.exceptions)
+    """
+    scenario, config, path = _data_case(tmp_path, "", setup)
+    result = typecheck_scenario(scenario, config)
+    assert not result.ok, result.format()
+    error = result.diagnostics[0]
+    assert "exception groups" in error.message, result.format()
+    assert "use `except`" in error.message, result.format()
+    assert error.line == _line_of(path, "except* ValueError")
+
+
+def test_the_439_rewrites_compose_with_fstring_specs_and_class_constants(
+    tmp_path: Path,
+) -> None:
+    definitions = """
+class Names:
+    A = "ab"
+    B = "cd"
+    HIT = "abc".startswith((A, B))
+    LABEL = f"{len(A):+d}"
+
+    def check(self, s: str = "abx") -> bool:
+        return s.startswith((Names.A, Names.B))
+"""
+    setup = """
+        n = 5
+        s = "abc"
+        signed = format(n, "+d") + f"{n:+d}" + format(2.5, "+.1f")
+        inside = f"{s.startswith(('a', 'z'))}-{format(n, '>4')}-{n:+d}"
+        names = Names()
+        assert names.check() and Names.HIT and len(signed) + len(inside) > 0
+        logger.info("%s %s %s", signed, inside, Names.LABEL)
+    """
+    scenario, config, _ = _data_case(tmp_path, definitions, setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_a_bytes_method_codon_lacks_is_refused_with_a_hint(tmp_path: Path) -> None:
+    setup = "r = b'ab'.hex()\n"
+    scenario, config, path = _data_case(tmp_path, "", setup)
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "already text" in error.message, error.format()
+    assert error.line == _line_of(path, "r = b'ab'.hex()")
+
+
 def test_a_class_with_only_lt_sorts(tmp_path: Path) -> None:
     setup = """
         items = [ByLt(2), ByLt(1), ByLt(3)]
