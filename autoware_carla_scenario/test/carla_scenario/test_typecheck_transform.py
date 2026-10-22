@@ -1090,6 +1090,41 @@ def test_the_framework_s_enums_are_iterated_without_being_named() -> None:
     assert "ComparisonRule._acs_by_name('LESS_THAN')" in out
 
 
+@pytest.mark.parametrize(
+    "binding",
+    [
+        'TurnDirection = ["a", "b"]',
+        "def TurnDirection():\n    return [1]",
+        "import os as TurnDirection",
+        "from os import path as TurnDirection",
+        "for TurnDirection in [[1]]:\n    pass",
+    ],
+)
+def test_a_module_binding_of_a_model_enum_s_name_is_not_iterated(binding: str) -> None:
+    out = _transform(f"{binding}\ndef f():\n    return list(TurnDirection)\n")
+    assert (
+        "list(TurnDirection)" in out
+        and "_acs_members" not in out.partition("def f")[2].partition("\n\n@extend")[0]
+    )
+
+
+def test_a_framework_import_of_a_model_enum_is_still_iterated() -> None:
+    out = _transform(
+        "from autoware_carla_scenario import TurnDirection\n"
+        "def f():\n    return list(TurnDirection)\n"
+    )
+    assert "list(TurnDirection._acs_members())" in out
+
+
+def test_a_model_enum_name_bound_inside_a_function_only_shadows_there() -> None:
+    out = _transform(
+        "def f():\n    TurnDirection = [1]\n    return list(TurnDirection)\n"
+        "def g():\n    return list(TurnDirection)\n"
+    )
+    assert "list(TurnDirection)\n" in out
+    assert "list(TurnDirection._acs_members())" in out
+
+
 def test_a_class_of_a_model_enum_s_name_that_is_no_enum_is_not_iterated() -> None:
     out = _transform(
         "class TurnDirection:\n    pass\ndef f():\n    return list(TurnDirection)\n"
@@ -2817,6 +2852,81 @@ def test_format_and_ascii_bound_by_the_module_are_left_alone(source: str) -> Non
     assert _rewritten(source + "\n") == source + "\n"
 
 
+@pytest.mark.parametrize(
+    "source",
+    [
+        "class Rep:\n    def format(self):\n        return 'r'\nr = format(3, '05d')",
+        "class Rep:\n    format = 1\nr = format(3, '05d')",
+        "def render(format):\n    return format\nr = format(3, '05d')",
+        "class Rep:\n    def ascii(self, x):\n        return 1\nr = ascii(3)",
+        "def f():\n    ascii = 1\ng = lambda format: format\nr = format(3)",
+    ],
+)
+def test_format_is_rewritten_where_no_enclosing_scope_binds_it(source: str) -> None:
+    text = _rewritten(source + "\n")
+    assert "r = " in text and (
+        "__format__" in text or "str(3)" in text or "repr(3)" in text
+    )
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "def f(format):\n    return format(1, 2)",
+        "def f():\n    format = g\n    return format(1, 2)",
+        "def f(format):\n    def h():\n        return format(1, 2)\n    return h",
+        "r = (lambda ascii: ascii(1))(repr)",
+    ],
+)
+def test_format_is_left_alone_inside_the_function_that_binds_it(source: str) -> None:
+    assert _rewritten(source + "\n") == source + "\n"
+
+
+def test_a_parameter_shadows_the_builtin_only_in_its_function() -> None:
+    text = _rewritten("def f(format):\n    return format(1, 2)\nr = format(3, '05d')\n")
+    assert "return format(1, 2)" in text
+    assert "r = (3).__format__('05d')" in text
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "def f():\n    global format\n    format = g\ndef h():\n    return format(1, 2)",
+        "def f(xs):\n    return [format(1, 2) for format in xs]",
+        "class A:\n    r = [format(1, 2) for format in FS]",
+        "def f(xs):\n    [(format := x) for x in xs]\n    return format(1, 2)",
+        "def f(x):\n    match x:\n        case [format, *_]:\n            pass\n"
+        "    return format(1, 2)",
+        "def f():\n    try:\n        pass\n    except E as format:\n        pass\n"
+        "    return format(1, 2)",
+        "def f(x):\n    if x:\n        format = g\n    return format(1, 2)",
+    ],
+)
+def test_format_follows_python_scoping_where_it_is_bound(source: str) -> None:
+    assert _rewritten(source + "\n") == source + "\n"
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "class A:\n    format = 1\n    def m(self):\n        return format(1, 2)",
+        "def f(xs):\n    a = [format for format in xs]\n    return format(1, 2)",
+    ],
+)
+def test_format_is_rewritten_where_python_resolves_it_to_the_builtin(
+    source: str,
+) -> None:
+    assert "format(1, 2)" not in _rewritten(source + "\n")
+
+
+def test_a_global_declaration_of_a_model_enum_s_name_shadows_it() -> None:
+    out = _transform(
+        "def f():\n    global TurnDirection\n    TurnDirection = [1]\n"
+        "def g():\n    return list(TurnDirection)\n"
+    )
+    assert "list(TurnDirection)\n" in out
+
+
 def test_format_nested_in_startswith_is_rewritten_too() -> None:
     text = _rewritten('r = f(1).startswith((format(x, "d"), ascii(y)))\n')
     assert "format(" not in text and "ascii(" not in text
@@ -3472,6 +3582,35 @@ def test_dict_with_keywords_becomes_a_display() -> None:
     out = transform_source("d = dict(a=1, b = 2,)\ne = dict(**x)\nf = dict()\n")
     assert 'd = {"a": 1, "b": 2}' in out
     assert "e = dict(**x)" in out and "f = dict()" in out
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "def f(dict):\n    return dict(a=1)",
+        "def f():\n    dict = g\n    return dict(a=1)",
+        "def f():\n    global dict\n    dict = g\ndef h():\n    return dict(a=1)",
+        "dict = g\nx = dict(a=1)",
+        "class A:\n    dict = g\n    x = dict(a=1)",
+    ],
+)
+def test_dict_with_keywords_is_left_alone_where_dict_is_bound(source: str) -> None:
+    out = transform_source(source + "\n")
+    assert "dict(a=1)" in out
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "def f(dict):\n    return dict\nx = dict(a=1)",
+        "class A:\n    dict = g\n    def m(self):\n        return dict(a=1)",
+        "class A:\n    def dict(self):\n        return 1\nx = dict(a=1)",
+    ],
+)
+def test_dict_with_keywords_is_rewritten_where_dict_is_the_builtin(
+    source: str,
+) -> None:
+    assert "dict(a=1)" not in transform_source(source + "\n")
 
 
 def test_dict_with_keywords_is_left_alone_where_the_module_binds_dict() -> None:

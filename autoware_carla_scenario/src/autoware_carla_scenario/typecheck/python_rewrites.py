@@ -98,6 +98,7 @@ import re
 import string
 from collections.abc import Iterator
 
+from .scopes import ShadowScopes
 from .transform import (
     _ENUM_BASES,
     _dataclass_options,
@@ -192,6 +193,17 @@ REWRITE_HINTS: tuple[tuple[re.Pattern[str], str], ...] = (
         "a class attribute, a computed display, a bound method "
         "or a lambda using a local variable is not rewritten): write an "
         "if/elif chain, or a `match` on the key, instead",
+    ),
+    (
+        # A set element or a dict key must be hashable; Codon's function is not.
+        re.compile(
+            r"^'(?:%_lambda_\d+(?:\[[^']*\]|\([^']*\))?|\w+\([^']*\.\.\.\))' "
+            r"object has no attribute '__hash__'"
+        ),
+        "Codon cannot hash a function, so a set of functions, or a dict keyed "
+        "by one, does not compile in the check (a dict with functions as "
+        "values is fine): use a list, or a dict keyed by the function's name "
+        '(`{"inc": inc}`) or by an enum',
     ),
     (
         re.compile(r"no function 'Callable\.__new__' with arguments"),
@@ -653,32 +665,13 @@ def _escaped(text: str) -> str:
     return "".join(out)
 
 
-def _rebound_names(tree: ast.AST) -> set[str]:
-    """Every name the module binds anywhere (a variable, parameter, function,
-    class or import), so a builtin of the same name is not taken for it."""
-    names: set[str] = set()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
-            names.add(node.id)
-        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            names.add(node.name)
-        elif isinstance(node, ast.arg):
-            names.add(node.arg)
-        elif isinstance(node, (ast.Import, ast.ImportFrom)):
-            for alias in node.names:
-                names.add((alias.asname or alias.name).split(".")[0])
-        elif isinstance(node, ast.ExceptHandler) and node.name:
-            names.add(node.name)
-    return names
-
-
-class _Pass(ast.NodeVisitor):
+class _Pass(ShadowScopes):
     def __init__(self, edits: _Edits, total_ordering: set[str]) -> None:
+        super().__init__()
         self.edits = edits
         self.total_ordering = total_ordering
         self.refused: list[tuple[int, str]] = []
         self._depth = 0
-        self._rebound: set[str] = set()
         #: The functions being visited, innermost last, with their local names.
         self._functions: list[tuple[ast.FunctionDef | ast.AsyncFunctionDef, set[str]]]
         self._functions = []
@@ -1105,7 +1098,7 @@ class _Pass(ast.NodeVisitor):
         self.edits.replace(*self.edits.node_span(node), text)
 
     def visit_Module(self, node: ast.Module) -> None:
-        self._rebound = _rebound_names(node)
+        self.enter_module(node)
         self.generic_visit(node)
 
     # -- except* -------------------------------------------------------------
@@ -1205,7 +1198,7 @@ class _Pass(ast.NodeVisitor):
         plain_call = (
             not any(isinstance(a, ast.Starred) for a in node.args) and not node.keywords
         )
-        if isinstance(func, ast.Name) and func.id not in self._rebound:
+        if isinstance(func, ast.Name) and not self._shadowed(func.id):
             if func.id == "format" and plain_call and len(node.args) in (1, 2):
                 value = self._operand(node.args[0])
                 if len(node.args) == 1:

@@ -1034,6 +1034,30 @@ def _data_model_hints(
     return out
 
 
+def _annotated_class_attribute(
+    cls_name: str, attr: str, sources: _Sources
+) -> str | None:
+    """Why ``C.X`` is no attribute of *C* when the class annotates ``X`` (#471):
+    Codon makes an annotated name of a class body a field of the instance."""
+    cls = _python_class(cls_name, sources)
+    if cls is None or attr not in cls.__dict__.get("__annotations__", {}):
+        return None
+    if attr not in cls.__dict__:
+        return None  # annotated with no value: a field in Python too
+    if dataclasses.is_dataclass(cls):
+        return (
+            f"`{attr}` is a field of the @dataclass {cls_name} (its default "
+            f"is read as `{cls_name}.{attr}` in Python only): read it from an "
+            f"instance, or use a module-level constant"
+        )
+    return (
+        f"Codon makes the annotated `{attr}` of class {cls_name} a field of "
+        f"the instance, not a class attribute (`ClassVar[...]` and "
+        f"`Final[int]` included): write `{attr}: Final = ...` (or no "
+        f"annotation) to read it as `{cls_name}.{attr}`"
+    )
+
+
 def _data_model_hint(
     message: str, trace: tuple[str, ...], sources: _Sources
 ) -> str | None:
@@ -1115,6 +1139,10 @@ def _data_model_hint(
                     "(p.x, p.y)"
                 )
     missing = _NO_ATTRIBUTE.search(message)
+    if missing is not None:
+        annotated = _annotated_class_attribute(missing["cls"], missing["attr"], sources)
+        if annotated is not None:
+            return annotated
     if missing is not None and missing["attr"] in _NAMED_TUPLE_ONLY:
         if _is_named_tuple_class(_python_class(missing["cls"], sources)):
             return (
