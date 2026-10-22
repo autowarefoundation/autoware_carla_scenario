@@ -2,7 +2,8 @@
 
 SUMO runs in-process (libsumo, or TraCI when libsumo is missing) on the road
 network of the world the run is in (:mod:`.network`), one SUMO step per CARLA
-tick, with the step length set to the world's ``fixed_delta_seconds``.  The
+tick, with the step length set to the world's ``fixed_delta_seconds`` (or
+several shorter ones per tick, with ``step_length_s``).  The
 coupling follows TeraSim's CARLA co-simulation
 (https://github.com/autowarefoundation/TeraSim, Apache-2.0); its adversarial
 behaviour generation is left out -- that is what scenarios are for.
@@ -163,6 +164,7 @@ _VEHICLE_SETTERS = {
     "decel": "setDecel",
     "reaction_time_s": "setTau",
     "imperfection": "setImperfection",
+    "max_lateral_speed_mps": "setMaxSpeedLat",
 }
 #: How many pedestrian types, each its own draw of the pedestrian
 #: parameters, SUMO's default pedestrian type is a distribution of.
@@ -220,6 +222,32 @@ def _net_offset(net_file: Path) -> tuple[float, float]:
             if "<edge" in line:
                 break
     return 0.0, 0.0
+
+
+def _sumo_step(tick: float, step_length: Optional[float]) -> tuple[float, int]:
+    """SUMO's step length and how many steps it makes per CARLA *tick*.
+
+    Raises:
+        ValueError: If *step_length* is longer than the tick, does not divide
+            it, or is not a whole number of milliseconds -- SUMO's clock counts
+            those, so it would round the step and drift from CARLA's.
+    """
+    if step_length is None:
+        return tick, 1
+    steps = round(tick / step_length)
+    millis = step_length * 1000.0
+    if (
+        steps < 1
+        or abs(steps * step_length - tick) > 1e-6 * max(tick, 1.0)
+        or abs(millis - round(millis)) > 1e-6
+    ):
+        raise ValueError(
+            f"traffic.options.step_length_s ({step_length:g} s) must divide the "
+            f"world's fixed_delta_seconds ({tick:g} s) in whole milliseconds: "
+            "SUMO makes a whole number of steps per CARLA tick, and its clock "
+            "counts milliseconds"
+        )
+    return tick / steps, steps
 
 
 class SumoTrafficBackend(TrafficBackend):
@@ -349,6 +377,8 @@ class SumoTrafficBackend(TrafficBackend):
         #: SUMO id -> its maximum speed (m/s) before the visibility held it
         #: down, its deceleration (m/s²) and its tau (s): read once.
         self._max_speeds: dict[str, tuple[float, float, float]] = {}
+        #: SUMO steps per CARLA tick (``step_length_s``).
+        self._substeps = 1
         #: The vehicles that departed in this step, read once per step.
         self._departed: Optional[list[str]] = None
         #: The pedestrian parameters changed during the run, which each
@@ -375,6 +405,14 @@ class SumoTrafficBackend(TrafficBackend):
                 "the TrafficManager drives, do without them",
                 ", ".join(dropped),
             )
+
+    def supported_vehicle_parameters(self) -> set[str]:
+        """SUMO's, but a lateral acceleration only with the sublane model
+        (``lateral_resolution_m``): SUMO's lane-based model has none."""
+        supported = super().supported_vehicle_parameters()
+        if self._config.lateral_resolution_m is None:
+            supported.discard("max_lateral_accel")
+        return supported
 
     def supported_vehicle_overrides(self) -> set[str]:
         """Every vehicle parameter it supports: each is set per vehicle."""
@@ -448,6 +486,15 @@ class SumoTrafficBackend(TrafficBackend):
                 ", ".join(dropped),
             )
 
+    def _step_sumo(self, world: Any) -> None:
+        """Advance SUMO by one CARLA tick: its steps, each giving the vehicles
+        that departed in it their parameters and their sight."""
+        for _ in range(self._substeps):
+            self._traci.simulationStep()
+            self._departed = None
+            self._apply_parameters()
+            self._follow_visibility(world)
+
     def _departed_ids(self) -> list[str]:
         """The vehicles that departed in the step SUMO just made."""
         if self._departed is None:
@@ -480,6 +527,10 @@ class SumoTrafficBackend(TrafficBackend):
     def prepare(self, context: TrafficContext) -> None:
         """Build the network of the world, generate demand and start SUMO."""
         self.close()
+        # Before anything is built: a step that does not fit is a config error.
+        step_length, self._substeps = _sumo_step(
+            context.fixed_delta_seconds, self._config.step_length_s
+        )
         self._context = context
         self._traci = _load_traci(self._config.use_libsumo)
         self._rng = random.Random(context.random_seed)
@@ -520,20 +571,26 @@ class SumoTrafficBackend(TrafficBackend):
             "-n",
             str(self._network.net_file),
             "--step-length",
-            f"{context.fixed_delta_seconds:g}",
+            f"{step_length:g}",
             "--seed",
             str(context.random_seed),
             "--collision.action",
             "warn",
-            # Lane changes take time, as on the road (SUMO's default is one
-            # step), so a scenario waiting for one sees it happen.
-            "--lanechange.duration",
-            f"{LANE_CHANGE_DURATION_S:g}",
             "--no-step-log",
             "true",
             "--log",
             str(out / "sumo.log"),
         ]
+        if self._config.lateral_resolution_m is not None:
+            cmd += ["--lateral-resolution", f"{self._config.lateral_resolution_m:g}"]
+        else:
+            # Lane changes take time, as on the road (SUMO's default is one
+            # step), so a scenario waiting for one sees it happen.
+            duration = self._config.lane_change_duration_s
+            cmd += [
+                "--lanechange.duration",
+                f"{LANE_CHANGE_DURATION_S if duration is None else duration:g}",
+            ]
         routes = []
         ambient = self._config.ambient
         if ambient.enabled:
@@ -655,10 +712,7 @@ class SumoTrafficBackend(TrafficBackend):
             self._push_walkers(world)
             if self._config.traffic_light_authority == "carla":
                 self._signals_to_sumo()
-            self._traci.simulationStep()
-            self._departed = None
-            self._apply_parameters()
-            self._follow_visibility(world)
+            self._step_sumo(world)
             if self._clock_log is not None:
                 stamp = world.get_snapshot().timestamp
                 self._clock_log.write(
@@ -2662,10 +2716,19 @@ class SumoTrafficBackend(TrafficBackend):
                 ("decel", parameters.decel),
                 ("reaction_time_s", parameters.reaction_time_s),
                 ("imperfection", parameters.imperfection),
+                ("max_lateral_speed_mps", parameters.max_lateral_speed_mps),
             ):
                 if value is not None:
                     setter = getattr(vehicle, _VEHICLE_SETTERS[name])
                     setter(sumo_id, value.draw(rng, VEHICLE_BOUNDS[name]))
+            lateral_accel = parameters.max_lateral_accel
+            if lateral_accel is not None:
+                # No setter of its own: a parameter of the sublane model.
+                vehicle.setParameter(
+                    sumo_id,
+                    "laneChangeModel.lcAccelLat",
+                    f"{lateral_accel.draw(rng, VEHICLE_BOUNDS['max_lateral_accel']):g}",
+                )
             if parameters.lane_changes is not None:
                 vehicle.setLaneChangeMode(
                     sumo_id,
@@ -2932,10 +2995,7 @@ class SumoTrafficBackend(TrafficBackend):
             # would have built.
             if self._config.traffic_light_authority == "carla":
                 self._signals_to_sumo()
-            tc.simulationStep()
-            self._departed = None
-            self._apply_parameters()
-            self._follow_visibility(world)
+            self._step_sumo(world)
             if self._meso is not None:
                 # Not the scenario's vehicles: they are held still for now.
                 self._step_mesoscopic(world, entities=False)

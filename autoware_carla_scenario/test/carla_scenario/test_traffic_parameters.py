@@ -96,6 +96,8 @@ def test_nothing_set_is_every_default() -> None:
         ("decel", 0.0),
         ("reaction_time_s", -0.5),
         ("imperfection", 2.0),
+        ("max_lateral_speed_mps", 0.0),
+        ("max_lateral_accel", -1.0),
     ],
 )
 def test_an_impossible_value_is_refused(field: str, value: float) -> None:
@@ -184,6 +186,7 @@ def test_building_a_backend_checks_its_parameters() -> None:
 
 def test_each_backend_supports_what_the_table_says() -> None:
     from autoware_carla_scenario.traffic.sumo.backend import SumoTrafficBackend
+    from autoware_carla_scenario.traffic.sumo.config import SumoBackendConfig
 
     assert TrafficManagerBackend().supported_vehicle_parameters() == {
         "speed_factor",
@@ -203,8 +206,14 @@ def test_each_backend_supports_what_the_table_says() -> None:
         "decel",
         "reaction_time_s",
         "imperfection",
+        "max_lateral_speed_mps",
         "follow_visibility",
     }
+    # A lateral acceleration only with SUMO's sublane model.
+    sublane = SumoTrafficBackend(SumoBackendConfig(lateral_resolution_m=0.4))
+    assert sublane.supported_vehicle_parameters() == (
+        SumoTrafficBackend().supported_vehicle_parameters() | {"max_lateral_accel"}
+    )
     assert NullTrafficBackend().supported_vehicle_parameters() == set()
 
 
@@ -224,6 +233,8 @@ def test_every_hand_written_field_list_names_every_field() -> None:
         decel=Spread(1.0),
         reaction_time_s=Spread(1.0),
         imperfection=Spread(0.5),
+        max_lateral_speed_mps=Spread(1.0),
+        max_lateral_accel=Spread(1.0),
         follow_visibility=True,
     )
     assert set(everything.set_fields()) == fields

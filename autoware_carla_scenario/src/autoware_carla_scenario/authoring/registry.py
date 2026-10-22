@@ -2201,6 +2201,13 @@ _VEHICLE_SPREADS: tuple[tuple[str, str, str, str], ...] = (
     ("decel", "Braking", "m/s^2", "sumo; also the visibility's."),
     ("reaction_time_s", "Reaction time", "s", "sumo; also the visibility's."),
     ("imperfection", "Imperfection", "", "Driver imperfection (0-1); sumo."),
+    ("max_lateral_speed_mps", "Max lateral speed", "m/s", "sumo."),
+    (
+        "max_lateral_accel",
+        "Max lateral acceleration",
+        "m/s^2",
+        "sumo, with its sublane model (lateral_resolution_m).",
+    ),
 )
 _PEDESTRIAN_SPREADS: tuple[tuple[str, str, str, str], ...] = (
     ("walking_speed_mps", "Walking speed", "m/s", "sumo."),

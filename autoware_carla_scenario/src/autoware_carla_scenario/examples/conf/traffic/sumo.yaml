@@ -37,6 +37,17 @@ traffic:
     # map is converted (roadgen cuts edges at bends and slows each piece and
     # each junction turn); null converts the map as it is.
     curve_lateral_acceleration: 3.0
+    # How long a lane change takes, s (--lanechange.duration); null: 3 s, or
+    # none with lateral_resolution_m.
+    lane_change_duration_s: null
+    # Sublane width, m (--lateral-resolution): SUMO's sublane model, where
+    # vehicles move sideways continuously at traffic.vehicles'
+    # max_lateral_speed_mps and max_lateral_accel. null: lane-based.
+    lateral_resolution_m: null
+    # SUMO's step, s (--step-length); null: the world's fixed_delta_seconds.
+    # A shorter one must divide it in whole ms: SUMO steps that many times
+    # per tick.
+    step_length_s: null
     # carla: SUMO obeys CARLA's lights. sumo: CARLA's lights follow SUMO. none.
     traffic_light_authority: carla
     # SUMO's own randomTrips demand, independent of the scenario. Off: the
@@ -114,6 +125,10 @@ traffic:
     decel: {mean: null, std: null}
     reaction_time_s: {mean: null, std: null}
     imperfection: {mean: null, std: null}
+    # Most lateral speed, m/s, and (with traffic.options.lateral_resolution_m,
+    # SUMO's sublane model) most lateral acceleration, m/s^2 (sumo only).
+    max_lateral_speed_mps: {mean: null, std: null}
+    max_lateral_accel: {mean: null, std: null}
     # Hold the traffic to the speed it stops from within what its
     # drivers see in the run's weather (sumo only; on by default there).
     follow_visibility: null

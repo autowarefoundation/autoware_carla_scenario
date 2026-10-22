@@ -198,6 +198,8 @@ class VehicleParameters:
     decel: Optional[Spread]
     reaction_time_s: Optional[Spread]
     imperfection: Optional[Spread]
+    max_lateral_speed_mps: Optional[Spread]
+    max_lateral_accel: Optional[Spread]
     follow_visibility: Optional[bool]
 
     def __init__(self,
@@ -213,6 +215,8 @@ class VehicleParameters:
                  decel = None,
                  reaction_time_s = None,
                  imperfection = None,
+                 max_lateral_speed_mps = None,
+                 max_lateral_accel = None,
                  follow_visibility: Optional[bool] = None):
         self.speed_factor = _as_spread(speed_factor)
         self.min_gap_m = _as_spread(min_gap_m)
@@ -226,6 +230,8 @@ class VehicleParameters:
         self.decel = _as_spread(decel)
         self.reaction_time_s = _as_spread(reaction_time_s)
         self.imperfection = _as_spread(imperfection)
+        self.max_lateral_speed_mps = _as_spread(max_lateral_speed_mps)
+        self.max_lateral_accel = _as_spread(max_lateral_accel)
         self.follow_visibility = follow_visibility
 
 

@@ -56,6 +56,8 @@ run starts.  A field left at ``None`` is the backend's own default.
 ``decel``                  --                     ``decel``
 ``reaction_time_s``        --                     ``tau``
 ``imperfection``           --                     ``sigma``
+``max_lateral_speed_mps``  --                     ``maxSpeedLat``
+``max_lateral_accel``      --                     ``lcAccelLat`` (sublane)
 ``follow_visibility``      --                     held to sight
 ========================== ====================== =============================
 
@@ -97,6 +99,7 @@ __all__ = [
     "PedestrianParameters",
     "TrafficParameterError",
     "VEHICLE_PARAMETER_BACKENDS",
+    "VEHICLE_PARAMETER_REQUIREMENTS",
     "VehicleParameters",
 ]
 
@@ -117,7 +120,18 @@ VEHICLE_PARAMETER_BACKENDS: dict[str, list[str]] = {
     "decel": ["sumo"],
     "reaction_time_s": ["sumo"],
     "imperfection": ["sumo"],
+    "max_lateral_speed_mps": ["sumo"],
+    "max_lateral_accel": ["sumo"],
     "follow_visibility": ["sumo"],
+}
+
+#: A vehicle parameter a built-in backend supports only with one of its options
+#: set, and that option: what an error names when the option is not set.
+VEHICLE_PARAMETER_REQUIREMENTS: dict[str, str] = {
+    "max_lateral_accel": (
+        "traffic.options.lateral_resolution_m (SUMO's sublane model, the only "
+        "one with a lateral acceleration)"
+    ),
 }
 
 #: The same for each pedestrian parameter.  Only SUMO simulates pedestrian
@@ -177,6 +191,11 @@ def check_supported(
             )
             continue
         others = table.get(name, [])
+        if backend in others and name in VEHICLE_PARAMETER_REQUIREMENTS:
+            problems.append(
+                f"{node}.{name} needs {VEHICLE_PARAMETER_REQUIREMENTS[name]}"
+            )
+            continue
         if others:
             where = " or ".join(f"'{b}'" for b in others)
             plural = "s" if len(others) > 1 else ""
@@ -210,6 +229,8 @@ VEHICLE_BOUNDS: dict[str, tuple[float, float]] = {
     "decel": (0.05, INF),
     "reaction_time_s": (0.0, INF),
     "imperfection": (0.0, 1.0),
+    "max_lateral_speed_mps": (0.05, INF),
+    "max_lateral_accel": (0.05, INF),
 }
 PEDESTRIAN_BOUNDS: dict[str, tuple[float, float]] = {
     "walking_speed_mps": (0.05, INF),
@@ -351,6 +372,13 @@ class VehicleParameters:
             the speed out from.
         imperfection: Driver imperfection, 0 (perfect) to 1 (SUMO's
             ``sigma``).
+        max_lateral_speed_mps: The fastest a vehicle moves sideways, m/s
+            (SUMO's ``maxSpeedLat``; 1.0 by default): a lane change takes at
+            least a lane's width over this, whatever
+            ``traffic.options.lane_change_duration_s`` says.
+        max_lateral_accel: The hardest a vehicle accelerates sideways, m/s²
+            (SUMO's ``lcAccelLat``; 1.0 by default).  Only SUMO's sublane
+            model has one: it needs ``traffic.options.lateral_resolution_m``.
         follow_visibility: Hold the backend's own traffic to the speed it stops
             from within what its drivers see, once the run's weather says how
             far that is (:mod:`autoware_carla_scenario.visibility`, set by the
@@ -370,6 +398,8 @@ class VehicleParameters:
     decel: Optional[Spread] = None
     reaction_time_s: Optional[Spread] = None
     imperfection: Optional[Spread] = None
+    max_lateral_speed_mps: Optional[Spread] = None
+    max_lateral_accel: Optional[Spread] = None
     follow_visibility: Optional[bool] = None
 
     def __init__(
@@ -386,6 +416,8 @@ class VehicleParameters:
         decel: Optional[SpreadOrValue] = None,
         reaction_time_s: Optional[SpreadOrValue] = None,
         imperfection: Optional[SpreadOrValue] = None,
+        max_lateral_speed_mps: Optional[SpreadOrValue] = None,
+        max_lateral_accel: Optional[SpreadOrValue] = None,
         follow_visibility: Optional[bool] = None,
     ) -> None:
         # Written out rather than generated, to take a plain number as well as
@@ -402,6 +434,8 @@ class VehicleParameters:
         self.decel = as_spread(decel)
         self.reaction_time_s = as_spread(reaction_time_s)
         self.imperfection = as_spread(imperfection)
+        self.max_lateral_speed_mps = as_spread(max_lateral_speed_mps)
+        self.max_lateral_accel = as_spread(max_lateral_accel)
         self.follow_visibility = follow_visibility
         self.__post_init__()
 
@@ -417,6 +451,8 @@ class VehicleParameters:
         _check("decel", self.decel, VEHICLE_BOUNDS)
         _check("reaction_time_s", self.reaction_time_s, VEHICLE_BOUNDS)
         _check("imperfection", self.imperfection, VEHICLE_BOUNDS)
+        _check("max_lateral_speed_mps", self.max_lateral_speed_mps, VEHICLE_BOUNDS)
+        _check("max_lateral_accel", self.max_lateral_accel, VEHICLE_BOUNDS)
 
     def set_fields(self) -> list[str]:
         """The names of the fields that are not ``None``, in declared order."""
@@ -433,6 +469,8 @@ class VehicleParameters:
             ("decel", self.decel is not None),
             ("reaction_time_s", self.reaction_time_s is not None),
             ("imperfection", self.imperfection is not None),
+            ("max_lateral_speed_mps", self.max_lateral_speed_mps is not None),
+            ("max_lateral_accel", self.max_lateral_accel is not None),
             ("follow_visibility", self.follow_visibility is not None),
         ]
         return [name for name, is_set in values if is_set]
@@ -476,6 +514,14 @@ class VehicleParameters:
                 self.reaction_time_s if "reaction_time_s" in supported else None
             ),
             imperfection=self.imperfection if "imperfection" in supported else None,
+            max_lateral_speed_mps=(
+                self.max_lateral_speed_mps
+                if "max_lateral_speed_mps" in supported
+                else None
+            ),
+            max_lateral_accel=(
+                self.max_lateral_accel if "max_lateral_accel" in supported else None
+            ),
             follow_visibility=(
                 self.follow_visibility if "follow_visibility" in supported else None
             ),
@@ -537,6 +583,16 @@ class VehicleParameters:
                 if overrides.imperfection is not None
                 else self.imperfection
             ),
+            max_lateral_speed_mps=(
+                overrides.max_lateral_speed_mps
+                if overrides.max_lateral_speed_mps is not None
+                else self.max_lateral_speed_mps
+            ),
+            max_lateral_accel=(
+                overrides.max_lateral_accel
+                if overrides.max_lateral_accel is not None
+                else self.max_lateral_accel
+            ),
             follow_visibility=(
                 overrides.follow_visibility
                 if overrides.follow_visibility is not None
@@ -560,6 +616,8 @@ class VehicleParameters:
             "decel": self.decel,
             "reaction_time_s": self.reaction_time_s,
             "imperfection": self.imperfection,
+            "max_lateral_speed_mps": self.max_lateral_speed_mps,
+            "max_lateral_accel": self.max_lateral_accel,
             "follow_visibility": self.follow_visibility,
         }
         return {
