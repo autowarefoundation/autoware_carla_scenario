@@ -38,6 +38,7 @@ __all__ = [
     "EntityConfig",
     "EgoVehicleConfig",
     "NpcVehicleConfig",
+    "DriverCameraLensSpec",
     "DriverCameraSpec",
     "DriverLidarSpec",
     "DriverControlSpec",
@@ -237,6 +238,23 @@ class NpcVehicleConfig:
 
 
 @dataclass
+class DriverCameraLensSpec:
+    """The lens a camera's frames are drawn through, when not CARLA's pinhole.
+
+    Mirrors :class:`~autoware_carla_scenario.driver.base.DriverCameraLens`; see that
+    class for the meaning of each field.
+    """
+
+    model: str = "ftheta"
+    principal_point: list[float] = field(default_factory=list)
+    pixeldist_to_angle_poly: list[float] = field(default_factory=list)
+    angle_to_pixeldist_poly: list[float] = field(default_factory=list)
+    max_angle: float = 0.0
+    linear_cde: list[float] = field(default_factory=lambda: [1.0, 0.0, 0.0])
+    reference_poly: str = "pixeldist_to_angle"
+
+
+@dataclass
 class DriverCameraSpec:
     """One camera streamed to the driver policy.
 
@@ -256,6 +274,9 @@ class DriverCameraSpec:
     roll: float = 0.0
     pitch: float = 0.0
     yaw: float = 0.0
+    #: The lens the frames are drawn through, e.g. a carla_canvas renderer's
+    #: fisheye; ``null`` is CARLA's pinhole of ``fov``.
+    lens: DriverCameraLensSpec | None = None
 
 
 @dataclass

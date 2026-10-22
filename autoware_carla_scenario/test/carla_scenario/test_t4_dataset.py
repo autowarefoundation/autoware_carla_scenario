@@ -89,6 +89,104 @@ def test_settings_refuse_what_cannot_be_recorded(
         T4Settings.from_driver(_driver(**driver), config)
 
 
+def test_a_camera_lens_comes_from_the_driver_config() -> None:
+    from ._ftheta_lens import COSMOS3_FRONT_WIDE
+
+    config = DriverClientConfig.from_mapping(
+        {
+            "cameras": [
+                {
+                    "logical_id": "camera_front_wide_120fov",
+                    "image_width": 832,
+                    "image_height": 480,
+                    "lens": COSMOS3_FRONT_WIDE,
+                },
+                {"logical_id": "cam_pinhole"},
+            ]
+        }
+    )
+    settings = T4Settings.from_driver(config, {})
+    ((logical_id, lens),) = settings.lenses
+    assert logical_id == "camera_front_wide_120fov"
+    assert lens.max_angle == pytest.approx(1.226783919)
+
+
+@pytest.mark.parametrize(
+    "change, message",
+    [
+        ({"model": "kannala_brandt"}, "lens.model"),
+        ({"principal_point": [1.0]}, "principal_point"),
+        ({"angle_to_pixeldist_poly": []}, "both"),
+        ({"max_angle": 0.0}, "max_angle"),
+        ({"reference_poly": "fw"}, "reference_poly"),
+    ],
+)
+def test_a_lens_out_of_its_domain_is_refused(change: dict, message: str) -> None:
+    from autoware_carla_scenario.driver.base import DriverCameraLens
+
+    from ._ftheta_lens import COSMOS3_FRONT_WIDE
+
+    with pytest.raises(ValueError, match=message):
+        DriverCameraLens.from_mapping({**COSMOS3_FRONT_WIDE, **change})
+
+
+def _opencv_project(intrinsic: Any, distortion: Any, rays: np.ndarray) -> np.ndarray:
+    """OpenCV's projection (cv2.projectPoints) of optical-frame rays, written out."""
+    k1, k2, p1, p2, k3, k4, k5, k6 = distortion
+    x, y = rays[:, 0] / rays[:, 2], rays[:, 1] / rays[:, 2]
+    r2 = x * x + y * y
+    f = (1 + k1 * r2 + k2 * r2**2 + k3 * r2**3) / (
+        1 + k4 * r2 + k5 * r2**2 + k6 * r2**3
+    )
+    xd, yd = x * f, y * f
+    (fx, s, cx), (_, fy, cy), _ = intrinsic
+    return np.stack([fx * xd + s * yd + cx, fy * yd + cy], 1)
+
+
+def test_an_ftheta_lens_is_written_as_opencvs_rational_model() -> None:
+    """T4's cameras are OpenCV's: the fitted model lands a ray where the lens
+    does, to a fraction of a pixel."""
+    from autoware_carla_scenario.driver.base import DriverCameraLens
+
+    from ._ftheta_lens import COSMOS3_FRONT_WIDE
+
+    lens = DriverCameraLens.from_mapping(COSMOS3_FRONT_WIDE)
+    intrinsic, distortion, mean_px, max_px = t4.opencv_of_ftheta(lens, 832, 480)
+    assert len(distortion) == 8 and distortion[2:4] == [0.0, 0.0]
+    (fx, skew, cx), (_, fy, cy), _ = intrinsic
+    assert (cx, cy) == pytest.approx(tuple(COSMOS3_FRONT_WIDE["principal_point"]))
+    assert fy == pytest.approx(411.286296) and fx == pytest.approx(
+        411.286296 * 1.00234926
+    )
+    assert skew == 0.0
+    assert mean_px < 0.2 and max_px < 3.0
+
+    # Rays the lens sees, projected by the lens and by the fitted model.
+    rng = np.random.default_rng(0)
+    theta = rng.uniform(0.0, np.radians(60.0), 2000)
+    phi = rng.uniform(-np.pi, np.pi, 2000)
+    rays = np.stack(
+        [np.sin(theta) * np.cos(phi), np.sin(theta) * np.sin(phi), np.cos(theta)], 1
+    )
+    radius = np.polynomial.polynomial.polyval(theta, lens.angle_to_pixeldist_poly)
+    c = lens.linear_cde[0]
+    lens_px = np.stack([c * radius * np.cos(phi) + cx, radius * np.sin(phi) + cy], 1)
+    error = np.hypot(*(_opencv_project(intrinsic, distortion, rays) - lens_px).T)
+    assert np.median(error) < 0.2 and error.max() < 3.0
+
+
+def test_a_skewed_lens_has_no_opencv_model() -> None:
+    from autoware_carla_scenario.driver.base import DriverCameraLens
+
+    from ._ftheta_lens import COSMOS3_FRONT_WIDE
+
+    lens = DriverCameraLens.from_mapping(
+        {**COSMOS3_FRONT_WIDE, "linear_cde": [1.0, 0.0, 0.1]}
+    )
+    with pytest.raises(ValueError, match="no OpenCV model"):
+        t4.opencv_of_ftheta(lens, 832, 480)
+
+
 @pytest.mark.parametrize(
     ("type_id", "base_type", "wheels", "category"),
     [
@@ -313,14 +411,17 @@ OFFSETS = (1000.0, 2000.0, 30.0)
 
 
 def _start(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, world: "_World"
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    world: "_World",
+    driver: Optional[DriverClientConfig] = None,
 ) -> T4Recording:
     monkeypatch.setattr(t4, "_map_offset", lambda: OFFSETS)
     monkeypatch.setattr(carla_lidar, "_SWEEP_TIMEOUT", 0.05)
     lanelet2 = tmp_path / "map" / "lanelet2_map.osm"
     lanelet2.parent.mkdir()
     lanelet2.write_text("<osm/>")
-    recording = T4Recorder(T4Settings.from_driver(_driver(), {})).start(
+    recording = T4Recorder(T4Settings.from_driver(driver or _driver(), {})).start(
         tmp_path / "out",
         "CutInScenario",
         world,  # type: ignore[arg-type]
@@ -334,11 +435,15 @@ def _start(
     return recording
 
 
-def _record(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, _World]:
+def _record(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    driver: Optional[DriverClientConfig] = None,
+) -> tuple[Path, _World]:
     """Ten ticks of the fake world at 10 Hz (a sweep every other tick), with
     the recorder's own sensors on the ego."""
     world = _World()
-    recording = _start(tmp_path, monkeypatch, world)
+    recording = _start(tmp_path, monkeypatch, world, driver)
     assert not recording.fed_by_driver
     assert len(world.sensors) == 2
     for frame in range(101, 111):
@@ -440,6 +545,29 @@ def test_t4_devkit_loads_the_dataset(
     # The car is ahead and to the right: in the optical frame, +z and +x.
     (box,) = boxes
     assert box.position[2] > 0.0 and box.position[0] > 0.0
+
+
+def test_a_lens_camera_is_calibrated_with_its_opencv_model(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from autoware_carla_scenario.driver.base import DriverCameraLens
+
+    from ._ftheta_lens import COSMOS3_FRONT_WIDE
+
+    lens = DriverCameraLens.from_mapping(COSMOS3_FRONT_WIDE)
+    camera = DriverCameraConfig(
+        logical_id="cam_front", image_width=832, image_height=480, lens=lens
+    )
+    root, _ = _record(tmp_path, monkeypatch, _driver(cameras=(camera,)))
+    intrinsic, distortion, _, _ = t4.opencv_of_ftheta(lens, 832, 480)
+    sensors = {s["token"]: s["channel"] for s in _table(root, "sensor")}
+    (calibrated,) = [
+        c
+        for c in _table(root, "calibrated_sensor")
+        if sensors[c["sensor_token"]] == "CAM_FRONT"
+    ]
+    np.testing.assert_allclose(calibrated["camera_intrinsic"], intrinsic)
+    np.testing.assert_allclose(calibrated["camera_distortion"], distortion)
 
 
 def test_the_dataset_passes_t4_devkits_sanity_check(

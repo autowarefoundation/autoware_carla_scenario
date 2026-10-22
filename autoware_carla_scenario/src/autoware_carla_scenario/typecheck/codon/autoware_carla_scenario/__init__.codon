@@ -60,7 +60,7 @@ from .placement import (
     vehicle_bumpers,
 )
 from .scenario_base import BaseScenario, EgoConfig
-from .scenario_config import (DriverCameraSpec, DriverConfig, DriverControlSpec, DriverLidarSpec,
+from .scenario_config import (DriverCameraLensSpec, DriverCameraSpec, DriverConfig, DriverControlSpec, DriverLidarSpec,
                               EgoVehicleConfig, EntityConfig, MapConfig, NpcVehicleConfig,
                               ServerConfig, SweepConfig)
 from .traffic import (LaneChangeDirection, PedestrianParameters, Spread, TrafficContext,

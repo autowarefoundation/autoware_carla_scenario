@@ -164,6 +164,47 @@ driver:
     throttle_deadband: 0.3      # vehicle interface: least throttle to pull away
 ```
 
+### A camera with a lens of its own: `driver.cameras[].lens`
+
+A camera's frames are CARLA's pinhole of its `fov` unless it says otherwise. A
+[carla_canvas](usage.md#rendering-sensors-with-carla_canvas) renderer may draw
+a camera through another lens: the Cosmos3 world model
+([cosmos3-canvas](https://github.com/hakuturu583/cosmos3-canvas)) draws only its
+Hyperion 8 cameras, each through its F-theta fisheye lens. Such a camera carries
+its `lens`, so the policy and a [T4 dataset](t4_dataset.md) are told what the
+frames are:
+
+```yaml
+driver:
+  cameras:
+    # python -m cosmos3_canvas.camera camera_front_wide_120fov
+    - logical_id: camera_front_wide_120fov
+      image_width: 832
+      image_height: 480
+      fov: 120.0
+      lens:
+        model: ftheta
+        principal_point: [412.641208, 242.790324]
+        pixeldist_to_angle_poly: [0.0, 0.00243165382, -4.05625414e-08, 6.10818843e-10, -9.93181484e-13, 8.73787714e-16]
+        angle_to_pixeldist_poly: [0.0, 411.286296, 2.40299018, -16.2530848, 10.3586782, -3.39986006]
+        max_angle: 1.226783919
+        linear_cde: [1.00234926, 0.0, 0.0]
+```
+
+| Field | Meaning |
+|---|---|
+| `model` | `ftheta`, NVIDIA's F-theta model: the only one |
+| `principal_point` | `[x, y]` in pixels (the centre of the top-left pixel is (0, 0)) |
+| `pixeldist_to_angle_poly` | Radius from the principal point (pixels) to the angle from the optical axis (radians); coefficients from the constant term up |
+| `angle_to_pixeldist_poly` | Its inverse, the angle to the radius |
+| `max_angle` | The largest angle the lens sees (radians) |
+| `linear_cde` | `[c, d, e]`: `[[c, d], [e, 1]]` maps the radial offset to pixels |
+| `reference_poly` | Which polynomial defines the lens: `pixeldist_to_angle` (default) or `angle_to_pixeldist` |
+
+The policy is sent the lens as alpasim's `FthetaCameraParam`, in place of the
+pinhole. The CARLA camera is still made with `image_width`, `image_height` and
+`fov`: what the renderer reads to know which of its cameras it is.
+
 ### How the plan is tracked
 
 `TrajectoryFollower` (`driver/control.py`) does what Autoware's control stack does

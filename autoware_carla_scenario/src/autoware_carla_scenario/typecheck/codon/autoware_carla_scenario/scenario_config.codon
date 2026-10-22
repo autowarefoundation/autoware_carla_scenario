@@ -51,6 +51,16 @@ class NpcVehicleConfig:
     initial_speed_kmh: float = 0.0
 
 
+class DriverCameraLensSpec:
+    model: str = "ftheta"
+    principal_point: List[float] = List[float]()
+    pixeldist_to_angle_poly: List[float] = List[float]()
+    angle_to_pixeldist_poly: List[float] = List[float]()
+    max_angle: float = 0.0
+    linear_cde: List[float] = [1.0, 0.0, 0.0]
+    reference_poly: str = "pixeldist_to_angle"
+
+
 class DriverCameraSpec:
     logical_id: str = "camera_front_wide_120fov"
     image_width: int = 960
@@ -63,6 +73,7 @@ class DriverCameraSpec:
     roll: float = 0.0
     pitch: float = 0.0
     yaw: float = 0.0
+    lens: Optional[DriverCameraLensSpec] = None
 
 
 class DriverLidarSpec:

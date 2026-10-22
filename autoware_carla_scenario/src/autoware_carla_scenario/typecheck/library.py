@@ -337,6 +337,7 @@ UNCALLED: dict[str, str] = {
     "autoware_carla_scenario.conditions.elapsed_time.ElapsedTimeCondition.get_details": _DETAILS,
     "autoware_carla_scenario.conditions.metric.MetricCondition.get_details": _DETAILS,
     "autoware_carla_scenario.driver.base.DriverCameraConfig.from_mapping": _DRIVER_FROM_MAPPING,
+    "autoware_carla_scenario.driver.base.DriverCameraLens.from_mapping": _DRIVER_FROM_MAPPING,
     "autoware_carla_scenario.driver.base.DriverClientConfig.from_mapping": _DRIVER_FROM_MAPPING,
     "autoware_carla_scenario.driver.base.DriverLidarConfig.from_mapping": _DRIVER_FROM_MAPPING,
     "autoware_carla_scenario.driver.control.ControlConfig.from_mapping": "takes a Hydra node (`Mapping[str, Any]`) of mixed value types, which Codon cannot express, reads the dataclass's fields from its class (`dataclasses.fields(cls)`) and builds the config with `**` of a dict",

@@ -84,7 +84,7 @@ costs the run's thread about 0.3 ms.
 | `scene`, `log` | One: the run's file stem, the scenario class, the ego's blueprint, the map |
 | `sample` | One per key frame, linked frame to frame |
 | `ego_pose` | The ego's pose at each key frame, with its `twist` and `acceleration` in its own frame |
-| `sensor`, `calibrated_sensor` | `LIDAR_CONCAT` at the ego's origin, and each camera (its logical id upper-cased) with its mount and pinhole |
+| `sensor`, `calibrated_sensor` | `LIDAR_CONCAT` at the ego's origin, and each camera (its logical id upper-cased) with its mount and pinhole (or its lens, see [Frames](#frames)) |
 | `sample_data` | Each sweep (`.pcd.bin`) and camera frame (`.jpg`) |
 | `instance`, `sample_annotation` | Each road user, and its box at each key frame, with its velocity and `num_lidar_pts` |
 | `category` | `car`, `truck`, `bus`, `motorcycle`, `bicycle`, `pedestrian` (from the blueprint's `base_type`), with a null `index` |
@@ -108,6 +108,14 @@ step apart.
   z up: the driver policy's rig frame. `LIDAR_CONCAT`'s points are in it.
 - A **camera**'s frame is the optical one (x right, y down, z forward); its
   intrinsics are the pinhole of its `fov` and resolution, with no distortion.
+  A camera with a `lens` of its own ([F-theta](driver_interface.md#a-camera-with-a-lens-of-its-own-drivercameraslens))
+  is written as OpenCV's rational model fitted to the lens: its focal lengths
+  and principal point, and `camera_distortion`
+  `[k1, k2, p1, p2, k3, k4, k5, k6]`, T4 having no F-theta model. The fit is
+  logged; for Cosmos3's front wide camera it is within 0.05 px out to the
+  image's corners. t4-devkit v0.8.0's own projection (`view_points`) applies
+  the distortion before dividing by depth, so project with OpenCV
+  (`cv2.projectPoints`).
 - A **box** is its centre and orientation in the map frame, and its size
   `(width, length, height)`; velocities are in the map frame too.
 
