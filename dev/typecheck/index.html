@@ -3399,6 +3399,11 @@ cannot express is refused at its line, with what to write instead.</p>
 <td>a brace or a nested f-string inside an expression of the f-string (below); <code>!a</code> together with a rewritten spec</td>
 </tr>
 <tr>
+<td>An f-string (or <code>"{}".format(...)</code>, <code>{x=}</code>) in the body of a lambda that reads a name the lambda does not bind: <code>lambda v: f"{v}{p}"</code>, <code>sorted(xs, key=lambda e: f"{e}{p}")</code>, <code>lambda v, lab=cfg.name: f"{v}{lab}"</code> (#470)</td>
+<td><code>str()</code> parts joined by <code>+</code>: <code>str(v) + str(p)</code>; <code>repr(p)</code> for <code>!r</code>, <code>(p).__format__(spec)</code> for a spec, <code>"p=" + repr(p)</code> for <code>{p=}</code>, <code>repr(p)</code> for <code>!a</code> (as for <code>ascii()</code>). Each value is evaluated once, in order, and the result is a <code>str</code>. Codon looks the names of an f-string up in the lambda's own scope ("name 'p' is not defined"); a <code>def</code> or a comprehension does not have that limit. An f-string of the lambda's own parameters is left as written</td>
+<td>a brace or a nested f-string inside an expression (as above)</td>
+</tr>
+<tr>
 <td><code>zip(a, b, strict=True)</code></td>
 <td><code>zip(a, b)</code>: the check types the loop, it does not run it</td>
 <td></td>
@@ -5535,7 +5540,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 22, 2026 04:51:03 UTC"><span class="timeago" datetime="2026-10-22T04:51:03+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 22, 2026 04:51:03 UTC">2026-10-22</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 22, 2026 07:13:13 UTC"><span class="timeago" datetime="2026-10-22T07:13:13+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 22, 2026 07:13:13 UTC">2026-10-22</span>
   </span>
 
     
