@@ -2080,12 +2080,20 @@ def _class_body_hoists(
     """
     hoists: list[tuple[ast.ClassDef, ast.expr, str, ast.Lambda | None]] = []
     refused: list[tuple[int, str]] = []
-    for node in tree.body:
-        if not isinstance(node, ast.ClassDef) or any(
+
+    def visit(node: ast.ClassDef, outer: ast.ClassDef, names: tuple[str, ...]) -> None:
+        """*node*, nested in classes called *names* (the first is *outer*)."""
+        if any(
             (_dotted(b) or "").rsplit(".", 1)[-1] in _ENUM_BASES for b in node.bases
         ):
-            continue
+            return
+        names = (*names, node.name)
         for stmt in node.body:
+            if isinstance(stmt, ast.ClassDef):
+                # A class nested in a class (#482): its function is placed
+                # above the outermost class, named after the whole path.
+                visit(stmt, outer, names)
+                continue
             if not isinstance(stmt, (ast.Assign, ast.AnnAssign)) or stmt.value is None:
                 continue
             value = stmt.value
@@ -2118,12 +2126,13 @@ def _class_body_hoists(
                 for n in ast.walk(expr)
                 if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)
             }
-            if node.name in reads:
+            read = next((n for n in reversed(names) if n in reads), None)
+            if read is not None:
                 refused.append(
                     (
                         stmt.lineno,
                         f"this expression in the body of class {node.name} "
-                        f"reads {node.name} itself, which Codon has not "
+                        f"reads {read} itself, which Codon has not "
                         "defined while it runs the body, and it needs a "
                         "function of its own (a comprehension or an Enum "
                         "iteration cannot run in a class body): build it in "
@@ -2133,14 +2142,87 @@ def _class_body_hoists(
                 )
                 continue
             hoists.append(
-                (node, expr, f"_acs_hoist_{node.name}_{stmt.lineno}", factory)
+                (outer, expr, f"_acs_hoist_{'_'.join(names)}_{stmt.lineno}", factory)
             )
+
+    for top in tree.body:
+        if isinstance(top, ast.ClassDef):
+            visit(top, top, ())
     return hoists, refused
 
 
 def class_body_refusals(source: str) -> list[tuple[int, str]]:
-    """What :func:`hoist_class_bodies` cannot move, as (line, message)."""
-    return _class_body_hoists(ast.parse(source))[1]
+    """What :func:`hoist_class_bodies` and :func:`class_body_lambdas` cannot
+    move or rewrite, and the fields Codon cannot type, as (line, message)."""
+    tree = ast.parse(source)
+    return [
+        *_class_body_hoists(tree)[1],
+        *lambda_default_refusals(source),
+        *bare_collection_refusals(tree),
+    ]
+
+
+#: The bare collection annotations Codon cannot infer the elements of, and the
+#: parametrized spelling to write.
+_BARE_COLLECTIONS = {
+    "list": "list[X]",
+    "dict": "dict[K, V]",
+    "set": "set[X]",
+    "frozenset": "frozenset[X]",
+    "tuple": "tuple[X, ...] (or tuple[float, float])",
+    "List": "List[X]",
+    "Dict": "Dict[K, V]",
+    "Set": "Set[X]",
+    "FrozenSet": "FrozenSet[X]",
+    "Tuple": "Tuple[X, ...] (or Tuple[float, float])",
+    "typing.List": "List[X]",
+    "typing.Dict": "Dict[K, V]",
+    "typing.Set": "Set[X]",
+    "typing.FrozenSet": "FrozenSet[X]",
+    "typing.Tuple": "Tuple[X, ...] (or Tuple[float, float])",
+}
+
+
+def bare_collection_refusals(tree: ast.Module) -> list[tuple[int, str]]:
+    """The class attributes annotated with a bare ``list``, ``dict``, ``set`` or
+    ``tuple``, as (line, message) (#482).
+
+    Codon types an attribute declared in a class body (a dataclass field, a
+    NamedTuple field, a plain ``xs: list = []``, or a bare ``xs: list``
+    declaration) from its annotation and cannot infer the elements of a bare
+    one ("type of attribute 'xs' of object 'Cfg' cannot be inferred", or a
+    bare ``Tuple`` that matches no tuple), whatever the default is.  An
+    annotation on ``self.xs: list = []`` inside a method is fine.
+    """
+    refused: list[tuple[int, str]] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ClassDef):
+            continue
+        for stmt in node.body:
+            if not isinstance(stmt, ast.AnnAssign) or not isinstance(
+                stmt.target, ast.Name
+            ):
+                continue
+            annotation = stmt.annotation
+            if isinstance(annotation, ast.Constant) and isinstance(
+                annotation.value, str
+            ):
+                try:
+                    annotation = ast.parse(annotation.value, mode="eval").body
+                except SyntaxError:
+                    continue
+            spelled = _dotted(annotation)
+            if spelled in _BARE_COLLECTIONS:
+                refused.append(
+                    (
+                        stmt.lineno,
+                        f"attribute `{ast.unparse(stmt.target)}` of class "
+                        f"{node.name} is annotated with a bare `{spelled}`, "
+                        "whose elements Codon cannot infer: write "
+                        f"`{_BARE_COLLECTIONS[spelled]}`",
+                    )
+                )
+    return refused
 
 
 def hoist_class_bodies(
@@ -2156,7 +2238,10 @@ def hoist_class_bodies(
     class (above its decorators).  The expression keeps its statement's
     line; the two new lines map to the line of the expression (*origin* is
     extended the same way as :func:`tuple_named_tuples`'s).  A function is
-    typed from what it returns, so nothing is lost.
+    typed from what it returns, so nothing is lost.  A class nested in classes
+    (#482) has its function placed above the outermost class, named after the
+    whole path (``_acs_hoist_Outer_Inner_5``); a class inside a function is not
+    hoisted.
     """
     tree = ast.parse(source)
     hoists, _ = _class_body_hoists(tree, enum_names)
@@ -2184,6 +2269,207 @@ def hoist_class_bodies(
             lines[first - 1 : first - 1] = new
             origin[first - 1 : first - 1] = [line] * len(new)
     return b"".join(lines).decode(), origin
+
+
+class _ClassWalker(ast.NodeVisitor):
+    """Each class of a module with the classes it is nested in, outermost first,
+    and whether a function or lambda is around it."""
+
+    def __init__(self) -> None:
+        self.found: list[tuple[ast.ClassDef, tuple[ast.ClassDef, ...], bool]] = []
+        self._chain: list[ast.ClassDef] = []
+        self._functions = 0
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        self.found.append((node, tuple(self._chain), self._functions > 0))
+        self._chain.append(node)
+        self.generic_visit(node)
+        self._chain.pop()
+
+    def _function(self, node: ast.AST) -> None:
+        self._functions += 1
+        self.generic_visit(node)
+        self._functions -= 1
+
+    visit_FunctionDef = _function  # noqa: N815
+    visit_AsyncFunctionDef = _function  # noqa: N815
+    visit_Lambda = _function  # noqa: N815
+
+
+def _lambda_def_text(name: str, lam: ast.Lambda, body: str) -> str:
+    """``def name(args): return (body)``, the lambda ``lam`` as a function."""
+    return f"def {name}({ast.unparse(lam.args)}): return ({body})"
+
+
+def _wrapped_lambda(value: ast.expr) -> tuple[str | None, ast.Lambda | None]:
+    """(the wrapper, the lambda) of ``lambda ...``, ``staticmethod(lambda ...)``
+    and ``classmethod(lambda ...)``; the wrapper is ``None`` for a bare lambda."""
+    if isinstance(value, ast.Lambda):
+        return None, value
+    if (
+        isinstance(value, ast.Call)
+        and isinstance(value.func, ast.Name)
+        and value.func.id in ("staticmethod", "classmethod")
+        and len(value.args) == 1
+        and not value.keywords
+        and isinstance(value.args[0], ast.Lambda)
+    ):
+        return value.func.id, value.args[0]
+    return None, None
+
+
+def class_body_lambdas(source: str) -> tuple[str, list[int]]:
+    """Turn the lambdas of class bodies into functions (#482).
+
+    Python makes ``f = lambda self, v: v * 2`` in a class body a method, and
+    Codon cannot realize it ("cannot typecheck 'class ...'"); a ``def`` is
+    what Python means.  ``name = lambda args: body`` becomes ``def name(args):
+    return (body)`` on its line.  A lambda whose first parameter is not
+    ``self`` or ``cls`` (``key = lambda v: v * 2``, called as ``C.key(3)``)
+    is a ``@staticmethod``: Codon would bind the instance to ``v`` and check
+    ``v * 2`` on it.  ``staticmethod(lambda ...)`` and ``classmethod(lambda
+    ...)`` become a ``@staticmethod`` / ``@classmethod`` def.
+
+    A lambda default of a method (``def sort(self, key=lambda v: -v)``),
+    which Codon cannot realize either, becomes a module-level function above
+    the outermost class (``key=_acs_lambda_P_3_30``): Python evaluates a
+    default once, when the class body runs, and the lambda reads only
+    globals and its own parameters, as the function does.
+
+    Returns the source and, for each of its lines, the line of *source* it
+    comes from: the ``@staticmethod`` / ``@classmethod`` line and the lines
+    of a hoisted function map to the line they stand for.
+    """
+    lines = source.encode().splitlines(keepends=True)
+    origin = list(range(1, len(lines) + 1))
+    tree = ast.parse(source)
+    edits = _Edits(list(lines))
+    decorators: dict[int, tuple[str, int]] = {}
+    inserts: dict[int, list[tuple[str, int]]] = {}
+    walker = _ClassWalker()
+    walker.visit(tree)
+    for cls, chain, in_function in walker.found:
+        path = "_".join(c.name for c in (*chain, cls))
+        for stmt in cls.body:
+            if (
+                isinstance(stmt, ast.Assign)
+                and len(stmt.targets) == 1
+                and isinstance(stmt.targets[0], ast.Name)
+                and _alone_on_its_line(stmt, edits.lines)
+            ):
+                wrapper, lam = _wrapped_lambda(stmt.value)
+                if lam is None:
+                    continue
+                positional = [*lam.args.posonlyargs, *lam.args.args]
+                if wrapper is None:
+                    wrapper = (
+                        None
+                        if positional and positional[0].arg in ("self", "cls")
+                        else "staticmethod"
+                    )
+                body = edits.text(*edits.node_span(lam.body))
+                edits.replace(
+                    *edits.node_span(stmt),
+                    _lambda_def_text(stmt.targets[0].id, lam, body),
+                )
+                if wrapper is not None:
+                    decorators[stmt.lineno] = (
+                        " " * stmt.col_offset + f"@{wrapper}",
+                        stmt.lineno,
+                    )
+            elif isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                _hoist_lambda_defaults(
+                    stmt, chain, cls, in_function, path, edits, inserts
+                )
+    lines = edits.apply().encode().splitlines(keepends=True)
+    # New lines, last first: above a decorated statement, and above the
+    # outermost class (above its decorators) for a hoisted function.
+    new_lines: dict[int, list[tuple[str, int]]] = {}
+    for at, item in decorators.items():
+        new_lines.setdefault(at, []).append(item)
+    for at, items in inserts.items():
+        new_lines.setdefault(at, []).extend(items)
+    for at in sorted(new_lines, reverse=True):
+        for text, line in reversed(new_lines[at]):
+            added = (text + "\n").encode().splitlines(keepends=True)
+            lines[at - 1 : at - 1] = added
+            origin[at - 1 : at - 1] = [line] * len(added)
+    return b"".join(lines).decode(), origin
+
+
+def _alone_on_its_line(stmt: ast.stmt, lines: list[bytes]) -> bool:
+    """Whether *stmt* starts its line and ends it (no ``;`` after it, no
+    ``class C: f = ...`` before it), so a ``def`` can take its place."""
+    start = lines[stmt.lineno - 1][: stmt.col_offset]
+    end = lines[(stmt.end_lineno or stmt.lineno) - 1][stmt.end_col_offset or 0 :]
+    rest = end.strip()
+    return not start.strip() and (not rest or rest.startswith(b"#"))
+
+
+def _hoist_lambda_defaults(
+    func: ast.FunctionDef | ast.AsyncFunctionDef,
+    chain: tuple[ast.ClassDef, ...],
+    cls: ast.ClassDef,
+    in_function: bool,
+    path: str,
+    edits: _Edits,
+    inserts: dict[int, list[tuple[str, int]]],
+) -> None:
+    """Replace each lambda default of the method *func* by a function above the
+    outermost class (see :func:`class_body_lambdas`)."""
+    outermost = chain[0] if chain else cls
+    defaults = [
+        d
+        for d in (*func.args.defaults, *func.args.kw_defaults)
+        if isinstance(d, ast.Lambda)
+    ]
+    for lam in defaults:
+        literal = all(
+            isinstance(d, ast.Constant) or d is None
+            for d in (*lam.args.defaults, *lam.args.kw_defaults)
+        )
+        if in_function or outermost.col_offset or not literal:
+            continue  # refused: lambda_default_refusals
+        name = f"_acs_lambda_{path}_{lam.lineno}_{lam.col_offset}"
+        body = edits.text(*edits.node_span(lam.body))
+        edits.replace(*edits.node_span(lam), name)
+        first = min([outermost.lineno, *(d.lineno for d in outermost.decorator_list)])
+        inserts.setdefault(first, []).append(
+            (_lambda_def_text(name, lam, body), lam.lineno)
+        )
+
+
+def lambda_default_refusals(source: str) -> list[tuple[int, str]]:
+    """The lambda defaults of methods :func:`class_body_lambdas` cannot move,
+    as (line, message)."""
+    walker = _ClassWalker()
+    walker.visit(ast.parse(source))
+    refused: list[tuple[int, str]] = []
+    for cls, chain, in_function in walker.found:
+        outermost = chain[0] if chain else cls
+        for func in cls.body:
+            if not isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            for lam in (*func.args.defaults, *func.args.kw_defaults):
+                if not isinstance(lam, ast.Lambda):
+                    continue
+                literal = all(
+                    isinstance(d, ast.Constant) or d is None
+                    for d in (*lam.args.defaults, *lam.args.kw_defaults)
+                )
+                if in_function or outermost.col_offset or not literal:
+                    refused.append(
+                        (
+                            lam.lineno,
+                            f"the lambda default of method {func.name} cannot be "
+                            "compiled by Codon, and the check can move it to a "
+                            "module-level function only for a class at module "
+                            "level (not in a function or a block) and a lambda "
+                            "whose own defaults are literals: write a "
+                            "module-level `def` and use its name as the default",
+                        )
+                    )
+    return refused
 
 
 def transform_source(
@@ -2226,8 +2512,12 @@ def transform_source_lines(
     # Valid Python Codon refuses or crashes on (#376): python_rewrites.py.
     from .python_rewrites import python_rewrites
 
+    # Class-body lambdas and method defaults become functions first, so the
+    # rewrites see the function (#482); its extra lines map to their origin.
+    source, early = class_body_lambdas(source)
     source, ordering = python_rewrites(source)
     source, origin = split_tuple_excepts(source)
+    origin = [early[line - 1] for line in origin]
     source, origin = tuple_named_tuples(source, origin)
     source, origin = hoist_class_bodies(
         source,

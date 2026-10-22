@@ -7069,3 +7069,152 @@ class Q:
     )
     result = typecheck_scenario(scenario, config)
     assert result.ok, result.format()
+
+
+# -- class-body lambdas, method lambda defaults, bare collections (#482) -------
+
+_CLASS_BODY_LAMBDAS = """
+class Outer:
+    class Inner:
+        k = 2
+        f = lambda v: v * 2
+        key = lambda v: str(v) + "!"
+        XS = [i * 2 for i in range(3)]
+
+
+class T:
+    scale = 3
+    f = lambda self, v: v * self.scale
+    s = staticmethod(lambda a, b=2: a + b)
+
+
+class P2:
+    def sort(self, xs: list[int], key=lambda v: -v) -> list[int]:
+        return sorted(xs, key=key)
+
+    def scaled(self, xs: list[int], *, by=lambda v: v * 2) -> list[int]:
+        return [by(x) for x in xs]
+
+
+class Guard:
+    def __enter__(self) -> Guard:
+        return self
+
+    def __exit__(
+        self, exc_type: type[BaseException] | None, exc: BaseException | None, tb: object
+    ) -> bool:
+        return False
+"""
+
+
+def test_class_body_lambdas_and_method_lambda_defaults_compile(
+    tmp_path: Path,
+) -> None:
+    setup = """
+        logger.info("%s %s", Outer.Inner.f(3), Outer.Inner.key(4))
+        logger.info("%s %s", Outer.Inner.XS, T().f(2))
+        logger.info("%s %s", T.s(1), T.s(1, 5))
+        logger.info("%s %s", P2().sort([1, 2]), P2().scaled([1, 2]))
+        with Guard():
+            pass
+    """
+    scenario, config, _ = _data_case(tmp_path, _CLASS_BODY_LAMBDAS, setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+    # The idiomatic __exit__ signature is no warning (it contradicted the docs).
+    assert not any("__exit__" in str(w) for w in result.warnings), result.format()
+
+
+def test_a_class_body_lambda_is_still_type_checked(tmp_path: Path) -> None:
+    definitions = """
+class Q:
+    f = lambda v: v.nope
+"""
+    scenario, config, path = _data_case(tmp_path, definitions, "x = Q.f(1)\n")
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert error.line == _line_of(path, "f = lambda"), error.format()
+
+
+def test_a_method_lambda_default_is_still_type_checked(tmp_path: Path) -> None:
+    definitions = """
+class Q:
+    def run(self, xs: list[int], key=lambda v: v.nope) -> list[int]:
+        return sorted(xs, key=key)
+"""
+    scenario, config, path = _data_case(tmp_path, definitions, "x = Q().run([1])\n")
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert error.line == _line_of(path, "def run"), error.format()
+
+
+def test_a_method_lambda_default_in_a_function_is_refused(tmp_path: Path) -> None:
+    definitions = """
+def build() -> int:
+    class Q:
+        def run(self, key=lambda v: v) -> int:
+            return key(1)
+
+    return Q().run()
+"""
+    scenario, config, path = _data_case(tmp_path, definitions, "x = build()\n")
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "module-level `def`" in error.message, error.format()
+    assert error.line == _line_of(path, "key=lambda")
+
+
+def test_a_comprehension_in_a_nested_class_compiles(tmp_path: Path) -> None:
+    definitions = """
+class Outer:
+    class Inner:
+        XS = [i * i for i in range(3)]
+        TABLE = {k: len(k) for k in ["a", "bb"]}
+
+    class Other(Inner):
+        pass
+"""
+    scenario, config, _ = _data_case(
+        tmp_path,
+        definitions,
+        'logger.info("%s %s", Outer.Inner.XS, Outer.Inner.TABLE)\n',
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+@pytest.mark.parametrize("annotation", ["list", "dict", "set", "tuple"])
+def test_a_bare_collection_field_of_a_dataclass_is_refused_at_its_line(
+    tmp_path: Path, annotation: str
+) -> None:
+    definitions = f"""
+@dataclass
+class Cfg:
+    xs: {annotation}
+    name: str = "a"
+"""
+    scenario, config, path = _data_case(tmp_path, definitions, "x = Cfg([])\n")
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert error.line == _line_of(path, f"xs: {annotation}"), error.format()
+    assert f"bare `{annotation}`" in error.message
+
+
+def test_a_bare_collection_in_a_plain_class_is_refused_at_its_line(
+    tmp_path: Path,
+) -> None:
+    definitions = """
+class Cfg:
+    name = "a"
+    xs: list = []
+"""
+    scenario, config, path = _data_case(tmp_path, definitions, "x = Cfg()\n")
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert error.line == _line_of(path, "xs: list"), error.format()
+    assert "bare `list`" in error.message
+
+
+def test_a_bare_tuple_return_gets_a_hint(tmp_path: Path) -> None:
+    definitions = """
+def pt() -> tuple:
+    return (1.0, 2.0)
+"""
+    scenario, config, _ = _data_case(tmp_path, definitions, "x = pt()\n")
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "tuple[float, float]" in error.message, error.format()
