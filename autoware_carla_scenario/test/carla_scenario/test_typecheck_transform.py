@@ -9,6 +9,7 @@ import ast
 import builtins
 import dataclasses
 import enum
+import re
 import sys
 import textwrap
 from typing import Any, Optional
@@ -27,6 +28,7 @@ from autoware_carla_scenario.typecheck.transform import (
     classes_with_init,
     codon_annotation,
     conflicting_imports,
+    flag_member_values,
     inherited_inits,
     relative_module_imports,
     split_tuple_excepts,
@@ -833,17 +835,20 @@ def test_only_an_int_or_str_enum_derives_from_the_value_comparing_classes() -> N
                 X = 1
             class G(enum.Flag):
                 X = 1
+            class H(int, enum.Flag):
+                X = 1
             """
         )
     )
     for line in (
         "class A(_acs_IntEnum[int]):",
         "class B(_acs_IntEnum[int]):",
-        "class C(_acs_IntEnum[int]):",
+        "class C(_acs_IntFlag[int]):",
         "class D(_acs_StrEnum[str]):",
         "class E(_acs_StrEnum[str]):",
         "class F(enum.Enum[int]):",
         "class G(enum.Flag[int]):",
+        "class H(_acs_IntFlag[int]):",
     ):
         assert line in out
 
@@ -926,6 +931,161 @@ def test_an_enum_is_given_its_members_and_a_lookup_by_name() -> None:
     )
     assert "if name == 'ALIAS':\n            return Turn.ALIAS" in out
     assert out.rstrip().endswith("raise KeyError(name)")
+
+
+_FLAGS = """
+class Perm(enum.IntFlag):
+    NONE = 0
+    R = 1
+    W = 2
+    RW = R | W
+    X = enum.auto()
+    BOTH = 3
+    HIGH = 1 << 4
+    Y = enum.auto()
+    ALL = ~0
+"""
+
+
+def test_a_flag_s_composite_values_are_worked_out_and_skipped_by_iteration() -> None:
+    # Python 3.11+ iterates the single-bit members: not zero, not a composite
+    # (`RW`), not an alias of one.
+    out = _transform(_FLAGS)
+    assert "RW: ClassVar[Perm] = Perm('RW', 3)" in out
+    assert "X: ClassVar[Perm] = Perm('X', 4)" in out  # above the highest bit (3)
+    assert "HIGH: ClassVar[Perm] = Perm('HIGH', 16)" in out
+    assert "Y: ClassVar[Perm] = Perm('Y', 32)" in out
+    assert "ALL: ClassVar[Perm] = Perm('ALL', -1)" in out
+    assert (
+        "return [Perm.R, Perm.W, Perm.X, Perm.HIGH, Perm.Y]" in out
+    ), "NONE, RW, BOTH and ALL are not iterated"
+    for name in ("NONE", "RW", "BOTH", "ALL"):
+        assert f"if name == '{name}':\n            return Perm.{name}" in out
+
+
+def test_a_flag_is_given_its_operators_after_the_module() -> None:
+    out = _transform(_FLAGS)
+    extension = out.partition("\n\n@extend\n")[2]
+    for method in ("or", "and", "xor"):
+        assert f"def __{method}__(self, other: Perm) -> Perm:" in extension
+        assert f"def __{method}__(self, other: int) -> Perm:" in extension
+        assert f"def __r{method}__(self, other: int) -> Perm:" in extension
+    assert "def __contains__(self, other: Perm) -> bool:" in extension
+    # `~` flips every bit below the highest (32), as IntFlag does.
+    assert "return Perm(63 & ~self._value_)" in extension
+    plain = _transform("class Bits(enum.Flag):\n    A = 1\n    B = 2\n")
+    assert "def __or__(self, other: Bits) -> Bits:" in plain
+    assert "other: int" not in plain  # only an IntFlag takes an int
+    assert "return Bits(3 & ~self._value_)" in plain
+
+
+_FLAG_DEFINITIONS = [
+    ("Flag", "A = auto()\nB = 4\nC = auto()\nD = 1\nE = auto()"),
+    ("Flag", "A = 1\nB = 2\nAB = A | B\nC = auto()"),
+    ("Flag", "R = 1\nW = 2\nRW = R | W\nX = 4"),
+    ("Flag", "N = 0\nR = 1\nW = 2"),
+    ("Flag", "R = 1\nW = 2\nREAD = 1\nX = 4"),
+    ("Flag", "A = 3\nB = auto()"),
+    ("Flag", "A = 1\nB = 2 * 2\nC = A + 6"),
+    ("Flag", "A = 1\nB = 2\nC = 4\nAB = A ^ B\nBC = (A | B | C) & ~A"),
+    ("Flag", "RW = 3\nR = 1\nW = 2"),
+    ("Flag", "A = 1\nB = 2\nC = 3\nD = 3"),
+    ("Flag", "A = 1\nB = 2\nBC = 6\nC = auto()"),
+    ("IntFlag", "R = 1\nW = 2\nALL = ~0"),
+    ("IntFlag", "R = 1\nW = 2\nM = -1"),
+    ("IntFlag", "R = 1\nW = 2\nT = 3\nF = 5\nX = 8"),
+    ("IntFlag", "A = 6\nB = 1\nC = 8"),
+    ("IntFlag", "A = 1 << 3\nB = 1 << 5\nC = auto()"),
+    ("IntFlag", "A = 16\nB = auto()\nC = auto()"),
+    ("IntFlag", "A = 1\nB = -4\nC = auto()"),
+    ("IntFlag", "R = 1\nW = 2\nBIG = 12"),
+    ("IntFlag", "N = 0\nR = 2\nW = 4"),
+]
+
+
+@pytest.mark.skipif(
+    sys.version_info < (3, 11), reason="Python 3.11 changed Flag iteration and ~"
+)
+@pytest.mark.parametrize(("kind", "body"), _FLAG_DEFINITIONS)
+def test_a_flag_s_values_iteration_and_complement_are_python_s(
+    kind: str, body: str
+) -> None:
+    # A differential test against CPython's own enum.Flag / IntFlag (#437).
+    source = f"class P(enum.{kind}):\n" + textwrap.indent(body, "    ") + "\n"
+    namespace: dict[str, Any] = {"enum": enum, "auto": enum.auto}
+    exec(source, namespace)  # noqa: S102
+    flag = namespace["P"]
+    assert flag_member_values(ast.parse(source).body[0].body) == {  # type: ignore[attr-defined]
+        name: member.value for name, member in flag.__members__.items()
+    }
+    out = _transform("import enum\nfrom enum import auto\n" + source)
+    listed = re.search(r"return \[(.*?)\]", out.partition("_acs_members")[2])
+    assert listed is not None
+    assert [m.strip().split(".")[1] for m in listed[1].split(",") if m] == [
+        member.name for member in flag
+    ]
+    flipped = re.search(r"return P\((-?\d+) & ~self\._value_\)", out)
+    assert flipped is not None
+    for member in flag.__members__.values():
+        assert int(flipped[1]) & ~member.value == (~member).value, member
+
+
+def test_a_flag_s_operators_follow_its_class_and_keep_the_lines_after_it() -> None:
+    # Module-level code (`RW = P.R | P.W`) needs them while Codon reads the
+    # module, so they cannot wait for its end; the lines after the class map
+    # to their own (#437).
+    source = textwrap.dedent(
+        """
+        import enum
+        class P(enum.Flag):
+            R = 1
+            W = 2
+        RW = P.R | P.W  # line 6
+        class Q(enum.Enum):
+            A = 1
+        LAST = 1  # line 9
+        """
+    )
+    text, origin = transform_source_lines(source)
+    lines = text[len(PRELUDE) :].splitlines()
+    assert len(origin) == len(lines)
+    at = lines.index("RW = P.R | P.W  # line 6")
+    assert origin[at] == 6
+    assert any("def __or__" in line for line in lines[:at])
+    assert origin[lines.index("LAST = 1  # line 9")] == 9
+    # a plain Enum's extension still waits for the end of the module
+    assert text.rstrip().endswith("raise KeyError(name)")
+
+
+def test_no_other_enum_is_given_flag_operators() -> None:
+    out = _transform(
+        "class A(enum.IntEnum):\n    X = 1\nclass B(enum.Enum):\n    X = 1\n"
+    )
+    assert "__or__" not in out and "__invert__" not in out
+
+
+def test_a_flag_value_that_is_not_worked_out_leaves_the_complement_to_codon() -> None:
+    out = _transform("class P(enum.Flag):\n    A = 1\n    B = compute()\n")
+    assert "B: ClassVar[P] = P('B', compute())" in out
+    assert "__or__" in out and "__invert__" not in out
+
+
+def test_the_framework_s_enums_are_iterated_without_being_named() -> None:
+    from autoware_carla_scenario.typecheck.transform import model_enum_names
+
+    assert {"TurnDirection", "ComparisonRule"} <= model_enum_names()
+    out = _transform(
+        "def f():\n    return list(TurnDirection), ComparisonRule['LESS_THAN']\n"
+    )
+    assert "list(TurnDirection._acs_members())" in out
+    assert "ComparisonRule._acs_by_name('LESS_THAN')" in out
+
+
+def test_a_class_of_a_model_enum_s_name_that_is_no_enum_is_not_iterated() -> None:
+    out = _transform(
+        "class TurnDirection:\n    pass\ndef f():\n    return list(TurnDirection)\n"
+    )
+    assert "list(TurnDirection)" in out
 
 
 def test_iterating_over_an_enum_class_and_looking_up_a_member_by_name() -> None:
@@ -2487,7 +2647,7 @@ def test_str_format_on_something_else_is_left_alone() -> None:
         # ast.unparse spells a lambda "lambda : 1" before Python 3.11.
         (
             'f"{(lambda: 1)():+d}"',
-            f'((({ast.unparse(ast.parse("lambda: 1", mode="eval").body)})())'
+            f"((({ast.unparse(ast.parse('lambda: 1', mode='eval').body)})())"
             '.__format__("+d"))',
         ),
     ],

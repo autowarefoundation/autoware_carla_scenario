@@ -28,3 +28,23 @@ class ActionState:
         if self == ActionState.COMPLETE:
             return "COMPLETE"
         raise ValueError("not a member of ActionState")
+
+    # What `for m in E`, `list(E)` and `E["A"]` read: the checker rewrites
+    # them (#437). Declared in Python's order, as the test checks.
+    @staticmethod
+    def _acs_members() -> List[ActionState]:
+        return [ActionState.STANDBY, ActionState.START_TRANSITION, ActionState.RUNNING, ActionState.END_TRANSITION, ActionState.COMPLETE]
+
+    @staticmethod
+    def _acs_by_name(name: str) -> ActionState:
+        if name == "STANDBY":
+            return ActionState.STANDBY
+        if name == "START_TRANSITION":
+            return ActionState.START_TRANSITION
+        if name == "RUNNING":
+            return ActionState.RUNNING
+        if name == "END_TRANSITION":
+            return ActionState.END_TRANSITION
+        if name == "COMPLETE":
+            return ActionState.COMPLETE
+        raise KeyError(name)

@@ -23,6 +23,22 @@ class CoordinateFrame:
             return "OPENDRIVE"
         raise ValueError("not a member of CoordinateFrame")
 
+    # What `for m in E`, `list(E)` and `E["A"]` read: the checker rewrites
+    # them (#437). Declared in Python's order, as the test checks.
+    @staticmethod
+    def _acs_members() -> List[CoordinateFrame]:
+        return [CoordinateFrame.CARLA_WORLD, CoordinateFrame.LANELET2, CoordinateFrame.OPENDRIVE]
+
+    @staticmethod
+    def _acs_by_name(name: str) -> CoordinateFrame:
+        if name == "CARLA_WORLD":
+            return CoordinateFrame.CARLA_WORLD
+        if name == "LANELET2":
+            return CoordinateFrame.LANELET2
+        if name == "OPENDRIVE":
+            return CoordinateFrame.OPENDRIVE
+        raise KeyError(name)
+
 
 class FrameMismatchError(Static[Exception]):
     frame_a: CoordinateFrame
