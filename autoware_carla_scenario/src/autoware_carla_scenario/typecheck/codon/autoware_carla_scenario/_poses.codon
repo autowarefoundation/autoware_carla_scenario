@@ -99,6 +99,23 @@ class OpenDrivePose:
         self.t = t
         self.heading = heading
 
+    # dataclasses.replace(pose, lane_id=...): the check lowers it to these
+    # (typecheck/transform.py), as it does for a scenario's own dataclass.
+    def _acs_with__road_id(self, road_id: str) -> OpenDrivePose:
+        return OpenDrivePose(road_id, self.lane_id, self.s, self.t, self.heading)
+
+    def _acs_with__lane_id(self, lane_id: int) -> OpenDrivePose:
+        return OpenDrivePose(self.road_id, lane_id, self.s, self.t, self.heading)
+
+    def _acs_with__s(self, s: float) -> OpenDrivePose:
+        return OpenDrivePose(self.road_id, self.lane_id, s, self.t, self.heading)
+
+    def _acs_with__t(self, t: float) -> OpenDrivePose:
+        return OpenDrivePose(self.road_id, self.lane_id, self.s, t, self.heading)
+
+    def _acs_with__heading(self, heading: float) -> OpenDrivePose:
+        return OpenDrivePose(self.road_id, self.lane_id, self.s, self.t, heading)
+
 
 class CarlaWorldPose:
     x: float

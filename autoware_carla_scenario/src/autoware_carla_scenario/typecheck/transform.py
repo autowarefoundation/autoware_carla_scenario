@@ -19,6 +19,12 @@ which :func:`transform_source_lines` maps back onto the handler):
   ``@dataclass`` generates besides ``__init__`` are appended after the module
   with ``@extend`` (:func:`_dataclass_dunders`): ``__eq__`` / ``__ne__``,
   ``__hash__`` (``frozen`` or ``unsafe_hash``), ordering (``order=True``).
+* ``replace(obj, a=x, b=y)`` (``dataclasses.replace``) becomes
+  ``replace(obj)._acs_with__a(a=x)._acs_with__b(b=y)`` (:func:`lower_replace_calls`):
+  each dataclass of the module gets one ``_acs_with__<field>`` method per field
+  (:func:`_dataclass_replacers`), a typed copy of the object with that field
+  changed, so Codon checks the field name and the value's type (the erased
+  ``**changes`` it replaces crashed Codon on a ``None``, #487).
 * A ``class Pt(NamedTuple)`` becomes a Codon ``@tuple`` class, the decorator
   on a new line above it (:func:`tuple_named_tuples`).
 * ``@abstractmethod`` is removed (Codon 0.19 cannot decorate a method; the
@@ -2398,6 +2404,7 @@ def class_body_refusals(source: str) -> list[tuple[int, str]]:
         *_class_body_hoists(tree)[1],
         *lambda_default_refusals(source),
         *bare_collection_refusals(tree),
+        *replace_refusals(tree),
     ]
 
 
@@ -2783,6 +2790,7 @@ def transform_source_lines(
     other = _module_level_bindings(tree) - own
     enum_iteration(tree, edits, own | (model_enum_names() - other))
     repeated_imports(tree, edits)
+    lower_replace_calls(tree, edits)
     lines = {
         node.name: origin[node.lineno - 1]
         for node in tree.body
@@ -2812,6 +2820,7 @@ def transform_source_lines(
         *at_end,
         *_inherited_init_extensions(_inherited_bases(tree, init_classes, exceptions)),
         *_dataclass_dunders(tree, exceptions),
+        *_dataclass_replacers(tree, exceptions),
         *ordering,
     ]
     origin = list(origin)
@@ -3677,6 +3686,190 @@ def _dataclass_dunders(tree: ast.Module, exceptions: set[str]) -> list[tuple[str
                 ("__ge__", ">="),
             ):
                 method(dunder, "bool", tuples(op))
+        if lines:
+            out.append(
+                (node.name, f"\n\n@extend\nclass {node.name}:\n" + "".join(lines))
+            )
+    return out
+
+
+# ---------------------------------------------------------------------------
+# dataclasses.replace (#487)
+# ---------------------------------------------------------------------------
+
+
+def _replace_spellings(tree: ast.Module) -> tuple[set[str], set[str]]:
+    """The names ``dataclasses.replace`` is bound to, and those ``dataclasses``
+    is: ``from dataclasses import replace as r`` and ``import dataclasses as d``."""
+    functions: set[str] = set()
+    modules: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module == "dataclasses":
+            functions |= {a.asname or a.name for a in node.names if a.name == "replace"}
+        elif isinstance(node, ast.Import):
+            modules |= {
+                a.asname or a.name for a in node.names if a.name == "dataclasses"
+            }
+    return functions, modules
+
+
+def _replace_calls(tree: ast.Module) -> list[ast.Call]:
+    functions, modules = _replace_spellings(tree)
+    if not functions and not modules:
+        return []
+    calls = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if (isinstance(func, ast.Name) and func.id in functions) or (
+            isinstance(func, ast.Attribute)
+            and func.attr == "replace"
+            and isinstance(func.value, ast.Name)
+            and func.value.id in modules
+        ):
+            calls.append(node)
+    return calls
+
+
+def _replace_problem(call: ast.Call) -> str | None:
+    """Why *call* cannot be lowered, or ``None`` when it can."""
+    if len(call.args) != 1 or isinstance(call.args[0], ast.Starred):
+        return (
+            "dataclasses.replace takes the object as its one positional "
+            "argument and the fields to change as keywords: write "
+            "replace(obj, field=value)"
+        )
+    if any(kw.arg is None for kw in call.keywords):
+        return (
+            "dataclasses.replace(obj, **changes) cannot be checked, as the "
+            "fields it changes are not known: write each as a keyword "
+            "(replace(obj, speed=1.0)), or build the dataclass yourself"
+        )
+    return None
+
+
+def replace_refusals(tree: ast.Module) -> list[tuple[int, str]]:
+    """The ``dataclasses.replace`` calls :func:`lower_replace_calls` cannot
+    lower, as (line, message)."""
+    out = []
+    for call in _replace_calls(tree):
+        problem = _replace_problem(call)
+        if problem is not None:
+            out.append((call.lineno, problem))
+    return out
+
+
+def replace_method(field_name: str) -> str:
+    """The name of the method that copies a dataclass with one field changed."""
+    return f"_acs_with__{field_name}"
+
+
+def lower_replace_calls(tree: ast.Module, edits: _Edits) -> None:
+    """``replace(obj, a=x, b=y)`` becomes ``replace(obj)._acs_with__a(a=x)
+    ._acs_with__b(b=y)``: the copy is made by the typed methods
+    :func:`_dataclass_replacers` appends, which Codon checks.
+
+    Only the text between the arguments is edited, so the values keep the
+    rewrites made inside them and every call stays on its lines.
+    """
+    for call in _replace_calls(tree):
+        if _replace_problem(call) is not None or not call.keywords:
+            continue
+        previous = call.args[0]
+        for keyword in call.keywords:
+            start = edits.node_span(previous)[1]
+            end = edits.node_span(keyword)[0]
+            comma = edits.text(start, end).find(",")
+            if comma < 0:
+                break
+            edits.replace(start + comma, end, f").{replace_method(str(keyword.arg))}(")
+            previous = keyword.value
+
+
+def _replaceable_fields(node: ast.ClassDef) -> list[tuple[str, ast.expr, bool]] | None:
+    """The fields *node* declares, as (name, annotation, whether ``__init__``
+    takes it); ``None`` for a class ``replace`` cannot copy (an ``InitVar``)."""
+    out = []
+    for stmt in node.body:
+        if not (isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name)):
+            continue
+        annotation = stmt.annotation
+        text = annotation.value if isinstance(annotation, ast.Constant) else None
+        if isinstance(text, str):
+            annotation = ast.parse(text, mode="eval").body
+        head = annotation.value if isinstance(annotation, ast.Subscript) else annotation
+        kind = _dotted(head)
+        if kind in ("InitVar", "dataclasses.InitVar"):
+            return None
+        if kind in _NOT_FIELDS:
+            continue
+        init = True
+        value = stmt.value
+        if isinstance(value, ast.Call) and _dotted(value.func) in _FIELD_FUNCTIONS:
+            init = not any(
+                k.arg == "init"
+                and isinstance(k.value, ast.Constant)
+                and k.value.value is False
+                for k in value.keywords
+            )
+        out.append((stmt.target.id, annotation, init))
+    return out
+
+
+def _dataclass_replacers(
+    tree: ast.Module, exceptions: set[str]
+) -> list[tuple[str, str]]:
+    """The ``_acs_with__<field>`` methods of each dataclass, per class.
+
+    Each returns the object's copy built through the constructor with that
+    field changed (``Plan(points=self.points, best=best)``), typed as the
+    field is declared, so ``replace(plan, best=None)`` and ``replace(plan,
+    speed="fast")`` are checked and Codon needs no ``**changes``.  A field
+    declared ``init=False`` gets none, as Python's ``replace`` refuses it (the
+    hint of the "no attribute" error says so).  A class with a base the module does not
+    define, an ``__init__`` of its own or an ``InitVar`` has none: ``replace``
+    of it is refused ("no attribute").  Each is (the class, the lines).
+    """
+    fields: dict[str, list[tuple[str, ast.expr, bool]]] = {}
+    out: list[tuple[str, str]] = []
+    for node in tree.body:
+        if not isinstance(node, ast.ClassDef):
+            continue
+        if _dataclass_options(node) is None or node.name in exceptions or node.keywords:
+            continue
+        inherited: list[tuple[str, ast.expr, bool]] | None = []
+        for base in node.bases:
+            name = _dotted(base)
+            if name in fields:
+                inherited = [*(inherited or []), *fields[name]]
+            elif name not in _PLAIN_BASES:
+                inherited = None
+                break
+        own_fields = _replaceable_fields(node)
+        if inherited is None or own_fields is None:
+            continue
+        merged = {n: (n, a, i) for n, a, i in [*inherited, *own_fields]}
+        listed = list(merged.values())
+        fields[node.name] = listed
+        if "__init__" in _defined_methods(node):
+            continue
+        lines = []
+        for name, annotation, init in listed:
+            method = replace_method(name)
+            if not init:
+                continue  # Python refuses to replace it too
+            # As a parameter does: an abstract collection (Mapping, Sequence)
+            # is left generic, and the constructor checks what is passed.
+            typed = codon_annotation(annotation)
+            param = f"{name}: {typed}" if typed is not None else name
+            call = ", ".join(
+                f"{n}={n}" if n == name else f"{n}=self.{n}" for n, _, i in listed if i
+            )
+            lines.append(
+                f"    def {method}(self, {param}) -> {node.name}:\n"
+                f"        return {node.name}({call})\n"
+            )
         if lines:
             out.append(
                 (node.name, f"\n\n@extend\nclass {node.name}:\n" + "".join(lines))
