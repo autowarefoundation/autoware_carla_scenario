@@ -4735,7 +4735,7 @@ class Bits(enum.Flag):
         return b in cls and len(cls) == 2 and cls["AB"] == cls.A | cls.B
 
 
-class Tag(enum.StrEnum):
+class Tag(str, enum.Enum):  # enum.StrEnum is Python 3.11+
     X = "x"
     Y = "y"
 
