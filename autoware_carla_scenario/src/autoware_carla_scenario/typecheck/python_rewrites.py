@@ -27,6 +27,12 @@ so a rewrite has to keep the *types*, not the values, of what it replaces.
   the check.  An f-string with a brace or a nested f-string inside an
   expression (``f"{'{}'.format(x)}"``, ``f"{len({1, 2})}"``) is refused:
   Codon's f-string parser loses the position there.
+* An f-string in the body of a lambda that reads a name the lambda does not
+  bind (a captured variable, or the parameter of a lambda around it) becomes
+  ``str(v) + str(p)`` (#470): Codon resolves the names of an f-string in the
+  lambda's own scope ("name 'p' is not defined").  ``!r`` is ``repr(p)``, a
+  spec ``(p).__format__(spec)``, ``{p=}`` ``"p=" + repr(p)``; ``.format`` is
+  an f-string first, so it ends up lowered too.  ``!a`` there is ``repr``.
 * ``zip(..., strict=...)`` becomes ``zip(...)``.
 * Builtins and str methods Codon lacks (#439), each with the type of what it
   replaces: ``s.startswith((a, b))`` (also ``endswith``, and with a ``start``
@@ -458,6 +464,54 @@ def _fstring_rewrite(node: ast.JoinedStr) -> str:
     return " + ".join(parts) if parts else '""'
 
 
+def _lambda_fstring_rewrite(node: ast.JoinedStr) -> str:
+    """*node* as ``str(x) + "lit" + ...``: every field a call, never an f-string.
+
+    For the body of a lambda that reads a captured name (#470): Codon looks
+    the names of an f-string up in the lambda's own scope, so ``f"{v}{p}"``
+    is "name 'p' is not defined" there while ``str(v) + str(p)`` is not.
+    A field is ``str(x)``, ``repr(x)`` for ``!r``, and ``x.__format__(spec)``
+    with a spec, as Python's ``format`` calls it; ``{x=}`` is already a text
+    part and a ``!r`` field in the tree.  Each value is evaluated once, in order.
+    """
+    parts: list[str] = []
+    chunk = ""
+    for value in node.values:
+        if isinstance(value, ast.Constant):
+            chunk += str(value.value)
+            continue
+        if not isinstance(value, ast.FormattedValue):
+            continue
+        if chunk:
+            parts.append(_string_literal(chunk))
+            chunk = ""
+        if value.conversion == ord("a"):
+            # Codon has no ascii(); repr() has the same type (as for ascii()).
+            value = ast.FormattedValue(
+                value=value.value,
+                conversion=ord("r"),
+                format_spec=value.format_spec,
+            )
+        parts.append(_formatted(value))
+    if chunk:
+        parts.append(_string_literal(chunk))
+    return " + ".join(parts) if parts else '""'
+
+
+def _reads_outside(node: ast.JoinedStr, own: set[str]) -> bool:
+    """Whether a field of *node* reads a name other than *own* (a parameter of
+    the lambda around it) or one it binds itself (a comprehension variable)."""
+    bound = set(own)
+    names: set[str] = set()
+    for field in ast.walk(node):
+        if isinstance(field, ast.Name):
+            if isinstance(field.ctx, ast.Load):
+                names.add(field.id)
+            else:
+                bound.add(field.id)
+    return bool(names - bound)
+
+
 def _scope_names(node: ast.AST) -> Iterator[ast.Name]:
     """The names *node* loads in the scope it is written in.
 
@@ -621,6 +675,8 @@ class _Pass(ast.NodeVisitor):
         self._functions: list[tuple[ast.FunctionDef | ast.AsyncFunctionDef, set[str]]]
         self._functions = []
         self._class_body = False
+        #: The parameter names of the lambdas being visited, innermost last.
+        self._lambdas: list[set[str]] = []
         #: The names ``import x`` / ``import x.y as z`` bind: ``x.f`` is a function.
         self._modules: set[str] = set()
         #: Where each enclosing scope's class can be named from outside: the
@@ -1064,9 +1120,14 @@ class _Pass(ast.NodeVisitor):
         if problem is not None:
             self._refuse(node, problem)
             return
-        if _fstring_needs_rewrite(node):
+        lambda_lowered = bool(self._lambdas) and _reads_outside(node, self._lambdas[-1])
+        if lambda_lowered or _fstring_needs_rewrite(node):
             try:
-                text = _fstring_rewrite(node)
+                text = (
+                    _lambda_fstring_rewrite(node)
+                    if lambda_lowered
+                    else _fstring_rewrite(node)
+                )
             except _Refused as error:
                 self._refuse(node, str(error))
                 return
@@ -1352,7 +1413,13 @@ class _Pass(ast.NodeVisitor):
                 inner.kwonlyargs.append(arg)
                 inner.kw_defaults.append(kw_default)
         if not moved:
-            self.generic_visit(node)
+            for outer in (*args.defaults, *args.kw_defaults):
+                if outer is not None:
+                    self.visit(outer)
+            own = {a.arg for a in ast.walk(args) if isinstance(a, ast.arg)}
+            self._lambdas.append(own)
+            self.visit(node.body)
+            self._lambdas.pop()
             return
         names = ", ".join(name for name, _ in moved)
         values = ", ".join(self._text(default) for _, default in moved)
