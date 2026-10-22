@@ -3462,12 +3462,12 @@ cannot express is refused at its line, with what to write instead.</p>
 <tr>
 <td><code>format(x, spec)</code>, <code>format(x)</code> (#439)</td>
 <td><code>x.__format__(spec)</code>, <code>str(x)</code></td>
-<td>a module that binds the name <code>format</code> itself is left alone</td>
+<td><code>format</code> is bound where the call is: by the module (an assignment, import, <code>def</code> or <code>class</code> at module level) or by an enclosing function or lambda (a parameter or local); a method named <code>format</code> or a class attribute binds nothing there, so it does not disable the rewrite (#471)</td>
 </tr>
 <tr>
 <td><code>ascii(x)</code> (#439)</td>
 <td><code>repr(x)</code>: the same <code>str</code> type; the check does not run it, so the escaping of non-ASCII characters is unchanged at run time</td>
-<td>a module that binds the name <code>ascii</code> itself is left alone</td>
+<td><code>ascii</code> is bound where the call is, as for <code>format</code> (#471)</td>
 </tr>
 <tr>
 <td><code>sorted(xs)</code>, <code>xs.sort()</code>, <code>min</code> / <code>max</code> of a class that defines <code>__lt__</code> only</td>
@@ -3529,7 +3529,9 @@ cannot express is refused at its line, with what to write instead.</p>
   of different ones does not compile without the annotation, even if you
   annotate nothing else. Annotate where the table is assigned or returned; an
   element of another signature than the annotation is refused, a <code>set</code> of functions is
-  refused whatever the annotation (Codon cannot hash a function). An
+  refused whatever the annotation (Codon cannot hash a function), as is a
+  dict keyed by functions (a dict with functions as values is fine): the error
+  carries a hint to use a list or a dict keyed by name. An
   unannotated <code>fs = [inc, dbl]</code> or a class attribute is
   refused with a hint: write an <code>if</code>/<code>elif</code> chain or a <code>match</code> on the key
   instead (<code>if key == "a": return inc(x)</code>). A bound method (<code>self.run</code>) or a
@@ -3611,7 +3613,11 @@ in step:</p>
   further down) it is <code>x</code> as it is.</li>
 <li>A class-level <code>Y: Final[int] = 4</code> stays a typed field, not a class
   attribute, as any annotated class-level name does; write <code>Y: Final = 4</code> for
-  a class attribute read as <code>C.Y</code>.</li>
+  a class attribute read as <code>C.Y</code>. A read from outside the class (<code>Q.LIMIT</code>
+  with <code>LIMIT: int = 5</code> or <code>ClassVar[int]</code>) gets Codon's <code>'Q' object has no
+  attribute 'LIMIT'</code> with a hint to write <code>LIMIT: Final = 5</code> (#471); the
+  check does not rewrite it, since in a @dataclass the annotated name is an
+  instance field in Python too.</li>
 <li><code>Iterator</code> is Codon's generator type, and <code>Deque</code>, <code>DefaultDict</code> and
   <code>Counter</code> are <code>collections.deque</code>, <code>defaultdict</code> and <code>Counter</code>.</li>
 <li>Any other name is refused at its import line. <code>Generic</code> and <code>TypedDict</code>
@@ -3773,7 +3779,9 @@ defined in another module of the package.</p>
 the check takes the enums to rewrite from the model files, so a new model enum
 is iterable once it declares them. <code>test_typecheck_model.py</code> keeps both equal
 to the Python enum's members, in its order. A scenario class of the same name
-as a model enum that is no enum is left alone.</p>
+as a model enum that is no enum is left alone, and so is a module-level
+variable, function or non-framework import of that name (#471); a parameter or
+local of the name shadows it only inside its function.</p>
 <p>What does not work:</p>
 <ul>
 <li>the class passed as a value, <code>f(Mode)</code>, or <code>Mode.__members__</code>: both stay as
@@ -5613,7 +5621,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 22, 2026 11:19:37 UTC"><span class="timeago" datetime="2026-10-22T11:19:37+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 22, 2026 11:19:37 UTC">2026-10-22</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 22, 2026 11:24:42 UTC"><span class="timeago" datetime="2026-10-22T11:24:42+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 22, 2026 11:24:42 UTC">2026-10-22</span>
   </span>
 
     
