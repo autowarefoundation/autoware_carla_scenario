@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional
 
@@ -198,8 +199,9 @@ class PedestrianEntity(WalkedEntity):
     # Motion
     # ------------------------------------------------------------------
 
-    def walk_straight(self, speed_ms: float) -> None:
-        """Walk forward at *speed_ms*, holding the current heading.
+    def walk_straight(self, speed_ms: float, yaw_deg: Optional[float] = None) -> None:
+        """Walk forward at *speed_ms*, holding the current heading -- or along
+        *yaw_deg*, when given.
 
         The run's traffic backend walks it when it walks the scenario's
         pedestrians (:meth:`~autoware_carla_scenario.traffic.base.TrafficBackend.walk_straight`);
@@ -208,6 +210,8 @@ class PedestrianEntity(WalkedEntity):
         Args:
             speed_ms: Walking speed in metres per second.  Zero stops the
                 walker where it stands.
+            yaw_deg: The way to walk, as a CARLA yaw (degrees); ``None`` walks
+                the way the walker faces.
         """
         if self._walker is None:
             logger.warning(
@@ -218,11 +222,17 @@ class PedestrianEntity(WalkedEntity):
         backend = self._traffic_backend
         if backend is not None:
             walked: WalkedEntity = self
-            if backend.walk_straight(walked, speed_ms):
+            if backend.walk_straight(walked, speed_ms, yaw_deg=yaw_deg):
                 return
-        forward = self._walker.get_transform().get_forward_vector()
+        if yaw_deg is None:
+            direction = self._walker.get_transform().get_forward_vector()
+        else:
+            yaw = math.radians(yaw_deg)
+            direction = carla.Vector3D(x=math.cos(yaw), y=math.sin(yaw), z=0.0)
         self._walker.apply_control(
-            carla.WalkerControl(direction=forward, speed=walker_speed_command(speed_ms))
+            carla.WalkerControl(
+                direction=direction, speed=walker_speed_command(speed_ms)
+            )
         )
 
     def release_from_traffic(self, world: "carla.World") -> None:

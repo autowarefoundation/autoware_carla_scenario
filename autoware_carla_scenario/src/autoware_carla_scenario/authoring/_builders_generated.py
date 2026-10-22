@@ -1323,6 +1323,9 @@ def build_walk_straight_action(
         timing=timing,
         label=compiled.label,
         once=compiled.node.once,
+        turn_back_ttc_s=params["turn_back_ttc_s"],
+        turn_back_distance_m=params["turn_back_distance_m"],
+        turn_back_within_m=params["turn_back_within_m"],
     )
 
 

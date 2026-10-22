@@ -149,6 +149,9 @@ class PedestrianDartOutScenario(BaseScenario):
                     label="ego_near_pedestrian",
                 ),
                 label="dart_out",
+                turn_back_ttc_s=cfg.turn_back_ttc_s,
+                turn_back_distance_m=cfg.turn_back_distance_m,
+                turn_back_within_m=cfg.turn_back_within_m,
             )
         )
 
