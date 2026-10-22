@@ -2408,3 +2408,42 @@ def test_a_base_class_checks_every_override_against_its_return_type(
             assert isinstance(text, ast.Constant) and isinstance(text.value, str)
             declared[hook] = (ast.unparse(type_), text.value)
     assert declared == expected
+
+
+@pytest.mark.parametrize(
+    ("path", "python"),
+    [
+        ("_poses.codon", acs.OpenDrivePose),
+        ("autoware_stack/devcontainer.codon", stack_devcontainer.DevContainer),
+    ],
+)
+def test_the_replace_methods_of_a_model_match_the_dataclass_fields(
+    path: str, python: Any
+) -> None:
+    # dataclasses.replace(obj, f=x) is lowered to obj._acs_with__f(f=x)
+    # (#487). The model of a framework dataclass spells those methods by
+    # hand: a field added to the Python class and not to them would make the
+    # check refuse a replace() the run accepts.
+    cls = next(
+        n
+        for n in _parse(_MODEL / path).body
+        if isinstance(n, ast.ClassDef) and n.name == python.__name__
+    )
+    methods = {
+        s.name: s
+        for s in cls.body
+        if isinstance(s, ast.FunctionDef) and s.name.startswith("_acs_with__")
+    }
+    fields = [f for f in dataclasses.fields(python) if f.init]
+    assert sorted(methods) == sorted(f"_acs_with__{f.name}" for f in fields)
+    for f in fields:
+        method = methods[f"_acs_with__{f.name}"]
+        assert [a.arg for a in method.args.args] == ["self", f.name]
+        # It rebuilds the object from every field, in order.
+        returned = method.body[-1]
+        assert isinstance(returned, ast.Return)
+        assert isinstance(returned.value, ast.Call)
+        built = [ast.unparse(a) for a in returned.value.args]
+        assert built == [
+            f.name if g.name == f.name else f"self.{g.name}" for g in fields
+        ]

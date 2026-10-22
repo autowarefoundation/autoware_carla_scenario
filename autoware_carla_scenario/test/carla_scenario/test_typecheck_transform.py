@@ -2531,7 +2531,7 @@ def test_a_dataclasss_flags_pick_the_methods_generated(
     generated = {
         node.name
         for node in ast.walk(ast.parse(out.partition("\n\n@extend\n")[2] or "pass"))
-        if isinstance(node, ast.FunctionDef)
+        if isinstance(node, ast.FunctionDef) and not node.name.startswith("_acs_with__")
     }
     assert generated == methods, out
 
@@ -2560,7 +2560,7 @@ def test_a_dataclass_inheriting_a_dataclass_compares_the_base_fields_first() -> 
             """
         )
     )
-    sub = out.rpartition("class Sub:")[2]
+    sub = out.split("class Sub:")[1]  # the dunders; the copies follow
     assert "self.a == other.a and self.b == other.b" in sub
     assert "hash((self.a, self.b,))" in sub
 
@@ -4094,3 +4094,139 @@ def test_a_parametrized_class_field_is_not_a_bare_collection() -> None:
         "class P:\n    xs: list[int] = []\n"
     )
     assert class_body_refusals(source) == []
+
+
+# dataclasses.replace lowered to typed copies (#487)
+
+_REPLACE_DEFS = """
+from dataclasses import dataclass, field, replace
+import dataclasses
+
+@dataclass
+class W:
+    lane: int = 0
+    best: W | None = None
+    cache: int = field(default=0, init=False)
+
+@dataclass(frozen=True)
+class V(W):
+    speed: float = 1.0
+"""
+
+
+def _replacer_block(source: str, name: str) -> str:
+    out = transform_source(textwrap.dedent(source))
+    blocks = out.split("\n\n@extend\n")[1:]
+    return next(
+        (b for b in blocks if b.startswith(f"class {name}:") and "_acs_with__" in b),
+        "",
+    )
+
+
+def test_a_dataclass_gets_a_typed_copy_method_per_init_field() -> None:
+    w = _replacer_block(_REPLACE_DEFS, "W")
+    assert _methods(w) == {"_acs_with__lane", "_acs_with__best"}
+    assert "def _acs_with__best(self, best: Optional[W]) -> W:" in w
+    assert "return W(lane=self.lane, best=best)" in w
+    v = _replacer_block(_REPLACE_DEFS, "V")
+    assert _methods(v) == {"_acs_with__lane", "_acs_with__best", "_acs_with__speed"}
+    assert "return V(lane=lane, best=self.best, speed=self.speed)" in v
+
+
+def test_a_class_with_an_init_or_an_unknown_base_gets_no_copy_method() -> None:
+    source = """
+    from dataclasses import dataclass
+    from elsewhere import Base
+
+    @dataclass
+    class A(Base):
+        x: int = 0
+
+    @dataclass
+    class B:
+        x: int = 0
+
+        def __init__(self, x: int = 0) -> None:
+            self.x = x
+    """
+    assert _replacer_block(source, "A") == ""
+    assert _replacer_block(source, "B") == ""
+
+
+@pytest.mark.parametrize(
+    ("call", "lowered"),
+    [
+        ("replace(w, lane=1)", "replace(w)._acs_with__lane(lane=1)"),
+        (
+            "replace(w, lane=1, best=None)",
+            "replace(w)._acs_with__lane(lane=1)._acs_with__best(best=None)",
+        ),
+        ("dataclasses.replace(w, lane=f(1, 2))", None),
+        ("replace((w), lane=1,)", "replace((w))._acs_with__lane(lane=1,)"),
+        ("replace(w)", "replace(w)"),
+    ],
+)
+def test_replace_becomes_a_chain_of_typed_copies(
+    call: str, lowered: str | None
+) -> None:
+    out = transform_source(_REPLACE_DEFS + f"\nx = {call}\n")
+    line = next(ln for ln in out.splitlines() if ln.startswith("x = "))
+    if lowered is None:
+        assert "._acs_with__lane(lane=f(1, 2))" in line
+    else:
+        assert line == f"x = {lowered}"
+
+
+def test_replace_keeps_each_statement_on_its_lines() -> None:
+    source = _REPLACE_DEFS + "\nx = replace(\n    w,\n    lane=1,\n    best=None,\n)\n"
+    out, origin = transform_source_lines(source)
+    lines = out.splitlines()
+    start = next(i for i, ln in enumerate(lines) if ln.startswith("x = "))
+    assert "".join(lines[start : start + 5]).replace(" ", "") == (
+        "x=replace(w)._acs_with__lane(lane=1)._acs_with__best(best=None,)"
+    )
+    assert out.count("\n") == len(origin) + PRELUDE.count("\n")
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        "replace(w, **kw)",
+        "replace(w, 3)",
+        "replace(obj=w, lane=1)",
+        "dataclasses.replace(*args, lane=1)",
+        "replace()",
+    ],
+)
+def test_a_replace_call_that_cannot_be_lowered_is_refused(call: str) -> None:
+    refused = python_rewrite_refusals(_REPLACE_DEFS + f"\nx = {call}\n")
+    assert len(refused) == 1 and "dataclasses.replace" in refused[0][1]
+
+
+def test_replace_that_is_not_dataclasses_replace_is_left_alone() -> None:
+    source = "s = 'a'.replace('a', 'b')\n\ndef replace(a, b=1):\n    return a\n\nx = replace(1, b=2)\n"
+    assert python_rewrite_refusals(source) == []
+    assert "_acs_with__" not in transform_source(source)
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "from dataclasses import replace\ns = 'a'\nt = s.replace('a', 'b')\n",
+        "from dataclasses import replace\ndef f(replace):\n    return replace(1, a=2)\n",
+        "from dataclasses import replace\ndef f():\n    replace = lambda o, a: o\n    return replace(1, a=2)\n",
+        "from dataclasses import replace\nfrom mine import replace\nx = replace(1, a=2)\n",
+        "import dataclasses\ndef f(dataclasses):\n    return dataclasses.replace(1, a=2)\n",
+        "from mine import replace\nx = replace(1, a=2)\n",
+    ],
+)
+def test_a_shadowed_replace_is_not_dataclasses_replace(source: str) -> None:
+    assert python_rewrite_refusals(source) == []
+    assert "_acs_with__" not in transform_source(source)
+
+
+def test_replace_imported_inside_a_function_is_lowered() -> None:
+    source = (
+        "def f(w):\n    from dataclasses import replace\n    return replace(w, a=2)\n"
+    )
+    assert "replace(w)._acs_with__a(a=2)" in transform_source(source)

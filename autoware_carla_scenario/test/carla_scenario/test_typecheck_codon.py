@@ -7400,3 +7400,151 @@ def pt() -> tuple:
     scenario, config, _ = _data_case(tmp_path, definitions, "x = pt()\n")
     error = _only_error(typecheck_scenario(scenario, config))
     assert "tuple[float, float]" in error.message, error.format()
+
+
+# ---------------------------------------------------------------------------
+# dataclasses.replace is lowered to typed copies (#487)
+# ---------------------------------------------------------------------------
+
+_REPLACE_CONFIG = """
+from dataclasses import dataclass, field
+import enum
+
+
+class Kind(enum.Enum):
+    SLOW = "slow"
+    FAST = "fast"
+
+
+@dataclass
+class Waypoint:
+    lane: int = 0
+    speed: float = 5.0
+    kind: Kind = Kind.SLOW
+
+
+@dataclass(frozen=True)
+class Frozen:
+    a: int = 1
+    note: str | None = "x"
+
+
+@dataclass
+class Plan:
+    points: list[Waypoint] = field(default_factory=list)
+    best: Waypoint | None = None
+    cache: int = field(default=0, init=False)
+
+
+@dataclass
+class CaseConfig:
+    name: str = "case"
+    goal_lanelet_ids: list[int] = field(default_factory=lambda: [460, 265])
+    timeout_seconds: float = 10.0
+    min_speed_kmh: float | None = None
+    plan: Plan = field(default_factory=lambda: Plan([Waypoint(1, 3.0, Kind.FAST)]))
+"""
+
+_REPLACE_IMPORTS = "\n\nfrom dataclasses import replace\n\nfrom .configs import Frozen, Kind, Plan, Waypoint\n\n\n"
+
+
+def _replace_case(tmp_path: Path, setup: str) -> tuple[Any, Any, Path]:
+    return _write_case(
+        tmp_path,
+        _TIMEOUT_SETUP + textwrap.dedent(setup),
+        _REPLACE_IMPORTS,
+        config=_REPLACE_CONFIG,
+    )
+
+
+def test_replace_of_a_dataclass_is_checked_and_usable(tmp_path: Path) -> None:
+    setup = """
+        p = cfg.plan
+        q = replace(p, best=None)
+        fast = [w for w in q.points]
+        assert len(fast) == 1 and q.best is None
+        w = Waypoint()
+        w2 = replace(w, speed=2.5)
+        w3 = replace(w2, lane=3, kind=Kind.FAST, speed=1.0)
+        assert w3.lane + 1 == 4 and w3.speed < 2.0 and w.lane == 0
+        r = replace(p, best=w3, points=[w, w2])
+        assert r.best is not None and r.best.lane == 3 and len(r.points) == 2
+        z = replace(
+            w,
+            lane=7,
+        )
+        f = replace(Frozen(), note=None)
+        g = replace(f, a=2, note="y")
+        assert g.a == 2 and f.note is None
+        assert replace(g).a == 2
+    """
+    scenario, config, _ = _replace_case(tmp_path, setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_replace_as_dataclasses_attribute_is_checked(tmp_path: Path) -> None:
+    setup = """
+        w = dataclasses.replace(Waypoint(), lane=2)
+        assert w.lane == 2
+        dataclasses.replace(w, nonexistent=1)
+    """
+    scenario, config, path = _write_case(
+        tmp_path,
+        _TIMEOUT_SETUP + textwrap.dedent(setup),
+        _REPLACE_IMPORTS + "import dataclasses\n",
+        config=_REPLACE_CONFIG,
+    )
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert error.line == _line_of(path, "dataclasses.replace(w, nonexistent=1)")
+
+
+@pytest.mark.parametrize(
+    ("call", "message"),
+    [
+        ("replace(Waypoint(), nonexistent=1)", "nonexistent"),
+        ("replace(Waypoint(), lane=1, nonexistent=1)", "nonexistent"),
+        ('replace(Waypoint(), speed="fast")', "str"),
+        ("replace(Frozen(), a=None)", "None"),
+        ("replace(Plan(), cache=3)", "init=False"),
+    ],
+    ids=["unknown", "unknown-among-known", "wrong-type", "wrong-none", "init-false"],
+)
+def test_a_wrong_replace_is_refused_at_its_line(
+    tmp_path: Path, call: str, message: str
+) -> None:
+    scenario, config, path = _replace_case(tmp_path, f"x = {call}\n")
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert message in error.format(), error.format()
+    assert error.path == str(path)
+    assert error.line == _line_of(path, f"x = {call}")
+    assert "failed without a diagnostic" not in error.format()
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        "replace(Waypoint(), **{'lane': 1})",
+        "replace(Waypoint(), 3)",
+        "replace(obj=Waypoint(), lane=1)",
+    ],
+    ids=["double-star", "positional", "obj-keyword"],
+)
+def test_a_replace_call_that_cannot_be_lowered_is_refused(
+    tmp_path: Path, call: str
+) -> None:
+    scenario, config, path = _replace_case(tmp_path, f"x = {call}\n")
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "dataclasses.replace" in error.format(), error.format()
+    assert error.line == _line_of(path, f"x = {call}")
+
+
+def test_replace_of_a_class_the_check_has_no_fields_of_is_refused(
+    tmp_path: Path,
+) -> None:
+    scenario, config, path = _replace_case(
+        tmp_path, "x = replace(carla.Location(), x=1.0)\n"
+    )
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert error.line == _line_of(path, "x = replace(carla.Location()")
+    assert "failed without a diagnostic" not in error.format()
