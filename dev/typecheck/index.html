@@ -3767,11 +3767,22 @@ instead:</p>
 <li><code>x in Mode</code> and <code>x not in Mode</code>;</li>
 <li><code>Mode["A"]</code>, a member looked up by name.</li>
 </ul>
+<p>Inside the enum's own methods the class has other spellings, and the check
+reads them as the class (#481). In a <code>@classmethod</code>, the first parameter
+(<code>cls</code>, or whatever it is called) is the class, so <code>[g.name for g in cls]</code>,
+<code>list(cls)</code>, <code>len(cls)</code>, <code>x in cls</code> and <code>cls["A"]</code> work. In an instance
+method, <code>type(self)</code> and <code>self.__class__</code> are the class too
+(<code>for m in type(self)</code>). These hold only in a method written directly in the
+class body: a <code>@staticmethod</code>, a function outside the class and a class that
+is no enum are left alone, and so is a parameter the method rebinds (an
+assignment, a loop or comprehension variable, an import, a nested <code>def</code>), a
+nested function or lambda that declares a parameter of the same name, and a
+<code>type</code> the module or function binds.</p>
 <p>Iteration yields the members in definition order. A member whose value repeats
 an earlier one is an alias, and is skipped, as in Python. A <code>Flag</code> or <code>IntFlag</code>
 yields its single-bit members only, as Python 3.11 and later do: a composite
 (<code>RW = R | W</code>, <code>BOTH = 3</code>), a zero member and an alias are skipped, though
-<code>Perm["RW"]</code> finds them. Only the bare name of the class is rewritten, so a
+<code>Perm["RW"]</code> finds them. Only the name of the class (and the spellings above) is rewritten, so a
 parameter or local called like the class is left alone, and the enum may be
 defined in another module of the package.</p>
 <p>The framework's enums are <code>@tuple</code> classes in the model
@@ -3784,6 +3795,10 @@ variable, function or non-framework import of that name (#471); a parameter or
 local of the name shadows it only inside its function.</p>
 <p>What does not work:</p>
 <ul>
+<li>the class under another name or as a value: <code>k = cls</code> and then <code>for m in
+  k</code>, or <code>f(cls)</code>, and <code>cls.__members__</code>. They stay as written (the first is
+  refused with a hint to write the class's name: <code>'Mode' object has no
+  attribute '__iter__'</code>);</li>
 <li>the class passed as a value, <code>f(Mode)</code>, or <code>Mode.__members__</code>: both stay as
   written, which Codon does not resolve (<code>no function 'List.__init__' with
   arguments (List[T], type[Mode])</code> for <code>list(e)</code> in <code>f</code>, and <code>'Mode' object
@@ -5621,7 +5636,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 22, 2026 14:07:42 UTC"><span class="timeago" datetime="2026-10-22T14:07:42+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 22, 2026 14:07:42 UTC">2026-10-22</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 22, 2026 14:43:58 UTC"><span class="timeago" datetime="2026-10-22T14:43:58+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 22, 2026 14:43:58 UTC">2026-10-22</span>
   </span>
 
     
