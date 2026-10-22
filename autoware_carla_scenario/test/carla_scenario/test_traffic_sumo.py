@@ -2021,6 +2021,33 @@ def test_sumo_walks_the_scenarios_pedestrian_straight_across_the_road(
 
 
 @needs_sumo
+def test_sumo_walks_the_scenarios_pedestrian_the_way_it_is_told(
+    crossroads_with_sidewalks: Path, tmp_path: Path
+) -> None:
+    """A walk given a yaw goes that way, not the way the walker faces: how a
+    pedestrian turning back walks back to the kerb."""
+    backend, world, entity = _scenario_pedestrian(
+        crossroads_with_sidewalks, tmp_path, scenario_pedestrians="sumo"
+    )
+    tc = backend._traci
+    walker = entity.actor
+    try:
+        (person,) = backend._walked
+        entity.walk_straight(1.5)
+        for i in range(20):  # 1 s out
+            backend.tick(world, 1.0 + i * 0.05)
+        out = tc.person.getPosition(person)
+        assert out == pytest.approx((-50.0, -8.25 + 1.5), abs=0.1)
+        # Back the way it came, though the walker still faces out.
+        entity.walk_straight(1.5, yaw_deg=walker.transform.rotation.yaw + 180.0)
+        for i in range(20):  # 1 s back
+            backend.tick(world, 2.0 + i * 0.05)
+        assert tc.person.getPosition(person) == pytest.approx((-50.0, -8.25), abs=0.1)
+    finally:
+        backend.close()
+
+
+@needs_sumo
 def test_sumo_traffic_stops_for_the_scenarios_pedestrian_sumo_walks(
     crossroads_with_sidewalks: Path, tmp_path: Path
 ) -> None:

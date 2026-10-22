@@ -256,7 +256,7 @@ class TestWalking:
         walker.set_traffic_backend(backend)
         WalkStraightAction(entity_name="walker1", speed_ms=1.4).execute(MagicMock())
 
-        backend.walk_straight.assert_called_once_with(walker, 1.4)
+        backend.walk_straight.assert_called_once_with(walker, 1.4, yaw_deg=None)
         actor = walker.actor
         assert actor is not None
         actor.apply_control.assert_not_called()
