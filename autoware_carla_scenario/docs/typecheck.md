@@ -2652,7 +2652,23 @@ What Codon 0.19 needs that Python does not, beyond
   target `list[Base]`, or declare a local `list[Base]` and `append()` each
   element. An element that is no subclass of the base is refused, and so is a
   method only a subclass has, as in Python. A set or a tuple display is not
-  rewritten. An element of a `Sequence[AnyPose]` is
+  rewritten.
+  The same holds for the neighbouring shapes (#489). A dict display of
+  constructor calls, `{"a": Circle(), "b": Square()}`, is a dict of the nearest
+  shared class when its keys are all `str` or all `int` literals
+  (`_acs_dict_into(Dict[str, Shape](), ...)`), and of the annotation for an
+  annotated target or a `dict[str, Shape]` parameter of a function or class of
+  the module; any other dict display of different classes is refused with a
+  hint to annotate it. A list display added to a local or parameter annotated
+  `list[Shape]` (`a + [Square()]`, `[Square()] + a`, `a += [Square()]`,
+  `a.extend([Square()])`) is a list of that class; added to a list whose type
+  the check does not know (a call, an attribute), it is refused with a hint to
+  put the display in a `list[Shape]` local first. A class defined below the
+  scenario class may be named inside a function body (Codon types a body
+  when it is first called, after the whole module), so the displays above
+  work with it; a class body, a default or a module-level statement runs at
+  once and cannot name it (`name 'Rule' is not defined`): define the class
+  above, as the hint says. An element of a `Sequence[AnyPose]` is
   a `Union` of poses; the model's `_expect_pose` takes one, reading its
   members with `static.vars_types(pose, with_index=True)` (without
   `with_index`, Codon 0.19 does not bind the loop variable).

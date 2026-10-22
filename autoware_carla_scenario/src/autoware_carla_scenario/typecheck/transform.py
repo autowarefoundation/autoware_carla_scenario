@@ -53,7 +53,12 @@ which :func:`transform_source_lines` maps back onto the handler):
   Python; other values are left to Codon's display.  Assigned to an
   annotated ``x: dict[K, V]`` (``K`` and ``V`` plain names), such a display,
   of one item or more, becomes ``_acs_dict_into(Dict[K, V](), (k1, v1),
-  ...)``, a dict of the annotated type.
+  ...)``, a dict of the annotated type.  A display of constructor calls of
+  the module's own classes becomes one of the annotated type of a
+  ``dict[K, B]`` parameter, or, unannotated, of ``Dict[str, B]`` with ``B``
+  their nearest shared class (#489); a list display added to a ``list[B]``
+  local or parameter (``a + [Sub()]``, ``+=``, ``extend()``) is a list of
+  ``B``; and a class defined further down may be named in a function body.
 * An ``Enum`` class derives from the ``enum`` shim's ``Enum[T]`` (``T`` the
   type of its values: ``str`` for ``class C(str, Enum)``, ``int`` for
   ``auto()``), and each member ``RED = "red"`` becomes the class variable
@@ -937,6 +942,14 @@ class _Rewriter(ShadowScopes):
         #: The list displays (by ``id``) whose target type is known, and the
         #: class name of its elements: ``_acs_list_into(List[B](), ...)``.
         self._list_targets: dict[int, str] = {}
+        #: The dict displays (by ``id``) whose target type is known (a
+        #: parameter ``dict[str, B]``), and that type: ``Dict[str, B]``.
+        self._dict_targets: dict[int, str] = {}
+        #: The local lists (name -> the element class of its ``list[B]``, or
+        #: ``None`` when it is no list of a known class) of the module and of
+        #: each function being visited, innermost last: a list display added
+        #: to one (``a + [Sub()]``) is a list of that class (#489).
+        self._list_scopes: list[dict[str, str | None]] = [{}]
         #: The element class of the ``-> list[B]`` of each function being
         #: visited (``None``: no such return annotation).
         self._return_elements: list[str | None] = []
@@ -1077,11 +1090,21 @@ class _Rewriter(ShadowScopes):
                         and isinstance(sub.target, ast.Name)
                     ]
 
+    def _later(self, name: str) -> bool:
+        """Whether Codon cannot name the class *name* here: it is defined
+        further down the module and this is not a function body.
+
+        A module-level or class-level statement runs at once, and a signature
+        is read when the function is defined; a function body is typed when
+        the function is first called, after the whole module (#489).
+        """
+        return name in self._later_classes and self._function_depth == 0
+
     def _list_element(self, annotation: ast.AST | None) -> str | None:
         """``B`` for a ``list[B]`` annotation of a class Codon can name, else ``None``.
 
         ``B`` is a plain class name (not a scalar, ``Any``, a ``TypeVar`` or a
-        class defined further down).
+        class defined further down, unless in a function body).
         """
         if (
             not isinstance(annotation, ast.Subscript)
@@ -1095,7 +1118,7 @@ class _Rewriter(ShadowScopes):
             or name in _SCALAR_NAMES
             or name in _CONCRETE_GENERICS | _ABSTRACT_GENERICS
             or name in self._type_vars
-            or name in self._later_classes
+            or self._later(name)
         ):
             return None
         return name
@@ -1116,10 +1139,93 @@ class _Rewriter(ShadowScopes):
             return
         for (_, annotation), arg in zip(parameters, node.args):
             self._mark_list(arg, annotation)
+            self._mark_dict(arg, annotation)
         by_name = dict(parameters)
         for kw in node.keywords:
             if kw.arg is not None and kw.arg in by_name:
                 self._mark_list(kw.value, by_name[kw.arg])
+                self._mark_dict(kw.value, by_name[kw.arg])
+
+    def _mark_dict(self, value: ast.AST | None, annotation: ast.AST | None) -> None:
+        """Note that the dict display *value*, of the module's own classes, is
+        to be the ``dict[K, B]`` of *annotation* (``total({"a": Circle()})``)."""
+        if isinstance(value, ast.Dict) and self._own_class_values(value):
+            typed = self._dict_annotation_type(annotation)
+            if typed is not None:
+                self._dict_targets[id(value)] = typed
+
+    def _own_class_values(self, node: ast.Dict) -> bool:
+        """Whether every value of the dict display *node* constructs a class
+        of the module (``{"a": Circle(), "b": Square()}``)."""
+        return (
+            bool(node.values)
+            and all(key is not None for key in node.keys)
+            and all(
+                isinstance(value, ast.Call) and _dotted(value.func) in self._class_bases
+                for value in node.values
+            )
+        )
+
+    def _common_dict_type(self, node: ast.Dict) -> str | None:
+        """``Dict[K, B]`` for the unannotated dict display *node* of classes
+        of the module, ``B`` the nearest class they share and ``K`` the type
+        of its literal keys; ``None`` when either is not told."""
+        if len(node.values) < 2 or not self._own_class_values(node):
+            return None
+        keys = [key for key in node.keys if key is not None]
+        if all(
+            isinstance(k, ast.JoinedStr)
+            or (isinstance(k, ast.Constant) and isinstance(k.value, str))
+            for k in keys
+        ):
+            key = "str"
+        elif all(
+            isinstance(k, ast.Constant)
+            and isinstance(k.value, int)
+            and not isinstance(k.value, bool)
+            for k in keys
+        ):
+            key = "int"
+        else:
+            return None
+        base = self._common_base(node.values)
+        return None if base is None else f"Dict[{key}, {base}]"
+
+    def _list_scope_base(self, node: ast.AST) -> str | None:
+        """The element class of the list *node* when it is a local known to be
+        a ``list[B]`` (or a sum of such), else ``None``."""
+        if isinstance(node, ast.Name):
+            for scope in reversed(self._list_scopes):
+                if node.id in scope:
+                    return scope[node.id]
+        elif isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+            return self._list_scope_base(node.left) or self._list_scope_base(node.right)
+        return None
+
+    def _mark_added(self, base: str | None, display: ast.AST | None) -> None:
+        """Make the list display *display*, added to a list of *base*, a list
+        of it."""
+        if base is not None and isinstance(display, ast.List):
+            if listable_display(display) and not self._later(base):
+                self._list_targets[id(display)] = base
+
+    def visit_BinOp(self, node: ast.BinOp) -> None:
+        if isinstance(node.op, ast.Add):
+            # `a + [Sub()]` with `a: list[Base]`: the display is a list of the
+            # base too, as Python's is.
+            self._mark_added(self._list_scope_base(node.left), node.right)
+            self._mark_added(self._list_scope_base(node.right), node.left)
+        self.generic_visit(node)
+
+    def visit_AugAssign(self, node: ast.AugAssign) -> None:
+        if isinstance(node.op, ast.Add):
+            self._mark_added(self._list_scope_base(node.target), node.value)
+        self.generic_visit(node)
+
+    def _note_list_local(self, name: str, base: str | None) -> None:
+        """Note that the local *name* is a list of *base* (``None``: unknown)."""
+        if self._class_depth == 0:
+            self._list_scopes[-1][name] = base
 
     def _common_base(self, elements: list[ast.expr]) -> str | None:
         """The nearest class of the module that the classes constructed by
@@ -1137,7 +1243,7 @@ class _Rewriter(ShadowScopes):
         lines = [self._ancestors(name) for name in names]
         shared = set.intersection(*(set(line) for line in lines))
         for ancestor in lines[0]:
-            if ancestor in shared and ancestor not in self._later_classes:
+            if ancestor in shared and not self._later(ancestor):
                 # A base from elsewhere may be a framework condition or action,
                 # whose displays `_acs_list` upcasts to BaseCondition /
                 # BaseAction: leave those to it, a List[Mid] is no
@@ -1464,6 +1570,12 @@ class _Rewriter(ShadowScopes):
         if class_name is not None:
             self._method_class = class_name
         self._function_depth += 1
+        self._list_scopes.append(
+            {
+                name: self._list_element(annotation)
+                for name, annotation in _parameters(node.args, skip_first=False)
+            }
+        )
         self._return_elements.append(
             None
             if node.returns is None or isinstance(node, ast.AsyncFunctionDef)
@@ -1472,6 +1584,7 @@ class _Rewriter(ShadowScopes):
         for stmt in node.body:
             self.visit(stmt)
         self._return_elements.pop()
+        self._list_scopes.pop()
         self._function_depth -= 1
         self._class_depth = class_depth
         self._class_name = class_name
@@ -1761,7 +1874,7 @@ class _Rewriter(ShadowScopes):
             self._dict_annotation_type(node.annotation)
             if isinstance(value, ast.Dict)
             and not class_level
-            and _mixed_dict(value, least=1)
+            and (_mixed_dict(value, least=1) or self._own_class_values(value))
             else None
         )
         if typed is not None:
@@ -1771,6 +1884,8 @@ class _Rewriter(ShadowScopes):
             self._rewrite_dict(value, f"_acs_dict_into({typed}(), ")
             self.generic_visit(value)
             value = None
+        if isinstance(node.target, ast.Name):
+            self._note_list_local(node.target.id, self._list_element(node.annotation))
         converted = self._rewrite_annotation(node.annotation, class_level=class_level)
         if (
             converted is None
@@ -1805,6 +1920,13 @@ class _Rewriter(ShadowScopes):
 
     def visit_Call(self, node: ast.Call) -> None:
         self._mark_list_arguments(node)
+        if (
+            isinstance(node.func, ast.Attribute)
+            and node.func.attr == "extend"
+            and len(node.args) == 1
+        ):
+            # `a.extend([Sub()])` with `a: list[Base]`.
+            self._mark_added(self._list_scope_base(node.func.value), node.args[0])
         if isinstance(node.func, ast.Name) and node.func.id == "frozenset":
             # Codon 0.19 has no frozenset: build a set, which types the same.
             start, end = self.edits.node_span(node.func)
@@ -1932,6 +2054,12 @@ class _Rewriter(ShadowScopes):
             # takes no string as a type, so a forward reference is unquoted
             # (Codon reads the TYPE_CHECKING imports, which define the name).
             self._unquote_alias_members(value.slice)
+        for target in node.targets:
+            if isinstance(target, ast.Name):
+                base = None
+                if isinstance(value, ast.List) and listable_display(value):
+                    base = self._common_base(value.elts)
+                self._note_list_local(target.id, base)
         literal = _literal_type(value)
         if self._class_depth == 0 and self._function_depth == 0 and literal:
             # A Literal alias, `Tristate = Literal["any", "yes", "no"]`: the
@@ -1959,6 +2087,13 @@ class _Rewriter(ShadowScopes):
             self._unquote_alias_members(child)
 
     def visit_Dict(self, node: ast.Dict) -> None:
+        typed = self._dict_targets.pop(id(node), None) or self._common_dict_type(node)
+        if typed is not None:
+            # `{"a": Circle(), "b": Square()}`: a dict of the target type, or
+            # of the nearest class the values share, as the list display is.
+            self._rewrite_dict(node, f"_acs_dict_into({typed}(), ")
+            self.generic_visit(node)
+            return
         if _mixed_dict(node):
             # `{"turn": turn, "lc": lc}`: `{"turn": _acs_base(turn), ...}`.
             # Each edit starts before the value it wraps (after its key),
@@ -1978,11 +2113,12 @@ class _Rewriter(ShadowScopes):
                 self.edits.replace(value_end, value_end, ")")
         self.generic_visit(node)
 
-    def _dict_annotation_type(self, annotation: ast.AST) -> str | None:
+    def _dict_annotation_type(self, annotation: ast.AST | None) -> str | None:
         """``Dict[K, V]`` for a ``dict[K, V]`` / ``Mapping[K, V]`` annotation.
 
         Only of two plain names Codon can type with (not ``Any``, a
-        ``TypeVar``, or a class defined further down); ``None`` otherwise.
+        ``TypeVar``, or a class defined further down unless in a function
+        body); ``None`` otherwise.
         """
         if not (
             isinstance(annotation, ast.Subscript)
@@ -1998,7 +2134,7 @@ class _Rewriter(ShadowScopes):
                 or element.id in _UNEXPRESSIBLE
                 or element.id in _CONCRETE_GENERICS | _ABSTRACT_GENERICS
                 or element.id in self._type_vars
-                or element.id in self._later_classes
+                or self._later(element.id)
             ):
                 return None
             names.append("str" if element.id in _BYTES_NAMES else element.id)

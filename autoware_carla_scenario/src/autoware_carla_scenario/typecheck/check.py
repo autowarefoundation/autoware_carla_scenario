@@ -890,6 +890,105 @@ _LIST_DISPLAY_HINT = (
 )
 
 
+_DICT_DISPLAY_HINT = (
+    "a dict display is typed by its first value, so its values must share a "
+    "class of the scenario's own that the check can infer from literal keys "
+    "and constructor calls: annotate the target as the common base "
+    "(`d: dict[str, Base] = {...}`, a `dict[str, Base]` parameter), or declare "
+    "a local `dict[str, Base]` and assign each item; a value that is no "
+    "subclass of the base is refused"
+)
+_SUM_DISPLAY_HINT = (
+    "a list display is typed by its first element, so it is no list of the "
+    "base: put it in a local annotated `list[Base]` (`more: list[Base] = "
+    "[Sub()]`) and add that, or `append()` each element; the check types the "
+    "display itself when the other operand is a local or parameter annotated "
+    "`list[Base]`"
+)
+_DICT_MISMATCH = re.compile(r"^'\w+' does not match expected type '\w+'")
+_DICT_LINE = re.compile(r"\{|^\s*[\w\"'.]+\s*:\s*\w+\(")
+_LIST_SUM = re.compile(
+    r"^unsupported operand type\(s\) for \+=?: 'List\[(\w+)\]' and 'List\[(\w+)\]'"
+)
+
+
+def _source_line(diagnostic: Diagnostic) -> str:
+    """The line of the author's file *diagnostic* is at, or ``""``."""
+    if diagnostic.path is None or diagnostic.line is None:
+        return ""
+    try:
+        lines = Path(diagnostic.path).read_text().splitlines()
+        return lines[diagnostic.line - 1]
+    except (OSError, UnicodeDecodeError, IndexError):
+        return ""
+
+
+def _classes_below(diagnostic: Diagnostic) -> tuple[set[str], bool]:
+    """The classes of the file defined below the line of *diagnostic*, and
+    whether that line is in a function body (which may name them)."""
+    if diagnostic.path is None or diagnostic.line is None:
+        return set(), False
+    try:
+        tree = ast.parse(Path(diagnostic.path).read_text())
+    except (OSError, SyntaxError, UnicodeDecodeError):
+        return set(), False
+    line = diagnostic.line
+    in_body = any(
+        isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.lineno <= line <= (node.end_lineno or node.lineno)
+        for node in ast.walk(tree)
+    )
+    below = {
+        node.name
+        for node in tree.body
+        if isinstance(node, ast.ClassDef) and node.lineno > line
+    }
+    return below, in_body
+
+
+def _define_above(name: str) -> str:
+    return (
+        f"Codon cannot name `{name}` here: it is defined further down the "
+        f"module, and a class body or a module-level statement runs at once: "
+        f"define `{name}` above its use (a function body may name it)"
+    )
+
+
+_NOT_DEFINED = re.compile(r"^name '(\w+)' is not defined$")
+
+
+def _display_hint(diagnostic: Diagnostic, in_display: bool) -> str | None:
+    """Why Codon refused a display of the scenario's own classes, when no
+    other hint fits: a list or dict display typed by its first element, a
+    list display added to a list, or a class defined below its use."""
+    below, in_body = _classes_below(diagnostic)
+    undefined = _NOT_DEFINED.match(diagnostic.message)
+    if undefined is not None:
+        return _define_above(undefined[1]) if undefined[1] in below else None
+    if in_display:
+        later = next(
+            (
+                n
+                for n in re.findall(r"[A-Za-z_]\w*", _source_line(diagnostic))
+                if n in below
+            ),
+            None,
+        )
+        if later is not None and not in_body:
+            return _define_above(later)
+        return _LIST_DISPLAY_HINT
+    if any("_acs_dict_into" in frame for frame in diagnostic.trace):
+        return None  # already a dict of the target type: the value is refused
+    sum_ = _LIST_SUM.match(diagnostic.message)
+    if sum_ is not None and sum_[1] != sum_[2] and "+" in _source_line(diagnostic):
+        return _SUM_DISPLAY_HINT
+    if _DICT_MISMATCH.match(diagnostic.message) and _DICT_LINE.search(
+        _source_line(diagnostic)
+    ):
+        return _DICT_DISPLAY_HINT
+    return None
+
+
 def _variadic_hints(diagnostics: list[Diagnostic]) -> list[Diagnostic]:
     """*diagnostics*, each refusal of a Codon limit on ``**kwargs``, on
     ``*args`` or on a tuple saying why and what to write instead (#266)."""
@@ -912,11 +1011,11 @@ def _variadic_hints(diagnostics: list[Diagnostic]) -> list[Diagnostic]:
                 )
                 break
         else:
-            if in_display:
-                # No other hint fits (a table of functions has its own, #462).
+            # No other hint fits (a table of functions has its own, #462).
+            shown = _display_hint(diagnostic, in_display)
+            if shown is not None:
                 diagnostic = dataclasses.replace(
-                    diagnostic,
-                    message=f"{diagnostic.message}: {_LIST_DISPLAY_HINT}",
+                    diagnostic, message=f"{diagnostic.message}: {shown}"
                 )
         out.append(diagnostic)
     return out

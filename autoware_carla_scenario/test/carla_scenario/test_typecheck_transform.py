@@ -340,6 +340,114 @@ def test_an_unannotated_list_display_of_own_classes_takes_their_common_base() ->
     assert "f: list[float] = _acs_list(x, y)" in out
 
 
+def test_an_unannotated_dict_display_of_own_classes_takes_their_common_base() -> None:
+    # #489: the dict counterpart of the list display above.
+    out = _transform_own(
+        """
+        a = {"x": Dbl(), "y": Neg()}
+        b = {1: Neg(), 2: Dbl()}
+        c = {"x": Dbl(), "y": Other()}
+        d = {"x": Dbl(), "y": Dbl()}
+        e = {k: Dbl(), "y": Neg()}
+        f = {"x": Dbl(), "y": v}
+        """
+    )
+    assert 'a = _acs_dict_into(Dict[str, Dbl](), ("x", Dbl()), ("y", Neg()))' in out
+    assert "b = _acs_dict_into(Dict[int, Dbl](), (1, Neg()), (2, Dbl()))" in out
+    assert 'c = {"x": _acs_base(Dbl()), "y": _acs_base(Other())}' in out
+    assert 'd = {"x": Dbl(), "y": Dbl()}' in out
+    assert 'e = {k: _acs_base(Dbl()), "y": _acs_base(Neg())}' in out
+    assert 'f = {"x": _acs_base(Dbl()), "y": _acs_base(v)}' in out
+
+
+def test_a_dict_display_of_own_classes_is_a_dict_of_the_annotation() -> None:
+    out = _transform_own(
+        """
+        def total(rs: dict[str, Rule], v: float = 1.0) -> float: ...
+        total({"x": Dbl()})
+        total(rs={"x": Dbl(), "y": Neg()})
+        total({"x": Dbl(), "y": Other()})
+        def f():
+            x: dict[str, Rule] = {"x": Dbl()}
+        """
+    )
+    assert 'total(_acs_dict_into(Dict[str, Rule](), ("x", Dbl())))' in out
+    assert (
+        'total(rs=_acs_dict_into(Dict[str, Rule](), ("x", Dbl()), ("y", Neg())))' in out
+    )
+    assert (
+        'total(_acs_dict_into(Dict[str, Rule](), ("x", Dbl()), ("y", Other())))' in out
+    )
+    assert 'x: dict[str, Rule] = _acs_dict_into(Dict[str, Rule](), ("x", Dbl()))' in out
+
+
+def test_a_list_display_added_to_a_list_of_the_base_is_a_list_of_it() -> None:
+    out = _transform_own(
+        """
+        def f(more: list[Rule], other: list[float]):
+            a: list[Rule] = [Dbl()]
+            b = a + [Neg()]
+            c = [Neg(), Dbl()] + a
+            a += [Neg(), Dbl()]
+            a.extend([Neg()])
+            d = more + [Dbl()]
+            e = other + [x, y]
+            g = a + [Dbl()] + [Neg()]
+            h = unknown + [Dbl()]
+            a = unknown
+            i = a + [Dbl()]
+        """
+    )
+    assert "b = a + _acs_list_into(List[Rule](), Neg())" in out
+    assert "c = _acs_list_into(List[Rule](), Neg(), Dbl()) + a" in out
+    assert "a += _acs_list_into(List[Rule](), Neg(), Dbl())" in out
+    assert "a.extend(_acs_list_into(List[Rule](), Neg()))" in out
+    assert "d = more + _acs_list_into(List[Rule](), Dbl())" in out
+    assert "e = other + _acs_list(x, y)" in out
+    assert (
+        "g = a + _acs_list_into(List[Rule](), Dbl()) + "
+        "_acs_list_into(List[Rule](), Neg())"
+    ) in out
+    assert "h = unknown + _acs_list_into" not in out
+    assert "i = a + _acs_list_into" not in out  # `a` is no longer known
+
+
+def test_a_base_defined_below_is_named_in_a_function_body_only() -> None:
+    # #489: a function body is typed when it is first called, after the whole
+    # module, so it may name a class defined further down; a class body, a
+    # default and the module's statements run at once and may not.
+    out = _transform(
+        textwrap.dedent(
+            """
+            class Scenario:
+                def setup(self):
+                    rules: list[Rule] = [Low(), High()]
+                    a = [Low(), High()]
+                    d = {"x": Low(), "y": High()}
+                    e: dict[str, Rule] = {"x": Low()}
+                    self.total([Low()])
+                    rules += [High()]
+                def total(self, rs: list[Rule]) -> float: ...
+                def make(self) -> list[Rule]:
+                    return [Low(), High()]
+                held: list[Rule] = [Low(), High()]
+            class Rule: ...
+            class Low(Rule): ...
+            class High(Rule): ...
+            """
+        )
+    )
+    assert "rules = _acs_list_into(List[Rule](), Low(), High())" in out
+    assert "a = _acs_list_into(List[Rule](), Low(), High())" in out
+    assert 'd = _acs_dict_into(Dict[str, Rule](), ("x", Low()), ("y", High()))' in out
+    assert 'e = _acs_dict_into(Dict[str, Rule](), ("x", Low()))' in out
+    assert "rules += _acs_list_into(List[Rule](), High())" in out
+    assert "return _acs_list_into(List[Rule](), Low(), High())" in out
+    assert (
+        "held: list[Rule] = _acs_list(Low(), High())" in out
+    )  # a class body: not named
+
+
 def test_a_display_of_classes_with_a_foreign_base_stays_an_acs_list() -> None:
     # A base from elsewhere may be BaseCondition: `_acs_list` makes those a
     # List[BaseCondition], a List[Mid] would be none (#480).
