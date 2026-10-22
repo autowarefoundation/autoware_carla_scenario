@@ -13,7 +13,7 @@ pub fn normalize(q: Quat) -> Quat {
     [q[0] / n, q[1] / n, q[2] / n, q[3] / n]
 }
 
-fn conjugate(q: Quat) -> Quat {
+pub fn conjugate(q: Quat) -> Quat {
     [q[0], -q[1], -q[2], -q[3]]
 }
 
@@ -40,7 +40,7 @@ pub fn rotate(q: Quat, v: Vec3) -> Vec3 {
     ]
 }
 
-fn cross(a: Vec3, b: Vec3) -> Vec3 {
+pub fn cross(a: Vec3, b: Vec3) -> Vec3 {
     [
         a[1] * b[2] - a[2] * b[1],
         a[2] * b[0] - a[0] * b[2],
@@ -128,6 +128,101 @@ impl OrientedBox {
     }
 }
 
+/// Boxes binned on a grid over the x-y plane, so that a point is tested
+/// against the few boxes around it rather than all of them: a sweep is ~10^5
+/// points, a frame tens of boxes.
+pub struct BoxGrid {
+    boxes: Vec<OrientedBox>,
+    origin: [f64; 2],
+    cell: f64,
+    nx: usize,
+    ny: usize,
+    /// Each cell's boxes (indices into `boxes`), row-major.
+    cells: Vec<Vec<u32>>,
+}
+
+impl BoxGrid {
+    /// The most cells a grid has; a wider spread of boxes gets larger cells.
+    const MAX_CELLS: f64 = 65_536.0;
+
+    /// Bin `boxes` into cells of `cell` metres (or larger, see `MAX_CELLS`).
+    pub fn new(boxes: Vec<OrientedBox>, cell: f64) -> Self {
+        let (mut lo, mut hi) = ([f64::INFINITY; 2], [f64::NEG_INFINITY; 2]);
+        for b in &boxes {
+            let (c, r) = (b.pose.translation, b.radius_sq.sqrt());
+            for k in 0..2 {
+                lo[k] = lo[k].min(c[k] - r);
+                hi[k] = hi[k].max(c[k] + r);
+            }
+        }
+        if boxes.is_empty() {
+            return Self {
+                boxes,
+                origin: [0.0; 2],
+                cell,
+                nx: 0,
+                ny: 0,
+                cells: Vec::new(),
+            };
+        }
+        let area = (hi[0] - lo[0]).max(cell) * (hi[1] - lo[1]).max(cell);
+        let cell = cell.max((area / Self::MAX_CELLS).sqrt());
+        let nx = ((hi[0] - lo[0]) / cell).floor() as usize + 1;
+        let ny = ((hi[1] - lo[1]) / cell).floor() as usize + 1;
+        let mut cells = vec![Vec::new(); nx * ny];
+        for (i, b) in boxes.iter().enumerate() {
+            let (c, r) = (b.pose.translation, b.radius_sq.sqrt());
+            let x0 = ((c[0] - r - lo[0]) / cell).floor() as usize;
+            let x1 = (((c[0] + r - lo[0]) / cell).floor() as usize).min(nx - 1);
+            let y0 = ((c[1] - r - lo[1]) / cell).floor() as usize;
+            let y1 = (((c[1] + r - lo[1]) / cell).floor() as usize).min(ny - 1);
+            for y in y0..=y1 {
+                for x in x0..=x1 {
+                    cells[y * nx + x].push(i as u32);
+                }
+            }
+        }
+        Self {
+            boxes,
+            origin: lo,
+            cell,
+            nx,
+            ny,
+            cells,
+        }
+    }
+
+    /// Add to `counts[i]` the points of `points` (rows of `stride` floats,
+    /// `x, y, z` first) inside box `i`.
+    pub fn count(&self, points: &[f32], stride: usize, counts: &mut [u64]) {
+        if self.cells.is_empty() {
+            return;
+        }
+        let inv = 1.0 / self.cell;
+        for row in points.chunks_exact(stride) {
+            let (x, y) = (f64::from(row[0]), f64::from(row[1]));
+            let (fx, fy) = ((x - self.origin[0]) * inv, (y - self.origin[1]) * inv);
+            if !(fx >= 0.0 && fy >= 0.0) {
+                continue;
+            }
+            let (cx, cy) = (fx as usize, fy as usize);
+            if cx >= self.nx || cy >= self.ny {
+                continue;
+            }
+            let candidates = &self.cells[cy * self.nx + cx];
+            if candidates.is_empty() {
+                continue;
+            }
+            let p = [x, y, f64::from(row[2])];
+            for &i in candidates {
+                if self.boxes[i as usize].contains(p) {
+                    counts[i as usize] += 1;
+                }
+            }
+        }
+    }
+}
+
 /// The quaternion of a rotation of `yaw` radians about z.
 pub fn yaw_quaternion(yaw: f64) -> Quat {
     [(yaw / 2.0).cos(), 0.0, 0.0, (yaw / 2.0).sin()]
@@ -163,6 +258,51 @@ mod tests {
             parent.compose(&child).apply(p),
             parent.apply(child.apply(p))
         ));
+    }
+
+    #[test]
+    fn a_grid_counts_what_testing_every_box_counts() {
+        let boxes: Vec<OrientedBox> = (0..30)
+            .map(|i| {
+                let i = f64::from(i);
+                OrientedBox::new(
+                    Pose::new(
+                        [i * 3.7 - 50.0, (i * 1.9).sin() * 20.0, 0.5],
+                        yaw_quaternion(i),
+                    ),
+                    [1.8, 4.5, 1.5],
+                )
+            })
+            .collect();
+        let mut points = Vec::new();
+        let mut seed = 1u64;
+        for _ in 0..20_000 {
+            let mut next = || {
+                seed = seed
+                    .wrapping_mul(6364136223846793005)
+                    .wrapping_add(1442695040888963407);
+                ((seed >> 33) as f64 / f64::from(1u32 << 31)) as f32
+            };
+            points.extend_from_slice(&[
+                next() * 120.0 - 60.0,
+                next() * 50.0 - 25.0,
+                next() * 2.0 - 0.5,
+                1.0,
+            ]);
+        }
+        let mut brute = vec![0u64; boxes.len()];
+        for row in points.chunks_exact(4) {
+            let p = [f64::from(row[0]), f64::from(row[1]), f64::from(row[2])];
+            for (i, b) in boxes.iter().enumerate() {
+                if b.contains(p) {
+                    brute[i] += 1;
+                }
+            }
+        }
+        let mut gridded = vec![0u64; boxes.len()];
+        BoxGrid::new(boxes, 2.0).count(&points, 4, &mut gridded);
+        assert_eq!(gridded, brute);
+        assert!(brute.iter().sum::<u64>() > 0);
     }
 
     #[test]

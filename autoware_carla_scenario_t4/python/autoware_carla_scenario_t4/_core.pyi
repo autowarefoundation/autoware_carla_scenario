@@ -19,6 +19,9 @@ class T4Writer:
         date_captured: str = "",
         location: str = "",
         token_seed: Optional[str] = None,
+        map_offset: Sequence[float] = (0.0, 0.0, 0.0),
+        rear_axle_offset_m: float = 0.0,
+        max_distance_m: Optional[float] = None,
         jpeg_quality: int = 90,
         workers: int = 2,
         queue: int = 16,
@@ -59,6 +62,29 @@ class T4Writer:
         acceleration: Optional[Sequence[float]] = None,
         attributes: Sequence[str] = ...,
         instance_name: Optional[str] = None,
+    ) -> None: ...
+    def register_actor(
+        self,
+        actor_id: int,
+        category: str,
+        center: Sequence[float],
+        size: Sequence[float],
+        name: Optional[str] = None,
+    ) -> None: ...
+    def knows_actor(self, actor_id: int) -> bool: ...
+    def begin_frame_carla(
+        self,
+        timestamp_us: int,
+        transform: Sequence[float],
+        velocity: Sequence[float],
+        angular_velocity: Sequence[float],
+        acceleration: Sequence[float],
+    ) -> None: ...
+    def add_carla_boxes(
+        self, ids: npt.NDArray[np.uint64], states: npt.NDArray[np.float64]
+    ) -> int: ...
+    def add_camera_jpeg(
+        self, channel: str, jpeg: bytes, width: int, height: int
     ) -> None: ...
     def add_lidar(self, channel: str, points: npt.NDArray[np.float32]) -> None: ...
     def add_camera(

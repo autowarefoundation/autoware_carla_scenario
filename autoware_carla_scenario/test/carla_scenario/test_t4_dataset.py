@@ -15,14 +15,20 @@ import pytest
 from omegaconf import OmegaConf
 
 from autoware_carla_scenario import t4
+from autoware_carla_scenario.driver.base import (
+    DriverCameraConfig,
+    DriverClientConfig,
+    DriverLidarConfig,
+)
 from autoware_carla_scenario.driver.observation import rear_axle_offset
 from autoware_carla_scenario.sensor import carla_lidar
-from autoware_carla_scenario.sensor.carla_camera import CarlaCameraSensorConfig
 from autoware_carla_scenario.t4 import (
-    T4CameraConfig,
+    LIDAR_CHANNEL,
     T4Recorder,
+    T4Recording,
     T4Settings,
     T4UnavailableError,
+    camera_channel,
     category_of,
     dataset_path,
 )
@@ -34,45 +40,53 @@ writer_module = pytest.importorskip("autoware_carla_scenario_t4")
 # ---------------------------------------------------------------------------
 
 
-def test_the_defaults_are_a_top_lidar_and_a_front_camera_at_10_hz() -> None:
-    settings = T4Settings()
-    assert [c.channel for c in settings.lidars] == ["LIDAR_TOP"]
-    assert [c.channel for c in settings.cameras] == ["CAM_FRONT"]
-    assert settings.interval_ticks == 2
+def _driver(**overrides: Any) -> DriverClientConfig:
+    """A driver policy's config: a roof LiDAR and a small front camera."""
+    values: dict[str, Any] = {
+        "lidars": (DriverLidarConfig(logical_id="lidar_top", position_z=2.2),),
+        "cameras": (
+            DriverCameraConfig(
+                logical_id="cam_front",
+                image_width=64,
+                image_height=48,
+                fov=90.0,
+                position_x=1.0,
+                position_z=1.6,
+            ),
+        ),
+        "policy_timestep_s": 0.1,
+        **overrides,
+    }
+    return DriverClientConfig(**values)
 
 
-def test_settings_read_a_config_section() -> None:
-    settings = T4Settings.from_config(
-        {
-            "enabled": True,
-            "frequency_hz": 5,
-            "max_distance_m": None,
-            "lidars": [{"channel": "LIDAR_CONCAT", "channels": 32, "position_z": 1.9}],
-            "cameras": [],
-        }
+def test_settings_take_the_driver_policys_sensors_and_step() -> None:
+    settings = T4Settings.from_driver(
+        _driver(policy_timestep_s=0.2, image_quality=70),
+        {"enabled": True, "max_distance_m": None, "workers": 2},
     )
+    assert [c.position_z for c in settings.lidars] == [2.2]
+    assert [logical_id for logical_id, _ in settings.cameras] == ["cam_front"]
     assert settings.interval_ticks == 4
+    assert settings.jpeg_quality == 70
     assert settings.max_distance_m is None
-    assert settings.lidars[0].channel == "LIDAR_CONCAT"
-    assert settings.lidars[0].sensor.channels == 32
-    assert settings.cameras == ()
+    assert settings.workers == 2
+    assert camera_channel("cam_front") == "CAM_FRONT"
 
 
 @pytest.mark.parametrize(
-    ("config", "match"),
+    ("driver", "config", "match"),
     [
-        ({"frequency_hz": 3.0}, "whole ticks"),
-        ({"frequency_hz": 0.0}, "positive"),
-        ({"lidars": [], "cameras": []}, "at least one"),
-        ({"cameras": [{"channel": "LIDAR_TOP"}]}, "used twice"),
-        ({"lidars": [{"channel": "L", "beams": 64}]}, "no setting beams"),
-        ({"jpeg_quality": 0}, "1-100"),
-        ({"max_distance_m": -1.0}, "positive"),
+        ({"lidars": (), "cameras": ()}, {}, "needs a sensor"),
+        ({}, {"max_distance_m": -1.0}, "positive"),
+        ({}, {"workers": 0}, "positive"),
     ],
 )
-def test_settings_refuse_what_cannot_be_recorded(config: dict, match: str) -> None:
+def test_settings_refuse_what_cannot_be_recorded(
+    driver: dict, config: dict, match: str
+) -> None:
     with pytest.raises(ValueError, match=match):
-        T4Settings.from_config(config)
+        T4Settings.from_driver(_driver(**driver), config)
 
 
 @pytest.mark.parametrize(
@@ -102,7 +116,29 @@ def test_a_run_refuses_t4_without_the_writer(monkeypatch: pytest.MonkeyPatch) ->
 
     monkeypatch.setattr(t4.importlib, "import_module", missing)
     assert run.build_t4_recorder(OmegaConf.create({"t4": {"enabled": False}})) is None
+    enabled = OmegaConf.create({"t4": {"enabled": True}, "driver": {}})
     with pytest.raises(T4UnavailableError, match=r"autoware-carla-scenario\[t4\]"):
+        run.build_t4_recorder(enabled)
+
+
+def test_a_run_builds_the_recorder_from_its_driver_config() -> None:
+    from autoware_carla_scenario.examples import run  # noqa: PLC0415
+
+    cfg = OmegaConf.create(
+        {
+            "t4": {"enabled": True, "max_distance_m": 80.0},
+            "driver": {
+                "policy_timestep_s": 0.05,
+                "lidars": [{"logical_id": "lidar_top", "position_z": 1.9}],
+            },
+        }
+    )
+    recorder = run.build_t4_recorder(cfg)
+    assert recorder is not None
+    assert recorder.settings.interval_ticks == 1
+    assert recorder.settings.max_distance_m == 80.0
+    assert [c.position_z for c in recorder.settings.lidars] == [1.9]
+    with pytest.raises(ValueError, match="'driver' config group"):
         run.build_t4_recorder(OmegaConf.create({"t4": {"enabled": True}}))
 
 
@@ -276,28 +312,15 @@ class _World:
 OFFSETS = (1000.0, 2000.0, 30.0)
 
 
-def _record(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, _World]:
-    """Ten ticks of the fake world at 10 Hz (a sweep every other tick)."""
-    monkeypatch.setattr(t4, "_map_offsets", lambda: OFFSETS)
+def _start(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, world: "_World"
+) -> T4Recording:
+    monkeypatch.setattr(t4, "_map_offset", lambda: OFFSETS)
     monkeypatch.setattr(carla_lidar, "_SWEEP_TIMEOUT", 0.05)
     lanelet2 = tmp_path / "map" / "lanelet2_map.osm"
     lanelet2.parent.mkdir()
     lanelet2.write_text("<osm/>")
-    world = _World()
-    settings = T4Settings(
-        cameras=(
-            T4CameraConfig(
-                sensor=CarlaCameraSensorConfig(
-                    image_width=64,
-                    image_height=48,
-                    fov=90.0,
-                    position_x=1.0,
-                    position_z=1.6,
-                )
-            ),
-        )
-    )
-    recording = T4Recorder(settings).start(
+    recording = T4Recorder(T4Settings.from_driver(_driver(), {})).start(
         tmp_path / "out",
         "CutInScenario",
         world,  # type: ignore[arg-type]
@@ -308,6 +331,16 @@ def _record(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, _Wor
         lanelet2,
     )
     assert recording is not None
+    return recording
+
+
+def _record(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, _World]:
+    """Ten ticks of the fake world at 10 Hz (a sweep every other tick), with
+    the recorder's own sensors on the ego."""
+    world = _World()
+    recording = _start(tmp_path, monkeypatch, world)
+    assert not recording.fed_by_driver
+    assert len(world.sensors) == 2
     for frame in range(101, 111):
         world.frame = frame
         if frame % 2 == 1:  # the sensors' ticks, from the one after they were spawned
@@ -334,7 +367,7 @@ def test_a_key_frame_is_written_for_every_sweep(
     channels = sorted(
         {sd["filename"].split("/")[1] for sd in _table(root, "sample_data")}
     )
-    assert channels == ["CAM_FRONT", "LIDAR_TOP"]
+    assert channels == ["CAM_FRONT", LIDAR_CHANNEL]
     assert (root / "0" / "map" / "lanelet2_map.osm").read_text() == "<osm/>"
 
 
@@ -380,22 +413,24 @@ def test_t4_devkit_loads_the_dataset(
     t4_devkit = pytest.importorskip("t4_devkit")
     from t4_devkit.dataclass import LidarPointCloud  # noqa: PLC0415
 
-    root, _ = _record(tmp_path, monkeypatch)
+    root, world = _record(tmp_path, monkeypatch)
+    rear = rear_axle_offset(world.ego)  # type: ignore[arg-type]
     dataset = t4_devkit.T4Devkit(str(root))
     assert dataset.version == "0"
     assert len(dataset.sample) == 5
 
     sample = dataset.sample[0]
-    path, boxes, intrinsic = dataset.get_sample_data(sample.data["LIDAR_TOP"])
+    path, boxes, intrinsic = dataset.get_sample_data(sample.data[LIDAR_CHANNEL])
     assert intrinsic is None
     (box,) = boxes
     assert box.semantic_label.name == "car"
     assert box.num_points == 2
-    # In the LiDAR's frame: 10 m ahead, 3.5 m to the right, 1.5 m below it.
-    np.testing.assert_allclose(box.position, [10.0, -3.5, -1.5], atol=1e-6)
+    # In the ego's frame (LIDAR_CONCAT's): 10 m ahead of the actor, so
+    # 10 - rear ahead of the rear axle, 3.5 m to the right, 0.7 m up.
+    np.testing.assert_allclose(box.position, [10.0 - rear, -3.5, 0.7], atol=1e-6)
     points = LidarPointCloud.from_file(path).points
     assert points.shape == (4, 3)
-    np.testing.assert_allclose(points[:3, 0], [10.0, -3.5, -1.5], atol=1e-6)
+    np.testing.assert_allclose(points[:3, 0], [10.0 - rear, -3.5, 0.7], atol=1e-5)
 
     path, boxes, intrinsic = dataset.get_sample_data(sample.data["CAM_FRONT"])
     np.testing.assert_allclose(
@@ -429,6 +464,53 @@ def test_a_recording_that_cannot_start_is_none(tmp_path: Path) -> None:
     out = tmp_path / "out"
     (dataset_path(out, "Run") / "0" / "annotation").mkdir(parents=True)
     world = _World()
-    recording = T4Recorder().start(out, "Run", world, world.ego, 100)  # type: ignore[arg-type]
+    recorder = T4Recorder(T4Settings.from_driver(_driver(), {}))
+    recording = recorder.start(out, "Run", world, world.ego, 100)  # type: ignore[arg-type]
     assert recording is None
     assert world.sensors == []
+
+
+def test_a_driver_policys_ego_feeds_the_dataset(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With a driver policy's ego, the dataset puts no sensor on it: it takes
+    the sweeps (rig frame) and the JPEG frames the policy is sent."""
+    world = _World()
+    t4.offer_driver_sensors(-1.25)
+    try:
+        recording = _start(tmp_path, monkeypatch, world)
+    finally:
+        t4.withdraw_driver_sensors()
+    assert recording.fed_by_driver
+    assert t4.active_recording() is recording
+    assert world.sensors == []
+    jpeg = _jpeg()
+    for frame in range(101, 111):
+        world.frame = frame
+        if frame % 2 == 1:  # the policy's steps
+            recording.feed_lidar(
+                frame, np.array([[11.25, -3.5, 0.7, 0.9]], dtype=np.float32)
+            )
+            recording.feed_camera_jpeg(frame, "cam_front", jpeg)
+        recording.record(world)  # type: ignore[arg-type]
+    root = recording.close()
+    assert root is not None
+    assert t4.active_recording() is None
+
+    assert len(_table(root, "sample")) == 5
+    first = _table(root, "ego_pose")[0]
+    np.testing.assert_allclose(
+        first["translation"][0], world.ego_x(101) - 1.25 + OFFSETS[0], atol=1e-9
+    )
+    (camera,) = [s for s in _table(root, "sample_data") if s["fileformat"] == "jpg"][:1]
+    assert (root / "0" / camera["filename"]).read_bytes() == jpeg
+    assert (camera["width"], camera["height"]) == (64, 48)
+    assert [a["num_lidar_pts"] for a in _table(root, "sample_annotation")] == [1] * 5
+
+
+def _jpeg() -> bytes:
+    import cv2  # noqa: PLC0415
+
+    ok, encoded = cv2.imencode(".jpg", np.zeros((48, 64, 3), dtype=np.uint8))
+    assert ok
+    return encoded.tobytes()

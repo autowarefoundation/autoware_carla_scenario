@@ -360,9 +360,10 @@ With `rerun.enabled=true`:
 #### A T4 dataset of a run
 
 With `t4.enabled=true` each run is also written as a T4 dataset,
-`{ScenarioName}.t4/`, which t4-devkit reads: LiDAR sweeps and camera frames
-from sensors the recorder puts on the ego, and the box of every vehicle and
-pedestrian from CARLA's ground truth (the `t4` extra; [T4 Dataset](t4_dataset.md)).
+`{ScenarioName}.t4/`, which t4-devkit reads: the sweeps and frames of the
+driver policy's sensors (`driver.lidars`, `driver.cameras`) at each policy
+step, and the box of every vehicle and pedestrian from CARLA's ground truth
+(the `t4` extra; [T4 Dataset](t4_dataset.md)).
 
 ### Sensors in the recording
 

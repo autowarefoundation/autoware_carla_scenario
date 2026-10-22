@@ -2,25 +2,33 @@
 
 With ``t4.enabled=true`` each run is also written as a T4 dataset, TIER IV's
 nuScenes-style format that `t4-devkit <https://github.com/tier4/t4-devkit>`_
-reads, in ``{stem}.t4/0/`` beside the run's other files.  The recorder puts
-sensors of its own on the ego -- the LiDARs and cameras ``t4.lidars`` and
-``t4.cameras`` list, whatever the ego's entity is -- and makes a key frame of
-every sweep: the ego's pose, a sweep of every LiDAR, a frame of every camera,
-and the box of every vehicle and pedestrian, which CARLA knows exactly.
+reads, in ``{stem}.t4/0/`` beside the run's other files.  Its sensors are the
+driver policy's (``driver.lidars``, ``driver.cameras``), and a key frame is a
+policy step (``driver.policy_timestep_s``): the ego's pose, the LiDARs' sweeps
+as one ``LIDAR_CONCAT`` cloud in the ego's frame, a frame of every camera, and
+the box of every vehicle and pedestrian near the ego, which CARLA knows
+exactly.
+
+Where the data comes from:
+
+* an ego driven by a driver policy (``ego.entity=carla_driver``) feeds the
+  dataset what it sends the policy (:meth:`T4Recording.feed_lidar`,
+  :meth:`T4Recording.feed_camera_jpeg`) -- the sweeps already in the rig
+  frame and the frames already JPEG -- so the dataset renders and encodes
+  nothing of its own;
+* any other ego gets the same sensors put on it by the recorder, at the same
+  rate.
 
 The dataset is written by ``autoware-carla-scenario-t4``, a Rust writer with
-a PyO3 binding (``autoware_carla_scenario_t4.T4Writer``): this module only
-reads the world and the sensors and hands them over.  The writer encodes and
-writes the sensor files on threads of its own while the run goes on.
+a PyO3 binding (``autoware_carla_scenario_t4.T4Writer``), which runs on every
+key frame: it turns the CARLA states into the map frame, keeps the tables, and
+hands the files to threads of its own, which write the sweeps, encode the raw
+camera frames and count each box's points.  This module only reads the world
+and hands it over.
 
-Frames (docs/t4_dataset.md):
-
-* the map frame is Autoware's: the Lanelet2 map's (CARLA's with ``y``
-  flipped, plus the map's MGRS and elevation offsets), or CARLA's with ``y``
-  flipped when no Lanelet2 map is loaded;
-* the ego's frame (``base_link``) is at its rear axle, x forward, y left, z up;
-* a LiDAR's points are in its own frame (CARLA's sensor frame with ``y``
-  flipped), a camera's frame is the optical one (x right, y down, z forward).
+Frames (docs/t4_dataset.md): the map frame is Autoware's (the Lanelet2 map's:
+CARLA's with ``y`` flipped, plus the map's MGRS and elevation offsets); the
+ego's frame (``base_link``) is at its rear axle, as the driver policy's rig.
 
 Recording is best effort, like the trajectory log: an error is logged and the
 dataset stops, it never fails the scenario.
@@ -30,40 +38,49 @@ from __future__ import annotations
 
 import importlib
 import logging
-import math
 import shutil
 import threading
 import time
-from dataclasses import dataclass, field, fields
+from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from types import ModuleType
-from typing import TYPE_CHECKING, Any, Mapping, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 import numpy as np
-from carla_driver_interface.geometry import Pose, body_to_optical
+from carla_driver_interface.geometry import body_to_optical
 
 from .constants import FIXED_DELTA_SECONDS
 from .coordinate.map_manager import MapManager
-from .driver.observation import rear_axle_offset, sensor_pose_in_rig
+from .driver.observation import (
+    lidar_points_to_rig,
+    rear_axle_offset,
+    sensor_pose_in_rig,
+)
 from .sensor.carla_camera import BLUEPRINT_ATTRIBUTES, CarlaCameraSensorConfig
 from .sensor.carla_lidar import CarlaLidarSensor, CarlaLidarSensorConfig
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
 
+    from .driver.base import DriverClientConfig
+
 __all__ = [
     "DATASET_SUFFIX",
     "INSTALL_HINT",
-    "T4CameraConfig",
-    "T4LidarConfig",
+    "LIDAR_CHANNEL",
     "T4Recorder",
     "T4Recording",
     "T4Settings",
     "T4UnavailableError",
+    "active_recording",
+    "camera_channel",
     "category_of",
     "dataset_path",
+    "offer_driver_sensors",
     "require_writer",
+    "withdraw_driver_sensors",
 ]
 
 logger = logging.getLogger(__name__)
@@ -72,11 +89,14 @@ logger = logging.getLogger(__name__)
 INSTALL_HINT = "pip install 'autoware-carla-scenario[t4]'"
 #: What a run's dataset is named: ``{stem}.t4``, its one version ``0`` inside.
 DATASET_SUFFIX = ".t4"
+#: The channel every LiDAR's sweep goes into, in the ego's frame (T4's own
+#: name for a concatenated cloud).
+LIDAR_CHANNEL = "LIDAR_CONCAT"
 #: The package that writes the datasets.
 _WRITER_MODULE = "autoware_carla_scenario_t4"
 #: The dataset version a run writes (T4's ``<dataset id>/<version>/``).
 _VERSION = "0"
-#: How long a frame waits for a camera's image, in seconds.
+#: How long a key frame waits for a camera's image, in seconds.
 _FRAME_TIMEOUT_S = 1.0
 #: How far below the interval a sensor's ``sensor_tick`` is set; see
 #: ``sensor.carla_lidar._SENSOR_TICK_MARGIN_S``, which the LiDARs use.
@@ -92,6 +112,13 @@ _VEHICLE_CATEGORIES = {
     "motorcycle": "motorcycle",
     "bicycle": "bicycle",
 }
+
+_lock = threading.Lock()
+#: The recording of the run in progress, which a driver entity feeds.
+_active: Optional["T4Recording"] = None
+#: The rear-axle offset of a driver entity whose sensors feed the dataset, while
+#: its scenario runs; None when no such entity is running.
+_driver_rear_axle: Optional[float] = None
 
 
 class T4UnavailableError(RuntimeError):
@@ -120,113 +147,104 @@ def dataset_path(directory: Path, stem: str) -> Path:
     return Path(directory) / f"{stem}{DATASET_SUFFIX}"
 
 
-@dataclass(frozen=True)
-class T4LidarConfig:
-    """A LiDAR the recorder puts on the ego: its channel and its sensor."""
-
-    channel: str = "LIDAR_TOP"
-    sensor: CarlaLidarSensorConfig = field(
-        default_factory=lambda: CarlaLidarSensorConfig(position_z=2.2)
-    )
+def camera_channel(logical_id: str) -> str:
+    """The T4 channel of the driver camera *logical_id*: upper-cased, as T4's
+    channels are (``camera_front_wide_120fov`` -> ``CAMERA_FRONT_WIDE_120FOV``)."""
+    return logical_id.upper()
 
 
-@dataclass(frozen=True)
-class T4CameraConfig:
-    """A camera the recorder puts on the ego: its channel and its sensor.
-
-    The camera takes a frame with every key frame: its ``fps`` is not used.
-    """
-
-    channel: str = "CAM_FRONT"
-    sensor: CarlaCameraSensorConfig = field(
-        default_factory=lambda: CarlaCameraSensorConfig(
-            image_width=1280, image_height=720, fov=90.0, position_x=1.0, position_z=1.6
-        )
-    )
+def active_recording() -> Optional["T4Recording"]:
+    """The recording of the run in progress, if one is fed by a driver entity."""
+    return _active
 
 
-def _sensor_config(kind: type, channel_default: str, entry: Mapping[str, Any]) -> Any:
-    """``entry`` (``{channel, <sensor fields>}``) as a :class:`T4LidarConfig`
-    or :class:`T4CameraConfig` (*kind*)."""
-    values = dict(entry)
-    channel = str(values.pop("channel", channel_default))
-    sensor_type = (
-        CarlaLidarSensorConfig if kind is T4LidarConfig else CarlaCameraSensorConfig
-    )
-    known = {f.name for f in fields(sensor_type)}
-    unknown = sorted(set(values) - known)
-    if unknown:
-        raise ValueError(
-            f"t4: {channel} has no setting {', '.join(unknown)} "
-            f"(a {sensor_type.__name__} has {', '.join(sorted(known))})"
-        )
-    return kind(channel=channel, sensor=sensor_type(**values))
+def offer_driver_sensors(rear_axle_offset_m: float) -> None:
+    """A driver entity's scenario starts with its sensors attached and its
+    rig origin *rear_axle_offset_m* from the actor: a dataset started now is
+    fed by it rather than putting sensors of its own on the ego."""
+    global _driver_rear_axle
+    with _lock:
+        _driver_rear_axle = float(rear_axle_offset_m)
+
+
+def withdraw_driver_sensors() -> None:
+    """The driver entity's scenario has ended: its sensors are gone."""
+    global _driver_rear_axle
+    with _lock:
+        _driver_rear_axle = None
 
 
 @dataclass(frozen=True)
 class T4Settings:
-    """What a run's dataset holds, and how often (the ``t4`` config)."""
+    """What a run's dataset holds, and how often: the driver policy's sensors
+    and step, and the ``t4`` config."""
 
-    #: Key frames a second; a whole number of ticks apart.
-    frequency_hz: float = 10.0
-    lidars: tuple[T4LidarConfig, ...] = (T4LidarConfig(),)
-    cameras: tuple[T4CameraConfig, ...] = (T4CameraConfig(),)
+    #: The LiDARs, as ``driver.lidars`` (their ``logical_id`` is not used:
+    #: every sweep goes into :data:`LIDAR_CHANNEL`).
+    lidars: tuple[CarlaLidarSensorConfig, ...] = ()
+    #: The cameras, ``(logical id, sensor)``, as ``driver.cameras``.
+    cameras: tuple[tuple[str, CarlaCameraSensorConfig], ...] = ()
+    #: Seconds between key frames, ``driver.policy_timestep_s``.
+    timestep_s: float = 0.1
+    #: The JPEG quality of the frames the recorder encodes itself
+    #: (``driver.image_quality``, which the policy's frames have too).
+    jpeg_quality: int = 90
+    #: The rig origin's offset from the actor, ``driver.rear_axle_offset_m``;
+    #: None derives it from the vehicle's wheels.
+    rear_axle_offset_m: Optional[float] = None
     #: Annotate the road users within this distance of the ego; None for all.
     max_distance_m: Optional[float] = 100.0
-    #: The camera frames' JPEG quality, 1-100.
-    jpeg_quality: int = 90
+    #: Threads writing the files and counting the boxes' points.
+    workers: int = 4
 
     def __post_init__(self) -> None:
         if not self.lidars and not self.cameras:
-            raise ValueError("t4: a dataset needs at least one LiDAR or camera")
-        channels = [c.channel for c in self.lidars] + [c.channel for c in self.cameras]
-        duplicates = sorted({c for c in channels if channels.count(c) > 1})
-        if duplicates:
-            raise ValueError(f"t4: channel {', '.join(duplicates)} is used twice")
-        self.interval_ticks  # noqa: B018 - validates frequency_hz
+            raise ValueError(
+                "t4: a dataset needs a sensor: set driver.lidars or driver.cameras"
+            )
+        self.interval_ticks  # noqa: B018 - validates timestep_s
         if self.max_distance_m is not None and self.max_distance_m <= 0.0:
             raise ValueError("t4.max_distance_m must be positive (or null)")
         if not 1 <= self.jpeg_quality <= 100:
-            raise ValueError("t4.jpeg_quality must be 1-100")
+            raise ValueError("driver.image_quality must be 1-100")
+        if self.workers < 1:
+            raise ValueError("t4.workers must be positive")
 
     @property
     def interval_ticks(self) -> int:
         """World ticks from one key frame to the next."""
-        if self.frequency_hz <= 0.0:
-            raise ValueError("t4.frequency_hz must be positive")
-        ticks = round(1.0 / (self.frequency_hz * FIXED_DELTA_SECONDS))
-        if (
-            ticks < 1
-            or abs(ticks * self.frequency_hz * FIXED_DELTA_SECONDS - 1.0) > 1e-6
-        ):
+        ticks = round(self.timestep_s / FIXED_DELTA_SECONDS)
+        if ticks < 1 or abs(ticks * FIXED_DELTA_SECONDS - self.timestep_s) > 1e-9:
             raise ValueError(
-                f"t4.frequency_hz must divide the {1.0 / FIXED_DELTA_SECONDS:g} Hz "
-                f"tick rate into whole ticks, got {self.frequency_hz}"
+                f"t4: the key frames' step (driver.policy_timestep_s) must be a "
+                f"positive multiple of the {FIXED_DELTA_SECONDS} s tick, got "
+                f"{self.timestep_s}"
             )
         return int(ticks)
 
     @classmethod
-    def from_config(cls, config: Mapping[str, Any]) -> "T4Settings":
-        """The settings a ``t4`` config section gives (``enabled`` aside)."""
+    def from_driver(
+        cls, driver: "DriverClientConfig", config: Mapping[str, Any]
+    ) -> "T4Settings":
+        """The settings of the driver policy's *driver* config and a ``t4``
+        config section (``max_distance_m``, ``workers``)."""
         values: dict[str, Any] = {}
-        if config.get("frequency_hz") is not None:
-            values["frequency_hz"] = float(config["frequency_hz"])
         if "max_distance_m" in config:
             distance = config["max_distance_m"]
             values["max_distance_m"] = None if distance is None else float(distance)
-        if config.get("jpeg_quality") is not None:
-            values["jpeg_quality"] = int(config["jpeg_quality"])
-        if config.get("lidars") is not None:
-            values["lidars"] = tuple(
-                _sensor_config(T4LidarConfig, "LIDAR_TOP", entry)
-                for entry in config["lidars"]
-            )
-        if config.get("cameras") is not None:
-            values["cameras"] = tuple(
-                _sensor_config(T4CameraConfig, "CAM_FRONT", entry)
-                for entry in config["cameras"]
-            )
-        return cls(**values)
+        if config.get("workers") is not None:
+            values["workers"] = int(config["workers"])
+        return cls(
+            lidars=tuple(driver.lidars),
+            cameras=tuple(
+                (camera.logical_id, camera.to_sensor_config())
+                for camera in driver.cameras
+            ),
+            timestep_s=float(driver.policy_timestep_s),
+            jpeg_quality=int(driver.image_quality),
+            rear_axle_offset_m=driver.rear_axle_offset_m,
+            **values,
+        )
 
 
 def category_of(type_id: str, base_type: str = "", wheels: int = 0) -> str:
@@ -249,48 +267,17 @@ def _attribute(actor: Any, name: str) -> str:
         return ""
 
 
-def _carla_pose(transform: Any, offsets: tuple[float, float, float]) -> Pose:
-    """A CARLA transform as a pose in the map frame (right-handed): ``y``
-    flipped, CARLA's ``yaw * pitch * roll`` rebuilt with the yaw and pitch
-    negated (``driver.observation.camera_extrinsics_to_rig``), and the map's
-    offsets added."""
-    loc, rot = transform.location, transform.rotation
-    rotation = (
-        Pose.from_axis_angle(2, -math.radians(rot.yaw))
-        @ Pose.from_axis_angle(1, -math.radians(rot.pitch))
-        @ Pose.from_axis_angle(0, math.radians(rot.roll))
-    )
-    return Pose(
-        np.array(
-            [loc.x + offsets[0], -loc.y + offsets[1], loc.z + offsets[2]],
-            dtype=np.float64,
-        ),
-        rotation.quat_xyzw,
-    )
-
-
-def _wxyz(pose: Pose) -> tuple[float, float, float, float]:
-    x, y, z, w = (float(v) for v in pose.quat_xyzw)
-    return (w, x, y, z)
-
-
 def _xyz(values: Any) -> tuple[float, float, float]:
     """The first three of *values* (a sequence or an array) as floats."""
     return (float(values[0]), float(values[1]), float(values[2]))
 
 
-def _mirrored(vector: Any) -> np.ndarray[tuple[int], np.dtype[np.float64]]:
-    """A CARLA world vector in the map frame (``y`` flipped)."""
-    return np.array([vector.x, -vector.y, vector.z], dtype=np.float64)
+def _wxyz(quat_xyzw: Any) -> tuple[float, float, float, float]:
+    x, y, z, w = (float(v) for v in quat_xyzw)
+    return (w, x, y, z)
 
 
-def _mirrored_rate(vector: Any) -> np.ndarray[tuple[int], np.dtype[np.float64]]:
-    """A CARLA angular velocity (deg/s) in the map frame, in rad/s: a
-    pseudovector, so the flip of ``y`` negates ``x`` and ``z`` instead."""
-    return np.radians(np.array([-vector.x, vector.y, -vector.z], dtype=np.float64))
-
-
-def _map_offsets() -> tuple[float, float, float]:
+def _map_offset() -> tuple[float, float, float]:
     """The loaded Lanelet2 map's MGRS and elevation offsets, or zeros."""
     mm = MapManager.get_instance()
     try:
@@ -300,18 +287,6 @@ def _map_offsets() -> tuple[float, float, float]:
         return (0.0, 0.0, 0.0)
 
 
-@dataclass
-class _ActorInfo:
-    """What a recorded actor's boxes need that does not change."""
-
-    category: str
-    name: str
-    #: The box's centre in the actor's frame (right-handed) and its size
-    #: ``(width, length, height)``.
-    center: np.ndarray[tuple[int], np.dtype[np.float64]]
-    size: tuple[float, float, float]
-
-
 class _FrameCamera:
     """A ``sensor.camera.rgb`` that keeps its newest frames by CARLA frame."""
 
@@ -319,9 +294,7 @@ class _FrameCamera:
         self.config = config
         self._interval_ticks = interval_ticks
         self._sensor: Optional[Any] = None
-        self._frames: dict[
-            int, np.ndarray[tuple[int, int, int], np.dtype[np.uint8]]
-        ] = {}
+        self._frames: dict[int, np.ndarray[Any, np.dtype[np.uint8]]] = {}
         self._arrived = threading.Condition()
 
     def attach(self, world: Any, actor: Any) -> None:
@@ -349,7 +322,8 @@ class _FrameCamera:
         self._sensor.listen(self._receive)
 
     def _receive(self, data: Any) -> None:
-        """On a CARLA thread: copy the BGRA frame out, keep the newest few."""
+        """On a CARLA thread: copy the BGRA frame out of CARLA's buffer, which
+        is reused, and keep the newest few only."""
         try:
             image = data.as_image() if hasattr(data, "as_image") else data
             pixels = (
@@ -362,7 +336,7 @@ class _FrameCamera:
                 for old in sorted(self._frames)[:-4]:
                     del self._frames[old]
                 self._arrived.notify_all()
-        except Exception:  # noqa: BLE001 - a sensor thread must not die
+        except Exception:
             logger.exception("T4: failed to receive a camera frame")
 
     def newest_frame(self) -> Optional[int]:
@@ -372,7 +346,7 @@ class _FrameCamera:
 
     def image_at(
         self, frame: int, timeout_s: float = _FRAME_TIMEOUT_S
-    ) -> Optional[np.ndarray[tuple[int, int, int], np.dtype[np.uint8]]]:
+    ) -> Optional[np.ndarray[Any, np.dtype[np.uint8]]]:
         """The frame taken on *frame*, waiting up to *timeout_s* for it."""
         deadline = time.monotonic() + timeout_s
         with self._arrived:
@@ -395,10 +369,10 @@ class _FrameCamera:
 
 
 class T4Recording:
-    """One run's dataset: the sensors on its ego, and the writer.
+    """One run's dataset: the writer, and the sensors that feed it.
 
-    Made by :meth:`T4Recorder.start`; :meth:`record` after every world tick,
-    :meth:`close` when the run ends.
+    Made by :meth:`T4Recorder.start`; :meth:`record` after every world tick
+    (once the ego has had its tick), :meth:`close` when the run ends.
     """
 
     def __init__(
@@ -420,15 +394,30 @@ class T4Recording:
         self._settings = settings
         self._ego = ego
         self._ego_id = int(ego.id)
-        self._offsets = _map_offsets()
-        self._actors: dict[int, Optional[_ActorInfo]] = {}
-        #: World snapshots of the last ticks, by frame: a sweep can be from a
-        #: tick before the one it is read on.
+        #: Ids of the actors seen, and whether each is annotated.
+        self._seen: dict[int, bool] = {}
+        #: World snapshots of the last ticks, by frame: a sweep of the
+        #: recorder's own LiDARs can be from a tick before it is read on.
         self._snapshots: dict[int, Any] = {}
         self._last_frame = -1
         self._active = True
-        self._lidars: list[tuple[str, CarlaLidarSensor]] = []
+        self._lidars: list[tuple[CarlaLidarSensor, Any]] = []
         self._cameras: list[tuple[str, _FrameCamera]] = []
+        #: Each camera's resolution, by logical id.
+        self._resolutions = {
+            logical_id: (cam.image_width, cam.image_height)
+            for logical_id, cam in settings.cameras
+        }
+        #: What a driver entity fed for a frame: ``(frame, sweeps, frames)``.
+        self._fed: Optional[tuple[int, list[Any], list[tuple[str, bytes]]]] = None
+
+        with _lock:
+            driver_rear_axle = _driver_rear_axle
+        self.fed_by_driver = driver_rear_axle is not None
+        if driver_rear_axle is not None:
+            self._rear_axle = driver_rear_axle
+        else:
+            self._rear_axle = rear_axle_offset(ego, settings.rear_axle_offset_m)
 
         started = time.time()
         self._epoch_us = int(started * 1e6)
@@ -442,7 +431,11 @@ class T4Recording:
             date_captured=captured.strftime("%Y-%m-%d-%H-%M-%S"),
             location=location,
             token_seed=f"{scene_name}@{self._epoch_us}",
+            map_offset=_map_offset(),
+            rear_axle_offset_m=self._rear_axle,
+            max_distance_m=settings.max_distance_m,
             jpeg_quality=settings.jpeg_quality,
+            workers=settings.workers,
         )
         if lanelet2_path is not None and Path(lanelet2_path).is_file():
             self._writer.add_lanelet2_map(Path(lanelet2_path))
@@ -454,11 +447,54 @@ class T4Recording:
                     info, self.path / _VERSION / "map" / PROJECTOR_INFO_FILENAME
                 )
 
-        self._rear_axle = rear_axle_offset(ego)
-        interval = settings.interval_ticks
+        self._declare_sensors()
+        if not self.fed_by_driver:
+            self._attach_sensors(world, ego)
+        logger.info(
+            "T4 dataset: %d LiDAR(s) and %d camera(s) %s, every %d tick(s) -> %s",
+            len(settings.lidars),
+            len(settings.cameras),
+            "fed by the driver policy's" if self.fed_by_driver else "on the ego",
+            settings.interval_ticks,
+            self.path,
+        )
+
+    def _declare_sensors(self) -> None:
+        """Declare the channels: the LiDARs' cloud in the ego's frame, and each
+        camera's optical frame on the ego with its pinhole."""
+        if self._settings.lidars:
+            self._writer.add_sensor(
+                LIDAR_CHANNEL, "lidar", (0.0, 0.0, 0.0), (1.0, 0.0, 0.0, 0.0)
+            )
+        for logical_id, cam in self._settings.cameras:
+            body = sensor_pose_in_rig(
+                cam.position_x,
+                cam.position_y,
+                cam.position_z,
+                cam.roll,
+                cam.pitch,
+                cam.yaw,
+                self._rear_axle,
+            )
+            optical = body_to_optical(body)
+            self._writer.add_sensor(
+                camera_channel(logical_id),
+                "camera",
+                _xyz(optical.position),
+                _wxyz(optical.quat_xyzw),
+                camera_intrinsic=[
+                    [cam.fx, 0.0, cam.image_width / 2.0],
+                    [0.0, cam.fx, cam.image_height / 2.0],
+                    [0.0, 0.0, 1.0],
+                ],
+                camera_distortion=[0.0, 0.0, 0.0, 0.0, 0.0],
+            )
+
+    def _attach_sensors(self, world: "carla.World", ego: "carla.Actor") -> None:
+        """Put the driver policy's sensors on an ego that has none of its own."""
+        interval = self._settings.interval_ticks
         try:
-            for lidar_config in settings.lidars:
-                cfg = lidar_config.sensor
+            for cfg in self._settings.lidars:
                 mount = sensor_pose_in_rig(
                     cfg.position_x,
                     cfg.position_y,
@@ -468,54 +504,18 @@ class T4Recording:
                     cfg.yaw,
                     self._rear_axle,
                 )
-                self._writer.add_sensor(
-                    lidar_config.channel,
-                    "lidar",
-                    _xyz(mount.position),
-                    _wxyz(mount),
-                )
                 lidar = CarlaLidarSensor(
                     cfg, sweep_interval_s=interval * FIXED_DELTA_SECONDS
                 )
                 lidar.attach(world, ego)
-                self._lidars.append((lidar_config.channel, lidar))
-            for camera_config in settings.cameras:
-                cam = camera_config.sensor
-                body = sensor_pose_in_rig(
-                    cam.position_x,
-                    cam.position_y,
-                    cam.position_z,
-                    cam.roll,
-                    cam.pitch,
-                    cam.yaw,
-                    self._rear_axle,
-                )
-                optical = body_to_optical(body)
-                self._writer.add_sensor(
-                    camera_config.channel,
-                    "camera",
-                    _xyz(optical.position),
-                    _wxyz(optical),
-                    camera_intrinsic=[
-                        [cam.fx, 0.0, cam.image_width / 2.0],
-                        [0.0, cam.fx, cam.image_height / 2.0],
-                        [0.0, 0.0, 1.0],
-                    ],
-                    camera_distortion=[0.0, 0.0, 0.0, 0.0, 0.0],
-                )
+                self._lidars.append((lidar, mount))
+            for logical_id, cam in self._settings.cameras:
                 camera = _FrameCamera(cam, interval)
                 camera.attach(world, ego)
-                self._cameras.append((camera_config.channel, camera))
+                self._cameras.append((camera_channel(logical_id), camera))
         except Exception:
             self._destroy_sensors()
             raise
-        logger.info(
-            "T4 dataset: %d LiDAR(s) and %d camera(s) on the ego, %g Hz -> %s",
-            len(self._lidars),
-            len(self._cameras),
-            settings.frequency_hz,
-            self.path,
-        )
 
     @property
     def active(self) -> bool:
@@ -526,6 +526,26 @@ class T4Recording:
     def frames(self) -> int:
         """The key frames recorded so far."""
         return int(self._writer.frames)
+
+    # -- What a driver entity feeds -----------------------------------------
+
+    def _fed_for(self, frame: int) -> tuple[int, list[Any], list[tuple[str, bytes]]]:
+        if self._fed is None or self._fed[0] != frame:
+            self._fed = (frame, [], [])
+        return self._fed
+
+    def feed_lidar(self, frame: int, points_in_rig: Any) -> None:
+        """A sweep the driver policy got on *frame*: ``[N, 4]`` float32 in the
+        rig frame (the ego's ``base_link``)."""
+        if self._active:
+            self._fed_for(frame)[1].append(points_in_rig)
+
+    def feed_camera_jpeg(self, frame: int, logical_id: str, jpeg: bytes) -> None:
+        """A camera frame the driver policy got on *frame*, as it got it."""
+        if self._active:
+            self._fed_for(frame)[2].append((logical_id, jpeg))
+
+    # -- Every tick -----------------------------------------------------------
 
     def record(self, world: "carla.World") -> None:
         """Record the tick the world was just stepped to, when it completes a
@@ -541,19 +561,24 @@ class T4Recording:
     def _record(self, world: "carla.World") -> None:
         snapshot = world.get_snapshot()
         frame = int(snapshot.frame)
+        if self.fed_by_driver:
+            fed, self._fed = self._fed, None
+            if fed is None or fed[0] != frame or frame < self.start_frame:
+                return
+            self._write_frame(world, frame, snapshot, fed[1], fed[2], [])
+            return
+
         self._snapshots[frame] = snapshot
         horizon = frame - 2 * self._settings.interval_ticks
         for old in [f for f in self._snapshots if f < horizon]:
             del self._snapshots[old]
-
-        sweeps: dict[str, Any] = {}
         key_frame: Optional[int] = None
-        for channel, lidar in self._lidars:
+        sweeps: list[tuple[int, Any, Any]] = []
+        for lidar, mount in self._lidars:
             sweep = lidar.latest_sweep(frame)
-            if sweep is None or sweep[0] <= self._last_frame:
-                continue
-            sweeps[channel] = sweep
-            key_frame = sweep[0] if key_frame is None else min(key_frame, sweep[0])
+            if sweep is not None and sweep[0] > self._last_frame:
+                sweeps.append((sweep[0], sweep[1], mount))
+                key_frame = sweep[0] if key_frame is None else min(key_frame, sweep[0])
         if not self._lidars:
             # Cameras alone: the first one's frames are the key frames.
             newest = self._cameras[0][1].newest_frame()
@@ -561,120 +586,118 @@ class T4Recording:
                 key_frame = newest
         if key_frame is None or key_frame < self.start_frame:
             return
-        # A LiDAR whose sweep is later than the key frame's joins the next one.
-        sweeps = {c: s for c, s in sweeps.items() if s[0] == key_frame}
         key_snapshot = self._snapshots.get(key_frame)
         if key_snapshot is None:
             logger.debug("T4 dataset: no snapshot of frame %d; skipped", key_frame)
             return
         self._last_frame = key_frame
-        self._write_frame(world, key_frame, key_snapshot, sweeps)
-
-    def _timestamp_us(self, frame: int) -> int:
-        return self._epoch_us + int(
-            round((frame - self.start_frame) * FIXED_DELTA_SECONDS * 1e6)
-        )
+        # A LiDAR whose sweep is later than the key frame's joins the next one.
+        points = [
+            lidar_points_to_rig(raw, mount)
+            for f, raw, mount in sweeps
+            if f == key_frame
+        ]
+        raw_frames = []
+        for channel, camera in self._cameras:
+            image = camera.image_at(key_frame)
+            if image is None:
+                logger.debug("T4 dataset: no %s frame for frame %d", channel, key_frame)
+            else:
+                raw_frames.append((channel, image))
+        self._write_frame(world, key_frame, key_snapshot, points, [], raw_frames)
 
     def _write_frame(
-        self, world: "carla.World", frame: int, snapshot: Any, sweeps: dict[str, Any]
+        self,
+        world: "carla.World",
+        frame: int,
+        snapshot: Any,
+        points: list[Any],
+        jpegs: list[tuple[str, bytes]],
+        raw_frames: list[tuple[str, Any]],
     ) -> None:
-        ego_snapshot = snapshot.find(self._ego_id)
-        if ego_snapshot is None:
+        ego = snapshot.find(self._ego_id)
+        if ego is None:
             return
-        actor_pose = _carla_pose(ego_snapshot.get_transform(), self._offsets)
-        base_link = actor_pose @ Pose.from_xyz_yaw(self._rear_axle, 0.0, 0.0, 0.0)
-        to_local = base_link.rotation.inv()
-        omega = _mirrored_rate(ego_snapshot.get_angular_velocity())
-        lever = base_link.position - actor_pose.position
-        velocity = _mirrored(ego_snapshot.get_velocity()) + np.cross(omega, lever)
-        v_local = to_local.apply(velocity)
-        w_local = to_local.apply(omega)
-        a_local = to_local.apply(_mirrored(ego_snapshot.get_acceleration()))
-
         writer = self._writer
-        writer.begin_frame(
-            self._timestamp_us(frame),
-            _xyz(base_link.position),
-            _wxyz(base_link),
-            twist=(
-                *_xyz(v_local),
-                float(w_local[2]),
-                float(w_local[1]),
-                float(w_local[0]),
-            ),
-            acceleration=_xyz(a_local),
+        tf, v = ego.get_transform(), ego.get_velocity()
+        w, a = ego.get_angular_velocity(), ego.get_acceleration()
+        loc, rot = tf.location, tf.rotation
+        writer.begin_frame_carla(
+            self._epoch_us
+            + int(round((frame - self.start_frame) * FIXED_DELTA_SECONDS * 1e6)),
+            (loc.x, loc.y, loc.z, rot.roll, rot.pitch, rot.yaw),
+            (v.x, v.y, v.z),
+            (w.x, w.y, w.z),
+            (a.x, a.y, a.z),
         )
         try:
-            self._annotate(world, snapshot, base_link)
-            for channel, (_, raw) in sweeps.items():
-                points = np.array(raw, dtype=np.float32, copy=True).reshape(-1, 4)
-                points[:, 1] *= -1.0  # CARLA's sensor frame is left-handed
-                writer.add_lidar(channel, points)
-            for channel, camera in self._cameras:
-                image = camera.image_at(frame)
-                if image is None:
-                    logger.debug("T4 dataset: no %s frame for frame %d", channel, frame)
-                    continue
+            self._annotate(world, snapshot)
+            for cloud in points:
+                writer.add_lidar(LIDAR_CHANNEL, cloud)
+            for logical_id, jpeg in jpegs:
+                resolution = self._resolutions.get(logical_id)
+                if resolution is not None:
+                    writer.add_camera_jpeg(
+                        camera_channel(logical_id), jpeg, *resolution
+                    )
+            for channel, image in raw_frames:
                 writer.add_camera(channel, image, "bgra")
-            self._vehicle_state(float(np.linalg.norm(velocity)))
+            self._vehicle_state(float(np.sqrt(v.x * v.x + v.y * v.y + v.z * v.z)))
         finally:
             writer.end_frame()
 
-    def _annotate(self, world: "carla.World", snapshot: Any, base_link: Pose) -> None:
-        new = [s.id for s in snapshot if s.id not in self._actors]
+    def _annotate(self, world: "carla.World", snapshot: Any) -> None:
+        """Hand the writer the vehicles' and pedestrians' states: one array,
+        which it turns into boxes in the map frame."""
+        seen = self._seen
+        new = [s.id for s in snapshot if s.id not in seen]
         if new:
             for actor in world.get_actors(new):
-                self._actors[int(actor.id)] = self._actor_info(actor)
+                seen[int(actor.id)] = self._register(actor)
             for actor_id in new:  # gone before it could be looked up
-                self._actors.setdefault(int(actor_id), None)
-        limit = self._settings.max_distance_m
+                seen.setdefault(int(actor_id), False)
+        ids: list[int] = []
+        rows: list[tuple[float, ...]] = []
         for s in snapshot:
-            actor_id = int(s.id)
-            info = self._actors.get(actor_id)
-            if info is None or actor_id == self._ego_id:
+            if not seen.get(s.id):
                 continue
-            pose = _carla_pose(s.get_transform(), self._offsets)
-            center = pose.position + pose.rotation.apply(info.center)
-            if (
-                limit is not None
-                and np.linalg.norm(center - base_link.position) > limit
-            ):
-                continue
-            self._writer.add_annotation(
-                actor_id,
-                info.category,
-                _xyz(center),
-                info.size,
-                _wxyz(pose),
-                velocity=_xyz(_mirrored(s.get_velocity())),
-                acceleration=_xyz(_mirrored(s.get_acceleration())),
-                instance_name=info.name,
+            tf, v = s.get_transform(), s.get_velocity()
+            loc, rot = tf.location, tf.rotation
+            ids.append(s.id)
+            rows.append(
+                (loc.x, loc.y, loc.z, rot.roll, rot.pitch, rot.yaw, v.x, v.y, v.z)
+            )
+        if ids:
+            self._writer.add_carla_boxes(
+                np.asarray(ids, dtype=np.uint64),
+                np.asarray(rows, dtype=np.float64).reshape(-1, 9),
             )
 
-    @staticmethod
-    def _actor_info(actor: Any) -> Optional[_ActorInfo]:
+    def _register(self, actor: Any) -> bool:
+        """Register *actor* with the writer when it is annotated: a vehicle or
+        pedestrian other than the ego."""
         type_id = str(actor.type_id)
-        if not type_id.startswith(_ANNOTATED_KINDS):
-            return None
+        if int(actor.id) == self._ego_id or not type_id.startswith(_ANNOTATED_KINDS):
+            return False
         try:
             wheels = int(_attribute(actor, "number_of_wheels") or 0)
         except ValueError:
             wheels = 0
         box = actor.bounding_box
         role = _attribute(actor, "role_name")
-        return _ActorInfo(
-            category=category_of(type_id, _attribute(actor, "base_type"), wheels),
-            name=f"{role or type_id}#{actor.id}",
-            center=np.array(
-                [box.location.x, -box.location.y, box.location.z], dtype=np.float64
-            ),
-            size=(2.0 * box.extent.y, 2.0 * box.extent.x, 2.0 * box.extent.z),
+        self._writer.register_actor(
+            int(actor.id),
+            category_of(type_id, _attribute(actor, "base_type"), wheels),
+            (box.location.x, -box.location.y, box.location.z),
+            (2.0 * box.extent.y, 2.0 * box.extent.x, 2.0 * box.extent.z),
+            f"{role or type_id}#{actor.id}",
         )
+        return True
 
     def _vehicle_state(self, speed: float) -> None:
         try:
             control = self._ego.get_control()
-        except Exception:  # noqa: BLE001 - a walker or a gone ego has none
+        except Exception:  # noqa: BLE001 - a gone ego has none
             return
         self._writer.add_vehicle_state(
             accel_pedal=100.0 * float(control.throttle),
@@ -686,13 +709,11 @@ class T4Recording:
         )
 
     def _destroy_sensors(self) -> None:
-        for channel, lidar in self._lidars:
+        for lidar, _ in self._lidars:
             try:
                 lidar.destroy()
             except Exception:  # noqa: BLE001 - teardown must not raise
-                logger.warning(
-                    "T4 dataset: destroying %s failed", channel, exc_info=True
-                )
+                logger.warning("T4 dataset: destroying a LiDAR failed", exc_info=True)
         for channel, camera in self._cameras:
             try:
                 camera.destroy()
@@ -704,11 +725,16 @@ class T4Recording:
         self._cameras = []
 
     def close(self) -> Optional[Path]:
-        """Remove the sensors and finish the dataset; its path, or ``None``
-        when it holds nothing or could not be finished (logged)."""
+        """Remove the recorder's sensors and finish the dataset; its path, or
+        ``None`` when it holds nothing or could not be finished (logged)."""
+        global _active
+        with _lock:
+            if _active is self:
+                _active = None
         self._active = False
         self._destroy_sensors()
         self._snapshots = {}
+        self._fed = None
         try:
             summary = self._writer.finish()
         except Exception as error:  # noqa: BLE001 - best effort, like the log
@@ -728,8 +754,7 @@ class T4Recorder:
     """Writes each run of a batch as a T4 dataset (``t4.enabled``).
 
     Args:
-        settings: The sensors and the rate; :class:`T4Settings`' defaults
-            when None.
+        settings: The sensors and the rate (:meth:`T4Settings.from_driver`).
         writer: The writer package; imported (:func:`require_writer`) when
             None.
 
@@ -738,9 +763,9 @@ class T4Recorder:
     """
 
     def __init__(
-        self, settings: Optional[T4Settings] = None, writer: Optional[ModuleType] = None
+        self, settings: T4Settings, writer: Optional[ModuleType] = None
     ) -> None:
-        self.settings = settings if settings is not None else T4Settings()
+        self.settings = settings
         self._writer = writer if writer is not None else require_writer()
 
     def start(
@@ -754,11 +779,12 @@ class T4Recorder:
         location: str = "",
         lanelet2_path: Optional[Path] = None,
     ) -> Optional[T4Recording]:
-        """Put the sensors on *ego* and start ``{directory}/{stem}.t4``, from
-        CARLA frame *start_frame* (the scenario clock's start); ``None``, with
-        a warning, when it cannot be started."""
+        """Start ``{directory}/{stem}.t4`` from CARLA frame *start_frame* (the
+        scenario clock's start), fed by the ego's driver policy or with sensors
+        of its own on *ego*; ``None``, with a warning, when it cannot start."""
+        global _active
         try:
-            return T4Recording(
+            recording = T4Recording(
                 self._writer,
                 self.settings,
                 dataset_path(directory, stem),
@@ -775,3 +801,6 @@ class T4Recorder:
                 "T4 dataset: could not start %s", dataset_path(directory, stem)
             )
             return None
+        with _lock:
+            _active = recording
+        return recording

@@ -26,7 +26,8 @@ use std::thread::JoinHandle;
 use jpeg_encoder::{ColorType, Encoder};
 use serde::Serialize;
 
-use crate::geometry::{OrientedBox, Pose, Quat, Vec3};
+use crate::carla;
+use crate::geometry::{conjugate, cross, rotate, BoxGrid, OrientedBox, Pose, Quat, Vec3};
 use crate::tables::*;
 
 pub type Result<T> = std::result::Result<T, String>;
@@ -170,6 +171,8 @@ struct SensorEntry {
     /// The channel's latest sample_data, which the next one follows.
     last: Option<usize>,
     resolution: Option<(u32, u32)>,
+    /// How many values the channel's last frame held (a LiDAR's).
+    points_hint: usize,
 }
 
 struct InstanceEntry {
@@ -187,15 +190,44 @@ struct OpenFrame {
     ego: Pose,
     /// The frame's annotations: `annotations[first_annotation..]`.
     first_annotation: usize,
-    /// The frame's LiDAR points, in the map frame, for `num_lidar_pts`.
-    points: Vec<Vec3>,
-    channels: Vec<String>,
+    /// Each LiDAR channel's points this frame, `(x, y, z, intensity)` rows in
+    /// the channel's frame: every sweep added to a channel is concatenated.
+    lidar: Vec<(usize, Vec<f32>)>,
+    /// The channels with data this frame.
+    channels: Vec<usize>,
+}
+
+/// A registered road user: what its boxes need that does not change.
+struct ActorEntry {
+    category: String,
+    name: String,
+    /// The box's centre in the actor's (right-handed) frame.
+    center: Vec3,
+    /// `[width, length, height]`.
+    size: Vec3,
+}
+
+/// The CARLA frame the boxes and the ego are given in, and where they go.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct CarlaFrame {
+    /// Added to every position once `y` is flipped: the map's MGRS offset and
+    /// elevation offset.
+    pub map_offset: Vec3,
+    /// From the ego actor's origin to its rear axle along its x axis (negative
+    /// when the axle is behind it): where the ego's `base_link` is.
+    pub rear_axle_offset_m: f64,
+    /// Annotate the road users within this distance of the ego only.
+    pub max_distance_m: Option<f64>,
 }
 
 enum Job {
+    /// A frame's points of one channel: written as T4's `(x, y, z,
+    /// intensity, ring = -1)`, and counted in `boxes` (in the channel's frame,
+    /// each with its annotation's index).
     Lidar {
         path: PathBuf,
         points: Vec<f32>,
+        boxes: Vec<(usize, OrientedBox)>,
     },
     Camera {
         path: PathBuf,
@@ -205,20 +237,63 @@ enum Job {
         format: PixelFormat,
         quality: u8,
     },
+    /// An already encoded file, written as it is.
+    Bytes { path: PathBuf, bytes: Vec<u8> },
 }
 
+/// What the workers report back: their errors, and each box's LiDAR points.
+#[derive(Default)]
+struct Outcome {
+    errors: Vec<String>,
+    counts: Vec<(usize, u64)>,
+}
+
+/// Point buffers the workers are done with, for the next frames to fill: a
+/// buffer of a sweep's size taken fresh from the allocator is new pages,
+/// which cost the caller's thread more to fault in than the copy itself.
+type Pool = Mutex<Vec<Vec<f32>>>;
+
+/// How many spare point buffers the pool keeps.
+const POOL_SIZE: usize = 8;
+
 impl Job {
-    fn run(self) -> Result<()> {
+    fn run(self, outcome: &Mutex<Outcome>, pool: &Pool) -> Result<()> {
         match self {
-            Job::Lidar { path, points } => {
-                let file =
-                    fs::File::create(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-                let mut out = BufWriter::with_capacity(1 << 20, file);
-                for value in points {
-                    out.write_all(&value.to_le_bytes())
-                        .map_err(|e| format!("{}: {e}", path.display()))?;
+            Job::Lidar {
+                path,
+                points,
+                boxes,
+            } => {
+                let mut points = points;
+                if !points.iter().all(|v| v.is_finite()) {
+                    points = points
+                        .chunks_exact(4)
+                        .filter(|row| row[..3].iter().all(|v| v.is_finite()))
+                        .flatten()
+                        .copied()
+                        .collect();
                 }
-                out.flush().map_err(|e| format!("{}: {e}", path.display()))
+                let mut bytes = Vec::with_capacity(points.len() / 4 * 20);
+                for row in points.chunks_exact(4) {
+                    for value in row {
+                        bytes.extend_from_slice(&value.to_le_bytes());
+                    }
+                    bytes.extend_from_slice(&(-1.0f32).to_le_bytes());
+                }
+                fs::write(&path, bytes).map_err(|e| format!("{}: {e}", path.display()))?;
+                let (indices, boxes): (Vec<usize>, Vec<OrientedBox>) = boxes.into_iter().unzip();
+                let mut counts = vec![0u64; boxes.len()];
+                BoxGrid::new(boxes, 2.0).count(&points, 4, &mut counts);
+                if let Ok(mut outcome) = outcome.lock() {
+                    outcome.counts.extend(indices.into_iter().zip(counts));
+                }
+                if let Ok(mut pool) = pool.lock() {
+                    if pool.len() < POOL_SIZE {
+                        points.clear();
+                        pool.push(points);
+                    }
+                }
+                Ok(())
             }
             Job::Camera {
                 path,
@@ -230,35 +305,41 @@ impl Job {
             } => Encoder::new_file(&path, quality)
                 .and_then(|encoder| encoder.encode(&pixels, width, height, format.color_type()))
                 .map_err(|e| format!("{}: {e}", path.display())),
+            Job::Bytes { path, bytes } => {
+                fs::write(&path, bytes).map_err(|e| format!("{}: {e}", path.display()))
+            }
         }
     }
 }
 
-/// Threads that write the sensor files; the first error each meets is kept.
+/// Threads that write the sensor files and count the boxes' points.
 struct Workers {
     sender: Option<SyncSender<Job>>,
     handles: Vec<JoinHandle<()>>,
-    errors: Arc<Mutex<Vec<String>>>,
+    outcome: Arc<Mutex<Outcome>>,
+    pool: Arc<Pool>,
 }
 
 impl Workers {
     fn new(count: usize, queue: usize) -> Self {
         let (sender, receiver) = sync_channel::<Job>(queue.max(1));
         let receiver: Arc<Mutex<Receiver<Job>>> = Arc::new(Mutex::new(receiver));
-        let errors = Arc::new(Mutex::new(Vec::new()));
+        let outcome = Arc::new(Mutex::new(Outcome::default()));
+        let pool: Arc<Pool> = Arc::new(Mutex::new(Vec::new()));
         let handles = (0..count.max(1))
             .map(|_| {
                 let receiver = Arc::clone(&receiver);
-                let errors = Arc::clone(&errors);
+                let outcome = Arc::clone(&outcome);
+                let pool = Arc::clone(&pool);
                 std::thread::spawn(move || loop {
                     let job = match receiver.lock() {
                         Ok(guard) => guard.recv(),
                         Err(_) => return,
                     };
                     let Ok(job) = job else { return };
-                    if let Err(error) = job.run() {
-                        if let Ok(mut errors) = errors.lock() {
-                            errors.push(error);
+                    if let Err(error) = job.run(&outcome, &pool) {
+                        if let Ok(mut outcome) = outcome.lock() {
+                            outcome.errors.push(error);
                         }
                     }
                 })
@@ -267,8 +348,21 @@ impl Workers {
         Self {
             sender: Some(sender),
             handles,
-            errors,
+            outcome,
+            pool,
         }
+    }
+
+    /// A point buffer for `capacity` values: a spare one when there is one.
+    fn buffer(&self, capacity: usize) -> Vec<f32> {
+        let mut buffer = self
+            .pool
+            .lock()
+            .ok()
+            .and_then(|mut pool| pool.pop())
+            .unwrap_or_default();
+        buffer.reserve(capacity);
+        buffer
     }
 
     fn submit(&self, job: Job) -> Result<()> {
@@ -282,13 +376,16 @@ impl Workers {
         }
     }
 
-    /// Wait for every queued file; the errors the workers met.
-    fn join(&mut self) -> Vec<String> {
+    /// Wait for every queued job; what they reported.
+    fn join(&mut self) -> Outcome {
         self.sender = None;
         for handle in self.handles.drain(..) {
             let _ = handle.join();
         }
-        self.errors.lock().map(|e| e.clone()).unwrap_or_default()
+        self.outcome
+            .lock()
+            .map(|mut o| std::mem::take(&mut *o))
+            .unwrap_or_default()
     }
 }
 
@@ -328,6 +425,9 @@ pub struct T4Writer {
     vehicle_states: Vec<VehicleState>,
 
     frame: Option<OpenFrame>,
+
+    carla: CarlaFrame,
+    actors: HashMap<u64, ActorEntry>,
 }
 
 fn check_finite(what: &str, values: &[f64]) -> Result<()> {
@@ -360,6 +460,30 @@ impl T4Writer {
         workers: usize,
         queue: usize,
     ) -> Result<Self> {
+        Self::create_in(
+            data_root,
+            info,
+            CarlaFrame::default(),
+            jpeg_quality,
+            workers,
+            queue,
+        )
+    }
+
+    /// `create`, with the CARLA frame `begin_frame_carla` and
+    /// `add_carla_boxes` read their poses in.
+    pub fn create_in(
+        data_root: impl Into<PathBuf>,
+        info: SceneInfo,
+        carla: CarlaFrame,
+        jpeg_quality: u8,
+        workers: usize,
+        queue: usize,
+    ) -> Result<Self> {
+        check_finite("the map offset", &carla.map_offset)?;
+        if carla.max_distance_m.is_some_and(|d| d.is_nan() || d <= 0.0) {
+            return Err("max_distance_m must be positive".to_string());
+        }
         let root: PathBuf = data_root.into();
         if root.join("annotation").exists() {
             return Err(format!(
@@ -402,6 +526,8 @@ impl T4Writer {
             annotations: Vec::new(),
             vehicle_states: Vec::new(),
             frame: None,
+            carla,
+            actors: HashMap::new(),
         })
     }
 
@@ -495,6 +621,7 @@ impl T4Writer {
             pose,
             last: None,
             resolution: None,
+            points_hint: 0,
         });
         Ok(())
     }
@@ -553,7 +680,7 @@ impl T4Writer {
             ego_pose: self.ego_poses.len() - 1,
             ego: ego.pose,
             first_annotation: self.annotations.len(),
-            points: Vec::new(),
+            lidar: Vec::new(),
             channels: Vec::new(),
         });
         Ok(())
@@ -691,6 +818,131 @@ impl T4Writer {
         Ok(())
     }
 
+    /// Register a road user `add_carla_boxes` annotates: its `category`, its
+    /// box's centre in its own (right-handed) frame and its size `[width,
+    /// length, height]`.  Registering it again replaces what was known.
+    pub fn register_actor(
+        &mut self,
+        id: u64,
+        category: &str,
+        center: Vec3,
+        size: Vec3,
+        name: Option<String>,
+    ) -> Result<()> {
+        if category.is_empty() {
+            return Err("an actor needs a category".to_string());
+        }
+        check_finite("an actor's box centre", &center)?;
+        check_finite("an actor's box size", &size)?;
+        self.actors.insert(
+            id,
+            ActorEntry {
+                category: category.to_string(),
+                name: name.unwrap_or_else(|| format!("{category}_{id}")),
+                center,
+                size,
+            },
+        );
+        Ok(())
+    }
+
+    /// Whether `id` is registered.
+    pub fn knows_actor(&self, id: u64) -> bool {
+        self.actors.contains_key(&id)
+    }
+
+    /// `begin_frame` with the ego actor's state as CARLA reports it:
+    /// `transform` `[x, y, z, roll, pitch, yaw]`, its velocity, angular
+    /// velocity (deg/s) and acceleration, in CARLA's world frame.  The pose is
+    /// its rear axle's (`CarlaFrame::rear_axle_offset_m`) in the map frame,
+    /// the twist and acceleration in its own frame.
+    pub fn begin_frame_carla(
+        &mut self,
+        timestamp_us: u64,
+        transform: [f64; 6],
+        velocity: [f64; 3],
+        angular_velocity: [f64; 3],
+        acceleration: [f64; 3],
+    ) -> Result<()> {
+        for values in [&transform[..], &velocity, &angular_velocity, &acceleration] {
+            check_finite("the ego's state", values)?;
+        }
+        let actor = carla::pose(&transform, self.carla.map_offset);
+        let base = actor.compose(&Pose::new(
+            [self.carla.rear_axle_offset_m, 0.0, 0.0],
+            [1.0, 0.0, 0.0, 0.0],
+        ));
+        let omega = carla::angular_velocity(&angular_velocity);
+        let lever = [
+            base.translation[0] - actor.translation[0],
+            base.translation[1] - actor.translation[1],
+            base.translation[2] - actor.translation[2],
+        ];
+        let spin = cross(omega, lever);
+        let v = carla::vector(&velocity);
+        let v = [v[0] + spin[0], v[1] + spin[1], v[2] + spin[2]];
+        let to_local = conjugate(base.rotation);
+        let v = rotate(to_local, v);
+        let w = rotate(to_local, omega);
+        let a = rotate(to_local, carla::vector(&acceleration));
+        self.begin_frame(
+            timestamp_us,
+            EgoState {
+                pose: base,
+                twist: Some([v[0], v[1], v[2], w[2], w[1], w[0]]),
+                acceleration: Some(a),
+            },
+        )
+    }
+
+    /// Annotate the registered road users `ids` in the open frame, from their
+    /// CARLA states: `states` is `[N, 9]` row-major, `x, y, z, roll, pitch,
+    /// yaw, vx, vy, vz` in CARLA's world frame.  Ids not registered, and road
+    /// users beyond `CarlaFrame::max_distance_m` of the ego, are skipped.
+    /// How many were annotated.
+    pub fn add_carla_boxes(&mut self, ids: &[u64], states: &[f64]) -> Result<usize> {
+        self.check_open()?;
+        let ego = self.open_frame()?.ego.translation;
+        if states.len() != ids.len() * 9 {
+            return Err(format!(
+                "{} ids need {} state values (9 each), got {}",
+                ids.len(),
+                ids.len() * 9,
+                states.len()
+            ));
+        }
+        let limit_sq = self.carla.max_distance_m.map(|d| d * d);
+        let mut added = 0;
+        for (id, state) in ids.iter().zip(states.chunks_exact(9)) {
+            let Some(entry) = self.actors.get(id) else {
+                continue;
+            };
+            let transform = [state[0], state[1], state[2], state[3], state[4], state[5]];
+            let pose = carla::pose(&transform, self.carla.map_offset);
+            let center = pose.apply(entry.center);
+            if let Some(limit_sq) = limit_sq {
+                let d = [center[0] - ego[0], center[1] - ego[1], center[2] - ego[2]];
+                if d[0] * d[0] + d[1] * d[1] + d[2] * d[2] > limit_sq {
+                    continue;
+                }
+            }
+            let annotation = Annotation {
+                instance_id: *id,
+                category: entry.category.clone(),
+                instance_name: Some(entry.name.clone()),
+                attributes: Vec::new(),
+                translation: center,
+                size: entry.size,
+                rotation: pose.rotation,
+                velocity: Some(carla::vector(&[state[6], state[7], state[8]])),
+                acceleration: None,
+            };
+            self.add_annotation(annotation)?;
+            added += 1;
+        }
+        Ok(added)
+    }
+
     fn sensor_index(&self, channel: &str, modality: Modality) -> Result<usize> {
         let index = self
             .sensors
@@ -719,7 +971,7 @@ impl T4Writer {
     ) -> Result<PathBuf> {
         let frame = self.open_frame()?;
         let channel = self.sensors[index].channel.clone();
-        if frame.channels.contains(&channel) {
+        if frame.channels.contains(&index) {
             return Err(format!("sensor {channel:?} already has data in this frame"));
         }
         let (sample, ego_pose) = (frame.sample, frame.ego_pose);
@@ -749,15 +1001,17 @@ impl T4Writer {
         });
         self.sensors[index].last = Some(self.sample_data.len() - 1);
         if let Some(frame) = self.frame.as_mut() {
-            frame.channels.push(channel);
+            frame.channels.push(index);
         }
         Ok(self.root.join(filename))
     }
 
     /// Add a LiDAR sweep to the open frame: `points` is `[N, fields]`
     /// row-major, `x, y, z` (in the sensor's frame) and, when `fields > 3`,
-    /// the intensity; any further fields are dropped.  Written as
-    /// `NNNNN.pcd.bin`, T4's default layout `(x, y, z, intensity, ring = -1)`.
+    /// the intensity; any further fields are dropped.  The sweeps a channel
+    /// gets in a frame are concatenated (`LIDAR_CONCAT`).  Written as
+    /// `NNNNN.pcd.bin`, T4's default layout `(x, y, z, intensity, ring = -1)`,
+    /// by `end_frame`.
     pub fn add_lidar(&mut self, channel: &str, points: &[f32], fields: usize) -> Result<()> {
         self.check_open()?;
         self.open_frame()?;
@@ -771,27 +1025,63 @@ impl T4Writer {
                 points.len()
             ));
         }
-        let rows = points.len() / fields;
-        let mut packed = Vec::with_capacity(rows * 5);
-        let mut world = Vec::with_capacity(rows);
-        let sensor_to_map = self.open_frame()?.ego.compose(&self.sensors[index].pose);
-        for row in points.chunks_exact(fields) {
-            let (x, y, z) = (row[0], row[1], row[2]);
-            if !(x.is_finite() && y.is_finite() && z.is_finite()) {
-                continue;
+        // The previous frame's size: one allocation, not one per sweep added.
+        let reserve = self.sensors[index]
+            .points_hint
+            .max(points.len() / fields * 4);
+        let frame = self.frame.as_mut().expect("checked open above");
+        let buffer = match frame.lidar.iter().position(|(i, _)| *i == index) {
+            Some(at) => &mut frame.lidar[at].1,
+            None => {
+                frame.lidar.push((index, self.workers.buffer(reserve)));
+                &mut frame.lidar.last_mut().expect("pushed").1
             }
-            let intensity = if fields > 3 { row[3] } else { 0.0 };
-            packed.extend_from_slice(&[x, y, z, intensity, -1.0]);
-            world.push(sensor_to_map.apply([f64::from(x), f64::from(y), f64::from(z)]));
+        };
+        // A copy and nothing more on the caller's thread: the rows that are
+        // not finite are dropped by the worker that writes them.
+        if fields == 4 {
+            buffer.extend_from_slice(points);
+        } else {
+            buffer.reserve(points.len() / fields * 4);
+            for row in points.chunks_exact(fields) {
+                let intensity = if fields > 3 { row[3] } else { 0.0 };
+                buffer.extend_from_slice(&[row[0], row[1], row[2], intensity]);
+            }
         }
-        let path = self.push_sample_data(index, "pcd.bin", "pcd.bin", 0, 0)?;
-        if let Some(frame) = self.frame.as_mut() {
-            frame.points.extend(world);
+        Ok(())
+    }
+
+    /// Add a camera frame already encoded as JPEG (`width` x `height`).
+    pub fn add_camera_jpeg(
+        &mut self,
+        channel: &str,
+        jpeg: Vec<u8>,
+        width: u32,
+        height: u32,
+    ) -> Result<()> {
+        self.check_open()?;
+        self.open_frame()?;
+        let index = self.sensor_index(channel, Modality::Camera)?;
+        if jpeg.len() < 2 || jpeg[..2] != [0xff, 0xd8] {
+            return Err(format!("camera {channel:?}'s frame is not a JPEG"));
         }
-        self.workers.submit(Job::Lidar {
-            path,
-            points: packed,
-        })
+        self.check_resolution(index, width, height)?;
+        let path = self.push_sample_data(index, "jpg", "jpg", width, height)?;
+        self.workers.submit(Job::Bytes { path, bytes: jpeg })
+    }
+
+    fn check_resolution(&mut self, index: usize, width: u32, height: u32) -> Result<()> {
+        if let Some(resolution) = self.sensors[index].resolution {
+            if resolution != (width, height) {
+                return Err(format!(
+                    "camera {:?} changed resolution from {resolution:?} to {:?}",
+                    self.sensors[index].channel,
+                    (width, height)
+                ));
+            }
+        }
+        self.sensors[index].resolution = Some((width, height));
+        Ok(())
     }
 
     /// Add a camera frame to the open frame: `pixels` is `height` rows of
@@ -821,15 +1111,7 @@ impl T4Writer {
                 pixels.len()
             ));
         }
-        if let Some(resolution) = self.sensors[index].resolution {
-            if resolution != (width, height) {
-                return Err(format!(
-                    "camera {channel:?} changed resolution from {resolution:?} to {:?}",
-                    (width, height)
-                ));
-            }
-        }
-        self.sensors[index].resolution = Some((width, height));
+        self.check_resolution(index, width, height)?;
         let path = self.push_sample_data(index, "jpg", "jpg", width, height)?;
         self.workers.submit(Job::Camera {
             path,
@@ -876,23 +1158,38 @@ impl T4Writer {
         Ok(())
     }
 
-    /// Close the open frame: count the LiDAR points inside each of its boxes.
+    /// Close the open frame: hand each LiDAR channel's points to the workers,
+    /// which write them and count the points inside each of the frame's boxes.
     pub fn end_frame(&mut self) -> Result<()> {
         self.check_open()?;
-        let frame = self
-            .frame
-            .take()
-            .ok_or_else(|| "no frame is open (call begin_frame first)".to_string())?;
-        if frame.points.is_empty() {
-            return Ok(());
+        let lidar = match self.frame.as_mut() {
+            Some(frame) => std::mem::take(&mut frame.lidar),
+            None => return Err("no frame is open (call begin_frame first)".to_string()),
+        };
+        let mut jobs = Vec::with_capacity(lidar.len());
+        for (index, points) in lidar {
+            self.sensors[index].points_hint = points.len();
+            let path = self.push_sample_data(index, "pcd.bin", "pcd.bin", 0, 0)?;
+            let frame = self.open_frame()?;
+            // The boxes in the channel's frame, rather than every point in
+            // the map's: a handful of transforms instead of a sweep's worth.
+            let map_to_sensor = frame.ego.compose(&self.sensors[index].pose).inverse();
+            let boxes = (frame.first_annotation..self.annotations.len())
+                .map(|i| {
+                    let a = &self.annotations[i];
+                    let pose = map_to_sensor.compose(&Pose::new(a.translation, a.rotation));
+                    (i, OrientedBox::new(pose, a.size))
+                })
+                .collect();
+            jobs.push(Job::Lidar {
+                path,
+                points,
+                boxes,
+            });
         }
-        for annotation in &mut self.annotations[frame.first_annotation..] {
-            let bbox = OrientedBox::new(
-                Pose::new(annotation.translation, annotation.rotation),
-                annotation.size,
-            );
-            annotation.num_lidar_pts =
-                frame.points.iter().filter(|p| bbox.contains(**p)).count() as u64;
+        self.frame = None;
+        for job in jobs {
+            self.workers.submit(job)?;
         }
         Ok(())
     }
@@ -905,7 +1202,10 @@ impl T4Writer {
             self.end_frame()?;
         }
         self.finished = true;
-        let errors = self.workers.join();
+        let Outcome { errors, counts } = self.workers.join();
+        for (index, count) in counts {
+            self.annotations[index].num_lidar_pts += count;
+        }
         if !errors.is_empty() {
             return Err(format!(
                 "{} sensor file(s) could not be written; the first: {}",

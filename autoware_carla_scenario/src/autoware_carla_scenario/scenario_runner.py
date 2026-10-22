@@ -1405,12 +1405,14 @@ class ScenarioRunner:
                 # it advanced to.
                 elapsed = clock.simulated
                 trajectory.record(world, elapsed)
-                if t4_recording is not None:
-                    t4_recording.record(world)
 
                 # Give the ego entity a chance to drive itself before the
                 # scenario's own post-tick hooks observe the new state.
                 ego.on_tick(world, elapsed)
+                # After the ego's tick: a driver policy's ego has just handed
+                # the dataset what its sensors took on it.
+                if t4_recording is not None:
+                    t4_recording.record(world)
                 trajectory.record_markers(_ego_markers(ego))
 
                 # Then the traffic, which reacts to where the ego now is.

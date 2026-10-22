@@ -7,7 +7,7 @@ use std::path::Path;
 
 use autoware_carla_scenario_t4::geometry::{yaw_quaternion, Pose};
 use autoware_carla_scenario_t4::writer::{
-    Annotation, EgoState, Modality, PixelFormat, SceneInfo, T4Writer, VehicleControls,
+    Annotation, CarlaFrame, EgoState, Modality, PixelFormat, SceneInfo, T4Writer, VehicleControls,
 };
 use serde_json::Value;
 
@@ -225,8 +225,8 @@ fn misuse_is_refused() {
     assert!(w.add_annotation(car(1, 0.0)).is_err(), "twice in a frame");
     w.add_lidar("LIDAR_TOP", &[0.0, 0.0, 0.0], 3).unwrap();
     assert!(
-        w.add_lidar("LIDAR_TOP", &[0.0, 0.0, 0.0], 3).is_err(),
-        "twice in a frame"
+        w.add_lidar("LIDAR_TOP", &[0.0, 0.0], 3).is_err(),
+        "not rows of 3"
     );
     w.end_frame().unwrap();
     assert!(w.begin_frame(10, ego).is_err(), "timestamps must increase");
@@ -236,4 +236,93 @@ fn misuse_is_refused() {
         T4Writer::create(dir.path(), info(), 90, 1, 1).is_err(),
         "already a dataset"
     );
+}
+
+fn floats(value: &Value) -> Vec<f64> {
+    value
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_f64().unwrap())
+        .collect()
+}
+
+fn assert_close(a: &[f64], b: &[f64]) {
+    for (x, y) in a.iter().zip(b) {
+        assert!((x - y).abs() < 1e-9, "{a:?} != {b:?}");
+    }
+}
+
+#[test]
+fn sweeps_of_one_channel_are_concatenated() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut w = T4Writer::create(dir.path(), info(), 90, 1, 1).unwrap();
+    let identity = Pose::new([0.0; 3], [1.0, 0.0, 0.0, 0.0]);
+    w.add_sensor("LIDAR_CONCAT", Modality::Lidar, identity, None, None)
+        .unwrap();
+    let ego = EgoState {
+        pose: identity,
+        twist: None,
+        acceleration: None,
+    };
+    w.begin_frame(1, ego).unwrap();
+    w.add_lidar("LIDAR_CONCAT", &[1.0, 2.0, 3.0, 0.5], 4)
+        .unwrap();
+    w.add_lidar("LIDAR_CONCAT", &[4.0, 5.0, 6.0, f32::NAN, 7.0, 8.0], 3)
+        .unwrap();
+    w.end_frame().unwrap();
+    w.finish().unwrap();
+    let bytes = fs::read(dir.path().join("data/LIDAR_CONCAT/00000.pcd.bin")).unwrap();
+    assert_eq!(bytes.len(), 2 * 5 * 4, "the row with a NaN is dropped");
+    assert_eq!(table(dir.path(), "sample_data").len(), 1);
+}
+
+#[test]
+fn carla_states_become_map_frame_poses_and_boxes() {
+    let dir = tempfile::tempdir().unwrap();
+    let carla = CarlaFrame {
+        map_offset: [100.0, 200.0, 10.0],
+        rear_axle_offset_m: -1.5,
+        max_distance_m: Some(50.0),
+    };
+    let mut w = T4Writer::create_in(dir.path(), info(), carla, 90, 1, 1).unwrap();
+    let identity = Pose::new([0.0; 3], [1.0, 0.0, 0.0, 0.0]);
+    w.add_sensor("LIDAR_CONCAT", Modality::Lidar, identity, None, None)
+        .unwrap();
+    w.register_actor(2, "car", [0.0, 0.0, 0.7], [1.8, 4.0, 1.4], None)
+        .unwrap();
+    w.register_actor(3, "pedestrian", [0.0, 0.0, 0.9], [0.6, 0.6, 1.8], None)
+        .unwrap();
+    // The ego at CARLA (10, 5) facing south (yaw 90), driving at 2 m/s.
+    w.begin_frame_carla(
+        1_000_000,
+        [10.0, 5.0, 0.0, 0.0, 0.0, 90.0],
+        [0.0, 2.0, 0.0],
+        [0.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0],
+    )
+    .unwrap();
+    // The car 20 m ahead of it (further south); the pedestrian 100 m away.
+    let states = [
+        10.0, 25.0, 0.0, 0.0, 0.0, 90.0, 0.0, 2.0, 0.0, //
+        110.0, 5.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+    ];
+    assert!(w.add_carla_boxes(&[2, 3, 4], &states).is_err());
+    assert_eq!(w.add_carla_boxes(&[2, 3], &states).unwrap(), 1);
+    // A point 21.5 m ahead of the rear axle, on the car (base_link frame).
+    w.add_lidar("LIDAR_CONCAT", &[21.5, 0.0, 0.7, 1.0], 4)
+        .unwrap();
+    w.end_frame().unwrap();
+    w.finish().unwrap();
+
+    let ego = &table(dir.path(), "ego_pose")[0];
+    // The rear axle 1.5 m behind the actor: north of it, at CARLA y = 3.5.
+    assert_close(&floats(&ego["translation"]), &[110.0, 196.5, 10.0]);
+    assert_close(&floats(&ego["twist"])[..2], &[2.0, 0.0]);
+
+    let anns = table(dir.path(), "sample_annotation");
+    assert_eq!(anns.len(), 1);
+    assert_close(&floats(&anns[0]["translation"]), &[110.0, 175.0, 10.7]);
+    assert_eq!(anns[0]["num_lidar_pts"], 1);
+    assert_close(&floats(&anns[0]["velocity"]), &[0.0, -2.0, 0.0]);
 }

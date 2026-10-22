@@ -61,6 +61,7 @@ from ..driver.observation import (
 from carla_driver_interface.driver import TurnIndicator
 from carla_driver_interface.protocol import LidarSweep, pack_lidar_sweep
 from ..rerun_lidar import CameraMount, active_recorder
+from ..t4 import active_recording, offer_driver_sensors, withdraw_driver_sensors
 from ._policy_warmup import PolicyWarmup
 from .bridged_ego import BridgeHandshake
 from .externally_driven import ExternallyDrivenEgo
@@ -313,6 +314,9 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
                 "driver.lidars / driver.map_dir need send_renderer_data, which is off; "
                 "the policy gets neither sweeps nor traffic lights"
             )
+        # A T4 dataset of the run (t4.enabled) takes what the policy is sent
+        # rather than rendering it again.
+        offer_driver_sensors(self._rear_axle_offset_m)
 
         session_uuid = str(uuid.uuid4())
         self._client.start_session(session_uuid, str(self._map.name))
@@ -401,6 +405,7 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
         Teardown failures are logged rather than raised so that one unreachable policy
         cannot abort the rest of the scenario cleanup.
         """
+        withdraw_driver_sensors()
         if self._warmup is not None:
             self._warmup.restore()
             self._warmup = None
@@ -515,6 +520,7 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
         recorder = active_recorder() if pose is not None else None
         if recorder is not None and not recorder.records_lidar:
             recorder = None
+        dataset = active_recording() if pose is not None else None
         sweeps = []
         for logical_id, lidar, mount in self._lidars:
             sweep = lidar.latest_sweep(frame)
@@ -532,6 +538,8 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
             )
             if recorder is not None and pose is not None:
                 self._record_lidar(recorder, logical_id, sweep[0], points, pose)
+            if dataset is not None:
+                dataset.feed_lidar(frame, points)
         return sweeps
 
     def _record_lidar(
@@ -703,6 +711,11 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
                 encoded,
             )
             self._record_camera(logical_id, encoded)
+            dataset = active_recording()
+            if dataset is not None and self._world is not None:
+                dataset.feed_camera_jpeg(
+                    int(self._world.get_snapshot().frame), logical_id, encoded
+                )
 
     def _record_camera(self, logical_id: str, encoded: bytes) -> None:
         """Write a frame the policy got into the run's recording, when it

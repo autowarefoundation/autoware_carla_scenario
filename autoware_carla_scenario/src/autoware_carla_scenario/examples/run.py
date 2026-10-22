@@ -791,25 +791,36 @@ def build_rerun_converter(*cfgs: DictConfig) -> RerunConverter | None:
 
 def build_t4_recorder(*cfgs: DictConfig) -> T4Recorder | None:
     """What writes each run as a T4 dataset, when the first of *cfgs* that
-    sets ``t4.enabled`` does (its ``t4`` settings: the sensors and the rate);
-    ``None`` otherwise.
+    sets ``t4.enabled`` does: with the driver policy's sensors and step
+    (``driver``) and its ``t4`` settings; ``None`` otherwise.
 
     Called before anything runs, so a run asking for datasets without the
     ``t4`` extra installed is refused at once.
 
     Raises:
         T4UnavailableError: The extra is not installed.
-        ValueError: The ``t4`` settings are not valid.
+        ValueError: The ``t4`` or ``driver`` settings are not valid.
     """
+    from autoware_carla_scenario.driver import DriverClientConfig  # noqa: PLC0415
+
     for cfg in cfgs:
         t4_cfg = cfg.get("t4") or {}
         if not t4_cfg.get("enabled", False):
             continue
-        settings = OmegaConf.to_container(t4_cfg, resolve=True)
-        assert isinstance(settings, dict)  # noqa: S101 - a config section
-        return T4Recorder(
-            T4Settings.from_config({str(k): v for k, v in settings.items()})
+        driver_cfg = cfg.get("driver")
+        if driver_cfg is None:
+            raise ValueError(
+                "t4.enabled takes its sensors from the 'driver' config group "
+                "(driver.lidars, driver.cameras): add 'driver: default' to the "
+                "defaults list"
+            )
+        driver = DriverClientConfig.from_mapping(
+            _with_fog_density_scale(_to_dict(driver_cfg), cfg)
         )
+        settings = T4Settings.from_driver(
+            driver, _to_dict(t4_cfg) if isinstance(t4_cfg, DictConfig) else t4_cfg
+        )
+        return T4Recorder(settings)
     return None
 
 

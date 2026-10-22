@@ -1,19 +1,22 @@
 //! T4 datasets of autoware_carla_scenario runs: the writer (`writer`), and its
 //! Python binding, `autoware_carla_scenario_t4._core.T4Writer`.
 
+pub mod carla;
 pub mod geometry;
 pub mod tables;
 pub mod writer;
 
 use std::path::PathBuf;
 
-use numpy::{PyReadonlyArray2, PyReadonlyArray3, PyUntypedArrayMethods};
+use numpy::{PyReadonlyArray1, PyReadonlyArray2, PyReadonlyArray3, PyUntypedArrayMethods};
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
 use crate::geometry::{Pose, Quat, Vec3};
-use crate::writer::{Annotation, EgoState, Modality, PixelFormat, SceneInfo, VehicleControls};
+use crate::writer::{
+    Annotation, CarlaFrame, EgoState, Modality, PixelFormat, SceneInfo, VehicleControls,
+};
 
 fn value_error(message: String) -> PyErr {
     PyValueError::new_err(message)
@@ -44,6 +47,9 @@ impl T4Writer {
         date_captured = String::new(),
         location = String::new(),
         token_seed = None,
+        map_offset = [0.0, 0.0, 0.0],
+        rear_axle_offset_m = 0.0,
+        max_distance_m = None,
         jpeg_quality = 90,
         workers = 2,
         queue = 16,
@@ -58,6 +64,9 @@ impl T4Writer {
         date_captured: String,
         location: String,
         token_seed: Option<String>,
+        map_offset: Vec3,
+        rear_axle_offset_m: f64,
+        max_distance_m: Option<f64>,
         jpeg_quality: u8,
         workers: usize,
         queue: usize,
@@ -71,7 +80,12 @@ impl T4Writer {
             date_captured,
             location,
         };
-        writer::T4Writer::create(data_root, info, jpeg_quality, workers, queue)
+        let carla = CarlaFrame {
+            map_offset,
+            rear_axle_offset_m,
+            max_distance_m,
+        };
+        writer::T4Writer::create_in(data_root, info, carla, jpeg_quality, workers, queue)
             .map(|inner| Self { inner })
             .map_err(value_error)
     }
@@ -172,6 +186,81 @@ impl T4Writer {
                 velocity,
                 acceleration,
             })
+            .map_err(value_error)
+    }
+
+    /// Register a road user :meth:`add_carla_boxes` annotates: its box's
+    /// centre in its own (right-handed) frame and its size ``(width, length,
+    /// height)``.
+    #[pyo3(signature = (actor_id, category, center, size, name = None))]
+    fn register_actor(
+        &mut self,
+        actor_id: u64,
+        category: &str,
+        center: Vec3,
+        size: Vec3,
+        name: Option<String>,
+    ) -> PyResult<()> {
+        self.inner
+            .register_actor(actor_id, category, center, size, name)
+            .map_err(value_error)
+    }
+
+    /// Whether ``actor_id`` is registered.
+    fn knows_actor(&self, actor_id: u64) -> bool {
+        self.inner.knows_actor(actor_id)
+    }
+
+    /// Open a frame with the ego actor's state as CARLA reports it
+    /// (``transform`` ``(x, y, z, roll, pitch, yaw)``, velocity, angular
+    /// velocity in deg/s, acceleration; CARLA's world frame).
+    fn begin_frame_carla(
+        &mut self,
+        timestamp_us: u64,
+        transform: [f64; 6],
+        velocity: [f64; 3],
+        angular_velocity: [f64; 3],
+        acceleration: [f64; 3],
+    ) -> PyResult<()> {
+        self.inner
+            .begin_frame_carla(
+                timestamp_us,
+                transform,
+                velocity,
+                angular_velocity,
+                acceleration,
+            )
+            .map_err(value_error)
+    }
+
+    /// Annotate the registered road users ``ids`` (``uint64 [N]``) from their
+    /// CARLA states (``float64 [N, 9]``: ``x, y, z, roll, pitch, yaw, vx, vy,
+    /// vz``); how many were annotated.
+    fn add_carla_boxes(
+        &mut self,
+        ids: PyReadonlyArray1<'_, u64>,
+        states: PyReadonlyArray2<'_, f64>,
+    ) -> PyResult<usize> {
+        let ids: Vec<u64> = ids.as_array().iter().copied().collect();
+        let states: Vec<f64> = match states.as_slice() {
+            Ok(values) => values.to_vec(),
+            Err(_) => states.as_array().iter().copied().collect(),
+        };
+        self.inner
+            .add_carla_boxes(&ids, &states)
+            .map_err(value_error)
+    }
+
+    /// Add a camera frame already encoded as JPEG.
+    fn add_camera_jpeg(
+        &mut self,
+        channel: &str,
+        jpeg: &[u8],
+        width: u32,
+        height: u32,
+    ) -> PyResult<()> {
+        self.inner
+            .add_camera_jpeg(channel, jpeg.to_vec(), width, height)
             .map_err(value_error)
     }
 
