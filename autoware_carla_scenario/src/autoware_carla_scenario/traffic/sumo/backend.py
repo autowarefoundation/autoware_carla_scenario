@@ -1020,9 +1020,12 @@ class SumoTrafficBackend(TrafficBackend):
         from when the run starts."""
         self._pedestrian_entities.append(entity)
 
-    def walk_straight(self, entity: Any, speed_ms: float) -> bool:
+    def walk_straight(
+        self, entity: Any, speed_ms: float, yaw_deg: Optional[float] = None
+    ) -> bool:
         """Walk a scenario pedestrian SUMO walks straight ahead at *speed_ms*,
-        the way its walker faces; zero stands it where it is.
+        the way its walker faces (or along *yaw_deg*, a CARLA yaw); zero
+        stands it where it is.
 
         The walk is TraCI's, not SUMO's pedestrian model: each step the person
         is moved on along the line (``person.moveToXY``, onto whatever lane is
@@ -1042,7 +1045,7 @@ class SumoTrafficBackend(TrafficBackend):
             self._walk(actor, self._person_carla_pose(person), 0.0)
             logger.info("SUMO: pedestrian '%s' stands where it is", role)
             return True
-        pose = self._walker_pose(actor)
+        pose = self._walker_pose(actor, yaw_deg)
         self._walking[person] = (pose.x, pose.y, pose.heading_deg, float(speed_ms))
         logger.info(
             "SUMO walks pedestrian '%s' straight on at %.2f m/s", role, speed_ms
@@ -1615,11 +1618,13 @@ class SumoTrafficBackend(TrafficBackend):
                     person, "", pose.x, pose.y, pose.heading_deg, _KEEP_ROUTE_ANYWHERE
                 )
 
-    def _walker_pose(self, actor: Any) -> Pose2D:
-        """Where CARLA's walker *actor* is, in SUMO's frame."""
+    def _walker_pose(self, actor: Any, yaw_deg: Optional[float] = None) -> Pose2D:
+        """Where CARLA's walker *actor* is, in SUMO's frame; facing *yaw_deg*
+        (CARLA's) when given, else the way it faces."""
         tf = actor.get_transform()
+        yaw = tf.rotation.yaw if yaw_deg is None else yaw_deg
         return carla_to_sumo(
-            Pose2D(tf.location.x, tf.location.y, tf.location.z, tf.rotation.yaw),
+            Pose2D(tf.location.x, tf.location.y, tf.location.z, yaw),
             0.0,
             self._offset,
         )

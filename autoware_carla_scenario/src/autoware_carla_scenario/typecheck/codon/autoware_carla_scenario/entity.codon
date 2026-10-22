@@ -92,7 +92,7 @@ class PedestrianEntity:
     def destroy(self) -> None:
         raise NotImplementedError()
 
-    def walk_straight(self, speed_ms: float) -> None:
+    def walk_straight(self, speed_ms: float, yaw_deg: Optional[float] = None) -> None:
         raise NotImplementedError()
 
     def release_from_traffic(self, world: carla.World) -> None:

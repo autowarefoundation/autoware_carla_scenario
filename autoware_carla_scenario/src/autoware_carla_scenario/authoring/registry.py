@@ -1155,6 +1155,41 @@ register_action_spec(
                     "can start a crossing and a second can end it."
                 ),
             ),
+            FieldSpec(
+                name="turn_back_ttc_s",
+                label="Turn back at TTC",
+                kind="number",
+                default=None,
+                required=False,
+                unit="s",
+                help=(
+                    "Turn back when a vehicle's time to collision, along the "
+                    "road, is at most this.  Empty: not by TTC."
+                ),
+            ),
+            FieldSpec(
+                name="turn_back_distance_m",
+                label="Turn back at distance",
+                kind="number",
+                default=None,
+                required=False,
+                unit="m",
+                help=(
+                    "Turn back when a vehicle is at most this far away along "
+                    "the road.  Empty: not by distance."
+                ),
+            ),
+            FieldSpec(
+                name="turn_back_within_m",
+                label="Turn back within",
+                kind="number",
+                default=1.0,
+                unit="m",
+                help=(
+                    "How far onto the road, from the kerb, the pedestrian may "
+                    "be and still turn back; further out it keeps going."
+                ),
+            ),
         ),
         description=(
             "Send a pedestrian forward the way it is facing, with no "

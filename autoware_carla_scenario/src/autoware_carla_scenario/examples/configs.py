@@ -18,6 +18,7 @@ This module defines only the *example-specific* scenario configs and the root
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Optional
 
 # The shared configs are imported because the composite configs in this module
 # (``ScenarioRunConfig`` and ``IntersectionPassingConfig``) reference them.
@@ -191,6 +192,19 @@ class PedestrianDartOutConfig:
 
     #: Walking speed into the road (m/s); a run, not a stroll.
     walk_speed_ms: float = 2.0
+
+    #: The pedestrian turns back when a vehicle's time to collision with it,
+    #: along the road, is at most this (s); ``None``: not by TTC.  See
+    #: :class:`~autoware_carla_scenario.actions.WalkStraightAction`.
+    turn_back_ttc_s: Optional[float] = None
+
+    #: The pedestrian turns back when a vehicle is at most this far from it
+    #: along the road (m); ``None``: not by distance.
+    turn_back_distance_m: Optional[float] = None
+
+    #: How far onto the road, from the kerb, the pedestrian may be and still
+    #: turn back (m).
+    turn_back_within_m: float = 1.0
 
     #: CARLA blueprint of the pedestrian: one CARLA 0.9 and 0.10 both ship.
     walker_type: str = "walker.pedestrian.0015"
