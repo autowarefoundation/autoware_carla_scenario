@@ -71,6 +71,7 @@ from __future__ import annotations
 
 import ast
 import itertools
+import re
 from collections.abc import Collection, Mapping
 from dataclasses import dataclass, field
 
@@ -78,6 +79,8 @@ from .driver import Driver
 from .python_rewrites import _Pass, python_rewrites
 from .transform import (
     PRELUDE,
+    _SCALAR_NAMES,
+    listable_display,
     _ENUM_BASES,
     _TYPE_VAR_NAMES,
     _dotted,
@@ -804,7 +807,17 @@ class _Renderer:
                 continue
             # The driver is no module the transform rewrites: an f-string with a
             # sign in its spec, a `.format` call, would reach Codon as written.
-            value = python_rewrites(ast.unparse(assigned) + "\n")[0].strip()
+            value = python_rewrite_value(assigned)
+            if (
+                isinstance(assigned, ast.List)
+                and listable_display(assigned)
+                and (listed := re.fullmatch(r"[Ll]ist\[([A-Za-z_]\w*)\]", typed))
+                and listed.group(1) not in _SCALAR_NAMES
+            ):
+                # `[Dbl(), Neg()]` of a `list[Rule]`: a list of the annotated
+                # type, as the transform makes it (#480).
+                items = ", ".join(python_rewrite_value(e) for e in assigned.elts)
+                value = f"_acs_list_into(List[{listed.group(1)}](), {items})"
             if typed == "bool":
                 # Codon converts any value assigned to a `bool` with its
                 # `__bool__` (`x: bool = "x"` compiles); a call does not.
@@ -1303,3 +1316,8 @@ def render_library_driver(modules: list[str]) -> Driver:
         )
         calls.append(f"_acs_check_{i}()")
     return Driver("\n".join([*lines, "", "", *calls]) + "\n")
+
+
+def python_rewrite_value(node: ast.expr) -> str:
+    """*node* as source with the Python-level rewrites applied."""
+    return python_rewrites(ast.unparse(node) + "\n")[0].strip()

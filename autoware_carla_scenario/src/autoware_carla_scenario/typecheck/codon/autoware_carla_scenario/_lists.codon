@@ -59,6 +59,18 @@ def _acs_dict_into(out, *items):
     return out
 
 
+# _acs_list_into: a list display whose target type is known, or whose elements
+# share a class of the scenario's own, `[Dbl(), Neg()]` as
+# `_acs_list_into(List[Rule](), Dbl(), Neg())`: each element goes into the list
+# of the base class, as `append()` does, which refuses one that is not of it.
+
+
+def _acs_list_into(out, *items):
+    for item in items:
+        out.append(item)
+    return out
+
+
 # Last, not first: every module the checker rewrites imports these, and in the
 # library check some of them are imported by the model these import
 # (typecheck/library.py, REPLACED_MODELS). Codon resolves an import cycle with

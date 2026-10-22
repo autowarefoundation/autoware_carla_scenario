@@ -272,6 +272,96 @@ def test_a_list_of_calls_or_names_becomes_an_acs_list() -> None:
     assert "x = _acs_list(f(), g())" in transform_source("x = [f(), g()]\n")
 
 
+def _transform_own(source: str) -> str:
+    return _transform(_OWN_RULES + textwrap.dedent(source))
+
+
+_OWN_RULES = """
+class Rule: ...
+class Dbl(Rule): ...
+class Neg(Dbl): ...
+class Other: ...
+"""
+
+
+def test_a_list_display_of_own_classes_is_a_list_of_the_annotation() -> None:
+    # #480: Codon types a display by its first element, so a list of two
+    # subclasses (or of one) is no list of their base: the display is built
+    # into the annotated list.
+    out = _transform_own(
+        """
+        RULES: list[Rule] = [Dbl()]
+        def make() -> list[Rule]:
+            return [Dbl(), Neg()]
+        def total(rs: list[Rule], v: float = 1.0) -> float: ...
+        total([Dbl()])
+        total(rs=[Dbl(), Other()])
+        def f():
+            x: list[Rule] = [Dbl(), Neg()]
+        """
+    )
+    assert "RULES: list[Rule] = _acs_list_into(List[Rule](), Dbl())" in out
+    assert "return _acs_list_into(List[Rule](), Dbl(), Neg())" in out
+    assert "total(_acs_list_into(List[Rule](), Dbl()))" in out
+    assert "total(rs=_acs_list_into(List[Rule](), Dbl(), Other()))" in out
+    assert "x: list[Rule] = _acs_list_into(List[Rule](), Dbl(), Neg())" in out
+
+
+def test_a_dataclass_field_and_a_class_attribute_list_display() -> None:
+    out = _transform_own(
+        """
+        @dataclass
+        class H:
+            rules: list[Rule] = field(default_factory=lambda: [Dbl()], repr=False)
+        class R:
+            rules: list[Rule] = [Dbl(), Neg()]
+        """
+    )
+    assert "rules: list[Rule] = (_acs_list_into(List[Rule](), Dbl()))" in out
+    assert "rules: list[Rule] = _acs_list_into(List[Rule](), Dbl(), Neg())" in out
+
+
+def test_an_unannotated_list_display_of_own_classes_takes_their_common_base() -> None:
+    out = _transform_own(
+        """
+        a = [Dbl(), Neg()]
+        b = [Neg(), Dbl()]
+        c = [Dbl(), Other()]
+        d = [Dbl(), Dbl()]
+        e = [1, 2]
+        f: list[float] = [x, y]
+        """
+    )
+    assert "a = _acs_list_into(List[Dbl](), Dbl(), Neg())" in out
+    assert "b = _acs_list_into(List[Dbl](), Neg(), Dbl())" in out
+    assert "c = _acs_list(Dbl(), Other())" in out
+    assert "d = _acs_list(Dbl(), Dbl())" in out
+    assert "e = [1, 2]" in out
+    assert "f: list[float] = _acs_list(x, y)" in out
+
+
+def test_a_display_of_classes_with_a_foreign_base_stays_an_acs_list() -> None:
+    # A base from elsewhere may be BaseCondition: `_acs_list` makes those a
+    # List[BaseCondition], a List[Mid] would be none (#480).
+    out = _transform(
+        textwrap.dedent(
+            """
+            from lib import BaseCondition
+            class Mid(BaseCondition): ...
+            class A(Mid): ...
+            class B(Mid): ...
+            class P: ...
+            class Q(P): ...
+            class R(P): ...
+            x = [A(), B()]
+            y = [Q(), R()]
+            """
+        )
+    )
+    assert "x = _acs_list(A(), B())" in out
+    assert "y = _acs_list_into(List[P](), Q(), R())" in out
+
+
 def test_a_dict_display_of_mixed_values_wraps_them_in_acs_base() -> None:
     # Codon types a dict display by its first item (#250): each value that may
     # be a condition or an action becomes its base class; the display, and

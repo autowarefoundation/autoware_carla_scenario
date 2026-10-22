@@ -199,7 +199,7 @@ MISSING_BUILTIN_EXCEPTIONS = (
 #: back by as many.
 PRELUDE = (
     "from autoware_carla_scenario._lists import _acs_list, _acs_base, "
-    "_acs_dict_into\n"
+    "_acs_dict_into, _acs_list_into\n"
     "from autoware_carla_scenario._tc import _Required as _acs_Required, "
     "_acs_Returning, _acs_callable, _acs_tuple, _acs_reduce\n"
     "from enum import IntEnum as _acs_IntEnum, IntFlag as _acs_IntFlag, "
@@ -276,6 +276,11 @@ _DICT_ANNOTATIONS = {
 #: numpy's array class, which Codon's numpy has as ``ndarray[dtype, ndim]``.
 _NDARRAY_NAMES = {"np.ndarray", "numpy.ndarray"}
 _DTYPE_NAMES = {"np.dtype", "numpy.dtype"}
+_LIST_ANNOTATIONS = {"list", "List", "typing.List"}
+#: Bases that make a class no framework condition or action.
+_PLAIN_BASES = {"object", "ABC", "abc.ABC"}
+#: Types Codon displays on its own: a ``list[float]`` is not rewritten.
+_SCALAR_NAMES = {"int", "float", "str", "bool", "bytes", "complex"}
 _UNEXPRESSIBLE = {
     "Any",
     "object",
@@ -929,6 +934,18 @@ class _Rewriter(ShadowScopes):
         self.enums: list[_EnumInfo] = []
         #: Local name -> the ``functools`` name it is imported as.
         self._functools_names: dict[str, str] = {}
+        #: The list displays (by ``id``) whose target type is known, and the
+        #: class name of its elements: ``_acs_list_into(List[B](), ...)``.
+        self._list_targets: dict[int, str] = {}
+        #: The element class of the ``-> list[B]`` of each function being
+        #: visited (``None``: no such return annotation).
+        self._return_elements: list[str | None] = []
+        #: Top-level classes of the module -> the names of their bases.
+        self._class_bases: dict[str, list[str]] = {}
+        #: Top-level functions of the module and the ``__init__`` / dataclass
+        #: fields of its classes -> the parameters (name, annotation) a call
+        #: passes its arguments to, in order.
+        self._signatures: dict[str, list[tuple[str, ast.expr | None]]] = {}
         #: Local names of the ``functools`` module.
         self._functools_modules: set[str] = set()
 
@@ -993,6 +1010,7 @@ class _Rewriter(ShadowScopes):
             if local not in rebound
         }
         later = {stmt.name for stmt in node.body if isinstance(stmt, ast.ClassDef)}
+        self._scan_signatures(node)
         self._type_vars = {
             target.id
             for stmt in node.body
@@ -1007,6 +1025,143 @@ class _Rewriter(ShadowScopes):
                 later.discard(stmt.name)  # a class may name itself
             self._later_classes = set(later)
             self.visit(stmt)
+
+    def _scan_signatures(self, module: ast.Module) -> None:
+        """Note the module's classes and the parameters its callables take.
+
+        For the list displays (:meth:`visit_List`): a class's bases tell the
+        nearest class two elements share, and a parameter annotated
+        ``list[B]`` the type of the display passed to it.  A name the module
+        defines twice is left out (which one is called is not told here).
+        """
+        seen: set[str] = set()
+        duplicated: set[str] = set()
+        for stmt in module.body:
+            if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                (duplicated if stmt.name in seen else seen).add(stmt.name)
+        for stmt in module.body:
+            if getattr(stmt, "name", None) in duplicated:
+                continue
+            if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                self._signatures[stmt.name] = _parameters(stmt.args, skip_first=False)
+            elif isinstance(stmt, ast.ClassDef):
+                self._class_bases[stmt.name] = [
+                    name
+                    for base in stmt.bases
+                    for name in [
+                        _dotted(base.value if isinstance(base, ast.Subscript) else base)
+                    ]
+                    if name is not None
+                ]
+                init = next(
+                    (
+                        sub
+                        for sub in stmt.body
+                        if isinstance(sub, ast.FunctionDef) and sub.name == "__init__"
+                    ),
+                    None,
+                )
+                if init is not None:
+                    self._signatures[stmt.name] = _parameters(
+                        init.args, skip_first=True
+                    )
+                elif any(
+                    _dotted(d.func if isinstance(d, ast.Call) else d)
+                    in {"dataclass", "dataclasses.dataclass"}
+                    for d in stmt.decorator_list
+                ):
+                    self._signatures[stmt.name] = [
+                        (sub.target.id, sub.annotation)
+                        for sub in stmt.body
+                        if isinstance(sub, ast.AnnAssign)
+                        and isinstance(sub.target, ast.Name)
+                    ]
+
+    def _list_element(self, annotation: ast.AST | None) -> str | None:
+        """``B`` for a ``list[B]`` annotation of a class Codon can name, else ``None``.
+
+        ``B`` is a plain class name (not a scalar, ``Any``, a ``TypeVar`` or a
+        class defined further down).
+        """
+        if (
+            not isinstance(annotation, ast.Subscript)
+            or _dotted(annotation.value) not in _LIST_ANNOTATIONS
+            or not isinstance(annotation.slice, ast.Name)
+        ):
+            return None
+        name = annotation.slice.id
+        if (
+            name in _UNEXPRESSIBLE
+            or name in _SCALAR_NAMES
+            or name in _CONCRETE_GENERICS | _ABSTRACT_GENERICS
+            or name in self._type_vars
+            or name in self._later_classes
+        ):
+            return None
+        return name
+
+    def _mark_list(self, value: ast.AST | None, annotation: ast.AST | None) -> None:
+        """Note that the list display *value* is to be a ``list[B]`` of *annotation*."""
+        if isinstance(value, ast.List) and listable_display(value):
+            element = self._list_element(annotation)
+            if element is not None:
+                self._list_targets[id(value)] = element
+
+    def _mark_list_arguments(self, node: ast.Call) -> None:
+        """Note the list displays passed to a ``list[B]`` parameter of the
+        module's own function or class (``total([Dbl(), Neg()])``)."""
+        callee = _dotted(node.func)
+        parameters = self._signatures.get(callee) if callee is not None else None
+        if parameters is None:
+            return
+        for (_, annotation), arg in zip(parameters, node.args):
+            self._mark_list(arg, annotation)
+        by_name = dict(parameters)
+        for kw in node.keywords:
+            if kw.arg is not None and kw.arg in by_name:
+                self._mark_list(kw.value, by_name[kw.arg])
+
+    def _common_base(self, elements: list[ast.expr]) -> str | None:
+        """The nearest class of the module that the classes constructed by
+        *elements* (``Dbl()``, ``Neg()``) all derive from, if there is one."""
+        names = []
+        for element in elements:
+            if not isinstance(element, ast.Call):
+                return None
+            callee = _dotted(element.func)
+            if callee is None or callee not in self._class_bases:
+                return None
+            names.append(callee)
+        if len(set(names)) < 2:
+            return None
+        lines = [self._ancestors(name) for name in names]
+        shared = set.intersection(*(set(line) for line in lines))
+        for ancestor in lines[0]:
+            if ancestor in shared and ancestor not in self._later_classes:
+                # A base from elsewhere may be a framework condition or action,
+                # whose displays `_acs_list` upcasts to BaseCondition /
+                # BaseAction: leave those to it, a List[Mid] is no
+                # List[BaseCondition].
+                if any(
+                    base not in self._class_bases and base not in _PLAIN_BASES
+                    for line in self._ancestors(ancestor)
+                    for base in self._class_bases[line]
+                ):
+                    return None
+                return ancestor
+        return None
+
+    def _ancestors(self, name: str) -> list[str]:
+        """*name* and the classes of the module it derives from, nearest first."""
+        out: list[str] = []
+        queue = [name]
+        while queue:
+            current = queue.pop(0)
+            if current in out or current not in self._class_bases:
+                continue
+            out.append(current)
+            queue.extend(self._class_bases[current])
+        return out
 
     def _rewrite_annotation(self, node: ast.AST, *, class_level: bool) -> str | None:
         """Rewrite *node* in place; ``None`` when it must be dropped instead."""
@@ -1309,8 +1464,14 @@ class _Rewriter(ShadowScopes):
         if class_name is not None:
             self._method_class = class_name
         self._function_depth += 1
+        self._return_elements.append(
+            None
+            if node.returns is None or isinstance(node, ast.AsyncFunctionDef)
+            else self._list_element(node.returns)
+        )
         for stmt in node.body:
             self.visit(stmt)
+        self._return_elements.pop()
         self._function_depth -= 1
         self._class_depth = class_depth
         self._class_name = class_name
@@ -1556,6 +1717,25 @@ class _Rewriter(ShadowScopes):
     def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
         class_level = self._class_depth > 0 and self._function_depth == 0
         value = node.value
+        self._mark_list(value, node.annotation)
+        factory = (
+            _lambda_factory(value)
+            if class_level and isinstance(value, ast.Call)
+            else None
+        )
+        listed: ast.expr | None = None
+        if factory is not None:
+            self._mark_list(factory.body, node.annotation)
+            if id(factory.body) in self._list_targets:
+                # `field(default_factory=lambda: [Dbl()])` of a `list[Rule]`:
+                # the default alone, `(_acs_list_into(List[Rule](), Dbl()))`.
+                assert isinstance(value, ast.Call)
+                call_start, call_end = self.edits.node_span(value)
+                body_start, body_end = self.edits.node_span(factory.body)
+                self.edits.replace(call_start, body_start, "(")
+                self.edits.replace(body_end, call_end, ")")
+                listed = factory.body
+                value = None  # replaced as a whole
         if (
             class_level
             and value is not None
@@ -1608,6 +1788,8 @@ class _Rewriter(ShadowScopes):
         self.visit(node.target)
         if value is not None:
             self.visit(value)
+        if listed is not None:
+            self.visit(listed)
 
     def visit_Raise(self, node: ast.Raise) -> None:
         if node.exc is not None and node.cause is not None and _is_none(node.cause):
@@ -1622,6 +1804,7 @@ class _Rewriter(ShadowScopes):
         self.generic_visit(node)
 
     def visit_Call(self, node: ast.Call) -> None:
+        self._mark_list_arguments(node)
         if isinstance(node.func, ast.Name) and node.func.id == "frozenset":
             # Codon 0.19 has no frozenset: build a set, which types the same.
             start, end = self.edits.node_span(node.func)
@@ -1851,16 +2034,72 @@ class _Rewriter(ShadowScopes):
         edits.replace(previous, end, ")" + edits.text(previous, end - 1) + ")")
 
     def visit_List(self, node: ast.List) -> None:
-        if (
-            isinstance(node.ctx, ast.Load)
-            and len(node.elts) >= 2
-            and not any(isinstance(e, ast.Starred) for e in node.elts)
-            and not all(isinstance(e, ast.Constant) for e in node.elts)
-        ):
-            start, end = self.edits.node_span(node)
+        if not isinstance(node.ctx, ast.Load):
+            self.generic_visit(node)
+            return
+        element = self._list_targets.pop(id(node), None)
+        if element is None and len(node.elts) >= 2 and listable_display(node):
+            # `[Dbl(), Neg()]`: a list of the nearest class they share.
+            element = self._common_base(node.elts)
+        start, end = self.edits.node_span(node)
+        if element is not None:
+            # `_acs_list_into(List[B](), a, b)`: a list of B that each element
+            # is put into, as `append()` does (Codon types a display by its
+            # first element and does not make a list of a subclass one of
+            # its base).
+            self.edits.replace(start, start + 1, f"_acs_list_into(List[{element}](), ")
+            self.edits.replace(end - 1, end, ")")
+        elif len(node.elts) >= 2 and listable_display(node):
             self.edits.replace(start, start + 1, "_acs_list(")
             self.edits.replace(end - 1, end, ")")
         self.generic_visit(node)
+
+    def visit_Return(self, node: ast.Return) -> None:
+        if self._return_elements and self._return_elements[-1] is not None:
+            if isinstance(node.value, ast.List) and listable_display(node.value):
+                self._list_targets[id(node.value)] = self._return_elements[-1]  # type: ignore[assignment]
+        self.generic_visit(node)
+
+
+def listable_display(node: ast.List) -> bool:
+    """Whether the list display *node* is one ``_acs_list`` / ``_acs_list_into``
+    makes: no starred element, and not all literals (which Codon types)."""
+    return (
+        bool(node.elts)
+        and not any(isinstance(e, ast.Starred) for e in node.elts)
+        and not all(isinstance(e, ast.Constant) for e in node.elts)
+        and not all(isinstance(e, ast.JoinedStr) for e in node.elts)
+        and not _same_class_attributes(node.elts)
+    )
+
+
+def _same_class_attributes(elements: list[ast.expr]) -> bool:
+    """Whether *elements* are all members of one class (``Color.RED``, ...)."""
+    if not all(isinstance(e, ast.Attribute) for e in elements):
+        return False
+    bases = {_dotted(e.value) for e in elements}  # type: ignore[attr-defined]
+    base = bases.pop() if len(bases) == 1 else None
+    return base is not None and base.rsplit(".", 1)[-1][:1].isupper()
+
+
+def _lambda_factory(call: ast.Call) -> ast.Lambda | None:
+    """The lambda of ``field(default_factory=lambda: ...)``, if that is *call*."""
+    if _dotted(call.func) not in _FIELD_FUNCTIONS:
+        return None
+    for kw in call.keywords:
+        if kw.arg == "default_factory" and isinstance(kw.value, ast.Lambda):
+            return kw.value
+    return None
+
+
+def _parameters(
+    args: ast.arguments, *, skip_first: bool
+) -> list[tuple[str, ast.expr | None]]:
+    """The parameters (name, annotation) of *args*, positional ones first."""
+    positional = [*args.posonlyargs, *args.args]
+    if skip_first:
+        positional = positional[1:]
+    return [(a.arg, a.annotation) for a in [*positional, *args.kwonlyargs]]
 
 
 #: The dict display values ``_acs_base`` wraps: those that may be a

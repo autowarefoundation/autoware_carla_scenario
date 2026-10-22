@@ -3420,6 +3420,188 @@ def test_a_dict_display_of_different_classes_compiles(
     assert result.ok, result.format()
 
 
+_OWN_RULES = """
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+
+class Rule:
+    def apply(self, v: float) -> float:
+        return v
+
+
+class Dbl(Rule):
+    def apply(self, v: float) -> float:
+        return v * 2.0
+
+
+class Neg(Rule):
+    def apply(self, v: float) -> float:
+        return -v
+
+    def flip(self) -> bool:
+        return True
+
+
+class Other:
+    def apply(self, v: float) -> float:
+        return v
+
+
+RULES: list[Rule] = [Dbl()]
+PAIR: list[Rule] = [Dbl(), Neg()]
+
+
+def make() -> list[Rule]:
+    return [Dbl(), Neg()]
+
+
+def make_one() -> list[Rule]:
+    return [Dbl()]
+
+
+def total(rules: list[Rule], v: float = 1.0) -> float:
+    out = v
+    for rule in rules:
+        out = rule.apply(out)
+    return out
+
+
+def use_argument() -> float:
+    return total([Dbl(), Neg()]) + total([Neg()], v=2.0)
+
+
+def use_keyword() -> float:
+    return total(rules=[Dbl(), Neg()])
+
+
+def use_common_base() -> float:
+    mixed = [Dbl(), Neg()]
+    return total(mixed)
+
+
+@dataclass
+class Holder:
+    rules: list[Rule] = field(default_factory=lambda: [Dbl(), Neg()])
+    one: list[Rule] = field(default_factory=lambda: [Dbl()])
+
+
+class Registry:
+    rules: list[Rule] = [Dbl(), Neg()]
+    untyped = [Dbl(), Neg()]
+"""
+
+_OWN_RULES_IMPORT = (
+    "from .configs import CaseConfig\n"
+    "from .rules import (\n"
+    "    PAIR, RULES, Dbl, Holder, Neg, Other, Registry, Rule, make, make_one, total,\n"
+    "    use_argument, use_common_base, use_keyword,\n"
+    ")\n"
+)
+
+
+def _own_rules_case(tmp_path: Path, setup: str) -> tuple[type, type, Path]:
+    header = _HEADER.replace("from .configs import CaseConfig\n", _OWN_RULES_IMPORT, 1)
+    return _write_case(tmp_path, setup, header=header, modules={"rules.py": _OWN_RULES})
+
+
+@pytest.mark.parametrize(
+    "setup",
+    [
+        'logger.info("%f", total(RULES) + total(PAIR))\n',
+        """
+        rules: list[Rule] = [Dbl(), Neg()]
+        one: list[Rule] = [Dbl()]
+        logger.info("%f", total(rules) + total(one))
+        """,
+        'logger.info("%f", total(make()) + total(make_one()))\n',
+        'logger.info("%f", use_argument())\n',
+        'logger.info("%f", use_keyword())\n',
+        """
+        holder = Holder()
+        logger.info("%f", total(holder.rules) + total(holder.one))
+        """,
+        """
+        logger.info("%f", total(Registry().rules) + total(Registry.untyped))
+        """,
+        'logger.info("%f", use_common_base())\n',
+        """
+        rules: list[Rule] = [
+            Dbl(),  # doubled
+            Neg(),
+        ]
+        logger.info("%f", total(rules))
+        """,
+    ],
+    ids=[
+        "module-level",
+        "local",
+        "return",
+        "argument",
+        "keyword-argument",
+        "dataclass-factory",
+        "class-attribute",
+        "common-base",
+        "multi-line",
+    ],
+)
+def test_a_list_display_of_the_scenarios_own_subclasses_compiles(
+    tmp_path: Path, setup: str
+) -> None:
+    # Codon types a list display by its first element and a List[Dbl] is no
+    # List[Rule]: each of these was refused (`_acs_list(*items:
+    # Tuple[Dbl,Neg])`, #480) until the check made the display a list of the
+    # annotated element type, or of the nearest class the elements share.
+    scenario, config, _ = _own_rules_case(tmp_path, setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+@pytest.mark.parametrize(
+    ("setup", "needle", "message"),
+    [
+        (
+            "rules: list[Rule] = [Dbl(), Other()]\n",
+            "rules: list[Rule]",
+            "'Other' does not match expected type 'Rule'",
+        ),
+        (
+            "rules: list[Rule] = [Dbl(), Neg()]\nrules[0].flip()\n",
+            "rules[0].flip()",
+            "flip",
+        ),
+    ],
+    ids=["local", "subclass-only-method"],
+)
+def test_a_list_display_of_own_classes_still_checks_its_elements(
+    tmp_path: Path, setup: str, needle: str, message: str
+) -> None:
+    # The list is a list of the base: a class that is not a subclass is
+    # refused, and so is a method only a subclass has.
+    scenario, config, path = _own_rules_case(tmp_path, setup)
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert message in error.message, error.format()
+    assert "_acs_list" not in error.message, error.format()
+    assert error.path == str(path), error.format()
+    assert error.line == _line_of(path, needle), error.format()
+
+
+def test_a_list_display_of_unrelated_classes_is_refused_with_a_hint(
+    tmp_path: Path,
+) -> None:
+    # No class is shared (and nothing annotated): the refusal says so and
+    # names the fix, without the helper that reported it.
+    setup = 'mixed = [Dbl(), Other()]\nlogger.info("%d", len(mixed))\n'
+    scenario, config, path = _own_rules_case(tmp_path, setup)
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "_acs_list" not in error.message, error.format()
+    assert "list[Base]" in error.message, error.format()
+    assert not any("_acs_list" in frame for frame in error.trace), error.format()
+    assert error.path == str(path), error.format()
+    assert error.line == _line_of(path, "mixed = [Dbl(), Other()]"), error.format()
+
+
 @pytest.mark.parametrize(
     ("setup", "needle"),
     [
