@@ -32,6 +32,11 @@ DEFAULT_WALKING_SPEED_MS = 1.4
 #: when the scenario does not say: about one stride and a half.
 DEFAULT_TURN_BACK_WITHIN_M = 1.0
 
+#: How far back from the kerb a pedestrian that turns back stands (m), at most
+#: as far as where it set off.  Not on the kerb's edge itself: a CARLA 0.10
+#: walker stopped with its feet on the edge tips over, slowly, into the road.
+_STEP_BACK_M = 0.5
+
 #: Closing speeds below this are "not closing", as in the TTC condition.
 _CLOSING_SPEED_EPSILON = 1e-6
 
@@ -70,8 +75,9 @@ class WalkStraightAction(BaseAction):
       reads it.  How far it has gone onto the road is the distance from the
       last place it stood off the road -- the kerb, where it stepped out.
       Within *turn_back_within_m* of the kerb it turns round and walks back
-      to it at *speed_ms*, then stands there.  Further out, it keeps going.
-    * Not on the road yet, it stops where it stands rather than step out.
+      at *speed_ms*, to half a metre behind the kerb (no further back than
+      where it set off), and stands there.  Further out, it keeps going.
+    * Not on the road yet, it steps back the same way rather than step out.
 
     Either way the walk ends there: the pedestrian stands until another
     action moves it.  The action runs, watching, until the pedestrian has
@@ -114,6 +120,10 @@ class WalkStraightAction(BaseAction):
     _has_kerb: bool
     _kerb_x: float
     _kerb_y: float
+    _start_x: float
+    _start_y: float
+    _target_x: float
+    _target_y: float
 
     def __init__(
         self,
@@ -157,6 +167,10 @@ class WalkStraightAction(BaseAction):
         self._has_kerb = False
         self._kerb_x = 0.0
         self._kerb_y = 0.0
+        self._start_x = 0.0
+        self._start_y = 0.0
+        self._target_x = 0.0
+        self._target_y = 0.0
 
     @property
     def turns_back(self) -> bool:
@@ -202,6 +216,8 @@ class WalkStraightAction(BaseAction):
         walking: carla.Actor = actor
         transform = walking.get_transform()
         self._yaw_deg = transform.rotation.yaw
+        self._start_x = transform.location.x
+        self._start_y = transform.location.y
         self._has_kerb = False
         self._mark_kerb(world, transform.location)
         self._phase = _WALKING
@@ -246,7 +262,7 @@ class WalkStraightAction(BaseAction):
         pedestrian: carla.Actor = actor
         location = pedestrian.get_transform().location
         if self._phase == _TURNING_BACK:
-            self._walk_back(world, walker, location)
+            self._walk_back(walker, location)
             return
 
         on_road = self._mark_kerb(world, location)
@@ -273,15 +289,14 @@ class WalkStraightAction(BaseAction):
         threat = self._threat(world, pedestrian, location)
         if threat is None:
             return
-        if not on_road:
-            walker.walk_straight(0.0)
-            logger.info(
-                "WalkStraightAction: '%s' stops at the kerb (%s)",
-                self._entity_name,
-                threat,
-            )
-            self._phase = _SETTLED
-            return
+        # Where it stands once back: behind the kerb, on the pavement.
+        back = math.radians(self._back_yaw_deg())
+        step = min(
+            _STEP_BACK_M,
+            math.hypot(self._start_x - self._kerb_x, self._start_y - self._kerb_y),
+        )
+        self._target_x = self._kerb_x + step * math.cos(back)
+        self._target_y = self._kerb_y + step * math.sin(back)
         walker.walk_straight(self._speed_ms, yaw_deg=self._back_yaw_deg())
         logger.info(
             "WalkStraightAction: '%s' turns back %.2f m onto the road (%s)",
@@ -290,20 +305,21 @@ class WalkStraightAction(BaseAction):
             threat,
         )
         self._phase = _TURNING_BACK
+        self._walk_back(walker, location)
 
-    def _walk_back(
-        self, world: "carla.World", walker: PedestrianEntity, location: carla.Location
-    ) -> None:
-        """Stand the pedestrian walking back once it is off the road again, or
-        level with the kerb it stepped out from."""
+    def _walk_back(self, walker: PedestrianEntity, location: carla.Location) -> None:
+        """Stand the pedestrian walking back once it has reached where it is
+        to stand."""
         back = math.radians(self._back_yaw_deg())
-        ahead = (self._kerb_x - location.x) * math.cos(back) + (
-            self._kerb_y - location.y
+        ahead = (self._target_x - location.x) * math.cos(back) + (
+            self._target_y - location.y
         ) * math.sin(back)
-        if ahead > 0.0 and self._on_road(world, location):
+        if ahead > 0.0:
             return
         walker.walk_straight(0.0)
-        logger.info("WalkStraightAction: '%s' is back at the kerb", self._entity_name)
+        logger.info(
+            "WalkStraightAction: '%s' is back behind the kerb", self._entity_name
+        )
         self._phase = _SETTLED
 
     def _back_yaw_deg(self) -> float:

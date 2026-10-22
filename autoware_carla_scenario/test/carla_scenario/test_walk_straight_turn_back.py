@@ -135,8 +135,8 @@ class _Vehicle:
 
 
 class _Scene:
-    def __init__(self, vehicles: list[_Vehicle]) -> None:
-        start = _world_at(CROSSING_S, START_T)
+    def __init__(self, vehicles: list[_Vehicle], start_t: float = START_T) -> None:
+        start = _world_at(CROSSING_S, start_t)
         across = _world_at(CROSSING_S, 0.0)
         yaw = math.degrees(math.atan2(across.y - start.y, across.x - start.x))
         self.walker = _Walker(start, yaw)
@@ -183,8 +183,8 @@ def scene(loaded_map: MapManager, monkeypatch: pytest.MonkeyPatch) -> Iterator[A
     monkeypatch.setattr(walk_module, "run_carla_map", lambda world: _RoadMap())
     scenes: list[_Scene] = []
 
-    def make(*vehicles: _Vehicle) -> _Scene:
-        built = _Scene(list(vehicles))
+    def make(*vehicles: _Vehicle, start_t: float = START_T) -> _Scene:
+        built = _Scene(list(vehicles), start_t)
         register_entity("walker1", built.entity)
         scenes.append(built)
         return built
@@ -226,10 +226,25 @@ def test_a_vehicle_too_close_along_the_road_turns_it_back_to_the_kerb(
     # It turned within a tick or two of the vehicle closing in.
     assert KERB_T + 0.3 < s.t < KERB_T + 0.7
     s.run(action, 1.5)
-    # Walked back to the kerb, and stands there.
+    # Walked back to half a metre behind the kerb, and stands there.
     assert s.walker.speed == 0.0
-    assert KERB_T - 0.15 < s.t < KERB_T + 0.05
+    assert KERB_T - 0.65 < s.t < KERB_T - 0.45
     assert action.state is ActionState.COMPLETE
+
+
+def test_it_steps_back_no_further_than_where_it_set_off(scene: Any) -> None:
+    # Set off 0.2 m behind the kerb: back there, not half a metre behind it.
+    s = scene(_Vehicle(CROSSING_S + 30.0), start_t=KERB_T - 0.2)
+    action = _action(turn_back_distance_m=10.0)
+
+    def close_in(scene: _Scene) -> None:
+        if scene.t > KERB_T + 0.5:
+            scene.vehicles[0].s = CROSSING_S + 8.0
+
+    s.run(action, 2.5, close_in)
+    assert s.reversed
+    assert s.walker.speed == 0.0
+    assert KERB_T - 0.35 < s.t < KERB_T - 0.15
 
 
 def test_a_vehicle_closing_within_the_ttc_turns_it_back(scene: Any) -> None:
@@ -243,7 +258,7 @@ def test_a_vehicle_closing_within_the_ttc_turns_it_back(scene: Any) -> None:
     assert s.reversed
     s.run(action, 1.0)
     assert s.walker.speed == 0.0
-    assert s.t < KERB_T + 0.05
+    assert s.t < KERB_T - 0.4
     assert action.state is ActionState.COMPLETE
 
 
@@ -255,13 +270,14 @@ def test_a_vehicle_driving_away_has_no_ttc(scene: Any) -> None:
     assert s.t > KERB_T + 2.0
 
 
-def test_still_on_the_kerb_it_stops_rather_than_step_out(scene: Any) -> None:
+def test_not_on_the_road_yet_it_stays_off_it(scene: Any) -> None:
     s = scene(_Vehicle(CROSSING_S + 8.0))
     action = _action(turn_back_distance_m=10.0)
     s.run(action, 1.0)
+    # Stopped a step from where it set off, back no further than that.
     assert s.walker.speed == 0.0
-    assert s.t < KERB_T
-    assert not s.reversed
+    # (A tick of overshoot: 0.1 m at 2 m/s.)
+    assert START_T - 0.15 < s.t < START_T + 0.15
     assert action.state is ActionState.COMPLETE
 
 

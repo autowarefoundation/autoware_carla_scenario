@@ -50,10 +50,11 @@ the vehicles as it goes (`WalkStraightAction`'s turn-back options):
 - **When.** Once a vehicle's time to collision with it, or its distance to it,
   is at or under the threshold. Both are measured along the road, centre to
   centre, as the lane-frame TTC and distance conditions measure them.
-- **Where it can.** While the pedestrian is still on the kerb, it stops there.
-  Up to `turn_back_within_m` onto the road -- a driving lane under it, measured
-  from where it stepped off -- it turns round, walks back to the kerb and
-  stands. Further out, it keeps going.
+- **Where it can.** Up to `turn_back_within_m` onto the road -- a driving lane
+  under it, measured from where it stepped off -- it turns round, walks back to
+  half a metre behind the kerb (no further back than where it set off) and
+  stands. One not on the road yet steps back the same way. Further out, it
+  keeps going.
 
 ```bash
 uv run scenario scenario=pedestrian_dart_out/pedestrian_dart_out map=<map> \
