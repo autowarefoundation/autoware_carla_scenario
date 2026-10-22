@@ -64,6 +64,9 @@ class T4Recording:
 
 
 class T4Recorder:
+    def __init__(self):
+        compile_error("T4Recorder(): no constructor takes these arguments (required: settings)")
+
     # The settings (T4Settings) and the writer package, which Python holds as
     # a module: taken as they come.
     def __init__(self, settings, writer = None):
