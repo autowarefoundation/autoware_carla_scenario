@@ -728,7 +728,40 @@ _STORING_METHODS = {
 }
 
 
-def stored_parameters(body: list[ast.stmt], names: set[str]) -> set[str]:
+#: A class's methods and, for each, the parameters it stores: the parameter
+#: names in order (``self`` excluded) and the stored ones.
+_Forwards = dict[str, tuple[list[str], set[str]]]
+
+
+def forwarded_stores(cls: ast.ClassDef) -> _Forwards:
+    """The parameters each method of *cls* stores, one that hands them to a
+    method that stores them included (``register`` calls ``self._add(fn)``)."""
+    methods = {
+        m.name: m
+        for m in cls.body
+        if isinstance(m, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    forwards: _Forwards = {}
+    for name, method in methods.items():
+        every = [*method.args.posonlyargs, *method.args.args, *method.args.kwonlyargs]
+        if not any(_dotted(d) == "staticmethod" for d in method.decorator_list):
+            every = every[1:]
+        forwards[name] = ([a.arg for a in every], set())
+    changed = True
+    while changed:
+        changed = False
+        for name, method in methods.items():
+            params, stored = forwards[name]
+            now = stored_parameters(method.body, set(params), forwards)
+            if now - stored:
+                stored |= now
+                changed = True
+    return forwards
+
+
+def stored_parameters(
+    body: list[ast.stmt], names: set[str], forwards: _Forwards | None = None
+) -> set[str]:
     """The *names* the *body* puts in an attribute, a subscript or a collection.
 
     ``self.cb = fn``, ``self.cbs[key] = fn`` and ``self.cbs.append(fn)`` store
@@ -757,6 +790,21 @@ def stored_parameters(body: list[ast.stmt], names: set[str]) -> set[str]:
             and node.func.attr in _STORING_METHODS
         ):
             values = list(node.args)
+        if (
+            forwards
+            and isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id in ("self", "cls")
+            and node.func.attr in forwards
+        ):
+            params, stored = forwards[node.func.attr]
+            values += [
+                a
+                for i, a in enumerate(node.args)
+                if i < len(params) and params[i] in stored
+            ]
+            values += [k.value for k in node.keywords if k.arg in stored]
         for value in values:
             if isinstance(value, ast.Name) and value.id in names:
                 found.add(value.id)
@@ -996,6 +1044,7 @@ class _Rewriter(ShadowScopes):
         self._exceptions = exceptions
         #: The class whose body is being visited (``None`` in a function).
         self._class_name: str | None = None
+        self._forwards: _Forwards = {}
         #: The class whose method (or a function inside one) is being visited.
         self._method_class: str | None = None
         #: Top-level classes of the module defined below the statement
@@ -1297,7 +1346,7 @@ class _Rewriter(ShadowScopes):
         function, which Codon cannot convert to a ``Callable``, still checks.
         """
         node = arg.annotation
-        if node is None or not stored_parameters(body, {arg.arg}):
+        if node is None or not stored_parameters(body, {arg.arg}, self._forwards):
             return False
         if _annotation_names(node) & (self._later_classes | self._type_vars):
             return False
@@ -1625,12 +1674,14 @@ class _Rewriter(ShadowScopes):
             for base in node.bases:
                 self.visit(base)
         class_name, self._class_name = self._class_name, node.name
+        forwards, self._forwards = self._forwards, forwarded_stores(node)
         self._class_depth += 1
         for stmt in node.body:
             if members is None or stmt not in members:
                 self.visit(stmt)
         self._class_depth -= 1
         self._class_name = class_name
+        self._forwards = forwards
 
     def _rewrite_enum(self, node: ast.ClassDef) -> list[ast.stmt] | None:
         """Rewrite an Enum class for the ``enum`` shim; its members, or ``None``.

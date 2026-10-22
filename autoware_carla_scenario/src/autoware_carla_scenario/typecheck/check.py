@@ -141,7 +141,9 @@ _BAD_ALLOC = "std::bad_alloc"
 #: without comparing the two and only the verifier of the IR it generated
 #: notices (#488).
 _SIGNATURE_MISMATCH = "Call parameter type does not match function signature"
-_PASSED_FUNCTION = re.compile(r'ptr @"std\.[\w.]*?\.(?P<fn>\w+)\.\d+:\d+\[')
+#: Calls that take a zero-argument lambda as a factory, not as a ``Callable``.
+_FACTORY_CALLS = {"field", "defaultdict"}
+_PASSED_FUNCTION = re.compile(r'ptr @"std\.[\w.:]*?\.(?P<fn>\w+)\.\d+:\d+\[')
 #: The class an LLVM error's frame names, as in
 #: ``(__internal__.opt_ref_new_rtti:0[,std.pkg.module.Cls.0])``.
 _LLVM_CLASS = re.compile(
@@ -2202,17 +2204,34 @@ def _callable_signature_hints(output: str, sources: _Sources) -> list[Diagnostic
         "does not compare them and fails in code generation; give the function "
         "the argument and result types of the `Callable`"
     )
+    lambda_message = (
+        "A lambda that takes no arguments passed where a `Callable` is expected "
+        "is a likely cause: Codon 0.19 converts it without comparing the "
+        "signature and fails in code generation; pass a named function "
+        "(`def f() -> None`)"
+    )
     hints: list[Diagnostic] = []
     for module in sources.modules.values():
         for call in ast.walk(module.tree):
-            if not isinstance(call, ast.Call) or name is None:
+            if not isinstance(call, ast.Call):
                 continue
-            if any(
-                (isinstance(a, ast.Name) and a.id == name)
-                or (isinstance(a, ast.Attribute) and a.attr == name)
-                for a in [*call.args, *(k.value for k in call.keywords)]
-            ):
-                hints.append(Diagnostic(message, str(module.path), call.lineno))
+            for arg in [*call.args, *(k.value for k in call.keywords)]:
+                if name is not None and (
+                    (isinstance(arg, ast.Name) and arg.id == name)
+                    or (isinstance(arg, ast.Attribute) and arg.attr == name)
+                ):
+                    hints.append(Diagnostic(message, str(module.path), call.lineno))
+                elif (
+                    name is None
+                    and isinstance(arg, ast.Lambda)
+                    and not ast.unparse(arg.args)
+                    and (_dotted_name(call.func) or "").rpartition(".")[2]
+                    not in _FACTORY_CALLS
+                ):
+                    # No function is named in the IR: a lambda has no name.
+                    hints.append(
+                        Diagnostic(lambda_message, str(module.path), arg.lineno)
+                    )
     return hints or [Diagnostic(message)]
 
 

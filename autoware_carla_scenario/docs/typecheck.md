@@ -1266,7 +1266,8 @@ in step:
   `Type`, `Sized`, `Hashable`, `Any` and `Callable` annotations are dropped,
   so they are not checked. The exception is a `Callable[[A], R]` parameter
   whose function body stores it (`self._cb = fn`, `self._cbs[key] = fn`,
-  `self._cbs.append(fn)`), with argument and result types Codon can express:
+  `self._cbs.append(fn)`, or hands it to a method of the same class that
+  stores it, `self._add(fn)`), with argument and result types Codon can express:
   it is kept, written as Codon's `Callable[Tuple[A], R]`, so a callback
   registry (a class-level `_cbs: list[Callable[[int], int]]` that `register()`
   appends to) has the same type on both sides. A generic parameter put in a
@@ -1275,7 +1276,8 @@ in step:
   of the wrong signature is refused at the call. Two limits, both Codon's: a
   closure reading a local variable of its function cannot be converted (Codon's
   own refusal, with the dispatch-table hint), and neither can a lambda that
-  takes no arguments (`lambda: None`; pass a named function). A parameter the
+  takes no arguments (`lambda: None`; it is refused at its line after the
+  crash, with the hint to pass a named function). A parameter the
   body only calls, or passes on, stays dropped, so a closure still checks.
 - A Codon abort with `std::bad_alloc` names the `Callable` attributes of the
   checked modules at their lines; a function passed where a `Callable` of

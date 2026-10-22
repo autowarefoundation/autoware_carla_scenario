@@ -4178,3 +4178,32 @@ def test_every_way_of_storing_a_callable_parameter_keeps_it(store: str) -> None:
         """
     )
     assert "fn: Callable[Tuple[float], float]" in out
+
+
+def test_a_callable_parameter_handed_to_a_storing_method_is_kept() -> None:
+    # `register` only passes `fn` on to the method that stores it: the
+    # attribute is typed, so the generic parameter would abort Codon (#488).
+    out = _transform(
+        """
+        class R:
+            def _add(self, fn: Callable[[float], float]) -> None:
+                self.cbs.append(fn)
+
+            def register(self, fn: Callable[[float], float]) -> None:
+                self._add(fn)
+
+            def register_all(self, a: Callable[[float], float], b: int) -> None:
+                self._add(fn=a)
+
+            def call(self, fn: Callable[[float], float]) -> float:
+                return self.run(fn)
+
+            def run(self, fn: Callable[[float], float]) -> float:
+                return fn(1.0)
+        """
+    )
+    assert "def _add(self, fn: Callable[Tuple[float], float])" in out
+    assert "def register(self, fn: Callable[Tuple[float], float])" in out
+    assert "def register_all(self, a: Callable[Tuple[float], float], b: int)" in out
+    assert "def call(self, fn) -> float:" in out
+    assert "def run(self, fn) -> float:" in out

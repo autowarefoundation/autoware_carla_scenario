@@ -7511,3 +7511,68 @@ def test_a_codon_abort_names_the_callable_attributes(tmp_path: Path) -> None:
     assert "std::bad_alloc" in found[0].message
     assert "Callable" in found[0].message
     assert "std::bad_alloc" in check._bad_alloc_hints(check._Sources())[0].message
+
+
+def test_a_callback_stored_through_a_helper_method_compiles(tmp_path: Path) -> None:
+    # `register` hands the callback to `_add`, which stores it (#488).
+    definitions = """
+class Registry:
+    handlers: list[typing.Callable[[float], float]]
+
+    def __init__(self) -> None:
+        self.handlers = []
+
+    def _add(self, fn: typing.Callable[[float], float]) -> None:
+        self.handlers.append(fn)
+
+    def register(self, fn: typing.Callable[[float], float]) -> None:
+        self._add(fn)
+
+    def call(self, v: float) -> float:
+        return self.handlers[0](v)
+
+
+def inc(v: float) -> float:
+    return v + 1.0
+"""
+    setup = """
+        reg = Registry()
+        reg.register(inc)
+        self.register_fail_condition(TimeoutCondition(reg.call(1.0), label="t"))
+    """
+    scenario, config, _ = _data_case(tmp_path, definitions, setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+@pytest.mark.parametrize(
+    ("argument", "local"),
+    [("lambda: None", False), ("noop_str", True)],
+)
+def test_a_zero_argument_lambda_or_a_local_function_of_another_signature_is_located(
+    tmp_path: Path, argument: str, local: bool
+) -> None:
+    # Codon 0.19 fails in code generation on both (#488); the report names
+    # the line that passes them, not "failed without a diagnostic".
+    definitions = """
+class Ticks:
+    cbs: list[typing.Callable[[], None]]
+
+    def __init__(self) -> None:
+        self.cbs = []
+
+    def register(self, fn: typing.Callable[[], None]) -> None:
+        self.cbs.append(fn)
+"""
+    prelude = "def noop_str(v: str) -> str:\n            return v\n" if local else ""
+    setup = f"""
+        {prelude}
+        ticks = Ticks()
+        ticks.register({argument})
+        self.register_fail_condition(TimeoutCondition(1.0, label="t"))
+    """
+    scenario, config, path = _data_case(tmp_path, definitions, setup)
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert error.line == _line_of(path, "ticks.register("), error.format()
+    assert Path(error.path or "") == path, error.format()
+    assert "without a diagnostic" not in error.message, error.format()
