@@ -8,7 +8,7 @@ members = [
 # release, 0.1.0, is on PyPI: then this line goes, and the dev group below
 # takes it from PyPI as it takes the Rerun converter. Built from source until
 # then, so `uv sync` needs a Rust toolchain.
-autoware-carla-scenario-t4 = { git = "https://github.com/hakuturu583/autoware_carla_scenario_t4", rev = "7f8845560a02fcde7685802f7d51fa76976d040b" }
+autoware-carla-scenario-t4 = { git = "https://github.com/hakuturu583/autoware_carla_scenario_t4", rev = "a3c1b8f26a72d027855a4cd2b6833e818e807540" }
 # The T4 dataset reader the tests load each written dataset with, at its
 # latest release (it is not on PyPI under this name).
 t4-devkit = { git = "https://github.com/tier4/t4-devkit", tag = "v0.8.0" }

@@ -30,7 +30,7 @@ members = [
 [manifest.dependency-groups]
 dev = [
     { name = "autoware-carla-scenario-rerun", specifier = ">=0.1,<0.2" },
-    { name = "autoware-carla-scenario-t4", git = "https://github.com/hakuturu583/autoware_carla_scenario_t4?rev=7f8845560a02fcde7685802f7d51fa76976d040b" },
+    { name = "autoware-carla-scenario-t4", git = "https://github.com/hakuturu583/autoware_carla_scenario_t4?rev=a3c1b8f26a72d027855a4cd2b6833e818e807540" },
     { name = "black", specifier = ">=25.11.0" },
     { name = "colorama", marker = "python_full_version < '3.13'", specifier = ">=0.4.6" },
     { name = "cyclonedds", marker = "python_full_version < '3.14' and platform_machine == 'x86_64' and sys_platform == 'linux'", specifier = ">=11.0.1" },
@@ -237,7 +237,7 @@ requires-dist = [
     { name = "autoware-carla-scenario-rerun", marker = "extra == 'rerun'", specifier = ">=0.1,<0.2" },
     { name = "autoware-carla-scenario-rerun", marker = "extra == 'rerun-lidar'", specifier = ">=0.1,<0.2" },
     { name = "autoware-carla-scenario-rerun", extras = ["viewer"], marker = "extra == 'viewer'", specifier = ">=0.1,<0.2" },
-    { name = "autoware-carla-scenario-t4", marker = "extra == 't4'", git = "https://github.com/hakuturu583/autoware_carla_scenario_t4?rev=7f8845560a02fcde7685802f7d51fa76976d040b" },
+    { name = "autoware-carla-scenario-t4", marker = "extra == 't4'", git = "https://github.com/hakuturu583/autoware_carla_scenario_t4?rev=a3c1b8f26a72d027855a4cd2b6833e818e807540" },
     { name = "carla-driver-interface", specifier = ">=2.3,<3" },
     { name = "cyclonedds", marker = "python_full_version < '3.14' and platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'ros2'", specifier = ">=11.0.1" },
     { name = "eclipse-sumo", marker = "extra == 'sumo'", specifier = ">=1.23" },
@@ -291,7 +291,7 @@ viewer = [
 [[package]]
 name = "autoware-carla-scenario-t4"
 version = "0.1.0"
-source = { git = "https://github.com/hakuturu583/autoware_carla_scenario_t4?rev=7f8845560a02fcde7685802f7d51fa76976d040b#7f8845560a02fcde7685802f7d51fa76976d040b" }
+source = { git = "https://github.com/hakuturu583/autoware_carla_scenario_t4?rev=a3c1b8f26a72d027855a4cd2b6833e818e807540#a3c1b8f26a72d027855a4cd2b6833e818e807540" }
 dependencies = [
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
