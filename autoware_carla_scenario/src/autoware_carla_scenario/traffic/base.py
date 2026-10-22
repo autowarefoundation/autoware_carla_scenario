@@ -697,9 +697,12 @@ class TrafficBackend:
             entity: The pedestrian joining the run.
         """
 
-    def walk_straight(self, entity: WalkedEntity, speed_ms: float) -> bool:
-        """Walk *entity* on at *speed_ms* the way it faces, if this backend
-        walks it; *speed_ms* zero stops it where it is.
+    def walk_straight(
+        self, entity: WalkedEntity, speed_ms: float, yaw_deg: Optional[float] = None
+    ) -> bool:
+        """Walk *entity* on at *speed_ms* the way it faces -- or along
+        *yaw_deg*, a CARLA yaw in degrees, when given -- if this backend walks
+        it; *speed_ms* zero stops it where it is.
 
         Answers whether it did.  ``False`` leaves the walk to the entity, which
         walks its walker straight ahead itself (``carla.WalkerControl``): what
@@ -711,7 +714,9 @@ class TrafficBackend:
                 :class:`~autoware_carla_scenario.actions.WalkStraightAction`
                 names.
             speed_ms: Walking speed in metres per second.
+            yaw_deg: The way to walk; ``None`` is the way the walker faces.
         """
+        del yaw_deg
         return False
 
     def release_pedestrian(self, entity: WalkedEntity, world: "carla.World") -> None:

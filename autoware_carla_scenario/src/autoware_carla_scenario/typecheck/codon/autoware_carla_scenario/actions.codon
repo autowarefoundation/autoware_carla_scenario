@@ -543,10 +543,20 @@ class WalkStraightAction(BaseAction):
 
     def __init__(self, entity_name, speed_ms: float = 1.4, condition = None,
                  timing: TickTiming = TickTiming("pre_tick"), *_kw, label: str = "walk_straight",
-                 once: bool = True):
-        _keyword_only(_kw, "WalkStraightAction(): label and once")
+                 once: bool = True, turn_back_ttc_s: Optional[float] = None,
+                 turn_back_distance_m: Optional[float] = None,
+                 turn_back_within_m: float = 1.0):
+        _keyword_only(_kw, "WalkStraightAction(): label, once and the turn_back_* options")
         _expect_role(entity_name)
         super().__init__(label, condition, timing, once=once)
+
+    @property
+    def turns_back(self) -> bool:
+        raise NotImplementedError()
+
+    @property
+    def settled(self) -> bool:
+        raise NotImplementedError()
 
 
 class AdversarialBrakeAction(BaseAction):
