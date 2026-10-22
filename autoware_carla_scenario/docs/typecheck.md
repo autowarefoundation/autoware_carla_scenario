@@ -2226,11 +2226,13 @@ What Codon 0.19 needs that Python does not, beyond
 
   `tempfile` declares `mkstemp(suffix=None, prefix=None, dir=None,
   text=False)` only, with CPython 3.10's signature (a `str` or an
-  `os.PathLike` directory; bytes affixes are not declared) and nothing runs:
-  it returns `(-1, "")`. `mkdtemp()`, `NamedTemporaryFile()`,
-  `TemporaryDirectory()`, `gettempdir()` and the rest are not declared and
-  fail the check. Two more modules are not shims but extensions of Codon's
-  own `collections` and `itertools`, in `codon/_stdlib/` (#422): they add
+  `os.PathLike` directory; bytes affixes are not declared). The check only
+  compiles it, so its body is a stub that makes no file (it is typed to give
+  `(int, str)`, the descriptor and the name). `mkdtemp()`,
+  `NamedTemporaryFile()`, `TemporaryDirectory()`, `gettempdir()` and the
+  rest are not declared and fail the check. Two more modules are not
+  shims but extensions of Codon's own `collections` and `itertools`, in
+  `codon/_stdlib/` (#422): they add
   `collections.OrderedDict` and `itertools.pairwise`, as listed under
   "Standard library names Codon lacks".
 

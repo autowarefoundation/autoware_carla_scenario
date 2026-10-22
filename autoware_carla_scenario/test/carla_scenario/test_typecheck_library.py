@@ -3737,7 +3737,11 @@ def _shim_modules() -> set[str]:
             parts = parts[:-1]
             body = ast.parse(path.read_text()).body
             # A package whose __init__ only imports or is empty names no module.
-            if all(isinstance(n, (ast.Import, ast.ImportFrom)) for n in body):
+            imports = (ast.Import, ast.ImportFrom)
+            only_imports = all(isinstance(n, imports) for n in body)
+            # ... unless there is no submodule to stand for it: then it is a shim.
+            has_submodule = any(p != path for p in path.parent.rglob("*.codon"))
+            if only_imports and has_submodule:
                 continue
         names.add(".".join(parts))
     return names
