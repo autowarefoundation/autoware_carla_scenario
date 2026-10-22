@@ -9,6 +9,8 @@ import ast
 import builtins
 import dataclasses
 import enum
+import re
+import sys
 import textwrap
 from typing import Any, Optional
 
@@ -26,6 +28,7 @@ from autoware_carla_scenario.typecheck.transform import (
     classes_with_init,
     codon_annotation,
     conflicting_imports,
+    flag_member_values,
     inherited_inits,
     relative_module_imports,
     split_tuple_excepts,
@@ -62,6 +65,11 @@ def _transform(source: str) -> str:
     out = transform_source(textwrap.dedent(source))
     assert out.startswith(PRELUDE)
     return out[len(PRELUDE) :]
+
+
+def _without_extensions(out: str) -> str:
+    """*out* without its ``@extend`` blocks (each follows its class)."""
+    return re.sub(r"\n@extend\nclass \w+:\n(?:(?:[ ].*)?\n)*", "", out)
 
 
 def _annotation(text: str, *, class_level: bool = False) -> str | None:
@@ -832,17 +840,20 @@ def test_only_an_int_or_str_enum_derives_from_the_value_comparing_classes() -> N
                 X = 1
             class G(enum.Flag):
                 X = 1
+            class H(int, enum.Flag):
+                X = 1
             """
         )
     )
     for line in (
         "class A(_acs_IntEnum[int]):",
         "class B(_acs_IntEnum[int]):",
-        "class C(_acs_IntEnum[int]):",
+        "class C(_acs_IntFlag[int]):",
         "class D(_acs_StrEnum[str]):",
         "class E(_acs_StrEnum[str]):",
         "class F(enum.Enum[int]):",
         "class G(enum.Flag[int]):",
+        "class H(_acs_IntFlag[int]):",
     ):
         assert line in out
 
@@ -872,7 +883,7 @@ def test_an_enum_becomes_a_subclass_of_the_enum_shim() -> None:
         """
     )
     out = _transform(source)
-    body = out.partition("\n\n@extend\n")[0]  # the constructors by value follow
+    body = _without_extensions(out)  # the constructors by value follow
     assert body.count("\n") == source.count("\n")
     assert "@unique" not in out
     assert "class Turn(_acs_StrEnum[str]):" in out
@@ -900,11 +911,11 @@ def test_an_enum_is_given_a_constructor_by_value_after_the_module() -> None:
         """
     )
     out = _transform(source)
-    body, _, lookups = out.partition("\n\n@extend\n")
+    body = _without_extensions(out)
     assert body.count("\n") == source.count("\n")  # no line of the source moves
     assert "@extend\nclass Turn:\n    def __init__(self, value: str):" in out
     assert "@extend\nclass Level:\n    def __init__(self, value: int):" in out
-    assert "class Local" not in lookups  # the module's top-level enums only
+    assert "@extend\nclass Local:" not in out  # the module's top-level enums only
 
 
 def test_an_enum_is_given_its_members_and_a_lookup_by_name() -> None:
@@ -927,6 +938,165 @@ def test_an_enum_is_given_its_members_and_a_lookup_by_name() -> None:
     assert out.rstrip().endswith("raise KeyError(name)")
 
 
+_FLAGS = """
+class Perm(enum.IntFlag):
+    NONE = 0
+    R = 1
+    W = 2
+    RW = R | W
+    X = enum.auto()
+    BOTH = 3
+    HIGH = 1 << 4
+    Y = enum.auto()
+    ALL = ~0
+"""
+
+
+def test_a_flag_s_composite_values_are_worked_out_and_skipped_by_iteration() -> None:
+    # Python 3.11+ iterates the single-bit members: not zero, not a composite
+    # (`RW`), not an alias of one.
+    out = _transform(_FLAGS)
+    assert "RW: ClassVar[Perm] = Perm('RW', 3)" in out
+    assert "X: ClassVar[Perm] = Perm('X', 4)" in out  # above the highest bit (3)
+    assert "HIGH: ClassVar[Perm] = Perm('HIGH', 16)" in out
+    assert "Y: ClassVar[Perm] = Perm('Y', 32)" in out
+    assert "ALL: ClassVar[Perm] = Perm('ALL', -1)" in out
+    assert (
+        "return [Perm.R, Perm.W, Perm.X, Perm.HIGH, Perm.Y]" in out
+    ), "NONE, RW, BOTH and ALL are not iterated"
+    for name in ("NONE", "RW", "BOTH", "ALL"):
+        assert f"if name == '{name}':\n            return Perm.{name}" in out
+
+
+def test_a_flag_is_given_its_operators_after_the_module() -> None:
+    out = _transform(_FLAGS)
+    extension = out.partition("\n\n@extend\n")[2]
+    for method in ("or", "and", "xor"):
+        assert f"def __{method}__(self, other: Perm) -> Perm:" in extension
+        assert f"def __{method}__(self, other: int) -> Perm:" in extension
+        assert f"def __r{method}__(self, other: int) -> Perm:" in extension
+    assert "def __contains__(self, other: Perm) -> bool:" in extension
+    # `~` flips every bit below the highest (32), as IntFlag does.
+    assert "return Perm(63 & ~self._value_)" in extension
+    plain = _transform("class Bits(enum.Flag):\n    A = 1\n    B = 2\n")
+    assert "def __or__(self, other: Bits) -> Bits:" in plain
+    assert "other: int" not in plain  # only an IntFlag takes an int
+    assert "return Bits(3 & ~self._value_)" in plain
+
+
+_FLAG_DEFINITIONS = [
+    ("Flag", "A = auto()\nB = 4\nC = auto()\nD = 1\nE = auto()"),
+    ("Flag", "A = 1\nB = 2\nAB = A | B\nC = auto()"),
+    ("Flag", "R = 1\nW = 2\nRW = R | W\nX = 4"),
+    ("Flag", "N = 0\nR = 1\nW = 2"),
+    ("Flag", "R = 1\nW = 2\nREAD = 1\nX = 4"),
+    ("Flag", "A = 3\nB = auto()"),
+    ("Flag", "A = 1\nB = 2 * 2\nC = A + 6"),
+    ("Flag", "A = 1\nB = 2\nC = 4\nAB = A ^ B\nBC = (A | B | C) & ~A"),
+    ("Flag", "RW = 3\nR = 1\nW = 2"),
+    ("Flag", "A = 1\nB = 2\nC = 3\nD = 3"),
+    ("Flag", "A = 1\nB = 2\nBC = 6\nC = auto()"),
+    ("IntFlag", "R = 1\nW = 2\nALL = ~0"),
+    ("IntFlag", "R = 1\nW = 2\nM = -1"),
+    ("IntFlag", "R = 1\nW = 2\nT = 3\nF = 5\nX = 8"),
+    ("IntFlag", "A = 6\nB = 1\nC = 8"),
+    ("IntFlag", "A = 1 << 3\nB = 1 << 5\nC = auto()"),
+    ("IntFlag", "A = 16\nB = auto()\nC = auto()"),
+    ("IntFlag", "A = 1\nB = -4\nC = auto()"),
+    ("IntFlag", "R = 1\nW = 2\nBIG = 12"),
+    ("IntFlag", "N = 0\nR = 2\nW = 4"),
+]
+
+
+@pytest.mark.skipif(
+    sys.version_info < (3, 11), reason="Python 3.11 changed Flag iteration and ~"
+)
+@pytest.mark.parametrize(("kind", "body"), _FLAG_DEFINITIONS)
+def test_a_flag_s_values_iteration_and_complement_are_python_s(
+    kind: str, body: str
+) -> None:
+    # A differential test against CPython's own enum.Flag / IntFlag (#437).
+    source = f"class P(enum.{kind}):\n" + textwrap.indent(body, "    ") + "\n"
+    namespace: dict[str, Any] = {"enum": enum, "auto": enum.auto}
+    exec(source, namespace)  # noqa: S102
+    flag = namespace["P"]
+    assert flag_member_values(ast.parse(source).body[0].body) == {  # type: ignore[attr-defined]
+        name: member.value for name, member in flag.__members__.items()
+    }
+    out = _transform("import enum\nfrom enum import auto\n" + source)
+    listed = re.search(r"return \[(.*?)\]", out.partition("_acs_members")[2])
+    assert listed is not None
+    assert [m.strip().split(".")[1] for m in listed[1].split(",") if m] == [
+        member.name for member in flag
+    ]
+    flipped = re.search(r"return P\((-?\d+) & ~self\._value_\)", out)
+    assert flipped is not None
+    for member in flag.__members__.values():
+        assert int(flipped[1]) & ~member.value == (~member).value, member
+
+
+def test_a_flag_s_operators_follow_its_class_and_keep_the_lines_after_it() -> None:
+    # Module-level code (`RW = P.R | P.W`) needs them while Codon reads the
+    # module, so they cannot wait for its end; the lines after the class map
+    # to their own (#437).
+    source = textwrap.dedent(
+        """
+        import enum
+        class P(enum.Flag):
+            R = 1
+            W = 2
+        RW = P.R | P.W  # line 6
+        class Q(enum.Enum):
+            A = 1
+        LAST = 1  # line 9
+        """
+    )
+    text, origin = transform_source_lines(source)
+    lines = text[len(PRELUDE) :].splitlines()
+    assert len(origin) == len(lines)
+    at = lines.index("RW = P.R | P.W  # line 6")
+    assert origin[at] == 6
+    assert any("def __or__" in line for line in lines[:at])
+    assert origin[lines.index("LAST = 1  # line 9")] == 9
+    # so does a plain Enum's (#469): a class body or module-level comprehension
+    # over it reads its members while Codon reads the module
+    assert any(
+        "def _acs_by_name" in line
+        for line in lines[: lines.index("LAST = 1  # line 9")]
+    )
+
+
+def test_no_other_enum_is_given_flag_operators() -> None:
+    out = _transform(
+        "class A(enum.IntEnum):\n    X = 1\nclass B(enum.Enum):\n    X = 1\n"
+    )
+    assert "__or__" not in out and "__invert__" not in out
+
+
+def test_a_flag_value_that_is_not_worked_out_leaves_the_complement_to_codon() -> None:
+    out = _transform("class P(enum.Flag):\n    A = 1\n    B = compute()\n")
+    assert "B: ClassVar[P] = P('B', compute())" in out
+    assert "__or__" in out and "__invert__" not in out
+
+
+def test_the_framework_s_enums_are_iterated_without_being_named() -> None:
+    from autoware_carla_scenario.typecheck.transform import model_enum_names
+
+    assert {"TurnDirection", "ComparisonRule"} <= model_enum_names()
+    out = _transform(
+        "def f():\n    return list(TurnDirection), ComparisonRule['LESS_THAN']\n"
+    )
+    assert "list(TurnDirection._acs_members())" in out
+    assert "ComparisonRule._acs_by_name('LESS_THAN')" in out
+
+
+def test_a_class_of_a_model_enum_s_name_that_is_no_enum_is_not_iterated() -> None:
+    out = _transform(
+        "class TurnDirection:\n    pass\ndef f():\n    return list(TurnDirection)\n"
+    )
+    assert "list(TurnDirection)" in out
+
+
 def test_iterating_over_an_enum_class_and_looking_up_a_member_by_name() -> None:
     source = textwrap.dedent(
         """
@@ -947,7 +1117,7 @@ def test_iterating_over_an_enum_class_and_looking_up_a_member_by_name() -> None:
         """
     )
     out = _transform(source)
-    body = out.partition("\n\n@extend\n")[0]
+    body = _without_extensions(out)
     assert body.count("\n") == source.count("\n")  # no line moves
     assert "for m in Mode._acs_members():" in out
     assert "[x for x in Mode._acs_members() if x in Mode._acs_members()]" in out
@@ -980,7 +1150,7 @@ def test_a_name_that_is_not_the_enum_class_is_left_alone() -> None:
             return list(Mode), self.Mode["A"]
         """
     )
-    out = _transform(source).partition("\n\n@extend\n")[0]
+    out = _without_extensions(_transform(source))
     assert 'list(Mode), Mode["A"], 1 in Mode' in out
     assert "[m for m in Mode], Mode[1]" in out
     assert "_acs_by_name(int)" not in out
@@ -2486,7 +2656,7 @@ def test_str_format_on_something_else_is_left_alone() -> None:
         # ast.unparse spells a lambda "lambda : 1" before Python 3.11.
         (
             'f"{(lambda: 1)():+d}"',
-            f'((({ast.unparse(ast.parse("lambda: 1", mode="eval").body)})())'
+            f"((({ast.unparse(ast.parse('lambda: 1', mode='eval').body)})())"
             '.__format__("+d"))',
         ),
     ],
@@ -2554,6 +2724,168 @@ def test_zip_strict_is_dropped() -> None:
     assert text.count("\n") == source.count("\n")
     assert "strict" not in text
     assert _rewritten("other(a, strict=True)\n") == "other(a, strict=True)\n"
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        ('s.startswith(("a", "b"))', '(s.startswith("a") or s.startswith("b"))'),
+        ("self.p.endswith((x, y.z))", "(self.p.endswith(x) or self.p.endswith(y.z))"),
+        ("s.startswith((a, b), 2)", "(s.startswith(a, 2) or s.startswith(b, 2))"),
+        ('s.startswith(("a",))', '(s.startswith("a"))'),
+    ],
+)
+def test_startswith_with_a_tuple_becomes_an_or(source: str, expected: str) -> None:
+    assert _rewritten(source + "\n") == expected + "\n"
+
+
+def test_startswith_with_a_tuple_evaluates_each_part_once() -> None:
+    text = _rewritten("r = f(1).startswith((g(2), h(3)), k())\n")
+    assert text.count("f(1)") == text.count("g(2)") == text.count("h(3)") == 1
+    assert text.count("k()") == 1
+    assert text == (
+        "r = ((lambda _acs_a0, _acs_a1, _acs_a2, _acs_a3: "
+        "_acs_a0.startswith(_acs_a1, _acs_a3) or "
+        "_acs_a0.startswith(_acs_a2, _acs_a3))(f(1), g(2), h(3), k()))\n"
+    )
+
+
+def test_startswith_with_a_tuple_keeps_its_lines() -> None:
+    source = "r = (\n    f(s)\n    .startswith(\n        (g(), 'z'),\n    )\n    and q\n)\nz = 1\n"
+    text = _rewritten(source)
+    assert text.count("\n") == source.count("\n")
+    assert text.endswith("\nz = 1\n")
+    assert "and q" in text.splitlines()[-3]
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "s.startswith(prefixes)",
+        "s.startswith(('a', 'b'), *rest)",
+        "s.startswith(())",
+        "s.startswith(('a', 'b'), start=1)",
+        "s.startswith('a')",
+    ],
+)
+def test_startswith_it_cannot_rewrite_is_left_alone(source: str) -> None:
+    assert _rewritten(source + "\n") == source + "\n"
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        ("format(x, spec)", "x.__format__(spec)"),
+        ('format(3.14159, ".2f")', '(3.14159).__format__(".2f")'),
+        ('format(a + b, ">8")', '(a + b).__format__(">8")'),
+        ("format(self.v, f(1))", "self.v.__format__(f(1))"),
+        ("format(x)", "str(x)"),
+        ("format(f(1))", "str(f(1))"),
+        ("ascii(x)", "repr(x)"),
+        ('ascii("b")', 'repr("b")'),
+    ],
+)
+def test_format_and_ascii_are_rewritten(source: str, expected: str) -> None:
+    assert _rewritten(source + "\n") == expected + "\n"
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "format()",
+        "format(x, y, z)",
+        "format(*a)",
+        "format(x, spec=y)",
+        "ascii(x, y)",
+        "obj.format(x, y)",
+    ],
+)
+def test_format_and_ascii_with_other_arguments_are_left_alone(source: str) -> None:
+    assert _rewritten(source + "\n") == source + "\n"
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "def format(x, y):\n    return 1\nr = format(1, 2)",
+        "from mod import ascii\nr = ascii(1)",
+        "def f(format):\n    return format(1, 2)",
+        "ascii = repr\nr = ascii(1)",
+    ],
+)
+def test_format_and_ascii_bound_by_the_module_are_left_alone(source: str) -> None:
+    assert _rewritten(source + "\n") == source + "\n"
+
+
+def test_format_nested_in_startswith_is_rewritten_too() -> None:
+    text = _rewritten('r = f(1).startswith((format(x, "d"), ascii(y)))\n')
+    assert "format(" not in text and "ascii(" not in text
+    assert 'x.__format__("d")' in text and "repr(y)" in text
+
+
+def test_format_keeps_its_lines() -> None:
+    source = "r = format(\n    x,\n    spec,\n)\nz = 1\n"
+    text = _rewritten(source)
+    assert text.count("\n") == source.count("\n")
+    assert text.startswith("r = x.__format__(spec)")
+
+
+def test_startswith_with_a_tuple_matches_cpython() -> None:
+    # Differential: the rewritten text and the original give the same value and
+    # evaluate the same parts in the same order (all of them, as CPython does,
+    # even once an earlier prefix matched).
+    import itertools
+
+    templates = [
+        "{R}.{M}(({A}, {B}))",
+        "{R}.{M}(({A}, {B}), {S})",
+        "{R}.{M}(({A}, {B}), {S}, {E})",
+        "{R}.{M}(({A},), {S}, {E})",
+    ]
+    for template, r, a, b, s, e, m in itertools.product(
+        templates,
+        ["s", 'r("hello world")', '"hello world"'],
+        ['"he"', 'a("wo")', "pre"],
+        ['"ld"', 'b("ld")', '""'],
+        ["1", 'sn("0")', "-3"],
+        ["5", 'en("20")'],
+        ["startswith", "endswith"],
+    ):
+        source = "v = " + template.format(R=r, A=a, B=b, S=s, E=e, M=m) + "\n"
+        results = []
+        for code in (source, _rewritten(source)):
+            log: list[str] = []
+
+            def note(name: str, value: Any, log: list[str] = log) -> Any:
+                log.append(name)
+                return value
+
+            scope: dict[str, Any] = {
+                "s": "hello world",
+                "pre": "hello",
+                "r": lambda v: note("r", v),
+                "a": lambda v: note("a", v),
+                "b": lambda v: note("b", v),
+                "sn": lambda v: note("s", int(v)),
+                "en": lambda v: note("e", int(v)),
+            }
+            exec(code, scope)
+            results.append((scope["v"], log))
+        assert results[0] == results[1], source
+
+
+def test_except_star_is_refused_at_its_line() -> None:
+    if sys.version_info < (3, 11):
+        pytest.skip("except* needs Python 3.11")
+    source = "try:\n    f()\nexcept* ValueError as eg:\n    g()\nz = 1\n"
+    refused = python_rewrite_refusals(source)
+    assert [line for line, _ in refused] == [3]
+    assert "exception groups" in refused[0][1] and "use `except`" in refused[0][1]
+    two = source.replace("z = 1", "").replace(
+        "    g()\n", "    g()\nexcept* KeyError:\n    h()\n"
+    )
+    assert [line for line, _ in python_rewrite_refusals(two)] == [3, 5]
+    assert python_rewrite_refusals("try:\n    f()\nexcept ValueError:\n    g()\n") == []
 
 
 _LT_ONLY = """
@@ -3066,3 +3398,196 @@ def test_class_constants_compose_with_the_other_rewrites() -> None:
     text, [(name, block)] = python_rewrites(source)
     assert "x: int = V.N" in text and "a=V.N" in text and name == "V"
     assert "total_ordering" not in text and 'f"{a}"' in text
+
+
+# -- a comprehension in a class body or a default_factory (#469) --------------
+
+
+def test_a_class_body_comprehension_is_hoisted_above_its_class() -> None:
+    out = transform_source(
+        textwrap.dedent(
+            """
+            class Q:
+                SQ = [i * i for i in range(3)]
+            """
+        )
+    )
+    assert (
+        "def _acs_hoist_Q_3():\n    return ([i * i for i in range(3)])\n"
+        "class Q:\n    SQ = _acs_hoist_Q_3()\n"
+    ) in out
+
+
+def test_a_default_factory_with_a_comprehension_is_hoisted() -> None:
+    out = transform_source(
+        textwrap.dedent(
+            """
+            from dataclasses import dataclass, field
+            @dataclass
+            class D:
+                a: list[str] = field(default_factory=lambda: [str(i) for i in range(3)])
+                b: tuple = field(default_factory=lambda: tuple(i for i in range(3)))
+                c: dict = field(default_factory=lambda: dict(a=1))
+                e: list = field(default_factory=lambda: [1, 2])
+            """
+        )
+    )
+    assert "a: list[str] = _acs_hoist_D_5()" in out
+    assert "b: tuple = _acs_hoist_D_6()" in out
+    assert "c: dict = _acs_hoist_D_7()" in out
+    assert "e: list = ([1, 2])" in out  # nothing to hoist
+
+
+def test_hoisting_keeps_the_lines_of_the_class_and_maps_the_new_ones() -> None:
+    from autoware_carla_scenario.typecheck.transform import (
+        PRELUDE,
+        transform_source_lines,
+    )
+
+    source = "x = 1\nclass Q:\n    SQ = [i for i in range(3)]\n    Y = 2\n"
+    text, origin = transform_source_lines(source)
+    lines = text[len(PRELUDE) :].splitlines()
+    assert len(lines) == len(origin)
+    assert origin[lines.index("    SQ = _acs_hoist_Q_3()")] == 3
+    assert origin[lines.index("    Y = 2")] == 4
+    assert origin[lines.index("def _acs_hoist_Q_3():")] == 3
+
+
+def test_an_enum_extension_follows_its_class() -> None:
+    out = transform_source(
+        "import enum\nclass C(enum.Enum):\n    A = 1\nX = [c for c in C]\n"
+    )
+    assert out.index("def _acs_members") < out.index("X = [c for c in C._acs")
+
+
+def test_a_comprehension_reading_its_class_is_refused() -> None:
+    refused = python_rewrite_refusals(
+        "class Q:\n    B = 3\n    SQ = [i * 2 for i in range(B)]\n"
+    )
+    assert refused and "module-level function" in refused[0][1]
+    assert refused[0][0] == 3
+
+
+def test_dict_with_keywords_becomes_a_display() -> None:
+    out = transform_source("d = dict(a=1, b = 2,)\ne = dict(**x)\nf = dict()\n")
+    assert 'd = {"a": 1, "b": 2}' in out
+    assert "e = dict(**x)" in out and "f = dict()" in out
+
+
+def test_dict_with_keywords_is_left_alone_where_the_module_binds_dict() -> None:
+    out = transform_source("def f(dict):\n    return dict(a=1)\nx = dict(b=2, **y)\n")
+    assert "return dict(a=1)" in out and "x = dict(b=2, **y)" in out
+
+
+# ---------------------------------------------------------------------------
+# An f-string in a lambda that reads a captured name (#470)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        ('f = lambda v: f"{v}{p}"', "f = lambda v: (str(v) + str(p))"),
+        (
+            'f = lambda v: f"a{v}-{p}!"',
+            'f = lambda v: ("a" + str(v) + "-" + str(p) + "!")',
+        ),
+        ('f = lambda v: f"{p!r}"', "f = lambda v: (repr(p))"),
+        ('f = lambda v: f"{p:.2f}"', 'f = lambda v: ((p).__format__(".2f"))'),
+        (
+            'f = lambda v: f"{p!r:>{v}}"',
+            'f = lambda v: (repr(p).__format__(">" + str(v)))',
+        ),
+        ('f = lambda: f"{p=:.2f}"', 'f = lambda: ("p=" + (p).__format__(".2f"))'),
+        ('f = lambda: f"{p=}"', 'f = lambda: ("p=" + repr(p))'),
+        ('f = lambda e: "{}{}".format(e, p)', "f = lambda e: (str(e) + str(p))"),
+        (
+            'f = lambda v, lab=cfg.name: f"{v}{lab}"',
+            "f = (lambda lab: lambda v: (str(v) + str(lab)))(cfg.name)",
+        ),
+        (
+            'g = (lambda lab: lambda v: f"{lab}")("a")',
+            'g = (lambda lab: lambda v: (str(lab)))("a")',
+        ),
+        (
+            's = sorted(xs, key=lambda e: f"{e}{p}")',
+            "s = sorted(xs, key=lambda e: (str(e) + str(p)))",
+        ),
+    ],
+)
+def test_a_lambda_fstring_reading_a_captured_name_is_lowered(
+    source: str, expected: str
+) -> None:
+    assert _rewritten(source + "\n") == expected + "\n"
+    assert python_rewrite_refusals(source + "\n") == []
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        'f = lambda v: f"{v}"',
+        'f = lambda v, w: f"{v}{w:>5}"',
+        'f = lambda: f"{3}"',
+        'p = 1\nf = f"{p}"',
+        'def g(p):\n    return f"{p}"',
+        'def g(p):\n    return (lambda v: p)(1), f"{p}"',
+    ],
+)
+def test_a_lambda_fstring_of_its_own_names_is_left_alone(source: str) -> None:
+    assert _rewritten(source + "\n") == source + "\n"
+
+
+def test_a_lambda_fstring_lowering_keeps_the_lines() -> None:
+    source = 'f = lambda v: f"""a\n{v}\n{p}"""\nz = 1\n'
+    text = _rewritten(source)
+    assert text.count("\n") == source.count("\n")
+    assert text.splitlines()[-1] == "z = 1"
+    ast.parse(text)
+
+
+def test_a_lambda_fstring_with_ascii_conversion_is_lowered_to_repr() -> None:
+    assert _rewritten('f = lambda v: f"{p!a}"\n') == "f = lambda v: (repr(p))\n"
+    assert (
+        _rewritten('f = lambda v: f"{p!a:>5}"\n')
+        == 'f = lambda v: (repr(p).__format__(">5"))\n'
+    )
+
+
+@pytest.mark.parametrize(
+    "template",
+    [
+        'lambda v: f"{v}{p}"',
+        'lambda v: f"<{v!r}|{p!r}|{p!s}|{p!s:>8}|{p!a}|{v!a:>9}>"',
+        'lambda v: f"{p:{w}.{w}}|{p:>{w}}|{v:{w}}"',
+        'lambda v: f"""a\\n{v}\\n{p}"""',
+        'lambda v: (lambda u: f"{u}{v}{p}")(v)',
+        'lambda v: [f"{u}{v}" for u in range(2)]',
+        'lambda v: (y := v, f"{y}{p}")',
+        'lambda v: f"{v:>6}|{p:.2f}|{p:+.1f}|{v:{w}}"',
+        'lambda v: f"{p=}|{p=:.1f}|{v=}"',
+        'lambda v: "{}-{:>4}-{!r}".format(v, p, p)',
+        'lambda v: f"{{lit}} {v} {p}"',
+        'lambda v, lab="q": f"{v}{lab}{p}"',
+        'lambda v, lab=side(): f"{v}{lab}{p}"',
+        '(lambda lab: lambda v: f"{v}{lab}{p}")(side())',
+        'lambda v: f"{note(v)}{note(p)}{note(w)}"',
+        'lambda v: [f"{i}{p}" for i in range(v)]',
+    ],
+)
+def test_a_lowered_lambda_fstring_equals_the_original(template: str) -> None:
+    results = []
+    for code in (
+        f"f = {template}\n",
+        _rewritten(f"f = {template}\n"),
+    ):
+        log: list[str] = []
+
+        def note(value: Any, log: list[str] = log) -> Any:
+            log.append(repr(value))
+            return value
+
+        scope: dict[str, Any] = {"p": 2.5, "w": 7, "side": lambda: "S", "note": note}
+        exec(code, scope)  # noqa: S102
+        samples = (3,) if "range" in code else (1, 3.25)
+        results.append(([scope["f"](v) for v in samples], log))
+    assert results[0] == results[1], template

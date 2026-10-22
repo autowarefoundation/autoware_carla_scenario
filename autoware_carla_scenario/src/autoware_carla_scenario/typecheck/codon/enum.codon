@@ -136,8 +136,48 @@ class StrEnum(Enum[T]):
             return self._value_ != other
 
 
-Flag = Enum
-IntFlag = IntEnum
+class Flag(Enum[T]):
+    T: type
+    """A flag enum (`Flag`).  It equals a flag by value, so two combinations
+    of the same members are equal, and it is false when it has no bit set.
+    The operators `|`, `&`, `^`, `~` and `in` (#437) are not here: Codon
+    realizes a method of this class for the base type, which could not name
+    the subclass it returns, so the checker declares them on each flag class
+    with `@extend` (`def __or__(self, other: Perm) -> Perm`).  A combination
+    is no member: it is the class built from the combined int (`Perm(3)`,
+    the constructor by value the checker adds to each class), with the empty
+    name."""
+
+    def __eq__(self, other) -> bool:
+        if isinstance(other, Enum):
+            return self._value_ == other._value_
+        else:
+            return False
+
+    def __ne__(self, other) -> bool:
+        if isinstance(other, Enum):
+            return self._value_ != other._value_
+        else:
+            return True
+
+    def __hash__(self) -> int:
+        return hash(self._value_)
+
+    def __bool__(self) -> bool:
+        return self._value_ != 0
+
+
+class IntFlag(IntEnum[T]):
+    T: type
+    """An `IntFlag` (also `(int, Flag)`): an IntEnum's comparisons and int(),
+    and Flag's truth value; its operators, which take an int on either side
+    too, are declared on each class by the checker (see Flag)."""
+
+    def __hash__(self) -> int:
+        return hash(self._value_)
+
+    def __bool__(self) -> bool:
+        return self._value_ != 0
 
 
 def auto() -> int:

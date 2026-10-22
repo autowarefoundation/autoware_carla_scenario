@@ -10,7 +10,7 @@ from .conditions import (AdversityKind, AdversityLocation, BaseCondition, TurnIn
 from .coordinate import (Lanelet2Pose, CarlaWorldPose, GroundProjectionConfig,
                          _expect_lanelet2_poses, _expect_optional_ground_projection)
 from .entity_role import EntityRole, _expect_role
-from .traffic import TurnDirection, LaneChangeDirection
+from .traffic import TurnDirection, LaneChangeDirection, PedestrianParameters, VehicleParameters
 from .trajectory import (Trajectory, TrajectoryFollowingMode, TrajectoryTiming,
                          _expect_optional_timing, _expect_trajectory_position)
 
@@ -30,6 +30,20 @@ class TickTiming:
             return "POST_TICK"
         raise ValueError("not a member of TickTiming")
 
+    # What `for m in E`, `list(E)` and `E["A"]` read: the checker rewrites
+    # them (#437). Declared in Python's order, as the test checks.
+    @staticmethod
+    def _acs_members() -> List[TickTiming]:
+        return [TickTiming.PRE_TICK, TickTiming.POST_TICK]
+
+    @staticmethod
+    def _acs_by_name(name: str) -> TickTiming:
+        if name == "PRE_TICK":
+            return TickTiming.PRE_TICK
+        if name == "POST_TICK":
+            return TickTiming.POST_TICK
+        raise KeyError(name)
+
 
 @tuple
 class TrafficLightTarget:
@@ -42,6 +56,18 @@ class TrafficLightTarget:
         if self == TrafficLightTarget.ALL:
             return "ALL"
         raise ValueError("not a member of TrafficLightTarget")
+
+    # What `for m in E`, `list(E)` and `E["A"]` read: the checker rewrites
+    # them (#437). Declared in Python's order, as the test checks.
+    @staticmethod
+    def _acs_members() -> List[TrafficLightTarget]:
+        return [TrafficLightTarget.ALL]
+
+    @staticmethod
+    def _acs_by_name(name: str) -> TrafficLightTarget:
+        if name == "ALL":
+            return TrafficLightTarget.ALL
+        raise KeyError(name)
 
 
 class AdversityEvent:
@@ -356,6 +382,20 @@ class PropOperation:
             return "REMOVE"
         raise ValueError("not a member of PropOperation")
 
+    # What `for m in E`, `list(E)` and `E["A"]` read: the checker rewrites
+    # them (#437). Declared in Python's order, as the test checks.
+    @staticmethod
+    def _acs_members() -> List[PropOperation]:
+        return [PropOperation.ADD, PropOperation.REMOVE]
+
+    @staticmethod
+    def _acs_by_name(name: str) -> PropOperation:
+        if name == "ADD":
+            return PropOperation.ADD
+        if name == "REMOVE":
+            return PropOperation.REMOVE
+        raise KeyError(name)
+
 
 class PropAction(BaseAction):
     def __init__(self, label):
@@ -442,6 +482,20 @@ class TurnAction(BaseAction):
                  post_junction_distance: float = 20.0):
         _keyword_only(_kw, "TurnAction(): label, once, search_distance, waypoint_step and post_junction_distance")
         _expect_role(entity_name)
+        super().__init__(label, condition, timing, once=once)
+
+
+class TrafficParametersAction(BaseAction):
+    def __init__(self, label: str):
+        compile_error("TrafficParametersAction(): no constructor takes a label alone "
+                      "(vehicles or pedestrians are what it sets)")
+
+    def __init__(self, vehicles: Optional[VehicleParameters] = None,
+                 pedestrians: Optional[PedestrianParameters] = None, *_kw,
+                 entity_name: Optional[str] = None, condition = None,
+                 timing: TickTiming = TickTiming("post_tick"),
+                 label: str = "TrafficParameters", once: bool = True):
+        _keyword_only(_kw, "TrafficParametersAction(): entity_name, condition, timing, label and once")
         super().__init__(label, condition, timing, once=once)
 
 

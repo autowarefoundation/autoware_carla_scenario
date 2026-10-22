@@ -25,7 +25,8 @@ Every numeric parameter is a :class:`Spread` -- a mean and a standard
 deviation -- and each road user draws its own value from it, a normal
 distribution cut to the parameter's bounds (:data:`VEHICLE_BOUNDS`,
 :data:`PEDESTRIAN_BOUNDS`): a population of drivers, not one driver copied.
-A plain number is a spread of no width.  An ODD bounds the mean and the
+A plain number -- in a config or a constructor -- is a spread of no width:
+every road user takes that value.  An ODD bounds the mean and the
 spread of each like any other attribute it samples
 (:mod:`autoware_carla_scenario.odd.traffic_probes`).
 
@@ -82,12 +83,14 @@ from __future__ import annotations
 
 import random
 from dataclasses import dataclass
-from typing import Any, Mapping, Optional
+from typing import Any, Mapping, Optional, Union
 
 __all__ = [
     "PEDESTRIAN_BOUNDS",
     "PEDESTRIAN_PARAMETER_BACKENDS",
     "Spread",
+    "SpreadOrValue",
+    "as_spread",
     "VEHICLE_BOUNDS",
     "record_run_parameters",
     "run_parameters",
@@ -141,6 +144,8 @@ def check_supported(
     set_fields: list[str],
     supported: set[str],
     table: dict[str, list[str]],
+    during_run: bool = False,
+    before_run: Optional[set[str]] = None,
 ) -> None:
     """Refuse every field of *set_fields* that *backend* does not support.
 
@@ -150,6 +155,13 @@ def check_supported(
         set_fields: The fields that are set.
         supported: The fields the backend supports.
         table: Each field and the built-in backends that support it.
+        during_run: Whether the fields are to change during a run (a
+            :class:`~autoware_carla_scenario.TrafficParametersAction`), which
+            the message says, as *supported* is then what the backend can
+            change then.
+        before_run: With *during_run*, the fields the backend supports in its
+            config, before the run: such a field is refused as one to set
+            there instead.
 
     Raises:
         TrafficParameterError: Naming each unsupported field and the backends
@@ -158,6 +170,11 @@ def check_supported(
     problems: list[str] = []
     for name in set_fields:
         if name in supported:
+            continue
+        if before_run is not None and name in before_run:
+            problems.append(
+                f"{node}.{name} can only be set before the run, in its config"
+            )
             continue
         others = table.get(name, [])
         if others:
@@ -169,8 +186,9 @@ def check_supported(
         else:
             problems.append(f"{node}.{name} is supported by no built-in backend")
     if problems:
+        what = "cannot change during a run:" if during_run else "does not support"
         raise TrafficParameterError(
-            f"The '{backend}' traffic backend does not support "
+            f"The '{backend}' traffic backend {what} "
             + "; ".join(problems)
             + ". Leave the field unset (null) or select a backend that "
             "supports it."
@@ -236,6 +254,20 @@ class Spread:
         return {"mean": self.mean, "std": self.std}
 
 
+#: A numeric traffic parameter as given: a :class:`Spread`, or a plain number,
+#: which every road user takes as it is (a spread of no width).
+SpreadOrValue = Union[Spread, float]
+
+
+def as_spread(value: Optional[SpreadOrValue]) -> Optional[Spread]:
+    """*value* as a :class:`Spread`: a number is a spread of no width."""
+    if value is None:
+        return None
+    if isinstance(value, Spread):
+        return value
+    return Spread(float(value))
+
+
 def _check(
     name: str, value: Optional[Spread], bounds: dict[str, tuple[float, float]]
 ) -> None:
@@ -284,7 +316,7 @@ def _described(value: Any) -> Any:
     return value.describe() if isinstance(value, Spread) else value
 
 
-@dataclass(frozen=True)
+@dataclass(init=False)
 class VehicleParameters:
     """How the vehicles a traffic backend drives behave (``traffic.vehicles``).
 
@@ -339,6 +371,39 @@ class VehicleParameters:
     reaction_time_s: Optional[Spread] = None
     imperfection: Optional[Spread] = None
     follow_visibility: Optional[bool] = None
+
+    def __init__(
+        self,
+        speed_factor: Optional[SpreadOrValue] = None,
+        min_gap_m: Optional[SpreadOrValue] = None,
+        lane_changes: Optional[bool] = None,
+        ignore_lights: Optional[SpreadOrValue] = None,
+        ignore_signs: Optional[SpreadOrValue] = None,
+        ignore_vehicles: Optional[SpreadOrValue] = None,
+        ignore_walkers: Optional[SpreadOrValue] = None,
+        random_lane_changes: Optional[SpreadOrValue] = None,
+        accel: Optional[SpreadOrValue] = None,
+        decel: Optional[SpreadOrValue] = None,
+        reaction_time_s: Optional[SpreadOrValue] = None,
+        imperfection: Optional[SpreadOrValue] = None,
+        follow_visibility: Optional[bool] = None,
+    ) -> None:
+        # Written out rather than generated, to take a plain number as well as
+        # a spread (as_spread) and keep the fields themselves spreads.
+        self.speed_factor = as_spread(speed_factor)
+        self.min_gap_m = as_spread(min_gap_m)
+        self.lane_changes = lane_changes
+        self.ignore_lights = as_spread(ignore_lights)
+        self.ignore_signs = as_spread(ignore_signs)
+        self.ignore_vehicles = as_spread(ignore_vehicles)
+        self.ignore_walkers = as_spread(ignore_walkers)
+        self.random_lane_changes = as_spread(random_lane_changes)
+        self.accel = as_spread(accel)
+        self.decel = as_spread(decel)
+        self.reaction_time_s = as_spread(reaction_time_s)
+        self.imperfection = as_spread(imperfection)
+        self.follow_visibility = follow_visibility
+        self.__post_init__()
 
     def __post_init__(self) -> None:
         _check("speed_factor", self.speed_factor, VEHICLE_BOUNDS)
@@ -416,6 +481,69 @@ class VehicleParameters:
             ),
         )
 
+    def overridden_by(self, overrides: "VehicleParameters") -> "VehicleParameters":
+        """These parameters with every field *overrides* sets replaced by its
+        value; the rest kept (a :class:`~autoware_carla_scenario.TrafficParametersAction`)."""
+        return VehicleParameters(
+            speed_factor=(
+                overrides.speed_factor
+                if overrides.speed_factor is not None
+                else self.speed_factor
+            ),
+            min_gap_m=(
+                overrides.min_gap_m
+                if overrides.min_gap_m is not None
+                else self.min_gap_m
+            ),
+            lane_changes=(
+                overrides.lane_changes
+                if overrides.lane_changes is not None
+                else self.lane_changes
+            ),
+            ignore_lights=(
+                overrides.ignore_lights
+                if overrides.ignore_lights is not None
+                else self.ignore_lights
+            ),
+            ignore_signs=(
+                overrides.ignore_signs
+                if overrides.ignore_signs is not None
+                else self.ignore_signs
+            ),
+            ignore_vehicles=(
+                overrides.ignore_vehicles
+                if overrides.ignore_vehicles is not None
+                else self.ignore_vehicles
+            ),
+            ignore_walkers=(
+                overrides.ignore_walkers
+                if overrides.ignore_walkers is not None
+                else self.ignore_walkers
+            ),
+            random_lane_changes=(
+                overrides.random_lane_changes
+                if overrides.random_lane_changes is not None
+                else self.random_lane_changes
+            ),
+            accel=(overrides.accel if overrides.accel is not None else self.accel),
+            decel=(overrides.decel if overrides.decel is not None else self.decel),
+            reaction_time_s=(
+                overrides.reaction_time_s
+                if overrides.reaction_time_s is not None
+                else self.reaction_time_s
+            ),
+            imperfection=(
+                overrides.imperfection
+                if overrides.imperfection is not None
+                else self.imperfection
+            ),
+            follow_visibility=(
+                overrides.follow_visibility
+                if overrides.follow_visibility is not None
+                else self.follow_visibility
+            ),
+        )
+
     def describe(self) -> dict[str, Any]:
         """The fields that are set, for a run's result record: a spread as
         ``{"mean": ..., "std": ...}``."""
@@ -447,7 +575,7 @@ class VehicleParameters:
         return cls(**_spreads_from(cls, mapping, VEHICLE_BOUNDS))
 
 
-@dataclass(frozen=True)
+@dataclass(init=False)
 class PedestrianParameters:
     """How the pedestrians a traffic backend simulates behave
     (``traffic.pedestrians``).
@@ -472,6 +600,19 @@ class PedestrianParameters:
     min_gap_m: Optional[Spread] = None
     red_light_violation_s: Optional[Spread] = None
 
+    def __init__(
+        self,
+        walking_speed_mps: Optional[SpreadOrValue] = None,
+        min_gap_m: Optional[SpreadOrValue] = None,
+        red_light_violation_s: Optional[SpreadOrValue] = None,
+    ) -> None:
+        # Written out rather than generated, to take a plain number as well as
+        # a spread (as_spread) and keep the fields themselves spreads.
+        self.walking_speed_mps = as_spread(walking_speed_mps)
+        self.min_gap_m = as_spread(min_gap_m)
+        self.red_light_violation_s = as_spread(red_light_violation_s)
+        self.__post_init__()
+
     def __post_init__(self) -> None:
         _check("walking_speed_mps", self.walking_speed_mps, PEDESTRIAN_BOUNDS)
         _check("min_gap_m", self.min_gap_m, PEDESTRIAN_BOUNDS)
@@ -495,6 +636,29 @@ class PedestrianParameters:
             self.set_fields(),
             supported,
             PEDESTRIAN_PARAMETER_BACKENDS,
+        )
+
+    def overridden_by(
+        self, overrides: "PedestrianParameters"
+    ) -> "PedestrianParameters":
+        """These parameters with every field *overrides* sets replaced by its
+        value; the rest kept (a :class:`~autoware_carla_scenario.TrafficParametersAction`)."""
+        return PedestrianParameters(
+            walking_speed_mps=(
+                overrides.walking_speed_mps
+                if overrides.walking_speed_mps is not None
+                else self.walking_speed_mps
+            ),
+            min_gap_m=(
+                overrides.min_gap_m
+                if overrides.min_gap_m is not None
+                else self.min_gap_m
+            ),
+            red_light_violation_s=(
+                overrides.red_light_violation_s
+                if overrides.red_light_violation_s is not None
+                else self.red_light_violation_s
+            ),
         )
 
     def describe(self) -> dict[str, Any]:

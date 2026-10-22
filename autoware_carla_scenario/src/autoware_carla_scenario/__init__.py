@@ -90,6 +90,7 @@ if TYPE_CHECKING:
         TurnAction as TurnAction,
         TurnIndicatorAction as TurnIndicatorAction,
         TurnDirection as TurnDirection,
+        TrafficParametersAction as TrafficParametersAction,
         TrafficSinkAction as TrafficSinkAction,
         TrafficSourceAction as TrafficSourceAction,
         WalkStraightAction as WalkStraightAction,
@@ -510,6 +511,7 @@ __all__ = [
     "WaypointCondition",
     "TurnAction",
     "TurnDirection",
+    "TrafficParametersAction",
     "TrafficSinkAction",
     "TrafficSourceAction",
     "WalkStraightAction",
@@ -605,6 +607,7 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "TurnAction": (".actions", "TurnAction"),
     "WalkStraightAction": (".actions", "WalkStraightAction"),
     "TrafficSourceAction": (".actions", "TrafficSourceAction"),
+    "TrafficParametersAction": (".actions", "TrafficParametersAction"),
     "TrafficSinkAction": (".actions", "TrafficSinkAction"),
     "TurnDirection": (".actions", "TurnDirection"),
     # trajectories

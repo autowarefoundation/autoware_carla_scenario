@@ -2,14 +2,20 @@
 traffic:
   # SUMO, co-simulated on the world's own road network: the world's OpenDRIVE
   # is converted with roadgen (hakuturu583/hdmap_generator) and netconvert, and
-  # SUMO steps once per CARLA tick.  Needs the `sumo` extra.  SUMO fills the road
-  # with its own traffic; the scenario's vehicles stay with the TrafficManager
-  # and, like an Autoware ego, are published into SUMO so its traffic reacts.
+  # SUMO steps once per CARLA tick.  Needs the `sumo` extra.  By default the
+  # scenario's vehicles stay with the TrafficManager and its pedestrians with
+  # CARLA, and like an Autoware ego they are published into SUMO so its traffic
+  # reacts; SUMO adds no traffic of its own unless `ambient` or `pedestrians`
+  # asks for it.
   backend: sumo
   options:
     # traffic_manager: the scenario's NPCs (and an autopilot ego) are driven as
     # under the traffic_manager backend. sumo: SUMO drives them too.
     scenario_vehicles: traffic_manager
+    # traffic_manager: the scenario's pedestrians walk on CARLA's side
+    # (WalkStraightAction: a WalkerControl). sumo: each is a SUMO person its
+    # walker follows, and WalkStraightAction walks it straight on through TraCI.
+    scenario_pedestrians: traffic_manager
     # How CARLA's copies of SUMO's vehicles follow them. physics: CARLA's
     # vehicle physics, steered and driven along SUMO's trajectory. teleport:
     # placed where SUMO has them every tick.

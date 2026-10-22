@@ -1392,6 +1392,7 @@ class TestEnvironmentTrack:
             "environment",
             "prop",
             "traffic_signal",
+            "traffic_parameters",
             "traffic_signal_controller",
             "traffic_sink",
             "traffic_source",

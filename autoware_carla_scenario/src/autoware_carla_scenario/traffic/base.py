@@ -77,6 +77,7 @@ __all__ = [
     "TrafficBackendUnavailable",
     "TrafficContext",
     "DrivenEntity",
+    "WalkedEntity",
     "NullTrafficBackend",
 ]
 
@@ -291,6 +292,19 @@ class DrivenEntity:
         return False
 
 
+class WalkedEntity:
+    """What a backend's pedestrian calls take as the *entity* they walk.
+
+    The base of :class:`~autoware_carla_scenario.entity.pedestrian_entity.PedestrianEntity`,
+    as :class:`DrivenEntity` is of the vehicles: the type of every *entity*
+    parameter of :class:`TrafficBackend`'s pedestrian calls
+    (:meth:`TrafficBackend.adopt_pedestrian`, :meth:`TrafficBackend.walk_straight`,
+    :meth:`TrafficBackend.release_pedestrian`).  A backend keeps nothing on a
+    pedestrian, so it holds nothing; it reads the walker's ``actor`` and
+    ``role_name`` where the entity has them, as it reads a vehicle's.
+    """
+
+
 # ---------------------------------------------------------------------------
 # The interface
 # ---------------------------------------------------------------------------
@@ -351,6 +365,11 @@ class TrafficBackend:
     _vehicle_parameters: Optional[VehicleParameters] = None
     #: What :meth:`set_pedestrian_parameters` was given; ``None``: every default.
     _pedestrian_parameters: Optional[PedestrianParameters] = None
+    #: The parameters the run started with, while an override changed them;
+    #: :meth:`_restore_parameters` puts them back when the run closes.
+    _configured_vehicles: Optional[VehicleParameters] = None
+    _configured_pedestrians: Optional[PedestrianParameters] = None
+    _overridden: bool = False
 
     # ------------------------------------------------------------------
     # Parameters
@@ -424,6 +443,71 @@ class TrafficBackend:
         if self._pedestrian_parameters is None:
             return _NO_PEDESTRIAN_PARAMETERS
         return self._pedestrian_parameters
+
+    # ------------------------------------------------------------------
+    # Parameters changed during a run
+    # ------------------------------------------------------------------
+
+    def _remember_parameters(self) -> None:
+        """Keep the run's own parameters before an override changes them: one
+        backend serves a whole queue, and the next run starts from its config,
+        not from where this one's actions left it."""
+        if not self._overridden:
+            self._overridden = True
+            self._configured_vehicles = self._vehicle_parameters
+            self._configured_pedestrians = self._pedestrian_parameters
+
+    def _restore_parameters(self) -> None:
+        """Put back what :meth:`_remember_parameters` kept; :meth:`close` calls it."""
+        if self._overridden:
+            self._overridden = False
+            self._vehicle_parameters = self._configured_vehicles
+            self._pedestrian_parameters = self._configured_pedestrians
+
+    def supported_vehicle_overrides(self) -> set[str]:
+        """The vehicle parameters this backend can change during a run
+        (:meth:`override_vehicle_parameters`).
+
+        None by default: a backend that cannot refuses the
+        :class:`~autoware_carla_scenario.TrafficParametersAction` that asks,
+        when it is registered, rather than leave the run as it was.
+        """
+        return set()
+
+    def supported_pedestrian_overrides(self) -> set[str]:
+        """The pedestrian parameters this backend can change during a run
+        (:meth:`override_pedestrian_parameters`); none by default."""
+        return set()
+
+    def override_vehicle_parameters(
+        self, world: "carla.World", overrides: VehicleParameters
+    ) -> None:
+        """Change the vehicles' parameters from now on: the fields *overrides*
+        sets replace the ones the run had, and every vehicle draws its value
+        of them again.
+
+        Only the fields of :meth:`supported_vehicle_overrides` reach here; the
+        action checked them when it was registered.
+        """
+        logger.warning("%s: cannot change vehicle parameters during a run", self.name)
+
+    def override_entity_parameters(
+        self, world: "carla.World", overrides: VehicleParameters, entity: DrivenEntity
+    ) -> None:
+        """Give *entity*'s vehicle alone a new draw of the fields *overrides*
+        sets; the run's parameters stay as they were."""
+        logger.warning(
+            "%s: cannot change a vehicle's parameters during a run", self.name
+        )
+
+    def override_pedestrian_parameters(
+        self, world: "carla.World", overrides: PedestrianParameters
+    ) -> None:
+        """Change the pedestrians' parameters from now on, as
+        :meth:`override_vehicle_parameters` does the vehicles'."""
+        logger.warning(
+            "%s: cannot change pedestrian parameters during a run", self.name
+        )
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -593,6 +677,54 @@ class TrafficBackend:
 
         Args:
             entity: The entity handed back.
+            world: The CARLA world.
+        """
+
+    # ------------------------------------------------------------------
+    # The scenario's pedestrians
+    # ------------------------------------------------------------------
+
+    def adopt_pedestrian(self, entity: WalkedEntity) -> None:
+        """Take note of a pedestrian the scenario owns.
+
+        Called for every pedestrian registered with
+        :meth:`~autoware_carla_scenario.scenario_base.BaseScenario.register_pedestrian`,
+        before :meth:`start`.  As with :meth:`adopt`, the walker stays the
+        scenario's: the backend does not spawn or destroy it.  A backend that
+        walks pedestrians (:meth:`walk_straight`) takes it on at :meth:`start`.
+
+        Args:
+            entity: The pedestrian joining the run.
+        """
+
+    def walk_straight(self, entity: WalkedEntity, speed_ms: float) -> bool:
+        """Walk *entity* on at *speed_ms* the way it faces, if this backend
+        walks it; *speed_ms* zero stops it where it is.
+
+        Answers whether it did.  ``False`` leaves the walk to the entity, which
+        walks its walker straight ahead itself (``carla.WalkerControl``): what
+        the base answers, since a backend that walks no pedestrians -- the
+        TrafficManager, which has none -- has nothing to send the walk to.
+
+        Args:
+            entity: The pedestrian a
+                :class:`~autoware_carla_scenario.actions.WalkStraightAction`
+                names.
+            speed_ms: Walking speed in metres per second.
+        """
+        return False
+
+    def release_pedestrian(self, entity: WalkedEntity, world: "carla.World") -> None:
+        """Stop walking *entity*: a scenario action moves it itself.
+
+        :meth:`release` for a pedestrian: a
+        :class:`~autoware_carla_scenario.actions.FollowTrajectoryAction` (an
+        adversity among them) puts the walker on its path every tick.  Must
+        hold before or after :meth:`start` and be safe to repeat.  The base does
+        nothing, which is right for a backend that walks no pedestrians.
+
+        Args:
+            entity: The pedestrian being taken over.
             world: The CARLA world.
         """
 

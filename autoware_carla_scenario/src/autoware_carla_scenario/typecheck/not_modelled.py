@@ -173,8 +173,7 @@ NOT_MODELLED: dict[str, dict[str, str]] = {
         **_each(
             "NullTrafficBackend TrafficBackend TrafficBackendError "
             "TrafficBackendUnavailable TrafficConfig TrafficManagerBackend "
-            "TrafficManagerBackendConfig TrafficParameterError PedestrianParameters Spread "
-            "VehicleParameters",
+            "TrafficManagerBackendConfig TrafficParameterError",
             _TRAFFIC_BACKEND,
         ),
         "load_openodd": _OPENODD,
@@ -260,14 +259,15 @@ NOT_MODELLED: dict[str, dict[str, str]] = {
         **_each(
             "NullTrafficBackend TrafficBackend TrafficBackendError "
             "TrafficBackendUnavailable TrafficConfig TrafficManagerBackend "
-            "TrafficManagerBackendConfig TrafficParameterError VehicleParameters "
-            "PedestrianParameters Spread VEHICLE_PARAMETER_BACKENDS "
+            "TrafficManagerBackendConfig TrafficParameterError "
+            "VEHICLE_PARAMETER_BACKENDS "
             "PEDESTRIAN_PARAMETER_BACKENDS build_none build_sumo build_traffic_manager "
             "register_builtin_backends",
             _TRAFFIC_BACKEND,
         ),
         **_each(
-            "BackendDriven DrivenEntity LaneChanging SettingSpeed TurningAtJunctions",
+            "BackendDriven DrivenEntity LaneChanging SettingSpeed TurningAtJunctions "
+            "WalkedEntity",
             _TRAFFIC_PROTOCOL,
         ),
     },
@@ -314,6 +314,16 @@ _CONDITION_DETAILS = (
     "a condition's details for the runner's report, a `dict[str, Any]`, which "
     "Codon has no type for; a scenario reads a condition through check() and "
     "the properties of each condition"
+)
+_TRAFFIC_DRAWS = (
+    "draws a road user's value with the backend's random stream: the backend "
+    "draws for each vehicle and pedestrian, not a scenario, which hands the "
+    "spread to a TrafficParametersAction"
+)
+_TRAFFIC_PARAMETER_PLUMBING = (
+    "what the traffic backend and the TrafficParametersAction do with the "
+    "parameters (refusing unsupported fields, merging an override); a "
+    "scenario builds them and hands them to the action"
 )
 _SET_TRAFFIC_BACKEND = (
     "takes or returns the run's TrafficBackend, which is not modelled (see "
@@ -451,6 +461,7 @@ NOT_MODELLED_MEMBERS: dict[str, dict[str, str]] = {
         "compiles them from their source",
     ),
     "BackendDriven": {"set_traffic_backend": _SET_TRAFFIC_BACKEND},
+    "PedestrianEntity": {"set_traffic_backend": _SET_TRAFFIC_BACKEND},
     "BaseAction": {"close": _RUN_CLEANUP},
     "BaseCondition": {
         **_members("get_details to_summary_dict", _CONDITION_DETAILS),
@@ -565,6 +576,26 @@ NOT_MODELLED_MEMBERS: dict[str, dict[str, str]] = {
     "TrafficSinkAction": {"set_traffic_backend": _SET_TRAFFIC_BACKEND},
     "ConstructionZoneAction": {"set_traffic_backend": _SET_TRAFFIC_BACKEND},
     "TrafficSourceAction": {"set_traffic_backend": _SET_TRAFFIC_BACKEND},
+    "TrafficParametersAction": {"set_traffic_backend": _SET_TRAFFIC_BACKEND},
+    "Spread": {
+        "describe": _AS_DICT,
+        "draw": _TRAFFIC_DRAWS,
+    },
+    "VehicleParameters": {
+        "describe": _AS_DICT,
+        "from_mapping": _FROM_MAPPING,
+        **_members(
+            "check_supported overridden_by restricted_to set_fields",
+            _TRAFFIC_PARAMETER_PLUMBING,
+        ),
+    },
+    "PedestrianParameters": {
+        "describe": _AS_DICT,
+        "from_mapping": _FROM_MAPPING,
+        **_members(
+            "check_supported overridden_by set_fields", _TRAFFIC_PARAMETER_PLUMBING
+        ),
+    },
 }
 
 

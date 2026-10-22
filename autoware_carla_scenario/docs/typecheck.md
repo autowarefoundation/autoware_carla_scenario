@@ -1107,7 +1107,9 @@ Two things Python does that Codon 0.19 does not are filled in for you:
     (`M.A < M.B`) and converts with `int()` and `float()`. A `StrEnum` or
     `class M(str, Enum)` member compares with its string (`M.A == "a"`) and
     does nothing more: ordering and `int()` are refused, as in Python for a
-    plain `Enum`, a `Flag` and a `(str, Enum)`. A plain `Enum` member equals
+    plain `Enum`, a `Flag` and a `(str, Enum)`. A `Flag` and an `IntFlag` also
+  combine with `|`, `&`, `^`, `~` and `in` ([Flag and
+  IntFlag](#flag-and-intflag)). A plain `Enum` member equals
     only members (`M.A == 1` is `False`, as in Python). An enum member is
     **not** an `int` or a `str` otherwise: passing it to an `int` / `str`
     parameter or doing arithmetic on it (`M.A + 1`) is refused with a hint.
@@ -1133,13 +1135,19 @@ cannot express is refused at its line, with what to write instead.
 | `{**a, "k": v, **b}` | `(a \| {"k": v} \| b)`; `{**a}` is `dict(a)` | the values of the parts have other types (`Dict[str, int]` and `Dict[str, str]`) |
 | `"{:>5}\|{a}".format(1, a=x)` on a string literal | the f-string `f"{1:>5}\|{x}"` (a complex argument is bound once by a lambda) | `*args` / `**kwargs`, a field inside a format spec (`{:>{}}`: write the f-string, which is rewritten), a missing argument, mixed auto and manual numbering, a template that is not a literal (write an f-string) |
 | `f"{x:+.2f}"`, `f"{n:>{w}d}"`, a spec Codon's f-string parser does not know | the value's own `__format__`, the f-string a `+` of its parts: `(x).__format__("+.2f")`, `(n).__format__(">" + str(w) + "d")`. A nested field is `str(w)` (`repr(w)` for `!r`); the result is a `str`, as before. `"{:+.2f}".format(x)` is rewritten to the f-string first, so it gets the same | a brace or a nested f-string inside an expression of the f-string (below); `!a` together with a rewritten spec |
+| An f-string (or `"{}".format(...)`, `{x=}`) in the body of a lambda that reads a name the lambda does not bind: `lambda v: f"{v}{p}"`, `sorted(xs, key=lambda e: f"{e}{p}")`, `lambda v, lab=cfg.name: f"{v}{lab}"` (#470) | `str()` parts joined by `+`: `str(v) + str(p)`; `repr(p)` for `!r`, `(p).__format__(spec)` for a spec, `"p=" + repr(p)` for `{p=}`, `repr(p)` for `!a` (as for `ascii()`). Each value is evaluated once, in order, and the result is a `str`. Codon looks the names of an f-string up in the lambda's own scope ("name 'p' is not defined"); a `def` or a comprehension does not have that limit. An f-string of the lambda's own parameters is left as written | a brace or a nested f-string inside an expression (as above) |
 | `zip(a, b, strict=True)` | `zip(a, b)`: the check types the loop, it does not run it | |
+| `s.startswith((a, b))`, `s.endswith((a, b), start)` with the tuple written in the call (#439) | `(s.startswith(a) or s.startswith(b))`; a receiver or item that is not a name, attribute or constant is bound once by a lambda | the tuple is held in a name (`s.startswith(PREFIXES)`), is empty, or the call has `*args` / keywords; each item is still checked as a `str` |
+| `format(x, spec)`, `format(x)` (#439) | `x.__format__(spec)`, `str(x)` | a module that binds the name `format` itself is left alone |
+| `ascii(x)` (#439) | `repr(x)`: the same `str` type; the check does not run it, so the escaping of non-ASCII characters is unchanged at run time | a module that binds the name `ascii` itself is left alone |
 | `sorted(xs)`, `xs.sort()`, `min` / `max` of a class that defines `__lt__` only | the class gets `__gt__` (`other < self`) and `__ge__` (`not self < other`), which Codon's sort calls | the class defines no ordering (use `@dataclass(order=True)` or `key=`) |
 | `@functools.total_ordering` | the decorator and its import are dropped, and the class gets the comparisons it would add from its `__lt__`, `__le__`, `__gt__` or `__ge__` (and `==`, or identity without `__eq__`) | the class is not at module level, or defines none of the four |
 | `lambda x, k=k: x + k` (a default that is not a literal) | `(lambda k: lambda x: x + k)(k)`: the default is bound by a call, once, as in Python | |
 | `def __exit__(self, exc_type, exc, tb)` (annotated `type[BaseException] \| None`, `BaseException \| None`, `object`, ... or not) | each parameter without a default gets `=None`: Codon calls `__exit__()` with no arguments, even when the block raised (#435). An annotation of `BaseException` or `Exception` (alone or `\| None`, `Optional[...]`) is kept as `X \| None`; any other annotation is dropped | |
 | `fs: list[Callable[[int], int]] = [inc, lambda x: x * 2]`, `table: dict[str, Callable[[int], int]] = {"a": inc, "b": dbl}`, or a `return` of such a display from a function annotated so (a dispatch table) | each function, module function (`mod.f`) or lambda element is wrapped in Codon's `Callable[Tuple[int], int](...)`, so they share one type (#436) | the element is a bound method, a lambda using a local variable of its function, or a call (not wrapped, then Codon's own refusal and a hint); the table is a `set`, an attribute of a class, is unannotated, or is built another way than a display (a comprehension) |
 | a class constant read in its own class body (#433): `DOUBLE = LIMIT * 2`, `x: int = SIZE` (a dataclass default), `def f(self, n=LIMIT)`, `@register(LIMIT)` | `Class.LIMIT` (`Outer.Inner.LIMIT` in a nested class) | the constant is annotated and not a single-line literal (`LIMIT: int = 2 * 3`), it is assigned again later in the body, the class is defined in a function, the read is a `NamedTuple` field default, or it is an Enum member with a non-literal value |
+| a comprehension or generator in a class body (#469): `SQ = [i * i for i in range(3)]`, `field(default_factory=lambda: [d.name for d in Mode])`, `lambda: tuple(gen)`, `lambda: list(Mode)` | a module-level function above the class (`def _acs_hoist_Q_2(): return (...)`) that the attribute or field default calls, on the same lines (Codon does not bind a comprehension's variable in a class body, and crashes on an Enum iterated there) | the expression reads its own class (`range(LIMIT)` with `LIMIT` a constant of the class): build it in a module-level function |
+| `dict(a=1)` | `{"a": 1}` (Codon's `dict` takes no keywords) | |
 
 Notes:
 
@@ -1266,6 +1274,12 @@ the check needs the other spelling.
 | `case [a, b] as whole:` | `unexpected indentation` | match without `as` and use the name the subject already has |
 | `def show(h: HasArea)` called with a class that has `area()` but does not derive from the `Protocol` `HasArea` | `'Sq[float]' does not match expected type 'HasArea'` (also `List[Sq]` against `List[HasArea]`) | derive from it (`class Sq(HasArea):`), give the classes a common base class, or annotate `Union[Sq, Circle]`; Codon lists are invariant: annotate a list with the class it holds (`list[Sq]`) |
 | `f(*xs)` with a list, `f(**d)` with a dict | `argument after * must be a tuple, not 'List[int]'` / `argument after ** must be a named tuple, not 'Dict[str,int]'` | pass the elements (`f(xs[0], xs[1])`, `f(a=d["a"], b=d["b"])`), or make the parameter a list or dict; a tuple (`f(*(1, 2))`) is accepted |
+| `try: ... except* ValueError as eg:` (exception groups, #439) | `scenario.py:70:1: error: unexpected dedent`, at the line after the handler | `except ValueError:` (one handler per exception type); Codon has no syntax for `except*` |
+| `s.startswith(PREFIXES)` with a tuple held in a name (#439) | `'Tuple[str,str]' does not match expected type 'str'` | `any(s.startswith(p) for p in PREFIXES)`; a tuple written in the call is rewritten |
+| `d.update(c=3)` (#439) | `no function 'Dict.update' with arguments (Dict[str,int], int)` | `d.update({"c": 3})` (the check cannot rewrite it: it does not know `d` is a dict, and `obj.update(dt=1)` of your own class is valid) |
+| `int.from_bytes(b, "big")`, `n.to_bytes(2, "big")` (#439) | `'int' object has no attribute 'from_bytes'` | shifts and masks (`n = (n << 8) \| byte`); Codon's `bytes` is a `str` |
+| `"{a}".format_map(d)` (#439) | `'{a}' object has no attribute 'format_map'` | an f-string, or `"{a}".format(a=d["a"])` |
+| `b.decode()`, `b.hex()` on a bytes value (#439) | `'str' object has no attribute 'decode'` | Codon's `bytes` is a `str`: it is already text |
 
 Plain value, or-pattern, guard, sequence (without `*`) and enum-member
 (`case Mode.A:`) patterns compile, as does `case int():` of a builtin type.
@@ -1325,8 +1339,9 @@ instead:
 
 ### Iterating an enum
 
-For a scenario's own `Enum` class (any of `Enum`, `IntEnum`, `StrEnum`,
-`Flag`, `IntFlag`, `(str, Enum)`), the check rewrites, as Python reads it:
+For an `Enum` class, a scenario's own (any of `Enum`, `IntEnum`, `StrEnum`,
+`Flag`, `IntFlag`, `(str, Enum)`) or one of the framework's (`TurnDirection`,
+`ComparisonRule`, `TickTiming`, ...), the check rewrites, as Python reads it:
 
 - `for m in Mode` and a comprehension over `Mode`, and `*Mode`;
 - `list(Mode)`, `tuple`, `set`, `frozenset`, `sorted`, `len`, `reversed`,
@@ -1336,13 +1351,22 @@ For a scenario's own `Enum` class (any of `Enum`, `IntEnum`, `StrEnum`,
 - `Mode["A"]`, a member looked up by name.
 
 Iteration yields the members in definition order. A member whose value repeats
-an earlier one is an alias, and is skipped, as in Python. Only the bare name of
-the class is rewritten, so a parameter or local called like the class is left
-alone, and the enum may be defined in another module of the package.
+an earlier one is an alias, and is skipped, as in Python. A `Flag` or `IntFlag`
+yields its single-bit members only, as Python 3.11 and later do: a composite
+(`RW = R | W`, `BOTH = 3`), a zero member and an alias are skipped, though
+`Perm["RW"]` finds them. Only the bare name of the class is rewritten, so a
+parameter or local called like the class is left alone, and the enum may be
+defined in another module of the package.
 
-What does not work (Flag operators and the model enums are tracked in #437):
+The framework's enums are `@tuple` classes in the model
+(`typecheck/codon/`). Each declares `_acs_members()` and `_acs_by_name()`, and
+the check takes the enums to rewrite from the model files, so a new model enum
+is iterable once it declares them. `test_typecheck_model.py` keeps both equal
+to the Python enum's members, in its order. A scenario class of the same name
+as a model enum that is no enum is left alone.
 
-- the framework's own model enums (`TurnDirection`, ...) are not iterable;
+What does not work:
+
 - the class passed as a value, `f(Mode)`, or `Mode.__members__`: both stay as
   written, which Codon does not resolve (`no function 'List.__init__' with
   arguments (List[T], type[Mode])` for `list(e)` in `f`, and `'Mode' object
@@ -1350,8 +1374,30 @@ What does not work (Flag operators and the model enums are tracked in #437):
 - `sum`, `any` and `all` of the class, and `filter(None, Mode)`: Codon needs
   `__bool__` or `+` on the member (`sum(int(m) for m in Mode)`, `any(m == x
   for m in Mode)`);
-- the operators of a `Flag` (`A | B`: `unsupported operand type(s) for |`);
 - an enum with no member (`'Empty' object has no attribute '_acs_members'`).
+
+### Flag and IntFlag
+
+A scenario's own `Flag` or `IntFlag` (also `class M(int, Flag)`) combines as in
+Python: `A | B`, `&`, `^`, `~` and `A in x` (every bit of `A` is set in `x`)
+make a value of the same class, an `IntFlag` takes an `int` on either side
+too (`P.R | 4`, `4 | P.R`), and `bool(x)` is false for no bit set. Two
+combinations of the same members are equal, hash alike and compare equal to
+the member that has their value (`P.R | P.W == P.RW`). A `Flag` does no
+other arithmetic, order or `int()`; an `IntFlag` compares, orders and converts
+as an `IntEnum` does, and `P.R + P.W` is refused (use `.value`). `~x` flips the
+bits of the single-bit members for a `Flag`, and every bit up to the highest
+of any member for an `IntFlag`, as Python 3.11+ does. The operators are usable
+at module level and in a class body or default (`RW = P.R | P.W`).
+
+A combination is no member: the check builds it from the combined int, so it
+has an empty `name`, and `P.R | P.W is P.RW` is not modelled (compare with
+`==`). A value written as an expression of the class's own members, even a
+composite or an `auto()` one, is worked out when the check reads the class
+(`RW = R | W`, `ALL = A | B | C`, `HIGH = 1 << 4`, `ALL = ~0`); `auto()` is the
+power of two above the highest bit so far. Operators of two different flag
+classes, and of a framework enum such as `TurnDirection.LEFT |
+TurnDirection.RIGHT` (not a `Flag`, so Python refuses it too), are refused.
 
 ## What the check does not catch
 
@@ -1525,8 +1571,8 @@ To check one more module:
 
 ### What is checked of the framework
 
-Every module now has an entry other than `"not yet checked (#45)"`. 196 of
-the package's 291 modules (67%; about 47,300 of 84,200 lines) are `CHECKED`:
+Every module now has an entry other than `"not yet checked (#45)"`. 198 of
+the package's 293 modules (68%; about 47,300 of 84,200 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the conversions between
 Lanelet2, OpenDRIVE and CARLA world poses (`coordinate.transform`), the stop
 lines read off a Lanelet2 map (`utils.stop_line`, `coordinate.stop_line`)
@@ -1543,7 +1589,7 @@ the sweeper's lanelet constraints and parameter bindings
 frame, poses and search (`route.geometry`, `route.frame`, `route.positions`,
 `route.search`), all against the lanelet2 model, the condition base and
 every condition, the action base with the environment, follow-trajectory,
-traffic-signal, signal-controller, lane-change, routing, set-speed, turn and
+traffic-signal, signal-controller, lane-change, routing, set-speed, traffic-parameters, turn and
 walk-straight actions, the stalled object (`actions.stalled_object`) and the background-traffic source and sink
 (`actions.background_traffic`), the logical scenario's route search and matches (`route.model`) and
 the scenario's route (`route.active`),
@@ -2169,12 +2215,31 @@ What Codon 0.19 needs that Python does not, beyond
   the frame's waypoint, weather, lanelet tags, ... each `Optional`, and
   `read`, so a read that failed is still kept as `None` for the frame, as
   before.
-- Standard modules Codon does not have (`json`, `inspect`, `tempfile`,
-  ...) are not available to a checked module; the `typing`,
-  `dataclasses`, `enum`, `logging`, `abc`, `queue`, `pathlib`, `hashlib`,
-  `os`, `shutil`, `subprocess`, `signal`, `atexit`, `shlex`, `sys`,
-  `threading`, `importlib.metadata`, `urllib.parse` and `__future__` shims
-  of `codon/` are. Each takes the
+- Standard modules Codon does not have (`json`, `inspect`,
+  `concurrent.futures`, ...) are not available to a checked module; the
+  shims of `codon/` are. They are these (`test_shim_list` keeps the list
+  and the files of `codon/` in step):
+
+  <!-- shims:start -->
+  `__future__`, `abc`, `atexit`, `dataclasses`, `enum`, `hashlib`,
+  `importlib.metadata`, `logging`, `os`, `os.path`, `pathlib`, `queue`,
+  `shlex`, `shutil`, `signal`, `subprocess`, `sys`, `tempfile`, `threading`,
+  `typing` and `urllib.parse`
+  <!-- shims:end -->
+
+  `tempfile` declares `mkstemp(suffix=None, prefix=None, dir=None,
+  text=False)` only, with CPython 3.10's signature (a `str` or an
+  `os.PathLike` directory; bytes affixes are not declared). The check only
+  compiles it, so its body is a stub that makes no file (it is typed to give
+  `(int, str)`, the descriptor and the name). `mkdtemp()`,
+  `NamedTemporaryFile()`, `TemporaryDirectory()`, `gettempdir()` and the
+  rest are not declared and fail the check. Two more modules are not
+  shims but extensions of Codon's own `collections` and `itertools`, in
+  `codon/_stdlib/` (#422): they add
+  `collections.OrderedDict` and `itertools.pairwise`, as listed under
+  "Standard library names Codon lacks".
+
+  Each shim takes the
   arguments CPython takes, so the check accepts what CPython accepts and
   refuses the rest; where Python versions differ, it takes what Python 3.10,
   the oldest the package supports, takes. `pathlib` declares `Path(*parts)`,
@@ -3097,10 +3162,9 @@ What Codon 0.19 needs that Python does not, beyond
   only the uncalled parser reads it.
 - **An enum member looked up by name, or an enum iterated over**
   (`ComparisonRule[name]`, `list(ComparisonRule)`): write it as in Python.
-  The check rewrites both for an enum of the package being checked
-  ([Iterating an enum](#iterating-an-enum)), so `sweeper.constraints` has no
-  spelled-out member lists left. The framework's own model enums are the
-  exception: they are not iterable.
+  The check rewrites both for an enum of the package being checked and for the
+  framework's own enums ([Iterating an enum](#iterating-an-enum)), so
+  `sweeper.constraints` has no spelled-out member lists left.
 - **An exception class raised with no arguments** (`raise _Exhausted()` in
   `route.search`): Codon 0.19 raises no exception class without its own
   `__init__`, and its `Exception` takes a message where Python's takes none.

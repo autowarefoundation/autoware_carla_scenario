@@ -62,7 +62,11 @@ jobs:
   end-of-file-fixer:
     name: Auto-fix End of File
     runs-on: ubuntu-24.04
+    # A fork's branch is not in this repository, so it can neither be checked
+    # out by name nor pushed to with this repository's token: skip forks, as
+    # `auto-format` in ci.yml does. `lint-and-format` still checks their files.
     if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
       github.actor != 'github-actions[bot]' &&
       github.event.action != 'labeled' && github.event.action != 'unlabeled'
     permissions:

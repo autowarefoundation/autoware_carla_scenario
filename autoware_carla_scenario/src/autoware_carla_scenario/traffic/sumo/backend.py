@@ -29,7 +29,16 @@ Every vehicle in the run falls in one of three groups:
 
 Pedestrians go both ways too: CARLA's are published into SUMO as persons
 (``publish_walkers``), and SUMO's own (``pedestrians``) are mirrored into
-CARLA as walkers while they are near the ego or a vehicle CARLA drives.
+CARLA as walkers while they are near the ego or a vehicle CARLA drives.  The
+scenario's own pedestrians are published, like its vehicles, unless
+``scenario_pedestrians=sumo``: then each is a SUMO person its walker follows,
+which a ``WalkStraightAction`` walks straight on through TraCI
+(:meth:`SumoTrafficBackend.walk_straight`).
+
+Nothing joins the run that the run did not ask for: SUMO's own vehicles
+(``ambient``) and pedestrians (``pedestrians``) are off by default, so the
+road holds the scenario's vehicles and pedestrians, and the background
+vehicles its traffic sources add (``TrafficSourceAction``).
 
 With ``mesoscopic.enabled``, a driven or ambient vehicle far from every
 published one (the ego among them) leaves SUMO for a mesoscopic queue model
@@ -140,6 +149,12 @@ _LANE_CHANGE_MODE_EXTERNAL = 0
 #: needs it: SUMO's default (1621) without the cooperative, speed-gain and
 #: keep-right changes.
 _LANE_CHANGE_MODE_STRATEGIC = 1537
+#: SUMO's own lane-change mode bits, which ``lane_changes: true`` puts back.
+_LANE_CHANGE_MODE_DEFAULT = 1621
+#: The pedestrian parameters a run can change: the walking speed and the gap
+#: are set on each person, but ``jmDriveAfterRedTime`` only on a type, and
+#: the types are written before SUMO starts.
+_PEDESTRIAN_OVERRIDES = ("walking_speed_mps", "min_gap_m")
 #: Vehicle parameter -> the TraCI setter that gives a vehicle its draw.
 _VEHICLE_SETTERS = {
     "speed_factor": "setSpeedFactor",
@@ -264,6 +279,17 @@ class SumoTrafficBackend(TrafficBackend):
         self._walkers: dict[int, str] = {}
         #: CARLA pedestrians no edge was found near, so not yet in SUMO.
         self._walkers_off_network: set[int] = set()
+        #: The scenario's pedestrians, adopted with adopt_pedestrian().
+        self._pedestrian_entities: list[Any] = []
+        #: ``id()`` of the scenario's pedestrians an action moves itself
+        #: (release_pedestrian()): published, not walked.
+        self._released_pedestrians: set[int] = set()
+        #: SUMO person id -> the scenario's pedestrian SUMO walks
+        #: (``scenario_pedestrians=sumo``).
+        self._walked: dict[str, Any] = {}
+        #: The persons of ``_walked`` out on a walk, whose walkers follow them:
+        #: where each is (SUMO's frame), its heading and its speed (m/s).
+        self._walking: dict[str, tuple[float, float, float, float]] = {}
         #: SUMO ids of the background vehicles spawn_background added.
         self._background: set[str] = set()
         #: Lane id -> the vehicle classes it allowed before close_lane().
@@ -325,6 +351,9 @@ class SumoTrafficBackend(TrafficBackend):
         self._max_speeds: dict[str, tuple[float, float, float]] = {}
         #: The vehicles that departed in this step, read once per step.
         self._departed: Optional[list[str]] = None
+        #: The pedestrian parameters changed during the run, which each
+        #: person who departs from then on draws.
+        self._pedestrian_overrides: Optional[PedestrianParameters] = None
         if vehicles is not None:
             self.set_vehicle_parameters(vehicles)
         if pedestrians is not None:
@@ -344,6 +373,78 @@ class SumoTrafficBackend(TrafficBackend):
             logger.info(
                 "SUMO: %s apply to SUMO's vehicles only; the scenario's, which "
                 "the TrafficManager drives, do without them",
+                ", ".join(dropped),
+            )
+
+    def supported_vehicle_overrides(self) -> set[str]:
+        """Every vehicle parameter it supports: each is set per vehicle."""
+        return self.supported_vehicle_parameters()
+
+    def supported_pedestrian_overrides(self) -> set[str]:
+        """The walking speed and the gap; the red light only before the run."""
+        return set(_PEDESTRIAN_OVERRIDES)
+
+    def override_entity_parameters(
+        self, world: Any, overrides: VehicleParameters, entity: Any
+    ) -> None:
+        """Give *entity*'s vehicle alone a new draw of the fields *overrides*
+        sets: in SUMO when SUMO drives it, else through the TrafficManager."""
+        sumo_id = self._id_of(entity)
+        if sumo_id is not None:
+            self._draw_vehicle(sumo_id, overrides)
+        elif self._tm_drives_scenario:
+            shared = overrides.restricted_to(self._tm.supported_vehicle_parameters())
+            self._warn_dropped(overrides, shared)
+            self._tm.override_entity_parameters(world, shared, entity)
+
+    def override_vehicle_parameters(
+        self, world: Any, overrides: VehicleParameters
+    ) -> None:
+        """Give every vehicle SUMO drives (and the TrafficManager drives for
+        the scenario) a new draw of the fields *overrides* sets, and the ones
+        that depart later the new parameters."""
+        shared = overrides.restricted_to(self._tm.supported_vehicle_parameters())
+        self._remember_parameters()
+        self._vehicle_parameters = self.vehicle_parameters.overridden_by(overrides)
+        if self._tm_drives_scenario:
+            self._warn_dropped(overrides, shared)
+            self._tm.override_vehicle_parameters(world, shared)
+        if not self._running:
+            return
+        for sumo_id in self._traci.vehicle.getIDList():
+            if sumo_id not in self._external:
+                self._draw_vehicle(sumo_id, overrides)
+        # The visibility is held anew, from the new draws (or not at all).
+        for sumo_id in list(self._max_speeds):
+            self._hold_to_sight(sumo_id, None)
+        self._visibility = None
+
+    def override_pedestrian_parameters(
+        self, world: Any, overrides: PedestrianParameters
+    ) -> None:
+        """Give every pedestrian of SUMO's own a new draw of the fields
+        *overrides* sets, and those who depart later too."""
+        del world
+        self._remember_parameters()
+        self._pedestrian_parameters = self.pedestrian_parameters.overridden_by(
+            overrides
+        )
+        previous = self._pedestrian_overrides
+        self._pedestrian_overrides = (
+            overrides if previous is None else previous.overridden_by(overrides)
+        )
+        if not self._running:
+            return
+        for person in self._traci.person.getIDList():
+            self._draw_person(person, overrides)
+
+    @staticmethod
+    def _warn_dropped(overrides: VehicleParameters, shared: VehicleParameters) -> None:
+        dropped = sorted(set(overrides.set_fields()) - set(shared.set_fields()))
+        if dropped:
+            logger.warning(
+                "SUMO: %s do not reach the scenario's vehicles the TrafficManager "
+                "drives",
                 ", ".join(dropped),
             )
 
@@ -367,6 +468,10 @@ class SumoTrafficBackend(TrafficBackend):
     @property
     def _tm_drives_scenario(self) -> bool:
         return self._config.scenario_vehicles == "traffic_manager"
+
+    @property
+    def _walks_scenario_pedestrians(self) -> bool:
+        return self._config.scenario_pedestrians == "sumo"
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -522,6 +627,14 @@ class SumoTrafficBackend(TrafficBackend):
             len(self._driven),
             len(self._external),
         )
+        if self._walks_scenario_pedestrians:
+            for entity in self._pedestrian_entities:
+                self._take_pedestrian(entity)
+            logger.info(
+                "SUMO walks %d of the scenario's %d pedestrian(s)",
+                len(self._walked),
+                len(self._pedestrian_entities),
+            )
         if self._config.traffic_light_authority != "none":
             self._signals = self._match_signals(world)
             if self._config.traffic_light_authority == "carla":
@@ -557,6 +670,7 @@ class SumoTrafficBackend(TrafficBackend):
             self._pull_driven()
             self._sync_ambient(world)
             self._sync_persons(world)
+            self._follow_walked()
             self._flush_commands()
             if self._config.traffic_light_authority == "sumo":
                 self._signals_to_carla()
@@ -573,6 +687,9 @@ class SumoTrafficBackend(TrafficBackend):
     def close(self) -> None:
         """Stop SUMO, destroy the ambient actors and forget the run."""
         self._tm.close()
+        # The next run starts from its config, not from this one's overrides.
+        self._restore_parameters()
+        self._pedestrian_overrides = None
         if self._clock_log is not None:
             self._clock_log.close()
             self._clock_log = None
@@ -636,6 +753,10 @@ class SumoTrafficBackend(TrafficBackend):
         self._external = {}
         self._walkers = {}
         self._walkers_off_network = set()
+        self._pedestrian_entities = []
+        self._released_pedestrians = set()
+        self._walked = {}
+        self._walking = {}
         self._background = set()
         self._background_count = 0
         self._closed_lanes = {}
@@ -666,6 +787,7 @@ class SumoTrafficBackend(TrafficBackend):
         if self._network is not None:
             out["network"] = str(self._network.net_file)
         out["scenario_vehicles"] = self._config.scenario_vehicles
+        out["scenario_pedestrians"] = self._config.scenario_pedestrians
         out["vehicle_control"] = self._config.vehicle_control
         out["publish_walkers"] = self._config.publish_walkers
         out["pedestrian_crossings"] = self._config.pedestrian_crossings
@@ -888,6 +1010,116 @@ class SumoTrafficBackend(TrafficBackend):
         )
         self._driven[sumo_id] = entity
         logger.info("SUMO: %s resumed; SUMO drives it again", sumo_id)
+
+    # ------------------------------------------------------------------
+    # The scenario's pedestrians
+    # ------------------------------------------------------------------
+
+    def adopt_pedestrian(self, entity: Any) -> None:
+        """Remember *entity*; with ``scenario_pedestrians=sumo`` SUMO walks it
+        from when the run starts."""
+        self._pedestrian_entities.append(entity)
+
+    def walk_straight(self, entity: Any, speed_ms: float) -> bool:
+        """Walk a scenario pedestrian SUMO walks straight ahead at *speed_ms*,
+        the way its walker faces; zero stands it where it is.
+
+        The walk is TraCI's, not SUMO's pedestrian model: each step the person
+        is moved on along the line (``person.moveToXY``, onto whatever lane is
+        there, so SUMO's traffic sees it on the road), and its walker follows
+        it -- off the kerb and across the road where it stands, as
+        ``WalkStraightAction`` means, until it is stopped.
+        """
+        person = self._walked_id(entity)
+        if person is None or not self._running:
+            return False
+        actor = getattr(entity, "actor", None)
+        if actor is None:
+            return False
+        role = str(getattr(entity, "role_name", person))
+        if speed_ms <= 0.0:
+            self._walking.pop(person, None)
+            self._walk(actor, self._person_carla_pose(person), 0.0)
+            logger.info("SUMO: pedestrian '%s' stands where it is", role)
+            return True
+        pose = self._walker_pose(actor)
+        self._walking[person] = (pose.x, pose.y, pose.heading_deg, float(speed_ms))
+        logger.info(
+            "SUMO walks pedestrian '%s' straight on at %.2f m/s", role, speed_ms
+        )
+        return True
+
+    def release_pedestrian(self, entity: Any, world: Any) -> None:
+        """Stop walking *entity* in SUMO and publish it there instead: an
+        action moves its walker itself from now on."""
+        del world
+        self._released_pedestrians.add(id(entity))
+        person = self._walked_id(entity)
+        if person is None or not self._running:
+            # Not in SUMO yet: start() leaves it to be published.
+            return
+        self._publish_walked(person)
+        logger.info(
+            "SUMO: pedestrian '%s' released; it is published from CARLA now",
+            str(getattr(entity, "role_name", person)),
+        )
+
+    def _walked_id(self, entity: Any) -> Optional[str]:
+        for person, walked in self._walked.items():
+            if walked is entity:
+                return person
+        return None
+
+    def _take_pedestrian(self, entity: Any) -> None:
+        """Put the scenario's pedestrian *entity* into SUMO as a person SUMO
+        walks.  Until it is sent on a walk it stands where its walker stands
+        (:meth:`_push_walkers` puts it there every tick)."""
+        actor = getattr(entity, "actor", None)
+        if actor is None or id(entity) in self._released_pedestrians:
+            return
+        person = self._new_person(actor, self._walker_pose(actor))
+        if person is None:
+            # No footway near (warned): CARLA walks it, and SUMO cannot see it.
+            return
+        self._traci.person.setColor(person, _DRIVEN_COLOR)
+        self._walked[person] = entity
+
+    def _publish_walked(self, person: str) -> None:
+        """Stop walking *person*: its walker is published into SUMO from now
+        on, as any CARLA pedestrian is (or taken out, without
+        ``publish_walkers``)."""
+        entity = self._walked.pop(person)
+        self._walking.pop(person, None)
+        actor = getattr(entity, "actor", None)
+        if actor is None or not self._config.publish_walkers:
+            self._traci.person.remove(person)
+            return
+        self._traci.person.setColor(person, _PUBLISHED_COLOR)
+        self._walkers[actor.id] = person
+
+    def _walked_pose(self, person: str, actor: Any) -> Pose2D:
+        """Where *person*, SUMO walks, is to be this step (SUMO's frame): on
+        along its walk, or, standing, where its walker is."""
+        walk = self._walking.get(person)
+        if walk is None:
+            return self._walker_pose(actor)
+        x, y, heading_deg, speed = walk
+        dt = self._context.fixed_delta_seconds if self._context is not None else 0.05
+        # SUMO's angle turns clockwise from north.
+        heading = math.radians(90.0 - heading_deg)
+        x += speed * dt * math.cos(heading)
+        y += speed * dt * math.sin(heading)
+        self._walking[person] = (x, y, heading_deg, speed)
+        return Pose2D(x, y, 0.0, heading_deg)
+
+    def _follow_walked(self) -> None:
+        """Walk the walkers of the scenario's pedestrians out on a walk to
+        where SUMO has their persons."""
+        for person, (_x, _y, _heading, speed) in self._walking.items():
+            entity = self._walked.get(person)
+            actor = getattr(entity, "actor", None) if entity is not None else None
+            if actor is not None:
+                self._walk(actor, self._person_carla_pose(person), speed)
 
     def background_actors(self, world: Any) -> dict[str, Any]:
         """The CARLA mirror of every ambient SUMO vehicle, by its role name
@@ -1336,20 +1568,39 @@ class SumoTrafficBackend(TrafficBackend):
             tc.vehicle.setPreviousSpeed(sumo_id, speed)
 
     def _push_walkers(self, world: Any) -> None:
-        """Put every CARLA pedestrian into SUMO where it stands, as a person.
+        """Put every CARLA pedestrian into SUMO where it stands, as a person,
+        and each of the scenario's pedestrians SUMO walks where it is to be.
 
         Placed again each step -- a person SUMO is not moving any more would
         walk off on its own -- and removed once its actor is gone.
         """
+        tc = self._traci
+        present = {a.id: a for a in world.get_actors().filter("walker.pedestrian.*")}
+        # The scenario's pedestrians SUMO walks leave SUMO with their walkers.
+        for walked, entity in list(self._walked.items()):
+            actor = getattr(entity, "actor", None)
+            if actor is None or actor.id not in present:
+                del self._walked[walked]
+                self._walking.pop(walked, None)
+                try:
+                    tc.person.remove(walked)
+                except Exception as exc:  # noqa: BLE001 - it may have left already
+                    logger.debug("SUMO: removing a person: %s", exc)
+                continue
+            pose = self._walked_pose(walked, actor)
+            tc.person.moveToXY(
+                walked, "", pose.x, pose.y, pose.heading_deg, _KEEP_ROUTE_ANYWHERE
+            )
         if not self._config.publish_walkers:
             return
-        tc = self._traci
-        # Not the walkers mirroring SUMO's own pedestrians: those are in SUMO.
+        # Not the walkers mirroring SUMO's own pedestrians, nor the ones
+        # following a person SUMO walks: those are in SUMO.
         mirrors = {actor.id for actor in self._persons.values()}
+        mirrors.update(entity.actor.id for entity in self._walked.values())
         walkers = {
-            a.id: a
-            for a in world.get_actors().filter("walker.pedestrian.*")
-            if a.id not in mirrors
+            actor_id: actor
+            for actor_id, actor in present.items()
+            if actor_id not in mirrors
         }
         for actor_id in [i for i in self._walkers if i not in walkers]:
             try:
@@ -1357,20 +1608,33 @@ class SumoTrafficBackend(TrafficBackend):
             except Exception as exc:  # noqa: BLE001 - it may have left already
                 logger.debug("SUMO: removing a person: %s", exc)
         for actor_id, actor in walkers.items():
-            tf = actor.get_transform()
-            pose = carla_to_sumo(
-                Pose2D(tf.location.x, tf.location.y, tf.location.z, tf.rotation.yaw),
-                0.0,
-                self._offset,
-            )
+            pose = self._walker_pose(actor)
             person = self._walkers.get(actor_id) or self._add_person(actor, pose)
             if person is not None:
                 tc.person.moveToXY(
                     person, "", pose.x, pose.y, pose.heading_deg, _KEEP_ROUTE_ANYWHERE
                 )
 
+    def _walker_pose(self, actor: Any) -> Pose2D:
+        """Where CARLA's walker *actor* is, in SUMO's frame."""
+        tf = actor.get_transform()
+        return carla_to_sumo(
+            Pose2D(tf.location.x, tf.location.y, tf.location.z, tf.rotation.yaw),
+            0.0,
+            self._offset,
+        )
+
     def _add_person(self, actor: Any, pose: Pose2D) -> Optional[str]:
-        """Add a person for *actor* on the nearest edge; ``None`` if none is near."""
+        """Publish *actor* as a person on the nearest edge; ``None`` if none is near."""
+        person = self._new_person(actor, pose)
+        if person is not None:
+            self._traci.person.setColor(person, _PUBLISHED_COLOR)
+            self._walkers[actor.id] = person
+        return person
+
+    def _new_person(self, actor: Any, pose: Pose2D) -> Optional[str]:
+        """Add a person for *actor* on the nearest edge, standing; ``None`` if
+        none is near."""
         edges = [
             (distance, edge)
             for edge, distance in self._net.getNeighboringEdges(
@@ -1395,13 +1659,12 @@ class SumoTrafficBackend(TrafficBackend):
         person = f"carla_walker{actor.id}"
         tc = self._traci
         tc.person.add(person, min(edges, key=lambda e: e[0])[1].getID(), 0.0)
-        # Stands where it is put; moveToXY moves it every step.
+        # Stands where it is put: a published person is moved every step, and
+        # one SUMO walks stands until walk_straight() sends it on a walk.
         tc.person.appendWaitingStage(person, 1e7)
         extent = actor.bounding_box.extent
         tc.person.setLength(person, max(2.0 * float(extent.x), 0.2))
         tc.person.setWidth(person, max(2.0 * float(extent.y), 0.2))
-        tc.person.setColor(person, _PUBLISHED_COLOR)
-        self._walkers[actor.id] = person
         return person
 
     def _follow(self, actor: Any, sumo_id: str, length: float) -> None:
@@ -2207,7 +2470,7 @@ class SumoTrafficBackend(TrafficBackend):
         if not self._config.pedestrians.enabled:
             return
         tc = self._traci
-        published = set(self._walkers.values())
+        published = set(self._walkers.values()) | set(self._walked)
         policy = self._person_policy()
         focus = self._focus_points() if policy is not None else []
         wanted: list[tuple[float, str]] = []
@@ -2288,8 +2551,16 @@ class SumoTrafficBackend(TrafficBackend):
             ),
             carla.Rotation(yaw=pose.heading_deg),
         )
+        from ...entity.pedestrian_entity import (  # noqa: PLC0415
+            _UE5_WALKER_MAX_SPEED_MS,
+            walker_speed_command,
+        )
+
+        # The command CARLA 0.10 walks it at *speed* with, capped at what it
+        # can walk rather than warned about: it is sent every tick.
         control = carla.WalkerControl(
-            direction=carla.Vector3D(math.cos(yaw), math.sin(yaw), 0.0), speed=speed
+            direction=carla.Vector3D(math.cos(yaw), math.sin(yaw), 0.0),
+            speed=walker_speed_command(min(speed, _UE5_WALKER_MAX_SPEED_MS)),
         )
         if self._context is not None and self._context.client is not None:
             self._commands += [
@@ -2365,33 +2636,66 @@ class SumoTrafficBackend(TrafficBackend):
         ``tau``, so the sight speed is worked out from its draws.
         """
         parameters = self.vehicle_parameters
-        if not parameters.set_fields():
-            return
+        if parameters.set_fields():
+            for sumo_id in self._departed_ids():
+                if sumo_id not in self._external:  # CARLA's side drives those
+                    self._draw_vehicle(sumo_id, parameters)
+        overrides = self._pedestrian_overrides
+        if overrides is not None:
+            for person in self._traci.simulation.getDepartedPersonIDList():
+                self._draw_person(person, overrides)
+
+    def _draw_vehicle(self, sumo_id: str, parameters: VehicleParameters) -> None:
+        """Give *sumo_id* its own draw of each field *parameters* sets."""
         vehicle = self._traci.vehicle
         rng = self._draws
-        for sumo_id in self._departed_ids():
-            if sumo_id in self._external:
-                continue  # CARLA's side drives it; SUMO only places it
-            try:
-                for name, value in (
-                    ("speed_factor", parameters.speed_factor),
-                    ("min_gap_m", parameters.min_gap_m),
-                    ("accel", parameters.accel),
-                    ("decel", parameters.decel),
-                    ("reaction_time_s", parameters.reaction_time_s),
-                    ("imperfection", parameters.imperfection),
-                ):
-                    if value is not None:
-                        setter = getattr(vehicle, _VEHICLE_SETTERS[name])
-                        setter(sumo_id, value.draw(rng, VEHICLE_BOUNDS[name]))
-                if parameters.lane_changes is False:
-                    vehicle.setLaneChangeMode(sumo_id, _LANE_CHANGE_MODE_STRATEGIC)
-            except Exception as exc:  # noqa: BLE001 - one vehicle must not end the run
-                logger.warning(
-                    "SUMO could not set the traffic parameters of %s: %s",
+        try:
+            for name, value in (
+                ("speed_factor", parameters.speed_factor),
+                ("min_gap_m", parameters.min_gap_m),
+                ("accel", parameters.accel),
+                ("decel", parameters.decel),
+                ("reaction_time_s", parameters.reaction_time_s),
+                ("imperfection", parameters.imperfection),
+            ):
+                if value is not None:
+                    setter = getattr(vehicle, _VEHICLE_SETTERS[name])
+                    setter(sumo_id, value.draw(rng, VEHICLE_BOUNDS[name]))
+            if parameters.lane_changes is not None:
+                vehicle.setLaneChangeMode(
                     sumo_id,
-                    exc,
+                    _LANE_CHANGE_MODE_DEFAULT
+                    if parameters.lane_changes
+                    else _LANE_CHANGE_MODE_STRATEGIC,
                 )
+        except Exception as exc:  # noqa: BLE001 - one vehicle must not end the run
+            logger.warning(
+                "SUMO could not set the traffic parameters of %s: %s", sumo_id, exc
+            )
+
+    def _draw_person(self, person: str, parameters: PedestrianParameters) -> None:
+        """Give SUMO's pedestrian *person* its own draw of the fields
+        *parameters* sets that a person can be given during a run."""
+        if person in self._walkers.values():
+            return  # one of CARLA's, placed in SUMO where it stands
+        tc = self._traci
+        try:
+            walking = parameters.walking_speed_mps
+            if walking is not None:
+                tc.person.setMaxSpeed(
+                    person,
+                    walking.draw(self._draws, PEDESTRIAN_BOUNDS["walking_speed_mps"]),
+                )
+                tc.person.setSpeedFactor(person, 1.0)  # the draw is the speed
+            gap = parameters.min_gap_m
+            if gap is not None:
+                tc.person.setMinGap(
+                    person, gap.draw(self._draws, PEDESTRIAN_BOUNDS["min_gap_m"])
+                )
+        except Exception as exc:  # noqa: BLE001 - one person must not end the run
+            logger.warning(
+                "SUMO could not set the pedestrian parameters of %s: %s", person, exc
+            )
 
     # ------------------------------------------------------------------
     # Internals: what drivers see

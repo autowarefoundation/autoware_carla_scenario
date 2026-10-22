@@ -59,9 +59,15 @@ which :func:`transform_source_lines` maps back onto the handler):
   ``auto()``), and each member ``RED = "red"`` becomes the class variable
   ``RED: ClassVar[C] = C("RED", "red")``.  After the module, each such class
   is given a constructor by value (``C("red")``) with ``@extend``.
-  An ``IntEnum`` / ``IntFlag`` / ``(int, Enum)`` derives from the shim's
-  ``IntEnum[int]`` (ordering, ``int()``), a ``StrEnum`` / ``(str, Enum)`` from
-  ``StrEnum[str]`` (equality with its string); no other enum has either.
+  An ``IntEnum`` / ``(int, Enum)`` derives from the shim's ``IntEnum[int]``
+  (ordering, ``int()``), a ``StrEnum`` / ``(str, Enum)`` from ``StrEnum[str]``
+  (equality with its string); no other enum has either.  An ``IntFlag`` /
+  ``(int, Flag)`` derives from ``IntFlag[int]`` (an ``IntEnum``'s, and a truth
+  value), a ``Flag`` from ``Flag[int]``; the ``@extend`` of each also declares
+  its ``|``, ``&``, ``^``, ``~`` and ``in`` (:func:`_flag_operators`), typed by
+  the class, which a method of the shim could not name.  A flag's value that
+  is an expression of its members (``RW = R | W``, ``auto()``) is worked out
+  (:func:`flag_member_values`); iteration skips composites, as Python 3.11+.
 * A class deriving from an exception (a built-in one, one defined above it in
   the module, or a name ending in ``Error`` / ``Exception``) derives from
   ``Static[Base]``, as Codon 0.19 derives exceptions.
@@ -147,8 +153,10 @@ from __future__ import annotations
 
 import ast
 import builtins
-from collections.abc import Callable, Collection, Mapping
+import functools
+from collections.abc import Callable, Collection, Iterator, Mapping
 from dataclasses import dataclass, field
+from pathlib import Path
 
 __all__ = [
     "MISSING_BUILTIN_EXCEPTIONS",
@@ -157,6 +165,9 @@ __all__ = [
     "class_declarations",
     "classes_with_init",
     "enum_class_names",
+    "class_body_refusals",
+    "hoist_class_bodies",
+    "model_enum_names",
     "inherited_inits",
     "redirect_imports",
     "relative_module_imports",
@@ -189,7 +200,8 @@ PRELUDE = (
     "_acs_dict_into\n"
     "from autoware_carla_scenario._tc import _Required as _acs_Required, "
     "_acs_Returning, _acs_callable, _acs_tuple, _acs_reduce\n"
-    "from enum import IntEnum as _acs_IntEnum, StrEnum as _acs_StrEnum\n"
+    "from enum import IntEnum as _acs_IntEnum, IntFlag as _acs_IntFlag, "
+    "StrEnum as _acs_StrEnum\n"
     "from autoware_carla_scenario._exceptions import "
     + ", ".join(MISSING_BUILTIN_EXCEPTIONS)
     + "\n"
@@ -889,6 +901,7 @@ class _Rewriter(ast.NodeVisitor):
         self._dropped_decorators = set(dropped_decorators)
         self._class_depth = 0
         self._function_depth = 0
+        self._dict_rebound = False
         #: Top-level classes of the module that are exceptions.
         self._exceptions = exceptions
         #: The class whose body is being visited (``None`` in a function).
@@ -1394,40 +1407,83 @@ class _Rewriter(ast.NodeVisitor):
         last = 0
         seen_values: set[str] = set()
         listed: list[str] = []
+        #: A flag's value of each member so far, for a composite
+        #: (``RW = R | W``) to be worked out, and the bits of the listed ones.
+        known: dict[str, int] = {}
+        numbers = flag_member_values(node.body) if flag else {}
+        mask: int | None = 0 if flag else None
+        every = 0  # the bits of all the members, composites too
         for stmt, name, value in members:
+            number: int | None = None
             if is_auto(value):
                 if value_type == "str":
                     text = repr(name.lower())
+                elif flag:
+                    number = numbers[name]
+                    text = str(number)
                 else:
-                    last = (last * 2 if last else 1) if flag else last + 1
+                    last += 1
                     text = str(last)
             else:
+                if flag:
+                    number = numbers[name]
+                if number is not None:
+                    text = str(number)
+                else:
+                    text = self.edits.text(*self.edits.node_span(value))
                 if isinstance(value, ast.Constant) and isinstance(value.value, int):
                     last = value.value
-                text = self.edits.text(*self.edits.node_span(value))
-            # A member whose value repeats an earlier one is an alias, which
-            # iterating over the enum skips.
-            if text not in seen_values or is_auto(value):
+            if number is not None:
+                known[name] = number
+                every |= max(number, 0)
+            if flag and number is not None:
+                # Python 3.11+ iterates a Flag's single-bit members, in
+                # definition order: not an alias of one, not a composite
+                # (``RW = R | W``), not zero.
+                single = number > 0 and number & (number - 1) == 0
+                if single and text not in seen_values:
+                    listed.append(name)
+                    assert mask is not None
+                    mask |= number
+            elif text not in seen_values or is_auto(value):
+                # A member whose value repeats an earlier one is an alias,
+                # which iterating over the enum skips.
                 listed.append(name)
             seen_values.add(text)
             self.edits.replace(
                 *self.edits.node_span(stmt),
                 f"{name}: ClassVar[{node.name}] = {node.name}({name!r}, {text})",
             )
+        if flag and len(known) != len(members):
+            mask = None  # a value that is not worked out: `~` is left to Codon
+        elif kind == "IntFlag":
+            # An IntFlag (boundary KEEP) flips every bit below the highest one
+            # of any member, composites included; a Flag only those of its
+            # single-bit members.
+            mask = (1 << every.bit_length()) - 1
         first_start = self.edits.node_span(node.bases[0])[0]
         last_end = self.edits.node_span(node.bases[-1])[1]
         # Only an int-valued IntEnum / IntFlag / (int, Enum) orders and
         # converts like its value, and a StrEnum / (str, Enum) equals its
         # string: the shim has a class for each, a plain Enum has neither.
         shim = enum_base
-        if kind in {"IntEnum", "IntFlag"} or "int" in bases:
+        if kind == "IntFlag" or (kind == "Flag" and "int" in bases):
+            shim = "_acs_IntFlag"
+        elif kind == "IntEnum" or "int" in bases:
             shim = "_acs_IntEnum"
         elif kind == "StrEnum" or "str" in bases:
             shim = "_acs_StrEnum"
         self.edits.replace(first_start, last_end, f"{shim}[{value_type}]")
         if self._class_depth == 0 and self._function_depth == 0:
             self.enums.append(
-                _EnumInfo(node.name, value_type, listed, [n for _, n, _ in members])
+                _EnumInfo(
+                    node.name,
+                    value_type,
+                    listed,
+                    [n for _, n, _ in members],
+                    mask,
+                    ("int" if shim == "_acs_IntFlag" else "flag") if flag else None,
+                )
             )
         return [stmt for stmt, _, _ in members]
 
@@ -1563,6 +1619,24 @@ class _Rewriter(ast.NodeVisitor):
             # Codon 0.19 has no frozenset: build a set, which types the same.
             start, end = self.edits.node_span(node.func)
             self.edits.replace(start, end, "set")
+        elif (
+            isinstance(node.func, ast.Name)
+            and node.func.id == "dict"
+            and not self._dict_rebound
+            and not node.args
+            and node.keywords
+            and all(kw.arg is not None for kw in node.keywords)
+        ):
+            # `dict(a=1)`: Codon's dict takes no keywords (#469); the display
+            # `{"a": 1}` is the same dict.
+            start, end = self.edits.node_span(node)
+            self.edits.replace(start, self.edits.node_span(node.keywords[0])[0], "{")
+            for kw in node.keywords:
+                kw_start = self.edits.node_span(kw)[0]
+                value_start = self.edits.node_span(kw.value)[0]
+                self.edits.replace(kw_start, value_start, f'"{kw.arg}": ')
+            last = self.edits.node_span(node.keywords[-1].value)[1]
+            self.edits.replace(last, end, "}")
         elif (
             isinstance(node.func, ast.Subscript)
             and isinstance(node.func.value, ast.Name)
@@ -1946,6 +2020,164 @@ def split_tuple_excepts(source: str) -> tuple[str, list[int]]:
         origin[first - 1 : last] = origin[first - 1 : last] * len(copies)
 
 
+_COMPREHENSIONS = (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
+#: Built-ins that build a collection from an argument (``list(Color)``,
+#: ``tuple(gen)``, ``dict(a=1)``).
+_COLLECTION_CALLS = {"list", "tuple", "set", "dict", "frozenset", "sorted"}
+
+
+def _walk_eager(node: ast.AST) -> Iterator[ast.AST]:
+    """*node* and what it evaluates itself: a lambda's body is left out."""
+    yield node
+    if isinstance(node, ast.Lambda):
+        return
+    for child in ast.iter_child_nodes(node):
+        yield from _walk_eager(child)
+
+
+def _factory_needs_hoist(body: ast.expr, enum_names: Collection[str]) -> bool:
+    """Whether a ``default_factory`` lambda body is one Codon compiles only
+    in a function: a comprehension, a collection built from an argument, or
+    an Enum class (iterated)."""
+    for sub in ast.walk(body):
+        if isinstance(sub, _COMPREHENSIONS):
+            return True
+        if (
+            isinstance(sub, ast.Call)
+            and isinstance(sub.func, ast.Name)
+            and sub.func.id in _COLLECTION_CALLS
+            and (sub.args or sub.keywords)
+        ):
+            return True
+        if isinstance(sub, ast.Name) and sub.id in enum_names:
+            return True
+    return False
+
+
+def _class_body_hoists(
+    tree: ast.Module, enum_names: Collection[str] = ()
+) -> tuple[
+    list[tuple[ast.ClassDef, ast.expr, str, ast.Lambda | None]],
+    list[tuple[int, str]],
+]:
+    """The class-body expressions to move into module-level functions (#469).
+
+    Codon realizes a class body in the class's scope, where it does not bind
+    the target of a comprehension ("name '%_i_945' is not defined"), and
+    crashes on an Enum iterated there.  A function has neither problem, and
+    Python evaluates a class body once, so a call of a function is the same
+    value.  Each item is (the class, the expression, its function name,
+    the ``default_factory`` lambda it is the body of, if it is); the second
+    value is what cannot be moved, as (line, message).
+    """
+    hoists: list[tuple[ast.ClassDef, ast.expr, str, ast.Lambda | None]] = []
+    refused: list[tuple[int, str]] = []
+    for node in tree.body:
+        if not isinstance(node, ast.ClassDef) or any(
+            (_dotted(b) or "").rsplit(".", 1)[-1] in _ENUM_BASES for b in node.bases
+        ):
+            continue
+        for stmt in node.body:
+            if not isinstance(stmt, (ast.Assign, ast.AnnAssign)) or stmt.value is None:
+                continue
+            value = stmt.value
+            factory: ast.Lambda | None = None
+            if isinstance(value, ast.Call) and _dotted(value.func) in _FIELD_FUNCTIONS:
+                lam = next(
+                    (
+                        kw.value
+                        for kw in value.keywords
+                        if kw.arg == "default_factory"
+                        and isinstance(kw.value, ast.Lambda)
+                        and not kw.value.args.args
+                        and not kw.value.args.posonlyargs
+                        and not kw.value.args.kwonlyargs
+                        and kw.value.args.vararg is None
+                        and kw.value.args.kwarg is None
+                    ),
+                    None,
+                )
+                if lam is None or not _factory_needs_hoist(lam.body, enum_names):
+                    continue
+                expr: ast.expr = lam.body
+                factory = lam
+            elif any(isinstance(n, _COMPREHENSIONS) for n in _walk_eager(value)):
+                expr = value
+            else:
+                continue
+            reads = {
+                n.id
+                for n in ast.walk(expr)
+                if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)
+            }
+            if node.name in reads:
+                refused.append(
+                    (
+                        stmt.lineno,
+                        f"this expression in the body of class {node.name} "
+                        f"reads {node.name} itself, which Codon has not "
+                        "defined while it runs the body, and it needs a "
+                        "function of its own (a comprehension or an Enum "
+                        "iteration cannot run in a class body): build it in "
+                        "a module-level function that does not read the "
+                        "class",
+                    )
+                )
+                continue
+            hoists.append(
+                (node, expr, f"_acs_hoist_{node.name}_{stmt.lineno}", factory)
+            )
+    return hoists, refused
+
+
+def class_body_refusals(source: str) -> list[tuple[int, str]]:
+    """What :func:`hoist_class_bodies` cannot move, as (line, message)."""
+    return _class_body_hoists(ast.parse(source))[1]
+
+
+def hoist_class_bodies(
+    source: str, origin: list[int], enum_names: Collection[str] = ()
+) -> tuple[str, list[int]]:
+    """Move class-body comprehensions and ``default_factory`` lambdas that
+    need a function into module-level functions placed above their class
+    (#469).
+
+    ``SQ = [i * i for i in range(3)]`` becomes ``SQ = _acs_hoist_Q_2()`` and
+    ``field(default_factory=lambda: [...])`` ``field(default_factory=
+    _acs_hoist_D_5)``, with ``def _acs_hoist_...(): return (...)`` above the
+    class (above its decorators).  The expression keeps its statement's
+    line; the two new lines map to the line of the expression (*origin* is
+    extended the same way as :func:`tuple_named_tuples`'s).  A function is
+    typed from what it returns, so nothing is lost.
+    """
+    tree = ast.parse(source)
+    hoists, _ = _class_body_hoists(tree, enum_names)
+    if not hoists:
+        return source, origin
+    edits = _Edits(source.encode().splitlines(keepends=True))
+    inserts: dict[int, list[tuple[str, int]]] = {}
+    for cls, expr, name, factory in hoists:
+        body = edits.text(*edits.node_span(expr))
+        if factory is None:
+            edits.replace(*edits.node_span(expr), f"{name}()")
+        else:
+            edits.replace(*edits.node_span(factory), name)
+        first = min([cls.lineno, *(d.lineno for d in cls.decorator_list)])
+        inserts.setdefault(first, []).append(
+            (f"def {name}():\n    return ({body})\n", origin[expr.lineno - 1])
+        )
+    lines = edits.apply().encode().splitlines(keepends=True)
+    origin = list(origin)
+    for first, items in sorted(inserts.items(), reverse=True):
+        for text, line in reversed(items):
+            new = text.encode().splitlines(keepends=True)
+            # The body may span lines: keep each of the function's lines
+            # on the line its text came from.
+            lines[first - 1 : first - 1] = new
+            origin[first - 1 : first - 1] = [line] * len(new)
+    return b"".join(lines).decode(), origin
+
+
 def transform_source(
     source: str,
     dropped_decorators: Collection[str] = (),
@@ -1989,26 +2221,75 @@ def transform_source_lines(
     source, ordering = python_rewrites(source)
     source, origin = split_tuple_excepts(source)
     source, origin = tuple_named_tuples(source, origin)
+    source, origin = hoist_class_bodies(
+        source,
+        origin,
+        {
+            n.name
+            for n in ast.parse(source).body
+            if isinstance(n, ast.ClassDef)
+            and any(
+                (_dotted(b) or "").rsplit(".", 1)[-1] in _ENUM_BASES for b in n.bases
+            )
+        }
+        | set(enum_classes)
+        | model_enum_names(),
+    )
     tree = ast.parse(source)
     edits = _Edits(source.encode().splitlines(keepends=True))
     exceptions = _exception_classes(tree)
     rewriter = _Rewriter(edits, exceptions, dropped_decorators)
+    from .python_rewrites import _rebound_names
+
+    # A module that binds ``dict`` itself (a parameter, a variable) calls its
+    # own, whose keywords are not Codon's concern.
+    rewriter._dict_rebound = "dict" in _rebound_names(tree)
     rewriter.visit(tree)
-    enum_iteration(tree, edits, {e.name for e in rewriter.enums} | set(enum_classes))
+    own = {e.name for e in rewriter.enums} | set(enum_classes)
+    # The model's enums too (#437), unless the module defines a class of that
+    # name which is no enum.
+    other = {
+        n.name for n in tree.body if isinstance(n, ast.ClassDef) and n.name not in own
+    }
+    enum_iteration(tree, edits, own | (model_enum_names() - other))
     repeated_imports(tree, edits)
     lines = {
         node.name: origin[node.lineno - 1]
         for node in tree.body
         if isinstance(node, ast.ClassDef)
     }
+    # An Enum's extension (its members list, its lookups and, for a Flag, its
+    # operators) follows its class instead of the module: module-level and
+    # class-body code such as ``RW = P.R | P.W`` or a comprehension over the
+    # class reads them while Codon reads the module (#437, #469).  Its lines
+    # come from the class's line.
+    after_class: dict[int, tuple[str, str]] = {}
+    at_end = []
+    for name, block in _enum_lookups(rewriter.enums):
+        end = next(
+            (
+                n.end_lineno
+                for n in tree.body
+                if isinstance(n, ast.ClassDef) and n.name == name
+            ),
+            None,
+        )
+        if end is None:  # nested in something: after the module
+            at_end.append((name, block))
+        else:
+            after_class[end] = (name, block)
     appended = [
-        *_enum_lookups(rewriter.enums),
+        *at_end,
         *_inherited_init_extensions(_inherited_bases(tree, init_classes, exceptions)),
         *_dataclass_dunders(tree, exceptions),
         *ordering,
     ]
-    text = PRELUDE + edits.apply()
     origin = list(origin)
+    for end, (name, block) in sorted(after_class.items(), reverse=True):
+        at = edits.starts[end] if end < len(edits.starts) else len(edits.data)
+        edits.replace(at, at, block[1:])
+        origin[end:end] = [lines[name]] * (block.count("\n") - 1)
+    text = PRELUDE + edits.apply()
     for name, block in appended:
         text += block
         origin += [lines[name]] * block.count("\n")
@@ -2218,6 +2499,78 @@ class _EnumInfo:
     value_type: str
     members: list[str]
     names: list[str]
+    #: A Flag's bits of its members (what ``~`` flips), when all are known.
+    mask: int | None = None
+    #: ``"flag"`` for a ``Flag``, ``"int"`` for an ``IntFlag`` (whose operators
+    #: take an int too), ``None`` for any other enum.
+    flag: str | None = None
+
+
+_FLAG_OPERATORS: dict[type, Callable[[int, int], int]] = {
+    ast.BitOr: lambda a, b: a | b,
+    ast.BitAnd: lambda a, b: a & b,
+    ast.BitXor: lambda a, b: a ^ b,
+    ast.LShift: lambda a, b: a << b if 0 <= b < 64 else 0,
+    ast.Add: lambda a, b: a + b,
+    ast.Sub: lambda a, b: a - b,
+    ast.Mult: lambda a, b: a * b,
+}
+
+
+def flag_member_values(body: list[ast.stmt]) -> dict[str, int | None]:
+    """The int of each member of a Flag class body (``None`` if not worked out).
+
+    A member ``auto()`` is the power of two above the highest bit so far, as
+    in Python 3.11+; any other value is worked out by :func:`_flag_value`.
+    """
+    known: dict[str, int] = {}
+    out: dict[str, int | None] = {}
+    for stmt in body:
+        if not (
+            isinstance(stmt, ast.Assign)
+            and len(stmt.targets) == 1
+            and isinstance(stmt.targets[0], ast.Name)
+            and not stmt.targets[0].id.startswith("_")
+        ):
+            continue
+        name = stmt.targets[0].id
+        value = stmt.value
+        if isinstance(value, ast.Call) and _dotted(value.func) in _AUTO:
+            number: int | None = 1 << max([0, *known.values()]).bit_length()
+        else:
+            number = _flag_value(value, known)
+        out[name] = number
+        if number is not None:
+            known[name] = number
+    return out
+
+
+def _flag_value(value: ast.expr, known: Mapping[str, int]) -> int | None:
+    """The int a Flag member's value works out to, or ``None``.
+
+    A literal, an earlier member of the class and the bit operators of them
+    (``RW = R | W``, ``ALL = ~0``, ``HIGH = 1 << 4``); what the class body
+    computes in Python, where an earlier member is still an int.
+    """
+    if isinstance(value, ast.Constant):
+        number = value.value
+        return (
+            number if isinstance(number, int) and not isinstance(number, bool) else None
+        )
+    if isinstance(value, ast.Name):
+        return known.get(value.id)
+    if isinstance(value, ast.UnaryOp) and isinstance(value.op, (ast.Invert, ast.USub)):
+        operand = _flag_value(value.operand, known)
+        if operand is None:
+            return None
+        return ~operand if isinstance(value.op, ast.Invert) else -operand
+    if isinstance(value, ast.BinOp) and type(value.op) in _FLAG_OPERATORS:
+        left = _flag_value(value.left, known)
+        right = _flag_value(value.right, known)
+        if left is None or right is None:
+            return None
+        return _FLAG_OPERATORS[type(value.op)](left, right)
+    return None
 
 
 #: Builtins whose argument may be an enum class, which they iterate over.
@@ -2240,6 +2593,26 @@ _ITERATING_BUILTINS = {
     "map",
     "filter",
 }
+
+
+@functools.lru_cache(maxsize=None)
+def model_enum_names() -> frozenset[str]:
+    """The names of the framework's enums in the model (``typecheck/codon``).
+
+    A model enum is a ``@tuple`` class that declares ``_acs_members()`` (what
+    iterating over it reads) and ``_acs_by_name()``; the names come from the
+    model files, so a new enum is iterable as soon as it declares them.
+    """
+    root = Path(__file__).resolve().parent / "codon" / "autoware_carla_scenario"
+    names = set()
+    for path in sorted(root.rglob("*.codon")):
+        for node in ast.parse(path.read_text(encoding="utf-8")).body:
+            if isinstance(node, ast.ClassDef) and any(
+                isinstance(stmt, ast.FunctionDef) and stmt.name == "_acs_members"
+                for stmt in node.body
+            ):
+                names.add(node.name)
+    return frozenset(names)
 
 
 def enum_class_names(classes: Mapping[str, ast.ClassDef]) -> set[str]:
@@ -2359,6 +2732,42 @@ def enum_iteration(tree: ast.Module, edits: _Edits, enums: Collection[str]) -> N
         _EnumIteration(edits, enums).visit(tree)
 
 
+def _flag_operators(info: _EnumInfo) -> str:
+    """The methods ``|``, ``&``, ``^``, ``~`` and ``in`` of a Flag class (#437).
+
+    Each returns the class, built from the combined int (any int is a value of
+    the constructor by value, so a combination of members is representable
+    though no member).  An ``IntFlag`` takes an int on either side too.  ``in``
+    is true when every bit of the other is set.  ``~`` flips the bits of the
+    members (Python's complement), and is left out when a member's value is not
+    worked out.
+    """
+    name = info.name
+    out = ""
+    for method, symbol in (("or", "|"), ("and", "&"), ("xor", "^")):
+        out += (
+            f"\n    def __{method}__(self, other: {name}) -> {name}:\n"
+            f"        return {name}(self._value_ {symbol} other._value_)\n"
+        )
+        if info.flag == "int":
+            out += (
+                f"\n    def __{method}__(self, other: int) -> {name}:\n"
+                f"        return {name}(self._value_ {symbol} other)\n"
+                f"\n    def __r{method}__(self, other: int) -> {name}:\n"
+                f"        return {name}(other {symbol} self._value_)\n"
+            )
+    out += (
+        f"\n    def __contains__(self, other: {name}) -> bool:\n"
+        f"        return (self._value_ & other._value_) == other._value_\n"
+    )
+    if info.mask is not None:
+        out += (
+            f"\n    def __invert__(self) -> {name}:\n"
+            f"        return {name}({info.mask} & ~self._value_)\n"
+        )
+    return out
+
+
 def _enum_lookups(enums: list[_EnumInfo]) -> list[tuple[str, str]]:
     """A constructor by value (``Color("red")``) for each rewritten Enum class.
 
@@ -2381,6 +2790,7 @@ def _enum_lookups(enums: list[_EnumInfo]) -> list[tuple[str, str]]:
             f"        if name == {n!r}:\n            return {name}.{n}\n"
             for n in info.names
         )
+        operators = _flag_operators(info) if info.flag else ""
         out.append(
             (
                 name,
@@ -2396,6 +2806,7 @@ def _enum_lookups(enums: list[_EnumInfo]) -> list[tuple[str, str]]:
                     f"    def _acs_by_name(name: str) -> {name}:\n"
                     f"{lookups}"
                     f"        raise KeyError(name)\n"
+                    f"{operators}"
                 ),
             )
         )

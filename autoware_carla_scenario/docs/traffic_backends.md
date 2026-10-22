@@ -115,8 +115,9 @@ Every numeric parameter is a **spread**, a mean and a standard deviation
 (`{mean, std}`, `Spread` in Python): each vehicle and each pedestrian draws
 its own value from a normal distribution of that mean and std, cut to the
 parameter's bounds (drawn again until it is inside them -- a truncated
-normal). The traffic is a population of drivers, not one driver copied. A
-plain number, or a `std` of 0, gives every road user the same value. The
+normal). The traffic is a population of drivers, not one driver copied. Every
+numeric parameter also takes a plain value instead, in a config and in Python
+alike: a number (or a `std` of 0) gives every road user exactly that value. The
 draws come from the run's seed: the same seed, the same drivers.
 
 ```yaml
@@ -296,15 +297,18 @@ generates; `traffic.pedestrians` how they walk.
 The TrafficManager drives no pedestrians, so it refuses every field here.
 
 The same in Python, where every field is a keyword of `VehicleParameters` or
-`PedestrianParameters`:
+`PedestrianParameters`, and a numeric one takes a `Spread` (a distribution) or
+a plain number (a value):
 
 ```python
 from autoware_carla_scenario import PedestrianParameters, Spread, VehicleParameters
 
 VehicleParameters(
-    speed_factor=Spread(0.9, 0.1), min_gap_m=Spread(3.0), reaction_time_s=Spread(1.5, 0.3)
+    speed_factor=Spread(0.9, 0.1),  # a distribution: each vehicle draws its own
+    min_gap_m=3.0,                  # a value: every vehicle 3 m
+    reaction_time_s=Spread(1.5, 0.3),
 )
-PedestrianParameters(walking_speed_mps=Spread(1.2, 0.2))
+PedestrianParameters(walking_speed_mps=1.2)
 ```
 
 A field set for a backend that cannot honour it fails the run before anything is
@@ -339,6 +343,76 @@ class MySimulatorBackend(TrafficBackend):
 
 and reads them from `self.vehicle_parameters` and `self.pedestrian_parameters`
 in `prepare()`.
+
+### Changing the parameters during a run
+
+`TrafficParametersAction` changes the parameters from the tick it fires on,
+like any action, on a condition:
+
+```python
+from autoware_carla_scenario import (
+    ElapsedTimeCondition,
+    PedestrianParameters,
+    Spread,
+    TrafficParametersAction,
+    VehicleParameters,
+)
+
+# From 20 s on, drivers slow down and keep their distance.
+scenario.register_post_tick(
+    TrafficParametersAction(
+        vehicles=VehicleParameters(
+            speed_factor=Spread(0.8, 0.05), min_gap_m=Spread(4.0, 1.0)
+        ),
+        condition=ElapsedTimeCondition(20.0, label="after_20s"),
+    )
+)
+
+# The NPC ahead turns reckless (traffic_manager): values, not distributions.
+scenario.register_post_tick(
+    TrafficParametersAction(
+        vehicles=VehicleParameters(speed_factor=1.3, ignore_lights=1.0),
+        entity_name="npc1",
+    )
+)
+
+# Pedestrians hurry (sumo).
+scenario.register_post_tick(
+    TrafficParametersAction(
+        pedestrians=PedestrianParameters(walking_speed_mps=Spread(1.8, 0.2))
+    )
+)
+```
+
+- **Field by field.** The fields the action sets replace the run's; the ones it
+  leaves unset keep their values, whether they came from the config or from
+  the ODD.
+- **Everyone draws again.** Without `entity_name`, every vehicle (or pedestrian)
+  already in the run draws its value of the changed fields again from the new
+  spread, and every one that joins later draws from the merged parameters.
+  The ODD's probes read the merged parameters from then on.
+- **One vehicle.** With `entity_name` (a `role_name`), only that vehicle draws the
+  changed fields again; the run's parameters stay as they were. An entity is a
+  vehicle, so `pedestrians` cannot be given with it.
+- **Refused before the run.** A field the backend cannot change during a run
+  is refused when the action is registered on the scenario, with a
+  `TrafficParameterError`:
+    - the TrafficManager can change every vehicle parameter it supports, and no
+      pedestrian one;
+    - SUMO can change every vehicle parameter it supports, and a pedestrian's
+      `walking_speed_mps` and `min_gap_m`. It cannot change
+      `red_light_violation_s`, which SUMO reads off the pedestrian types it is
+      started with: set it in `traffic.pedestrians` instead.
+- **Under SUMO,** a scenario vehicle the TrafficManager drives
+  (`scenario_vehicles=traffic_manager`) gets the shared fields, with a warning
+  naming the others. A visibility already held is held anew, from the new
+  draws.
+- **One run only.** The change lasts until the run ends: the next run of a
+  queue starts from its own config.
+- **In the scenario editor** it is two cards: *Traffic Parameters* on the
+  environment track (the whole run's traffic) and *Vehicle Parameters* on an
+  NPC's track (that vehicle alone), with a mean and a std field per
+  parameter; an empty field keeps the run's value.
 
 ## The lifecycle
 
@@ -605,10 +679,10 @@ uv run scenario ... background_traffic.enabled=true background_traffic.source.ve
 uv run scenario ... background_traffic.enabled=true background_traffic.source.stop_after_seconds=20
 ```
 
-`background_traffic` (in `examples/conf/config.yaml`) is off by default, and the
-SUMO backend's own `ambient` randomTrips demand is off in
-`conf/traffic/sumo.yaml`, so an example runs with no traffic but its own unless
-asked.
+`background_traffic` (in `examples/conf/config.yaml`) is off by default, and so
+are the SUMO backend's own `ambient` randomTrips demand and its `pedestrians`
+(`SumoBackendConfig`'s defaults, and `conf/traffic/sumo.yaml`'s), so a run has
+no traffic but its own and its traffic sources' unless asked.
 
 ## Why this exists
 
@@ -632,6 +706,7 @@ before anything is spawned.
 uv run scenario scenario=lane_change/left map=town10hd_opt traffic=sumo
 uv run scenario ... traffic=sumo traffic.options.ambient.vehicles_per_hour=1800
 uv run scenario ... traffic=sumo traffic.options.scenario_vehicles=sumo
+uv run scenario ... traffic=sumo traffic.options.scenario_pedestrians=sumo
 uv run scenario ... traffic=sumo traffic.options.fcd_output=true   # <output>/sumo/fcd.xml
 ```
 
@@ -659,8 +734,9 @@ mirrored. `traffic.options.net_path` runs on an existing `.net.xml` instead.
 | --- | --- | --- |
 | Ego (`autoware`, `carla_driver`) | its entity | published: moved to its CARLA pose every tick |
 | Scenario NPCs, autopilot ego | the TrafficManager (`scenario_vehicles=traffic_manager`, default), or SUMO (`scenario_vehicles=sumo`) | published, or driven |
-| Ambient traffic (`randomTrips.py`) | SUMO | native; mirrored into CARLA |
-| Pedestrians (`walker.pedestrian.*`, e.g. `WalkStraightAction`) | CARLA | published as SUMO persons (`publish_walkers`, on by default) |
+| Ambient traffic (`randomTrips.py`, `ambient.enabled`, off by default) | SUMO | native; mirrored into CARLA |
+| Scenario pedestrians (`PedestrianEntity`, e.g. `WalkStraightAction`) | CARLA (`scenario_pedestrians=traffic_manager`, default), or SUMO (`scenario_pedestrians=sumo`) | published, or walked |
+| Other CARLA pedestrians (`walker.pedestrian.*`) | CARLA | published as SUMO persons (`publish_walkers`, on by default) |
 | SUMO's pedestrians (`randomTrips.py --pedestrians`, `pedestrians.enabled`) | SUMO | native; mirrored into CARLA as walkers near the ego |
 
 A published vehicle has SUMO's speed and lane-change control switched off, so
@@ -675,6 +751,21 @@ crossing or anywhere else, or changes lanes round it. A person has to be added
 on an edge with a footway -- SUMO aborts the whole simulation when one is moved
 off an edge without -- so a pedestrian with no footway within 50 m (or on a
 network with none) is left out, with a warning.
+
+**The scenario's pedestrians walked by SUMO** (`scenario_pedestrians=sumo`):
+each `PedestrianEntity` the scenario registers is a SUMO person from the start
+of the run, and its CARLA walker follows that person, as a mirrored walker
+follows one of SUMO's own. Standing, the person is put where its walker
+stands every tick. A `WalkStraightAction` walks the person straight on, the
+way its walker faces, through TraCI: each step it is moved on along the line
+at the action's speed (`moveToXY`, `keepRoute` 6, so off the kerb it is on the
+road lanes, where SUMO's traffic brakes for it), until a second action stops
+it (`speed_ms: 0`). This is TraCI's walk, not SUMO's pedestrian model, which
+walks footways and crossings to a destination and so has no way to step off
+the kerb where a pedestrian stands. An action that moves the walker itself
+(`FollowTrajectoryAction`, an adversity) takes it back from SUMO, which
+publishes it from then on. A pedestrian with no footway within 50 m stays
+CARLA's, as a published one would.
 
 **SUMO's own pedestrians** (`pedestrians`, off by default) walk the network's
 footways (`randomTrips.py --pedestrians`, unweighted, up to `max_distance_m`

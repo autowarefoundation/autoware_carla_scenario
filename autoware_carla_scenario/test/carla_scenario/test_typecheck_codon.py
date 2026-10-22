@@ -324,6 +324,77 @@ def test_turn_indicators_compile(tmp_path: Path) -> None:
     assert result.ok, result.format()
 
 
+def test_a_traffic_parameters_action_compiles(tmp_path: Path) -> None:
+    """The run's traffic, and one vehicle, draw new parameters."""
+    setup = """
+        self.register_post_tick(
+            TrafficParametersAction(
+                VehicleParameters(speed_factor=Spread(0.8, 0.05), lane_changes=False),
+                condition=ElapsedTimeCondition(20.0, label="after_20s"),
+            )
+        )
+        self.register_post_tick(
+            TrafficParametersAction(
+                vehicles=VehicleParameters(ignore_lights=Spread(1.0)),
+                entity_name="npc1",
+                label="reckless",
+            )
+        )
+        self.register_post_tick(
+            TrafficParametersAction(
+                pedestrians=PedestrianParameters(walking_speed_mps=Spread(1.8, 0.2))
+            )
+        )
+"""
+    header = _HEADER.replace(
+        "import logging\n",
+        "import logging\n"
+        "from autoware_carla_scenario import (PedestrianParameters, Spread,\n"
+        "    TrafficParametersAction, VehicleParameters)\n",
+        1,
+    )
+    scenario, config, _ = _write_case(tmp_path, setup, header=header)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_a_traffic_parameter_takes_a_value_or_a_spread(tmp_path: Path) -> None:
+    """A plain number is a spread of no width."""
+    setup = """
+        self.register_post_tick(
+            TrafficParametersAction(
+                VehicleParameters(speed_factor=0.8, min_gap_m=3, decel=Spread(4.0, 0.5))
+            )
+        )
+"""
+    header = _HEADER.replace(
+        "import logging\n",
+        "import logging\n"
+        "from autoware_carla_scenario import (Spread, TrafficParametersAction,\n"
+        "    VehicleParameters)\n",
+        1,
+    )
+    scenario, config, _ = _write_case(tmp_path, setup, header=header)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_a_traffic_parameter_refuses_what_is_neither(tmp_path: Path) -> None:
+    setup = """
+        self.register_post_tick(
+            TrafficParametersAction(VehicleParameters(speed_factor="fast"))
+        )
+"""
+    header = _HEADER.replace(
+        "import logging\n",
+        "import logging\n"
+        "from autoware_carla_scenario import TrafficParametersAction, VehicleParameters\n",
+        1,
+    )
+    scenario, config, _ = _write_case(tmp_path, setup, header=header)
+    assert not typecheck_scenario(scenario, config).ok
+
+
 def test_cover_items_compile(tmp_path: Path) -> None:
     scenario, config, _ = _write_case(tmp_path, _COVER_SETUP, _COVER_EXTRA)
     result = typecheck_scenario(scenario, config)
@@ -4605,6 +4676,153 @@ def test_an_enum_class_is_iterated_and_looked_up_by_name(tmp_path: Path) -> None
     assert result.ok, result.format()
 
 
+def test_the_framework_enums_are_iterated_and_looked_up_by_name(
+    tmp_path: Path,
+) -> None:
+    # The model's enums read the same rewrite as a scenario's own (#437).
+    setup = """
+        assert [m.name for m in TurnDirection] == ["LEFT", "RIGHT", "STRAIGHT"]
+        assert len(list(TurnDirection)) == 3 and len(TurnDirection) == 3
+        assert TurnDirection["LEFT"] == TurnDirection.LEFT
+        assert ComparisonRule["LESS_THAN"] == ComparisonRule.LESS_THAN
+        assert TurnDirection.RIGHT in TurnDirection
+        assert {m.value: m for m in TickTiming}["pre_tick"] == TickTiming.PRE_TICK
+        for rule in ComparisonRule:
+            assert rule.name != ""
+        try:
+            TurnDirection["NOPE"]
+            assert False
+        except KeyError:
+            pass
+    """
+    scenario, config, _ = _write_case(tmp_path, _TIMEOUT_SETUP + textwrap.dedent(setup))
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "TurnDirection.LEFT | TurnDirection.RIGHT",
+        "TurnDirection.LEFT in TurnDirection.RIGHT",
+        "~TurnDirection.LEFT",
+    ],
+)
+def test_a_framework_enum_that_is_no_flag_has_no_flag_operators(
+    tmp_path: Path, line: str
+) -> None:
+    scenario, config, path = _write_case(tmp_path, _TIMEOUT_SETUP + f"r = {line}\n")
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert error.line == _line_of(path, f"r = {line}"), error.format()
+
+
+_FLAGS = """
+class Perm(enum.IntFlag):
+    NONE = 0
+    R = 1
+    W = 2
+    RW = R | W
+    X = enum.auto()
+
+
+class Bits(enum.Flag):
+    A = 1
+    B = 2
+    AB = A | B
+    C = enum.auto()
+    ALL = A | B | C
+"""
+
+
+_FLAG_USERS = """
+
+MODULE_DEFAULT = Perm.R | Perm.W
+
+
+class Holder:
+    mode: Perm
+    DEFAULT = Perm.R | Perm.W
+
+    def __init__(self) -> None:
+        self.mode: Perm = Holder.DEFAULT
+
+
+def pick(TurnDirection: typing.List[int]) -> int:
+    # A parameter called like a framework enum is not that enum.
+    return len(TurnDirection) + sum([t for t in TurnDirection])
+"""
+
+
+def test_flag_and_intflag_members_combine(tmp_path: Path) -> None:
+    setup = """
+        rw: Perm = Perm.R | Perm.W
+        assert rw == Perm.RW and rw == 3 and int(rw) == 3 and rw.value == 3
+        assert Perm.R in rw and Perm.X not in rw and Perm.RW in rw
+        assert (rw & Perm.W) == Perm.W and (rw ^ Perm.R) == Perm.W
+        assert (rw | 4).value == 7 and (4 | rw).value == 7
+        assert (~Perm.R).value == 6 and bool(rw) and not Perm.NONE
+        both: Bits = Bits.A | Bits.B
+        assert both == Bits.AB and Bits.A in both and Bits.C not in both
+        assert (both & Bits.A) == Bits.A and (both ^ Bits.A) == Bits.B
+        assert (~Bits.A).value == 6 and bool(both) and not (Bits.A & Bits.B)
+        assert Bits.ALL.value == 7 and both != Bits.A
+        mask = Perm.NONE
+        for p in Perm:
+            mask = mask | p
+        assert mask.value == 7
+        assert [p.name for p in Bits] == ["A", "B", "C"]
+        assert Perm["RW"] == Perm.RW and len(Perm) == 3
+        assert {rw: 1}[Perm.RW] == 1
+        assert Perm.R < Perm.W and int(Perm.W) == 2
+        assert Holder().mode == Perm.R | Perm.W == Holder.DEFAULT == MODULE_DEFAULT
+        assert pick([1, 2]) == 5
+    """
+    scenario, config, _ = _data_case(tmp_path, _FLAGS + _FLAG_USERS, setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+@pytest.mark.parametrize(
+    ("line", "hint"),
+    [
+        ("Perm.R + Perm.W", "combines with `|`, `&`, `^`, `~` and `in`"),
+        ("Perm.R + Perm.W", "use its .value"),
+        ("Bits.A + Bits.B", "combines with `|`, `&`, `^`, `~` and `in`"),
+    ],
+)
+def test_the_hint_for_flag_arithmetic_names_the_operators_it_has(
+    tmp_path: Path, line: str, hint: str
+) -> None:
+    scenario, config, _ = _data_case(tmp_path, _FLAGS, f"r = {line}\n")
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert hint in error.message, error.format()
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "Perm.R | Bits.A + 1",
+        "Bits.A < Bits.B",
+        "int(Bits.A)",
+        "Bits.A + Bits.B",
+        "Bits.A + 1",
+        "Bits.A | 1",
+        "Bits.A | Perm.R",
+        "Plain.A | Plain.B",
+        "Plain.A in Plain.B",
+        "~Plain.A",
+    ],
+)
+def test_a_flag_does_not_order_convert_or_add(tmp_path: Path, line: str) -> None:
+    scenario, config, path = _data_case(
+        tmp_path,
+        _FLAGS + "\n\nclass Plain(enum.Enum):\n    A = 1\n    B = 2\n",
+        f"r = {line}\n",
+    )
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert error.line == _line_of(path, f"r = {line}"), error.format()
+
+
 def test_an_error_in_an_iterated_enum_keeps_its_line(tmp_path: Path) -> None:
     line = "r = [m.nope for m in Plain]"
     scenario, config, path = _data_case(tmp_path, _ITERATED_ENUMS, f"{line}\n")
@@ -5443,6 +5661,159 @@ def test_zip_with_strict_still_needs_iterables(tmp_path: Path) -> None:
     assert error.line == _line_of(path, line)
 
 
+def test_builtins_codon_lacks_compile(tmp_path: Path) -> None:
+    # #439: startswith / endswith with a tuple, format(), ascii().
+    setup = """
+        s = "abc"
+        words = ["ab", "cd"]
+        spec = ".2f"
+        a = s.startswith(("a", "z"))
+        b = s.endswith(("c", "y"), 1)
+        c = words[0].startswith((words[1], "a"))
+        d = (
+            s.upper()
+            .startswith(
+                ("A", words[0].upper()),
+            )
+        )
+        e = format(3.14159, ".2f") + format(7, "04d") + format(2.5, spec)
+        f = format(3) + format(s) + ascii(s) + ascii(5)
+        g = format(1 + 2, "x") + format(len(words))
+        assert a and not b and c and d and len(e) + len(f) + len(g) > 0
+    """
+    scenario, config, _ = _data_case(tmp_path, "", setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+@pytest.mark.parametrize(
+    ("line", "message"),
+    [
+        ("r = s.startswith((1, 2))", "'int' does not match expected type 'str'"),
+        ("r = s.endswith(('a', 2))", "'int' does not match expected type 'str'"),
+        ("r = s.startswith(('a', 'b'), 'x')", "'str' does not match expected"),
+        ("r = format(s, 5)", "'int' does not match expected type 'str'"),
+        ("r: int = format(5)", "'int' does not match expected type 'str'"),
+        ("r: int = ascii(5)", "'int' does not match expected type 'str'"),
+    ],
+    ids=[
+        "startswith-ints",
+        "endswith-mixed",
+        "startswith-start",
+        "format-spec",
+        "format-type",
+        "ascii-type",
+    ],
+)
+def test_the_rewritten_builtins_are_still_type_checked(
+    tmp_path: Path, line: str, message: str
+) -> None:
+    scenario, config, path = _data_case(tmp_path, "", f's = "abc"\n{line}\n')
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert message in error.message, error.format()
+    assert error.line == _line_of(path, line)
+
+
+@pytest.mark.parametrize(
+    ("setup", "last", "hint"),
+    [
+        (
+            'prefixes = ("a", "b")\nr = "abc".startswith(prefixes)',
+            'r = "abc".startswith(prefixes)',
+            "any(s.startswith(p) for p in prefixes)",
+        ),
+        (
+            'd = {"a": 1}\nd.update(c=3)',
+            "d.update(c=3)",
+            'd.update({"k": v})',
+        ),
+        (
+            "r = int.from_bytes(b'a', 'big')",
+            "r = int.from_bytes(b'a', 'big')",
+            "shifts and masks",
+        ),
+        (
+            'r = "{a}".format_map({"a": 1})',
+            'r = "{a}".format_map({"a": 1})',
+            "write an f-string",
+        ),
+    ],
+    ids=["startswith-tuple-name", "dict-update-keywords", "from-bytes", "format-map"],
+)
+def test_a_builtin_codon_lacks_is_refused_with_a_hint(
+    tmp_path: Path, setup: str, last: str, hint: str
+) -> None:
+    scenario, config, path = _data_case(tmp_path, "", setup + "\n")
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert hint in error.message, error.format()
+    assert error.line == _line_of(path, last)
+
+
+def test_dict_update_with_a_dict_or_pairs_compiles(tmp_path: Path) -> None:
+    setup = """
+        d = {"a": 1}
+        d.update({"c": 3})
+        d.update([("e", 5)])
+        assert len(d) == 3
+    """
+    scenario, config, _ = _data_case(tmp_path, "", setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_except_star_is_refused_at_its_line(tmp_path: Path) -> None:
+    if sys.version_info < (3, 11):
+        pytest.skip("except* needs Python 3.11")
+    setup = """
+        try:
+            raise ValueError("x")
+        except* ValueError as eg:
+            n = len(eg.exceptions)
+    """
+    scenario, config, path = _data_case(tmp_path, "", setup)
+    result = typecheck_scenario(scenario, config)
+    assert not result.ok, result.format()
+    error = result.diagnostics[0]
+    assert "exception groups" in error.message, result.format()
+    assert "use `except`" in error.message, result.format()
+    assert error.line == _line_of(path, "except* ValueError")
+
+
+def test_the_439_rewrites_compose_with_fstring_specs_and_class_constants(
+    tmp_path: Path,
+) -> None:
+    definitions = """
+class Names:
+    A = "ab"
+    B = "cd"
+    HIT = "abc".startswith((A, B))
+    LABEL = f"{len(A):+d}"
+
+    def check(self, s: str = "abx") -> bool:
+        return s.startswith((Names.A, Names.B))
+"""
+    setup = """
+        n = 5
+        s = "abc"
+        signed = format(n, "+d") + f"{n:+d}" + format(2.5, "+.1f")
+        inside = f"{s.startswith(('a', 'z'))}-{format(n, '>4')}-{n:+d}"
+        names = Names()
+        assert names.check() and Names.HIT and len(signed) + len(inside) > 0
+        logger.info("%s %s %s", signed, inside, Names.LABEL)
+    """
+    scenario, config, _ = _data_case(tmp_path, definitions, setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_a_bytes_method_codon_lacks_is_refused_with_a_hint(tmp_path: Path) -> None:
+    setup = "r = b'ab'.hex()\n"
+    scenario, config, path = _data_case(tmp_path, "", setup)
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "already text" in error.message, error.format()
+    assert error.line == _line_of(path, "r = b'ab'.hex()")
+
+
 def test_a_class_with_only_lt_sorts(tmp_path: Path) -> None:
     setup = """
         items = [ByLt(2), ByLt(1), ByLt(3)]
@@ -6243,3 +6614,192 @@ def make():
     error = _only_error(typecheck_scenario(scenario, config))
     assert "defined in a function" in error.message, error.format()
     assert error.line == _line_of(path, "R = Q * 2")
+
+
+def test_fstrings_in_lambdas_that_capture_compile(tmp_path: Path) -> None:
+    """Every form of #470: Codon cannot see a captured name in a lambda's f-string."""
+    setup = """
+        p = cfg.name
+        x = 3.14159
+        a = lambda v: f"{v}{p}"
+        b = sorted(["b", "a"], key=lambda e: f"{e}{p}")
+        c = lambda e: "{}{}".format(e, p)
+        d = lambda v, lab=cfg.name: f"{v}{lab}"
+        e = lambda v, lab=f"{x}": f"{v}{lab}"
+        f = lambda: f"{x=:.2f}"
+        g = (lambda lab: lambda v: f"{lab}")("a")
+        h = lambda v: f"{v:+.2f}|{x:>10.3f}|{p!r}|{x=}|{{lit}}"
+        i = lambda v: [f"{k}{p}" for k in range(v)]
+
+        def inner(name):
+            return (lambda v: f"{v}{name}")(1)
+
+        r: str = a(1) + c(2) + d(3) + e(4) + f() + g(5) + h(6.5) + inner("n")
+        assert len(r) > 0 and len(b) == 2 and len(i(2)) == 2
+    """
+    scenario, config, _ = _data_case(tmp_path, "", setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+@pytest.mark.parametrize(
+    ("line", "message"),
+    [
+        ('r: int = (lambda v: f"{v}{p}")(1)', "int"),
+        ('r = (lambda v: f"{v}{p.nope}")(1)', "nope"),
+        ('r = (lambda v: f"{v.nope}{p}")(1)', "nope"),
+        ('r = (lambda v: "{}{}".format(v, p) + 1)(1)', "str"),
+    ],
+    ids=["result", "capture-attribute", "param-attribute", "format"],
+)
+def test_a_lowered_lambda_fstring_is_still_type_checked(
+    tmp_path: Path, line: str, message: str
+) -> None:
+    scenario, config, path = _data_case(tmp_path, "", 'p = "a"\n' + line + "\n")
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert message in error.message, error.format()
+    assert error.line == _line_of(path, line)
+
+
+_LAMBDA_FSTRING_TYPES = (
+    _FLAGS
+    + """
+class Color(enum.Enum):
+    RED = 1
+    BLUE = 2
+
+
+class Shown:
+    n: int
+
+    def __init__(self, n: int) -> None:
+        self.n = n
+
+    def __str__(self) -> str:
+        return "shown"
+
+    def __repr__(self) -> str:
+        return "Shown()"
+
+
+class Holder:
+    prefix = "h"
+
+
+MULTILINE = lambda v, p: f\"\"\"a
+{v}
+{p}{Holder.prefix}\"\"\"
+"""
+)
+
+
+def test_fstrings_in_lambdas_accept_the_types_a_scenario_uses(tmp_path: Path) -> None:
+    """``str(x)`` / ``repr(x)`` exist for enums, flags, framework and user types."""
+    setup = """
+        p = cfg.name
+        loc = carla.Location(x=1.0, y=2.0, z=3.0)
+        col = Color.RED
+        sh = Shown(1)
+        a = lambda v: f"{v}{loc}{col}{Perm.R | Perm.W}{Bits.A}{sh}{p}"
+        b = lambda v: f"{loc!r}{col!r}{sh!r}{sh!s}{sh!a}{p!s:>5}{p!a:>5}"
+        c = lambda v: f"{p:>{v}}|{v:{len(p)}}|{v:>{v}d}"
+        d = lambda v: (y := v, f"{y}{p}")[1]
+        e = lambda v: [f"{k}{v}{p}" for k in range(v)]
+        f = lambda v: (lambda u: [lambda w: f"{u}{v}{w}{p}" for _ in range(2)])(v)
+        g = lambda v, h=lambda w: f"{w}{p}": h(v)
+        i = MULTILINE
+        r: str = a(1) + b(2) + c(3) + d(4) + e(2)[0] + f(5)[0](6) + g(7) + i(8, p)
+        assert len(r) > 0
+    """
+    scenario, config, _ = _data_case(tmp_path, _LAMBDA_FSTRING_TYPES, setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+# -- a comprehension in a class body or a default_factory (#469) ---------------
+
+_CLASS_BODY_COMPREHENSIONS = """
+class Color(enum.Enum):
+    RED = 1
+    BLUE = 2
+
+
+class Q:
+    SQ = [i * i for i in range(3)]
+    NAMES = [n.upper() for n in ["a", "b"]]
+    TABLE = {k: len(k) for k in ["a", "bb"]}
+    COLORS = [c.name for c in Color]
+    DIRS = [d.name for d in TurnDirection]
+
+
+@dataclass
+class D:
+    names: list[str] = dataclasses.field(
+        default_factory=lambda: [str(i) for i in range(3)]
+    )
+    ds: list[TurnDirection] = dataclasses.field(
+        default_factory=lambda: list(TurnDirection)
+    )
+    dnames: list[str] = dataclasses.field(
+        default_factory=lambda: [d.name for d in TurnDirection]
+    )
+    cnames: list[str] = dataclasses.field(
+        default_factory=lambda: [c.name for c in Color]
+    )
+    squares: tuple[int, ...] = dataclasses.field(
+        default_factory=lambda: tuple(i for i in range(3))
+    )
+    opts: dict[str, int] = dataclasses.field(default_factory=lambda: dict(a=1))
+"""
+
+
+def test_class_body_comprehensions_and_factories_compile(tmp_path: Path) -> None:
+    setup = """
+        d = D()
+        logger.info("%s %s %s", Q.SQ, Q.NAMES, Q.TABLE)
+        logger.info("%s %s", Q.COLORS, Q.DIRS)
+        logger.info("%s %s %s %s", d.names, d.ds, d.dnames, d.cnames)
+        logger.info("%s %s", d.squares, d.opts)
+    """
+    scenario, config, _ = _data_case(tmp_path, _CLASS_BODY_COMPREHENSIONS, setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_a_hoisted_class_body_comprehension_is_still_type_checked(
+    tmp_path: Path,
+) -> None:
+    definitions = """
+class Q:
+    BAD = [i.nope for i in range(0)]
+"""
+    scenario, config, path = _data_case(tmp_path, definitions, "x = Q.BAD\n")
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert error.line == _line_of(path, "BAD = ")
+
+
+def test_a_hoisted_default_factory_is_still_type_checked(tmp_path: Path) -> None:
+    definitions = """
+@dataclass
+class D:
+    names: list[str] = dataclasses.field(
+        default_factory=lambda: [i + "a" for i in range(3)]
+    )
+"""
+    scenario, config, path = _data_case(tmp_path, definitions, "x = D().names\n")
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert error.line == _line_of(path, "default_factory=lambda"), error.format()
+
+
+def test_a_class_body_comprehension_reading_its_class_is_refused(
+    tmp_path: Path,
+) -> None:
+    definitions = """
+class Q:
+    BASE = 3
+    SQ = [i * 2 for i in range(BASE)]
+"""
+    scenario, config, path = _data_case(tmp_path, definitions, "x = Q.SQ\n")
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "module-level function" in error.message, error.format()
+    assert error.line == _line_of(path, "SQ = ")

@@ -16,15 +16,18 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # A push to master is a merge whose pull request already ran this suite, so it
-# does not repeat those verdicts. It runs only the jobs whose caches the next
-# pull requests restore -- the Codon check verdicts and the scenario image's
-# build cache -- and none at all for the release workflow's "chore: bump
-# version to X" commit, which changes nothing but the version.
+# does not repeat those verdicts. It runs only the fast test matrices, whose
+# Codon check verdicts the next pull requests restore, and on every interpreter
+# of the range where a pull request runs only the floor and the ceiling -- and
+# none at all for the release workflow's "chore: bump version to X" commit,
+# which changes nothing but the version.
 
 jobs:
   test:
-    # The whole supported range (`requires-python`). The floor is 3.10 because
-    # that is what Autoware's own environment is.
+    # The whole supported range (`requires-python`) on master. The floor is
+    # 3.10 because that is what Autoware's own environment is. A pull request
+    # runs the floor and the ceiling, which stand in for the interpreters
+    # between them; master catches what only those break.
     name: test (${{ matrix.python-version }})
     runs-on: ubuntu-24.04
     if: >-
@@ -33,7 +36,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # Kept literal: test_authoring_export.py checks it against
+        # TESTED_PYTHONS and `requires-python`.
         python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+        exclude: ${{ fromJSON(github.event_name == 'pull_request' && '[{"python-version":"3.11"}, {"python-version":"3.12"}, {"python-version":"3.13"}]' || '[]') }}
 
     steps:
     - uses: actions/checkout@v4
@@ -185,11 +191,6 @@ jobs:
     runs-on: ubuntu-24.04
     # Repeats the pull request's verdict and seeds no cache: see the top.
     if: github.event_name == 'pull_request'
-    env:
-      # The pytest hook runs the whole fast suite again (for a contributor's
-      # commit); here the test jobs already do, and it made this the slowest
-      # job of the run.
-      SKIP: pytest-carla
     steps:
     - uses: actions/checkout@v4
 
@@ -224,9 +225,6 @@ jobs:
           run-precommit: "false"
 
       - name: Run pre-commit auto-fix
-        env:
-          # Fixes nothing; see lint-and-format.
-          SKIP: pytest-carla
         run: uv run pre-commit run --all-files || true
 
       - name: Commit and push if changes were made
@@ -281,9 +279,10 @@ jobs:
     # own platform. The x86_64 leg keeps the job's original name.
     name: scenario image${{ matrix.arch == 'arm64' && ' (arm64)' || '' }}
     runs-on: ${{ matrix.runner }}
-    if: >-
-      github.event_name != 'push' ||
-      !startsWith(github.event.head_commit.message, 'chore: bump version to ')
+    # Repeats the pull request's verdict: see the top. A run on master would
+    # leave a build cache for pull requests to restore, but not one worth two
+    # Docker builds on every merge.
+    if: github.event_name == 'pull_request'
     strategy:
       fail-fast: false
       matrix:

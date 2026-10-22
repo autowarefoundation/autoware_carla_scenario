@@ -38,6 +38,22 @@ class SamplingEvent:
             return "TICK"
         raise ValueError("not a member of SamplingEvent")
 
+    # What `for m in E`, `list(E)` and `E["A"]` read: the checker rewrites
+    # them (#437). Declared in Python's order, as the test checks.
+    @staticmethod
+    def _acs_members() -> List[SamplingEvent]:
+        return [SamplingEvent.START, SamplingEvent.END, SamplingEvent.TICK]
+
+    @staticmethod
+    def _acs_by_name(name: str) -> SamplingEvent:
+        if name == "START":
+            return SamplingEvent.START
+        if name == "END":
+            return SamplingEvent.END
+        if name == "TICK":
+            return SamplingEvent.TICK
+        raise KeyError(name)
+
 
 # The schema a coverage file names (openodd.collector.COVERAGE_SCHEMA).
 COVERAGE_SCHEMA: str = "openodd.coverage/1"
@@ -60,6 +76,22 @@ class CoverGroup:
         if self == CoverGroup.SCENARIO:
             return "SCENARIO"
         raise ValueError("not a member of CoverGroup")
+
+    # What `for m in E`, `list(E)` and `E["A"]` read: the checker rewrites
+    # them (#437). Declared in Python's order, as the test checks.
+    @staticmethod
+    def _acs_members() -> List[CoverGroup]:
+        return [CoverGroup.ODD, CoverGroup.SITUATION, CoverGroup.SCENARIO]
+
+    @staticmethod
+    def _acs_by_name(name: str) -> CoverGroup:
+        if name == "ODD":
+            return CoverGroup.ODD
+        if name == "SITUATION":
+            return CoverGroup.SITUATION
+        if name == "SCENARIO":
+            return CoverGroup.SCENARIO
+        raise KeyError(name)
 
 
 def _expect_sampling_event(event):
