@@ -1264,7 +1264,23 @@ in step:
 - `Final` and `Annotated` are read as what they wrap (`Final[int]` and
   `Annotated[int, "m"]` are `int`; a bare `Final` is dropped). `NoReturn`,
   `Type`, `Sized`, `Hashable`, `Any` and `Callable` annotations are dropped,
-  so they are not checked.
+  so they are not checked. The exception is a `Callable[[A], R]` parameter
+  whose function body stores it (`self._cb = fn`, `self._cbs[key] = fn`,
+  `self._cbs.append(fn)`), with argument and result types Codon can express:
+  it is kept, written as Codon's `Callable[Tuple[A], R]`, so a callback
+  registry (a class-level `_cbs: list[Callable[[int], int]]` that `register()`
+  appends to) has the same type on both sides. A generic parameter put in a
+  typed `Callable` container made Codon abort with `std::bad_alloc` and no
+  location (#488). A named function or a lambda passed to it converts, and one
+  of the wrong signature is refused at the call. Two limits, both Codon's: a
+  closure reading a local variable of its function cannot be converted (Codon's
+  own refusal, with the dispatch-table hint), and neither can a lambda that
+  takes no arguments (`lambda: None`; pass a named function). A parameter the
+  body only calls, or passes on, stays dropped, so a closure still checks.
+- A Codon abort with `std::bad_alloc` names the `Callable` attributes of the
+  checked modules at their lines; a function passed where a `Callable` of
+  another signature is expected is named at the call that passes it (Codon
+  0.19 reports no type error for that, only a code generation failure).
 - `cast(T, x)` is `x` typed as `T` (as in Python, nothing checks that `x` is
   a `T`); when `T` cannot be named in Codon (a `Callable`, a class defined
   further down) it is `x` as it is.

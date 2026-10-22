@@ -133,6 +133,15 @@ _CRASH_MARKERS = ("Assert failed", "Segmentation fault", "Aborted")
 #: Codon 0.19's code generation refusing the IR it generated itself: a bug of
 #: Codon's, no error of the program (#263).
 _LLVM_ERROR = "LLVM: error:"
+#: Codon 0.19 aborting with no location, as for a ``Callable`` attribute that
+#: a value of another type is stored in (#488).
+_BAD_ALLOC = "std::bad_alloc"
+#: LLVM refusing a call that passes a function where a ``Callable`` is
+#: expected, with the signature of another: Codon 0.19 converts the function
+#: without comparing the two and only the verifier of the IR it generated
+#: notices (#488).
+_SIGNATURE_MISMATCH = "Call parameter type does not match function signature"
+_PASSED_FUNCTION = re.compile(r'ptr @"std\.[\w.]*?\.(?P<fn>\w+)\.\d+:\d+\[')
 #: The class an LLVM error's frame names, as in
 #: ``(__internal__.opt_ref_new_rtti:0[,std.pkg.module.Cls.0])``.
 _LLVM_CLASS = re.compile(
@@ -2150,6 +2159,16 @@ def _compile(
         or codegen
         or any(m in output for m in _CRASH_MARKERS)
     )
+    if proc.returncode != 0 and not diagnostics and _SIGNATURE_MISMATCH in output:
+        try:
+            diagnostics = _callable_signature_hints(output, sources)
+        except Exception:  # only a hint: the crash is reported either way
+            diagnostics = []
+    if proc.returncode != 0 and not diagnostics and _BAD_ALLOC in output:
+        try:
+            diagnostics = _bad_alloc_hints(sources)
+        except Exception:  # only a hint: the crash is reported either way
+            diagnostics = []
     if proc.returncode != 0 and not diagnostics:
         tail = _ANSI.sub("", output).strip().splitlines()[-1:] or [
             f"exit status {proc.returncode}"
@@ -2164,6 +2183,79 @@ def _compile(
         output=output,
         seconds=seconds,
     )
+
+
+def _callable_signature_hints(output: str, sources: _Sources) -> list[Diagnostic]:
+    """A function of another signature than the ``Callable`` it is passed as (#488).
+
+    Codon 0.19 does not compare a function passed to a ``Callable`` parameter
+    with the parameter's signature (a lambda it does), and generates a call
+    LLVM refuses.  The function is named in the IR; each call of the checked
+    modules that passes it is reported, or the crash once if none is found.
+    """
+    text = _ANSI.sub("", output)
+    found = _PASSED_FUNCTION.search(text)
+    name = found["fn"] if found is not None else None
+    message = (
+        f"{'`' + name + '`' if name else 'A function'} is passed where a "
+        "`Callable` is expected, and has another signature than it: Codon 0.19 "
+        "does not compare them and fails in code generation; give the function "
+        "the argument and result types of the `Callable`"
+    )
+    hints: list[Diagnostic] = []
+    for module in sources.modules.values():
+        for call in ast.walk(module.tree):
+            if not isinstance(call, ast.Call) or name is None:
+                continue
+            if any(
+                (isinstance(a, ast.Name) and a.id == name)
+                or (isinstance(a, ast.Attribute) and a.attr == name)
+                for a in [*call.args, *(k.value for k in call.keywords)]
+            ):
+                hints.append(Diagnostic(message, str(module.path), call.lineno))
+    return hints or [Diagnostic(message)]
+
+
+def _bad_alloc_hints(sources: _Sources) -> list[Diagnostic]:
+    """Codon aborting with ``std::bad_alloc``, as what is likely to cause it (#488).
+
+    Codon 0.19 gives no file, line or message for it.  The cause seen is a
+    class attribute annotated with a ``Callable`` (alone, or inside a list or
+    dict) that a value of no declared type is stored in; the transform now
+    keeps the ``Callable`` annotation of a parameter, so what is left is a
+    stored value of another unannotated kind.  Each such attribute is named at
+    its line, and the crash is reported once if none is found.
+    """
+    found: list[Diagnostic] = []
+    for module in sources.modules.values():
+        for cls in ast.walk(module.tree):
+            if not isinstance(cls, ast.ClassDef):
+                continue
+            for stmt in cls.body:
+                if isinstance(stmt, ast.AnnAssign) and any(
+                    isinstance(n, (ast.Name, ast.Attribute))
+                    and (_dotted_name(n) or "").rpartition(".")[2] == "Callable"
+                    for n in ast.walk(stmt.annotation)
+                ):
+                    found.append(
+                        Diagnostic(
+                            "Codon aborted with `std::bad_alloc` (it gives no "
+                            "location); a `Callable` attribute is a likely cause: "
+                            "annotate every parameter or variable stored in it "
+                            "with the same `Callable[[...], R]`, or store a "
+                            "function the attribute's signature names",
+                            str(module.path),
+                            stmt.lineno,
+                        )
+                    )
+    return found or [
+        Diagnostic(
+            "Codon aborted with `std::bad_alloc` (it gives no location): it ran "
+            "out of memory, or was given a type it cannot hold, often a "
+            "`Callable` annotation on an attribute that a value of another "
+            "type is stored in"
+        )
+    ]
 
 
 def _codegen_crash(output: str, sources: _Sources) -> Diagnostic:

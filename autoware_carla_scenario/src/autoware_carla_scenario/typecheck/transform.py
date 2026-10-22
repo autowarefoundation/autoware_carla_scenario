@@ -11,6 +11,9 @@ which :func:`transform_source_lines` maps back onto the handler):
   An annotation Codon cannot express (another ``Union``, which crashes Codon
   0.19, ``Any``, ``Callable``, ``type[...]``, ``Sequence[...]``, ...) is
   dropped: the parameter becomes generic, which Codon checks at each call.
+  A ``Callable[[A], R]`` parameter the body stores (``self._cb = fn``,
+  ``self._cbs.append(fn)``) is kept as ``Callable[Tuple[A], R]``: a generic
+  one put in a typed ``Callable`` attribute aborts Codon (#488).
   Class-level declarations keep the abstract collections, which the
   ``typing`` shim maps onto ``List`` / ``Dict``.
 * ``@dataclass`` is removed (a Codon class with annotated fields already gets
@@ -686,6 +689,80 @@ def callable_annotation(node: ast.AST) -> str | None:
     return f"Callable[[{', '.join(a for a in args if a is not None)}], {ret}]"
 
 
+def kept_callable_parameter(node: ast.AST) -> str | None:
+    """A ``Callable[[A, B], R]`` parameter annotation in Codon's spelling.
+
+    ``Callable[Tuple[A, B], R]`` (the list of argument types a display the
+    transform would rewrite), or ``None`` when the annotation is no
+    ``Callable`` whose argument and result types Codon can express (it is
+    dropped, as every ``Callable`` annotation once was).  A parameter stored
+    in a ``Callable``-typed attribute or list (a callback registry) must keep
+    the annotation: Codon aborts with ``std::bad_alloc`` on the generic
+    parameter put in a typed container (#488).
+    """
+    spelled = callable_annotation(node)
+    if spelled is None:
+        return None
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        node = ast.parse(node.value, mode="eval").body
+    assert isinstance(node, ast.Subscript) and isinstance(node.slice, ast.Tuple)
+    params, result = node.slice.elts
+    assert isinstance(params, ast.List)
+    if not params.elts:
+        return spelled
+    args = [codon_annotation(p, class_level=True) for p in params.elts]
+    ret = codon_annotation(result, class_level=True)
+    return f"Callable[Tuple[{', '.join(str(a) for a in args)}], {ret}]"
+
+
+#: Methods that put their argument in a collection.
+_STORING_METHODS = {
+    "append",
+    "appendleft",
+    "add",
+    "insert",
+    "extend",
+    "setdefault",
+    "put",
+    "put_nowait",
+}
+
+
+def stored_parameters(body: list[ast.stmt], names: set[str]) -> set[str]:
+    """The *names* the *body* puts in an attribute, a subscript or a collection.
+
+    ``self.cb = fn``, ``self.cbs[key] = fn`` and ``self.cbs.append(fn)`` store
+    ``fn``; calling it, or passing it on, does not.  A nested function or
+    class is part of the body (a store there stores what it captured).
+    """
+    found: set[str] = set()
+    stack: list[ast.AST] = list(body)
+    while stack:
+        node = stack.pop()
+        stack.extend(ast.iter_child_nodes(node))
+        values: list[ast.expr] = []
+        if isinstance(node, ast.Assign) and any(
+            isinstance(t, (ast.Attribute, ast.Subscript)) for t in node.targets
+        ):
+            values = [node.value]
+        elif (
+            isinstance(node, ast.AnnAssign)
+            and node.value is not None
+            and isinstance(node.target, (ast.Attribute, ast.Subscript))
+        ):
+            values = [node.value]
+        elif (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr in _STORING_METHODS
+        ):
+            values = list(node.args)
+        for value in values:
+            if isinstance(value, ast.Name) and value.id in names:
+                found.add(value.id)
+    return found
+
+
 def _members_or_self(node: ast.AST) -> list[ast.AST]:
     """The members of a union or an ``Optional`` (``None`` included), or *node*."""
     if isinstance(node, ast.Subscript) and _dotted(node.value) in (
@@ -1210,7 +1287,33 @@ class _Rewriter(ShadowScopes):
         # variable-length tuple: abstract collections are the only other.
         return codon_annotation(node, class_level=True)
 
-    def _rewrite_arguments(self, args: ast.arguments, *, skip_first: bool) -> None:
+    def _keep_callable(self, arg: ast.arg, body: list[ast.stmt]) -> bool:
+        """Write the ``Callable`` annotation of a parameter the body stores (#488).
+
+        A parameter put in an attribute, a list or a dict is a value of a
+        ``Callable``-typed one, which Codon aborts on (``std::bad_alloc``)
+        when the parameter is generic.  One the body only calls stays dropped:
+        it is generic, so a closure that reads a local variable of its
+        function, which Codon cannot convert to a ``Callable``, still checks.
+        """
+        node = arg.annotation
+        if node is None or not stored_parameters(body, {arg.arg}):
+            return False
+        if _annotation_names(node) & (self._later_classes | self._type_vars):
+            return False
+        kept = kept_callable_parameter(node)
+        if kept is None:
+            return False
+        self._write_annotation(node, kept)
+        return True
+
+    def _rewrite_arguments(
+        self,
+        args: ast.arguments,
+        *,
+        skip_first: bool,
+        body: list[ast.stmt] | None = None,
+    ) -> None:
         every = [*args.posonlyargs, *args.args, *args.kwonlyargs]
         if skip_first:
             every = every[1:]  # removed as a whole (_rewrite_classmethod)
@@ -1221,6 +1324,8 @@ class _Rewriter(ShadowScopes):
             if arg.annotation is None:
                 continue
             if self._rewrite_annotation(arg.annotation, class_level=False) is None:
+                if self._keep_callable(arg, body or []):
+                    continue
                 name_end = self.edits.offset(arg.lineno, arg.col_offset) + len(
                     arg.arg.encode()
                 )
@@ -1453,7 +1558,7 @@ class _Rewriter(ShadowScopes):
         if classmethod_ and self._class_name is not None:
             self._rewrite_classmethod(node, self._class_name)
         self._rewrite_defaults(node.args)
-        self._rewrite_arguments(node.args, skip_first=classmethod_)
+        self._rewrite_arguments(node.args, skip_first=classmethod_, body=node.body)
         self._rewrite_returns(node)
         for default in [*node.args.defaults, *node.args.kw_defaults]:
             if default is not None:
