@@ -53,6 +53,10 @@ def authored_vehicle_parameters(
     reaction_time_s_std: Optional[float] = None,
     imperfection_mean: Optional[float] = None,
     imperfection_std: Optional[float] = None,
+    max_lateral_speed_mps_mean: Optional[float] = None,
+    max_lateral_speed_mps_std: Optional[float] = None,
+    max_lateral_accel_mean: Optional[float] = None,
+    max_lateral_accel_std: Optional[float] = None,
     follow_visibility: Optional[bool] = None,
 ) -> Optional[VehicleParameters]:
     """The vehicle parameters the fields set; ``None`` when they set none."""
@@ -77,6 +81,14 @@ def authored_vehicle_parameters(
             reaction_time_s_mean, reaction_time_s_std, "reaction_time_s"
         ),
         imperfection=_spread(imperfection_mean, imperfection_std, "imperfection"),
+        max_lateral_speed_mps=_spread(
+            max_lateral_speed_mps_mean,
+            max_lateral_speed_mps_std,
+            "max_lateral_speed_mps",
+        ),
+        max_lateral_accel=_spread(
+            max_lateral_accel_mean, max_lateral_accel_std, "max_lateral_accel"
+        ),
         follow_visibility=follow_visibility,
     )
     if not parameters.set_fields():

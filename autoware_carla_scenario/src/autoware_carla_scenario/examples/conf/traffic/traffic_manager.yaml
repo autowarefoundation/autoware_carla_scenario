@@ -37,6 +37,10 @@ traffic:
     decel: {mean: null, std: null}
     reaction_time_s: {mean: null, std: null}
     imperfection: {mean: null, std: null}
+    # Most lateral speed, m/s, and (with traffic.options.lateral_resolution_m,
+    # SUMO's sublane model) most lateral acceleration, m/s^2 (sumo only).
+    max_lateral_speed_mps: {mean: null, std: null}
+    max_lateral_accel: {mean: null, std: null}
     # Hold the traffic to the speed it stops from within what its
     # drivers see in the run's weather (sumo only; on by default there).
     follow_visibility: null

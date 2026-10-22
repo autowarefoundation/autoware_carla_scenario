@@ -195,6 +195,23 @@ class SumoBackendConfig:
             ``None`` converts the map as it is.  Needs a roadgen with
             ``export_sumo(curve_lateral_acceleration=...)``; an older one
             converts without it, with a warning.  Ignored with ``net_path``.
+        lateral_resolution_m: Width of a sublane, metres
+            (``--lateral-resolution``; 0.4 by default): SUMO's sublane model,
+            where a vehicle's lateral position is continuous -- it changes
+            lanes smoothly, at its own lateral speed and acceleration
+            (``traffic.vehicles.max_lateral_speed_mps`` and
+            ``max_lateral_accel``), never in one step.  ``None``: SUMO's
+            lane-based model, with ``lane_change_duration_s``.
+        lane_change_duration_s: With ``lateral_resolution_m: null`` only, how
+            long a lane change of SUMO's lane-based model takes, seconds
+            (``--lanechange.duration``; 3 s when unset): a vehicle moves
+            across continuously over this time, at no more than its
+            ``max_lateral_speed_mps``.  SUMO takes only one of the two.
+        step_length_s: SUMO's step, seconds (``--step-length``).  ``None``:
+            the world's ``fixed_delta_seconds``, one SUMO step per CARLA tick.
+            A shorter one must divide the tick in whole milliseconds (SUMO's
+            clock counts those): SUMO then makes that many steps per tick, so
+            movement within a tick, a lane change above all, is smoother.
         net_path: An existing ``.net.xml`` to run on, instead of converting the
             world's OpenDRIVE.  Its x/y must be OpenDRIVE's plus its
             ``netOffset``, as netconvert writes a network built from it.
@@ -240,6 +257,9 @@ class SumoBackendConfig:
     publish_walkers: bool = True
     pedestrian_crossings: bool = True
     curve_lateral_acceleration: Optional[float] = 3.0
+    lateral_resolution_m: Optional[float] = 0.4
+    lane_change_duration_s: Optional[float] = None
+    step_length_s: Optional[float] = None
     net_path: Optional[str] = None
     route_path: Optional[str] = None
     ambient: AmbientTrafficConfig = field(default_factory=AmbientTrafficConfig)
@@ -266,12 +286,24 @@ class SumoBackendConfig:
                 "vehicle_control must be one of "
                 f"{', '.join(_VEHICLE_CONTROLS)} (got {self.vehicle_control!r})"
             )
-        if self.curve_lateral_acceleration is not None and not (
-            self.curve_lateral_acceleration > 0.0
+        for name, value in (
+            ("curve_lateral_acceleration", self.curve_lateral_acceleration),
+            ("lateral_resolution_m", self.lateral_resolution_m),
+            ("lane_change_duration_s", self.lane_change_duration_s),
+            ("step_length_s", self.step_length_s),
+        ):
+            if value is not None and not value > 0.0:
+                raise ValueError(f"{name} must be positive or null (got {value!r})")
+        if (
+            self.lane_change_duration_s is not None
+            and self.lateral_resolution_m is not None
         ):
             raise ValueError(
-                "curve_lateral_acceleration must be positive or null "
-                f"(got {self.curve_lateral_acceleration!r})"
+                "lane_change_duration_s needs lateral_resolution_m: null: SUMO "
+                "changes lanes either over a duration, in its lane-based model, "
+                "or in its sublane model (the default), where "
+                "max_lateral_speed_mps and max_lateral_accel (traffic.vehicles) "
+                "say how fast"
             )
         if self.scenario_vehicles not in _SCENARIO_VEHICLE_DRIVERS:
             raise ValueError(

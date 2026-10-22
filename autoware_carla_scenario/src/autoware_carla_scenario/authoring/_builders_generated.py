@@ -1364,6 +1364,10 @@ def build_traffic_parameters_action(
         reaction_time_s_std=params["reaction_time_s_std"],
         imperfection_mean=params["imperfection_mean"],
         imperfection_std=params["imperfection_std"],
+        max_lateral_speed_mps_mean=params["max_lateral_speed_mps_mean"],
+        max_lateral_speed_mps_std=params["max_lateral_speed_mps_std"],
+        max_lateral_accel_mean=params["max_lateral_accel_mean"],
+        max_lateral_accel_std=params["max_lateral_accel_std"],
         lane_changes=params["lane_changes"],
         follow_visibility=params["follow_visibility"],
     )
@@ -1582,6 +1586,10 @@ def build_vehicle_parameters_action(
         reaction_time_s_std=params["reaction_time_s_std"],
         imperfection_mean=params["imperfection_mean"],
         imperfection_std=params["imperfection_std"],
+        max_lateral_speed_mps_mean=params["max_lateral_speed_mps_mean"],
+        max_lateral_speed_mps_std=params["max_lateral_speed_mps_std"],
+        max_lateral_accel_mean=params["max_lateral_accel_mean"],
+        max_lateral_accel_std=params["max_lateral_accel_std"],
         lane_changes=params["lane_changes"],
         follow_visibility=params["follow_visibility"],
     )

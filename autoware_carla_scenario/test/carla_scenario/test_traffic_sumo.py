@@ -106,6 +106,57 @@ def test_curve_speeds_are_on_by_default_and_must_be_positive() -> None:
             SumoBackendConfig.from_mapping({"curve_lateral_acceleration": bad})
 
 
+def test_the_lane_change_options_are_checked() -> None:
+    config = SumoBackendConfig()
+    # The sublane model by default: no lane change in one step.
+    assert config.lateral_resolution_m == pytest.approx(0.4)
+    assert config.lane_change_duration_s is None
+    assert config.step_length_s is None
+    for name in ("lane_change_duration_s", "lateral_resolution_m", "step_length_s"):
+        with pytest.raises(ValueError, match=name):
+            SumoBackendConfig.from_mapping({name: 0.0})
+    # SUMO takes one or the other.
+    with pytest.raises(ValueError, match="lateral_resolution_m: null"):
+        SumoBackendConfig.from_mapping({"lane_change_duration_s": 2.0})
+    lane_based = SumoBackendConfig.from_mapping(
+        {"lane_change_duration_s": 2.0, "lateral_resolution_m": None}
+    )
+    assert lane_based.lane_change_duration_s == pytest.approx(2.0)
+
+
+def test_a_sumo_step_divides_the_carla_tick() -> None:
+    from autoware_carla_scenario.traffic.sumo.backend import _sumo_step
+
+    assert _sumo_step(0.05, None) == (0.05, 1)
+    step, count = _sumo_step(0.05, 0.01)
+    assert count == 5
+    assert step == pytest.approx(0.01)
+    assert _sumo_step(0.1, 0.1) == (0.1, 1)
+    # 0.0125 divides the tick, but SUMO's clock would round it to 0.013.
+    for bad in (0.03, 0.1, 0.0125):
+        with pytest.raises(ValueError, match="step_length_s"):
+            _sumo_step(0.05, bad)
+
+
+def test_a_lateral_acceleration_needs_the_sublane_model() -> None:
+    from autoware_carla_scenario.traffic.parameters import (
+        TrafficParameterError,
+        VehicleParameters,
+    )
+    from autoware_carla_scenario.traffic.sumo.backend import SumoTrafficBackend
+
+    with pytest.raises(
+        TrafficParameterError,
+        match="max_lateral_accel needs traffic.options.lateral_resolution_m",
+    ):
+        SumoTrafficBackend(
+            SumoBackendConfig(lateral_resolution_m=None),
+            vehicles=VehicleParameters(max_lateral_accel=0.5),
+        )
+    backend = SumoTrafficBackend(vehicles=VehicleParameters(max_lateral_accel=0.5))
+    assert backend.vehicle_parameters.max_lateral_accel is not None
+
+
 def test_an_older_roadgen_converts_without_curve_speeds(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -575,6 +626,35 @@ def test_manoeuvres_become_sumo_commands(crossroads: Path, tmp_path: Path) -> No
 
 
 @needs_sumo
+@pytest.mark.parametrize("sublane", [False, True])
+def test_a_lane_change_takes_as_long_as_its_lateral_speed_allows(
+    crossroads: Path, tmp_path: Path, sublane: bool
+) -> None:
+    from autoware_carla_scenario.traffic.parameters import VehicleParameters
+
+    options: dict[str, Any] = {} if sublane else {"lateral_resolution_m": None}
+    backend, world, _npc, _ego = _prepared(
+        crossroads,
+        tmp_path,
+        vehicles=VehicleParameters(max_lateral_speed_mps=0.5),
+        **options,
+    )
+    entity = backend._driven[next(iter(backend._driven))]
+    try:
+        backend.tick(world, 0.0)
+        backend.change_lane(entity, world, LaneChangeDirection.LEFT)
+        ticks = 0
+        while ticks < 400 and not backend.lane_change_finished(entity, world):
+            ticks += 1
+            backend.tick(world, ticks * 0.05)
+        assert backend.lane_change_finished(entity, world)
+        # 3.5 m across at no more than 0.5 m/s: some 7 s, not the 3 s default.
+        assert ticks * 0.05 > 5.0
+    finally:
+        backend.close()
+
+
+@needs_sumo
 def test_a_construction_zone_closes_and_reopens_the_lane(
     crossroads: Path, tmp_path: Path
 ) -> None:
@@ -962,6 +1042,45 @@ def test_sumo_drives_its_vehicles_with_the_traffic_parameters(
     finally:
         backend.close()
         forget_visibility()
+
+
+@needs_sumo
+@pytest.mark.parametrize("sublane", [False, True])
+def test_sumo_gives_its_vehicles_their_lateral_speed_and_acceleration(
+    crossroads: Path, tmp_path: Path, sublane: bool
+) -> None:
+    from autoware_carla_scenario.traffic.parameters import Spread, VehicleParameters
+
+    parameters = VehicleParameters(
+        max_lateral_speed_mps=Spread(0.6),
+        max_lateral_accel=Spread(0.4) if sublane else None,
+    )
+    options: dict[str, Any] = (
+        {} if sublane else {"lateral_resolution_m": None, "lane_change_duration_s": 2.0}
+    )
+    backend, world, _npc, _ego = _prepared(
+        crossroads, tmp_path, vehicles=parameters, step_length_s=0.01, **options
+    )
+    tc = backend._traci
+    try:
+        handle = backend.spawn_background(
+            world, _carla_transform(-60.0, 5.25, 0.0), speed_kmh=60.0
+        )
+        assert handle is not None
+        (npc_id,) = backend._driven
+        before = tc.simulation.getTime()
+        backend.tick(world, 0.0)
+        # Five SUMO steps of 0.01 s per 0.05 s tick.
+        assert tc.simulation.getTime() - before == pytest.approx(0.05)
+        assert tc.simulation.getDeltaT() == pytest.approx(0.01)
+        for sumo_id in (handle, npc_id):
+            assert tc.vehicle.getMaxSpeedLat(sumo_id) == pytest.approx(0.6)
+            if sublane:
+                assert float(
+                    tc.vehicle.getParameter(sumo_id, "laneChangeModel.lcAccelLat")
+                ) == pytest.approx(0.4)
+    finally:
+        backend.close()
 
 
 def test_follow_visibility_is_a_traffic_parameter_now() -> None:

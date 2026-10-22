@@ -1062,6 +1062,8 @@ from them.
 | `vehicles.decel` | m/s^2 | 1-9 | 0-2 |
 | `vehicles.reaction_time_s` | s | 0.3-3 | 0-1 |
 | `vehicles.imperfection` | | 0-1 | 0-0.5 |
+| `vehicles.max_lateral_speed_mps` | m/s | 0.2-2 | 0-0.5 |
+| `vehicles.max_lateral_accel` | m/s^2 | 0.2-3 | 0-0.5 |
 | `pedestrians.walking_speed_mps` | m/s | 0.5-2.5 | 0-0.5 |
 | `pedestrians.min_gap_m` | m | 0.1-2 | 0-0.5 |
 | `pedestrians.red_light_violation_s` | s | 0-60 | 0-30 |

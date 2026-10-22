@@ -401,6 +401,13 @@ class TrafficBackend:
             if self.name in backends
         }
 
+    def parameter_requirements(self) -> dict[str, str]:
+        """The vehicle parameters this backend leaves out of
+        :meth:`supported_vehicle_parameters` only because one of its options
+        is not set, each with what to set: what an error names instead of the
+        other backends.  None by default."""
+        return {}
+
     def set_vehicle_parameters(self, parameters: VehicleParameters) -> None:
         """Drive the vehicles with *parameters* from the next :meth:`prepare` on.
 
@@ -414,7 +421,11 @@ class TrafficBackend:
                 backends that do.  Raised before the run, as :meth:`prepare`
                 refuses.
         """
-        parameters.check_supported(self.name, self.supported_vehicle_parameters())
+        parameters.check_supported(
+            self.name,
+            self.supported_vehicle_parameters(),
+            self.parameter_requirements(),
+        )
         self._vehicle_parameters = parameters
 
     def set_pedestrian_parameters(self, parameters: PedestrianParameters) -> None:
