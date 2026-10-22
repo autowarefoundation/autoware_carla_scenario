@@ -901,6 +901,7 @@ class _Rewriter(ast.NodeVisitor):
         self._dropped_decorators = set(dropped_decorators)
         self._class_depth = 0
         self._function_depth = 0
+        self._dict_rebound = False
         #: Top-level classes of the module that are exceptions.
         self._exceptions = exceptions
         #: The class whose body is being visited (``None`` in a function).
@@ -1621,6 +1622,7 @@ class _Rewriter(ast.NodeVisitor):
         elif (
             isinstance(node.func, ast.Name)
             and node.func.id == "dict"
+            and not self._dict_rebound
             and not node.args
             and node.keywords
             and all(kw.arg is not None for kw in node.keywords)
@@ -2237,6 +2239,11 @@ def transform_source_lines(
     edits = _Edits(source.encode().splitlines(keepends=True))
     exceptions = _exception_classes(tree)
     rewriter = _Rewriter(edits, exceptions, dropped_decorators)
+    from .python_rewrites import _rebound_names
+
+    # A module that binds ``dict`` itself (a parameter, a variable) calls its
+    # own, whose keywords are not Codon's concern.
+    rewriter._dict_rebound = "dict" in _rebound_names(tree)
     rewriter.visit(tree)
     own = {e.name for e in rewriter.enums} | set(enum_classes)
     # The model's enums too (#437), unless the module defines a class of that

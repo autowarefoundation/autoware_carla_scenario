@@ -3472,3 +3472,8 @@ def test_dict_with_keywords_becomes_a_display() -> None:
     out = transform_source("d = dict(a=1, b = 2,)\ne = dict(**x)\nf = dict()\n")
     assert 'd = {"a": 1, "b": 2}' in out
     assert "e = dict(**x)" in out and "f = dict()" in out
+
+
+def test_dict_with_keywords_is_left_alone_where_the_module_binds_dict() -> None:
+    out = transform_source("def f(dict):\n    return dict(a=1)\nx = dict(b=2, **y)\n")
+    assert "return dict(a=1)" in out and "x = dict(b=2, **y)" in out
