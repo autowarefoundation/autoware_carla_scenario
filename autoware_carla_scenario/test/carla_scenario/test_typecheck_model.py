@@ -2420,7 +2420,7 @@ def test_a_base_class_checks_every_override_against_its_return_type(
 def test_the_replace_methods_of_a_model_match_the_dataclass_fields(
     path: str, python: Any
 ) -> None:
-    # dataclasses.replace(obj, f=x) is lowered to obj._acs_with__f(f=x)
+    # dataclasses.replace(obj, f=x) is lowered to obj._acs_with__f(x)
     # (#487). The model of a framework dataclass spells those methods by
     # hand: a field added to the Python class and not to them would make the
     # check refuse a replace() the run accepts.

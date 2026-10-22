@@ -7908,6 +7908,32 @@ class Plan:
 
 
 @dataclass
+class Base2:
+    a: int = 0
+
+
+@dataclass
+class Derived(Base2):
+    b: float = 1.0
+
+
+@dataclass
+class Leaf(Derived):
+    c: str = "c"
+    a: int = 9
+
+
+@dataclass(frozen=True)
+class FrozenBase:
+    x: int = 1
+
+
+@dataclass(frozen=True)
+class FrozenChild(FrozenBase):
+    y: float | None = None
+
+
+@dataclass
 class CaseConfig:
     name: str = "case"
     goal_lanelet_ids: list[int] = field(default_factory=lambda: [460, 265])
@@ -7916,7 +7942,7 @@ class CaseConfig:
     plan: Plan = field(default_factory=lambda: Plan([Waypoint(1, 3.0, Kind.FAST)]))
 """
 
-_REPLACE_IMPORTS = "\n\nfrom dataclasses import replace\n\nfrom .configs import Frozen, Kind, Plan, Waypoint\n\n\n"
+_REPLACE_IMPORTS = "\n\nfrom dataclasses import replace\n\nfrom .configs import (\n    Base2,\n    Derived,\n    Frozen,\n    FrozenBase,\n    FrozenChild,\n    Kind,\n    Leaf,\n    Plan,\n    Waypoint,\n)\n\n\n"
 
 
 def _replace_case(tmp_path: Path, setup: str) -> tuple[Any, Any, Path]:
@@ -7952,6 +7978,75 @@ def test_replace_of_a_dataclass_is_checked_and_usable(tmp_path: Path) -> None:
     scenario, config, _ = _replace_case(tmp_path, setup)
     result = typecheck_scenario(scenario, config)
     assert result.ok, result.format()
+
+
+def test_replace_of_a_field_a_base_dataclass_declares_is_usable(
+    tmp_path: Path,
+) -> None:
+    # #494: a method of a base and of its subclass is virtual, and Codon
+    # cannot pass a keyword through the dispatch thunk.
+    setup = """
+        d = Derived(a=1, b=2.0)
+        d2 = replace(d, a=5)
+        d3 = replace(d, b=5.0)
+        d4 = replace(d, a=3, b=4.0)
+        assert d2.a + d3.a + d4.a > 0 and d2.b < d3.b and d4.b < d3.b
+        base = replace(Base2(), a=2)
+        assert base.a == 2
+        leaf = Leaf()
+        l1 = replace(leaf, a=1)
+        l2 = replace(leaf, b=2.5, c="z")
+        l3 = replace(replace(leaf, c="y"), a=4, b=1.5)
+        assert l1.c != l2.c and l3.a == 4 and l3.b < 2.0
+        fc = FrozenChild(x=1, y=None)
+        fc2 = replace(fc, x=2)
+        fc3 = replace(fc2, y=1.0, x=3)
+        assert fc3.x == 3 and replace(FrozenBase(), x=2).x == 2
+        z = replace(
+            d,
+            a=7,
+            b=1.0,
+        )
+    """
+    scenario, config, _ = _replace_case(tmp_path, setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        "replace(Derived(), a=None)",
+        'replace(Derived(), a="x")',
+        "replace(Derived(), nonexistent=1)",
+        "replace(Leaf(), c=3, a=1)",
+        "replace(FrozenChild(), x=None)",
+        'replace(Leaf(), a=1, b="s")',
+    ],
+    ids=["base-none", "base-str", "unknown", "own-wrong", "frozen", "mixed"],
+)
+def test_a_wrong_replace_of_a_derived_dataclass_is_refused_at_the_call(
+    tmp_path: Path, call: str
+) -> None:
+    scenario, config, path = _replace_case(tmp_path, f"x = {call}\n")
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert error.path == str(path), error.format()
+    assert error.line == _line_of(path, f"x = {call}"), error.format()
+    line = path.read_text().splitlines()[error.line - 1]
+    assert error.column is None or error.column <= len(line), error.format()
+    assert "failed without a diagnostic" not in error.format()
+    assert "class_thunk_dispatch" not in error.message, error.format()
+
+
+def test_a_wrong_value_for_an_inherited_field_names_the_field(
+    tmp_path: Path,
+) -> None:
+    scenario, config, path = _replace_case(tmp_path, 'x = replace(Leaf(), a="s")\n')
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "field 'a' of Leaf is declared int, not str" in error.message
+    assert error.trace == (), error.format()
+    assert error.line == _line_of(path, "x = replace(Leaf()")
+    assert error.column is None, error.format()
 
 
 @pytest.mark.parametrize(

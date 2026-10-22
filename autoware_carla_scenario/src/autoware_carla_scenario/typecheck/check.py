@@ -1000,11 +1000,36 @@ def _display_hint(diagnostic: Diagnostic, in_display: bool) -> str | None:
     return None
 
 
+#: The frame Codon reports when a value of the wrong type goes to a
+#: ``dataclasses.replace`` method that a subclass overrides (#494): a call to a
+#: virtual method goes through a dispatch thunk, which names no field.
+_REPLACE_THUNK_FRAME = re.compile(
+    r"^(?:during the realization of )?class_thunk_dispatch\(slf: \w+, cls_id: int, \*args: Tuple\[(?P<got>[^\]]*)\], "
+    r"F: _acs_with__(?P<field>\w+)\[(?P<cls>\w+),(?P<want>[^\]]*)\]\)"
+)
+
+
+def _replace_thunk_message(diagnostic: Diagnostic) -> Diagnostic:
+    """Say what ``replace(obj, a="x")`` got wrong when the field is inherited."""
+    for frame in diagnostic.trace:
+        found = _REPLACE_THUNK_FRAME.match(frame)
+        if found is None or "does not match expected type" not in diagnostic.message:
+            continue
+        message = (
+            f"dataclasses.replace: field '{found['field']}' of {found['cls']} "
+            f"is declared {found['want']}, not {found['got']}"
+        )
+        trace = tuple(f for f in diagnostic.trace if f is not frame)
+        return dataclasses.replace(diagnostic, message=message, trace=trace)
+    return diagnostic
+
+
 def _variadic_hints(diagnostics: list[Diagnostic]) -> list[Diagnostic]:
     """*diagnostics*, each refusal of a Codon limit on ``**kwargs``, on
     ``*args`` or on a tuple saying why and what to write instead (#266)."""
     out = []
     for diagnostic in diagnostics:
+        diagnostic = _replace_thunk_message(diagnostic)
         in_display = any(_LIST_DISPLAY_FRAME.match(frame) for frame in diagnostic.trace)
         if in_display:
             # A list display `_acs_list` could not make one list (#480): the
@@ -1376,11 +1401,28 @@ def _fstring_line(
     return _original_line(origin, fields[0][0])
 
 
+def _line_rewritten(
+    checked: Path, line: int, original: str, original_line: int
+) -> bool:
+    """Whether line *line* of the file the check compiled differs from line
+    *original_line* of the author's *original*."""
+    try:
+        compiled = checked.read_text().splitlines()[line - 1]
+        written = Path(original).read_text().splitlines()[original_line - 1]
+    except (OSError, IndexError, ValueError):
+        return False
+    return compiled != written
+
+
 def _parse_output(output: str, ws: _Workspace) -> list[Diagnostic]:
     """Codon's errors, each located at its innermost frame in the scenario's files."""
     by_basename: dict[str, list[str]] = {}
     for rel in ws.files:
         by_basename.setdefault(Path(rel).name, []).append(rel)
+
+    #: The (file, line) of Codon's whose text the check rewrote: its columns
+    #: are those of the rewritten line, not of the author's.
+    moved: set[tuple[str, int]] = set()
 
     def locate(
         file: str, line: int, column: int | None = None, message: str = ""
@@ -1416,6 +1458,10 @@ def _parse_output(output: str, ws: _Workspace) -> list[Diagnostic]:
             )
             if found is not None:
                 original = found
+        if original >= 1 and _line_rewritten(
+            ws.root / rel, line, ws.files[rel], original
+        ):
+            moved.add((file, line))
         return (ws.files[rel], original, True, None)
 
     errors: list[tuple[str, list[tuple[str, int, int | None, str]]]] = []
@@ -1453,6 +1499,8 @@ def _parse_output(output: str, ws: _Workspace) -> list[Diagnostic]:
             ((f, loc) for f, loc in located if loc and loc[2]), None
         ) or next(((f, loc) for f, loc in located if loc), (None, None))
         column = pf[2] if pf is not None else None
+        if pf is not None and (pf[0], pf[1]) in moved:
+            column = None  # a column of the rewritten line (#494)
         trace = []
         if primary is not None and primary[3] is not None:
             # The error is on an appended line itself: say which call it is.
