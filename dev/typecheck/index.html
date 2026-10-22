@@ -3403,6 +3403,25 @@ value whose members are <code>int</code>, not as a type: it becomes <code>int</c
     modelled either: write <code>a is b</code>. Python refuses <code>&lt;</code> without <code>order=True</code>
     and <code>hash()</code> of a non-frozen dataclass, and so does the check, with a
     hint naming the flag.</li>
+<li><code>dataclasses.replace(obj, a=x, b=y)</code> is checked as the typed copy it is
+    (#487): the check appends to each dataclass of the module one
+    <code>_acs_with__&lt;field&gt;</code> method per field the constructor takes, and writes
+    the call as <code>replace(obj)._acs_with__a(a=x)._acs_with__b(b=y)</code>. An unknown
+    field, a value of the wrong type (<code>replace(w, speed="fast")</code>) and a
+    field declared <code>field(init=False)</code> (which Python refuses too) are
+    refused at the call, and <code>replace(plan, best=None)</code> of an <code>Optional</code>
+    field works. It holds for a dataclass the scenario package defines, in
+    any of its modules, whose bases are dataclasses of the same module (or
+    none) and which has no <code>__init__</code> of its own; for any other class (a
+    framework or library dataclass) the call is refused with a hint to build
+    the object yourself (<code>OpenDrivePose</code> and <code>DevContainer</code> have the methods in their
+    models, as the framework uses <code>replace</code> on them). The object goes by position and the fields by keyword:
+    <code>replace(obj, **changes)</code> and <code>replace(obj, 3.0)</code> are refused. The fields
+    change one after the other, so a <code>__post_init__</code> is not run between them,
+    and <code>replace(obj)</code> with no change returns <code>obj</code> itself, not a copy (both
+    only matter to the types). A <code>replace</code> that is not <code>dataclasses</code>' (a
+    parameter, a local or another import of that name, <code>str.replace</code>) is left
+    alone.</li>
 <li>An <code>IntEnum</code> (also <code>IntFlag</code>, <code>class M(int, Enum)</code>) member compares with
     its value (<code>M.A == 1</code>), orders against a member or an <code>int</code>
     (<code>M.A &lt; M.B</code>) and converts with <code>int()</code> and <code>float()</code>. A <code>StrEnum</code> or
@@ -3775,7 +3794,8 @@ instead:</p>
 <ul>
 <li><code>dataclasses.asdict</code> returns a <code>dict[str, Any]</code>: build the dict from the
   fields you need. The <code>dataclasses</code> shim declares only <code>dataclass</code>, <code>field</code>
-  and <code>replace</code>.</li>
+  and <code>replace</code> (a call is rewritten and checked per field, see "Your own
+  dataclasses, enums and named tuples").</li>
 <li><code>functools.wraps</code> (and any other name of <code>functools</code>, <code>itertools</code> or
   <code>collections</code> not listed above) is not modelled.</li>
 <li><code>contextlib</code>: write a class with <code>__enter__</code> and
@@ -5684,7 +5704,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 22, 2026 17:55:09 UTC"><span class="timeago" datetime="2026-10-22T17:55:09+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 22, 2026 17:55:09 UTC">2026-10-22</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 22, 2026 20:27:30 UTC"><span class="timeago" datetime="2026-10-22T20:27:30+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 22, 2026 20:27:30 UTC">2026-10-22</span>
   </span>
 
     
