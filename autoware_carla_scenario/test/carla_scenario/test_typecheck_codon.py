@@ -9364,3 +9364,149 @@ def test_a_config_that_raises_when_built_is_reported(tmp_path: Path) -> None:
     result = typecheck_scenario(scenario, config, {"mode": "nope"})
     assert not result.ok
     assert "ValueError" in result.format()
+
+
+# ---------------------------------------------------------------------------
+# Round 29: to_lanelet2, Optional actions, `or` readers, Optional subclasses
+# ---------------------------------------------------------------------------
+
+_R29_HEADER = _HEADER.replace(
+    "    TurnAction,\n",
+    "    TurnAction,\n    EntityRole,\n    SetSpeedAction,\n    to_lanelet2,\n    to_carla_world,\n    to_opendrive,\n",
+    1,
+).replace("from typing", "from typing", 1)
+_R29_HEADER = _R29_HEADER.replace(
+    "import logging\n", "import logging\nfrom typing import Optional\n", 1
+)
+
+_R29_EXTRA = """
+    def _gap(self, world: carla.World) -> Optional[float]:
+        return None
+"""
+
+
+@pytest.mark.parametrize(
+    "setup",
+    [
+        "p = to_lanelet2(to_opendrive(Lanelet2Pose(lanelet_id=1, s=0.0)))\n"
+        'logger.info("%d", p.lanelet_id)\n',
+        'p = to_lanelet2(OpenDrivePose(road_id="1", lane_id=-1, s=0.0))\n'
+        'logger.info("%d", p.lanelet_id)\n',
+        "p = to_lanelet2(to_carla_world(Lanelet2Pose(lanelet_id=1, s=0.0)))\n"
+        'logger.info("%d", p.lanelet_id)\n',
+    ],
+    ids=["opendrive", "opendrive-literal", "carla-world"],
+)
+def test_to_lanelet2_takes_both_documented_poses(tmp_path: Path, setup: str) -> None:
+    scenario, config, _ = _write_case(tmp_path, setup, header=_R29_HEADER)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_to_lanelet2_refuses_another_argument(tmp_path: Path) -> None:
+    wrong = "to_lanelet2(Lanelet2Pose(lanelet_id=1, s=0.0))"
+    scenario, config, path = _write_case(tmp_path, wrong + "\n", header=_R29_HEADER)
+    result = typecheck_scenario(scenario, config)
+    assert any(
+        d.line == _line_of(path, wrong) and "to_lanelet2 takes" in d.message
+        for d in result.diagnostics
+    ), result.format()
+
+
+_OPTIONAL_ACTION_SETUPS = {
+    "local": """
+        a: Optional[SetSpeedAction] = None
+        if cfg.timeout_seconds > 5.0:
+            a = SetSpeedAction(EntityRole.npc(1), 10.0, label="s")
+        if a is not None:
+            self.REG(a)
+        """,
+    "attribute": """
+        self._a = None
+        if cfg.timeout_seconds > 5.0:
+            self._a = SetSpeedAction(EntityRole.npc(1), 10.0, label="s")
+        if self._a is not None:
+            self.REG(self._a)
+        """,
+    "conditional": """
+        a = SetSpeedAction(EntityRole.npc(1), 10.0, label="s") if cfg.timeout_seconds > 1.0 else None
+        if a:
+            self.REG(a)
+        """,
+}
+
+
+@pytest.mark.parametrize("register", ["register_pre_tick", "register_post_tick"])
+@pytest.mark.parametrize("kind", sorted(_OPTIONAL_ACTION_SETUPS))
+def test_an_optional_action_registered_after_a_none_test_compiles(
+    tmp_path: Path, kind: str, register: str
+) -> None:
+    setup = _OPTIONAL_ACTION_SETUPS[kind].replace("REG", register)
+    scenario, config, _ = _write_case(
+        tmp_path,
+        setup,
+        extra="\n    _a: Optional[SetSpeedAction]\n",
+        header=_R29_HEADER,
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+@pytest.mark.parametrize(
+    "read",
+    ["lambda w: self._gap(w) or 0.0", "lambda w: 0.0 or self._gap(w)"],
+    ids=["optional-first", "optional-last"],
+)
+def test_a_measure_read_that_defaults_an_optional_with_or_compiles(
+    tmp_path: Path, read: str
+) -> None:
+    setup = f'self.register_measure("a", {read})\n'
+    scenario, config, _ = _write_case(
+        tmp_path, setup, extra=_R29_EXTRA, header=_R29_HEADER
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+_OPTIONAL_BASE_SETUPS = {
+    "local": """
+        c: Optional[BaseCondition] = ElapsedTimeCondition(1.0, label="e")
+        if c is not None:
+            self.register_fail_condition(c)
+        """,
+    "branches": """
+        c: Optional[BaseCondition] = None
+        if cfg.timeout_seconds > 5.0:
+            c = ElapsedTimeCondition(1.0, label="e")
+        else:
+            c = TimeoutCondition(3.0, label="t")
+        if c is not None:
+            self.register_fail_condition(c)
+        """,
+    "action": """
+        a: Optional[BaseAction] = None
+        if cfg.timeout_seconds > 5.0:
+            a = SetSpeedAction(EntityRole.npc(1), 10.0, label="s")
+        if a is not None:
+            self.register_pre_tick(a)
+        """,
+}
+
+
+@pytest.mark.parametrize("kind", sorted(_OPTIONAL_BASE_SETUPS))
+def test_an_optional_base_class_holding_a_subclass_is_refused_with_a_hint(
+    tmp_path: Path, kind: str
+) -> None:
+    header = _R29_HEADER.replace(
+        "    BaseCondition,\n", "    BaseAction,\n    BaseCondition,\n", 1
+    )
+    scenario, config, _ = _write_case(
+        tmp_path, _OPTIONAL_BASE_SETUPS[kind], header=header
+    )
+    result = typecheck_scenario(scenario, config)
+    # Codon 0.19 converts no Optional of a subclass, in the scenario's own
+    # code, which the model cannot change (#541): refused with the hint.
+    assert not result.ok
+    assert (
+        "does not convert an Optional of a subclass" in result.format()
+    ), result.format()

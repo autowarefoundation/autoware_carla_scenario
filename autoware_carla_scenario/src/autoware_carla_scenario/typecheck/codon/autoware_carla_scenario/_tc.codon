@@ -165,7 +165,24 @@ def _expect_float(x) -> float:
 
 
 def _expect_optional_float(x) -> Optional[float]:
-    if isinstance(x, None):
+    if isinstance(x, Union):
+        # `maybe_float or 0.0` (#538): Codon types `Optional[T] or D` as the
+        # Union of both, which Python reads as a number. Only the unions of
+        # numbers and None are accepted; the members are not enumerable, so
+        # the combinations that `or` makes of them are listed.
+        if isinstance(x, Union[Optional[float], float]):
+            return None
+        elif isinstance(x, Union[Optional[float], int]):
+            return None
+        elif isinstance(x, Union[Optional[int], float]):
+            return None
+        elif isinstance(x, Union[Optional[int], int]):
+            return None
+        elif isinstance(x, Union[float, int]):
+            return None
+        else:
+            compile_error("expected a float (or an int), or None")
+    elif isinstance(x, None):
         return None
     elif isinstance(x, Optional[NoneType]):
         return None

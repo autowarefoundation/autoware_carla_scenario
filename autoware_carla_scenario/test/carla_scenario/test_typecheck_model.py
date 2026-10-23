@@ -2581,3 +2581,23 @@ def test_the_logging_model_holds_the_levels_and_keywords_of_python() -> None:
     assert len(level_functions) == 18
     for function in level_functions:
         assert {a.arg for a in function.args.kwonlyargs} == keywords, function.name
+
+
+def test_no_model_file_defines_a_top_level_function_twice() -> None:
+    # Codon 0.19 tries only the last of two typed overloads, so a second
+    # `def f(x: A)` after `def f(x: B)` refuses a B that Python accepts (#536,
+    # as to_carla_world had before). One untyped definition with an
+    # isinstance() check does what both are meant to; an @overload set is
+    # Codon's own dispatch and is left alone.
+    duplicated: list[str] = []
+    for path in sorted(model_dir().rglob("*.codon")):
+        seen: set[str] = set()
+        for node in _parse(path).body:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                # Codon's own @overload dispatches on the arguments.
+                if any(ast.unparse(d) == "overload" for d in node.decorator_list):
+                    continue
+                if node.name in seen:
+                    duplicated.append(f"{path.relative_to(model_dir())}: {node.name}")
+                seen.add(node.name)
+    assert not duplicated, duplicated

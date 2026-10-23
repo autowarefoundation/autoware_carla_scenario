@@ -122,11 +122,15 @@ def to_opendrive(pose) -> OpenDrivePose:
     raise NotImplementedError()
 
 
-def to_lanelet2(pose: OpenDrivePose) -> Lanelet2Pose:
-    raise NotImplementedError()
-
-
-def to_lanelet2(pose: CarlaWorldPose) -> Lanelet2Pose:
+def to_lanelet2(pose) -> Lanelet2Pose:
+    # An OpenDrivePose or a CarlaWorldPose. One definition: of two typed
+    # overloads Codon tries only the last, which refused an OpenDrivePose.
+    if isinstance(pose, OpenDrivePose):
+        pass
+    elif isinstance(pose, CarlaWorldPose):
+        pass
+    else:
+        compile_error("to_lanelet2 takes an OpenDrivePose or a CarlaWorldPose")
     raise NotImplementedError()
 
 
