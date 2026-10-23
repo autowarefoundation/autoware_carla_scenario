@@ -354,8 +354,18 @@ class DeclarativeScenario(BaseScenario):
         self._send_ego_along(match)
 
     def _send_ego_along(self, match: "RouteMatch") -> None:
-        """Make the route the ego's: waypoints for Autoware, turns for the rest."""
-        if self.ego_requires_goal:
+        """Make the route the ego's: waypoints with a goal, turns without one.
+
+        With a goal, the route's lanelets between the ego's spawn and goal
+        lanelets become its waypoints (unless some were configured), which the
+        ego's :class:`~autoware_carla_scenario.actions.RoutingAction` hands it:
+        an Autoware ego plans the matched route rather than the shortest one,
+        and one a traffic backend drives is handed the whole route as one path
+        (:meth:`~autoware_carla_scenario.entity.ego.EgoVehicle.route_to`).
+        Without one -- only an ego driven for it may have none -- nothing is
+        handed over, and the ego is turned at each junction instead.
+        """
+        if self.ego_requires_goal or self.goal_pose is not None:
             if self.waypoint_poses:
                 return
             ids = list(match.lanelet_ids)

@@ -28,7 +28,7 @@ something which is not driving them.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, List, Optional
 
 from ..constants import DEFAULT_TM_PORT
 from .base import DrivenEntity, LaneChangeDirection, TrafficBackend, TurnDirection
@@ -170,6 +170,11 @@ class BackendDriven(DrivenEntity):
             self._resolve_backend()
         else:
             self._resolve_backend().turn_at_junction(self, world, direction, **kwargs)
+
+    def follow_route(self, world: "carla.World", path: List["carla.Location"]) -> None:
+        """Drive along *path*, through every junction on it."""
+        entity: DrivenEntity = self
+        self._resolve_backend().follow_route(entity, world, path)
 
     def release_from_traffic(self, world: "carla.World") -> None:
         """Stop the backend driving this vehicle; the caller drives it now."""

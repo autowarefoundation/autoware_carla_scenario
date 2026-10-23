@@ -23,6 +23,8 @@ __all__ = [
     "PlannedRoute",
     "RouteError",
     "plan_route",
+    "route_lanelets",
+    "route_poses",
 ]
 
 
@@ -85,12 +87,12 @@ def _lanelet(lanelet_map: LaneletMap, lanelet_id: int, what: str) -> ConstLanele
     return lanelet
 
 
-def plan_route(
+def route_lanelets(
     route: PlannedRoute,
     lanelet_map: LaneletMap,
     routing_graph: RoutingGraph,
-) -> list[tuple[int, float]]:
-    """The lanelets of *route*, in order, with the metres driven on each.
+) -> list[ConstLanelet]:
+    """The lanelets of *route*, in order, from its start to its goal.
 
     Each leg (start to the first waypoint, ... to the goal) is the shortest
     path in *routing_graph*, lane changes allowed.
@@ -102,7 +104,6 @@ def plan_route(
     if route.goal is None:
         raise RouteError("no goal: the route cannot be planned")
     goal: Lanelet2Pose = route.goal
-    import lanelet2.geometry  # noqa: PLC0415
 
     stops: list[tuple[ConstLanelet, str]] = [
         (_lanelet(lanelet_map, route.start.lanelet_id, "start"), "start")
@@ -123,29 +124,108 @@ def plan_route(
             )
         found: LaneletPath = leg
         path.extend(list(found)[1:])
+    return path
 
-    # Metres on each: the start lanelet from the start pose on, the goal
-    # lanelet up to the goal pose.
-    last = len(path) - 1
-    driven: list[float] = []
-    for i, lanelet in enumerate(path):
-        length = float(lanelet2.geometry.length2d(lanelet))
-        begin = _clamp(route.start.s, length) if i == 0 else 0.0
-        end = _clamp(goal.s, length) if i == last else length
-        driven.append(max(0.0, end - begin))
 
+def plan_route(
+    route: PlannedRoute,
+    lanelet_map: LaneletMap,
+    routing_graph: RoutingGraph,
+) -> list[tuple[int, float]]:
+    """The lanelets of *route*, in order, with the metres driven on each.
+
+    The lanelets are :func:`route_lanelets`'s.
+
+    Raises:
+        RouteError: if the route has no goal, names a lanelet the map does
+            not have, or a leg has no path.
+    """
+    path = route_lanelets(route, lanelet_map, routing_graph)
+    spans = _driven_spans(route, path)
+    changes = _lane_changes(path, routing_graph)
     # A lane change: the vehicle drives along the two lanelets side by side,
     # so their length is split between them rather than counted twice.
-    lateral = [0] * len(path)
-    for i in range(last):
+    planned: list[tuple[int, float]] = []
+    for i, lanelet in enumerate(path):
+        begin, end = spans[i]
+        sides = (1 if i > 0 and changes[i - 1] else 0) + (
+            1 if i < len(changes) and changes[i] else 0
+        )
+        planned.append((int(lanelet.id), (end - begin) / (1 + sides)))
+    return planned
+
+
+def route_poses(
+    route: PlannedRoute,
+    lanelet_map: LaneletMap,
+    routing_graph: RoutingGraph,
+    step: float,
+) -> list[Lanelet2Pose]:
+    """Poses every *step* metres along *route*, from its start to its goal.
+
+    The centrelines of :func:`route_lanelets`, sampled, ending on the goal.  A
+    lane change is driven across the middle of the two lanelets side by side:
+    the poses leave the first at half its length and join the second at half
+    of its own, rather than running the length of both.
+
+    Raises:
+        RouteError: as :func:`route_lanelets`.
+    """
+    from ..coordinate.poses import Lanelet2Pose  # noqa: PLC0415
+
+    path = route_lanelets(route, lanelet_map, routing_graph)
+    spans = _driven_spans(route, path)
+    changes = _lane_changes(path, routing_graph)
+    last = len(path) - 1
+    poses: list[Lanelet2Pose] = []
+    for i, lanelet in enumerate(path):
+        begin, end = spans[i]
+        half = _length(lanelet) / 2.0
+        if i > 0 and changes[i - 1]:
+            begin = max(begin, half)
+        if i < last and changes[i]:
+            end = min(end, half)
+        s = begin
+        while s < end:
+            poses.append(Lanelet2Pose(lanelet_id=int(lanelet.id), s=s))
+            s += step
+        if i == last:
+            poses.append(Lanelet2Pose(lanelet_id=int(lanelet.id), s=end))
+    return poses
+
+
+def _driven_spans(
+    route: PlannedRoute, path: Sequence[ConstLanelet]
+) -> list[tuple[float, float]]:
+    """``(begin, end)`` metres along each lanelet of *path*: the start lanelet
+    from the start pose on, the goal lanelet up to the goal pose."""
+    goal_s = route.goal.s if route.goal is not None else 0.0
+    last = len(path) - 1
+    spans: list[tuple[float, float]] = []
+    for i, lanelet in enumerate(path):
+        length = _length(lanelet)
+        begin = _clamp(route.start.s, length) if i == 0 else 0.0
+        end = _clamp(goal_s, length) if i == last else length
+        spans.append((begin, max(begin, end)))
+    return spans
+
+
+def _lane_changes(
+    path: Sequence[ConstLanelet], routing_graph: RoutingGraph
+) -> list[bool]:
+    """Whether the step from each lanelet of *path* to the next is a lane
+    change rather than a lanelet that follows it (one fewer than *path*)."""
+    changes: list[bool] = []
+    for i in range(len(path) - 1):
         following = {ll.id for ll in routing_graph.following(path[i])}
-        if path[i + 1].id not in following:
-            lateral[i] += 1
-            lateral[i + 1] += 1
-    return [
-        (int(lanelet.id), metres / (1 + sides))
-        for lanelet, metres, sides in zip(path, driven, lateral)
-    ]
+        changes.append(path[i + 1].id not in following)
+    return changes
+
+
+def _length(lanelet: ConstLanelet) -> float:
+    import lanelet2.geometry  # noqa: PLC0415
+
+    return float(lanelet2.geometry.length2d(lanelet))
 
 
 def _clamp(s: float, length: float) -> float:

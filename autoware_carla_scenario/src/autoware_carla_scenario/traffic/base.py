@@ -41,6 +41,7 @@ from typing import (
     Any,
     ClassVar,
     Collection,
+    List,
     Optional,
     Protocol,
     Tuple,
@@ -657,6 +658,26 @@ class TrafficBackend:
     ) -> None:
         """Send *entity* *direction* at the next junction ahead."""
         self._unavailable("turn_at_junction", entity)
+
+    def follow_route(
+        self,
+        entity: DrivenEntity,
+        world: "carla.World",
+        path: List["carla.Location"],
+    ) -> None:
+        """Drive *entity* along *path*, a route laid out point by point.
+
+        Where :meth:`turn_at_junction` decides one junction, this is the whole
+        way: the points run from where the vehicle is to where it is going,
+        through every junction between, so nothing is left for the traffic
+        model to choose.
+
+        Args:
+            entity: The entity asking for the route.
+            world: The CARLA world.
+            path: The route, in order, as CARLA world locations.
+        """
+        self._unavailable("follow_route", entity)
 
     def release(self, entity: DrivenEntity, world: "carla.World") -> None:
         """Stop driving *entity*: something else has taken it over.

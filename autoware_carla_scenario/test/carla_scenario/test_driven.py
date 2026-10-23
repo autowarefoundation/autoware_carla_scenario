@@ -522,3 +522,32 @@ class TestTheTurnActionDelegates:
                 _World(_Map(None))
             )
         assert "not found" in caplog.text
+
+
+class TestFollowRoute:
+    def test_the_whole_route_is_the_path(self) -> None:
+        actor = _Actor(_Transform(_Location(0.0, 0.0), 0.0))
+        vehicle = _Vehicle(actor)
+        tm = _TrafficManager()
+        vehicle.set_client(_Client(tm))
+        path = [_Location(0.0, 0.0), _Location(5.0, 0.0), _Location(10.0, 5.0)]
+
+        vehicle.follow_route(_World(_Map(None)), path)
+
+        assert tm.paths == [(actor, path)]
+
+    def test_an_empty_route_sends_nothing(self) -> None:
+        vehicle = _Vehicle(_Actor(_Transform(_Location())))
+        tm = _TrafficManager()
+        vehicle.set_client(_Client(tm))
+        vehicle.follow_route(_World(_Map(None)), [])
+        assert tm.paths == []
+
+    def test_an_autoware_ego_refuses_a_route(self, caplog) -> None:
+        from autoware_carla_scenario.autoware_bridge import FakeAutowareBridge
+        from autoware_carla_scenario.entity import AutowareEgoEntity
+
+        entity = AutowareEgoEntity(bridge=FakeAutowareBridge())
+        with caplog.at_level("WARNING"):
+            entity.follow_route(_World(_Map(None)), [_Location()])
+        assert "not driven by the TrafficManager" in caplog.text

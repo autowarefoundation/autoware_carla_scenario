@@ -26,11 +26,12 @@ The hierarchy::
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, List, Optional, Sequence
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
 
+    from ..coordinate import CarlaWorldPose, GroundProjectionConfig, Lanelet2Pose
     from ..traffic.base import LaneChangeDirection, TurnDirection
 
 from .ego import EgoVehicle
@@ -87,6 +88,23 @@ class ExternallyDrivenEgo(EgoVehicle):
         self._termination_requested = False
         self._termination_reason = None
 
+    def route_to(
+        self,
+        world: "carla.World",
+        goal: "Lanelet2Pose",
+        *,
+        initial_pose: "Optional[CarlaWorldPose]" = None,
+        ground_projection: "Optional[GroundProjectionConfig]" = None,
+        waypoints: "Sequence[Lanelet2Pose]" = (),
+    ) -> None:
+        """Take no route: the stack driving this ego goes where it goes.
+
+        A no-op, as it is for an external control policy, which takes no
+        destination; a stack that does plan one (see
+        :class:`~autoware_carla_scenario.entity.bridged_ego.BridgedEgoEntity`)
+        overrides this in turn.
+        """
+
     # ------------------------------------------------------------------
     # Manoeuvres
     # ------------------------------------------------------------------
@@ -122,6 +140,10 @@ class ExternallyDrivenEgo(EgoVehicle):
     ) -> None:
         """Refuse a TrafficManager route: nothing here is driven by it."""
         self._refuse("a turn was asked for", "setting a route there would do nothing")
+
+    def follow_route(self, world: "carla.World", path: List["carla.Location"]) -> None:
+        """Refuse a TrafficManager route: nothing here is driven by it."""
+        self._refuse("a route was set", "setting it there would do nothing")
 
     def resume_traffic(self, world: "carla.World") -> None:
         """Refuse to hand this ego to the traffic backend: its stack drives it.

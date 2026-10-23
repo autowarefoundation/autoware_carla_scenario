@@ -718,3 +718,56 @@ class TestRunnerWarning:
         finally:
             MapManager._instance = saved
         assert caplog.text == ""
+
+
+class TestRoutePoses:
+    """The route a backend-driven ego is handed, a pose every few metres."""
+
+    def test_from_the_start_pose_to_the_goal_pose(
+        self, nishishinjuku: tuple[Any, Any]
+    ) -> None:
+        from autoware_carla_scenario.odd.route_plan import route_poses
+
+        poses = route_poses(LEFT_TURN, *nishishinjuku, 5.0)
+        assert poses[0] == Lanelet2Pose(lanelet_id=203, s=25.0)
+        assert poses[-1] == Lanelet2Pose(lanelet_id=207, s=10.0)
+        assert list(dict.fromkeys(p.lanelet_id for p in poses)) == [203, 411, 207]
+
+    def test_a_pose_every_step_along_each_lanelet(
+        self, nishishinjuku: tuple[Any, Any]
+    ) -> None:
+        from autoware_carla_scenario.odd.route_plan import route_poses
+
+        poses = route_poses(LEFT_TURN, *nishishinjuku, 5.0)
+        on_411 = [p.s for p in poses if p.lanelet_id == 411]
+        assert on_411[0] == 0.0
+        assert all(b - a == pytest.approx(5.0) for a, b in zip(on_411, on_411[1:]))
+        assert on_411[-1] > _length(nishishinjuku, 411) - 5.0
+
+    def test_a_lane_change_crosses_at_the_middle(
+        self, nishishinjuku: tuple[Any, Any]
+    ) -> None:
+        """Not the length of both lanelets: the path would double back."""
+        from autoware_carla_scenario.odd.route_plan import route_poses
+
+        lanelet_map, graph = nishishinjuku
+        after = graph.following(lanelet_map.laneletLayer[184])[0].id
+        route = PlannedRoute(
+            start=Lanelet2Pose(lanelet_id=183, s=0.0),
+            goal=Lanelet2Pose(lanelet_id=after, s=5.0),
+        )
+        poses = route_poses(route, lanelet_map, graph, 2.0)
+        assert (
+            max(p.s for p in poses if p.lanelet_id == 183)
+            < _length(nishishinjuku, 183) / 2
+        )
+        assert min(p.s for p in poses if p.lanelet_id == 184) == pytest.approx(
+            _length(nishishinjuku, 184) / 2
+        )
+
+    def test_the_lanelets_are_plan_routes(self, nishishinjuku: tuple[Any, Any]) -> None:
+        from autoware_carla_scenario.odd.route_plan import route_lanelets
+
+        assert [int(ll.id) for ll in route_lanelets(LEFT_TURN, *nishishinjuku)] == [
+            i for i, _ in plan_route(LEFT_TURN, *nishishinjuku)
+        ]

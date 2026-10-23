@@ -540,6 +540,31 @@ class TrafficManagerBackend(TrafficBackend):
             len(path),
         )
 
+    def follow_route(
+        self,
+        entity: DrivenEntity,
+        world: "carla.World",
+        path: List["carla.Location"],
+    ) -> None:
+        """Hand *entity* the whole of *path* as its TrafficManager path.
+
+        ``set_path`` replaces whatever path the vehicle had, so a later
+        :meth:`turn_at_junction` replaces this one in turn.  Once the vehicle
+        has driven the last point the TrafficManager chooses its way again.
+        """
+        if not path:
+            logger.warning("%s: an empty route to follow", _entity_name(entity))
+            return
+        actor = _require_actor(entity, "follow_route")
+        if actor is None:
+            return
+        tm = self._require_tm("follow_route")
+        if tm is None:
+            return
+
+        tm.set_path(_vehicle(actor), path)
+        logger.info("%s: set a route of %d points", _entity_name(entity), len(path))
+
     def release(self, entity: DrivenEntity, world: "carla.World") -> None:
         """Take *entity*'s vehicle off autopilot, and keep it off at :meth:`start`."""
         actor = _require_actor(entity, "release")

@@ -139,6 +139,8 @@ class EgoVehicle:
             _acs_expect_return(r, NoneType, "EgoVehicle.set_desired_speed() returns None")
         elif name == "turn_at_junction":
             _acs_expect_return(r, NoneType, "EgoVehicle.turn_at_junction() returns None")
+        elif name == "follow_route":
+            _acs_expect_return(r, NoneType, "EgoVehicle.follow_route() returns None")
         elif name == "release_from_traffic":
             _acs_expect_return(r, NoneType, "EgoVehicle.release_from_traffic() returns None")
         elif name == "resume_traffic":
@@ -209,6 +211,9 @@ class EgoVehicle:
         raise NotImplementedError()
 
     def turn_at_junction(self, world: carla.World, direction: TurnDirection, **kwargs) -> None:
+        raise NotImplementedError()
+
+    def follow_route(self, world: carla.World, path: List[carla.Location]) -> None:
         raise NotImplementedError()
 
     def release_from_traffic(self, world: carla.World) -> None:

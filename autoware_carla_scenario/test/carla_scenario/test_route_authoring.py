@@ -396,7 +396,24 @@ class TestTheRunPicksItsRoute:
         assert match.lanelet_ids == (rm.W_IN1, rm.W_IN2, rm.J[("W", "N")], rm.N_OUT)
         assert scenario._spawn_pose == _approx_pose(rm.W_IN1, 45.0)
         assert scenario.goal_pose == _approx_pose(rm.N_OUT, 38.0)
-        # An ego the TrafficManager drives is turned at the junction.
+        # An ego the TrafficManager drives is handed the route as waypoints,
+        # and turned at no junction: the route it follows goes through it.
+        assert [p.lanelet_id for p in scenario.waypoint_poses] == [
+            rm.W_IN2,
+            rm.J[("W", "N")],
+        ]
+        assert not any(isinstance(a, TurnAction) for a in scenario._pre_tick_actions)
+
+    def test_without_a_goal_the_ego_is_turned_at_each_junction(
+        self, loaded: None
+    ) -> None:
+        """No goal, no RoutingAction: the route has nothing to be handed with."""
+        raw = _raw()
+        raw["route"]["ego_goal"] = False
+        scenario = _scenario(ScenarioDocument.model_validate(raw))
+        scenario._prepare_route()
+        assert scenario.goal_pose is None
+        assert scenario.waypoint_poses == []
         turns = [a for a in scenario._pre_tick_actions if isinstance(a, TurnAction)]
         assert [t.label for t in turns] == ["route_turn_0"]
         assert isinstance(turns[0]._condition, RouteProgressCondition)
@@ -538,3 +555,78 @@ def test_a_match_index_the_search_never_returns() -> None:
     raw["route"]["match_index"] = 2
     messages = _messages(ScenarioDocument.model_validate(raw))
     assert any("can never be taken" in m for m in messages)
+
+
+class _RouteTM:
+    def __init__(self) -> None:
+        self.paths: list[tuple[Any, list[Any]]] = []
+
+    def set_path(self, actor: Any, path: list[Any]) -> None:
+        self.paths.append((actor, path))
+
+
+class _RouteClient:
+    def __init__(self, tm: _RouteTM) -> None:
+        self._tm = tm
+
+    def get_trafficmanager(self, port: int) -> _RouteTM:
+        return self._tm
+
+
+class TestABackendDrivenEgoFollowsTheRoute:
+    """``EgoVehicle.route_to`` hands its traffic backend the whole route."""
+
+    @staticmethod
+    def _ego() -> tuple[Any, _RouteTM]:
+        from autoware_carla_scenario.entity.ego import EgoVehicle
+
+        ego = EgoVehicle()
+        ego._vehicle = object()  # type: ignore[assignment]
+        tm = _RouteTM()
+        ego.set_client(_RouteClient(tm))  # type: ignore[arg-type]
+        return ego, tm
+
+    def test_through_the_waypoints_to_the_goal(self, loaded: None) -> None:
+        from autoware_carla_scenario.coordinate.transform import (
+            to_carla_location,
+            to_carla_world,
+        )
+        from autoware_carla_scenario.entity.ego import ROUTE_POINT_STEP_M
+
+        ego, tm = self._ego()
+        start = Lanelet2Pose(lanelet_id=rm.W_IN1, s=45.0)
+        goal = Lanelet2Pose(lanelet_id=rm.N_OUT, s=38.0)
+
+        ego.route_to(
+            object(),  # type: ignore[arg-type]
+            goal,
+            initial_pose=to_carla_world(start),
+            waypoints=[
+                Lanelet2Pose(rm.W_IN2, 0.0),
+                Lanelet2Pose(rm.J[("W", "N")], 0.0),
+            ],
+        )
+
+        ((_actor, path),) = tm.paths
+        assert path[0].distance(to_carla_location(start)) < 1e-6
+        assert path[-1].distance(to_carla_location(goal)) < 1e-6
+        steps = [a.distance(b) for a, b in zip(path, path[1:])]
+        assert max(steps) <= ROUTE_POINT_STEP_M + 1e-6
+        # The left turn: it ends on the N road, never having gone east or south.
+        assert abs(path[-1].x) < 3.5 and -path[-1].y > 10.0
+        assert all(p.x < 12.0 and -p.y > -12.0 for p in path)
+
+    def test_a_route_that_cannot_be_planned_sends_nothing(
+        self, loaded: None, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        from autoware_carla_scenario.coordinate.transform import to_carla_world
+
+        ego, tm = self._ego()
+        with caplog.at_level("WARNING"):
+            ego.route_to(
+                object(),  # type: ignore[arg-type]
+                Lanelet2Pose(lanelet_id=rm.ONE_WAY1, s=0.0),
+                initial_pose=to_carla_world(Lanelet2Pose(rm.W_IN1, 45.0)),
+            )
+        assert tm.paths == []
+        assert "no route to follow" in caplog.text
