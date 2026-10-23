@@ -820,7 +820,7 @@ class TestAWalkAgainstTheLanelets:
             start=Lanelet2Pose(lanelet_id=2, s=7.0),
             goal=Lanelet2Pose(lanelet_id=1, s=2.0),
         )
-        poses = route_poses(route, lanelet_map, graph, 2.0)
+        poses = route_poses(route, lanelet_map, graph, 2.0, bidirectional=True)
 
         assert poses[0] == Lanelet2Pose(lanelet_id=2, s=7.0)
         assert poses[-1] == Lanelet2Pose(lanelet_id=1, s=2.0)

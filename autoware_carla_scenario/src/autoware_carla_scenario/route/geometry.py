@@ -112,9 +112,9 @@ _MAX_ABREAST_HOPS = 20
 #: The most junction lanelets walked back to where another path enters.
 _MAX_JUNCTION_HOPS = 4
 #: Lanelet subtypes that are not for vehicles.
-_NOT_ROADS = frozenset(
-    {"crosswalk", "walkway", "stairs", "bicycle_lane", "road_shoulder", "parking"}
-)
+#: Lanelets a pedestrian walks, by subtype.
+_WALKABLE = frozenset({"crosswalk", "walkway", "stairs"})
+_NOT_ROADS = _WALKABLE | {"bicycle_lane", "road_shoulder", "parking"}
 
 
 def approach_of(entry_heading: float, other_heading: float) -> str:
@@ -293,6 +293,14 @@ class MapFeatures:
         return (
             "subtype" in lanelet.attributes
             and str(lanelet.attributes["subtype"]) == "crosswalk"
+        )
+
+    @staticmethod
+    def is_walkable(lanelet: ConstLanelet) -> bool:
+        """Whether a pedestrian walks it (a walkway, crosswalk or stairs)."""
+        return (
+            "subtype" in lanelet.attributes
+            and str(lanelet.attributes["subtype"]) in _WALKABLE
         )
 
     @staticmethod

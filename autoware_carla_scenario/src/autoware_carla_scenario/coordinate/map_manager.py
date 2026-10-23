@@ -266,11 +266,9 @@ class MapManager:
             import lanelet2.traffic_rules
 
             started = time.monotonic()
-            rules = lanelet2.traffic_rules.create(
-                lanelet2.traffic_rules.Locations.Germany,
-                lanelet2.traffic_rules.Participants.Vehicle,
+            self._routing_graph = build_routing_graph(
+                self.lanelet_map, lanelet2.traffic_rules.Participants.Vehicle
             )
-            self._routing_graph = lanelet2.routing.RoutingGraph(self.lanelet_map, rules)
             logger.info(
                 "Built the Lanelet2 routing graph in %.1f s",
                 time.monotonic() - started,
@@ -286,15 +284,10 @@ class MapManager:
         crosswalks merely overlap the walkways it has no way across a road.
         """
         if self._pedestrian_routing_graph is None:
-            import lanelet2.routing
             import lanelet2.traffic_rules
 
-            rules = lanelet2.traffic_rules.create(
-                lanelet2.traffic_rules.Locations.Germany,
-                lanelet2.traffic_rules.Participants.Pedestrian,
-            )
-            self._pedestrian_routing_graph = lanelet2.routing.RoutingGraph(
-                self.lanelet_map, rules
+            self._pedestrian_routing_graph = build_routing_graph(
+                self.lanelet_map, lanelet2.traffic_rules.Participants.Pedestrian
             )
         return self._pedestrian_routing_graph
 
@@ -521,6 +514,20 @@ class MapManager:
                 best_z = float(np.interp(arc[min_idx], arc, z_coords))
 
         return ll2_z - best_z
+
+
+def build_routing_graph(
+    lanelet_map: lanelet2.core.LaneletMap, participant: str
+) -> lanelet2.routing.RoutingGraph:
+    """A routing graph of *lanelet_map* for *participant*
+    (``lanelet2.traffic_rules.Participants``), by German traffic rules."""
+    import lanelet2.routing
+    import lanelet2.traffic_rules
+
+    rules = lanelet2.traffic_rules.create(
+        lanelet2.traffic_rules.Locations.Germany, participant
+    )
+    return lanelet2.routing.RoutingGraph(lanelet_map, rules)
 
 
 def run_carla_map(world: carla.World) -> carla.Map:

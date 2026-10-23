@@ -353,18 +353,6 @@ class DeclarativeScenario(BaseScenario):
         )
         self._send_ego_along(match)
 
-    def _walks(self, compiled_action: Any, action: Any) -> bool:
-        """Whether *action* routes a pedestrian, whose walk needs the loop."""
-        from .actions import RoutingAction  # noqa: PLC0415
-
-        if not isinstance(action, RoutingAction):
-            return False
-        actor = compiled_action.node.actor
-        return any(
-            entity.id == actor and entity.kind == "pedestrian"
-            for entity in self._compiled.npcs
-        )
-
     def _send_ego_along(self, match: "RouteMatch") -> None:
         """Make the route the ego's: waypoints with a goal, turns without one.
 
@@ -445,10 +433,6 @@ class DeclarativeScenario(BaseScenario):
             # the loop -- a goal the ego needs to become ready -- would never be
             # performed if it were registered on the loop.
             phase = compiled_action.node.phase
-            if phase == "init" and self._walks(compiled_action, action):
-                # A pedestrian routed from the start: its walk is stepped on
-                # the loop, where the action fires on the first tick.
-                phase = "pre_tick"
             if phase == "init":
                 self.register_init(action)
             elif action.timing is TickTiming.POST_TICK:

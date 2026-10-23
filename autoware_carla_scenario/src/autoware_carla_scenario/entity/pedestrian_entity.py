@@ -5,14 +5,15 @@ from __future__ import annotations
 import logging
 import math
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, List, Optional, Sequence
+from typing import TYPE_CHECKING, Optional, Sequence
 
 import typesafe_carla.carla as carla
 
 from ..traffic.base import TrafficBackend, WalkedEntity
 
 if TYPE_CHECKING:
-    from ..coordinate import CarlaWorldPose, Lanelet2Pose
+    from ..coordinate import CarlaWorldPose, GroundProjectionConfig, Lanelet2Pose
+    from ..trajectory.model import ResolvedTrajectory
     from ._spawn import SpawnTransform
 
 logger = logging.getLogger(__name__)
@@ -30,13 +31,20 @@ _SPAWN_LIFTS_M = (0.3, 0.8, 1.3)
 #: speed it is given, whatever the step length -- measured on 0.10.0: 2 -> 0.098
 #: m/s, 20 -> 0.98 m/s, 40 -> 1.95 m/s -- and no faster than 2 m/s.
 _UE5_WALKER_SPEED_SCALE = 20.5
+_UE5_WALKER_MAX_SPEED_MS = 2.0
 
-#: Metres between the points of a walk :func:`plan_walk` lays out.
+#: Metres between the poses of a walk :meth:`PedestrianEntity.route_to` lays out.
 WALK_POINT_STEP_M: float = 1.5
 
-#: The lanelets a walk is laid on, by subtype.
-WALKABLE_SUBTYPES: tuple[str, ...] = ("walkway", "crosswalk", "sidewalk")
-_UE5_WALKER_MAX_SPEED_MS = 2.0
+#: How far ahead (m) along its path a walker is steered at (:func:`steer_walker`).
+WALKER_LOOKAHEAD_M: float = 1.5
+
+#: How near (m) the end of its walk a walker has arrived, as
+#: :class:`~autoware_carla_scenario.actions.FollowTrajectoryAction` takes it.
+WALK_ARRIVAL_M: float = 1.0
+
+#: A pedestrian's walking speed along a route, in m/s, unless it is told one.
+DEFAULT_WALKING_SPEED_MPS: float = 1.4
 
 
 def walker_speed_command(speed_ms: float) -> float:
@@ -48,6 +56,41 @@ def walker_speed_command(speed_ms: float) -> float:
             speed_ms,
         )
     return speed_ms * _UE5_WALKER_SPEED_SCALE
+
+
+def walker_control_speed(speed_mps: float) -> float:
+    """The ``WalkerControl`` speed for *speed_mps*, capped at what CARLA walks.
+
+    Capped rather than left to warn: a walk re-sends it every tick.
+    """
+    return walker_speed_command(min(max(speed_mps, 0.0), _UE5_WALKER_MAX_SPEED_MS))
+
+
+def steer_walker(
+    actor: "carla.Actor",
+    location: "carla.Location",
+    path: "ResolvedTrajectory",
+    here: float,
+    speed_mps: float,
+) -> None:
+    """One tick of walking *actor*, at *location*, along *path*: towards the
+    point :data:`WALKER_LOOKAHEAD_M` past *here* (m along it), at *speed_mps*.
+
+    What a :class:`~autoware_carla_scenario.actions.FollowTrajectoryAction` in
+    ``FOLLOW`` mode and a routed pedestrian (:meth:`PedestrianEntity.walk_on`)
+    both send.
+    """
+    target = path.at_distance(here + WALKER_LOOKAHEAD_M)
+    dx, dy = target.x - location.x, target.y - location.y
+    norm = math.hypot(dx, dy)
+    if norm < 1e-6:
+        speed_mps, dx, dy, norm = 0.0, 1.0, 0.0, 1.0
+    actor.apply_control(
+        carla.WalkerControl(
+            direction=carla.Vector3D(x=dx / norm, y=dy / norm, z=0.0),
+            speed=walker_control_speed(speed_mps),
+        )
+    )
 
 
 @dataclass
@@ -99,11 +142,17 @@ class PedestrianEntity(WalkedEntity):
     _config: PedestrianEntityConfig
     _walker: Optional["carla.Actor"]
     _traffic_backend: Optional[TrafficBackend]
+    _walk: Optional["ResolvedTrajectory"]
+    _walk_distance: float
+    _walk_speed: float
 
     def __init__(self, config: PedestrianEntityConfig) -> None:
         self._config = config
         self._walker: Optional["carla.Actor"] = None
         self._traffic_backend: Optional[TrafficBackend] = None
+        self._walk = None
+        self._walk_distance = 0.0
+        self._walk_speed = DEFAULT_WALKING_SPEED_MPS
 
     def set_traffic_backend(self, backend: TrafficBackend) -> None:
         """Hand this pedestrian's walks to *backend*, the run's traffic backend
@@ -242,6 +291,94 @@ class PedestrianEntity(WalkedEntity):
             )
         )
 
+    def route_to(
+        self,
+        world: "carla.World",
+        goal: "Lanelet2Pose",
+        *,
+        initial_pose: "Optional[CarlaWorldPose]" = None,
+        ground_projection: "Optional[GroundProjectionConfig]" = None,
+        waypoints: "Sequence[Lanelet2Pose]" = (),
+        walking_speed: float = DEFAULT_WALKING_SPEED_MPS,
+    ) -> None:
+        """Lay out a walk from where the walker is through *waypoints* to *goal*,
+        which :meth:`walk_on` then walks a tick at a time; see
+        ``docs/architecture.md``.  *ground_projection* is not used.
+
+        Each leg is the shortest path on the walkable lanelets where there is
+        one, and straight where there is none -- across a road whose crosswalks
+        only overlap its walkways, unless a crosswalk is a waypoint.
+        """
+        from ..coordinate.map_manager import MapManager  # noqa: PLC0415
+        from ..coordinate.poses import CarlaWorldPose  # noqa: PLC0415
+        from ..coordinate.transform import to_carla_world  # noqa: PLC0415
+        from ..odd.route_plan import PlannedRoute, route_poses  # noqa: PLC0415
+        from ..trajectory.model import ResolvedTrajectory  # noqa: PLC0415
+
+        self._walk = None
+        actor = self._walker
+        if actor is None:
+            logger.warning(
+                "PedestrianEntity '%s': not spawned, no walk to plan",
+                self._config.role_name,
+            )
+            return
+        # A typed local: Codon unwraps the Optional here.
+        walking: "carla.Actor" = actor
+        start = initial_pose
+        if start is None:
+            start = CarlaWorldPose.from_carla_transform(walking.get_transform())
+        here: CarlaWorldPose = start
+        mm = MapManager.get_instance()
+        on = _on_walkable_lanelet(here)
+        poses: list[Lanelet2Pose] = list(waypoints)
+        poses.append(goal)
+        if on is not None:
+            walk_from: Lanelet2Pose = on
+            poses = route_poses(
+                PlannedRoute(start=walk_from, goal=goal, via=tuple(waypoints)),
+                mm.lanelet_map,
+                mm.pedestrian_routing_graph,
+                WALK_POINT_STEP_M,
+                bidirectional=True,
+                straight_legs=True,
+            )
+        xs, ys, zs = [here.x], [here.y], [here.z]
+        yaws: list[Optional[float]] = [None]
+        for pose in poses:
+            point = to_carla_world(pose)
+            xs.append(point.x)
+            ys.append(point.y)
+            zs.append(point.z)
+            yaws.append(None)
+        self._walk = ResolvedTrajectory(xs, ys, zs, yaws)
+        self._walk_distance = 0.0
+        self._walk_speed = walking_speed
+
+    @property
+    def walking(self) -> bool:
+        """Whether a walk :meth:`route_to` laid out is still being walked."""
+        return self._walk is not None
+
+    def walk_on(self) -> None:
+        """Walk one tick along the walk :meth:`route_to` laid out, standing
+        still once it has arrived."""
+        walk = self._walk
+        actor = self._walker
+        if walk is None or actor is None:
+            return
+        # Typed locals: Codon unwraps the Optionals here.
+        path: "ResolvedTrajectory" = walk
+        walker: "carla.Actor" = actor
+        location = walker.get_transform().location
+        here = path.project(location.x, location.y, near=self._walk_distance)
+        self._walk_distance = here
+        if here >= path.length - WALK_ARRIVAL_M:
+            self._walk = None
+            walker.apply_control(carla.WalkerControl(speed=0.0))
+            return
+        steer_walker(walker, location, path, here, self._walk_speed)
+
     def release_from_traffic(self, world: "carla.World") -> None:
         """Take this pedestrian back from the traffic backend that walks it,
         for an action that moves the walker itself
@@ -268,77 +405,9 @@ class PedestrianEntity(WalkedEntity):
         )
 
 
-def plan_walk(
-    walker: PedestrianEntity,
-    goal: "Lanelet2Pose",
-    waypoints: "Sequence[Lanelet2Pose]",
-) -> List["CarlaWorldPose"]:
-    """The way *walker* walks from where it stands, through *waypoints*, to *goal*.
-
-    A point every :data:`WALK_POINT_STEP_M` metres, in CARLA world coordinates,
-    from the walker's own position.  Each leg -- to the first waypoint, ... to
-    the goal -- is the shortest path on the walkable lanelets
-    (:attr:`~autoware_carla_scenario.coordinate.map_manager.MapManager.pedestrian_routing_graph`)
-    where there is one, and a straight line where there is none: a map whose
-    crosswalks only overlap its walkways, as most do, has no path across a road,
-    so a walk that should cross at a crosswalk names it as a waypoint.  Empty
-    when the walker has not been spawned.
-    """
-    from ..coordinate.map_manager import MapManager  # noqa: PLC0415
-    from ..coordinate.poses import CarlaWorldPose  # noqa: PLC0415
-    from ..coordinate.transform import to_carla_world  # noqa: PLC0415
-    from ..odd.route_plan import PlannedRoute, RouteError, route_poses  # noqa: PLC0415
-
-    points: List[CarlaWorldPose] = []
-    actor = walker.actor
-    if actor is None:
-        logger.warning(
-            "PedestrianEntity '%s': not spawned, no walk to plan", walker.role_name
-        )
-        return points
-    # A typed local: Codon unwraps the Optional here.
-    walking: "carla.Actor" = actor
-    transform = walking.get_transform()
-    here = CarlaWorldPose(
-        x=transform.location.x,
-        y=transform.location.y,
-        z=transform.location.z,
-        yaw=transform.rotation.yaw,
-    )
-    points.append(here)
-    mm = MapManager.get_instance()
-    current = _on_walkable_lanelet(here)
-    stops: List[Lanelet2Pose] = list(waypoints)
-    stops.append(goal)
-    for stop in stops:
-        leg: List[CarlaWorldPose] = []
-        if current is not None:
-            start: Lanelet2Pose = current
-            try:
-                for pose in route_poses(
-                    PlannedRoute(start=start, goal=stop),
-                    mm.lanelet_map,
-                    mm.pedestrian_routing_graph,
-                    WALK_POINT_STEP_M,
-                ):
-                    leg.append(to_carla_world(pose))
-            except RouteError as error:
-                logger.info(
-                    "PedestrianEntity '%s': walks straight to lanelet %d (%s)",
-                    walker.role_name,
-                    stop.lanelet_id,
-                    error,
-                )
-                leg = []
-        if not leg:
-            leg = _straight(points[-1], to_carla_world(stop))
-        points.extend(leg)
-        current = stop
-    return points
-
-
 def _on_walkable_lanelet(pose: "CarlaWorldPose") -> "Optional[Lanelet2Pose]":
     """*pose* on the nearest lanelet a pedestrian walks, or ``None`` far from any."""
+    from ..route.geometry import MapFeatures  # noqa: PLC0415
     import lanelet2.core  # noqa: PLC0415
     import lanelet2.geometry  # noqa: PLC0415
 
@@ -354,31 +423,8 @@ def _on_walkable_lanelet(pose: "CarlaWorldPose") -> "Optional[Lanelet2Pose]":
         mm.lanelet_map.laneletLayer, lanelet2.core.BasicPoint2d(x, y), 16
     )
     for _distance, lanelet in nearest:
-        attributes = lanelet.attributes
-        if "subtype" in attributes and str(attributes["subtype"]) in WALKABLE_SUBTYPES:
+        if MapFeatures.is_walkable(lanelet):
             on: Optional[Lanelet2Pose] = project_onto_lanelet(pose, int(lanelet.id))
             return on
     none: Optional[Lanelet2Pose] = None
     return none
-
-
-def _straight(start: "CarlaWorldPose", end: "CarlaWorldPose") -> List["CarlaWorldPose"]:
-    """Points every :data:`WALK_POINT_STEP_M` metres from *start* to *end*,
-    *end* included and *start* not."""
-    from ..coordinate.poses import CarlaWorldPose  # noqa: PLC0415
-
-    length = math.hypot(end.x - start.x, end.y - start.y)
-    count = max(1, int(math.ceil(length / WALK_POINT_STEP_M)))
-    yaw = math.degrees(math.atan2(end.y - start.y, end.x - start.x))
-    out: List[CarlaWorldPose] = []
-    for i in range(1, count + 1):
-        f = i / count
-        out.append(
-            CarlaWorldPose(
-                x=start.x + f * (end.x - start.x),
-                y=start.y + f * (end.y - start.y),
-                z=start.z + f * (end.z - start.z),
-                yaw=yaw,
-            )
-        )
-    return out

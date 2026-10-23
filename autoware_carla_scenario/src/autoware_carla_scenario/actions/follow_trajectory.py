@@ -17,6 +17,11 @@ from ..action_state import ActionState
 from ..conditions import BaseCondition
 from ..conditions.base import ScenarioResult
 from ..coordinate.poses import CarlaWorldPose
+from ..entity.pedestrian_entity import (
+    WALKER_LOOKAHEAD_M,
+    steer_walker,
+    walker_control_speed,
+)
 from ..entity.registry import find_pedestrian_entity, find_vehicle_entity
 from ..entity_role import EntityRole
 from ..trajectory.model import (
@@ -66,7 +71,7 @@ _PLAN_BEHIND_M = 2.0
 #: Below this speed (m/s) an untimed trajectory is not moving at all.
 _STANDSTILL_MPS = 0.05
 #: How far ahead (m) a walker following the path is aimed.
-_WALKER_LOOKAHEAD_M = 1.5
+_WALKER_LOOKAHEAD_M = WALKER_LOOKAHEAD_M
 #: How near (m) a walker has to come to a waiting vertex to have reached it.
 #: A walker stops where it is told to, so it needs less of a band than a car.
 _WALKER_GATE_TOLERANCE_M = 0.3
@@ -808,8 +813,6 @@ class FollowTrajectoryAction(BaseAction):
 
     def _walk(self, world: "carla.World", actor: "carla.Actor") -> None:
         """One tick of ``FOLLOW`` mode for a pedestrian."""
-        import typesafe_carla.carla as carla  # noqa: PLC0415
-
         resolved = self._resolved
         assert resolved is not None
         location = actor.get_transform().location
@@ -831,17 +834,7 @@ class FollowTrajectoryAction(BaseAction):
             )
         else:
             speed = self._speed
-        target = resolved.at_distance(here + _WALKER_LOOKAHEAD_M)
-        dx, dy = target.x - location.x, target.y - location.y
-        norm = math.hypot(dx, dy)
-        if norm < 1e-6:
-            speed, dx, dy, norm = 0.0, 1.0, 0.0, 1.0
-        _as_walker(actor).apply_control(
-            carla.WalkerControl(
-                direction=carla.Vector3D(dx / norm, dy / norm, 0.0),
-                speed=_walker_speed(speed),
-            )
-        )
+        steer_walker(actor, location, resolved, here, speed)
 
     # ------------------------------------------------------------------
     # Waypoint conditions: the departure timeline
@@ -1307,12 +1300,7 @@ def _walker_speed(speed_mps: float) -> float:
     Capped here rather than left to warn: the command is re-sent every tick,
     and a recording of someone jogging would otherwise log on every one.
     """
-    from ..entity.pedestrian_entity import (  # noqa: PLC0415
-        _UE5_WALKER_MAX_SPEED_MS,
-        walker_speed_command,
-    )
-
-    return walker_speed_command(min(max(speed_mps, 0.0), _UE5_WALKER_MAX_SPEED_MS))
+    return walker_control_speed(speed_mps)
 
 
 def _place(actor: "carla.Actor", sample: TrajectorySample, walker: bool) -> None:

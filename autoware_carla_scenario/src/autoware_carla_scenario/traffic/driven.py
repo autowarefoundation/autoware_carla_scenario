@@ -40,11 +40,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["BackendDriven", "ROUTE_POINT_STEP_M"]
-
-#: Metres between the points of the route a backend-driven vehicle is handed
-#: (:meth:`BackendDriven.route_to`).
-ROUTE_POINT_STEP_M: float = 5.0
+__all__ = ["BackendDriven"]
 
 #: The TrafficManager an entity with no client at all is driven by: it can
 #: answer the questions that need no CARLA call and reports the missing client
@@ -177,10 +173,10 @@ class BackendDriven(DrivenEntity):
         else:
             self._resolve_backend().turn_at_junction(self, world, direction, **kwargs)
 
-    def follow_route(self, world: "carla.World", path: List["carla.Location"]) -> None:
-        """Drive along *path*, through every junction on it."""
+    def follow_route(self, world: "carla.World", stops: List["Lanelet2Pose"]) -> None:
+        """Drive along the route through *stops* (where it is, waypoints, goal)."""
         entity: DrivenEntity = self
-        self._resolve_backend().follow_route(entity, world, path)
+        self._resolve_backend().follow_route(entity, world, stops)
 
     def route_to(
         self,
@@ -191,61 +187,14 @@ class BackendDriven(DrivenEntity):
         ground_projection: "Optional[GroundProjectionConfig]" = None,
         waypoints: "Sequence[Lanelet2Pose]" = (),
     ) -> None:
-        """Send this vehicle to *goal* through *waypoints*, by the lanelets between.
-
-        The backend driving it picks its own way at every junction when left to
-        itself.  So the way is worked out here: the Lanelet2 map's shortest path
-        from where the vehicle is through each waypoint in turn to the goal
-        (:func:`~autoware_carla_scenario.odd.route_plan.route_poses`), its
-        centrelines a point every :data:`ROUTE_POINT_STEP_M` metres, handed to
-        the backend as one path (:meth:`follow_route`).  A route that cannot be
-        planned is logged, and the vehicle left to the backend.
-
-        What :class:`~autoware_carla_scenario.actions.RoutingAction` calls, on
-        the ego and on an NPC vehicle alike.  Routing lives on the entity
-        because *how* a destination is delivered is the entity's business: an
-        ego with a stack of its own takes a map-frame pose over a bridge (see
-        :class:`~autoware_carla_scenario.entity.autoware_entity.AutowareEgoEntity`),
-        one an external policy drives takes nothing (see
-        :class:`~autoware_carla_scenario.entity.externally_driven.ExternallyDrivenEgo`),
-        and both override this.  The action only says where and when.
-
-        Args:
-            world: The CARLA world.
-            goal: Lanelet2 pose to route to.
-            initial_pose: Where the vehicle starts, which the route starts from.
-                ``None`` reads its actor.
-            ground_projection: Not used: the route is laid on the lanelets'
-                centrelines.
-            waypoints: Lanelet2 poses the route passes through, in order.
-        """
-        path = self._route_path(goal, initial_pose, waypoints)
-        if path:
-            # Through a local of the type that declares it: Codon calls a
-            # method a subclass overrides through a dispatch thunk, which does
-            # not upcast (docs/typecheck.md).
-            driven: BackendDriven = self
-            driven.follow_route(world, path)
-
-    def _route_path(
-        self,
-        goal: "Lanelet2Pose",
-        initial_pose: "Optional[CarlaWorldPose]",
-        waypoints: "Sequence[Lanelet2Pose]",
-    ) -> List["carla.Location"]:
-        """The CARLA locations :meth:`route_to` hands the backend, or none."""
-        from ..coordinate.map_manager import MapManager  # noqa: PLC0415
+        """Have the backend drive this vehicle from where it is (*initial_pose*,
+        else its actor) through *waypoints* to *goal* (:meth:`follow_route`);
+        see ``docs/traffic_backends.md``.  *ground_projection* is not used."""
         from ..coordinate.poses import CarlaWorldPose  # noqa: PLC0415
-        from ..coordinate.transform import (  # noqa: PLC0415
-            project_onto_lanelet,
-            to_carla_location,
-            to_lanelet2,
-        )
-        from ..odd.route_plan import PlannedRoute, RouteError, route_poses  # noqa: PLC0415
+        from ..trajectory.relative_lane import reference_lane_pose_of  # noqa: PLC0415
 
-        located: List["carla.Location"] = []
-        start_pose = initial_pose
-        if start_pose is None:
+        start = initial_pose
+        if start is None:
             # hasattr rather than getattr with a default (docs/typecheck.md):
             # the mixin itself declares no actor; the entities do.
             actor: Optional["carla.Actor"] = None
@@ -256,41 +205,19 @@ class BackendDriven(DrivenEntity):
                     "%s: a route was asked for before the actor exists",
                     type(self).__name__,
                 )
-                return located
+                return
             # A typed local: Codon unwraps the Optional here.
             vehicle: "carla.Actor" = actor
-            transform = vehicle.get_transform()
-            start_pose = CarlaWorldPose(
-                x=transform.location.x,
-                y=transform.location.y,
-                z=transform.location.z,
-                yaw=transform.rotation.yaw,
-            )
-        start: CarlaWorldPose = start_pose
-        # The nearest lanelet, then where along it: to_lanelet2() measures to
-        # the nearest vertex of the centreline, which on a straight lanelet of
-        # two vertices is one end or the other.
-        here = project_onto_lanelet(start, to_lanelet2(start).lanelet_id)
-        mm = MapManager.get_instance()
-        try:
-            poses = route_poses(
-                PlannedRoute(start=here, goal=goal, via=tuple(waypoints)),
-                mm.lanelet_map,
-                mm.routing_graph,
-                ROUTE_POINT_STEP_M,
-            )
-        except RouteError as error:
-            logger.warning("%s: no route to follow: %s", type(self).__name__, error)
-            return located
-        # The pose the vehicle stands on is left out, so the path starts a
-        # step ahead of it.  The TrafficManager takes the points in order and
-        # waits for each to come within a few metres of its next waypoint: a
-        # point behind the vehicle never does, and with it outstanding the
-        # TrafficManager chooses its own way at every junction.
-        ahead = poses[1:] if len(poses) > 1 else poses
-        for pose in ahead:
-            located.append(to_carla_location(pose))
-        return located
+            start = CarlaWorldPose.from_carla_transform(vehicle.get_transform())
+        here: CarlaWorldPose = start
+        stops: List[Lanelet2Pose] = [reference_lane_pose_of(here)]
+        stops.extend(waypoints)
+        stops.append(goal)
+        # Through a local of the type that declares it: Codon calls a method a
+        # subclass overrides through a dispatch thunk, which does not upcast
+        # (docs/typecheck.md).
+        driven: BackendDriven = self
+        driven.follow_route(world, stops)
 
     def release_from_traffic(self, world: "carla.World") -> None:
         """Stop the backend driving this vehicle; the caller drives it now."""

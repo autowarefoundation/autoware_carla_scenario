@@ -126,7 +126,7 @@ class VehicleEntity:
     def turn_at_junction(self, world: carla.World, direction: TurnDirection, **kwargs) -> None:
         raise NotImplementedError()
 
-    def follow_route(self, world: carla.World, path: List[carla.Location]) -> None:
+    def follow_route(self, world: carla.World, stops: List[Lanelet2Pose]) -> None:
         raise NotImplementedError()
 
     def release_from_traffic(self, world: carla.World) -> None:

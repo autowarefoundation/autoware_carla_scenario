@@ -59,6 +59,8 @@ from .parameters import (
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
 
+    from ..coordinate.poses import Lanelet2Pose
+
 logger = logging.getLogger(__name__)
 
 #: The parameters of a backend that was given none: every field unset.
@@ -660,23 +662,11 @@ class TrafficBackend:
         self._unavailable("turn_at_junction", entity)
 
     def follow_route(
-        self,
-        entity: DrivenEntity,
-        world: "carla.World",
-        path: List["carla.Location"],
+        self, entity: DrivenEntity, world: "carla.World", stops: List["Lanelet2Pose"]
     ) -> None:
-        """Drive *entity* along *path*, a route laid out point by point.
-
-        Where :meth:`turn_at_junction` decides one junction, this is the whole
-        way: the points run from where the vehicle is to where it is going,
-        through every junction between, so nothing is left for the traffic
-        model to choose.
-
-        Args:
-            entity: The entity asking for the route.
-            world: The CARLA world.
-            path: The route, in order, as CARLA world locations.
-        """
+        """Drive *entity* along the route through *stops* -- where it is, its
+        waypoints, its goal, on the Lanelet2 map -- through every junction as
+        planned; see ``docs/traffic_backends.md``."""
         self._unavailable("follow_route", entity)
 
     def release(self, entity: DrivenEntity, world: "carla.World") -> None:

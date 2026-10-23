@@ -95,6 +95,21 @@ class PedestrianEntity:
     def walk_straight(self, speed_ms: float, yaw_deg: Optional[float] = None) -> None:
         raise NotImplementedError()
 
+    def route_to(self, world: carla.World, goal: Lanelet2Pose, *_kw,
+                 initial_pose: Optional[CarlaWorldPose] = None, ground_projection = None,
+                 waypoints = (), walking_speed: float = 1.4) -> None:
+        _keyword_only(_kw, "PedestrianEntity.route_to(): initial_pose, ground_projection, waypoints and walking_speed")
+        _expect_optional_ground_projection(ground_projection)
+        _expect_lanelet2_poses(waypoints)
+        raise NotImplementedError()
+
+    @property
+    def walking(self) -> bool:
+        raise NotImplementedError()
+
+    def walk_on(self) -> None:
+        raise NotImplementedError()
+
     def release_from_traffic(self, world: carla.World) -> None:
         raise NotImplementedError()
 
@@ -213,7 +228,7 @@ class EgoVehicle:
     def turn_at_junction(self, world: carla.World, direction: TurnDirection, **kwargs) -> None:
         raise NotImplementedError()
 
-    def follow_route(self, world: carla.World, path: List[carla.Location]) -> None:
+    def follow_route(self, world: carla.World, stops: List[Lanelet2Pose]) -> None:
         raise NotImplementedError()
 
     def release_from_traffic(self, world: carla.World) -> None:

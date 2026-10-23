@@ -141,7 +141,7 @@ class ExternallyDrivenEgo(EgoVehicle):
         """Refuse a TrafficManager route: nothing here is driven by it."""
         self._refuse("a turn was asked for", "setting a route there would do nothing")
 
-    def follow_route(self, world: "carla.World", path: List["carla.Location"]) -> None:
+    def follow_route(self, world: "carla.World", stops: List["Lanelet2Pose"]) -> None:
         """Refuse a TrafficManager route: nothing here is driven by it."""
         self._refuse("a route was set", "setting it there would do nothing")
 

@@ -488,14 +488,11 @@ class NotConstraint(Constraint):
 
 def create_routing_graph(lanelet_map: LaneletMap) -> RoutingGraph:
     """Build a routing graph for *lanelet_map* using default traffic rules."""
-    import lanelet2.routing
     import lanelet2.traffic_rules
 
-    traffic_rules = lanelet2.traffic_rules.create(
-        lanelet2.traffic_rules.Locations.Germany,
-        lanelet2.traffic_rules.Participants.Vehicle,
-    )
-    return lanelet2.routing.RoutingGraph(lanelet_map, traffic_rules)
+    from ..coordinate.map_manager import build_routing_graph  # noqa: PLC0415
+
+    return build_routing_graph(lanelet_map, lanelet2.traffic_rules.Participants.Vehicle)
 
 
 @dataclass(frozen=True)

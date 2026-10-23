@@ -525,60 +525,40 @@ class TestTheTurnActionDelegates:
 
 
 class TestFollowRoute:
-    def test_the_whole_route_is_the_path(self) -> None:
-        actor = _Actor(_Transform(_Location(0.0, 0.0), 0.0))
-        vehicle = _Vehicle(actor)
-        tm = _TrafficManager()
-        vehicle.set_client(_Client(tm))
-        path = [_Location(0.0, 0.0), _Location(5.0, 0.0), _Location(10.0, 5.0)]
+    def test_the_route_reaches_the_backend(self) -> None:
+        sent: list[object] = []
 
-        vehicle.follow_route(_World(_Map(None)), path)
+        class _Backend:
+            def follow_route(self, entity, world, route) -> None:  # noqa: ANN001
+                sent.append(route)
 
-        assert tm.paths == [(actor, path)]
+        vehicle = _Vehicle(_Actor(_Transform(_Location())))
+        vehicle.set_traffic_backend(_Backend())  # type: ignore[arg-type]
+        route = object()
+        vehicle.follow_route(_World(_Map(None)), route)  # type: ignore[arg-type]
+        assert sent == [route]
 
     def test_a_junction_and_its_edges_are_left_out(self) -> None:
         """At a junction the TrafficManager takes the road of the next point.
 
-        A point in the junction, or at its edge, is on several ways through,
-        so it is left out: the next point is then on the road out.
+        A point in a junction, or next to one, is on several ways through, so
+        it is left out: the next point is then on the road out.
         """
+        from autoware_carla_scenario.traffic.traffic_manager import (
+            _clear_of_junctions,
+        )
 
         class _Lane:
             def __init__(self, x: float) -> None:
-                self.x = x
                 self.is_junction = 10.0 <= x <= 20.0
-
-            def next(self, distance: float) -> list:
-                return [_Lane(self.x + distance)]
-
-            def previous(self, distance: float) -> list:
-                return [_Lane(self.x - distance)]
 
         class _LaneMap:
             def get_waypoint(self, location):  # noqa: ANN001
                 return _Lane(location.x)
 
-        class _LaneWorld:
-            def get_map(self) -> _LaneMap:
-                return _LaneMap()
-
-        actor = _Actor(_Transform(_Location(0.0, 0.0), 0.0))
-        vehicle = _Vehicle(actor)
-        tm = _TrafficManager()
-        vehicle.set_client(_Client(tm))
-        path = [_Location(float(x), 0.0) for x in range(0, 31, 2)]
-
-        vehicle.follow_route(_LaneWorld(), path)
-
-        ((_actor, sent),) = tm.paths
-        assert [p.x for p in sent] == [0.0, 2.0, 4.0, 6.0, 24.0, 26.0, 28.0, 30.0]
-
-    def test_an_empty_route_sends_nothing(self) -> None:
-        vehicle = _Vehicle(_Actor(_Transform(_Location())))
-        tm = _TrafficManager()
-        vehicle.set_client(_Client(tm))
-        vehicle.follow_route(_World(_Map(None)), [])
-        assert tm.paths == []
+        path = [_Location(float(x), 0.0) for x in range(0, 31, 5)]
+        kept = _clear_of_junctions(_LaneMap(), path)  # type: ignore[arg-type]
+        assert [p.x for p in kept] == [0.0, 30.0]
 
     def test_an_autoware_ego_refuses_a_route(self, caplog) -> None:
         from autoware_carla_scenario.autoware_bridge import FakeAutowareBridge
@@ -586,5 +566,5 @@ class TestFollowRoute:
 
         entity = AutowareEgoEntity(bridge=FakeAutowareBridge())
         with caplog.at_level("WARNING"):
-            entity.follow_route(_World(_Map(None)), [_Location()])
+            entity.follow_route(_World(_Map(None)), object())  # type: ignore[arg-type]
         assert "not driven by the TrafficManager" in caplog.text

@@ -137,6 +137,8 @@ class BaseAction:
                                "BaseAction.take_adversity_events() returns List[AdversityEvent]")
         elif name == "reissues_while_running":
             _acs_expect_return(r, bool, "BaseAction.reissues_while_running returns bool")
+        elif name == "needs_tick_loop":
+            _acs_expect_return(r, bool, "BaseAction.needs_tick_loop returns bool")
         elif name == "execute":
             _acs_expect_return(r, NoneType, "BaseAction.execute() returns None")
         elif name == "tick":
@@ -167,6 +169,10 @@ class BaseAction:
         raise NotImplementedError()
 
     def take_adversity_events(self) -> List[AdversityEvent]:
+        raise NotImplementedError()
+
+    @property
+    def needs_tick_loop(self) -> bool:
         raise NotImplementedError()
 
     @property
@@ -292,6 +298,10 @@ class RoutingAction(BaseAction):
 
     @property
     def entity_name(self) -> EntityRole:
+        raise NotImplementedError()
+
+    @property
+    def walking(self) -> bool:
         raise NotImplementedError()
 
     # tuple[Lanelet2Pose, ...] in Python: a List here, as a class-level
