@@ -34,6 +34,29 @@ class deque:
         for x in it:
             self.append(x)
 
+    # With maxlen=0 Codon's append empties the deque and then reads the empty
+    # ring (head == tail) as full, doubling it into a deque of garbage: a
+    # deque that holds nothing drops the item first.
+    def append(self, x: T):
+        if self._maxlen == 0:
+            return
+        self._arr[self._tail] = x
+        self._tail = (self._tail + 1) & (len(self._arr) - 1)
+        if self._maxlen >= 0 and len(self) > self._maxlen:
+            self.popleft()
+        if self._head == self._tail:
+            self._double_cap()
+
+    def appendleft(self, x: T):
+        if self._maxlen == 0:
+            return
+        self._head = (self._head - 1) & (len(self._arr) - 1)
+        self._arr[self._head] = x
+        if self._maxlen >= 0 and len(self) > self._maxlen:
+            self.pop()
+        if self._head == self._tail:
+            self._double_cap()
+
     def extend(self, it: Generator[T]):
         # A copy first: d.extend(d) must end.
         for x in List[T](it):

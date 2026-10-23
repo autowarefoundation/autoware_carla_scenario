@@ -6020,6 +6020,9 @@ _STDLIB_CASES: dict[str, tuple[str, str, str]] = {
         "m: deque[int] = deque(maxlen=3)\n"
         "m.extend([1, 2, 3, 4])\n"
         "assert list(m) == [2, 3, 4]\n"
+        "z: deque[int] = deque(maxlen=0)\n"
+        "z.append(1)\nz.appendleft(2)\nz.extend([3])\n"
+        "assert list(z) == [] and len(z) == 0\n"
         "logger.info('%d', len(window([1.0])))\n",
     ),
     "collections.deque (rotate, search)": (
