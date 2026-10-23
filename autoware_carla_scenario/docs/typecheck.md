@@ -2512,8 +2512,29 @@ What Codon 0.19 needs that Python does not, beyond
   no import in the `else` branch, nor in the body of `if not TYPE_CHECKING:`
   (the same branch, written the other way round): `scenario_queue` imports
   tqdm in an `else` branch, at module level, and waits without the progress
-  bar in the first branch. The `logging` shim's
-  methods take `exc_info` as a `bool`.
+  bar in the first branch. The `logging` shim covers, with CPython's
+  signatures: `getLogger`, `getLevelName`, the level constants (`NOTSET` to `CRITICAL`,
+  `WARN`, `FATAL`) and `BASIC_FORMAT`; `Logger.debug`, `info`, `warning`,
+  `warn` (the deprecated alias), `error`, `exception`, `critical`, `fatal` and
+  `log(level, msg, ...)`, and the module-level functions of the same names;
+  `setLevel`, `isEnabledFor`, `getEffectiveLevel`, `addHandler`,
+  `removeHandler`, `hasHandlers`, `getChild` and the `handlers` list; `Handler`, `StreamHandler`,
+  `FileHandler`, `NullHandler` and `Formatter`; and `basicConfig` with its
+  keywords (`filename`, `filemode`, `format`, `datefmt`, `style`, `level`,
+  `stream`, `handlers`, `force`, `encoding`, `errors`). Every logging call
+  takes `exc_info` and `stack_info` as a `bool`, `stacklevel` as an `int`
+  and `extra` untyped: the check reads no more of it than that it is passed.
+  The message may be any object (`logger.info(123)`), and `log()` takes its
+  level as an `int`, as CPython does (a `str` raises `TypeError` there), while
+  `setLevel()` and `basicConfig(level=...)` take an `int` or a `str`
+  (`"INFO"`). `extra={"k": 1}` and `extra={"k": "v"}` pass; a dict with values
+  of two classes (`{"k": "v", "n": 2}`) is valid Python that Codon cannot type
+  as a dict display, so annotate it (`extra: dict[str, str]`) or convert
+  the values to `str`. `exc_info` takes a `bool` only (not an exception or a
+  tuple). Left out: `LogRecord`, `Filter`, `LoggerAdapter`, `disable`,
+  `shutdown`, `captureWarnings`, `addLevelName`, the record factory and logger class
+  functions, and the internals of `Logger` (`handle`, `makeRecord`,
+  `callHandlers`, `findCaller`); `test_typecheck_model.py` lists them.
 - **pyxodr's road network is the model's**: `codon/pyxodr/` names the
   `RoadNetwork`, `Road`, `LaneSection` and `Lane` that `coordinate.codon`
   declares (what the framework reads of them, down to the XML elements, and

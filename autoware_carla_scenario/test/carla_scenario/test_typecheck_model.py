@@ -2447,3 +2447,137 @@ def test_the_replace_methods_of_a_model_match_the_dataclass_fields(
         assert built == [
             f.name if g.name == f.name else f"self.{g.name}" for g in fields
         ]
+
+
+# ---------------------------------------------------------------------------
+# The logging model against CPython's logging (#496)
+# ---------------------------------------------------------------------------
+
+#: The public methods of logging.Logger the model leaves out: a scenario does
+#: not build log records or walk the logger tree.
+_LOGGER_NOT_MODELLED = {
+    "callHandlers",
+    "findCaller",
+    "getChildren",
+    "handle",
+    "makeRecord",
+    "manager",
+    "root",
+}
+
+#: logging.__all__ names the model leaves out: records, filters, adapters and
+#: the global configuration of the logging module.
+_LOGGING_NOT_MODELLED = {
+    "BufferingFormatter",
+    "Filter",
+    "LogRecord",
+    "LoggerAdapter",
+    "addLevelName",
+    "captureWarnings",
+    "disable",
+    "getHandlerByName",
+    "getHandlerNames",
+    "getLevelNamesMapping",
+    "getLogRecordFactory",
+    "getLoggerClass",
+    "lastResort",
+    "makeLogRecord",
+    "raiseExceptions",
+    "setLogRecordFactory",
+    "setLoggerClass",
+    "shutdown",
+}
+
+
+def _codon_logging() -> ast.Module:
+    return _parse(model_dir() / "logging.codon")
+
+
+def _declared(node: ast.AST) -> set[str]:
+    names: set[str] = set()
+    for item in getattr(node, "body", []):
+        if isinstance(item, (ast.FunctionDef, ast.ClassDef)):
+            names.add(item.name)
+        elif isinstance(item, ast.Assign):
+            names |= {t.id for t in item.targets if isinstance(t, ast.Name)}
+    return names
+
+
+def test_the_logging_model_declares_the_loggers_methods() -> None:
+    import logging
+
+    (logger,) = [
+        n
+        for n in _codon_logging().body
+        if isinstance(n, ast.ClassDef) and n.name == "Logger"
+    ]
+    modelled = {n for n in _declared(logger) if not n.startswith("_")}
+    methods = {
+        n
+        for n, v in vars(logging.Logger).items()
+        if not n.startswith("_") and callable(v)
+    }
+    assert methods - modelled <= _LOGGER_NOT_MODELLED, "public, not modelled"
+    assert not modelled & _LOGGER_NOT_MODELLED, "listed, but modelled"
+    # The model's methods are CPython's (the instance attributes are Python's).
+    assert modelled - {"name", "level", "propagate", "disabled"} <= set(
+        dir(logging.Logger)
+    )
+
+
+def test_the_logging_model_declares_the_modules_names() -> None:
+    import logging
+
+    modelled = {n for n in _declared(_codon_logging()) if not n.startswith("_")}
+    exported = set(logging.__all__)
+    assert exported - modelled <= _LOGGING_NOT_MODELLED, "exported, not modelled"
+    assert not modelled & _LOGGING_NOT_MODELLED, "listed, but modelled"
+    assert (modelled - {"BASIC_FORMAT"}) - exported == set(), "not in logging"
+
+
+def test_the_logging_model_holds_the_levels_and_keywords_of_python() -> None:
+    import logging
+
+    tree = _codon_logging()
+    levels = {
+        t.id: ast.literal_eval(n.value)
+        for n in tree.body
+        if isinstance(n, ast.Assign) and isinstance(n.value, ast.Constant)
+        for t in n.targets
+        if isinstance(t, ast.Name) and t.id.isupper() and t.id != "BASIC_FORMAT"
+    }
+    assert levels == {
+        name: getattr(logging, name)
+        for name in ("NOTSET DEBUG INFO WARNING WARN ERROR CRITICAL FATAL".split())
+    }
+    assert (
+        ast.literal_eval(
+            [
+                n.value
+                for n in tree.body
+                if isinstance(n, ast.Assign)
+                and any(getattr(t, "id", "") == "BASIC_FORMAT" for t in n.targets)
+            ][0]
+        )
+        == logging.BASIC_FORMAT
+    )
+    # Every level method takes the keywords CPython's _log() does.
+    keywords = {"exc_info", "stack_info", "stacklevel", "extra"}
+    functions = [n for n in tree.body if isinstance(n, ast.FunctionDef)]
+    functions += [
+        m
+        for c in tree.body
+        if isinstance(c, ast.ClassDef) and c.name == "Logger"
+        for m in c.body
+        if isinstance(m, ast.FunctionDef)
+    ]
+    level_functions = [
+        f
+        for f in functions
+        if f.name
+        in {"debug", "info", "warning", "warn", "error", "exception", "critical"}
+        | {"fatal", "log"}
+    ]
+    assert len(level_functions) == 18
+    for function in level_functions:
+        assert {a.arg for a in function.args.kwonlyargs} == keywords, function.name

@@ -45,8 +45,17 @@ from carla_driver_interface.server import serving
 from carla_driver_interface.service import EgodriverServicer
 from autoware_carla_scenario.driver.geometry import Pose, Trajectory
 from autoware_carla_scenario.entity.carla_driver_entity import CarlaDriverEntity
+from autoware_carla_scenario.t4 import withdraw_driver_sensors
 
 from ._vehicle_physics import mkz_physics, mkz_powertrain
+
+
+@pytest.fixture(autouse=True)
+def _withdraw_driver_sensors():
+    """Most tests here start an entity and never end it; its offer of sensors to
+    a T4 dataset is process-global and must not reach another test's recording."""
+    yield
+    withdraw_driver_sensors()
 
 
 _TICK_S = 0.05
@@ -280,6 +289,23 @@ def test_start_before_spawn_raises() -> None:
     entity = CarlaDriverEntity(config, client=_FakeDriverClient(config))
     with pytest.raises(RuntimeError, match="before spawn"):
         entity.on_scenario_start(_world_with_route())
+
+
+def test_a_session_that_fails_to_start_leaves_no_sensors_on_offer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from autoware_carla_scenario import t4
+
+    entity, client = _entity()
+
+    def _refuse(session_uuid: str, scene_id: str) -> None:
+        raise ConnectionError("policy unreachable")
+
+    monkeypatch.setattr(client, "start_session", _refuse)
+    with pytest.raises(ConnectionError, match="policy unreachable"):
+        entity.on_scenario_start(_world_with_route())
+
+    assert t4._driver_rear_axle is None
 
 
 def test_cameras_are_attached_and_streamed(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -319,7 +319,13 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
         offer_driver_sensors(self._rear_axle_offset_m)
 
         session_uuid = str(uuid.uuid4())
-        self._client.start_session(session_uuid, str(self._map.name))
+        try:
+            self._client.start_session(session_uuid, str(self._map.name))
+        except BaseException:
+            # No session, so nothing feeds a dataset: do not leave the offer
+            # standing for the next recording in this process.
+            withdraw_driver_sensors()
+            raise
         self._session_open = True
 
         if self._handshake is None:
