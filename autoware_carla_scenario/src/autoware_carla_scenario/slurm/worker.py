@@ -470,11 +470,11 @@ def run_task(manifest_path: Path, submission_index: int, task_index: int) -> int
                 else None
             ),
         )
+        port_file = layout.task_port(submission_index, task_index)
         try:
-            watchdog = CarlaWatchdog(slot)
+            watchdog = CarlaWatchdog(slot, port_file)
         except OSError as exc:
             logger.warning("No CARLA watchdog (%s): a SIGKILL would leave CARLA", exc)
-        port_file = layout.task_port(submission_index, task_index)
         port_file.write_text(f"{slot.rpc}\n", encoding="utf-8")
         logger.info(
             "Task %d of submission %d: %d case(s) %s, ports %s",
@@ -607,7 +607,10 @@ def run_task(manifest_path: Path, submission_index: int, task_index: int) -> int
             if left:
                 logger.error("CARLA on port %d still runs: %s", slot.rpc, left)
             else:
-                layout.task_port(submission_index, task_index).unlink(missing_ok=True)
+                # The file (the job script's pointer to CARLA) goes only once
+                # CARLA is gone; a worker cut short here leaves it to the
+                # watchdog, which removes it after stopping CARLA.
+                port_file.unlink(missing_ok=True)
                 if watchdog is not None:
                     watchdog.finish()
             # With CARLA left, the watchdog ends it when this process does,

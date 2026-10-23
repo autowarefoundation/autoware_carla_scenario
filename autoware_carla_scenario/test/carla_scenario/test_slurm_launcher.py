@@ -358,7 +358,7 @@ def test_a_crashed_task_leaves_its_cases_missing_and_resubmit_runs_only_them(
     assert task0 is not None
     port = task0["ports"]["rpc"]
     _wait_for(lambda: carla_processes_on_port(port) == [], 20, "the orphaned CARLA")
-    assert not layout.task_port(0, 0).exists()
+    _wait_for(lambda: not layout.task_port(0, 0).exists(), 20, "the port file")
 
     # Resubmitted: the two cases with no result, and those that errored (the
     # fake world's errored cases raise again, as a case without ground would).
@@ -424,7 +424,11 @@ def test_scancel_stops_the_tasks_and_their_carla_and_resubmit_finishes_the_batch
     for task in range(2):
         task_status = layout.read_task(0, task)
         assert task_status is not None and task_status["state"] == "cancelled"
-        assert not layout.task_port(0, task).exists()
+        # Removed after CARLA is gone, by the worker or (when it was killed)
+        # its watchdog, so it can lag the CARLA check above (#525).
+        _wait_for(
+            lambda t=task: not layout.task_port(0, t).exists(), 20, "the port file"
+        )
 
     # The collect job ran (once the array ended): every case without a result.
     _wait_for(lambda: (batch / "batch_results.json").exists(), 30, "the collect job")
@@ -750,6 +754,33 @@ def test_a_kept_lock_survives_the_release_while_the_watchdog_holds_it(
     watchdog.finish()  # no CARLA runs: it ends, and with it the lock
     again = acquire_slot(base, 1, start=0, lock_dir=tmp_path)
     again.release()
+
+
+def test_the_watchdog_removes_the_port_file_of_a_worker_that_died(
+    tmp_path: Path,
+) -> None:
+    """A SIGKILLed worker never removes its ``.port`` file (#525): the watchdog,
+    which sees the pipe close without ``done``, does."""
+    from autoware_carla_scenario.slurm.ports import CarlaWatchdog
+
+    slot = acquire_slot(31800, 1, start=0, lock_dir=tmp_path)
+    port_file = tmp_path / "0-0.port"
+    port_file.write_text(f"{slot.rpc}\n", encoding="utf-8")
+    watchdog = CarlaWatchdog(slot, port_file)
+    slot.release(keep_lock=True)
+    process = watchdog._process
+    assert process is not None and process.stdin is not None
+    process.stdin.close()  # the worker died: end of file, no "done"
+    process.wait(timeout=30)
+    assert not port_file.exists()
+
+    # A worker that finished cleans up itself: the watchdog leaves the file.
+    slot = acquire_slot(31800, 1, start=0, lock_dir=tmp_path)
+    port_file.write_text("x\n", encoding="utf-8")
+    watchdog = CarlaWatchdog(slot, port_file)
+    slot.release(keep_lock=True)
+    watchdog.finish()
+    assert port_file.exists()
 
 
 def test_first_slot_differs_by_task() -> None:
