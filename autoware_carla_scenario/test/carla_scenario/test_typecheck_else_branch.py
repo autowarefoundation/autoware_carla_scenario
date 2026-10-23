@@ -22,13 +22,16 @@ from autoware_carla_scenario.typecheck.library import CHECKED, package_modules
 #: ``turn_at_junction()`` is not one: its then branch calls no method through
 #: a class (it stops at ``_resolve_backend()``, since a dispatch thunk cannot
 #: forward ``**kwargs``), so there is no checked copy to compare with.
-EXPECTED_SITES: frozenset[tuple[str, str]] = frozenset(
-    {
-        ("autoware_carla_scenario.actions.background_traffic", "spawn_background"),
-        ("autoware_carla_scenario.actions.turn", "turn_at_junction"),
-        ("autoware_carla_scenario.scenario_runner", "start"),
-    }
+#: ``actions.routing``'s ``route_to()`` is two pairs: with waypoints and
+#: without, for an override that predates them.
+EXPECTED_PAIRS: tuple[tuple[str, str], ...] = (
+    ("autoware_carla_scenario.actions.background_traffic", "spawn_background"),
+    ("autoware_carla_scenario.actions.routing", "route_to"),
+    ("autoware_carla_scenario.actions.routing", "route_to"),
+    ("autoware_carla_scenario.actions.turn", "turn_at_junction"),
+    ("autoware_carla_scenario.scenario_runner", "start"),
 )
+EXPECTED_SITES: frozenset[tuple[str, str]] = frozenset(EXPECTED_PAIRS)
 
 
 @dataclass(frozen=True)
@@ -124,7 +127,9 @@ def test_the_pairs_are_the_expected_ones() -> None:
         f"gone {sorted(EXPECTED_SITES - found)}. "
         "Update EXPECTED_SITES in this test if that was intended."
     )
-    assert len(PAIRS) == len(EXPECTED_SITES), [str(pair) for pair in PAIRS]
+    assert sorted(pair.site for pair in PAIRS) == sorted(EXPECTED_PAIRS), [
+        str(pair) for pair in PAIRS
+    ]
 
 
 @pytest.mark.parametrize("pair", PAIRS, ids=str)

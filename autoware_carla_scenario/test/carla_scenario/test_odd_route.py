@@ -739,10 +739,10 @@ class TestRoutePoses:
         from autoware_carla_scenario.odd.route_plan import route_poses
 
         poses = route_poses(LEFT_TURN, *nishishinjuku, 5.0)
-        on_411 = [p.s for p in poses if p.lanelet_id == 411]
-        assert on_411[0] == 0.0
-        assert all(b - a == pytest.approx(5.0) for a, b in zip(on_411, on_411[1:]))
-        assert on_411[-1] > _length(nishishinjuku, 411) - 5.0
+        on_203 = [p.s for p in poses if p.lanelet_id == 203]
+        assert on_203[0] == 25.0
+        assert all(b - a == pytest.approx(5.0) for a, b in zip(on_203, on_203[1:]))
+        assert on_203[-1] > _length(nishishinjuku, 203) - 5.0
 
     def test_a_lane_change_crosses_at_the_middle(
         self, nishishinjuku: tuple[Any, Any]

@@ -3200,8 +3200,8 @@ What Codon 0.19 needs that Python does not, beyond
   attributes out (`JunctionSegmentSpec.crossing()`), and keep the `getattr`
   for any other name in the `else` branch of `if TYPE_CHECKING:`, so Python
   still raises the `AttributeError` it raised.
-- **A method only some subclasses have** (`EgoVehicle.route_to()`, which an
-  entity found as a `BackendDriven` may or may not have): ask
+- **A method only some entities have** (`route_to()`, which an entity found
+  as a `BackendDriven` has and a pedestrian does not): ask
   `hasattr(entity, "route_to")` and call it under that, and keep the call
   that raises the `AttributeError` for an entity without it in the `else`
   branch of `if TYPE_CHECKING:`. Codon decides `hasattr` by the static type,

@@ -421,7 +421,7 @@ and the ego is sent along it:
   `RoutingAction` hands it with the goal: an **Autoware** ego plans the
   matched route rather than the shortest one, and an ego the
   **TrafficManager** drives is handed the whole route as one path, a point
-  every 5 m along the lanelets' centrelines (`EgoVehicle.route_to`, which
+  every 5 m along the lanelets' centrelines (`BackendDriven.route_to`, which
   the TrafficManager follows through `set_path`), so it chooses no junction
   of its own;
 * with no goal (`ego_goal: false`) nothing is handed over, and an ego the

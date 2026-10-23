@@ -3,9 +3,10 @@
 An entity driven by a full autonomy stack is not told how to steer; it is told
 *where to go* and works the trajectory out itself.  This action says where and
 when; *how* the destination is delivered belongs to the entity, so this calls
-:meth:`~autoware_carla_scenario.entity.ego.EgoVehicle.route_to` and nothing
-else.  One stack takes a map-frame pose over a bridge, another might take a
-lane sequence or nothing at all, and none of that belongs in a timeline.
+:meth:`~autoware_carla_scenario.traffic.driven.BackendDriven.route_to` and
+nothing else.  One stack takes a map-frame pose over a bridge, a traffic
+backend a path to follow, an external policy nothing at all, and none of that
+belongs in a timeline.
 
 **When it runs is the caller's choice, with one hard constraint.**  The ego
 needs a goal at least once during initialization: the runner waits for it to
@@ -50,10 +51,11 @@ class RoutingAction(BaseAction):
     friends resolve the CARLA *actor* a role names, this resolves the *entity*
     -- a route is not something that can be applied to an actor.
 
-    Only an entity that plans its own route has a mission to set; for any other
-    :meth:`~autoware_carla_scenario.entity.ego.EgoVehicle.route_to` is a no-op,
-    so a scenario can register this unconditionally and let the entity decide
-    whether it means anything.
+    An entity that plans its own route is given a mission; a vehicle a traffic
+    backend drives, the ego or an NPC, is handed the route as a path
+    (:meth:`~autoware_carla_scenario.traffic.driven.BackendDriven.route_to`);
+    for an ego an external policy drives it is a no-op.  So a scenario can
+    register this unconditionally and let the entity decide what it means.
 
     Args:
         entity_name: Role name of the entity to route.
@@ -136,18 +138,27 @@ class RoutingAction(BaseAction):
             )
             return
         walker: PedestrianEntity = pedestrian
-        self._route(world, walker)
+        # A pedestrian has no route_to(): the call raises the AttributeError it
+        # always did.  Codon, which reads TYPE_CHECKING as true, compiles none.
+        if TYPE_CHECKING:
+            raise AttributeError("route_to")
+        else:
+            walker.route_to(world, self._goal)
 
-    def _route(
-        self, world: "carla.World", entity: Union[BackendDriven, PedestrianEntity]
-    ) -> None:
-        if hasattr(entity, "route_to"):
-            # Waypoints only when there are some: an entity that overrides
-            # route_to() with the signature it had before waypoints existed
-            # keeps working for every run that names none.  Two calls rather
-            # than `**extra`: Codon unpacks no dict into keyword arguments.
-            if self._waypoints:
-                entity.route_to(
+    def _route(self, world: "carla.World", entity: BackendDriven) -> None:
+        # Waypoints only when there are some: an entity that overrides
+        # route_to() with the signature it had before waypoints existed keeps
+        # working for every run that names none.  Two calls rather than
+        # `**extra`: Codon unpacks no dict into keyword arguments.  And each
+        # through the class in the check: Codon calls a method a subclass
+        # overrides (ExternallyDrivenEgo's, BridgedEgoEntity's) through a
+        # dispatch thunk, which takes no keyword argument (docs/typecheck.md);
+        # the check calls BackendDriven's own, and each override through its
+        # class.
+        if self._waypoints:
+            if TYPE_CHECKING:
+                BackendDriven.route_to(
+                    entity,
                     world,
                     self._goal,
                     initial_pose=self._initial_pose,
@@ -160,15 +171,16 @@ class RoutingAction(BaseAction):
                     self._goal,
                     initial_pose=self._initial_pose,
                     ground_projection=self._ground_projection,
+                    waypoints=self._waypoints,
                 )
-            return
-        # An entity without route_to() (an NPC vehicle, a pedestrian): the call
-        # raises the AttributeError it always did.  Codon, which reads
-        # TYPE_CHECKING as true, decides hasattr() by the static type, which
-        # never has route_to (only EgoVehicle declares it), and compiles none
-        # of the calls.
-        if TYPE_CHECKING:
-            raise AttributeError("route_to")
+        elif TYPE_CHECKING:
+            BackendDriven.route_to(
+                entity,
+                world,
+                self._goal,
+                initial_pose=self._initial_pose,
+                ground_projection=self._ground_projection,
+            )
         else:
             entity.route_to(
                 world,

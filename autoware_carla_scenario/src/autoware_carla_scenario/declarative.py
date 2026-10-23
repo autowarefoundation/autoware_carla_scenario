@@ -361,7 +361,7 @@ class DeclarativeScenario(BaseScenario):
         ego's :class:`~autoware_carla_scenario.actions.RoutingAction` hands it:
         an Autoware ego plans the matched route rather than the shortest one,
         and one a traffic backend drives is handed the whole route as one path
-        (:meth:`~autoware_carla_scenario.entity.ego.EgoVehicle.route_to`).
+        (:meth:`~autoware_carla_scenario.traffic.driven.BackendDriven.route_to`).
         Without one -- only an ego driven for it may have none -- nothing is
         handed over, and the ego is turned at each junction instead.
         """

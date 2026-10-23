@@ -557,6 +557,18 @@ def test_a_match_index_the_search_never_returns() -> None:
     assert any("can never be taken" in m for m in messages)
 
 
+class _OpenRoad:
+    """A CARLA map with no junction: every point of a route is kept."""
+
+    def get_waypoint(self, location: Any) -> None:
+        return None
+
+
+class _OpenWorld:
+    def get_map(self) -> _OpenRoad:
+        return _OpenRoad()
+
+
 class _RouteTM:
     def __init__(self) -> None:
         self.paths: list[tuple[Any, list[Any]]] = []
@@ -574,7 +586,7 @@ class _RouteClient:
 
 
 class TestABackendDrivenEgoFollowsTheRoute:
-    """``EgoVehicle.route_to`` hands its traffic backend the whole route."""
+    """``BackendDriven.route_to`` hands the ego's traffic backend the whole route."""
 
     @staticmethod
     def _ego() -> tuple[Any, _RouteTM]:
@@ -591,14 +603,14 @@ class TestABackendDrivenEgoFollowsTheRoute:
             to_carla_location,
             to_carla_world,
         )
-        from autoware_carla_scenario.entity.ego import ROUTE_POINT_STEP_M
+        from autoware_carla_scenario.traffic.driven import ROUTE_POINT_STEP_M
 
         ego, tm = self._ego()
         start = Lanelet2Pose(lanelet_id=rm.W_IN1, s=45.0)
         goal = Lanelet2Pose(lanelet_id=rm.N_OUT, s=38.0)
 
         ego.route_to(
-            object(),  # type: ignore[arg-type]
+            _OpenWorld(),  # type: ignore[arg-type]
             goal,
             initial_pose=to_carla_world(start),
             waypoints=[
@@ -608,7 +620,10 @@ class TestABackendDrivenEgoFollowsTheRoute:
         )
 
         ((_actor, path),) = tm.paths
-        assert path[0].distance(to_carla_location(start)) < 1e-6
+        # A step ahead of where it stands: a point behind it would never be
+        # reached, and the TrafficManager would wait on it.
+        ahead = to_carla_location(Lanelet2Pose(rm.W_IN1, 45.0 + ROUTE_POINT_STEP_M))
+        assert path[0].distance(ahead) < 1e-6
         assert path[-1].distance(to_carla_location(goal)) < 1e-6
         steps = [a.distance(b) for a, b in zip(path, path[1:])]
         assert max(steps) <= ROUTE_POINT_STEP_M + 1e-6
@@ -624,9 +639,86 @@ class TestABackendDrivenEgoFollowsTheRoute:
         ego, tm = self._ego()
         with caplog.at_level("WARNING"):
             ego.route_to(
-                object(),  # type: ignore[arg-type]
+                _OpenWorld(),  # type: ignore[arg-type]
                 Lanelet2Pose(lanelet_id=rm.ONE_WAY1, s=0.0),
                 initial_pose=to_carla_world(Lanelet2Pose(rm.W_IN1, 45.0)),
             )
         assert tm.paths == []
         assert "no route to follow" in caplog.text
+
+
+class _StandingActor:
+    """An NPC's actor where the route starts, read when no initial pose is given."""
+
+    def __init__(self, transform: Any) -> None:
+        self._transform = transform
+
+    def get_transform(self) -> Any:
+        return self._transform
+
+
+class TestAnNpcVehicleFollowsTheRoute:
+    """The same route_to, on an NPC the traffic backend drives."""
+
+    @staticmethod
+    def _npc() -> tuple[Any, _RouteTM]:
+        from autoware_carla_scenario.coordinate.transform import to_carla_world
+        from autoware_carla_scenario.entity import (
+            SpawnPointIndex,
+            VehicleEntity,
+            VehicleEntityConfig,
+        )
+
+        npc = VehicleEntity(
+            VehicleEntityConfig(role_name="npc1", spawn_location=SpawnPointIndex(0))
+        )
+        npc._vehicle = _StandingActor(  # type: ignore[assignment]
+            to_carla_world(Lanelet2Pose(rm.W_IN1, 45.0)).to_carla_transform()
+        )
+        tm = _RouteTM()
+        npc.set_client(_RouteClient(tm))  # type: ignore[arg-type]
+        return npc, tm
+
+    def test_from_where_its_actor_is_through_the_waypoints(self, loaded: None) -> None:
+        from autoware_carla_scenario.coordinate.transform import (
+            to_carla_location,
+        )
+
+        npc, tm = self._npc()
+        goal = Lanelet2Pose(lanelet_id=rm.N_OUT, s=38.0)
+
+        npc.route_to(
+            _OpenWorld(),  # type: ignore[arg-type]
+            goal,
+            waypoints=[Lanelet2Pose(rm.J[("W", "N")], 0.0)],
+        )
+
+        from autoware_carla_scenario.traffic.driven import ROUTE_POINT_STEP_M
+
+        ((actor, path),) = tm.paths
+        assert actor is npc.actor
+        # Measured from where its actor is, exactly, not from a centreline vertex.
+        ahead = Lanelet2Pose(rm.W_IN1, 45.0 + ROUTE_POINT_STEP_M)
+        assert path[0].distance(to_carla_location(ahead)) < 0.05
+        assert path[-1].distance(to_carla_location(goal)) < 1e-6
+        assert abs(path[-1].x) < 3.5 and -path[-1].y > 10.0
+
+    def test_a_routing_action_on_the_npc_reaches_it(
+        self, loaded: None, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """What a document's Set Goal card on an NPC builds, executed."""
+        from autoware_carla_scenario.actions.routing import RoutingAction
+        from autoware_carla_scenario.entity import registry
+
+        npc, tm = self._npc()
+        monkeypatch.setattr(registry, "_VEHICLES", {})
+        monkeypatch.setattr(registry, "_PEDESTRIANS", {})
+        registry.register_entity("npc1", npc)
+
+        RoutingAction(
+            "npc1",
+            Lanelet2Pose(lanelet_id=rm.N_OUT, s=38.0),
+            waypoints=[Lanelet2Pose(rm.J[("W", "N")], 0.0)],
+        ).execute(_OpenWorld())  # type: ignore[arg-type]
+
+        assert len(tm.paths) == 1

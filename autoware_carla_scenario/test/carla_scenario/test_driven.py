@@ -536,6 +536,43 @@ class TestFollowRoute:
 
         assert tm.paths == [(actor, path)]
 
+    def test_a_junction_and_its_edges_are_left_out(self) -> None:
+        """At a junction the TrafficManager takes the road of the next point.
+
+        A point in the junction, or at its edge, is on several ways through,
+        so it is left out: the next point is then on the road out.
+        """
+
+        class _Lane:
+            def __init__(self, x: float) -> None:
+                self.x = x
+                self.is_junction = 10.0 <= x <= 20.0
+
+            def next(self, distance: float) -> list:
+                return [_Lane(self.x + distance)]
+
+            def previous(self, distance: float) -> list:
+                return [_Lane(self.x - distance)]
+
+        class _LaneMap:
+            def get_waypoint(self, location):  # noqa: ANN001
+                return _Lane(location.x)
+
+        class _LaneWorld:
+            def get_map(self) -> _LaneMap:
+                return _LaneMap()
+
+        actor = _Actor(_Transform(_Location(0.0, 0.0), 0.0))
+        vehicle = _Vehicle(actor)
+        tm = _TrafficManager()
+        vehicle.set_client(_Client(tm))
+        path = [_Location(float(x), 0.0) for x in range(0, 31, 2)]
+
+        vehicle.follow_route(_LaneWorld(), path)
+
+        ((_actor, sent),) = tm.paths
+        assert [p.x for p in sent] == [0.0, 2.0, 4.0, 6.0, 24.0, 26.0, 28.0, 30.0]
+
     def test_an_empty_route_sends_nothing(self) -> None:
         vehicle = _Vehicle(_Actor(_Transform(_Location())))
         tm = _TrafficManager()

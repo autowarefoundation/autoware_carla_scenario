@@ -2,25 +2,17 @@
 
 from __future__ import annotations
 
-import logging
-from typing import TYPE_CHECKING, FrozenSet, List, Mapping, Optional, Sequence
+from typing import TYPE_CHECKING, FrozenSet, Mapping, Optional
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
 
-    from ..coordinate import CarlaWorldPose, GroundProjectionConfig, Lanelet2Pose
     from ..scenario_base import EgoConfig
 
 from ..constants import EGO_ROLE_NAME
 from ..debug_markers import DebugMarkers
 from ._spawn import spawn_vehicle_actor
 from ..traffic.driven import BackendDriven
-
-logger = logging.getLogger(__name__)
-
-#: Metres between the points of the route a backend-driven ego is handed
-#: (:meth:`EgoVehicle.route_to`).
-ROUTE_POINT_STEP_M: float = 5.0
 
 
 class EgoVehicle(BackendDriven):
@@ -121,95 +113,6 @@ class EgoVehicle(BackendDriven):
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
-
-    def route_to(
-        self,
-        world: "carla.World",
-        goal: "Lanelet2Pose",
-        *,
-        initial_pose: "Optional[CarlaWorldPose]" = None,
-        ground_projection: "Optional[GroundProjectionConfig]" = None,
-        waypoints: "Sequence[Lanelet2Pose]" = (),
-    ) -> None:
-        """Send this ego to *goal* through *waypoints*, by the lanelets between.
-
-        The ego's traffic backend drives it, and a backend left to itself picks
-        its own way at every junction.  So the way is worked out here: the
-        Lanelet2 map's shortest path from where the ego is through each
-        waypoint in turn to the goal
-        (:func:`~autoware_carla_scenario.odd.route_plan.route_poses`), its
-        centrelines a point every :data:`ROUTE_POINT_STEP_M` metres, handed to
-        the backend as one path (:meth:`follow_route`).  A route that cannot be
-        planned is logged, and the ego left to the backend.
-
-        Routing lives on the entity rather than in the action that asks for it
-        because *how* a destination is delivered is the entity's business: one
-        stack takes a map-frame pose over a bridge, a traffic backend a path
-        of points, an external control policy nothing at all (see
-        :class:`~autoware_carla_scenario.entity.autoware_entity.AutowareEgoEntity`
-        and :class:`~autoware_carla_scenario.entity.externally_driven.ExternallyDrivenEgo`,
-        which override this).  The action only says where and when.
-
-        Args:
-            world: The CARLA world.
-            goal: Lanelet2 pose to route to.
-            initial_pose: Where the ego starts, which the route starts from.
-                ``None`` reads the attached actor.
-            ground_projection: Not used: the route is laid on the lanelets'
-                centrelines.
-            waypoints: Lanelet2 poses the route passes through, in order.
-        """
-        path = self._route_path(goal, initial_pose, waypoints)
-        if path:
-            # Through a local of the type that declares it: Codon calls a
-            # method a subclass overrides through a dispatch thunk, which does
-            # not upcast (docs/typecheck.md).
-            driven: BackendDriven = self
-            driven.follow_route(world, path)
-
-    def _route_path(
-        self,
-        goal: "Lanelet2Pose",
-        initial_pose: "Optional[CarlaWorldPose]",
-        waypoints: "Sequence[Lanelet2Pose]",
-    ) -> List["carla.Location"]:
-        """The CARLA locations :meth:`route_to` hands the backend, or none."""
-        from ..coordinate.map_manager import MapManager  # noqa: PLC0415
-        from ..coordinate.poses import CarlaWorldPose  # noqa: PLC0415
-        from ..coordinate.transform import to_carla_location, to_lanelet2  # noqa: PLC0415
-        from ..odd.route_plan import PlannedRoute, RouteError, route_poses  # noqa: PLC0415
-
-        located: List["carla.Location"] = []
-        start_pose = initial_pose
-        if start_pose is None:
-            actor = self._vehicle
-            if actor is None:
-                logger.warning("Ego: a route was asked for before the actor exists")
-                return located
-            # A typed local: Codon unwraps the Optional here.
-            vehicle: "carla.Actor" = actor
-            transform = vehicle.get_transform()
-            start_pose = CarlaWorldPose(
-                x=transform.location.x,
-                y=transform.location.y,
-                z=transform.location.z,
-                yaw=transform.rotation.yaw,
-            )
-        start: CarlaWorldPose = start_pose
-        mm = MapManager.get_instance()
-        try:
-            poses = route_poses(
-                PlannedRoute(start=to_lanelet2(start), goal=goal, via=tuple(waypoints)),
-                mm.lanelet_map,
-                mm.routing_graph,
-                ROUTE_POINT_STEP_M,
-            )
-        except RouteError as error:
-            logger.warning("Ego: no route to follow: %s", error)
-            return located
-        for pose in poses:
-            located.append(to_carla_location(pose))
-        return located
 
     def spawn(self, world: "carla.World", config: EgoConfig) -> "carla.Actor":
         """Spawn the ego vehicle.

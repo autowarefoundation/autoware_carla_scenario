@@ -63,6 +63,10 @@ TURN_WAYPOINT_STEP_M: float = 2.0
 #: is what the branches are compared by, and it is only stable once the road
 #: has straightened out.
 TURN_POST_JUNCTION_DISTANCE_M: float = 20.0
+#: How far either side of a junction :meth:`TrafficManagerBackend.follow_route`
+#: leaves a route's points out: there a point lies on several of the ways
+#: through.
+ROUTE_JUNCTION_MARGIN_M: float = 3.0
 
 #: Heading change, in degrees, that each turn amounts to.  CARLA's yaw is
 #: left-handed and clockwise-positive seen from above.
@@ -546,22 +550,36 @@ class TrafficManagerBackend(TrafficBackend):
         world: "carla.World",
         path: List["carla.Location"],
     ) -> None:
-        """Hand *entity* the whole of *path* as its TrafficManager path.
+        """Hand *entity* *path*, junctions left out, as its TrafficManager path.
+
+        The TrafficManager takes a junction's way out whose road is the road of
+        the next point of the path, and failing that the one nearest it.  A
+        point inside a junction, or within :data:`ROUTE_JUNCTION_MARGIN_M` of
+        one, is on a road of the junction's own -- or on several -- and the
+        nearest way out of a junction's middle is any of them, so those points
+        are left out: the next point at a junction is then on the road the
+        route leaves it by.
 
         ``set_path`` replaces whatever path the vehicle had, so a later
         :meth:`turn_at_junction` replaces this one in turn.  Once the vehicle
         has driven the last point the TrafficManager chooses its way again.
         """
-        if not path:
-            logger.warning("%s: an empty route to follow", _entity_name(entity))
-            return
         actor = _require_actor(entity, "follow_route")
         if actor is None:
             return
         tm = self._require_tm("follow_route")
         if tm is None:
             return
+        carla_map = run_carla_map(world)
+        clear: List["carla.Location"] = []
+        for location in path:
+            if not _near_a_junction(carla_map, location):
+                clear.append(location)
+        if not clear:
+            logger.warning("%s: an empty route to follow", _entity_name(entity))
+            return
 
+        path = clear
         tm.set_path(_vehicle(actor), path)
         logger.info("%s: set a route of %d points", _entity_name(entity), len(path))
 
@@ -756,6 +774,21 @@ def _actor_name(actor: "carla.Actor") -> str:
     if "role_name" in attributes:
         return str(attributes["role_name"])
     return f"actor {actor.id}"
+
+
+def _near_a_junction(carla_map: "carla.Map", location: "carla.Location") -> bool:
+    """Whether *location* is in a junction, or :data:`ROUTE_JUNCTION_MARGIN_M`
+    either side of one along its lane."""
+    found = carla_map.get_waypoint(location)
+    if found is None:
+        return False
+    waypoint: "carla.Waypoint" = found
+    if waypoint.is_junction:
+        return True
+    around = waypoint.next(ROUTE_JUNCTION_MARGIN_M) + waypoint.previous(
+        ROUTE_JUNCTION_MARGIN_M
+    )
+    return any(w.is_junction for w in around)
 
 
 def _require_actor(entity: DrivenEntity, what: str) -> Optional["carla.Actor"]:

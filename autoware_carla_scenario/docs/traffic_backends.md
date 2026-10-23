@@ -525,8 +525,10 @@ own bookkeeping on the vehicle rather than in a table of its own:
 
 `direction` is `LaneChangeDirection` or `TurnDirection` — intents, not CARLA
 values. `path` is the whole way a vehicle is to drive, as CARLA locations in
-order: what an ego given a goal is handed (`EgoVehicle.route_to`), where
-`turn_at_junction` decides one junction. A backend that has no answer for one simply does not override it: the
+order: what a vehicle given a goal is handed (`BackendDriven.route_to`), where
+`turn_at_junction` decides one junction. The TrafficManager takes a junction's
+way out by the road of the next point, so its backend leaves out the points in
+a junction and within 3 m of one: there a point lies on several ways through. A backend that has no answer for one simply does not override it: the
 base class logs that the intent is unavailable and the vehicle keeps doing what
 it was doing, which is also what `LaneChangeAction` sees when it asks whether the
 manoeuvre finished.

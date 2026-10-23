@@ -1117,9 +1117,10 @@ that drives itself overrides them — see
 an empty road, or one from another package. `ScenarioRunner` calls
 `prepare` / `start` / `tick` / `close` on it and never names a traffic simulator
 itself, and an entity's manoeuvre intents (`change_lane`, `turn_at_junction`,
-`follow_route`) are delegated to whichever backend drives it. A goal given to an
-ego the backend drives becomes one of them: `EgoVehicle.route_to` plans the
-lanelets to it, through any waypoints, and hands the backend that path.
+`follow_route`) are delegated to whichever backend drives it. A goal given to a
+vehicle the backend drives, the ego or an NPC, becomes one of them:
+`BackendDriven.route_to` plans the lanelets to it, through any waypoints, and
+hands the backend that path.
 
 **Who drives the ego**: `use_autopilot` decides whether the backend is given the
 ego actor to drive or told to keep its hands off it. `EgoVehicle` opts in (TrafficManager drives);
