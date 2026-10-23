@@ -327,6 +327,16 @@ subject along the road, the way the subject faces, negative behind it
 (`coordinate.lane_distance.lane_offset`), so it reads the same whether the ego
 is moving or stopped.
 
+Road users the framework moves itself keep clear of each other as the
+TrafficManager's do: a vehicle driven by its own controller (`follow` mode, a
+final approach) brakes for a walker in its way within its stopping distance,
+and a walker moved by the route walker (or `follow` mode) waits for a vehicle
+moving across its way and walks round one standing there
+(`utils.clearance`). A walker that falls over all the same is taken out of the
+world once it has lain there 5 s (`npc_collisions.FALLEN_DESPAWN_S`, the
+monitor's `despawn_fallen_after_s`; never the ego), with a `despawn` record
+of reason `fallen`.
+
 A pedestrian's written-out waypoints a few metres apart (no more than 10 m
 from one to the next: a recorded walk) are walked as written, from where it
 starts; farther apart they are routed between on the walkable lanelets.

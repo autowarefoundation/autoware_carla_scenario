@@ -51,8 +51,10 @@ __all__ = [
 SCAN_EVERY_TICKS = 20
 #: How often (ticks) the walkers are looked at for a fall.
 FALL_CHECK_EVERY_TICKS = 5
-#: How long (s) a pair's contact is one collision.
+#: How long (s) without an event from a pair ends its contact.
 REPEAT_S = 1.0
+#: How long (s) a walker lies fallen before it is despawned (``None``: never).
+FALLEN_DESPAWN_S: Optional[float] = 5.0
 #: A walker tilted further than this (deg) has fallen.
 FALLEN_TILT_DEG = 50.0
 #: A walker this far below where it stood, or deeper, is out of the world
@@ -74,8 +76,12 @@ class NpcCollision:
         t: Scenario time (s) it was taken up at.
         actors: The ``role_name`` of each side (its type id when it has none).
         ids: The two actors' ids.
-        impulse: The normal impulse's magnitude (N·s).
+        impulse: The normal impulse's magnitude (N·s); at the end of a
+            contact, the strongest during it.
         ego: Whether one side is the ego (whose own condition fails the run).
+        phase: ``"start"`` when the contact began, ``"end"`` when it ended.
+        duration: How long (s) the contact lasted, at its end; ``None`` at
+            its start.
     """
 
     frame: int
@@ -84,6 +90,41 @@ class NpcCollision:
     ids: list[int]
     impulse: float
     ego: bool
+    phase: str = "start"
+    duration: Optional[float] = None
+
+
+class _Contact:
+    """A contact between two actors under way: since when, and how hard."""
+
+    def __init__(
+        self, frame: int, start: float, names: list[str], ids: list[int], impulse: float
+    ) -> None:
+        self.frame = frame
+        self.start = start
+        self.last = start
+        self.names = names
+        self.ids = ids
+        self.impulse = impulse
+
+    def record(
+        self,
+        frame: int,
+        t: float,
+        phase: str,
+        duration: Optional[float],
+        ego_role: str,
+    ) -> NpcCollision:
+        return NpcCollision(
+            frame=frame,
+            t=t,
+            actors=self.names,
+            ids=self.ids,
+            impulse=self.impulse,
+            ego=ego_role in self.names,
+            phase=phase,
+            duration=duration,
+        )
 
 
 @dataclass(frozen=True)
@@ -134,14 +175,21 @@ class NpcCollisionMonitor:
     stopped through the handle that started it listening.
     """
 
-    def __init__(self, ego_role: str = str(EGO_ROLE_NAME)) -> None:
+    def __init__(
+        self,
+        ego_role: str = str(EGO_ROLE_NAME),
+        despawn_fallen_after_s: Optional[float] = FALLEN_DESPAWN_S,
+    ) -> None:
         self._ego_role = ego_role
         self._ticks = 0
         self._sensed: dict[int, _Sensed] = {}
         self._names: dict[int, str] = {}
         self._lock = threading.Lock()
         self._heard: list[tuple[int, int, int, str, float]] = []
-        self._last_pair: dict[tuple[int, int], float] = {}
+        self._contacts: dict[tuple[int, int], _Contact] = {}
+        #: When each walker seen fallen went down, until it is despawned.
+        self._down: dict[int, float] = {}
+        self._despawn_fallen_after = despawn_fallen_after_s
         self._walkers: dict[int, tuple[float, float, float, float]] = {}
         #: How many looks in a row each walker has been in the world for.
         self._settled: dict[int, int] = {}
@@ -156,10 +204,11 @@ class NpcCollisionMonitor:
 
     def tick(
         self, world: "carla.World", elapsed: float
-    ) -> tuple[list[NpcCollision], list[WalkerFallen]]:
-        """What happened since the last tick: collisions and falls, logged."""
+    ) -> tuple[list[NpcCollision], list[WalkerFallen], list[tuple[str, int]]]:
+        """What happened since the last tick: contacts begun and ended, falls,
+        and the fallen walkers despawned (role, actor id), logged."""
         if self._broken:
-            return [], []
+            return [], [], []
         try:
             return self._tick(world, elapsed)
         except Exception:  # noqa: BLE001 - a log aid never fails the run
@@ -167,7 +216,7 @@ class NpcCollisionMonitor:
                 "NPC collision logging stopped after an error", exc_info=True
             )
             self._broken = True
-            return [], []
+            return [], [], []
 
     def release(self, actor_id: int) -> None:
         """Stop hearing *actor_id* and forget it: it is leaving the world."""
@@ -190,14 +239,38 @@ class NpcCollisionMonitor:
 
     def _tick(
         self, world: "carla.World", elapsed: float
-    ) -> tuple[list[NpcCollision], list[WalkerFallen]]:
+    ) -> tuple[list[NpcCollision], list[WalkerFallen], list[tuple[str, int]]]:
         if self._ticks % SCAN_EVERY_TICKS == 0:
             self._scan(world)
         fallen: list[WalkerFallen] = []
         if self._ticks % FALL_CHECK_EVERY_TICKS == 0 and self._walkers:
             fallen = self._look_for_falls(world, elapsed)
+            for fall in fallen:
+                self._down[fall.id] = elapsed
         self._ticks += 1
-        return self._collisions(elapsed), fallen
+        return self._collisions(elapsed), fallen, self._despawn_fallen(world, elapsed)
+
+    def _despawn_fallen(
+        self, world: "carla.World", elapsed: float
+    ) -> list[tuple[str, int]]:
+        """Despawn the walkers down :data:`FALLEN_DESPAWN_S` (never the ego)."""
+        after = self._despawn_fallen_after
+        if after is None or not self._down:
+            return []
+        from .actions.despawn import despawn_entity  # noqa: PLC0415
+
+        out: list[tuple[str, int]] = []
+        for walker_id, since in list(self._down.items()):
+            if elapsed - since < after:
+                continue
+            del self._down[walker_id]
+            role = self._names.get(walker_id, "")
+            if not role or role == self._ego_role:
+                continue
+            gone = despawn_entity(world, role, "fallen walker")
+            if gone is not None:
+                out.append((role, gone))
+        return out
 
     def _scan(self, world: "carla.World") -> None:
         """Hear new vehicles, let go of gone ones, note the walkers."""
@@ -249,26 +322,23 @@ class NpcCollisionMonitor:
             )
 
     def _collisions(self, elapsed: float) -> list[NpcCollision]:
-        """The queued collisions, one per pair per :data:`REPEAT_S`, logged."""
+        """A record for each contact that began, and for each that ended
+        (no event from the pair for :data:`REPEAT_S`), with how long it
+        lasted; a warning when one begins."""
         with self._lock:
             heard, self._heard = self._heard, []
         out: list[NpcCollision] = []
         for frame, parent, other, other_name, impulse in heard:
             self._names.setdefault(other, other_name)
             pair = (min(parent, other), max(parent, other))
-            last = self._last_pair.get(pair)
-            self._last_pair[pair] = elapsed
-            if last is not None and elapsed - last < REPEAT_S:
+            contact = self._contacts.get(pair)
+            if contact is not None:
+                contact.last = elapsed
+                contact.impulse = max(contact.impulse, impulse)
                 continue
             names = [self._names.get(parent, str(parent)), self._names[other]]
-            collision = NpcCollision(
-                frame=frame,
-                t=elapsed,
-                actors=names,
-                ids=[parent, other],
-                impulse=impulse,
-                ego=self._ego_role in names,
-            )
+            contact = _Contact(frame, elapsed, names, [parent, other], impulse)
+            self._contacts[pair] = contact
             logger.warning(
                 "Collision at %.2fs between '%s' and '%s' (impulse %.0f N*s)",
                 elapsed,
@@ -276,7 +346,20 @@ class NpcCollisionMonitor:
                 names[1],
                 impulse,
             )
-            out.append(collision)
+            out.append(contact.record(frame, elapsed, "start", None, self._ego_role))
+        for pair, contact in list(self._contacts.items()):
+            if elapsed - contact.last <= REPEAT_S:
+                continue
+            del self._contacts[pair]
+            out.append(
+                contact.record(
+                    contact.frame,
+                    elapsed,
+                    "end",
+                    contact.last - contact.start,
+                    self._ego_role,
+                )
+            )
         return out
 
     def _look_for_falls(

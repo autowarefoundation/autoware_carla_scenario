@@ -28,7 +28,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["DespawnAction"]
+__all__ = ["DespawnAction", "despawn_entity"]
 
 
 class DespawnAction(BaseAction):
@@ -84,55 +84,67 @@ class DespawnAction(BaseAction):
 
     def execute(self, world: "carla.World") -> None:
         """Hand the entity back, stop hearing it, destroy it, forget it."""
-        name = self._entity_name
-        actor: Optional["carla.Actor"] = None
-        vehicle = find_vehicle_entity(name)
-        if vehicle is not None:
-            if hasattr(vehicle, "actor"):
-                actor = vehicle.actor
-            vehicle.release_from_traffic(world)
-            self._forget(actor)
-            # BackendDriven, the mixin, declares no destroy(); the entities it
-            # is mixed into do (docs/typecheck.md).
-            if hasattr(vehicle, "destroy"):
-                try:
-                    vehicle.destroy()
-                except RuntimeError:
-                    self._already_gone(name)
-        else:
-            pedestrian = find_pedestrian_entity(name)
-            if pedestrian is None:
-                logger.warning("%s: '%s' is not in the world", self.label, name)
-                return
-            actor = pedestrian.actor
-            pedestrian.release_from_traffic(world)
-            self._forget(actor)
+        actor_id = despawn_entity(world, self._entity_name, self.label)
+        if actor_id is not None:
+            gone: int = actor_id
+            self._despawned.append((self._entity_name, gone))
+
+
+def despawn_entity(world: "carla.World", name: str, label: str) -> Optional[int]:
+    """Take the vehicle or pedestrian *name* out of the world: its traffic
+    backend lets go of it, the collision log stops hearing it, its actor is
+    destroyed and the entity unregistered.  Its actor's id (``-1`` if it had
+    none), or ``None`` when no such entity is in the world (logged)."""
+    actor: Optional["carla.Actor"] = None
+    vehicle = find_vehicle_entity(name)
+    if vehicle is not None:
+        if hasattr(vehicle, "actor"):
+            actor = vehicle.actor
+        vehicle.release_from_traffic(world)
+        _forget(actor)
+        # BackendDriven, the mixin, declares no destroy(); the entities it
+        # is mixed into do (docs/typecheck.md).
+        if hasattr(vehicle, "destroy"):
             try:
-                pedestrian.destroy()
+                vehicle.destroy()
             except RuntimeError:
-                self._already_gone(name)
-        unregister_entity(name)
-        actor_id = -1
-        if actor is not None:
-            gone: "carla.Actor" = actor
-            actor_id = int(gone.id)
-        self._despawned.append((name, actor_id))
-        logger.info("%s: '%s' despawned", self.label, name)
+                _already_gone(label, name)
+    else:
+        pedestrian = find_pedestrian_entity(name)
+        if pedestrian is None:
+            logger.warning("%s: '%s' is not in the world", label, name)
+            return None
+        actor = pedestrian.actor
+        pedestrian.release_from_traffic(world)
+        _forget(actor)
+        try:
+            pedestrian.destroy()
+        except RuntimeError:
+            _already_gone(label, name)
+    unregister_entity(name)
+    actor_id = -1
+    if actor is not None:
+        gone: "carla.Actor" = actor
+        actor_id = int(gone.id)
+    logger.info("%s: '%s' despawned", label, name)
+    return actor_id
 
-    def _already_gone(self, name: str) -> None:
-        """Its actor was destroyed before (by CARLA, a backend): nothing to do."""
-        logger.info("%s: '%s' was already gone from the world", self.label, name)
 
-    def _forget(self, actor: Optional["carla.Actor"]) -> None:
-        """Have the collision log let go of *actor* before it is destroyed."""
-        if actor is None:
-            return
-        found: "carla.Actor" = actor
-        if TYPE_CHECKING:
-            # The collision log is not compiled (npc_collisions, EXCLUDED).
-            pass
-        else:
-            _release_collision_sensor(int(found.id))
+def _already_gone(label: str, name: str) -> None:
+    """Its actor was destroyed before (by CARLA, a backend): nothing to do."""
+    logger.info("%s: '%s' was already gone from the world", label, name)
+
+
+def _forget(actor: Optional["carla.Actor"]) -> None:
+    """Have the collision log let go of *actor* before it is destroyed."""
+    if actor is None:
+        return
+    found: "carla.Actor" = actor
+    if TYPE_CHECKING:
+        # The collision log is not compiled (npc_collisions, EXCLUDED).
+        pass
+    else:
+        _release_collision_sensor(int(found.id))
 
 
 def _release_collision_sensor(actor_id: int) -> None:

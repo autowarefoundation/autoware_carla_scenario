@@ -735,7 +735,7 @@
     },
     "CollisionRecord": {
       "title": "CollisionRecord",
-      "description": "A vehicle other than the ego collided with a vehicle or a walker (`npc_collisions.NpcCollisionMonitor`): logged, not judged -- the ego's own collision condition is what fails a run. One contact is written once per second it lasts. Added in version 2, which a reader of version 2 that does not know it skips.",
+      "description": "A vehicle other than the ego collided with a vehicle or a walker (`npc_collisions.NpcCollisionMonitor`): logged, not judged -- the ego's own collision condition is what fails a run. A contact is written when it begins (`phase: start`) and when it ends (`phase: end`, no event from the pair for a second), with how long it lasted. Added in version 2, which a reader of version 2 that does not know it skips.",
       "type": "object",
       "properties": {
         "type": {
@@ -768,13 +768,28 @@
           "maxItems": 2
         },
         "impulse": {
-          "description": "The magnitude of the collision's normal impulse (N*s).",
+          "description": "The magnitude of the collision's normal impulse (N*s); at a contact's end, the strongest during it.",
           "type": "number",
           "minimum": 0
         },
         "ego": {
           "description": "Whether one side is the ego.",
           "type": "boolean"
+        },
+        "phase": {
+          "description": "`start` when the contact began, `end` when it ended.",
+          "type": "string",
+          "enum": [
+            "start",
+            "end"
+          ]
+        },
+        "duration": {
+          "description": "How long (s) the contact lasted, at its end; null at its start.",
+          "type": [
+            "number",
+            "null"
+          ]
         }
       },
       "required": [
@@ -784,7 +799,9 @@
         "actors",
         "ids",
         "impulse",
-        "ego"
+        "ego",
+        "phase",
+        "duration"
       ],
       "additionalProperties": false
     },
@@ -834,7 +851,7 @@
     },
     "DespawnRecord": {
       "title": "DespawnRecord",
-      "description": "A `DespawnAction` took an entity out of the world: its traffic backend let go of it and its actor was destroyed. Written on the tick it fired. Added in version 2, which a reader of version 2 that does not know it skips.",
+      "description": "A `DespawnAction` (`reason: action`), or the run for a walker lying fallen 5 s (`reason: fallen`), took an entity out of the world: its traffic backend let go of it and its actor was destroyed. Written on the tick it fired. Added in version 2, which a reader of version 2 that does not know it skips.",
       "type": "object",
       "properties": {
         "type": {
@@ -866,6 +883,14 @@
               "type": "null"
             }
           ]
+        },
+        "reason": {
+          "description": "What removed it: `action` a DespawnAction, `fallen` a walker that lay fallen.",
+          "type": "string",
+          "enum": [
+            "action",
+            "fallen"
+          ]
         }
       },
       "required": [
@@ -874,7 +899,8 @@
         "t",
         "label",
         "entity",
-        "id"
+        "id",
+        "reason"
       ],
       "additionalProperties": false
     },

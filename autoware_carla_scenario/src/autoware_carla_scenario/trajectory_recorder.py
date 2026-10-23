@@ -50,12 +50,15 @@ One JSON object per line, in CARLA's (left-handed) frame, metres/degrees
   reached a waypoint with a time or a departure condition: when it was due
   (its time; the moment its condition first held) and when it arrived.
 * ``{"type": "collision", "frame", "t", "actors": [role, role], "ids":
-  [id, id], "impulse", "ego"}`` -- a vehicle other than the ego collided
-  with a vehicle or a walker (:mod:`~autoware_carla_scenario.npc_collisions`).
+  [id, id], "impulse", "ego", "phase", "duration"}`` -- a vehicle other than
+  the ego began (``phase: "start"``) or ended (``"end"``, with how long it
+  lasted) a contact with a vehicle or a walker
+  (:mod:`~autoware_carla_scenario.npc_collisions`).
 * ``{"type": "walker_fallen", "frame", "t", "id", "role", "drop", "tilt"}``
   -- a walker was seen fallen over, once per walker.
-* ``{"type": "despawn", "frame", "t", "label", "entity", "id"}`` -- a
-  ``DespawnAction`` took an entity out of the world.
+* ``{"type": "despawn", "frame", "t", "label", "entity", "id", "reason"}``
+  -- a ``DespawnAction`` (``reason: "action"``), or the run for a walker
+  lying fallen (``"fallen"``), took an entity out of the world.
 * ``{"type": "result", "passed", "message", "elapsed_seconds",
   "conditions"}`` -- last, the verdict.
 
@@ -457,6 +460,10 @@ class TrajectoryRecorder:
                     "ids": [int(i) for i in collision.ids],
                     "impulse": _r(collision.impulse),
                     "ego": bool(collision.ego),
+                    "phase": str(collision.phase),
+                    "duration": None
+                    if collision.duration is None
+                    else _r(collision.duration),
                 }
             ),
         )
@@ -481,9 +488,12 @@ class TrajectoryRecorder:
             ),
         )
 
-    def record_despawn(self, label: str, entity: str, actor_id: int) -> None:
-        """Write that the action labelled *label* removed *entity* (its actor
-        *actor_id*, ``-1`` if it had none), on the tick last recorded."""
+    def record_despawn(
+        self, label: str, entity: str, actor_id: int, reason: str = "action"
+    ) -> None:
+        """Write that *label* removed *entity* (its actor *actor_id*, ``-1``
+        if it had none), on the tick last recorded: a ``DespawnAction``
+        (*reason* ``"action"``) or the run, a walker down (``"fallen"``)."""
         if self._out is None:
             return
         self._guarded(
@@ -496,6 +506,7 @@ class TrajectoryRecorder:
                     "label": label,
                     "entity": entity,
                     "id": None if actor_id < 0 else int(actor_id),
+                    "reason": reason,
                 }
             ),
         )

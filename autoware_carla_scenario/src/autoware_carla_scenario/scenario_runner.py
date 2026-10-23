@@ -1485,11 +1485,15 @@ class ScenarioRunner:
                     pass
                 else:
                     if npc_events is not None:
-                        collisions, falls = npc_events.tick(world, elapsed)
+                        collisions, falls, fallen_gone = npc_events.tick(world, elapsed)
                         for collision in collisions:
                             trajectory.record_collision(collision)
                         for fall in falls:
                             trajectory.record_walker_fallen(fall)
+                        for entity, actor_id in fallen_gone:
+                            trajectory.record_despawn(
+                                "fallen walker", entity, actor_id, "fallen"
+                            )
 
                 # The weight the actions above leave the run with, for the
                 # metric that reads it.
