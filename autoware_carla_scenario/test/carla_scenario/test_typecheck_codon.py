@@ -9510,3 +9510,68 @@ def test_an_optional_base_class_holding_a_subclass_is_refused_with_a_hint(
     assert (
         "does not convert an Optional of a subclass" in result.format()
     ), result.format()
+
+
+@pytest.mark.parametrize("argument", ["5", "'text'", "None"])
+def test_register_tick_still_refuses_a_non_action_non_callable(
+    tmp_path: Path, argument: str
+) -> None:
+    line = f"self.register_pre_tick({argument})"
+    scenario, config, path = _write_case(tmp_path, line + "\n", header=_R29_HEADER)
+    result = typecheck_scenario(scenario, config)
+    assert any(
+        d.line == _line_of(path, line) for d in result.diagnostics
+    ), result.format()
+
+
+@pytest.mark.parametrize(
+    "read",
+    [
+        "lambda w: self._gap(w) or 0",
+        "lambda w: self._gap(w) or self._gap(w) or 0.0",
+        "lambda w: self._count(w) or 0",
+    ],
+    ids=["int-default", "nested", "optional-int"],
+)
+def test_more_measure_reads_with_or_compile(tmp_path: Path, read: str) -> None:
+    extra = (
+        _R29_EXTRA
+        + """
+    def _count(self, world: carla.World) -> Optional[int]:
+        return None
+"""
+    )
+    setup = f'self.register_measure("a", {read})\n'
+    scenario, config, _ = _write_case(tmp_path, setup, extra=extra, header=_R29_HEADER)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_a_measure_read_of_str_or_float_is_refused(tmp_path: Path) -> None:
+    extra = """
+    def _name(self, world: carla.World) -> Optional[str]:
+        return None
+"""
+    read = "lambda w: self._name(w) or 0.0"
+    setup = f'self.register_measure("a", {read})\n'
+    scenario, config, _ = _write_case(tmp_path, setup, extra=extra, header=_R29_HEADER)
+    result = typecheck_scenario(scenario, config)
+    assert not result.ok
+
+
+def test_the_optional_hint_is_not_given_for_unrelated_optionals(
+    tmp_path: Path,
+) -> None:
+    setup = """
+        n: Optional[int] = 3
+        self._s = self._take(n)
+        """
+    extra = """
+    _s: int
+
+    def _take(self, s: Optional[str]) -> int:
+        return 0
+"""
+    scenario, config, _ = _write_case(tmp_path, setup, extra=extra, header=_R29_HEADER)
+    result = typecheck_scenario(scenario, config)
+    assert "does not convert an Optional of a subclass" not in result.format()

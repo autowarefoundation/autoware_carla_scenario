@@ -61,7 +61,10 @@ TYPING_HINTS: tuple[tuple[re.Pattern[str], str], ...] = (
         "`str(e)`, or catch `Exception` itself",
     ),
     (
-        re.compile(r"'Optional\[\w+\]' does not match expected type 'Optional\[\w+\]'"),
+        re.compile(
+            r"'Optional\[\w*(?:Condition|Action|Scenario)\]' "
+            r"does not match expected type 'Optional\[\w*(?:Condition|Action|Scenario)\]'"
+        ),
         "Codon 0.19 does not convert an Optional of a subclass to an Optional of "
         "its base (nor the reverse), so an `Optional[BaseCondition]` or "
         "`Optional[BaseAction]` that holds an `ElapsedTimeCondition`, a "
