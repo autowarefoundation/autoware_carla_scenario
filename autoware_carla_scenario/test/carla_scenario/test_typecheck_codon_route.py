@@ -119,7 +119,7 @@ def test_a_logical_scenario_compiles(tmp_path: Path) -> None:
             'FollowTrajectoryAction("npc1", Trajectory("t", [TrajectoryVertex(RouteLanePose()), '
             'TrajectoryVertex(RouteLanePose(5.0))]), appear_on_start="yes")\n',
             'FollowTrajectoryAction("npc1"',
-            "no function 'FollowTrajectoryAction.__init__'",
+            "FollowTrajectoryAction(): appear_on_start: expected bool, got str",
         ),
     ],
     ids=["missing-label", "str-for-float", "int-anchor", "str-appear-on-start"],

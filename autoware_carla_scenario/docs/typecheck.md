@@ -236,6 +236,40 @@ an abstract one (`@abstractmethod`) or one that only raises
 also checks what the scenario's own `setup()` and `is_done()` return, after
 the module checks, for one the appended calls leave out.
 
+**A wrong call or `return` is reported in the author's terms** (#527, #528,
+#529, #530). Codon says `no function 'SetSpeedAction.__init__' with arguments
+(SetSpeedAction, EntityRole, str, str)` for a call it cannot match, and
+`'float' does not match expected type 'str'` (the two types swapped) for a
+`return` of the wrong type. The check reads the call or the `return` in your
+file, binds it to the real Python signature of the class, method or function,
+and says what is wrong, at the argument:
+
+```text
+scenario.py:28:62: error: SetSpeedAction(): target_speed_kmh: expected float, got str
+scenario.py:28:60: error: TimeoutCondition(): 'lable' is an invalid keyword argument (did you mean 'label'?); TimeoutCondition takes (timeout_seconds: float = 60.0, *, label: str)
+scenario.py:36:9: error: val() returns str, but the function is declared -> float
+```
+
+A message that cannot be tied to a parameter is `X() takes (...); got
+(EntityRole, str, label=str)`, with `self` dropped and a keyword argument
+marked. A static string type prints as `'str'` (not `''3''`), the frames of
+the model's own helpers (`_keyword_only`, `_required_str`, `actions.codon`)
+are left out of the trace, and a literal `None` given where a type is
+expected is told that the parameter does not take `None` rather than to test
+the value.
+
+Two declared return types Codon does not enforce are refused from the syntax,
+before Codon runs (#529): a `return` of a literal, an f-string or a display in
+a function declared `-> bool` (Codon converts it to a `bool`; Python returns
+the `str`), and a function declared to return a type other than `None`,
+`Optional[...]`, `Any` or `NoReturn` whose body can run off its end. The flow
+analysis follows `if`, `while`, `for`, `try`, `with` and `match`; a `while
+True` without a `break`, a `raise`, `assert False`, `sys.exit()` and a call of
+a function declared `NoReturn` end a path, and a body that is only `...`,
+`pass` or a docstring (an abstract method, an overload) is not checked. A
+returned expression whose type is not obvious from its syntax
+(`return some_str`) is not judged.
+
 **Then mypy checks that an `Optional` is tested for `None` before it is
 used** (#239). Codon unwraps an `Optional[T]` implicitly wherever a `T` is
 needed, so `cfg.min_speed_kmh / 3.6` of a `float | None` field compiled, and
@@ -1598,7 +1632,7 @@ The known gaps:
   or are in a function the check does not compile.
 - **A value converted by an annotated assignment.** Codon 0.19 converts any
   value with `__bool__` in an annotated assignment: `done: bool = "no"`
-  compiles, and is `True`. The check binds hook results strictly (#238) and
+  compiles, and is `True`. (A literal returned from a function declared `-> bool` is refused, #529.) The check binds hook results strictly (#238) and
   class-level `bool` defaults through `_expect_bool` (#190), but an annotated
   local of the scenario's own code is converted as written. A local
   `x: bool = some_str` is no `bool` in Python.
