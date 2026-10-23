@@ -1512,6 +1512,7 @@ def build_routing_action(
         label=compiled.label,
         once=compiled.node.once,
         waypoints=waypoints,
+        walking_speed=params["walking_speed"],
     )
 
 

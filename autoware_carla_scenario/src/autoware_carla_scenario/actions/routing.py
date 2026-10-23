@@ -26,17 +26,23 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Optional, Sequence, Union
 
+from ..action_state import ActionState
 from ..coordinate import CarlaWorldPose, GroundProjectionConfig, Lanelet2Pose
-from ..entity.pedestrian_entity import PedestrianEntity
+from ..entity.pedestrian_entity import PedestrianEntity, plan_walk
 from ..entity.registry import find_pedestrian_entity, find_vehicle_entity
 from ..entity_role import EntityRole
 from ..traffic.driven import BackendDriven
+from ..trajectory.model import Trajectory, TrajectoryFollowingMode, TrajectoryVertex
 from .base import BaseAction, TickTiming
+from .follow_trajectory import FollowTrajectoryAction, _TrajectoryEnd
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
 
     from ..conditions.base import BaseCondition
+
+#: A pedestrian's walking speed along a route, in m/s, unless the action says.
+DEFAULT_WALKING_SPEED_MPS: float = 1.4
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +79,14 @@ class RoutingAction(BaseAction):
         ground_projection: Settings used to snap the goal to the road surface.
         waypoints: Lanelet2 poses the route must pass through, in order.  Empty
             leaves the way to the goal to the entity's own planner.
+        walking_speed: How fast a pedestrian walks the route, in m/s.  A
+            vehicle goes at the speed whatever drives it chooses.
+
+    **A pedestrian** is walked by the action itself, along the way
+    :func:`~autoware_carla_scenario.entity.pedestrian_entity.plan_walk` lays
+    out, with the walking :class:`~autoware_carla_scenario.actions.FollowTrajectoryAction`
+    does in ``FOLLOW`` mode: so on a pedestrian the action runs on the tick
+    loop until the walker has arrived, and has to be registered there.
     """
 
     _entity_name: Union[EntityRole, str]
@@ -80,6 +94,9 @@ class RoutingAction(BaseAction):
     _initial_pose: Optional[CarlaWorldPose]
     _ground_projection: Optional[GroundProjectionConfig]
     _waypoints: tuple[Lanelet2Pose, ...]
+    _walking_speed: float
+    _walk: Optional[FollowTrajectoryAction]
+    _elapsed: float
 
     def __init__(
         self,
@@ -93,7 +110,10 @@ class RoutingAction(BaseAction):
         initial_pose: Optional[CarlaWorldPose] = None,
         ground_projection: Optional[GroundProjectionConfig] = None,
         waypoints: Sequence[Lanelet2Pose] = (),
+        walking_speed: float = DEFAULT_WALKING_SPEED_MPS,
     ) -> None:
+        if not walking_speed > 0.0:
+            raise ValueError("walking_speed must be positive")
         super().__init__(
             label=label,
             condition=condition,
@@ -105,6 +125,9 @@ class RoutingAction(BaseAction):
         self._initial_pose = initial_pose
         self._ground_projection = ground_projection
         self._waypoints = tuple(waypoints)
+        self._walking_speed = float(walking_speed)
+        self._walk = None
+        self._elapsed = 0.0
 
     @property
     def waypoints(self) -> tuple[Lanelet2Pose, ...]:
@@ -121,8 +144,20 @@ class RoutingAction(BaseAction):
         """Role name of the entity this routes."""
         return self._entity_name
 
+    def tick(self, world: "carla.World", elapsed: float) -> None:
+        """Run the action's tick, keeping *elapsed* for a walk it steps."""
+        self._elapsed = elapsed
+        super().tick(world, elapsed)
+
+    def _reissues_by_default(self) -> bool:
+        """A walk is stepped every tick; a vehicle's route is handed over once."""
+        return self._walk is not None
+
     def execute(self, world: "carla.World") -> None:
-        """Hand the goal to the named entity."""
+        """Hand the goal to the named entity, or walk the named pedestrian."""
+        if self.state is ActionState.STANDBY:
+            # A new run: a walk is planned again, from where the walker is now.
+            self._walk = None
         # The entity of any kind the role names, as find_entity_by_role_name
         # finds it: a vehicle first, then a pedestrian.  Looked up by kind, so
         # the static check knows its type (docs/typecheck.md).
@@ -138,12 +173,33 @@ class RoutingAction(BaseAction):
             )
             return
         walker: PedestrianEntity = pedestrian
-        # A pedestrian has no route_to(): the call raises the AttributeError it
-        # always did.  Codon, which reads TYPE_CHECKING as true, compiles none.
-        if TYPE_CHECKING:
-            raise AttributeError("route_to")
-        else:
-            walker.route_to(world, self._goal)
+        self._step_walk(world, walker)
+
+    def _step_walk(self, world: "carla.World", walker: PedestrianEntity) -> None:
+        """Walk *walker* one tick along its route, planning it on the first."""
+        if self._walk is None:
+            points = plan_walk(walker, self._goal, self._waypoints)
+            if len(points) < 2:
+                logger.warning(
+                    "RoutingAction: no walk for '%s' to follow", str(self._entity_name)
+                )
+                return
+            vertices: list[TrajectoryVertex] = []
+            for point in points:
+                vertices.append(TrajectoryVertex(point))
+            walk = FollowTrajectoryAction(
+                self._entity_name,
+                Trajectory(f"{self.label} walk", vertices),
+                following_mode=TrajectoryFollowingMode.FOLLOW,
+                label=f"{self.label}_walk",
+                speed=self._walking_speed,
+            )
+            self._walk = walk
+            # The run ends when the walk does.
+            ending: BaseCondition = _TrajectoryEnd(walk, self.label)
+            self._until = ending
+        stepping: FollowTrajectoryAction = self._walk
+        stepping.tick(world, self._elapsed)
 
     def _route(self, world: "carla.World", entity: BackendDriven) -> None:
         # Waypoints only when there are some: an entity that overrides

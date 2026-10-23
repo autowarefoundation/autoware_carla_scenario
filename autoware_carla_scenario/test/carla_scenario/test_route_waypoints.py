@@ -232,25 +232,26 @@ class TestTheRoutingActionHandsThemOn:
     def test_a_pedestrian_is_found_when_no_vehicle_has_the_role(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """A pedestrian is kept as a pedestrian only: the second lookup."""
+        """A pedestrian is kept as a pedestrian only: the second lookup, whose
+        walk the action plans and steps itself."""
+        from autoware_carla_scenario.actions import routing
         from autoware_carla_scenario.entity import registry
         from autoware_carla_scenario.entity.pedestrian_entity import (
             PedestrianEntity,
         )
 
-        routed: list[object] = []
+        planned: list[object] = []
 
-        class _RoutedWalker(PedestrianEntity):
-            def route_to(
-                self, world, goal, *, initial_pose=None, ground_projection=None
-            ):
-                routed.append(goal)
+        def _plan(walker, goal, waypoints):  # noqa: ANN001, ANN202
+            planned.append((walker, goal))
+            return []
 
-        walker = _RoutedWalker.__new__(_RoutedWalker)
+        monkeypatch.setattr(routing, "plan_walk", _plan)
+        walker = PedestrianEntity.__new__(PedestrianEntity)
         self._execute(monkeypatch, walker, ())
 
         assert "ego" not in registry._VEHICLES
-        assert routed == [Lanelet2Pose(lanelet_id=3, s=7.0)]
+        assert planned == [(walker, Lanelet2Pose(lanelet_id=3, s=7.0))]
 
     def test_an_entity_not_registered_is_skipped(
         self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture

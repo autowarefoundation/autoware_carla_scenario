@@ -10,6 +10,7 @@ route search; and :class:`DeclarativeScenario` picks a route on the loaded map.
 from __future__ import annotations
 
 import copy
+import math
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -722,3 +723,173 @@ class TestAnNpcVehicleFollowsTheRoute:
         ).execute(_OpenWorld())  # type: ignore[arg-type]
 
         assert len(tm.paths) == 1
+
+
+class _StandingWalker:
+    def __init__(self, transform: Any) -> None:
+        self._transform = transform
+
+    def get_transform(self) -> Any:
+        return self._transform
+
+
+class TestAPedestrianWalksTheRoute:
+    """plan_walk() lays the walk out; RoutingAction walks it."""
+
+    @staticmethod
+    def _walker() -> Any:
+        from autoware_carla_scenario.coordinate.transform import to_carla_world
+        from autoware_carla_scenario.entity import (
+            PedestrianEntity,
+            PedestrianEntityConfig,
+            SpawnTransform,
+        )
+
+        walker = PedestrianEntity(
+            PedestrianEntityConfig(
+                role_name="walker1", spawn_location=SpawnTransform(carla.Transform())
+            )
+        )
+        walker._walker = _StandingWalker(  # type: ignore[assignment]
+            to_carla_world(Lanelet2Pose(rm.CROSSWALK_W, 2.0)).to_carla_transform()
+        )
+        return walker
+
+    def test_with_no_walkable_way_a_leg_is_straight(self, loaded: None) -> None:
+        """The crosswalks of the crossroads join nothing: each leg is straight."""
+        from autoware_carla_scenario.coordinate.transform import to_carla_world
+        from autoware_carla_scenario.entity.pedestrian_entity import (
+            WALK_POINT_STEP_M,
+            plan_walk,
+        )
+
+        goal = Lanelet2Pose(lanelet_id=rm.CROSSWALK_E, s=10.0)
+        points = plan_walk(self._walker(), goal, [])
+
+        start = to_carla_world(Lanelet2Pose(rm.CROSSWALK_W, 2.0))
+        end = to_carla_world(goal)
+        assert (points[0].x, points[0].y) == pytest.approx((start.x, start.y))
+        assert (points[-1].x, points[-1].y) == pytest.approx((end.x, end.y))
+        steps = [math.hypot(b.x - a.x, b.y - a.y) for a, b in zip(points, points[1:])]
+        assert max(steps) <= WALK_POINT_STEP_M + 1e-6
+
+    def test_through_a_waypoint(self, loaded: None) -> None:
+        from autoware_carla_scenario.coordinate.transform import to_carla_world
+        from autoware_carla_scenario.entity.pedestrian_entity import plan_walk
+
+        via = Lanelet2Pose(lanelet_id=rm.CROSSWALK_W, s=12.0)
+        points = plan_walk(self._walker(), Lanelet2Pose(rm.CROSSWALK_E, 10.0), [via])
+
+        at = to_carla_world(via)
+        assert min(math.hypot(p.x - at.x, p.y - at.y) for p in points) < 1e-6
+
+    def test_an_unspawned_walker_has_no_walk(self, loaded: None) -> None:
+        from autoware_carla_scenario.entity import (
+            PedestrianEntity,
+            PedestrianEntityConfig,
+            SpawnTransform,
+        )
+        from autoware_carla_scenario.entity.pedestrian_entity import plan_walk
+
+        walker = PedestrianEntity(
+            PedestrianEntityConfig(
+                role_name="walker1", spawn_location=SpawnTransform(carla.Transform())
+            )
+        )
+        assert plan_walk(walker, Lanelet2Pose(rm.CROSSWALK_E, 10.0), []) == []
+
+
+class _Walk:
+    """Stands in for the FollowTrajectoryAction a RoutingAction walks with."""
+
+    made: list["_Walk"] = []
+
+    def __init__(self, entity_name: Any, trajectory: Any, **kwargs: Any) -> None:
+        self.entity_name = entity_name
+        self.trajectory = trajectory
+        self.kwargs = kwargs
+        self.ticks = 0
+        self.finished = False
+        _Walk.made.append(self)
+
+    def tick(self, world: Any, elapsed: float) -> None:
+        self.ticks += 1
+
+
+class TestTheRoutingActionWalks:
+    def test_it_walks_until_the_walk_ends(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from autoware_carla_scenario.action_state import ActionState
+        from autoware_carla_scenario.actions import routing
+        from autoware_carla_scenario.coordinate import CarlaWorldPose
+        from autoware_carla_scenario.entity import registry
+        from autoware_carla_scenario.entity.pedestrian_entity import PedestrianEntity
+        from autoware_carla_scenario.trajectory.model import TrajectoryFollowingMode
+
+        _Walk.made = []
+        monkeypatch.setattr(routing, "FollowTrajectoryAction", _Walk)
+        monkeypatch.setattr(
+            routing,
+            "plan_walk",
+            lambda walker, goal, waypoints: [
+                CarlaWorldPose(x=0.0, y=0.0, z=0.0),
+                CarlaWorldPose(x=5.0, y=0.0, z=0.0),
+            ],
+        )
+        monkeypatch.setattr(registry, "_VEHICLES", {})
+        monkeypatch.setattr(registry, "_PEDESTRIANS", {})
+        registry.register_entity("walker1", PedestrianEntity.__new__(PedestrianEntity))
+
+        action = routing.RoutingAction(
+            "walker1", Lanelet2Pose(lanelet_id=3, s=7.0), walking_speed=0.9
+        )
+        action.tick(object(), 0.0)  # type: ignore[arg-type]
+        (walk,) = _Walk.made
+        assert walk.kwargs["following_mode"] is TrajectoryFollowingMode.FOLLOW
+        assert walk.kwargs["speed"] == 0.9
+        assert len(walk.trajectory.vertices) == 2
+        assert action.reissues_while_running
+
+        for t in (0.05, 0.1, 0.15):
+            action.tick(object(), t)  # type: ignore[arg-type]
+        assert walk.ticks == 4
+        assert action.state is ActionState.RUNNING
+
+        walk.finished = True
+        action.tick(object(), 0.2)  # type: ignore[arg-type]
+        action.tick(object(), 0.25)  # type: ignore[arg-type]
+        assert action.state is ActionState.COMPLETE
+
+    def test_a_walking_speed_must_be_positive(self) -> None:
+        from autoware_carla_scenario.actions.routing import RoutingAction
+
+        with pytest.raises(ValueError, match="walking_speed"):
+            RoutingAction("walker1", Lanelet2Pose(3, 7.0), walking_speed=0.0)
+
+
+class TestAPedestrianRoutedFromTheStart:
+    def test_its_walk_is_put_on_the_loop(self) -> None:
+        """An init routing card on a pedestrian: walking needs the ticks."""
+        from types import SimpleNamespace
+
+        from autoware_carla_scenario.actions import RoutingAction, TurnAction
+        from autoware_carla_scenario.traffic import TurnDirection
+
+        scenario = SimpleNamespace(
+            _compiled=SimpleNamespace(
+                npcs=[
+                    SimpleNamespace(id="walker1", kind="pedestrian"),
+                    SimpleNamespace(id="npc1", kind="vehicle"),
+                ]
+            )
+        )
+        routing_card = RoutingAction("walker1", Lanelet2Pose(3, 7.0))
+
+        def walks(actor: str, action: Any) -> bool:
+            node = SimpleNamespace(node=SimpleNamespace(actor=actor))
+            return DeclarativeScenario._walks(scenario, node, action)  # type: ignore[arg-type]
+
+        assert walks("walker1", routing_card)
+        assert not walks("npc1", RoutingAction("npc1", Lanelet2Pose(3, 7.0)))
+        assert not walks("walker1", TurnAction("walker1", TurnDirection.LEFT))

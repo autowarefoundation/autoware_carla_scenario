@@ -1120,7 +1120,11 @@ itself, and an entity's manoeuvre intents (`change_lane`, `turn_at_junction`,
 `follow_route`) are delegated to whichever backend drives it. A goal given to a
 vehicle the backend drives, the ego or an NPC, becomes one of them:
 `BackendDriven.route_to` plans the lanelets to it, through any waypoints, and
-hands the backend that path.
+hands the backend that path. A pedestrian given one is walked by the
+`RoutingAction` itself, on the tick loop: `plan_walk` lays the walk on the
+walkable lanelets (a straight line for a leg they do not join up, as across a
+road whose crosswalks only overlap its walkways), and the action steps it with
+the walking `FollowTrajectoryAction` does in `FOLLOW` mode.
 
 **Who drives the ego**: `use_autopilot` decides whether the backend is given the
 ego actor to drive or told to keep its hands off it. `EgoVehicle` opts in (TrafficManager drives);

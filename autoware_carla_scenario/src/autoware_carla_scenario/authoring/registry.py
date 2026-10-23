@@ -2418,6 +2418,15 @@ register_action_spec(
                     "Empty: the shortest way to the goal."
                 ),
             ),
+            FieldSpec(
+                name="walking_speed",
+                label="Walking speed",
+                kind="number",
+                default=1.4,
+                required=False,
+                unit="m/s",
+                help="How fast a pedestrian walks the route. A vehicle ignores it.",
+            ),
         ),
         description=(
             "Give a vehicle a destination and let its stack plan the route. "

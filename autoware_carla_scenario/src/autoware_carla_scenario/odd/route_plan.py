@@ -117,14 +117,44 @@ def route_lanelets(
     for there, what in stops[1:]:
         if there.id == path[-1].id:
             continue  # already on it
-        leg: Optional[LaneletPath] = routing_graph.shortestPath(path[-1], there)
-        if leg is None:
+        # A lanelet a graph lets be travelled both ways -- a pedestrian's --
+        # is in it twice, once inverted: the leg may end on either, and the
+        # first may start on either too, since nothing has set the way the
+        # start lanelet is travelled yet.  A vehicle's graph has only one.
+        starts = [path[-1]]
+        if len(path) == 1:
+            starts.append(path[-1].invert())
+        legs = _shortest_leg(routing_graph, starts, [there, there.invert()])
+        if not legs:
             raise RouteError(
                 f"no route from lanelet {path[-1].id} to lanelet {there.id} ({what})"
             )
-        found: LaneletPath = leg
-        path.extend(list(found)[1:])
+        # Its first lanelet is the one the leg starts on, as the graph travels
+        # it.
+        path[-1] = legs[0]
+        path.extend(legs[1:])
     return path
+
+
+def _shortest_leg(
+    routing_graph: RoutingGraph,
+    starts: Sequence[ConstLanelet],
+    ends: Sequence[ConstLanelet],
+) -> list[ConstLanelet]:
+    """The shortest of the paths from any of *starts* to any of *ends*, or none."""
+    best: list[ConstLanelet] = []
+    best_length = 0.0
+    for start in starts:
+        for end in ends:
+            leg: Optional[LaneletPath] = routing_graph.shortestPath(start, end)
+            if leg is None:
+                continue
+            found: LaneletPath = leg
+            lanelets = list(found)
+            length = sum(_length(lanelet) for lanelet in lanelets)
+            if not best or length < best_length:
+                best, best_length = lanelets, length
+    return best
 
 
 def plan_route(
@@ -185,27 +215,41 @@ def route_poses(
             begin = max(begin, half)
         if i < last and changes[i]:
             end = min(end, half)
-        s = begin
-        while s < end:
-            poses.append(Lanelet2Pose(lanelet_id=int(lanelet.id), s=s))
-            s += step
+        length = _length(lanelet)
+        u = begin
+        while u < end:
+            poses.append(
+                Lanelet2Pose(lanelet_id=int(lanelet.id), s=_s_of(lanelet, length, u))
+            )
+            u += step
         if i == last:
-            poses.append(Lanelet2Pose(lanelet_id=int(lanelet.id), s=end))
+            poses.append(
+                Lanelet2Pose(lanelet_id=int(lanelet.id), s=_s_of(lanelet, length, end))
+            )
     return poses
+
+
+def _s_of(lanelet: ConstLanelet, length: float, u: float) -> float:
+    """``s`` along *lanelet* of the point *u* metres along the way it is driven
+    -- or walked: a lanelet a routing graph travels backwards is inverted."""
+    return length - u if lanelet.inverted() else u
 
 
 def _driven_spans(
     route: PlannedRoute, path: Sequence[ConstLanelet]
 ) -> list[tuple[float, float]]:
-    """``(begin, end)`` metres along each lanelet of *path*: the start lanelet
-    from the start pose on, the goal lanelet up to the goal pose."""
+    """``(begin, end)`` metres along each lanelet of *path*, the way it is
+    travelled: the start lanelet from the start pose on, the goal lanelet up to
+    the goal pose."""
     goal_s = route.goal.s if route.goal is not None else 0.0
     last = len(path) - 1
     spans: list[tuple[float, float]] = []
     for i, lanelet in enumerate(path):
         length = _length(lanelet)
-        begin = _clamp(route.start.s, length) if i == 0 else 0.0
-        end = _clamp(goal_s, length) if i == last else length
+        # Along the way the lanelet is travelled, which is the other way round
+        # for one walked backwards.
+        begin = _s_of(lanelet, length, _clamp(route.start.s, length)) if i == 0 else 0.0
+        end = _s_of(lanelet, length, _clamp(goal_s, length)) if i == last else length
         spans.append((begin, max(begin, end)))
     return spans
 

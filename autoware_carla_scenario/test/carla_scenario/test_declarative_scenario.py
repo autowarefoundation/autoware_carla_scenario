@@ -365,6 +365,18 @@ class TestRoutingActionBuilder:
         assert isinstance(action, RoutingAction)
         assert action.waypoints == (Lanelet2Pose(263, 0.0), Lanelet2Pose(264, 0.0))
 
+    def test_a_walking_speed_reaches_the_action(self) -> None:
+        from autoware_carla_scenario.actions import RoutingAction
+
+        document = self._document_with_a_goal("npc1")
+        document.actions[0].params["walking_speed"] = 0.8
+        compiled = compile_document(document)
+
+        action = instantiate_action(compiled.actions[0], BuildContext(scenario=None))
+
+        assert isinstance(action, RoutingAction)
+        assert action._walking_speed == 0.8
+
     def test_no_via_lanelets_no_waypoints(self) -> None:
         """A card written before the field existed still compiles, to none."""
         from autoware_carla_scenario.actions import RoutingAction
