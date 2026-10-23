@@ -2762,6 +2762,18 @@ register_condition_spec(
                 ),
             ),
             _edge_to_edge_field(),
+            FieldSpec(
+                name="signed",
+                label="Ahead (+) or behind (-)",
+                kind="bool",
+                default=False,
+                required=False,
+                help=(
+                    "Along the road only: how far the target is ahead of the "
+                    "subject, the way the subject faces, negative behind it -- "
+                    "so -30 with at most reads at least 30 m behind."
+                ),
+            ),
         ),
         description=(
             "Distance from the subject to the target.  Say which frame and "

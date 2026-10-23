@@ -533,6 +533,7 @@ def build_entity_distance_condition(
         edge_to_edge=params["edge_to_edge"],
         coordinate_system=DistanceCoordinateSystem[str(params["measure"]).upper()],
         label=compiled.label,
+        signed=params["signed"],
     )
 
 
