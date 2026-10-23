@@ -1191,13 +1191,6 @@ class TrajectoryRun(BaseAction):
             target.x - actor.get_transform().location.x,
             (target.y - actor.get_transform().location.y),
         )
-        if TYPE_CHECKING:
-            pass  # utils.clearance is not compiled (docs/typecheck.md)
-        else:
-            from ..entity.pedestrian_entity import _clear_walk  # noqa: PLC0415
-
-            location = actor.get_transform().location
-            dx, dy, speed = _clear_walk(actor, location, dx, dy, speed)
         norm = math.hypot(dx, dy)
         if norm < 1e-6:
             speed, dx, dy, norm = 0.0, 1.0, 0.0, 1.0

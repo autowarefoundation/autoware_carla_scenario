@@ -83,12 +83,6 @@ def steer_walker(
     """
     target = path.at_distance(here + WALKER_LOOKAHEAD_M)
     dx, dy = target.x - location.x, target.y - location.y
-    if TYPE_CHECKING:
-        # The way ahead is read off a world snapshot (utils.clearance, which
-        # the static check does not compile).
-        pass
-    else:
-        dx, dy, speed_mps = _clear_walk(actor, location, dx, dy, speed_mps)
     norm = math.hypot(dx, dy)
     if norm < 1e-6:
         speed_mps, dx, dy, norm = 0.0, 1.0, 0.0, 1.0
@@ -100,53 +94,27 @@ def steer_walker(
     )
 
 
-#: How far ahead (m) a walker looks for a vehicle in its way.
-WALKER_CLEARANCE_M: float = 2.0
-#: How far (m) clear of a standing vehicle's outline a walker walks round it.
-_WALK_ROUND_M: float = 0.8
-#: A vehicle faster than this (m/s) in a walker's way is waited for.
-_MOVING_MPS: float = 0.3
+def _walk_by_ai(
+    walker: "carla.Actor", path: "ResolvedTrajectory", here: float, speed: float
+) -> bool:
+    """One tick of *walker* on CARLA's walker controller
+    (:mod:`._walker_ai`); ``False`` on a map without a navigation mesh."""
+    from ._walker_ai import drive  # noqa: PLC0415
 
-
-def _clear_walk(
-    actor: "carla.Actor",
-    location: "carla.Location",
-    dx: float,
-    dy: float,
-    speed_mps: float,
-) -> tuple[float, float, float]:
-    """The step *actor* takes towards ``(dx, dy)`` at *speed_mps*, clear of
-    vehicles: a vehicle moving across its way is waited for (it stands), one
-    standing there is walked round, on the side the walker is already on.
-    Walkers that walked straight on fell over the vehicles they met."""
-    from ..utils.clearance import first_in_way  # noqa: PLC0415
-
-    heading = math.degrees(math.atan2(dy, dx))
     try:
-        world = actor.get_world()
-        found = first_in_way(
-            world,
-            int(actor.id),
-            location.x,
-            location.y,
-            heading,
-            "vehicle",
-            WALKER_CLEARANCE_M,
-            0.4,
-        )
+        return drive(walker, path, here, speed)
+    except AttributeError:
+        return False  # a walker with no world to ask (a test double)
+
+
+def _release_walker_ai(walker: "carla.Actor") -> None:
+    """Stop and destroy *walker*'s controller, if it has one."""
+    from ._walker_ai import release  # noqa: PLC0415
+
+    try:
+        release(int(walker.id))
     except (AttributeError, RuntimeError):
-        return dx, dy, speed_mps
-    if found is None:
-        return dx, dy, speed_mps
-    if found.speed > _MOVING_MPS:
-        return dx, dy, 0.0
-    rad = math.radians(heading)
-    left_x, left_y = -math.sin(rad), math.cos(rad)
-    away = -1.0 if found.side > 0.0 else 1.0
-    reach = found.radius + _WALK_ROUND_M
-    aim_x = found.x + away * reach * left_x
-    aim_y = found.y + away * reach * left_y
-    return aim_x - location.x, aim_y - location.y, speed_mps
+        pass
 
 
 @dataclass
@@ -302,8 +270,13 @@ class PedestrianEntity(WalkedEntity):
         return walker
 
     def destroy(self) -> None:
-        """Destroy the pedestrian actor and release resources."""
+        """Destroy the pedestrian actor and release resources (its walker
+        controller, first)."""
         if self._walker is not None:
+            if TYPE_CHECKING:
+                pass  # the walker controller is not compiled (docs/typecheck.md)
+            else:
+                _release_walker_ai(self._walker)
             self._walker.destroy()
             self._walker = None
 
@@ -445,12 +418,20 @@ class PedestrianEntity(WalkedEntity):
         self._walk_distance = here
         if here >= path.length - WALK_ARRIVAL_M:
             self._walk = None
+            if TYPE_CHECKING:
+                pass  # the walker controller is not compiled (docs/typecheck.md)
+            else:
+                _release_walker_ai(walker)
             walker.apply_control(carla.WalkerControl(speed=0.0))
             return
         speed = self._walk_speed
         if speed_mps is not None:
             speed = speed_mps
-        steer_walker(walker, location, path, here, speed)
+        if TYPE_CHECKING:
+            steer_walker(walker, location, path, here, speed)
+        elif not _walk_by_ai(walker, path, here, speed):
+            # No navigation mesh on this map: stepped along the route.
+            steer_walker(walker, location, path, here, speed)
 
     def release_from_traffic(self, world: "carla.World") -> None:
         """Take this pedestrian back from the traffic backend that walks it,

@@ -327,12 +327,20 @@ subject along the road, the way the subject faces, negative behind it
 (`coordinate.lane_distance.lane_offset`), so it reads the same whether the ego
 is moving or stopped.
 
-Road users the framework moves itself keep clear of each other as the
-TrafficManager's do: a vehicle driven by its own controller (`follow` mode, a
-final approach) brakes for a walker in its way within its stopping distance,
-and a walker moved by the route walker (or `follow` mode) waits for a vehicle
-moving across its way and walks round one standing there
-(`utils.clearance`). A walker that falls over all the same is taken out of the
+A pedestrian routed in `driver` mode is walked by CARLA's own walker
+controller (`controller.ai.walker`) where the map has a pedestrian navigation
+mesh: it keeps to the pavements, crosses at crossings (waiting at the kerb, as
+CARLA's walkers do), and walks round what stands in its way. It is sent along
+its route a target every 10 m, its top speed the walk's pace (0 holds it); a
+recorded walk that crossed the road away from a crossing is walked to the
+nearest crossing instead, the navigation mesh's way (CARLA's
+`set_pedestrians_cross_factor` would let walkers cross anywhere; it is left at
+its default). A map without a navigation mesh is said once, and its walkers are
+stepped along their routes as before. The navigation mesh comes with the map's
+import (roadgen's `<Name>Package.py` builds it with CARLA's RecastBuilder).
+A vehicle driven by the framework's own controller (`follow` mode, a final
+approach), which the TrafficManager does not drive, brakes for a walker in its
+way within its stopping distance (`utils.clearance`). A walker that falls over all the same is taken out of the
 world once it has lain there 5 s (`npc_collisions.FALLEN_DESPAWN_S`, the
 monitor's `despawn_fallen_after_s`; never the ego), with a `despawn` record
 of reason `fallen`.

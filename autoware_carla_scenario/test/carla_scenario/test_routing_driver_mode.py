@@ -548,24 +548,87 @@ def test_a_walker_ahead_is_found_and_one_beside_is_not() -> None:
     assert clearance.first_in_way(world, 1, 0.0, 0.0, 180.0, "walker", 8.0, 1.5) is None
 
 
-def test_a_walker_walks_round_a_standing_car_and_waits_for_a_moving_one() -> None:
-    from autoware_carla_scenario.entity.pedestrian_entity import _clear_walk
-    from autoware_carla_scenario.utils import clearance
+class _Controller:
+    def __init__(self) -> None:
+        self.calls: list[Any] = []
 
-    for speed, waits in ((0.0, False), (3.0, True)):
-        clearance._CACHE.frame = -1
-        clearance._CACHE.episode = -1
-        world = _SnapshotWorld(
-            {
-                7: ("walker.pedestrian.0001", 0.0, 0.0, 1.0),
-                8: ("vehicle.mini", 1.5, 0.3, speed),
-            }
-        )
-        walker = SimpleNamespace(id=7, get_world=lambda world=world: world)
-        location = SimpleNamespace(x=0.0, y=0.0)
-        dx, dy, step = _clear_walk(walker, location, 1.0, 0.0, 1.4)  # type: ignore[arg-type]
-        if waits:
-            assert step == 0.0
-        else:
-            assert step == 1.4
-            assert dy < -2.0  # round it, on the side away from its centre
+    def start(self) -> None:
+        self.calls.append("start")
+
+    def go_to_location(self, location: Any) -> None:
+        self.calls.append(("go", round(location.x, 1)))
+
+    def set_max_speed(self, speed: float) -> None:
+        self.calls.append(("speed", speed))
+
+    def stop(self) -> None:
+        self.calls.append("stop")
+
+    def destroy(self) -> None:
+        self.calls.append("destroy")
+
+
+class _AiWorld:
+    def __init__(self, navmesh: bool, world_id: int) -> None:
+        self.id = world_id
+        self.navmesh = navmesh
+        self.controller = _Controller()
+
+    def get_random_location_from_navigation(self) -> Any:
+        return SimpleNamespace(x=0.0, y=0.0, z=0.0) if self.navmesh else None
+
+    def get_blueprint_library(self) -> Any:
+        return SimpleNamespace(find=lambda name: name)
+
+    def spawn_actor(self, blueprint: Any, transform: Any, attach_to: Any) -> Any:
+        assert blueprint == "controller.ai.walker"
+        return self.controller
+
+
+def path_of(length: float) -> Any:
+    from autoware_carla_scenario.trajectory.model import ResolvedTrajectory
+
+    return ResolvedTrajectory([0.0, length], [0.0, 0.0], [0.0, 0.0], [None, None])
+
+
+def test_a_routed_walker_is_walked_by_carlas_controller() -> None:
+    from autoware_carla_scenario.entity import _walker_ai
+    from autoware_carla_scenario.trajectory.model import ResolvedTrajectory
+
+    world = _AiWorld(True, 101)
+    where = SimpleNamespace(x=0.0, y=0.0, z=-500.0)
+    walker = SimpleNamespace(id=55, get_world=lambda: world, get_location=lambda: where)
+    # Still under the map (brought in, not yet moved there): not started yet.
+    assert _walker_ai.drive(walker, path_of(25.0), 0.0, 1.4)
+    assert world.controller.calls == []
+    where.z = 0.0
+    path = ResolvedTrajectory([0.0, 25.0], [0.0, 0.0], [0.0, 0.0], [None, None])
+    assert _walker_ai.drive(walker, path, 0.0, 1.4)
+    assert _walker_ai.drive(walker, path, 9.0, 1.4)  # within 2 m of the first target
+    assert _walker_ai.drive(walker, path, 9.5, 0.0)  # held
+    _walker_ai.release(55)
+    assert world.controller.calls == [
+        "start",
+        ("go", 10.0),
+        ("speed", 1.4),
+        ("go", 20.0),
+        ("speed", 0.0),
+        "stop",
+        "destroy",
+    ]
+
+
+def test_without_a_navmesh_the_walker_is_stepped_and_it_is_said_once(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from autoware_carla_scenario.entity import _walker_ai
+    from autoware_carla_scenario.trajectory.model import ResolvedTrajectory
+
+    world = _AiWorld(False, 102)
+    walker = SimpleNamespace(id=56, get_world=lambda: world)
+    path = ResolvedTrajectory([0.0, 25.0], [0.0, 0.0], [0.0, 0.0], [None, None])
+    with caplog.at_level(logging.WARNING):
+        assert not _walker_ai.drive(walker, path, 0.0, 1.4)
+        assert not _walker_ai.drive(walker, path, 1.0, 1.4)
+    assert sum("navigation mesh" in r.getMessage() for r in caplog.records) == 1
+    assert world.controller.calls == []
