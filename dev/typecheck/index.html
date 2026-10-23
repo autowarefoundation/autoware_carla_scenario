@@ -4863,8 +4863,29 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   no import in the <code>else</code> branch, nor in the body of <code>if not TYPE_CHECKING:</code>
   (the same branch, written the other way round): <code>scenario_queue</code> imports
   tqdm in an <code>else</code> branch, at module level, and waits without the progress
-  bar in the first branch. The <code>logging</code> shim's
-  methods take <code>exc_info</code> as a <code>bool</code>.
+  bar in the first branch. The <code>logging</code> shim covers, with CPython's
+  signatures: <code>getLogger</code>, <code>getLevelName</code>, the level constants (<code>NOTSET</code> to <code>CRITICAL</code>,
+  <code>WARN</code>, <code>FATAL</code>) and <code>BASIC_FORMAT</code>; <code>Logger.debug</code>, <code>info</code>, <code>warning</code>,
+  <code>warn</code> (the deprecated alias), <code>error</code>, <code>exception</code>, <code>critical</code>, <code>fatal</code> and
+  <code>log(level, msg, ...)</code>, and the module-level functions of the same names;
+  <code>setLevel</code>, <code>isEnabledFor</code>, <code>getEffectiveLevel</code>, <code>addHandler</code>,
+  <code>removeHandler</code>, <code>hasHandlers</code>, <code>getChild</code> and the <code>handlers</code> list; <code>Handler</code>, <code>StreamHandler</code>,
+  <code>FileHandler</code>, <code>NullHandler</code> and <code>Formatter</code>; and <code>basicConfig</code> with its
+  keywords (<code>filename</code>, <code>filemode</code>, <code>format</code>, <code>datefmt</code>, <code>style</code>, <code>level</code>,
+  <code>stream</code>, <code>handlers</code>, <code>force</code>, <code>encoding</code>, <code>errors</code>). Every logging call
+  takes <code>exc_info</code> and <code>stack_info</code> as a <code>bool</code>, <code>stacklevel</code> as an <code>int</code>
+  and <code>extra</code> untyped: the check reads no more of it than that it is passed.
+  The message may be any object (<code>logger.info(123)</code>), and <code>log()</code> takes its
+  level as an <code>int</code>, as CPython does (a <code>str</code> raises <code>TypeError</code> there), while
+  <code>setLevel()</code> and <code>basicConfig(level=...)</code> take an <code>int</code> or a <code>str</code>
+  (<code>"INFO"</code>). <code>extra={"k": 1}</code> and <code>extra={"k": "v"}</code> pass; a dict with values
+  of two classes (<code>{"k": "v", "n": 2}</code>) is valid Python that Codon cannot type
+  as a dict display, so annotate it (<code>extra: dict[str, str]</code>) or convert
+  the values to <code>str</code>. <code>exc_info</code> takes a <code>bool</code> only (not an exception or a
+  tuple). Left out: <code>LogRecord</code>, <code>Filter</code>, <code>LoggerAdapter</code>, <code>disable</code>,
+  <code>shutdown</code>, <code>captureWarnings</code>, <code>addLevelName</code>, the record factory and logger class
+  functions, and the internals of <code>Logger</code> (<code>handle</code>, <code>makeRecord</code>,
+  <code>callHandlers</code>, <code>findCaller</code>); <code>test_typecheck_model.py</code> lists them.
 - <strong>pyxodr's road network is the model's</strong>: <code>codon/pyxodr/</code> names the
   <code>RoadNetwork</code>, <code>Road</code>, <code>LaneSection</code> and <code>Lane</code> that <code>coordinate.codon</code>
   declares (what the framework reads of them, down to the XML elements, and
@@ -5752,7 +5773,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 23, 2026 01:35:10 UTC"><span class="timeago" datetime="2026-10-23T01:35:10+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 23, 2026 01:35:10 UTC">2026-10-23</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 23, 2026 01:46:30 UTC"><span class="timeago" datetime="2026-10-23T01:46:30+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 23, 2026 01:46:30 UTC">2026-10-23</span>
   </span>
 
     
