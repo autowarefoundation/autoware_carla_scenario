@@ -322,13 +322,13 @@ class RoutingAction(BaseAction):
                  timing: TickTiming = TickTiming("pre_tick"), *_kw, label: str = "routing",
                  once: bool = True, initial_pose: Optional[CarlaWorldPose] = None,
                  ground_projection = None, waypoints = (), walking_speed: float = 1.4,
-                 trajectory: Optional[Trajectory] = None,
+                 cross_factor = None, trajectory: Optional[Trajectory] = None,
                  mode: RoutingMode = RoutingMode("driver"), time_reference = None,
                  initial_distance_offset: float = 0.0, until = None,
                  control_config = None, hidden_outside_trajectory: bool = False,
                  speed = None, appear_on_start: bool = False, stop_at_end: bool = True):
         _keyword_only(_kw, "RoutingAction(): label, once, initial_pose, ground_projection, "
-                           "waypoints, walking_speed, trajectory, mode, time_reference, "
+                           "waypoints, walking_speed, cross_factor, trajectory, mode, time_reference, "
                            "initial_distance_offset, until, control_config, "
                            "hidden_outside_trajectory, speed, appear_on_start and stop_at_end")
         _expect_role(entity_name)
@@ -336,6 +336,7 @@ class RoutingAction(BaseAction):
         _expect_lanelet2_poses(waypoints)
         _expect_optional_timing(time_reference)
         _expect_optional_float(speed)
+        _expect_optional_float(cross_factor)
         super().__init__(label, condition, timing, once=once, until=until)
 
     @property

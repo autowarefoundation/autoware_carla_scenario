@@ -2468,6 +2468,19 @@ register_action_spec(
                 ),
             ),
             FieldSpec(
+                name="cross_factor",
+                label="Crosses away from crossings",
+                kind="number",
+                default=None,
+                required=False,
+                help=(
+                    "For a pedestrian walked by CARLA's walker controller: the "
+                    "probability (0 to 1) that its route may cross a road away "
+                    "from a crossing -- 1 for a recorded walk that did, 0 keeps "
+                    "it to crossings. Empty is CARLA's default (0)."
+                ),
+            ),
+            FieldSpec(
                 name="walking_speed",
                 label="Walking speed",
                 kind="number",

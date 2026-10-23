@@ -95,14 +95,19 @@ def steer_walker(
 
 
 def _walk_by_ai(
-    walker: "carla.Actor", path: "ResolvedTrajectory", here: float, speed: float
+    walker: "carla.Actor",
+    path: "ResolvedTrajectory",
+    here: float,
+    speed: float,
+    location: "carla.Location",
+    cross_factor: Optional[float],
 ) -> bool:
     """One tick of *walker* on CARLA's walker controller
     (:mod:`._walker_ai`); ``False`` on a map without a navigation mesh."""
     from ._walker_ai import drive  # noqa: PLC0415
 
     try:
-        return drive(walker, path, here, speed)
+        return drive(walker, path, here, speed, location, cross_factor)
     except AttributeError:
         return False  # a walker with no world to ask (a test double)
 
@@ -169,6 +174,7 @@ class PedestrianEntity(WalkedEntity):
     _walk: Optional["ResolvedTrajectory"]
     _walk_distance: float
     _walk_speed: float
+    _walk_cross: Optional[float]
 
     def __init__(self, config: PedestrianEntityConfig) -> None:
         self._config = config
@@ -177,6 +183,7 @@ class PedestrianEntity(WalkedEntity):
         self._walk = None
         self._walk_distance = 0.0
         self._walk_speed = DEFAULT_WALKING_SPEED_MPS
+        self._walk_cross = None
 
     def set_traffic_backend(self, backend: TrafficBackend) -> None:
         """Hand this pedestrian's walks to *backend*, the run's traffic backend
@@ -329,10 +336,13 @@ class PedestrianEntity(WalkedEntity):
         ground_projection: "Optional[GroundProjectionConfig]" = None,
         waypoints: "Sequence[Lanelet2Pose]" = (),
         walking_speed: float = DEFAULT_WALKING_SPEED_MPS,
+        cross_factor: Optional[float] = None,
     ) -> None:
         """Lay out a walk from where the walker is through *waypoints* to *goal*,
         which :meth:`walk_on` then walks a tick at a time; see
         ``docs/architecture.md``.  *ground_projection* is not used.
+        *cross_factor* is the probability that CARLA's walker controller may
+        take it across a road away from a crossing (``None``: CARLA's).
 
         Each leg is the shortest path on the walkable lanelets where there is
         one, and straight where there is none -- across a road whose crosswalks
@@ -383,14 +393,21 @@ class PedestrianEntity(WalkedEntity):
         self._walk = ResolvedTrajectory(xs, ys, zs, yaws)
         self._walk_distance = 0.0
         self._walk_speed = walking_speed
+        self._walk_cross = cross_factor
 
-    def walk_along(self, path: "ResolvedTrajectory", walking_speed: float) -> None:
+    def walk_along(
+        self,
+        path: "ResolvedTrajectory",
+        walking_speed: float,
+        cross_factor: Optional[float] = None,
+    ) -> None:
         """Walk *path* as it is, from its start, which :meth:`walk_on` then
         walks a tick at a time: the walk :meth:`route_to` would lay out, given
-        whole (a recorded walk)."""
+        whole (a recorded walk).  *cross_factor* as :meth:`route_to`'s."""
         self._walk = path
         self._walk_distance = 0.0
         self._walk_speed = walking_speed
+        self._walk_cross = cross_factor
 
     @property
     def walking(self) -> bool:
@@ -429,7 +446,7 @@ class PedestrianEntity(WalkedEntity):
             speed = speed_mps
         if TYPE_CHECKING:
             steer_walker(walker, location, path, here, speed)
-        elif not _walk_by_ai(walker, path, here, speed):
+        elif not _walk_by_ai(walker, path, here, speed, location, self._walk_cross):
             # No navigation mesh on this map: stepped along the route.
             steer_walker(walker, location, path, here, speed)
 

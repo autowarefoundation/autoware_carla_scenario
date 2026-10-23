@@ -331,11 +331,17 @@ A pedestrian routed in `driver` mode is walked by CARLA's own walker
 controller (`controller.ai.walker`) where the map has a pedestrian navigation
 mesh: it keeps to the pavements, crosses at crossings (waiting at the kerb, as
 CARLA's walkers do), and walks round what stands in its way. It is sent along
-its route a target every 10 m, its top speed the walk's pace (0 holds it); a
-recorded walk that crossed the road away from a crossing is walked to the
-nearest crossing instead, the navigation mesh's way (CARLA's
-`set_pedestrians_cross_factor` would let walkers cross anywhere; it is left at
-its default). A map without a navigation mesh is said once, and its walkers are
+its route a target every 10 m (reached 2 m short of it along the walk, or
+2 m from it), its top speed the walk's pace; a walker held by its route's
+timing is taken off the controller while it stands (CARLA sends a walker
+standing 4 s somewhere random) and its target is sent again every 2 s.
+Whether it may cross a road away from a crossing is its own: the
+RoutingAction's `cross_factor` (the card's *Crosses away from crossings*), the
+probability its route may use the road anywhere -- 1 for a recorded walk that
+crossed there, 0 keeps it to crossings, empty is CARLA's default (0). CARLA
+keeps one such factor for the world and reads it only as a walker's controller
+starts (`Navigation::AddWalker`), so it is set to the walker's own just then
+and put back straight after. A map without a navigation mesh is said once, and its walkers are
 stepped along their routes as before. The navigation mesh comes with the map's
 import (roadgen's `<Name>Package.py` builds it with CARLA's RecastBuilder).
 A vehicle driven by the framework's own controller (`follow` mode, a final

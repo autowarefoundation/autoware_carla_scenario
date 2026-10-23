@@ -97,8 +97,8 @@ class PedestrianEntity:
 
     def route_to(self, world: carla.World, goal: Lanelet2Pose, *_kw,
                  initial_pose: Optional[CarlaWorldPose] = None, ground_projection = None,
-                 waypoints = (), walking_speed: float = 1.4) -> None:
-        _keyword_only(_kw, "PedestrianEntity.route_to(): initial_pose, ground_projection, waypoints and walking_speed")
+                 waypoints = (), walking_speed: float = 1.4, cross_factor = None) -> None:
+        _keyword_only(_kw, "PedestrianEntity.route_to(): initial_pose, ground_projection, waypoints, walking_speed and cross_factor")
         _expect_optional_ground_projection(ground_projection)
         _expect_lanelet2_poses(waypoints)
         raise NotImplementedError()

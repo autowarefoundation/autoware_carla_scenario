@@ -699,6 +699,17 @@ def _check_routing(out: _Collector, path: str, node: ActionNode) -> None:
     speed = params.get("speed_ms")
     if not _is_blank(speed) and _coercible_float(speed) and float(str(speed)) < 0.0:
         out.error(f"{path}.speed_ms", "Speed must not be negative.", node.id)
+    cross = params.get("cross_factor")
+    if (
+        not _is_blank(cross)
+        and _coercible_float(cross)
+        and not 0.0 <= float(str(cross)) <= 1.0
+    ):
+        out.error(
+            f"{path}.cross_factor",
+            "Crossing away from crossings is a probability, 0 to 1.",
+            node.id,
+        )
     if not _positive(params.get("time_scale", 1.0)):
         out.error(f"{path}.time_scale", "Time scale must be positive.", node.id)
     if params.get("appear_on_start") and params.get("hidden_outside_trajectory"):

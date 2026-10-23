@@ -1524,6 +1524,7 @@ def build_routing_action(
         once=compiled.node.once,
         waypoints=waypoints,
         walking_speed=params["walking_speed"],
+        cross_factor=params["cross_factor"],
         trajectory=trajectory,
         mode=RoutingMode[str(params["mode"]).upper()],
         time_reference=time_reference,

@@ -139,6 +139,12 @@ class RoutingAction(TrajectoryRun):
         waypoints: Lanelet2 poses the route passes through, with *goal*.
         walking_speed: How fast a pedestrian walks the route in ``driver``
             mode where *speed* does not say, in m/s.
+        cross_factor: The probability (0..1) that a pedestrian walked by
+            CARLA's walker controller (``driver`` mode, a map with a
+            navigation mesh) may cross a road away from a crossing: 1 for a
+            recorded walk that did, 0 keeps it to crossings; ``None`` is
+            CARLA's default (0).  Beside *walking_speed*: both are how this
+            pedestrian walks this route.
         trajectory: The waypoints, the last one the goal, instead of *goal*
             and *waypoints*.
         mode: Who moves the entity (:class:`RoutingMode`).
@@ -168,6 +174,7 @@ class RoutingAction(TrajectoryRun):
     _ground_projection: Optional[GroundProjectionConfig]
     _waypoints: tuple[Lanelet2Pose, ...]
     _walking_speed: float
+    _cross_factor: Optional[float]
     _mode: RoutingMode
     _walking: bool
     _stepping: bool
@@ -196,6 +203,7 @@ class RoutingAction(TrajectoryRun):
         ground_projection: Optional[GroundProjectionConfig] = None,
         waypoints: Sequence[Lanelet2Pose] = (),
         walking_speed: float = DEFAULT_WALKING_SPEED_MPS,
+        cross_factor: Optional[float] = None,
         trajectory: Optional[Trajectory] = None,
         mode: RoutingMode = RoutingMode.DRIVER,
         time_reference: Optional[TrajectoryTiming] = None,
@@ -209,6 +217,10 @@ class RoutingAction(TrajectoryRun):
     ) -> None:
         if not walking_speed > 0.0:
             raise ValueError("walking_speed must be positive")
+        if cross_factor is not None:
+            share: float = cross_factor
+            if not 0.0 <= share <= 1.0:
+                raise ValueError("cross_factor is a probability, 0 to 1")
         if (goal is None) == (trajectory is None):
             raise ValueError(
                 f"{label}: give a route a goal (with its waypoints) or a "
@@ -246,6 +258,7 @@ class RoutingAction(TrajectoryRun):
         self._ground_projection = ground_projection
         self._waypoints = stops
         self._walking_speed = float(walking_speed)
+        self._cross_factor = cross_factor
         self._mode = mode
         self._walking = False
         self._stepping = False
@@ -643,7 +656,7 @@ class RoutingAction(TrajectoryRun):
                 # (which sends a pedestrian at a junction's corner down a
                 # walkway the recording never took).
                 walked: ResolvedTrajectory = track
-                walker.walk_along(walked, self._cruise_walk())
+                walker.walk_along(walked, self._cruise_walk(), self._cross_factor)
             else:
                 walker.route_to(
                     world,
@@ -652,6 +665,7 @@ class RoutingAction(TrajectoryRun):
                     ground_projection=self._ground_projection,
                     waypoints=stops[:-1],
                     walking_speed=self._cruise_walk(),
+                    cross_factor=self._cross_factor,
                 )
             if actor is not None and self._timed():
                 walk = walker.walk_path

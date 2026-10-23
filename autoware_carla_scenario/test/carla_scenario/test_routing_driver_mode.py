@@ -574,6 +574,9 @@ class _AiWorld:
         self.navmesh = navmesh
         self.controller = _Controller()
 
+    def set_pedestrians_cross_factor(self, factor: float) -> None:
+        self.cross_factor = factor
+
     def get_random_location_from_navigation(self) -> Any:
         return SimpleNamespace(x=0.0, y=0.0, z=0.0) if self.navmesh else None
 
@@ -593,29 +596,53 @@ def path_of(length: float) -> Any:
 
 def test_a_routed_walker_is_walked_by_carlas_controller() -> None:
     from autoware_carla_scenario.entity import _walker_ai
-    from autoware_carla_scenario.trajectory.model import ResolvedTrajectory
 
     world = _AiWorld(True, 101)
     where = SimpleNamespace(x=0.0, y=0.0, z=-500.0)
-    walker = SimpleNamespace(id=55, get_world=lambda: world, get_location=lambda: where)
+    walker = SimpleNamespace(
+        id=55,
+        get_world=lambda: world,
+        get_location=lambda: where,
+        apply_control=lambda control: world.controller.calls.append("stand"),
+    )
+    path = path_of(25.0)
     # Still under the map (brought in, not yet moved there): not started yet.
-    assert _walker_ai.drive(walker, path_of(25.0), 0.0, 1.4)
+    assert _walker_ai.drive(walker, path, 0.0, 1.4, where)
     assert world.controller.calls == []
     where.z = 0.0
-    path = ResolvedTrajectory([0.0, 25.0], [0.0, 0.0], [0.0, 0.0], [None, None])
-    assert _walker_ai.drive(walker, path, 0.0, 1.4)
-    assert _walker_ai.drive(walker, path, 9.0, 1.4)  # within 2 m of the first target
-    assert _walker_ai.drive(walker, path, 9.5, 0.0)  # held
+    assert _walker_ai.drive(walker, path, 0.0, 1.4, where)
+    assert _walker_ai.drive(walker, path, 9.0, 1.4, where)  # 2 m short: reached
+    assert _walker_ai.drive(walker, path, 9.5, 0.0, where)  # held: off it
+    assert _walker_ai.drive(walker, path, 9.5, 1.0, where)  # on again
     _walker_ai.release(55)
     assert world.controller.calls == [
         "start",
         ("go", 10.0),
         ("speed", 1.4),
         ("go", 20.0),
-        ("speed", 0.0),
+        "stop",
+        "stand",
+        "start",
+        ("go", 20.0),
+        ("speed", 1.0),
         "stop",
         "destroy",
     ]
+
+
+def test_a_walkers_own_cross_factor_is_set_as_its_controller_starts() -> None:
+    from autoware_carla_scenario.entity import _walker_ai
+
+    world = _AiWorld(True, 103)
+    factors: list[float] = []
+    world.set_pedestrians_cross_factor = factors.append  # type: ignore[assignment]
+    where = SimpleNamespace(x=0.0, y=0.0, z=0.0)
+    for walker_id, factor in ((57, 1.0), (58, 0.0), (60, None)):
+        walker = SimpleNamespace(id=walker_id, get_world=lambda: world)
+        assert _walker_ai.drive(walker, path_of(25.0), 0.0, 1.4, where, factor)
+        _walker_ai.release(walker_id)
+    # Each set just before its start and put back after; None leaves it.
+    assert factors == [1.0, 0.0, -1.0, 0.0]
 
 
 def test_without_a_navmesh_the_walker_is_stepped_and_it_is_said_once(
@@ -632,3 +659,18 @@ def test_without_a_navmesh_the_walker_is_stepped_and_it_is_said_once(
         assert not _walker_ai.drive(walker, path, 1.0, 1.4)
     assert sum("navigation mesh" in r.getMessage() for r in caplog.records) == 1
     assert world.controller.calls == []
+
+
+def test_a_target_near_enough_counts_as_reached_off_the_walk() -> None:
+    """Taken off the line of its walk, the walker projects short of the
+    target; 2 m from it in a straight line, it has reached it all the same."""
+    from autoware_carla_scenario.entity import _walker_ai
+
+    world = _AiWorld(True, 104)
+    where = SimpleNamespace(x=0.0, y=0.0, z=0.0)
+    walker = SimpleNamespace(id=59, get_world=lambda: world, get_location=lambda: where)
+    assert _walker_ai.drive(walker, path_of(25.0), 0.0, 1.4, where)
+    beside = SimpleNamespace(x=9.0, y=1.5, z=0.0)
+    assert _walker_ai.drive(walker, path_of(25.0), 3.0, 1.4, beside)
+    _walker_ai.release(59)
+    assert ("go", 20.0) in world.controller.calls
