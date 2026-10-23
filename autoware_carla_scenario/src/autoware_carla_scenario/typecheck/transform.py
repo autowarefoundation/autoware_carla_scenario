@@ -23,7 +23,7 @@ which :func:`transform_source_lines` maps back onto the handler):
   with ``@extend`` (:func:`_dataclass_dunders`): ``__eq__`` / ``__ne__``,
   ``__hash__`` (``frozen`` or ``unsafe_hash``), ordering (``order=True``).
 * ``replace(obj, a=x, b=y)`` (``dataclasses.replace``) becomes
-  ``replace(obj)._acs_with__a(a=x)._acs_with__b(b=y)`` (:func:`lower_replace_calls`):
+  ``replace(obj)._acs_with__a(x)._acs_with__b(y)`` (:func:`lower_replace_calls`):
   each dataclass of the module gets one ``_acs_with__<field>`` method per field
   (:func:`_dataclass_replacers`), a typed copy of the object with that field
   changed, so Codon checks the field name and the value's type (the erased
@@ -4194,9 +4194,15 @@ def replace_method(field_name: str) -> str:
 
 
 def lower_replace_calls(tree: ast.Module, edits: _Edits) -> None:
-    """``replace(obj, a=x, b=y)`` becomes ``replace(obj)._acs_with__a(a=x)
-    ._acs_with__b(b=y)``: the copy is made by the typed methods
+    """``replace(obj, a=x, b=y)`` becomes ``replace(obj)._acs_with__a(x)
+    ._acs_with__b(y)``: the copy is made by the typed methods
     :func:`_dataclass_replacers` appends, which Codon checks.
+
+    The value goes by position: a field a base declares has the method on the
+    base and on each subclass (so that it returns the subclass), which makes
+    it virtual, and Codon 0.19 cannot pass a keyword through the dispatch
+    thunk ("'a' is an invalid keyword argument for class_thunk_dispatch()",
+    #494).
 
     Only the text between the arguments is edited, so the values keep the
     rewrites made inside them and every call stays on its lines.
@@ -4207,7 +4213,7 @@ def lower_replace_calls(tree: ast.Module, edits: _Edits) -> None:
         previous = call.args[0]
         for keyword in call.keywords:
             start = edits.node_span(previous)[1]
-            end = edits.node_span(keyword)[0]
+            end = edits.node_span(keyword.value)[0]
             comma = edits.text(start, end).find(",")
             if comma < 0:
                 break

@@ -4386,6 +4386,45 @@ def test_a_dataclass_gets_a_typed_copy_method_per_init_field() -> None:
     assert "return V(lane=lane, best=self.best, speed=self.speed)" in v
 
 
+_REPLACE_CHAIN = """
+from dataclasses import dataclass, replace
+
+@dataclass
+class A:
+    a: int = 0
+
+@dataclass
+class B(A):
+    b: float = 1.0
+
+@dataclass(frozen=True)
+class C(B):
+    c: str = "c"
+    a: int = 9
+"""
+
+
+def test_every_class_of_a_hierarchy_copies_the_fields_it_inherits() -> None:
+    # #494: the base's field has a method on each class, returning that class.
+    a = _replacer_block(_REPLACE_CHAIN, "A")
+    b = _replacer_block(_REPLACE_CHAIN, "B")
+    c = _replacer_block(_REPLACE_CHAIN, "C")
+    assert _methods(a) == {"_acs_with__a"}
+    assert _methods(b) == {"_acs_with__a", "_acs_with__b"}
+    assert _methods(c) == {"_acs_with__a", "_acs_with__b", "_acs_with__c"}
+    assert "def _acs_with__a(self, a: int) -> B:" in b
+    assert "def _acs_with__a(self, a: int) -> C:" in c
+    assert "return C(a=a, b=self.b, c=self.c)" in c
+
+
+def test_replace_passes_the_value_by_position_to_a_possibly_virtual_method() -> None:
+    # A keyword cannot go through Codon's dispatch thunk of an overridden
+    # method (#494).
+    out = transform_source(_REPLACE_CHAIN + "\nx = replace(C(), a=5, b=2.0)\n")
+    line = next(ln for ln in out.splitlines() if ln.startswith("x = "))
+    assert line == "x = replace(C())._acs_with__a(5)._acs_with__b(2.0)"
+
+
 def test_a_class_with_an_init_or_an_unknown_base_gets_no_copy_method() -> None:
     source = """
     from dataclasses import dataclass
@@ -4409,13 +4448,13 @@ def test_a_class_with_an_init_or_an_unknown_base_gets_no_copy_method() -> None:
 @pytest.mark.parametrize(
     ("call", "lowered"),
     [
-        ("replace(w, lane=1)", "replace(w)._acs_with__lane(lane=1)"),
+        ("replace(w, lane=1)", "replace(w)._acs_with__lane(1)"),
         (
             "replace(w, lane=1, best=None)",
-            "replace(w)._acs_with__lane(lane=1)._acs_with__best(best=None)",
+            "replace(w)._acs_with__lane(1)._acs_with__best(None)",
         ),
         ("dataclasses.replace(w, lane=f(1, 2))", None),
-        ("replace((w), lane=1,)", "replace((w))._acs_with__lane(lane=1,)"),
+        ("replace((w), lane=1,)", "replace((w))._acs_with__lane(1,)"),
         ("replace(w)", "replace(w)"),
     ],
 )
@@ -4425,7 +4464,7 @@ def test_replace_becomes_a_chain_of_typed_copies(
     out = transform_source(_REPLACE_DEFS + f"\nx = {call}\n")
     line = next(ln for ln in out.splitlines() if ln.startswith("x = "))
     if lowered is None:
-        assert "._acs_with__lane(lane=f(1, 2))" in line
+        assert "._acs_with__lane(f(1, 2))" in line
     else:
         assert line == f"x = {lowered}"
 
@@ -4436,7 +4475,7 @@ def test_replace_keeps_each_statement_on_its_lines() -> None:
     lines = out.splitlines()
     start = next(i for i, ln in enumerate(lines) if ln.startswith("x = "))
     assert "".join(lines[start : start + 5]).replace(" ", "") == (
-        "x=replace(w)._acs_with__lane(lane=1)._acs_with__best(best=None,)"
+        "x=replace(w)._acs_with__lane(1)._acs_with__best(None,)"
     )
     assert out.count("\n") == len(origin) + PRELUDE.count("\n")
 
@@ -4482,7 +4521,7 @@ def test_replace_imported_inside_a_function_is_lowered() -> None:
     source = (
         "def f(w):\n    from dataclasses import replace\n    return replace(w, a=2)\n"
     )
-    assert "replace(w)._acs_with__a(a=2)" in transform_source(source)
+    assert "replace(w)._acs_with__a(2)" in transform_source(source)
 
 
 @pytest.mark.parametrize(

@@ -1117,11 +1117,16 @@ Two things Python does that Codon 0.19 does not are filled in for you:
   - `dataclasses.replace(obj, a=x, b=y)` is checked as the typed copy it is
     (#487): the check appends to each dataclass of the module one
     `_acs_with__<field>` method per field the constructor takes, and writes
-    the call as `replace(obj)._acs_with__a(a=x)._acs_with__b(b=y)`. An unknown
+    the call as `replace(obj)._acs_with__a(x)._acs_with__b(y)`. An unknown
     field, a value of the wrong type (`replace(w, speed="fast")`) and a
     field declared `field(init=False)` (which Python refuses too) are
     refused at the call, and `replace(plan, best=None)` of an `Optional`
-    field works. It holds for a dataclass the scenario package defines, in
+    field works. A field a base dataclass declares can be replaced on the base
+    and on any subclass, however many levels (`replace(derived, a=5)`), also
+    one a subclass redeclares and in a frozen hierarchy (#494): the value goes
+    by position, as Codon cannot pass a keyword to a method a subclass
+    overrides. A wrong value for it is reported as
+    `dataclasses.replace: field 'a' of Derived is declared int, not str`. It holds for a dataclass the scenario package defines, in
     any of its modules, whose bases are dataclasses of the same module (or
     none) and which has no `__init__` of its own; for any other class (a
     framework or library dataclass) the call is refused with a hint to build
