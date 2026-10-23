@@ -100,12 +100,14 @@ scenario's classes.)
 from __future__ import annotations
 
 import ast
+import copy
 import json
+import keyword
 import re
 import string
 from collections.abc import Iterator
 
-from .scopes import ShadowScopes
+from .scopes import ShadowScopes, _scope_bindings
 from .transform import (
     _ENUM_BASES,
     _dataclass_options,
@@ -1143,6 +1145,7 @@ class _Pass(ShadowScopes):
 
     def visit_Module(self, node: ast.Module) -> None:
         self.enter_module(node)
+        self._namedtuple_foreign = _foreign_collections_bindings(node)
         self.generic_visit(node)
 
     # -- except* -------------------------------------------------------------
@@ -1231,14 +1234,27 @@ class _Pass(ShadowScopes):
 
     # -- collections.namedtuple("P", "x y") (#510) ---------------------------
 
+    _namedtuple_foreign: frozenset[str] = frozenset()
+
     def _is_namedtuple(self, func: ast.expr) -> bool:
+        """``namedtuple`` / ``collections.namedtuple`` as the standard library
+        spells them: not a name the module or an enclosing function binds to
+        something else (the import itself is not such a binding)."""
         if isinstance(func, ast.Name):
-            return func.id == "namedtuple"
-        return (
+            name = func.id
+            if name != "namedtuple":
+                return False
+        elif (
             isinstance(func, ast.Attribute)
             and func.attr == "namedtuple"
             and isinstance(func.value, ast.Name)
             and func.value.id == "collections"
+        ):
+            name = "collections"
+        else:
+            return False
+        return name not in self._namedtuple_foreign and not any(
+            name in bound for bound, _ in self._local_bound
         )
 
     def _namedtuple(self, node: ast.Call) -> None:
@@ -1246,11 +1262,11 @@ class _Pass(ShadowScopes):
         tuple display (a string crashes it, a variable too) and takes neither
         ``rename=`` nor ``defaults=``: a literal string becomes the list; the
         rest is refused with a hint."""
-        for keyword in node.keywords:
-            if keyword.arg in ("rename", "defaults", "field_names", "typename"):
+        for kw in node.keywords:
+            if kw.arg in ("rename", "defaults", "field_names", "typename", "module"):
                 self._refuse(
                     node,
-                    f"Codon's namedtuple() does not take {keyword.arg}=: pass "
+                    f"Codon's namedtuple() does not take {kw.arg}=: pass "
                     "the type name and a list of field names positionally "
                     "(a field with a default: a typing.NamedTuple class)",
                 )
@@ -1260,6 +1276,19 @@ class _Pass(ShadowScopes):
         fields = node.args[1]
         if isinstance(fields, ast.Constant) and isinstance(fields.value, str):
             names = fields.value.replace(",", " ").split()
+            bad = [
+                n
+                for n in names
+                if not n.isidentifier() or keyword.iskeyword(n) or n.startswith("_")
+            ]
+            if bad or len(set(names)) != len(names):
+                self._refuse(
+                    node,
+                    "namedtuple() field names must be distinct identifiers, not "
+                    f"keywords and not starting with an underscore (a ValueError "
+                    f"in Python): {fields.value!r}",
+                )
+                return
             self.edits.replace(
                 *self.edits.node_span(fields),
                 "[" + ", ".join(json.dumps(n) for n in names) + "]",
@@ -1535,6 +1564,43 @@ def _total_ordering_names(tree: ast.Module) -> set[str]:
                 if alias.name == "total_ordering" and not node.level:
                     names.add(alias.asname or alias.name)
     return names
+
+
+def _foreign_collections_bindings(tree: ast.Module) -> frozenset[str]:
+    """Of ``namedtuple`` and ``collections``, those the module binds other than
+    by ``from collections import namedtuple`` / ``import collections``."""
+    stripped = copy.deepcopy(tree)
+    for node in ast.walk(stripped):
+        for field in ("body", "orelse", "finalbody"):
+            body = getattr(node, field, None)
+            if not isinstance(body, list):
+                continue
+            for index, stmt in enumerate(body):
+                if (
+                    isinstance(stmt, ast.ImportFrom)
+                    and stmt.module == "collections"
+                    and stmt.level == 0
+                ):
+                    stmt.names = [
+                        a
+                        for a in stmt.names
+                        if not (a.name == "namedtuple" and not a.asname)
+                    ]
+                elif isinstance(stmt, ast.Import):
+                    stmt.names = [
+                        a
+                        for a in stmt.names
+                        if not (a.name == "collections" and not a.asname)
+                    ]
+                else:
+                    continue
+                if not stmt.names:
+                    body[index] = ast.Pass()
+    bound = _scope_bindings(stripped)
+    for node in ast.walk(stripped):
+        if isinstance(node, ast.Global):
+            bound.update(node.names)
+    return frozenset(bound & {"namedtuple", "collections"})
 
 
 def _ordering_blocks(

@@ -3602,6 +3602,52 @@ def test_namedtuple_it_cannot_express_is_refused(source: str, hint: str) -> None
     assert line == source.count("\n") and hint in message
 
 
+@pytest.mark.parametrize("spec", ['"x x"', '"x class"', '"1x"', '"_x"', '"x-y"'])
+def test_namedtuple_invalid_field_strings_are_refused(spec: str) -> None:
+    [(_, message)] = python_rewrite_refusals(f'P = namedtuple("P", {spec})\n')
+    assert "ValueError" in message
+
+
+def test_namedtuple_module_keyword_is_refused() -> None:
+    [(_, message)] = python_rewrite_refusals('P = namedtuple("P", "x", module="m")\n')
+    assert "module=" in message
+
+
+def test_the_namedtuple_import_is_not_a_shadowing() -> None:
+    for head in ("from collections import namedtuple\n", "import collections\n"):
+        call = (
+            "collections.namedtuple" if "import collections" in head else "namedtuple"
+        )
+        assert _rewritten(f'{head}P = {call}("P", "x y")\n').endswith(
+            f'P = {call}("P", ["x", "y"])\n'
+        )
+
+
+@pytest.mark.parametrize(
+    "head",
+    [
+        "def namedtuple(a, b):\n    return a\n",
+        "from mylib import namedtuple\n",
+        "from collections import namedtuple\nnamedtuple = lambda a, b: a\n",
+        "from typing import NamedTuple as namedtuple\n",
+    ],
+)
+def test_a_namedtuple_the_module_defines_is_left_alone(head: str) -> None:
+    source = head + 'P = namedtuple("P", "x y")\n'
+    assert _rewritten(source) == source
+    assert python_rewrite_refusals(source) == []
+
+
+def test_a_collections_the_module_rebinds_is_left_alone() -> None:
+    source = 'collections = object()\nP = collections.namedtuple("P", "x y")\n'
+    assert _rewritten(source) == source
+
+
+def test_a_local_namedtuple_parameter_is_left_alone() -> None:
+    source = 'def f(namedtuple):\n    return namedtuple("P", "x y")\n'
+    assert _rewritten(source) == source
+
+
 def test_a_lambda_default_that_is_not_a_literal_is_bound_by_a_call() -> None:
     assert (
         _rewritten("fs = [lambda x, k=k: x + k for k in range(3)]\n")
