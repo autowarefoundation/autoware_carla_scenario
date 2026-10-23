@@ -3406,11 +3406,16 @@ value whose members are <code>int</code>, not as a type: it becomes <code>int</c
 <li><code>dataclasses.replace(obj, a=x, b=y)</code> is checked as the typed copy it is
     (#487): the check appends to each dataclass of the module one
     <code>_acs_with__&lt;field&gt;</code> method per field the constructor takes, and writes
-    the call as <code>replace(obj)._acs_with__a(a=x)._acs_with__b(b=y)</code>. An unknown
+    the call as <code>replace(obj)._acs_with__a(x)._acs_with__b(y)</code>. An unknown
     field, a value of the wrong type (<code>replace(w, speed="fast")</code>) and a
     field declared <code>field(init=False)</code> (which Python refuses too) are
     refused at the call, and <code>replace(plan, best=None)</code> of an <code>Optional</code>
-    field works. It holds for a dataclass the scenario package defines, in
+    field works. A field a base dataclass declares can be replaced on the base
+    and on any subclass, however many levels (<code>replace(derived, a=5)</code>), also
+    one a subclass redeclares and in a frozen hierarchy (#494): the value goes
+    by position, as Codon cannot pass a keyword to a method a subclass
+    overrides. A wrong value for it is reported as
+    <code>dataclasses.replace: field 'a' of Derived is declared int, not str</code>. It holds for a dataclass the scenario package defines, in
     any of its modules, whose bases are dataclasses of the same module (or
     none) and which has no <code>__init__</code> of its own; for any other class (a
     framework or library dataclass) the call is refused with a hint to build
@@ -5773,7 +5778,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 23, 2026 01:46:30 UTC"><span class="timeago" datetime="2026-10-23T01:46:30+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 23, 2026 01:46:30 UTC">2026-10-23</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 23, 2026 04:58:48 UTC"><span class="timeago" datetime="2026-10-23T04:58:48+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 23, 2026 04:58:48 UTC">2026-10-23</span>
   </span>
 
     
