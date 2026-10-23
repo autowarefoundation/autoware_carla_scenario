@@ -239,6 +239,13 @@ class _FakeActor:
     def get_transform(self) -> Any:
         return self.transform
 
+    @property
+    def is_alive(self) -> bool:
+        return not self.destroyed
+
+    def get_location(self) -> Any:
+        return self.transform.location
+
     def set_transform(self, transform: Any) -> None:
         self.transform = transform
 
@@ -328,6 +335,10 @@ class _FakeWorld:
 
     def get_actors(self) -> _Actors:
         return _Actors(self.actors)
+
+    def get_map(self) -> Any:
+        """A map no actor stands on: no road ahead to search for a dead end."""
+        return SimpleNamespace(get_waypoint=lambda location: None)
 
     def get_blueprint_library(self) -> _Library:
         self.library_fetches += 1

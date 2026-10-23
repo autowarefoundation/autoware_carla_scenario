@@ -777,6 +777,44 @@ The visibility comes from the ODD as any other attribute: its `visibility`,
 set what the run's weather leaves, and the backend -- this one or `sumo` --
 follows.
 
+## Vehicles the TrafficManager must not destroy
+
+CARLA's TrafficManager destroys a vehicle it drives in two cases, with no
+per-vehicle switch but a `role_name` of `hero`:
+
+- **Standing:** one that has stood (under 0.8 m/s) for 90 s — 180 s at a red
+  light — is destroyed (`BLOCKED_TIME_THRESHOLD`, `ALSM.cpp`).
+- **A dead end:** one whose planned path (4 s of driving ahead, at least 15 m)
+  meets a lane with no successor is destroyed (`marked_for_removal`,
+  `LocalizationStage.cpp`; with OSM mode on, the default).
+
+Only **background vehicles** (`spawn_background`) are left to that. Every other
+vehicle the `traffic_manager` backend has on autopilot — the ego, each NPC the
+scenario authored — is kept from it in `tick()`; under `traffic=sumo` with
+`scenario_vehicles=traffic_manager` the same, since SUMO hands those to it.
+
+- **Standing:** once a kept vehicle has stood 60 s (90 s less a 30 s margin)
+  it is taken off autopilot and put straight back on. Unregistering a vehicle erases its idle
+  time (`ALSM::RemoveActor`) and registering it starts a new one, so the
+  TrafficManager's count starts again. Its per-vehicle settings (desired speed,
+  speed difference, gap, lane-change and ignore rules) are the TrafficManager's
+  parameters, which survive the switch. Its planned waypoints do not, and the
+  points of a path already planned are gone from the path the TrafficManager
+  holds (`LocalizationStage::ImportPath`), so the part of the path it was last
+  given (`follow_route`, `turn_at_junction`) still ahead of it is given again. It drives on as before; it is logged once.
+- **A dead end:** every 0.5 s the road ahead of a kept vehicle is walked down
+  every branch (the TrafficManager picks one at random) a little past the
+  TrafficManager's horizon, on the run's cached map. Where some branch ends,
+  the vehicle is taken off autopilot and held braking where it is, logged once,
+  until it is given a new route or an action takes it over. On a path it was
+  given the walk waits until the path's end is near: the TrafficManager follows
+  the path, which goes on, to there.
+
+Each kept vehicle is looked at every 0.5 s, the first looks spread over that
+period: a velocity read and, unless it is where the last walk found the road
+going on, a waypoint lookup and a walk of a few dozen waypoints. Nothing is
+done per background vehicle, and no map is built.
+
 ## Why this exists
 
 CARLA's TrafficManager is a good default for a handful of scripted NPCs and the

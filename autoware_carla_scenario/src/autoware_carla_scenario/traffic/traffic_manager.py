@@ -15,6 +15,7 @@ action that asks or to the entity that is asked.
 from __future__ import annotations
 
 import logging
+import math
 import random
 from typing import TYPE_CHECKING, Any, ClassVar, Collection, List, Optional, Tuple
 
@@ -97,6 +98,72 @@ TM_DEFAULT_SPEED_DIFFERENCE_PCT: float = 30.0
 #: 0.9 and 0.10 both ship.
 _BACKGROUND_BLUEPRINT = "vehicle.lincoln.mkz*"
 
+# What the TrafficManager destroys a vehicle it drives for, and how a
+# scenario's own vehicles are kept from it: "Vehicles the TrafficManager must
+# not destroy" in docs/traffic_backends.md.  The TrafficManager's figures are
+# LibCarla's ``trafficmanager/Constants.h``.
+
+#: Seconds standing before the TrafficManager destroys a vehicle
+#: (``BLOCKED_TIME_THRESHOLD``; twice that at a red light).
+_TM_BLOCKED_TIME_THRESHOLD_S: float = 90.0
+#: How long before that a standing kept vehicle is re-registered, s.
+_TM_BLOCKED_MARGIN_S: float = 30.0
+#: Below this the TrafficManager counts a vehicle as standing, m/s
+#: (``STOPPED_VELOCITY_THRESHOLD``).
+_TM_STOPPED_SPEED_MPS: float = 0.8
+#: The least it plans a vehicle's path ahead, m (``MINIMUM_HORIZON_LENGTH``).
+_TM_MIN_HORIZON_M: float = 15.0
+#: The most driving it plans ahead, s (``HIGH_SPEED_HORIZON_RATE``).
+_TM_HORIZON_S: float = 4.0
+#: How often each kept vehicle is looked at, s.
+_CHECK_PERIOD_S: float = 0.5
+#: How many slices of a period the vehicles' first looks are spread over.
+_CHECK_STAGGER: int = 8
+#: Metres searched beyond the TrafficManager's horizon, for its rounding.
+_DEAD_END_MARGIN_M: float = 10.0
+#: Step the road ahead is walked in, m: a lane end is found within one step.
+_DEAD_END_STEP_M: float = 5.0
+#: Waypoints a search walks at the most; a road that branches more than that
+#: is taken to go on.
+_DEAD_END_MAX_WAYPOINTS: int = 256
+
+
+class _Kept:
+    """One vehicle the backend keeps from the TrafficManager's removal
+    (:meth:`TrafficManagerBackend._keep_scenario_vehicles`)."""
+
+    actor: "carla.Actor"
+    moved_at: float
+    check_due: float
+    path: List["carla.Location"]
+    near_route_end: bool
+    checked_x: float
+    checked_y: float
+    checked_lookahead: float
+    held: bool
+    refreshed: bool
+
+    def __init__(self, actor: "carla.Actor") -> None:
+        self.actor = actor
+        #: When it was last seen moving, s of the run.
+        self.moved_at = 0.0
+        #: When it is next looked at, s of the run; negative: not yet.
+        self.check_due = -1.0
+        #: The rest of the path it was last given, to give again.
+        self.path = []
+        #: Whether its path's end has come near: its road is searched for a
+        #: dead end only then (or without a path).
+        self.near_route_end = False
+        #: Where the last walk found the road going on, and how far it looked;
+        #: a negative lookahead: no walk to go by.
+        self.checked_x = 0.0
+        self.checked_y = 0.0
+        self.checked_lookahead = -1.0
+        #: Taken off autopilot before a dead end, braking where it is.
+        self.held = False
+        #: Re-registered at least once (logged at info once).
+        self.refreshed = False
+
 
 class TrafficManagerBackend(TrafficBackend):
     """Traffic driven by CARLA's own TrafficManager.
@@ -125,6 +192,10 @@ class TrafficManagerBackend(TrafficBackend):
     or the constructor, for an entity that was only ever given a client (see
     :meth:`~autoware_carla_scenario.traffic.driven.BackendDriven.set_client`).
     A backend that was never given one says so rather than failing inside CARLA.
+
+    Only background vehicles may be destroyed by the TrafficManager (standing
+    90 s, a dead end); see "Vehicles the TrafficManager must not destroy" in
+    ``docs/traffic_backends.md``.
     """
 
     name: ClassVar[str] = "traffic_manager"
@@ -146,6 +217,7 @@ class TrafficManagerBackend(TrafficBackend):
     _speed_differences: dict[int, float]
     _held: dict[int, float]
     _sight_due: float
+    _kept: dict[int, _Kept]
 
     def __init__(
         self,
@@ -200,6 +272,8 @@ class TrafficManagerBackend(TrafficBackend):
         #: that have theirs.
         self._draws = None
         self._drawn = set()
+        #: Every vehicle on autopilot but a background one, by actor id.
+        self._kept = {}
         if vehicles is not None:
             self.set_vehicle_parameters(vehicles)
 
@@ -245,10 +319,11 @@ class TrafficManagerBackend(TrafficBackend):
         skip = set(skip_actor_ids)
         self._skipped = skip
         enabled = 0
+        background = {actor.id for actor in self._background.values()}
         for actor in world.get_actors().filter("vehicle.*"):
             if actor.id in skip or actor.id in self._released:
                 continue
-            self._autopilot(actor)
+            self._autopilot(actor, keep=actor.id not in background)
             enabled += 1
         if enabled:
             logger.info("Autopilot enabled on %d vehicle(s)", enabled)
@@ -259,9 +334,11 @@ class TrafficManagerBackend(TrafficBackend):
             )
 
     def tick(self, world: "carla.World", elapsed: float) -> None:
-        """Hold the traffic to what its drivers see, with ``follow_visibility``.
+        """Keep the scenario's vehicles from the TrafficManager's removal
+        (:meth:`_keep_scenario_vehicles`), and hold the traffic to what its
+        drivers see, with ``follow_visibility``.
 
-        The TrafficManager rides the CARLA tick, and has no notion of sight:
+        The TrafficManager has no notion of sight:
         its vehicles know where every actor is, fog or not
         (:mod:`autoware_carla_scenario.visibility`).  With
         ``follow_visibility: true`` each vehicle it drives is held to the
@@ -274,6 +351,7 @@ class TrafficManagerBackend(TrafficBackend):
         it, the visibility is only logged, with the speed it would hold a car
         to.
         """
+        self._keep_scenario_vehicles(world, elapsed)
         seen = world_visibility(episode_of(world))
         follows = self.vehicle_parameters.follow_visibility is True
         changed = seen != self._visibility
@@ -379,6 +457,7 @@ class TrafficManagerBackend(TrafficBackend):
         self._sight_due = 0.0
         self._drawn = set()
         self._draws = None
+        self._kept = {}
         self._restore_parameters()
         if self._closed or self._client is None:
             return
@@ -444,7 +523,7 @@ class TrafficManagerBackend(TrafficBackend):
             carla.Vector3D(forward.x * speed, forward.y * speed, 0.0)
         )
         if self._started:
-            self._autopilot(actor)
+            self._autopilot(actor, keep=False)
         tm = self._require_tm("spawn_background")
         if tm is not None:
             tm.set_desired_speed(_vehicle(actor), max(speed_kmh, 1.0))
@@ -638,6 +717,8 @@ class TrafficManagerBackend(TrafficBackend):
             return
 
         tm.set_path(_vehicle(actor), path)
+        self._remember_path(actor, path)
+        self._drive_on(actor)
         logger.info(
             "%s: set a %s turn route (%d points)",
             _entity_name(entity),
@@ -679,6 +760,8 @@ class TrafficManagerBackend(TrafficBackend):
             logger.warning("%s: an empty route to follow", _entity_name(entity))
             return
         tm.set_path(_vehicle(actor), path)
+        self._remember_path(actor, path)
+        self._drive_on(actor)
         logger.info("%s: set a route of %d points", _entity_name(entity), len(path))
 
     def release(self, entity: DrivenEntity, world: "carla.World") -> None:
@@ -693,6 +776,10 @@ class TrafficManagerBackend(TrafficBackend):
     def release_actor(self, world: "carla.World", actor: "carla.Actor") -> None:
         """Take *actor* off autopilot, and keep it off at :meth:`start`."""
         self._released.add(actor.id)
+        # The scenario drives it now: neither kept nor held any more.  Not
+        # pop(key, default): Codon has no such overload.
+        if actor.id in self._kept:
+            del self._kept[actor.id]
         if self._started:
             actor.set_autopilot(False, self.port)
             logger.info("%s: autopilot released", _actor_name(actor))
@@ -720,21 +807,26 @@ class TrafficManagerBackend(TrafficBackend):
             return
         self._released.discard(actor.id)
         if self._started:
-            self._autopilot(actor)
+            background = any(b.id == actor.id for b in self._background.values())
+            self._autopilot(actor, keep=not background)
             logger.info("%s: autopilot resumed", _actor_name(actor))
 
     # ------------------------------------------------------------------
     # Internals
     # ------------------------------------------------------------------
 
-    def _autopilot(self, actor: "carla.Actor") -> None:
-        """Put *actor* on autopilot, with its own draw of each parameter.
+    def _autopilot(self, actor: "carla.Actor", keep: bool = True) -> None:
+        """Put *actor* on autopilot, with its own draw of each parameter, and
+        keep it from the TrafficManager's removal unless *keep* is false (a
+        background vehicle).
 
         Drawn once per vehicle: one taken back (:meth:`release_actor`) and
         resumed keeps the draws the TrafficManager holds for it.
         """
         actor.set_autopilot(True, self.port)
         self._autopiloted[actor.id] = actor
+        if keep and actor.id not in self._kept:
+            self._kept[actor.id] = _Kept(actor)
         if actor.id in self._drawn:
             return
         self._drawn.add(actor.id)
@@ -795,6 +887,161 @@ class TrafficManagerBackend(TrafficBackend):
             chance = _percent(random_lane_changes, rng, "random_lane_changes")
             tm.random_left_lanechange_percentage(vehicle, chance)
             tm.random_right_lanechange_percentage(vehicle, chance)
+
+    # ------------------------------------------------------------------
+    # Vehicles the TrafficManager must not destroy
+    # ------------------------------------------------------------------
+
+    def _keep_scenario_vehicles(self, world: "carla.World", elapsed: float) -> None:
+        """Keep every vehicle on autopilot but a background one from the
+        TrafficManager's removal, each looked at every :data:`_CHECK_PERIOD_S`
+        (``docs/traffic_backends.md``)."""
+        for actor_id, kept in list(self._kept.items()):
+            if kept.held or elapsed < kept.check_due:
+                continue
+            actor = kept.actor
+            if not actor.is_alive:
+                del self._kept[actor_id]  # Destroyed by something else.
+                continue
+            if kept.check_due < 0.0:
+                # First looked at: staggered, so the walks spread over a period.
+                kept.moved_at = elapsed
+                kept.check_due = elapsed + (actor_id % _CHECK_STAGGER) * (
+                    _CHECK_PERIOD_S / _CHECK_STAGGER
+                )
+                continue
+            kept.check_due = elapsed + _CHECK_PERIOD_S
+            try:
+                velocity = actor.get_velocity()
+                # The TrafficManager's own measure: the 3-D speed, squared.
+                speed_sq = (
+                    velocity.x * velocity.x
+                    + velocity.y * velocity.y
+                    + velocity.z * velocity.z
+                )
+                self._keep_standing(kept, speed_sq, elapsed)
+                self._keep_off_dead_ends(world, kept, math.sqrt(speed_sq))
+            except RuntimeError:
+                del self._kept[actor_id]  # Destroyed under us.
+
+    def _keep_standing(self, kept: _Kept, speed_sq: float, elapsed: float) -> None:
+        """Take a vehicle that has stood :data:`_TM_BLOCKED_TIME_THRESHOLD_S`
+        less :data:`_TM_BLOCKED_MARGIN_S` off autopilot and straight back on,
+        which restarts the TrafficManager's count."""
+        if speed_sq > _TM_STOPPED_SPEED_MPS * _TM_STOPPED_SPEED_MPS:
+            kept.moved_at = elapsed
+            return
+        stood = elapsed - kept.moved_at
+        if stood < _TM_BLOCKED_TIME_THRESHOLD_S - _TM_BLOCKED_MARGIN_S:
+            return
+        actor = kept.actor
+        actor.set_autopilot(False, self.port)
+        actor.set_autopilot(True, self.port)
+        kept.moved_at = elapsed
+        self._give_path_again(kept)
+        if kept.refreshed:
+            logger.debug("%s: re-registered after %.0f s", _actor_name(actor), stood)
+            return
+        kept.refreshed = True
+        logger.info(
+            "%s: stood %.0f s; taken off autopilot and put back on so the "
+            "TrafficManager, which destroys a vehicle standing %.0f s, keeps it "
+            "(again each time it stands that long)",
+            _actor_name(actor),
+            stood,
+            _TM_BLOCKED_TIME_THRESHOLD_S,
+        )
+
+    def _give_path_again(self, kept: _Kept) -> None:
+        """Give a re-registered vehicle the rest of its path again.
+
+        The TrafficManager moves a path's points into the vehicle's planned
+        waypoints as it goes and drops them from the path it holds
+        (``LocalizationStage::ImportPath``: ``UpdateUploadPath``, and
+        ``RemoveUploadPath`` once all are in); unregistering drops the planned
+        waypoints (``ALSM::RemoveActor``: ``buffer_map.erase``).  So the points
+        it had planned would be lost.
+        """
+        if not kept.path:
+            return
+        kept.path = _ahead_of(kept.path, kept.actor.get_location())
+        if not kept.path:
+            return
+        tm = self._require_tm("re-registering")
+        if tm is not None:
+            tm.set_path(_vehicle(kept.actor), kept.path)
+
+    def _remember_path(
+        self, actor: "carla.Actor", path: List["carla.Location"]
+    ) -> None:
+        """Remember the path a kept vehicle was just given."""
+        if actor.id not in self._kept:
+            return
+        kept = self._kept[actor.id]
+        kept.path = list(path)
+        kept.near_route_end = False
+        kept.checked_lookahead = -1.0
+
+    def _drive_on(self, actor: "carla.Actor") -> None:
+        """Put a vehicle held at a dead end back on autopilot: it was given a
+        new route, the way on it was waiting for."""
+        if actor.id not in self._kept or not self._kept[actor.id].held:
+            return
+        kept = self._kept[actor.id]
+        kept.held = False
+        kept.check_due = -1.0
+        self._autopilot(actor)
+        logger.info(
+            "%s: given a new route, back on autopilot from where it was held",
+            _actor_name(actor),
+        )
+
+    def _keep_off_dead_ends(
+        self, world: "carla.World", kept: _Kept, speed: float
+    ) -> None:
+        """Take a vehicle off autopilot, braking, before the TrafficManager's
+        plan for it reaches a lane with no successor; on a path it was given,
+        only once the path's end is near."""
+        # Before any annotation names it: Codon makes it a local (docs/typecheck.md).
+        import typesafe_carla.carla as carla  # noqa: PLC0415
+
+        lookahead = (
+            max(_TM_MIN_HORIZON_M, speed * _TM_HORIZON_S)
+            + speed * _CHECK_PERIOD_S
+            + _DEAD_END_MARGIN_M
+        )
+        actor = kept.actor
+        location = actor.get_location()
+        if kept.path and not kept.near_route_end:
+            if location.distance(kept.path[-1]) > lookahead:
+                return
+            kept.near_route_end = True
+        # Where the last walk found the road going on, no further ahead.
+        if lookahead <= kept.checked_lookahead and (
+            math.hypot(location.x - kept.checked_x, location.y - kept.checked_y)
+            < _DEAD_END_STEP_M
+        ):
+            return
+        found = run_carla_map(world).get_waypoint(location)
+        if found is None:
+            return
+        # Codon does not narrow an Optional (docs/typecheck.md).
+        start: "carla.Waypoint" = found
+        if not _dead_end_within(start, lookahead):
+            kept.checked_x = location.x
+            kept.checked_y = location.y
+            kept.checked_lookahead = lookahead
+            return
+        actor.set_autopilot(False, self.port)
+        _vehicle(actor).apply_control(carla.VehicleControl(throttle=0.0, brake=1.0))
+        kept.held = True
+        logger.info(
+            "%s: its road ends within %.0f m, where the TrafficManager would "
+            "destroy it; taken off autopilot and held braking until it is "
+            "given a new route",
+            _actor_name(actor),
+            lookahead,
+        )
 
     # ------------------------------------------------------------------
     # Parameters changed during a run
@@ -901,6 +1148,48 @@ def _clear_of_junctions(
         if not any(inside[max(0, i - 1) : i + 2]):
             clear.append(location)
     return clear
+
+
+def _ahead_of(
+    path: List["carla.Location"], location: "carla.Location"
+) -> List["carla.Location"]:
+    """The points of *path* after the one nearest *location*.
+
+    Not that nearest one: the TrafficManager waits for each point to come
+    within a few metres, and one beside or behind the vehicle may never.
+    """
+    nearest = 0
+    best = float("inf")
+    for i, point in enumerate(path):
+        gap = location.distance(point)
+        if gap < best:
+            best = gap
+            nearest = i
+    return path[nearest + 1 :]
+
+
+def _dead_end_within(start: "carla.Waypoint", distance: float) -> bool:
+    """Whether some way on from *start* ends within *distance* metres.
+
+    Walked in :data:`_DEAD_END_STEP_M` steps down every branch: ``next()`` is
+    empty where a lane ends with no successor.  A road that branches into
+    more than :data:`_DEAD_END_MAX_WAYPOINTS` waypoints is taken to go on.
+    """
+    frontier: List[Tuple["carla.Waypoint", float]] = [(start, 0.0)]
+    # Where branches meet again, the road on is walked once.
+    seen: set[Tuple[int, int, int, int]] = set()
+    while frontier and len(seen) < _DEAD_END_MAX_WAYPOINTS:
+        waypoint, travelled = frontier.pop()
+        key = (waypoint.road_id, waypoint.section_id, waypoint.lane_id, int(waypoint.s))
+        if travelled >= distance or key in seen:
+            continue
+        seen.add(key)
+        ahead = waypoint.next(_DEAD_END_STEP_M)
+        if not ahead:
+            return True
+        for following in ahead:
+            frontier.append((following, travelled + _DEAD_END_STEP_M))
+    return False
 
 
 def _require_actor(entity: DrivenEntity, what: str) -> Optional["carla.Actor"]:
