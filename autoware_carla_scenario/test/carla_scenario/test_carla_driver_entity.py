@@ -291,6 +291,23 @@ def test_start_before_spawn_raises() -> None:
         entity.on_scenario_start(_world_with_route())
 
 
+def test_a_session_that_fails_to_start_leaves_no_sensors_on_offer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from autoware_carla_scenario import t4
+
+    entity, client = _entity()
+
+    def _refuse(session_uuid: str, scene_id: str) -> None:
+        raise ConnectionError("policy unreachable")
+
+    monkeypatch.setattr(client, "start_session", _refuse)
+    with pytest.raises(ConnectionError, match="policy unreachable"):
+        entity.on_scenario_start(_world_with_route())
+
+    assert t4._driver_rear_axle is None
+
+
 def test_cameras_are_attached_and_streamed(monkeypatch: pytest.MonkeyPatch) -> None:
     from autoware_carla_scenario.sensor.carla_camera import CarlaCameraSensor
 
