@@ -107,6 +107,13 @@ class NullHandler(Handler):
         super().__init__()
 
 
+# Each class with a subclass, built once after its subclasses are defined, so
+# that its Optional compiles (`handler: Optional[Handler] = None`) in a program
+# that builds none: Codon 0.19 crashes on it otherwise (conditions.codon, #263).
+Handler()
+StreamHandler()
+
+
 class Logger:
     name: str
     level: int
