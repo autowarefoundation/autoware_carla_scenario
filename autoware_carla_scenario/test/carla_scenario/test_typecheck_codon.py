@@ -996,12 +996,12 @@ def test_a_trajectory_with_waypoint_conditions_compiles(tmp_path: Path) -> None:
         (
             'self.register_fail_condition(TimeoutCondition("10", label="t"))\n',
             'TimeoutCondition("10"',
-            "no function 'TimeoutCondition.__init__'",
+            "TimeoutCondition(): timeout_seconds: expected float, got str",
         ),
         (
             "self.register_pre_tick(TurnAction(EGO_ROLE_NAME, LaneChangeDirection.LEFT))\n",
             "LaneChangeDirection.LEFT",
-            "no function 'TurnAction.__init__'",
+            "TurnAction(): direction: expected TurnDirection, got LaneChangeDirection",
         ),
         (
             "self.register_pass_condition(TurnAction(EGO_ROLE_NAME, TurnDirection.LEFT))\n",
@@ -1150,7 +1150,7 @@ _DEFAULT_HEADER = _HEADER.replace(
             '        return {1: "fast"}\n',
             _HEADER,
             'return {1: "fast"}',
-            "does not match expected type",
+            "initial_speeds_mps() returns dict[int,str], but the function is declared",
             "<scenario check: CaseScenario.initial_speeds_mps(",
         ),
         (
@@ -1726,7 +1726,11 @@ def test_a_wrong_argument_to_an_inherited_init_is_refused(tmp_path: Path) -> Non
         tmp_path, _VALID_SETUP, extra, header=_PARENT_HEADER
     )
     error = _only_error(typecheck_scenario(scenario, config))
-    assert "no function 'CaseParent.__init__'" in error.message, error.format()
+    # In the author's terms (#527): no `self`, no "no function".
+    assert (
+        error.message
+        == "CaseParent() cannot be called with (EgoConfig, Lanelet2Pose, str)"
+    ), error.format()
     # At the class that inherits the __init__, with the call in the trace.
     assert error.path == str(path)
     assert error.line == _line_of(path, "class CaseScenario(CaseParent):")

@@ -79,7 +79,13 @@ from .library import (
     UNCALLED,
     package_modules,
 )
-from .none_check import NoneCheckSkipped, NoneFinding, run_none_check, search_path
+from .none_check import (
+    NoneCheckSkipped,
+    NoneFinding,
+    none_given,
+    run_none_check,
+    search_path,
+)
 from .not_modelled import NOT_MODELLED, not_modelled_member
 from .library_driver import (
     call_sites,
@@ -102,6 +108,12 @@ from .transform import (
     transform_source_lines,
     undeclared_attributes,
 )
+from .call_diagnostics import (
+    Refiner,
+    is_internal_frame,
+    plain_literal_types,
+)
+from .return_paths import return_problems
 from .typing_rewrites import TYPING_HINTS, typing_rewrite_refusals
 
 __all__ = [
@@ -1504,6 +1516,37 @@ def _column_survives(column: int, compiled: str, written: str) -> bool:
 _LAMBDA_TYPE = re.compile(r"%_lambda_\d+(?:\(\.\.\.\)|\[[^\]]*\])?")
 
 
+def _python_callable(name: str, sources: _Sources) -> Any:
+    """The Python function Codon calls *name*: one of the checked modules',
+    else one a modelled module defines."""
+    for module in [*sources.modules, *sorted(_model_modules())]:
+        try:
+            found = getattr(importlib.import_module(module), name, None)
+        except Exception:  # noqa: BLE001 - only a hint: a module that does not import
+            continue
+        if inspect.isfunction(found):
+            return found
+    return None
+
+
+def _authors_terms(diagnostic: Diagnostic, refiner: Refiner) -> Diagnostic:
+    """*diagnostic* in the author's terms, not Codon's (#527, #528, #530): a
+    refused call or ``return`` says what is wrong with it, a static string
+    type is ``str``, and the frames of the model's own helpers are gone."""
+    message, line, column = refiner.refine(
+        diagnostic.message, diagnostic.path, diagnostic.line, diagnostic.column
+    )
+    return dataclasses.replace(
+        diagnostic,
+        message=plain_literal_types(message),
+        line=line,
+        column=column,
+        trace=tuple(
+            plain_literal_types(t) for t in diagnostic.trace if not is_internal_frame(t)
+        ),
+    )
+
+
 def _without_lambda_names(diagnostic: Diagnostic) -> Diagnostic:
     """*diagnostic* with the lambda type names of its message and trace plain.
 
@@ -2047,8 +2090,25 @@ def typecheck_scenario(
         toolchain,
         timeout,
         what="scenario",
-        refuse=lambda sources: _abstract_classes_built(sources, scenario_cls),
+        refuse=lambda sources: [
+            *_abstract_classes_built(sources, scenario_cls),
+            *_returns_not_kept(sources),
+        ],
     )
+
+
+def _returns_not_kept(sources: _Sources) -> list[Diagnostic]:
+    """Each function of the scenario's modules whose declared return type
+    Codon does not enforce: a literal returned from a ``-> bool`` and a path
+    that returns nothing (#529, :mod:`.return_paths`)."""
+    modules = {
+        name: (str(module.path), module.tree)
+        for name, module in sources.modules.items()
+    }
+    return [
+        Diagnostic(p.message, p.path, p.line, p.column)
+        for p in return_problems(modules)
+    ]
 
 
 def _abstract_classes_built(sources: _Sources, scenario_cls: type) -> list[Diagnostic]:
@@ -2290,6 +2350,9 @@ def _none_check_advice(finding: NoneFinding) -> str:
     """The message of a :class:`.none_check.NoneFinding`, with what to do."""
     union = finding.union
     if union is None:
+        wanted = none_given(finding.message)
+        if wanted is not None:  # None itself: there is no value to test
+            return _none_not_taken(finding, wanted)
         return (
             f"{finding.message}: Codon unwraps an Optional implicitly, so test "
             f"the value for None before this use, or Python fails here when it "
@@ -2301,6 +2364,26 @@ def _none_check_advice(finding: NoneFinding) -> str:
         f"time, so narrow it with isinstance first, or Python fails here on "
         f"any other member (mypy: {finding.code})"
     )
+
+
+_ARGUMENT = re.compile(r'^Argument (?P<n>\d+) to "(?P<callee>[^"]+)"')
+
+
+def _none_not_taken(finding: NoneFinding, wanted: str) -> str:
+    """The message for ``None`` itself given where *wanted* is expected."""
+    argument = _ARGUMENT.match(finding.message)
+    if argument is not None:
+        what = (
+            f"argument {argument['n']} of {argument['callee']}() does not take "
+            f"None, it takes {wanted}"
+        )
+    elif finding.message.startswith("Incompatible return value type"):
+        what = f"the function is declared -> {wanted}, so it cannot return None"
+    elif finding.message.startswith("Incompatible types in assignment"):
+        what = f"this is declared {wanted}, so it cannot be assigned None"
+    else:
+        what = f"None is given where {wanted} is expected, and it does not take None"
+    return f"{what} (mypy: {finding.code})"
 
 
 def typecheck_odd(
@@ -2407,6 +2490,10 @@ def _compile(
             except Exception:  # only a hint: never lose Codon's own errors to it
                 pass
     seconds = time.monotonic() - started
+    refiner = Refiner(
+        lambda name: _python_class(name, sources),
+        lambda name: _python_callable(name, sources),
+    )
     codegen = proc.returncode != 0 and _LLVM_ERROR in output
     if codegen:
         diagnostics = [_codegen_crash(output, sources)]
@@ -2434,7 +2521,9 @@ def _compile(
     return TypeCheckResult(
         name,
         ok=proc.returncode == 0,
-        diagnostics=[_without_lambda_names(d) for d in diagnostics],
+        diagnostics=[
+            _without_lambda_names(_authors_terms(d, refiner)) for d in diagnostics
+        ],
         warnings=list(ws.warnings),
         crashed=crashed,
         output=output,

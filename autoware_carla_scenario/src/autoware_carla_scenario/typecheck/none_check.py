@@ -193,6 +193,16 @@ def _offends(actual: str, expected: str) -> bool:
     return _holds_none(actual) and not _holds_none(expected)
 
 
+def none_given(message: str) -> str | None:
+    """The type expected, when mypy's *message* is of ``None`` itself (a
+    ``None`` literal or a name always bound to it) given where another type
+    is expected, and not of a value that may be ``None`` (#530)."""
+    expected = _EXPECTED.search(message)
+    if expected is None or expected["actual"] != "None":
+        return None
+    return expected["expected"]
+
+
 def is_none_misuse(code: str, message: str) -> bool:
     """Whether mypy's error *message* (of *code*) is of a value that may be None.
 
