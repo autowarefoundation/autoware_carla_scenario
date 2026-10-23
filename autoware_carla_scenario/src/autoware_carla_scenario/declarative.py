@@ -513,6 +513,11 @@ class DeclarativeScenario(BaseScenario):
                 npc_entity = self._build_npc(entity, world)
                 actor = npc_entity.spawn(world)
                 self.register_entity(npc_entity)
+                if entity.spawn.hidden:
+                    # Kept off autopilot until its action brings it in: the
+                    # TrafficManager deletes a vehicle it finds under the map
+                    # as stuck at a dead end.
+                    npc_entity.release_from_traffic(world)
             if entity.spawn.hidden:
                 # Under the map, where it would otherwise fall for as long as
                 # it waits to be brought in.

@@ -537,7 +537,7 @@ class FollowTrajectoryAction(BaseAction):
                 - self._resolved.start_time
             )
         if self._appear_on_start:
-            self._appear(actor)
+            self._appear(world, actor)
         velocity = actor.get_velocity()
         self._speed = (
             math.hypot(velocity.x, velocity.y)
@@ -596,7 +596,7 @@ class FollowTrajectoryAction(BaseAction):
                 ),
             )
 
-    def _appear(self, actor: "carla.Actor") -> None:
+    def _appear(self, world: "carla.World", actor: "carla.Actor") -> None:
         """Put *actor* where the run starts, facing along the path, at speed."""
         import typesafe_carla.carla as carla  # noqa: PLC0415
 
@@ -607,10 +607,16 @@ class FollowTrajectoryAction(BaseAction):
         walker = _is_walker(actor)
         actor.set_simulate_physics(True)
         self._hidden = False
-        lift = float(actor.bounding_box.extent.z) if walker else 0.0
+        z = sample.z
+        lift = 0.0
+        if walker:
+            # On the pavement, not the road under it: the path has the lane's
+            # height, and a walker set into a raised kerb's mesh never moves.
+            z = _ground_z(world, sample)
+            lift = float(actor.bounding_box.extent.z)
         actor.set_transform(
             carla.Transform(
-                carla.Location(x=sample.x, y=sample.y, z=sample.z + lift),
+                carla.Location(x=sample.x, y=sample.y, z=z + lift),
                 carla.Rotation(yaw=sample.yaw),
             )
         )
@@ -1228,6 +1234,16 @@ class _TrajectoryEnd(BaseCondition):
 # ---------------------------------------------------------------------------
 # Actuation
 # ---------------------------------------------------------------------------
+
+
+def _ground_z(world: "carla.World", sample: TrajectorySample) -> float:
+    """The ground's height under *sample*, or the sample's own where none is hit."""
+    from ..coordinate.snap import refine_z_with_ground_projection  # noqa: PLC0415
+
+    try:
+        return refine_z_with_ground_projection(sample.x, sample.y, sample.z, world)
+    except RuntimeError:
+        return sample.z
 
 
 def _is_walker(actor: "carla.Actor") -> bool:
