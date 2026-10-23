@@ -7338,6 +7338,24 @@ def test_an_optional_callback_of_the_wrong_signature_is_refused(
     assert "%_lambda" not in error.message, error.format()
 
 
+def test_none_for_a_required_callback_is_still_refused(tmp_path: Path) -> None:
+    # The stored optional parameter is the plain `Callable` for Codon, which
+    # converts `None` to it; a required `Callable` parameter stays refused for
+    # `None` by the mypy pass (#495).
+    definitions = """
+class Required:
+    def __init__(self, cb: typing.Callable[[int], int]) -> None:
+        self.cb = cb
+"""
+    setup = """
+        Required(None)
+        self.register_fail_condition(TimeoutCondition(1.0, label="t"))
+    """
+    scenario, config, path = _data_case(tmp_path, definitions, setup)
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert error.line == _line_of(path, "Required(None)"), error.format()
+
+
 def test_an_optional_callback_called_without_a_none_test_compiles(
     tmp_path: Path,
 ) -> None:
