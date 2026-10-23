@@ -752,6 +752,33 @@ def test_a_kept_lock_survives_the_release_while_the_watchdog_holds_it(
     again.release()
 
 
+def test_the_watchdog_removes_the_port_file_of_a_worker_that_died(
+    tmp_path: Path,
+) -> None:
+    """A SIGKILLed worker never removes its ``.port`` file (#525): the watchdog,
+    which sees the pipe close without ``done``, does."""
+    from autoware_carla_scenario.slurm.ports import CarlaWatchdog
+
+    slot = acquire_slot(31800, 1, start=0, lock_dir=tmp_path)
+    port_file = tmp_path / "0-0.port"
+    port_file.write_text(f"{slot.rpc}\n", encoding="utf-8")
+    watchdog = CarlaWatchdog(slot, port_file)
+    slot.release(keep_lock=True)
+    process = watchdog._process
+    assert process is not None and process.stdin is not None
+    process.stdin.close()  # the worker died: end of file, no "done"
+    process.wait(timeout=30)
+    assert not port_file.exists()
+
+    # A worker that finished cleans up itself: the watchdog leaves the file.
+    slot = acquire_slot(31800, 1, start=0, lock_dir=tmp_path)
+    port_file.write_text("x\n", encoding="utf-8")
+    watchdog = CarlaWatchdog(slot, port_file)
+    slot.release(keep_lock=True)
+    watchdog.finish()
+    assert port_file.exists()
+
+
 def test_first_slot_differs_by_task() -> None:
     env = {"SLURM_ARRAY_JOB_ID": "120", "SLURM_ARRAY_TASK_ID": "3"}
     assert first_slot(env, 1000) == 123
