@@ -291,6 +291,36 @@ def is_bicycle(actor: Any) -> bool:
     return base_type.lower() == "bicycle"
 
 
+def _green_together(phases: list[str], index: int) -> set[int]:
+    """The links green in a phase of *phases* where link *index* is green."""
+    together: set[int] = set()
+    for state in phases:
+        if index < len(state) and state[index] in "Gg":
+            together.update(i for i, c in enumerate(state) if c in "Gg")
+    return together
+
+
+def _write_type_distribution(
+    path: Path, type_id: str, vclass: str, members: list[dict[str, float]]
+) -> Path:
+    """Write *type_id* as a distribution of one type of *vclass* per member,
+    each with that member's attributes, to *path* (an additional file)."""
+    lines = []
+    for index, attributes in enumerate(members):
+        written = " ".join(f'{key}="{value:.4g}"' for key, value in attributes.items())
+        lines.append(
+            f'        <vType id="{vclass}{index}" vClass="{vclass}" {written}/>'
+        )
+    path.write_text(
+        "<additional>\n"
+        f'    <vTypeDistribution id="{type_id}">\n'
+        + "\n".join(lines)
+        + "\n    </vTypeDistribution>\n"
+        "</additional>\n"
+    )
+    return path
+
+
 def _ride_state(follows: str, states: list[str]) -> str:
     """The state of a bicycle ride's signal link, from the *states* of the
     vehicle links it *follows* (``with``) or must be clear of (``clear``)."""
@@ -502,13 +532,12 @@ class SumoTrafficBackend(TrafficBackend):
         sets: in SUMO when SUMO drives it, else through the TrafficManager."""
         sumo_id = self._id_of(entity)
         if sumo_id is not None:
-            if self._vclass(sumo_id) == "bicycle":
+            if self._is_bicycle(sumo_id):
                 logger.warning(
                     "SUMO: %s is a bicycle, which rides as traffic.options."
                     "bicycles says; the vehicle parameters do not reach it",
                     sumo_id,
                 )
-                return
             self._draw_vehicle(sumo_id, overrides)
         elif self._tm_drives_scenario:
             shared = overrides.restricted_to(self._tm.supported_vehicle_parameters())
@@ -530,7 +559,7 @@ class SumoTrafficBackend(TrafficBackend):
         if not self._running:
             return
         for sumo_id in self._traci.vehicle.getIDList():
-            if sumo_id not in self._external and self._vclass(sumo_id) != "bicycle":
+            if sumo_id not in self._external:
                 self._draw_vehicle(sumo_id, overrides)
         # The visibility is held anew, from the new draws (or not at all).
         for sumo_id in list(self._max_speeds):
@@ -572,8 +601,20 @@ class SumoTrafficBackend(TrafficBackend):
         for _ in range(self._substeps):
             self._traci.simulationStep()
             self._departed = None
+            self._forget_arrived()
             self._apply_parameters()
             self._follow_visibility(world)
+
+    def _forget_arrived(self) -> None:
+        """Drop the vehicle class kept for those that left SUMO this step.
+
+        Not their blueprints: one taken out for the mesoscopic model leaves
+        SUMO too, and comes back as the vehicle it was.
+        """
+        if not self._vclasses:
+            return
+        for sumo_id in self._traci.simulation.getArrivedIDList():
+            self._vclasses.pop(sumo_id, None)
 
     def _departed_ids(self) -> list[str]:
         """The vehicles that departed in the step SUMO just made."""
@@ -797,7 +838,9 @@ class SumoTrafficBackend(TrafficBackend):
             self._signals = self._match_signals(world)
             if self._config.traffic_light_authority == "carla":
                 self._crossing_links = self._match_crossings()
-                self._bicycle_rides = self._match_bicycle_rides()
+                if self._config.cycle_on_sidewalks or self._config.net_path:
+                    # Only such a network has edges for bicycles alone.
+                    self._bicycle_rides = self._match_bicycle_rides()
             if self._config.traffic_light_authority == "sumo":
                 for light in {id(tl): tl for tl in self._signals.values()}.values():
                     light.freeze(True)
@@ -1861,12 +1904,10 @@ class SumoTrafficBackend(TrafficBackend):
         tc.person.setWidth(person, max(2.0 * float(extent.y), 0.2))
         return person
 
-    def _follow(
-        self, actor: Any, sumo_id: str, length: float, control: Optional[str] = None
-    ) -> None:
+    def _follow(self, actor: Any, sumo_id: str, length: float, control: str) -> None:
         """Carry *actor* towards where its SUMO vehicle is after this step,
-        as *control* says (``vehicle_control`` when ``None``)."""
-        if (control or self._config.vehicle_control) == "physics":
+        as *control* (``physics`` or ``teleport``) says."""
+        if control == "physics":
             self._drive(actor, sumo_id, length)
         else:
             self._teleport(actor, sumo_id, length)
@@ -2201,29 +2242,39 @@ class SumoTrafficBackend(TrafficBackend):
         bicycles within ``bicycles.radius_m``, at most
         ``bicycles.max_bicycles``: each counts against its own limit.
         """
-        tc = self._traci
         own = set(self._driven) | set(self._external)
-        ids = [i for i in tc.vehicle.getIDList() if i not in own]
+        cars: list[str] = []
+        bikes: list[str] = []
+        for sumo_id in self._traci.vehicle.getIDList():
+            if sumo_id not in own:
+                (bikes if self._is_bicycle(sumo_id) else cars).append(sumo_id)
         bicycles = self._config.bicycles
-        bikes = [i for i in ids if self._vclass(i) == "bicycle"]
-        cars = [i for i in ids if self._vclass(i) != "bicycle"]
         radius = bicycles.radius_m or self._config.spawn_radius_m
+        # Measured from one ego pose, read once.
+        ego = (
+            None
+            if self._ego_actor is None
+            else self._carla_pose_to_sumo(self._ego_actor)
+        )
         return self._nearest(
-            cars, self._config.spawn_radius_m, self._config.max_vehicles
-        ) + self._nearest(bikes, radius, bicycles.max_bicycles)
+            cars, ego, self._config.spawn_radius_m, self._config.max_vehicles
+        ) + self._nearest(bikes, ego, radius, bicycles.max_bicycles)
 
     def _nearest(
-        self, ids: list[str], radius: Optional[float], limit: Optional[int]
+        self,
+        ids: list[str],
+        ego: Optional[Pose2D],
+        radius: Optional[float],
+        limit: Optional[int],
     ) -> list[str]:
-        """Those of *ids* within *radius* of the ego, at most *limit* of them,
-        nearest first."""
-        tc = self._traci
-        if self._ego_actor is None:
+        """Those of *ids* within *radius* of the *ego* (SUMO's frame), at most
+        *limit* of them, nearest first."""
+        if ego is None:
             # Nothing to measure from: the first ones SUMO lists.
             return ids[:limit] if limit else ids
-        if not (radius or limit):
+        if not ids or not (radius or limit):
             return ids
-        ego = self._carla_pose_to_sumo(self._ego_actor)
+        tc = self._traci
         dist = {i: math.dist((ego.x, ego.y), tc.vehicle.getPosition(i)) for i in ids}
         ids = sorted(ids, key=dist.__getitem__)
         if radius:
@@ -2244,10 +2295,14 @@ class SumoTrafficBackend(TrafficBackend):
             self._vclasses[sumo_id] = vclass
         return vclass
 
+    def _is_bicycle(self, sumo_id: str) -> bool:
+        """Whether SUMO's vehicle *sumo_id* is a bicycle."""
+        return self._vclass(sumo_id) == "bicycle"
+
     def _control(self, sumo_id: str) -> str:
         """How the CARLA actor of *sumo_id* follows it: ``bicycles``' way for
         a bicycle, ``vehicle_control`` for the rest."""
-        if self._vclass(sumo_id) == "bicycle":
+        if self._is_bicycle(sumo_id):
             return self._config.bicycles.vehicle_control
         return self._config.vehicle_control
 
@@ -2257,7 +2312,7 @@ class SumoTrafficBackend(TrafficBackend):
         blueprint = self._blueprints.get(sumo_id)
         if blueprint is not None:
             return blueprint
-        if self._vclass(sumo_id) != "bicycle":
+        if not self._is_bicycle(sumo_id):
             return self._config.blueprint
         if self._bicycle_blueprints is None:
             self._bicycle_blueprints = []
@@ -2456,7 +2511,7 @@ class SumoTrafficBackend(TrafficBackend):
         for sumo_id in tc.vehicle.getIDList():
             # A bicycle stays in SUMO: the queue model's roads are the
             # carriageways, and a bicycle rides the sidewalks too.
-            if sumo_id in self._external or self._vclass(sumo_id) == "bicycle":
+            if sumo_id in self._external or self._is_bicycle(sumo_id):
                 continue
             if sumo_id in self._driven and not (
                 entities and self._may_leave_world(sumo_id)
@@ -2859,8 +2914,8 @@ class SumoTrafficBackend(TrafficBackend):
         if not parameters.set_fields():
             return None
         members = []
-        for index in range(PEDESTRIAN_TYPES):
-            attributes: dict[str, Optional[float]] = {}
+        for _ in range(PEDESTRIAN_TYPES):
+            attributes: dict[str, float] = {}
             walking = parameters.walking_speed_mps
             if walking is not None:
                 attributes["maxSpeed"] = walking.draw(
@@ -2878,21 +2933,10 @@ class SumoTrafficBackend(TrafficBackend):
                 attributes["jmDriveAfterRedTime"] = red.draw(
                     self._draws, PEDESTRIAN_BOUNDS["red_light_violation_s"]
                 )
-            written = " ".join(
-                f'{key}="{value:.4g}"' for key, value in attributes.items()
-            )
-            members.append(
-                f'        <vType id="pedestrian{index}" vClass="pedestrian" {written}/>'
-            )
-        path = out / "pedestrian_type.add.xml"
-        path.write_text(
-            "<additional>\n"
-            '    <vTypeDistribution id="DEFAULT_PEDTYPE">\n'
-            + "\n".join(members)
-            + "\n    </vTypeDistribution>\n"
-            "</additional>\n"
+            members.append(attributes)
+        return _write_type_distribution(
+            out / "pedestrian_type.add.xml", "DEFAULT_PEDTYPE", "pedestrian", members
         )
-        return path
 
     def _bicycle_type(self, out: Path) -> Optional[Path]:
         """Write SUMO's default bicycle type as a distribution of
@@ -2909,7 +2953,7 @@ class SumoTrafficBackend(TrafficBackend):
         if not riding:
             return None
         members = []
-        for index in range(BICYCLE_TYPES):
+        for _ in range(BICYCLE_TYPES):
             attributes = {
                 _BICYCLE_ATTRIBUTES[name]: spread.draw(
                     self._draws, BICYCLE_BOUNDS[name]
@@ -2922,21 +2966,10 @@ class SumoTrafficBackend(TrafficBackend):
                 # with no second spread of SUMO's.
                 attributes["desiredMaxSpeed"] = attributes["maxSpeed"]
                 attributes["speedDev"] = 0.0
-            written = " ".join(
-                f'{key}="{value:.4g}"' for key, value in attributes.items()
-            )
-            members.append(
-                f'        <vType id="bicycle{index}" vClass="bicycle" {written}/>'
-            )
-        path = out / "bicycle_type.add.xml"
-        path.write_text(
-            "<additional>\n"
-            f'    <vTypeDistribution id="{_BICYCLE_TYPE}">\n'
-            + "\n".join(members)
-            + "\n    </vTypeDistribution>\n"
-            "</additional>\n"
+            members.append(attributes)
+        return _write_type_distribution(
+            out / "bicycle_type.add.xml", _BICYCLE_TYPE, "bicycle", members
         )
-        return path
 
     def _apply_parameters(self) -> None:
         """Give each vehicle that has just departed, and that SUMO drives,
@@ -2957,7 +2990,7 @@ class SumoTrafficBackend(TrafficBackend):
                     continue
                 if sublane:
                     self._no_sidestep_standing(sumo_id)
-                if draws and self._vclass(sumo_id) != "bicycle":
+                if draws:
                     self._draw_vehicle(sumo_id, parameters)
         overrides = self._pedestrian_overrides
         if overrides is not None:
@@ -2979,7 +3012,10 @@ class SumoTrafficBackend(TrafficBackend):
             logger.warning("SUMO could not hold %s sideways: %s", sumo_id, exc)
 
     def _draw_vehicle(self, sumo_id: str, parameters: VehicleParameters) -> None:
-        """Give *sumo_id* its own draw of each field *parameters* sets."""
+        """Give *sumo_id* its own draw of each field *parameters* sets; not a
+        bicycle, whose rider draws ``bicycles``' parameters off its type."""
+        if self._is_bicycle(sumo_id):
+            return
         vehicle = self._traci.vehicle
         rng = self._draws
         try:
@@ -3266,6 +3302,7 @@ class SumoTrafficBackend(TrafficBackend):
                 index for index, kind in kinds.items() if kind == ("road", "road")
             ]
             rides: list[tuple[int, str, list[int]]] = []
+            phases: Optional[list[str]] = None
             for index, kind in kinds.items():
                 if (tls, index) in switched or "bicycle" not in kind:
                     continue
@@ -3282,7 +3319,9 @@ class SumoTrafficBackend(TrafficBackend):
                     same = [i for i in vehicles if lanes[i][0] == in_lane]
                     rides.append((index, "with", same))
                 elif kind == ("bicycle", "bicycle"):
-                    together = self._green_together(tls, index)
+                    if phases is None:
+                        phases = self._program_states(tls)
+                    together = _green_together(phases, index)
                     foes = [i for i in vehicles if i not in together]
                     rides.append((index, "clear", foes))
             rides = [ride for ride in rides if ride[2]]
@@ -3333,16 +3372,13 @@ class SumoTrafficBackend(TrafficBackend):
         from_edge = lanes[nearest][0].rsplit("_", 1)[0]
         return [i for i in into if lanes[i][0].rsplit("_", 1)[0] == from_edge]
 
-    def _green_together(self, tls: str, index: int) -> set[int]:
-        """The links SUMO's own programs of *tls* have green in a phase where
-        link *index* is green."""
-        together: set[int] = set()
-        for logic in self._traci.trafficlight.getAllProgramLogics(tls):
-            for phase in logic.phases:
-                state = phase.state
-                if index < len(state) and state[index] in "Gg":
-                    together.update(i for i, c in enumerate(state) if c in "Gg")
-        return together
+    def _program_states(self, tls: str) -> list[str]:
+        """The state of every phase of SUMO's own programs of *tls*."""
+        return [
+            phase.state
+            for logic in self._traci.trafficlight.getAllProgramLogics(tls)
+            for phase in logic.phases
+        ]
 
     def _signals_to_carla(self) -> None:
         import typesafe_carla.carla as carla  # noqa: PLC0415

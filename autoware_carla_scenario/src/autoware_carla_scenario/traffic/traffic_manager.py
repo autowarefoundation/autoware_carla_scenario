@@ -269,36 +269,37 @@ class TrafficManagerBackend(TrafficBackend):
         to.
         """
         seen = world_visibility(episode_of(world))
-        changed = seen != self._visibility
         follows = self.vehicle_parameters.follow_visibility is True
+        changed = seen != self._visibility
         if changed:
             self._visibility = seen
             self._log_sight(seen, follows)
-        if not follows and len(self._held) == 0:
+        # Negative: no hold, so every vehicle held is given its own back (no
+        # visibility any more, or follow_visibility turned off during the run).
+        limit_kmh = -1.0
+        if follows and seen is not None:
+            limit_kmh = sight_speed(seen, DEFAULT_DECEL, DEFAULT_REACTION_S) * 3.6
+        if limit_kmh < 0.0 and len(self._held) == 0:
             return
         if follows and not changed and elapsed < self._sight_due:
             return
         self._sight_due = elapsed + SIGHT_UPDATE_S
-        if seen is None and len(self._held) == 0:
-            return
         tm = self._require_tm("follow_visibility")
         if tm is None:
             return
-        # Turned off during the run (a TrafficParametersAction), or no
-        # visibility any more: every vehicle held is given its own back.
-        limit_kmh = -1.0
-        if follows and seen is not None:
-            limit_kmh = sight_speed(seen, DEFAULT_DECEL, DEFAULT_REACTION_S) * 3.6
         for actor_id, actor in list(self._autopiloted.items()):
+            if not actor.is_alive:
+                # Destroyed since it was put on autopilot: forgotten.
+                del self._autopiloted[actor_id]
+                if actor_id in self._held:
+                    del self._held[actor_id]
+                continue
             if actor_id in self._released:
                 continue
             try:
                 self._hold_to_sight(tm, actor, limit_kmh)
             except RuntimeError:
-                # Destroyed since it was put on autopilot: forgotten.
-                del self._autopiloted[actor_id]
-                if actor_id in self._held:
-                    del self._held[actor_id]
+                continue  # destroyed under us: forgotten at the next update
 
     def _hold_to_sight(
         self, tm: "carla.TrafficManager", actor: "carla.Actor", limit_kmh: float
@@ -330,27 +331,18 @@ class TrafficManagerBackend(TrafficBackend):
         if seen is None:
             logger.info("TrafficManager: no visibility set any more")
             return
-        decel = DEFAULT_DECEL
-        limit_kmh = sight_speed(seen, decel, DEFAULT_REACTION_S) * 3.6
-        if follows:
-            logger.info(
-                "TrafficManager: drivers see %.0f m, so traffic drives at most "
-                "%.0f km/h (braking at %.1f m/s² after %.1f s)",
-                seen,
-                limit_kmh,
-                decel,
-                DEFAULT_REACTION_S,
-            )
-            return
         logger.info(
-            "TrafficManager: drivers see %.0f m, so traffic that follows it "
-            "would drive at most %.0f km/h (braking at %.1f m/s² after %.1f s); "
-            "traffic.vehicles.follow_visibility is not on, and its vehicles "
-            "drive as before",
+            "TrafficManager: drivers see %.0f m, so traffic %s at most %.0f km/h "
+            "(braking at %.1f m/s² after %.1f s)%s",
             seen,
-            limit_kmh,
-            decel,
+            "drives" if follows else "that follows it would drive",
+            sight_speed(seen, DEFAULT_DECEL, DEFAULT_REACTION_S) * 3.6,
+            DEFAULT_DECEL,
             DEFAULT_REACTION_S,
+            ""
+            if follows
+            else "; traffic.vehicles.follow_visibility is not on, and its "
+            "vehicles drive as before",
         )
 
     def close(self) -> None:

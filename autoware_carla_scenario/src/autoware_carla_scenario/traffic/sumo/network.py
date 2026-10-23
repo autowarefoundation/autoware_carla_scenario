@@ -262,74 +262,22 @@ def build_network(
     return network
 
 
-def generate_trips(
+def _random_trips(
     network: SumoNetwork,
     out: Path,
     *,
     seed: int,
     period: float,
     end: float,
-    safe_weights: bool = True,
-    fringe_factor: float = 5.0,
+    prefix: str,
+    options: list[str],
+    what: str = "",
 ) -> Path:
-    """Ambient demand for *network*, written to *out* (a ``.rou.xml``).
+    """Run SUMO's ``randomTrips.py`` on *network*, validated routes into *out*
+    (a ``.rou.xml``), with *options* beside the ones every demand shares.
 
-    Weighted by roadgen's ``network.safe.*`` files when *safe_weights* and the
-    network has them, by *fringe_factor* otherwise.
-    """
-    tool = sumo_home() / "tools" / "randomTrips.py"
-    if safe_weights and Path(f"{network.weights_prefix}.src.xml").is_file():
-        weights = ["--weights-prefix", str(network.weights_prefix)]
-    else:
-        weights = ["--fringe-factor", f"{fringe_factor:g}"]
-    out.parent.mkdir(parents=True, exist_ok=True)
-    trips = out.with_suffix(".trips.xml")
-    cmd = [
-        sys.executable,
-        str(tool),
-        "-n",
-        str(network.net_file),
-        "-o",
-        str(trips),
-        "-r",
-        str(out),
-        "-b",
-        "0",
-        "-e",
-        str(end),
-        "-p",
-        str(period),
-        "--seed",
-        str(seed),
-        "--validate",
-        "--vehicle-class",
-        "passenger",
-        "--prefix",
-        "sumo",
-        *weights,
-    ]
-    env = dict(os.environ, SUMO_HOME=str(sumo_home()))
-    proc = subprocess.run(cmd, capture_output=True, text=True, env=env, check=False)  # noqa: S603
-    if proc.returncode != 0 or not out.is_file():
-        raise TrafficBackendError(
-            f"randomTrips.py failed ({proc.returncode}): {proc.stderr.strip()[-2000:]}"
-        )
-    return out
-
-
-def generate_walks(
-    network: SumoNetwork,
-    out: Path,
-    *,
-    seed: int,
-    period: float,
-    end: float,
-    max_distance: float,
-) -> Path:
-    """Pedestrian demand for *network*, written to *out* (a ``.rou.xml``).
-
-    Unweighted: roadgen's weights are for cars, and say nothing of where
-    people walk.
+    Raises:
+        TrafficBackendError: It failed; *what* names the demand in the message.
     """
     tool = sumo_home() / "tools" / "randomTrips.py"
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -351,20 +299,74 @@ def generate_walks(
         "--seed",
         str(seed),
         "--validate",
-        "--pedestrians",
-        "--max-distance",
-        f"{max_distance:g}",
         "--prefix",
-        "sumoped",
+        prefix,
+        *options,
     ]
     env = dict(os.environ, SUMO_HOME=str(sumo_home()))
     proc = subprocess.run(cmd, capture_output=True, text=True, env=env, check=False)  # noqa: S603
     if proc.returncode != 0 or not out.is_file():
         raise TrafficBackendError(
-            f"randomTrips.py --pedestrians failed ({proc.returncode}): "
+            f"randomTrips.py{what} failed ({proc.returncode}): "
             f"{proc.stderr.strip()[-2000:]}"
         )
     return out
+
+
+def generate_trips(
+    network: SumoNetwork,
+    out: Path,
+    *,
+    seed: int,
+    period: float,
+    end: float,
+    safe_weights: bool = True,
+    fringe_factor: float = 5.0,
+) -> Path:
+    """Ambient demand for *network*, written to *out* (a ``.rou.xml``).
+
+    Weighted by roadgen's ``network.safe.*`` files when *safe_weights* and the
+    network has them, by *fringe_factor* otherwise.
+    """
+    if safe_weights and Path(f"{network.weights_prefix}.src.xml").is_file():
+        weights = ["--weights-prefix", str(network.weights_prefix)]
+    else:
+        weights = ["--fringe-factor", f"{fringe_factor:g}"]
+    return _random_trips(
+        network,
+        out,
+        seed=seed,
+        period=period,
+        end=end,
+        prefix="sumo",
+        options=["--vehicle-class", "passenger", *weights],
+    )
+
+
+def generate_walks(
+    network: SumoNetwork,
+    out: Path,
+    *,
+    seed: int,
+    period: float,
+    end: float,
+    max_distance: float,
+) -> Path:
+    """Pedestrian demand for *network*, written to *out* (a ``.rou.xml``).
+
+    Unweighted: roadgen's weights are for cars, and say nothing of where
+    people walk.
+    """
+    return _random_trips(
+        network,
+        out,
+        seed=seed,
+        period=period,
+        end=end,
+        prefix="sumoped",
+        options=["--pedestrians", "--max-distance", f"{max_distance:g}"],
+        what=" --pedestrians",
+    )
 
 
 def generate_rides(
@@ -386,26 +388,7 @@ def generate_rides(
     file redefining that type, which the routing has to know.  Unweighted:
     roadgen's weights are for cars, and give every bicycle edge 0.
     """
-    tool = sumo_home() / "tools" / "randomTrips.py"
-    out.parent.mkdir(parents=True, exist_ok=True)
-    cmd = [
-        sys.executable,
-        str(tool),
-        "-n",
-        str(network.net_file),
-        "-o",
-        str(out.with_suffix(".trips.xml")),
-        "-r",
-        str(out),
-        "-b",
-        "0",
-        "-e",
-        str(end),
-        "-p",
-        str(period),
-        "--seed",
-        str(seed),
-        "--validate",
+    options = [
         # From and to edges a bicycle may use; the type is SUMO's own, which
         # --vehicle-class would shadow with one of randomTrips'.
         "--vclass",
@@ -414,29 +397,29 @@ def generate_rides(
         'type="DEFAULT_BIKETYPE"',
         "--min-distance",
         f"{min_distance:g}",
-        "--prefix",
-        "sumobike",
     ]
     if max_distance is not None:
-        cmd += ["--max-distance", f"{max_distance:g}"]
+        options += ["--max-distance", f"{max_distance:g}"]
     if bicycle_type is not None:
         # The routing writes the types its rides drew beside them rather than
         # into them: SUMO loads the type file itself, and refuses a type
         # defined twice.
-        cmd += [
+        options += [
             "--additional-files",
             str(bicycle_type),
             "--vtype-output",
             str(out.with_suffix(".vtypes.xml")),
         ]
-    env = dict(os.environ, SUMO_HOME=str(sumo_home()))
-    proc = subprocess.run(cmd, capture_output=True, text=True, env=env, check=False)  # noqa: S603
-    if proc.returncode != 0 or not out.is_file():
-        raise TrafficBackendError(
-            f"randomTrips.py --vclass bicycle failed ({proc.returncode}): "
-            f"{proc.stderr.strip()[-2000:]}"
-        )
-    return out
+    return _random_trips(
+        network,
+        out,
+        seed=seed,
+        period=period,
+        end=end,
+        prefix="sumobike",
+        options=options,
+        what=" --vclass bicycle",
+    )
 
 
 def crossing_edges(net_file: Path) -> dict[str, frozenset[str]]:

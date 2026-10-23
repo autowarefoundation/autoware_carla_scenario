@@ -46,6 +46,7 @@ class _Actor:
         self.attributes: dict = {}
         self.autopilot: List[Tuple[bool, int]] = []
         self.speed_limit = speed_limit
+        self.is_alive = True
 
     def get_speed_limit(self) -> float:
         return self.speed_limit
@@ -496,6 +497,20 @@ class TestTrafficManagerVisibility:
         backend.tick(world, 0.2 + SIGHT_UPDATE_S)
         assert tm.speed_differences[2][-1] == TM_DEFAULT_SPEED_DIFFERENCE_PCT
         assert 1 not in tm.speed_differences
+        backend.close()
+
+    def test_a_destroyed_vehicle_is_forgotten(self) -> None:
+        from autoware_carla_scenario.visibility import set_world_visibility
+
+        gone = _Actor(2, speed_limit=120.0)
+        backend, world, tm = self._following(gone)
+        set_world_visibility(4, 50.0)
+        backend.tick(world, 0.05)
+        assert 2 in backend._held
+        gone.is_alive = False
+        set_world_visibility(4, 40.0)
+        backend.tick(world, 0.10)
+        assert backend._autopiloted == {} and backend._held == {}
         backend.close()
 
     def test_a_vehicle_is_never_held_faster_than_its_own_speed_factor(

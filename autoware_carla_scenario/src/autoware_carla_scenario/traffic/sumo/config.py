@@ -13,7 +13,7 @@ from typing import Any, Mapping, Optional
 
 from ...constants import DEFAULT_TM_PORT
 from ..fidelity import MesoscopicConfig
-from ..parameters import INF, Spread
+from ..parameters import INF, Spread, _check
 
 __all__ = [
     "AmbientTrafficConfig",
@@ -264,12 +264,7 @@ class BicycleConfig:
                 f"min_distance_m must not be negative (got {self.min_distance_m!r})"
             )
         for name, spread in self.riding().items():
-            low, high = BICYCLE_BOUNDS[name]
-            if not (low <= spread.mean <= high):
-                raise ValueError(
-                    f"bicycles.{name} must be within [{low:g}, {high:g}] "
-                    f"(got a mean of {spread.mean!r})"
-                )
+            _check(name, spread, BICYCLE_BOUNDS)
 
     def period(self) -> float:
         """Seconds between two generated rides."""
