@@ -204,6 +204,19 @@ def _wait_for(predicate: Any, timeout: float = 60.0, what: str = "") -> None:
     raise AssertionError(f"timed out waiting for {what or predicate}")
 
 
+def _carla_records(record: Path, count: int) -> bool:
+    """``count`` fake CARLAs have written a record that parses."""
+    files = list(record.glob("carla-*.json"))
+    if len(files) != count:
+        return False
+    try:
+        for path in files:
+            json.loads(path.read_text())
+    except (OSError, ValueError):
+        return False
+    return True
+
+
 def _jobs_done(env: SimpleNamespace) -> bool:
     jobs = env.state / "jobs"
     for job in jobs.iterdir() if jobs.is_dir() else []:
@@ -390,7 +403,7 @@ def test_scancel_stops_the_tasks_and_their_carla_and_resubmit_finishes_the_batch
     assert submission["collect_job_id"]
 
     _wait_for(
-        lambda: len(list(fake_slurm.record.glob("carla-*.json"))) == 2,
+        lambda: _carla_records(fake_slurm.record, 2),
         60,
         "two tasks' CARLAs",
     )
@@ -460,7 +473,7 @@ def test_a_worker_killed_before_it_stopped_carla_leaves_none_running(
     fake_slurm.monkeypatch.setenv("FAKE_SLURM_KILL_WAIT", "1")
     _status, batch = _run_batch(fake_slurm, "slurm", _slurm(), wait=False)
     records = fake_slurm.record
-    _wait_for(lambda: len(list(records.glob("carla-*.json"))) == 2, 90, "two CARLAs")
+    _wait_for(lambda: _carla_records(records, 2), 90, "two CARLAs")
     workers = [int(p.stem.rpartition("-")[2]) for p in records.glob("carla-*.json")]
     ports = [json.loads(p.read_text())["port"] for p in records.glob("carla-*.json")]
     # Stopped, the workers cannot handle the SIGTERM before the SIGKILL.

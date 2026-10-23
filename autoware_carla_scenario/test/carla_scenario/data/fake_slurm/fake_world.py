@@ -113,7 +113,9 @@ class FakeQueue:
         if record:
             path = Path(record) / f"carla-{os.getpid()}.json"
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(
+            # Atomic: a reader that sees the name sees the whole record.
+            tmp = path.with_name(f".{path.name}.tmp")
+            tmp.write_text(
                 json.dumps(
                     {
                         "pid": self._carla.pid,
@@ -123,6 +125,7 @@ class FakeQueue:
                     }
                 )
             )
+            os.replace(tmp, path)
         return self
 
     def __exit__(self, *_: object) -> None:
