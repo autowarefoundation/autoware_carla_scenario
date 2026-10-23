@@ -2052,6 +2052,76 @@ def test_a_nested_mapping_compiles_only_where_the_config_converts_it(
     assert error.path == "scenario.goal"
 
 
+_CHOICE_CONFIG = """
+import enum
+from dataclasses import dataclass
+
+
+class Mode(enum.Enum):
+    FAST = "fast"
+    SLOW = "slow"
+
+
+@dataclass
+class CaseConfig:
+    name: str = "p"
+    timeout_seconds: float = 5.0
+    mode: Mode = Mode.FAST
+    pos: tuple[float, float] = (0.0, 1.0)
+"""
+
+_CONVERTING_CHOICE_CONFIG = (
+    _CHOICE_CONFIG
+    + """
+    def __post_init__(self) -> None:
+        if isinstance(self.mode, str):
+            self.mode = Mode(self.mode)
+        self.pos = (float(self.pos[0]), float(self.pos[1]))
+"""
+)
+
+
+def test_an_enum_or_tuple_the_config_converts_compiles(tmp_path: Path) -> None:
+    # The runner passes the YAML str / list to the constructor: it compiles
+    # only where the config's __post_init__ converts them (#531).
+    setup = "logger.info('%s', cfg.mode.value)\nlogger.info('%f', cfg.pos[1])\n"
+    values = {"mode": "slow", "pos": [1.0, 2.0]}
+    scenario, config, _ = _write_case(tmp_path, setup, config=_CONVERTING_CHOICE_CONFIG)
+    result = typecheck_scenario(scenario, config, values)
+    assert result.ok, result.format()
+
+    scenario, config, _ = _write_case(tmp_path, setup, config=_CHOICE_CONFIG)
+    paths = {d.path for d in typecheck_scenario(scenario, config, values).diagnostics}
+    assert "scenario.mode" in paths
+
+
+_LEGS_CONFIG = """
+from dataclasses import dataclass, field
+
+
+@dataclass
+class Leg:
+    lanelet_id: int = 0
+    speed: float = 1.0
+
+
+@dataclass
+class CaseConfig:
+    legs: list[Leg] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        self.legs = [Leg(**n) if isinstance(n, dict) else n for n in self.legs]
+"""
+
+
+def test_a_bad_value_in_a_nested_list_names_its_field(tmp_path: Path) -> None:
+    setup = "logger.info('%d', cfg.legs[0].lanelet_id)\n"
+    scenario, config, _ = _write_case(tmp_path, setup, config=_LEGS_CONFIG)
+    values = {"legs": [{"lanelet_id": 1}, {"lanelet_id": 2, "speed": "x"}]}
+    error = _only_error(typecheck_scenario(scenario, config, values))
+    assert error.path == "scenario.legs[1].speed"
+
+
 def test_an_undeclared_attribute_is_refused_before_compiling(tmp_path: Path) -> None:
     scenario, config, path = _write_case(tmp_path, "self._count = 3\n")
     error = _only_error(typecheck_scenario(scenario, config))

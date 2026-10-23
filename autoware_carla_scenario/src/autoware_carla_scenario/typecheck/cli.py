@@ -10,7 +10,11 @@ Each ``scenario=`` config (a name or a glob, as ``scenario`` takes) is composed
 with the remaining overrides, exactly as the runner composes it, and checked
 the way the runner checks it before a run (docs/typecheck.md).  The exit
 status is 0 when every scenario passed, 1 when one failed, and 2 when there is
-no Codon compiler to check with.
+no Codon compiler to check with or the command line does not compose: no config
+matches ``scenario=``, or an override names a key the config does not have
+(the message suggests the closest key; ``+key=value`` adds a new one).
+``scenario='*'`` is every config, like ``scenario='*/*'`` or no ``scenario=``.
+A package author checks only theirs: ``scenario='my_package/*'``.
 
 ``--library`` checks the framework's own modules instead: those
 ``typecheck/library.py`` lists as checked, or the modules named after it with
@@ -20,8 +24,10 @@ itself").
 
 from __future__ import annotations
 
+import difflib
 import logging
 import os
+import re
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
@@ -31,6 +37,45 @@ from .mode import typecheck_registered
 from .toolchain import ToolchainError
 
 __all__ = ["main"]
+
+_OVERRIDE_KEY = re.compile(r"Could not (?:override|delete) '([^']+)'")
+
+
+def _flatten(node: Any, prefix: str = "") -> list[str]:
+    """The dotted keys of the nested mapping *node*."""
+    if not isinstance(node, dict):
+        return []
+    keys: list[str] = []
+    for key, value in node.items():
+        path = f"{prefix}.{key}" if prefix else str(key)
+        keys.append(path)
+        keys += _flatten(value, path)
+    return keys
+
+
+def _suggest(word: str, known: list[str]) -> str:
+    close = difflib.get_close_matches(word, known, n=1, cutoff=0.6)
+    return f"did you mean {close[0]!r}? " if close else ""
+
+
+def _compose_error(exc: Exception, name: str, overrides: list[str], run: Any) -> str:
+    """One message for the composition error *exc* of config *name*."""
+    text = str(exc).strip()
+    found = _OVERRIDE_KEY.search(text)
+    if found is None:
+        return f"Error: {text.splitlines()[0] if text else type(exc).__name__}"
+    key = found.group(1)
+    try:
+        known = _flatten(run._to_dict(run._compose_config(name, [])), "")
+    except Exception:  # noqa: BLE001 - the suggestion is a courtesy
+        known = []
+    value = next(
+        (o.split("=", 1)[1] for o in overrides if o.split("=", 1)[0] == key), "..."
+    )
+    return (
+        f"Error: could not override {key!r}: the config has no such key\n"
+        f"  ({_suggest(key, known)}To add a new key, use +{key}={value})"
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -54,12 +99,31 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if result.ok else 1
 
     from ..examples import run  # noqa: PLC0415 - registers the built-in scenarios
-    from ..registry import get_scenario_builder, load_scenario_plugins  # noqa: PLC0415
+    from ..registry import (  # noqa: PLC0415
+        get_scenario_builder,
+        get_scenario_registry,
+        load_scenario_plugins,
+    )
 
     load_scenario_plugins()
     pattern, overrides = run._extract_scenario_override(["scenario-check", *args])
-    names = run._resolve_scenario_glob(pattern or "**/*")
-    cfgs = [run._compose_config(name, overrides) for name in names]
+    if pattern in (None, "*"):
+        pattern = "**/*"  # `*` alone matches no `group/name`
+    try:
+        names = run._resolve_scenario_glob(pattern)
+    except SystemExit:
+        # The runner's helper printed which pattern matched nothing.
+        known = run._resolve_scenario_glob("**/*")
+        close = difflib.get_close_matches(pattern, known, n=3, cutoff=0.5)
+        if close:
+            print(f"  did you mean: {', '.join(close)}?", file=sys.stderr)  # noqa: T201
+        print(f"  scenario configs: {', '.join(known)}", file=sys.stderr)  # noqa: T201
+        return 2
+    try:
+        cfgs = [run._compose_config(name, overrides) for name in names]
+    except Exception as exc:  # noqa: BLE001 - hydra, omegaconf: a key, a value
+        print(_compose_error(exc, names[0], overrides, run), file=sys.stderr)  # noqa: T201
+        return 2
 
     def check(cfg: Any) -> Any:
         return typecheck_registered(
@@ -75,7 +139,12 @@ def main(argv: list[str] | None = None) -> int:
     for config_name, cfg, result in zip(names, cfgs, results):
         scenario_name = str(cfg.scenario.name)
         if result is None and get_scenario_builder(scenario_name) is None:
-            print(f"[FAILED] {config_name}: unknown scenario name {scenario_name!r}")  # noqa: T201
+            known = sorted(get_scenario_registry())
+            hint = _suggest(scenario_name, known)
+            print(  # noqa: T201
+                f"[FAILED] {config_name}: unknown scenario name {scenario_name!r} "
+                f"({hint}known names: {', '.join(known)})"
+            )
             failed += 1
             continue
         if result is None:
