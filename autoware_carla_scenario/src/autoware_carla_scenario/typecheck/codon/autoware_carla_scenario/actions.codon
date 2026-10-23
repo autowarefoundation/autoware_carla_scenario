@@ -10,7 +10,8 @@ from .conditions import (AdversityKind, AdversityLocation, BaseCondition, TurnIn
 from .coordinate import (Lanelet2Pose, CarlaWorldPose, GroundProjectionConfig,
                          _expect_lanelet2_poses, _expect_optional_ground_projection)
 from .entity_role import EntityRole, _expect_role
-from .traffic import TurnDirection, LaneChangeDirection, PedestrianParameters, VehicleParameters
+from .traffic import (TurnDirection, LaneChangeDirection, BicycleParameters, PedestrianParameters,
+                      VehicleParameters)
 from .trajectory import (Trajectory, TrajectoryFollowingMode, TrajectoryTiming,
                          _expect_optional_timing, _expect_trajectory_position)
 
@@ -488,10 +489,11 @@ class TurnAction(BaseAction):
 class TrafficParametersAction(BaseAction):
     def __init__(self, label: str):
         compile_error("TrafficParametersAction(): no constructor takes a label alone "
-                      "(vehicles or pedestrians are what it sets)")
+                      "(vehicles, pedestrians or bicycles are what it sets)")
 
     def __init__(self, vehicles: Optional[VehicleParameters] = None,
-                 pedestrians: Optional[PedestrianParameters] = None, *_kw,
+                 pedestrians: Optional[PedestrianParameters] = None,
+                 bicycles: Optional[BicycleParameters] = None, *_kw,
                  entity_name: Optional[str] = None, condition = None,
                  timing: TickTiming = TickTiming("post_tick"),
                  label: str = "TrafficParameters", once: bool = True):

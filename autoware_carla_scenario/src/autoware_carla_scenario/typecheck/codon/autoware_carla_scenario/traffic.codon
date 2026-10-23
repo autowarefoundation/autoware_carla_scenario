@@ -146,7 +146,8 @@ def get_backend_factory(name: str):
     raise NotImplementedError()
 
 
-def build_backend(name: str, options = None, vehicles = None, pedestrians = None):
+def build_backend(name: str, options = None, vehicles = None, pedestrians = None,
+                  bicycles = None):
     raise NotImplementedError()
 
 
@@ -247,4 +248,34 @@ class PedestrianParameters:
                  red_light_violation_s = None):
         self.walking_speed_mps = _as_spread(walking_speed_mps)
         self.min_gap_m = _as_spread(min_gap_m)
+        self.red_light_violation_s = _as_spread(red_light_violation_s)
+
+
+# traffic.bicycles: how the bicycles ride.
+class BicycleParameters:
+    max_speed_mps: Optional[Spread]
+    accel: Optional[Spread]
+    decel: Optional[Spread]
+    min_gap_m: Optional[Spread]
+    reaction_time_s: Optional[Spread]
+    imperfection: Optional[Spread]
+    max_lateral_speed_mps: Optional[Spread]
+    red_light_violation_s: Optional[Spread]
+
+    def __init__(self,
+                 max_speed_mps = None,
+                 accel = None,
+                 decel = None,
+                 min_gap_m = None,
+                 reaction_time_s = None,
+                 imperfection = None,
+                 max_lateral_speed_mps = None,
+                 red_light_violation_s = None):
+        self.max_speed_mps = _as_spread(max_speed_mps)
+        self.accel = _as_spread(accel)
+        self.decel = _as_spread(decel)
+        self.min_gap_m = _as_spread(min_gap_m)
+        self.reaction_time_s = _as_spread(reaction_time_s)
+        self.imperfection = _as_spread(imperfection)
+        self.max_lateral_speed_mps = _as_spread(max_lateral_speed_mps)
         self.red_light_violation_s = _as_spread(red_light_violation_s)

@@ -907,6 +907,18 @@ their own:
 | `fog` | `environment.fog_density` | as `rain` |
 | `illumination` | `environment.sun_altitude_angle` | `day` 15-90, `low_sun` 0-15, `twilight` -6-0, `night` -90 to -6 |
 | `visibility` | `environment.visibility_m` | 15-400 m, whatever the weather |
+| `road_wetness` | `environment.wetness` | as `rain` |
+| `tire_friction` | `environment.tire_friction` | 0.3-1.1 of the dry road's grip, whatever the weather |
+| `wind` | `environment.wind_intensity` | as `rain` |
+| `cloudiness` | `environment.cloudiness` | as `rain` |
+
+`road_wetness` reads the weather's `wetness` alone, which its knob sets, so a
+drawn value reads back as its bucket; the standing water `rain` brings is the
+rain's, and the grip follows the larger of the two. `tire_friction` reads the
+grip the run's weather left the vehicles' wheels (a share of the dry
+road's, 1.0) -- `None` when nothing set it -- and its knob names it outright, as
+`visibility`'s names the visibility. `wind` and `cloudiness` read CARLA's
+0-100 intensities as levels, as `rain` and `fog` do.
 
 `environment.rain` sets the precipitation and, with it, the cloudiness,
 standing water and wetness of CARLA's rain presets (`EnvironmentAction`'s
@@ -961,7 +973,8 @@ from the ODD and the grip from the range that weather allows: a heavy-rain
 case never runs on a dry road's grip. `tire_friction: false` in the
 `odd_sample` leaves every case at the middle of its range, and
 `environment.tire_friction` fixes the grip whatever the weather (it wins over
-the quantile).
+the quantile, and a case that names one draws no quantile; the ODD's
+`tire_friction` probe draws it through that knob).
 
 The vehicles in the world when the action fires are scaled then; a scenario
 with such an action -- the config's, or its own -- also runs
@@ -969,6 +982,8 @@ with such an action -- the config's, or its own -- also runs
 later (background traffic) the same grip. A scenario that sets the weather on
 the tick loop sets the grip with it: a factor applied again replaces the last
 one rather than compounding it.
+
+The grip is CARLA's vehicle physics alone: no traffic backend reads it.
 
 The example scenarios declare these:
 
@@ -1028,11 +1043,14 @@ sets it through its own knob, `environment.visibility_m`, and a case with one
 keeps it. A run that sets no weather records none, and its traffic sees as
 it always did; each run starts with none, whatever the last left.
 
-What follows it is the traffic backend's: the `sumo` backend holds its own
-traffic to the speed it stops from within it
-([Visibility](traffic_backends.md#the-sumo-backend)); the TrafficManager has no notion of
-sight, so the `traffic_manager` backend logs the speed it would hold traffic
-to whenever the visibility changes, and its vehicles drive as before.
+What follows it is the traffic backend's (`traffic.vehicles.follow_visibility`):
+the `sumo` backend holds its own
+traffic to the speed it stops from within it, by default
+([Visibility](traffic_backends.md#the-sumo-backend)); the `traffic_manager`
+backend holds every vehicle it drives to it with `follow_visibility: true`,
+under its road's speed limit
+([Weather and the TrafficManager](traffic_backends.md#weather-and-the-trafficmanager)),
+and otherwise only logs the speed it would hold traffic to.
 
 ### Traffic parameters from the ODD
 
@@ -1052,6 +1070,8 @@ from them.
 | `vehicle_<field>_std` | `traffic.vehicles.<field>.std` | the field's std range below |
 | `pedestrian_<field>_mean` | `traffic.pedestrians.<field>.mean` | likewise |
 | `pedestrian_<field>_std` | `traffic.pedestrians.<field>.std` | likewise |
+| `bicycle_<field>_mean` | `traffic.bicycles.<field>.mean` | likewise (`sumo` only) |
+| `bicycle_<field>_std` | `traffic.bicycles.<field>.std` | likewise (`sumo` only) |
 
 | Parameter | Unit | Mean range | Std range |
 |---|---|---|---|
@@ -1067,6 +1087,19 @@ from them.
 | `pedestrians.walking_speed_mps` | m/s | 0.5-2.5 | 0-0.5 |
 | `pedestrians.min_gap_m` | m | 0.1-2 | 0-0.5 |
 | `pedestrians.red_light_violation_s` | s | 0-60 | 0-30 |
+| `bicycles.max_speed_mps` | m/s | 2-8 | 0-1.5 |
+| `bicycles.accel` | m/s^2 | 0.5-2 | 0-0.5 |
+| `bicycles.decel` | m/s^2 | 1-4 | 0-1 |
+| `bicycles.min_gap_m` | m | 0.2-2 | 0-0.5 |
+| `bicycles.reaction_time_s` | s | 0.3-2 | 0-0.5 |
+| `bicycles.imperfection` | | 0-1 | 0-0.3 |
+| `bicycles.max_lateral_speed_mps` | m/s | 0.2-2 | 0-0.5 |
+| `bicycles.red_light_violation_s` | s | 0-30 | 0-10 |
+
+The bicycles' are `traffic.bicycles` (`BicycleParameters`,
+[Traffic parameters](traffic_backends.md#traffic-parameters)): only SUMO
+simulates bicycles, so an ODD that draws them is an ODD for the `sumo`
+backend.
 
 A bucket of the ODD's attribute narrows the range, as for any knob. In a
 binding file:

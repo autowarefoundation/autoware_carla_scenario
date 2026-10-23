@@ -41,10 +41,15 @@ from autoware_carla_scenario.traffic.traffic_manager import TrafficManagerBacken
 
 
 class _Actor:
-    def __init__(self, actor_id: int) -> None:
+    def __init__(self, actor_id: int, speed_limit: float = 50.0) -> None:
         self.id = actor_id
         self.attributes: dict = {}
         self.autopilot: List[Tuple[bool, int]] = []
+        self.speed_limit = speed_limit
+        self.is_alive = True
+
+    def get_speed_limit(self) -> float:
+        return self.speed_limit
 
     def set_autopilot(self, enabled: bool, port: int) -> None:
         self.autopilot.append((enabled, port))
@@ -73,6 +78,11 @@ class _TrafficManager:
         self.synchronous: List[bool] = []
         self.seeds: List[int] = []
         self.shut_downs = 0
+        #: actor id -> every percentage under the limit it was given.
+        self.speed_differences: dict = {}
+
+    def vehicle_percentage_speed_difference(self, actor: Any, percent: float) -> None:
+        self.speed_differences.setdefault(actor.id, []).append(percent)
 
     def set_synchronous_mode(self, enabled: bool) -> None:
         self.synchronous.append(enabled)
@@ -375,6 +385,8 @@ class TestTrafficManagerClose:
             "backend": "traffic_manager",
             "port": 8123,
             "random_seed": 11,
+            "follow_visibility": False,
+            "visibility_m": None,
         }
 
 
@@ -418,6 +430,122 @@ class TestTrafficManagerVisibility:
         with caplog.at_level(logging.INFO):
             backend.tick(world, 0.15)
         assert any("drivers see 20 m" in r.getMessage() for r in caplog.records)
+        backend.close()
+
+    def _following(
+        self, *actors: Any, speed_factor: Optional[float] = None
+    ) -> Tuple[Any, Any, Any]:
+        from autoware_carla_scenario.traffic.parameters import (
+            Spread,
+            VehicleParameters,
+        )
+
+        world = _World(list(actors))
+        world.id = 4  # type: ignore[attr-defined]
+        client = _Client()
+        backend = TrafficManagerBackend(
+            client=client,
+            vehicles=VehicleParameters(
+                follow_visibility=True,
+                speed_factor=None if speed_factor is None else Spread(speed_factor),
+            ),
+        )
+        backend.prepare(_context(client, world))
+        backend.start(world)
+        return backend, world, client.tm
+
+    def test_with_follow_visibility_its_traffic_is_held_to_what_it_sees(
+        self,
+    ) -> None:
+        from autoware_carla_scenario.visibility import (
+            DEFAULT_DECEL,
+            DEFAULT_REACTION_S,
+            set_world_visibility,
+            sight_speed,
+        )
+        from autoware_carla_scenario.traffic.traffic_manager import (
+            SIGHT_UPDATE_S,
+            TM_DEFAULT_SPEED_DIFFERENCE_PCT,
+        )
+
+        town = _Actor(1, speed_limit=50.0)
+        highway = _Actor(2, speed_limit=120.0)
+        backend, world, tm = self._following(town, highway)
+        backend.tick(world, 0.05)
+        assert tm.speed_differences == {}  # nothing set, nothing held
+
+        set_world_visibility(4, 50.0)
+        backend.tick(world, 0.10)
+        limit = sight_speed(50.0, DEFAULT_DECEL, DEFAULT_REACTION_S) * 3.6
+        # 62 km/h: the town's 50 is under it, kept at the TrafficManager's
+        # own percentage; the highway's 120 is held to it.
+        assert 1 not in tm.speed_differences
+        assert tm.speed_differences[2] == [pytest.approx(100 * (1 - limit / 120.0))]
+        assert backend.describe()["follow_visibility"] is True
+
+        # The limit changes along the road: worked out again each update.
+        highway.speed_limit = 100.0
+        backend.tick(world, 0.15)
+        assert len(tm.speed_differences[2]) == 1  # not due yet
+        backend.tick(world, 0.10 + SIGHT_UPDATE_S)
+        assert tm.speed_differences[2][-1] == pytest.approx(100 * (1 - limit / 100.0))
+
+        # The fog lifts: each held vehicle gets its own back.
+        from autoware_carla_scenario.visibility import forget_visibility
+
+        forget_visibility()
+        backend.tick(world, 0.2 + SIGHT_UPDATE_S)
+        assert tm.speed_differences[2][-1] == TM_DEFAULT_SPEED_DIFFERENCE_PCT
+        assert 1 not in tm.speed_differences
+        backend.close()
+
+    def test_a_destroyed_vehicle_is_forgotten(self) -> None:
+        from autoware_carla_scenario.visibility import set_world_visibility
+
+        gone = _Actor(2, speed_limit=120.0)
+        backend, world, tm = self._following(gone)
+        set_world_visibility(4, 50.0)
+        backend.tick(world, 0.05)
+        assert 2 in backend._held
+        gone.is_alive = False
+        set_world_visibility(4, 40.0)
+        backend.tick(world, 0.10)
+        assert backend._autopiloted == {} and backend._held == {}
+        backend.close()
+
+    def test_a_vehicle_is_never_held_faster_than_its_own_speed_factor(
+        self,
+    ) -> None:
+        from autoware_carla_scenario.visibility import set_world_visibility
+
+        # 0.3 of the limit: 36 km/h on a 120 road, under what 300 m allows.
+        highway = _Actor(2, speed_limit=120.0)
+        backend, world, tm = self._following(highway, speed_factor=0.3)
+        assert tm.speed_differences[2] == [pytest.approx(70.0)]
+        set_world_visibility(4, 300.0)
+        backend.tick(world, 0.05)
+        assert tm.speed_differences[2] == [pytest.approx(70.0)]
+        backend.close()
+
+    def test_turning_follow_visibility_off_gives_the_traffic_its_speed_back(
+        self,
+    ) -> None:
+        from autoware_carla_scenario.traffic.parameters import VehicleParameters
+        from autoware_carla_scenario.traffic.traffic_manager import (
+            TM_DEFAULT_SPEED_DIFFERENCE_PCT,
+        )
+        from autoware_carla_scenario.visibility import set_world_visibility
+
+        highway = _Actor(2, speed_limit=120.0)
+        backend, world, tm = self._following(highway)
+        set_world_visibility(4, 30.0)
+        backend.tick(world, 0.05)
+        assert tm.speed_differences[2][-1] > TM_DEFAULT_SPEED_DIFFERENCE_PCT
+        backend.override_vehicle_parameters(
+            world, VehicleParameters(follow_visibility=False)
+        )
+        backend.tick(world, 0.10)
+        assert tm.speed_differences[2][-1] == TM_DEFAULT_SPEED_DIFFERENCE_PCT
         backend.close()
 
     def test_a_world_with_no_visibility_logs_nothing(

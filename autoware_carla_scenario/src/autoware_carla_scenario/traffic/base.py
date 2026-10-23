@@ -49,8 +49,10 @@ from typing import (
 
 from .context import TrafficContext
 from .parameters import (
+    BICYCLE_PARAMETER_BACKENDS,
     PEDESTRIAN_PARAMETER_BACKENDS,
     VEHICLE_PARAMETER_BACKENDS,
+    BicycleParameters,
     PedestrianParameters,
     VehicleParameters,
 )
@@ -63,6 +65,7 @@ logger = logging.getLogger(__name__)
 #: The parameters of a backend that was given none: every field unset.
 _NO_VEHICLE_PARAMETERS = VehicleParameters()
 _NO_PEDESTRIAN_PARAMETERS = PedestrianParameters()
+_NO_BICYCLE_PARAMETERS = BicycleParameters()
 
 __all__ = [
     "LaneChangeDirection",
@@ -365,10 +368,13 @@ class TrafficBackend:
     _vehicle_parameters: Optional[VehicleParameters] = None
     #: What :meth:`set_pedestrian_parameters` was given; ``None``: every default.
     _pedestrian_parameters: Optional[PedestrianParameters] = None
+    #: What :meth:`set_bicycle_parameters` was given; ``None``: every default.
+    _bicycle_parameters: Optional[BicycleParameters] = None
     #: The parameters the run started with, while an override changed them;
     #: :meth:`_restore_parameters` puts them back when the run closes.
     _configured_vehicles: Optional[VehicleParameters] = None
     _configured_pedestrians: Optional[PedestrianParameters] = None
+    _configured_bicycles: Optional[BicycleParameters] = None
     _overridden: bool = False
 
     # ------------------------------------------------------------------
@@ -398,6 +404,17 @@ class TrafficBackend:
         return {
             field
             for field, backends in PEDESTRIAN_PARAMETER_BACKENDS.items()
+            if self.name in backends
+        }
+
+    def supported_bicycle_parameters(self) -> set[str]:
+        """The :class:`~autoware_carla_scenario.traffic.parameters.BicycleParameters`
+        fields this backend honours, as :meth:`supported_vehicle_parameters`
+        (:data:`~autoware_carla_scenario.traffic.parameters.BICYCLE_PARAMETER_BACKENDS`).
+        """
+        return {
+            field
+            for field, backends in BICYCLE_PARAMETER_BACKENDS.items()
             if self.name in backends
         }
 
@@ -439,6 +456,17 @@ class TrafficBackend:
         parameters.check_supported(self.name, self.supported_pedestrian_parameters())
         self._pedestrian_parameters = parameters
 
+    def set_bicycle_parameters(self, parameters: BicycleParameters) -> None:
+        """Have the bicycles ride as *parameters* say, from the next
+        :meth:`prepare` on (the ``traffic.bicycles`` node).
+
+        Raises:
+            TrafficParameterError: As :meth:`set_vehicle_parameters`, for
+                :meth:`supported_bicycle_parameters`.
+        """
+        parameters.check_supported(self.name, self.supported_bicycle_parameters())
+        self._bicycle_parameters = parameters
+
     @property
     def vehicle_parameters(self) -> VehicleParameters:
         """The parameters this backend drives vehicles with (every field
@@ -455,6 +483,14 @@ class TrafficBackend:
             return _NO_PEDESTRIAN_PARAMETERS
         return self._pedestrian_parameters
 
+    @property
+    def bicycle_parameters(self) -> BicycleParameters:
+        """The parameters of this backend's bicycles (every field ``None``
+        when none were set)."""
+        if self._bicycle_parameters is None:
+            return _NO_BICYCLE_PARAMETERS
+        return self._bicycle_parameters
+
     # ------------------------------------------------------------------
     # Parameters changed during a run
     # ------------------------------------------------------------------
@@ -467,6 +503,7 @@ class TrafficBackend:
             self._overridden = True
             self._configured_vehicles = self._vehicle_parameters
             self._configured_pedestrians = self._pedestrian_parameters
+            self._configured_bicycles = self._bicycle_parameters
 
     def _restore_parameters(self) -> None:
         """Put back what :meth:`_remember_parameters` kept; :meth:`close` calls it."""
@@ -474,6 +511,7 @@ class TrafficBackend:
             self._overridden = False
             self._vehicle_parameters = self._configured_vehicles
             self._pedestrian_parameters = self._configured_pedestrians
+            self._bicycle_parameters = self._configured_bicycles
 
     def supported_vehicle_overrides(self) -> set[str]:
         """The vehicle parameters this backend can change during a run
@@ -488,6 +526,11 @@ class TrafficBackend:
     def supported_pedestrian_overrides(self) -> set[str]:
         """The pedestrian parameters this backend can change during a run
         (:meth:`override_pedestrian_parameters`); none by default."""
+        return set()
+
+    def supported_bicycle_overrides(self) -> set[str]:
+        """The bicycle parameters this backend can change during a run
+        (:meth:`override_bicycle_parameters`); none by default."""
         return set()
 
     def override_vehicle_parameters(
@@ -519,6 +562,13 @@ class TrafficBackend:
         logger.warning(
             "%s: cannot change pedestrian parameters during a run", self.name
         )
+
+    def override_bicycle_parameters(
+        self, world: "carla.World", overrides: BicycleParameters
+    ) -> None:
+        """Change the bicycles' parameters from now on, as
+        :meth:`override_vehicle_parameters` does the vehicles'."""
+        logger.warning("%s: cannot change bicycle parameters during a run", self.name)
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -594,7 +644,7 @@ class TrafficBackend:
 
         Subclasses add their seed, their process version, whatever makes a run
         reproducible from its record alone.  The parameters that were set
-        are there under ``vehicles`` and ``pedestrians``.
+        are there under ``vehicles``, ``pedestrians`` and ``bicycles``.
         """
         out: dict[str, Any] = {"backend": self.name}
         vehicles = self.vehicle_parameters.describe()
@@ -603,6 +653,9 @@ class TrafficBackend:
         pedestrians = self.pedestrian_parameters.describe()
         if pedestrians:
             out["pedestrians"] = pedestrians
+        bicycles = self.bicycle_parameters.describe()
+        if bicycles:
+            out["bicycles"] = bicycles
         return out
 
     # ------------------------------------------------------------------

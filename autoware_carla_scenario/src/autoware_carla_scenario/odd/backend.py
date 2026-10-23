@@ -62,6 +62,10 @@ _PROBE_UNITS: dict[str, str] = {
             "illumination",
             "rain",
             "fog",
+            "tire_friction",
+            "road_wetness",
+            "wind",
+            "cloudiness",
             "traffic_density",
             "pedestrian_nearby",
         )
@@ -102,18 +106,31 @@ BUILT_IN_PROBES: Mapping[str, tuple[Callable[[Any], Any], str]] = _BuiltInProbes
 #: the weather (:func:`~autoware_carla_scenario.visibility.visibility_range`),
 #: and a traffic backend that models drivers' sight (``sumo``) holds its
 #: traffic to it.  The visibility knob names it outright, in metres, whatever
-#: the weather.
+#: the weather.  The road-wetness knob sets the road's water, which the
+#: vehicles' grip follows (:func:`~autoware_carla_scenario.actions.environment.tire_friction_range`),
+#: and the tire-friction knob names the grip outright, whatever the water:
+#: the vehicles' wheel friction, which CARLA's physics alone reads.
+#: The value a weather intensity knob draws for each of
+#: :func:`~.probes.intensity_level`'s levels, so a drawn value reads back as
+#: its bucket.
+_INTENSITY_VALUES: dict[str, Any] = {
+    "none": 0,
+    "light": [1, 30],
+    "moderate": [30, 70],
+    "heavy": [70, 100],
+}
+
 DEFAULT_KNOBS: dict[Callable[..., Any], OddKnob] = {
     # environment.rain rather than environment.precipitation: precipitation
     # alone barely shows in a camera image, so a "heavy rain" case would look
     # like a dry day (EnvironmentAction's ``rain``).
     probes.rain: OddKnob(
         "environment.rain",
-        values={"none": 0, "light": [1, 30], "moderate": [30, 70], "heavy": [70, 100]},
+        values=_INTENSITY_VALUES,
     ),
     probes.fog: OddKnob(
         "environment.fog_density",
-        values={"none": 0, "light": [1, 30], "moderate": [30, 70], "heavy": [70, 100]},
+        values=_INTENSITY_VALUES,
     ),
     probes.illumination: OddKnob(
         "environment.sun_altitude_angle",
@@ -127,6 +144,24 @@ DEFAULT_KNOBS: dict[Callable[..., Any], OddKnob] = {
     probes.visibility: OddKnob(
         "environment.visibility_m",
         range=(15.0, 400.0),
+    ),
+    # The wetness, which the grip follows (with rain's standing water, the
+    # larger of the two).
+    probes.road_wetness: OddKnob(
+        "environment.wetness",
+        values=_INTENSITY_VALUES,
+    ),
+    probes.tire_friction: OddKnob(
+        "environment.tire_friction",
+        range=(0.3, 1.1),
+    ),
+    probes.wind: OddKnob(
+        "environment.wind_intensity",
+        values=_INTENSITY_VALUES,
+    ),
+    probes.cloudiness: OddKnob(
+        "environment.cloudiness",
+        values=_INTENSITY_VALUES,
     ),
     # The mean and spread of every traffic parameter (.traffic_probes).
     **TRAFFIC_KNOBS,

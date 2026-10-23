@@ -30,6 +30,8 @@ from autoware_carla_scenario.traffic import (
 )
 from autoware_carla_scenario.traffic.fidelity import MesoscopicConfig
 from autoware_carla_scenario.traffic.sumo.config import (
+    DEFAULT_BICYCLE_BLUEPRINTS,
+    BicycleConfig,
     PedestrianConfig,
     SumoBackendConfig,
 )
@@ -157,21 +159,6 @@ def test_a_lateral_acceleration_needs_the_sublane_model() -> None:
     assert backend.vehicle_parameters.max_lateral_accel is not None
 
 
-def test_an_older_roadgen_converts_without_curve_speeds(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture
-) -> None:
-    from autoware_carla_scenario.traffic.sumo import network
-
-    class OldMap:
-        def export_sumo(self, directory: str, trace: bool = True) -> str:
-            return "old"
-
-    with caplog.at_level("WARNING"):
-        assert network._export(OldMap(), tmp_path, 3.0) == "old"
-    assert "curve speeds" in caplog.text
-    assert network._export(OldMap(), tmp_path, None) == "old"
-
-
 @pytest.mark.parametrize(
     ("yaw", "angle"), [(0.0, 90.0), (90.0, 180.0), (-90.0, 0.0), (180.0, 270.0)]
 )
@@ -289,6 +276,9 @@ class _FakeActor:
 
 
 class _Blueprint:
+    def __init__(self, blueprint_id: str = "vehicle.fake") -> None:
+        self.id = blueprint_id
+
     def has_attribute(self, name: str) -> bool:
         return name == "role_name"
 
@@ -297,8 +287,13 @@ class _Blueprint:
 
 
 class _Library:
+    def __init__(self, missing: Any = ()) -> None:
+        self.missing = set(missing)
+
     def find(self, name: str) -> _Blueprint:
-        return _Blueprint()
+        if name in self.missing:
+            raise IndexError(f"blueprint '{name}' not found")
+        return _Blueprint(name)
 
 
 class _Actors(list):  # type: ignore[type-arg]
@@ -324,6 +319,8 @@ class _FakeWorld:
         self.frame = 0
         self.library_fetches = 0
         self.spawn_attempts = 0
+        #: Blueprints the world does not have.
+        self.missing: set[str] = set()
 
     def get_snapshot(self) -> _Snapshot:
         self.frame += 1
@@ -334,11 +331,11 @@ class _FakeWorld:
 
     def get_blueprint_library(self) -> _Library:
         self.library_fetches += 1
-        return _Library()
+        return _Library(self.missing)
 
     def try_spawn_actor(self, blueprint: _Blueprint, transform: Any) -> _FakeActor:
         self.spawn_attempts += 1
-        actor = _FakeActor(transform, getattr(blueprint, "role_name", ""))
+        actor = _FakeActor(transform, getattr(blueprint, "role_name", ""), blueprint.id)
         self.spawned.append(actor)
         return actor
 
@@ -1524,6 +1521,7 @@ def test_carla_light_states_reach_sumo_as_typesafe_carla_reports_them() -> None:
     backend = SumoTrafficBackend.__new__(SumoTrafficBackend)
     backend._traci = SimpleNamespace(trafficlight=_Lights())
     backend._crossing_links = {}
+    backend._bicycle_rides = {}
     backend._signals = {
         ("tls", 0): light(carla.TrafficLightState.Green),
         ("tls", 1): light(carla.TrafficLightState.Yellow),
@@ -1551,6 +1549,7 @@ def test_a_crossing_walks_only_while_the_roads_it_crosses_are_red() -> None:
     backend._traci = SimpleNamespace(trafficlight=lights)
     # Links 0-1 drive over the road crossing 4 crosses, 2-3 over crossing 5's.
     backend._crossing_links = {"tls": [(4, [0, 1]), (5, [2, 3])]}
+    backend._bicycle_rides = {}
     backend._signals = {
         ("tls", 0): green,
         ("tls", 1): red,
@@ -2474,3 +2473,394 @@ def test_sumos_pedestrians_cross_roads_on_crossings(
         assert seen & crossings, "no pedestrian walked over a crossing"
     finally:
         backend.close()
+
+
+# ---------------------------------------------------------------------------
+# Bicycles
+# ---------------------------------------------------------------------------
+
+
+def test_the_bicycle_options_are_checked() -> None:
+    assert not SumoBackendConfig().bicycles.enabled
+    assert not SumoBackendConfig().cycle_on_sidewalks
+    config = SumoBackendConfig.from_mapping(
+        {
+            "cycle_on_sidewalks": True,
+            "bicycles": {
+                "enabled": True,
+                "period_s": 4.0,
+                "blueprints": ["vehicle.bh.crossbike"],
+            },
+        }
+    )
+    bicycles = config.bicycles
+    assert config.cycle_on_sidewalks and bicycles.enabled
+    assert bicycles.period() == 4.0
+    assert bicycles.blueprints == ["vehicle.bh.crossbike"]
+    assert BicycleConfig(bicycles_per_hour=1800).period() == pytest.approx(2.0)
+    assert BicycleConfig().blueprints == list(DEFAULT_BICYCLE_BLUEPRINTS)
+    assert BicycleConfig().vehicle_control == "teleport"
+    with pytest.raises(ValueError, match="Unknown BicycleConfig"):
+        SumoBackendConfig.from_mapping({"bicycles": {"speed": 3}})
+    with pytest.raises(ValueError, match="vehicle_control"):
+        BicycleConfig(vehicle_control="pedal")
+    # How they ride is traffic.bicycles, which every backend reads.
+    with pytest.raises(ValueError, match="traffic.bicycles"):
+        BicycleConfig.from_mapping({"max_speed_mps": 4.0})
+    for name in ("radius_m", "max_distance_m"):
+        with pytest.raises(ValueError, match=name):
+            BicycleConfig.from_mapping({name: 0.0})
+
+
+def test_a_bicycle_is_a_vehicle_whose_base_type_says_so() -> None:
+    from autoware_carla_scenario.traffic.sumo.backend import is_bicycle
+
+    bike = _FakeActor(None, type_id="vehicle.bh.crossbike")
+    bike.attributes["base_type"] = "Bicycle"
+    assert is_bicycle(bike)
+    assert not is_bicycle(_FakeActor(None))
+    assert not is_bicycle(SimpleNamespace())
+
+
+def test_a_bicycle_ride_goes_with_its_traffic_or_waits_for_it_to_stop() -> None:
+    from autoware_carla_scenario.traffic.sumo.backend import _ride_state
+
+    assert _ride_state("with", ["r", "G"]) == "g"
+    assert _ride_state("with", ["r", "g"]) == "g"
+    assert _ride_state("with", ["y", "r"]) == "y"
+    assert _ride_state("with", ["r", "r"]) == "r"
+    assert _ride_state("clear", ["r", "r"]) == "G"
+    assert _ride_state("clear", ["r", "y"]) == "r"
+
+
+def _riding(
+    road: Path,
+    tmp_path: Path,
+    *,
+    vehicles: Any = None,
+    riders: Any = None,
+    warmup_s: float = 30.0,
+    **bicycles: Any,
+) -> tuple[Any, _FakeWorld, _FakeActor]:
+    """A started backend generating SUMO bicycles on a network whose
+    sidewalks they may ride, with an ego published from the west arm;
+    *vehicles* are its vehicle parameters, *riders* its bicycle ones."""
+    from autoware_carla_scenario.traffic.sumo.backend import SumoTrafficBackend
+    from autoware_carla_scenario.traffic.sumo.config import AmbientTrafficConfig
+
+    config = SumoBackendConfig(
+        traffic_light_authority="none",
+        warmup_s=warmup_s,
+        vehicle_control="physics",
+        cache_dir=str(tmp_path / "cache"),
+        cycle_on_sidewalks=True,
+        ambient=AmbientTrafficConfig(enabled=False),
+        bicycles=BicycleConfig(enabled=True, period_s=1.0, **bicycles),
+    )
+    backend = SumoTrafficBackend(config, vehicles=vehicles, bicycles=riders)
+    backend.prepare(
+        TrafficContext(
+            xodr_path=road,
+            fixed_delta_seconds=0.05,
+            random_seed=3,
+            output_dir=tmp_path / "out",
+        )
+    )
+    ego = _FakeActor(_carla_transform(-100.0, 1.75, 0.0), str(EGO_ROLE_NAME))
+    world = _FakeWorld([ego])
+    backend.adopt(_Entity(ego, str(EGO_ROLE_NAME)))
+    backend.start(world, skip_actor_ids={ego.id})
+    return backend, world, ego
+
+
+def _bikes(backend: Any) -> list[str]:
+    """SUMO's own bicycles in SUMO now: not the published ego."""
+    return [i for i in backend._traci.vehicle.getIDList() if i.startswith("sumobike")]
+
+
+def _bicycle_mirrors(world: _FakeWorld) -> list[_FakeActor]:
+    return [
+        a
+        for a in world.spawned
+        if a.attributes["role_name"].startswith("sumo:sumobike") and not a.destroyed
+    ]
+
+
+@needs_sumo
+def test_sumos_bicycles_ride_the_sidewalks_and_are_mirrored_as_bicycles(
+    crossroads_with_sidewalks: Path, tmp_path: Path
+) -> None:
+    backend, world, _ego = _riding(crossroads_with_sidewalks, tmp_path)
+    tc = backend._traci
+    try:
+        assert (tmp_path / "out" / "sumo" / "bicycles.rou.xml").is_file()
+        on_sidewalks = set()
+        for i in range(100):
+            backend.tick(world, i * 0.05)
+            for bike in _bikes(backend):
+                assert tc.vehicle.getVehicleClass(bike) == "bicycle"
+                if ".bike" in tc.vehicle.getRoadID(bike):
+                    on_sidewalks.add(bike)
+        # The network gave them the sidewalks, and they took them.
+        assert on_sidewalks
+        mirrors = _bicycle_mirrors(world)
+        assert mirrors and len(mirrors) == len(backend._ambient)
+        assert {a.type_id for a in mirrors} <= set(DEFAULT_BICYCLE_BLUEPRINTS)
+        # Placed where SUMO has them each tick, not driven by the car physics
+        # vehicle_control asks for, which would trip on the kerb.
+        assert all(a.constant_velocity is not None for a in mirrors)
+        assert backend.describe()["cycle_on_sidewalks"] is True
+        assert backend.describe()["bicycle_control"] == "teleport"
+    finally:
+        backend.close()
+    assert _bicycle_mirrors(world) == []
+
+
+@needs_sumo
+def test_bicycles_count_against_their_own_limit(
+    crossroads_with_sidewalks: Path, tmp_path: Path
+) -> None:
+    backend, world, _ego = _riding(crossroads_with_sidewalks, tmp_path, max_bicycles=2)
+    try:
+        for i in range(100):
+            backend.tick(world, i * 0.05)
+            assert len(_bicycle_mirrors(world)) <= 2
+        assert len(_bikes(backend)) > 2
+        assert len(_bicycle_mirrors(world)) == 2
+    finally:
+        backend.close()
+
+
+@needs_sumo
+def test_sumos_bicycles_ride_with_the_bicycle_parameters(
+    crossroads_with_sidewalks: Path, tmp_path: Path
+) -> None:
+    from autoware_carla_scenario.traffic.parameters import (
+        BicycleParameters,
+        Spread,
+        VehicleParameters,
+    )
+
+    backend, world, _ego = _riding(
+        crossroads_with_sidewalks,
+        tmp_path,
+        # The drivers' parameters are a car's: none of them reaches a rider.
+        vehicles=VehicleParameters(accel=Spread(4.0), min_gap_m=Spread(3.0)),
+        riders=BicycleParameters(max_speed_mps=Spread(4.0, 0.8), accel=0.8),
+    )
+    tc = backend._traci
+    try:
+        assert (tmp_path / "out" / "sumo" / "bicycle_type.add.xml").is_file()
+        for i in range(100):
+            backend.tick(world, i * 0.05)
+        bikes = _bikes(backend)
+        assert len(bikes) >= 5
+        speeds = [tc.vehicle.getMaxSpeed(b) for b in bikes]
+        # Each rider at their own draw: a spread, not one speed.
+        assert len({round(v, 3) for v in speeds}) > 1
+        assert all(0.5 <= v for v in speeds)
+        for bike in bikes:
+            assert tc.vehicle.getAccel(bike) == pytest.approx(0.8)
+            assert tc.vehicle.getMinGap(bike) != pytest.approx(3.0)
+        assert backend.describe()["bicycles"]["max_speed_mps"] == {
+            "mean": 4.0,
+            "std": 0.8,
+        }
+    finally:
+        backend.close()
+
+
+@needs_sumo
+def test_a_world_without_bicycles_keeps_sumos_in_sumo(
+    crossroads_with_sidewalks: Path,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from autoware_carla_scenario.traffic.sumo.backend import SumoTrafficBackend
+
+    backend, world, _ego = _riding(crossroads_with_sidewalks, tmp_path, warmup_s=0.0)
+    assert isinstance(backend, SumoTrafficBackend)
+    world.missing = set(DEFAULT_BICYCLE_BLUEPRINTS)
+    try:
+        with caplog.at_level("WARNING"):
+            for i in range(100):
+                backend.tick(world, i * 0.05)
+        assert _bikes(backend)
+        assert _bicycle_mirrors(world) == []
+        assert caplog.text.count("none of the bicycle blueprints") == 1
+    finally:
+        backend.close()
+
+
+@needs_sumo
+def test_a_scenario_bicycle_joins_sumo_as_a_bicycle(
+    crossroads_with_sidewalks: Path, tmp_path: Path
+) -> None:
+    from autoware_carla_scenario.traffic.sumo.backend import SumoTrafficBackend
+    from autoware_carla_scenario.traffic.sumo.config import AmbientTrafficConfig
+
+    backend = SumoTrafficBackend(
+        SumoBackendConfig(
+            scenario_vehicles="sumo",
+            traffic_light_authority="none",
+            warmup_s=0.0,
+            vehicle_control="teleport",
+            cache_dir=str(tmp_path / "cache"),
+            cycle_on_sidewalks=True,
+            ambient=AmbientTrafficConfig(enabled=False),
+        )
+    )
+    backend.prepare(
+        TrafficContext(
+            xodr_path=crossroads_with_sidewalks,
+            fixed_delta_seconds=0.05,
+            random_seed=3,
+            output_dir=tmp_path / "out",
+        )
+    )
+    # On the eastbound sidewalk of the west arm (CARLA y > 0 is OpenDRIVE's
+    # right): 7 m out, beyond the two 3.5 m lanes.
+    bike = _FakeActor(
+        _carla_transform(-80.0, 8.0, 0.0), "rider", "vehicle.bh.crossbike"
+    )
+    bike.attributes["base_type"] = "bicycle"
+    world = _FakeWorld([bike])
+    backend.adopt(_Entity(bike, "rider"))
+    backend.start(world)
+    tc = backend._traci
+    try:
+        ((sumo_id, _entity),) = backend._driven.items()
+        assert tc.vehicle.getVehicleClass(sumo_id) == "bicycle"
+        # Not yet inserted, so on no road: where its route starts.
+        assert ".bike" in tc.vehicle.getRoute(sumo_id)[0]
+        for i in range(200):
+            backend.tick(world, i * 0.05)
+        # Ridden on, where bicycles may go, and never off the end of its route.
+        assert bike.transform.location.x > -70.0
+        assert sumo_id in tc.vehicle.getIDList()
+        assert all(
+            backend._net.getEdge(edge).allows("bicycle")
+            for edge in tc.vehicle.getRoute(sumo_id)
+        )
+    finally:
+        backend.close()
+
+
+@needs_sumo
+def test_signalled_bicycle_rides_go_with_the_traffic_carlas_lights_let_go(
+    signalled_crossroads: Path, tmp_path: Path
+) -> None:
+    import typesafe_carla.carla as carla
+
+    from autoware_carla_scenario.traffic.sumo.backend import SumoTrafficBackend
+    from autoware_carla_scenario.traffic.sumo.config import AmbientTrafficConfig
+
+    backend = SumoTrafficBackend(
+        SumoBackendConfig(
+            warmup_s=0.0,
+            vehicle_control="teleport",
+            cache_dir=str(tmp_path / "cache"),
+            cycle_on_sidewalks=True,
+            ambient=AmbientTrafficConfig(enabled=False),
+        )
+    )
+    backend.prepare(
+        TrafficContext(
+            xodr_path=signalled_crossroads,
+            fixed_delta_seconds=0.05,
+            random_seed=3,
+            output_dir=tmp_path / "out",
+        )
+    )
+    tc = backend._traci
+    try:
+        backend.start(_FakeWorld([]))
+        ((tls, rides),) = backend._bicycle_rides.items()
+        links = {
+            index: (controlled[0][0], controlled[0][1])
+            for index, controlled in enumerate(tc.trafficlight.getControlledLinks(tls))
+        }
+        onto = {
+            index: companions
+            for index, follows, companions in rides
+            if follows == "with" and ".bike" in links[index][0]
+        }
+        assert len(onto) >= 4
+        for index, companions in onto.items():
+            in_lane, out_lane = links[index]
+            road = in_lane.split(".bike", 1)[0]
+            # The traffic of the carriageway beside its sidewalk, into the
+            # same road.
+            assert companions
+            for companion in companions:
+                assert links[companion][0].split(".")[0] == road.split(".")[0]
+                assert (
+                    links[companion][1].rsplit("_", 1)[0] == out_lane.rsplit("_", 1)[0]
+                )
+        # CARLA lets one companion go: its rides follow, giving way; the rest
+        # wait with the traffic they go with.
+        index, companions = next(iter(onto.items()))
+        green = SimpleNamespace(get_state=lambda: int(carla.TrafficLightState.Green))
+        red = SimpleNamespace(get_state=lambda: int(carla.TrafficLightState.Red))
+        vehicles = {c for cs in onto.values() for c in cs}
+        backend._signals = {
+            (tls, i): green if i == companions[0] else red for i in vehicles
+        }
+        backend._signals_to_sumo()
+        now = tc.trafficlight.getRedYellowGreenState(tls)
+        assert now[index] == "g"
+        assert all(now[i] == "r" for i in onto if companions[0] not in onto[i])
+    finally:
+        backend.close()
+    assert backend._bicycle_rides == {}
+
+
+def test_sumo_refuses_nothing_of_the_bicycle_parameters() -> None:
+    from autoware_carla_scenario.traffic import TrafficManagerBackend
+    from autoware_carla_scenario.traffic.parameters import (
+        BICYCLE_PARAMETER_BACKENDS,
+        BicycleParameters,
+        TrafficParameterError,
+    )
+    from autoware_carla_scenario.traffic.sumo.backend import SumoTrafficBackend
+
+    assert SumoTrafficBackend().supported_bicycle_parameters() == set(
+        BICYCLE_PARAMETER_BACKENDS
+    )
+    # The speed and the red light are on the types SUMO starts with.
+    assert "max_speed_mps" not in SumoTrafficBackend().supported_bicycle_overrides()
+    with pytest.raises(TrafficParameterError, match="traffic.bicycles.decel"):
+        TrafficManagerBackend().set_bicycle_parameters(BicycleParameters(decel=4.0))
+
+
+@needs_sumo
+def test_an_override_redraws_every_bicycle_sumo_drives(
+    crossroads_with_sidewalks: Path, tmp_path: Path
+) -> None:
+    from autoware_carla_scenario.traffic.parameters import BicycleParameters, Spread
+
+    backend, world, _ego = _riding(
+        crossroads_with_sidewalks, tmp_path, riders=BicycleParameters(decel=2.0)
+    )
+    tc = backend._traci
+    try:
+        backend.tick(world, 0.0)
+        before = _bikes(backend)
+        assert before
+        backend.override_bicycle_parameters(
+            world, BicycleParameters(decel=Spread(4.0), min_gap_m=0.3)
+        )
+        for bike in before:
+            assert tc.vehicle.getDecel(bike) == pytest.approx(4.0)
+            assert tc.vehicle.getMinGap(bike) == pytest.approx(0.3)
+        # One that departs later draws the overrides too.
+        for i in range(40):
+            backend.tick(world, 0.05 * (i + 1))
+        later = [b for b in _bikes(backend) if b not in before]
+        assert later
+        assert all(tc.vehicle.getDecel(b) == pytest.approx(4.0) for b in later)
+        assert backend.bicycle_parameters.decel == Spread(4.0)
+    finally:
+        backend.close()
+    # The next run starts from its config.
+    assert backend.bicycle_parameters.decel == Spread(2.0)

@@ -310,6 +310,17 @@ class TestTireFriction:
             EnvironmentAction(**kwargs)
 
 
+class TestTheGripReadBack:
+    def test_the_grip_given_the_wheels_is_what_the_probe_reads(self) -> None:
+        from autoware_carla_scenario.actions.environment import world_tire_friction
+
+        world = _world_with(_Vehicle(1))
+        assert world_tire_friction(world.id) is None
+        apply_tire_friction(world, 0.55)
+        assert world_tire_friction(world.id) == 0.55
+        assert world_tire_friction(None) is None
+
+
 class TestFollowingTheGrip:
     """A scenario with an action that sets the grip follows it after every tick."""
 

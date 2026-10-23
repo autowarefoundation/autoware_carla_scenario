@@ -40,6 +40,7 @@ __all__ = [
     "rain_weather",
     "tire_friction",
     "tire_friction_range",
+    "world_tire_friction",
 ]
 
 #: CARLA's rain presets (``SoftRain``, ``MidRainy``, ``HardRain``; LibCarla's
@@ -204,6 +205,20 @@ def apply_tire_friction(world: "carla.World", factor: float) -> None:
     )
 
 
+def world_tire_friction(world_id: Optional[int]) -> Optional[float]:
+    """The share of the dry road's grip :func:`apply_tire_friction` last gave
+    the vehicles of the world *world_id*, or ``None`` where it gave none.
+
+    What the ODD's ``tire_friction`` probe reads.  The vehicles' wheels are
+    CARLA's physics alone: no traffic backend reads it.
+    """
+    if world_id is None:
+        return None
+    if world_id in _TIRE_FACTORS:
+        return _TIRE_FACTORS[world_id]
+    return None
+
+
 def follow_tire_friction(world: "carla.World") -> None:
     """Give the vehicles spawned since the last call the world's tire friction.
 
@@ -286,7 +301,8 @@ class EnvironmentAction(BaseAction):
     if given, else the point *visibility_quantile* of
     :func:`~autoware_carla_scenario.visibility.visibility_range` -- its middle
     by default.  A traffic backend that models drivers' sight (``sumo``)
-    holds its traffic to it; the TrafficManager only logs it.
+    holds its traffic to it, and the TrafficManager with
+    ``follow_visibility: true``.
 
     **The road's grip follows the water on it.**  An action that sets the
     ``wetness`` or the standing water (``rain`` sets both), or names a tire

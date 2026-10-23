@@ -1,7 +1,7 @@
 """Change the traffic's parameters during a run.
 
 The run's traffic parameters (``traffic.vehicles``, ``traffic.pedestrians``,
-:mod:`autoware_carla_scenario.traffic.parameters`) are what its road users
+``traffic.bicycles``, :mod:`autoware_carla_scenario.traffic.parameters`) are what its road users
 draw their behaviour from when they join it.  :class:`TrafficParametersAction`
 changes them from the tick it fires on: the fields it sets replace the run's,
 the rest stay as they were, and every road user draws its value of the
@@ -26,8 +26,9 @@ changed fields again -- or, given an *entity_name*, only that vehicle does::
 A field the run's backend cannot change during a run is refused when the
 action is registered on the scenario, before the run starts, naming the
 backends that can (:class:`~autoware_carla_scenario.traffic.parameters.TrafficParameterError`):
-the TrafficManager drives no pedestrians, and SUMO sets a pedestrian's
-red-light rule on its type, before it starts.  The change ends with the run:
+the TrafficManager drives no pedestrians or bicycles, and SUMO sets a
+pedestrian's red-light rule, and a bicycle's speed and red-light rule, on its
+type, before it starts.  The change ends with the run:
 the next run of a queue starts from its own config.
 """
 
@@ -41,8 +42,10 @@ from ..entity.registry import find_vehicle_entity
 from ..traffic.base import DrivenEntity, TrafficBackend
 from ..traffic.driven import BackendDriven
 from ..traffic.parameters import (
+    BICYCLE_PARAMETER_BACKENDS,
     PEDESTRIAN_PARAMETER_BACKENDS,
     VEHICLE_PARAMETER_BACKENDS,
+    BicycleParameters,
     PedestrianParameters,
     VehicleParameters,
     check_supported,
@@ -66,6 +69,8 @@ class TrafficParametersAction(BaseAction):
             keep their values.
         pedestrians: The pedestrian parameters to change, likewise.  Not with
             *entity_name*: the entity here is a vehicle.
+        bicycles: The bicycle parameters to change, likewise; not with
+            *entity_name* either.
         entity_name: ``role_name`` of the one vehicle to change; ``None``
             (default) changes the whole run's traffic.
         condition: Trigger condition (see :class:`BaseCondition`); fires on
@@ -75,12 +80,13 @@ class TrafficParametersAction(BaseAction):
         once: If ``True`` (default) the action fires at most once.
 
     Raises:
-        ValueError: If it changes nothing, or changes pedestrians of an
-            entity.
+        ValueError: If it changes nothing, or changes pedestrians or bicycles
+            of an entity.
     """
 
     _vehicles: Optional[VehicleParameters]
     _pedestrians: Optional[PedestrianParameters]
+    _bicycles: Optional[BicycleParameters]
     _entity_name: Optional[str]
     _backend: Optional[TrafficBackend]
 
@@ -88,6 +94,7 @@ class TrafficParametersAction(BaseAction):
         self,
         vehicles: Optional[VehicleParameters] = None,
         pedestrians: Optional[PedestrianParameters] = None,
+        bicycles: Optional[BicycleParameters] = None,
         *,
         entity_name: Optional[str] = None,
         condition: Optional[BaseCondition] = None,
@@ -100,19 +107,21 @@ class TrafficParametersAction(BaseAction):
         changes_pedestrians = (
             pedestrians is not None and len(pedestrians.set_fields()) > 0
         )
-        if not changes_vehicles and not changes_pedestrians:
+        changes_bicycles = bicycles is not None and len(bicycles.set_fields()) > 0
+        if not changes_vehicles and not changes_pedestrians and not changes_bicycles:
             raise ValueError(
-                f"{type(self).__name__} '{label}': sets no vehicle or pedestrian "
-                "parameter"
+                f"{type(self).__name__} '{label}': sets no vehicle, pedestrian or "
+                "bicycle parameter"
             )
-        if entity_name is not None and changes_pedestrians:
+        if entity_name is not None and (changes_pedestrians or changes_bicycles):
             raise ValueError(
                 f"{type(self).__name__} '{label}': an entity is a vehicle, so "
-                "pedestrian parameters apply to the run's traffic only (leave "
-                "entity_name unset)"
+                "pedestrian and bicycle parameters apply to the run's traffic "
+                "only (leave entity_name unset)"
             )
         self._vehicles = vehicles if changes_vehicles else None
         self._pedestrians = pedestrians if changes_pedestrians else None
+        self._bicycles = bicycles if changes_bicycles else None
         self._entity_name = entity_name
         self._backend = None
 
@@ -146,6 +155,17 @@ class TrafficParametersAction(BaseAction):
                 PEDESTRIAN_PARAMETER_BACKENDS,
                 during_run=True,
                 before_run=backend.supported_pedestrian_parameters(),
+            )
+        bicycles = self._bicycles
+        if bicycles is not None:
+            check_supported(
+                "traffic.bicycles",
+                backend.name,
+                bicycles.set_fields(),
+                backend.supported_bicycle_overrides(),
+                BICYCLE_PARAMETER_BACKENDS,
+                during_run=True,
+                before_run=backend.supported_bicycle_parameters(),
             )
         self._backend = backend
 
@@ -188,6 +208,14 @@ class TrafficParametersAction(BaseAction):
         if pedestrians is not None:
             walkers: PedestrianParameters = pedestrians
             backend.override_pedestrian_parameters(world, walkers)
+        bicycles = self._bicycles
+        if bicycles is not None:
+            riders: BicycleParameters = bicycles
+            backend.override_bicycle_parameters(world, riders)
         # What the ODD's probes read from now on (odd.traffic_probes).
-        record_run_parameters(backend.vehicle_parameters, backend.pedestrian_parameters)
+        record_run_parameters(
+            backend.vehicle_parameters,
+            backend.pedestrian_parameters,
+            backend.bicycle_parameters,
+        )
         logger.info("%s: the traffic draws its parameters anew", self.label)

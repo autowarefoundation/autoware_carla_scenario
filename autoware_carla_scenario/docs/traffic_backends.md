@@ -105,11 +105,12 @@ exported scenario packages still set — keeps deciding the port when
 
 ## Traffic parameters
 
-How the traffic's road users *behave* is not a backend's own option but two
+How the traffic's road users *behave* is not a backend's own option but three
 parameter spaces every backend reads: `traffic.vehicles` (`VehicleParameters`)
-for how vehicles drive, and `traffic.pedestrians` (`PedestrianParameters`) for
-how pedestrians walk. Every field is `null` by default, which leaves the
-backend's own default.
+for how vehicles drive, `traffic.pedestrians` (`PedestrianParameters`) for
+how pedestrians walk, and `traffic.bicycles` (`BicycleParameters`) for how
+bicycles ride. Every field is `null` by default, which leaves the backend's
+own default.
 
 Every numeric parameter is a **spread**, a mean and a standard deviation
 (`{mean, std}`, `Spread` in Python): each vehicle and each pedestrian draws
@@ -131,6 +132,8 @@ traffic:
   pedestrians:
     walking_speed_mps: {mean: 1.2, std: 0.2}
     red_light_violation_s: {mean: 5.0, std: 5.0}
+  bicycles:
+    max_speed_mps: {mean: 4.5, std: 0.8}
 ```
 
 ```bash
@@ -161,7 +164,7 @@ An ODD can draw both the mean and the std of each, per case
 | `imperfection` | Driver imperfection, 0-1 | — | `sigma` |
 | `max_lateral_speed_mps` | Most lateral speed, m/s | — | `maxSpeedLat` |
 | `max_lateral_accel` | Most lateral acceleration, m/s² | — | `lcAccelLat` (sublane model, the default) |
-| `follow_visibility` | Slow to what the drivers see in the weather | — | ✓ (on by default) |
+| `follow_visibility` | Slow to what the drivers see in the weather | ✓ (when `true`) | ✓ (on by default) |
 
 `traffic.pedestrians` (the TrafficManager drives no pedestrians — a scenario's
 own walk as the scenario steers them — so every field is `sumo`'s):
@@ -171,6 +174,27 @@ own walk as the scenario steers them — so every field is `sumo`'s):
 | `walking_speed_mps` | Walking speed, m/s | — | `maxSpeed` |
 | `min_gap_m` | Gap to the person ahead, m | — | `minGap` |
 | `red_light_violation_s` | Cross on red if it has been red for less than this, s | — | `jmDriveAfterRedTime` |
+
+`traffic.bicycles` (only SUMO simulates bicycles; the TrafficManager drives a
+bicycle blueprint as it drives a car, so every field is `sumo`'s). The
+vehicle parameters are a driver's and never reach a bicycle:
+
+| Field | Meaning | `traffic_manager` | `sumo` | Default |
+| --- | --- | --- | --- | --- |
+| `max_speed_mps` | Speed on a free road, m/s | — | `desiredMaxSpeed` and `maxSpeed` | 5.56 (20 km/h), with SUMO's spread of 0.1 |
+| `accel` | Acceleration, m/s² | — | `accel` | 1.2 |
+| `decel` | Braking, m/s² | — | `decel` | 3 |
+| `min_gap_m` | Gap to the one ahead when standing, m | — | `minGap` | 0.5 |
+| `reaction_time_s` | Reaction time, s | — | `tau` | 1 |
+| `imperfection` | Rider imperfection, 0-1 | — | `sigma` | 0.5 |
+| `max_lateral_speed_mps` | Most lateral speed, m/s | — | `maxSpeedLat` | 1 |
+| `red_light_violation_s` | Ride on through a light red for less than this, s | — | `jmDriveAfterRedTime` | stop at red |
+
+SUMO's default bicycle type (`DEFAULT_BIKETYPE`) is redefined as a
+distribution of 100 types, each its own draw of them
+(`<output>/sumo/bicycle_type.add.xml`, loaded before the demand), which
+SUMO's own bicycles (`traffic.options.bicycles`), a `route_path` demand's of
+that type and the scenario's bicycles are all of.
 
 ### Parameter reference
 
@@ -274,12 +298,18 @@ defaults.
       `traffic.options.lateral_resolution_m: null` it is an error before the run.
 
 - `follow_visibility` — bool
-    - Hold SUMO's own traffic (ambient and background vehicles) to the speed it
-      stops from within what its drivers see in the run's weather, `v * tau + v² /
-      (2 * decel)` = the visibility, and give each its own speed back when the
-      weather lifts. Unset, `true`; `false` ignores the visibility, as the
-      TrafficManager does. See **Visibility** under
-      [The SUMO backend](#the-sumo-backend).
+    - Hold the backend's own traffic to the speed it stops from within what
+      its drivers see in the run's weather, `v * tau + v² / (2 * decel)` = the
+      visibility, and give each its own speed back when the weather lifts.
+    - `sumo`: SUMO's own traffic (ambient and background vehicles), with each
+      vehicle's own `tau` and `decel`. Unset, `true`; `false` ignores the
+      visibility. See **Visibility** under [The SUMO backend](#the-sumo-backend).
+    - `traffic_manager`: every vehicle it drives, with SUMO's default car's
+      reaction (1 s) and braking (4.5 m/s²), the TrafficManager having
+      neither, held as a percentage under its road's speed limit (never
+      faster than its own `speed_factor`), worked out again every second. Off
+      unless `true`, so a scenario's vehicles drive as they always did. See
+      [Weather and the TrafficManager](#weather-and-the-trafficmanager).
 
 #### `traffic.pedestrians` (`sumo` only)
 
@@ -364,6 +394,7 @@ like any action, on a condition:
 
 ```python
 from autoware_carla_scenario import (
+    BicycleParameters,
     ElapsedTimeCondition,
     PedestrianParameters,
     Spread,
@@ -395,6 +426,13 @@ scenario.register_post_tick(
         pedestrians=PedestrianParameters(walking_speed_mps=Spread(1.8, 0.2))
     )
 )
+
+# Riders brake harder and keep closer (sumo).
+scenario.register_post_tick(
+    TrafficParametersAction(
+        bicycles=BicycleParameters(decel=Spread(4.0, 0.5), min_gap_m=0.3)
+    )
+)
 ```
 
 - **Field by field.** The fields the action sets replace the run's; the ones it
@@ -406,7 +444,7 @@ scenario.register_post_tick(
   The ODD's probes read the merged parameters from then on.
 - **One vehicle.** With `entity_name` (a `role_name`), only that vehicle draws the
   changed fields again; the run's parameters stay as they were. An entity is a
-  vehicle, so `pedestrians` cannot be given with it.
+  vehicle, so `pedestrians` and `bicycles` cannot be given with it.
 - **Refused before the run.** A field the backend cannot change during a run
   is refused when the action is registered on the scenario, with a
   `TrafficParameterError`:
@@ -415,7 +453,10 @@ scenario.register_post_tick(
     - SUMO can change every vehicle parameter it supports, and a pedestrian's
       `walking_speed_mps` and `min_gap_m`. It cannot change
       `red_light_violation_s`, which SUMO reads off the pedestrian types it is
-      started with: set it in `traffic.pedestrians` instead.
+      started with: set it in `traffic.pedestrians` instead. Of the bicycle
+      parameters it can change every one but `max_speed_mps` and
+      `red_light_violation_s`, which it reads off the bicycle types: set those
+      in `traffic.bicycles`.
 - **Under SUMO,** a scenario vehicle the TrafficManager drives
   (`scenario_vehicles=traffic_manager`) gets the shared fields, with a warning
   naming the others. A visibility already held is held anew, from the new
@@ -693,9 +734,40 @@ uv run scenario ... background_traffic.enabled=true background_traffic.source.st
 ```
 
 `background_traffic` (in `examples/conf/config.yaml`) is off by default, and so
-are the SUMO backend's own `ambient` randomTrips demand and its `pedestrians`
-(`SumoBackendConfig`'s defaults, and `conf/traffic/sumo.yaml`'s), so a run has
+are the SUMO backend's own `ambient` randomTrips demand, its `pedestrians` and
+its `bicycles` (`SumoBackendConfig`'s defaults, and `conf/traffic/sumo.yaml`'s), so a run has
 no traffic but its own and its traffic sources' unless asked.
+
+## Weather and the TrafficManager
+
+CARLA's TrafficManager drives in the weather as on a clear day: its vehicles
+know where every actor is whatever the fog. With
+`traffic.vehicles.follow_visibility: true` each vehicle it drives is held to
+the speed it stops from within what its driver sees, worked out with SUMO's
+default car's reaction (1 s) and braking (4.5 m/s²): 62 km/h in 50 m of fog.
+The TrafficManager takes a speed as a percentage under the road's limit, so
+each vehicle is given the one that holds it there
+(`vehicle_percentage_speed_difference`), never less than its own
+`speed_factor`'s, worked out again every second and whenever the visibility
+changes; when the weather lifts, or the field is turned off during the run
+(`TrafficParametersAction`), each gets its own back. A vehicle a scenario gave
+a speed of its own (`set_desired_speed`) keeps it. Off by default, so a
+scenario's vehicles drive as they always did; unset, the backend logs the
+speed it would hold traffic to.
+
+The road's grip is CARLA's vehicle physics alone (`EnvironmentAction`'s tire
+friction scales every vehicle's wheels, the TrafficManager's as well); the
+sight speed above does not read it.
+
+```bash
+uv run scenario ... environment.fog_density=80 environment.rain=60 \
+    traffic.vehicles.follow_visibility=true
+```
+
+The visibility comes from the ODD as any other attribute: its `visibility`,
+`rain`, `fog` and `illumination` knobs ([The weather and the sun](odd.md))
+set what the run's weather leaves, and the backend -- this one or `sumo` --
+follows.
 
 ## Why this exists
 
@@ -751,6 +823,8 @@ mirrored. `traffic.options.net_path` runs on an existing `.net.xml` instead.
 | Scenario pedestrians (`PedestrianEntity`, e.g. `WalkStraightAction`) | CARLA (`scenario_pedestrians=traffic_manager`, default), or SUMO (`scenario_pedestrians=sumo`) | published, or walked |
 | Other CARLA pedestrians (`walker.pedestrian.*`) | CARLA | published as SUMO persons (`publish_walkers`, on by default) |
 | SUMO's pedestrians (`randomTrips.py --pedestrians`, `pedestrians.enabled`) | SUMO | native; mirrored into CARLA as walkers near the ego |
+| Scenario bicycles (a vehicle whose blueprint's `base_type` is `bicycle`) | as the scenario's other vehicles | published or driven, as a SUMO `bicycle` |
+| SUMO's bicycles (`randomTrips.py --vclass bicycle`, `bicycles.enabled`) | SUMO | native; mirrored into CARLA as bicycles near the ego |
 
 A published vehicle has SUMO's speed and lane-change control switched off, so
 SUMO traffic sees it where CARLA has it and reacts to it. With the default the
@@ -807,6 +881,55 @@ given as `net_path` is used as it is.
 ```bash
 uv run scenario ... traffic=sumo traffic.options.pedestrians.enabled=true \
     traffic.options.pedestrians.radius_m=80
+```
+
+**Bicycles on sidewalks** (`cycle_on_sidewalks`, off by default): the network
+is built with roadgen's `export_sumo(cycle_on_sidewalks=True)` (roadgen 0.41.1
+or later, which the `sumo` extra requires), so bicycles may ride every
+sidewalk, both ways, as well as the carriageway. Each sidewalk gets a bicycle
+edge each way along it (`<edge>.bike<index>` and `<edge>.bike<index>.rev`),
+open to bicycles and pedestrians; the sidewalk lane itself stays the
+pedestrians'. A bicycle may change between sidewalk and road at every junction
+and every 50 m at most between, ride across the road wherever a crossing is,
+and turn back at a dead end. At a junction without a light a bicycle coming off
+the sidewalk gives way to the traffic it meets. At a signalised one roadgen's
+program gives such a bicycle a green of its own ahead of the traffic; with
+`traffic_light_authority=carla`, where CARLA's lights switch the traffic, a
+bicycle coming onto the road goes with the traffic of the road beside its
+sidewalk (and gives way), one getting off the road goes with the traffic it
+leaves, and one riding across a road goes while every vehicle link SUMO's own
+program never lets go with it is red. Off, sidewalks are the pedestrians' and
+bicycles keep to the carriageway and the cycle lanes. The network is cached
+apart from one built without, and a network given as `net_path` is used as it
+is.
+
+**SUMO's own bicycles** (`bicycles`, off by default) ride from and to edges a
+bicycle may use (`randomTrips.py --vclass bicycle`, unweighted, from
+`min_distance_m` to `max_distance_m` each) and are mirrored into CARLA as
+bicycles, each one of `blueprints` (those the world lacks are left out; with
+none left, bicycles ride in SUMO only, where its traffic still sees them), with
+the role name `sumo:<id>`. They count against limits of their own:
+`radius_m` (the vehicles' `spawn_radius_m` when null) and `max_bicycles`,
+apart from `max_vehicles`. A mirror follows its bicycle as
+`bicycles.vehicle_control` says, `teleport` by default: a bicycle changing
+between sidewalk and road crosses the kerb, which CARLA's vehicle physics
+would trip on. Bicycles stay in SUMO when `mesoscopic` is enabled: the queue
+model's roads are the carriageways.
+
+How they ride is not `traffic.vehicles` -- a driver's parameters, which never
+reach a bicycle -- but `traffic.bicycles` (`BicycleParameters`,
+[Traffic parameters](#traffic-parameters)).
+
+The scenario's own bicycles ride by it too: a vehicle whose blueprint's
+`base_type` is `bicycle` (CARLA's bicycles') joins SUMO as a `bicycle`, on the
+nearest lane a bicycle may use -- a sidewalk's, on a network that has them --
+published or driven like the scenario's other vehicles, and SUMO routes one it
+drives (`scenario_vehicles=sumo`) only where bicycles may go.
+
+```bash
+uv run scenario ... traffic=sumo traffic.options.cycle_on_sidewalks=true \
+    traffic.options.bicycles.enabled=true traffic.options.bicycles.max_bicycles=20 \
+    traffic.bicycles.max_speed_mps.mean=4.0 traffic.bicycles.max_speed_mps.std=0.8
 ```
 
 **Stepping**: one SUMO step per CARLA tick, with the step length set to the
@@ -875,11 +998,7 @@ How a CARLA vehicle follows its SUMO vehicle is `vehicle_control`:
   queue at a light say, is given its zero once).
 
 **Visibility** (`traffic.vehicles.follow_visibility`, on by default): SUMO's traffic sees only
-as far as the run's weather lets a driver see. The TrafficManager has no
-notion of sight -- its vehicles know where every actor is whatever the fog --
-so night, rain and fog change nothing about how it drives: the
-`traffic_manager` backend logs each visibility a run sets, with the speed
-SUMO's default car would be held to, and does nothing else. An
+as far as the run's weather lets a driver see. An
 `EnvironmentAction` that sets the fog, the rain or the sun records how far
 drivers see in the weather it leaves
 ([Visibility follows the weather](odd.md#visibility-follows-the-weather)),
@@ -890,10 +1009,15 @@ its braking (`traffic.vehicles.reaction_time_s` and `decel` when set) -- a defau
 night under a dipped beam (50 m) the same. A vehicle that departs later is
 held as it departs, and when the weather lifts each gets its own maximum speed
 back. The scenario's own vehicles, driven by SUMO or not, are left to the
-scenario. `traffic.vehicles.follow_visibility=false` ignores the visibility,
-as the TrafficManager does; set for the `traffic_manager` backend, the field is
-refused. It used to be `traffic.options.follow_visibility`, which is now an
-error pointing here.
+scenario. `traffic.vehicles.follow_visibility=false` ignores the visibility.
+It used to be `traffic.options.follow_visibility`, which is now an error
+pointing here.
+
+The road's grip (`EnvironmentAction`'s tire friction,
+[Tire friction follows the weather](odd.md#tire-friction-follows-the-weather))
+is CARLA's vehicle physics alone: SUMO's models are not told it, and plan
+their vehicles' braking as on a dry road. A car under `vehicle_control:
+physics` follows that plan on the grip CARLA gives its wheels.
 
 **Traffic lights** (`traffic_light_authority`): `carla` (default) gives SUMO's
 signals the states of CARLA's lights every step, so a scenario that sets the

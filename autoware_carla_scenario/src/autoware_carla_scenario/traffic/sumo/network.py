@@ -8,7 +8,9 @@ network without offset normalisation, so its x/y are OpenDRIVE's.
 
 Ambient demand comes from SUMO's own ``randomTrips.py``, weighted by the
 ``network.safe.*`` files roadgen writes beside the network (sources and sinks
-away from dead ends).
+away from dead ends); pedestrian and bicycle demand from the same tool,
+unweighted.  With ``cycle_on_sidewalks`` roadgen lays bicycle edges along
+every sidewalk, so bicycles ride them as well as the carriageway.
 
 Beside the network go roadgen's traces -- the IR dump, what each element of the
 OpenDRIVE became (``map.xodr.trace.json``) and what each became in SUMO -- which
@@ -43,6 +45,7 @@ __all__ = [
     "SumoNetwork",
     "build_network",
     "crossing_edges",
+    "generate_rides",
     "generate_trips",
     "generate_walks",
     "sanitize_opendrive",
@@ -160,6 +163,7 @@ def build_network(
     curve_lateral_acceleration: float | None = None,
     *,
     pedestrian_crossings: bool = False,
+    cycle_on_sidewalks: bool = False,
 ) -> SumoNetwork:
     """The SUMO network of *opendrive* (OpenDRIVE text), built or cached.
 
@@ -173,6 +177,12 @@ def build_network(
             footways and crossings.  At a signalised junction netconvert
             appends the crossings' links after the vehicle links, so those keep
             the indices roadgen's trace gives them.
+        cycle_on_sidewalks: Let bicycles ride the sidewalks both ways as well
+            as the carriageway (roadgen's option of the same name): each
+            sidewalk gets a bicycle edge each way along it, with rides onto
+            and off the carriageway at every junction and every 50 m between,
+            across the road where a crossing is, and back at a dead end.
+            roadgen traces every ride a light controls to that light.
 
     Raises:
         TrafficBackendUnavailable: roadgen or SUMO is not installed.
@@ -188,6 +198,8 @@ def build_network(
     if pedestrian_crossings:
         # Only when on: a network built without keeps the key it had.
         options += ";crossings.guess"
+    if cycle_on_sidewalks:
+        options += ";cycle_on_sidewalks"
     key = hashlib.sha256(
         "\0".join((_versions(), options, opendrive)).encode()
     ).hexdigest()[:16]
@@ -203,7 +215,11 @@ def build_network(
         xodr.write_text(sanitize_opendrive(opendrive))
         try:
             road_map = roadgen.read_opendrive(str(xodr))
-            prefix = _export(road_map, tmp, curve_lateral_acceleration)
+            prefix = road_map.export_sumo(
+                str(tmp),
+                curve_lateral_acceleration=curve_lateral_acceleration,
+                cycle_on_sidewalks=cycle_on_sidewalks,
+            )
             road_map.export_ir(str(tmp / "network.ir.json"))
             road_map.write_read_trace(str(tmp / f"{xodr.name}.trace.json"))
         except Exception as exc:  # roadgen raises ValueError, among others
@@ -246,92 +262,22 @@ def build_network(
     return network
 
 
-def _export(
-    road_map: Any, directory: Path, curve_lateral_acceleration: float | None
-) -> str:
-    if curve_lateral_acceleration is None:
-        return road_map.export_sumo(str(directory))
-    try:
-        return road_map.export_sumo(
-            str(directory), curve_lateral_acceleration=curve_lateral_acceleration
-        )
-    except TypeError:
-        logger.warning(
-            "roadgen %s cannot hold traffic to curve speeds; converting without "
-            "(SUMO traffic will take bends at the speed limit)",
-            _versions(),
-        )
-        return road_map.export_sumo(str(directory))
-
-
-def generate_trips(
+def _random_trips(
     network: SumoNetwork,
     out: Path,
     *,
     seed: int,
     period: float,
     end: float,
-    safe_weights: bool = True,
-    fringe_factor: float = 5.0,
+    prefix: str,
+    options: list[str],
+    what: str = "",
 ) -> Path:
-    """Ambient demand for *network*, written to *out* (a ``.rou.xml``).
+    """Run SUMO's ``randomTrips.py`` on *network*, validated routes into *out*
+    (a ``.rou.xml``), with *options* beside the ones every demand shares.
 
-    Weighted by roadgen's ``network.safe.*`` files when *safe_weights* and the
-    network has them, by *fringe_factor* otherwise.
-    """
-    tool = sumo_home() / "tools" / "randomTrips.py"
-    if safe_weights and Path(f"{network.weights_prefix}.src.xml").is_file():
-        weights = ["--weights-prefix", str(network.weights_prefix)]
-    else:
-        weights = ["--fringe-factor", f"{fringe_factor:g}"]
-    out.parent.mkdir(parents=True, exist_ok=True)
-    trips = out.with_suffix(".trips.xml")
-    cmd = [
-        sys.executable,
-        str(tool),
-        "-n",
-        str(network.net_file),
-        "-o",
-        str(trips),
-        "-r",
-        str(out),
-        "-b",
-        "0",
-        "-e",
-        str(end),
-        "-p",
-        str(period),
-        "--seed",
-        str(seed),
-        "--validate",
-        "--vehicle-class",
-        "passenger",
-        "--prefix",
-        "sumo",
-        *weights,
-    ]
-    env = dict(os.environ, SUMO_HOME=str(sumo_home()))
-    proc = subprocess.run(cmd, capture_output=True, text=True, env=env, check=False)  # noqa: S603
-    if proc.returncode != 0 or not out.is_file():
-        raise TrafficBackendError(
-            f"randomTrips.py failed ({proc.returncode}): {proc.stderr.strip()[-2000:]}"
-        )
-    return out
-
-
-def generate_walks(
-    network: SumoNetwork,
-    out: Path,
-    *,
-    seed: int,
-    period: float,
-    end: float,
-    max_distance: float,
-) -> Path:
-    """Pedestrian demand for *network*, written to *out* (a ``.rou.xml``).
-
-    Unweighted: roadgen's weights are for cars, and say nothing of where
-    people walk.
+    Raises:
+        TrafficBackendError: It failed; *what* names the demand in the message.
     """
     tool = sumo_home() / "tools" / "randomTrips.py"
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -353,20 +299,127 @@ def generate_walks(
         "--seed",
         str(seed),
         "--validate",
-        "--pedestrians",
-        "--max-distance",
-        f"{max_distance:g}",
         "--prefix",
-        "sumoped",
+        prefix,
+        *options,
     ]
     env = dict(os.environ, SUMO_HOME=str(sumo_home()))
     proc = subprocess.run(cmd, capture_output=True, text=True, env=env, check=False)  # noqa: S603
     if proc.returncode != 0 or not out.is_file():
         raise TrafficBackendError(
-            f"randomTrips.py --pedestrians failed ({proc.returncode}): "
+            f"randomTrips.py{what} failed ({proc.returncode}): "
             f"{proc.stderr.strip()[-2000:]}"
         )
     return out
+
+
+def generate_trips(
+    network: SumoNetwork,
+    out: Path,
+    *,
+    seed: int,
+    period: float,
+    end: float,
+    safe_weights: bool = True,
+    fringe_factor: float = 5.0,
+) -> Path:
+    """Ambient demand for *network*, written to *out* (a ``.rou.xml``).
+
+    Weighted by roadgen's ``network.safe.*`` files when *safe_weights* and the
+    network has them, by *fringe_factor* otherwise.
+    """
+    if safe_weights and Path(f"{network.weights_prefix}.src.xml").is_file():
+        weights = ["--weights-prefix", str(network.weights_prefix)]
+    else:
+        weights = ["--fringe-factor", f"{fringe_factor:g}"]
+    return _random_trips(
+        network,
+        out,
+        seed=seed,
+        period=period,
+        end=end,
+        prefix="sumo",
+        options=["--vehicle-class", "passenger", *weights],
+    )
+
+
+def generate_walks(
+    network: SumoNetwork,
+    out: Path,
+    *,
+    seed: int,
+    period: float,
+    end: float,
+    max_distance: float,
+) -> Path:
+    """Pedestrian demand for *network*, written to *out* (a ``.rou.xml``).
+
+    Unweighted: roadgen's weights are for cars, and say nothing of where
+    people walk.
+    """
+    return _random_trips(
+        network,
+        out,
+        seed=seed,
+        period=period,
+        end=end,
+        prefix="sumoped",
+        options=["--pedestrians", "--max-distance", f"{max_distance:g}"],
+        what=" --pedestrians",
+    )
+
+
+def generate_rides(
+    network: SumoNetwork,
+    out: Path,
+    *,
+    seed: int,
+    period: float,
+    end: float,
+    min_distance: float = 0.0,
+    max_distance: float | None = None,
+    bicycle_type: Path | None = None,
+) -> Path:
+    """Bicycle demand for *network*, written to *out* (a ``.rou.xml``).
+
+    Every ride is of SUMO's default bicycle type, ``DEFAULT_BIKETYPE``, and
+    starts and ends on an edge a bicycle may use -- a sidewalk's bicycle edges
+    among them, when the network has them.  *bicycle_type* is an additional
+    file redefining that type, which the routing has to know.  Unweighted:
+    roadgen's weights are for cars, and give every bicycle edge 0.
+    """
+    options = [
+        # From and to edges a bicycle may use; the type is SUMO's own, which
+        # --vehicle-class would shadow with one of randomTrips'.
+        "--vclass",
+        "bicycle",
+        "--trip-attributes",
+        'type="DEFAULT_BIKETYPE"',
+        "--min-distance",
+        f"{min_distance:g}",
+    ]
+    if max_distance is not None:
+        options += ["--max-distance", f"{max_distance:g}"]
+    if bicycle_type is not None:
+        # The routing writes the types its rides drew beside them rather than
+        # into them: SUMO loads the type file itself, and refuses a type
+        # defined twice.
+        options += [
+            "--additional-files",
+            str(bicycle_type),
+            "--vtype-output",
+            str(out.with_suffix(".vtypes.xml")),
+        ]
+    return _random_trips(
+        network,
+        out,
+        seed=seed,
+        period=period,
+        end=end,
+        prefix="sumobike",
+        options=options,
+        what=" --vclass bicycle",
+    )
 
 
 def crossing_edges(net_file: Path) -> dict[str, frozenset[str]]:

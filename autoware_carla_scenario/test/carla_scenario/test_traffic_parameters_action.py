@@ -110,7 +110,7 @@ def _speed_calls(client: _Client) -> list[tuple[int, float]]:
 
 
 def test_an_action_that_changes_nothing_is_refused() -> None:
-    with pytest.raises(ValueError, match="sets no vehicle or pedestrian"):
+    with pytest.raises(ValueError, match="sets no vehicle, pedestrian or bicycle"):
         TrafficParametersAction(VehicleParameters())
 
 
@@ -120,6 +120,36 @@ def test_an_entity_takes_vehicle_parameters_only() -> None:
             pedestrians=PedestrianParameters(walking_speed_mps=Spread(1.0)),
             entity_name="npc1",
         )
+
+
+def test_an_entity_takes_no_bicycle_parameters() -> None:
+    from autoware_carla_scenario.traffic.parameters import BicycleParameters
+
+    with pytest.raises(ValueError, match="an entity is a vehicle"):
+        TrafficParametersAction(
+            bicycles=BicycleParameters(decel=Spread(3.0)), entity_name="npc1"
+        )
+
+
+def test_sumo_changes_a_bicycle_parameter_but_not_its_speed_during_a_run() -> None:
+    from autoware_carla_scenario.traffic.parameters import BicycleParameters
+    from autoware_carla_scenario.traffic.sumo.backend import SumoTrafficBackend
+
+    sumo = SumoTrafficBackend()
+    TrafficParametersAction(
+        bicycles=BicycleParameters(decel=Spread(3.0))
+    ).set_traffic_backend(sumo)
+    with pytest.raises(
+        TrafficParameterError,
+        match="max_speed_mps can only be set before the run, in its config",
+    ):
+        TrafficParametersAction(
+            bicycles=BicycleParameters(max_speed_mps=Spread(4.0))
+        ).set_traffic_backend(sumo)
+    with pytest.raises(TrafficParameterError, match="traffic.bicycles"):
+        TrafficParametersAction(
+            bicycles=BicycleParameters(decel=Spread(3.0))
+        ).set_traffic_backend(TrafficManagerBackend())
 
 
 def test_a_field_the_backend_cannot_change_during_a_run_is_refused() -> None:
@@ -273,6 +303,15 @@ def test_the_editors_fields_become_parameters() -> None:
     assert authored_pedestrian_parameters(
         pedestrian_min_gap_m_mean=0.5
     ) == PedestrianParameters(min_gap_m=Spread(0.5))
+    from autoware_carla_scenario.traffic.authoring import (
+        authored_bicycle_parameters,
+    )
+    from autoware_carla_scenario.traffic.parameters import BicycleParameters
+
+    assert authored_bicycle_parameters() is None
+    assert authored_bicycle_parameters(
+        bicycle_decel_mean=3.5, bicycle_decel_std=0.4
+    ) == BicycleParameters(decel=Spread(3.5, 0.4))
     with pytest.raises(ValueError, match="a std needs a mean"):
         authored_vehicle_parameters(decel_std=1.0)
 

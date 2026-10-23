@@ -252,7 +252,7 @@ NOT_MODELLED: dict[str, dict[str, str]] = {
     },
     f"{_PACKAGE}.scenario_config": _each(
         "TrafficConfig TrafficManagerBackendConfig PedestrianParameters Spread "
-        "VehicleParameters",
+        "VehicleParameters BicycleParameters",
         _TRAFFIC_BACKEND,
     ),
     f"{_PACKAGE}.traffic": {
@@ -261,7 +261,8 @@ NOT_MODELLED: dict[str, dict[str, str]] = {
             "TrafficBackendUnavailable TrafficConfig TrafficManagerBackend "
             "TrafficManagerBackendConfig TrafficParameterError "
             "VEHICLE_PARAMETER_BACKENDS "
-            "PEDESTRIAN_PARAMETER_BACKENDS build_none build_sumo build_traffic_manager "
+            "PEDESTRIAN_PARAMETER_BACKENDS BICYCLE_PARAMETER_BACKENDS build_none "
+            "build_sumo build_traffic_manager "
             "register_builtin_backends",
             _TRAFFIC_BACKEND,
         ),
@@ -616,6 +617,14 @@ NOT_MODELLED_MEMBERS: dict[str, dict[str, str]] = {
         "from_mapping": _FROM_MAPPING,
         **_members(
             "check_supported overridden_by set_fields", _TRAFFIC_PARAMETER_PLUMBING
+        ),
+    },
+    "BicycleParameters": {
+        "describe": _AS_DICT,
+        "from_mapping": _FROM_MAPPING,
+        **_members(
+            "check_supported overridden_by set_fields spreads",
+            _TRAFFIC_PARAMETER_PLUMBING,
         ),
     },
 }

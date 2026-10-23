@@ -9,7 +9,9 @@ has two parameter spaces of its own:
   limit, how close behind the car ahead, whether drivers change lanes,
   whether they slow for what they cannot see;
 * :class:`PedestrianParameters`, ``traffic.pedestrians``: how fast people
-  walk, how close they keep, whether they cross on red.
+  walk, how close they keep, whether they cross on red;
+* :class:`BicycleParameters`, ``traffic.bicycles``: how fast riders ride, how
+  hard they brake, whether they ride through a red light.
 
 ::
 
@@ -20,11 +22,14 @@ has two parameter spaces of its own:
         reaction_time_s: {mean: 1.5, std: 0.3}
       pedestrians:
         walking_speed_mps: {mean: 1.2, std: 0.2}
+      bicycles:
+        max_speed_mps: {mean: 4.5, std: 0.8}
 
 Every numeric parameter is a :class:`Spread` -- a mean and a standard
 deviation -- and each road user draws its own value from it, a normal
 distribution cut to the parameter's bounds (:data:`VEHICLE_BOUNDS`,
-:data:`PEDESTRIAN_BOUNDS`): a population of drivers, not one driver copied.
+:data:`PEDESTRIAN_BOUNDS`, :data:`BICYCLE_BOUNDS`): a population of drivers,
+not one driver copied.
 A plain number -- in a config or a constructor -- is a spread of no width:
 every road user takes that value.  An ODD bounds the mean and the
 spread of each like any other attribute it samples
@@ -35,7 +40,8 @@ be dropped in silence: a run that asked for drivers who react in 1.5 s and got
 the TrafficManager's, which has no reaction time, is a run that tested
 something other than what it says.  So each field names the backends that
 support it (:data:`VEHICLE_PARAMETER_BACKENDS`,
-:data:`PEDESTRIAN_PARAMETER_BACKENDS`), each backend names the fields it
+:data:`PEDESTRIAN_PARAMETER_BACKENDS`, :data:`BICYCLE_PARAMETER_BACKENDS`),
+each backend names the fields it
 supports (:meth:`~autoware_carla_scenario.traffic.base.TrafficBackend.supported_vehicle_parameters`,
 :meth:`~autoware_carla_scenario.traffic.base.TrafficBackend.supported_pedestrian_parameters`),
 and a field set for a backend that does not support it is an error before the
@@ -58,7 +64,7 @@ run starts.  A field left at ``None`` is the backend's own default.
 ``imperfection``           --                     ``sigma``
 ``max_lateral_speed_mps``  --                     ``maxSpeedLat``
 ``max_lateral_accel``      --                     ``lcAccelLat`` (sublane)
-``follow_visibility``      --                     held to sight
+``follow_visibility``      held to sight (opt-in) held to sight
 ========================== ====================== =============================
 
 ========================== ====================== =============================
@@ -72,10 +78,27 @@ run starts.  A field left at ``None`` is the backend's own default.
 The TrafficManager drives no pedestrians: a scenario's own walk as the
 scenario steers them, and it has no pedestrian traffic of its own.
 
+========================== ====================== =============================
+``traffic.bicycles``       ``traffic_manager``    ``sumo``
+========================== ====================== =============================
+``max_speed_mps``          --                     ``desiredMaxSpeed``
+``accel``                  --                     ``accel``
+``decel``                  --                     ``decel``
+``min_gap_m``              --                     ``minGap``
+``reaction_time_s``        --                     ``tau``
+``imperfection``           --                     ``sigma``
+``max_lateral_speed_mps``  --                     ``maxSpeedLat``
+``red_light_violation_s``  --                     ``jmDriveAfterRedTime``
+========================== ====================== =============================
+
+Only SUMO simulates bicycles: the TrafficManager drives a bicycle blueprint
+as it drives a car.
+
 The visibility (:mod:`autoware_carla_scenario.visibility`) is a vehicle
 parameter: ``follow_visibility`` holds the traffic to the speed it stops from
 within what its drivers see, with ``reaction_time_s`` and ``decel`` as the
-reaction and the braking that speed is worked out from.
+reaction and the braking that speed is worked out from (SUMO's default car's
+for the TrafficManager, which has neither).
 
 Like :mod:`.config`, this module imports nothing heavier than the standard
 library, so the config layer and the editor can name it.
@@ -88,6 +111,9 @@ from dataclasses import dataclass
 from typing import Any, Mapping, Optional, Union
 
 __all__ = [
+    "BICYCLE_BOUNDS",
+    "BICYCLE_PARAMETER_BACKENDS",
+    "BicycleParameters",
     "PEDESTRIAN_BOUNDS",
     "PEDESTRIAN_PARAMETER_BACKENDS",
     "Spread",
@@ -95,6 +121,7 @@ __all__ = [
     "as_spread",
     "VEHICLE_BOUNDS",
     "record_run_parameters",
+    "run_bicycle_parameters",
     "run_parameters",
     "PedestrianParameters",
     "TrafficParameterError",
@@ -121,7 +148,7 @@ VEHICLE_PARAMETER_BACKENDS: dict[str, list[str]] = {
     "imperfection": ["sumo"],
     "max_lateral_speed_mps": ["sumo"],
     "max_lateral_accel": ["sumo"],
-    "follow_visibility": ["sumo"],
+    "follow_visibility": ["traffic_manager", "sumo"],
 }
 
 #: The same for each pedestrian parameter.  Only SUMO simulates pedestrian
@@ -129,6 +156,18 @@ VEHICLE_PARAMETER_BACKENDS: dict[str, list[str]] = {
 PEDESTRIAN_PARAMETER_BACKENDS: dict[str, list[str]] = {
     "walking_speed_mps": ["sumo"],
     "min_gap_m": ["sumo"],
+    "red_light_violation_s": ["sumo"],
+}
+
+#: The same for each bicycle parameter.  Only SUMO simulates bicycles.
+BICYCLE_PARAMETER_BACKENDS: dict[str, list[str]] = {
+    "max_speed_mps": ["sumo"],
+    "accel": ["sumo"],
+    "decel": ["sumo"],
+    "min_gap_m": ["sumo"],
+    "reaction_time_s": ["sumo"],
+    "imperfection": ["sumo"],
+    "max_lateral_speed_mps": ["sumo"],
     "red_light_violation_s": ["sumo"],
 }
 
@@ -227,6 +266,16 @@ VEHICLE_BOUNDS: dict[str, tuple[float, float]] = {
 PEDESTRIAN_BOUNDS: dict[str, tuple[float, float]] = {
     "walking_speed_mps": (0.05, INF),
     "min_gap_m": (0.0, INF),
+    "red_light_violation_s": (0.0, INF),
+}
+BICYCLE_BOUNDS: dict[str, tuple[float, float]] = {
+    "max_speed_mps": (0.5, INF),
+    "accel": (0.05, INF),
+    "decel": (0.05, INF),
+    "min_gap_m": (0.0, INF),
+    "reaction_time_s": (0.0, INF),
+    "imperfection": (0.0, 1.0),
+    "max_lateral_speed_mps": (0.05, INF),
     "red_light_violation_s": (0.0, INF),
 }
 
@@ -376,7 +425,9 @@ class VehicleParameters:
             from within what its drivers see, once the run's weather says how
             far that is (:mod:`autoware_carla_scenario.visibility`, set by the
             ``EnvironmentAction``), and give it its own speed back when the
-            weather lifts.  The SUMO backend does so by default.
+            weather lifts.  The SUMO backend does so by
+            default; the TrafficManager only when it is ``true``, holding
+            each vehicle under its road's speed limit.
     """
 
     speed_factor: Optional[Spread] = None
@@ -738,18 +789,160 @@ class PedestrianParameters:
         return cls(**_spreads_from(cls, mapping, PEDESTRIAN_BOUNDS))
 
 
+@dataclass(init=False)
+class BicycleParameters:
+    """How the bicycles a traffic backend simulates ride (``traffic.bicycles``).
+
+    Every field is optional: ``None`` leaves the backend's own default.  Which
+    backend supports which field is :data:`BICYCLE_PARAMETER_BACKENDS`.  Each
+    field is a :class:`Spread`: every rider draws its own value from it (cut
+    to :data:`BICYCLE_BOUNDS`).  The vehicle parameters
+    (:class:`VehicleParameters`) are a driver's, not a rider's, and do not
+    reach a bicycle.
+
+    Attributes:
+        max_speed_mps: The speed a rider rides at on a free road, m/s
+            (SUMO's ``desiredMaxSpeed``, and ``maxSpeed`` with it; 20 km/h,
+            5.56 m/s, with SUMO's own spread of 0.1, by default).
+        accel: Acceleration, m/s² (SUMO's ``accel``; 1.2 by default).
+        decel: Braking, m/s² (SUMO's ``decel``; 3 by default).
+        min_gap_m: Gap kept to the one ahead when standing, metres (SUMO's
+            ``minGap``; 0.5 by default).
+        reaction_time_s: Reaction time, seconds (SUMO's ``tau``; 1 by
+            default).
+        imperfection: Rider imperfection, 0-1 (SUMO's ``sigma``; 0.5 by
+            default).
+        max_lateral_speed_mps: Most lateral speed, m/s (SUMO's
+            ``maxSpeedLat``; 1 by default): with the sublane model, how
+            quickly a rider moves across its lane and round the one ahead.
+        red_light_violation_s: Ride on through a light that has been red for
+            less than this, seconds (SUMO's ``jmDriveAfterRedTime``).
+            ``None``: riders stop at red.
+    """
+
+    max_speed_mps: Optional[Spread] = None
+    accel: Optional[Spread] = None
+    decel: Optional[Spread] = None
+    min_gap_m: Optional[Spread] = None
+    reaction_time_s: Optional[Spread] = None
+    imperfection: Optional[Spread] = None
+    max_lateral_speed_mps: Optional[Spread] = None
+    red_light_violation_s: Optional[Spread] = None
+
+    def __init__(
+        self,
+        max_speed_mps: Optional[SpreadOrValue] = None,
+        accel: Optional[SpreadOrValue] = None,
+        decel: Optional[SpreadOrValue] = None,
+        min_gap_m: Optional[SpreadOrValue] = None,
+        reaction_time_s: Optional[SpreadOrValue] = None,
+        imperfection: Optional[SpreadOrValue] = None,
+        max_lateral_speed_mps: Optional[SpreadOrValue] = None,
+        red_light_violation_s: Optional[SpreadOrValue] = None,
+    ) -> None:
+        # Written out, as PedestrianParameters' is.
+        self.max_speed_mps = as_spread(max_speed_mps)
+        self.accel = as_spread(accel)
+        self.decel = as_spread(decel)
+        self.min_gap_m = as_spread(min_gap_m)
+        self.reaction_time_s = as_spread(reaction_time_s)
+        self.imperfection = as_spread(imperfection)
+        self.max_lateral_speed_mps = as_spread(max_lateral_speed_mps)
+        self.red_light_violation_s = as_spread(red_light_violation_s)
+        self.__post_init__()
+
+    def __post_init__(self) -> None:
+        for name, value in self._fields():
+            _check(name, value, BICYCLE_BOUNDS)
+
+    def _fields(self) -> list[tuple[str, Optional[Spread]]]:
+        """Every field and its value, in declared order (Codon has no field
+        reflection)."""
+        return [
+            ("max_speed_mps", self.max_speed_mps),
+            ("accel", self.accel),
+            ("decel", self.decel),
+            ("min_gap_m", self.min_gap_m),
+            ("reaction_time_s", self.reaction_time_s),
+            ("imperfection", self.imperfection),
+            ("max_lateral_speed_mps", self.max_lateral_speed_mps),
+            ("red_light_violation_s", self.red_light_violation_s),
+        ]
+
+    def set_fields(self) -> list[str]:
+        """The names of the fields that are not ``None``, in declared order."""
+        return [name for name, value in self._fields() if value is not None]
+
+    def spreads(self) -> dict[str, Spread]:
+        """Each field that is set, by name, in declared order."""
+        out: dict[str, Spread] = {}
+        for name, value in self._fields():
+            if value is not None:
+                out[name] = value
+        return out
+
+    def check_supported(self, backend: str, supported: set[str]) -> None:
+        """Refuse every field set here that *backend* does not support
+        (:func:`check_supported`, under ``traffic.bicycles``)."""
+        check_supported(
+            "traffic.bicycles",
+            backend,
+            self.set_fields(),
+            supported,
+            BICYCLE_PARAMETER_BACKENDS,
+        )
+
+    def overridden_by(self, overrides: "BicycleParameters") -> "BicycleParameters":
+        """These parameters with every field *overrides* sets replaced by its
+        value; the rest kept (a :class:`~autoware_carla_scenario.TrafficParametersAction`)."""
+        ours = self.spreads()
+        theirs = overrides.spreads()
+        merged: dict[str, Spread] = {}
+        for name, _value in self._fields():
+            if name in theirs:
+                merged[name] = theirs[name]
+            elif name in ours:
+                merged[name] = ours[name]
+        return BicycleParameters(
+            max_speed_mps=merged.get("max_speed_mps"),
+            accel=merged.get("accel"),
+            decel=merged.get("decel"),
+            min_gap_m=merged.get("min_gap_m"),
+            reaction_time_s=merged.get("reaction_time_s"),
+            imperfection=merged.get("imperfection"),
+            max_lateral_speed_mps=merged.get("max_lateral_speed_mps"),
+            red_light_violation_s=merged.get("red_light_violation_s"),
+        )
+
+    def describe(self) -> dict[str, Any]:
+        """The fields that are set, for a run's result record."""
+        return {name: _described(value) for name, value in self.spreads().items()}
+
+    @classmethod
+    def from_mapping(cls, mapping: Mapping[str, Any]) -> "BicycleParameters":
+        """Return parameters built from a plain mapping (e.g. a Hydra node):
+        each field is a number or ``{mean, std}``."""
+        return cls(**_spreads_from(cls, mapping, BICYCLE_BOUNDS))
+
+
 #: The parameters the current run's traffic backend was given, for the ODD's
 #: probes to read (:func:`record_run_parameters`).
 _RUN_PARAMETERS: list[tuple[VehicleParameters, PedestrianParameters]] = []
+_RUN_BICYCLES: list[BicycleParameters] = []
 
 
 def record_run_parameters(
-    vehicles: VehicleParameters, pedestrians: PedestrianParameters
+    vehicles: VehicleParameters,
+    pedestrians: PedestrianParameters,
+    bicycles: Optional[BicycleParameters] = None,
 ) -> None:
     """Record the parameters the run's traffic is driven with; the runner
     calls this for every run, after the backend is prepared."""
     _RUN_PARAMETERS.clear()
     _RUN_PARAMETERS.append((vehicles, pedestrians))
+    _RUN_BICYCLES.clear()
+    if bicycles is not None:
+        _RUN_BICYCLES.append(bicycles)
 
 
 def run_parameters() -> Optional[tuple[VehicleParameters, PedestrianParameters]]:
@@ -757,3 +950,11 @@ def run_parameters() -> Optional[tuple[VehicleParameters, PedestrianParameters]]
     if not _RUN_PARAMETERS:
         return None
     return _RUN_PARAMETERS[0]
+
+
+def run_bicycle_parameters() -> Optional[BicycleParameters]:
+    """The bicycle parameters :func:`record_run_parameters` last recorded,
+    or ``None``."""
+    if not _RUN_BICYCLES:
+        return None
+    return _RUN_BICYCLES[0]

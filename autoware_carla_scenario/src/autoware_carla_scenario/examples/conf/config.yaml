@@ -248,8 +248,9 @@ controls: {}
 # heavy fog 15-40 m -- at `visibility_quantile` (0-1, the middle when null; an
 # odd_sample sweep draws it per case). `visibility_m` fixes it instead. The
 # `sumo` traffic backend holds its traffic to the speed it can stop from
-# within it (traffic.vehicles.follow_visibility); the TrafficManager only
-# logs what it would do.
+# within it (traffic.vehicles.follow_visibility, on by default there); the
+# TrafficManager does so with follow_visibility:
+# true, and only logs it otherwise.
 environment:
   rain: null
   cloudiness: null

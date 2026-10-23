@@ -99,22 +99,25 @@ Changelog = "https://github.com/autowarefoundation/autoware_carla_scenario/relea
 # The SUMO traffic backend (`traffic.backend=sumo`): SUMO itself (the
 # simulator, netconvert and randomTrips), driven in-process through libsumo,
 # and roadgen (hakuturu583/hdmap_generator), which converts the OpenDRIVE the
-# CARLA world runs into the network netconvert builds.
+# CARLA world runs into the network netconvert builds -- with bicycles on the
+# sidewalks both ways, changing between sidewalk and road and with every
+# bicycle link traced to its light (`cycle_on_sidewalks`, 0.41.1).
 sumo = [
     "eclipse-sumo>=1.23",
     "libsumo>=1.23",
     "sumolib>=1.23",
     "traci>=1.23",
-    "roadgen>=0.36.0",
+    "roadgen>=0.41.1",
 ]
 # Map files for a driver policy (`driver.map_dir`): roadgen converts the
 # world's OpenDRIVE into Lanelet2 and friends, with the stop lines CARLA
 # paints (0.33), each junction lanelet's `turn_direction` (0.34), the
 # traffic-light regulatory elements on the lanelets through the junction
 # with the stop line before them (0.35), and a stop sign's `traffic_sign`
-# element (0.36), as Autoware's maps have them.
+# element (0.36), as Autoware's maps have them; the same version as the
+# `sumo` extra's, so the two install together.
 map = [
-    "roadgen>=0.36.0",
+    "roadgen>=0.41.1",
 ]
 # An ego driven by ROS 2 nodes over DDS (`ego.entity=ros2`, docs/ros2.md):
 # Cyclone DDS's Python binding, which speaks to rmw_cyclonedds_cpp nodes with

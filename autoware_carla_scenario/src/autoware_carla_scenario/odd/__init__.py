@@ -30,6 +30,7 @@ from .probes import (
     INTENSITY_LEVELS,
     NEARBY_RADIUS_M,
     TRAFFIC_DENSITY_LEVELS,
+    cloudiness,
     ego_speed_kph,
     fog,
     illumination,
@@ -44,9 +45,12 @@ from .probes import (
     pedestrian_nearby,
     rain,
     reset_probes,
+    road_wetness,
     speed_limit_kph,
+    tire_friction,
     traffic_density,
     visibility,
+    wind,
 )
 from .scenario_measure import ScenarioMeasure, scenario_measure
 from .route import (
@@ -110,6 +114,7 @@ __all__ = [
     "all_of",
     "any_of",
     "default_odd",
+    "cloudiness",
     "ego_speed_kph",
     "fog",
     "illumination",
@@ -139,9 +144,12 @@ __all__ = [
     "register_odd",
     "reset_probes",
     "resolve_odd",
+    "road_wetness",
     "speed_limit_kph",
+    "tire_friction",
     "traffic_density",
     "visibility",
+    "wind",
     "ScenarioMeasure",
     "scenario_measure",
 ]

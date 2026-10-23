@@ -569,6 +569,70 @@ def test_a_case_that_names_its_visibility_keeps_it() -> None:
     assert added.overrides[1].startswith("environment.visibility_quantile=")
 
 
+def test_a_case_that_names_its_grip_draws_no_quantile_for_it() -> None:
+    from autoware_carla_scenario.odd.sampler import OddSample, with_tire_friction
+
+    fixed = OddSample(0, ["environment.tire_friction=0.4"], {}, {})
+    drawn = OddSample(1, ["environment.rain=80"], {}, {})
+
+    kept, added = with_tire_friction([fixed, drawn], seed=0)
+
+    assert kept == fixed
+    assert added.overrides[1].startswith("environment.tire_friction_quantile=")
+
+
+@pytest.mark.parametrize(
+    "name, key, unit",
+    [
+        ("tire_friction", "environment.tire_friction", ""),
+        ("road_wetness", "environment.wetness", ""),
+        ("wind", "environment.wind_intensity", ""),
+        ("cloudiness", "environment.cloudiness", ""),
+    ],
+)
+def test_the_road_and_weather_probes_have_knobs(name: str, key: str, unit: str) -> None:
+    from autoware_carla_scenario.odd import probes
+    from autoware_carla_scenario.odd.backend import BUILT_IN_PROBES, DEFAULT_KNOBS
+
+    probe = getattr(probes, name)
+    assert BUILT_IN_PROBES[name] == (probe, unit)
+    assert DEFAULT_KNOBS[probe].key == key
+
+
+def test_the_grip_knob_spans_a_flooded_road_to_a_grippy_one() -> None:
+    from autoware_carla_scenario.odd import probes
+    from autoware_carla_scenario.odd.backend import DEFAULT_KNOBS
+
+    assert DEFAULT_KNOBS[probes.tire_friction].range == (0.3, 1.1)
+
+
+def test_the_weather_probes_read_the_levels_their_knobs_draw() -> None:
+    from unittest.mock import MagicMock
+
+    import typesafe_carla.carla as carla
+
+    from autoware_carla_scenario.odd import probes
+
+    probes.reset_probes()
+    world = MagicMock()
+    world.id = 77
+    world.get_snapshot.return_value.frame = 1
+    world.get_weather.return_value = carla.WeatherParameters(
+        cloudiness=50.0,
+        wetness=10.0,
+        precipitation_deposits=90.0,
+        wind_intensity=80.0,
+    )
+    try:
+        # The wetness its knob writes, not rain's standing water.
+        assert probes.road_wetness(world) == "light"
+        assert probes.wind(world) == "heavy"
+        assert probes.cloudiness(world) == "moderate"
+        assert probes.tire_friction(world) is None
+    finally:
+        probes.reset_probes()
+
+
 def test_the_visibility_probe_has_a_knob_in_metres() -> None:
     from autoware_carla_scenario.odd import probes
     from autoware_carla_scenario.odd.backend import BUILT_IN_PROBES, DEFAULT_KNOBS

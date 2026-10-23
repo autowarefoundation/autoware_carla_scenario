@@ -39,7 +39,8 @@ traffic:
     max_lateral_speed_mps: {mean: null, std: null}
     max_lateral_accel: {mean: null, std: null}
     # Hold the traffic to the speed it stops from within what its
-    # drivers see in the run's weather (sumo only; on by default there).
+    # drivers see in the run's weather (traffic_manager, sumo; on by
+    # default for sumo, off unless true for traffic_manager).
     follow_visibility: null
   # SUMO's pedestrians (sumo only: the TrafficManager drives no pedestrians).
   pedestrians:
@@ -48,4 +49,22 @@ traffic:
     # Gap kept to the person ahead, m.
     min_gap_m: {mean: null, std: null}
     # Walk onto a crossing whose light has been red for less than this, s.
+    red_light_violation_s: {mean: null, std: null}
+  # How bicycles ride (BicycleParameters; sumo only: only SUMO simulates
+  # bicycles). Each a spread, {mean, std}, every rider drawing its own value
+  # (null: SUMO's bicycle default). traffic.vehicles does not reach bicycles.
+  bicycles:
+    # Speed on a free road, m/s (SUMO: 5.56, 20 km/h).
+    max_speed_mps: {mean: null, std: null}
+    # Acceleration and braking, m/s^2 (SUMO: 1.2 and 3).
+    accel: {mean: null, std: null}
+    decel: {mean: null, std: null}
+    # Gap kept to the one ahead when standing, m (SUMO: 0.5).
+    min_gap_m: {mean: null, std: null}
+    # Reaction time, s, and imperfection, 0-1 (SUMO: 1 and 0.5).
+    reaction_time_s: {mean: null, std: null}
+    imperfection: {mean: null, std: null}
+    # Most lateral speed, m/s: how quickly a rider moves across the lane.
+    max_lateral_speed_mps: {mean: null, std: null}
+    # Ride on through a light red for less than this, s (null: stop at red).
     red_light_violation_s: {mean: null, std: null}

@@ -147,7 +147,7 @@ def test_restricting_keeps_only_what_is_supported() -> None:
 
 def test_a_field_another_backend_supports_is_refused_naming_it() -> None:
     parameters = VehicleParameters(
-        speed_factor=Spread(0.9), reaction_time_s=Spread(1.5), follow_visibility=True
+        speed_factor=Spread(0.9), reaction_time_s=Spread(1.5), decel=Spread(4.0)
     )
     with pytest.raises(TrafficParameterError) as raised:
         TrafficManagerBackend(vehicles=parameters)
@@ -157,7 +157,7 @@ def test_a_field_another_backend_supports_is_refused_naming_it() -> None:
         "traffic.vehicles.reaction_time_s can only be used with the 'sumo' backend"
         in message
     )
-    assert "traffic.vehicles.follow_visibility can only be used with" in message
+    assert "traffic.vehicles.decel can only be used with" in message
     # A field it does support is not named.
     assert "speed_factor" not in message
 
@@ -177,7 +177,9 @@ def test_a_backend_that_reads_no_parameters_refuses_every_one() -> None:
 
 def test_building_a_backend_checks_its_parameters() -> None:
     with pytest.raises(TrafficParameterError, match="'sumo' backend"):
-        build_backend("traffic_manager", {}, VehicleParameters(follow_visibility=False))
+        build_backend(
+            "traffic_manager", {}, VehicleParameters(reaction_time_s=Spread(1.0))
+        )
     backend = build_backend(
         "traffic_manager", {}, VehicleParameters(min_gap_m=Spread(3.0))
     )
@@ -197,6 +199,7 @@ def test_each_backend_supports_what_the_table_says() -> None:
         "ignore_vehicles",
         "ignore_walkers",
         "random_lane_changes",
+        "follow_visibility",
     }
     assert SumoTrafficBackend().supported_vehicle_parameters() == {
         "speed_factor",
@@ -362,3 +365,52 @@ def test_the_pedestrian_parameters_are_recorded() -> None:
     assert backend.describe()["pedestrians"] == {
         "red_light_violation_s": {"mean": 30.0, "std": 0.0}
     }
+
+
+def test_every_hand_written_bicycle_field_list_names_every_field() -> None:
+    """Codon has no field reflection, so the methods spell the fields out."""
+    from autoware_carla_scenario.traffic.parameters import (
+        BICYCLE_BOUNDS,
+        BICYCLE_PARAMETER_BACKENDS,
+        BicycleParameters,
+    )
+
+    fields = set(BicycleParameters.__dataclass_fields__)  # type: ignore[attr-defined]
+    assert fields == set(BICYCLE_BOUNDS) == set(BICYCLE_PARAMETER_BACKENDS)
+    everything = BicycleParameters(
+        **{name: 1.0 if name != "imperfection" else 0.5 for name in fields}
+    )
+    assert set(everything.set_fields()) == fields
+    assert set(everything.describe()) == fields
+    assert everything.overridden_by(BicycleParameters()) == everything
+    assert BicycleParameters(decel=2.0).overridden_by(
+        BicycleParameters(accel=1.0, decel=3.0)
+    ) == BicycleParameters(accel=1.0, decel=3.0)
+
+
+def test_a_bicycle_parameter_out_of_its_bounds_is_refused() -> None:
+    from autoware_carla_scenario.traffic.parameters import BicycleParameters
+
+    with pytest.raises(ValueError, match="imperfection"):
+        BicycleParameters(imperfection=1.5)
+    with pytest.raises(ValueError, match="max_speed_mps"):
+        BicycleParameters.from_mapping({"max_speed_mps": 0.1})
+
+
+def test_the_traffic_config_reads_the_bicycle_parameters() -> None:
+    from autoware_carla_scenario.traffic.config import TrafficConfig
+    from autoware_carla_scenario.traffic.parameters import BicycleParameters
+
+    config = TrafficConfig.from_mapping(
+        {
+            "backend": "sumo",
+            "bicycles": {"max_speed_mps": {"mean": 4.0, "std": 0.5}, "decel": None},
+        }
+    )
+    assert config.bicycles == BicycleParameters(max_speed_mps=Spread(4.0, 0.5))
+    backend = build_backend("sumo", {}, bicycles=config.bicycles)
+    assert backend.describe()["bicycles"] == {
+        "max_speed_mps": {"mean": 4.0, "std": 0.5}
+    }
+    with pytest.raises(TrafficParameterError, match="traffic.bicycles"):
+        build_backend("traffic_manager", {}, bicycles=config.bicycles)

@@ -22,7 +22,7 @@ import logging
 from typing import Any, Callable, Mapping
 
 from .base import TrafficBackend
-from .parameters import PedestrianParameters, VehicleParameters
+from .parameters import BicycleParameters, PedestrianParameters, VehicleParameters
 
 logger = logging.getLogger(__name__)
 
@@ -101,6 +101,7 @@ def build_backend(
     options: Mapping[str, Any] | None = None,
     vehicles: VehicleParameters | None = None,
     pedestrians: PedestrianParameters | None = None,
+    bicycles: BicycleParameters | None = None,
 ) -> TrafficBackend:
     """Build the backend *name* from its *options*, with its road users'
     parameters.
@@ -114,10 +115,13 @@ def build_backend(
         pedestrians: How its pedestrians walk
             (:class:`~autoware_carla_scenario.traffic.parameters.PedestrianParameters`);
             ``None`` means the backend's defaults.
+        bicycles: How its bicycles ride
+            (:class:`~autoware_carla_scenario.traffic.parameters.BicycleParameters`);
+            ``None`` means the backend's defaults.
 
     Raises:
         ValueError: If no backend answers to *name*.
-        TrafficParameterError: If *vehicles* or *pedestrians* sets a field the
+        TrafficParameterError: If *vehicles*, *pedestrians* or *bicycles* sets a field the
             backend does not support; the message names the backends that do.
     """
     backend = get_backend_factory(name)(dict(options or {}))
@@ -125,6 +129,8 @@ def build_backend(
         backend.set_vehicle_parameters(vehicles)
     if pedestrians is not None:
         backend.set_pedestrian_parameters(pedestrians)
+    if bicycles is not None:
+        backend.set_bicycle_parameters(bicycles)
     return backend
 
 

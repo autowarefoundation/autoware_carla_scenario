@@ -21,8 +21,10 @@ The scenery attributes come from two maps:
   ``speed_limit``), for a run with a Lanelet2 map loaded.
 
 Weather values are CARLA's 0-100 intensities, not physical units such as mm/h,
-so rain and fog are named levels.  How far drivers see, which the weather
-bounds, is in metres (:func:`visibility`).
+so rain, fog, the road's water, the wind and the clouds are named levels.  How
+far drivers see, which the weather bounds, is in metres (:func:`visibility`),
+and how well the road grips, which its water bounds, a share of the dry
+road's grip (:func:`tire_friction`).
 
 The probes whose value the Lanelet2 map alone decides also read it off a
 lanelet, without a world: ``probe.on_lanelet(lanelet, lanelet_map,
@@ -57,6 +59,7 @@ __all__ = [
     "INTENSITY_LEVELS",
     "NEARBY_RADIUS_M",
     "TRAFFIC_DENSITY_LEVELS",
+    "cloudiness",
     "ego_speed_kph",
     "fog",
     "illumination",
@@ -73,10 +76,13 @@ __all__ = [
     "pedestrian_nearby",
     "rain",
     "reset_probes",
+    "road_wetness",
     "speed_limit_kph",
+    "tire_friction",
     "traffic_density",
     "traffic_density_level",
     "visibility",
+    "wind",
 ]
 
 #: Radius around the ego in which other road users count as near it, in metres.
@@ -85,7 +91,7 @@ NEARBY_RADIUS_M = 50.0
 #: Illumination levels, brightest first.
 ILLUMINATION_LEVELS = ["day", "low_sun", "twilight", "night"]
 
-#: Rain and fog levels, from CARLA's 0-100 intensity.
+#: Rain, fog, road water, wind and cloud levels, from CARLA's 0-100 intensity.
 INTENSITY_LEVELS = ["none", "light", "moderate", "heavy"]
 
 #: Traffic density levels, from the number of other vehicles near the ego.
@@ -502,6 +508,46 @@ def visibility(world: carla.World) -> Optional[float]:
     (:mod:`autoware_carla_scenario.visibility`); ``None`` when the run set
     none."""
     return world_visibility(episode_of(world))
+
+
+def tire_friction(world: carla.World) -> Optional[float]:
+    """How well the road grips, as a share of the dry road's grip (1.0):
+    what the run's weather left the vehicles' wheels
+    (:func:`~autoware_carla_scenario.actions.environment.world_tire_friction`);
+    ``None`` when nothing set it in this world."""
+    # Imported here: the actions package is heavier than a probe module.
+    from ..actions.environment import world_tire_friction  # noqa: PLC0415
+
+    return world_tire_friction(episode_of(world))
+
+
+def road_wetness(world: carla.World) -> Optional[str]:
+    """The level of the road's wetness, from CARLA's 0-100 ``wetness``.
+
+    The wetness alone, which its knob sets, so a drawn value reads back as
+    its bucket: the standing water ``rain`` brings with it is the rain's
+    (the grip follows the larger of the two).
+    """
+    weather = _weather(world)
+    if weather is None:
+        return None
+    return intensity_level(float(weather.wetness))
+
+
+def wind(world: carla.World) -> Optional[str]:
+    """The wind level, from CARLA's 0-100 wind intensity."""
+    weather = _weather(world)
+    if weather is None:
+        return None
+    return intensity_level(float(weather.wind_intensity))
+
+
+def cloudiness(world: carla.World) -> Optional[str]:
+    """The cloud level, from CARLA's 0-100 cloudiness."""
+    weather = _weather(world)
+    if weather is None:
+        return None
+    return intensity_level(float(weather.cloudiness))
 
 
 def traffic_density(world: carla.World) -> Optional[str]:
