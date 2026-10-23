@@ -1574,6 +1574,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#vehicles-the-trafficmanager-must-not-destroy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Vehicles the TrafficManager must not destroy
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#why-this-exists" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2211,6 +2222,17 @@
     <span class="md-ellipsis">
       
         Weather and the TrafficManager
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#vehicles-the-trafficmanager-must-not-destroy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Vehicles the TrafficManager must not destroy
       
     </span>
   </a>
@@ -3226,6 +3248,42 @@ sight speed above does not read it.</p>
 <code>rain</code>, <code>fog</code> and <code>illumination</code> knobs (<a href="../odd/">The weather and the sun</a>)
 set what the run's weather leaves, and the backend -- this one or <code>sumo</code> --
 follows.</p>
+<h2 id="vehicles-the-trafficmanager-must-not-destroy">Vehicles the TrafficManager must not destroy<a class="headerlink" href="#vehicles-the-trafficmanager-must-not-destroy" title="Permanent link">&para;</a></h2>
+<p>CARLA's TrafficManager destroys a vehicle it drives in two cases, with no
+per-vehicle switch but a <code>role_name</code> of <code>hero</code>:</p>
+<ul>
+<li><strong>Standing:</strong> one that has stood (under 0.8 m/s) for 90 s — 180 s at a red
+  light — is destroyed (<code>BLOCKED_TIME_THRESHOLD</code>, <code>ALSM.cpp</code>).</li>
+<li><strong>A dead end:</strong> one whose planned path (4 s of driving ahead, at least 15 m)
+  meets a lane with no successor is destroyed (<code>marked_for_removal</code>,
+  <code>LocalizationStage.cpp</code>; with OSM mode on, the default).</li>
+</ul>
+<p>Only <strong>background vehicles</strong> (<code>spawn_background</code>) are left to that. Every other
+vehicle the <code>traffic_manager</code> backend has on autopilot — the ego, each NPC the
+scenario authored — is kept from it in <code>tick()</code>; under <code>traffic=sumo</code> with
+<code>scenario_vehicles=traffic_manager</code> the same, since SUMO hands those to it.</p>
+<ul>
+<li><strong>Standing:</strong> once a kept vehicle has stood 60 s (90 s less a 30 s margin)
+  it is taken off autopilot and put straight back on. Unregistering a vehicle erases its idle
+  time (<code>ALSM::RemoveActor</code>) and registering it starts a new one, so the
+  TrafficManager's count starts again. Its per-vehicle settings (desired speed,
+  speed difference, gap, lane-change and ignore rules) are the TrafficManager's
+  parameters, which survive the switch. Its planned waypoints do not, and the
+  points of a path already planned are gone from the path the TrafficManager
+  holds (<code>LocalizationStage::ImportPath</code>), so the part of the path it was last
+  given (<code>follow_route</code>, <code>turn_at_junction</code>) still ahead of it is given again. It drives on as before; it is logged once.</li>
+<li><strong>A dead end:</strong> every 0.5 s the road ahead of a kept vehicle is walked down
+  every branch (the TrafficManager picks one at random) a little past the
+  TrafficManager's horizon, on the run's cached map. Where some branch ends,
+  the vehicle is taken off autopilot and held braking where it is, logged once,
+  until it is given a new route or an action takes it over. On a path it was
+  given the walk waits until the path's end is near: the TrafficManager follows
+  the path, which goes on, to there.</li>
+</ul>
+<p>Each kept vehicle is looked at every 0.5 s, the first looks spread over that
+period: a velocity read and, unless it is where the last walk found the road
+going on, a waypoint lookup and a walk of a few dozen waypoints. Nothing is
+done per background vehicle, and no map is built.</p>
 <h2 id="why-this-exists">Why this exists<a class="headerlink" href="#why-this-exists" title="Permanent link">&para;</a></h2>
 <p>CARLA's TrafficManager is a good default for a handful of scripted NPCs and the
 wrong tool for dense, demand-driven flow. Microscopic traffic simulators model
@@ -3597,7 +3655,7 @@ CARLA co-simulation; its adversarial behaviour generation is left to scenarios.<
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 23, 2026 10:07:36 UTC"><span class="timeago" datetime="2026-10-23T10:07:36+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 23, 2026 10:07:36 UTC">2026-10-23</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 23, 2026 11:48:33 UTC"><span class="timeago" datetime="2026-10-23T11:48:33+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 23, 2026 11:48:33 UTC">2026-10-23</span>
   </span>
 
     
