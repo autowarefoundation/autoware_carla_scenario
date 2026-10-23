@@ -35,9 +35,17 @@ uv run scenario-check scenario='lane_change/*' scenario.timeout_seconds=20
 ```
 
 `scenario-check` composes each config exactly as the runner does, so the same
-overrides apply. It exits with 0 when every scenario passed, 1 when one
-failed, and 2 when there is no Codon compiler. A scenario package can make
-the same check in its own tests, with no simulator:
+overrides apply. `scenario='*'` is every config, like no `scenario=`; a
+package author checks only theirs (`scenario='my_package/*'`, about 15 s per
+config), as every built-in config takes minutes. It exits with 0 when every
+scenario passed, 1 when one failed, and 2 when it could not run: there is no
+Codon compiler, no config matches `scenario=` (the message lists the
+configs), or an override names a key the config does not have
+(`scenario.timout_seconds=3` is reported with the closest key,
+`scenario.timeout_seconds`; `+key=value` adds a new one; `HYDRA_FULL_ERROR=1`
+shows the traceback). A scenario package
+can make the same check in its own tests, with no simulator (the template and
+`scenario-new` packages have one in `tests/test_typecheck.py`):
 
 ```python
 from autoware_carla_scenario.typecheck import typecheck_scenario
@@ -961,7 +969,15 @@ scenario has to do itself:
   (`goal: Goal`) holds one at run time unless the config's `__post_init__`
   turns it into a `Goal`, as the built-in configs do for their NPC lists.
   The check builds the config the same way and refuses an unconverted
-  mapping at its `scenario.<key>`.
+  mapping at its `scenario.<key>`. The same goes for an Enum field (YAML
+  gives its name or value as a `str`) and a tuple field (YAML gives a
+  list): they compile when the `__post_init__` converts them
+  (`self.mode = Mode(self.mode)`), and are refused at `scenario.<key>`
+  when it does not. A bad value inside a nested list is refused at its own
+  field, e.g. `scenario.legs[1].speed`.
+  A config that raises when built (a `__post_init__` that rejects a value, a
+  name `Mode(...)` does not know) fails the check with the exception, as it
+  stops the run.
 
 - **Annotate every parameter of every function and method**, helpers and
   hook overrides included. Every function of the scenario's modules is

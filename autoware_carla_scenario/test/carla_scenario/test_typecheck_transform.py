@@ -1789,7 +1789,11 @@ def test_the_driver_renders_the_yaml_values_with_the_config_types() -> None:
         "scenario.timeout_seconds": "config.timeout_seconds = 5.0",
         "scenario.min_speed_kmh": "config.min_speed_kmh = 3.0",
         "scenario.ids": "config.ids = [460, 265]",
-        "scenario.npcs": "config.npcs = [_Npc(spawn_lanelet_id=1, spawn_s=2.0)]",
+        # A nested dataclass is one field to a line (#531).
+        "scenario.npcs[0]": "config.npcs = [_Npc(",
+        "scenario.npcs[0].spawn_lanelet_id": "spawn_lanelet_id=1,",
+        "scenario.npcs[0].spawn_s": "spawn_s=2.0,",
+        "scenario.npcs": ")]",
         "scenario.turn": "config.turn = _Turn.LEFT",
     }
     assert f"from {__name__} import _Npc" in lines
