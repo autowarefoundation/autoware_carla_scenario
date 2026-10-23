@@ -945,6 +945,22 @@ def _source_line(diagnostic: Diagnostic) -> str:
         return ""
 
 
+def _in_dict_display(diagnostic: Diagnostic) -> bool:
+    """Whether the line of *diagnostic* is inside a dict display of the
+    author's file: a ``{`` of an f-string or a set is no dict display."""
+    if diagnostic.path is None or diagnostic.line is None:
+        return False
+    try:
+        tree = ast.parse(Path(diagnostic.path).read_text())
+    except (OSError, SyntaxError, UnicodeDecodeError):
+        return False
+    return any(
+        isinstance(node, ast.Dict)
+        and node.lineno <= diagnostic.line <= (node.end_lineno or node.lineno)
+        for node in ast.walk(tree)
+    )
+
+
 def _classes_below(diagnostic: Diagnostic) -> tuple[set[str], bool]:
     """The classes of the file defined below the line of *diagnostic*, and
     whether that line is in a function body (which may name them)."""
@@ -1007,7 +1023,7 @@ def _display_hint(diagnostic: Diagnostic, in_display: bool) -> str | None:
     if _DICT_MISMATCH.match(diagnostic.message) and _DICT_LINE.search(
         _source_line(diagnostic)
     ):
-        if _SCALAR_MISMATCH.match(diagnostic.message):
+        if _SCALAR_MISMATCH.match(diagnostic.message) and _in_dict_display(diagnostic):
             return _DICT_SCALAR_HINT
         return _DICT_DISPLAY_HINT
     return None
@@ -1211,13 +1227,13 @@ def _data_model_hints(
     return out
 
 
-_FOR_LINE = re.compile(r"^\s*(?:async\s+)?for\b.*\bin\b(?P<iterable>.*)$")
+_FOR_LINE = re.compile(r"\bfor\b.*?\bin\b(?P<iterable>.*)$")
 
 
 def _self_iterator_hint(diagnostic: Diagnostic, sources: _Sources) -> str | None:
     """Why ``for x in C(...)`` is refused when *C* is an iterator class with
     ``__next__`` (#504): Codon has no ``__next__`` protocol."""
-    found = _FOR_LINE.match(_source_line(diagnostic))
+    found = _FOR_LINE.search(_source_line(diagnostic))
     if found is None:
         return None
     for name in re.findall(r"[A-Za-z_]\w*", found["iterable"]):
@@ -1227,6 +1243,7 @@ def _self_iterator_hint(diagnostic: Diagnostic, sources: _Sources) -> str | None
             and hasattr(cls, "__next__")
             and not issubclass(cls, tuple)
             and "__iter__" in dir(cls)
+            and not inspect.isgeneratorfunction(getattr(cls, "__iter__", None))
         ):
             return (
                 f"Codon iterates a class only through an `__iter__` that is a "

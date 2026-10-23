@@ -6318,6 +6318,44 @@ class Countdown:
     assert error.line == _line_of(path, line), error.format()
 
 
+def test_a_scalar_mismatch_outside_a_dict_display_gets_no_dict_hint(
+    tmp_path: Path,
+) -> None:
+    definitions = """
+def show(a: str, b: str) -> str:
+    return a + b
+"""
+    line = 'shown = show(f"{1}", 2)'
+    scenario, config, _ = _data_case(tmp_path, definitions, line + "\n")
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "dataclass" not in error.message, error.format()
+
+
+def test_a_self_iterator_in_a_comprehension_gets_the_generator_hint(
+    tmp_path: Path,
+) -> None:
+    definitions = """
+class Countdown:
+    n: int
+
+    def __init__(self, n: int) -> None:
+        self.n = n
+
+    def __iter__(self) -> "Countdown":
+        return self
+
+    def __next__(self) -> int:
+        if self.n <= 0:
+            raise StopIteration
+        self.n -= 1
+        return self.n
+"""
+    setup = "ks = [k for k in Countdown(3)]\nlogger.info('%s', len(ks))\n"
+    scenario, config, _ = _data_case(tmp_path, definitions, setup)
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "yield" in error.message, error.format()
+
+
 def test_str_format_on_a_literal_compiles(tmp_path: Path) -> None:
     setup = """
         n = 7
