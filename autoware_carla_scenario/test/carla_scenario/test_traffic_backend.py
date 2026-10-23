@@ -47,12 +47,29 @@ class _Actor:
         self.autopilot: List[Tuple[bool, int]] = []
         self.speed_limit = speed_limit
         self.is_alive = True
+        self.speed = 0.0
+        self.location: Any = None
+        self.controls: List[Any] = []
+        self.destroyed = False
 
     def get_speed_limit(self) -> float:
         return self.speed_limit
 
     def set_autopilot(self, enabled: bool, port: int) -> None:
         self.autopilot.append((enabled, port))
+
+    def get_velocity(self) -> Any:
+        if self.destroyed:
+            raise RuntimeError("destroyed")
+        return SimpleNamespace(x=self.speed, y=0.0, z=0.0)
+
+    def get_location(self) -> Any:
+        import typesafe_carla.carla as carla  # noqa: PLC0415
+
+        return self.location or carla.Location(0.0, 0.0, 0.0)
+
+    def apply_control(self, control: Any) -> None:
+        self.controls.append(control)
 
 
 class _ActorList:
@@ -72,6 +89,10 @@ class _World:
     def get_actors(self) -> _ActorList:
         return self._actors
 
+    def get_map(self) -> Any:
+        """A map no actor stands on: no road ahead to search."""
+        return SimpleNamespace(get_waypoint=lambda location: None)
+
 
 class _TrafficManager:
     def __init__(self) -> None:
@@ -80,9 +101,13 @@ class _TrafficManager:
         self.shut_downs = 0
         #: actor id -> every percentage under the limit it was given.
         self.speed_differences: dict = {}
+        self.paths: List[Tuple[int, List[Any]]] = []
 
     def vehicle_percentage_speed_difference(self, actor: Any, percent: float) -> None:
         self.speed_differences.setdefault(actor.id, []).append(percent)
+
+    def set_path(self, vehicle: Any, path: List[Any]) -> None:
+        self.paths.append((vehicle.id, list(path)))
 
     def set_synchronous_mode(self, enabled: bool) -> None:
         self.synchronous.append(enabled)
@@ -567,6 +592,7 @@ class _Blueprint:
 
 class _BackgroundActor:
     def __init__(self) -> None:
+        self.id = 100
         self.destroyed = 0
 
     def set_target_velocity(self, velocity: Any) -> None:
@@ -622,6 +648,193 @@ class TestTrafficManagerBackground:
         backend.remove_background(world, handle)
         assert world.spawned[0].destroyed == 1
         assert backend.background_vehicles(world) == {}
+
+
+# ---------------------------------------------------------------------------
+# What the TrafficManager may not destroy
+# ---------------------------------------------------------------------------
+
+
+class _Waypoint:
+    """A lane *left* metres long, ending without a successor when *dead*."""
+
+    road_id, section_id, lane_id = 1, 0, -1
+
+    def __init__(self, left: float, dead: bool) -> None:
+        self.left, self.dead = left, dead
+        self.s = 1000.0 - left
+
+    def next(self, step: float) -> List["_Waypoint"]:
+        if step <= self.left:
+            return [_Waypoint(self.left - step, self.dead)]
+        return [] if self.dead else [_Waypoint(1000.0, False)]
+
+
+def _road(monkeypatch: pytest.MonkeyPatch, left: float, dead: bool) -> List[Any]:
+    """Every vehicle stands *left* metres before its lane ends; returns the
+    locations the road is looked up at."""
+    import autoware_carla_scenario.traffic.traffic_manager as tm_module
+
+    looked_up: List[Any] = []
+
+    def get_waypoint(location: Any) -> _Waypoint:
+        looked_up.append(location)
+        return _Waypoint(left, dead)
+
+    road = SimpleNamespace(get_waypoint=get_waypoint)
+    monkeypatch.setattr(tm_module, "run_carla_map", lambda world: road)
+    return looked_up
+
+
+def _on_autopilot(*actors: _Actor) -> Tuple[TrafficManagerBackend, _Client]:
+    client = _Client()
+    backend = TrafficManagerBackend(
+        TrafficManagerBackendConfig(port=8123), client=client
+    )
+    backend.start(_World(list(actors)))
+    return backend, client
+
+
+def _stand(backend: TrafficManagerBackend, until: float, since: float = 0.0) -> None:
+    """Tick *backend* every half second of the run from *since* to *until*."""
+    elapsed = since
+    while elapsed <= until:
+        backend.tick(_World(), elapsed)
+        elapsed += 0.5
+
+
+class TestTheTrafficManagerKeepsScenarioVehicles:
+    """The TrafficManager destroys a vehicle standing 90 s or meeting a dead
+    end; the scenario's own are kept from it, background vehicles are not."""
+
+    def test_a_standing_vehicle_is_re_registered_before_it_is_destroyed(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        from autoware_carla_scenario.traffic.traffic_manager import (
+            _TM_BLOCKED_MARGIN_S,
+            _TM_BLOCKED_TIME_THRESHOLD_S,
+        )
+
+        _road(monkeypatch, 1000.0, dead=False)
+        ego = _Actor(1)
+        ego.attributes = {"role_name": "Ego"}
+        backend, _ = _on_autopilot(ego)
+        refresh = _TM_BLOCKED_TIME_THRESHOLD_S - _TM_BLOCKED_MARGIN_S
+        _stand(backend, refresh - 1.0)
+        assert ego.autopilot == [(True, 8123)]
+        with caplog.at_level(logging.INFO):
+            _stand(backend, 2 * refresh + 1.0, since=refresh - 0.5)
+        assert ego.autopilot == [(True, 8123)] + [(False, 8123), (True, 8123)] * 2
+        kept = [
+            r for r in caplog.records if "off autopilot and put back" in r.getMessage()
+        ]
+        assert len(kept) == 1  # Once a vehicle, not each time.
+        assert kept[0].getMessage().startswith("Ego: stood 60 s")
+
+    def test_a_moving_vehicle_is_left_alone(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _road(monkeypatch, 1000.0, dead=False)
+        npc = _Actor(2)
+        npc.speed = 1.0
+        backend, _ = _on_autopilot(npc)
+        _stand(backend, 200.0)
+        assert npc.autopilot == [(True, 8123)]
+
+    def test_the_rest_of_its_path_is_given_again(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import typesafe_carla.carla as carla  # noqa: PLC0415
+
+        _road(monkeypatch, 1000.0, dead=False)
+        npc = _Actor(2)
+        npc.location = carla.Location(11.0, 0.0, 0.0)
+        backend, client = _on_autopilot(npc)
+        path = [carla.Location(float(x), 0.0, 0.0) for x in (5, 10, 15, 500)]
+        backend._remember_path(npc, path)  # type: ignore[arg-type]
+        _stand(backend, 61.0)
+        assert client.tm.paths == [(2, path[2:])]
+
+    def test_a_background_vehicle_is_left_to_the_traffic_manager(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _road(monkeypatch, 3.0, dead=True)
+        car = _Actor(3)
+        backend = TrafficManagerBackend(
+            TrafficManagerBackendConfig(port=8123), client=_Client()
+        )
+        backend._background = {"background1": car}  # type: ignore[dict-item]
+        backend.start(_World([car]))
+        _stand(backend, 200.0)
+        assert car.autopilot == [(True, 8123)]
+        assert car.controls == []
+
+    def test_a_vehicle_is_held_before_a_dead_end(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        _road(monkeypatch, 20.0, dead=True)
+        npc = _Actor(2)
+        npc.attributes = {"role_name": "npc14"}
+        backend, _ = _on_autopilot(npc)
+        with caplog.at_level(logging.INFO):
+            _stand(backend, 200.0)
+        assert npc.autopilot == [(True, 8123), (False, 8123)]
+        assert [(c.throttle, c.brake) for c in npc.controls] == [(0.0, 1.0)]
+        held = [r for r in caplog.records if "its road ends" in r.getMessage()]
+        assert len(held) == 1 and held[0].getMessage().startswith("npc14:")
+
+    def test_a_dead_end_beyond_the_horizon_is_no_reason(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _road(monkeypatch, 200.0, dead=True)
+        npc = _Actor(2)
+        backend, _ = _on_autopilot(npc)
+        _stand(backend, 1.0)
+        assert npc.autopilot == [(True, 8123)]
+
+    def test_a_held_vehicle_given_a_route_drives_on(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import typesafe_carla.carla as carla  # noqa: PLC0415
+
+        _road(monkeypatch, 20.0, dead=True)
+        npc = _Actor(2)
+        backend, _ = _on_autopilot(npc)
+        _stand(backend, 1.0)
+        backend._remember_path(npc, [carla.Location(300.0, 0.0, 0.0)])  # type: ignore[arg-type]
+        backend._drive_on(npc)  # type: ignore[arg-type]
+        _stand(backend, 3.0, since=1.5)
+        # Back on autopilot, and not held again while far from the route's end.
+        assert npc.autopilot == [(True, 8123), (False, 8123), (True, 8123)]
+
+    def test_a_released_vehicle_is_the_scenarios(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _road(monkeypatch, 20.0, dead=True)
+        npc = _Actor(2)
+        backend, _ = _on_autopilot(npc)
+        backend.release(_stand_in(npc), _World())
+        _stand(backend, 200.0)
+        assert npc.autopilot == [(True, 8123), (False, 8123)]
+        assert npc.controls == []
+
+    def test_a_destroyed_vehicle_is_forgotten(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _road(monkeypatch, 1000.0, dead=False)
+        npc = _Actor(2)
+        backend, _ = _on_autopilot(npc)
+        npc.is_alive = False
+        _stand(backend, 1.0)
+        assert backend._kept == {}
+
+    def test_a_vehicle_standing_where_the_road_went_on_is_not_walked_again(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        looked_up = _road(monkeypatch, 1000.0, dead=False)
+        backend, _ = _on_autopilot(_Actor(2))
+        _stand(backend, 30.0)
+        assert len(looked_up) == 1
 
 
 # ---------------------------------------------------------------------------

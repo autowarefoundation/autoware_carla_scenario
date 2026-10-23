@@ -124,6 +124,7 @@ class _Client:
 class _Actor:
     def __init__(self, transform: _Transform) -> None:
         self._transform = transform
+        self.id = 1
 
     def get_location(self) -> _Location:
         return self._transform.location

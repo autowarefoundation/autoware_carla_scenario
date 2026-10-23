@@ -13,6 +13,7 @@ import copy
 import math
 from collections.abc import Iterator
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -594,7 +595,7 @@ class TestABackendDrivenEgoFollowsTheRoute:
         from autoware_carla_scenario.entity.ego import EgoVehicle
 
         ego = EgoVehicle()
-        ego._vehicle = object()  # type: ignore[assignment]
+        ego._vehicle = SimpleNamespace(id=1)  # type: ignore[assignment]
         tm = _RouteTM()
         ego.set_client(_RouteClient(tm))  # type: ignore[arg-type]
         return ego, tm
@@ -653,6 +654,7 @@ class _StandingActor:
 
     def __init__(self, transform: Any) -> None:
         self._transform = transform
+        self.id = 2
 
     def get_transform(self) -> Any:
         return self._transform
