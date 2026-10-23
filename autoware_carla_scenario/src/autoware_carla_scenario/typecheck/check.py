@@ -917,6 +917,17 @@ _SUM_DISPLAY_HINT = (
     "`list[Base]`"
 )
 _DICT_MISMATCH = re.compile(r"^'\w+' does not match expected type '\w+'")
+_SCALAR_MISMATCH = re.compile(
+    r"^'(?:int|float|str|bool)' does not match expected type "
+    r"'(?:int|float|str|bool)'"
+)
+_DICT_SCALAR_HINT = (
+    "a dict display is typed by its first value, and Codon has no dict of "
+    "values of different types (no usable `Any` or `Union` value type, so "
+    "annotating the target does not help): keep one value type (`str(...)` "
+    "every value, or `dict[str, str]`), use a small dataclass with typed "
+    "fields for the record, or use one dict per type"
+)
 _DICT_LINE = re.compile(r"\{|^\s*[\w\"'.]+\s*:\s*\w+\(")
 _LIST_SUM = re.compile(
     r"^unsupported operand type\(s\) for \+=?: 'List\[(\w+)\]' and 'List\[(\w+)\]'"
@@ -996,6 +1007,8 @@ def _display_hint(diagnostic: Diagnostic, in_display: bool) -> str | None:
     if _DICT_MISMATCH.match(diagnostic.message) and _DICT_LINE.search(
         _source_line(diagnostic)
     ):
+        if _SCALAR_MISMATCH.match(diagnostic.message):
+            return _DICT_SCALAR_HINT
         return _DICT_DISPLAY_HINT
     return None
 
@@ -1165,10 +1178,38 @@ def _data_model_hints(
             hint = _data_model_hint(message, diagnostic.trace, sources)
         except Exception:  # noqa: BLE001 - only a hint: never lose Codon's error
             pass
+        if hint is None and message.startswith("expected iterable expression"):
+            hint = _self_iterator_hint(diagnostic, sources)
         if hint is not None:
             diagnostic = dataclasses.replace(diagnostic, message=f"{message}: {hint}")
         out.append(diagnostic)
     return out
+
+
+_FOR_LINE = re.compile(r"^\s*(?:async\s+)?for\b.*\bin\b(?P<iterable>.*)$")
+
+
+def _self_iterator_hint(diagnostic: Diagnostic, sources: _Sources) -> str | None:
+    """Why ``for x in C(...)`` is refused when *C* is an iterator class with
+    ``__next__`` (#504): Codon has no ``__next__`` protocol."""
+    found = _FOR_LINE.match(_source_line(diagnostic))
+    if found is None:
+        return None
+    for name in re.findall(r"[A-Za-z_]\w*", found["iterable"]):
+        cls = _python_class(name, sources)
+        if (
+            cls is not None
+            and hasattr(cls, "__next__")
+            and not issubclass(cls, tuple)
+            and "__iter__" in dir(cls)
+        ):
+            return (
+                f"Codon iterates a class only through an `__iter__` that is a "
+                f"generator (it has no `__next__` protocol): write "
+                f"`{name}.__iter__` with `yield` instead of returning self "
+                f"(valid Python too)"
+            )
+    return None
 
 
 def _annotated_class_attribute(

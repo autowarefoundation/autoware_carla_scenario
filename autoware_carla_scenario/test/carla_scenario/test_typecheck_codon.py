@@ -6279,6 +6279,45 @@ def test_a_dict_display_merging_other_value_types_is_refused(tmp_path: Path) -> 
     assert error.line == _line_of(path, line)
 
 
+def test_a_dict_display_of_mixed_primitives_gets_the_one_type_hint(
+    tmp_path: Path,
+) -> None:
+    line = 'info: dict[str, Any] = {"a": 1, "b": "x", "c": 2.5}'
+    setup = line + '\nlogger.info("%s", info["b"])\n'
+    scenario, config, path = _data_case(tmp_path, "from typing import Any\n", setup)
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "dataclass" in error.message, error.format()
+    assert "common base" not in error.message, error.format()
+    assert error.line == _line_of(path, line), error.format()
+
+
+def test_a_self_iterator_class_gets_the_generator_hint(tmp_path: Path) -> None:
+    definitions = """
+class Countdown:
+    n: int
+
+    def __init__(self, n: int) -> None:
+        self.n = n
+
+    def __iter__(self) -> "Countdown":
+        return self
+
+    def __next__(self) -> int:
+        if self.n <= 0:
+            raise StopIteration
+        self.n -= 1
+        return self.n
+"""
+    line = "for k in Countdown(3):"
+    setup = f"total = 0\n{line}\n    total += k\n"
+    scenario, config, path = _data_case(tmp_path, definitions, setup)
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "expected iterable expression" in error.message, error.format()
+    assert "generator" in error.message, error.format()
+    assert "yield" in error.message, error.format()
+    assert error.line == _line_of(path, line), error.format()
+
+
 def test_str_format_on_a_literal_compiles(tmp_path: Path) -> None:
     setup = """
         n = 7
