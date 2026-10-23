@@ -2387,9 +2387,17 @@ sweep are checked before anything starts. To check without running anything:</p>
 <a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario-check<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span><span class="s1">'lane_change/*'</span><span class="w"> </span>scenario.timeout_seconds<span class="o">=</span><span class="m">20</span>
 </code></pre></div>
 <p><code>scenario-check</code> composes each config exactly as the runner does, so the same
-overrides apply. It exits with 0 when every scenario passed, 1 when one
-failed, and 2 when there is no Codon compiler. A scenario package can make
-the same check in its own tests, with no simulator:</p>
+overrides apply. <code>scenario='*'</code> is every config, like no <code>scenario=</code>; a
+package author checks only theirs (<code>scenario='my_package/*'</code>, about 15 s per
+config), as every built-in config takes minutes. It exits with 0 when every
+scenario passed, 1 when one failed, and 2 when it could not run: there is no
+Codon compiler, no config matches <code>scenario=</code> (the message lists the
+configs), or an override names a key the config does not have
+(<code>scenario.timout_seconds=3</code> is reported with the closest key,
+<code>scenario.timeout_seconds</code>; <code>+key=value</code> adds a new one; <code>HYDRA_FULL_ERROR=1</code>
+shows the traceback). A scenario package
+can make the same check in its own tests, with no simulator (the template and
+<code>scenario-new</code> packages have one in <code>tests/test_typecheck.py</code>):</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario.typecheck</span><span class="w"> </span><span class="kn">import</span> <span class="n">typecheck_scenario</span>
 <a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>
 <a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="k">def</span><span class="w"> </span><span class="nf">test_my_scenario_compiles</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
@@ -3249,7 +3257,15 @@ scenario has to do itself:</p>
   (<code>goal: Goal</code>) holds one at run time unless the config's <code>__post_init__</code>
   turns it into a <code>Goal</code>, as the built-in configs do for their NPC lists.
   The check builds the config the same way and refuses an unconverted
-  mapping at its <code>scenario.&lt;key&gt;</code>.</p>
+  mapping at its <code>scenario.&lt;key&gt;</code>. The same goes for an Enum field (YAML
+  gives its name or value as a <code>str</code>) and a tuple field (YAML gives a
+  list): they compile when the <code>__post_init__</code> converts them
+  (<code>self.mode = Mode(self.mode)</code>), and are refused at <code>scenario.&lt;key&gt;</code>
+  when it does not. A bad value inside a nested list is refused at its own
+  field, e.g. <code>scenario.legs[1].speed</code>.
+  A config that raises when built (a <code>__post_init__</code> that rejects a value, a
+  name <code>Mode(...)</code> does not know) fails the check with the exception, as it
+  stops the run.</p>
 <ul>
 <li><strong>Annotate every parameter of every function and method</strong>, helpers and
   hook overrides included. Every function of the scenario's modules is
@@ -5920,7 +5936,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 23, 2026 13:07:15 UTC"><span class="timeago" datetime="2026-10-23T13:07:15+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 23, 2026 13:07:15 UTC">2026-10-23</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 23, 2026 15:45:22 UTC"><span class="timeago" datetime="2026-10-23T15:45:22+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 23, 2026 15:45:22 UTC">2026-10-23</span>
   </span>
 
     
