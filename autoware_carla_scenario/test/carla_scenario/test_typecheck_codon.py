@@ -6005,6 +6005,114 @@ _STDLIB_CASES: dict[str, tuple[str, str, str]] = {
         '    c["a"] += 1\n    return c\n',
         "logger.info('%d %d', len(ordered()), len(tally()))\n",
     ),
+    "collections.deque (extend, maxlen)": (
+        "from collections import deque\n",
+        "def window(xs: list[float]) -> list[float]:\n"
+        "    d: deque[float] = deque(maxlen=3)\n"
+        "    d.extend(xs)\n    d.extendleft([0.5])\n"
+        "    d.extend(d)\n    return list(d)\n"
+        "def kept(xs: list[int]) -> deque[int]:\n"
+        "    return deque(xs, maxlen=2)\n"
+        "def kept_kw(xs: list[int]) -> deque[int]:\n"
+        "    return deque(xs, maxlen=2)\n",
+        "assert window([1.0, 2.0, 3.0, 4.0]) == [3.0, 4.0]\n"
+        "assert list(kept([1, 2, 3])) == [2, 3] and list(kept_kw([1])) == [1]\n"
+        "m: deque[int] = deque(maxlen=3)\n"
+        "m.extend([1, 2, 3, 4])\n"
+        "assert list(m) == [2, 3, 4]\n"
+        "logger.info('%d', len(window([1.0])))\n",
+    ),
+    "collections.deque (rotate, search)": (
+        "from collections import deque\n",
+        "def turned() -> list[int]:\n"
+        "    d = deque([1, 2, 3, 4])\n"
+        "    d.rotate(1)\n    d.rotate(-2)\n    d.rotate()\n"
+        "    return list(d)\n"
+        "def edited() -> list[int]:\n"
+        "    d = deque([1, 2, 3, 2])\n"
+        "    d.remove(2)\n    d.reverse()\n    d.insert(1, 9)\n"
+        "    d[0] = 7\n    del d[2]\n"
+        "    assert d.count(7) == 1 and d.index(9) == 1\n"
+        "    assert d == d.copy() and d != deque([1])\n"
+        "    return list(d)\n",
+        "assert turned() == [4, 1, 2, 3]\n"
+        "assert edited() == [7, 9, 2]\n"
+        "logger.info('%d', len(turned()))\n",
+    ),
+    "math.dist": (
+        "import math\nfrom math import dist\n",
+        "def gap(a: tuple[float, float], b: tuple[float, float]) -> float:\n"
+        "    return dist(a, b)\n"
+        "def gap3(a: list[float], b: list[float]) -> float:\n"
+        "    return math.dist(a, b)\n",
+        "assert gap((0.0, 0.0), (3.0, 4.0)) == 5.0\n"
+        "assert gap3([1.0, 2.0, 3.0], [4.0, 6.0, 3.0]) == 5.0\n"
+        "logger.info('%f', gap((0.0, 0.0), (3.0, 4.0)))\n",
+    ),
+    "math.isqrt": (
+        "import math\n",
+        "def root(n: int) -> int:\n    return math.isqrt(n)\n",
+        "assert root(10) == 3 and root(16) == 4 and root(0) == 0\n"
+        "logger.info('%d', root(99))\n",
+    ),
+    "math.comb": (
+        "import math\n",
+        "def choose(n: int, k: int) -> int:\n    return math.comb(n, k)\n",
+        "assert choose(5, 2) == 10 and choose(5, 7) == 0\n"
+        "logger.info('%d', choose(60, 30))\n",
+    ),
+    "math.perm": (
+        "import math\n",
+        "def arrange(n: int) -> int:\n    return math.perm(n)\n"
+        "def arrange_k(n: int, k: int) -> int:\n    return math.perm(n, k)\n",
+        "assert arrange(5) == 120 and arrange_k(5, 2) == 20\n"
+        "logger.info('%d', arrange_k(3, 5))\n",
+    ),
+    "math.cbrt": (
+        "import math\n",
+        "def cube_root(x: float) -> float:\n    return math.cbrt(x)\n",
+        "assert cube_root(8.0) == 2.0 and cube_root(-27.0) == -3.0\n"
+        "logger.info('%f', cube_root(1.0))\n",
+    ),
+    "math.exp2": (
+        "import math\n",
+        "def power(x: float) -> float:\n    return math.exp2(x)\n",
+        "assert power(10.0) == 1024.0\nlogger.info('%f', power(1.0))\n",
+    ),
+    "random.Random (choices, triangular)": (
+        "import random\n",
+        "def draw(rng: random.Random) -> int:\n"
+        "    a = rng.choices([1, 2], weights=[1, 2], k=3)\n"
+        "    b = rng.choices([1, 2], weights=[0.5, 1.5], k=3)\n"
+        "    c = rng.choices([1, 2], k=3)\n"
+        "    d = rng.choices([1, 2], cum_weights=[1, 3])\n"
+        "    e = rng.choices(['a', 'b'], [1, 1])\n"
+        "    return len(a) + len(b) + len(c) + len(d) + len(e)\n"
+        "def skew(rng: random.Random) -> float:\n"
+        "    return rng.triangular(0.0, 1.0) + rng.triangular() "
+        "+ rng.triangular(0.0, 1.0, 0.25)\n",
+        "rng = random.Random(1)\n"
+        "assert draw(rng) == 11\n"
+        "assert 0.0 <= skew(rng) <= 3.0\n"
+        "logger.info('%d', draw(rng))\n",
+    ),
+    "random.triangular": (
+        "import random\nfrom random import triangular\n",
+        "def skew() -> float:\n"
+        "    return random.triangular(0.0, 1.0) + triangular(0.0, 2.0, 1.0) "
+        "+ triangular()\n",
+        "assert 0.0 <= skew() <= 4.0\nlogger.info('%f', skew())\n",
+    ),
+    "random.choices": (
+        "import random\nfrom random import choices\n",
+        "def pick() -> int:\n"
+        "    a = random.choices([1, 2], weights=[1.0, 2.0], k=3)\n"
+        "    b = choices([1, 2], weights=[1, 2])\n"
+        "    c = random.choices([1, 2], k=2)\n"
+        "    d = random.choices([1, 2], cum_weights=[1, 3])\n"
+        "    return len(a) + len(b) + len(c) + len(d)\n",
+        "assert pick() == 7\nlogger.info('%d', pick())\n",
+    ),
 }
 
 #: Each name or module refused with a hint: the import line, the code using
@@ -6020,6 +6128,12 @@ _STDLIB_REFUSALS: dict[str, tuple[str, str, str, str]] = {
         "from functools import wraps\n",
         "",
         "cannot import name 'wraps' from 'functools'",
+        "docs/typecheck.md",
+    ),
+    "math.ulp": (
+        "from math import ulp\n",
+        "",
+        "cannot import name 'ulp' from 'math'",
         "docs/typecheck.md",
     ),
     "contextlib": (
@@ -6308,11 +6422,18 @@ def test_an_unsupported_stdlib_name_is_refused_with_a_hint(
     assert error.line == path.read_text().splitlines().index(first) + 1
 
 
+#: Names the check adds that Python's own module has from 3.11 on only: the
+#: check accepts them on 3.10 too (docs/typecheck.md).
+_PYTHON_3_11_NAMES = {"math.cbrt", "math.exp2"}
+
+
 def test_stdlib_names() -> None:
     # The documented lists, the transform, the extensions and the cases agree.
     import itertools
     import collections
     import functools
+    import math
+    import random
 
     from autoware_carla_scenario.typecheck.transform import FUNCTOOLS_NAMES
 
@@ -6338,13 +6459,15 @@ def test_stdlib_names() -> None:
                     if isinstance(t, ast.Name)
                 }
     assert listed("stdlib-names") == declared
-    for name in declared:
+    for name in declared - _PYTHON_3_11_NAMES:
         module, _, attribute = name.partition(".")
         assert hasattr(
             {
                 "functools": functools,
                 "itertools": itertools,
                 "collections": collections,
+                "math": math,
+                "random": random,
             }[module],
             attribute,
         ), name
@@ -6358,6 +6481,38 @@ def test_stdlib_names() -> None:
     assert {name for name in _STDLIB_REFUSALS if "." not in name} == set(
         _UNMODELLED_HINTS
     )
+
+
+_FILE_DEFINITIONS = """
+import os
+from pathlib import Path
+
+DATA = Path(__file__).resolve().parent / "data"
+HERE = os.path.dirname(os.path.abspath(__file__))
+NAME: str = __file__
+
+
+def here() -> Path:
+    return Path(__file__).parent
+
+
+def named() -> str:
+    return os.path.basename(__file__)
+"""
+
+
+def test_the_file_of_a_module_is_defined(tmp_path: Path) -> None:
+    # `__file__` is the module's path, as a str, at module level, in a
+    # function and in os.path and pathlib calls (#515).
+    setup = """
+        assert NAME.endswith("scenario.py")
+        assert named() == "scenario.py"
+        assert str(here()) == os.path.dirname(NAME)
+        logger.info("%s %s %s", DATA, HERE, NAME)
+    """
+    scenario, config, _ = _data_case(tmp_path, _FILE_DEFINITIONS, setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
 
 
 def test_an_ellipsis_class_is_still_an_empty_class(tmp_path: Path) -> None:

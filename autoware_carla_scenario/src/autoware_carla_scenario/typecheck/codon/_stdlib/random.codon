@@ -1,0 +1,75 @@
+# What the checker adds to Codon's random (docs/typecheck.md). The workspace
+# gets Codon's own stdlib/random.codon followed by this file (typecheck/check.py,
+# _base_workspace), so every name Codon has stays.
+
+
+@extend
+class Random:
+    # Codon's triangular() needs the mode and its choices() every argument,
+    # and the weights have to be ints: these take Python's 3.10 arguments
+    # (cum_weights and k are keyword-only there, which Codon cannot declare).
+    def triangular(self, low: float = 0.0, high: float = 1.0) -> float:
+        return self.triangular(low, high, (low + high) / 2)
+
+    # choices(): Codon's takes every argument, as ints. Python's three forms
+    # are overloads (cum_weights and k are keyword-only there, which Codon
+    # cannot declare); the one taking `weights` is last, so it is the one a
+    # positional second argument reaches.
+    def _choose(self, population, cum: List[float], k: int):
+        n = len(population)
+        if len(cum) != n:
+            raise ValueError("The number of weights does not match the population")
+        total = cum[-1] + 0.0
+        if total <= 0.0:
+            raise ValueError("Total of weights must be greater than zero")
+        result = []
+        for _ in range(k):
+            r = self.random() * total
+            lo = 0
+            hi = n - 1
+            while lo < hi:
+                mid = (lo + hi) // 2
+                if r < cum[mid]:
+                    hi = mid
+                else:
+                    lo = mid + 1
+            result.append(population[lo])
+        return result
+
+    def choices(self, population, k: int = 1):
+        n = len(population)
+        return [population[int(self.random() * n)] for _ in range(k)]
+
+    def choices(self, population, cum_weights, k: int = 1):
+        cum = List[float](len(cum_weights))
+        for w in cum_weights:
+            cum.append(float(w))
+        return self._choose(population, cum, k)
+
+    def choices(self, population, weights, k: int = 1):
+        cum = List[float](len(weights))
+        total = 0.0
+        for w in weights:
+            total += float(w)
+            cum.append(total)
+        return self._choose(population, cum, k)
+
+
+# The module-level functions take the same arguments as the methods.
+@overload
+def triangular(low: float, high: float):
+    return _rnd.triangular(low, high)
+
+@overload
+def choices(population, k: int = 1):
+    return _rnd.choices(population, k=k)
+
+
+@overload
+def choices(population, cum_weights, k: int = 1):
+    return _rnd.choices(population, cum_weights=cum_weights, k=k)
+
+
+@overload
+def choices(population, weights, k: int = 1):
+    return _rnd.choices(population, weights=weights, k=k)

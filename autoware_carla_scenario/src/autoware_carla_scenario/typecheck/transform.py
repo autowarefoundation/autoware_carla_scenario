@@ -3110,6 +3110,7 @@ def transform_source(
     dropped_decorators: Collection[str] = (),
     init_classes: Collection[str] = (),
     enum_classes: Collection[str] = (),
+    file: str | None = None,
 ) -> str:
     """Rewrite *source* for Codon; the result starts with :data:`PRELUDE`.
 
@@ -3120,9 +3121,10 @@ def transform_source(
     model) that define an ``__init__``, their own or a base's
     (:func:`classes_with_init`): a class of *source* deriving from one
     without an ``__init__`` of its own inherits it (:func:`inherited_inits`).
+    *file* is the module's path, bound to ``__file__`` (#515).
     """
     return transform_source_lines(
-        source, dropped_decorators, init_classes, enum_classes
+        source, dropped_decorators, init_classes, enum_classes, file
     )[0]
 
 
@@ -3131,6 +3133,7 @@ def transform_source_lines(
     dropped_decorators: Collection[str] = (),
     init_classes: Collection[str] = (),
     enum_classes: Collection[str] = (),
+    file: str | None = None,
 ) -> tuple[str, list[int]]:
     """:func:`transform_source`, and the line of *source* each line comes from.
 
@@ -3215,11 +3218,20 @@ def transform_source_lines(
         at = edits.starts[end] if end < len(edits.starts) else len(edits.data)
         edits.replace(at, at, block[1:])
         origin[end:end] = [lines[name]] * (block.count("\n") - 1)
-    text = PRELUDE + edits.apply()
+    # Python sets a module's `__file__`, which Codon 0.19 does not (#515): it
+    # is bound on the prelude's last line, before any code of the module and
+    # with no line moved.
+    prelude = PRELUDE if file is None else _with_file(PRELUDE, file)
+    text = prelude + edits.apply()
     for name, block in appended:
         text += block
         origin += [lines[name]] * block.count("\n")
     return text, origin
+
+
+def _with_file(prelude: str, file: str) -> str:
+    """*prelude*, its last line also binding ``__file__`` to *file*."""
+    return f"{prelude[:-1]}; __file__: str = {file!r}\n"
 
 
 def _import_bindings(

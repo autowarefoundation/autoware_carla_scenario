@@ -1374,14 +1374,16 @@ the same code either way, because a `Protocol` base is only a marker there.
 
 ### Standard library names Codon lacks
 
-Codon ships its own `functools` (only `partial`), `itertools` and
-`collections`, and a name it lacks fails with a bare "cannot import name".
-The check supplies these (#378); `test_stdlib_names` keeps this list, the
-check's additions and the tests in step:
+Codon ships its own `functools` (only `partial`), `itertools`, `collections`,
+`math` and `random`, and a name it lacks fails with a bare "cannot import
+name". The check supplies these (#378, #515, #516); `test_stdlib_names` keeps
+this list, the check's additions and the tests in step:
 
 <!-- stdlib-names:start -->
 `functools.reduce`, `functools.lru_cache`, `functools.cache`,
-`functools.cached_property`, `itertools.pairwise`, `collections.OrderedDict`
+`functools.cached_property`, `itertools.pairwise`, `collections.OrderedDict`,
+`collections.deque`, `math.dist`, `math.isqrt`, `math.comb`, `math.perm`,
+`math.cbrt`, `math.exp2`, `random.Random`, `random.choices`, `random.triangular`
 <!-- stdlib-names:end -->
 
 - `functools.reduce` (with or without an initial value) is a function of the
@@ -1399,21 +1401,40 @@ check's additions and the tests in step:
   `collections.OrderedDict` is a `dict`, which keeps its insertion order;
   `move_to_end()` and `popitem(last=...)` are not declared, and are
   refused when called.
+- `collections.deque` gets what Codon's lacks: `deque(iterable, maxlen)`,
+  `extend`, `extendleft`, `rotate`, `count`, `index`, `insert`, `remove`,
+  `reverse`, item assignment and deletion and `==`/`!=`, all as Python's
+  (`maxlen` drops items from the other end, `rotate(-n)` turns left). Codon's
+  own `deque(maxlen=n)` kept one item too many when `n + 1` was a power of
+  two; the check's is fixed. `deque(iterable, maxlen=None)` and `reversed(d)`
+  are not declared, and `d.maxlen` is `-1`, not `None`, for a deque with no
+  limit (Codon's).
+- `math.dist`, `isqrt`, `comb` and `perm` are Python's (the same
+  `ValueError`s); an `int` is 64 bits in Codon, so `comb` and `perm` overflow
+  where Python's would not. `math.cbrt` and `math.exp2` are Python 3.11
+  functions: the check accepts them on 3.10 too (run time is where 3.10
+  refuses them), so a scenario meant for 3.10 has to avoid them itself.
+  `nextafter` and `ulp` are not declared.
+- `random.Random.choices` (and `random.choices`) take `weights` of ints or
+  floats, or `cum_weights=`, and `k=`, as Python's do, and
+  `triangular(low, high)` (the method and the function) takes the midpoint as the mode. Codon's
+  `choices` wanted int weights and all four arguments. `cum_weights` and `k`
+  can be passed by position here, where Python makes them keyword-only.
 
 These are refused at the import line, with a hint saying what to write
 instead:
 
 <!-- stdlib-refused:start -->
-`dataclasses.asdict`, `functools.wraps`, `contextlib`, `warnings`, `json`,
-`types`, `textwrap`, `traceback`, `io`
+`dataclasses.asdict`, `functools.wraps`, `math.ulp`, `contextlib`, `warnings`,
+`json`, `types`, `textwrap`, `traceback`, `io`
 <!-- stdlib-refused:end -->
 
 - `dataclasses.asdict` returns a `dict[str, Any]`: build the dict from the
   fields you need. The `dataclasses` shim declares only `dataclass`, `field`
   and `replace` (a call is rewritten and checked per field, see "Your own
   dataclasses, enums and named tuples").
-- `functools.wraps` (and any other name of `functools`, `itertools` or
-  `collections` not listed above) is not modelled.
+- `functools.wraps` (and any other name of `functools`, `itertools`,
+  `collections`, `math` or `random` not listed above, such as `math.ulp`) is not modelled.
 - `contextlib`: write a class with `__enter__` and
   `__exit__(self, exc_type, exc, tb)` for `contextmanager` (the check rewrites
   the signature, see "Python the check rewrites for Codon"), and `try/except X: pass` for `suppress`. `warnings`: log
@@ -2174,8 +2195,11 @@ stands in for it in the check's workspace:
   checked itself.
 
 Each checked module gets the `__file__` Python sets on it (its source's path,
-a `str`), which Codon 0.19 does not, appended after the calls of the check
-so no line moves: `autoware_stack.bridge_node` finds the installed
+a `str`), which Codon 0.19 does not, bound on the last line of the prelude so
+it exists before any code of the module and no line moves (#515), so
+`Path(__file__).resolve().parent / "data"` and
+`os.path.dirname(os.path.abspath(__file__))` compile at module level and in a
+function: `autoware_stack.bridge_node` finds the installed
 `autoware_bridge` package with `from ..autoware_bridge import __file__`.
 Codon has no module object, so `from .. import autoware_bridge` and
 `autoware_bridge.__file__` do not compile.
@@ -3293,10 +3317,11 @@ What Codon 0.19 needs that Python does not, beyond
   `to_map_frame` returns to the checked `AutowareBridge.configure()`
   (it imports `coordinate.transform` itself, which is checked, so the library
   check compiles the real `to_map_frame` there).
-- **No `math.dist`** in Codon's `math`: `math.hypot` of the differences,
-  which is the computation CPython's `math.dist` makes (`AutowareEgoEntity`,
-  `actions.background_traffic`, where `test_background_traffic.py` pins the
-  two to the same number).
+- **`math.hypot` of the differences** where CPython's `math.dist` would do
+  (`AutowareEgoEntity`, `actions.background_traffic`, where
+  `test_background_traffic.py` pins the two to the same number): Codon's
+  `math` had no `math.dist` when these were written; the check adds it now
+  (see "Standard library names Codon lacks").
 - **A function whose only return is `return None`**: with an `Optional[X]`
   return annotation, the check returns `Optional[X]()` and realizes `X`
   before calling it ([*Writing a scenario that
