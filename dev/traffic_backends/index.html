@@ -1563,6 +1563,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#weather-and-the-trafficmanager" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Weather and the TrafficManager
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#why-this-exists" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2196,6 +2207,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#weather-and-the-trafficmanager" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Weather and the TrafficManager
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#why-this-exists" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2340,11 +2362,12 @@ config:</p>
 exported scenario packages still set — keeps deciding the port when
 <code>traffic.options.port</code> is left unset.</p>
 <h2 id="traffic-parameters">Traffic parameters<a class="headerlink" href="#traffic-parameters" title="Permanent link">&para;</a></h2>
-<p>How the traffic's road users <em>behave</em> is not a backend's own option but two
+<p>How the traffic's road users <em>behave</em> is not a backend's own option but three
 parameter spaces every backend reads: <code>traffic.vehicles</code> (<code>VehicleParameters</code>)
-for how vehicles drive, and <code>traffic.pedestrians</code> (<code>PedestrianParameters</code>) for
-how pedestrians walk. Every field is <code>null</code> by default, which leaves the
-backend's own default.</p>
+for how vehicles drive, <code>traffic.pedestrians</code> (<code>PedestrianParameters</code>) for
+how pedestrians walk, and <code>traffic.bicycles</code> (<code>BicycleParameters</code>) for how
+bicycles ride. Every field is <code>null</code> by default, which leaves the backend's
+own default.</p>
 <p>Every numeric parameter is a <strong>spread</strong>, a mean and a standard deviation
 (<code>{mean, std}</code>, <code>Spread</code> in Python): each vehicle and each pedestrian draws
 its own value from a normal distribution of that mean and std, cut to the
@@ -2363,6 +2386,8 @@ draws come from the run's seed: the same seed, the same drivers.</p>
 <a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="w">  </span><span class="nt">pedestrians</span><span class="p">:</span>
 <a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="w">    </span><span class="nt">walking_speed_mps</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">mean</span><span class="p">:</span><span class="w"> </span><span class="nv">1.2</span><span class="p p-Indicator">,</span><span class="nt"> std</span><span class="p">:</span><span class="w"> </span><span class="nv">0.2</span><span class="p p-Indicator">}</span>
 <a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="w">    </span><span class="nt">red_light_violation_s</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">mean</span><span class="p">:</span><span class="w"> </span><span class="nv">5.0</span><span class="p p-Indicator">,</span><span class="nt"> std</span><span class="p">:</span><span class="w"> </span><span class="nv">5.0</span><span class="p p-Indicator">}</span>
+<a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a><span class="w">  </span><span class="nt">bicycles</span><span class="p">:</span>
+<a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a><span class="w">    </span><span class="nt">max_speed_mps</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">mean</span><span class="p">:</span><span class="w"> </span><span class="nv">4.5</span><span class="p p-Indicator">,</span><span class="nt"> std</span><span class="p">:</span><span class="w"> </span><span class="nv">0.8</span><span class="p p-Indicator">}</span>
 </code></pre></div>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">traffic</span><span class="o">=</span>sumo<span class="w"> </span>traffic.vehicles.reaction_time_s.mean<span class="o">=</span><span class="m">1</span>.5<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">    </span>traffic.vehicles.reaction_time_s.std<span class="o">=</span><span class="m">0</span>.3
@@ -2469,7 +2494,7 @@ draws come from the run's seed: the same seed, the same drivers.</p>
 <tr>
 <td><code>follow_visibility</code></td>
 <td>Slow to what the drivers see in the weather</td>
-<td>—</td>
+<td>✓ (when <code>true</code>)</td>
 <td>✓ (on by default)</td>
 </tr>
 </tbody>
@@ -2506,6 +2531,83 @@ own walk as the scenario steers them — so every field is <code>sumo</code>'s):
 </tr>
 </tbody>
 </table>
+<p><code>traffic.bicycles</code> (only SUMO simulates bicycles; the TrafficManager drives a
+bicycle blueprint as it drives a car, so every field is <code>sumo</code>'s). The
+vehicle parameters are a driver's and never reach a bicycle:</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Meaning</th>
+<th><code>traffic_manager</code></th>
+<th><code>sumo</code></th>
+<th>Default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>max_speed_mps</code></td>
+<td>Speed on a free road, m/s</td>
+<td>—</td>
+<td><code>desiredMaxSpeed</code> and <code>maxSpeed</code></td>
+<td>5.56 (20 km/h), with SUMO's spread of 0.1</td>
+</tr>
+<tr>
+<td><code>accel</code></td>
+<td>Acceleration, m/s²</td>
+<td>—</td>
+<td><code>accel</code></td>
+<td>1.2</td>
+</tr>
+<tr>
+<td><code>decel</code></td>
+<td>Braking, m/s²</td>
+<td>—</td>
+<td><code>decel</code></td>
+<td>3</td>
+</tr>
+<tr>
+<td><code>min_gap_m</code></td>
+<td>Gap to the one ahead when standing, m</td>
+<td>—</td>
+<td><code>minGap</code></td>
+<td>0.5</td>
+</tr>
+<tr>
+<td><code>reaction_time_s</code></td>
+<td>Reaction time, s</td>
+<td>—</td>
+<td><code>tau</code></td>
+<td>1</td>
+</tr>
+<tr>
+<td><code>imperfection</code></td>
+<td>Rider imperfection, 0-1</td>
+<td>—</td>
+<td><code>sigma</code></td>
+<td>0.5</td>
+</tr>
+<tr>
+<td><code>max_lateral_speed_mps</code></td>
+<td>Most lateral speed, m/s</td>
+<td>—</td>
+<td><code>maxSpeedLat</code></td>
+<td>1</td>
+</tr>
+<tr>
+<td><code>red_light_violation_s</code></td>
+<td>Ride on through a light red for less than this, s</td>
+<td>—</td>
+<td><code>jmDriveAfterRedTime</code></td>
+<td>stop at red</td>
+</tr>
+</tbody>
+</table>
+<p>SUMO's default bicycle type (<code>DEFAULT_BIKETYPE</code>) is redefined as a
+distribution of 100 types, each its own draw of them
+(<code>&lt;output&gt;/sumo/bicycle_type.add.xml</code>, loaded before the demand), which
+SUMO's own bicycles (<code>traffic.options.bicycles</code>), a <code>route_path</code> demand's of
+that type and the scenario's bicycles are all of.</p>
 <h3 id="parameter-reference">Parameter reference<a class="headerlink" href="#parameter-reference" title="Permanent link">&para;</a></h3>
 <p>Each parameter, with its type, the values it accepts, and what it becomes in
 each backend. Unset (<code>null</code>) means the backend's own default, which is given
@@ -2649,12 +2751,18 @@ defaults.</p>
 <li>
 <p><code>follow_visibility</code> — bool</p>
 <ul>
-<li>Hold SUMO's own traffic (ambient and background vehicles) to the speed it
-  stops from within what its drivers see in the run's weather, <code>v * tau + v² /
-  (2 * decel)</code> = the visibility, and give each its own speed back when the
-  weather lifts. Unset, <code>true</code>; <code>false</code> ignores the visibility, as the
-  TrafficManager does. See <strong>Visibility</strong> under
-  <a href="#the-sumo-backend">The SUMO backend</a>.</li>
+<li>Hold the backend's own traffic to the speed it stops from within what
+  its drivers see in the run's weather, <code>v * tau + v² / (2 * decel)</code> = the
+  visibility, and give each its own speed back when the weather lifts.</li>
+<li><code>sumo</code>: SUMO's own traffic (ambient and background vehicles), with each
+  vehicle's own <code>tau</code> and <code>decel</code>. Unset, <code>true</code>; <code>false</code> ignores the
+  visibility. See <strong>Visibility</strong> under <a href="#the-sumo-backend">The SUMO backend</a>.</li>
+<li><code>traffic_manager</code>: every vehicle it drives, with SUMO's default car's
+  reaction (1 s) and braking (4.5 m/s²), the TrafficManager having
+  neither, held as a percentage under its road's speed limit (never
+  faster than its own <code>speed_factor</code>), worked out again every second. Off
+  unless <code>true</code>, so a scenario's vehicles drive as they always did. See
+  <a href="#weather-and-the-trafficmanager">Weather and the TrafficManager</a>.</li>
 </ul>
 </li>
 </ul>
@@ -2731,37 +2839,45 @@ in <code>prepare()</code>.</p>
 <p><code>TrafficParametersAction</code> changes the parameters from the tick it fires on,
 like any action, on a condition:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
-<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>    <span class="n">ElapsedTimeCondition</span><span class="p">,</span>
-<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>    <span class="n">PedestrianParameters</span><span class="p">,</span>
-<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a>    <span class="n">Spread</span><span class="p">,</span>
-<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a>    <span class="n">TrafficParametersAction</span><span class="p">,</span>
-<a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a>    <span class="n">VehicleParameters</span><span class="p">,</span>
-<a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a><span class="p">)</span>
-<a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a>
-<a id="__codelineno-8-9" name="__codelineno-8-9" href="#__codelineno-8-9"></a><span class="c1"># From 20 s on, drivers slow down and keep their distance.</span>
-<a id="__codelineno-8-10" name="__codelineno-8-10" href="#__codelineno-8-10"></a><span class="n">scenario</span><span class="o">.</span><span class="n">register_post_tick</span><span class="p">(</span>
-<a id="__codelineno-8-11" name="__codelineno-8-11" href="#__codelineno-8-11"></a>    <span class="n">TrafficParametersAction</span><span class="p">(</span>
-<a id="__codelineno-8-12" name="__codelineno-8-12" href="#__codelineno-8-12"></a>        <span class="n">vehicles</span><span class="o">=</span><span class="n">VehicleParameters</span><span class="p">(</span>
-<a id="__codelineno-8-13" name="__codelineno-8-13" href="#__codelineno-8-13"></a>            <span class="n">speed_factor</span><span class="o">=</span><span class="n">Spread</span><span class="p">(</span><span class="mf">0.8</span><span class="p">,</span> <span class="mf">0.05</span><span class="p">),</span> <span class="n">min_gap_m</span><span class="o">=</span><span class="n">Spread</span><span class="p">(</span><span class="mf">4.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">)</span>
-<a id="__codelineno-8-14" name="__codelineno-8-14" href="#__codelineno-8-14"></a>        <span class="p">),</span>
-<a id="__codelineno-8-15" name="__codelineno-8-15" href="#__codelineno-8-15"></a>        <span class="n">condition</span><span class="o">=</span><span class="n">ElapsedTimeCondition</span><span class="p">(</span><span class="mf">20.0</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">"after_20s"</span><span class="p">),</span>
-<a id="__codelineno-8-16" name="__codelineno-8-16" href="#__codelineno-8-16"></a>    <span class="p">)</span>
-<a id="__codelineno-8-17" name="__codelineno-8-17" href="#__codelineno-8-17"></a><span class="p">)</span>
-<a id="__codelineno-8-18" name="__codelineno-8-18" href="#__codelineno-8-18"></a>
-<a id="__codelineno-8-19" name="__codelineno-8-19" href="#__codelineno-8-19"></a><span class="c1"># The NPC ahead turns reckless (traffic_manager): values, not distributions.</span>
-<a id="__codelineno-8-20" name="__codelineno-8-20" href="#__codelineno-8-20"></a><span class="n">scenario</span><span class="o">.</span><span class="n">register_post_tick</span><span class="p">(</span>
-<a id="__codelineno-8-21" name="__codelineno-8-21" href="#__codelineno-8-21"></a>    <span class="n">TrafficParametersAction</span><span class="p">(</span>
-<a id="__codelineno-8-22" name="__codelineno-8-22" href="#__codelineno-8-22"></a>        <span class="n">vehicles</span><span class="o">=</span><span class="n">VehicleParameters</span><span class="p">(</span><span class="n">speed_factor</span><span class="o">=</span><span class="mf">1.3</span><span class="p">,</span> <span class="n">ignore_lights</span><span class="o">=</span><span class="mf">1.0</span><span class="p">),</span>
-<a id="__codelineno-8-23" name="__codelineno-8-23" href="#__codelineno-8-23"></a>        <span class="n">entity_name</span><span class="o">=</span><span class="s2">"npc1"</span><span class="p">,</span>
-<a id="__codelineno-8-24" name="__codelineno-8-24" href="#__codelineno-8-24"></a>    <span class="p">)</span>
-<a id="__codelineno-8-25" name="__codelineno-8-25" href="#__codelineno-8-25"></a><span class="p">)</span>
-<a id="__codelineno-8-26" name="__codelineno-8-26" href="#__codelineno-8-26"></a>
-<a id="__codelineno-8-27" name="__codelineno-8-27" href="#__codelineno-8-27"></a><span class="c1"># Pedestrians hurry (sumo).</span>
-<a id="__codelineno-8-28" name="__codelineno-8-28" href="#__codelineno-8-28"></a><span class="n">scenario</span><span class="o">.</span><span class="n">register_post_tick</span><span class="p">(</span>
-<a id="__codelineno-8-29" name="__codelineno-8-29" href="#__codelineno-8-29"></a>    <span class="n">TrafficParametersAction</span><span class="p">(</span>
-<a id="__codelineno-8-30" name="__codelineno-8-30" href="#__codelineno-8-30"></a>        <span class="n">pedestrians</span><span class="o">=</span><span class="n">PedestrianParameters</span><span class="p">(</span><span class="n">walking_speed_mps</span><span class="o">=</span><span class="n">Spread</span><span class="p">(</span><span class="mf">1.8</span><span class="p">,</span> <span class="mf">0.2</span><span class="p">))</span>
-<a id="__codelineno-8-31" name="__codelineno-8-31" href="#__codelineno-8-31"></a>    <span class="p">)</span>
-<a id="__codelineno-8-32" name="__codelineno-8-32" href="#__codelineno-8-32"></a><span class="p">)</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>    <span class="n">BicycleParameters</span><span class="p">,</span>
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>    <span class="n">ElapsedTimeCondition</span><span class="p">,</span>
+<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a>    <span class="n">PedestrianParameters</span><span class="p">,</span>
+<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a>    <span class="n">Spread</span><span class="p">,</span>
+<a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a>    <span class="n">TrafficParametersAction</span><span class="p">,</span>
+<a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a>    <span class="n">VehicleParameters</span><span class="p">,</span>
+<a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a><span class="p">)</span>
+<a id="__codelineno-8-9" name="__codelineno-8-9" href="#__codelineno-8-9"></a>
+<a id="__codelineno-8-10" name="__codelineno-8-10" href="#__codelineno-8-10"></a><span class="c1"># From 20 s on, drivers slow down and keep their distance.</span>
+<a id="__codelineno-8-11" name="__codelineno-8-11" href="#__codelineno-8-11"></a><span class="n">scenario</span><span class="o">.</span><span class="n">register_post_tick</span><span class="p">(</span>
+<a id="__codelineno-8-12" name="__codelineno-8-12" href="#__codelineno-8-12"></a>    <span class="n">TrafficParametersAction</span><span class="p">(</span>
+<a id="__codelineno-8-13" name="__codelineno-8-13" href="#__codelineno-8-13"></a>        <span class="n">vehicles</span><span class="o">=</span><span class="n">VehicleParameters</span><span class="p">(</span>
+<a id="__codelineno-8-14" name="__codelineno-8-14" href="#__codelineno-8-14"></a>            <span class="n">speed_factor</span><span class="o">=</span><span class="n">Spread</span><span class="p">(</span><span class="mf">0.8</span><span class="p">,</span> <span class="mf">0.05</span><span class="p">),</span> <span class="n">min_gap_m</span><span class="o">=</span><span class="n">Spread</span><span class="p">(</span><span class="mf">4.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">)</span>
+<a id="__codelineno-8-15" name="__codelineno-8-15" href="#__codelineno-8-15"></a>        <span class="p">),</span>
+<a id="__codelineno-8-16" name="__codelineno-8-16" href="#__codelineno-8-16"></a>        <span class="n">condition</span><span class="o">=</span><span class="n">ElapsedTimeCondition</span><span class="p">(</span><span class="mf">20.0</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">"after_20s"</span><span class="p">),</span>
+<a id="__codelineno-8-17" name="__codelineno-8-17" href="#__codelineno-8-17"></a>    <span class="p">)</span>
+<a id="__codelineno-8-18" name="__codelineno-8-18" href="#__codelineno-8-18"></a><span class="p">)</span>
+<a id="__codelineno-8-19" name="__codelineno-8-19" href="#__codelineno-8-19"></a>
+<a id="__codelineno-8-20" name="__codelineno-8-20" href="#__codelineno-8-20"></a><span class="c1"># The NPC ahead turns reckless (traffic_manager): values, not distributions.</span>
+<a id="__codelineno-8-21" name="__codelineno-8-21" href="#__codelineno-8-21"></a><span class="n">scenario</span><span class="o">.</span><span class="n">register_post_tick</span><span class="p">(</span>
+<a id="__codelineno-8-22" name="__codelineno-8-22" href="#__codelineno-8-22"></a>    <span class="n">TrafficParametersAction</span><span class="p">(</span>
+<a id="__codelineno-8-23" name="__codelineno-8-23" href="#__codelineno-8-23"></a>        <span class="n">vehicles</span><span class="o">=</span><span class="n">VehicleParameters</span><span class="p">(</span><span class="n">speed_factor</span><span class="o">=</span><span class="mf">1.3</span><span class="p">,</span> <span class="n">ignore_lights</span><span class="o">=</span><span class="mf">1.0</span><span class="p">),</span>
+<a id="__codelineno-8-24" name="__codelineno-8-24" href="#__codelineno-8-24"></a>        <span class="n">entity_name</span><span class="o">=</span><span class="s2">"npc1"</span><span class="p">,</span>
+<a id="__codelineno-8-25" name="__codelineno-8-25" href="#__codelineno-8-25"></a>    <span class="p">)</span>
+<a id="__codelineno-8-26" name="__codelineno-8-26" href="#__codelineno-8-26"></a><span class="p">)</span>
+<a id="__codelineno-8-27" name="__codelineno-8-27" href="#__codelineno-8-27"></a>
+<a id="__codelineno-8-28" name="__codelineno-8-28" href="#__codelineno-8-28"></a><span class="c1"># Pedestrians hurry (sumo).</span>
+<a id="__codelineno-8-29" name="__codelineno-8-29" href="#__codelineno-8-29"></a><span class="n">scenario</span><span class="o">.</span><span class="n">register_post_tick</span><span class="p">(</span>
+<a id="__codelineno-8-30" name="__codelineno-8-30" href="#__codelineno-8-30"></a>    <span class="n">TrafficParametersAction</span><span class="p">(</span>
+<a id="__codelineno-8-31" name="__codelineno-8-31" href="#__codelineno-8-31"></a>        <span class="n">pedestrians</span><span class="o">=</span><span class="n">PedestrianParameters</span><span class="p">(</span><span class="n">walking_speed_mps</span><span class="o">=</span><span class="n">Spread</span><span class="p">(</span><span class="mf">1.8</span><span class="p">,</span> <span class="mf">0.2</span><span class="p">))</span>
+<a id="__codelineno-8-32" name="__codelineno-8-32" href="#__codelineno-8-32"></a>    <span class="p">)</span>
+<a id="__codelineno-8-33" name="__codelineno-8-33" href="#__codelineno-8-33"></a><span class="p">)</span>
+<a id="__codelineno-8-34" name="__codelineno-8-34" href="#__codelineno-8-34"></a>
+<a id="__codelineno-8-35" name="__codelineno-8-35" href="#__codelineno-8-35"></a><span class="c1"># Riders brake harder and keep closer (sumo).</span>
+<a id="__codelineno-8-36" name="__codelineno-8-36" href="#__codelineno-8-36"></a><span class="n">scenario</span><span class="o">.</span><span class="n">register_post_tick</span><span class="p">(</span>
+<a id="__codelineno-8-37" name="__codelineno-8-37" href="#__codelineno-8-37"></a>    <span class="n">TrafficParametersAction</span><span class="p">(</span>
+<a id="__codelineno-8-38" name="__codelineno-8-38" href="#__codelineno-8-38"></a>        <span class="n">bicycles</span><span class="o">=</span><span class="n">BicycleParameters</span><span class="p">(</span><span class="n">decel</span><span class="o">=</span><span class="n">Spread</span><span class="p">(</span><span class="mf">4.0</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">),</span> <span class="n">min_gap_m</span><span class="o">=</span><span class="mf">0.3</span><span class="p">)</span>
+<a id="__codelineno-8-39" name="__codelineno-8-39" href="#__codelineno-8-39"></a>    <span class="p">)</span>
+<a id="__codelineno-8-40" name="__codelineno-8-40" href="#__codelineno-8-40"></a><span class="p">)</span>
 </code></pre></div>
 <ul>
 <li><strong>Field by field.</strong> The fields the action sets replace the run's; the ones it
@@ -2773,7 +2889,7 @@ like any action, on a condition:</p>
   The ODD's probes read the merged parameters from then on.</li>
 <li><strong>One vehicle.</strong> With <code>entity_name</code> (a <code>role_name</code>), only that vehicle draws the
   changed fields again; the run's parameters stay as they were. An entity is a
-  vehicle, so <code>pedestrians</code> cannot be given with it.</li>
+  vehicle, so <code>pedestrians</code> and <code>bicycles</code> cannot be given with it.</li>
 <li><strong>Refused before the run.</strong> A field the backend cannot change during a run
   is refused when the action is registered on the scenario, with a
   <code>TrafficParameterError</code>:<ul>
@@ -2782,7 +2898,10 @@ like any action, on a condition:</p>
 <li>SUMO can change every vehicle parameter it supports, and a pedestrian's
   <code>walking_speed_mps</code> and <code>min_gap_m</code>. It cannot change
   <code>red_light_violation_s</code>, which SUMO reads off the pedestrian types it is
-  started with: set it in <code>traffic.pedestrians</code> instead.</li>
+  started with: set it in <code>traffic.pedestrians</code> instead. Of the bicycle
+  parameters it can change every one but <code>max_speed_mps</code> and
+  <code>red_light_violation_s</code>, which it reads off the bicycle types: set those
+  in <code>traffic.bicycles</code>.</li>
 </ul>
 </li>
 <li><strong>Under SUMO,</strong> a scenario vehicle the TrafficManager drives
@@ -3071,9 +3190,34 @@ same action means "every lane outside a junction" on any map:</p>
 <a id="__codelineno-15-6" name="__codelineno-15-6" href="#__codelineno-15-6"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>...<span class="w"> </span>background_traffic.enabled<span class="o">=</span><span class="nb">true</span><span class="w"> </span>background_traffic.source.stop_after_seconds<span class="o">=</span><span class="m">20</span>
 </code></pre></div>
 <p><code>background_traffic</code> (in <code>examples/conf/config.yaml</code>) is off by default, and so
-are the SUMO backend's own <code>ambient</code> randomTrips demand and its <code>pedestrians</code>
-(<code>SumoBackendConfig</code>'s defaults, and <code>conf/traffic/sumo.yaml</code>'s), so a run has
+are the SUMO backend's own <code>ambient</code> randomTrips demand, its <code>pedestrians</code> and
+its <code>bicycles</code> (<code>SumoBackendConfig</code>'s defaults, and <code>conf/traffic/sumo.yaml</code>'s), so a run has
 no traffic but its own and its traffic sources' unless asked.</p>
+<h2 id="weather-and-the-trafficmanager">Weather and the TrafficManager<a class="headerlink" href="#weather-and-the-trafficmanager" title="Permanent link">&para;</a></h2>
+<p>CARLA's TrafficManager drives in the weather as on a clear day: its vehicles
+know where every actor is whatever the fog. With
+<code>traffic.vehicles.follow_visibility: true</code> each vehicle it drives is held to
+the speed it stops from within what its driver sees, worked out with SUMO's
+default car's reaction (1 s) and braking (4.5 m/s²): 62 km/h in 50 m of fog.
+The TrafficManager takes a speed as a percentage under the road's limit, so
+each vehicle is given the one that holds it there
+(<code>vehicle_percentage_speed_difference</code>), never less than its own
+<code>speed_factor</code>'s, worked out again every second and whenever the visibility
+changes; when the weather lifts, or the field is turned off during the run
+(<code>TrafficParametersAction</code>), each gets its own back. A vehicle a scenario gave
+a speed of its own (<code>set_desired_speed</code>) keeps it. Off by default, so a
+scenario's vehicles drive as they always did; unset, the backend logs the
+speed it would hold traffic to.</p>
+<p>The road's grip is CARLA's vehicle physics alone (<code>EnvironmentAction</code>'s tire
+friction scales every vehicle's wheels, the TrafficManager's as well); the
+sight speed above does not read it.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>...<span class="w"> </span>environment.fog_density<span class="o">=</span><span class="m">80</span><span class="w"> </span>environment.rain<span class="o">=</span><span class="m">60</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a><span class="w">    </span>traffic.vehicles.follow_visibility<span class="o">=</span><span class="nb">true</span>
+</code></pre></div>
+<p>The visibility comes from the ODD as any other attribute: its <code>visibility</code>,
+<code>rain</code>, <code>fog</code> and <code>illumination</code> knobs (<a href="../odd/">The weather and the sun</a>)
+set what the run's weather leaves, and the backend -- this one or <code>sumo</code> --
+follows.</p>
 <h2 id="why-this-exists">Why this exists<a class="headerlink" href="#why-this-exists" title="Permanent link">&para;</a></h2>
 <p>CARLA's TrafficManager is a good default for a handful of scripted NPCs and the
 wrong tool for dense, demand-driven flow. Microscopic traffic simulators model
@@ -3088,11 +3232,11 @@ swapped.</p>
 world. It needs the <code>sumo</code> extra (<code>autoware-carla-scenario[sumo]</code>: SUMO,
 libsumo and roadgen, all wheels); without it the run is refused in <code>prepare()</code>,
 before anything is spawned.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>lane_change/left<span class="w"> </span><span class="nv">map</span><span class="o">=</span>town10hd_opt<span class="w"> </span><span class="nv">traffic</span><span class="o">=</span>sumo
-<a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>...<span class="w"> </span><span class="nv">traffic</span><span class="o">=</span>sumo<span class="w"> </span>traffic.options.ambient.vehicles_per_hour<span class="o">=</span><span class="m">1800</span>
-<a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>...<span class="w"> </span><span class="nv">traffic</span><span class="o">=</span>sumo<span class="w"> </span>traffic.options.scenario_vehicles<span class="o">=</span>sumo
-<a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>...<span class="w"> </span><span class="nv">traffic</span><span class="o">=</span>sumo<span class="w"> </span>traffic.options.scenario_pedestrians<span class="o">=</span>sumo
-<a id="__codelineno-16-5" name="__codelineno-16-5" href="#__codelineno-16-5"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>...<span class="w"> </span><span class="nv">traffic</span><span class="o">=</span>sumo<span class="w"> </span>traffic.options.fcd_output<span class="o">=</span><span class="nb">true</span><span class="w">   </span><span class="c1"># &lt;output&gt;/sumo/fcd.xml</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>lane_change/left<span class="w"> </span><span class="nv">map</span><span class="o">=</span>town10hd_opt<span class="w"> </span><span class="nv">traffic</span><span class="o">=</span>sumo
+<a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>...<span class="w"> </span><span class="nv">traffic</span><span class="o">=</span>sumo<span class="w"> </span>traffic.options.ambient.vehicles_per_hour<span class="o">=</span><span class="m">1800</span>
+<a id="__codelineno-17-3" name="__codelineno-17-3" href="#__codelineno-17-3"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>...<span class="w"> </span><span class="nv">traffic</span><span class="o">=</span>sumo<span class="w"> </span>traffic.options.scenario_vehicles<span class="o">=</span>sumo
+<a id="__codelineno-17-4" name="__codelineno-17-4" href="#__codelineno-17-4"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>...<span class="w"> </span><span class="nv">traffic</span><span class="o">=</span>sumo<span class="w"> </span>traffic.options.scenario_pedestrians<span class="o">=</span>sumo
+<a id="__codelineno-17-5" name="__codelineno-17-5" href="#__codelineno-17-5"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>...<span class="w"> </span><span class="nv">traffic</span><span class="o">=</span>sumo<span class="w"> </span>traffic.options.fcd_output<span class="o">=</span><span class="nb">true</span><span class="w">   </span><span class="c1"># &lt;output&gt;/sumo/fcd.xml</span>
 </code></pre></div>
 <p><strong>The network</strong> is the world's own road network. The backend takes the
 OpenDRIVE the world runs (the file the run installed, or
@@ -3152,6 +3296,16 @@ by roadgen's validation.</p>
 <td>SUMO</td>
 <td>native; mirrored into CARLA as walkers near the ego</td>
 </tr>
+<tr>
+<td>Scenario bicycles (a vehicle whose blueprint's <code>base_type</code> is <code>bicycle</code>)</td>
+<td>as the scenario's other vehicles</td>
+<td>published or driven, as a SUMO <code>bicycle</code></td>
+</tr>
+<tr>
+<td>SUMO's bicycles (<code>randomTrips.py --vclass bicycle</code>, <code>bicycles.enabled</code>)</td>
+<td>SUMO</td>
+<td>native; mirrored into CARLA as bicycles near the ego</td>
+</tr>
 </tbody>
 </table>
 <p>A published vehicle has SUMO's speed and lane-change control switched off, so
@@ -3201,8 +3355,51 @@ vehicle links keep the indices CARLA's lights are matched to. With
 into or out of a road it crosses is red, and red otherwise; with <code>sumo</code>, SUMO's
 own program (which netconvert gives a pedestrian phase) drives it. A network
 given as <code>net_path</code> is used as it is.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>...<span class="w"> </span><span class="nv">traffic</span><span class="o">=</span>sumo<span class="w"> </span>traffic.options.pedestrians.enabled<span class="o">=</span><span class="nb">true</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a><span class="w">    </span>traffic.options.pedestrians.radius_m<span class="o">=</span><span class="m">80</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>...<span class="w"> </span><span class="nv">traffic</span><span class="o">=</span>sumo<span class="w"> </span>traffic.options.pedestrians.enabled<span class="o">=</span><span class="nb">true</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a><span class="w">    </span>traffic.options.pedestrians.radius_m<span class="o">=</span><span class="m">80</span>
+</code></pre></div>
+<p><strong>Bicycles on sidewalks</strong> (<code>cycle_on_sidewalks</code>, off by default): the network
+is built with roadgen's <code>export_sumo(cycle_on_sidewalks=True)</code> (roadgen 0.41.1
+or later, which the <code>sumo</code> extra requires), so bicycles may ride every
+sidewalk, both ways, as well as the carriageway. Each sidewalk gets a bicycle
+edge each way along it (<code>&lt;edge&gt;.bike&lt;index&gt;</code> and <code>&lt;edge&gt;.bike&lt;index&gt;.rev</code>),
+open to bicycles and pedestrians; the sidewalk lane itself stays the
+pedestrians'. A bicycle may change between sidewalk and road at every junction
+and every 50 m at most between, ride across the road wherever a crossing is,
+and turn back at a dead end. At a junction without a light a bicycle coming off
+the sidewalk gives way to the traffic it meets. At a signalised one roadgen's
+program gives such a bicycle a green of its own ahead of the traffic; with
+<code>traffic_light_authority=carla</code>, where CARLA's lights switch the traffic, a
+bicycle coming onto the road goes with the traffic of the road beside its
+sidewalk (and gives way), one getting off the road goes with the traffic it
+leaves, and one riding across a road goes while every vehicle link SUMO's own
+program never lets go with it is red. Off, sidewalks are the pedestrians' and
+bicycles keep to the carriageway and the cycle lanes. The network is cached
+apart from one built without, and a network given as <code>net_path</code> is used as it
+is.</p>
+<p><strong>SUMO's own bicycles</strong> (<code>bicycles</code>, off by default) ride from and to edges a
+bicycle may use (<code>randomTrips.py --vclass bicycle</code>, unweighted, from
+<code>min_distance_m</code> to <code>max_distance_m</code> each) and are mirrored into CARLA as
+bicycles, each one of <code>blueprints</code> (those the world lacks are left out; with
+none left, bicycles ride in SUMO only, where its traffic still sees them), with
+the role name <code>sumo:&lt;id&gt;</code>. They count against limits of their own:
+<code>radius_m</code> (the vehicles' <code>spawn_radius_m</code> when null) and <code>max_bicycles</code>,
+apart from <code>max_vehicles</code>. A mirror follows its bicycle as
+<code>bicycles.vehicle_control</code> says, <code>teleport</code> by default: a bicycle changing
+between sidewalk and road crosses the kerb, which CARLA's vehicle physics
+would trip on. Bicycles stay in SUMO when <code>mesoscopic</code> is enabled: the queue
+model's roads are the carriageways.</p>
+<p>How they ride is not <code>traffic.vehicles</code> -- a driver's parameters, which never
+reach a bicycle -- but <code>traffic.bicycles</code> (<code>BicycleParameters</code>,
+<a href="#traffic-parameters">Traffic parameters</a>).</p>
+<p>The scenario's own bicycles ride by it too: a vehicle whose blueprint's
+<code>base_type</code> is <code>bicycle</code> (CARLA's bicycles') joins SUMO as a <code>bicycle</code>, on the
+nearest lane a bicycle may use -- a sidewalk's, on a network that has them --
+published or driven like the scenario's other vehicles, and SUMO routes one it
+drives (<code>scenario_vehicles=sumo</code>) only where bicycles may go.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>...<span class="w"> </span><span class="nv">traffic</span><span class="o">=</span>sumo<span class="w"> </span>traffic.options.cycle_on_sidewalks<span class="o">=</span><span class="nb">true</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a><span class="w">    </span>traffic.options.bicycles.enabled<span class="o">=</span><span class="nb">true</span><span class="w"> </span>traffic.options.bicycles.max_bicycles<span class="o">=</span><span class="m">20</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-19-3" name="__codelineno-19-3" href="#__codelineno-19-3"></a><span class="w">    </span>traffic.bicycles.max_speed_mps.mean<span class="o">=</span><span class="m">4</span>.0<span class="w"> </span>traffic.bicycles.max_speed_mps.std<span class="o">=</span><span class="m">0</span>.8
 </code></pre></div>
 <p><strong>Stepping</strong>: one SUMO step per CARLA tick, with the step length set to the
 world's <code>fixed_delta_seconds</code> and the seed to the scenario's. CARLA poses are
@@ -3224,10 +3421,10 @@ change still moves across continuously, over <code>lane_change_duration_s</code>
 unset, <code>--lanechange.duration</code>) and no faster than <code>max_lateral_speed_mps</code>.
 SUMO takes one or the other, so <code>lane_change_duration_s</code> with a sublane width
 is an error.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a><span class="c1"># Gentler lane changes, five SUMO steps per 0.05 s tick.</span>
-<a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>...<span class="w"> </span><span class="nv">traffic</span><span class="o">=</span>sumo<span class="w"> </span>traffic.options.step_length_s<span class="o">=</span><span class="m">0</span>.01<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-18-3" name="__codelineno-18-3" href="#__codelineno-18-3"></a><span class="w">    </span>traffic.vehicles.max_lateral_speed_mps.mean<span class="o">=</span><span class="m">0</span>.8<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-18-4" name="__codelineno-18-4" href="#__codelineno-18-4"></a><span class="w">    </span>traffic.vehicles.max_lateral_accel.mean<span class="o">=</span><span class="m">0</span>.6
+<div class="highlight"><pre><span></span><code><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a><span class="c1"># Gentler lane changes, five SUMO steps per 0.05 s tick.</span>
+<a id="__codelineno-20-2" name="__codelineno-20-2" href="#__codelineno-20-2"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>...<span class="w"> </span><span class="nv">traffic</span><span class="o">=</span>sumo<span class="w"> </span>traffic.options.step_length_s<span class="o">=</span><span class="m">0</span>.01<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-20-3" name="__codelineno-20-3" href="#__codelineno-20-3"></a><span class="w">    </span>traffic.vehicles.max_lateral_speed_mps.mean<span class="o">=</span><span class="m">0</span>.8<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-20-4" name="__codelineno-20-4" href="#__codelineno-20-4"></a><span class="w">    </span>traffic.vehicles.max_lateral_accel.mean<span class="o">=</span><span class="m">0</span>.6
 </code></pre></div>
 <p>How a CARLA vehicle follows its SUMO vehicle is <code>vehicle_control</code>:</p>
 <ul>
@@ -3266,11 +3463,7 @@ is an error.</p>
   queue at a light say, is given its zero once).</li>
 </ul>
 <p><strong>Visibility</strong> (<code>traffic.vehicles.follow_visibility</code>, on by default): SUMO's traffic sees only
-as far as the run's weather lets a driver see. The TrafficManager has no
-notion of sight -- its vehicles know where every actor is whatever the fog --
-so night, rain and fog change nothing about how it drives: the
-<code>traffic_manager</code> backend logs each visibility a run sets, with the speed
-SUMO's default car would be held to, and does nothing else. An
+as far as the run's weather lets a driver see. An
 <code>EnvironmentAction</code> that sets the fog, the rain or the sun records how far
 drivers see in the weather it leaves
 (<a href="../odd/#visibility-follows-the-weather">Visibility follows the weather</a>),
@@ -3281,10 +3474,14 @@ its braking (<code>traffic.vehicles.reaction_time_s</code> and <code>decel</code
 night under a dipped beam (50 m) the same. A vehicle that departs later is
 held as it departs, and when the weather lifts each gets its own maximum speed
 back. The scenario's own vehicles, driven by SUMO or not, are left to the
-scenario. <code>traffic.vehicles.follow_visibility=false</code> ignores the visibility,
-as the TrafficManager does; set for the <code>traffic_manager</code> backend, the field is
-refused. It used to be <code>traffic.options.follow_visibility</code>, which is now an
-error pointing here.</p>
+scenario. <code>traffic.vehicles.follow_visibility=false</code> ignores the visibility.
+It used to be <code>traffic.options.follow_visibility</code>, which is now an error
+pointing here.</p>
+<p>The road's grip (<code>EnvironmentAction</code>'s tire friction,
+<a href="../odd/#tire-friction-follows-the-weather">Tire friction follows the weather</a>)
+is CARLA's vehicle physics alone: SUMO's models are not told it, and plan
+their vehicles' braking as on a dry road. A car under <code>vehicle_control:
+physics</code> follows that plan on the grip CARLA gives its wheels.</p>
 <p><strong>Traffic lights</strong> (<code>traffic_light_authority</code>): <code>carla</code> (default) gives SUMO's
 signals the states of CARLA's lights every step, so a scenario that sets the
 lights sets them for SUMO's traffic too; <code>sumo</code> drives CARLA's lights from
@@ -3309,8 +3506,8 @@ on the best lane for its route, and into CARLA -- when it is within
 <code>micro_radius_m</code> of one again. SUMO then steps only the traffic near what CARLA
 drives, and CARLA holds an actor only for that, so a large demand costs what
 the traffic around the ego costs.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>...<span class="w"> </span><span class="nv">traffic</span><span class="o">=</span>sumo<span class="w"> </span>traffic.options.mesoscopic.enabled<span class="o">=</span><span class="nb">true</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a><span class="w">    </span>traffic.options.mesoscopic.micro_radius_m<span class="o">=</span><span class="m">150</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>...<span class="w"> </span><span class="nv">traffic</span><span class="o">=</span>sumo<span class="w"> </span>traffic.options.mesoscopic.enabled<span class="o">=</span><span class="nb">true</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-21-2" name="__codelineno-21-2" href="#__codelineno-21-2"></a><span class="w">    </span>traffic.options.mesoscopic.micro_radius_m<span class="o">=</span><span class="m">150</span>
 </code></pre></div>
 <table>
 <thead>
@@ -3390,7 +3587,7 @@ CARLA co-simulation; its adversarial behaviour generation is left to scenarios.<
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 22, 2026 20:45:31 UTC"><span class="timeago" datetime="2026-10-22T20:45:31+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 22, 2026 20:45:31 UTC">2026-10-22</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 23, 2026 06:50:00 UTC"><span class="timeago" datetime="2026-10-23T06:50:00+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 23, 2026 06:50:00 UTC">2026-10-23</span>
   </span>
 
     
