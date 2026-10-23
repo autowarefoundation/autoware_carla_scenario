@@ -12,8 +12,11 @@ from __future__ import annotations
 
 import ast
 import re
-from collections.abc import Collection
+from collections.abc import Mapping
 from pathlib import Path
+from typing import Any
+
+from .transform import _absolute_module
 
 _CANNOT_IMPORT = re.compile(r"^cannot import name '(\w+)' from '([\w.]+)'$")
 _UNNAMED = re.compile(r"^(expected type expression|name '(\w+)' is not defined)$")
@@ -41,18 +44,38 @@ def _in_type_checking(tree: ast.Module, line: int) -> bool:
     return False
 
 
-def _imported(tree: ast.Module) -> set[str]:
-    """The names the module imports at module level (also under an ``if``)."""
+def _imported_after(tree: ast.Module, line: int) -> set[str]:
+    """The names imported at module level on a line after *line*: what the
+    end-of-module import of a cycle binds once the class body has run."""
     names: set[str] = set()
     for stmt in tree.body:
         for node in ast.walk(stmt) if isinstance(stmt, ast.If) else [stmt]:
-            if isinstance(node, (ast.Import, ast.ImportFrom)):
+            if isinstance(node, (ast.Import, ast.ImportFrom)) and node.lineno > line:
                 names |= {(a.asname or a.name).split(".")[0] for a in node.names}
     return names
 
 
+def _imports_back(modules: Mapping[str, Any], path: str, target: str) -> bool:
+    """Whether *target* imports the module at *path*, which is what makes the
+    refused import a cycle and not a name *target* simply lacks."""
+    mine = None
+    for name, module in modules.items():
+        if Path(module.path) == Path(path):
+            mine = name
+    if mine is None or target not in modules:
+        return False
+    for node in ast.walk(modules[target].tree):
+        if isinstance(node, ast.ImportFrom):
+            base = _absolute_module(node, target, modules[target].is_package)
+            if base == mine or any(f"{base}.{a.name}" == mine for a in node.names):
+                return True
+        elif isinstance(node, ast.Import) and any(a.name == mine for a in node.names):
+            return True
+    return False
+
+
 def cycle_hint(
-    message: str, path: str | None, line: int | None, modules: Collection[str]
+    message: str, path: str | None, line: int | None, modules: Mapping[str, Any]
 ) -> str | None:
     """What to do about a refusal that comes from a module cycle, or ``None``.
 
@@ -66,7 +89,7 @@ def cycle_hint(
         return None
     cannot = _CANNOT_IMPORT.match(message)
     if cannot is not None:
-        if cannot[2] not in modules:
+        if cannot[2] not in modules or not _imports_back(modules, path, cannot[2]):
             return None
         where = (
             "the check reads TYPE_CHECKING as true, so this import made for "
@@ -77,7 +100,11 @@ def cycle_hint(
         return where + _PATTERN
     if _UNNAMED.match(message) is None:
         return None
-    imported = _imported(tree)
+    # Only a name imported further down the module (the cycle's workaround)
+    # can be missing when the class body runs: `x: Optional[Strr]` is a typo.
+    late = _imported_after(tree, line)
+    if (named := re.match(r"name '(\w+)'", message)) is not None:
+        late &= {named[1]}
     for cls in ast.walk(tree):
         if not isinstance(cls, ast.ClassDef):
             continue
@@ -85,7 +112,7 @@ def cycle_hint(
             if (
                 isinstance(stmt, ast.AnnAssign)
                 and stmt.lineno == line
-                and imported & set(re.findall(r"[A-Za-z_]\w*", ast.unparse(stmt)))
+                and late & set(re.findall(r"[A-Za-z_]\w*", ast.unparse(stmt)))
             ):
                 return _PATTERN
     return None
