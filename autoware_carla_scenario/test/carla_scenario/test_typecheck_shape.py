@@ -104,7 +104,11 @@ def test_cases_that_differ_only_in_their_values_have_one_shape() -> None:
         "scenario.label": "config.label = <str>",
         "scenario.enabled": "config.enabled = <bool>",
         "scenario.ids": "config.ids = [<int>, <int>]",
-        "scenario.npcs": "config.npcs = [_Npc(spawn_lanelet_id=<int>, spawn_s=<float>)]",
+        # A nested dataclass is one field to a line: Codon's error names it (#531).
+        "scenario.npcs[0]": "config.npcs = [_Npc(",
+        "scenario.npcs[0].spawn_lanelet_id": "spawn_lanelet_id=<int>,",
+        "scenario.npcs[0].spawn_s": "spawn_s=<float>,",
+        "scenario.npcs": ")]",
         "scenario.turn": "config.turn = <_Turn>",
     }
 

@@ -2083,10 +2083,16 @@ def typecheck_scenario(
     """
     name = f"{scenario_cls.__module__}.{scenario_cls.__qualname__}"
     roots = sorted({scenario_cls.__module__, config_cls.__module__})
-    return _typecheck(
+    built: list[Any] = []
+
+    def driver() -> Any:
+        built.append(render_driver(scenario_cls, config_cls, dict(scenario_dict or {})))
+        return built[0]
+
+    result = _typecheck(
         name,
         roots,
-        lambda: render_driver(scenario_cls, config_cls, dict(scenario_dict or {})),
+        driver,
         toolchain,
         timeout,
         what="scenario",
@@ -2095,6 +2101,18 @@ def typecheck_scenario(
             *_returns_not_kept(sources),
         ],
     )
+    if built and built[0].build_error and result.skipped is None and not result.crashed:
+        # The runner builds the config as the driver does, so a constructor
+        # or __post_init__ that raises stops the run, whatever Codon says (#531).
+        error = Diagnostic(
+            f"building {config_cls.__qualname__}(**scenario) raised "
+            f"{built[0].build_error}: the runner builds the config the same way",
+            "scenario",
+        )
+        result = dataclasses.replace(
+            result, ok=False, diagnostics=[*result.diagnostics, error]
+        )
+    return result
 
 
 def _returns_not_kept(sources: _Sources) -> list[Diagnostic]:

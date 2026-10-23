@@ -414,7 +414,14 @@ reach_goal_pkg/
 ```bash
 uv pip install -e reach_goal_pkg
 uv run scenario scenario=reach_goal/default map=nishishinjuku
+
+# Static check, before CARLA starts: only this package's scenarios.
+uv run scenario-check scenario='reach_goal/*'
 ```
+
+`scenario-check` compiles the scenario with Codon and reports a type error, a
+misspelled config key or a bad value at its line; see [Static check](typecheck.md).
+The generated package has a `tests/test_typecheck.py` that runs it under pytest.
 
 The same generator is available programmatically:
 

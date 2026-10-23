@@ -22,6 +22,8 @@ scenario_package_template/
         └── default.yaml               # a concrete scenario (YAML)
 ```
 
+`tests/test_typecheck.py` (next to `src/`) runs the static check on the scenario.
+
 ## How it plugs in
 
 Two framework primitives do all the work, both imported from the public API:
@@ -62,6 +64,28 @@ uv run scenario scenario=reach_goal/default map=nishishinjuku
 uv run scenario scenario='reach_goal/*' map=nishishinjuku
 uv run scenario scenario=reach_goal/default scenario.timeout_seconds=20
 ```
+
+## Check it
+
+The static check compiles each scenario with Codon and reports a type error,
+a misspelled config key or a bad value at its line, before CARLA starts (see
+the framework's *Static Check* documentation):
+
+```bash
+# Only this package's scenarios: about 15 s per config.
+uv run scenario-check scenario='reach_goal/*'
+
+# One config, with the same overrides as the runner takes.
+uv run scenario-check scenario=reach_goal/default scenario.timeout_seconds=20
+```
+
+`scenario-check` without arguments (or `scenario='*'`) checks every installed
+scenario, the built-in ones too, which takes minutes. The exit status is 0 when
+every config passed, 1 when one failed the check, and 2 when it could not run:
+no Codon compiler, no config matching `scenario=`, or an override of a key
+the config does not have (the message suggests the closest key).
+
+`tests/test_typecheck.py` runs the same check under pytest (`uv run pytest`).
 
 ## Making it a workspace member (optional)
 
