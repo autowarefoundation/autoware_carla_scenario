@@ -12,6 +12,7 @@ import enum
 import re
 import sys
 import textwrap
+from pathlib import Path
 from typing import Any, Optional
 
 import pytest
@@ -30,6 +31,7 @@ from autoware_carla_scenario.typecheck.transform import (
     conflicting_imports,
     flag_member_values,
     inherited_inits,
+    literal_all,
     relative_module_imports,
     split_tuple_excepts,
     transform_source,
@@ -2432,6 +2434,65 @@ def test_an_own_module_imported_as_a_module_is_imported_from_its_directory(
     assert out == f"{rewritten}\nx = 1\n"
 
 
+@pytest.mark.parametrize(
+    ("exports", "rewritten"),
+    [
+        (["a", "_b"], "from .helpers import a, _b"),
+        (["a"], "from .helpers import a"),
+        ([], "pass"),
+    ],
+)
+def test_a_star_import_of_an_own_module_imports_its_all(
+    exports: list[str], rewritten: str
+) -> None:
+    # Python binds only `__all__` (#506); Codon binds every public name.
+    out, problems = relative_module_imports(
+        "from .helpers import *\nx = 1\n",
+        "pkg.scenario",
+        False,
+        _OWN_MODULES.__contains__,
+        lambda module: exports if module == "pkg.helpers" else None,
+    )
+    assert problems == []
+    assert out == f"{rewritten}\nx = 1\n"
+
+
+@pytest.mark.parametrize(
+    "star_names",
+    [lambda module: None, None],
+    ids=["no-literal-all", "not-asked"],
+)
+def test_a_star_import_without_a_literal_all_is_left_as_written(star_names) -> None:  # type: ignore[no-untyped-def]
+    out, problems = relative_module_imports(
+        "from .helpers import *\n",
+        "pkg.scenario",
+        False,
+        _OWN_MODULES.__contains__,
+        star_names,
+    )
+    assert (out, problems) == ("from .helpers import *\n", [])
+
+
+@pytest.mark.parametrize(
+    ("source", "names"),
+    [
+        ('__all__ = ["a", "b"]\n', ["a", "b"]),
+        ('__all__ = ("a",)\n', ["a"]),
+        ('__all__: list[str] = ["a"]\n', ["a"]),
+        ('__all__ = ["a"]\n__all__ += ["b"]\n', ["a", "b"]),
+        ("x = 1\n", None),
+        ("__all__ = [n for n in dir()]\n", None),
+        ('__all__ = ["a"]\n__all__.append("b")\n', None),
+        ('__all__ = ["a"]\nif x:\n    __all__ += ["b"]\n', None),
+        ('__all__ += ["b"]\n', None),
+    ],
+)
+def test_literal_all_reads_only_a_literal_list_or_tuple(
+    source: str, names: list[str] | None
+) -> None:
+    assert literal_all(ast.parse(source)) == names
+
+
 def test_the_rewrite_keeps_every_line_and_reaches_functions() -> None:
     source = textwrap.dedent(
         """\
@@ -4597,3 +4658,61 @@ def test_an_optional_callable_attribute_codon_cannot_express_is_kept_as_written(
         """
     )
     assert "    cb: Optional[Callable[..., int]] = None" in out
+
+
+def _cycle_modules(tmp_path: Path, a: str, b: str) -> dict[str, Any]:
+    from types import SimpleNamespace
+
+    modules = {}
+    for name, text in (("pkg.a", a), ("pkg.b", b)):
+        path = tmp_path / f"{name.split('.')[-1]}.py"
+        path.write_text(text)
+        modules[name] = SimpleNamespace(
+            path=path, is_package=False, tree=ast.parse(text)
+        )
+    return modules
+
+
+_CYCLE_A_TEXT = (
+    "from typing import Optional\n"
+    "class A:\n"
+    "    peer: {annotation}\n"
+    "from .b import B\n"
+)
+
+
+@pytest.mark.parametrize(
+    ("annotation", "message", "fires"),
+    [
+        ('Optional["B"]', "expected type expression", True),
+        ('Optional["B"]', "name 'B' is not defined", True),
+        # A typo or a missing import is not a module cycle (#507).
+        ("Optional[Strr]", "name 'Strr' is not defined", False),
+        ("Optional[Strr]", "expected type expression", False),
+        ("Strr", "name 'Strr' is not defined", False),
+    ],
+)
+def test_the_cycle_hint_fires_only_for_a_late_import(
+    tmp_path: Path, annotation: str, message: str, fires: bool
+) -> None:
+    from autoware_carla_scenario.typecheck.module_cycles import cycle_hint
+
+    modules = _cycle_modules(
+        tmp_path,
+        _CYCLE_A_TEXT.format(annotation=annotation),
+        "from .a import A\n",
+    )
+    hint = cycle_hint(message, str(modules["pkg.a"].path), 3, modules)
+    assert (hint is not None) == fires
+
+
+def test_the_cycle_hint_needs_the_other_module_to_import_back(
+    tmp_path: Path,
+) -> None:
+    from autoware_carla_scenario.typecheck.module_cycles import cycle_hint
+
+    message = "cannot import name 'B' from 'pkg.b'"
+    cycle = _cycle_modules(tmp_path, "from .b import B\n", "from .a import A\n")
+    assert cycle_hint(message, str(cycle["pkg.a"].path), 1, cycle) is not None
+    typo = _cycle_modules(tmp_path, "from .b import B\n", "x = 1\n")
+    assert cycle_hint(message, str(typo["pkg.a"].path), 1, typo) is None

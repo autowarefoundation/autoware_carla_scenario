@@ -41,6 +41,8 @@ which :func:`transform_source_lines` maps back onto the handler):
   down (``AbsoluteVelocity.__add__(self, other: RelativeVelocity)``) is
   dropped: Codon 0.19 cannot name a class in a signature before its
   definition, and two classes that take each other cannot both come first.
+  So is one naming a class the module imports further down (the
+  ``if TYPE_CHECKING:`` import moved to the end of a module in a cycle).
 * An annotation naming one of CARLA's integer enumerations
   (``carla.TrafficLightState``) becomes ``int``: typesafe_carla's Codon
   library has each as a value whose members are ``int``, not as a type.
@@ -186,6 +188,7 @@ __all__ = [
     "model_enum_names",
     "inherited_inits",
     "redirect_imports",
+    "literal_all",
     "relative_module_imports",
     "split_tuple_excepts",
     "tuple_named_tuples",
@@ -1200,6 +1203,11 @@ class _Rewriter(ShadowScopes):
             if local not in rebound
         }
         later = {stmt.name for stmt in node.body if isinstance(stmt, ast.ClassDef)}
+        # A name imported further down (the `if TYPE_CHECKING:` import of a
+        # module cycle, moved to the end of the module) is as unnamable (#507).
+        imported = {stmt: _imported_names(stmt) for stmt in node.body}
+        for names in imported.values():
+            later |= names
         self._scan_signatures(node)
         self._type_vars = {
             target.id
@@ -1213,6 +1221,7 @@ class _Rewriter(ShadowScopes):
         for stmt in node.body:
             if isinstance(stmt, ast.ClassDef):
                 later.discard(stmt.name)  # a class may name itself
+            later -= imported[stmt]
             self._later_classes = set(later)
             self.visit(stmt)
 
@@ -3351,6 +3360,23 @@ def _import_plan(
     return drops, problems
 
 
+def _imported_names(stmt: ast.stmt) -> set[str]:
+    """The names a top-level import statement binds, also in an ``if``."""
+    if isinstance(stmt, ast.If):
+        return {
+            name
+            for inner in [*stmt.body, *stmt.orelse]
+            for name in _imported_names(inner)
+        }
+    if isinstance(stmt, (ast.Import, ast.ImportFrom)):
+        return {
+            (alias.asname or alias.name).split(".")[0]
+            for alias in stmt.names
+            if alias.name != "*"
+        }
+    return set()
+
+
 def _is_functools_import(node: ast.ImportFrom) -> bool:
     return node.module == "functools" and node.level == 0
 
@@ -4638,11 +4664,51 @@ def _relative_from(package: str, target: str) -> str:
     return "." * (len(mine) - shared + 1) + ".".join(theirs[shared:])
 
 
+def literal_all(tree: ast.Module) -> list[str] | None:
+    """The names of ``__all__`` when *tree* sets it only as a literal list or
+    tuple of strings (``=``, ``: list[str] =`` or ``+=``); ``None`` when it
+    sets none or builds it any other way (``from X import *`` then binds
+    every public name, as Codon does)."""
+    names: list[str] | None = None
+    for stmt in tree.body:
+        if isinstance(stmt, ast.Assign):
+            targets, value = stmt.targets, stmt.value
+        elif isinstance(stmt, ast.AnnAssign) and stmt.value is not None:
+            targets, value = [stmt.target], stmt.value
+        elif isinstance(stmt, ast.AugAssign):
+            targets, value = [stmt.target], stmt.value
+        else:
+            if any(
+                isinstance(n, ast.Name) and n.id == "__all__" for n in ast.walk(stmt)
+            ):
+                return None  # __all__.append(...), a conditional, a function...
+            continue
+        if not any(isinstance(t, ast.Name) and t.id == "__all__" for t in targets):
+            continue
+        if not isinstance(value, (ast.List, ast.Tuple)) or not all(
+            isinstance(e, ast.Constant) and isinstance(e.value, str) for e in value.elts
+        ):
+            return None
+        literal = [
+            e.value
+            for e in value.elts
+            if isinstance(e, ast.Constant) and isinstance(e.value, str)
+        ]
+        if isinstance(stmt, ast.AugAssign):
+            if names is None:
+                return None
+            names += literal
+        else:
+            names = literal
+    return names
+
+
 def relative_module_imports(
     source: str,
     module: str,
     is_package: bool,
     is_own_module: Callable[[str], bool],
+    star_names: Callable[[str], list[str] | None] | None = None,
 ) -> tuple[str, list[tuple[int, str]]]:
     """Import each of the scenario's own modules imported as a module the way
     Codon 0.19 resolves it (#310).
@@ -4660,6 +4726,10 @@ def relative_module_imports(
     import mod`` -> ``import sub.mod as mod``).  ``from a import b, c`` that
     imports both a module and names becomes two statements on its line, so
     no line moves.
+
+    ``from helpers import *`` of an own module whose ``__all__`` is a literal
+    (``star_names(module)`` returns its names, see :func:`literal_all`) is
+    rewritten into an import of those names, as Python binds only them (#506).
 
     A module that is not inside the importing module's package (``from ..
     import helpers`` in ``pkg/sub/scenario.py``) has no such form, and
@@ -4698,7 +4768,19 @@ def relative_module_imports(
         if isinstance(node, ast.ImportFrom):
             name = _absolute_module(node, module, is_package)
             plain: list[str] = []
-            for alias in node.names:
+            aliases = list(node.names)
+            exports = (
+                star_names(name)
+                if star_names is not None
+                and any(a.name == "*" for a in aliases)
+                and is_own_module(name)
+                else None
+            )
+            if exports is not None:
+                aliases = [a for a in aliases if a.name != "*"] + [
+                    ast.alias(name=n) for n in exports
+                ]
+            for alias in aliases:
                 target = f"{name}.{alias.name}" if name else alias.name
                 if alias.name == "*" or not is_own_module(target):
                     plain.append(_alias(alias.name, alias.asname))
@@ -4712,7 +4794,7 @@ def relative_module_imports(
                     failed = True
                 else:
                     pieces.append(piece)
-            if not pieces and not failed:
+            if not pieces and not failed and exports is None:
                 continue
             if plain:
                 pieces.insert(
@@ -4720,6 +4802,8 @@ def relative_module_imports(
                     f"from {'.' * node.level}{node.module or ''} import "
                     f"{', '.join(plain)}",
                 )
+            elif not pieces:
+                pieces.append("pass")  # an empty __all__ binds nothing
         elif isinstance(node, ast.Import):
             if not any(is_own_module(alias.name) for alias in node.names):
                 continue

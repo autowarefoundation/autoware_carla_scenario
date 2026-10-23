@@ -784,6 +784,14 @@ scenario has to do itself:
   scenario.py:3: error: `from .. import helpers` imports the module pkg.helpers as a module, which Codon 0.19 resolves only inside the importing module's own package (pkg.sub): import the names instead (`from ..helpers import name`)
   ```
 
+- **`from .helpers import *` binds `helpers.__all__`.** When the helper
+  module of the scenario's package sets `__all__` as a literal list or tuple
+  of strings, the checker rewrites the star import into an import of those
+  names, on the same line (#506), so a scenario that uses a public name
+  `__all__` leaves out is refused (`name 'SPEED' is not defined`) as Python
+  raises `NameError`. An `__all__` built any other way is not read: the star
+  import then binds every public name of the helper.
+
 - **Import a name once.** Python accepts `from autoware_carla_scenario import
   ComparisonRule` in the import header and again further down, and so does
   the check (#354): Codon 0.19 leaves a module-level name imported twice
@@ -2907,9 +2915,22 @@ What Codon 0.19 needs that Python does not, beyond
   an import cycle, and Codon resolves a cycle only with the names already
   defined. Put that `if TYPE_CHECKING:` import at the end of its module
   (`# noqa: E402`), after the names the other module imports, as
-  `coordinate/frames.py` does for `poses.py`. Set class attributes in the
-  class body (`FRAME: ClassVar[CoordinateFrame] = CoordinateFrame.LANELET2`)
-  rather than from a function run after the class.
+  `coordinate/frames.py` does for `poses.py`; a parameter or return
+  annotation naming a class imported there is dropped, as for a class
+  defined further down (#507). That covers signatures only: a class-body
+  attribute declaration (`peer: Optional["B"]`) is read when the class is
+  defined, so a class cannot declare an attribute typed by a class of a
+  module that imports its own, and Codon 0.19 refuses even a class defined
+  further down the same module. Declare the attribute in one module of the
+  pair, and in the other name the class in signatures or import it inside
+  the function that uses it, or put both classes in one module. The check
+  says so at the attribute (or at the import) instead of Codon's bare
+  "expected type expression" / "cannot import name". The scenario imports
+  the module with the late import first (`from .a import A` before `from
+  .b import B`), since Codon runs the cycle from the first module it reaches.
+  Set class attributes in the class body (`FRAME: ClassVar[CoordinateFrame]
+  = CoordinateFrame.LANELET2`) rather than from a function run after the
+  class.
 - **Codon does not narrow an `Optional`** after `if x is None: return`. Where
   the narrowed value goes into something typed (a tuple the function
   returns), assign it to an annotated local first (`od: OpenDrivePose = x`),

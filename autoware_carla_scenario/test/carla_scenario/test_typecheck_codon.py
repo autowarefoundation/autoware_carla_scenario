@@ -4989,6 +4989,120 @@ def test_a_module_of_the_package_imported_without_a_name_is_refused(
     assert error.line == _line_of(path, "import acs_typecheck_case_")
 
 
+_ALL_HELPERS = """
+__all__ = ["make_label"]
+SPEED = 3.0
+
+
+def make_label(i: int) -> str:
+    return f"ego_{i}"
+"""
+
+_STAR_HEADER = _HEADER.replace(
+    "from .configs import CaseConfig\n",
+    "from .configs import CaseConfig\nfrom .helpers import *\n",
+    1,
+)
+
+
+def test_a_star_import_binds_the_all_of_the_module_only(tmp_path: Path) -> None:
+    # Python binds `__all__` only, so SPEED raises NameError there (#506).
+    setup = _TIMEOUT_SETUP + 'logger.info("%s", make_label(1))\n'
+    scenario, config, _ = _write_case(
+        tmp_path, setup, header=_STAR_HEADER, modules={"helpers.py": _ALL_HELPERS}
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+    scenario, config, path = _write_case(
+        tmp_path,
+        setup + "x = SPEED\n",
+        header=_STAR_HEADER,
+        modules={"helpers.py": _ALL_HELPERS},
+    )
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "name 'SPEED' is not defined" in error.message, error.format()
+    assert error.line == _line_of(path, "x = SPEED")
+
+
+_CYCLE_A = """
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Optional
+
+class A:
+    v: int
+{attribute}
+    def __init__(self, v: int) -> None:
+        self.v = v
+{init}
+    def total(self, b: "B") -> int:
+        return b.w + self.v
+
+if TYPE_CHECKING:
+    from .b import B  # noqa: E402
+"""
+
+_CYCLE_B = """
+from __future__ import annotations
+
+from .a import A
+
+class B:
+    w: int
+    a: A
+
+    def __init__(self, w: int) -> None:
+        self.w = w
+        self.a = A(w)
+"""
+
+_CYCLE_HEADER = _HEADER.replace(
+    "from .configs import CaseConfig\n",
+    "from .configs import CaseConfig\nfrom .a import A\nfrom .b import B\n",
+    1,
+)
+_CYCLE_SETUP = _TIMEOUT_SETUP + "n = B(1).a.total(B(2))\n"
+
+
+def test_two_modules_naming_each_other_in_signatures_compile(
+    tmp_path: Path,
+) -> None:
+    # The `if TYPE_CHECKING:` import at the end of the module, and the
+    # signature naming it dropped (#507).
+    modules = {
+        "a.py": _CYCLE_A.replace("{attribute}\n", "").replace("{init}\n", ""),
+        "b.py": _CYCLE_B,
+    }
+    scenario, config, _ = _write_case(
+        tmp_path, _CYCLE_SETUP, header=_CYCLE_HEADER, modules=modules
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_an_attribute_typed_by_a_class_of_a_module_cycle_is_explained(
+    tmp_path: Path,
+) -> None:
+    # Codon cannot name a class of the other module in an attribute
+    # declaration, whatever the order: the hint names what compiles.
+    modules = {
+        "a.py": _CYCLE_A.replace("{attribute}", '    peer: Optional["B"]').replace(
+            "{init}", "        self.peer = None"
+        ),
+        "b.py": _CYCLE_B,
+    }
+    scenario, config, path = _write_case(
+        tmp_path, _CYCLE_SETUP, header=_CYCLE_HEADER, modules=modules
+    )
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert (
+        "a module cycle cannot hold a class attribute" in error.message
+    ), error.format()
+    assert error.path == str(path.parent / "a.py")
+    assert error.line == _line_of(path.parent / "a.py", "peer: Optional")
+
+
 # ---------------------------------------------------------------------------
 # An import repeated in a module (#354)
 # ---------------------------------------------------------------------------
