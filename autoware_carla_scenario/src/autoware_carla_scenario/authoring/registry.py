@@ -2219,6 +2219,28 @@ _PEDESTRIAN_SPREADS: tuple[tuple[str, str, str, str], ...] = (
         "Set before the run only (traffic.pedestrians); sumo.",
     ),
 )
+# The bicycles' fields are all ``bicycle_*``, apart from the vehicles' and the
+# pedestrians' of the same name on the same form.
+_BICYCLE_SPREADS: tuple[tuple[str, str, str, str], ...] = (
+    (
+        "bicycle_max_speed_mps",
+        "Bicycle speed",
+        "m/s",
+        "Set before the run only (traffic.bicycles); sumo.",
+    ),
+    ("bicycle_accel", "Bicycle acceleration", "m/s^2", "sumo."),
+    ("bicycle_decel", "Bicycle braking", "m/s^2", "sumo."),
+    ("bicycle_min_gap_m", "Bicycle gap", "m", "Gap to the one ahead; sumo."),
+    ("bicycle_reaction_time_s", "Rider reaction time", "s", "sumo."),
+    ("bicycle_imperfection", "Rider imperfection", "", "0-1; sumo."),
+    ("bicycle_max_lateral_speed_mps", "Bicycle lateral speed", "m/s", "sumo."),
+    (
+        "bicycle_red_light_violation_s",
+        "Ride on red within",
+        "s",
+        "Set before the run only (traffic.bicycles); sumo.",
+    ),
+)
 
 
 def _spread_fields(
@@ -2316,12 +2338,18 @@ register_action_spec(
                 target="..traffic.authoring:authored_pedestrian_parameters",
                 parts=(BuiltPart(args=_spread_args(_PEDESTRIAN_SPREADS)),),
             ),
+            BuiltArgument(
+                kwarg="bicycles",
+                target="..traffic.authoring:authored_bicycle_parameters",
+                parts=(BuiltPart(args=_spread_args(_BICYCLE_SPREADS)),),
+            ),
         ),
         fields=_spread_fields(_VEHICLE_SPREADS)
         + _TRAFFIC_BOOLEANS
-        + _spread_fields(_PEDESTRIAN_SPREADS),
+        + _spread_fields(_PEDESTRIAN_SPREADS)
+        + _spread_fields(_BICYCLE_SPREADS),
         description=(
-            "Change the run's traffic -- every vehicle and pedestrian -- from "
+            "Change the run's traffic -- every vehicle, pedestrian and bicycle -- from "
             "this point on: they draw the changed parameters again. "
             + _TRAFFIC_PARAMETERS_HELP
         ),

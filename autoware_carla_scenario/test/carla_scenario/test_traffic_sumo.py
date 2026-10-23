@@ -2481,8 +2481,6 @@ def test_sumos_pedestrians_cross_roads_on_crossings(
 
 
 def test_the_bicycle_options_are_checked() -> None:
-    from autoware_carla_scenario.traffic.parameters import Spread
-
     assert not SumoBackendConfig().bicycles.enabled
     assert not SumoBackendConfig().cycle_on_sidewalks
     config = SumoBackendConfig.from_mapping(
@@ -2491,10 +2489,6 @@ def test_the_bicycle_options_are_checked() -> None:
             "bicycles": {
                 "enabled": True,
                 "period_s": 4.0,
-                "max_speed_mps": {"mean": 4.0, "std": 0.5},
-                "accel": 1.0,
-                # What the Hydra group declares for a parameter left unset.
-                "decel": {"mean": None, "std": None},
                 "blueprints": ["vehicle.bh.crossbike"],
             },
         }
@@ -2502,10 +2496,6 @@ def test_the_bicycle_options_are_checked() -> None:
     bicycles = config.bicycles
     assert config.cycle_on_sidewalks and bicycles.enabled
     assert bicycles.period() == 4.0
-    assert bicycles.riding() == {
-        "max_speed_mps": Spread(4.0, 0.5),
-        "accel": Spread(1.0),
-    }
     assert bicycles.blueprints == ["vehicle.bh.crossbike"]
     assert BicycleConfig(bicycles_per_hour=1800).period() == pytest.approx(2.0)
     assert BicycleConfig().blueprints == list(DEFAULT_BICYCLE_BLUEPRINTS)
@@ -2514,8 +2504,9 @@ def test_the_bicycle_options_are_checked() -> None:
         SumoBackendConfig.from_mapping({"bicycles": {"speed": 3}})
     with pytest.raises(ValueError, match="vehicle_control"):
         BicycleConfig(vehicle_control="pedal")
-    with pytest.raises(ValueError, match="imperfection"):
-        BicycleConfig.from_mapping({"imperfection": 1.5})
+    # How they ride is traffic.bicycles, which every backend reads.
+    with pytest.raises(ValueError, match="traffic.bicycles"):
+        BicycleConfig.from_mapping({"max_speed_mps": 4.0})
     for name in ("radius_m", "max_distance_m"):
         with pytest.raises(ValueError, match=name):
             BicycleConfig.from_mapping({name: 0.0})
@@ -2547,12 +2538,13 @@ def _riding(
     tmp_path: Path,
     *,
     vehicles: Any = None,
+    riders: Any = None,
     warmup_s: float = 30.0,
     **bicycles: Any,
 ) -> tuple[Any, _FakeWorld, _FakeActor]:
     """A started backend generating SUMO bicycles on a network whose
     sidewalks they may ride, with an ego published from the west arm;
-    *vehicles* are its vehicle parameters."""
+    *vehicles* are its vehicle parameters, *riders* its bicycle ones."""
     from autoware_carla_scenario.traffic.sumo.backend import SumoTrafficBackend
     from autoware_carla_scenario.traffic.sumo.config import AmbientTrafficConfig
 
@@ -2565,7 +2557,7 @@ def _riding(
         ambient=AmbientTrafficConfig(enabled=False),
         bicycles=BicycleConfig(enabled=True, period_s=1.0, **bicycles),
     )
-    backend = SumoTrafficBackend(config, vehicles=vehicles)
+    backend = SumoTrafficBackend(config, vehicles=vehicles, bicycles=riders)
     backend.prepare(
         TrafficContext(
             xodr_path=road,
@@ -2643,15 +2635,18 @@ def test_bicycles_count_against_their_own_limit(
 def test_sumos_bicycles_ride_with_the_bicycle_parameters(
     crossroads_with_sidewalks: Path, tmp_path: Path
 ) -> None:
-    from autoware_carla_scenario.traffic.parameters import Spread, VehicleParameters
+    from autoware_carla_scenario.traffic.parameters import (
+        BicycleParameters,
+        Spread,
+        VehicleParameters,
+    )
 
     backend, world, _ego = _riding(
         crossroads_with_sidewalks,
         tmp_path,
         # The drivers' parameters are a car's: none of them reaches a rider.
         vehicles=VehicleParameters(accel=Spread(4.0), min_gap_m=Spread(3.0)),
-        max_speed_mps=Spread(4.0, 0.8),
-        accel=Spread(0.8),
+        riders=BicycleParameters(max_speed_mps=Spread(4.0, 0.8), accel=0.8),
     )
     tc = backend._traci
     try:
@@ -2818,3 +2813,54 @@ def test_signalled_bicycle_rides_go_with_the_traffic_carlas_lights_let_go(
     finally:
         backend.close()
     assert backend._bicycle_rides == {}
+
+
+def test_sumo_refuses_nothing_of_the_bicycle_parameters() -> None:
+    from autoware_carla_scenario.traffic import TrafficManagerBackend
+    from autoware_carla_scenario.traffic.parameters import (
+        BICYCLE_PARAMETER_BACKENDS,
+        BicycleParameters,
+        TrafficParameterError,
+    )
+    from autoware_carla_scenario.traffic.sumo.backend import SumoTrafficBackend
+
+    assert SumoTrafficBackend().supported_bicycle_parameters() == set(
+        BICYCLE_PARAMETER_BACKENDS
+    )
+    # The speed and the red light are on the types SUMO starts with.
+    assert "max_speed_mps" not in SumoTrafficBackend().supported_bicycle_overrides()
+    with pytest.raises(TrafficParameterError, match="traffic.bicycles.decel"):
+        TrafficManagerBackend().set_bicycle_parameters(BicycleParameters(decel=4.0))
+
+
+@needs_sumo
+def test_an_override_redraws_every_bicycle_sumo_drives(
+    crossroads_with_sidewalks: Path, tmp_path: Path
+) -> None:
+    from autoware_carla_scenario.traffic.parameters import BicycleParameters, Spread
+
+    backend, world, _ego = _riding(
+        crossroads_with_sidewalks, tmp_path, riders=BicycleParameters(decel=2.0)
+    )
+    tc = backend._traci
+    try:
+        backend.tick(world, 0.0)
+        before = _bikes(backend)
+        assert before
+        backend.override_bicycle_parameters(
+            world, BicycleParameters(decel=Spread(4.0), min_gap_m=0.3)
+        )
+        for bike in before:
+            assert tc.vehicle.getDecel(bike) == pytest.approx(4.0)
+            assert tc.vehicle.getMinGap(bike) == pytest.approx(0.3)
+        # One that departs later draws the overrides too.
+        for i in range(40):
+            backend.tick(world, 0.05 * (i + 1))
+        later = [b for b in _bikes(backend) if b not in before]
+        assert later
+        assert all(tc.vehicle.getDecel(b) == pytest.approx(4.0) for b in later)
+        assert backend.bicycle_parameters.decel == Spread(4.0)
+    finally:
+        backend.close()
+    # The next run starts from its config.
+    assert backend.bicycle_parameters.decel == Spread(2.0)

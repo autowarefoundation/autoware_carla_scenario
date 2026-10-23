@@ -10,13 +10,16 @@ behave; everything else is the backend's own and travels as a plain mapping::
       vehicles:
         speed_factor: 0.9
       pedestrians: {}
+      bicycles: {}
 
 The split is what keeps a third-party backend from needing an edit here: a
 backend ships its own options dataclass and reads ``options`` with its own
 :meth:`from_mapping`, so the shared config never grows a field per simulator.
-``vehicles`` and ``pedestrians`` are the typed parts every backend reads alike
+``vehicles``, ``pedestrians`` and ``bicycles`` are the typed parts every
+backend reads alike
 (:class:`~autoware_carla_scenario.traffic.parameters.VehicleParameters`,
-:class:`~autoware_carla_scenario.traffic.parameters.PedestrianParameters`), and
+:class:`~autoware_carla_scenario.traffic.parameters.PedestrianParameters`,
+:class:`~autoware_carla_scenario.traffic.parameters.BicycleParameters`), and
 a backend refuses the fields it cannot honour.
 
 Like :mod:`autoware_carla_scenario.scenario_config`, this module has no heavy
@@ -30,7 +33,7 @@ from dataclasses import dataclass, field
 from typing import Any, Mapping
 
 from ..constants import DEFAULT_TM_PORT
-from .parameters import PedestrianParameters, VehicleParameters
+from .parameters import BicycleParameters, PedestrianParameters, VehicleParameters
 
 __all__ = [
     "TrafficConfig",
@@ -70,12 +73,14 @@ class TrafficConfig:
         vehicles: How the vehicles drive, in the terms every backend shares;
             a field the backend does not support is an error.
         pedestrians: How the pedestrians walk, likewise.
+        bicycles: How the bicycles ride, likewise.
     """
 
     backend: str = "traffic_manager"
     options: dict[str, Any] = field(default_factory=dict)
     vehicles: VehicleParameters = field(default_factory=VehicleParameters)
     pedestrians: PedestrianParameters = field(default_factory=PedestrianParameters)
+    bicycles: BicycleParameters = field(default_factory=BicycleParameters)
 
     @classmethod
     def from_mapping(cls, mapping: Mapping[str, Any]) -> "TrafficConfig":
@@ -96,4 +101,5 @@ class TrafficConfig:
             pedestrians=PedestrianParameters.from_mapping(
                 checked.get("pedestrians") or {}
             ),
+            bicycles=BicycleParameters.from_mapping(checked.get("bicycles") or {}),
         )

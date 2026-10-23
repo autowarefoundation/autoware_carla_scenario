@@ -580,7 +580,7 @@ def build_traffic_backend(cfg: DictConfig) -> TrafficBackend:
     options = {key: value for key, value in config.options.items() if value is not None}
 
     backend = build_backend(
-        config.backend, options, config.vehicles, config.pedestrians
+        config.backend, options, config.vehicles, config.pedestrians, config.bicycles
     )
     logger.info(
         "Traffic backend: %s (registered: %s)", config.backend, available_backends()

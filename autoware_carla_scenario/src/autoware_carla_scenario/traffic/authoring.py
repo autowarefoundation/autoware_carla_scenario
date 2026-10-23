@@ -11,9 +11,18 @@ from __future__ import annotations
 
 from typing import Optional
 
-from .parameters import PedestrianParameters, Spread, VehicleParameters
+from .parameters import (
+    BicycleParameters,
+    PedestrianParameters,
+    Spread,
+    VehicleParameters,
+)
 
-__all__ = ["authored_pedestrian_parameters", "authored_vehicle_parameters"]
+__all__ = [
+    "authored_bicycle_parameters",
+    "authored_pedestrian_parameters",
+    "authored_vehicle_parameters",
+]
 
 
 def _spread(mean: Optional[float], std: Optional[float], name: str) -> Optional[Spread]:
@@ -119,6 +128,60 @@ def authored_pedestrian_parameters(
         red_light_violation_s=_spread(
             red_light_violation_s_mean,
             red_light_violation_s_std,
+            "red_light_violation_s",
+        ),
+    )
+    if not parameters.set_fields():
+        return None
+    return parameters
+
+
+def authored_bicycle_parameters(
+    bicycle_max_speed_mps_mean: Optional[float] = None,
+    bicycle_max_speed_mps_std: Optional[float] = None,
+    bicycle_accel_mean: Optional[float] = None,
+    bicycle_accel_std: Optional[float] = None,
+    bicycle_decel_mean: Optional[float] = None,
+    bicycle_decel_std: Optional[float] = None,
+    bicycle_min_gap_m_mean: Optional[float] = None,
+    bicycle_min_gap_m_std: Optional[float] = None,
+    bicycle_reaction_time_s_mean: Optional[float] = None,
+    bicycle_reaction_time_s_std: Optional[float] = None,
+    bicycle_imperfection_mean: Optional[float] = None,
+    bicycle_imperfection_std: Optional[float] = None,
+    bicycle_max_lateral_speed_mps_mean: Optional[float] = None,
+    bicycle_max_lateral_speed_mps_std: Optional[float] = None,
+    bicycle_red_light_violation_s_mean: Optional[float] = None,
+    bicycle_red_light_violation_s_std: Optional[float] = None,
+) -> Optional[BicycleParameters]:
+    """The bicycle parameters the fields set; ``None`` when they set none.
+
+    Every field is ``bicycle_*``, apart from the vehicles' and the
+    pedestrians' of the same name on the same form.
+    """
+    parameters = BicycleParameters(
+        max_speed_mps=_spread(
+            bicycle_max_speed_mps_mean, bicycle_max_speed_mps_std, "max_speed_mps"
+        ),
+        accel=_spread(bicycle_accel_mean, bicycle_accel_std, "accel"),
+        decel=_spread(bicycle_decel_mean, bicycle_decel_std, "decel"),
+        min_gap_m=_spread(bicycle_min_gap_m_mean, bicycle_min_gap_m_std, "min_gap_m"),
+        reaction_time_s=_spread(
+            bicycle_reaction_time_s_mean,
+            bicycle_reaction_time_s_std,
+            "reaction_time_s",
+        ),
+        imperfection=_spread(
+            bicycle_imperfection_mean, bicycle_imperfection_std, "imperfection"
+        ),
+        max_lateral_speed_mps=_spread(
+            bicycle_max_lateral_speed_mps_mean,
+            bicycle_max_lateral_speed_mps_std,
+            "max_lateral_speed_mps",
+        ),
+        red_light_violation_s=_spread(
+            bicycle_red_light_violation_s_mean,
+            bicycle_red_light_violation_s_std,
             "red_light_violation_s",
         ),
     )

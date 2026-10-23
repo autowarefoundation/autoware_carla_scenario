@@ -105,11 +105,12 @@ exported scenario packages still set — keeps deciding the port when
 
 ## Traffic parameters
 
-How the traffic's road users *behave* is not a backend's own option but two
+How the traffic's road users *behave* is not a backend's own option but three
 parameter spaces every backend reads: `traffic.vehicles` (`VehicleParameters`)
-for how vehicles drive, and `traffic.pedestrians` (`PedestrianParameters`) for
-how pedestrians walk. Every field is `null` by default, which leaves the
-backend's own default.
+for how vehicles drive, `traffic.pedestrians` (`PedestrianParameters`) for
+how pedestrians walk, and `traffic.bicycles` (`BicycleParameters`) for how
+bicycles ride. Every field is `null` by default, which leaves the backend's
+own default.
 
 Every numeric parameter is a **spread**, a mean and a standard deviation
 (`{mean, std}`, `Spread` in Python): each vehicle and each pedestrian draws
@@ -131,6 +132,8 @@ traffic:
   pedestrians:
     walking_speed_mps: {mean: 1.2, std: 0.2}
     red_light_violation_s: {mean: 5.0, std: 5.0}
+  bicycles:
+    max_speed_mps: {mean: 4.5, std: 0.8}
 ```
 
 ```bash
@@ -171,6 +174,27 @@ own walk as the scenario steers them — so every field is `sumo`'s):
 | `walking_speed_mps` | Walking speed, m/s | — | `maxSpeed` |
 | `min_gap_m` | Gap to the person ahead, m | — | `minGap` |
 | `red_light_violation_s` | Cross on red if it has been red for less than this, s | — | `jmDriveAfterRedTime` |
+
+`traffic.bicycles` (only SUMO simulates bicycles; the TrafficManager drives a
+bicycle blueprint as it drives a car, so every field is `sumo`'s). The
+vehicle parameters are a driver's and never reach a bicycle:
+
+| Field | Meaning | `traffic_manager` | `sumo` | Default |
+| --- | --- | --- | --- | --- |
+| `max_speed_mps` | Speed on a free road, m/s | — | `desiredMaxSpeed` and `maxSpeed` | 5.56 (20 km/h), with SUMO's spread of 0.1 |
+| `accel` | Acceleration, m/s² | — | `accel` | 1.2 |
+| `decel` | Braking, m/s² | — | `decel` | 3 |
+| `min_gap_m` | Gap to the one ahead when standing, m | — | `minGap` | 0.5 |
+| `reaction_time_s` | Reaction time, s | — | `tau` | 1 |
+| `imperfection` | Rider imperfection, 0-1 | — | `sigma` | 0.5 |
+| `max_lateral_speed_mps` | Most lateral speed, m/s | — | `maxSpeedLat` | 1 |
+| `red_light_violation_s` | Ride on through a light red for less than this, s | — | `jmDriveAfterRedTime` | stop at red |
+
+SUMO's default bicycle type (`DEFAULT_BIKETYPE`) is redefined as a
+distribution of 100 types, each its own draw of them
+(`<output>/sumo/bicycle_type.add.xml`, loaded before the demand), which
+SUMO's own bicycles (`traffic.options.bicycles`), a `route_path` demand's of
+that type and the scenario's bicycles are all of.
 
 ### Parameter reference
 
@@ -370,6 +394,7 @@ like any action, on a condition:
 
 ```python
 from autoware_carla_scenario import (
+    BicycleParameters,
     ElapsedTimeCondition,
     PedestrianParameters,
     Spread,
@@ -401,6 +426,13 @@ scenario.register_post_tick(
         pedestrians=PedestrianParameters(walking_speed_mps=Spread(1.8, 0.2))
     )
 )
+
+# Riders brake harder and keep closer (sumo).
+scenario.register_post_tick(
+    TrafficParametersAction(
+        bicycles=BicycleParameters(decel=Spread(4.0, 0.5), min_gap_m=0.3)
+    )
+)
 ```
 
 - **Field by field.** The fields the action sets replace the run's; the ones it
@@ -412,7 +444,7 @@ scenario.register_post_tick(
   The ODD's probes read the merged parameters from then on.
 - **One vehicle.** With `entity_name` (a `role_name`), only that vehicle draws the
   changed fields again; the run's parameters stay as they were. An entity is a
-  vehicle, so `pedestrians` cannot be given with it.
+  vehicle, so `pedestrians` and `bicycles` cannot be given with it.
 - **Refused before the run.** A field the backend cannot change during a run
   is refused when the action is registered on the scenario, with a
   `TrafficParameterError`:
@@ -421,7 +453,10 @@ scenario.register_post_tick(
     - SUMO can change every vehicle parameter it supports, and a pedestrian's
       `walking_speed_mps` and `min_gap_m`. It cannot change
       `red_light_violation_s`, which SUMO reads off the pedestrian types it is
-      started with: set it in `traffic.pedestrians` instead.
+      started with: set it in `traffic.pedestrians` instead. Of the bicycle
+      parameters it can change every one but `max_speed_mps` and
+      `red_light_violation_s`, which it reads off the bicycle types: set those
+      in `traffic.bicycles`.
 - **Under SUMO,** a scenario vehicle the TrafficManager drives
   (`scenario_vehicles=traffic_manager`) gets the shared fields, with a warning
   naming the others. A visibility already held is held anew, from the new
@@ -882,24 +917,10 @@ would trip on. Bicycles stay in SUMO when `mesoscopic` is enabled: the queue
 model's roads are the carriageways.
 
 How they ride is not `traffic.vehicles` -- a driver's parameters, which never
-reach a bicycle -- but `bicycles`' own, SUMO's default bicycle type
-(`DEFAULT_BIKETYPE`) redefined as a distribution of 100 types, each its own
-draw (`<output>/sumo/bicycle_type.add.xml`, loaded before the demand). Each is
-a spread, `{mean, std}`, every rider drawing its own value cut to its bounds;
-`null` leaves SUMO's bicycle default:
+reach a bicycle -- but `traffic.bicycles` (`BicycleParameters`,
+[Traffic parameters](#traffic-parameters)).
 
-| `traffic.options.bicycles` | SUMO | Default |
-| --- | --- | --- |
-| `max_speed_mps` | `desiredMaxSpeed` and `maxSpeed` | 5.56 (20 km/h), with SUMO's spread of 0.1 |
-| `accel` | `accel` | 1.2 |
-| `decel` | `decel` | 3 |
-| `min_gap_m` | `minGap` | 0.5 |
-| `reaction_time_s` | `tau` | 1 |
-| `imperfection` | `sigma` (0-1) | 0.5 |
-| `max_lateral_speed_mps` | `maxSpeedLat` | 1 |
-| `red_light_violation_s` | `jmDriveAfterRedTime` | stop at red |
-
-The scenario's own bicycles are of that type too: a vehicle whose blueprint's
+The scenario's own bicycles ride by it too: a vehicle whose blueprint's
 `base_type` is `bicycle` (CARLA's bicycles') joins SUMO as a `bicycle`, on the
 nearest lane a bicycle may use -- a sidewalk's, on a network that has them --
 published or driven like the scenario's other vehicles, and SUMO routes one it
@@ -908,8 +929,7 @@ drives (`scenario_vehicles=sumo`) only where bicycles may go.
 ```bash
 uv run scenario ... traffic=sumo traffic.options.cycle_on_sidewalks=true \
     traffic.options.bicycles.enabled=true traffic.options.bicycles.max_bicycles=20 \
-    traffic.options.bicycles.max_speed_mps.mean=4.0 \
-    traffic.options.bicycles.max_speed_mps.std=0.8
+    traffic.bicycles.max_speed_mps.mean=4.0 traffic.bicycles.max_speed_mps.std=0.8
 ```
 
 **Stepping**: one SUMO step per CARLA tick, with the step length set to the

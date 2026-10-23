@@ -113,19 +113,16 @@ from ..base import (
 from ..config import TrafficManagerBackendConfig
 from ..fidelity import FidelityCandidate, MesoscopicConfig, plan_fidelity
 from ..parameters import (
+    BICYCLE_BOUNDS,
     PEDESTRIAN_BOUNDS,
     VEHICLE_BOUNDS,
+    BicycleParameters,
     PedestrianParameters,
     VehicleParameters,
 )
 from ..mesoscopic import MesoLink, MesoscopicTraffic
 from ..traffic_manager import TrafficManagerBackend
-from .config import (
-    BICYCLE_BOUNDS,
-    SumoBackendConfig,
-    forget_bicycle_parameters,
-    record_bicycle_parameters,
-)
+from .config import SumoBackendConfig
 from .geometry import Pose2D, carla_to_sumo, sumo_to_carla
 from .network import (
     SignalTable,
@@ -187,9 +184,19 @@ _LANE_CHANGE_MODEL_PARAMETERS = {"max_lateral_accel": "lcAccelLat"}
 #: parameters, SUMO's default pedestrian type is a distribution of.
 PEDESTRIAN_TYPES = 100
 #: The same for SUMO's default bicycle type, and the vType attribute each
-#: riding parameter of ``bicycles`` sets.
+#: bicycle parameter (``traffic.bicycles``) sets.
 BICYCLE_TYPES = 100
 _BICYCLE_TYPE = "DEFAULT_BIKETYPE"
+#: The bicycle parameters a run can change, each set on every bicycle; the
+#: speed (desiredMaxSpeed) and the red light only on a type, before the run.
+_BICYCLE_SETTERS = {
+    "accel": "setAccel",
+    "decel": "setDecel",
+    "min_gap_m": "setMinGap",
+    "reaction_time_s": "setTau",
+    "imperfection": "setImperfection",
+    "max_lateral_speed_mps": "setMaxSpeedLat",
+}
 _BICYCLE_ATTRIBUTES = {
     "max_speed_mps": "maxSpeed",
     "accel": "accel",
@@ -344,6 +351,7 @@ class SumoTrafficBackend(TrafficBackend):
         *,
         vehicles: Optional[VehicleParameters] = None,
         pedestrians: Optional[PedestrianParameters] = None,
+        bicycles: Optional[BicycleParameters] = None,
     ) -> None:
         """Create the backend.
 
@@ -353,10 +361,11 @@ class SumoTrafficBackend(TrafficBackend):
                 ``follow_visibility``) when omitted.
             pedestrians: How SUMO's pedestrians walk; SUMO's defaults when
                 omitted.
+            bicycles: How SUMO's bicycles ride; SUMO's defaults when omitted.
 
         Raises:
-            TrafficParameterError: If *vehicles* or *pedestrians* sets a field
-                SUMO does not support.
+            TrafficParameterError: If *vehicles*, *pedestrians* or *bicycles*
+                sets a field SUMO does not support.
         """
         self._config = config or SumoBackendConfig()
         #: Drives the scenario's own vehicles with scenario_vehicles=traffic_manager.
@@ -477,10 +486,14 @@ class SumoTrafficBackend(TrafficBackend):
         #: The pedestrian parameters changed during the run, which each
         #: person who departs from then on draws.
         self._pedestrian_overrides: Optional[PedestrianParameters] = None
+        #: The same for the bicycles, which each bicycle that departs draws.
+        self._bicycle_overrides: Optional[BicycleParameters] = None
         if vehicles is not None:
             self.set_vehicle_parameters(vehicles)
         if pedestrians is not None:
             self.set_pedestrian_parameters(pedestrians)
+        if bicycles is not None:
+            self.set_bicycle_parameters(bicycles)
 
     def set_vehicle_parameters(self, parameters: VehicleParameters) -> None:
         """Drive SUMO's vehicles with *parameters*, and the scenario's that
@@ -525,6 +538,11 @@ class SumoTrafficBackend(TrafficBackend):
         """The walking speed and the gap; the red light only before the run."""
         return set(_PEDESTRIAN_OVERRIDES)
 
+    def supported_bicycle_overrides(self) -> set[str]:
+        """Each set per bicycle; the speed and the red light only before the
+        run, on the type every bicycle is one of."""
+        return set(_BICYCLE_SETTERS)
+
     def override_entity_parameters(
         self, world: Any, overrides: VehicleParameters, entity: Any
     ) -> None:
@@ -534,8 +552,8 @@ class SumoTrafficBackend(TrafficBackend):
         if sumo_id is not None:
             if self._is_bicycle(sumo_id):
                 logger.warning(
-                    "SUMO: %s is a bicycle, which rides as traffic.options."
-                    "bicycles says; the vehicle parameters do not reach it",
+                    "SUMO: %s is a bicycle, which rides as traffic.bicycles "
+                    "says; the vehicle parameters do not reach it",
                     sumo_id,
                 )
             self._draw_vehicle(sumo_id, overrides)
@@ -584,6 +602,24 @@ class SumoTrafficBackend(TrafficBackend):
             return
         for person in self._traci.person.getIDList():
             self._draw_person(person, overrides)
+
+    def override_bicycle_parameters(
+        self, world: Any, overrides: BicycleParameters
+    ) -> None:
+        """Give every bicycle SUMO drives a new draw of the fields *overrides*
+        sets, and those that depart later too."""
+        del world
+        self._remember_parameters()
+        self._bicycle_parameters = self.bicycle_parameters.overridden_by(overrides)
+        previous = self._bicycle_overrides
+        self._bicycle_overrides = (
+            overrides if previous is None else previous.overridden_by(overrides)
+        )
+        if not self._running:
+            return
+        for sumo_id in self._traci.vehicle.getIDList():
+            if sumo_id not in self._external and self._is_bicycle(sumo_id):
+                self._draw_bicycle(sumo_id, overrides)
 
     @staticmethod
     def _warn_dropped(overrides: VehicleParameters, shared: VehicleParameters) -> None:
@@ -653,8 +689,6 @@ class SumoTrafficBackend(TrafficBackend):
             context.fixed_delta_seconds, self._config.step_length_s
         )
         self._context = context
-        # For the ODD's probes, which read how the run's bicycles ride.
-        record_bicycle_parameters(self._config.bicycles.riding())
         self._traci = _load_traci(self._config.use_libsumo)
         self._rng = random.Random(context.random_seed)
         # The road users' parameter draws, apart from the routes' stream so
@@ -886,10 +920,10 @@ class SumoTrafficBackend(TrafficBackend):
     def close(self) -> None:
         """Stop SUMO, destroy the ambient actors and forget the run."""
         self._tm.close()
-        forget_bicycle_parameters()
         # The next run starts from its config, not from this one's overrides.
         self._restore_parameters()
         self._pedestrian_overrides = None
+        self._bicycle_overrides = None
         if self._clock_log is not None:
             self._clock_log.close()
             self._clock_log = None
@@ -1007,11 +1041,6 @@ class SumoTrafficBackend(TrafficBackend):
         if bicycles.enabled:
             out["bicycles_period_s"] = bicycles.period()
             out["bicycle_control"] = bicycles.vehicle_control
-        riding = bicycles.riding()
-        if riding:
-            out["bicycles"] = {
-                name: spread.describe() for name, spread in riding.items()
-            }
         meso = self._config.mesoscopic
         if meso.enabled:
             out["mesoscopic"] = {
@@ -2940,8 +2969,8 @@ class SumoTrafficBackend(TrafficBackend):
 
     def _bicycle_type(self, out: Path) -> Optional[Path]:
         """Write SUMO's default bicycle type as a distribution of
-        :data:`BICYCLE_TYPES` types, each with its own draw of ``bicycles``'
-        riding parameters, into *out*; ``None`` when none are set.
+        :data:`BICYCLE_TYPES` types, each with its own draw of the run's
+        bicycle parameters, into *out*; ``None`` when none are set.
 
         As for pedestrians (:meth:`_pedestrian_type`): SUMO gives each bicycle
         one of the distribution's types as it is added, so each rides as its
@@ -2949,7 +2978,7 @@ class SumoTrafficBackend(TrafficBackend):
         demand's of SUMO's default bicycle type and the scenario's bicycles
         SUMO drives or is told of are all of it.
         """
-        riding = self._config.bicycles.riding()
+        riding = self.bicycle_parameters.spreads()
         if not riding:
             return None
         members = []
@@ -2996,6 +3025,11 @@ class SumoTrafficBackend(TrafficBackend):
         if overrides is not None:
             for person in self._traci.simulation.getDepartedPersonIDList():
                 self._draw_person(person, overrides)
+        riders = self._bicycle_overrides
+        if riders is not None:
+            for sumo_id in self._departed_ids():
+                if sumo_id not in self._external and self._is_bicycle(sumo_id):
+                    self._draw_bicycle(sumo_id, riders)
 
     def _no_sidestep_standing(self, sumo_id: str) -> None:
         """Keep *sumo_id* from moving sideways while it stands.
@@ -3049,6 +3083,21 @@ class SumoTrafficBackend(TrafficBackend):
         except Exception as exc:  # noqa: BLE001 - one vehicle must not end the run
             logger.warning(
                 "SUMO could not set the traffic parameters of %s: %s", sumo_id, exc
+            )
+
+    def _draw_bicycle(self, sumo_id: str, parameters: BicycleParameters) -> None:
+        """Give the bicycle *sumo_id* its own draw of each field *parameters*
+        sets that a bicycle can be given during a run."""
+        vehicle = self._traci.vehicle
+        try:
+            for name, spread in parameters.spreads().items():
+                setter = _BICYCLE_SETTERS.get(name)
+                if setter is not None:
+                    draw = spread.draw(self._draws, BICYCLE_BOUNDS[name])
+                    getattr(vehicle, setter)(sumo_id, draw)
+        except Exception as exc:  # noqa: BLE001 - one bicycle must not end the run
+            logger.warning(
+                "SUMO could not set the bicycle parameters of %s: %s", sumo_id, exc
             )
 
     def _draw_person(self, person: str, parameters: PedestrianParameters) -> None:

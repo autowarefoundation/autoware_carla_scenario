@@ -1167,7 +1167,9 @@ class ScenarioRunner:
             # What the run's road users draw their parameters from, for the
             # ODD's probes of them (odd.traffic_probes).
             record_run_parameters(
-                backend.vehicle_parameters, backend.pedestrian_parameters
+                backend.vehicle_parameters,
+                backend.pedestrian_parameters,
+                backend.bicycle_parameters,
             )
             if TYPE_CHECKING:
                 # describe() is a dict of mixed value types, which Codon

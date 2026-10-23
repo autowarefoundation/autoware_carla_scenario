@@ -30,7 +30,12 @@ from dataclasses import dataclass, field
 from typing import Any, List
 
 from .traffic.config import TrafficConfig, TrafficManagerBackendConfig
-from .traffic.parameters import PedestrianParameters, Spread, VehicleParameters
+from .traffic.parameters import (
+    BicycleParameters,
+    PedestrianParameters,
+    Spread,
+    VehicleParameters,
+)
 
 __all__ = [
     "ServerConfig",
@@ -50,6 +55,7 @@ __all__ = [
     "TrafficManagerBackendConfig",
     "VehicleParameters",
     "PedestrianParameters",
+    "BicycleParameters",
     "Spread",
 ]
 

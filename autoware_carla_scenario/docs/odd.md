@@ -1070,8 +1070,8 @@ from them.
 | `vehicle_<field>_std` | `traffic.vehicles.<field>.std` | the field's std range below |
 | `pedestrian_<field>_mean` | `traffic.pedestrians.<field>.mean` | likewise |
 | `pedestrian_<field>_std` | `traffic.pedestrians.<field>.std` | likewise |
-| `bicycle_<field>_mean` | `traffic.options.bicycles.<field>.mean` | likewise (`sumo` only) |
-| `bicycle_<field>_std` | `traffic.options.bicycles.<field>.std` | likewise (`sumo` only) |
+| `bicycle_<field>_mean` | `traffic.bicycles.<field>.mean` | likewise (`sumo` only) |
+| `bicycle_<field>_std` | `traffic.bicycles.<field>.std` | likewise (`sumo` only) |
 
 | Parameter | Unit | Mean range | Std range |
 |---|---|---|---|
@@ -1096,11 +1096,10 @@ from them.
 | `bicycles.max_lateral_speed_mps` | m/s | 0.2-2 | 0-0.5 |
 | `bicycles.red_light_violation_s` | s | 0-30 | 0-10 |
 
-The bicycles' are how SUMO's bicycles ride (`traffic.options.bicycles`,
-[SUMO's own bicycles](traffic_backends.md#the-sumo-backend)): bicycles are
-SUMO's alone, so they are the `sumo` backend's options, and an ODD that draws
-them is an ODD for it. Their probes read what the SUMO run was given; any
-other run reads them as missing.
+The bicycles' are `traffic.bicycles` (`BicycleParameters`,
+[Traffic parameters](traffic_backends.md#traffic-parameters)): only SUMO
+simulates bicycles, so an ODD that draws them is an ODD for the `sumo`
+backend.
 
 A bucket of the ODD's attribute narrows the range, as for any knob. In a
 binding file:

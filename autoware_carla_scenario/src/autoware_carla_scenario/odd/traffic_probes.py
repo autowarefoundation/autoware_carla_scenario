@@ -22,13 +22,11 @@ A parameter the run's backend does not support stays the backend's error
 (:class:`~autoware_carla_scenario.traffic.parameters.TrafficParameterError`):
 an ODD that draws a reaction time is an ODD for the ``sumo`` backend.
 
-How SUMO's bicycles ride
-(:class:`~autoware_carla_scenario.traffic.sumo.config.BicycleConfig`) is a
-spread too, each rider drawing its own value, and its probes are
-``bicycle_<field>_mean`` and ``_std``, with knobs writing
-``traffic.options.bicycles.<field>.mean`` and ``.std``: bicycles are SUMO's
-alone, so those are the ``sumo`` backend's options, and an ODD that draws
-them is an ODD for it.
+The bicycles' parameters
+(:class:`~autoware_carla_scenario.traffic.parameters.BicycleParameters`) are
+the same: ``bicycle_<field>_mean`` and ``_std``, with knobs writing
+``traffic.bicycles.<field>.mean`` and ``.std``.  Only SUMO simulates
+bicycles, so an ODD that draws them is an ODD for the ``sumo`` backend.
 """
 
 from __future__ import annotations
@@ -39,12 +37,13 @@ from typing import Any, Optional
 from openodd import OddKnob
 
 from ..traffic.parameters import (
+    BICYCLE_BOUNDS,
     PEDESTRIAN_BOUNDS,
     VEHICLE_BOUNDS,
     Spread,
+    run_bicycle_parameters,
     run_parameters,
 )
-from ..traffic.sumo.config import BICYCLE_BOUNDS, run_bicycle_parameters
 
 __all__ = [
     "PARAMETER_RANGES",
@@ -88,16 +87,11 @@ PARAMETER_RANGES: dict[
 
 #: A probe's name begins with the singular of its space.
 _PREFIX = {"vehicles": "vehicle", "pedestrians": "pedestrian", "bicycles": "bicycle"}
-#: Each space's bounds, and the config node its knobs write under.
+#: Each space's bounds.
 _BOUNDS = {
     "vehicles": VEHICLE_BOUNDS,
     "pedestrians": PEDESTRIAN_BOUNDS,
     "bicycles": BICYCLE_BOUNDS,
-}
-_NODE = {
-    "vehicles": "traffic.vehicles",
-    "pedestrians": "traffic.pedestrians",
-    "bicycles": "traffic.options.bicycles",
 }
 
 
@@ -113,19 +107,18 @@ class ParameterProbe:
 
     def __call__(self, world: Any) -> Optional[float]:
         del world  # the run's, not the world's
-        spread: Any
+        source: Any
         if self.space == "bicycles":
-            riding = run_bicycle_parameters()
-            if riding is None:
-                return None
-            spread = riding.get(self.field)
+            source = run_bicycle_parameters()
         else:
             recorded = run_parameters()
             if recorded is None:
                 return None
             vehicles, pedestrians = recorded
-            source: Any = vehicles if self.space == "vehicles" else pedestrians
-            spread = getattr(source, self.field)
+            source = vehicles if self.space == "vehicles" else pedestrians
+        if source is None:
+            return None
+        spread = getattr(source, self.field)
         if not isinstance(spread, Spread):
             return None
         return spread.mean if self.statistic == "mean" else spread.std
@@ -147,7 +140,7 @@ def _probes() -> (
             probe = ParameterProbe(space, field, statistic)
             probes[probe.__name__] = (probe, unit)
             knobs[probe] = OddKnob(
-                f"{_NODE[space]}.{field}.{statistic}",
+                f"traffic.{space}.{field}.{statistic}",
                 range=value_range,
                 # The mean must lie within the parameter's own bounds.
                 limits=bounds if statistic == "mean" else (0.0, float("inf")),
@@ -158,10 +151,8 @@ def _probes() -> (
 #: Probe name -> (probe, unit): ``vehicle_<field>_mean`` and ``_std`` for each
 #: numeric vehicle parameter, ``pedestrian_<field>_mean`` and ``_std`` for
 #: each pedestrian parameter, ``bicycle_<field>_mean`` and ``_std`` for each
-#: riding parameter of SUMO's bicycles.
+#: bicycle parameter.
 TRAFFIC_PROBES: dict[str, tuple[Callable[[Any], Any], str]]
-#: Probe -> the knob that sets it: ``traffic.<space>.<field>.mean`` or
-#: ``.std``, ``traffic.options.bicycles.<field>.mean`` or ``.std`` for a
-#: bicycle's.
+#: Probe -> the knob that sets it: ``traffic.<space>.<field>.mean`` or ``.std``.
 TRAFFIC_KNOBS: dict[Callable[..., Any], OddKnob]
 TRAFFIC_PROBES, TRAFFIC_KNOBS = _probes()

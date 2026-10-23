@@ -8,13 +8,15 @@ Selecting one is a name::
     uv run scenario traffic.backend=none
 
 and how its road users behave is
-:class:`~autoware_carla_scenario.traffic.parameters.VehicleParameters` and
-:class:`~autoware_carla_scenario.traffic.parameters.PedestrianParameters`,
+:class:`~autoware_carla_scenario.traffic.parameters.VehicleParameters`,
+:class:`~autoware_carla_scenario.traffic.parameters.PedestrianParameters` and
+:class:`~autoware_carla_scenario.traffic.parameters.BicycleParameters`,
 types every backend reads, which refuse a field the selected backend cannot
 honour::
 
     uv run scenario traffic=sumo traffic.vehicles.reaction_time_s=1.5
     uv run scenario traffic=sumo traffic.pedestrians.walking_speed_mps=1.2
+    uv run scenario traffic=sumo traffic.bicycles.max_speed_mps=4.5
 
 The seam has two halves: :class:`~autoware_carla_scenario.traffic.base.TrafficBackend`
 is what a traffic model must provide, and
@@ -60,8 +62,10 @@ from .base import (
 )
 from .config import TrafficConfig, TrafficManagerBackendConfig
 from .parameters import (
+    BICYCLE_PARAMETER_BACKENDS,
     PEDESTRIAN_PARAMETER_BACKENDS,
     VEHICLE_PARAMETER_BACKENDS,
+    BicycleParameters,
     PedestrianParameters,
     Spread,
     TrafficParameterError,
@@ -99,9 +103,11 @@ __all__ = [
     "TrafficParameterError",
     "VehicleParameters",
     "PedestrianParameters",
+    "BicycleParameters",
     "Spread",
     "VEHICLE_PARAMETER_BACKENDS",
     "PEDESTRIAN_PARAMETER_BACKENDS",
+    "BICYCLE_PARAMETER_BACKENDS",
     "TurnDirection",
     "build_traffic_manager",
     "build_none",

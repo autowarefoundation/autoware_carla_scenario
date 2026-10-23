@@ -13,18 +13,14 @@ from typing import Any, Mapping, Optional
 
 from ...constants import DEFAULT_TM_PORT
 from ..fidelity import MesoscopicConfig
-from ..parameters import INF, Spread, _check
+from ..parameters import BICYCLE_PARAMETER_BACKENDS
 
 __all__ = [
     "AmbientTrafficConfig",
-    "BICYCLE_BOUNDS",
     "BicycleConfig",
     "DEFAULT_BICYCLE_BLUEPRINTS",
     "PedestrianConfig",
     "SumoBackendConfig",
-    "forget_bicycle_parameters",
-    "record_bicycle_parameters",
-    "run_bicycle_parameters",
 ]
 
 _LIGHT_AUTHORITIES = ("carla", "sumo", "none")
@@ -37,18 +33,6 @@ DEFAULT_BICYCLE_BLUEPRINTS = (
     "vehicle.diamondback.century",
     "vehicle.gazelle.omafiets",
 )
-#: The values a bicycle parameter may take, ``(low, high)``: what a mean is
-#: checked against, and what each rider's draw is cut to.
-BICYCLE_BOUNDS: dict[str, tuple[float, float]] = {
-    "max_speed_mps": (0.5, INF),
-    "accel": (0.05, INF),
-    "decel": (0.05, INF),
-    "min_gap_m": (0.0, INF),
-    "reaction_time_s": (0.0, INF),
-    "imperfection": (0.0, 1.0),
-    "max_lateral_speed_mps": (0.05, INF),
-    "red_light_violation_s": (0.0, INF),
-}
 
 
 @dataclass
@@ -146,32 +130,6 @@ class PedestrianConfig:
         return cls(**checked_options(cls, mapping))
 
 
-#: The riding parameters of the current run's bicycles, for the ODD's probes
-#: (:func:`record_bicycle_parameters`).
-_RUN_RIDING: list[dict[str, Spread]] = []
-
-
-def record_bicycle_parameters(riding: dict[str, Spread]) -> None:
-    """Record the riding parameters the run's bicycles draw from
-    (:meth:`BicycleConfig.riding`); the SUMO backend calls this as it
-    prepares a run, and :func:`forget_bicycle_parameters` as it closes."""
-    _RUN_RIDING.clear()
-    _RUN_RIDING.append(dict(riding))
-
-
-def run_bicycle_parameters() -> Optional[dict[str, Spread]]:
-    """What :func:`record_bicycle_parameters` last recorded, or ``None``
-    outside a SUMO run."""
-    if not _RUN_RIDING:
-        return None
-    return _RUN_RIDING[0]
-
-
-def forget_bicycle_parameters() -> None:
-    """Forget the run's bicycles' riding parameters."""
-    _RUN_RIDING.clear()
-
-
 def _default_bicycle_blueprints() -> list[str]:
     return list(DEFAULT_BICYCLE_BLUEPRINTS)
 
@@ -183,13 +141,11 @@ class BicycleConfig:
 
     They ride wherever the network lets a bicycle: the carriageway's lanes and
     cycle lanes, and the sidewalks too when the network is built with
-    ``cycle_on_sidewalks``.  How they ride is SUMO's default bicycle type
-    (``DEFAULT_BIKETYPE``), redefined as a distribution of types when any
-    riding parameter here is set: each numeric one is a
-    :class:`~autoware_carla_scenario.traffic.parameters.Spread`, and every
-    bicycle draws its own value from it, cut to :data:`BICYCLE_BOUNDS`.  The
-    vehicle parameters (``traffic.vehicles``) are a driver's, not a rider's,
-    and are not given to bicycles.
+    ``cycle_on_sidewalks``.  How they ride is not here but in the parameters
+    every backend shares
+    (:class:`~autoware_carla_scenario.traffic.parameters.BicycleParameters`,
+    ``traffic.bicycles``); ``bicycles`` here is how many SUMO generates, and
+    how they reach CARLA.
 
     Attributes:
         enabled: Generate any at all.
@@ -200,21 +156,6 @@ class BicycleConfig:
             starts and ends).
         max_distance_m: The longest ride generated, metres; ``None`` for no
             limit.
-        max_speed_mps: The speed a rider rides at on a free road, m/s
-            (``desiredMaxSpeed``, and ``maxSpeed`` with it; SUMO's 20 km/h,
-            5.56 m/s, with its own spread of 0.1, by default).
-        accel: Acceleration, m/s² (``accel``; 1.2 by default).
-        decel: Braking, m/s² (``decel``; 3 by default).
-        min_gap_m: Gap kept to the one ahead when standing, metres
-            (``minGap``; 0.5 by default).
-        reaction_time_s: Reaction time, seconds (``tau``; 1 by default).
-        imperfection: Rider imperfection, 0-1 (``sigma``; 0.5 by default).
-        max_lateral_speed_mps: Most lateral speed, m/s (``maxSpeedLat``),
-            with the sublane model (``lateral_resolution_m``) how quickly a
-            rider moves across its lane and round the one ahead.
-        red_light_violation_s: Ride on through a light that has been red for
-            less than this, seconds (``jmDriveAfterRedTime``); ``None``:
-            riders stop at red.
         radius_m: Mirror only the bicycles this close to the ego into CARLA;
             ``None``: ``spawn_radius_m``, the vehicles' radius.
         max_bicycles: Most bicycles mirrored into CARLA at once, the nearest
@@ -234,14 +175,6 @@ class BicycleConfig:
     end_s: float = 3600.0
     min_distance_m: float = 0.0
     max_distance_m: Optional[float] = 2000.0
-    max_speed_mps: Optional[Spread] = None
-    accel: Optional[Spread] = None
-    decel: Optional[Spread] = None
-    min_gap_m: Optional[Spread] = None
-    reaction_time_s: Optional[Spread] = None
-    imperfection: Optional[Spread] = None
-    max_lateral_speed_mps: Optional[Spread] = None
-    red_light_violation_s: Optional[Spread] = None
     radius_m: Optional[float] = None
     max_bicycles: Optional[int] = None
     blueprints: list[str] = field(default_factory=_default_bicycle_blueprints)
@@ -263,8 +196,6 @@ class BicycleConfig:
             raise ValueError(
                 f"min_distance_m must not be negative (got {self.min_distance_m!r})"
             )
-        for name, spread in self.riding().items():
-            _check(name, spread, BICYCLE_BOUNDS)
 
     def period(self) -> float:
         """Seconds between two generated rides."""
@@ -272,31 +203,19 @@ class BicycleConfig:
             return float(self.period_s)
         return 3600.0 / max(float(self.bicycles_per_hour), 1e-6)
 
-    def riding(self) -> dict[str, Spread]:
-        """The riding parameters that are set, by name, in declared order."""
-        values: list[tuple[str, Optional[Spread]]] = [
-            ("max_speed_mps", self.max_speed_mps),
-            ("accel", self.accel),
-            ("decel", self.decel),
-            ("min_gap_m", self.min_gap_m),
-            ("reaction_time_s", self.reaction_time_s),
-            ("imperfection", self.imperfection),
-            ("max_lateral_speed_mps", self.max_lateral_speed_mps),
-            ("red_light_violation_s", self.red_light_violation_s),
-        ]
-        out: dict[str, Spread] = {}
-        for name, value in values:
-            if value is not None:
-                out[name] = value
-        return out
-
     @classmethod
     def from_mapping(cls, mapping: Mapping[str, Any]) -> "BicycleConfig":
-        """Return a config built from a plain mapping (e.g. a Hydra node): a
-        riding parameter is a number or ``{mean, std}``."""
-        from ..parameters import _spreads_from  # noqa: PLC0415
+        """Return a config built from a plain mapping (e.g. a Hydra node)."""
+        from ...utils.config import checked_options  # noqa: PLC0415
 
-        checked = _spreads_from(cls, mapping, BICYCLE_BOUNDS)
+        moved = sorted(set(mapping) & set(BICYCLE_PARAMETER_BACKENDS))
+        if moved:
+            raise ValueError(
+                f"traffic.options.bicycles.{moved[0]} is how bicycles ride: it "
+                "is traffic.bicycles now, with the vehicle and pedestrian "
+                "parameters every backend shares (BicycleParameters)"
+            )
+        checked = checked_options(cls, mapping)
         if "blueprints" in checked:
             checked["blueprints"] = [str(b) for b in checked["blueprints"] or []]
         return cls(**checked)
@@ -313,8 +232,9 @@ class SumoBackendConfig:
     ``traffic.vehicles``;
     :class:`~autoware_carla_scenario.traffic.parameters.PedestrianParameters`,
     ``traffic.pedestrians``).  ``pedestrians`` here is how many SUMO
-    generates.  Bicycles are SUMO's alone, so how they ride is here, in
-    ``bicycles``, with how many it generates.
+    generates, and how its bicycles ride is in
+    :class:`~autoware_carla_scenario.traffic.parameters.BicycleParameters`
+    (``traffic.bicycles``): ``bicycles`` here is how many it generates.
 
     Attributes:
         scenario_vehicles: What drives the scenario's own vehicles (its

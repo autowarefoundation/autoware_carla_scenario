@@ -275,8 +275,8 @@ def test_a_drawn_case_reaches_the_backend(tmp_path: Path) -> None:
     )
 
 
-def test_every_bicycle_riding_parameter_has_a_probe_and_a_knob() -> None:
-    from autoware_carla_scenario.traffic.sumo.config import BICYCLE_BOUNDS
+def test_every_bicycle_parameter_has_a_probe_and_a_knob() -> None:
+    from autoware_carla_scenario.traffic.parameters import BICYCLE_BOUNDS
 
     assert {f for space, f in PARAMETER_RANGES if space == "bicycles"} == set(
         BICYCLE_BOUNDS
@@ -285,37 +285,38 @@ def test_every_bicycle_riding_parameter_has_a_probe_and_a_knob() -> None:
         for statistic in ("mean", "std"):
             probe, _unit = BUILT_IN_PROBES[f"bicycle_{field}_{statistic}"]
             knob = DEFAULT_KNOBS[probe]
-            assert knob.key == f"traffic.options.bicycles.{field}.{statistic}"
+            assert knob.key == f"traffic.bicycles.{field}.{statistic}"
 
 
-def test_the_bicycle_probes_read_what_the_sumo_run_set() -> None:
-    from autoware_carla_scenario.traffic.sumo.config import (
-        BicycleConfig,
-        forget_bicycle_parameters,
-        record_bicycle_parameters,
-    )
+def test_the_bicycle_probes_read_what_the_run_set() -> None:
+    from autoware_carla_scenario.traffic.parameters import BicycleParameters
 
+    record_run_parameters(VehicleParameters(), PedestrianParameters())
     assert TRAFFIC_PROBES["bicycle_max_speed_mps_mean"][0](None) is None
-    record_bicycle_parameters(BicycleConfig(max_speed_mps=Spread(4.0, 0.5)).riding())
+    record_run_parameters(
+        VehicleParameters(),
+        PedestrianParameters(),
+        BicycleParameters(max_speed_mps=Spread(4.0, 0.5)),
+    )
     try:
         assert TRAFFIC_PROBES["bicycle_max_speed_mps_mean"][0](None) == 4.0
         assert TRAFFIC_PROBES["bicycle_max_speed_mps_std"][0](None) == 0.5
         assert TRAFFIC_PROBES["bicycle_accel_mean"][0](None) is None
     finally:
-        forget_bicycle_parameters()
+        record_run_parameters(VehicleParameters(), PedestrianParameters())
     assert TRAFFIC_PROBES["bicycle_max_speed_mps_mean"][0](None) is None
 
 
-def test_a_drawn_bicycle_case_writes_the_sumo_options() -> None:
-    from autoware_carla_scenario.traffic.sumo.config import SumoBackendConfig
+def test_a_drawn_bicycle_case_writes_the_bicycle_parameters() -> None:
+    from autoware_carla_scenario.traffic.config import TrafficConfig
 
     probe, unit = BUILT_IN_PROBES["bicycle_max_speed_mps_mean"]
     attribute = OddAttribute("riders.speed", probe, unit=unit, buckets=[2.0, 5.0, 8.0])
     sampler = OddSampler(OddDefinition("riders", [attribute]), seed=3)
     (case,) = sampler.sample(1)
-    speed = _value(case.overrides, "traffic.options.bicycles.max_speed_mps.mean")
+    speed = _value(case.overrides, "traffic.bicycles.max_speed_mps.mean")
     assert 2.0 <= speed <= 8.0
-    config = SumoBackendConfig.from_mapping(
-        {"bicycles": {"max_speed_mps": {"mean": speed, "std": None}}}
+    config = TrafficConfig.from_mapping(
+        {"backend": "sumo", "bicycles": {"max_speed_mps": {"mean": speed, "std": None}}}
     )
     assert config.bicycles.max_speed_mps == Spread(speed)

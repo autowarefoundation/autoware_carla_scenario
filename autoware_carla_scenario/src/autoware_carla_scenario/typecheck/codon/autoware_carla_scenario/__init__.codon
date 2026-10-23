@@ -63,7 +63,7 @@ from .scenario_base import BaseScenario, EgoConfig
 from .scenario_config import (DriverCameraLensSpec, DriverCameraSpec, DriverConfig, DriverControlSpec, DriverLidarSpec,
                               EgoVehicleConfig, EntityConfig, MapConfig, NpcVehicleConfig,
                               ServerConfig, SweepConfig)
-from .traffic import (LaneChangeDirection, PedestrianParameters, Spread, TrafficContext,
+from .traffic import (BicycleParameters, LaneChangeDirection, PedestrianParameters, Spread, TrafficContext,
                       TurnDirection, VehicleParameters, register_backend)
 from .trajectory import (MapPose, ReferenceContext, RelativeLanePose, RouteCrossingPose,
                          RouteCrosswalkPose, RouteLanePose, RouteOppositePose,

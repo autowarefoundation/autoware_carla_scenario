@@ -1339,6 +1339,7 @@ def build_traffic_parameters_action(
     from ..actions import TrafficParametersAction  # noqa: PLC0415
     from ..traffic.authoring import authored_vehicle_parameters  # noqa: PLC0415
     from ..traffic.authoring import authored_pedestrian_parameters  # noqa: PLC0415
+    from ..traffic.authoring import authored_bicycle_parameters  # noqa: PLC0415
 
     params = compiled.params
     vehicles = authored_vehicle_parameters(
@@ -1379,9 +1380,28 @@ def build_traffic_parameters_action(
         red_light_violation_s_mean=params["red_light_violation_s_mean"],
         red_light_violation_s_std=params["red_light_violation_s_std"],
     )
+    bicycles = authored_bicycle_parameters(
+        bicycle_max_speed_mps_mean=params["bicycle_max_speed_mps_mean"],
+        bicycle_max_speed_mps_std=params["bicycle_max_speed_mps_std"],
+        bicycle_accel_mean=params["bicycle_accel_mean"],
+        bicycle_accel_std=params["bicycle_accel_std"],
+        bicycle_decel_mean=params["bicycle_decel_mean"],
+        bicycle_decel_std=params["bicycle_decel_std"],
+        bicycle_min_gap_m_mean=params["bicycle_min_gap_m_mean"],
+        bicycle_min_gap_m_std=params["bicycle_min_gap_m_std"],
+        bicycle_reaction_time_s_mean=params["bicycle_reaction_time_s_mean"],
+        bicycle_reaction_time_s_std=params["bicycle_reaction_time_s_std"],
+        bicycle_imperfection_mean=params["bicycle_imperfection_mean"],
+        bicycle_imperfection_std=params["bicycle_imperfection_std"],
+        bicycle_max_lateral_speed_mps_mean=params["bicycle_max_lateral_speed_mps_mean"],
+        bicycle_max_lateral_speed_mps_std=params["bicycle_max_lateral_speed_mps_std"],
+        bicycle_red_light_violation_s_mean=params["bicycle_red_light_violation_s_mean"],
+        bicycle_red_light_violation_s_std=params["bicycle_red_light_violation_s_std"],
+    )
     return TrafficParametersAction(
         vehicles=vehicles,
         pedestrians=pedestrians,
+        bicycles=bicycles,
         condition=condition,
         timing=timing,
         label=compiled.label,
