@@ -354,8 +354,18 @@ class DeclarativeScenario(BaseScenario):
         self._send_ego_along(match)
 
     def _send_ego_along(self, match: "RouteMatch") -> None:
-        """Make the route the ego's: waypoints for Autoware, turns for the rest."""
-        if self.ego_requires_goal:
+        """Make the route the ego's: waypoints with a goal, turns without one.
+
+        With a goal, the route's lanelets between the ego's spawn and goal
+        lanelets become its waypoints (unless some were configured), which the
+        ego's :class:`~autoware_carla_scenario.actions.RoutingAction` hands it:
+        an Autoware ego plans the matched route rather than the shortest one,
+        and one a traffic backend drives is handed the whole route as one path
+        (:meth:`~autoware_carla_scenario.traffic.driven.BackendDriven.route_to`).
+        Without one -- only an ego driven for it may have none -- nothing is
+        handed over, and the ego is turned at each junction instead.
+        """
+        if self.ego_requires_goal or self.goal_pose is not None:
             if self.waypoint_poses:
                 return
             ids = list(match.lanelet_ids)
@@ -503,6 +513,11 @@ class DeclarativeScenario(BaseScenario):
                 npc_entity = self._build_npc(entity, world)
                 actor = npc_entity.spawn(world)
                 self.register_entity(npc_entity)
+                if entity.spawn.hidden:
+                    # Kept off autopilot until its action brings it in: the
+                    # TrafficManager deletes a vehicle it finds under the map
+                    # as stuck at a dead end.
+                    npc_entity.release_from_traffic(world)
             if entity.spawn.hidden:
                 # Under the map, where it would otherwise fall for as long as
                 # it waits to be brought in.

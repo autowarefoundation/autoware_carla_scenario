@@ -41,6 +41,7 @@ from typing import (
     Any,
     ClassVar,
     Collection,
+    List,
     Optional,
     Protocol,
     Tuple,
@@ -59,6 +60,8 @@ from .parameters import (
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
+
+    from ..coordinate.poses import Lanelet2Pose
 
 logger = logging.getLogger(__name__)
 
@@ -710,6 +713,14 @@ class TrafficBackend:
     ) -> None:
         """Send *entity* *direction* at the next junction ahead."""
         self._unavailable("turn_at_junction", entity)
+
+    def follow_route(
+        self, entity: DrivenEntity, world: "carla.World", stops: List["Lanelet2Pose"]
+    ) -> None:
+        """Drive *entity* along the route through *stops* -- where it is, its
+        waypoints, its goal, on the Lanelet2 map -- through every junction as
+        planned; see ``docs/traffic_backends.md``."""
+        self._unavailable("follow_route", entity)
 
     def release(self, entity: DrivenEntity, world: "carla.World") -> None:
         """Stop driving *entity*: something else has taken it over.

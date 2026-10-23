@@ -2397,6 +2397,14 @@ register_action_spec(
                     ),
                 ),
             ),
+            # The runtime takes poses; each lanelet becomes one at its start.
+            BuiltArgument(
+                kwarg="waypoints",
+                target="..coordinate:Lanelet2Pose",
+                over="waypoint_lanelet_ids",
+                item_kwarg="lanelet_id",
+                parts=(BuiltPart(constants=(("s", "0.0"),)),),
+            ),
         ),
         visual_kind="instant",
         # A goal is what an ego needs in order to become ready, and the runner
@@ -2411,11 +2419,11 @@ register_action_spec(
                 kind="lanelet",
                 default=0,
                 help=(
-                    "Where this vehicle is being sent. Only one that plans its "
-                    "own route reads it -- an Autoware ego -- and it will not "
-                    "move without a goal; a TrafficManager or driver vehicle "
-                    "ignores it. The ego's own goal is set on the ego itself, "
-                    "beside its spawn."
+                    "Where this vehicle is being sent. An Autoware ego plans "
+                    "its route there, and will not move without a goal; a "
+                    "vehicle the traffic backend drives, ego or NPC, is handed "
+                    "the route there; a driver-policy ego ignores it. The "
+                    "ego's own goal is set on the ego itself, beside its spawn."
                 ),
             ),
             FieldSpec(
@@ -2427,6 +2435,26 @@ register_action_spec(
                 unit="m",
                 help="Along the goal lanelet from its start.",
             ),
+            FieldSpec(
+                name="waypoint_lanelet_ids",
+                label="Via lanelets",
+                kind="lanelet_list",
+                default=[],
+                required=False,
+                help=(
+                    "Lanelets the route passes through on the way, in order. "
+                    "Empty: the shortest way to the goal."
+                ),
+            ),
+            FieldSpec(
+                name="walking_speed",
+                label="Walking speed",
+                kind="number",
+                default=1.4,
+                required=False,
+                unit="m/s",
+                help="How fast a pedestrian walks the route. A vehicle ignores it.",
+            ),
         ),
         description=(
             "Give a vehicle a destination and let its stack plan the route. "
@@ -2434,8 +2462,8 @@ register_action_spec(
             "its spawn: it is routed once during initialization whether or not "
             "a card says so, because it cannot start driving until it has. A "
             "card is for changing that destination mid-run, or for a vehicle "
-            "that is not the ego. Only a vehicle that plans its own route "
-            "reads it."
+            "that is not the ego. A vehicle the traffic backend drives is handed "
+            "the route, through the via lanelets, as a path to follow."
         ),
     )
 )

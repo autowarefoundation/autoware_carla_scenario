@@ -553,7 +553,7 @@ my_simulator = "my_package:register"
 
 ### Answering manoeuvre intents
 
-A backend that can steer the vehicles it drives overrides the three intent
+A backend that can steer the vehicles it drives overrides the intent
 methods. They receive the entity, so a backend can read the actor and record its
 own bookkeeping on the vehicle rather than in a table of its own:
 
@@ -561,10 +561,18 @@ own bookkeeping on the vehicle rather than in a table of its own:
     def change_lane(self, entity, world, direction) -> None: ...
     def lane_change_finished(self, entity, world) -> bool: ...
     def turn_at_junction(self, entity, world, direction, **kwargs) -> None: ...
+    def follow_route(self, entity, world, stops) -> None: ...
 ```
 
 `direction` is `LaneChangeDirection` or `TurnDirection` — intents, not CARLA
-values. A backend that has no answer for one simply does not override it: the
+values. `stops` is the whole way a vehicle is to drive, as Lanelet2 poses:
+where it is, its waypoints, its goal -- what a vehicle given a goal is handed
+(`BackendDriven.route_to`), where `turn_at_junction` decides one junction. Each
+backend lays the route out in its own terms. The TrafficManager backend plans
+the lanelets between the stops, samples their centrelines every 5 m from the
+point after the vehicle's own, and leaves out the points in a junction and next
+to one: the TrafficManager takes a junction's way out by the road of the next
+point, and there a point lies on several ways through. A backend that has no answer for one simply does not override it: the
 base class logs that the intent is unavailable and the vehicle keeps doing what
 it was doing, which is also what `LaneChangeAction` sees when it asks whether the
 manoeuvre finished.
@@ -1074,7 +1082,9 @@ microscopic vehicles only.
 **Manoeuvres** of SUMO-driven vehicles become TraCI calls: `change_lane` →
 `changeLane` (SUMO obeys a solid line, and says so), `set_desired_speed` →
 `setSpeed`, `turn_at_junction` → a route onto the junction's outgoing edge in
-that direction. With the default, they go to the TrafficManager.
+that direction. With the default, they go to the TrafficManager. `follow_route`
+goes to the TrafficManager only: a vehicle SUMO drives keeps its route, since
+the route's lanelets are not mapped to SUMO edges.
 
 The coupling follows [TeraSim](https://github.com/autowarefoundation/TeraSim)'s
 CARLA co-simulation; its adversarial behaviour generation is left to scenarios.

@@ -179,23 +179,6 @@ class TestTheRoutingActionHandsThemOn:
             "ego", Lanelet2Pose(lanelet_id=3, s=7.0), waypoints=waypoints
         ).execute(object())  # type: ignore[arg-type]
 
-    def test_an_entity_with_the_route_to_it_had_before_waypoints_still_works(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """route_to() is overridable; an override written before waypoints
-        existed must keep working for every run that names none."""
-        routed: list[object] = []
-
-        class _LegacyEntity:
-            def route_to(
-                self, world, goal, *, initial_pose=None, ground_projection=None
-            ):
-                routed.append(goal)
-
-        self._execute(monkeypatch, _LegacyEntity(), ())
-
-        assert routed == [Lanelet2Pose(lanelet_id=3, s=7.0)]
-
     def test_named_waypoints_are_handed_on(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -232,7 +215,8 @@ class TestTheRoutingActionHandsThemOn:
     def test_a_pedestrian_is_found_when_no_vehicle_has_the_role(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """A pedestrian is kept as a pedestrian only: the second lookup."""
+        """A pedestrian is kept as a pedestrian only: the second lookup, whose
+        walk the action plans and steps itself."""
         from autoware_carla_scenario.entity import registry
         from autoware_carla_scenario.entity.pedestrian_entity import (
             PedestrianEntity,
@@ -241,9 +225,9 @@ class TestTheRoutingActionHandsThemOn:
         routed: list[object] = []
 
         class _RoutedWalker(PedestrianEntity):
-            def route_to(
-                self, world, goal, *, initial_pose=None, ground_projection=None
-            ):
+            walking = False
+
+            def route_to(self, world, goal, **kwargs):  # noqa: ANN001, ANN003
                 routed.append(goal)
 
         walker = _RoutedWalker.__new__(_RoutedWalker)

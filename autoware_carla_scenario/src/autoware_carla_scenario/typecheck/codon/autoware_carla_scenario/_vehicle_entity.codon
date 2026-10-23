@@ -10,7 +10,9 @@
 import typesafe_carla.carla as carla
 
 from .constants import DEFAULT_TM_PORT
-from .coordinate import OpenDrivePose, GroundProjectionConfig, _expect_optional_ground_projection
+from ._tc import _keyword_only
+from .coordinate import (OpenDrivePose, GroundProjectionConfig, Lanelet2Pose, CarlaWorldPose,
+                         _expect_optional_ground_projection, _expect_lanelet2_poses)
 from .traffic import LaneChangeDirection, SimulationFidelity, TurnDirection
 from .entity_role import _expect_role_name
 
@@ -96,6 +98,16 @@ class VehicleEntity:
     def destroy(self) -> None:
         raise NotImplementedError()
 
+    # traffic.driven.BackendDriven.route_to(), which RoutingAction calls on an
+    # NPC as on the ego: the arguments are checked as EgoVehicle's are (#264).
+    def route_to(self, world: carla.World, goal: Lanelet2Pose, *_kw,
+                 initial_pose: Optional[CarlaWorldPose] = None, ground_projection = None,
+                 waypoints = ()) -> None:
+        _keyword_only(_kw, "VehicleEntity.route_to(): initial_pose, ground_projection and waypoints")
+        _expect_optional_ground_projection(ground_projection)
+        _expect_lanelet2_poses(waypoints)
+        raise NotImplementedError()
+
     # The manoeuvres of traffic.driven.BackendDriven, which VehicleEntity
     # mixes in: each is handed to the traffic backend that drives the vehicle
     # (#265). set_traffic_backend() is the runner's (typecheck/not_modelled.py).
@@ -112,6 +124,9 @@ class VehicleEntity:
         raise NotImplementedError()
 
     def turn_at_junction(self, world: carla.World, direction: TurnDirection, **kwargs) -> None:
+        raise NotImplementedError()
+
+    def follow_route(self, world: carla.World, stops: List[Lanelet2Pose]) -> None:
         raise NotImplementedError()
 
     def release_from_traffic(self, world: carla.World) -> None:

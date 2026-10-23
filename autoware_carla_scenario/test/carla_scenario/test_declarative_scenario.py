@@ -337,11 +337,10 @@ class TestRoutingActionBuilder:
         assert action.entity_name == str(EGO_ROLE_NAME)
 
     def test_the_card_carries_the_role_an_author_drew_it_on(self) -> None:
-        """Routing an NPC is allowed: the entity decides whether it means anything.
+        """Routing an NPC is allowed: the entity decides what it means.
 
-        A TrafficManager NPC takes no destination, so ``route_to`` is a no-op
-        for it -- which is better than refusing the compile over a card that
-        simply does nothing.
+        An NPC the traffic backend drives is handed the route to the goal
+        (``BackendDriven.route_to``).
         """
         from autoware_carla_scenario.actions import RoutingAction
 
@@ -351,6 +350,43 @@ class TestRoutingActionBuilder:
 
         assert isinstance(action, RoutingAction)
         assert action.entity_name == "npc1"
+
+    def test_via_lanelets_become_waypoints(self) -> None:
+        """One pose at the start of each, in order: what route_to passes through."""
+        from autoware_carla_scenario.actions import RoutingAction
+        from autoware_carla_scenario.coordinate import Lanelet2Pose
+
+        document = self._document_with_a_goal("npc1")
+        document.actions[0].params["waypoint_lanelet_ids"] = [263, 264]
+        compiled = compile_document(document)
+
+        action = instantiate_action(compiled.actions[0], BuildContext(scenario=None))
+
+        assert isinstance(action, RoutingAction)
+        assert action.waypoints == (Lanelet2Pose(263, 0.0), Lanelet2Pose(264, 0.0))
+
+    def test_a_walking_speed_reaches_the_action(self) -> None:
+        from autoware_carla_scenario.actions import RoutingAction
+
+        document = self._document_with_a_goal("npc1")
+        document.actions[0].params["walking_speed"] = 0.8
+        compiled = compile_document(document)
+
+        action = instantiate_action(compiled.actions[0], BuildContext(scenario=None))
+
+        assert isinstance(action, RoutingAction)
+        assert action._walking_speed == 0.8
+
+    def test_no_via_lanelets_no_waypoints(self) -> None:
+        """A card written before the field existed still compiles, to none."""
+        from autoware_carla_scenario.actions import RoutingAction
+
+        compiled = compile_document(self._document_with_a_goal("npc1"))
+
+        action = instantiate_action(compiled.actions[0], BuildContext(scenario=None))
+
+        assert isinstance(action, RoutingAction)
+        assert action.waypoints == ()
 
     def test_a_re_route_can_live_on_the_tick_loop(self) -> None:
         """The phase and ``once`` come from the document, not from the action.

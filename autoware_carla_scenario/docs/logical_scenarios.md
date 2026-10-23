@@ -416,12 +416,18 @@ the ego `ego_spawn_s` along it and sending it to the end. Either way the match
 becomes the scenario's route (`autoware_carla_scenario.route.set_scenario_route`),
 and the ego is sent along it:
 
-* an **Autoware** ego gets the route's lanelets between its spawn and goal
-  lanelets as waypoints (unless waypoints were configured), so it plans the
-  matched route rather than the shortest one;
-* an ego the **TrafficManager** drives gets a `TurnAction` per junction
-  segment, in the junction's actual `turn_direction`, triggered when it is
-  100 m short of the junction (or past the previous one).
+* the route's lanelets between the ego's spawn and goal lanelets become its
+  waypoints (unless waypoints were configured), which the ego's
+  `RoutingAction` hands it with the goal: an **Autoware** ego plans the
+  matched route rather than the shortest one, and an ego the
+  **TrafficManager** drives is handed the whole route as one path, a point
+  every 5 m along the lanelets' centrelines (`BackendDriven.route_to`, which
+  the TrafficManager follows through `set_path`), so it chooses no junction
+  of its own;
+* with no goal (`ego_goal: false`) nothing is handed over, and an ego the
+  TrafficManager drives gets a `TurnAction` per junction segment instead, in
+  the junction's actual `turn_direction`, triggered when it is 100 m short of
+  the junction (or past the previous one).
 
 ## Python API
 

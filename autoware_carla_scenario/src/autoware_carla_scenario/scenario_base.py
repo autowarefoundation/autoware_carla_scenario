@@ -639,7 +639,16 @@ class BaseScenario(ABC):
 
         Args:
             cb: A :class:`BaseAction` or a plain callable receiving the world.
+                An action that needs the tick loop
+                (:attr:`~autoware_carla_scenario.actions.BaseAction.needs_tick_loop`)
+                runs there instead, from the first tick.
         """
+        if isinstance(cb, BaseAction):
+            if cb.needs_tick_loop:
+                self._register_tick(
+                    cb, self._pre_tick_actions, self._pre_tick_callbacks
+                )
+                return
         self._register_tick(cb, self._init_actions, self._init_callbacks)
 
     def run_init(self, world: "carla.World") -> None:

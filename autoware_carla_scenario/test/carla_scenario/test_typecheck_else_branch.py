@@ -25,6 +25,7 @@ from autoware_carla_scenario.typecheck.library import CHECKED, package_modules
 EXPECTED_SITES: frozenset[tuple[str, str]] = frozenset(
     {
         ("autoware_carla_scenario.actions.background_traffic", "spawn_background"),
+        ("autoware_carla_scenario.actions.routing", "route_to"),
         ("autoware_carla_scenario.actions.turn", "turn_at_junction"),
         ("autoware_carla_scenario.scenario_runner", "start"),
     }

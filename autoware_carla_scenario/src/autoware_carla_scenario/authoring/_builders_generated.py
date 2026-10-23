@@ -1516,6 +1516,14 @@ def build_routing_action(
         lanelet_id=params["goal_lanelet_id"],
         s=params["goal_s"],
     )
+    waypoints: list[Any] = []
+    for item in params["waypoint_lanelet_ids"]:
+        waypoints.append(
+            Lanelet2Pose(
+                lanelet_id=item,
+                s=0.0,
+            )
+        )
     return RoutingAction(
         entity_name=compiled.actor_role,
         goal=goal,
@@ -1523,6 +1531,8 @@ def build_routing_action(
         timing=timing,
         label=compiled.label,
         once=compiled.node.once,
+        waypoints=waypoints,
+        walking_speed=params["walking_speed"],
     )
 
 

@@ -86,6 +86,7 @@ class MapManager:
     _instance: ClassVar[Optional["MapManager"]] = None
     _lanelet_map: Optional[lanelet2.core.LaneletMap]
     _routing_graph: Optional[lanelet2.routing.RoutingGraph]
+    _pedestrian_routing_graph: Optional[lanelet2.routing.RoutingGraph]
     _road_network: Optional[RoadNetwork]
     _geo_origin: Optional[tuple[float, float, float]]
     _mgrs_offset: Optional[tuple[float, float]]
@@ -97,6 +98,7 @@ class MapManager:
             cls._instance = super().__new__(cls)
             cls._instance._lanelet_map = None
             cls._instance._routing_graph = None
+            cls._instance._pedestrian_routing_graph = None
             cls._instance._road_network = None
             cls._instance._geo_origin = None
             cls._instance._mgrs_offset = None
@@ -264,16 +266,30 @@ class MapManager:
             import lanelet2.traffic_rules
 
             started = time.monotonic()
-            rules = lanelet2.traffic_rules.create(
-                lanelet2.traffic_rules.Locations.Germany,
-                lanelet2.traffic_rules.Participants.Vehicle,
+            self._routing_graph = build_routing_graph(
+                self.lanelet_map, lanelet2.traffic_rules.Participants.Vehicle
             )
-            self._routing_graph = lanelet2.routing.RoutingGraph(self.lanelet_map, rules)
             logger.info(
                 "Built the Lanelet2 routing graph in %.1f s",
                 time.monotonic() - started,
             )
         return self._routing_graph
+
+    @property
+    def pedestrian_routing_graph(self) -> lanelet2.routing.RoutingGraph:
+        """The routing graph of the lanelets a pedestrian may walk, built on
+        first use: walkways and crosswalks, by Lanelet2's pedestrian rules.
+
+        Only lanelets that share their ends are joined in it, so on a map whose
+        crosswalks merely overlap the walkways it has no way across a road.
+        """
+        if self._pedestrian_routing_graph is None:
+            import lanelet2.traffic_rules
+
+            self._pedestrian_routing_graph = build_routing_graph(
+                self.lanelet_map, lanelet2.traffic_rules.Participants.Pedestrian
+            )
+        return self._pedestrian_routing_graph
 
     @property
     def road_network(self) -> RoadNetwork:
@@ -498,6 +514,20 @@ class MapManager:
                 best_z = float(np.interp(arc[min_idx], arc, z_coords))
 
         return ll2_z - best_z
+
+
+def build_routing_graph(
+    lanelet_map: lanelet2.core.LaneletMap, participant: str
+) -> lanelet2.routing.RoutingGraph:
+    """A routing graph of *lanelet_map* for *participant*
+    (``lanelet2.traffic_rules.Participants``), by German traffic rules."""
+    import lanelet2.routing
+    import lanelet2.traffic_rules
+
+    rules = lanelet2.traffic_rules.create(
+        lanelet2.traffic_rules.Locations.Germany, participant
+    )
+    return lanelet2.routing.RoutingGraph(lanelet_map, rules)
 
 
 def run_carla_map(world: carla.World) -> carla.Map:

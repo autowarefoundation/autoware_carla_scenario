@@ -28,13 +28,15 @@ something which is not driving them.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, List, Optional, Sequence
 
 from ..constants import DEFAULT_TM_PORT
 from .base import DrivenEntity, LaneChangeDirection, TrafficBackend, TurnDirection
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
+
+    from ..coordinate import CarlaWorldPose, GroundProjectionConfig, Lanelet2Pose
 
 logger = logging.getLogger(__name__)
 
@@ -170,6 +172,52 @@ class BackendDriven(DrivenEntity):
             self._resolve_backend()
         else:
             self._resolve_backend().turn_at_junction(self, world, direction, **kwargs)
+
+    def follow_route(self, world: "carla.World", stops: List["Lanelet2Pose"]) -> None:
+        """Drive along the route through *stops* (where it is, waypoints, goal)."""
+        entity: DrivenEntity = self
+        self._resolve_backend().follow_route(entity, world, stops)
+
+    def route_to(
+        self,
+        world: "carla.World",
+        goal: "Lanelet2Pose",
+        *,
+        initial_pose: "Optional[CarlaWorldPose]" = None,
+        ground_projection: "Optional[GroundProjectionConfig]" = None,
+        waypoints: "Sequence[Lanelet2Pose]" = (),
+    ) -> None:
+        """Have the backend drive this vehicle from where it is (*initial_pose*,
+        else its actor) through *waypoints* to *goal* (:meth:`follow_route`);
+        see ``docs/traffic_backends.md``.  *ground_projection* is not used."""
+        from ..coordinate.poses import CarlaWorldPose  # noqa: PLC0415
+        from ..trajectory.relative_lane import reference_lane_pose_of  # noqa: PLC0415
+
+        start = initial_pose
+        if start is None:
+            # hasattr rather than getattr with a default (docs/typecheck.md):
+            # the mixin itself declares no actor; the entities do.
+            actor: Optional["carla.Actor"] = None
+            if hasattr(self, "actor"):
+                actor = self.actor
+            if actor is None:
+                logger.warning(
+                    "%s: a route was asked for before the actor exists",
+                    type(self).__name__,
+                )
+                return
+            # A typed local: Codon unwraps the Optional here.
+            vehicle: "carla.Actor" = actor
+            start = CarlaWorldPose.from_carla_transform(vehicle.get_transform())
+        here: CarlaWorldPose = start
+        stops: List[Lanelet2Pose] = [reference_lane_pose_of(here)]
+        stops.extend(waypoints)
+        stops.append(goal)
+        # Through a local of the type that declares it: Codon calls a method a
+        # subclass overrides through a dispatch thunk, which does not upcast
+        # (docs/typecheck.md).
+        driven: BackendDriven = self
+        driven.follow_route(world, stops)
 
     def release_from_traffic(self, world: "carla.World") -> None:
         """Stop the backend driving this vehicle; the caller drives it now."""

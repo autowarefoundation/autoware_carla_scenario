@@ -45,9 +45,12 @@ from ..visibility import (
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
 
+    from ..coordinate.poses import Lanelet2Pose
+
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "ROUTE_POINT_STEP_M",
     "TrafficManagerBackend",
     "compute_turn_route",
     "TURN_SEARCH_DISTANCE_M",
@@ -63,6 +66,9 @@ TURN_WAYPOINT_STEP_M: float = 2.0
 #: is what the branches are compared by, and it is only stable once the road
 #: has straightened out.
 TURN_POST_JUNCTION_DISTANCE_M: float = 20.0
+#: Metres between the points of a route :meth:`TrafficManagerBackend.follow_route`
+#: sets as a vehicle's path.
+ROUTE_POINT_STEP_M: float = 5.0
 
 #: Heading change, in degrees, that each turn amounts to.  CARLA's yaw is
 #: left-handed and clockwise-positive seen from above.
@@ -639,6 +645,42 @@ class TrafficManagerBackend(TrafficBackend):
             len(path),
         )
 
+    def follow_route(
+        self, entity: DrivenEntity, world: "carla.World", stops: List["Lanelet2Pose"]
+    ) -> None:
+        """Set the route through *stops* as *entity*'s TrafficManager path: a point every
+        :data:`ROUTE_POINT_STEP_M` metres, from the one after where it stands,
+        junctions left out (:func:`_clear_of_junctions`); see
+        ``docs/traffic_backends.md``."""
+        from ..coordinate.map_manager import MapManager  # noqa: PLC0415
+        from ..coordinate.transform import to_carla_location  # noqa: PLC0415
+        from ..odd.route_plan import PlannedRoute, RouteError, route_poses  # noqa: PLC0415
+
+        actor = _require_actor(entity, "follow_route")
+        if actor is None:
+            return
+        tm = self._require_tm("follow_route")
+        if tm is None:
+            return
+        mm = MapManager.get_instance()
+        route = PlannedRoute(start=stops[0], goal=stops[-1], via=tuple(stops[1:-1]))
+        try:
+            poses = route_poses(
+                route, mm.lanelet_map, mm.routing_graph, ROUTE_POINT_STEP_M
+            )
+        except RouteError as error:
+            logger.warning("%s: no route to follow: %s", _entity_name(entity), error)
+            return
+        # Not the point it stands on: the TrafficManager waits for each point
+        # to come within a few metres, and one behind the vehicle never does.
+        ahead = [to_carla_location(pose) for pose in poses[1:] or poses]
+        path = _clear_of_junctions(run_carla_map(world), ahead)
+        if not path:
+            logger.warning("%s: an empty route to follow", _entity_name(entity))
+            return
+        tm.set_path(_vehicle(actor), path)
+        logger.info("%s: set a route of %d points", _entity_name(entity), len(path))
+
     def release(self, entity: DrivenEntity, world: "carla.World") -> None:
         """Take *entity*'s vehicle off autopilot, and keep it off at :meth:`start`."""
         actor = _require_actor(entity, "release")
@@ -837,6 +879,28 @@ def _actor_name(actor: "carla.Actor") -> str:
     if "role_name" in attributes:
         return str(attributes["role_name"])
     return f"actor {actor.id}"
+
+
+def _clear_of_junctions(
+    carla_map: "carla.Map", path: List["carla.Location"]
+) -> List["carla.Location"]:
+    """*path* without its points in a junction or next to one.
+
+    The TrafficManager takes a junction's way out whose road is the road of
+    the next point, failing that the one nearest it.  A point in a junction is
+    on a road of the junction's own -- or on several, at its edge -- and the
+    nearest way out of a junction's middle is any of them; so the next point
+    at a junction has to be on the road out.
+    """
+    inside: List[bool] = []
+    for location in path:
+        found = carla_map.get_waypoint(location)
+        inside.append(found is not None and found.is_junction)
+    clear: List["carla.Location"] = []
+    for i, location in enumerate(path):
+        if not any(inside[max(0, i - 1) : i + 2]):
+            clear.append(location)
+    return clear
 
 
 def _require_actor(entity: DrivenEntity, what: str) -> Optional["carla.Actor"]:

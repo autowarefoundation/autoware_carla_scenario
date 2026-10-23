@@ -1199,6 +1199,14 @@ class SumoTrafficBackend(TrafficBackend):
         except Exception as exc:  # noqa: BLE001
             logger.warning("SUMO could not turn %s: %s", sumo_id, exc)
 
+    def follow_route(self, entity: Any, world: Any, stops: Any) -> None:
+        """Hand the route through *stops* to the TrafficManager for a vehicle it drives; one SUMO
+        drives keeps the route it has (its lanelets are not mapped to edges)."""
+        if self._id_of(entity) is None and self._tm_drives_scenario:
+            self._tm.follow_route(entity, world, stops)
+            return
+        self._unavailable("follow_route", entity)
+
     def release(self, entity: Any, world: Any) -> None:
         """Stop driving *entity* in SUMO and publish it there instead.
 

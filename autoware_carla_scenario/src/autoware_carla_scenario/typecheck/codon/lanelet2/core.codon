@@ -237,6 +237,12 @@ class ConstLanelet:
     def id(self) -> int:
         raise NotImplementedError()
 
+    def inverted(self) -> bool:
+        raise NotImplementedError()
+
+    def invert(self) -> ConstLanelet:
+        raise NotImplementedError()
+
     @property
     def attributes(self) -> AttributeMap:
         raise NotImplementedError()

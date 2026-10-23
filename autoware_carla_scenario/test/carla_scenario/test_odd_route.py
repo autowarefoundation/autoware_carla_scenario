@@ -718,3 +718,113 @@ class TestRunnerWarning:
         finally:
             MapManager._instance = saved
         assert caplog.text == ""
+
+
+class TestRoutePoses:
+    """The route a backend-driven ego is handed, a pose every few metres."""
+
+    def test_from_the_start_pose_to_the_goal_pose(
+        self, nishishinjuku: tuple[Any, Any]
+    ) -> None:
+        from autoware_carla_scenario.odd.route_plan import route_poses
+
+        poses = route_poses(LEFT_TURN, *nishishinjuku, 5.0)
+        assert poses[0] == Lanelet2Pose(lanelet_id=203, s=25.0)
+        assert poses[-1] == Lanelet2Pose(lanelet_id=207, s=10.0)
+        assert list(dict.fromkeys(p.lanelet_id for p in poses)) == [203, 411, 207]
+
+    def test_a_pose_every_step_along_each_lanelet(
+        self, nishishinjuku: tuple[Any, Any]
+    ) -> None:
+        from autoware_carla_scenario.odd.route_plan import route_poses
+
+        poses = route_poses(LEFT_TURN, *nishishinjuku, 5.0)
+        on_203 = [p.s for p in poses if p.lanelet_id == 203]
+        assert on_203[0] == 25.0
+        assert all(b - a == pytest.approx(5.0) for a, b in zip(on_203, on_203[1:]))
+        assert on_203[-1] > _length(nishishinjuku, 203) - 5.0
+
+    def test_a_lane_change_crosses_at_the_middle(
+        self, nishishinjuku: tuple[Any, Any]
+    ) -> None:
+        """Not the length of both lanelets: the path would double back."""
+        from autoware_carla_scenario.odd.route_plan import route_poses
+
+        lanelet_map, graph = nishishinjuku
+        after = graph.following(lanelet_map.laneletLayer[184])[0].id
+        route = PlannedRoute(
+            start=Lanelet2Pose(lanelet_id=183, s=0.0),
+            goal=Lanelet2Pose(lanelet_id=after, s=5.0),
+        )
+        poses = route_poses(route, lanelet_map, graph, 2.0)
+        assert (
+            max(p.s for p in poses if p.lanelet_id == 183)
+            < _length(nishishinjuku, 183) / 2
+        )
+        assert min(p.s for p in poses if p.lanelet_id == 184) == pytest.approx(
+            _length(nishishinjuku, 184) / 2
+        )
+
+    def test_the_lanelets_are_plan_routes(self, nishishinjuku: tuple[Any, Any]) -> None:
+        from autoware_carla_scenario.odd.route_plan import route_lanelets
+
+        assert [int(ll.id) for ll in route_lanelets(LEFT_TURN, *nishishinjuku)] == [
+            i for i, _ in plan_route(LEFT_TURN, *nishishinjuku)
+        ]
+
+
+def _walkway_pair() -> tuple[Any, Any]:
+    """Two walkways in a row along x, 0..10 and 10..20, walkable both ways."""
+    import lanelet2.core
+    import lanelet2.routing
+    import lanelet2.traffic_rules
+    from lanelet2.core import AttributeMap, Lanelet, LaneletMap, LineString3d, Point3d
+
+    ids = iter(range(100, 1000))
+
+    def line(y: float, xs: tuple[float, ...]) -> Any:
+        return LineString3d(next(ids), [Point3d(next(ids), x, y, 0.0) for x in xs])
+
+    lanelet_map = LaneletMap()
+    left = [line(1.0, (0.0, 10.0)), line(1.0, (10.0, 20.0))]
+    right = [line(-1.0, (0.0, 10.0)), line(-1.0, (10.0, 20.0))]
+    # The second starts where the first ends: the same points.
+    left[1] = LineString3d(next(ids), [left[0][1], Point3d(next(ids), 20.0, 1.0, 0.0)])
+    right[1] = LineString3d(
+        next(ids), [right[0][1], Point3d(next(ids), 20.0, -1.0, 0.0)]
+    )
+    for lanelet_id, (left_bound, right_bound) in zip((1, 2), zip(left, right)):
+        lanelet_map.add(
+            Lanelet(
+                lanelet_id,
+                left_bound,
+                right_bound,
+                AttributeMap(
+                    {"type": "lanelet", "subtype": "walkway", "one_way": "no"}
+                ),
+            )
+        )
+    rules = lanelet2.traffic_rules.create(
+        lanelet2.traffic_rules.Locations.Germany,
+        lanelet2.traffic_rules.Participants.Pedestrian,
+    )
+    return lanelet_map, lanelet2.routing.RoutingGraph(lanelet_map, rules)
+
+
+class TestAWalkAgainstTheLanelets:
+    def test_s_runs_down_a_lanelet_walked_backwards(self) -> None:
+        from autoware_carla_scenario.odd.route_plan import route_poses
+
+        lanelet_map, graph = _walkway_pair()
+        route = PlannedRoute(
+            start=Lanelet2Pose(lanelet_id=2, s=7.0),
+            goal=Lanelet2Pose(lanelet_id=1, s=2.0),
+        )
+        poses = route_poses(route, lanelet_map, graph, 2.0, bidirectional=True)
+
+        assert poses[0] == Lanelet2Pose(lanelet_id=2, s=7.0)
+        assert poses[-1] == Lanelet2Pose(lanelet_id=1, s=2.0)
+        assert [p.lanelet_id for p in poses] == [2] * 4 + [1] * 5
+        # x along the walk: 17, 15, 13, 11, then 10, 8, 6, 4, 2 -- always down.
+        x = [p.s + (10.0 if p.lanelet_id == 2 else 0.0) for p in poses]
+        assert all(b < a for a, b in zip(x, x[1:]))

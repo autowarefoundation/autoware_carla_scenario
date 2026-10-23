@@ -522,3 +522,49 @@ class TestTheTurnActionDelegates:
                 _World(_Map(None))
             )
         assert "not found" in caplog.text
+
+
+class TestFollowRoute:
+    def test_the_route_reaches_the_backend(self) -> None:
+        sent: list[object] = []
+
+        class _Backend:
+            def follow_route(self, entity, world, route) -> None:  # noqa: ANN001
+                sent.append(route)
+
+        vehicle = _Vehicle(_Actor(_Transform(_Location())))
+        vehicle.set_traffic_backend(_Backend())  # type: ignore[arg-type]
+        route = object()
+        vehicle.follow_route(_World(_Map(None)), route)  # type: ignore[arg-type]
+        assert sent == [route]
+
+    def test_a_junction_and_its_edges_are_left_out(self) -> None:
+        """At a junction the TrafficManager takes the road of the next point.
+
+        A point in a junction, or next to one, is on several ways through, so
+        it is left out: the next point is then on the road out.
+        """
+        from autoware_carla_scenario.traffic.traffic_manager import (
+            _clear_of_junctions,
+        )
+
+        class _Lane:
+            def __init__(self, x: float) -> None:
+                self.is_junction = 10.0 <= x <= 20.0
+
+        class _LaneMap:
+            def get_waypoint(self, location):  # noqa: ANN001
+                return _Lane(location.x)
+
+        path = [_Location(float(x), 0.0) for x in range(0, 31, 5)]
+        kept = _clear_of_junctions(_LaneMap(), path)  # type: ignore[arg-type]
+        assert [p.x for p in kept] == [0.0, 30.0]
+
+    def test_an_autoware_ego_refuses_a_route(self, caplog) -> None:
+        from autoware_carla_scenario.autoware_bridge import FakeAutowareBridge
+        from autoware_carla_scenario.entity import AutowareEgoEntity
+
+        entity = AutowareEgoEntity(bridge=FakeAutowareBridge())
+        with caplog.at_level("WARNING"):
+            entity.follow_route(_World(_Map(None)), object())  # type: ignore[arg-type]
+        assert "not driven by the TrafficManager" in caplog.text

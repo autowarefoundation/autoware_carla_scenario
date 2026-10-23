@@ -183,6 +183,14 @@ class BaseAction(ABC):
         return False
 
     @property
+    def needs_tick_loop(self) -> bool:
+        """Whether the action has to run on the tick loop, because it keeps
+        acting: one registered for initialization is put on the loop instead
+        (:meth:`~autoware_carla_scenario.scenario_base.BaseScenario.register_init`).
+        ``False`` unless the action says."""
+        return False
+
+    @property
     def reissues_while_running(self) -> bool:
         """Whether :meth:`execute` is called again on every tick of the run.
 

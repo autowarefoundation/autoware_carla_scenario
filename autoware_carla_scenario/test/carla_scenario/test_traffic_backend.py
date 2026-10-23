@@ -150,6 +150,7 @@ class TestTheContract:
         world = _World()
         backend.change_lane(entity, world, LaneChangeDirection.LEFT)
         backend.turn_at_junction(entity, world, TurnDirection.RIGHT)
+        backend.follow_route(entity, world, [])
         assert backend.lane_change_finished(entity, world) is False
 
     def test_it_names_itself_for_the_result_record(
@@ -682,6 +683,9 @@ class _Recording(TrafficBackend):
     ) -> None:
         self.calls.append(("turn_at_junction", direction))
 
+    def follow_route(self, entity: Any, world: Any, path: Any) -> None:
+        self.calls.append(("follow_route", path))
+
 
 class _Vehicle(BackendDriven):
     def __init__(self, role_name: str = "npc1") -> None:
@@ -791,10 +795,12 @@ class TestEntityDelegation:
 
         vehicle.change_lane(world, LaneChangeDirection.LEFT)
         vehicle.turn_at_junction(world, TurnDirection.RIGHT)
+        vehicle.follow_route(world, [])
         assert vehicle.lane_change_finished(world) is True
         assert [name for name, _ in backend.calls] == [
             "change_lane",
             "turn_at_junction",
+            "follow_route",
             "lane_change_finished",
         ]
 
