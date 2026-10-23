@@ -3676,11 +3676,36 @@ in step:</p>
 <code>Protocol</code>, <code>runtime_checkable</code>, <code>Literal</code>, <code>IO</code>, <code>Iterator</code>, <code>Deque</code>,
 <code>DefaultDict</code>, <code>Counter</code>, <code>Final</code>, <code>Annotated</code>, <code>NoReturn</code>, <code>Type</code>, <code>Sized</code>,
 <code>Hashable</code>, <code>cast</code>, <code>Optional</code>, <code>List</code>, <code>Dict</code>, <code>Set</code>, <code>Tuple</code>, <code>Callable</code>,
-<code>Union</code>, <code>ClassVar</code>, <code>Generator</code>, <code>overload</code></p>
+<code>Union</code>, <code>ClassVar</code>, <code>Generator</code>, <code>overload</code>, <code>Self</code>, <code>override</code>, <code>TypeAlias</code>,
+<code>NewType</code>, <code>Never</code>, <code>assert_never</code>, <code>TypeGuard</code>, <code>TypeIs</code>, <code>Container</code></p>
 <!-- typing-names:end -->
 
 <ul>
-<li><code>Final</code> and <code>Annotated</code> are read as what they wrap (<code>Final[int]</code> and
+<li><code>typing_extensions</code> has the same names as far as <code>typing</code> has them, so a
+  scenario for Python 3.10 imports <code>Self</code>, <code>override</code>, <code>Never</code>,
+  <code>assert_never</code> and <code>TypeIs</code> (which <code>typing</code> gained later) from there; any other
+  name of it (<code>deprecated</code>, <code>ReadOnly</code>) is refused with a hint to this list.</li>
+<li>The type-only names are rewritten before Codon reads the code (#514), and
+  none of them is checked: <code>@override</code> is dropped (not that the method
+  overrides one); <code>X: TypeAlias = T</code> is <code>X = T</code>; <code>Self</code> in an annotation of a
+  class is the class (<code>-&gt; Self</code> is <code>-&gt; Counter</code>, so a subclass's method is
+  checked as returning its base, and a call of <code>Twice(1).inc().twice_only()</code>
+  is refused although Python accepts it); <code>NewType("LaneId", int)</code> is <code>LaneId
+  = int</code> and <code>LaneId(v)</code> is <code>(v)</code>, so the new type is checked as its base (a
+  <code>LaneId</code> is any <code>int</code>, as Python runs it); <code>assert_never(x)</code>, as a
+  statement or a <code>return</code>, is <code>raise AssertionError(...)</code>, and anywhere else
+  (a ternary, a lambda body, an argument) it is refused, since Codon types the
+  call as <code>None</code>; <code>Never</code> and <code>Container</code>
+  annotations are dropped, like <code>NoReturn</code> and <code>Sized</code>; <code>TypeGuard[X]</code> and
+  <code>TypeIs[X]</code> are <code>bool</code>, which they are at run time.</li>
+<li>
+<p>A <code>TypeVar</code> with a <code>bound=</code> or constraints (<code>TypeVar("B", bound=Base)</code>,
+  <code>TypeVar("N", int, float)</code>) is rewritten to <code>TypeVar("B")</code> (#513): Codon's
+  takes a name only, and makes a function generic over its unannotated
+  parameters anyway, so the bound or the constraints are not checked.</p>
+</li>
+<li>
+<p><code>Final</code> and <code>Annotated</code> are read as what they wrap (<code>Final[int]</code> and
   <code>Annotated[int, "m"]</code> are <code>int</code>; a bare <code>Final</code> is dropped). <code>NoReturn</code>,
   <code>Type</code>, <code>Sized</code>, <code>Hashable</code>, <code>Any</code> and <code>Callable</code> annotations are dropped,
   so they are not checked. The exception is a <code>Callable[[A], R]</code> parameter
@@ -3707,7 +3732,8 @@ in step:</p>
   imports the class, #495), so <code>if self.cb is not None: self.cb(v)</code> checks.
   Codon accepts a call of it without that test; the check does not refuse it.
   A lambda's type, which Codon names <code>%_lambda_N</code>, shows in a message as "a
-  lambda".</li>
+  lambda".</p>
+</li>
 <li>A Codon abort with <code>std::bad_alloc</code> names the <code>Callable</code> attributes of the
   checked modules at their lines; a function passed where a <code>Callable</code> of
   another signature is expected is named at the call that passes it (Codon
@@ -4735,7 +4761,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
 <p><code>__future__</code>, <code>abc</code>, <code>atexit</code>, <code>dataclasses</code>, <code>enum</code>, <code>hashlib</code>,
   <code>importlib.metadata</code>, <code>logging</code>, <code>os</code>, <code>os.path</code>, <code>pathlib</code>, <code>queue</code>,
   <code>shlex</code>, <code>shutil</code>, <code>signal</code>, <code>subprocess</code>, <code>sys</code>, <code>tempfile</code>, <code>threading</code>,
-  <code>typing</code> and <code>urllib.parse</code>
+  <code>typing</code>, <code>typing_extensions</code> and <code>urllib.parse</code>
   <!-- shims:end -->
 </p>
 <p><code>tempfile</code> declares <code>mkstemp(suffix=None, prefix=None, dir=None,
@@ -5401,6 +5427,49 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   as it is (<code>raise NotImplementedError</code>, an abstract stub) is rewritten to
   an instance (<code>raise NotImplementedError()</code>), which Python raises anyway:
   Codon 0.19 crashes on the class.
+- <strong>A caught exception kept as an <code>Exception</code></strong> (#512): Codon does not
+  convert an exception to its base class (<code>'ValueError' does not match
+  expected type 'Exception'</code>), so <code>last: Exception = ...; except ValueError
+  as e: last = e</code> (also <code>Exception | None</code>, <code>BaseException</code>, <code>list[Exception]</code>
+  and <code>dict[K, Exception]</code> with <code>append</code>, <code>add</code>, an item assignment or a
+  display, a <code>return</code> of <code>-&gt; Exception | None</code>, and an argument of a function,
+  method or class of the module whose parameter is annotated so) is
+  rewritten to <code>last = Exception(e.typename, e.message)</code>: the stored value is
+  a plain <code>Exception</code> with the caught one's type name and message, so
+  <code>str(last)</code> and <code>logger</code> show the same, but <code>raise last</code> is not caught by
+  <code>except ValueError:</code> in the check, and the fields of a subclass are not
+  kept. Only a handler variable (<code>except X as e</code>, X not <code>Exception</code>) is
+  rebuilt: any other value (<code>last: Exception = ValueError("x")</code>, an
+  exception held in a local first) is refused with the hint to store <code>str(e)</code>
+  or catch <code>Exception</code>. <code>raise last</code> of an <code>Exception | None</code> is refused by
+  Codon (<code>exceptions must derive from BaseException</code>): test <code>last is not
+  None</code> and raise a local <code>Exception</code> instead.
+- <strong><code>e.args</code></strong> (#512): Codon's exceptions have no <code>args</code>; the model declares
+  it on Codon's own exception classes (<code>_exceptions.codon</code>) as the one-value
+  tuple of the message, which CPython's is for an exception raised with one
+  message. An exception raised with none or several values has other <code>args</code>
+  there (<code>len(e.args)</code> is 1 here, 0 for <code>ValueError()</code>).
+- <strong><code>operator.itemgetter(i)</code> and <code>attrgetter("n")</code> are lambdas</strong> (#517):
+  Codon's pass the argument wrapped in a tuple (<code>tuple index out of range</code>,
+  <code>'Tuple[A]' object has no attribute 'n'</code>), so they cannot be a sort key.
+  With literal arguments (an int or str key, a string of dotted attribute
+  names, several of each for a tuple) the check writes the lambda
+  (<code>key=lambda v: v[1]</code>, <code>lambda v: v.n</code>, <code>lambda v: (v[0], v[2])</code>), however
+  it is imported (<code>operator.itemgetter</code>, <code>from operator import itemgetter as
+  ig</code>); with a variable it refuses the call and says to write the lambda.
+- <strong><code>copy.copy</code> and <code>copy.deepcopy</code> of a class of the module</strong> (#517): Codon
+  calls the class's <code>__copy__</code> and <code>__deepcopy__</code>, which a class has not. In a
+  module that imports <code>copy</code> the check writes both, with <code>@extend</code>, for each
+  top-level class whose bases it can see (none, <code>object</code>, <code>ABC</code>, or classes
+  of the module): <code>__copy__</code> makes a new instance holding the same field
+  values, <code>__deepcopy__</code> one holding a deep copy of each, over the class-level
+  annotated fields (a base's first, <code>ClassVar</code> left out), as Python copies the
+  attributes. A method the class defines itself is kept. A class with another
+  base (a framework class), an exception, an Enum and a NamedTuple get none,
+  and a class defined in a module that does not import <code>copy</code> has none:
+  copying it from another module is refused with the hint to define the two
+  methods on the class (<code>def __copy__(self) -&gt; Self</code>) or to build the copy
+  from its fields. <code>copy.copy</code> of a list, dict or set compiles as it is.
 - <strong><code>frozenset</code> is checked as a <code>set</code></strong>: Codon 0.19 has none, so the check
   rewrites <code>frozenset(...)</code> to <code>set(...)</code>, <code>frozenset[X](...)</code> to
   <code>Set[X](...)</code> and <code>frozenset[X]</code> / <code>FrozenSet[X]</code> to <code>Set[X]</code>; the source
@@ -5851,7 +5920,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 23, 2026 11:57:18 UTC"><span class="timeago" datetime="2026-10-23T11:57:18+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 23, 2026 11:57:18 UTC">2026-10-23</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 23, 2026 13:07:15 UTC"><span class="timeago" datetime="2026-10-23T13:07:15+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 23, 2026 13:07:15 UTC">2026-10-23</span>
   </span>
 
     
