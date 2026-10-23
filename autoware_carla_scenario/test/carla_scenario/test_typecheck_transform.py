@@ -4522,3 +4522,78 @@ def test_replace_imported_inside_a_function_is_lowered() -> None:
         "def f(w):\n    from dataclasses import replace\n    return replace(w, a=2)\n"
     )
     assert "replace(w)._acs_with__a(2)" in transform_source(source)
+
+
+@pytest.mark.parametrize(
+    "annotation",
+    [
+        "Optional[Callable[[int], int]]",
+        "Callable[[int], int] | None",
+        "None | Callable[[int], int]",
+        "Union[Callable[[int], int], None]",
+        '"Callable[[int], int] | None"',
+    ],
+)
+def test_an_optional_callable_parameter_the_body_stores_is_the_plain_callable(
+    annotation: str,
+) -> None:
+    # Codon takes a function, a lambda and `None` for the plain Callable, but
+    # none of the first two for an Optional of it (#495); the None default
+    # stays as it is.
+    out = _transform(
+        f"""
+        class Opt:
+            def __init__(self, cb: {annotation} = None) -> None:
+                self.cb = cb
+
+            def set(self, *, other: {annotation}) -> None:
+                self.other = other
+        """
+    )
+    assert "def __init__(self, cb: Callable[Tuple[int], int] = None)" in out
+    assert "other: Callable[Tuple[int], int]) -> None:" in out
+
+
+def test_an_optional_callable_parameter_the_body_only_calls_stays_generic() -> None:
+    out = _transform(
+        """
+        def apply(v: int, cb: Callable[[int], int] | None = None) -> int:
+            return v if cb is None else cb(v)
+        """
+    )
+    assert "def apply(v: int, cb = Optional[Callable[[int], int]]()) -> int:" in out
+
+
+@pytest.mark.parametrize(
+    "annotation",
+    [
+        "Callable[[int], int] | None",
+        "Optional[Callable[[int], int]]",
+        "None | Callable[[int], int]",
+    ],
+)
+def test_an_optional_callable_attribute_is_written_as_optional(
+    annotation: str,
+) -> None:
+    # `Callable[...] | None` at class level is a runtime `|` Codon cannot
+    # evaluate (#495).
+    out = _transform(
+        f"""
+        class Box:
+            cb: {annotation} = None
+        """
+    )
+    assert "    cb: Optional[Callable[Tuple[int], int]] = None" in out
+    assert " | " not in out
+
+
+def test_an_optional_callable_attribute_codon_cannot_express_is_kept_as_written() -> (
+    None
+):
+    out = _transform(
+        """
+        class Box:
+            cb: Callable[..., int] | None = None
+        """
+    )
+    assert "    cb: Optional[Callable[..., int]] = None" in out

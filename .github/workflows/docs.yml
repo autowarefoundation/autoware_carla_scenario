@@ -52,7 +52,7 @@ concurrency:
 jobs:
   deploy:
     name: deploy the documentation
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       REQUESTED: ${{ inputs.version }}
       CONFIG: autoware_carla_scenario/mkdocs.yml

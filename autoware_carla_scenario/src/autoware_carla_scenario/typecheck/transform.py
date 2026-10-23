@@ -711,6 +711,11 @@ def kept_callable_parameter(node: ast.AST) -> str | None:
     the annotation: Codon aborts with ``std::bad_alloc`` on the generic
     parameter put in a typed container (#488).
     """
+    member = optional_callable(node)
+    if member is not None:
+        # `Optional[Callable[[A], R]]` / `Callable[[A], R] | None`: Codon takes
+        # a function, a lambda or `None` for the plain `Callable` (#495).
+        node = member
     spelled = callable_annotation(node)
     if spelled is None:
         return None
@@ -724,6 +729,37 @@ def kept_callable_parameter(node: ast.AST) -> str | None:
     args = [codon_annotation(p, class_level=True) for p in params.elts]
     ret = codon_annotation(result, class_level=True)
     return f"Callable[Tuple[{', '.join(str(a) for a in args)}], {ret}]"
+
+
+def optional_callable(node: ast.AST) -> ast.AST | None:
+    """The ``Callable[...]`` of an ``Optional[Callable[...]]`` /
+    ``Callable[...] | None`` annotation, or ``None`` for any other annotation."""
+    member = _optional_member(node)
+    if member is None:
+        return None
+    if isinstance(member, ast.Constant) and isinstance(member.value, str):
+        try:
+            member = ast.parse(member.value, mode="eval").body
+        except SyntaxError:
+            return None
+    if isinstance(member, ast.Subscript) and _dotted(member.value) in _CALLABLE_NAMES:
+        return member
+    return None
+
+
+def optional_callable_attribute(node: ast.AST) -> str | None:
+    """``Optional[Callable[Tuple[A], R]]`` for a class-level optional callback.
+
+    ``cb: Callable[[int], int] | None`` is a runtime ``|`` between a
+    ``Callable`` and an ``Optional`` when Codon evaluates the class body, which
+    it cannot (#495); ``Optional[...]`` is the same type, and the spelling of a
+    parameter that is stored in it (:func:`kept_callable_parameter`).
+    """
+    member = optional_callable(node)
+    if member is None:
+        return None
+    inner = kept_callable_parameter(member) or ast.unparse(member)
+    return f"Optional[{inner}]"
 
 
 #: Methods that put their argument in a collection.
@@ -1435,6 +1471,8 @@ class _Rewriter(ShadowScopes):
         if _annotation_names(node) & self._type_vars:
             return None  # a TypeVar, which types for mypy only
         converted = codon_annotation(node, class_level=class_level)
+        if converted is None and class_level:
+            converted = optional_callable_attribute(node)
         if converted is not None:
             self._write_annotation(node, converted)
         return converted
@@ -1524,7 +1562,20 @@ class _Rewriter(ShadowScopes):
             self._rewrite_bare_star(args)
         self._default_required_keywords(args)
 
-    def _rewrite_defaults(self, args: ast.arguments) -> None:
+    def _kept_optional_callable(self, arg: ast.arg, body: list[ast.stmt]) -> bool:
+        """Whether *arg* is an optional ``Callable`` parameter the body stores."""
+        node = arg.annotation
+        return (
+            node is not None
+            and optional_callable(node) is not None
+            and stored_parameters(body, {arg.arg}, self._forwards) != set()
+            and not _annotation_names(node) & (self._later_classes | self._type_vars)
+            and kept_callable_parameter(node) is not None
+        )
+
+    def _rewrite_defaults(
+        self, args: ast.arguments, body: list[ast.stmt] | None = None
+    ) -> None:
         """Type a default the dropped annotation of its parameter would type.
 
         A ``Sequence[X]`` / ``Collection[X]`` / ``tuple[X, ...]`` parameter is
@@ -1588,6 +1639,8 @@ class _Rewriter(ShadowScopes):
                 elif isinstance(default, ast.List):
                     typed = _sequence_list(arg.annotation)
             elif _is_none(default):
+                if self._kept_optional_callable(arg, body or []):
+                    continue  # the annotation is the plain `Callable` (#495)
                 member = _optional_member(arg.annotation)
                 inner = (
                     None
@@ -1745,7 +1798,7 @@ class _Rewriter(ShadowScopes):
                 self.visit(decorator)
         if classmethod_ and self._class_name is not None:
             self._rewrite_classmethod(node, self._class_name)
-        self._rewrite_defaults(node.args)
+        self._rewrite_defaults(node.args, node.body)
         self._rewrite_arguments(node.args, skip_first=classmethod_, body=node.body)
         self._rewrite_returns(node)
         for default in [*node.args.defaults, *node.args.kw_defaults]:

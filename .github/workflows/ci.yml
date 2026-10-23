@@ -29,7 +29,7 @@ jobs:
     # runs the floor and the ceiling, which stand in for the interpreters
     # between them; master catches what only those break.
     name: test (${{ matrix.python-version }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     if: >-
       github.event_name != 'push' ||
       !startsWith(github.event.head_commit.message, 'chore: bump version to ')
@@ -92,7 +92,7 @@ jobs:
     # Python its own tests run on); test-arm64 exports from the floor and the
     # ceiling, this leg from the middle.
     name: slow tests (3.12)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Repeats the pull request's verdict and seeds no cache: see the top.
     if: github.event_name == 'pull_request'
 
@@ -172,7 +172,7 @@ jobs:
     # does not depend on the interpreter. Building it in every matrix leg
     # reported one break as three red jobs.
     name: build the package
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Repeats the pull request's verdict and seeds no cache: see the top.
     if: github.event_name == 'pull_request'
     steps:
@@ -188,7 +188,7 @@ jobs:
       run: uv build --package autoware-carla-scenario
 
   lint-and-format:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Repeats the pull request's verdict and seeds no cache: see the top.
     if: github.event_name == 'pull_request'
     steps:
@@ -203,7 +203,7 @@ jobs:
 
   auto-format:
     name: Auto-fix formatting
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: lint-and-format
     if: |
       failure() &&
@@ -240,7 +240,7 @@ jobs:
           git push
 
   docs:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Repeats the pull request's verdict and seeds no cache: see the top. The
     # Docs workflow builds and deploys master's documentation.
     if: github.event_name == 'pull_request'
@@ -287,7 +287,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: ubuntu-latest
+          - runner: ubuntu-24.04
             arch: x64
           - runner: ubuntu-24.04-arm
             arch: arm64

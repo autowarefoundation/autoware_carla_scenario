@@ -1422,6 +1422,28 @@ def _column_survives(column: int, compiled: str, written: str) -> bool:
     return before <= len(written) and compiled[:before] == written[:before]
 
 
+#: Codon's internal name of a lambda's type (``%_lambda_981(...)``,
+#: ``%_lambda_88[T1]``), which names nothing in the scenario's source.
+_LAMBDA_TYPE = re.compile(r"%_lambda_\d+(?:\(\.\.\.\)|\[[^\]]*\])?")
+
+
+def _without_lambda_names(diagnostic: Diagnostic) -> Diagnostic:
+    """*diagnostic* with the lambda type names of its message and trace plain.
+
+    Done once the hints, which match Codon's own wording, have been applied.
+    """
+    return dataclasses.replace(
+        diagnostic,
+        message=_plain_lambda_names(diagnostic.message),
+        trace=tuple(_plain_lambda_names(t) for t in diagnostic.trace),
+    )
+
+
+def _plain_lambda_names(message: str) -> str:
+    """*message* with Codon's lambda type names read as "a lambda" (#495)."""
+    return _LAMBDA_TYPE.sub("a lambda", message)
+
+
 def _parse_output(output: str, ws: _Workspace) -> list[Diagnostic]:
     """Codon's errors, each located at its innermost frame in the scenario's files."""
     by_basename: dict[str, list[str]] = {}
@@ -2335,7 +2357,7 @@ def _compile(
     return TypeCheckResult(
         name,
         ok=proc.returncode == 0,
-        diagnostics=diagnostics,
+        diagnostics=[_without_lambda_names(d) for d in diagnostics],
         warnings=list(ws.warnings),
         crashed=crashed,
         output=output,
