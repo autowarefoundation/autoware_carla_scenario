@@ -34,8 +34,6 @@ _UE5_WALKER_SPEED_SCALE = 20.5
 #: Metres between the points of a walk :func:`plan_walk` lays out.
 WALK_POINT_STEP_M: float = 1.5
 
-#: The lanelets a walk is laid on, by subtype.
-WALKABLE_SUBTYPES: tuple[str, ...] = ("walkway", "crosswalk", "sidewalk")
 _UE5_WALKER_MAX_SPEED_MS = 2.0
 
 
@@ -277,17 +275,18 @@ def plan_walk(
 
     A point every :data:`WALK_POINT_STEP_M` metres, in CARLA world coordinates,
     from the walker's own position.  Each leg -- to the first waypoint, ... to
-    the goal -- is the shortest path on the walkable lanelets
-    (:attr:`~autoware_carla_scenario.coordinate.map_manager.MapManager.pedestrian_routing_graph`)
-    where there is one, and a straight line where there is none: a map whose
-    crosswalks only overlap its walkways, as most do, has no path across a road,
-    so a walk that should cross at a crosswalk names it as a waypoint.  Empty
-    when the walker has not been spawned.
+    the goal -- is the shortest walk on the walkable lanelets
+    (:class:`~autoware_carla_scenario.coordinate.walk_graph.WalkGraph`), which
+    crosses a road at a crosswalk that only overlaps the walkways, and walks a
+    walkway either way, whatever its ``one_way`` tag.  A leg with no such walk
+    -- a waypoint off the walkable lanelets, or a map with nothing joining
+    them -- is a straight line, and says so in a warning.  Empty when the
+    walker has not been spawned.
     """
     from ..coordinate.map_manager import MapManager  # noqa: PLC0415
     from ..coordinate.poses import CarlaWorldPose  # noqa: PLC0415
     from ..coordinate.transform import to_carla_world  # noqa: PLC0415
-    from ..odd.route_plan import PlannedRoute, RouteError, route_poses  # noqa: PLC0415
+    from ..coordinate.walk_graph import walk_graph  # noqa: PLC0415
 
     points: List[CarlaWorldPose] = []
     actor = walker.actor
@@ -307,6 +306,7 @@ def plan_walk(
     )
     points.append(here)
     mm = MapManager.get_instance()
+    graph = walk_graph(mm.lanelet_map)
     current = _on_walkable_lanelet(here)
     stops: List[Lanelet2Pose] = list(waypoints)
     stops.append(goal)
@@ -314,23 +314,18 @@ def plan_walk(
         leg: List[CarlaWorldPose] = []
         if current is not None:
             start: Lanelet2Pose = current
-            try:
-                for pose in route_poses(
-                    PlannedRoute(start=start, goal=stop),
-                    mm.lanelet_map,
-                    mm.pedestrian_routing_graph,
-                    WALK_POINT_STEP_M,
-                ):
+            walk = graph.walk(start, stop, WALK_POINT_STEP_M)
+            if walk is not None:
+                found: List[Lanelet2Pose] = walk
+                for pose in found:
                     leg.append(to_carla_world(pose))
-            except RouteError as error:
-                logger.info(
-                    "PedestrianEntity '%s': walks straight to lanelet %d (%s)",
-                    walker.role_name,
-                    stop.lanelet_id,
-                    error,
-                )
-                leg = []
         if not leg:
+            logger.warning(
+                "PedestrianEntity '%s': no walk to lanelet %d on the walkable "
+                "lanelets, walks straight there",
+                walker.role_name,
+                stop.lanelet_id,
+            )
             leg = _straight(points[-1], to_carla_world(stop))
         points.extend(leg)
         current = stop
@@ -347,6 +342,7 @@ def _on_walkable_lanelet(pose: "CarlaWorldPose") -> "Optional[Lanelet2Pose]":
         _carla_to_lanelet2_frame,
         project_onto_lanelet,
     )
+    from ..coordinate.walk_graph import WALKABLE_SUBTYPES  # noqa: PLC0415
 
     mm = MapManager.get_instance()
     x, y, _heading = _carla_to_lanelet2_frame(pose)

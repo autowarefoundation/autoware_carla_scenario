@@ -1122,9 +1122,15 @@ vehicle the backend drives, the ego or an NPC, becomes one of them:
 `BackendDriven.route_to` plans the lanelets to it, through any waypoints, and
 hands the backend that path. A pedestrian given one is walked by the
 `RoutingAction` itself, on the tick loop: `plan_walk` lays the walk on the
-walkable lanelets (a straight line for a leg they do not join up, as across a
-road whose crosswalks only overlap its walkways), and the action steps it with
-the walking `FollowTrajectoryAction` does in `FOLLOW` mode.
+walkable lanelets, and the action steps it with the walking
+`FollowTrajectoryAction` does in `FOLLOW` mode. The walk is searched on
+`coordinate.walk_graph.WalkGraph`, not on Lanelet2's routing graph: a crosswalk
+is usually drawn across the walkways it joins, reaching onto them without
+sharing a point, so Lanelet2 joins nothing across a road. The walk graph joins
+a walkable lanelet's end to any walkable lanelet it lies on (or within 0.5 m
+of), at that point along it, and walks every walkway both ways whatever its
+`one_way` tag. A leg it has no walk for (a map with no walkways, as most
+Autoware maps, or a waypoint off them) is a straight line, with a warning.
 
 **Who drives the ego**: `use_autopilot` decides whether the backend is given the
 ego actor to drive or told to keep its hands off it. `EgoVehicle` opts in (TrafficManager drives);
