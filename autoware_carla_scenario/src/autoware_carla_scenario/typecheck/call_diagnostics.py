@@ -25,6 +25,7 @@ import types
 import typing
 from dataclasses import dataclass
 from pathlib import Path
+from collections.abc import Iterator
 from typing import Any, Callable
 
 #: ``no function 'X.__init__' with arguments (X, str, str)``
@@ -578,6 +579,56 @@ def _generic(
 # ---------------------------------------------------------------------------
 
 
+def _returning_function(
+    tree: ast.Module, lines: list[str], line: int, column: int
+) -> ast.FunctionDef | ast.AsyncFunctionDef | None:
+    """The annotated function whose own ``return`` statement starts at
+    (*line*, *column*); ``None`` when that ``return`` belongs to an
+    unannotated nested function, or the function is a generator."""
+
+    def search(
+        node: ast.AST, owner: ast.FunctionDef | ast.AsyncFunctionDef | None
+    ) -> tuple[ast.FunctionDef | ast.AsyncFunctionDef | None] | None:
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                found = search(child, child)
+            elif isinstance(child, ast.Lambda):
+                found = search(child, None)
+            else:
+                if (
+                    isinstance(child, ast.Return)
+                    and child.lineno == line
+                    and _column(lines, line, child.col_offset) == column
+                ):
+                    return (owner,)
+                found = search(child, owner)
+            if found is not None:
+                return found
+        return None
+
+    hit = search(tree, None)
+    function = hit[0] if hit is not None else None
+    if function is None or function.returns is None:
+        return None
+    if any(
+        isinstance(n, (ast.Yield, ast.YieldFrom))
+        for stmt in function.body
+        for n in _own_nodes(stmt)
+    ):
+        return None
+    return function
+
+
+def _own_nodes(node: ast.AST) -> Iterator[ast.AST]:
+    """*node* and its descendants outside nested functions and lambdas."""
+    yield node
+    for child in ast.iter_child_nodes(node):
+        if not isinstance(
+            child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)
+        ):
+            yield from _own_nodes(child)
+
+
 def return_message(
     message: str,
     path: str | None,
@@ -593,24 +644,8 @@ def return_message(
     if not (found or none_returned) or parsed is None or line is None or column is None:
         return None
     tree, lines = parsed
-    functions = [
-        n
-        for n in ast.walk(tree)
-        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
-        and n.returns is not None
-        and n.lineno <= line <= (n.end_lineno or n.lineno)
-    ]
-    if not functions:
-        return None
-    function = max(functions, key=lambda n: n.lineno)
-    for node in ast.walk(function):
-        if (
-            isinstance(node, ast.Return)
-            and node.lineno == line
-            and _column(lines, line, node.col_offset) == column
-        ):
-            break
-    else:
+    function = _returning_function(tree, lines, line, column)
+    if function is None:
         return None
     declared = ast.unparse(function.returns).strip("'\"")  # type: ignore[arg-type]
     if found is None:
@@ -631,8 +666,9 @@ def return_message(
 class Refiner:
     """Applies the rewrites above to a list of diagnostics."""
 
-    resolve_class: Resolver
-    resolve_callable: Resolver
+    #: (name, path of the file the diagnostic is in) -> the Python object
+    resolve_class: Callable[[str, str | None], Any]
+    resolve_callable: Callable[[str, str | None], Any]
 
     def __post_init__(self) -> None:
         self.files = _Files()
@@ -647,8 +683,8 @@ class Refiner:
                 line,
                 column,
                 self.files,
-                self.resolve_class,
-                self.resolve_callable,
+                lambda name: self.resolve_class(name, path),
+                lambda name: self.resolve_callable(name, path),
             )
             if changed is not None:
                 return changed

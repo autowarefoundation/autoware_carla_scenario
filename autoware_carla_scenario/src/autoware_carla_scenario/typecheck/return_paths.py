@@ -10,7 +10,8 @@ on one path although it declares a return type.  Python returns the str, or
 * a function declared to return a type that is not ``None``, ``Optional``,
   ``Any`` or ``NoReturn`` whose body can reach its end.  Control flow is
   followed through ``if``, ``while``, ``for``, ``try``, ``with`` and
-  ``match``; a ``while True`` without a ``break``, ``return``, ``raise``,
+  ``match`` (a match without a wildcard case is
+  taken to be exhaustive); a ``while True`` without a ``break``, ``return``, ``raise``,
   ``assert False`` and a call of ``sys.exit`` or of a function declared
   ``NoReturn`` end a path.  Anything not understood is taken to end the path,
   so the check never refuses a function Python and mypy accept.
@@ -31,7 +32,9 @@ class ReturnProblem(NamedTuple):
 
 
 #: Calls that never return, whichever object they are made on.
-_NO_RETURN_CALLS = frozenset({"exit", "_exit", "abort", "assert_never", "quit"})
+_NO_RETURN_CALLS = frozenset(
+    {"exit", "_exit", "abort", "assert_never", "quit", "fail", "skip", "xfail"}
+)
 _NO_RETURN_TYPES = frozenset({"NoReturn", "Never"})
 _ANY_TYPES = frozenset({"Any", "object"})
 
@@ -85,6 +88,10 @@ def _walk_own(nodes: list[ast.stmt]) -> Iterator[ast.AST]:
     stack: list[ast.AST] = list(nodes)
     while stack:
         node = stack.pop()
+        if isinstance(
+            node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
+        ):
+            continue
         yield node
         for child in ast.iter_child_nodes(node):
             if not isinstance(
@@ -101,25 +108,16 @@ def _breaks(body: list[ast.stmt]) -> bool:
         node = stack.pop()
         if isinstance(node, ast.Break):
             return True
-        for child in ast.iter_child_nodes(node):
-            if isinstance(
-                child,
-                (
-                    ast.FunctionDef,
-                    ast.AsyncFunctionDef,
-                    ast.ClassDef,
-                    ast.Lambda,
-                    ast.While,
-                    ast.For,
-                    ast.AsyncFor,
-                ),
-            ):
-                # a break of a nested loop ends that loop; its else branch
-                # still belongs to this one
-                if isinstance(child, (ast.While, ast.For, ast.AsyncFor)):
-                    stack.extend(child.orelse)
-                continue
-            stack.append(child)
+        if isinstance(node, (ast.While, ast.For, ast.AsyncFor)):
+            # a break of a nested loop ends that loop; its else branch
+            # still belongs to this one
+            stack.extend(node.orelse)
+            continue
+        if isinstance(
+            node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
+        ):
+            continue
+        stack.extend(ast.iter_child_nodes(node))
     return False
 
 
@@ -179,13 +177,10 @@ class _Flow:
                 return False
             return body or handlers
         if isinstance(stmt, ast.Match):
-            irrefutable = any(
-                c.guard is None
-                and isinstance(c.pattern, ast.MatchAs)
-                and c.pattern.pattern is None
-                for c in stmt.cases
-            )
-            return any(self.falls(c.body) for c in stmt.cases) or not irrefutable
+            # Without a wildcard case the match may still be exhaustive (an
+            # enum, a union), which mypy accepts: only a case body that falls
+            # off the end counts.
+            return any(self.falls(c.body) for c in stmt.cases)
         return True
 
 

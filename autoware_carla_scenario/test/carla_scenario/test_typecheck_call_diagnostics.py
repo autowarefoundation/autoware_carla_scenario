@@ -511,3 +511,74 @@ def test_codon_types_read_as_python_types() -> None:
     assert codon_type("Optional[NoneType]") == "None"
     assert codon_type("Optional[float]") == "float | None"
     assert codon_type("List[int]") == "list[int]"
+
+
+_VALID_FLOW = """
+import os
+import pytest
+from typing import Iterator
+
+
+def nested_loop_break(x) -> int:
+    while True:
+        for i in x:
+            if i:
+                break
+        return 1
+
+
+def exhaustive_match(x) -> int:
+    match x:
+        case 1:
+            return 1
+        case 2:
+            return 2
+
+
+def pytest_fail() -> int:
+    pytest.fail("no")
+
+
+def os_exit() -> int:
+    os._exit(1)
+
+
+def nested_helpers() -> bool:
+    def inner():
+        return "s"
+
+    def gen():
+        yield 1
+
+    return True
+"""
+
+
+def test_flow_probes_of_valid_code_are_not_flagged() -> None:
+    tree = ast.parse(_VALID_FLOW)
+    assert return_problems({"m": ("m.py", tree)}) == []
+
+
+def test_a_return_of_a_nested_function_is_not_the_outer_functions(
+    tmp_path: Path,
+) -> None:
+    source = (
+        "def outer() -> float:\n"
+        "    def inner():\n"
+        '        return "s"\n'
+        "    return 1.0\n"
+        "g = lambda: 1\n"
+    )
+    path = tmp_path / "m.py"
+    path.write_text(source)
+    from autoware_carla_scenario.typecheck.call_diagnostics import (
+        _Files,
+        return_message,
+    )
+
+    message = "'float' does not match expected type 'str'"
+    files = _Files()
+    assert return_message(message, str(path), 3, 9, files) is None
+    assert "outer() returns str" in (
+        return_message(message, str(path), 4, 5, files) or ""
+    )

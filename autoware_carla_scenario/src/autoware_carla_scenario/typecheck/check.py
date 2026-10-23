@@ -1193,10 +1193,19 @@ def _uninferred_attributes(
 _NO_ATTRIBUTE = re.compile(r"'(?P<cls>\w+)' object has no attribute '(?P<attr>\w+)'")
 
 
-def _python_class(name: str, sources: _Sources) -> type | None:
+def _lookup_order(sources: _Sources, path: str | None) -> list[str]:
+    """The modules to look a name up in: the one in the file *path* first
+    (its name is what that file's calls mean, whatever another module
+    defines), then the other checked modules, then the modelled ones."""
+    own = [n for n, m in sources.modules.items() if path and str(m.path) == path]
+    rest = [n for n in sources.modules if n not in own]
+    return [*own, *rest, *sorted(_model_modules())]
+
+
+def _python_class(name: str, sources: _Sources, path: str | None = None) -> type | None:
     """The Python class Codon calls *name*: one of the checked modules' (a
     scenario's own subclass), else one a modelled module defines."""
-    for module in [*sources.modules, *sorted(_model_modules())]:
+    for module in _lookup_order(sources, path):
         try:
             found = getattr(importlib.import_module(module), name, None)
         except Exception:  # noqa: BLE001 - only a hint: a module that does not import
@@ -1516,10 +1525,10 @@ def _column_survives(column: int, compiled: str, written: str) -> bool:
 _LAMBDA_TYPE = re.compile(r"%_lambda_\d+(?:\(\.\.\.\)|\[[^\]]*\])?")
 
 
-def _python_callable(name: str, sources: _Sources) -> Any:
+def _python_callable(name: str, sources: _Sources, path: str | None = None) -> Any:
     """The Python function Codon calls *name*: one of the checked modules',
     else one a modelled module defines."""
-    for module in [*sources.modules, *sorted(_model_modules())]:
+    for module in _lookup_order(sources, path):
         try:
             found = getattr(importlib.import_module(module), name, None)
         except Exception:  # noqa: BLE001 - only a hint: a module that does not import
@@ -2509,8 +2518,8 @@ def _compile(
                 pass
     seconds = time.monotonic() - started
     refiner = Refiner(
-        lambda name: _python_class(name, sources),
-        lambda name: _python_callable(name, sources),
+        lambda name, path: _python_class(name, sources, path),
+        lambda name, path: _python_callable(name, sources, path),
     )
     codegen = proc.returncode != 0 and _LLVM_ERROR in output
     if codegen:
