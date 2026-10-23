@@ -83,6 +83,12 @@ def steer_walker(
     """
     target = path.at_distance(here + WALKER_LOOKAHEAD_M)
     dx, dy = target.x - location.x, target.y - location.y
+    if TYPE_CHECKING:
+        # The way ahead is read off a world snapshot (utils.clearance, which
+        # the static check does not compile).
+        pass
+    else:
+        dx, dy, speed_mps = _clear_walk(actor, location, dx, dy, speed_mps)
     norm = math.hypot(dx, dy)
     if norm < 1e-6:
         speed_mps, dx, dy, norm = 0.0, 1.0, 0.0, 1.0
@@ -92,6 +98,55 @@ def steer_walker(
             speed=walker_control_speed(speed_mps),
         )
     )
+
+
+#: How far ahead (m) a walker looks for a vehicle in its way.
+WALKER_CLEARANCE_M: float = 2.0
+#: How far (m) clear of a standing vehicle's outline a walker walks round it.
+_WALK_ROUND_M: float = 0.8
+#: A vehicle faster than this (m/s) in a walker's way is waited for.
+_MOVING_MPS: float = 0.3
+
+
+def _clear_walk(
+    actor: "carla.Actor",
+    location: "carla.Location",
+    dx: float,
+    dy: float,
+    speed_mps: float,
+) -> tuple[float, float, float]:
+    """The step *actor* takes towards ``(dx, dy)`` at *speed_mps*, clear of
+    vehicles: a vehicle moving across its way is waited for (it stands), one
+    standing there is walked round, on the side the walker is already on.
+    Walkers that walked straight on fell over the vehicles they met."""
+    from ..utils.clearance import first_in_way  # noqa: PLC0415
+
+    heading = math.degrees(math.atan2(dy, dx))
+    try:
+        world = actor.get_world()
+        found = first_in_way(
+            world,
+            int(actor.id),
+            location.x,
+            location.y,
+            heading,
+            "vehicle",
+            WALKER_CLEARANCE_M,
+            0.4,
+        )
+    except (AttributeError, RuntimeError):
+        return dx, dy, speed_mps
+    if found is None:
+        return dx, dy, speed_mps
+    if found.speed > _MOVING_MPS:
+        return dx, dy, 0.0
+    rad = math.radians(heading)
+    left_x, left_y = -math.sin(rad), math.cos(rad)
+    away = -1.0 if found.side > 0.0 else 1.0
+    reach = found.radius + _WALK_ROUND_M
+    aim_x = found.x + away * reach * left_x
+    aim_y = found.y + away * reach * left_y
+    return aim_x - location.x, aim_y - location.y, speed_mps
 
 
 @dataclass

@@ -113,6 +113,14 @@ class FinalApproach:
             vehicle.apply_control(carla.VehicleControl(throttle=0.0, brake=1.0))
             return
         velocity = actor.get_velocity()
+        if TYPE_CHECKING:
+            pass  # utils.clearance is not compiled (docs/typecheck.md)
+        else:
+            from ..actions._trajectory_run import _walker_in_way  # noqa: PLC0415
+
+            if _walker_in_way(actor, transform, math.hypot(velocity.x, velocity.y)):
+                vehicle.apply_control(carla.VehicleControl(throttle=0.0, brake=1.0))
+                return
         angular = actor.get_angular_velocity()
         control = vehicle.get_control()
         try:

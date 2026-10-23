@@ -773,6 +773,16 @@ class TrajectoryRun(BaseAction):
             gear = control.gear
         except AttributeError:
             gear = 0
+        if TYPE_CHECKING:
+            pass  # utils.clearance is not compiled (docs/typecheck.md)
+        elif _walker_in_way(actor, transform, math.hypot(velocity.x, velocity.y)):
+            # A walker in its way: stopped for, as the TrafficManager would.
+            import typesafe_carla.carla as carla  # noqa: PLC0415
+
+            as_vehicle(actor).apply_control(
+                carla.VehicleControl(throttle=0.0, brake=1.0)
+            )
+            return
         command = self._follower.step(
             plan,
             # The plan's frame is CARLA's with y flipped: right-handed, as the
@@ -1181,6 +1191,13 @@ class TrajectoryRun(BaseAction):
             target.x - actor.get_transform().location.x,
             (target.y - actor.get_transform().location.y),
         )
+        if TYPE_CHECKING:
+            pass  # utils.clearance is not compiled (docs/typecheck.md)
+        else:
+            from ..entity.pedestrian_entity import _clear_walk  # noqa: PLC0415
+
+            location = actor.get_transform().location
+            dx, dy, speed = _clear_walk(actor, location, dx, dy, speed)
         norm = math.hypot(dx, dy)
         if norm < 1e-6:
             speed, dx, dy, norm = 0.0, 1.0, 0.0, 1.0
@@ -1190,6 +1207,30 @@ class TrajectoryRun(BaseAction):
                 speed=_walker_speed(speed),
             )
         )
+
+
+def _walker_in_way(
+    actor: "carla.Actor", transform: "carla.Transform", speed: float
+) -> bool:
+    """Whether a walker stands in *actor*'s way within its stopping distance
+    (braking at 4 m/s², and 4 m more), across its width and half a metre."""
+    from ..utils.clearance import first_in_way  # noqa: PLC0415
+
+    try:
+        half_width = float(actor.bounding_box.extent.y) + 0.5
+        found = first_in_way(
+            actor.get_world(),
+            int(actor.id),
+            transform.location.x,
+            transform.location.y,
+            transform.rotation.yaw,
+            "walker",
+            speed * speed / 8.0 + 4.0,
+            half_width,
+        )
+    except (AttributeError, RuntimeError):
+        return False
+    return found is not None
 
 
 def _gate_at(timeline: DepartureTimeline, k: int) -> BaseCondition:
