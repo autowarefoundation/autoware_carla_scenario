@@ -8941,8 +8941,10 @@ def test_an_exception_that_is_not_a_caught_one_is_refused_with_a_hint(
 def test_assert_never_in_an_expression_is_refused_at_its_line(
     tmp_path: Path,
 ) -> None:
+    # typing.assert_never is Python 3.11+; the import runs on 3.10 too.
+    pytest.importorskip("typing_extensions")
     definitions = """
-from typing import assert_never
+from typing_extensions import assert_never
 
 
 def pick(x: int) -> int:
