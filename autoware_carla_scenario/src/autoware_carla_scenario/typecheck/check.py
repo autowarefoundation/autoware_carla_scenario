@@ -808,7 +808,10 @@ def _build_workspace(
             ]
         ]
         text, origin = transform_source_lines(
-            source, init_classes=init_classes, enum_classes=enum_class_names(classes)
+            source,
+            init_classes=init_classes,
+            enum_classes=enum_class_names(classes),
+            file=str(module.path),
         )
         checks = render_library_checks(
             module.tree,
@@ -884,10 +887,12 @@ _VARIADIC_LIMITS = (
     ),
     (
         re.compile(
-            r"cannot import name '\w+' from '(functools|itertools|collections)'"
+            r"cannot import name '\w+' from "
+            "'(functools|itertools|collections|math|random)'"
         ),
-        "the check adds only some names to Codon's functools, itertools and "
-        'collections: docs/typecheck.md ("standard library names") lists them',
+        "the check adds only some names to Codon's functools, itertools, "
+        'collections, math and random: docs/typecheck.md ("standard library '
+        'names") lists them',
     ),
     (
         re.compile(r"cannot import name '\w+' from 'typing'"),
@@ -2758,18 +2763,14 @@ def _library_files(
             dropped_decorators=[n for n in uncalled if "." not in n],
             init_classes=init_classes,
             enum_classes=enum_class_names(classes),
+            file=str(module.path),
         )
         rel = workspace_module(name).replace(".", "/") + ".codon"
-        # Python sets a module's `__file__`, which Codon 0.19 does not: a
-        # checked module importing it from another (`from ..autoware_bridge
-        # import __file__`, in bridge_node) finds it here, after the checks so
-        # no line of the module moves.
-        file_global = f"\n__file__: str = {str(module.path)!r}\n"
         files.append(
             _LibraryFile(
                 name,
                 rel,
-                body + checks.source + file_global,
+                body + checks.source,
                 body.count("\n"),
                 checks.labels,
                 origin,

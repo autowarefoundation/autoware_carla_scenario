@@ -5,3 +5,153 @@
 # A Codon dict keeps insertion order, which is all an OrderedDict adds in
 # Python 3.7+ besides move_to_end() and popitem(last=...), not declared here.
 OrderedDict = dict
+
+
+# Codon's deque has append, appendleft, pop, popleft, clear, copy, maxlen,
+# len, iteration, `in` and a read-only index: the rest of Python's is here.
+@extend
+class deque:
+    # The ring of a deque with a maxlen has to hold one item more than the
+    # maxlen: a full ring reads as empty, and Codon's own deque(maxlen=3) (a
+    # ring of 4) then keeps four items.
+    def __init__(self, maxlen: int):
+        cap = 1
+        while cap <= maxlen + 1:
+            cap *= 2
+        self._arr = Array[T](cap)
+        self._head = 0
+        self._tail = 0
+        self._maxlen = maxlen
+
+    def __init__(self, it: Generator[T], maxlen: int):
+        cap = 1
+        while cap <= maxlen + 1:
+            cap *= 2
+        self._arr = Array[T](cap)
+        self._head = 0
+        self._tail = 0
+        self._maxlen = maxlen
+        for x in it:
+            self.append(x)
+
+    # With maxlen=0 Codon's append empties the deque and then reads the empty
+    # ring (head == tail) as full, doubling it into a deque of garbage: a
+    # deque that holds nothing drops the item first.
+    def append(self, x: T):
+        if self._maxlen == 0:
+            return
+        self._arr[self._tail] = x
+        self._tail = (self._tail + 1) & (len(self._arr) - 1)
+        if self._maxlen >= 0 and len(self) > self._maxlen:
+            self.popleft()
+        if self._head == self._tail:
+            self._double_cap()
+
+    def appendleft(self, x: T):
+        if self._maxlen == 0:
+            return
+        self._head = (self._head - 1) & (len(self._arr) - 1)
+        self._arr[self._head] = x
+        if self._maxlen >= 0 and len(self) > self._maxlen:
+            self.pop()
+        if self._head == self._tail:
+            self._double_cap()
+
+    def extend(self, it: Generator[T]):
+        # A copy first: d.extend(d) must end.
+        for x in List[T](it):
+            self.append(x)
+
+    def extendleft(self, it: Generator[T]):
+        for x in List[T](it):
+            self.appendleft(x)
+
+    def rotate(self, n: int = 1):
+        size = len(self)
+        if size <= 1:
+            return
+        n %= size
+        if n < 0:
+            n += size
+        for _ in range(n):
+            self.appendleft(self.pop())
+
+    def count(self, x: T) -> int:
+        total = 0
+        for item in self:
+            if item == x:
+                total += 1
+        return total
+
+    def index(self, x: T, start: int = 0, stop: int = 0x7FFFFFFFFFFFFFFF) -> int:
+        size = len(self)
+        if start < 0:
+            start = max(start + size, 0)
+        if stop < 0:
+            stop = max(stop + size, 0)
+        if stop > size:
+            stop = size
+        i = 0
+        for item in self:
+            if i >= stop:
+                break
+            if i >= start and item == x:
+                return i
+            i += 1
+        raise ValueError(f"{x!r} is not in deque")
+
+    def _refill(self, items: List[T]):
+        self.clear()
+        for item in items:
+            self.append(item)
+
+    def insert(self, i: int, x: T):
+        size = len(self)
+        if self._maxlen >= 0 and size >= self._maxlen:
+            raise IndexError("deque already at its maximum size")
+        if i < 0:
+            i = max(i + size, 0)
+        if i > size:
+            i = size
+        items = List[T](self)
+        items.insert(i, x)
+        self._refill(items)
+
+    def remove(self, x: T):
+        items = List[T](self)
+        for i in range(len(items)):
+            if items[i] == x:
+                items.pop(i)
+                self._refill(items)
+                return
+        raise ValueError("deque.remove(x): x not in deque")
+
+    def reverse(self):
+        items = List[T](self)
+        items.reverse()
+        self._refill(items)
+
+    def __setitem__(self, idx: int, val: T):
+        if idx < 0:
+            idx += len(self)
+        self._idx_check(idx, "deque index out of range")
+        self._arr[(self._head + idx) & (len(self._arr) - 1)] = val
+
+    def __delitem__(self, idx: int):
+        if idx < 0:
+            idx += len(self)
+        self._idx_check(idx, "deque index out of range")
+        items = List[T](self)
+        items.pop(idx)
+        self._refill(items)
+
+    def __eq__(self, other: deque[T]) -> bool:
+        if len(self) != len(other):
+            return False
+        for a, b in zip(self, other):
+            if a != b:
+                return False
+        return True
+
+    def __ne__(self, other: deque[T]) -> bool:
+        return not (self == other)
