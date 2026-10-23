@@ -4624,10 +4624,24 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
 <p>What Codon 0.19 needs that Python does not, beyond
 <a href="#writing-a-scenario-that-type-checks">the rewrites above</a>:</p>
 <ul>
-<li><strong>Annotate what the check calls</strong>: every parameter of a function or method
+<li><strong>Write an iterator class's <code>__iter__</code> as a generator</strong> (#504): Codon has
+  no <code>__next__</code> protocol, so <code>for k in Countdown(3)</code> over a class whose
+  <code>__iter__</code> returns <code>self</code> is refused (<code>expected iterable expression</code>, with
+  a hint). <code>def __iter__(self): while self.n &gt; 0: self.n -= 1; yield self.n</code>
+  compiles, and is valid Python too.</li>
+<li>
+<p><strong>A dict display holds one value type</strong> (#505): <code>{"a": 1, "b": "x"}</code> is
+  refused even annotated <code>dict[str, Any]</code> (Codon has no usable <code>Any</code> or
+  <code>Union</code> value). Convert the values to <code>str</code>, use a dataclass with typed
+  fields, or use one dict per type. The base-class annotation of #489 is for
+  the scenario's own subclasses only.</p>
+</li>
+<li>
+<p><strong>Annotate what the check calls</strong>: every parameter of a function or method
   it calls, protected (<code>_</code>) ones included, with a type Codon can express. Spell a union out (<code>Lanelet2Pose | OpenDrivePose</code>) rather
   than through an alias (<code>AnyPose</code>); a union with <code>object</code> or <code>Any</code> in it
-  gives nothing to call with.</li>
+  gives nothing to call with.</p>
+</li>
 <li><strong>A default must have the parameter's type</strong> (#183): the check compiles
   each function once with its defaults. A <code>()</code> default of a sequence
   parameter is checked as an empty <code>List[X]</code>, so <code>X</code> must be a type Codon can
@@ -4896,8 +4910,8 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   <code>setLevel()</code> and <code>basicConfig(level=...)</code> take an <code>int</code> or a <code>str</code>
   (<code>"INFO"</code>). <code>extra={"k": 1}</code> and <code>extra={"k": "v"}</code> pass; a dict with values
   of two classes (<code>{"k": "v", "n": 2}</code>) is valid Python that Codon cannot type
-  as a dict display, so annotate it (<code>extra: dict[str, str]</code>) or convert
-  the values to <code>str</code>. <code>exc_info</code> takes a <code>bool</code> only (not an exception or a
+  as a dict display (even annotated <code>dict[str, Any]</code>), so convert
+  the values to <code>str</code> (<code>extra: dict[str, str]</code>). <code>exc_info</code> takes a <code>bool</code> only (not an exception or a
   tuple). Left out: <code>LogRecord</code>, <code>Filter</code>, <code>LoggerAdapter</code>, <code>disable</code>,
   <code>shutdown</code>, <code>captureWarnings</code>, <code>addLevelName</code>, the record factory and logger class
   functions, and the internals of <code>Logger</code> (<code>handle</code>, <code>makeRecord</code>,
@@ -5802,7 +5816,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 23, 2026 06:50:00 UTC"><span class="timeago" datetime="2026-10-23T06:50:00+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 23, 2026 06:50:00 UTC">2026-10-23</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 23, 2026 07:00:48 UTC"><span class="timeago" datetime="2026-10-23T07:00:48+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 23, 2026 07:00:48 UTC">2026-10-23</span>
   </span>
 
     
