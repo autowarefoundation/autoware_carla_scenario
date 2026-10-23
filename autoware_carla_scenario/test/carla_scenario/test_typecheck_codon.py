@@ -6844,6 +6844,69 @@ def test_total_ordering_gives_every_comparison(tmp_path: Path) -> None:
     assert result.ok, result.format()
 
 
+def test_eq_and_hash_class_in_a_set_and_dict_compiles(tmp_path: Path) -> None:
+    definitions = """
+class Key:
+    k: int
+
+    def __init__(self, k: int) -> None:
+        self.k = k
+
+    def __eq__(self, o: object) -> bool:
+        return isinstance(o, Key) and self.k == o.k
+
+    def __hash__(self) -> int:
+        return hash(self.k)
+
+    def __lt__(self, o: "Key") -> bool:
+        return self.k < o.k
+"""
+    setup = """
+        seen = {Key(1), Key(1), Key(2)}
+        by_key = {Key(3): 1}
+        by_key[Key(3)] = 2
+        ordered = sorted([Key(2), Key(1)])
+        assert len(seen) == 2 and by_key[Key(3)] == 2 and Key(1) != Key(2)
+        assert ordered[0].k == 1 and Key(1) in seen
+    """
+    scenario, config, _ = _data_case(tmp_path, definitions, setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_namedtuple_with_a_field_string_compiles(tmp_path: Path) -> None:
+    definitions = """
+import collections
+from collections import namedtuple
+
+Pt = namedtuple("Pt", "x y")
+Pc = collections.namedtuple("Pc", "a, b")
+"""
+    setup = """
+        p = Pt(x=1, y=2)
+        q = Pc(3, 4)
+        assert p.x + p[1] + q.a + q.b == 10
+    """
+    scenario, config, _ = _data_case(tmp_path, definitions, setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_namedtuple_with_non_literal_fields_is_refused_with_a_hint(
+    tmp_path: Path,
+) -> None:
+    definitions = """
+from collections import namedtuple
+
+FIELDS = ["x", "y"]
+Pt = namedtuple("Pt", FIELDS)
+"""
+    scenario, config, path = _data_case(tmp_path, definitions, "r = 1\n")
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "written in the call" in error.message, error.format()
+    assert error.line == _line_of(path, 'Pt = namedtuple("Pt", FIELDS)')
+
+
 def test_sorting_a_class_with_no_ordering_is_refused_with_a_hint(
     tmp_path: Path,
 ) -> None:

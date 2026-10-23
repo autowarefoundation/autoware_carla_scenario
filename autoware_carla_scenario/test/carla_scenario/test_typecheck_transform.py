@@ -3536,6 +3536,118 @@ def test_total_ordering_that_cannot_be_expressed_is_refused() -> None:
     assert line == 3 and "one of __lt__" in message
 
 
+def test_eq_without_ne_gets_ne() -> None:
+    source = "class V:\n    def __eq__(self, o: object) -> bool: ...\n"
+    _, [(name, block)] = python_rewrites(source)
+    assert name == "V" and "def __ne__(self, other: V) -> bool:" in block
+    assert "return not (self == other)" in block
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "class V:\n    def __eq__(self, o): ...\n    def __ne__(self, o): ...\n",
+        "class B:\n    def __ne__(self, o): ...\nclass V(B):\n    def __eq__(self, o): ...\n",
+        "from dataclasses import dataclass\n@dataclass\nclass V:\n    x: int\n    def __eq__(self, o): ...\n",
+    ],
+)
+def test_ne_is_not_added_where_defined_or_generated(source: str) -> None:
+    assert not any("__ne__" in block for _, block in python_rewrites(source)[1])
+
+
+def test_eq_and_lt_get_ne_gt_and_ge() -> None:
+    source = "class V:\n    def __eq__(self, o): ...\n    def __lt__(self, o): ...\n"
+    [(_, block)] = python_rewrites(source)[1]
+    assert all(f"def {n}(" in block for n in ("__ne__", "__gt__", "__ge__"))
+
+
+@pytest.mark.parametrize(
+    ("spec", "names"),
+    [
+        ('"x y"', '["x", "y"]'),
+        ('"x, y"', '["x", "y"]'),
+        ('"x,y  z"', '["x", "y", "z"]'),
+        ("'x'", '["x"]'),
+    ],
+)
+def test_namedtuple_field_string_becomes_a_list(spec: str, names: str) -> None:
+    assert (
+        _rewritten(f'P = namedtuple("P", {spec})\n')
+        == f'P = namedtuple("P", {names})\n'
+    )
+    assert (
+        _rewritten(f'P = collections.namedtuple("P", {spec})\n')
+        == f'P = collections.namedtuple("P", {names})\n'
+    )
+
+
+def test_namedtuple_list_and_tuple_fields_are_left_alone() -> None:
+    for text in ('P = namedtuple("P", ["x", "y"])\n', 'P = namedtuple("P", ("x",))\n'):
+        assert _rewritten(text) == text
+        assert python_rewrite_refusals(text) == []
+
+
+@pytest.mark.parametrize(
+    ("source", "hint"),
+    [
+        ('F = ["x"]\nP = namedtuple("P", F)\n', "written in the call"),
+        ('P = namedtuple("P", "x".split())\n', "written in the call"),
+        ('P = namedtuple("P", ["x"], rename=True)\n', "rename="),
+        ('P = namedtuple("P", ["x"], defaults=[1])\n', "defaults="),
+        ('P = namedtuple("P", field_names=["x"])\n', "field_names="),
+    ],
+)
+def test_namedtuple_it_cannot_express_is_refused(source: str, hint: str) -> None:
+    [(line, message)] = python_rewrite_refusals(source)
+    assert line == source.count("\n") and hint in message
+
+
+@pytest.mark.parametrize("spec", ['"x x"', '"x class"', '"1x"', '"_x"', '"x-y"'])
+def test_namedtuple_invalid_field_strings_are_refused(spec: str) -> None:
+    [(_, message)] = python_rewrite_refusals(f'P = namedtuple("P", {spec})\n')
+    assert "ValueError" in message
+
+
+def test_namedtuple_module_keyword_is_refused() -> None:
+    [(_, message)] = python_rewrite_refusals('P = namedtuple("P", "x", module="m")\n')
+    assert "module=" in message
+
+
+def test_the_namedtuple_import_is_not_a_shadowing() -> None:
+    for head in ("from collections import namedtuple\n", "import collections\n"):
+        call = (
+            "collections.namedtuple" if "import collections" in head else "namedtuple"
+        )
+        assert _rewritten(f'{head}P = {call}("P", "x y")\n').endswith(
+            f'P = {call}("P", ["x", "y"])\n'
+        )
+
+
+@pytest.mark.parametrize(
+    "head",
+    [
+        "def namedtuple(a, b):\n    return a\n",
+        "from mylib import namedtuple\n",
+        "from collections import namedtuple\nnamedtuple = lambda a, b: a\n",
+        "from typing import NamedTuple as namedtuple\n",
+    ],
+)
+def test_a_namedtuple_the_module_defines_is_left_alone(head: str) -> None:
+    source = head + 'P = namedtuple("P", "x y")\n'
+    assert _rewritten(source) == source
+    assert python_rewrite_refusals(source) == []
+
+
+def test_a_collections_the_module_rebinds_is_left_alone() -> None:
+    source = 'collections = object()\nP = collections.namedtuple("P", "x y")\n'
+    assert _rewritten(source) == source
+
+
+def test_a_local_namedtuple_parameter_is_left_alone() -> None:
+    source = 'def f(namedtuple):\n    return namedtuple("P", "x y")\n'
+    assert _rewritten(source) == source
+
+
 def test_a_lambda_default_that_is_not_a_literal_is_bound_by_a_call() -> None:
     assert (
         _rewritten("fs = [lambda x, k=k: x + k for k in range(3)]\n")
