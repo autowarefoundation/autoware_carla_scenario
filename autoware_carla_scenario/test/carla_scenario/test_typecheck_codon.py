@@ -8046,7 +8046,11 @@ def test_a_wrong_value_for_an_inherited_field_names_the_field(
     assert "field 'a' of Leaf is declared int, not str" in error.message
     assert error.trace == (), error.format()
     assert error.line == _line_of(path, "x = replace(Leaf()")
-    assert error.column is None, error.format()
+    # Codon locates the call at `replace`, which precedes the rewrite
+    # (`._acs_with__a(...)` is appended after it), so the column is the
+    # author's: the 1-based column of `replace` in the user's own line.
+    written = path.read_text().splitlines()[error.line - 1]
+    assert error.column == written.index("replace(") + 1, error.format()
 
 
 @pytest.mark.parametrize(
