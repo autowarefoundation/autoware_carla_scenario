@@ -2264,6 +2264,17 @@ module too (`SetSpeedAction`'s default `SpeedCondition` from
 What Codon 0.19 needs that Python does not, beyond
 [the rewrites above](#writing-a-scenario-that-type-checks):
 
+- **Write an iterator class's `__iter__` as a generator** (#504): Codon has
+  no `__next__` protocol, so `for k in Countdown(3)` over a class whose
+  `__iter__` returns `self` is refused (`expected iterable expression`, with
+  a hint). `def __iter__(self): while self.n > 0: self.n -= 1; yield self.n`
+  compiles, and is valid Python too.
+- **A dict display holds one value type** (#505): `{"a": 1, "b": "x"}` is
+  refused even annotated `dict[str, Any]` (Codon has no usable `Any` or
+  `Union` value). Convert the values to `str`, use a dataclass with typed
+  fields, or use one dict per type. The base-class annotation of #489 is for
+  the scenario's own subclasses only.
+
 - **Annotate what the check calls**: every parameter of a function or method
   it calls, protected (`_`) ones included, with a type Codon can express. Spell a union out (`Lanelet2Pose | OpenDrivePose`) rather
   than through an alias (`AnyPose`); a union with `object` or `Any` in it
@@ -2537,8 +2548,8 @@ What Codon 0.19 needs that Python does not, beyond
   `setLevel()` and `basicConfig(level=...)` take an `int` or a `str`
   (`"INFO"`). `extra={"k": 1}` and `extra={"k": "v"}` pass; a dict with values
   of two classes (`{"k": "v", "n": 2}`) is valid Python that Codon cannot type
-  as a dict display, so annotate it (`extra: dict[str, str]`) or convert
-  the values to `str`. `exc_info` takes a `bool` only (not an exception or a
+  as a dict display (even annotated `dict[str, Any]`), so convert
+  the values to `str` (`extra: dict[str, str]`). `exc_info` takes a `bool` only (not an exception or a
   tuple). Left out: `LogRecord`, `Filter`, `LoggerAdapter`, `disable`,
   `shutdown`, `captureWarnings`, `addLevelName`, the record factory and logger class
   functions, and the internals of `Logger` (`handle`, `makeRecord`,
