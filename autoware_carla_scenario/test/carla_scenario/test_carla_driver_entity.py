@@ -45,8 +45,17 @@ from carla_driver_interface.server import serving
 from carla_driver_interface.service import EgodriverServicer
 from autoware_carla_scenario.driver.geometry import Pose, Trajectory
 from autoware_carla_scenario.entity.carla_driver_entity import CarlaDriverEntity
+from autoware_carla_scenario.t4 import withdraw_driver_sensors
 
 from ._vehicle_physics import mkz_physics, mkz_powertrain
+
+
+@pytest.fixture(autouse=True)
+def _withdraw_driver_sensors():
+    """Most tests here start an entity and never end it; its offer of sensors to
+    a T4 dataset is process-global and must not reach another test's recording."""
+    yield
+    withdraw_driver_sensors()
 
 
 _TICK_S = 0.05

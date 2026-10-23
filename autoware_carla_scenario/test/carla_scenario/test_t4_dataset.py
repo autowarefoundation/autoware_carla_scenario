@@ -35,6 +35,14 @@ from autoware_carla_scenario.t4 import (
 
 writer_module = pytest.importorskip("autoware_carla_scenario_t4")
 
+
+@pytest.fixture(autouse=True)
+def _no_driver_sensors_offered(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The offer of a driver entity's sensors is process-global: no test starts
+    with one left by an earlier test in the same worker."""
+    monkeypatch.setattr(t4, "_driver_rear_axle", None)
+
+
 # ---------------------------------------------------------------------------
 # Settings
 # ---------------------------------------------------------------------------
@@ -634,6 +642,27 @@ def test_a_driver_policys_ego_feeds_the_dataset(
     assert (root / "0" / camera["filename"]).read_bytes() == jpeg
     assert (camera["width"], camera["height"]) == (64, 48)
     assert [a["num_lidar_pts"] for a in _table(root, "sample_annotation")] == [1] * 5
+
+
+def test_a_recording_after_a_driver_fed_one_is_not_fed_by_a_driver(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The driver entity withdraws its offer when its scenario ends, so the next
+    recording in the process puts sensors on the ego itself."""
+    (tmp_path / "fed").mkdir()
+    (tmp_path / "plain").mkdir()
+    fed_world = _World()
+    t4.offer_driver_sensors(-1.25)
+    try:
+        fed = _start(tmp_path / "fed", monkeypatch, fed_world)
+    finally:
+        t4.withdraw_driver_sensors()
+    assert fed.fed_by_driver
+    fed.close()
+    world = _World()
+    recording = _start(tmp_path / "plain", monkeypatch, world)
+    assert not recording.fed_by_driver
+    assert len(world.sensors) == 2
 
 
 def _jpeg() -> bytes:
