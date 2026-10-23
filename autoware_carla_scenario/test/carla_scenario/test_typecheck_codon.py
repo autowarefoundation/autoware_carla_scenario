@@ -5957,8 +5957,11 @@ def test_a_supported_stdlib_name_compiles_in_a_scenario(
         "\n\n" + helper,
         header=_stdlib_header(imports),
     )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
 
 
+# ---------------------------------------------------------------------------
 # Valid Python the transform rewrites for Codon (#376)
 # ---------------------------------------------------------------------------
 
@@ -6019,6 +6022,147 @@ class Unordered:
     def __init__(self, x: int) -> None:
         self.x = x
 """
+
+
+# ---------------------------------------------------------------------------
+# The logging model (#496)
+# ---------------------------------------------------------------------------
+
+#: Calls of logging the model accepts, as CPython's signatures allow them.
+_LOGGING_ACCEPTED: dict[str, str] = {
+    "log with a variable level": (
+        "level = logging.INFO if cfg.timeout_seconds > 1.0 else logging.DEBUG\n"
+        'logger.log(level, "x %s", 1)\n'
+        'logger.log(logging.WARNING, "x", exc_info=False, stack_info=True)\n'
+    ),
+    "deprecated warn": 'logger.warn("x %s", 1)\n',
+    "extra with int values": (
+        'logger.info("x", extra={"k": 1})\n'
+        'logger.warning("x %s", 1, extra={"a": 1})\n'
+    ),
+    "extra with str values": 'logger.error("x", extra={"k": "v"})\n',
+    "extra and stacklevel on every level method": (
+        'extra = {"k": "v"}\n'
+        'logger.debug("x", extra=extra, stacklevel=2)\n'
+        'logger.info("x %s", 1, stacklevel=2)\n'
+        'logger.warning("x", stack_info=True, stacklevel=3, extra=extra)\n'
+        'logger.error("x", exc_info=True, extra=extra)\n'
+        'logger.exception("x", stacklevel=2, extra=extra)\n'
+        'logger.critical("x", extra=extra, stacklevel=2)\n'
+        'logger.log(logging.INFO, "x", extra=extra, stacklevel=2)\n'
+    ),
+    "a message that is not a str": "logger.info(123)\nlogger.log(logging.INFO, 4.5)\n",
+    "module-level functions": (
+        'logging.debug("root")\nlogging.info("root %s", 1, extra={"k": 1})\n'
+        'logging.warning("root", stacklevel=2)\nlogging.error("root")\n'
+        'logging.exception("root")\nlogging.critical("root")\n'
+        'logging.log(logging.INFO, "root", stack_info=True)\n'
+        'logging.warn("root")\n'
+    ),
+    "basicConfig": (
+        "logging.basicConfig(level=logging.INFO)\n"
+        'logging.basicConfig(level="DEBUG", format="%(message)s", '
+        'datefmt="%H:%M", style="%", force=True)\n'
+        'logging.basicConfig(filename="run.log", filemode="w", encoding="utf-8")\n'
+        "logging.basicConfig(stream=sys.stderr, handlers=[logging.StreamHandler()])\n"
+    ),
+    "handlers and formatters": (
+        "handler = logging.StreamHandler()\n"
+        "handler.setLevel(logging.INFO)\n"
+        'handler.setFormatter(logging.Formatter("%(message)s", datefmt="%H:%M"))\n'
+        "logger.addHandler(handler)\n"
+        "logger.removeHandler(handler)\n"
+        'file_handler = logging.FileHandler("run.log", mode="w", encoding="utf-8")\n'
+        "logger.addHandler(file_handler)\n"
+        "logger.addHandler(logging.NullHandler())\n"
+    ),
+    "levels and queries": (
+        'logger.setLevel("INFO")\nlogger.setLevel(logging.NOTSET)\n'
+        "logger.propagate = False\n"
+        "enabled = logger.isEnabledFor(logging.DEBUG)\n"
+        "effective = logger.getEffectiveLevel() + logging.CRITICAL + logging.FATAL\n"
+        "logger.getChild('sub').info('x %s %s %s', enabled, effective, logging.WARN)\n"
+        "logger.hasHandlers()\n"
+        "n_handlers = len(logger.handlers)\n"
+        "root = logging.getLogger()\nroot2 = logging.getLogger(None)\n"
+        'name = logging.getLevelName(logging.INFO) + " " + str(n_handlers)\n'
+        'number = logging.getLevelName("INFO") + 1\n'
+        'logging.Formatter("%(message)s", defaults={"k": "v"})\n'
+    ),
+    "varargs of mixed types and exception in except": (
+        'logger.info("%s %d %.1f", "a", 1, 2.5)\n'
+        "try:\n    raise ValueError('x')\nexcept ValueError:\n"
+        '    logger.exception("x")\n'
+    ),
+}
+
+
+def test_the_logging_calls_compile_in_a_scenario(tmp_path: Path) -> None:
+    # One scenario holds every accepted call: each alone costs a Codon run.
+    setup = _TIMEOUT_SETUP + "".join(
+        f"if cfg.timeout_seconds > {i}.5e9:\n" + textwrap.indent(call, "    ")
+        for i, call in enumerate(_LOGGING_ACCEPTED.values())
+    )
+    scenario, config, _ = _write_case(
+        tmp_path, setup, header=_stdlib_header("import sys\n")
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+#: Calls CPython refuses, and the one valid call Codon cannot type, with the
+#: error the check gives.
+_LOGGING_REFUSED: dict[str, tuple[str, str]] = {
+    "log with a str level": (
+        'logger.log("INFO", "x")\n',
+        "does not match expected type 'int'",
+    ),
+    "log without a message": (
+        "logger.log(logging.INFO)\n",
+        "missing 1 required positional argument: 'msg'",
+    ),
+    "unknown keyword": ('logger.info("x", color="red")\n', "'color'"),
+    "stacklevel as a str": (
+        'logger.info("x", stacklevel="2")\n',
+        "does not match expected type 'int'",
+    ),
+    "stack_info as an int": (
+        'logger.info("x", stack_info=1)\n',
+        "does not match expected type 'bool'",
+    ),
+    # Valid Python, refused by Codon's dict display (typed by its first value);
+    # the check's hint says how to write it.
+    "extra with mixed values": (
+        'logger.info("x", extra={"k": "v", "n": 2})\n',
+        "a dict display is typed by its first value",
+    ),
+    "module-level unknown keyword": ('logging.info("x", color="red")\n', "'color'"),
+    "basicConfig positional": ("logging.basicConfig(logging.INFO)\n", "keyword-only"),
+    "basicConfig unknown keyword": ("logging.basicConfig(colour=1)\n", "'colour'"),
+    "basicConfig level of the wrong type": (
+        "logging.basicConfig(level=1.5)\n",
+        "takes a level as an int or a str",
+    ),
+    "setLevel of the wrong type": (
+        "logger.setLevel(1.5)\n",
+        "takes a level as an int or a str",
+    ),
+    "addHandler of a non-handler": (
+        'logger.addHandler("x")\n',
+        "does not match expected type 'Handler'",
+    ),
+}
+
+
+@pytest.mark.parametrize("name", sorted(_LOGGING_REFUSED))
+def test_a_logging_call_python_refuses_is_refused(tmp_path: Path, name: str) -> None:
+    call, message = _LOGGING_REFUSED[name]
+    scenario, config, path = _write_case(
+        tmp_path, _TIMEOUT_SETUP + call, header=_stdlib_header("")
+    )
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert message in error.message, error.format()
+    assert error.path == str(path)
 
 
 def test_an_ellipsis_class_body_compiles(tmp_path: Path) -> None:
