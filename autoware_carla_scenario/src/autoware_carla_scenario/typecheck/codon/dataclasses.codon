@@ -17,6 +17,6 @@ def field(default):
 
 def replace(obj):
     """dataclasses.replace(obj, a=x): the checker lowers the call to
-    `replace(obj)._acs_with__a(a=x)` (typecheck/transform.py), where this
+    `replace(obj)._acs_with__a(x)` (typecheck/transform.py), where this
     returns obj and the dataclass's own method makes the typed copy."""
     return obj
