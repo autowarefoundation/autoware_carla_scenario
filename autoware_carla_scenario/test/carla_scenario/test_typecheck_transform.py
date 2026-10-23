@@ -4941,6 +4941,40 @@ def test_assert_never_statement_and_return_raise() -> None:
     assert "h = lambda x: assert_never(x)" in out
 
 
+def test_assert_never_inside_an_expression_is_refused() -> None:
+    # Codon types the call of a function that always raises as None, which
+    # would refuse a correct `1 if ok else assert_never(x)` with a message
+    # about NoneType: say what to write instead.
+    source = textwrap.dedent(
+        """
+        from typing import assert_never
+        def g(x: int) -> int:
+            return 1 if x else assert_never(x)
+        """
+    )
+    assert typing_rewrites(source) == source
+    ((line, message),) = typing_rewrite_refusals(source)
+    assert line == 4 and "line of its own" in message
+
+
+def test_a_local_name_is_not_the_new_type_nor_the_typing_name() -> None:
+    # A parameter called like a NewType is not it: `LaneId(5)` on an int is
+    # a real error that must not become `(5)`.
+    source = textwrap.dedent(
+        """
+        from typing import NewType, override
+        LaneId = NewType("LaneId", int)
+        def f(LaneId: int, override) -> int:
+            return LaneId(5) + override(1)
+        def g() -> LaneId:
+            return LaneId(1)
+        """
+    )
+    out = typing_rewrites(source)
+    assert "return LaneId(5) + override(1)" in out
+    assert "return (1)" in out
+
+
 @pytest.mark.parametrize(
     ("annotation", "codon"),
     [

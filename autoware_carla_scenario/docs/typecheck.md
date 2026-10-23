@@ -1309,7 +1309,8 @@ in step:
   = int` and `LaneId(v)` is `(v)`, so the new type is checked as its base (a
   `LaneId` is any `int`, as Python runs it); `assert_never(x)`, as a
   statement or a `return`, is `raise AssertionError(...)`, and anywhere else
-  (a lambda body, an argument) a function raising it; `Never` and `Container`
+  (a ternary, a lambda body, an argument) it is refused, since Codon types the
+  call as `None`; `Never` and `Container`
   annotations are dropped, like `NoReturn` and `Sized`; `TypeGuard[X]` and
   `TypeIs[X]` are `bool`, which they are at run time.
 - A `TypeVar` with a `bound=` or constraints (`TypeVar("B", bound=Base)`,
@@ -2362,7 +2363,7 @@ What Codon 0.19 needs that Python does not, beyond
   `__future__`, `abc`, `atexit`, `dataclasses`, `enum`, `hashlib`,
   `importlib.metadata`, `logging`, `os`, `os.path`, `pathlib`, `queue`,
   `shlex`, `shutil`, `signal`, `subprocess`, `sys`, `tempfile`, `threading`,
-  `typing` and `urllib.parse`
+  `typing`, `typing_extensions` and `urllib.parse`
   <!-- shims:end -->
 
   `tempfile` declares `mkstemp(suffix=None, prefix=None, dir=None,

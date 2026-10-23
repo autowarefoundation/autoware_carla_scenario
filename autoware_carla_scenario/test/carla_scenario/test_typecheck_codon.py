@@ -8938,6 +8938,24 @@ def test_an_exception_that_is_not_a_caught_one_is_refused_with_a_hint(
     assert "str(e)" in error.message, error.format()
 
 
+def test_assert_never_in_an_expression_is_refused_at_its_line(
+    tmp_path: Path,
+) -> None:
+    definitions = """
+from typing import assert_never
+
+
+def pick(x: int) -> int:
+    return 1 if x else assert_never(x)
+"""
+    scenario, config, path = _data_case(
+        tmp_path, definitions, 'logger.info("%d", pick(1))\n'
+    )
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "line of its own" in error.message, error.format()
+    assert error.line == _line_of(path, "return 1 if x else assert_never(x)")
+
+
 # ---------------------------------------------------------------------------
 # operator.itemgetter / attrgetter, copy.copy / deepcopy (#517)
 # ---------------------------------------------------------------------------

@@ -34,6 +34,7 @@ from __future__ import annotations
 import ast
 import re
 
+from .scopes import ShadowScopes
 from .transform import _dotted, _Edits, _union_members
 
 __all__ = [
@@ -67,7 +68,7 @@ TYPING_HINTS: tuple[tuple[re.Pattern[str], str], ...] = (
         "(`def __copy__(self) -> Self`), or build the copy from its fields",
     ),
     (
-        re.compile(r"tuple index out of range.*item: \d+|object has no attribute 'n'"),
+        re.compile(r"tuple index out of range.*item: \d+"),
         "operator.itemgetter() and attrgetter() cannot be a key here: write a "
         "lambda (`key=lambda v: v[1]`, `lambda v: v.n`)",
     ),
@@ -214,8 +215,9 @@ def _own_statements(body: list[ast.stmt]) -> list[ast.stmt]:
     return out
 
 
-class _Pass(ast.NodeVisitor):
+class _Pass(ShadowScopes):
     def __init__(self, edits: _Edits, tree: ast.Module, names: _Names) -> None:
+        super().__init__()
         self.edits = edits
         self.names = names
         self.refused: list[tuple[int, str]] = []
@@ -245,6 +247,20 @@ class _Pass(ast.NodeVisitor):
         self._handlers: list[str] = []
         self._returns: list[ast.expr | None] = []
         self._classes: list[str] = []
+
+    def visit_Module(self, node: ast.Module) -> None:
+        self.enter_module(node)
+        self.generic_visit(node)
+
+    def _local(self, node: ast.AST) -> bool:
+        """Whether *node* is a name a function, lambda or class around it binds
+        (a parameter called ``LaneId``, say), not the module's import or alias."""
+        if not isinstance(node, ast.Name):
+            return False
+        for bound, _ in reversed(self._local_bound):
+            if node.id in bound:
+                return True
+        return False
 
     # -- scanning ---------------------------------------------------------
 
@@ -352,6 +368,8 @@ class _Pass(ast.NodeVisitor):
         for decorator in node.decorator_list:
             if self.names.typing_name(decorator) == "override":
                 start, end = self.edits.node_span(decorator)
+                while self.edits.text(start - 1, start) != "@":
+                    start -= 1  # `@ override`
                 self.edits.replace(start - 1, end, "")  # with its "@"
             else:
                 self.visit(decorator)
@@ -427,6 +445,7 @@ class _Pass(ast.NodeVisitor):
     def _assert_never(self, node: ast.AST) -> bool:
         return (
             isinstance(node, ast.Call)
+            and not self._local(node.func)
             and self.names.typing_name(node.func) == "assert_never"
             and len(node.args) == 1
             and not node.keywords
@@ -435,11 +454,13 @@ class _Pass(ast.NodeVisitor):
     # -- calls --------------------------------------------------------------
 
     def visit_Call(self, node: ast.Call) -> None:
-        typing = self.names.typing_name(node.func)
-        operator = self.names.operator_name(node.func)
+        local = self._local(node.func)
+        typing = None if local else self.names.typing_name(node.func)
+        operator = None if local else self.names.operator_name(node.func)
         if (
             isinstance(node.func, ast.Name)
             and node.func.id in self._new_types
+            and not self._local(node.func)
             and len(node.args) == 1
             and not node.keywords
             and not isinstance(node.args[0], ast.Starred)
@@ -449,6 +470,17 @@ class _Pass(ast.NodeVisitor):
             self.edits.replace(*self.edits.node_span(node.func), "")
             self.generic_visit(node)
             return
+        if typing == "assert_never":
+            # Only a statement or a `return` is rewritten: Codon types the
+            # call of the function that always raises as `None`, which would
+            # refuse a correct `1 if ok else assert_never(x)`.
+            self.refused.append(
+                (
+                    node.lineno,
+                    "assert_never() is checked only as a statement or after "
+                    "`return`: write `assert_never(x)` on a line of its own",
+                )
+            )
         if (
             typing == "TypeVar"
             and node.args
