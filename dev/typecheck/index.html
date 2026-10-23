@@ -3523,6 +3523,16 @@ cannot express is refused at its line, with what to write instead.</p>
 <td>the class defines no ordering (use <code>@dataclass(order=True)</code> or <code>key=</code>)</td>
 </tr>
 <tr>
+<td>a class that defines <code>__eq__</code> but not <code>__ne__</code> (a value object in a <code>set</code> or as a <code>dict</code> key)</td>
+<td>the class gets <code>__ne__</code> (<code>not (self == other)</code>): Python derives it, Codon does not and its hash table calls it</td>
+<td>(a <code>@dataclass</code> already has one)</td>
+</tr>
+<tr>
+<td><code>namedtuple("P", "x y")</code> / <code>"x, y"</code></td>
+<td>the string becomes the list <code>["x", "y"]</code> (Codon crashes on a string)</td>
+<td>field names that are not a literal (a variable, <code>.split()</code>), and <code>rename=</code> / <code>defaults=</code> / <code>field_names=</code> / <code>module=</code> as keywords, and field names Python rejects (a duplicate, a keyword, a leading underscore); a <code>namedtuple</code> the module defines or imports from elsewhere is left alone; use a list written in the call or a <code>typing.NamedTuple</code> class</td>
+</tr>
+<tr>
 <td><code>@functools.total_ordering</code></td>
 <td>the decorator and its import are dropped, and the class gets the comparisons it would add from its <code>__lt__</code>, <code>__le__</code>, <code>__gt__</code> or <code>__ge__</code> (and <code>==</code>, or identity without <code>__eq__</code>)</td>
 <td>the class is not at module level, or defines none of the four</td>
@@ -5816,7 +5826,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 23, 2026 07:00:48 UTC"><span class="timeago" datetime="2026-10-23T07:00:48+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 23, 2026 07:00:48 UTC">2026-10-23</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 23, 2026 09:33:41 UTC"><span class="timeago" datetime="2026-10-23T09:33:41+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 23, 2026 09:33:41 UTC">2026-10-23</span>
   </span>
 
     
