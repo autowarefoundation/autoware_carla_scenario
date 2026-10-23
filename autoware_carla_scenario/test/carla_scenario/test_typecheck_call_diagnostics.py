@@ -161,9 +161,21 @@ def test_a_helper_called_with_too_many_arguments_names_its_signature(
 @pytest.mark.parametrize(
     ("declared", "value", "message"),
     [
-        ("float", "'x'", "val() returns str, but the function is declared -> float"),
-        ("int", "2.5", "val() returns float, but the function is declared -> int"),
-        ("str", "5", "val() returns int, but the function is declared -> str"),
+        (
+            "float",
+            "'x'",
+            "CaseScenario.val() returns str, but the function is declared -> float",
+        ),
+        (
+            "int",
+            "2.5",
+            "CaseScenario.val() returns float, but the function is declared -> int",
+        ),
+        (
+            "str",
+            "5",
+            "CaseScenario.val() returns int, but the function is declared -> str",
+        ),
     ],
 )
 def test_a_wrong_return_says_what_is_returned_and_declared(
@@ -186,7 +198,9 @@ def test_setup_returning_a_value_is_refused_in_the_authors_terms(
 ) -> None:
     result, path = _check(tmp_path, "return 5\n")
     error = _only_error(result)
-    assert error.message == "setup() returns int, but the function is declared -> None"
+    assert error.message == (
+        "CaseScenario.setup() returns int, but the function is declared -> None"
+    )
     assert error.line == _line_of(path, "return 5")
 
 
@@ -198,7 +212,10 @@ def test_a_return_of_none_where_a_type_is_declared(tmp_path: Path) -> None:
         "\n    def val(self) -> str:\n        return None\n",
     )
     messages = [d.message for d in result.diagnostics]
-    assert "val() returns None, but the function is declared -> str" in messages
+    assert (
+        "CaseScenario.val() returns None, but the function is declared -> str"
+        in messages
+    )
     assert not any("test the value for None" in m for m in messages), result.format()
 
 
@@ -269,7 +286,7 @@ def test_a_bool_function_returning_a_literal_str_is_refused(tmp_path: Path) -> N
     )
     error = _only_error(result)
     assert error.message.startswith(
-        "flag() returns str, but the function is declared -> bool"
+        "CaseScenario.flag() returns str, but the function is declared -> bool"
     )
     assert error.line == _line_of(path, "return 'x'")
 
@@ -287,7 +304,8 @@ def test_a_float_function_with_a_path_returning_nothing_is_refused(
     )
     error = _only_error(result)
     assert error.message.startswith(
-        "val() has a path that returns nothing, but the function is declared -> float"
+        "CaseScenario.val() has a path that returns nothing, but the function is "
+        "declared -> float"
     )
     assert error.line == _line_of(path, "def val")
 
@@ -582,3 +600,580 @@ def test_a_return_of_a_nested_function_is_not_the_outer_functions(
     assert "outer() returns str" in (
         return_message(message, str(path), 4, 5, files) or ""
     )
+
+
+# ---------------------------------------------------------------------------
+# Own callables, `X | None` returns, a forgotten `self` (#539, #540, #542):
+# the rewrites on their own, with Codon's messages written out
+# ---------------------------------------------------------------------------
+
+_OWN = """\
+from dataclasses import dataclass
+
+
+def f(a: int, b: int) -> int:
+    return a
+
+
+def g(a: int, *, b: int = 2) -> int:
+    return a + b
+
+
+def m(a: int, b: int, c: str) -> int:
+    return a
+
+
+def opt(a: int | None = None) -> int:
+    return 0
+
+
+class U:
+    @staticmethod
+    def k(a: int, b: float) -> float:
+        return a + b
+
+
+class P:
+    def __init__(self, a: int, b: float = 0.0) -> None:
+        self.a = a
+
+
+@dataclass
+class D:
+    a: int
+    b: float = 0.0
+
+
+class S:
+    flag_v: bool = True
+
+    def h(self, a: int) -> int:
+        return a
+
+    def flag(self) -> bool:
+        return True
+
+    @staticmethod
+    def st() -> bool:
+        return flag()
+
+    def run(self, n: int, s: str) -> None:
+        self.h("x")
+        f(n, s)
+        f(
+            1,
+            "x",
+        )
+        g(1, b="s")
+        U.k(1, "x")
+        P("x", 1.0)
+        D(a="s")
+        D(a=1, c=2)
+        D(a=1, bb=2)
+        m(1, 2, "ok")
+        m("x", "y", 3)
+        m("x", 2, "c")
+        f(*[1, 2])
+        self.h(a=-1.5)
+        opt("s")
+        if flag():
+            pass
+        if self.flag:
+            pass
+        if not self.flag and n:
+            pass
+        x = flag_v
+"""
+
+_INT = "'str' does not match expected type 'int'"
+
+
+def _refiner(tmp_path: Path, source: str) -> tuple[Any, Path, list[str]]:
+    import importlib.util
+
+    from autoware_carla_scenario.typecheck.call_diagnostics import Refiner
+
+    path = tmp_path / "own_module.py"
+    path.write_text(source)
+    spec = importlib.util.spec_from_file_location("own_module", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    import sys
+
+    sys.modules["own_module"] = module
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        del sys.modules["own_module"]
+    refiner = Refiner(
+        lambda name, _path: getattr(module, name, None),
+        lambda name, _path: getattr(module, name, None),
+    )
+    return refiner, path, source.splitlines()
+
+
+def _at(lines: list[str], needle: str, occurrence: int = 1) -> tuple[int, int]:
+    seen = 0
+    for number, text in enumerate(lines, start=1):
+        if needle in text:
+            seen += 1
+            if seen == occurrence:
+                return number, text.index(needle) + 1
+    raise AssertionError(needle)
+
+
+def _refine(
+    tmp_path: Path, source: str, message: str, needle: str, occurrence: int = 1
+) -> tuple[str, int | None, int | None]:
+    refiner, path, lines = _refiner(tmp_path, source)
+    line, column = _at(lines, needle, occurrence)
+    return refiner.refine(message, str(path), line, column)
+
+
+@pytest.mark.parametrize(
+    ("call", "occurrence", "message", "argument", "got_at"),
+    [
+        (
+            'f(\n            1,\n            "x",',
+            3,
+            "f(): b: expected int, got str",
+            '"x"',
+            2,
+        ),
+        ('g(1, b="s")', 1, "g(): b: expected int, got str", '"s"', 1),
+        ('U.k(1, "x")', 1, "U.k(): b: expected float, got str", '"x"', 1),
+        ('P("x", 1.0)', 1, "P(): a: expected int, got str", '"x"', 1),
+        ('D(a="s")', 1, "D(): a: expected int, got str", '"s"', 1),
+        ('self.h("x")', 1, "S.h(): a: expected int, got str", '"x"', 1),
+        ("f(n, s)", 1, "f(): b: expected int, got str", "s)", 1),
+    ],
+)
+def test_a_wrong_argument_of_an_own_callable_is_named(
+    tmp_path: Path,
+    call: str,
+    occurrence: int,
+    message: str,
+    argument: str,
+    got_at: int,
+) -> None:
+    del got_at
+    first = call.splitlines()[0]
+    raw = "'float' does not match expected type 'int'" if "U.k" in call else _INT
+    if "U.k" in call:
+        raw = "'str' does not match expected type 'float'"
+    refined, line, column = _refine(tmp_path, _OWN, raw, first, occurrence)
+    lines = _OWN.splitlines()
+    assert refined == message
+    assert line is not None and column is not None
+    assert lines[line - 1][column - 1 :].startswith(argument.rstrip(")"))
+
+
+def test_a_multi_line_call_points_at_the_argument_line(tmp_path: Path) -> None:
+    refiner, path, lines = _refiner(tmp_path, _OWN)
+    line, column = _at(lines, "f(", 3)
+    assert lines[line - 1].strip() == "f("
+    message, at_line, at_column = refiner.refine(_INT, str(path), line, column)
+    assert message == "f(): b: expected int, got str"
+    assert (at_line, at_column) == (line + 2, column + 4)
+
+
+@pytest.mark.parametrize(
+    ("needle", "occurrence", "message"),
+    [
+        # nothing tells which argument: two certain strings for two ints
+        ('m("x", "y", 3)', 1, _INT),
+        # a variable of unknown type next to a parameter of the same type
+        ("f(n, s)", 1, "'float' does not match expected type 'int'"),
+        # the starred call, the unannotated callee, a call that is not ours
+        ("f(*[1, 2])", 1, _INT),
+        # the types in the message are not the argument's
+        ('opt("s")', 1, "'float' does not match expected type 'str'"),
+        ("flag()", 1, _INT),
+    ],
+)
+def test_an_argument_that_cannot_be_told_keeps_codons_message(
+    tmp_path: Path, needle: str, occurrence: int, message: str
+) -> None:
+    refined = _refine(tmp_path, _OWN, message, needle, occurrence)
+    assert refined[0] == message
+
+
+def test_a_mismatch_off_the_start_of_a_call_is_not_rewritten(tmp_path: Path) -> None:
+    refiner, path, lines = _refiner(tmp_path, _OWN)
+    line, column = _at(lines, '"x", 1.0)')
+    assert refiner.refine(_INT, str(path), line, column) == (_INT, line, column)
+
+
+def test_two_arguments_of_the_expected_type_are_not_guessed(tmp_path: Path) -> None:
+    source = (
+        "def f(a: int, b: int) -> int:\n    return a\n\n\n"
+        "def run(n) -> None:\n    f(n, 'x')\n    f('x', 'y')\n"
+    )
+    refined = _refine(tmp_path, source, _INT, "f(n,")
+    assert refined[0] == _INT  # n may be the one
+    refined = _refine(tmp_path, source, _INT, "f('x', 'y')")
+    assert refined[0] == _INT  # both are strings
+
+
+def test_a_parameter_that_is_assigned_is_not_a_certain_type(tmp_path: Path) -> None:
+    source = (
+        "def f(a: int) -> int:\n    return a\n\n\n"
+        "def run(s: str) -> None:\n    s = 3\n    f(s)\n"
+    )
+    assert _refine(tmp_path, source, _INT, "f(s)")[0] == _INT
+    source = source.replace("    s = 3\n", "")
+    assert _refine(tmp_path, source, _INT, "f(s)")[0] == (
+        "f(): a: expected int, got str"
+    )
+
+
+def test_an_unknown_keyword_names_the_class_and_the_signature(tmp_path: Path) -> None:
+    refiner, path, lines = _refiner(tmp_path, _OWN)
+    line, column = _at(lines, "c=2")
+    message, at_line, at_column = refiner.refine(
+        "'c' is an invalid keyword argument for __init__()", str(path), line, column
+    )
+    assert message == (
+        "D(): 'c' is an invalid keyword argument; D takes (a: int, b: float = 0.0)"
+    )
+    assert (at_line, at_column) == (line, column)
+
+
+def test_an_unknown_keyword_close_to_a_parameter_gets_a_suggestion(
+    tmp_path: Path,
+) -> None:
+    line, column = _at(_OWN.splitlines(), "bb=2")
+    refined = _refine(
+        tmp_path, _OWN, "'bb' is an invalid keyword argument for __init__()", "bb=2"
+    )
+    assert refined[0].startswith("D(): 'bb' is an invalid keyword argument (did you")
+    assert (refined[1], refined[2]) == (line, column)
+
+
+@pytest.mark.parametrize(
+    ("annotation", "value", "message", "shown"),
+    [
+        (
+            "float | None",
+            "'s'",
+            "'Optional[float]' does not match expected type 'Optional[str]'",
+            "str",
+        ),
+        (
+            "int | None",
+            "1.5",
+            "'Optional[int]' does not match expected type 'Optional[float]'",
+            "float",
+        ),
+        (
+            "list[int] | None",
+            "4",
+            "'Optional[List[int]]' does not match expected type 'Optional[int]'",
+            "int",
+        ),
+        (
+            "Optional[float]",
+            "'s'",
+            "'Optional[float]' does not match expected type 'Optional[str]'",
+            "str",
+        ),
+        (
+            "typing.Optional[float]",
+            "'s'",
+            "'Optional[float]' does not match expected type 'Optional[str]'",
+            "str",
+        ),
+        (
+            "Union[float, None]",
+            "'s'",
+            "'Optional[float]' does not match expected type 'Optional[str]'",
+            "str",
+        ),
+        (
+            "None | float",
+            "'s'",
+            "'Optional[float]' does not match expected type 'Optional[str]'",
+            "str",
+        ),
+        ("float", "'s'", "'float' does not match expected type 'str'", "str"),
+    ],
+)
+def test_an_optional_return_is_told_in_the_authors_terms(
+    tmp_path: Path, annotation: str, value: str, message: str, shown: str
+) -> None:
+    source = (
+        "from typing import Optional, Union\nimport typing\n\n\n"
+        f"def f(x: int) -> {annotation}:\n    return {value}\n"
+    )
+    refined = _refine(tmp_path, source, message, f"return {value}")
+    assert (
+        refined[0]
+        == f"f() returns {shown}, but the function is declared -> {annotation}"
+    )
+    assert (refined[1], refined[2]) == (6, 5)
+
+
+def test_a_method_return_names_its_class(tmp_path: Path) -> None:
+    source = (
+        "class C:\n    def check(self, w: int) -> int | None:\n        return True\n"
+    )
+    refined = _refine(
+        tmp_path,
+        source,
+        "'Optional[int]' does not match expected type 'Optional[bool]'",
+        "return True",
+    )
+    assert refined[0] == (
+        "C.check() returns bool, but the function is declared -> int | None"
+    )
+    refined = _refine(
+        tmp_path,
+        source.replace("int | None", "str"),
+        "cannot typecheck 'return None'",
+        "return True",
+    )
+    assert refined[0] == "C.check() returns None, but the function is declared -> str"
+
+
+def test_an_optional_return_of_a_variable_keeps_its_optionality(
+    tmp_path: Path,
+) -> None:
+    source = "def f(x: int | None) -> float | None:\n    return x\n"
+    refined = _refine(
+        tmp_path,
+        source,
+        "'Optional[float]' does not match expected type 'Optional[int]'",
+        "return x",
+    )
+    assert (
+        refined[0]
+        == "f() returns int | None, but the function is declared -> float | None"
+    )
+
+
+def test_another_mismatch_on_a_return_line_is_left_alone(tmp_path: Path) -> None:
+    source = "def f(x: int) -> float | None:\n    return g(x, 's')\n"
+    message = "'Optional[int]' does not match expected type 'str'"
+    assert _refine(tmp_path, source, message, "return g")[0] == message
+
+
+def test_a_missing_return_names_the_class() -> None:
+    tree = ast.parse(
+        "class C:\n    def val(self) -> float:\n        x = 1\n\n\n"
+        "def val() -> float:\n    x = 1\n\n\n"
+        "class D:\n    def flag(self) -> bool:\n        return 'x'\n"
+    )
+    messages = [p.message for p in return_problems({"m": ("m.py", tree)})]
+    assert any(
+        m.startswith("C.val() has a path that returns nothing") for m in messages
+    )
+    assert any(m.startswith("val() has a path that returns nothing") for m in messages)
+    assert any(m.startswith("D.flag() returns str") for m in messages)
+
+
+def test_a_bare_call_of_a_method_gets_the_self_hint(tmp_path: Path) -> None:
+    refined = _refine(tmp_path, _OWN, "name 'flag' is not defined", "flag()", 2)
+    assert refined[0] == (
+        "name 'flag' is not defined: S has a method flag(), "
+        "did you mean `self.flag()`?"
+    )
+    line, column = _at(_OWN.splitlines(), "flag()", 2)
+    assert (refined[1], refined[2]) == (line, column)
+
+
+def test_a_bare_attribute_gets_the_self_hint(tmp_path: Path) -> None:
+    refined = _refine(tmp_path, _OWN, "name 'flag_v' is not defined", "flag_v", 2)
+    assert refined[0] == (
+        "name 'flag_v' is not defined: S has an attribute flag_v, "
+        "did you mean `self.flag_v`?"
+    )
+
+
+def test_a_static_method_and_a_module_function_get_no_self_hint(
+    tmp_path: Path,
+) -> None:
+    message = "name 'flag' is not defined"
+    # `return flag()` of the static method: there is no self
+    assert _refine(tmp_path, _OWN, message, "return flag()")[0] == message
+    # nothing called `nothing` in the class
+    assert _refine(tmp_path, _OWN, "name 'nothing' is not defined", "flag()", 2)[0] == (
+        "name 'nothing' is not defined"
+    )
+
+
+@pytest.mark.parametrize("statement", ["if self.flag:", "if not self.flag and n:"])
+def test_a_method_used_as_a_value_is_told_to_be_called(
+    tmp_path: Path, statement: str
+) -> None:
+    refined = _refine(
+        tmp_path, _OWN, "'flag(S)' object has no attribute '__bool__'", statement
+    )
+    assert refined[0] == (
+        "`self.flag` is a method, not its result (a method is always true): "
+        "call it, `self.flag()`"
+    )
+    line, column = _at(_OWN.splitlines(), statement)
+    assert refined[1] == line
+    assert refined[2] == column + statement.index("self.flag")
+
+
+def test_a_method_that_is_called_is_not_told_to_be_called(tmp_path: Path) -> None:
+    message = "'flag(S)' object has no attribute '__bool__'"
+    source = _OWN.replace("if self.flag:", "if self.flag():").replace(
+        "if not self.flag and n:", "if not self.flag() and n:"
+    )
+    assert _refine(tmp_path, source, message, "if self.flag()")[0] == message
+
+
+def test_a_method_value_of_an_unknown_class_keeps_codons_message(
+    tmp_path: Path,
+) -> None:
+    message = "'flag(Other)' object has no attribute '__bool__'"
+    assert _refine(tmp_path, _OWN, message, "if self.flag:")[0] == message
+
+
+_HELPERS = """
+
+def f(a: int, b: int) -> int:
+    return a
+
+
+def g(a: int, *, b: int = 2) -> int:
+    return a + b
+
+
+class U:
+    @staticmethod
+    def k(a: int, b: float) -> float:
+        return a + b
+
+
+class P:
+    def __init__(self, a: int, b: float = 0.0) -> None:
+        self.a = a
+
+
+@dataclass
+class D:
+    a: int
+    b: float = 0.0
+"""
+
+
+@needs_codon
+@pytest.mark.parametrize(
+    ("setup", "needle", "message"),
+    [
+        ("f(\n    1,\n    'x',\n)\n", "'x',", "f(): b: expected int, got str"),
+        ("g(1, b='s')\n", "'s'", "g(): b: expected int, got str"),
+        ("U.k(1, 'x')\n", "'x'", "U.k(): b: expected float, got str"),
+        ("P('x', 1.0)\n", "'x'", "P(): a: expected int, got str"),
+        ("D(a='s')\n", "'s'", "D(): a: expected int, got str"),
+        (
+            "D(a=1, c=2)\n",
+            "c=2",
+            "D(): 'c' is an invalid keyword argument; D takes (a: int, b: float = 0.0)",
+        ),
+    ],
+)
+def test_a_wrong_argument_of_an_own_callable_is_named_by_codon_check(
+    tmp_path: Path, setup: str, needle: str, message: str
+) -> None:
+    result, path = _check(
+        tmp_path, setup, "from dataclasses import dataclass\n" + _HELPERS
+    )
+    error = _only_error(result)
+    assert error.message == message, result.format()
+    assert error.line == _line_of(path, needle)
+    source = path.read_text().splitlines()[error.line - 1]
+    assert source[error.column - 1 :].startswith(needle.rstrip(","))
+
+
+@needs_codon
+def test_a_wrong_argument_of_an_own_method_names_the_class(tmp_path: Path) -> None:
+    result, path = _check(
+        tmp_path,
+        "self.h('x')\n",
+        "\n    def h(self, a: int) -> int:\n        return a\n",
+    )
+    error = _only_error(result)
+    assert error.message == "CaseScenario.h(): a: expected int, got str"
+    assert error.line == _line_of(path, "self.h('x')")
+
+
+@needs_codon
+def test_right_arguments_of_own_callables_are_accepted(tmp_path: Path) -> None:
+    result, _ = _check(
+        tmp_path,
+        "f(1, 2)\ng(1, b=3)\nU.k(1, 2.5)\nP(1)\nD(a=1, b=2.0)\n",
+        "from dataclasses import dataclass\n" + _HELPERS,
+    )
+    assert result.ok, result.format()
+
+
+@needs_codon
+@pytest.mark.parametrize(
+    ("declared", "body", "message"),
+    [
+        (
+            "float | None",
+            "return 's'",
+            "returns str, but the function is declared -> float | None",
+        ),
+        (
+            "int | None",
+            "if x:\n            return None\n        return 1.5",
+            "returns float, but the function is declared -> int | None",
+        ),
+        (
+            "list[int] | None",
+            "return 4",
+            "returns int, but the function is declared -> list[int] | None",
+        ),
+        (
+            "Optional[float]",
+            "return 's'",
+            "returns str, but the function is declared -> Optional[float]",
+        ),
+    ],
+)
+def test_a_wrong_return_of_an_optional_function(
+    tmp_path: Path, declared: str, body: str, message: str
+) -> None:
+    result, path = _check(
+        tmp_path,
+        "ok = self.val(1)\n",
+        f"\n    def val(self, x: int) -> {declared}:\n        {body}\n",
+    )
+    error = _only_error(result)
+    assert error.message == f"CaseScenario.val() {message}", result.format()
+    assert "does not match expected type" not in error.message
+
+
+@needs_codon
+def test_a_forgotten_self_before_a_method_call(tmp_path: Path) -> None:
+    result, path = _check(
+        tmp_path,
+        "if flag():\n    pass\n",
+        "\n    def flag(self) -> bool:\n        return True\n",
+    )
+    error = _only_error(result)
+    assert error.message == (
+        "name 'flag' is not defined: CaseScenario has a method flag(), "
+        "did you mean `self.flag()`?"
+    )
+    assert error.line == _line_of(path, "if flag()")
+
+
+@needs_codon
+def test_a_method_used_as_a_condition_is_told_to_be_called(tmp_path: Path) -> None:
+    result, path = _check(
+        tmp_path,
+        "if self.flag:\n    pass\n",
+        "\n    def flag(self) -> bool:\n        return True\n",
+    )
+    error = _only_error(result)
+    assert error.message.startswith("`self.flag` is a method, not its result")
+    assert error.line == _line_of(path, "if self.flag")
+    source = path.read_text().splitlines()[error.line - 1]
+    assert source[error.column - 1 :].startswith("self.flag")

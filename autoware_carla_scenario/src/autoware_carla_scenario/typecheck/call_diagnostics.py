@@ -83,6 +83,60 @@ def codon_type(text: str) -> str:
     )
 
 
+def _union_members(node: ast.expr) -> tuple[list[ast.expr], bool]:
+    """The members of an annotation written ``X | Y``, ``Optional[X]`` or
+    ``Union[X, Y]`` (``typing.`` prefix or not), and whether ``None`` is one."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        try:
+            return _union_members(ast.parse(node.value, mode="eval").body)
+        except SyntaxError:
+            return [node], False
+    if isinstance(node, ast.Constant) and node.value is None:
+        return [], True
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
+        left, left_none = _union_members(node.left)
+        right, right_none = _union_members(node.right)
+        return left + right, left_none or right_none
+    if isinstance(node, ast.Subscript):
+        head = node.value.attr if isinstance(node.value, ast.Attribute) else None
+        if isinstance(node.value, ast.Name):
+            head = node.value.id
+        if head in ("Optional", "Union"):
+            args = (
+                node.slice.elts if isinstance(node.slice, ast.Tuple) else [node.slice]
+            )
+            members: list[ast.expr] = []
+            has_none = head == "Optional"
+            for arg in args:
+                inner, inner_none = _union_members(arg)
+                members += inner
+                has_none = has_none or inner_none
+            return members, has_none
+    return [node], False
+
+
+def canonical_annotation(annotation: ast.expr | str) -> str:
+    """An annotation, or a Codon type, in one spelling: ``X | None`` for
+    ``Optional[X]``, ``Union[X, None]`` and ``None | X``, ``list[int]`` for
+    ``List[int]``, no ``typing.`` prefix, no space after a comma."""
+    if isinstance(annotation, str):
+        try:
+            node = ast.parse(annotation.strip(), mode="eval").body
+        except SyntaxError:
+            return annotation.strip()
+    else:
+        node = annotation
+    members, has_none = _union_members(node)
+    texts = []
+    for member in members:
+        text = re.sub(r"\b(?:\w+\.)+(\w+)", r"\1", ast.unparse(member))
+        text = codon_type(text.strip("'\""))
+        texts.append(re.sub(r",\s+", ",", text))
+    if has_none:
+        texts.append("None")
+    return " | ".join(texts)
+
+
 # ---------------------------------------------------------------------------
 # Source lookup
 # ---------------------------------------------------------------------------
@@ -450,7 +504,7 @@ def _target(
             obj = getattr(cls, member, None)
             if obj is None:
                 return None
-            label = member
+            label = _method_label(obj, member)
             hints = _hints(obj)
         sig = inspect.signature(obj)
         if member != "__init__" and not isinstance(
@@ -464,6 +518,21 @@ def _target(
     if obj is None:
         return None
     return name, inspect.signature(obj), _hints(obj)
+
+
+def _method_label(obj: Any, member: str) -> str:
+    """``XScenario.h`` for a method the author wrote, the bare name for one of
+    the framework's (``register_pass_condition``)."""
+    func = getattr(obj, "__func__", obj)
+    qualname = getattr(func, "__qualname__", "")
+    module = getattr(func, "__module__", "") or ""
+    if (
+        qualname.endswith("." + member)
+        and "<locals>" not in qualname
+        and module.partition(".")[0] != "autoware_carla_scenario"
+    ):
+        return qualname
+    return member
 
 
 def call_message(
@@ -575,20 +644,236 @@ def _generic(
 
 
 # ---------------------------------------------------------------------------
+# A wrong argument type, or an unknown keyword, in a call to the author's own
+# callable (#540)
+# ---------------------------------------------------------------------------
+
+#: ``'c' is an invalid keyword argument for __init__()``
+_INVALID_KEYWORD = re.compile(
+    r"^'(?P<keyword>\w+)' is an invalid keyword argument for (?P<name>\w+)\(\)$"
+)
+_LITERAL_TYPES = {
+    str: "str",
+    bool: "bool",
+    int: "int",
+    float: "float",
+    type(None): "None",
+}
+
+
+def _enclosing_function(
+    tree: ast.Module, line: int
+) -> ast.FunctionDef | ast.AsyncFunctionDef | None:
+    best = None
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and (
+            node.lineno <= line <= (node.end_lineno or node.lineno)
+        ):
+            if best is None or node.lineno > best.lineno:
+                best = node
+    return best
+
+
+def _certain_argument_type(
+    node: ast.expr, function: ast.FunctionDef | ast.AsyncFunctionDef | None
+) -> str | None:
+    """The type Codon gives the argument *node*, when the syntax settles it:
+    a literal, an f-string, or a parameter of the enclosing function that is
+    annotated and never assigned.  ``None`` when it is not certain."""
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.USub, ast.UAdd)):
+        inner = _certain_argument_type(node.operand, function)
+        return inner if inner in ("int", "float") else None
+    if isinstance(node, ast.Constant):
+        return _LITERAL_TYPES.get(type(node.value))
+    if isinstance(node, ast.JoinedStr):
+        return "str"
+    if isinstance(node, ast.Name) and function is not None:
+        args = function.args
+        every = [*args.posonlyargs, *args.args, *args.kwonlyargs]
+        found = [a for a in every if a.arg == node.id]
+        if len(found) != 1 or found[0].annotation is None:
+            return None
+        if any(
+            isinstance(n, ast.Name)
+            and n.id == node.id
+            and not isinstance(n.ctx, ast.Load)
+            for n in ast.walk(function)
+        ):
+            return None
+        return canonical_annotation(found[0].annotation)
+    return None
+
+
+def _own_callee(
+    call: ast.Call,
+    tree: ast.Module,
+    resolve_class: Resolver,
+    resolve_callable: Resolver,
+) -> tuple[str, inspect.Signature, dict[str, Any]] | None:
+    """The function, method, static method or constructor *call* calls, when
+    it can be told from the author's source alone."""
+    func = call.func
+    if isinstance(func, ast.Name):
+        if isinstance(resolve_class(func.id), type):
+            return _target(
+                f"{func.id}.__init__", call, tree, resolve_class, resolve_callable
+            )
+        return _target(func.id, call, tree, resolve_class, resolve_callable)
+    if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name):
+        owner: str | None = None
+        if func.value.id == "self":
+            owner = _enclosing_class(tree, call.lineno)
+        elif isinstance(resolve_class(func.value.id), type):
+            owner = func.value.id
+        if owner is not None:
+            return _target(
+                f"{owner}.{func.attr}", call, tree, resolve_class, resolve_callable
+            )
+    return None
+
+
+def _plain_call(call: ast.Call) -> bool:
+    return not any(isinstance(a, ast.Starred) for a in call.args) and all(
+        k.arg is not None for k in call.keywords
+    )
+
+
+def argument_mismatch(
+    message: str,
+    path: str | None,
+    line: int | None,
+    column: int | None,
+    files: _Files,
+    resolve_class: Resolver,
+    resolve_callable: Resolver,
+) -> tuple[str, int | None, int | None] | None:
+    """``f(): b: expected int, got str``, at the argument, for Codon's
+    ``'str' does not match expected type 'int'`` at the start of a call.
+
+    The argument is named only when it is the one: exactly one argument whose
+    parameter is declared the type Codon expects has a type that is certain
+    from the syntax and is the type Codon got, and no other argument of such
+    a parameter could be it.  Anything else keeps Codon's message."""
+    found = _MISMATCH.match(message)
+    parsed = files.get(path)
+    if found is None or parsed is None or line is None or column is None:
+        return None
+    tree, lines = parsed
+    calls = [
+        n
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Call)
+        and n.lineno == line
+        and _column(lines, line, n.col_offset) == column
+    ]
+    if len(calls) != 1 or not _plain_call(calls[0]):
+        return None
+    call = calls[0]
+    callee = _own_callee(call, tree, resolve_class, resolve_callable)
+    if callee is None:
+        return None
+    label, sig, hints = callee
+    try:
+        bound = sig.bind(*call.args, **{k.arg: k.value for k in call.keywords if k.arg})
+    except TypeError:
+        return None
+    # Here the first type is the argument's and the second the parameter's.
+    got = codon_type(found["declared"])
+    want = canonical_annotation(found["got"])
+    function = _enclosing_function(tree, line)
+    culprits: list[tuple[str, ast.expr]] = []
+    for name, node in bound.arguments.items():
+        if name not in hints:
+            continue
+        if canonical_annotation(type_text(hints[name])) != want:
+            continue
+        if sig.parameters[name].kind in (
+            inspect.Parameter.VAR_POSITIONAL,
+            inspect.Parameter.VAR_KEYWORD,
+        ):
+            return None
+        assert isinstance(node, ast.expr)
+        certain = _certain_argument_type(node, function)
+        if certain is None:
+            return None  # this argument may be the one: do not guess
+        if canonical_annotation(certain) == canonical_annotation(got):
+            culprits.append((name, node))
+    if len(culprits) != 1:
+        return None
+    name, node = culprits[0]
+    return _located(
+        f"{label}(): {name}: expected {type_text(hints[name])}, got {got}",
+        node,
+        line,
+        column,
+        lines,
+    )
+
+
+def invalid_keyword(
+    message: str,
+    path: str | None,
+    line: int | None,
+    column: int | None,
+    files: _Files,
+    resolve_class: Resolver,
+    resolve_callable: Resolver,
+) -> tuple[str, int | None, int | None] | None:
+    """``P(): 'c' is an invalid keyword argument; P takes (a: int)`` for
+    Codon's ``'c' is an invalid keyword argument for __init__()``."""
+    found = _INVALID_KEYWORD.match(message)
+    parsed = files.get(path)
+    if found is None or parsed is None or line is None:
+        return None
+    tree, lines = parsed
+    calls = [
+        n
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Call)
+        and _plain_call(n)
+        and any(k.arg == found["keyword"] and k.lineno == line for k in n.keywords)
+    ]
+    if len(calls) != 1:
+        return None
+    call = calls[0]
+    callee = _own_callee(call, tree, resolve_class, resolve_callable)
+    if callee is None:
+        return None
+    label, sig, hints = callee
+    problem = _bind(
+        f"{label}()",
+        call,
+        sig,
+        hints,
+        None,
+        resolve_class,
+        f"{label} takes ({signature_text(sig, hints)})",
+    )
+    if (
+        problem is None
+        or not isinstance(problem.node, ast.keyword)
+        or problem.node.arg != found["keyword"]
+    ):
+        return None
+    return _located(problem.message, problem.node, line, column, lines)
+
+
+# ---------------------------------------------------------------------------
 # A return of the wrong type (#528)
 # ---------------------------------------------------------------------------
 
 
 def _returning_function(
     tree: ast.Module, lines: list[str], line: int, column: int
-) -> ast.FunctionDef | ast.AsyncFunctionDef | None:
+) -> tuple[ast.FunctionDef | ast.AsyncFunctionDef, ast.Return] | None:
     """The annotated function whose own ``return`` statement starts at
-    (*line*, *column*); ``None`` when that ``return`` belongs to an
-    unannotated nested function, or the function is a generator."""
+    (*line*, *column*), and that statement; ``None`` when that ``return``
+    belongs to an unannotated nested function, or the function is a
+    generator."""
 
     def search(
         node: ast.AST, owner: ast.FunctionDef | ast.AsyncFunctionDef | None
-    ) -> tuple[ast.FunctionDef | ast.AsyncFunctionDef | None] | None:
+    ) -> tuple[ast.FunctionDef | ast.AsyncFunctionDef | None, ast.Return] | None:
         for child in ast.iter_child_nodes(node):
             if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 found = search(child, child)
@@ -600,23 +885,23 @@ def _returning_function(
                     and child.lineno == line
                     and _column(lines, line, child.col_offset) == column
                 ):
-                    return (owner,)
+                    return (owner, child)
                 found = search(child, owner)
             if found is not None:
                 return found
         return None
 
     hit = search(tree, None)
-    function = hit[0] if hit is not None else None
-    if function is None or function.returns is None:
+    if hit is None or hit[0] is None or hit[0].returns is None:
         return None
+    function = hit[0]
     if any(
         isinstance(n, (ast.Yield, ast.YieldFrom))
         for stmt in function.body
         for n in _own_nodes(stmt)
     ):
         return None
-    return function
+    return function, hit[1]
 
 
 def _own_nodes(node: ast.AST) -> Iterator[ast.AST]:
@@ -627,6 +912,16 @@ def _own_nodes(node: ast.AST) -> Iterator[ast.AST]:
             child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)
         ):
             yield from _own_nodes(child)
+
+
+def qualified_name(tree: ast.Module, function: ast.AST) -> str:
+    """``XScenario.f`` for a method, ``f`` for any other function."""
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef) and function in node.body:
+            assert isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef))
+            return f"{node.name}.{function.name}"
+    assert isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef))
+    return function.name
 
 
 def return_message(
@@ -644,21 +939,137 @@ def return_message(
     if not (found or none_returned) or parsed is None or line is None or column is None:
         return None
     tree, lines = parsed
-    function = _returning_function(tree, lines, line, column)
-    if function is None:
+    hit = _returning_function(tree, lines, line, column)
+    if hit is None:
         return None
-    declared = ast.unparse(function.returns).strip("'\"")  # type: ignore[arg-type]
+    function, statement = hit
+    assert function.returns is not None
+    name = qualified_name(tree, function)
+    declared = ast.unparse(function.returns).strip("'\"")
     if found is None:
-        return (
-            f"{function.name}() returns None, but the function is declared "
-            f"-> {declared}"
+        return f"{name}() returns None, but the function is declared -> {declared}"
+    # Codon's message is the other way round: the first type is the declared
+    # one (here ``Optional[float]`` for ``-> float | None``, whichever way the
+    # author spelled it), the second the type of the returned value.
+    want = canonical_annotation(codon_type(found["declared"]))
+    have = canonical_annotation(function.returns)
+    if want.lower() != have.lower():
+        head = want.split("[")[0]
+        if "|" in want or head.lower() not in have.lower():
+            return None  # not the declared type: another mismatch on this line
+    shown = canonical_annotation(codon_type(found["got"]))
+    if statement.value is not None and shown.endswith(" | None"):
+        # Codon wraps the value in the declared Optional: say what it is.
+        certain = _certain_argument_type(
+            statement.value, _enclosing_function(tree, line)
         )
-    head = found["declared"].split("[")[0].replace("NoneType", "None")
-    if head.lower() not in declared.lower():
-        return None  # not the declared type: another mismatch on this line
+        if certain is not None and certain != "None":
+            shown = certain
+    return f"{name}() returns {shown}, but the function is declared -> {declared}"
+
+
+# ---------------------------------------------------------------------------
+# A forgotten ``self`` (#542)
+# ---------------------------------------------------------------------------
+
+#: ``'flag(XScenario)' object has no attribute '__bool__'``
+_BOUND_METHOD_TRUTH = re.compile(
+    r"^'(?P<name>\w+)\((?P<cls>\w+)\)' object has no attribute '__bool__'$"
+)
+_NOT_DEFINED = re.compile(r"^name '(?P<name>\w+)' is not defined$")
+
+
+def _method_receiver(tree: ast.Module, line: int) -> tuple[str, str] | None:
+    """(the class, the name of ``self``) of the method that holds *line*."""
+    owner = _enclosing_class(tree, line)
+    function = _enclosing_function(tree, line)
+    if owner is None or function is None or not function.args.args:
+        return None
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef) and node.name == owner:
+            if function in node.body:
+                break
+    else:
+        return None
+    if any(
+        isinstance(d, ast.Name) and d.id in ("staticmethod", "classmethod")
+        for d in function.decorator_list
+    ):
+        return None
+    return owner, function.args.args[0].arg
+
+
+def forgotten_self(
+    message: str,
+    path: str | None,
+    line: int | None,
+    column: int | None,
+    files: _Files,
+    resolve_class: Resolver,
+) -> tuple[str, int | None, int | None] | None:
+    """The hint for a bare ``flag()`` of a method (or attribute) of the
+    enclosing class, and for ``if self.flag:`` where ``flag`` is a method."""
+    parsed = files.get(path)
+    if parsed is None or line is None:
+        return None
+    tree, lines = parsed
+    undefined = _NOT_DEFINED.match(message)
+    if undefined is not None:
+        name = undefined["name"]
+        receiver = _method_receiver(tree, line)
+        if receiver is None:
+            return None
+        owner, self_name = receiver
+        names = [
+            n
+            for n in ast.walk(tree)
+            if isinstance(n, ast.Name)
+            and n.id == name
+            and n.lineno == line
+            and (column is None or _column(lines, line, n.col_offset) == column)
+        ]
+        cls = resolve_class(owner)
+        if len(names) != 1 or not isinstance(cls, type):
+            return None
+        called = any(
+            isinstance(c, ast.Call) and c.func is names[0] for c in ast.walk(tree)
+        )
+        member = inspect.getattr_static(cls, name, None)
+        if member is not None and inspect.isfunction(member):
+            what = f"{owner} has a method {name}()"
+            fix = f"{self_name}.{name}()" if called else f"{self_name}.{name}"
+        elif name in getattr(cls, "__annotations__", {}) or member is not None:
+            what = f"{owner} has an attribute {name}"
+            fix = f"{self_name}.{name}"
+        else:
+            return None
+        return f"{message}: {what}, did you mean `{fix}`?", line, column
+    bound = _BOUND_METHOD_TRUTH.match(message)
+    if bound is None:
+        return None
+    cls = resolve_class(bound["cls"])
+    if not isinstance(cls, type) or not inspect.isfunction(
+        inspect.getattr_static(cls, bound["name"], None)
+    ):
+        return None
+    callee_ids = {id(c.func) for c in ast.walk(tree) if isinstance(c, ast.Call)}
+    uses = [
+        n
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Attribute)
+        and n.attr == bound["name"]
+        and n.lineno == line
+        and id(n) not in callee_ids
+    ]
+    if len(uses) != 1:
+        return None
+    use = uses[0]
+    text = ast.unparse(use)
     return (
-        f"{function.name}() returns {codon_type(found['got'])}, but the function "
-        f"is declared -> {declared}"
+        f"`{text}` is a method, not its result (a method is always true): "
+        f"call it, `{text}()`",
+        use.lineno,
+        _column(lines, use.lineno, use.col_offset),
     )
 
 
@@ -688,9 +1099,22 @@ class Refiner:
             )
             if changed is not None:
                 return changed
+            resolvers = (
+                lambda name: self.resolve_class(name, path),
+                lambda name: self.resolve_callable(name, path),
+            )
+            for rewrite in (argument_mismatch, invalid_keyword):
+                changed = rewrite(message, path, line, column, self.files, *resolvers)
+                if changed is not None:
+                    return changed
             returned = return_message(message, path, line, column, self.files)
             if returned is not None:
                 return returned, line, column
+            changed = forgotten_self(
+                message, path, line, column, self.files, resolvers[0]
+            )
+            if changed is not None:
+                return changed
         except Exception:  # noqa: BLE001 - only a hint: never lose Codon's error
             pass
         return message, line, column
