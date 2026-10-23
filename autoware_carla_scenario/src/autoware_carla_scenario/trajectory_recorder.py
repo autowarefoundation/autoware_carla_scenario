@@ -54,6 +54,8 @@ One JSON object per line, in CARLA's (left-handed) frame, metres/degrees
   with a vehicle or a walker (:mod:`~autoware_carla_scenario.npc_collisions`).
 * ``{"type": "walker_fallen", "frame", "t", "id", "role", "drop", "tilt"}``
   -- a walker was seen fallen over, once per walker.
+* ``{"type": "despawn", "frame", "t", "label", "entity", "id"}`` -- a
+  ``DespawnAction`` took an entity out of the world.
 * ``{"type": "result", "passed", "message", "elapsed_seconds",
   "conditions"}`` -- last, the verdict.
 
@@ -475,6 +477,25 @@ class TrajectoryRecorder:
                     "role": str(fallen.role),
                     "drop": _r(fallen.drop),
                     "tilt": _r(fallen.tilt),
+                }
+            ),
+        )
+
+    def record_despawn(self, label: str, entity: str, actor_id: int) -> None:
+        """Write that the action labelled *label* removed *entity* (its actor
+        *actor_id*, ``-1`` if it had none), on the tick last recorded."""
+        if self._out is None:
+            return
+        self._guarded(
+            "stopped",
+            lambda: self._emit(
+                {
+                    "type": "despawn",
+                    "frame": self._frame,
+                    "t": _r(self._t),
+                    "label": label,
+                    "entity": entity,
+                    "id": None if actor_id < 0 else int(actor_id),
                 }
             ),
         )

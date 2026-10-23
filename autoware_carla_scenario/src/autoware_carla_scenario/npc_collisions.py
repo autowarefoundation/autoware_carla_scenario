@@ -40,6 +40,7 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "FALLEN_TILT_DEG",
+    "release_actor",
     "NpcCollision",
     "NpcCollisionMonitor",
     "REPEAT_S",
@@ -114,6 +115,17 @@ class _Sensed:
         self.name = name
 
 
+#: The run's monitor, for :func:`release_actor`; ``None`` between runs.
+_ACTIVE: Optional["NpcCollisionMonitor"] = None
+
+
+def release_actor(actor_id: int) -> None:
+    """Stop the run's monitor listening to *actor_id*, about to be destroyed
+    (:class:`~autoware_carla_scenario.actions.despawn.DespawnAction`)."""
+    if _ACTIVE is not None:
+        _ACTIVE.release(actor_id)
+
+
 class NpcCollisionMonitor:
     """Hears the collisions of every vehicle but the ego; sees walkers fall.
 
@@ -133,8 +145,12 @@ class NpcCollisionMonitor:
         self._walkers: dict[int, tuple[float, float, float, float]] = {}
         #: How many looks in a row each walker has been in the world for.
         self._settled: dict[int, int] = {}
+        #: Actors released before they are destroyed: not heard again.
+        self._gone: set[int] = set()
         self._fallen: set[int] = set()
         self._broken = False
+        global _ACTIVE
+        _ACTIVE = self
 
     # ------------------------------------------------------------------
 
@@ -153,11 +169,22 @@ class NpcCollisionMonitor:
             self._broken = True
             return [], []
 
+    def release(self, actor_id: int) -> None:
+        """Stop hearing *actor_id* and forget it: it is leaving the world."""
+        sensed = self._sensed.pop(actor_id, None)
+        if sensed is not None:
+            _release(sensed.sensor)
+        self._walkers.pop(actor_id, None)
+        self._gone.add(actor_id)
+
     def close(self) -> None:
         """Stop and destroy every sensor this attached, through its own handle."""
+        global _ACTIVE
         for sensed in self._sensed.values():
             _release(sensed.sensor)
         self._sensed.clear()
+        if _ACTIVE is self:
+            _ACTIVE = None
 
     # ------------------------------------------------------------------
 
@@ -181,6 +208,8 @@ class NpcCollisionMonitor:
             type_id = str(actor.type_id)
             if not (type_id.startswith("vehicle.") or type_id.startswith("walker.")):
                 continue
+            if actor.id in self._gone:
+                continue
             present.add(actor.id)
             name = _name_of(actor)
             self._names[actor.id] = name
@@ -192,9 +221,7 @@ class NpcCollisionMonitor:
             if name == self._ego_role or actor.id in self._sensed:
                 continue
             if blueprint is None:
-                blueprint = world.get_blueprint_library().find(
-                    "sensor.other.collision"
-                )
+                blueprint = world.get_blueprint_library().find("sensor.other.collision")
             import typesafe_carla.carla as carla  # noqa: PLC0415
 
             sensor = world.spawn_actor(blueprint, carla.Transform(), attach_to=actor)

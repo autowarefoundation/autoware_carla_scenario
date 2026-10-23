@@ -238,6 +238,7 @@ class TrajectoryRun(BaseAction):
     _elapsed: float
     _finished: bool
     _warned_missing: bool
+    _warned_absent: bool
     _start_time: float
     _clock_shift: float
     _distance: float
@@ -324,6 +325,7 @@ class TrajectoryRun(BaseAction):
         # Per run.
         self._finished = False
         self._warned_missing = False
+        self._warned_absent = False
         self._start_time = 0.0
         self._clock_shift = 0.0
         self._distance = 0.0
@@ -395,12 +397,23 @@ class TrajectoryRun(BaseAction):
             return
         pedestrian = find_pedestrian_entity(self._entity_name)
         if pedestrian is None:
-            logger.warning(
-                "%s: entity '%s' not found", self.label, str(self._entity_name)
-            )
+            self._entity_absent()
             return
         walking: PedestrianEntity = pedestrian
         self._move(world, walking)
+
+    def _entity_absent(self) -> None:
+        """The entity is not (or no longer) in the world -- despawned, or
+        never spawned: said once, and a run it was on ends."""
+        if not self._warned_absent:
+            self._warned_absent = True
+            logger.warning(
+                "%s: entity '%s' not found; nothing to move",
+                self.label,
+                str(self._entity_name),
+            )
+        if self._begun:
+            self._finished = True
 
     def _move(
         self, world: "carla.World", entity: Union[BackendDriven, PedestrianEntity]
@@ -413,9 +426,7 @@ class TrajectoryRun(BaseAction):
         if hasattr(entity, "actor"):
             maybe_actor = entity.actor
         if maybe_actor is None:
-            logger.warning(
-                "%s: '%s' has no actor", self.label, str(self._entity_name)
-            )
+            logger.warning("%s: '%s' has no actor", self.label, str(self._entity_name))
             return
         actor: carla.Actor = maybe_actor
         if hasattr(entity, "use_autopilot") and entity.use_autopilot is False:
@@ -964,8 +975,7 @@ class TrajectoryRun(BaseAction):
             )
         elif not opened and not self._waiting:
             logger.info(
-                "%s: '%s' waits at vertex %d of %r until %s "
-                "holds",
+                "%s: '%s' waits at vertex %d of %r until %s " "holds",
                 self.label,
                 self._entity_name,
                 index,

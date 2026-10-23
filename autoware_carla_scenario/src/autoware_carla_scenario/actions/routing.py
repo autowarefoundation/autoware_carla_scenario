@@ -71,6 +71,10 @@ _PACE_STEP_M = 2.0
 _DEFAULT_LIMIT_MPS = 50.0 / 3.6
 #: The fastest (m/s) CARLA walks a pedestrian.
 _WALKER_LIMIT_MPS = 2.0
+#: How far (m) off its planned route a vehicle is said to have left it.
+_OFF_PATH_M = 8.0
+#: Metres between the samples of a track matched to the lanes.
+_MATCH_STEP_M = 2.0
 #: A speed command that changes less than this (m/s) is not sent again.
 _SPEED_RESEND_MPS = 0.05
 
@@ -170,7 +174,11 @@ class RoutingAction(TrajectoryRun):
     _sent: float
     _arrivals: list[WaypointArrival]
     _stop_vertices: list[int]
+    _mark_points: list[tuple[int, float, float]]
+    _mark_lanes: list[tuple[int, Lanelet2Pose]]
     _start_pose: Optional[CarlaWorldPose]
+    _warned_off: bool
+    _route_start: Optional[Lanelet2Pose]
 
     def __init__(
         self,
@@ -244,7 +252,11 @@ class RoutingAction(TrajectoryRun):
         self._sent = -1.0
         self._arrivals = []
         self._stop_vertices = []
+        self._mark_points = []
+        self._mark_lanes = []
         self._start_pose = None
+        self._warned_off = False
+        self._route_start = None
 
     # ------------------------------------------------------------------
     # Public state
@@ -280,6 +292,8 @@ class RoutingAction(TrajectoryRun):
         """Anything but a vehicle handed an untimed route keeps acting."""
         if self._mode is not RoutingMode.DRIVER or self._appear_on_start:
             return True
+        if self._goal is None:
+            return True  # a route written out is followed to its end
         if self._timed():
             return True
         return (
@@ -319,6 +333,8 @@ class RoutingAction(TrajectoryRun):
             self._stepping = False
             self._walking = False
             self._sent = -1.0
+            self._warned_off = False
+            self._route_start = None
         super().execute(world)
 
     def _drive_target(self, world: "carla.World") -> None:
@@ -334,9 +350,9 @@ class RoutingAction(TrajectoryRun):
             return
         pedestrian = find_pedestrian_entity(self._entity_name)
         if pedestrian is None:
-            logger.warning(
-                "%s: entity '%s' not found", self.label, str(self._entity_name)
-            )
+            self._stepping = False
+            self._walking = False
+            self._entity_absent()
             return
         walker: PedestrianEntity = pedestrian
         self._walk_route(world, walker)
@@ -404,7 +420,7 @@ class RoutingAction(TrajectoryRun):
             return
         stops = self._stops(False)
         if not external and self._resolved is not None:
-            stops = self._drivable(stops)
+            stops = self._lane_stops(stops)
         if actor is not None and self._appear_on_start and not external:
             # Spawned out of the world and kept from its backend until now:
             # back on it, to drive the route it is about to be given.
@@ -412,7 +428,21 @@ class RoutingAction(TrajectoryRun):
         initial = self._initial_pose
         if initial is None and self._resolved is not None:
             initial = self._start_pose
-        if stops:
+        route_start = self._route_start
+        if stops and route_start is not None:
+            begin: Lanelet2Pose = route_start
+            logger.info(
+                "%s: '%s' routed from %d@%.1f through %s",
+                self.label,
+                str(self._entity_name),
+                begin.lanelet_id,
+                begin.s,
+                ", ".join(f"{p.lanelet_id}@{p.s:.1f}" for p in stops),
+            )
+            whole: list[Lanelet2Pose] = [begin]
+            whole.extend(stops)
+            entity.follow_route(world, whole)
+        elif stops:
             self._hand_route(world, entity, stops, initial)
         if external:
             if self._timed():
@@ -426,7 +456,10 @@ class RoutingAction(TrajectoryRun):
             self._finished = True
             return
         start = self._start_pose
-        if actor is not None and start is not None and stops and self._timed():
+        # A route written out is followed to its end, timed or not: what
+        # ends the run (and so what a despawn after it waits for) is arrival.
+        follows = self._timed() or self._goal is None
+        if actor is not None and start is not None and stops and follows:
             vehicle: "carla.Actor" = actor
             here: CarlaWorldPose = start
             self._plan_vehicle_pacing(here, stops, vehicle)
@@ -480,8 +513,13 @@ class RoutingAction(TrajectoryRun):
         from ..trajectory.relative_lane import reference_lane_pose_of  # noqa: PLC0415
 
         mm = MapManager.get_instance()
+        route_start = self._route_start
+        if route_start is not None:
+            begin: Lanelet2Pose = route_start
+        else:
+            begin = reference_lane_pose_of(start)
         route = PlannedRoute(
-            start=reference_lane_pose_of(start),
+            start=begin,
             goal=stops[-1],
             via=tuple(stops[:-1]),
         )
@@ -504,7 +542,7 @@ class RoutingAction(TrajectoryRun):
             zs.append(point.z)
             yaws.append(None)
         path = ResolvedTrajectory(xs, ys, zs, yaws)
-        self._start_pacing(path, stops, actor, ARRIVAL_TOLERANCE_M)
+        self._start_pacing(path, actor, ARRIVAL_TOLERANCE_M)
 
     def _pace_vehicle(
         self, world: "carla.World", entity: BackendDriven, actor: "carla.Actor"
@@ -531,17 +569,37 @@ class RoutingAction(TrajectoryRun):
             return
         self._here = planned.project(location.x, location.y, near=self._here)
         paced.observe(self._here, self._elapsed)
+        on_path = planned.at_distance(self._here)
+        off = math.hypot(on_path.x - location.x, on_path.y - location.y)
+        if off > _OFF_PATH_M and not self._warned_off:
+            self._warned_off = True
+            logger.warning(
+                "%s: '%s' is %.0f m off its route, %.0f of %.0f m along it",
+                self.label,
+                str(self._entity_name),
+                off,
+                self._here,
+                planned.length,
+            )
         limit = _speed_limit(actor)
         cruise = limit
         if self._given_speed is not None:
             given: float = self._given_speed
             cruise = min(given, limit)
         if self._here >= planned.length - ARRIVAL_TOLERANCE_M:
+            logger.info(
+                "%s: '%s' reached the end of its route",
+                self.label,
+                str(self._entity_name),
+            )
             # Arrived: the driver's own speed again from here on.
-            entity.set_desired_speed(world, cruise * 3.6)
+            if paced.paced or self._given_speed is not None:
+                entity.set_desired_speed(world, cruise * 3.6)
             self._finished = True
             self._stepping = False
             return
+        if not paced.paced and self._given_speed is None:
+            return  # nothing to time: the driver's own speed
         speed = paced.speed(world, self._here, self._elapsed, cruise, limit)
         if abs(speed - self._sent) >= _SPEED_RESEND_MPS or (
             speed == 0.0 and self._sent != 0.0
@@ -581,7 +639,7 @@ class RoutingAction(TrajectoryRun):
                 if walk is not None:
                     planned: ResolvedTrajectory = walk
                     standing: "carla.Actor" = actor
-                    self._start_pacing(planned, stops, standing, 1.0)
+                    self._start_pacing(planned, standing, 1.0)
             self._walking = walker.walking
             self._stepping = self._walking
             if not self._walking:
@@ -698,6 +756,8 @@ class RoutingAction(TrajectoryRun):
         offset = self._initial_distance_offset
         stops: list[Lanelet2Pose] = []
         self._stop_vertices = []
+        self._mark_points = []
+        self._mark_lanes = []
         goal = self._goal
         if goal is not None and resolved is None:
             # As given: the goal stands for both ends of a route without
@@ -708,6 +768,7 @@ class RoutingAction(TrajectoryRun):
             stops.append(end)
             first = count - len(stops)
             self._stop_vertices = list(range(first, count))
+            self._mark_lanes = list(zip(self._stop_vertices, stops))
             return stops
         for index, vertex in enumerate(self._trajectory.vertices):
             if resolved is not None:
@@ -723,9 +784,11 @@ class RoutingAction(TrajectoryRun):
                 # isinstance() (docs/typecheck.md).
                 lane: Lanelet2Pose = position
                 stops.append(lane)
+                self._mark_lanes.append((index, lane))
             elif resolved is not None:
                 world_path: ResolvedTrajectory = resolved
                 sample = world_path.at_vertex(index)
+                self._mark_points.append((index, sample.x, sample.y))
                 stops.append(
                     _lane_pose(
                         CarlaWorldPose(
@@ -738,6 +801,44 @@ class RoutingAction(TrajectoryRun):
                 continue
             self._stop_vertices.append(index)
         return stops
+
+    def _lane_stops(self, stops: list[Lanelet2Pose]) -> list[Lanelet2Pose]:
+        """The stops a vehicle's route takes to keep to the lanes its written
+        waypoints were driven on: the track between them matched to the
+        lanes (:func:`~autoware_carla_scenario.traffic.route_match.match_track`),
+        from where the run starts.  A track that cannot be matched falls back
+        to *stops*, less those no lane route reaches (:meth:`_drivable`),
+        with a warning that says why."""
+        resolved = self._resolved
+        if resolved is None:
+            return stops
+        path: ResolvedTrajectory = resolved
+        samples: list[tuple[float, float, float]] = []
+        along = self._initial_distance_offset
+        while along < path.length + _MATCH_STEP_M:
+            sample = path.at_distance(min(along, path.length))
+            samples.append((sample.x, sample.y, sample.yaw))
+            along += _MATCH_STEP_M
+        if TYPE_CHECKING:
+            # The matcher is not compiled (traffic.route_match, EXCLUDED).
+            matched: list[Lanelet2Pose] = []
+            problem = ""
+        else:
+            matched, problem = _matched_lanes(samples)
+        if matched:
+            # Started where the track starts, on its lane, rather than on
+            # whichever lane is under the vehicle (the opposite one, a
+            # junction branch), which a route would have to loop back from.
+            self._route_start = matched[0]
+            return matched[1:] or matched
+        logger.warning(
+            "%s: the track of '%s' was not matched to lanes (%s); its "
+            "waypoints are routed one by one instead",
+            self.label,
+            str(self._entity_name),
+            problem,
+        )
+        return self._drivable(stops)
 
     def _drivable(self, stops: list[Lanelet2Pose]) -> list[Lanelet2Pose]:
         """*stops* less the ones no lane route reaches from the stop before.
@@ -786,25 +887,23 @@ class RoutingAction(TrajectoryRun):
         return kept
 
     def _start_pacing(
-        self,
-        path: ResolvedTrajectory,
-        stops: list[Lanelet2Pose],
-        actor: "carla.Actor",
-        tolerance: float,
+        self, path: ResolvedTrajectory, actor: "carla.Actor", tolerance: float
     ) -> None:
-        """Pace the entity along *path*, on which it drives through *stops*."""
-        from ..coordinate.transform import to_carla_world  # noqa: PLC0415
-
+        """Pace the entity along *path*, on which it passes its waypoints
+        (:attr:`_mark_points`)."""
         vertices = self._trajectory.vertices
         marks: list[PaceMark] = []
         near = 0.0
         previous_x, previous_y = path.xs[0], path.ys[0]
-        for stop, index in zip(stops, self._stop_vertices):
-            point = to_carla_world(stop)
+        points = list(self._mark_points)
+        for at, lane in self._mark_lanes:
+            points.append(_mark_point(at, lane))
+        points.sort(key=_vertex_of)
+        for index, x, y in points:
             # As far on as the straight line there could take the path.
-            window = math.hypot(point.x - previous_x, point.y - previous_y) * 2.0 + 30.0
-            near = path.project(point.x, point.y, near=near, window=window)
-            previous_x, previous_y = point.x, point.y
+            window = math.hypot(x - previous_x, y - previous_y) * 2.0 + 30.0
+            near = path.project(x, y, near=near, window=window)
+            previous_x, previous_y = x, y
             vertex = vertices[index]
             marks.append(PaceMark(index, near, self._due(vertex), vertex.gate))
         velocity = actor.get_velocity()
@@ -843,6 +942,35 @@ def _goal_route(
         # A trajectory needs two vertices; the goal stands for both ends.
         vertices.insert(0, TrajectoryVertex(end))
     return Trajectory(label, vertices)
+
+
+def _vertex_of(point: tuple[int, float, float]) -> int:
+    return point[0]
+
+
+def _mark_point(index: int, pose: Lanelet2Pose) -> tuple[int, float, float]:
+    """Vertex *index* at Lanelet2 *pose*, as a CARLA world point."""
+    from ..coordinate.transform import to_carla_world  # noqa: PLC0415
+
+    point = to_carla_world(pose)
+    return (index, point.x, point.y)
+
+
+def _matched_lanes(
+    samples: list[tuple[float, float, float]],
+) -> tuple[list[Lanelet2Pose], str]:
+    """The lane stops a track of CARLA ``(x, y, yaw)`` samples runs along,
+    or none and why (:func:`~autoware_carla_scenario.traffic.route_match.match_track`)."""
+    from ..coordinate.map_manager import MapManager  # noqa: PLC0415
+    from ..traffic.route_match import TrackMatchError, match_track  # noqa: PLC0415
+
+    mm = MapManager.get_instance()
+    offset_x, offset_y = mm.mgrs_offset
+    frame = [(x + offset_x, -y + offset_y, -math.radians(yaw)) for x, y, yaw in samples]
+    try:
+        return match_track(frame, mm.lanelet_map, mm.routing_graph), ""
+    except TrackMatchError as error:
+        return [], str(error)
 
 
 def _lane_pose(pose: CarlaWorldPose, walker: bool) -> Lanelet2Pose:

@@ -1422,7 +1422,7 @@ class TestEnvironmentTrack:
             "stop_crossing",
             "walk_straight",
         }
-        assert offers["walker1"] == {"routing"} | pedestrian_only
+        assert offers["walker1"] == {"despawn", "routing"} | pedestrian_only
         assert not pedestrian_only & offers["ego"]
 
     def test_an_environment_action_needs_no_actor(

@@ -755,10 +755,29 @@ class TrafficManagerBackend(TrafficBackend):
         # Not the point it stands on: the TrafficManager waits for each point
         # to come within a few metres, and one behind the vehicle never does.
         ahead = [to_carla_location(pose) for pose in poses[1:] or poses]
-        path = _clear_of_junctions(run_carla_map(world), ahead)
+        carla_map = run_carla_map(world)
+        path = _clear_of_junctions(carla_map, ahead)
+        if not path or _in_junction(carla_map, ahead[-1]):
+            # A route that ends in a junction (or is all junction) has no
+            # point on the road out to say which way: carry it on along the
+            # lanes after its goal until it is clear of the junction.
+            beyond = _beyond_goal(stops[-1], ROUTE_POINT_STEP_M)
+            path = _clear_of_junctions(
+                carla_map, ahead + [to_carla_location(pose) for pose in beyond]
+            )
         if not path:
-            logger.warning("%s: an empty route to follow", _entity_name(entity))
-            return
+            # Still nothing clear of a junction: the points themselves, which
+            # the TrafficManager follows less surely than none at all.
+            logger.warning(
+                "%s: its route runs through a junction only and leads nowhere "
+                "past it; given as it is (%d points)",
+                _entity_name(entity),
+                len(ahead),
+            )
+            path = ahead
+        # The route says where to change lane; the TrafficManager's own lane
+        # changes would take the vehicle off it.
+        tm.auto_lane_change(_vehicle(actor), False)
         tm.set_path(_vehicle(actor), path)
         self._remember_path(actor, path)
         self._drive_on(actor)
@@ -1126,6 +1145,45 @@ def _actor_name(actor: "carla.Actor") -> str:
     if "role_name" in attributes:
         return str(attributes["role_name"])
     return f"actor {actor.id}"
+
+
+def _in_junction(carla_map: "carla.Map", location: "carla.Location") -> bool:
+    """Whether *location* is on a junction's road."""
+    found = carla_map.get_waypoint(location)
+    return found is not None and found.is_junction
+
+
+def _beyond_goal(
+    goal: "Lanelet2Pose", step: float, distance: float = 40.0
+) -> List["Lanelet2Pose"]:
+    """Poses every *step* metres along the lanes after *goal*, up to
+    *distance*: the first lanelet following each one (the routing graph's)."""
+    from lanelet2.core import ConstLanelet  # noqa: PLC0415
+
+    from ..coordinate.map_manager import MapManager  # noqa: PLC0415
+    from ..coordinate.poses import Lanelet2Pose  # noqa: PLC0415
+    from ..trajectory.relative_lane import _length  # noqa: PLC0415
+
+    mm = MapManager.get_instance()
+    layer = mm.lanelet_map.laneletLayer
+    if not layer.exists(int(goal.lanelet_id)):
+        return []
+    lanelet: ConstLanelet = layer[int(goal.lanelet_id)]
+    s = float(goal.s) + step
+    covered = 0.0
+    out: List[Lanelet2Pose] = []
+    while covered < distance:
+        length = _length(lanelet)
+        while s <= length and covered < distance:
+            out.append(Lanelet2Pose(lanelet_id=int(lanelet.id), s=s))
+            s += step
+            covered += step
+        following = mm.routing_graph.following(lanelet)
+        if not following:
+            break
+        lanelet = following[0]
+        s -= length
+    return out
 
 
 def _clear_of_junctions(

@@ -1475,6 +1475,12 @@ class ScenarioRunner:
                                     trajectory.record_waypoint_arrival(
                                         action.label, arrival
                                     )
+                            gone = getattr(action, "take_despawns", None)
+                            if gone is not None:
+                                for entity, actor_id in gone():
+                                    trajectory.record_despawn(
+                                        action.label, entity, actor_id
+                                    )
                 if TYPE_CHECKING:
                     pass
                 else:

@@ -227,10 +227,24 @@ first held) against when the entity arrived -- as a `waypoint_arrival`
 record of the [trajectory log](trajectory_log.md), so a run can be scored on
 its timing.
 
-**When it ends.** With nothing to time, a vehicle's run ends as soon as it has
-the route (as an ego's initial goal always has), and a pedestrian's when it
-arrives. A timed route runs until the entity is within 1 m of the goal along
-the planned path; its driver's speed is then set back to the cruise speed.
+**Keeping to the recorded lanes.** A vehicle's written-out waypoints are not
+routed one by one onto the nearest lane: the whole track between them is
+sampled every 2 m and matched to the lanes it runs along -- road lanelets
+within 4 m running within 60 degrees of its heading, joined on the routing
+graph by following on, a lane change or a short path, the closest sequence
+chosen (`traffic.route_match`) -- and the route goes through where it leaves
+each one. A track that cannot be matched falls back to its waypoints one by
+one, leaving out those no lane route reaches, with a warning. The
+TrafficManager is given the route with its own lane changes off, and a route
+ending in a junction is carried on along the lane after it until it is clear
+of the junction, so it is never handed an empty path.
+
+**When it ends.** A route given as a goal (and Lanelet2 waypoints) with
+nothing to time ends as soon as the vehicle has it (as an ego's initial goal
+always has); a route written out as waypoints, timed or not, runs until the
+vehicle is within 1 m of its end along the planned path (a timed one then sets
+its driver's speed back to the cruise speed); a pedestrian's ends when it
+arrives.
 
 ### Who drives in follow and position modes, and when it ends
 
@@ -267,6 +281,30 @@ Vertices may also be placed against a logical scenario's *route*
 (`RouteLanePose`, `RouteOppositePose`, `RouteCrossingPose`,
 `RouteCrosswalkPose`, `RouteRoadsidePose`; `path_source: route` in a
 document) -- see [Logical Scenarios from Routes](logical_scenarios.md).
+
+### When a road user leaves: `DespawnAction`
+
+A route's end is where the road user's recording ends, but its driver does not
+know that: a vehicle the TrafficManager drives carries on wherever its traffic
+takes it. `DespawnAction(entity, condition)` (card **Despawn**, `despawn`)
+takes a vehicle or a pedestrian -- never the ego -- out of the world when its
+condition holds: the traffic backend lets go of it (and stops protecting it),
+the collision log stops listening to it, its actor is destroyed and the entity
+is unregistered. An action still naming it afterwards logs that once and does
+nothing (a routing run on it ends); a condition reads it as absent. The run
+writes a `despawn` record to the [trajectory log](trajectory_log.md).
+
+```yaml
+- id: npc1_leaves
+  type: despawn
+  actor: npc1
+  trigger:
+    type: action_state
+    params: {action: npc1_drive, state: completeState}
+```
+
+A `driver` route written out as waypoints runs until the entity reaches its
+last one, timed or not, so its completion is the moment it arrives.
 
 ## Waypoint conditions
 

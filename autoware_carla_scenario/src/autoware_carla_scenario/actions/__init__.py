@@ -1,6 +1,7 @@
 """Actions that execute side effects in response to conditions during scenarios."""
 
 from .base import BaseAction, TickTiming
+from .despawn import DespawnAction
 from .environment import EnvironmentAction
 from .lane_change import LaneChangeAction, LaneChangeDirection
 from .routing import RoutingAction, RoutingMode
@@ -15,6 +16,7 @@ from .walk_straight import WalkStraightAction
 
 __all__ = [
     "BaseAction",
+    "DespawnAction",
     "EnvironmentAction",
     "LaneChangeAction",
     "LaneChangeDirection",

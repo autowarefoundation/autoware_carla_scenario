@@ -1209,6 +1209,26 @@ _FOLLOWING_MODES: tuple[SelectOption, ...] = (
 
 register_action_spec(
     ActionSpec(
+        type_id="despawn",
+        title="Despawn",
+        category="Vehicle / Motion",
+        builder="build_despawn_action",
+        target="..actions:DespawnAction",
+        actor_kinds=("vehicle", "pedestrian"),
+        visual_kind="instant",
+        fields=(),
+        description=(
+            "Take a vehicle or pedestrian out of the world for good: its "
+            "traffic backend lets go of it, its actor is destroyed and it is "
+            "forgotten. Trigger it on its Set Goal card's Action state "
+            "(Complete) to have a road user leave where its route ends, "
+            "rather than drive on wherever its traffic takes it."
+        ),
+    )
+)
+
+register_action_spec(
+    ActionSpec(
         type_id="stalled_object",
         title="Stalled Object",
         category="Adversity",

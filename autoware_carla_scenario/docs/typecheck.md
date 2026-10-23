@@ -1676,8 +1676,8 @@ To check one more module:
 
 ### What is checked of the framework
 
-Every module now has an entry other than `"not yet checked (#45)"`. 200 of
-the package's 297 modules (67%; about 47,300 of 84,200 lines) are `CHECKED`:
+Every module now has an entry other than `"not yet checked (#45)"`. 201 of
+the package's 299 modules (67%; about 47,300 of 84,200 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the conversions between
 Lanelet2, OpenDRIVE and CARLA world poses (`coordinate.transform`), the stop
 lines read off a Lanelet2 map (`utils.stop_line`, `coordinate.stop_line`)
@@ -1736,8 +1736,8 @@ driver's configs and client interface, trajectory follower and observations
 `driver.geometry`), and the `autoware_bridge`, `autoware_stack`, `entity`,
 `driver`, `maps` and `coverage` packages themselves, whose `__init__` re-exports what is not checked
 through models of it (see *A class a checked package only re-exports*
-below). 105
-functions and methods of those modules are `UNCALLED` (25 of them
+below). 107
+functions and methods of those modules are `UNCALLED` (27 of them
 protected helpers, see *What is compiled* below): most of them a
 condition's `get_details()` or a backend's `describe()`, what takes a traffic
 backend's options node (`Mapping[str, Any]`), what reads a route search, a
@@ -1773,9 +1773,9 @@ a `TrajectoryVertex` call's arguments, each of any type (`Any`), walks or
 binds a sweeper constraint of any kind, builds a condition's status (its
 details), or takes the list a plain tick callback goes into
 (`BaseScenario._register_tick()`, a `List[Callable[[carla.World], None]]`,
-which the check has no value of). The 97 `EXCLUDED` modules fall in
+which the check has no value of). The 98 `EXCLUDED` modules fall in
 four groups. Many fit more than one (about 73 import what Codon cannot
-compile, 29 build on an excluded module and 21 hold values Codon has no type
+compile, 29 build on an excluded module and 22 hold values Codon has no type
 for), so each is counted once, in the first group that fits it:
 
 - **73 import what Codon cannot compile**: pyxodr,
@@ -1811,10 +1811,11 @@ for), so each is counted once, in the first group that fits it:
   `on_lanelet` reader on any callable) and
   `traffic.registry` (the `registry`, in its plugin loader); 4 of the 19
   also hold values Codon has no type for.
-- **4 hold values Codon has no type for**, and nothing else keeps them out:
+- **5 hold values Codon has no type for**, and nothing else keeps them out:
   `Any` (`trajectory.authoring`, `authoring.registry`'s
   field defaults, `npc_collisions`' actors and world snapshots, which it also
-  hears through collision-sensor callbacks), or a class as a value (`utils.config`, which `traffic.config`,
+  hears through collision-sensor callbacks, `traffic.route_match`'s lanelet2
+  maps, lanelets and routing graphs), or a class as a value (`utils.config`, which `traffic.config`,
   `traffic.fidelity` and `traffic.sumo.config` import only in their uncalled
   `from_mapping()`).
 - **1 has a callback the check cannot type**: `ros2.camera`, whose camera

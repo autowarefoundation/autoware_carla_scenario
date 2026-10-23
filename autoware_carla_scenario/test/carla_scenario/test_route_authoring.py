@@ -579,6 +579,9 @@ class _RouteTM:
     def set_path(self, actor: Any, path: list[Any]) -> None:
         self.paths.append((actor, path))
 
+    def auto_lane_change(self, actor: Any, enabled: bool) -> None:
+        self.lane_changes = enabled
+
 
 class _RouteClient:
     def __init__(self, tm: _RouteTM) -> None:

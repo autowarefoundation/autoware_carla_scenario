@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "urn:autoware-carla-scenario:schema:trajectory",
   "title": "TrajectoryRecord",
-  "description": "One line of a run's `{stem}.trajectory.jsonl`, written by `autoware_carla_scenario.trajectory_recorder.TrajectoryRecorder`, format version 2: one of fifteen records, told apart by `type`. Units, frames and the order of a file: docs/trajectory_log.md.",
+  "description": "One line of a run's `{stem}.trajectory.jsonl`, written by `autoware_carla_scenario.trajectory_recorder.TrajectoryRecorder`, format version 2: one of sixteen records, told apart by `type`. Units, frames and the order of a file: docs/trajectory_log.md.",
   "x-schema-version": 2,
   "oneOf": [
     {
@@ -48,6 +48,9 @@
       "$ref": "#/definitions/WalkerFallenRecord"
     },
     {
+      "$ref": "#/definitions/DespawnRecord"
+    },
+    {
       "$ref": "#/definitions/ResultRecord"
     }
   ],
@@ -68,6 +71,7 @@
       "waypoint_arrival": "#/$defs/WaypointArrivalRecord",
       "collision": "#/$defs/CollisionRecord",
       "walker_fallen": "#/$defs/WalkerFallenRecord",
+      "despawn": "#/$defs/DespawnRecord",
       "result": "#/$defs/ResultRecord"
     }
   },
@@ -825,6 +829,52 @@
         "role",
         "drop",
         "tilt"
+      ],
+      "additionalProperties": false
+    },
+    "DespawnRecord": {
+      "title": "DespawnRecord",
+      "description": "A `DespawnAction` took an entity out of the world: its traffic backend let go of it and its actor was destroyed. Written on the tick it fired. Added in version 2, which a reader of version 2 that does not know it skips.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "despawn"
+        },
+        "frame": {
+          "description": "The CARLA frame of the tick it belongs to: the `frame` of a tick record (or of a tick left out for having no vehicle or walker in it).",
+          "$ref": "#/definitions/SafeUInt"
+        },
+        "t": {
+          "description": "That tick's simulated time, seconds since the scenario clock started.",
+          "type": "number"
+        },
+        "label": {
+          "description": "The action's label.",
+          "type": "string"
+        },
+        "entity": {
+          "description": "`role_name` of the entity removed.",
+          "type": "string"
+        },
+        "id": {
+          "description": "Its actor's id; null if it had no actor.",
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ActorId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "frame",
+        "t",
+        "label",
+        "entity",
+        "id"
       ],
       "additionalProperties": false
     },

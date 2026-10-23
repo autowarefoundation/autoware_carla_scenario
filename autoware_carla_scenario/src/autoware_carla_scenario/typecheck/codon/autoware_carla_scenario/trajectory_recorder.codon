@@ -66,6 +66,9 @@ class TrajectoryRecorder:
     def record_walker_fallen(self, fallen) -> None:
         raise NotImplementedError()
 
+    def record_despawn(self, label: str, entity: str, actor_id: int) -> None:
+        raise NotImplementedError()
+
     def record_result(self, result) -> None:
         raise NotImplementedError()
 

@@ -373,6 +373,23 @@ class RoutingAction(BaseAction):
         raise NotImplementedError()
 
 
+class DespawnAction(BaseAction):
+    def __init__(self, label):
+        compile_error("DespawnAction(): no constructor takes these arguments "
+                      "(required: entity_name)")
+
+    def __init__(self, entity_name, condition = None,
+                 timing: TickTiming = TickTiming("pre_tick"), *_kw, label: str = "despawn",
+                 once: bool = True):
+        _keyword_only(_kw, "DespawnAction(): label and once")
+        _expect_role(entity_name)
+        super().__init__(label, condition, timing, once=once)
+
+    @property
+    def entity_name(self) -> str:
+        raise NotImplementedError()
+
+
 class StalledObjectAction(BaseAction):
     def __init__(self, label):
         compile_error("StalledObjectAction(): no constructor takes these arguments "

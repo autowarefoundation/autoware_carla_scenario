@@ -85,6 +85,7 @@ __all__ = [
     "build_walk_straight_action",
     "build_traffic_parameters_action",
     "build_turn_indicator_action",
+    "build_despawn_action",
     "build_lane_change_action",
     "build_routing_action",
     "build_set_speed_action",
@@ -1423,6 +1424,25 @@ def build_turn_indicator_action(
     return TurnIndicatorAction(
         entity_name=compiled.actor_role,
         state=TurnIndicatorState[str(params["state"])],
+        condition=condition,
+        timing=timing,
+        label=compiled.label,
+        once=compiled.node.once,
+    )
+
+
+def build_despawn_action(
+    compiled: "CompiledAction",
+    condition: "BaseCondition | None",
+    timing: Any,
+    ctx: "BuildContext",
+) -> "BaseAction":
+    """Build a :class:`DespawnAction`."""
+    from ..actions import DespawnAction  # noqa: PLC0415
+
+    assert compiled.actor_role is not None  # noqa: S101 -- required by the spec
+    return DespawnAction(
+        entity_name=compiled.actor_role,
         condition=condition,
         timing=timing,
         label=compiled.label,

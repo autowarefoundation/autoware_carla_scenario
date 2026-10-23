@@ -602,6 +602,15 @@ would send a second destination in the same phase. Only a vehicle that plans its
 goal at all, so a goal stored on any other entity is a validation error rather
 than something quietly dropped at export.
 
+The **Set Goal** card is also how any road user moves through waypoints
+(written out, each with a time or a waypoint condition) and **Driven by** says
+who moves it: its own driver, a controller, or a replay
+([Routes, Trajectories and Recorded-Scene Replay](trajectory.md)). The
+**Despawn** card (`despawn`, a vehicle or a pedestrian, never the ego) takes a
+road user out of the world when its trigger holds -- typically an *Action
+state* condition on its own Set Goal card reaching *Complete*, so it leaves
+where its route ends instead of driving on wherever its traffic takes it.
+
 ## Metadata-driven GUI
 
 Actions, conditions, constraints and bindings keep growing, so the templates

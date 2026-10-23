@@ -8,7 +8,7 @@
 
 from .actions import (ConstructionSettings, ConstructionZoneAction, AdversarialBrakeAction, AdversarialCutInAction, AdversarialMergeAction,
                       AdversarialTrafficAction, NadeAdversity, NadeSettings, BaseAction,
-                      EnvironmentAction, HeadOnAction, IgnoreLeaderAction,
+                      DespawnAction, EnvironmentAction, HeadOnAction, IgnoreLeaderAction,
                       JaywalkAction, LaneChangeAbortAction, LaneChangeAction, PedestrianRunRedLightAction,
                       RunTrafficRuleAction, StopCrossingAction, RoutingAction, RoutingMode,
                       SetSpeedAction, StalledObjectAction, PropAction, PropOperation, TickTiming, collision_objects, TrafficLightTarget, TrafficSignalAction,

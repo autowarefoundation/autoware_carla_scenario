@@ -448,6 +448,12 @@ NOT_MODELLED_MEMBERS: dict[str, dict[str, str]] = {
         ),
         "set_traffic_backend": _SET_TRAFFIC_BACKEND,
     },
+    "DespawnAction": {
+        "take_despawns": (
+            "the entities removed, which the runner reads for the trajectory "
+            "log; a scenario reads the log, not the action"
+        ),
+    },
     "RoutingAction": {
         "take_waypoint_arrivals": (
             "the timed waypoints reached, as waypoint_arrival's WaypointArrival, "
