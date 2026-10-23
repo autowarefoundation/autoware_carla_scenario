@@ -533,6 +533,22 @@ def visibility(world: carla.World) -> Optional[float]:
     raise NotImplementedError()
 
 
+def tire_friction(world: carla.World) -> Optional[float]:
+    raise NotImplementedError()
+
+
+def road_wetness(world: carla.World) -> Optional[str]:
+    raise NotImplementedError()
+
+
+def wind(world: carla.World) -> Optional[str]:
+    raise NotImplementedError()
+
+
+def cloudiness(world: carla.World) -> Optional[str]:
+    raise NotImplementedError()
+
+
 def traffic_density(world: carla.World) -> Optional[str]:
     raise NotImplementedError()
 
