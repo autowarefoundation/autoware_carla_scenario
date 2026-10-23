@@ -1290,8 +1290,30 @@ in step:
 `Protocol`, `runtime_checkable`, `Literal`, `IO`, `Iterator`, `Deque`,
 `DefaultDict`, `Counter`, `Final`, `Annotated`, `NoReturn`, `Type`, `Sized`,
 `Hashable`, `cast`, `Optional`, `List`, `Dict`, `Set`, `Tuple`, `Callable`,
-`Union`, `ClassVar`, `Generator`, `overload`
+`Union`, `ClassVar`, `Generator`, `overload`, `Self`, `override`, `TypeAlias`,
+`NewType`, `Never`, `assert_never`, `TypeGuard`, `TypeIs`, `Container`
 <!-- typing-names:end -->
+
+- `typing_extensions` has the same names as far as `typing` has them, so a
+  scenario for Python 3.10 imports `Self`, `override`, `Never`,
+  `assert_never` and `TypeIs` (which `typing` gained later) from there; any other
+  name of it (`deprecated`, `ReadOnly`) is refused with a hint to this list.
+- The type-only names are rewritten before Codon reads the code (#514), and
+  none of them is checked: `@override` is dropped (not that the method
+  overrides one); `X: TypeAlias = T` is `X = T`; `Self` in an annotation of a
+  class is the class (`-> Self` is `-> Counter`, so a subclass's method is
+  checked as returning its base, and a call of `Twice(1).inc().twice_only()`
+  is refused although Python accepts it); `NewType("LaneId", int)` is `LaneId
+  = int` and `LaneId(v)` is `(v)`, so the new type is checked as its base (a
+  `LaneId` is any `int`, as Python runs it); `assert_never(x)`, as a
+  statement or a `return`, is `raise AssertionError(...)`, and anywhere else
+  (a lambda body, an argument) a function raising it; `Never` and `Container`
+  annotations are dropped, like `NoReturn` and `Sized`; `TypeGuard[X]` and
+  `TypeIs[X]` are `bool`, which they are at run time.
+- A `TypeVar` with a `bound=` or constraints (`TypeVar("B", bound=Base)`,
+  `TypeVar("N", int, float)`) is rewritten to `TypeVar("B")` (#513): Codon's
+  takes a name only, and makes a function generic over its unannotated
+  parameters anyway, so the bound or the constraints are not checked.
 
 - `Final` and `Annotated` are read as what they wrap (`Final[int]` and
   `Annotated[int, "m"]` are `int`; a bare `Final` is dropped). `NoReturn`,
@@ -3010,6 +3032,49 @@ What Codon 0.19 needs that Python does not, beyond
   as it is (`raise NotImplementedError`, an abstract stub) is rewritten to
   an instance (`raise NotImplementedError()`), which Python raises anyway:
   Codon 0.19 crashes on the class.
+- **A caught exception kept as an `Exception`** (#512): Codon does not
+  convert an exception to its base class (`'ValueError' does not match
+  expected type 'Exception'`), so `last: Exception = ...; except ValueError
+  as e: last = e` (also `Exception | None`, `BaseException`, `list[Exception]`
+  and `dict[K, Exception]` with `append`, `add`, an item assignment or a
+  display, a `return` of `-> Exception | None`, and an argument of a function,
+  method or class of the module whose parameter is annotated so) is
+  rewritten to `last = Exception(e.typename, e.message)`: the stored value is
+  a plain `Exception` with the caught one's type name and message, so
+  `str(last)` and `logger` show the same, but `raise last` is not caught by
+  `except ValueError:` in the check, and the fields of a subclass are not
+  kept. Only a handler variable (`except X as e`, X not `Exception`) is
+  rebuilt: any other value (`last: Exception = ValueError("x")`, an
+  exception held in a local first) is refused with the hint to store `str(e)`
+  or catch `Exception`. `raise last` of an `Exception | None` is refused by
+  Codon (`exceptions must derive from BaseException`): test `last is not
+  None` and raise a local `Exception` instead.
+- **`e.args`** (#512): Codon's exceptions have no `args`; the model declares
+  it on Codon's own exception classes (`_exceptions.codon`) as the one-value
+  tuple of the message, which CPython's is for an exception raised with one
+  message. An exception raised with none or several values has other `args`
+  there (`len(e.args)` is 1 here, 0 for `ValueError()`).
+- **`operator.itemgetter(i)` and `attrgetter("n")` are lambdas** (#517):
+  Codon's pass the argument wrapped in a tuple (`tuple index out of range`,
+  `'Tuple[A]' object has no attribute 'n'`), so they cannot be a sort key.
+  With literal arguments (an int or str key, a string of dotted attribute
+  names, several of each for a tuple) the check writes the lambda
+  (`key=lambda v: v[1]`, `lambda v: v.n`, `lambda v: (v[0], v[2])`), however
+  it is imported (`operator.itemgetter`, `from operator import itemgetter as
+  ig`); with a variable it refuses the call and says to write the lambda.
+- **`copy.copy` and `copy.deepcopy` of a class of the module** (#517): Codon
+  calls the class's `__copy__` and `__deepcopy__`, which a class has not. In a
+  module that imports `copy` the check writes both, with `@extend`, for each
+  top-level class whose bases it can see (none, `object`, `ABC`, or classes
+  of the module): `__copy__` makes a new instance holding the same field
+  values, `__deepcopy__` one holding a deep copy of each, over the class-level
+  annotated fields (a base's first, `ClassVar` left out), as Python copies the
+  attributes. A method the class defines itself is kept. A class with another
+  base (a framework class), an exception, an Enum and a NamedTuple get none,
+  and a class defined in a module that does not import `copy` has none:
+  copying it from another module is refused with the hint to define the two
+  methods on the class (`def __copy__(self) -> Self`) or to build the copy
+  from its fields. `copy.copy` of a list, dict or set compiles as it is.
 - **`frozenset` is checked as a `set`**: Codon 0.19 has none, so the check
   rewrites `frozenset(...)` to `set(...)`, `frozenset[X](...)` to
   `Set[X](...)` and `frozenset[X]` / `FrozenSet[X]` to `Set[X]`; the source

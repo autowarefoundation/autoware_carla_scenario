@@ -136,3 +136,47 @@ class Hashable:
 # typing.cast(T, x): x, typed as T. Nothing here runs.
 def cast(T: type, x) -> T:
     return Ptr[T]()[0]
+
+
+# Names only the type checker reads: the check rewrites or drops every use
+# (typecheck/typing_rewrites.py, transform.py), so these exist for the import
+# alone. `Self` is written as its class, `override` is a dropped decorator,
+# `X: TypeAlias = T` is `X = T`, `NewType("N", T)` is `T` (and `N(v)` is `v`),
+# `Never` is dropped like NoReturn, `TypeGuard[T]` and `TypeIs[T]` are `bool`,
+# and `Container` is dropped like Sized.
+class Self:
+    pass
+
+
+def override(f):
+    return f
+
+
+class TypeAlias:
+    pass
+
+
+def NewType(name: str, tp) -> str:
+    return name
+
+
+class Never:
+    pass
+
+
+class TypeGuard:
+    pass
+
+
+class TypeIs:
+    pass
+
+
+class Container:
+    pass
+
+
+# assert_never(x): the statement is rewritten to `raise AssertionError(...)`;
+# this serves the other uses (an argument, a lambda body).
+def assert_never(arg):
+    raise AssertionError("Expected code to be unreachable")

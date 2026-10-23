@@ -1,0 +1,30 @@
+# typing_extensions, for the scenario checker: the names it shares with
+# typing, which are the same here (docs/typecheck.md, "The names of typing a
+# scenario may import"). It backports to Python 3.10 what typing gained later
+# (Self, override, Never, assert_never, TypeIs), so a scenario for 3.10 imports
+# those from here; the check reads both modules alike.
+from typing import (
+    Annotated,
+    Any,
+    Container,
+    Final,
+    Hashable,
+    IO,
+    Iterator,
+    Literal,
+    Never,
+    NewType,
+    NoReturn,
+    Protocol,
+    Self,
+    Sized,
+    Type,
+    TypeAlias,
+    TypeGuard,
+    TypeIs,
+    TypeVar,
+    assert_never,
+    cast,
+    override,
+    runtime_checkable,
+)

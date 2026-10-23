@@ -38,6 +38,11 @@ from autoware_carla_scenario.typecheck.transform import (
     transform_source_lines,
     undeclared_attributes,
 )
+from autoware_carla_scenario.typecheck.typing_rewrites import (
+    TYPING_HINTS,
+    typing_rewrite_refusals,
+    typing_rewrites,
+)
 
 
 def test_the_prelude_imports_the_builtin_exceptions_codon_lacks() -> None:
@@ -50,7 +55,9 @@ def test_the_prelude_imports_the_builtin_exceptions_codon_lacks() -> None:
     bases = {
         node.name: ast.unparse(node.bases[0])
         for node in tree.body
-        if isinstance(node, ast.ClassDef) and node.name != "OSError"
+        if isinstance(node, ast.ClassDef)
+        and node.name != "OSError"
+        and not node.decorator_list  # the `@extend`s that add `args`
     }
     assert sorted(bases) == sorted(MISSING_BUILTIN_EXCEPTIONS)
     for name in MISSING_BUILTIN_EXCEPTIONS:
@@ -4716,3 +4723,303 @@ def test_the_cycle_hint_needs_the_other_module_to_import_back(
     assert cycle_hint(message, str(cycle["pkg.a"].path), 1, cycle) is not None
     typo = _cycle_modules(tmp_path, "from .b import B\n", "x = 1\n")
     assert cycle_hint(message, str(typo["pkg.a"].path), 1, typo) is None
+
+
+# ---------------------------------------------------------------------------
+# Type-only typing names, stored exceptions, operator getters, copy
+# (#512, #513, #514, #517)
+# ---------------------------------------------------------------------------
+
+
+def _typing_rewritten(source: str) -> str:
+    return typing_rewrites(textwrap.dedent(source))
+
+
+def test_a_type_alias_loses_its_annotation() -> None:
+    out = _typing_rewritten(
+        """
+        from typing import TypeAlias
+        Pose: TypeAlias = tuple[float, float, float]
+        """
+    )
+    assert "Pose = tuple[float, float, float]" in out
+    assert "TypeAlias =" not in out
+
+
+@pytest.mark.parametrize("module", ["typing", "typing_extensions"])
+def test_self_is_the_enclosing_class(module: str) -> None:
+    out = _typing_rewritten(
+        f"""
+        from {module} import Self
+        class Counter:
+            n: int
+            def inc(self, by: Self | None = None) -> Self:
+                return self
+            def me(self) -> list[Self]:
+                return [self]
+        """
+    )
+    assert "def inc(self, by: Counter | None = None) -> Counter:" in out
+    assert "-> list[Counter]:" in out
+    assert "Self" not in out.split("\n", 2)[2]
+
+
+def test_self_through_the_module_is_the_enclosing_class() -> None:
+    out = _typing_rewritten(
+        """
+        import typing as t
+        class A:
+            def f(self) -> t.Self:
+                return self
+        """
+    )
+    assert "def f(self) -> A:" in out
+
+
+def test_override_is_dropped_on_its_line() -> None:
+    source = """
+        from typing import override
+        import typing
+        class A:
+            @override
+            def f(self) -> int:
+                return 1
+            @typing.override
+            @property
+            def g(self) -> int:
+                return 1
+        """
+    out = _typing_rewritten(source)
+    assert "override\n" not in out.replace("import override", "")
+    assert out.count("\n") == textwrap.dedent(source).count("\n")
+    assert "@property" in out
+
+
+def test_a_new_type_is_its_base_and_a_call_of_it_its_argument() -> None:
+    out = _typing_rewritten(
+        """
+        from typing import NewType
+        LaneId = NewType("LaneId", int)
+        Pair = NewType("Pair", tuple[float, float])
+        lane = LaneId(LaneId(3) + 1)
+        pair = Pair((1.0, 2.0))
+        """
+    )
+    assert "LaneId = int" in out
+    assert "Pair = tuple[float, float]" in out
+    assert "lane = ((3) + 1)" in out
+    assert "pair = ((1.0, 2.0))" in out
+
+
+def test_assert_never_statement_and_return_raise() -> None:
+    out = _typing_rewritten(
+        """
+        from typing import assert_never
+        def f(x) -> int:
+            if x:
+                return 1
+            else:
+                assert_never(x)
+        def g(x) -> int:
+            return assert_never(x)
+        h = lambda x: assert_never(x)
+        """
+    )
+    assert out.count('raise AssertionError("Expected code to be unreachable")') == 2
+    assert "h = lambda x: assert_never(x)" in out
+
+
+@pytest.mark.parametrize(
+    ("annotation", "codon"),
+    [
+        ("TypeGuard[int]", "bool"),
+        ("typing.TypeIs[int]", "bool"),
+        ("Never", None),
+        ("Container[int]", None),
+        ("Sized", None),
+    ],
+)
+def test_the_type_only_annotations_are_dropped_or_bool(
+    annotation: str, codon: str | None
+) -> None:
+    assert _annotation(annotation) == codon
+
+
+def test_a_bound_or_constrained_type_var_is_a_plain_one() -> None:
+    out = _typing_rewritten(
+        """
+        from typing import TypeVar
+        B = TypeVar("B", bound=Base)
+        N = TypeVar("N", int, float)
+        C = TypeVar("C", covariant=True)
+        T = TypeVar("T")
+        """
+    )
+    assert out.count("TypeVar(") == 5 - 1  # the import is not a call
+    for name in "BNCT":
+        assert f'{name} = TypeVar("{name}")' in out
+
+
+def test_literal_getters_become_lambdas() -> None:
+    out = _typing_rewritten(
+        """
+        import operator
+        from operator import itemgetter as ig, attrgetter
+        a = sorted(xs, key=operator.itemgetter(1))
+        b = sorted(xs, key=ig(0, -1))
+        c = sorted(xs, key=attrgetter("n"))
+        d = sorted(xs, key=operator.attrgetter("a.b", "c"))
+        e = ig("k")
+        """
+    )
+    assert "a = sorted(xs, key=(lambda v: v[1]))" in out
+    assert "b = sorted(xs, key=(lambda v: (v[0], v[-1])))" in out
+    assert "c = sorted(xs, key=(lambda v: v.n))" in out
+    assert "d = sorted(xs, key=(lambda v: (v.a.b, v.c)))" in out
+    assert "e = (lambda v: v['k'])" in out or 'e = (lambda v: v["k"])' in out
+
+
+def test_a_getter_with_a_variable_argument_is_refused_with_a_hint() -> None:
+    refused = typing_rewrite_refusals(
+        textwrap.dedent(
+            """
+            import operator
+            i = 1
+            a = sorted(xs, key=operator.itemgetter(i))
+            b = sorted(xs, key=operator.attrgetter(name))
+            ok = operator.itemgetter(1)
+            """
+        )
+    )
+    assert [line for line, _ in refused] == [4, 5]
+    assert all("write a lambda" in message for _, message in refused)
+
+
+def test_a_names_not_from_the_modules_are_left_alone() -> None:
+    source = textwrap.dedent(
+        """
+        def Self(): ...
+        def itemgetter(i): ...
+        def TypeVar(*a, **k): ...
+        x = itemgetter(1)
+        T = TypeVar("T", bound=int)
+        """
+    )
+    assert typing_rewrites(source) == source
+
+
+def test_a_caught_exception_stored_as_an_exception_is_rebuilt() -> None:
+    out = _typing_rewritten(
+        """
+        class MyErr(Exception): ...
+        class Holder:
+            last: Exception | None
+            errs: list[Exception]
+            def run(self) -> None:
+                try:
+                    pass
+                except MyErr as e:
+                    self.last = e
+                    self.errs.append(e)
+                    self.keep(e)
+            def keep(self, err: Exception) -> None:
+                pass
+        def f(c) -> Exception | None:
+            last: Exception = Exception("none")
+            errs: list[Exception] = []
+            d: dict[str, Exception] = {}
+            try:
+                pass
+            except ValueError as e:
+                last = e
+                errs = [e]
+                errs.append(e)
+                d["k"] = e
+                return e
+            except Exception as other:
+                last = other
+            return None
+        """
+    )
+    rebuilt = "Exception(e.typename, e.message)"
+    assert out.count(rebuilt) == 8
+    assert "last = other" in out
+    assert "self.errs.append(Exception(e.typename, e.message))" in out
+    assert "return Exception(e.typename, e.message)" in out
+
+
+def test_an_exception_stored_where_its_own_class_is_expected_is_left_alone() -> None:
+    source = textwrap.dedent(
+        """
+        last: ValueError | None = None
+        errs: list[ValueError] = []
+        try:
+            pass
+        except ValueError as e:
+            last = e
+            errs.append(e)
+            other = e
+        """
+    )
+    assert typing_rewrites(source) == source
+
+
+def test_the_exception_hint_fires_on_codons_message() -> None:
+    message = (
+        "'Optional[ValueError]' does not match expected type 'Optional[Exception]'"
+    )
+    hints = [h for pattern, h in TYPING_HINTS if pattern.search(message)]
+    assert hints and "str(e)" in hints[0]
+    assert any(
+        p.search("'MyErr' does not match expected type 'Exception'")
+        for p, _ in TYPING_HINTS
+    )
+    assert any(
+        p.search("'Exception' does not match expected type 'ValueError'")
+        for p, _ in TYPING_HINTS
+    )
+    assert not any(
+        p.search("'int' does not match expected type 'str'") for p, _ in TYPING_HINTS
+    )
+
+
+def test_copy_gets_the_dunders_of_the_declared_fields() -> None:
+    source = textwrap.dedent(
+        """
+        import copy
+        from dataclasses import dataclass
+        @dataclass
+        class P:
+            x: float
+        @dataclass
+        class Q(P):
+            tags: list[str]
+            LIMIT: ClassVar[int] = 3
+        class Own:
+            n: int
+            def __copy__(self):
+                return self
+        class Framework(BaseScenario):
+            n: int
+        class Failure(Exception):
+            n: int
+        """
+    )
+    out = transform_source(source)
+    assert "def __copy__(self) -> P:" in out
+    assert "r.x = self.x" in out
+    # A derived class copies the fields of its base first.
+    q = out[out.index("class Q:", out.index("@extend")) :]
+    assert q.index("r.x = self.x") < q.index("r.tags = self.tags")
+    assert "LIMIT = self" not in out and "r.LIMIT" not in out
+    assert "r.tags = _acs_deepcopy(self.tags)" in out
+    # Defining one of the two keeps it, and the other is added.
+    own = out[out.index("class Own:", out.index("@extend")) :]
+    assert "def __copy__" not in own and "def __deepcopy__" in own
+    assert "class Framework:" not in out and "class Failure:" not in out
+
+
+def test_copy_dunders_need_the_copy_module() -> None:
+    out = transform_source("class A:\n    n: int\n")
+    assert "__copy__" not in out
+    assert "__deepcopy__" not in out

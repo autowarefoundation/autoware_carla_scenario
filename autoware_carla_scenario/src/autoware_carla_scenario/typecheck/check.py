@@ -102,6 +102,7 @@ from .transform import (
     transform_source_lines,
     undeclared_attributes,
 )
+from .typing_rewrites import TYPING_HINTS, typing_rewrite_refusals
 
 __all__ = [
     "Diagnostic",
@@ -805,6 +806,7 @@ def _build_workspace(
             for line, message in [
                 *conflicting_imports(source),
                 *python_rewrite_refusals(source),
+                *typing_rewrite_refusals(source),
             ]
         ]
         text, origin = transform_source_lines(
@@ -864,7 +866,9 @@ _VARIADIC_LIMITS = (
         re.compile(r"cannot import name 'Generic' from 'typing'"),
         "typing.Generic is not available in the check: leave the type "
         "parameters of a class or function unannotated (Codon makes it generic "
-        "over them), or write the concrete type",
+        "over them), or write the concrete type; a container with a typed "
+        "attribute (`items: list[T]`) declares the concrete element type "
+        "(`items: list[int]`)",
     ),
     (
         re.compile(r"cannot import name 'TypedDict' from 'typing'"),
@@ -1075,7 +1079,7 @@ def _variadic_hints(diagnostics: list[Diagnostic]) -> list[Diagnostic]:
                     f for f in diagnostic.trace if not _LIST_DISPLAY_FRAME.match(f)
                 ),
             )
-        for pattern, hint in (*_VARIADIC_LIMITS, *REWRITE_HINTS):
+        for pattern, hint in (*_VARIADIC_LIMITS, *REWRITE_HINTS, *TYPING_HINTS):
             if pattern.search(diagnostic.message):
                 diagnostic = dataclasses.replace(
                     diagnostic, message=f"{diagnostic.message}: {hint}"
@@ -2748,6 +2752,7 @@ def _library_files(
             *problems,
             *checks.problems,
             *python_rewrite_refusals(redirected),
+            *typing_rewrite_refusals(redirected),
         ]:
             sources.problems.append(Diagnostic(message, str(module.path), line))
         # A function the check never compiles cannot decorate one it does: a
