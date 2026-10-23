@@ -40,6 +40,154 @@ def _str(value: str) -> str:
     return value
 
 
+# `e.args`, which Codon's exceptions lack: the one-value tuple of the message,
+# which is CPython's for an exception raised with one message (`raise
+# ValueError("x")` has `args == ("x",)`). An exception raised with none or
+# several values has other `args` there. Codon copies a base class's methods
+# into a class when it defines it, so each of Codon's own exceptions is
+# extended (a class declared below inherits it from its base).
+
+
+@extend
+class BaseException:
+    @property
+    def args(self) -> Tuple[str]:
+        return (self.message,)
+
+
+@extend
+class Exception:
+    @property
+    def args(self) -> Tuple[str]:
+        return (self.message,)
+
+
+@extend
+class NameError:
+    @property
+    def args(self) -> Tuple[str]:
+        return (self.message,)
+
+
+@extend
+class OSError:
+    @property
+    def args(self) -> Tuple[str]:
+        return (self.message,)
+
+
+@extend
+class IOError:
+    @property
+    def args(self) -> Tuple[str]:
+        return (self.message,)
+
+
+@extend
+class ValueError:
+    @property
+    def args(self) -> Tuple[str]:
+        return (self.message,)
+
+
+@extend
+class LookupError:
+    @property
+    def args(self) -> Tuple[str]:
+        return (self.message,)
+
+
+@extend
+class IndexError:
+    @property
+    def args(self) -> Tuple[str]:
+        return (self.message,)
+
+
+@extend
+class KeyError:
+    @property
+    def args(self) -> Tuple[str]:
+        return (self.message,)
+
+
+@extend
+class TypeError:
+    @property
+    def args(self) -> Tuple[str]:
+        return (self.message,)
+
+
+@extend
+class ArithmeticError:
+    @property
+    def args(self) -> Tuple[str]:
+        return (self.message,)
+
+
+@extend
+class ZeroDivisionError:
+    @property
+    def args(self) -> Tuple[str]:
+        return (self.message,)
+
+
+@extend
+class OverflowError:
+    @property
+    def args(self) -> Tuple[str]:
+        return (self.message,)
+
+
+@extend
+class AttributeError:
+    @property
+    def args(self) -> Tuple[str]:
+        return (self.message,)
+
+
+@extend
+class RuntimeError:
+    @property
+    def args(self) -> Tuple[str]:
+        return (self.message,)
+
+
+@extend
+class NotImplementedError:
+    @property
+    def args(self) -> Tuple[str]:
+        return (self.message,)
+
+
+@extend
+class StopIteration:
+    @property
+    def args(self) -> Tuple[str]:
+        return (self.message,)
+
+
+@extend
+class AssertionError:
+    @property
+    def args(self) -> Tuple[str]:
+        return (self.message,)
+
+
+@extend
+class EOFError:
+    @property
+    def args(self) -> Tuple[str]:
+        return (self.message,)
+
+
+@extend
+class SystemExit:
+    @property
+    def args(self) -> Tuple[str]:
+        return (self.message,)
+
+
 # OSError's subclasses pass their own type name on, as Codon's LookupError
 # and RuntimeError take one for theirs; its own constructor stays.
 @extend

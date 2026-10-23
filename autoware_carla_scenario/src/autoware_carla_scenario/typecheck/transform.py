@@ -307,9 +307,16 @@ _UNEXPRESSIBLE = {
     "Literal",
     "Final",
     "NoReturn",
+    "Never",
     "Sized",
     "Hashable",
+    "Container",
+    "Self",
+    "TypeAlias",
 }
+#: ``TypeGuard[X]`` / ``TypeIs[X]``: what a function returns when it tells a
+#: type checker about its argument, a ``bool`` (#514).
+_BOOL_GUARDS = {"TypeGuard", "TypeIs"}
 #: Annotations that wrap another: ``Final[X]`` and ``Annotated[X, ...]`` are
 #: checked as ``X`` (a bare ``Final`` is dropped).
 _WRAPPERS = {"Final", "Annotated"}
@@ -637,6 +644,8 @@ def codon_annotation(node: ast.AST, *, class_level: bool = False) -> str | None:
         return codon_annotation(wrapped, class_level=class_level)
     if base in _UNEXPRESSIBLE or (base in _ABSTRACT_GENERICS and not class_level):
         return None
+    if subscript and base.rsplit(".", 1)[-1] in _BOOL_GUARDS:
+        return "bool"
     if base_name in _FROZENSET_NAMES:
         if not subscript:
             return None  # a bare frozenset: the element type is unknown
@@ -3148,6 +3157,11 @@ def transform_source_lines(
     # Valid Python Codon refuses or crashes on (#376): python_rewrites.py.
     from .python_rewrites import python_rewrites
 
+    # Type-only names, stored exceptions, operator getters (#512-#517): before
+    # the class-body lambdas, which hoist the lambdas it writes.
+    from .typing_rewrites import copy_dunders, typing_rewrites
+
+    source = typing_rewrites(source)
     # Class-body lambdas and method defaults become functions first, so the
     # rewrites see the function (#482); its extra lines map to their origin.
     source, early = class_body_lambdas(source)
@@ -3211,6 +3225,7 @@ def transform_source_lines(
         *_inherited_init_extensions(_inherited_bases(tree, init_classes, exceptions)),
         *_dataclass_dunders(tree, exceptions),
         *_dataclass_replacers(tree, exceptions),
+        *copy_dunders(tree, exceptions),
         *ordering,
     ]
     origin = list(origin)

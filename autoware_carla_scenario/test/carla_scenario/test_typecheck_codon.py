@@ -5826,6 +5826,58 @@ _TYPING_CASES: dict[str, tuple[str, str]] = {
         "def same(x: Optional[int]) -> int:\n    return cast(int, x) + 1\n"
         "def hush(x: int) -> int:\n    return cast('Callable', x)\n",
     ),
+    # #514: the names that only a type checker reads.
+    "Self": (
+        "Self",
+        "class Counter:\n    n: int\n    def __init__(self, n: int) -> None:\n"
+        "        self.n = n\n    def inc(self) -> Self:\n        self.n += 1\n"
+        "        return self\n"
+        "class Twice(Counter):\n    def inc(self) -> Self:\n        self.n += 2\n"
+        "        return self\n",
+    ),
+    "override": (
+        "override",
+        "class Base:\n    def f(self) -> int:\n        return 1\n"
+        "class Sub(Base):\n    @override\n    def f(self) -> int:\n"
+        "        return 2\n",
+    ),
+    "TypeAlias": (
+        "TypeAlias",
+        "Pose: TypeAlias = tuple[float, float]\n"
+        "def norm(p: Pose) -> float:\n    return p[0] + p[1]\n",
+    ),
+    "NewType": (
+        "NewType",
+        "LaneId = NewType('LaneId', int)\nPair = NewType('Pair', tuple[int, int])\n"
+        "def nxt(i: LaneId) -> LaneId:\n    return LaneId(i + 1)\n"
+        "def swap(p: Pair) -> Pair:\n    return Pair((p[1], p[0]))\n",
+    ),
+    "Never": (
+        "Never",
+        "def stop(why: str) -> Never:\n    raise RuntimeError(why)\n",
+    ),
+    "assert_never": (
+        "assert_never",
+        "def label(k: int) -> str:\n    if k == 0:\n        return 'a'\n"
+        "    elif k == 1:\n        return 'b'\n    else:\n"
+        "        assert_never(k)\n"
+        "def other(k: int) -> str:\n    if k == 0:\n        return 'a'\n"
+        "    return assert_never(k)\n",
+    ),
+    "TypeGuard": (
+        "TypeGuard",
+        "def is_pair(v: tuple[float, ...]) -> TypeGuard[tuple[float, float]]:\n"
+        "    return len(v) == 2\n",
+    ),
+    "TypeIs": (
+        "TypeIs",
+        "def is_pair(v: tuple[float, ...]) -> TypeIs[tuple[float, float]]:\n"
+        "    return len(v) == 2\n",
+    ),
+    "Container": (
+        "Container",
+        "def has(c: Container[int], x: int) -> bool:\n    return x in c\n",
+    ),
 }
 
 _TYPING_CALLS = {
@@ -5840,6 +5892,15 @@ _TYPING_CALLS = {
     "Sized": "logger.info('%d', size([1]))\n",
     "Hashable": "logger.info('%d', key(1))\n",
     "cast": "logger.info('%f %d %d', widen(2), same(1), hush(1))\n",
+    "Self": "logger.info('%d %d', Counter(1).inc().n, Twice(1).inc().n)\n",
+    "override": "logger.info('%d', Sub().f())\n",
+    "TypeAlias": "logger.info('%f', norm((1.0, 2.0)))\n",
+    "NewType": "logger.info('%d %d', nxt(LaneId(1)), swap(Pair((1, 2)))[0])\n",
+    "Never": "if cfg.timeout_seconds < 0:\n    stop('x')\n",
+    "assert_never": "logger.info('%s %s', label(0), other(0))\n",
+    "TypeGuard": "logger.info('%s', is_pair((1.0, 2.0)))\n",
+    "TypeIs": "logger.info('%s', is_pair((1.0, 2.0)))\n",
+    "Container": "logger.info('%s', has([1, 2], 2))\n",
 }
 
 
@@ -5847,6 +5908,10 @@ _TYPING_CALLS = {
 def test_a_supported_typing_name_compiles_in_a_scenario(
     tmp_path: Path, name: str
 ) -> None:
+    import typing
+
+    if not hasattr(typing, name):
+        pytest.skip(f"typing has no {name} before this Python")
     imports, helper = _TYPING_CASES[name]
     imports = f"{imports}, Optional, Callable" if name == "cast" else imports
     header = _HEADER.replace(
@@ -5898,6 +5963,10 @@ def test_an_unsupported_typing_name_is_refused_with_a_hint(
     assert error.line == _line_of(path, f"from typing import TypeVar, {name}")
 
 
+#: Names the documented list has that typing gained after Python 3.10 (the
+#: suite runs on it too; typing_extensions backports them, below).
+_TYPING_NEWER_THAN_3_10 = {"Self", "override", "Never", "assert_never", "TypeIs"}
+
 #: What Codon's own typing has, which the shim does not declare.
 _CODON_TYPING_BUILTINS = {
     "Optional",
@@ -5939,7 +6008,7 @@ def test_typing_names() -> None:
     # Every name the shim adds beyond Python's typing exists there too.
     import typing
 
-    assert documented <= set(dir(typing))
+    assert documented <= set(dir(typing)) | _TYPING_NEWER_THAN_3_10
     # Every name the shim adds beyond Codon is compiled by a test above.
     assert set(_TYPING_CASES) <= documented
 
@@ -8855,3 +8924,336 @@ def test_codons_lambda_type_names_are_not_shown() -> None:
     assert check._plain_lambda_names(text) == (
         "'Optional[a lambda]' does not match; cb: a lambda"
     )
+
+
+# ---------------------------------------------------------------------------
+# typing_extensions (#514)
+# ---------------------------------------------------------------------------
+
+
+def test_typing_extensions_names_compile_as_typing_ones(tmp_path: Path) -> None:
+    pytest.importorskip("typing_extensions")
+    header = _HEADER.replace(
+        "from .configs import CaseConfig\n",
+        "from typing_extensions import (Self, TypeAlias, TypeGuard, assert_never,\n"
+        "    override)\n\nfrom .configs import CaseConfig\n",
+        1,
+    )
+    helper = """
+
+Pose: TypeAlias = tuple[float, float]
+
+
+class Counter:
+    n: int
+
+    def __init__(self, n: int) -> None:
+        self.n = n
+
+    def inc(self) -> Self:
+        self.n += 1
+        return self
+
+
+class Twice(Counter):
+    @override
+    def inc(self) -> Self:
+        self.n += 2
+        return self
+
+
+def is_pair(v: tuple[float, ...]) -> TypeGuard[Pose]:
+    return len(v) == 2
+
+
+def label(k: int) -> str:
+    if k == 0:
+        return "a"
+    else:
+        assert_never(k)
+"""
+    setup = _TIMEOUT_SETUP + (
+        "logger.info('%d %d %s %s', Counter(1).inc().n, Twice(1).inc().n, "
+        "is_pair((1.0, 2.0)), label(0))\n"
+    )
+    scenario, config, _ = _write_case(tmp_path, setup, helper, header=header)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_a_typing_extensions_name_typing_lacks_is_refused_with_a_hint(
+    tmp_path: Path,
+) -> None:
+    header = _HEADER.replace(
+        "from .configs import CaseConfig\n",
+        "from typing_extensions import deprecated\n\nfrom .configs import CaseConfig\n",
+        1,
+    )
+    scenario, config, path = _write_case(tmp_path, _TIMEOUT_SETUP, header=header)
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "cannot import name 'deprecated' from 'typing_extensions'" in error.message
+    assert "docs/typecheck.md" in error.message, error.format()
+
+
+# ---------------------------------------------------------------------------
+# A caught exception kept in a variable, attribute or list (#512)
+# ---------------------------------------------------------------------------
+
+_EXCEPTIONS = """
+class MyErr(Exception):
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+
+
+class Holder:
+    last: Exception | None
+    errs: list[Exception]
+
+    def __init__(self) -> None:
+        self.last = None
+        self.errs = []
+
+    def run(self) -> None:
+        try:
+            raise MyErr("boom")
+        except MyErr as e:
+            self.last = e
+            self.errs.append(e)
+            self.keep(e)
+
+    def keep(self, err: Exception) -> None:
+        self.errs.append(err)
+
+
+def attempt(text: str) -> Exception | None:
+    try:
+        int(text)
+    except ValueError as e:
+        return e
+    return None
+"""
+
+
+def test_a_caught_exception_is_kept_in_an_exception_typed_name(
+    tmp_path: Path,
+) -> None:
+    setup = """
+        last: Exception = Exception("none")
+        last2: Exception | None = None
+        errs: list[Exception] = []
+        by_key: dict[str, Exception] = {}
+        base: BaseException = BaseException("BaseException", "none")
+        try:
+            int("x")
+        except ValueError as e:
+            last = e
+            last2 = e
+            errs.append(e)
+            by_key["k"] = e
+            base = e
+        try:
+            raise MyErr("zz")
+        except MyErr as e2:
+            errs.append(e2)
+            errs = [e2]
+        h = Holder()
+        h.run()
+        found = attempt("x")
+        logger.info("%s %s %d %d", last, last2 is None, len(errs), len(h.errs))
+        logger.info("%s %s %s", found is None, base, len(by_key))
+    """
+    scenario, config, _ = _data_case(tmp_path, _EXCEPTIONS, setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_an_exceptions_args_are_its_message(tmp_path: Path) -> None:
+    setup = """
+        try:
+            raise MyErr("zz")
+        except MyErr as e:
+            logger.info("%s %s", e.args, e.args[0])
+        try:
+            int("x")
+        except ValueError as e2:
+            logger.info("%d", len(e2.args))
+        except KeyError as e3:
+            logger.info("%s", e3.args)
+    """
+    scenario, config, _ = _data_case(tmp_path, _EXCEPTIONS, setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_an_exception_that_is_not_a_caught_one_is_refused_with_a_hint(
+    tmp_path: Path,
+) -> None:
+    scenario, config, path = _data_case(
+        tmp_path, "", 'last: Exception = ValueError("x")\nlogger.info("%s", last)\n'
+    )
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "does not match expected type" in error.message
+    assert "str(e)" in error.message, error.format()
+
+
+def test_assert_never_in_an_expression_is_refused_at_its_line(
+    tmp_path: Path,
+) -> None:
+    # typing.assert_never is Python 3.11+; the import runs on 3.10 too.
+    pytest.importorskip("typing_extensions")
+    definitions = """
+from typing_extensions import assert_never
+
+
+def pick(x: int) -> int:
+    return 1 if x else assert_never(x)
+"""
+    scenario, config, path = _data_case(
+        tmp_path, definitions, 'logger.info("%d", pick(1))\n'
+    )
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "line of its own" in error.message, error.format()
+    assert error.line == _line_of(path, "return 1 if x else assert_never(x)")
+
+
+# ---------------------------------------------------------------------------
+# operator.itemgetter / attrgetter, copy.copy / deepcopy (#517)
+# ---------------------------------------------------------------------------
+
+_GETTER_CLASSES = """
+import operator
+from operator import attrgetter, itemgetter
+
+
+class Item:
+    n: int
+    tag: str
+
+    def __init__(self, n: int, tag: str) -> None:
+        self.n = n
+        self.tag = tag
+"""
+
+
+def test_literal_getters_are_sort_keys(tmp_path: Path) -> None:
+    setup = """
+        xs = [(1, 2.0), (0, 3.0)]
+        a = sorted(xs, key=operator.itemgetter(1))
+        b = max(xs, key=itemgetter(0))
+        c = sorted(xs, key=itemgetter(1, 0))
+        items = [Item(2, "b"), Item(1, "a")]
+        d = sorted(items, key=operator.attrgetter("n"))
+        e = sorted(items, key=attrgetter("tag", "n"))
+        logger.info("%s %s %s %d %d", a, b, c, d[0].n, len(e))
+    """
+    scenario, config, _ = _data_case(tmp_path, _GETTER_CLASSES, setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_a_getter_of_a_variable_is_refused_with_a_hint(tmp_path: Path) -> None:
+    setup = """
+        which = 1
+        xs = [(1, 2.0), (0, 3.0)]
+        a = sorted(xs, key=operator.itemgetter(which))
+    """
+    scenario, config, path = _data_case(tmp_path, _GETTER_CLASSES, setup)
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "write a lambda" in error.message, error.format()
+    assert error.line == _line_of(path, "operator.itemgetter(which)")
+
+
+_COPY_CLASSES = """
+import copy
+
+
+@dataclass
+class Point:
+    x: float
+    y: float
+
+
+@dataclass
+class Path3(Point):
+    tags: list[str]
+
+
+class Box:
+    items: list[Point]
+
+    def __init__(self) -> None:
+        self.items = [Point(1.0, 2.0)]
+"""
+
+
+def test_copy_and_deepcopy_of_a_class_of_the_module(tmp_path: Path) -> None:
+    setup = """
+        p = Path3(1.0, 2.0, ["a"])
+        shallow = copy.copy(p)
+        deep = copy.deepcopy(p)
+        deep.tags.append("b")
+        shallow.x = 5.0
+        box = Box()
+        other = copy.deepcopy(box)
+        other.items[0].x = 9.0
+        assert len(p.tags) == 1 and p.x == 1.0 and box.items[0].x == 1.0
+        logger.info("%d %f %f", len(deep.tags), shallow.x, other.items[0].x)
+    """
+    scenario, config, _ = _data_case(tmp_path, _COPY_CLASSES, setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_copy_of_a_class_from_a_module_without_copy_is_refused_with_a_hint(
+    tmp_path: Path,
+) -> None:
+    helpers = (
+        "class Thing:\n    n: int\n\n    def __init__(self, n: int) -> None:\n"
+        "        self.n = n\n"
+    )
+    header = _HEADER.replace(
+        "from .configs import CaseConfig\n",
+        "import copy\n\nfrom .configs import CaseConfig\nfrom .helpers import Thing\n",
+        1,
+    )
+    setup = _TIMEOUT_SETUP + "t = copy.copy(Thing(1))\nlogger.info('%d', t.n)\n"
+    scenario, config, path = _write_case(
+        tmp_path, setup, header=header, modules={"helpers.py": helpers}
+    )
+    result = typecheck_scenario(scenario, config)
+    error = _only_error(result)
+    assert "__copy__" in error.message and "define them on this class" in error.message
+
+
+# ---------------------------------------------------------------------------
+# A bound or constrained TypeVar (#513)
+# ---------------------------------------------------------------------------
+
+
+def test_a_bound_and_a_constrained_type_var_compile(tmp_path: Path) -> None:
+    definitions = """
+from typing import TypeVar
+
+
+class Base:
+    def v(self) -> int:
+        return 1
+
+
+B = TypeVar("B", bound=Base)
+N = TypeVar("N", int, float)
+
+
+def pick(a: B, b: B) -> B:
+    return a if a.v() > b.v() else b
+
+
+def clamp(x: N, lo: N, hi: N) -> N:
+    return max(lo, min(x, hi))
+"""
+    setup = """
+        logger.info("%d %f %d", pick(Base(), Base()).v(), clamp(1.5, 0.0, 1.0), clamp(5, 0, 3))
+    """
+    scenario, config, _ = _data_case(tmp_path, definitions, setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
