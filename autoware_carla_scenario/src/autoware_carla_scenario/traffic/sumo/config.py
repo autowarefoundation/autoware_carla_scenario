@@ -22,6 +22,9 @@ __all__ = [
     "DEFAULT_BICYCLE_BLUEPRINTS",
     "PedestrianConfig",
     "SumoBackendConfig",
+    "forget_bicycle_parameters",
+    "record_bicycle_parameters",
+    "run_bicycle_parameters",
 ]
 
 _LIGHT_AUTHORITIES = ("carla", "sumo", "none")
@@ -141,6 +144,32 @@ class PedestrianConfig:
         from ...utils.config import checked_options  # noqa: PLC0415
 
         return cls(**checked_options(cls, mapping))
+
+
+#: The riding parameters of the current run's bicycles, for the ODD's probes
+#: (:func:`record_bicycle_parameters`).
+_RUN_RIDING: list[dict[str, Spread]] = []
+
+
+def record_bicycle_parameters(riding: dict[str, Spread]) -> None:
+    """Record the riding parameters the run's bicycles draw from
+    (:meth:`BicycleConfig.riding`); the SUMO backend calls this as it
+    prepares a run, and :func:`forget_bicycle_parameters` as it closes."""
+    _RUN_RIDING.clear()
+    _RUN_RIDING.append(dict(riding))
+
+
+def run_bicycle_parameters() -> Optional[dict[str, Spread]]:
+    """What :func:`record_bicycle_parameters` last recorded, or ``None``
+    outside a SUMO run."""
+    if not _RUN_RIDING:
+        return None
+    return _RUN_RIDING[0]
+
+
+def forget_bicycle_parameters() -> None:
+    """Forget the run's bicycles' riding parameters."""
+    _RUN_RIDING.clear()
 
 
 def _default_bicycle_blueprints() -> list[str]:

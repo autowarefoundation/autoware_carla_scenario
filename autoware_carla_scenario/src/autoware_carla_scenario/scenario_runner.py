@@ -46,6 +46,7 @@ from .traffic.config import TrafficManagerBackendConfig
 from .traffic.traffic_manager import TrafficManagerBackend
 from .rerun import RerunConverter
 from .t4 import T4Recorder, T4Recording
+from .road_grip import forget_grip
 from .visibility import forget_visibility
 from .traffic.parameters import record_run_parameters
 from .trajectory_recorder import TrajectoryRecorder
@@ -1147,9 +1148,11 @@ class ScenarioRunner:
             # autopilot call), and where a backend that cannot run at all -- a
             # simulator that is not installed -- refuses.  Inside the try, so a
             # refusal still gets the cleanup every other failure gets.
-            # How far drivers see is what this run's weather leaves, not what
-            # the last run's left in the same episode.
+            # How far drivers see, and how well the road grips, is what this
+            # run's weather leaves, not what the last run's left in the same
+            # episode.
             forget_visibility()
+            forget_grip()
             backend.prepare(
                 TrafficContext(
                     client=self._client,

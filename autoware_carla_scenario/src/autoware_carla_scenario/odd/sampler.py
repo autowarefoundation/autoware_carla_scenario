@@ -314,9 +314,12 @@ def with_tire_friction(
     ``EnvironmentAction`` reads it off the weather it leaves
     (:func:`~autoware_carla_scenario.actions.environment.tire_friction_range`),
     a dry road's around its own grip, a flooded one's about half.  A case that
-    names its quantile already keeps it.
+    names its quantile, or a grip (``environment.tire_friction``), already
+    keeps it.
     """
-    return _with_quantile(samples, seed, TIRE_FRICTION_KEY, "tire_friction")
+    return _with_quantile(
+        samples, seed, TIRE_FRICTION_KEY, "tire_friction", "environment.tire_friction"
+    )
 
 
 def with_visibility(

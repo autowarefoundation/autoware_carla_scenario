@@ -58,7 +58,7 @@ run starts.  A field left at ``None`` is the backend's own default.
 ``imperfection``           --                     ``sigma``
 ``max_lateral_speed_mps``  --                     ``maxSpeedLat``
 ``max_lateral_accel``      --                     ``lcAccelLat`` (sublane)
-``follow_visibility``      --                     held to sight
+``follow_visibility``      held to sight (opt-in) held to sight
 ========================== ====================== =============================
 
 ========================== ====================== =============================
@@ -75,7 +75,9 @@ scenario steers them, and it has no pedestrian traffic of its own.
 The visibility (:mod:`autoware_carla_scenario.visibility`) is a vehicle
 parameter: ``follow_visibility`` holds the traffic to the speed it stops from
 within what its drivers see, with ``reaction_time_s`` and ``decel`` as the
-reaction and the braking that speed is worked out from.
+reaction and the braking that speed is worked out from (SUMO's default car's
+for the TrafficManager, which has neither), and the braking scaled down to
+the grip the road's water leaves (:mod:`autoware_carla_scenario.road_grip`).
 
 Like :mod:`.config`, this module imports nothing heavier than the standard
 library, so the config layer and the editor can name it.
@@ -121,7 +123,7 @@ VEHICLE_PARAMETER_BACKENDS: dict[str, list[str]] = {
     "imperfection": ["sumo"],
     "max_lateral_speed_mps": ["sumo"],
     "max_lateral_accel": ["sumo"],
-    "follow_visibility": ["sumo"],
+    "follow_visibility": ["traffic_manager", "sumo"],
 }
 
 #: The same for each pedestrian parameter.  Only SUMO simulates pedestrian
@@ -376,7 +378,11 @@ class VehicleParameters:
             from within what its drivers see, once the run's weather says how
             far that is (:mod:`autoware_carla_scenario.visibility`, set by the
             ``EnvironmentAction``), and give it its own speed back when the
-            weather lifts.  The SUMO backend does so by default.
+            weather lifts.  The braking that speed is worked out from is the
+            grip's (:mod:`autoware_carla_scenario.road_grip`): a wet road
+            holds traffic slower in the same fog.  The SUMO backend does so by
+            default; the TrafficManager only when it is ``true``, holding
+            each vehicle under its road's speed limit.
     """
 
     speed_factor: Optional[Spread] = None

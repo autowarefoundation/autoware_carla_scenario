@@ -147,7 +147,7 @@ def test_restricting_keeps_only_what_is_supported() -> None:
 
 def test_a_field_another_backend_supports_is_refused_naming_it() -> None:
     parameters = VehicleParameters(
-        speed_factor=Spread(0.9), reaction_time_s=Spread(1.5), follow_visibility=True
+        speed_factor=Spread(0.9), reaction_time_s=Spread(1.5), decel=Spread(4.0)
     )
     with pytest.raises(TrafficParameterError) as raised:
         TrafficManagerBackend(vehicles=parameters)
@@ -157,7 +157,7 @@ def test_a_field_another_backend_supports_is_refused_naming_it() -> None:
         "traffic.vehicles.reaction_time_s can only be used with the 'sumo' backend"
         in message
     )
-    assert "traffic.vehicles.follow_visibility can only be used with" in message
+    assert "traffic.vehicles.decel can only be used with" in message
     # A field it does support is not named.
     assert "speed_factor" not in message
 
@@ -177,7 +177,9 @@ def test_a_backend_that_reads_no_parameters_refuses_every_one() -> None:
 
 def test_building_a_backend_checks_its_parameters() -> None:
     with pytest.raises(TrafficParameterError, match="'sumo' backend"):
-        build_backend("traffic_manager", {}, VehicleParameters(follow_visibility=False))
+        build_backend(
+            "traffic_manager", {}, VehicleParameters(reaction_time_s=Spread(1.0))
+        )
     backend = build_backend(
         "traffic_manager", {}, VehicleParameters(min_gap_m=Spread(3.0))
     )
@@ -197,6 +199,7 @@ def test_each_backend_supports_what_the_table_says() -> None:
         "ignore_vehicles",
         "ignore_walkers",
         "random_lane_changes",
+        "follow_visibility",
     }
     assert SumoTrafficBackend().supported_vehicle_parameters() == {
         "speed_factor",

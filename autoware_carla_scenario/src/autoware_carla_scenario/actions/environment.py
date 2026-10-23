@@ -18,6 +18,7 @@ import logging
 from typing import TYPE_CHECKING, Optional
 
 from ..conditions.base import BaseCondition
+from ..road_grip import set_world_grip
 from ..utils.vehicles import as_vehicle
 from ..visibility import (
     at_quantile,
@@ -195,9 +196,13 @@ def apply_tire_friction(world: "carla.World", factor: float) -> None:
     world_id = world.id
     _tire_state(world_id)
     if world_id in _TIRE_FACTORS and _TIRE_FACTORS[world_id] == factor:
+        # The runner forgets the backends' grip every run; the wheels keep it.
+        set_world_grip(world_id, factor)
         follow_tire_friction(world)
         return
     _TIRE_FACTORS[world_id] = factor
+    # For the traffic backends, which plan their vehicles' braking with it.
+    set_world_grip(world_id, factor)
     count = _scale_vehicles(world, world.get_actors(), factor)
     logger.info(
         "Tire friction set to %.3f of the dry road's on %d vehicle(s)", factor, count
@@ -286,7 +291,8 @@ class EnvironmentAction(BaseAction):
     if given, else the point *visibility_quantile* of
     :func:`~autoware_carla_scenario.visibility.visibility_range` -- its middle
     by default.  A traffic backend that models drivers' sight (``sumo``)
-    holds its traffic to it; the TrafficManager only logs it.
+    holds its traffic to it, and the TrafficManager with
+    ``follow_visibility: true``.
 
     **The road's grip follows the water on it.**  An action that sets the
     ``wetness`` or the standing water (``rain`` sets both), or names a tire

@@ -310,6 +310,24 @@ class TestTireFriction:
             EnvironmentAction(**kwargs)
 
 
+class TestTheGripForTheTraffic:
+    def test_the_grip_given_the_wheels_is_recorded_for_the_backends(self) -> None:
+        from autoware_carla_scenario.road_grip import forget_grip, world_grip
+
+        forget_grip()
+        world = _world_with(_Vehicle(1))
+        try:
+            apply_tire_friction(world, 0.55)
+            assert world_grip(world.id) == 0.55
+            # The runner forgets it every run; the same factor again records
+            # it again, though the wheels have it already.
+            forget_grip()
+            apply_tire_friction(world, 0.55)
+            assert world_grip(world.id) == 0.55
+        finally:
+            forget_grip()
+
+
 class TestFollowingTheGrip:
     """A scenario with an action that sets the grip follows it after every tick."""
 

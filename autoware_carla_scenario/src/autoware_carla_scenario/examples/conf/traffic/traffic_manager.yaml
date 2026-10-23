@@ -42,7 +42,9 @@ traffic:
     max_lateral_speed_mps: {mean: null, std: null}
     max_lateral_accel: {mean: null, std: null}
     # Hold the traffic to the speed it stops from within what its
-    # drivers see in the run's weather (sumo only; on by default there).
+    # drivers see in the run's weather, braking as the road's grip lets
+    # it (traffic_manager, sumo; on by default for sumo, off unless true
+    # for traffic_manager).
     follow_visibility: null
   # SUMO's pedestrians (sumo only: the TrafficManager drives no pedestrians).
   pedestrians:

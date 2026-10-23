@@ -21,6 +21,14 @@ run draws its own speed factor from that normal distribution.
 A parameter the run's backend does not support stays the backend's error
 (:class:`~autoware_carla_scenario.traffic.parameters.TrafficParameterError`):
 an ODD that draws a reaction time is an ODD for the ``sumo`` backend.
+
+How SUMO's bicycles ride
+(:class:`~autoware_carla_scenario.traffic.sumo.config.BicycleConfig`) is a
+spread too, each rider drawing its own value, and its probes are
+``bicycle_<field>_mean`` and ``_std``, with knobs writing
+``traffic.options.bicycles.<field>.mean`` and ``.std``: bicycles are SUMO's
+alone, so those are the ``sumo`` backend's options, and an ODD that draws
+them is an ODD for it.
 """
 
 from __future__ import annotations
@@ -36,6 +44,7 @@ from ..traffic.parameters import (
     Spread,
     run_parameters,
 )
+from ..traffic.sumo.config import BICYCLE_BOUNDS, run_bicycle_parameters
 
 __all__ = [
     "PARAMETER_RANGES",
@@ -67,10 +76,29 @@ PARAMETER_RANGES: dict[
     ("pedestrians", "walking_speed_mps"): ("m/s", (0.5, 2.5), (0.0, 0.5)),
     ("pedestrians", "min_gap_m"): ("m", (0.1, 2.0), (0.0, 0.5)),
     ("pedestrians", "red_light_violation_s"): ("s", (0.0, 60.0), (0.0, 30.0)),
+    ("bicycles", "max_speed_mps"): ("m/s", (2.0, 8.0), (0.0, 1.5)),
+    ("bicycles", "accel"): ("m/s^2", (0.5, 2.0), (0.0, 0.5)),
+    ("bicycles", "decel"): ("m/s^2", (1.0, 4.0), (0.0, 1.0)),
+    ("bicycles", "min_gap_m"): ("m", (0.2, 2.0), (0.0, 0.5)),
+    ("bicycles", "reaction_time_s"): ("s", (0.3, 2.0), (0.0, 0.5)),
+    ("bicycles", "imperfection"): ("", (0.0, 1.0), (0.0, 0.3)),
+    ("bicycles", "max_lateral_speed_mps"): ("m/s", (0.2, 2.0), (0.0, 0.5)),
+    ("bicycles", "red_light_violation_s"): ("s", (0.0, 30.0), (0.0, 10.0)),
 }
 
 #: A probe's name begins with the singular of its space.
-_PREFIX = {"vehicles": "vehicle", "pedestrians": "pedestrian"}
+_PREFIX = {"vehicles": "vehicle", "pedestrians": "pedestrian", "bicycles": "bicycle"}
+#: Each space's bounds, and the config node its knobs write under.
+_BOUNDS = {
+    "vehicles": VEHICLE_BOUNDS,
+    "pedestrians": PEDESTRIAN_BOUNDS,
+    "bicycles": BICYCLE_BOUNDS,
+}
+_NODE = {
+    "vehicles": "traffic.vehicles",
+    "pedestrians": "traffic.pedestrians",
+    "bicycles": "traffic.options.bicycles",
+}
 
 
 class ParameterProbe:
@@ -85,12 +113,19 @@ class ParameterProbe:
 
     def __call__(self, world: Any) -> Optional[float]:
         del world  # the run's, not the world's
-        recorded = run_parameters()
-        if recorded is None:
-            return None
-        vehicles, pedestrians = recorded
-        source: Any = vehicles if self.space == "vehicles" else pedestrians
-        spread = getattr(source, self.field)
+        spread: Any
+        if self.space == "bicycles":
+            riding = run_bicycle_parameters()
+            if riding is None:
+                return None
+            spread = riding.get(self.field)
+        else:
+            recorded = run_parameters()
+            if recorded is None:
+                return None
+            vehicles, pedestrians = recorded
+            source: Any = vehicles if self.space == "vehicles" else pedestrians
+            spread = getattr(source, self.field)
         if not isinstance(spread, Spread):
             return None
         return spread.mean if self.statistic == "mean" else spread.std
@@ -107,12 +142,12 @@ def _probes() -> (
     probes: dict[str, tuple[Callable[[Any], Any], str]] = {}
     knobs: dict[Callable[..., Any], OddKnob] = {}
     for (space, field), (unit, mean_range, std_range) in PARAMETER_RANGES.items():
-        bounds = (VEHICLE_BOUNDS if space == "vehicles" else PEDESTRIAN_BOUNDS)[field]
+        bounds = _BOUNDS[space][field]
         for statistic, value_range in (("mean", mean_range), ("std", std_range)):
             probe = ParameterProbe(space, field, statistic)
             probes[probe.__name__] = (probe, unit)
             knobs[probe] = OddKnob(
-                f"traffic.{space}.{field}.{statistic}",
+                f"{_NODE[space]}.{field}.{statistic}",
                 range=value_range,
                 # The mean must lie within the parameter's own bounds.
                 limits=bounds if statistic == "mean" else (0.0, float("inf")),
@@ -122,8 +157,11 @@ def _probes() -> (
 
 #: Probe name -> (probe, unit): ``vehicle_<field>_mean`` and ``_std`` for each
 #: numeric vehicle parameter, ``pedestrian_<field>_mean`` and ``_std`` for
-#: each pedestrian parameter.
+#: each pedestrian parameter, ``bicycle_<field>_mean`` and ``_std`` for each
+#: riding parameter of SUMO's bicycles.
 TRAFFIC_PROBES: dict[str, tuple[Callable[[Any], Any], str]]
-#: Probe -> the knob that sets it: ``traffic.<space>.<field>.mean`` or ``.std``.
+#: Probe -> the knob that sets it: ``traffic.<space>.<field>.mean`` or
+#: ``.std``, ``traffic.options.bicycles.<field>.mean`` or ``.std`` for a
+#: bicycle's.
 TRAFFIC_KNOBS: dict[Callable[..., Any], OddKnob]
 TRAFFIC_PROBES, TRAFFIC_KNOBS = _probes()

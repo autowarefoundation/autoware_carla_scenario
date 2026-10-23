@@ -7,8 +7,10 @@ visibility is a quantity of the run of its own, in metres, which the weather
 bounds (:func:`visibility_range`) and a traffic backend that models drivers'
 sight follows -- the ``sumo`` backend holds its traffic to the speed it can
 stop from within it (:func:`sight_speed`).  The TrafficManager has no such
-notion: the ``traffic_manager`` backend logs what it would hold its traffic
-to, and leaves it as it was.
+notion of its own: the ``traffic_manager`` backend holds its vehicles to it
+with ``follow_visibility: true``, and otherwise logs what it would hold them
+to.  Both work the speed out from the braking the road's grip leaves
+(:mod:`autoware_carla_scenario.road_grip`).
 
 :class:`~autoware_carla_scenario.EnvironmentAction` sets it, when it sets the
 fog, the rain or the sun (or names a visibility), for the world it acts on

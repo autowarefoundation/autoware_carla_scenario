@@ -948,6 +948,72 @@ def test_sumo_traffic_drives_no_faster_than_its_drivers_see(
 
 
 @needs_sumo
+def test_sumo_traffic_brakes_as_the_roads_grip_lets_it(
+    crossroads: Path, tmp_path: Path
+) -> None:
+    from autoware_carla_scenario.road_grip import forget_grip, set_world_grip
+    from autoware_carla_scenario.visibility import (
+        forget_visibility,
+        set_world_visibility,
+        sight_speed,
+    )
+
+    forget_grip()
+    forget_visibility()
+    backend, world, npc, ego = _prepared(crossroads, tmp_path)
+    world.id = 13  # type: ignore[attr-defined]
+    tc = backend._traci
+    try:
+        handle = backend.spawn_background(
+            world, _carla_transform(-60.0, 5.25, 0.0), speed_kmh=60.0
+        )
+        assert handle is not None
+        backend.tick(world, 0.0)
+        own = (tc.vehicle.getAccel(handle), tc.vehicle.getDecel(handle))
+        (npc_id,) = backend._driven
+        (ego_id,) = backend._external
+        npc_decel = tc.vehicle.getDecel(npc_id)
+        ego_decel = tc.vehicle.getDecel(ego_id)
+
+        # A soaked road: half the dry grip, half the braking.
+        set_world_grip(13, 0.5)
+        set_world_visibility(13, 40.0)
+        backend.tick(world, 0.05)
+        assert tc.vehicle.getAccel(handle) == pytest.approx(own[0] * 0.5)
+        assert tc.vehicle.getDecel(handle) == pytest.approx(own[1] * 0.5)
+        assert tc.vehicle.getEmergencyDecel(handle) >= tc.vehicle.getDecel(handle)
+        # The sight speed is worked out from the braking the grip leaves.
+        held = sight_speed(40.0, own[1] * 0.5, tc.vehicle.getTau(handle))
+        assert tc.vehicle.getMaxSpeed(handle) == pytest.approx(held)
+        # Physics: the scenario's vehicle SUMO drives too, not the one CARLA
+        # drives and publishes.
+        assert tc.vehicle.getDecel(npc_id) == pytest.approx(npc_decel * 0.5)
+        assert tc.vehicle.getDecel(ego_id) == pytest.approx(ego_decel)
+        assert backend.describe()["grip"] == 0.5
+
+        # Drier: the sight speed follows, in the same fog.
+        set_world_grip(13, 0.9)
+        backend.tick(world, 0.1)
+        assert tc.vehicle.getDecel(handle) == pytest.approx(own[1] * 0.9)
+        assert tc.vehicle.getMaxSpeed(handle) == pytest.approx(
+            sight_speed(40.0, own[1] * 0.9, tc.vehicle.getTau(handle))
+        )
+
+        # Forgotten: each brakes as its own again.
+        forget_grip()
+        backend.tick(world, 0.15)
+        assert (tc.vehicle.getAccel(handle), tc.vehicle.getDecel(handle)) == (
+            pytest.approx(own[0]),
+            pytest.approx(own[1]),
+        )
+        assert tc.vehicle.getDecel(npc_id) == pytest.approx(npc_decel)
+    finally:
+        backend.close()
+        forget_grip()
+        forget_visibility()
+
+
+@needs_sumo
 def test_sumo_traffic_can_ignore_the_visibility(
     crossroads: Path, tmp_path: Path
 ) -> None:

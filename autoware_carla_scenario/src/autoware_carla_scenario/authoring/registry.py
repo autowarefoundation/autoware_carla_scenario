@@ -2277,7 +2277,7 @@ _TRAFFIC_BOOLEANS = (
         kind="bool",
         default=None,
         required=False,
-        help="sumo.  Empty: keep the run's.",
+        help="traffic_manager, sumo.  Empty: keep the run's.",
     ),
 )
 _VEHICLES_ARGUMENT = BuiltArgument(
