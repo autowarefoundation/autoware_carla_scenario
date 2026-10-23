@@ -5,8 +5,8 @@ traffic:
   # SUMO steps once per CARLA tick.  Needs the `sumo` extra.  By default the
   # scenario's vehicles stay with the TrafficManager and its pedestrians with
   # CARLA, and like an Autoware ego they are published into SUMO so its traffic
-  # reacts; SUMO adds no traffic of its own unless `ambient` or `pedestrians`
-  # asks for it.
+  # reacts; SUMO adds no traffic of its own unless `ambient`, `pedestrians` or
+  # `bicycles` asks for it.
   backend: sumo
   options:
     # traffic_manager: the scenario's NPCs (and an autopilot ego) are driven as
@@ -33,6 +33,12 @@ traffic:
     # pedestrians cross roads on crossings; at a light, a crossing is green
     # while the traffic over its road is red.
     pedestrian_crossings: true
+    # Let bicycles ride the sidewalks, both ways, as well as the carriageway
+    # (roadgen's cycle_on_sidewalks): they change between sidewalk and road at
+    # junctions and every 50 m between, and cross where a crossing is. At a
+    # light, with traffic_light_authority: carla, a bicycle coming onto the
+    # road goes with the traffic beside it. false: sidewalks are for walking.
+    cycle_on_sidewalks: false
     # Lateral acceleration (m/s^2) SUMO traffic is held to in bends when the
     # map is converted (roadgen cuts edges at bends and slows each piece and
     # each junction turn); null converts the map as it is.
@@ -66,6 +72,44 @@ traffic:
       radius_m: null
       max_persons: null
       blueprint: walker.pedestrian.0001
+    # SUMO's own bicycles (randomTrips --vclass bicycle), mirrored into CARLA
+    # as bicycles within radius_m of the ego (null: spawn_radius_m), at most
+    # max_bicycles of them (apart from max_vehicles).
+    bicycles:
+      enabled: false
+      bicycles_per_hour: 300
+      min_distance_m: 0.0
+      max_distance_m: 2000.0
+      # How they ride, SUMO's default bicycle type redefined: each numeric
+      # parameter is a spread, {mean, std}, every rider drawing its own value
+      # (null: SUMO's bicycle default). traffic.vehicles does not apply to
+      # bicycles.
+      # Speed on a free road, m/s (SUMO: 5.56, 20 km/h).
+      max_speed_mps: {mean: null, std: null}
+      # Acceleration and braking, m/s^2 (SUMO: 1.2 and 3).
+      accel: {mean: null, std: null}
+      decel: {mean: null, std: null}
+      # Gap kept to the one ahead when standing, m (SUMO: 0.5).
+      min_gap_m: {mean: null, std: null}
+      # Reaction time, s, and imperfection, 0-1 (SUMO: 1 and 0.5).
+      reaction_time_s: {mean: null, std: null}
+      imperfection: {mean: null, std: null}
+      # Most lateral speed, m/s: how quickly a rider moves across the lane.
+      max_lateral_speed_mps: {mean: null, std: null}
+      # Ride on through a light red for less than this, s (null: stop at red).
+      red_light_violation_s: {mean: null, std: null}
+      radius_m: null
+      max_bicycles: null
+      # A mirrored bicycle is one of these; those the world lacks are left
+      # out, and with none left bicycles ride in SUMO only.
+      blueprints:
+        - vehicle.bh.crossbike
+        - vehicle.diamondback.century
+        - vehicle.gazelle.omafiets
+      # teleport: placed where SUMO has them every tick (a bicycle crossing
+      # the kerb between sidewalk and road would trip CARLA's physics).
+      # physics: as vehicle_control's.
+      vehicle_control: teleport
     # SUMO seconds simulated before the scenario clock starts.
     warmup_s: 30.0
     # Mirror only the nearest SUMO vehicles into CARLA (null: all of them).

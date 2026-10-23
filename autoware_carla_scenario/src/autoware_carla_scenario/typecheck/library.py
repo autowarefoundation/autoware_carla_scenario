@@ -369,6 +369,7 @@ UNCALLED: dict[str, str] = {
     "autoware_carla_scenario.traffic.parameters.VehicleParameters.describe": _DETAILS,
     "autoware_carla_scenario.traffic.parameters.VehicleParameters.from_mapping": _FROM_MAPPING,
     "autoware_carla_scenario.traffic.sumo.config.AmbientTrafficConfig.from_mapping": _FROM_MAPPING,
+    "autoware_carla_scenario.traffic.sumo.config.BicycleConfig.from_mapping": _FROM_MAPPING,
     "autoware_carla_scenario.traffic.sumo.config.PedestrianConfig.from_mapping": _FROM_MAPPING,
     "autoware_carla_scenario.traffic.sumo.config.SumoBackendConfig.from_mapping": _FROM_MAPPING,
     "autoware_carla_scenario.traffic.traffic_manager.TrafficManagerBackend.describe": _DETAILS,

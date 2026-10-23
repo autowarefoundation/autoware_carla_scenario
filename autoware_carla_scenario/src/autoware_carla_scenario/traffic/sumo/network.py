@@ -8,7 +8,9 @@ network without offset normalisation, so its x/y are OpenDRIVE's.
 
 Ambient demand comes from SUMO's own ``randomTrips.py``, weighted by the
 ``network.safe.*`` files roadgen writes beside the network (sources and sinks
-away from dead ends).
+away from dead ends); pedestrian and bicycle demand from the same tool,
+unweighted.  With ``cycle_on_sidewalks`` roadgen lays bicycle edges along
+every sidewalk, so bicycles ride them as well as the carriageway.
 
 Beside the network go roadgen's traces -- the IR dump, what each element of the
 OpenDRIVE became (``map.xodr.trace.json``) and what each became in SUMO -- which
@@ -43,6 +45,7 @@ __all__ = [
     "SumoNetwork",
     "build_network",
     "crossing_edges",
+    "generate_rides",
     "generate_trips",
     "generate_walks",
     "sanitize_opendrive",
@@ -160,6 +163,7 @@ def build_network(
     curve_lateral_acceleration: float | None = None,
     *,
     pedestrian_crossings: bool = False,
+    cycle_on_sidewalks: bool = False,
 ) -> SumoNetwork:
     """The SUMO network of *opendrive* (OpenDRIVE text), built or cached.
 
@@ -173,6 +177,12 @@ def build_network(
             footways and crossings.  At a signalised junction netconvert
             appends the crossings' links after the vehicle links, so those keep
             the indices roadgen's trace gives them.
+        cycle_on_sidewalks: Let bicycles ride the sidewalks both ways as well
+            as the carriageway (roadgen's option of the same name): each
+            sidewalk gets a bicycle edge each way along it, with rides onto
+            and off the carriageway at every junction and every 50 m between,
+            across the road where a crossing is, and back at a dead end.
+            roadgen traces every ride a light controls to that light.
 
     Raises:
         TrafficBackendUnavailable: roadgen or SUMO is not installed.
@@ -188,6 +198,8 @@ def build_network(
     if pedestrian_crossings:
         # Only when on: a network built without keeps the key it had.
         options += ";crossings.guess"
+    if cycle_on_sidewalks:
+        options += ";cycle_on_sidewalks"
     key = hashlib.sha256(
         "\0".join((_versions(), options, opendrive)).encode()
     ).hexdigest()[:16]
@@ -203,7 +215,11 @@ def build_network(
         xodr.write_text(sanitize_opendrive(opendrive))
         try:
             road_map = roadgen.read_opendrive(str(xodr))
-            prefix = _export(road_map, tmp, curve_lateral_acceleration)
+            prefix = road_map.export_sumo(
+                str(tmp),
+                curve_lateral_acceleration=curve_lateral_acceleration,
+                cycle_on_sidewalks=cycle_on_sidewalks,
+            )
             road_map.export_ir(str(tmp / "network.ir.json"))
             road_map.write_read_trace(str(tmp / f"{xodr.name}.trace.json"))
         except Exception as exc:  # roadgen raises ValueError, among others
@@ -244,24 +260,6 @@ def build_network(
         shutil.rmtree(tmp, ignore_errors=True)
     logger.info("Built the SUMO network %s", network.net_file)
     return network
-
-
-def _export(
-    road_map: Any, directory: Path, curve_lateral_acceleration: float | None
-) -> str:
-    if curve_lateral_acceleration is None:
-        return road_map.export_sumo(str(directory))
-    try:
-        return road_map.export_sumo(
-            str(directory), curve_lateral_acceleration=curve_lateral_acceleration
-        )
-    except TypeError:
-        logger.warning(
-            "roadgen %s cannot hold traffic to curve speeds; converting without "
-            "(SUMO traffic will take bends at the speed limit)",
-            _versions(),
-        )
-        return road_map.export_sumo(str(directory))
 
 
 def generate_trips(
@@ -364,6 +362,78 @@ def generate_walks(
     if proc.returncode != 0 or not out.is_file():
         raise TrafficBackendError(
             f"randomTrips.py --pedestrians failed ({proc.returncode}): "
+            f"{proc.stderr.strip()[-2000:]}"
+        )
+    return out
+
+
+def generate_rides(
+    network: SumoNetwork,
+    out: Path,
+    *,
+    seed: int,
+    period: float,
+    end: float,
+    min_distance: float = 0.0,
+    max_distance: float | None = None,
+    bicycle_type: Path | None = None,
+) -> Path:
+    """Bicycle demand for *network*, written to *out* (a ``.rou.xml``).
+
+    Every ride is of SUMO's default bicycle type, ``DEFAULT_BIKETYPE``, and
+    starts and ends on an edge a bicycle may use -- a sidewalk's bicycle edges
+    among them, when the network has them.  *bicycle_type* is an additional
+    file redefining that type, which the routing has to know.  Unweighted:
+    roadgen's weights are for cars, and give every bicycle edge 0.
+    """
+    tool = sumo_home() / "tools" / "randomTrips.py"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    cmd = [
+        sys.executable,
+        str(tool),
+        "-n",
+        str(network.net_file),
+        "-o",
+        str(out.with_suffix(".trips.xml")),
+        "-r",
+        str(out),
+        "-b",
+        "0",
+        "-e",
+        str(end),
+        "-p",
+        str(period),
+        "--seed",
+        str(seed),
+        "--validate",
+        # From and to edges a bicycle may use; the type is SUMO's own, which
+        # --vehicle-class would shadow with one of randomTrips'.
+        "--vclass",
+        "bicycle",
+        "--trip-attributes",
+        'type="DEFAULT_BIKETYPE"',
+        "--min-distance",
+        f"{min_distance:g}",
+        "--prefix",
+        "sumobike",
+    ]
+    if max_distance is not None:
+        cmd += ["--max-distance", f"{max_distance:g}"]
+    if bicycle_type is not None:
+        # The routing writes the types its rides drew beside them rather than
+        # into them: SUMO loads the type file itself, and refuses a type
+        # defined twice.
+        cmd += [
+            "--additional-files",
+            str(bicycle_type),
+            "--vtype-output",
+            str(out.with_suffix(".vtypes.xml")),
+        ]
+    env = dict(os.environ, SUMO_HOME=str(sumo_home()))
+    proc = subprocess.run(cmd, capture_output=True, text=True, env=env, check=False)  # noqa: S603
+    if proc.returncode != 0 or not out.is_file():
+        raise TrafficBackendError(
+            f"randomTrips.py --vclass bicycle failed ({proc.returncode}): "
             f"{proc.stderr.strip()[-2000:]}"
         )
     return out

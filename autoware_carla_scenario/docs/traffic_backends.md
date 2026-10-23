@@ -693,8 +693,8 @@ uv run scenario ... background_traffic.enabled=true background_traffic.source.st
 ```
 
 `background_traffic` (in `examples/conf/config.yaml`) is off by default, and so
-are the SUMO backend's own `ambient` randomTrips demand and its `pedestrians`
-(`SumoBackendConfig`'s defaults, and `conf/traffic/sumo.yaml`'s), so a run has
+are the SUMO backend's own `ambient` randomTrips demand, its `pedestrians` and
+its `bicycles` (`SumoBackendConfig`'s defaults, and `conf/traffic/sumo.yaml`'s), so a run has
 no traffic but its own and its traffic sources' unless asked.
 
 ## Why this exists
@@ -751,6 +751,8 @@ mirrored. `traffic.options.net_path` runs on an existing `.net.xml` instead.
 | Scenario pedestrians (`PedestrianEntity`, e.g. `WalkStraightAction`) | CARLA (`scenario_pedestrians=traffic_manager`, default), or SUMO (`scenario_pedestrians=sumo`) | published, or walked |
 | Other CARLA pedestrians (`walker.pedestrian.*`) | CARLA | published as SUMO persons (`publish_walkers`, on by default) |
 | SUMO's pedestrians (`randomTrips.py --pedestrians`, `pedestrians.enabled`) | SUMO | native; mirrored into CARLA as walkers near the ego |
+| Scenario bicycles (a vehicle whose blueprint's `base_type` is `bicycle`) | as the scenario's other vehicles | published or driven, as a SUMO `bicycle` |
+| SUMO's bicycles (`randomTrips.py --vclass bicycle`, `bicycles.enabled`) | SUMO | native; mirrored into CARLA as bicycles near the ego |
 
 A published vehicle has SUMO's speed and lane-change control switched off, so
 SUMO traffic sees it where CARLA has it and reacts to it. With the default the
@@ -807,6 +809,70 @@ given as `net_path` is used as it is.
 ```bash
 uv run scenario ... traffic=sumo traffic.options.pedestrians.enabled=true \
     traffic.options.pedestrians.radius_m=80
+```
+
+**Bicycles on sidewalks** (`cycle_on_sidewalks`, off by default): the network
+is built with roadgen's `export_sumo(cycle_on_sidewalks=True)` (roadgen 0.41.1
+or later, which the `sumo` extra requires), so bicycles may ride every
+sidewalk, both ways, as well as the carriageway. Each sidewalk gets a bicycle
+edge each way along it (`<edge>.bike<index>` and `<edge>.bike<index>.rev`),
+open to bicycles and pedestrians; the sidewalk lane itself stays the
+pedestrians'. A bicycle may change between sidewalk and road at every junction
+and every 50 m at most between, ride across the road wherever a crossing is,
+and turn back at a dead end. At a junction without a light a bicycle coming off
+the sidewalk gives way to the traffic it meets. At a signalised one roadgen's
+program gives such a bicycle a green of its own ahead of the traffic; with
+`traffic_light_authority=carla`, where CARLA's lights switch the traffic, a
+bicycle coming onto the road goes with the traffic of the road beside its
+sidewalk (and gives way), one getting off the road goes with the traffic it
+leaves, and one riding across a road goes while every vehicle link SUMO's own
+program never lets go with it is red. Off, sidewalks are the pedestrians' and
+bicycles keep to the carriageway and the cycle lanes. The network is cached
+apart from one built without, and a network given as `net_path` is used as it
+is.
+
+**SUMO's own bicycles** (`bicycles`, off by default) ride from and to edges a
+bicycle may use (`randomTrips.py --vclass bicycle`, unweighted, from
+`min_distance_m` to `max_distance_m` each) and are mirrored into CARLA as
+bicycles, each one of `blueprints` (those the world lacks are left out; with
+none left, bicycles ride in SUMO only, where its traffic still sees them), with
+the role name `sumo:<id>`. They count against limits of their own:
+`radius_m` (the vehicles' `spawn_radius_m` when null) and `max_bicycles`,
+apart from `max_vehicles`. A mirror follows its bicycle as
+`bicycles.vehicle_control` says, `teleport` by default: a bicycle changing
+between sidewalk and road crosses the kerb, which CARLA's vehicle physics
+would trip on. Bicycles stay in SUMO when `mesoscopic` is enabled: the queue
+model's roads are the carriageways.
+
+How they ride is not `traffic.vehicles` -- a driver's parameters, which never
+reach a bicycle -- but `bicycles`' own, SUMO's default bicycle type
+(`DEFAULT_BIKETYPE`) redefined as a distribution of 100 types, each its own
+draw (`<output>/sumo/bicycle_type.add.xml`, loaded before the demand). Each is
+a spread, `{mean, std}`, every rider drawing its own value cut to its bounds;
+`null` leaves SUMO's bicycle default:
+
+| `traffic.options.bicycles` | SUMO | Default |
+| --- | --- | --- |
+| `max_speed_mps` | `desiredMaxSpeed` and `maxSpeed` | 5.56 (20 km/h), with SUMO's spread of 0.1 |
+| `accel` | `accel` | 1.2 |
+| `decel` | `decel` | 3 |
+| `min_gap_m` | `minGap` | 0.5 |
+| `reaction_time_s` | `tau` | 1 |
+| `imperfection` | `sigma` (0-1) | 0.5 |
+| `max_lateral_speed_mps` | `maxSpeedLat` | 1 |
+| `red_light_violation_s` | `jmDriveAfterRedTime` | stop at red |
+
+The scenario's own bicycles are of that type too: a vehicle whose blueprint's
+`base_type` is `bicycle` (CARLA's bicycles') joins SUMO as a `bicycle`, on the
+nearest lane a bicycle may use -- a sidewalk's, on a network that has them --
+published or driven like the scenario's other vehicles, and SUMO routes one it
+drives (`scenario_vehicles=sumo`) only where bicycles may go.
+
+```bash
+uv run scenario ... traffic=sumo traffic.options.cycle_on_sidewalks=true \
+    traffic.options.bicycles.enabled=true traffic.options.bicycles.max_bicycles=20 \
+    traffic.options.bicycles.max_speed_mps.mean=4.0 \
+    traffic.options.bicycles.max_speed_mps.std=0.8
 ```
 
 **Stepping**: one SUMO step per CARLA tick, with the step length set to the
