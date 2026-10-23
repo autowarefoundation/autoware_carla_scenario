@@ -24,7 +24,7 @@ permissions:
 
 jobs:
   release:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # A manual release only ever comes from master.
     if: github.event_name == 'push' || github.ref == 'refs/heads/master'
     outputs:
@@ -356,7 +356,7 @@ jobs:
     name: build the distributions
     needs: release
     if: needs.release.outputs.release == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
     steps:
@@ -392,7 +392,7 @@ jobs:
   pypi-install:
     name: install on Python ${{ matrix.python-version }}
     needs: pypi-build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
     strategy:
@@ -439,7 +439,7 @@ jobs:
     name: publish to PyPI
     needs: [release, pypi-build, pypi-install]
     if: needs.release.outputs.release == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment:
       name: pypi
       url: https://pypi.org/p/autoware-carla-scenario
