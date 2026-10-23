@@ -306,6 +306,31 @@ writes a `despawn` record to the [trajectory log](trajectory_log.md).
 A `driver` route written out as waypoints runs until the entity reaches its
 last one, timed or not, so its completion is the moment it arrives.
 
+A road user the ego has left behind for good can leave too: one standing at
+least 30 m behind the ego along the road reads, in a trigger,
+
+```yaml
+type: any
+children:
+- {type: action_state, params: {action: npc1_drive, state: completeState}}
+- type: all
+  children:
+  - {type: action_state, params: {action: npc1_drive, state: runningState}}
+  - {type: standstill, params: {entity: npc1, duration: 5.0}}
+  - type: entity_distance
+    params: {source: ego, target: npc1, measure: lane, signed: true,
+             rule: less_than_or_equal, distance: -30.0}
+```
+
+`signed` (lane frame only) measures how far the target is ahead of the
+subject along the road, the way the subject faces, negative behind it
+(`coordinate.lane_distance.lane_offset`), so it reads the same whether the ego
+is moving or stopped.
+
+A pedestrian's written-out waypoints a few metres apart (no more than 10 m
+from one to the next: a recorded walk) are walked as written, from where it
+starts; farther apart they are routed between on the walkable lanelets.
+
 ## Waypoint conditions
 
 **Each vertex is departed on one condition**, its `advance`: when it holds,

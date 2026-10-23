@@ -390,3 +390,48 @@ def test_an_always_true_gate_never_holds_the_entity() -> None:
     mark = PaceMark(1, 20.0, gate=AlwaysTrueCondition())
     pacer = RoutePacer("npc1", "driver", [mark], 1.0, 8.0)
     assert pacer.speed(_WORLD, 0.0, 0.0, cruise=8.0, limit=15.0) == 8.0
+
+
+def test_a_hold_in_the_measured_entitys_way_is_let_go(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Held for the ego's progress, in the ego's lane just ahead of it, while
+    the ego stands behind it: after BLOCK_WAIT_S the hold is let go."""
+    import autoware_carla_scenario.actions._route_pacing as pacing
+
+    monkeypatch.setattr(
+        pacing, "route_s_of_carla_point", lambda x, y, near=None: (x, 0.5)
+    )
+    gate = _Progress(target=50.0)
+    gate.now = 10.0  # the ego, standing at route s 10
+    mark = PaceMark(1, 1.0, gate=gate)
+    pacer = RoutePacer("npc1", "driver", [mark], 0.5, 0.0)
+    pacer.observe(1.0, 0.0)
+    with caplog.at_level(logging.WARNING):
+        t = 0.0
+        while t < pacing.BLOCK_WAIT_S + 0.5:
+            pacer.speed(_WORLD, 1.0, t, 8.0, 15.0, position=(18.0, 0.0))
+            t += 0.05
+    assert mark.opened_at is not None
+    assert sum("stops holding" in r.getMessage() for r in caplog.records) == 1
+
+
+def test_a_hold_out_of_the_measured_entitys_way_is_kept(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import autoware_carla_scenario.actions._route_pacing as pacing
+
+    # Beside the route (8 m off its line): not in the ego's way.
+    monkeypatch.setattr(
+        pacing, "route_s_of_carla_point", lambda x, y, near=None: (x, 8.0)
+    )
+    gate = _Progress(target=50.0)
+    gate.now = 10.0
+    mark = PaceMark(1, 1.0, gate=gate)
+    pacer = RoutePacer("npc1", "driver", [mark], 0.5, 0.0)
+    pacer.observe(1.0, 0.0)
+    t = 0.0
+    while t < 10.0:
+        assert pacer.speed(_WORLD, 1.0, t, 8.0, 15.0, position=(18.0, 0.0)) == 0.0
+        t += 0.05
+    assert mark.opened_at is None

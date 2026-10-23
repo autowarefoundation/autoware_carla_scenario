@@ -446,6 +446,11 @@ NOT_MODELLED_MEMBERS: dict[str, dict[str, str]] = {
             "the routing action paces a walker along; a scenario routes the "
             "pedestrian, it does not read its walk"
         ),
+        "walk_along": (
+            "lays a walk out whole as a trajectory.model ResolvedTrajectory, "
+            "what the routing action does with a recorded walk; a scenario "
+            "routes the pedestrian with a RoutingAction instead"
+        ),
         "set_traffic_backend": _SET_TRAFFIC_BACKEND,
     },
     "DespawnAction": {

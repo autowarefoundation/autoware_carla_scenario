@@ -27,17 +27,29 @@ is reached against when it was meant to be, for the trajectory log
 
 from __future__ import annotations
 
+import logging
 import math
 from typing import TYPE_CHECKING, Optional
 
 from ..conditions.base import BaseCondition
-from ..conditions.route_progress import RouteProgressCondition
+from ..conditions.route_progress import RouteProgressCondition, route_s_of_carla_point
 from ..waypoint_arrival import WaypointArrival
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
 
-__all__ = ["HOLD_MARGIN_M", "PaceMark", "RoutePacer"]
+logger = logging.getLogger(__name__)
+
+__all__ = ["BLOCK_WAIT_S", "HOLD_MARGIN_M", "PaceMark", "RoutePacer"]
+
+#: How long (s) the measured entity of a ``route_progress`` hold has to stand
+#: still, the held entity in its way ahead, before the hold is let go.
+BLOCK_WAIT_S: float = 3.0
+#: How far (m) from the route's line the held entity counts as in its lane.
+_IN_LANE_M: float = 2.0
+#: How far (m) ahead of the measured entity, along the route, it counts as in
+#: its way.
+_BLOCK_RANGE_M: float = 30.0
 
 #: How far short (m) of a waypoint whose condition cannot be predicted the
 #: entity stops to wait for it.
@@ -124,6 +136,9 @@ class RoutePacer:
     _rate: float
     _rate_progress: Optional[float]
     _rate_time: float
+    _still_at: Optional[float]
+    _still_since: float
+    _let_go: bool
 
     def __init__(
         self,
@@ -143,6 +158,9 @@ class RoutePacer:
         self._rate = 0.0
         self._rate_progress = None
         self._rate_time = 0.0
+        self._still_at = None
+        self._still_since = 0.0
+        self._let_go = False
 
     @property
     def paced(self) -> bool:
@@ -215,8 +233,10 @@ class RoutePacer:
         elapsed: float,
         cruise: float,
         limit: float,
+        position: Optional[tuple[float, float]] = None,
     ) -> float:
-        """The speed (m/s) to command now, the entity being *here*.
+        """The speed (m/s) to command now, the entity being *here* (at CARLA
+        *position*, for the deadlock guard).
 
         *cruise* is the speed where nothing ahead is due, *limit* the most
         it may go at.  Checks the departure condition of the next waypoint
@@ -226,7 +246,7 @@ class RoutePacer:
         pending = self._pending()
         if pending is not None:
             mark: PaceMark = pending
-            target = self._towards(world, mark, here, elapsed, cruise, limit)
+            target = self._towards(world, mark, here, elapsed, cruise, limit, position)
         target = min(max(target, 0.0), limit)
         self._command += _SMOOTHING * (target - self._command)
         if target <= 0.0 and self._command < 0.1:
@@ -253,6 +273,7 @@ class RoutePacer:
         elapsed: float,
         cruise: float,
         limit: float,
+        position: Optional[tuple[float, float]],
     ) -> float:
         """The speed that meets *mark* from *here*."""
         remaining = max(0.0, mark.distance - here)
@@ -268,6 +289,9 @@ class RoutePacer:
             mark.opened_at = elapsed
         if mark.opened_at is not None:
             return cruise
+        if self._in_the_way(condition, mark, remaining, elapsed, position):
+            mark.opened_at = elapsed
+            return cruise
         if mark.reached_at is not None:
             return 0.0  # there, and it has not held: wait
         eta = self._eta(condition, elapsed)
@@ -278,6 +302,57 @@ class RoutePacer:
         arrive: float = eta
         speed = remaining / max(arrive - elapsed, _MIN_TIME_TO_GO_S)
         return min(speed, math.sqrt(2.0 * _HOLD_DECELERATION_MPS2 * remaining))
+
+    def _in_the_way(
+        self,
+        condition: BaseCondition,
+        mark: PaceMark,
+        remaining: float,
+        elapsed: float,
+        position: Optional[tuple[float, float]],
+    ) -> bool:
+        """Whether holding for *condition* would deadlock: the entity holds in
+        the measured entity's lane, just ahead of it along the route, and the
+        measured entity has stood :data:`BLOCK_WAIT_S` -- waiting, most
+        likely, for the entity that waits for it.  Then the hold is let go."""
+        gate = _progress_gate(condition)
+        held = mark.reached_at is not None or remaining <= HOLD_MARGIN_M + 1.0
+        if gate is None or position is None or not held:
+            return False
+        progress_gate: RouteProgressCondition = gate
+        progress = progress_gate.progress
+        if progress is None:
+            return False
+        measured: float = progress
+        still = self._still_at
+        if still is None or abs(measured - still) > 0.5:
+            self._still_at = measured
+            self._still_since = elapsed
+            self._let_go = False
+            return False
+        if self._let_go:
+            return True  # still standing behind it: the next hold too
+        if elapsed - self._still_since < BLOCK_WAIT_S:
+            return False
+        x, y = position
+        try:
+            s, gap = route_s_of_carla_point(x, y, measured)
+        except ValueError:
+            return False
+        if gap > _IN_LANE_M or not 0.0 < s - measured <= _BLOCK_RANGE_M:
+            return False
+        self._let_go = True
+        logger.warning(
+            "'%s' stops holding at waypoint %d for %s: it stands %.0f m ahead "
+            "of the measured entity in its lane, which has stood %.0f s "
+            "behind it",
+            self._entity,
+            mark.vertex,
+            condition.label,
+            s - measured,
+            elapsed - self._still_since,
+        )
+        return True
 
     def _eta(self, condition: BaseCondition, elapsed: float) -> Optional[float]:
         """When a rising ``route_progress`` *condition* will hold, from the

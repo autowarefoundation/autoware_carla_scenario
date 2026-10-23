@@ -71,6 +71,9 @@ _PACE_STEP_M = 2.0
 _DEFAULT_LIMIT_MPS = 50.0 / 3.6
 #: The fastest (m/s) CARLA walks a pedestrian.
 _WALKER_LIMIT_MPS = 2.0
+#: The farthest (m) a pedestrian's written-out waypoint may be from the one
+#: before for the waypoints to be walked as written (a recorded walk).
+_WALK_AS_WRITTEN_M = 10.0
 #: How far (m) off its planned route a vehicle is said to have left it.
 _OFF_PATH_M = 8.0
 #: Metres between the samples of a track matched to the lanes.
@@ -600,7 +603,14 @@ class RoutingAction(TrajectoryRun):
             return
         if not paced.paced and self._given_speed is None:
             return  # nothing to time: the driver's own speed
-        speed = paced.speed(world, self._here, self._elapsed, cruise, limit)
+        speed = paced.speed(
+            world,
+            self._here,
+            self._elapsed,
+            cruise,
+            limit,
+            (location.x, location.y),
+        )
         if abs(speed - self._sent) >= _SPEED_RESEND_MPS or (
             speed == 0.0 and self._sent != 0.0
         ):
@@ -626,14 +636,23 @@ class RoutingAction(TrajectoryRun):
             initial = self._initial_pose
             if initial is None and self._resolved is not None:
                 initial = self._start_pose
-            walker.route_to(
-                world,
-                stops[-1],
-                initial_pose=initial,
-                ground_projection=self._ground_projection,
-                waypoints=stops[:-1],
-                walking_speed=self._cruise_walk(),
-            )
+            track = self._walked_track()
+            if track is not None:
+                # A recorded walk, its points a few metres apart: walked as it
+                # was, not re-routed between them on the walkable lanelets
+                # (which sends a pedestrian at a junction's corner down a
+                # walkway the recording never took).
+                walked: ResolvedTrajectory = track
+                walker.walk_along(walked, self._cruise_walk())
+            else:
+                walker.route_to(
+                    world,
+                    stops[-1],
+                    initial_pose=initial,
+                    ground_projection=self._ground_projection,
+                    waypoints=stops[:-1],
+                    walking_speed=self._cruise_walk(),
+                )
             if actor is not None and self._timed():
                 walk = walker.walk_path
                 if walk is not None:
@@ -656,7 +675,12 @@ class RoutingAction(TrajectoryRun):
             self._here = planned_walk.project(location.x, location.y, near=self._here)
             paced.observe(self._here, self._elapsed)
             speed = paced.speed(
-                world, self._here, self._elapsed, self._cruise_walk(), _WALKER_LIMIT_MPS
+                world,
+                self._here,
+                self._elapsed,
+                self._cruise_walk(),
+                _WALKER_LIMIT_MPS,
+                (location.x, location.y),
             )
         if speed is None:
             walker.walk_on()
@@ -666,6 +690,32 @@ class RoutingAction(TrajectoryRun):
         if not self._walking:
             self._finished = True
             self._stepping = False
+
+    def _walked_track(self) -> Optional[ResolvedTrajectory]:
+        """The written-out waypoints from where the run starts, as a walk, when
+        none is more than :data:`_WALK_AS_WRITTEN_M` from the one before;
+        ``None`` for waypoints to route between."""
+        resolved = self._resolved
+        start = self._start_pose
+        if self._goal is not None or resolved is None or start is None:
+            return None
+        path: ResolvedTrajectory = resolved
+        here: CarlaWorldPose = start
+        xs, ys, zs = [here.x], [here.y], [here.z]
+        yaws: list[Optional[float]] = [None]
+        for index in self._stop_vertices:
+            sample = path.at_vertex(index)
+            if math.hypot(sample.x - xs[-1], sample.y - ys[-1]) > _WALK_AS_WRITTEN_M:
+                return None
+            if math.hypot(sample.x - xs[-1], sample.y - ys[-1]) < 0.05:
+                continue
+            xs.append(sample.x)
+            ys.append(sample.y)
+            zs.append(sample.z)
+            yaws.append(None)
+        if len(xs) < 2:
+            return None
+        return ResolvedTrajectory(xs, ys, zs, yaws)
 
     def _cruise_walk(self) -> float:
         """The speed a pedestrian walks its route at where nothing paces it."""

@@ -356,6 +356,14 @@ class PedestrianEntity(WalkedEntity):
         self._walk_distance = 0.0
         self._walk_speed = walking_speed
 
+    def walk_along(self, path: "ResolvedTrajectory", walking_speed: float) -> None:
+        """Walk *path* as it is, from its start, which :meth:`walk_on` then
+        walks a tick at a time: the walk :meth:`route_to` would lay out, given
+        whole (a recorded walk)."""
+        self._walk = path
+        self._walk_distance = 0.0
+        self._walk_speed = walking_speed
+
     @property
     def walking(self) -> bool:
         """Whether a walk :meth:`route_to` laid out is still being walked."""
