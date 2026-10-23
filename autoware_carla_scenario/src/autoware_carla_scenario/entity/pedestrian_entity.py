@@ -39,8 +39,9 @@ WALK_POINT_STEP_M: float = 1.5
 #: How far ahead (m) along its path a walker is steered at (:func:`steer_walker`).
 WALKER_LOOKAHEAD_M: float = 1.5
 
-#: How near (m) the end of its walk a walker has arrived, as
-#: :class:`~autoware_carla_scenario.actions.FollowTrajectoryAction` takes it.
+#: How near (m) the end of its walk a walker has arrived, as a
+#: :class:`~autoware_carla_scenario.actions.RoutingAction` following a
+#: trajectory takes it.
 WALK_ARRIVAL_M: float = 1.0
 
 #: A pedestrian's walking speed along a route, in m/s, unless it is told one.
@@ -76,8 +77,8 @@ def steer_walker(
     """One tick of walking *actor*, at *location*, along *path*: towards the
     point :data:`WALKER_LOOKAHEAD_M` past *here* (m along it), at *speed_mps*.
 
-    What a :class:`~autoware_carla_scenario.actions.FollowTrajectoryAction` in
-    ``FOLLOW`` mode and a routed pedestrian (:meth:`PedestrianEntity.walk_on`)
+    What a :class:`~autoware_carla_scenario.actions.RoutingAction` in
+    ``follow`` mode and a routed pedestrian (:meth:`PedestrianEntity.walk_on`)
     both send.
     """
     target = path.at_distance(here + WALKER_LOOKAHEAD_M)
@@ -360,9 +361,15 @@ class PedestrianEntity(WalkedEntity):
         """Whether a walk :meth:`route_to` laid out is still being walked."""
         return self._walk is not None
 
-    def walk_on(self) -> None:
+    @property
+    def walk_path(self) -> "Optional[ResolvedTrajectory]":
+        """The walk :meth:`route_to` laid out, while it is being walked."""
+        return self._walk
+
+    def walk_on(self, speed_mps: Optional[float] = None) -> None:
         """Walk one tick along the walk :meth:`route_to` laid out, standing
-        still once it has arrived."""
+        still once it has arrived: at *speed_mps*, or the walking speed
+        :meth:`route_to` was given (``None``)."""
         walk = self._walk
         actor = self._walker
         if walk is None or actor is None:
@@ -377,7 +384,10 @@ class PedestrianEntity(WalkedEntity):
             self._walk = None
             walker.apply_control(carla.WalkerControl(speed=0.0))
             return
-        steer_walker(walker, location, path, here, self._walk_speed)
+        speed = self._walk_speed
+        if speed_mps is not None:
+            speed = speed_mps
+        steer_walker(walker, location, path, here, speed)
 
     def release_from_traffic(self, world: "carla.World") -> None:
         """Take this pedestrian back from the traffic backend that walks it,

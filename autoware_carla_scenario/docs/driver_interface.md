@@ -277,7 +277,7 @@ more than 0.5 m away, as Autoware's would. `longitudinal_controller: time_indexe
 selects the tracker this framework had before: the plan read on its own clock, a PI
 on the speed it has the ego at *now* and a pull towards where it has it (`speed_kp`,
 `speed_ki`, `integral_limit`, `position_gain`, `max_position_correction_mps`,
-`speed_preview_s`, `stop_distance_m`); `FollowTrajectoryAction` drives timed
+`speed_preview_s`, `stop_distance_m`); `RoutingAction` in `follow` mode drives timed
 trajectories with it. Those keys are ignored, with a warning, for `pid`.
 
 ### Warming up a policy

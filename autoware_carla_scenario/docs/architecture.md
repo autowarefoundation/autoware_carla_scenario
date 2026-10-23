@@ -534,7 +534,6 @@ classDiagram
     class LaneChangeAction
     class RoutingAction
     class SetSpeedAction
-    class FollowTrajectoryAction
 
     BaseAction <|-- TrafficSignalAction
     BaseAction <|-- TrafficSignalControllerAction
@@ -544,7 +543,6 @@ classDiagram
     BaseAction <|-- LaneChangeAction
     BaseAction <|-- RoutingAction
     BaseAction <|-- SetSpeedAction
-    BaseAction <|-- FollowTrajectoryAction
     BaseAction --> BaseCondition : trigger condition
 ```
 
@@ -1124,7 +1122,7 @@ through any waypoints, to it. A pedestrian given one lays its walk out on the
 walkable lanelets (`PedestrianEntity.route_to`: a straight line for a leg they
 do not join up, as across a road whose crosswalks only overlap its walkways),
 and the `RoutingAction` walks it a tick at a time (`PedestrianEntity.walk_on`,
-steered as `FollowTrajectoryAction` steers a walker in `FOLLOW` mode) -- so on
+steered as a `RoutingAction` steers a walker in `follow` mode) -- so on
 a pedestrian the action needs the tick loop (`BaseAction.needs_tick_loop`).
 
 **Who drives the ego**: `use_autopilot` decides whether the backend is given the

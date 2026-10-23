@@ -23,7 +23,8 @@ from fastapi.testclient import TestClient
 
 from autoware_carla_scenario import (
     EgoConfig,
-    FollowTrajectoryAction,
+    RoutingAction,
+    RoutingMode,
     Lanelet2Pose,
     RouteCrossingPose,
     RouteLanePose,
@@ -98,14 +99,14 @@ entities:
     spawn: {hidden: true}
 actions:
   - id: oncoming_drive
-    type: follow_trajectory
+    type: routing
     actor: oncoming
     trigger:
       type: route_progress
       params: {value: -40, anchor: "junction:0:entry"}
     params:
       path_source: route
-      following_mode: follow
+      mode: follow
       time_domain: none
       speed_ms: 8.0
       appear_on_start: true
@@ -119,14 +120,14 @@ actions:
           type: route_progress
           params: {value: -5, anchor: "junction:0:entry"}
   - id: walker_cross
-    type: follow_trajectory
+    type: routing
     actor: walker
     trigger:
       type: route_progress
       params: {value: 0, anchor: "junction:0:entry"}
     params:
       path_source: route
-      following_mode: follow
+      mode: follow
       time_domain: none
       speed_ms: 1.3
       appear_on_start: true
@@ -134,7 +135,7 @@ actions:
         crosswalk junction=0 leg=exit side=right along=-1.5
         crosswalk junction=0 leg=exit side=right along=6
   - id: parked
-    type: follow_trajectory
+    type: routing
     actor: ego
     phase: post_tick
     trigger:
@@ -307,9 +308,9 @@ class TestBuild:
         compiled = compile_document(_document())
         ctx = BuildContext(scenario=None)
         oncoming = instantiate_action(compiled.actions[0], ctx)
-        assert isinstance(oncoming, FollowTrajectoryAction)
+        assert isinstance(oncoming, RoutingAction)
         assert oncoming._appear_on_start is True
-        assert oncoming._following_mode.value == "follow"
+        assert oncoming.mode is RoutingMode.FOLLOW
         vertices = oncoming.trajectory.vertices
         assert vertices[0].position == RouteCrossingPose(
             junction=0, approach="opposite", distance=-30.0, turn="straight"
@@ -322,7 +323,7 @@ class TestBuild:
         assert trigger.get_details()["entity_name"] == "Ego"
 
         parked = instantiate_action(compiled.actions[2], ctx)
-        assert isinstance(parked, FollowTrajectoryAction)
+        assert isinstance(parked, RoutingAction)
         assert parked.trajectory.vertices[0].position == RouteLanePose()
 
     def test_the_assertion_builds(self) -> None:
@@ -856,7 +857,7 @@ class TestTheRoutingActionWalks:
             def route_to(self, world, goal, **kwargs):  # noqa: ANN001, ANN003
                 calls.append(("route_to", kwargs["walking_speed"]))
 
-            def walk_on(self) -> None:
+            def walk_on(self, speed_mps: float | None = None) -> None:
                 calls.append("walk_on")
                 self.steps_left -= 1
 

@@ -357,7 +357,7 @@ class SpawnSpec(LaneletChoice):
     #: anticlockwise.  ``pi / 2`` faces across the lane from its right-hand edge.
     heading: float = 0.0
     #: Spawn out of the world -- under the map, physics off -- and let an
-    #: action bring the entity in: a *Follow Trajectory* card that keeps it out
+    #: action bring the entity in: a *Set Goal* card that keeps it out
     #: until its first vertex.  What a road user a recording picks up late
     #: needs: placed where it first appears, it could collide at spawn with
     #: whatever stood there when the run began.
@@ -582,7 +582,7 @@ class VertexCondition(_Node):
 
     Attached to an action whose spec takes them
     (:attr:`~autoware_carla_scenario.authoring.registry.ActionSpec.vertex_conditions`,
-    the *Follow Trajectory* card): the entity departs vertex :attr:`vertex` of
+    the *Set Goal* card): the entity departs vertex :attr:`vertex` of
     its trajectory when :attr:`condition` holds -- the runtime's
     :attr:`~autoware_carla_scenario.TrajectoryVertex.advance`.  A vertex
     has one: its time (a ``trajectory_time`` condition) or any other

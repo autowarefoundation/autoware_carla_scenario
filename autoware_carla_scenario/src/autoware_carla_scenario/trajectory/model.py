@@ -1,6 +1,6 @@
 """The trajectory an entity is told to follow, after OpenSCENARIO's.
 
-OpenSCENARIO 1.x describes ``FollowTrajectoryAction`` with four parts, and this
+OpenSCENARIO 1.x describes following a trajectory with four parts, and this
 module models each one under the same name:
 
 * a :class:`Trajectory` -- a named, possibly closed, shape.  Only the

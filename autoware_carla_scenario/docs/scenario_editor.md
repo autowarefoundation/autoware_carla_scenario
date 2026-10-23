@@ -243,7 +243,7 @@ Three rules make it readable:
 * **There is no separate event lane.** A condition is a *trigger*, drawn under
   the action it fires and joined to it by a solid line, so cause and effect are
   next to each other instead of being correlated across the screen. A
-  *Follow Trajectory* card can also hold conditions on its vertices --
+  *Set Goal* card can also hold conditions on its waypoints --
   [waypoint conditions](trajectory.md#waypoint-conditions), edited in its
   inspector with the same condition controls.
 * **One actor reacting to another is a reference, not a coincidence.**

@@ -78,12 +78,12 @@ if TYPE_CHECKING:
     from .actions import (
         BaseAction as BaseAction,
         EnvironmentAction as EnvironmentAction,
-        FollowTrajectoryAction as FollowTrajectoryAction,
         LaneChangeAction as LaneChangeAction,
         LaneChangeDirection as LaneChangeDirection,
         TickTiming as TickTiming,
         TrafficLightTarget as TrafficLightTarget,
         RoutingAction as RoutingAction,
+        RoutingMode as RoutingMode,
         SetSpeedAction as SetSpeedAction,
         TrafficSignalAction as TrafficSignalAction,
         TrafficSignalControllerAction as TrafficSignalControllerAction,
@@ -493,7 +493,6 @@ __all__ = [
     # Actions
     "BaseAction",
     "EnvironmentAction",
-    "FollowTrajectoryAction",
     "ConstructionSettings",
     "ConstructionZoneAction",
     "PropAction",
@@ -506,6 +505,7 @@ __all__ = [
     "TurnIndicatorAction",
     "TrafficLightTarget",
     "RoutingAction",
+    "RoutingMode",
     "SetSpeedAction",
     "TrafficSignalAction",
     "TrafficSignalControllerAction",
@@ -564,7 +564,6 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     # actions
     "BaseAction": (".actions", "BaseAction"),
     "EnvironmentAction": (".actions", "EnvironmentAction"),
-    "FollowTrajectoryAction": (".actions", "FollowTrajectoryAction"),
     "ConstructionSettings": (".adversity.construction", "ConstructionSettings"),
     "ConstructionZoneAction": (".actions.construction_zone", "ConstructionZoneAction"),
     "StalledObjectAction": (".actions.stalled_object", "StalledObjectAction"),
@@ -602,6 +601,7 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "AdversityLocation": (".adversity", "AdversityLocation"),
     "TrafficLightTarget": (".actions", "TrafficLightTarget"),
     "RoutingAction": (".actions", "RoutingAction"),
+    "RoutingMode": (".actions", "RoutingMode"),
     "SetSpeedAction": (".actions", "SetSpeedAction"),
     "TrafficSignalAction": (".actions", "TrafficSignalAction"),
     "TrafficSignalControllerAction": (

@@ -333,7 +333,7 @@ def _check_condition(
         out.error(
             path,
             "Trajectory time is a vertex's departure time: it only goes on a "
-            "Follow Trajectory card's waypoint condition, as the whole of it.",
+            "Set Goal card's waypoint condition, as the whole of it.",
             node.id,
         )
 
@@ -426,6 +426,17 @@ def _check_constraint(out: _Collector, path: str, node: ConstraintNode) -> None:
 def _check_action(out: _Collector, path: str, node: ActionNode, refs: _Refs) -> None:
     """Validate one action and its trigger."""
     spec = get_action_spec(node.type)
+    if spec is None and node.type == "follow_trajectory":
+        out.error(
+            path,
+            "Follow Trajectory (follow_trajectory, FollowTrajectoryAction) was "
+            "removed: a Set Goal card (routing, RoutingAction) does what it did. "
+            "Change the type to routing and rename following_mode to mode "
+            "(follow or position as before, or driver to let the entity's own "
+            "driver keep the waypoints' times); see docs/trajectory.md.",
+            node.id,
+        )
+        return
     if spec is None:
         out.error(path, f"Unknown action type {node.type!r}.", node.id)
         return
@@ -459,8 +470,8 @@ def _check_action(out: _Collector, path: str, node: ActionNode, refs: _Refs) -> 
         _check_field(out, path, field_spec, node.params, refs, node.id)
     _check_unknown_params(out, path, spec.fields, node.params, node.id)
     _check_init_is_not_asked_to_wait(out, path, node)
-    if node.type == "follow_trajectory":
-        _check_follow_trajectory(out, path, node)
+    if node.type == "routing":
+        _check_routing(out, path, node)
 
     if node.trigger is not None:
         _check_condition(out, f"{path}.trigger", node.trigger, refs, node.id)
@@ -595,7 +606,7 @@ def _vertex_count(node: ActionNode) -> Optional[int]:
     its own field, and comes back as ``0`` here so nothing is said twice.
     """
     params = node.params
-    source = params.get("path_source", "vertices")
+    source = params.get("path_source", "goal")
     try:
         if source == "vertices":
             return len(parse_vertices(params.get("vertices")))
@@ -608,8 +619,8 @@ def _vertex_count(node: ActionNode) -> Optional[int]:
     return None
 
 
-def _check_follow_trajectory(out: _Collector, path: str, node: ActionNode) -> None:
-    """Check what the *Follow Trajectory* card's fields only mean together.
+def _check_routing(out: _Collector, path: str, node: ActionNode) -> None:
+    """Check what the *Set Goal* card's fields only mean together.
 
     Each field is checked on its own by its kind; this is the part no single
     field can say: which source needs what, and which time reference and mode
@@ -617,9 +628,30 @@ def _check_follow_trajectory(out: _Collector, path: str, node: ActionNode) -> No
     is a document error the editor shows instead.
     """
     params = node.params
-    source = params.get("path_source", "vertices")
-    domain = params.get("time_domain", "relative")
+    source = params.get("path_source", "goal")
+    domain = params.get("time_domain", "none")
     timed = domain != "none"
+    if source == "goal":
+        if _is_blank(params.get("goal_lanelet_id")):
+            out.error(
+                f"{path}.goal_lanelet_id",
+                "A route to a goal needs its goal lanelet.",
+                node.id,
+            )
+        if timed:
+            out.error(
+                f"{path}.time_domain",
+                "A route to a goal has no waypoint times for a time reference "
+                "to apply to: write the waypoints out, or choose None.",
+                node.id,
+            )
+    elif params.get("waypoint_lanelet_ids"):
+        out.error(
+            f"{path}.waypoint_lanelet_ids",
+            "Via lanelets go with a goal lanelet; written-out waypoints are "
+            "the route's whole way.",
+            node.id,
+        )
     if source == "vertices":
         try:
             rows = parse_vertices(params.get("vertices"))
@@ -678,7 +710,7 @@ def _check_follow_trajectory(out: _Collector, path: str, node: ActionNode) -> No
             node.id,
         )
     if params.get("hidden_outside_trajectory") and (
-        not timed or params.get("following_mode", "position") != "position"
+        not timed or params.get("mode", "driver") != "position"
     ):
         out.error(
             f"{path}.hidden_outside_trajectory",
@@ -989,15 +1021,15 @@ def _check_step_order(out: _Collector, document: ScenarioDocument) -> None:
 def _check_hidden_spawns(out: _Collector, document: ScenarioDocument) -> None:
     """An entity spawned out of the world needs something to bring it in.
 
-    Only a *Follow Trajectory* card that keeps its entity out of the world
-    until its first vertex does that; without one the entity stays under the
+    Only a *Set Goal* card that keeps its entity out of the world until its
+    first waypoint, or brings it in there, does that; without one the entity stays under the
     map for the whole run -- allowed, but surely not what was meant.  The ego
     is never hidden: the run is measured on it from the first tick.
     """
     brought_in = {
         str(action.actor)
         for action in document.actions
-        if action.type == "follow_trajectory"
+        if action.type == "routing"
         and (
             action.params.get("hidden_outside_trajectory")
             or action.params.get("appear_on_start")
@@ -1006,13 +1038,13 @@ def _check_hidden_spawns(out: _Collector, document: ScenarioDocument) -> None:
     appearing = {
         str(action.actor)
         for action in document.actions
-        if action.type == "follow_trajectory" and action.params.get("appear_on_start")
+        if action.type == "routing" and action.params.get("appear_on_start")
     }
     for index, entity in enumerate(document.entities):
         if entity.id in appearing and not entity.spawn.hidden and entity.kind != "ego":
             out.warn(
                 f"entities[{index}].spawn.hidden",
-                f"{entity.display_name} appears when its Follow Trajectory card "
+                f"{entity.display_name} appears when its Set Goal card "
                 "starts, but is not spawned out of the world, so it stands at "
                 "its spawn until then. Spawn it hidden.",
                 entity.id,
@@ -1025,8 +1057,8 @@ def _check_hidden_spawns(out: _Collector, document: ScenarioDocument) -> None:
         elif entity.id not in brought_in:
             out.warn(
                 path,
-                f"{entity.display_name} spawns out of the world and no Follow "
-                "Trajectory card brings it in, so it stays there for the run.",
+                f"{entity.display_name} spawns out of the world and no Set Goal "
+                "card brings it in, so it stays there for the run.",
                 entity.id,
             )
 
@@ -1164,7 +1196,7 @@ def _check_route(out: _Collector, document: ScenarioDocument) -> None:
 
     for index, action in enumerate(document.actions):
         params = action.params
-        if action.type != "follow_trajectory" or params.get("path_source") != "route":
+        if action.type != "routing" or params.get("path_source") != "route":
             continue
         where = f"actions[{index}].route_vertices"
         if route is None:

@@ -2,7 +2,7 @@
 
 What the adversarial actions share once a trigger has fired and its command
 is planned (:func:`~..adversity.command.plan_command`): the path is driven
-by a :class:`~.follow_trajectory.FollowTrajectoryAction` on the path's own
+by a :class:`~._trajectory_run.TrajectoryRun` on the path's own
 clock -- ``FOLLOW`` (the vehicle's own motion, by default) or ``POSITION``
 (TeraSim's ``moveToXY`` teleport) -- which takes the vehicle back from its
 traffic backend first.  When the path is done a vehicle is handed back to
@@ -39,7 +39,7 @@ from ..trajectory.model import (
     TrajectoryVertex,
 )
 from .base import TickTiming
-from .follow_trajectory import FollowTrajectoryAction
+from ._trajectory_run import TrajectoryRun
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
@@ -63,7 +63,7 @@ def path_trajectory(name: str, path: list[PredictedState]) -> Trajectory:
     return Trajectory(name, vertices)
 
 
-class _ActorFollow(FollowTrajectoryAction):
+class _ActorFollow(TrajectoryRun):
     """A follow action on a background vehicle's *actor*, which no entity
     stands for: taken from *backend* when its run begins."""
 
@@ -118,7 +118,7 @@ class AdversarialExecution:
     """
 
     entity_name: str
-    _follow: FollowTrajectoryAction
+    _follow: TrajectoryRun
     _handed_back: bool
     _actor: Optional["carla.Actor"]
     _backend: Optional[TrafficBackend]
@@ -134,7 +134,7 @@ class AdversarialExecution:
     ) -> None:
         self.entity_name = str(entity_name)
         trajectory = path_trajectory(label, path)
-        follow: FollowTrajectoryAction = FollowTrajectoryAction(
+        follow: TrajectoryRun = TrajectoryRun(
             self.entity_name,
             trajectory,
             time_reference=TrajectoryTiming(ReferenceContext.RELATIVE),
@@ -147,7 +147,7 @@ class AdversarialExecution:
             # Typed locals: Codon unwraps the Optionals here.
             vehicle: "carla.Actor" = actor
             driver: TrafficBackend = backend
-            direct: FollowTrajectoryAction = _ActorFollow(
+            direct: TrajectoryRun = _ActorFollow(
                 self.entity_name, vehicle, driver, trajectory, following_mode, label
             )
             follow = direct

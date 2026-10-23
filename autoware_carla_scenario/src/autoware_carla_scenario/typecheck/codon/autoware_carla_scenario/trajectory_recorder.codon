@@ -55,6 +55,17 @@ class TrajectoryRecorder:
     def record_adversity(self, label: str, event) -> None:
         raise NotImplementedError()
 
+    # The runner hands these over in the `else` branch of `if TYPE_CHECKING:`:
+    # declared, taken as they come.
+    def record_waypoint_arrival(self, label: str, arrival) -> None:
+        raise NotImplementedError()
+
+    def record_collision(self, collision) -> None:
+        raise NotImplementedError()
+
+    def record_walker_fallen(self, fallen) -> None:
+        raise NotImplementedError()
+
     def record_result(self, result) -> None:
         raise NotImplementedError()
 

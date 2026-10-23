@@ -25,7 +25,8 @@ import pytest
 from autoware_carla_scenario import (
     CarlaWorldPose,
     ComparisonRule,
-    FollowTrajectoryAction,
+    RoutingAction,
+    RoutingMode,
     Lanelet2Pose,
     MapPose,
     RouteCrossingPose,
@@ -35,7 +36,6 @@ from autoware_carla_scenario import (
     RouteProgressCondition,
     RouteRoadsidePose,
     Trajectory,
-    TrajectoryFollowingMode,
     TrajectoryVertex,
 )
 from autoware_carla_scenario.coordinate.map_manager import MapManager
@@ -54,7 +54,7 @@ from autoware_carla_scenario.trajectory.resolve import resolve_trajectory
 
 from . import _route_maps as rm
 from ._fake_world import ActorsById
-from .test_follow_trajectory_action import _Actor, _Entity, _run, _World
+from .test_routing_trajectory_action import _Actor, _Entity, _run, _World, _route
 
 _STRAIGHT = {
     "segments": [
@@ -418,7 +418,7 @@ class TestAppearOnStart:
 
     def test_it_is_refused_with_hiding_outside(self) -> None:
         with pytest.raises(ValueError, match="choose one"):
-            FollowTrajectoryAction(
+            _route(
                 "npc1",
                 self._path(),
                 appear_on_start=True,
@@ -433,10 +433,10 @@ class TestAppearOnStart:
         register_entity("npc1", entity)
         ego = _Ego(-60.0, -1.75)  # route s 10
         try:
-            action = FollowTrajectoryAction(
+            action = _route(
                 "npc1",
                 self._path(),
-                following_mode=TrajectoryFollowingMode.FOLLOW,
+                mode=RoutingMode.FOLLOW,
                 speed=5.0,
                 appear_on_start=True,
             )
@@ -479,10 +479,10 @@ class TestAppearOnStart:
                     ),
                 ],
             )
-            action = FollowTrajectoryAction(
+            action = _route(
                 "walker1",
                 path,
-                following_mode=TrajectoryFollowingMode.FOLLOW,
+                mode=RoutingMode.FOLLOW,
                 speed=1.2,
                 appear_on_start=True,
             )
@@ -496,7 +496,7 @@ class TestAppearOnStart:
 
 
 def test_the_simulated_vehicle_helpers_are_shared() -> None:
-    """The action tests above drive the same fake as test_follow_trajectory_action."""
+    """The action tests above drive the same fake as test_routing_trajectory_action."""
     assert callable(_run)
 
 

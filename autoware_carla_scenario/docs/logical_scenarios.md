@@ -77,14 +77,14 @@ actions:
   # 30 m before the junction on the opposite approach, at 8 m/s; drives FOLLOW
   # mode and waits at the junction entry until the ego is 5 m from it.
   - id: oncoming_drive
-    type: follow_trajectory
+    type: routing
     actor: oncoming
     trigger:
       type: route_progress
       params: {value: -40.0, anchor: "junction:0:entry"}     # entity: ego (default)
     params:
       path_source: route
-      following_mode: follow
+      mode: follow
       time_domain: none
       speed_ms: 8.0               # initial speed on appearing, and pace
       appear_on_start: true
@@ -101,14 +101,14 @@ actions:
   # A pedestrian: appears on the pavement at the exit crosswalk's right end
   # when the ego enters the junction, and walks across.
   - id: walker_cross
-    type: follow_trajectory
+    type: routing
     actor: walker
     trigger:
       type: route_progress
       params: {value: 0.0, anchor: "junction:0:entry"}
     params:
       path_source: route
-      following_mode: follow
+      mode: follow
       time_domain: none
       speed_ms: 1.3
       appear_on_start: true
@@ -170,7 +170,7 @@ vice versa.
 
 ### Route vertices (`path_source: route`)
 
-A *Follow Trajectory* card with `path_source: route` lists its vertices in
+A *Set Goal* card with `path_source: route` lists its vertices in
 `route_vertices`: a list of mappings, each with a `kind`, or the editor's text
 form, one vertex per line, `kind key=value ...` (commas allowed between pairs;
 blank lines and `#` comments skipped and not counted). Unstated keys take
@@ -266,7 +266,7 @@ recorded point.
 
 ### `appear_on_start`
 
-A *Follow Trajectory* parameter (bool, default `false`): when a run of the
+A *Set Goal* parameter (bool, default `false`): when a run of the
 action starts, the entity is put on the first vertex (on the point
 `initial_distance_offset` names), facing along the path, physics on, moving at
 `speed_ms` (standing if unset) -- then follows the trajectory as usual, in
@@ -434,7 +434,7 @@ and the ego is sent along it:
 ```python
 from autoware_carla_scenario import (
     RouteLanePose, RouteOppositePose, RouteCrossingPose, RouteCrosswalkPose,
-    RouteRoadsidePose, RouteProgressCondition, FollowTrajectoryAction,
+    RouteRoadsidePose, RouteProgressCondition, RoutingAction, RoutingMode,
 )
 from autoware_carla_scenario.route import (
     parse_route_search, RouteMatch, set_scenario_route, scenario_route,

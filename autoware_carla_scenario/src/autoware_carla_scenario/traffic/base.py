@@ -726,7 +726,7 @@ class TrafficBackend:
         """Stop driving *entity*: something else has taken it over.
 
         Called when a scenario action drives the vehicle itself -- a
-        :class:`~autoware_carla_scenario.actions.FollowTrajectoryAction` puts it
+        :class:`~autoware_carla_scenario.actions.RoutingAction` puts it
         on a trajectory every tick, and a backend still steering it would undo
         that on every one.  The one-authority-per-vehicle rule that
         ``skip_actor_ids`` states at :meth:`start`, applied during the run.
@@ -798,7 +798,7 @@ class TrafficBackend:
         """Stop walking *entity*: a scenario action moves it itself.
 
         :meth:`release` for a pedestrian: a
-        :class:`~autoware_carla_scenario.actions.FollowTrajectoryAction` (an
+        :class:`~autoware_carla_scenario.actions.RoutingAction` (an
         adversity among them) puts the walker on its path every tick.  Must
         hold before or after :meth:`start` and be safe to repeat.  The base does
         nothing, which is right for a backend that walks no pedestrians.

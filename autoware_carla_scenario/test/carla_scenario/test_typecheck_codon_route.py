@@ -74,10 +74,10 @@ def test_a_logical_scenario_compiles(tmp_path: Path) -> None:
             ],
         )
         self.register_pre_tick(
-            FollowTrajectoryAction(
+            RoutingAction(
                 "npc1",
-                path,
-                following_mode=TrajectoryFollowingMode.FOLLOW,
+                trajectory=path,
+                mode=RoutingMode.FOLLOW,
                 condition=RouteProgressCondition(
                     EGO_ROLE_NAME, 20.0, ComparisonRule.GREATER_THAN, label="go"
                 ),
@@ -116,10 +116,10 @@ def test_a_logical_scenario_compiles(tmp_path: Path) -> None:
             "expected a str",
         ),
         (
-            'FollowTrajectoryAction("npc1", Trajectory("t", [TrajectoryVertex(RouteLanePose()), '
+            'RoutingAction("npc1", trajectory=Trajectory("t", [TrajectoryVertex(RouteLanePose()), '
             'TrajectoryVertex(RouteLanePose(5.0))]), appear_on_start="yes")\n',
-            'FollowTrajectoryAction("npc1"',
-            "no function 'FollowTrajectoryAction.__init__'",
+            'RoutingAction("npc1"',
+            "no function 'RoutingAction.__init__'",
         ),
     ],
     ids=["missing-label", "str-for-float", "int-anchor", "str-appear-on-start"],

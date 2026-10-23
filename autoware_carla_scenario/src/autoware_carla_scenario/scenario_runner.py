@@ -280,6 +280,14 @@ def _condition_statuses(
         return _collect_condition_statuses(scenario, world, elapsed, scenario_name)
 
 
+def _npc_collision_monitor() -> Any:
+    """The run's :class:`~autoware_carla_scenario.npc_collisions.NpcCollisionMonitor`:
+    the road users' own collisions and falls, logged, not judged."""
+    from .npc_collisions import NpcCollisionMonitor  # noqa: PLC0415
+
+    return NpcCollisionMonitor()
+
+
 def _traffic_record(backend: TrafficBackend, scenario_name: str) -> Optional[Any]:
     """What drove the run's traffic, as the result records it: the backend's
     :meth:`~TrafficBackend.describe`, with how many vehicles it simulated at
@@ -1139,6 +1147,7 @@ class ScenarioRunner:
         result: Optional[ScenarioResult] = None
         coverage: Optional[CoverageCollector] = None
         t4_recording: Optional[T4Recording] = None
+        npc_events: Any = None
 
         try:
             # Let the traffic backend get ready before anything is spawned: this
@@ -1379,6 +1388,14 @@ class ScenarioRunner:
             )
             coverage.start(world, clock.simulated)
 
+            # The road users' own collisions and falls, logged (not judged).
+            if TYPE_CHECKING:
+                # The monitor's sensor callbacks and Any-typed snapshot reads
+                # are not modelled (EXCLUDED in typecheck/library.py).
+                pass
+            else:
+                npc_events = _npc_collision_monitor()
+
             # Tick loop
             while not scenario.is_done():
                 # Read once before the world advances and once after, because
@@ -1447,6 +1464,26 @@ class ScenarioRunner:
                         # What it sampled this tick (NADE's adversities).
                         for event in action.take_adversity_events():
                             trajectory.record_adversity(action.label, event)
+                        if TYPE_CHECKING:
+                            # Only a RoutingAction has arrivals; Codon reads
+                            # no subclass method off a BaseAction.
+                            pass
+                        else:
+                            take = getattr(action, "take_waypoint_arrivals", None)
+                            if take is not None:
+                                for arrival in take():
+                                    trajectory.record_waypoint_arrival(
+                                        action.label, arrival
+                                    )
+                if TYPE_CHECKING:
+                    pass
+                else:
+                    if npc_events is not None:
+                        collisions, falls = npc_events.tick(world, elapsed)
+                        for collision in collisions:
+                            trajectory.record_collision(collision)
+                        for fall in falls:
+                            trajectory.record_walker_fallen(fall)
 
                 # The weight the actions above leave the run with, for the
                 # metric that reads it.
@@ -1589,6 +1626,11 @@ class ScenarioRunner:
                     scenario_name,
                     exc_info=True,
                 )
+            if TYPE_CHECKING:
+                pass
+            elif npc_events is not None:
+                # Its sensors, through their own handles, as the conditions'.
+                npc_events.close()
             # And the props a PropAction placed: the leftovers' sweep takes
             # vehicles, walkers and sensors, not static props.
             clear_props()

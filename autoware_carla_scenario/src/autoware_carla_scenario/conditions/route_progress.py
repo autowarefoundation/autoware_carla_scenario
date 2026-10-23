@@ -81,8 +81,10 @@ class RouteProgressCondition(BaseCondition):
     parked under the map) or not in the world has no progress: the condition
     does not hold and :attr:`progress` is ``None``.
 
-    Usable as an action's trigger and as a waypoint condition (a vertex of a
-    *Follow Trajectory* departs once it holds).
+    Usable as an action's trigger and as a waypoint condition (a waypoint of
+    a *Set Goal* route departs once it holds; in ``driver`` mode the routed
+    entity is paced to arrive when it is predicted to, from the measured
+    entity's progress rate).
 
     Args:
         entity_name: ``role_name`` of the entity measured; ``None`` is the ego.
@@ -103,6 +105,7 @@ class RouteProgressCondition(BaseCondition):
     _anchor: Optional[str]
     _tolerance: float
     _last: Optional[float]
+    _target: Optional[float]
 
     def __init__(
         self,
@@ -130,11 +133,27 @@ class RouteProgressCondition(BaseCondition):
         self._anchor = anchor
         self._tolerance = float(tolerance)
         self._last: Optional[float] = None
+        self._target: Optional[float] = None
 
     @property
     def progress(self) -> Optional[float]:
         """The entity's route s when last checked, or ``None``."""
         return self._last
+
+    @property
+    def target(self) -> Optional[float]:
+        """The route s the progress is compared with, once checked; ``None`` before."""
+        return self._target
+
+    @property
+    def rises(self) -> bool:
+        """Whether the condition holds once the entity has come far enough
+        (``GREATER_THAN`` or ``GREATER_THAN_OR_EQUAL``): one a forward-moving
+        entity's progress rate predicts the moment of."""
+        return self._rule in (
+            ComparisonRule.GREATER_THAN,
+            ComparisonRule.GREATER_THAN_OR_EQUAL,
+        )
 
     def get_details(self) -> dict[str, Any]:
         return {
@@ -167,6 +186,7 @@ class RouteProgressCondition(BaseCondition):
             return None
         self._last = s
         target = route.anchor_s(self._anchor) + self._value
+        self._target = target
         comparison = ScalarComparisonRule(
             field="route_s", rule=self._rule, value=target, tolerance=self._tolerance
         )

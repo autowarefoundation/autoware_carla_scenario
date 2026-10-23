@@ -45,6 +45,15 @@ One JSON object per line, in CARLA's (left-handed) frame, metres/degrees
 * ``{"type": "adversity", "frame", "t", "label", "agent", "kind", "location",
   "probability", "is_probability", "weight", "avoidable", "victims",
   "response"}`` -- an adversity NADE sampled, on its tick (#397).
+* ``{"type": "waypoint_arrival", "frame", "t", "label", "entity", "vertex",
+  "kind", "mode", "target_t", "actual_t", "error_s"}`` -- a routed entity
+  reached a waypoint with a time or a departure condition: when it was due
+  (its time; the moment its condition first held) and when it arrived.
+* ``{"type": "collision", "frame", "t", "actors": [role, role], "ids":
+  [id, id], "impulse", "ego"}`` -- a vehicle other than the ego collided
+  with a vehicle or a walker (:mod:`~autoware_carla_scenario.npc_collisions`).
+* ``{"type": "walker_fallen", "frame", "t", "id", "role", "drop", "tilt"}``
+  -- a walker was seen fallen over, once per walker.
 * ``{"type": "result", "passed", "message", "elapsed_seconds",
   "conditions"}`` -- last, the verdict.
 
@@ -74,6 +83,7 @@ import typesafe_carla.carla as carla
 from .adversity_event import AdversityEvent
 from .coordinate.map_manager import MapManager, run_carla_map
 from .utils.traffic_light import traffic_light_state_name
+from .waypoint_arrival import WaypointArrival
 
 logger = logging.getLogger(__name__)
 
@@ -401,6 +411,70 @@ class TrajectoryRecorder:
                     "label": label,
                     # Every field of the event, so none can be left out.
                     **dataclasses.asdict(event),
+                }
+            ),
+        )
+
+    def record_waypoint_arrival(self, label: str, arrival: WaypointArrival) -> None:
+        """Write a timed waypoint reached (:class:`WaypointArrival`) by the
+        routing action labelled *label*, on the tick last recorded."""
+        if self._out is None:
+            return
+        self._guarded(
+            "stopped",
+            lambda: self._emit(
+                {
+                    "type": "waypoint_arrival",
+                    "frame": self._frame,
+                    "t": _r(self._t),
+                    "label": label,
+                    "entity": arrival.entity,
+                    "vertex": int(arrival.vertex),
+                    "kind": arrival.kind,
+                    "mode": arrival.mode,
+                    "target_t": _r(arrival.target_t),
+                    "actual_t": _r(arrival.actual_t),
+                    "error_s": _r(arrival.error_s),
+                }
+            ),
+        )
+
+    def record_collision(self, collision: Any) -> None:
+        """Write a collision of a vehicle other than the ego
+        (:class:`~autoware_carla_scenario.npc_collisions.NpcCollision`)."""
+        if self._out is None:
+            return
+        self._guarded(
+            "stopped",
+            lambda: self._emit(
+                {
+                    "type": "collision",
+                    "frame": int(collision.frame),
+                    "t": _r(collision.t),
+                    "actors": [str(name) for name in collision.actors],
+                    "ids": [int(i) for i in collision.ids],
+                    "impulse": _r(collision.impulse),
+                    "ego": bool(collision.ego),
+                }
+            ),
+        )
+
+    def record_walker_fallen(self, fallen: Any) -> None:
+        """Write a walker seen fallen over
+        (:class:`~autoware_carla_scenario.npc_collisions.WalkerFallen`)."""
+        if self._out is None:
+            return
+        self._guarded(
+            "stopped",
+            lambda: self._emit(
+                {
+                    "type": "walker_fallen",
+                    "frame": int(fallen.frame),
+                    "t": _r(fallen.t),
+                    "id": int(fallen.id),
+                    "role": str(fallen.role),
+                    "drop": _r(fallen.drop),
+                    "tilt": _r(fallen.tilt),
                 }
             ),
         )

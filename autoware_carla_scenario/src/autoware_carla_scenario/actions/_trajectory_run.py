@@ -1,10 +1,12 @@
-"""Follow-trajectory action: move an entity along a given trajectory.
+"""Move an entity along a trajectory: the engine behind ``RoutingAction``.
 
-The OpenSCENARIO ``FollowTrajectoryAction``, with the same four parts -- the
-trajectory, its time reference, the following mode and an initial distance
-offset (see :mod:`autoware_carla_scenario.trajectory.model`).  It is what lets a
-recorded drive be written down as a scenario: every vehicle and pedestrian of a
-recorded scene becomes an entity following the trajectory it was recorded on.
+What OpenSCENARIO's trajectory-following action does, with the same four parts
+-- the trajectory, its time reference, the following mode and an initial
+distance offset (see :mod:`autoware_carla_scenario.trajectory.model`).  It is
+not a scenario action of its own any more: a
+:class:`~autoware_carla_scenario.actions.RoutingAction` in ``follow`` or
+``position`` mode runs on it, and so do the adversities that drive a planned
+path (:mod:`._adversarial_execution`, :mod:`.stalled_object`).
 """
 
 from __future__ import annotations
@@ -50,7 +52,7 @@ logger = logging.getLogger(__name__)
 #: the entity keeps the last segment's velocity there.
 _END_EPSILON_S = 1e-6
 
-__all__ = ["ARRIVAL_TOLERANCE_M", "FollowTrajectoryAction", "HIDDEN_DEPTH_M"]
+__all__ = ["ARRIVAL_TOLERANCE_M", "HIDDEN_DEPTH_M", "TrajectoryRun"]
 
 #: How near the end of the path (m) a followed trajectory counts as finished.
 #: A controller tracks a target rather than sitting on it, so ``follow`` mode
@@ -87,8 +89,8 @@ _GATE_DECELERATION_MPS2 = 2.0
 _PLAN_FAR_S = 3600.0
 
 
-class FollowTrajectoryAction(BaseAction):
-    """Make an entity follow a trajectory (OpenSCENARIO ``FollowTrajectoryAction``).
+class TrajectoryRun(BaseAction):
+    """Make an entity follow a trajectory (as OpenSCENARIO follows one).
 
     **Time reference.**  With a :class:`~autoware_carla_scenario.TrajectoryTiming`
     the entity is where the trajectory says at each moment: a vertex at time
@@ -255,7 +257,7 @@ class FollowTrajectoryAction(BaseAction):
         condition: Optional[BaseCondition] = None,
         timing: TickTiming = TickTiming.PRE_TICK,
         *,
-        label: str = "follow_trajectory",
+        label: str = "trajectory_run",
         once: bool = True,
         until: Optional[BaseCondition] = None,
         control_config: Optional["ControlConfig"] = None,
@@ -394,7 +396,7 @@ class FollowTrajectoryAction(BaseAction):
         pedestrian = find_pedestrian_entity(self._entity_name)
         if pedestrian is None:
             logger.warning(
-                "FollowTrajectoryAction: entity '%s' not found", str(self._entity_name)
+                "%s: entity '%s' not found", self.label, str(self._entity_name)
             )
             return
         walking: PedestrianEntity = pedestrian
@@ -412,14 +414,15 @@ class FollowTrajectoryAction(BaseAction):
             maybe_actor = entity.actor
         if maybe_actor is None:
             logger.warning(
-                "FollowTrajectoryAction: '%s' has no actor", str(self._entity_name)
+                "%s: '%s' has no actor", self.label, str(self._entity_name)
             )
             return
         actor: carla.Actor = maybe_actor
         if hasattr(entity, "use_autopilot") and entity.use_autopilot is False:
             logger.warning(
-                "FollowTrajectoryAction: '%s' is driven by an external stack and "
+                "%s: '%s' is driven by an external stack and "
                 "cannot also follow a trajectory",
+                self.label,
                 str(self._entity_name),
             )
             return
@@ -474,7 +477,8 @@ class FollowTrajectoryAction(BaseAction):
             if not self._hidden and (self._stop_at_end or walker):
                 _stop(actor, walker)
             logger.info(
-                "FollowTrajectoryAction: '%s' reached the end of %r",
+                "%s: '%s' reached the end of %r",
+                self.label,
                 str(self._entity_name),
                 self._trajectory.name,
             )
@@ -497,8 +501,9 @@ class FollowTrajectoryAction(BaseAction):
             if not self._warned_missing:
                 self._warned_missing = True
                 logger.warning(
-                    "FollowTrajectoryAction: %r is placed relative to '%s', "
+                    "%s: %r is placed relative to '%s', "
                     "which is not in the world yet; waiting for it",
+                    self.label,
                     self._trajectory.name,
                     missing.name,
                 )
@@ -546,16 +551,18 @@ class FollowTrajectoryAction(BaseAction):
         )
         if self._time_reference is None and self._speed < _STANDSTILL_MPS:
             logger.warning(
-                "FollowTrajectoryAction: '%s' is standing still and %r has no "
+                "%s: '%s' is standing still and %r has no "
                 "time reference, so it will not move along it",
+                self.label,
                 self._entity_name,
                 self._trajectory.name,
             )
         elif self._gated and self._speed < _STANDSTILL_MPS:
             logger.warning(
-                "FollowTrajectoryAction: '%s' is standing still and has no "
+                "%s: '%s' is standing still and has no "
                 "speed, so it will not move along a segment of %r that no "
                 "vertex time paces",
+                self.label,
                 self._entity_name,
                 self._trajectory.name,
             )
@@ -581,10 +588,11 @@ class FollowTrajectoryAction(BaseAction):
                 )
             elif config.longitudinal_controller != "time_indexed":
                 logger.warning(
-                    "FollowTrajectoryAction: '%s' follows %r with the %s longitudinal "
+                    "%s: '%s' follows %r with the %s longitudinal "
                     "controller, which follows the plan's speeds, not the "
                     "trajectory's clock; longitudinal_controller='time_indexed' "
                     "keeps its timing",
+                    self.label,
                     self._entity_name,
                     self._trajectory.name,
                     config.longitudinal_controller,
@@ -631,7 +639,8 @@ class FollowTrajectoryAction(BaseAction):
                 carla.Vector3D(speed * direction.x, speed * direction.y, 0.0)
             )
         logger.info(
-            "FollowTrajectoryAction: '%s' appears at the start of %r at %.1f m/s",
+            "%s: '%s' appears at the start of %r at %.1f m/s",
+            self.label,
             self._entity_name,
             self._trajectory.name,
             speed,
@@ -940,11 +949,14 @@ class FollowTrajectoryAction(BaseAction):
         vertex: a ``None`` then neither waits nor logs.
         """
         opened = condition.check(world, self._elapsed) is not None
+        if opened:
+            self._gate_opened(index)
         if early and not opened:
             return False
         if opened and self._waiting:
             logger.info(
-                "FollowTrajectoryAction: '%s' departs vertex %d of %r: %s holds",
+                "%s: '%s' departs vertex %d of %r: %s holds",
+                self.label,
                 self._entity_name,
                 index,
                 self._trajectory.name,
@@ -952,14 +964,21 @@ class FollowTrajectoryAction(BaseAction):
             )
         elif not opened and not self._waiting:
             logger.info(
-                "FollowTrajectoryAction: '%s' waits at vertex %d of %r until %s "
+                "%s: '%s' waits at vertex %d of %r until %s "
                 "holds",
+                self.label,
                 self._entity_name,
                 index,
                 self._trajectory.name,
                 condition.label,
             )
         return opened
+
+    def _gate_opened(self, index: int) -> None:
+        """Vertex *index*'s condition held this tick: a hook for a subclass
+        that keeps a record of it (a :class:`~.routing.RoutingAction`'s
+        arrival times)."""
+        return
 
     def _timeline_sample(self, world: "carla.World") -> TrajectorySample:
         """``POSITION`` mode on a gated trajectory: where the timeline has it now."""
@@ -1215,9 +1234,9 @@ class _ReferenceMissing(Exception):
 class _TrajectoryEnd(BaseCondition):
     """Satisfied once the action it watches has reached the end of its trajectory."""
 
-    _action: FollowTrajectoryAction
+    _action: TrajectoryRun
 
-    def __init__(self, action: FollowTrajectoryAction, label: str) -> None:
+    def __init__(self, action: TrajectoryRun, label: str) -> None:
         super().__init__(label=f"{label}_end")
         self._action = action
 

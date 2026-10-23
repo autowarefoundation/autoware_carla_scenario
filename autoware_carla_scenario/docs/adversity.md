@@ -188,7 +188,7 @@ removed). Outside that window the vehicle is out of the world.
 
 A vehicle cannot be spawned once a run has started, so the scenario spawns it
 in `setup`, preferably out of the world (`spawn.hidden`). The action is a
-`FollowTrajectoryAction` of a held pose, with `hidden_outside_trajectory`.
+trajectory run (the engine of `RoutingAction`'s `position` mode) of a held pose, with `hidden_outside_trajectory`.
 `collision_objects` creates two of them for a collision's aftermath.
 
 ```python

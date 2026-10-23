@@ -1,4 +1,4 @@
-"""Waypoint conditions on a *Follow Trajectory* card: the IR, its checks, its build.
+"""Waypoint conditions on a *Set Goal* card with written-out waypoints: the IR, its checks, its build.
 
 A card's ``advance_conditions`` say what a vertex of its trajectory is
 departed on (counted from 1: the Nth vertex, blank and comment lines not
@@ -22,7 +22,7 @@ from autoware_carla_scenario import (
     AndCondition,
     ElapsedTimeCondition,
     EntityDistanceCondition,
-    FollowTrajectoryAction,
+    RoutingAction,
     RelativeLanePose,
 )
 from autoware_carla_scenario.authoring.builders import instantiate_action
@@ -64,13 +64,13 @@ def _time(seconds: float) -> ConditionNode:
 def _document(
     gates: list[VertexCondition],
     params: dict[str, Any] | None = None,
-    action_type: str = "follow_trajectory",
+    action_type: str = "routing",
     *,
     timed: bool = False,
 ) -> ScenarioDocument:
     """A card with *gates*; untimed unless *timed* (then *gates* hold the times)."""
     base = {"path_source": "vertices", "vertices": _ROWS} if params is None else params
-    if action_type == "follow_trajectory":
+    if action_type == "routing":
         base = {"time_domain": "relative" if timed else "none", **base}
     return ScenarioDocument(
         id="s",
@@ -95,11 +95,11 @@ def _errors(document: ScenarioDocument) -> list[str]:
     return [issue.message for issue in validate_document(document).errors]
 
 
-def _built(document: ScenarioDocument, action_id: str = "a1") -> FollowTrajectoryAction:
+def _built(document: ScenarioDocument, action_id: str = "a1") -> RoutingAction:
     compiled = compile_document(document)
     (card,) = [a for a in compiled.actions if a.node.id == action_id]
     action = instantiate_action(card, BuildContext(scenario=None))
-    assert isinstance(action, FollowTrajectoryAction)
+    assert isinstance(action, RoutingAction)
     return action
 
 
@@ -210,7 +210,7 @@ class TestValidation:
             condition=ConditionNode(type="all", children=[_time(1.0), _wait()]),
         )
         assert any(
-            "only goes on a Follow Trajectory card's waypoint condition" in e
+            "only goes on a Set Goal card's waypoint condition" in e
             for e in _errors(_document([nested]))
         )
         trigger = _document([])
@@ -355,7 +355,7 @@ class TestBuild:
         # Entity ids are resolved to the roles the runtime knows.
         assert condition.children[1].params["target"] == "Ego"
         action = instantiate_action(card, BuildContext(scenario=None))
-        assert isinstance(action, FollowTrajectoryAction)
+        assert isinstance(action, RoutingAction)
         advance = action.trajectory.vertices[0].advance
         assert isinstance(advance, AndCondition)
         assert isinstance(advance._conditions[1], EntityDistanceCondition)
@@ -397,7 +397,7 @@ def client(tmp_path: Path) -> TestClient:
 
 
 def _card(client: TestClient, tmp_path: Path) -> tuple[str, str, DraftStore]:
-    """A draft with an untimed four-vertex Follow Trajectory card: (draft, card, store)."""
+    """A draft with an untimed four-vertex Set Goal card: (draft, card, store)."""
     response = client.post(
         "/new", data={"kind": "cut_in", "title": "Cut in"}, follow_redirects=False
     )
@@ -406,10 +406,10 @@ def _card(client: TestClient, tmp_path: Path) -> tuple[str, str, DraftStore]:
     actor = next(e.id for e in _stored(store, draft_id).entities if e.kind != "ego")
     client.post(
         f"/draft/{draft_id}/action",
-        data={"type_id": "follow_trajectory", "actor": actor},
+        data={"type_id": "routing", "actor": actor},
     )
     card = next(
-        a for a in _stored(store, draft_id).actions if a.type == "follow_trajectory"
+        a for a in _stored(store, draft_id).actions if a.type == "routing"
     )
     client.post(
         f"/draft/{draft_id}/action/{card.id}",
@@ -420,7 +420,7 @@ def _card(client: TestClient, tmp_path: Path) -> tuple[str, str, DraftStore]:
             "time_domain": "none",
             "time_scale": "1",
             "time_offset": "0",
-            "following_mode": "position",
+            "mode": "position",
             "initial_distance_offset": "0",
             "speed_kmh": "30",
             "speed_ms": "5",
@@ -576,7 +576,7 @@ class TestEditor:
     ) -> None:
         draft_id, _, store = _card(client, tmp_path)
         other = next(
-            a for a in _stored(store, draft_id).actions if a.type != "follow_trajectory"
+            a for a in _stored(store, draft_id).actions if a.type != "routing"
         )
         page = _add(client, draft_id, other.id, "1")
         assert "takes no waypoint conditions" in page.text

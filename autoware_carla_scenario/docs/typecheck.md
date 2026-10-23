@@ -1676,8 +1676,8 @@ To check one more module:
 
 ### What is checked of the framework
 
-Every module now has an entry other than `"not yet checked (#45)"`. 198 of
-the package's 294 modules (67%; about 47,300 of 84,200 lines) are `CHECKED`:
+Every module now has an entry other than `"not yet checked (#45)"`. 200 of
+the package's 297 modules (67%; about 47,300 of 84,200 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the conversions between
 Lanelet2, OpenDRIVE and CARLA world poses (`coordinate.transform`), the stop
 lines read off a Lanelet2 map (`utils.stop_line`, `coordinate.stop_line`)
@@ -1736,8 +1736,8 @@ driver's configs and client interface, trajectory follower and observations
 `driver.geometry`), and the `autoware_bridge`, `autoware_stack`, `entity`,
 `driver`, `maps` and `coverage` packages themselves, whose `__init__` re-exports what is not checked
 through models of it (see *A class a checked package only re-exports*
-below). 104
-functions and methods of those modules are `UNCALLED` (24 of them
+below). 105
+functions and methods of those modules are `UNCALLED` (25 of them
 protected helpers, see *What is compiled* below): most of them a
 condition's `get_details()` or a backend's `describe()`, what takes a traffic
 backend's options node (`Mapping[str, Any]`), what reads a route search, a
@@ -1773,9 +1773,9 @@ a `TrajectoryVertex` call's arguments, each of any type (`Any`), walks or
 binds a sweeper constraint of any kind, builds a condition's status (its
 details), or takes the list a plain tick callback goes into
 (`BaseScenario._register_tick()`, a `List[Callable[[carla.World], None]]`,
-which the check has no value of). The 96 `EXCLUDED` modules fall in
+which the check has no value of). The 97 `EXCLUDED` modules fall in
 four groups. Many fit more than one (about 73 import what Codon cannot
-compile, 29 build on an excluded module and 20 hold values Codon has no type
+compile, 29 build on an excluded module and 21 hold values Codon has no type
 for), so each is counted once, in the first group that fits it:
 
 - **73 import what Codon cannot compile**: pyxodr,
@@ -1811,9 +1811,10 @@ for), so each is counted once, in the first group that fits it:
   `on_lanelet` reader on any callable) and
   `traffic.registry` (the `registry`, in its plugin loader); 4 of the 19
   also hold values Codon has no type for.
-- **3 hold values Codon has no type for**, and nothing else keeps them out:
+- **4 hold values Codon has no type for**, and nothing else keeps them out:
   `Any` (`trajectory.authoring`, `authoring.registry`'s
-  field defaults), or a class as a value (`utils.config`, which `traffic.config`,
+  field defaults, `npc_collisions`' actors and world snapshots, which it also
+  hears through collision-sensor callbacks), or a class as a value (`utils.config`, which `traffic.config`,
   `traffic.fidelity` and `traffic.sumo.config` import only in their uncalled
   `from_mapping()`).
 - **1 has a callback the check cannot type**: `ros2.camera`, whose camera
@@ -2014,7 +2015,7 @@ Codon names the two types the other way round in an annotated assignment). A
 any value assigned to a `bool` local with its `__bool__`, so `ready: bool =
 "x"` would compile, and a call converts nothing. A default written without
 an annotation, overriding one a base declares (`REISSUES_BY_DEFAULT = True`
-on `FollowTrajectoryAction`, whose base declares `REISSUES_BY_DEFAULT:
+on `TrajectoryRun` (`RoutingAction`'s engine), whose base declares `REISSUES_BY_DEFAULT:
 ClassVar[bool] = False`), is checked against the base's annotation, a
 `ClassVar[T]`'s `T`; the base is found by name among the classes of its
 module and the other checked modules, depth first. Left out:
@@ -2038,7 +2039,7 @@ That is 22 defaults, at the time of writing: 20 annotated ones, in 10
 classes (`BaseScenario`, the five ego entities, `TurnAction`,
 `CollisionCondition`, `DrivenEntity` and `BackendDriven`), and the 2
 unannotated overrides of `BaseAction.REISSUES_BY_DEFAULT`
-(`FollowTrajectoryAction`, `_BackendAction`). Of the 34 non-`ClassVar`
+(`TrajectoryRun`, `_BackendAction`). Of the 34 non-`ClassVar`
 class-level defaults outside dataclasses and enums, the other 14 are those
 of `measures`' `_Cache`, `_Lines` and `_FrameMemo`, which the module
 constructs; the 7 `ClassVar`s are left out. None failed when it came in.
@@ -3094,7 +3095,7 @@ What Codon 0.19 needs that Python does not, beyond
   is None: return`) is left the unwrapped type for the next lap, whose
   assignment of the `Optional` then fails ("'BaseCondition' does not match
   expected type 'Optional[BaseCondition]'"). Read the value through a function
-  that returns it unwrapped (`follow_trajectory._gate_at()`), and test the
+  that returns it unwrapped (`_trajectory_run._gate_at()`), and test the
   `Optional` expression itself where the loop needs the test.
 - **A call into a module Codon cannot compile, from a function it must**: a
   function `UNCALLED` names is still compiled when a checked function calls

@@ -278,27 +278,76 @@ class TurnIndicatorAction(BaseAction):
         super().__init__(label, condition, timing, once=once)
 
 
+@tuple
+class RoutingMode:
+    value: str
+    DRIVER: ClassVar[RoutingMode] = RoutingMode("driver")
+    FOLLOW: ClassVar[RoutingMode] = RoutingMode("follow")
+    POSITION: ClassVar[RoutingMode] = RoutingMode("position")
+
+    # Enum's name (#307): Codon has no Enum to give a framework enum one.
+    @property
+    def name(self) -> str:
+        if self == RoutingMode.DRIVER:
+            return "DRIVER"
+        if self == RoutingMode.FOLLOW:
+            return "FOLLOW"
+        if self == RoutingMode.POSITION:
+            return "POSITION"
+        raise ValueError("not a member of RoutingMode")
+
+    # What `for m in E`, `list(E)` and `E["A"]` read: the checker rewrites
+    # them (#437). Declared in Python's order, as the test checks.
+    @staticmethod
+    def _acs_members() -> List[RoutingMode]:
+        return [RoutingMode.DRIVER, RoutingMode.FOLLOW, RoutingMode.POSITION]
+
+    @staticmethod
+    def _acs_by_name(name: str) -> RoutingMode:
+        if name == "DRIVER":
+            return RoutingMode.DRIVER
+        if name == "FOLLOW":
+            return RoutingMode.FOLLOW
+        if name == "POSITION":
+            return RoutingMode.POSITION
+        raise KeyError(name)
+
+
 class RoutingAction(BaseAction):
     def __init__(self, label):
         compile_error("RoutingAction(): no constructor takes these arguments "
-                      "(required: entity_name, goal)")
+                      "(required: entity_name, and a goal or a trajectory)")
 
-    def __init__(self, entity_name, goal: Lanelet2Pose, condition = None,
+    def __init__(self, entity_name, goal: Optional[Lanelet2Pose] = None, condition = None,
                  timing: TickTiming = TickTiming("pre_tick"), *_kw, label: str = "routing",
                  once: bool = True, initial_pose: Optional[CarlaWorldPose] = None,
-                 ground_projection = None, waypoints = (), walking_speed: float = 1.4):
-        _keyword_only(_kw, "RoutingAction(): label, once, initial_pose, ground_projection, waypoints and walking_speed")
+                 ground_projection = None, waypoints = (), walking_speed: float = 1.4,
+                 trajectory: Optional[Trajectory] = None,
+                 mode: RoutingMode = RoutingMode("driver"), time_reference = None,
+                 initial_distance_offset: float = 0.0, until = None,
+                 control_config = None, hidden_outside_trajectory: bool = False,
+                 speed = None, appear_on_start: bool = False, stop_at_end: bool = True):
+        _keyword_only(_kw, "RoutingAction(): label, once, initial_pose, ground_projection, "
+                           "waypoints, walking_speed, trajectory, mode, time_reference, "
+                           "initial_distance_offset, until, control_config, "
+                           "hidden_outside_trajectory, speed, appear_on_start and stop_at_end")
         _expect_role(entity_name)
         _expect_optional_ground_projection(ground_projection)
         _expect_lanelet2_poses(waypoints)
-        super().__init__(label, condition, timing, once=once)
+        _expect_optional_timing(time_reference)
+        _expect_optional_float(speed)
+        super().__init__(label, condition, timing, once=once, until=until)
 
     @property
-    def goal(self) -> Lanelet2Pose:
+    def goal(self) -> Optional[Lanelet2Pose]:
         raise NotImplementedError()
 
     @property
     def entity_name(self) -> EntityRole:
+        raise NotImplementedError()
+
+    @property
+    def mode(self) -> RoutingMode:
         raise NotImplementedError()
 
     @property
@@ -310,26 +359,6 @@ class RoutingAction(BaseAction):
     @property
     def waypoints(self) -> List[Lanelet2Pose]:
         raise NotImplementedError()
-
-
-class FollowTrajectoryAction(BaseAction):
-    def __init__(self, label):
-        compile_error("FollowTrajectoryAction(): no constructor takes these arguments "
-                      "(required: entity_name, trajectory)")
-
-    def __init__(self, entity_name, trajectory: Trajectory, time_reference = None,
-                 following_mode: TrajectoryFollowingMode = TrajectoryFollowingMode("position"),
-                 initial_distance_offset: float = 0.0, condition = None,
-                 timing: TickTiming = TickTiming("pre_tick"), *_kw,
-                 label: str = "follow_trajectory", once: bool = True, until = None,
-                 control_config = None, hidden_outside_trajectory: bool = False,
-                 speed = None, appear_on_start: bool = False, stop_at_end: bool = True):
-        _keyword_only(_kw, "FollowTrajectoryAction(): label, once, until, control_config, "
-                           "hidden_outside_trajectory, speed, appear_on_start and stop_at_end")
-        _expect_role(entity_name)
-        _expect_optional_timing(time_reference)
-        _expect_optional_float(speed)
-        super().__init__(label, condition, timing, once=once, until=until)
 
     @property
     def trajectory(self) -> Trajectory:

@@ -85,7 +85,6 @@ __all__ = [
     "build_walk_straight_action",
     "build_traffic_parameters_action",
     "build_turn_indicator_action",
-    "build_follow_trajectory_action",
     "build_lane_change_action",
     "build_routing_action",
     "build_set_speed_action",
@@ -1431,53 +1430,6 @@ def build_turn_indicator_action(
     )
 
 
-def build_follow_trajectory_action(
-    compiled: "CompiledAction",
-    condition: "BaseCondition | None",
-    timing: Any,
-    ctx: "BuildContext",
-) -> "BaseAction":
-    """Build a :class:`FollowTrajectoryAction`."""
-    from ..actions import FollowTrajectoryAction  # noqa: PLC0415
-    from ..trajectory.authoring import authored_trajectory  # noqa: PLC0415
-    from .builders import instantiate_advance_conditions  # noqa: PLC0415
-    from ..trajectory.authoring import authored_timing  # noqa: PLC0415
-    from ..trajectory.model import TrajectoryFollowingMode  # noqa: PLC0415
-
-    assert compiled.actor_role is not None  # noqa: S101 -- required by the spec
-    params = compiled.params
-    trajectory = authored_trajectory(
-        path_source=params["path_source"],
-        vertices=params["vertices"],
-        lanelet_ids=params["lanelet_ids"],
-        speed_kmh=params["speed_kmh"],
-        lateral_offset_m=params["lateral_offset_m"],
-        relative_vertices=params["relative_vertices"],
-        reference_entity=params["reference_entity"],
-        route_vertices=params["route_vertices"],
-        advance=instantiate_advance_conditions(compiled, ctx),
-    )
-    time_reference = authored_timing(
-        time_domain=params["time_domain"],
-        scale=params["time_scale"],
-        offset=params["time_offset"],
-    )
-    return FollowTrajectoryAction(
-        entity_name=compiled.actor_role,
-        trajectory=trajectory,
-        time_reference=time_reference,
-        following_mode=TrajectoryFollowingMode[str(params["following_mode"]).upper()],
-        initial_distance_offset=params["initial_distance_offset"],
-        condition=condition,
-        timing=timing,
-        label=compiled.label,
-        once=compiled.node.once,
-        hidden_outside_trajectory=params["hidden_outside_trajectory"],
-        speed=params["speed_ms"],
-        appear_on_start=params["appear_on_start"],
-    )
-
-
 def build_lane_change_action(
     compiled: "CompiledAction",
     condition: "BaseCondition | None",
@@ -1508,22 +1460,40 @@ def build_routing_action(
 ) -> "BaseAction":
     """Build a :class:`RoutingAction`."""
     from ..actions import RoutingAction  # noqa: PLC0415
-    from ..coordinate import Lanelet2Pose  # noqa: PLC0415
+    from ..trajectory.authoring import authored_goal  # noqa: PLC0415
+    from ..trajectory.authoring import authored_waypoints  # noqa: PLC0415
+    from ..trajectory.authoring import authored_route  # noqa: PLC0415
+    from .builders import instantiate_advance_conditions  # noqa: PLC0415
+    from ..trajectory.authoring import authored_timing  # noqa: PLC0415
+    from ..actions import RoutingMode  # noqa: PLC0415
 
     assert compiled.actor_role is not None  # noqa: S101 -- required by the spec
     params = compiled.params
-    goal = Lanelet2Pose(
+    goal = authored_goal(
+        path_source=params["path_source"],
         lanelet_id=params["goal_lanelet_id"],
         s=params["goal_s"],
     )
-    waypoints: list[Any] = []
-    for item in params["waypoint_lanelet_ids"]:
-        waypoints.append(
-            Lanelet2Pose(
-                lanelet_id=item,
-                s=0.0,
-            )
-        )
+    waypoints = authored_waypoints(
+        path_source=params["path_source"],
+        lanelet_ids=params["waypoint_lanelet_ids"],
+    )
+    trajectory = authored_route(
+        path_source=params["path_source"],
+        vertices=params["vertices"],
+        lanelet_ids=params["lanelet_ids"],
+        speed_kmh=params["speed_kmh"],
+        lateral_offset_m=params["lateral_offset_m"],
+        relative_vertices=params["relative_vertices"],
+        reference_entity=params["reference_entity"],
+        route_vertices=params["route_vertices"],
+        advance=instantiate_advance_conditions(compiled, ctx),
+    )
+    time_reference = authored_timing(
+        time_domain=params["time_domain"],
+        scale=params["time_scale"],
+        offset=params["time_offset"],
+    )
     return RoutingAction(
         entity_name=compiled.actor_role,
         goal=goal,
@@ -1533,6 +1503,13 @@ def build_routing_action(
         once=compiled.node.once,
         waypoints=waypoints,
         walking_speed=params["walking_speed"],
+        trajectory=trajectory,
+        mode=RoutingMode[str(params["mode"]).upper()],
+        time_reference=time_reference,
+        initial_distance_offset=params["initial_distance_offset"],
+        hidden_outside_trajectory=params["hidden_outside_trajectory"],
+        speed=params["speed_ms"],
+        appear_on_start=params["appear_on_start"],
     )
 
 

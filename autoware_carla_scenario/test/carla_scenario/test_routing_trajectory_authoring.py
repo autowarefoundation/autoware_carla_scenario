@@ -1,4 +1,4 @@
-"""Authoring a *Follow Trajectory* card: the text, the checks and what it builds.
+"""Authoring a *Set Goal* card with written-out waypoints: the text, the checks and what it builds.
 
 The card keeps its path in the document -- map-frame vertices, a route of
 lanelets, or vertices relative to an entity's lane -- so these tests follow a card from the editor's form, through the
@@ -15,7 +15,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from autoware_carla_scenario import (
-    FollowTrajectoryAction,
+    RoutingAction,
+    RoutingMode,
     Lanelet2Pose,
     MapPose,
     ReferenceContext,
@@ -75,6 +76,9 @@ def _document(
     kind: Literal["vehicle", "pedestrian"] = "vehicle",
     times: list[float] | None = None,
 ) -> ScenarioDocument:
+    # Timed from when the action starts unless the card says: these cards
+    # write their waypoints out (a Set Goal card's own default is none).
+    params = {"time_domain": "relative", **params}
     return ScenarioDocument(
         id="s",
         entities=[
@@ -84,7 +88,7 @@ def _document(
         actions=[
             ActionNode(
                 id="a1",
-                type="follow_trajectory",
+                type="routing",
                 actor="npc1",
                 params=params,
                 advance_conditions=_timed(times or []),
@@ -259,7 +263,7 @@ class TestValidation:
             {
                 "path_source": "vertices",
                 "vertices": _ROWS,
-                "following_mode": "follow",
+                "mode": "follow",
                 "hidden_outside_trajectory": True,
             },
             times=_TIMES,
@@ -317,7 +321,7 @@ class TestBuild:
                 "vertices": format_vertices(_ROWS),  # text, as a hand edit may leave it
                 "time_domain": "absolute",
                 "time_scale": 2.0,
-                "following_mode": "follow",
+                "mode": "follow",
                 "initial_distance_offset": 3.0,
             },
             times=_TIMES,
@@ -325,7 +329,7 @@ class TestBuild:
         compiled = compile_document(document)
         (card,) = [a for a in compiled.actions if a.node.id == "a1"]
         action = instantiate_action(card, BuildContext(scenario=None))
-        assert isinstance(action, FollowTrajectoryAction)
+        assert isinstance(action, RoutingAction)
         assert action.timing is TickTiming.PRE_TICK
         assert len(action.trajectory.vertices) == 3
         assert action.trajectory.vertices[0].position == MapPose(100.0, 200.0, 0.5)
@@ -333,7 +337,7 @@ class TestBuild:
         assert action._time_reference is not None
         assert action._time_reference.domain is ReferenceContext.ABSOLUTE
         assert action._time_reference.scale == 2.0
-        assert action._following_mode is TrajectoryFollowingMode.FOLLOW
+        assert action.mode is RoutingMode.FOLLOW
         assert math.isclose(action._initial_distance_offset, 3.0)
 
 
@@ -368,10 +372,10 @@ class TestEditor:
 
         client.post(
             f"/draft/{draft_id}/action",
-            data={"type_id": "follow_trajectory", "actor": actor},
+            data={"type_id": "routing", "actor": actor},
         )
         document = _stored(store, draft_id)
-        card = next(a for a in document.actions if a.type == "follow_trajectory")
+        card = next(a for a in document.actions if a.type == "routing")
 
         page = client.post(
             f"/draft/{draft_id}/action/{card.id}",
@@ -381,7 +385,7 @@ class TestEditor:
                 "time_domain": "absolute",
                 "time_scale": "1",
                 "time_offset": "0",
-                "following_mode": "position",
+                "mode": "position",
                 "initial_distance_offset": "0",
                 "hidden_outside_trajectory": "on",
                 "speed_kmh": "30",
@@ -409,10 +413,10 @@ class TestEditor:
         actor = next(e.id for e in _stored(store, draft_id).entities if e.kind != "ego")
         client.post(
             f"/draft/{draft_id}/action",
-            data={"type_id": "follow_trajectory", "actor": actor},
+            data={"type_id": "routing", "actor": actor},
         )
         card = next(
-            a for a in _stored(store, draft_id).actions if a.type == "follow_trajectory"
+            a for a in _stored(store, draft_id).actions if a.type == "routing"
         )
         page = client.post(
             f"/draft/{draft_id}/action/{card.id}",
@@ -454,7 +458,7 @@ class TestHiddenSpawn:
     def test_a_hidden_entity_is_spawned_under_the_map(self) -> None:
         import typesafe_carla.carla as carla
 
-        from autoware_carla_scenario.actions.follow_trajectory import HIDDEN_DEPTH_M
+        from autoware_carla_scenario.actions._trajectory_run import HIDDEN_DEPTH_M
         from autoware_carla_scenario.declarative import _hidden_if_asked
 
         at = carla.Transform(
@@ -635,7 +639,7 @@ class TestRelativeBuild:
         # The document's entity id is resolved to the role the runtime knows.
         assert card.params["reference_entity"] == "Ego"
         action = instantiate_action(card, BuildContext(scenario=None))
-        assert isinstance(action, FollowTrajectoryAction)
+        assert isinstance(action, RoutingAction)
         positions = [vertex.position for vertex in action.trajectory.vertices]
         assert positions[1] == RelativeLanePose(20.0, 0.0, 1, entity_ref="Ego")
         assert action._time_reference is not None
@@ -651,7 +655,7 @@ class TestRelativeBuild:
         )
         (card,) = [a for a in compiled.actions if a.node.id == "a1"]
         action = instantiate_action(card, BuildContext(scenario=None))
-        assert isinstance(action, FollowTrajectoryAction)
+        assert isinstance(action, RoutingAction)
         assert all(
             isinstance(vertex.position, RelativeLanePose)
             and vertex.position.entity_ref is None
@@ -674,10 +678,10 @@ class TestRelativeEditor:
 
         client.post(
             f"/draft/{draft_id}/action",
-            data={"type_id": "follow_trajectory", "actor": actor},
+            data={"type_id": "routing", "actor": actor},
         )
         card = next(
-            a for a in _stored(store, draft_id).actions if a.type == "follow_trajectory"
+            a for a in _stored(store, draft_id).actions if a.type == "routing"
         )
         page = client.post(
             f"/draft/{draft_id}/action/{card.id}",
@@ -689,7 +693,7 @@ class TestRelativeEditor:
                 "time_domain": "none",
                 "time_scale": "1",
                 "time_offset": "0",
-                "following_mode": "position",
+                "mode": "position",
                 "initial_distance_offset": "0",
                 "speed_kmh": "30",
                 "lateral_offset_m": "0",
@@ -719,10 +723,10 @@ class TestRelativeEditor:
         actor = next(e.id for e in _stored(store, draft_id).entities if e.kind != "ego")
         client.post(
             f"/draft/{draft_id}/action",
-            data={"type_id": "follow_trajectory", "actor": actor},
+            data={"type_id": "routing", "actor": actor},
         )
         card = next(
-            a for a in _stored(store, draft_id).actions if a.type == "follow_trajectory"
+            a for a in _stored(store, draft_id).actions if a.type == "routing"
         )
         client.post(
             f"/draft/{draft_id}/action/{card.id}",

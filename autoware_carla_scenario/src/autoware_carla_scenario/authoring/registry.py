@@ -1209,248 +1209,6 @@ _FOLLOWING_MODES: tuple[SelectOption, ...] = (
 
 register_action_spec(
     ActionSpec(
-        type_id="follow_trajectory",
-        title="Follow Trajectory",
-        category="Vehicle / Motion",
-        builder="build_follow_trajectory_action",
-        target="..actions:FollowTrajectoryAction",
-        argmap=(("speed_ms", "speed"),),
-        actor_kinds=("ego", "vehicle", "pedestrian"),
-        visual_kind="continuous",
-        vertex_conditions=True,
-        # The trajectory and its time reference are each assembled from
-        # several fields, which the constructor's signature alone cannot say.
-        builds=(
-            BuiltArgument(
-                kwarg="trajectory",
-                target="..trajectory.authoring:authored_trajectory",
-                parts=(
-                    BuiltPart(
-                        args=(
-                            ("path_source", "path_source"),
-                            ("vertices", "vertices"),
-                            ("lanelet_ids", "lanelet_ids"),
-                            ("speed_kmh", "speed_kmh"),
-                            ("lateral_offset_m", "lateral_offset_m"),
-                            ("relative_vertices", "relative_vertices"),
-                            ("reference_entity", "reference_entity"),
-                            ("route_vertices", "route_vertices"),
-                        ),
-                        sources=(("advance", "advance_conditions"),),
-                    ),
-                ),
-            ),
-            BuiltArgument(
-                kwarg="time_reference",
-                target="..trajectory.authoring:authored_timing",
-                parts=(
-                    BuiltPart(
-                        args=(
-                            ("time_domain", "time_domain"),
-                            ("scale", "time_scale"),
-                            ("offset", "time_offset"),
-                        ),
-                    ),
-                ),
-            ),
-        ),
-        fields=(
-            FieldSpec(
-                name="path_source",
-                label="Path",
-                kind="select",
-                default="vertices",
-                options=(
-                    SelectOption("vertices", "Vertices (map frame)"),
-                    SelectOption("lanelets", "Along lanelets"),
-                    SelectOption("relative_lane", "Relative to an entity's lane"),
-                    SelectOption("route", "Along the scenario's route (logical)"),
-                ),
-                help=(
-                    "Vertices are written out below -- a recording transcribes "
-                    "to them; a lanelet path follows the centrelines of the "
-                    "lanelets picked on the map; relative vertices are lanes "
-                    "and metres from where an entity is when the action starts; "
-                    "route vertices are placed against the route the "
-                    "scenario's route search found, on any map."
-                ),
-            ),
-            FieldSpec(
-                name="vertices",
-                label="Vertices",
-                kind="trajectory",
-                default=None,
-                required=False,
-                help=(
-                    "One vertex per line: x, y[, yaw] in the map frame (m, "
-                    "rad).  Leave yaw empty to face along the path.  A vertex's "
-                    "time is its Trajectory time waypoint condition, below."
-                ),
-            ),
-            FieldSpec(
-                name="lanelet_ids",
-                label="Lanelets",
-                kind="lanelet_list",
-                default=None,
-                required=False,
-                help="The route, in the order it is driven.",
-            ),
-            FieldSpec(
-                name="speed_kmh",
-                label="Path speed",
-                kind="number",
-                default=30.0,
-                required=False,
-                unit="km/h",
-                help="Times the lanelet path; empty or 0 leaves it untimed.",
-            ),
-            FieldSpec(
-                name="lateral_offset_m",
-                label="Lateral offset",
-                kind="number",
-                default=0.0,
-                required=False,
-                unit="m",
-                help="From the lanelets' centreline, positive to the left.",
-            ),
-            FieldSpec(
-                name="reference_entity",
-                label="Relative to",
-                kind="entity",
-                default=None,
-                required=False,
-                help=(
-                    "The entity relative vertices are measured from; leave "
-                    "empty for the entity that follows the trajectory."
-                ),
-            ),
-            FieldSpec(
-                name="relative_vertices",
-                label="Relative vertices",
-                kind="relative_lane_trajectory",
-                default=None,
-                required=False,
-                help=(
-                    "One vertex per line: ds[, offset][, d_lane][, yaw] -- "
-                    "metres along the reference's lane (negative behind), "
-                    "metres from the lane centre (positive left), lanes across "
-                    "(+1 left, -1 right), heading from the lane (rad, positive "
-                    "left; empty faces along the path).  Times are waypoint "
-                    "conditions, below.  Placed when the action starts; whether "
-                    "the lanes exist is only known then."
-                ),
-            ),
-            FieldSpec(
-                name="route_vertices",
-                label="Route vertices",
-                kind="route_trajectory",
-                default=None,
-                required=False,
-                help=(
-                    "One vertex per line, 'kind key=value ...': "
-                    "lane ds= offset= d_lane= yaw= anchor= | "
-                    "opposite ds= lane= offset= yaw= anchor= | "
-                    "crossing junction= approach=left|right|opposite distance= "
-                    "turn= offset= yaw= | "
-                    "crosswalk junction= leg=entry|exit side=left|right along= "
-                    "yaw= | roadside ds= side= kerb_distance= yaw= anchor=.  "
-                    "ds counts from the anchor (start, end, segment:K:start|end, "
-                    "junction:K:entry|exit) or, without one, from the ego.  "
-                    "Placed when the action starts."
-                ),
-            ),
-            FieldSpec(
-                name="speed_ms",
-                label="Speed where no time paces",
-                kind="number",
-                default=None,
-                required=False,
-                unit="m/s",
-                help=(
-                    "For segments no vertex time paces: without a time "
-                    "reference, and after a waypoint condition once the next "
-                    "time has passed. Empty takes the speed the entity has "
-                    "when the action starts."
-                ),
-            ),
-            FieldSpec(
-                name="time_domain",
-                label="Time reference",
-                kind="select",
-                default="relative",
-                options=(
-                    SelectOption("relative", "From when the action starts"),
-                    SelectOption("absolute", "From when the scenario starts"),
-                    SelectOption("none", "None -- keep the entity's own speed"),
-                ),
-                help=(
-                    "A vertex at time t is reached at t * scale + offset, "
-                    "counted from the start this names."
-                ),
-            ),
-            FieldSpec(
-                name="time_scale",
-                label="Time scale",
-                kind="number",
-                default=1.0,
-                help="2 plays the trajectory at half speed.",
-            ),
-            FieldSpec(
-                name="time_offset",
-                label="Time offset",
-                kind="number",
-                default=0.0,
-                unit="s",
-            ),
-            FieldSpec(
-                name="following_mode",
-                label="Following mode",
-                kind="select",
-                default="position",
-                options=_FOLLOWING_MODES,
-            ),
-            FieldSpec(
-                name="initial_distance_offset",
-                label="Start this far along",
-                kind="number",
-                default=0.0,
-                unit="m",
-            ),
-            FieldSpec(
-                name="hidden_outside_trajectory",
-                label="Out of the world before its first and after its last vertex",
-                kind="bool",
-                default=False,
-                help=(
-                    "For a road user a recording picks up late or loses early. "
-                    "Needs the Position mode and a time reference."
-                ),
-            ),
-            FieldSpec(
-                name="appear_on_start",
-                label="Appear at the first vertex when the action starts",
-                kind="bool",
-                default=False,
-                required=False,
-                help=(
-                    "For an entity spawned out of the world: placed on its "
-                    "first vertex, facing along the path, moving at the speed "
-                    "above, when the card is triggered -- in either mode."
-                ),
-            ),
-        ),
-        description=(
-            "Move a vehicle or pedestrian along a trajectory (OpenSCENARIO "
-            "FollowTrajectoryAction).  The card runs until the entity reaches "
-            "the end of it; while it runs, the action is the entity's only "
-            "driver.  A vertex is departed on its time, on a waypoint "
-            "condition, or on arrival."
-        ),
-    )
-)
-
-register_action_spec(
-    ActionSpec(
         type_id="stalled_object",
         title="Stalled Object",
         category="Adversity",
@@ -2377,6 +2135,13 @@ register_action_spec(
     )
 )
 
+#: Mirrors ``RoutingMode``; ``test_authoring_registry`` keeps the two in step.
+_ROUTING_MODES: tuple[SelectOption, ...] = (
+    SelectOption("driver", "Driver -- its own driver, Lanelet2 routes between"),
+    SelectOption("follow", "Follow -- a controller, straight legs between"),
+    SelectOption("position", "Position -- placed on the legs every tick"),
+)
+
 register_action_spec(
     ActionSpec(
         type_id="routing",
@@ -2384,40 +2149,106 @@ register_action_spec(
         category="Vehicle / Motion",
         builder="build_routing_action",
         target="..actions:RoutingAction",
-        # The goal is one pose out of two fields, which the constructor's own
-        # signature cannot say: `s` is where along the goal lanelet, and the
-        # lanelet is the address.
+        argmap=(("speed_ms", "speed"),),
+        actor_kinds=("ego", "vehicle", "pedestrian"),
+        visual_kind="continuous",
+        vertex_conditions=True,
+        # The route is a goal and via lanelets, or written-out waypoints, and
+        # the time reference is several fields: what the constructor's
+        # signature alone cannot say.
         builds=(
             BuiltArgument(
                 kwarg="goal",
-                target="..coordinate:Lanelet2Pose",
+                target="..trajectory.authoring:authored_goal",
                 parts=(
                     BuiltPart(
-                        args=(("lanelet_id", "goal_lanelet_id"), ("s", "goal_s")),
+                        args=(
+                            ("path_source", "path_source"),
+                            ("lanelet_id", "goal_lanelet_id"),
+                            ("s", "goal_s"),
+                        ),
                     ),
                 ),
             ),
-            # The runtime takes poses; each lanelet becomes one at its start.
             BuiltArgument(
                 kwarg="waypoints",
-                target="..coordinate:Lanelet2Pose",
-                over="waypoint_lanelet_ids",
-                item_kwarg="lanelet_id",
-                parts=(BuiltPart(constants=(("s", "0.0"),)),),
+                target="..trajectory.authoring:authored_waypoints",
+                parts=(
+                    BuiltPart(
+                        args=(
+                            ("path_source", "path_source"),
+                            ("lanelet_ids", "waypoint_lanelet_ids"),
+                        ),
+                    ),
+                ),
+            ),
+            BuiltArgument(
+                kwarg="trajectory",
+                target="..trajectory.authoring:authored_route",
+                parts=(
+                    BuiltPart(
+                        args=(
+                            ("path_source", "path_source"),
+                            ("vertices", "vertices"),
+                            ("lanelet_ids", "lanelet_ids"),
+                            ("speed_kmh", "speed_kmh"),
+                            ("lateral_offset_m", "lateral_offset_m"),
+                            ("relative_vertices", "relative_vertices"),
+                            ("reference_entity", "reference_entity"),
+                            ("route_vertices", "route_vertices"),
+                        ),
+                        sources=(("advance", "advance_conditions"),),
+                    ),
+                ),
+            ),
+            BuiltArgument(
+                kwarg="time_reference",
+                target="..trajectory.authoring:authored_timing",
+                parts=(
+                    BuiltPart(
+                        args=(
+                            ("time_domain", "time_domain"),
+                            ("scale", "time_scale"),
+                            ("offset", "time_offset"),
+                        ),
+                    ),
+                ),
             ),
         ),
-        visual_kind="instant",
         # A goal is what an ego needs in order to become ready, and the runner
         # waits for ready before the loop starts.  Landing this card on the tick
         # loop would deliver the goal to a stack nobody is listening to any more.
         default_phase="init",
         fields=(
             FieldSpec(
+                name="path_source",
+                label="Path",
+                kind="select",
+                default="goal",
+                options=(
+                    SelectOption("goal", "Goal lanelet, via lanelets"),
+                    SelectOption("vertices", "Vertices (map frame)"),
+                    SelectOption("lanelets", "Along lanelets"),
+                    SelectOption("relative_lane", "Relative to an entity's lane"),
+                    SelectOption("route", "Along the scenario's route (logical)"),
+                ),
+                help=(
+                    "A goal is a lanelet to go to, through the via lanelets. "
+                    "Vertices are written out below -- a recording transcribes "
+                    "to them; a lanelet path follows the centrelines of the "
+                    "lanelets picked on the map; relative vertices are lanes "
+                    "and metres from where an entity is when the action starts; "
+                    "route vertices are placed against the route the "
+                    "scenario's route search found, on any map."
+                ),
+            ),
+            FieldSpec(
                 name="goal_lanelet_id",
                 place="goal",
                 label="Goal lanelet",
                 kind="lanelet",
-                default=0,
+                default=None,
+                required=False,
                 help=(
                     "Where this vehicle is being sent. An Autoware ego plans "
                     "its route there, and will not move without a goal; a "
@@ -2447,6 +2278,176 @@ register_action_spec(
                 ),
             ),
             FieldSpec(
+                name="mode",
+                label="Driven by",
+                kind="select",
+                default="driver",
+                options=_ROUTING_MODES,
+                help=(
+                    "Driver: the entity's own driver (the traffic backend, the "
+                    "pedestrian route walker, Autoware) drives Lanelet2 routes "
+                    "between the waypoints, its speed set to meet their times. "
+                    "Follow: a controller drives straight legs between them. "
+                    "Position: placed on the legs every tick (a replay)."
+                ),
+            ),
+            FieldSpec(
+                name="vertices",
+                label="Vertices",
+                kind="trajectory",
+                default=None,
+                required=False,
+                help=(
+                    "One vertex per line: x, y[, yaw] in the map frame (m, "
+                    "rad).  Leave yaw empty to face along the path.  A vertex's "
+                    "time is its Trajectory time waypoint condition, below."
+                ),
+            ),
+            FieldSpec(
+                name="lanelet_ids",
+                label="Lanelets",
+                kind="lanelet_list",
+                default=None,
+                required=False,
+                help="The route, in the order it is driven.",
+            ),
+            FieldSpec(
+                name="speed_kmh",
+                label="Path speed",
+                kind="number",
+                default=30.0,
+                required=False,
+                unit="km/h",
+                help="Times the lanelet path; empty or 0 leaves it untimed.",
+            ),
+            FieldSpec(
+                name="lateral_offset_m",
+                label="Lateral offset",
+                kind="number",
+                default=0.0,
+                required=False,
+                unit="m",
+                help="From the lanelets' centreline, positive to the left.",
+            ),
+            FieldSpec(
+                name="reference_entity",
+                label="Relative to",
+                kind="entity",
+                default=None,
+                required=False,
+                help=(
+                    "The entity relative vertices are measured from; leave "
+                    "empty for the entity that follows the trajectory."
+                ),
+            ),
+            FieldSpec(
+                name="relative_vertices",
+                label="Relative vertices",
+                kind="relative_lane_trajectory",
+                default=None,
+                required=False,
+                help=(
+                    "One vertex per line: ds[, offset][, d_lane][, yaw] -- "
+                    "metres along the reference's lane (negative behind), "
+                    "metres from the lane centre (positive left), lanes across "
+                    "(+1 left, -1 right), heading from the lane (rad, positive "
+                    "left; empty faces along the path).  Times are waypoint "
+                    "conditions, below.  Placed when the action starts; whether "
+                    "the lanes exist is only known then."
+                ),
+            ),
+            FieldSpec(
+                name="route_vertices",
+                label="Route vertices",
+                kind="route_trajectory",
+                default=None,
+                required=False,
+                help=(
+                    "One vertex per line, 'kind key=value ...': "
+                    "lane ds= offset= d_lane= yaw= anchor= | "
+                    "opposite ds= lane= offset= yaw= anchor= | "
+                    "crossing junction= approach=left|right|opposite distance= "
+                    "turn= offset= yaw= | "
+                    "crosswalk junction= leg=entry|exit side=left|right along= "
+                    "yaw= | roadside ds= side= kerb_distance= yaw= anchor=.  "
+                    "ds counts from the anchor (start, end, segment:K:start|end, "
+                    "junction:K:entry|exit) or, without one, from the ego.  "
+                    "Placed when the action starts."
+                ),
+            ),
+            FieldSpec(
+                name="speed_ms",
+                label="Speed where no time paces",
+                kind="number",
+                default=None,
+                required=False,
+                unit="m/s",
+                help=(
+                    "Where no waypoint time paces the entity: without a time "
+                    "reference, and after a waypoint condition once the next "
+                    "time has passed. Empty: its driver's own speed (Driver), "
+                    "the speed it has when the action starts (Follow, Position)."
+                ),
+            ),
+            FieldSpec(
+                name="time_domain",
+                label="Time reference",
+                kind="select",
+                default="none",
+                options=(
+                    SelectOption("relative", "From when the action starts"),
+                    SelectOption("absolute", "From when the scenario starts"),
+                    SelectOption("none", "None -- keep the entity's own speed"),
+                ),
+                help=(
+                    "A vertex at time t is reached at t * scale + offset, "
+                    "counted from the start this names."
+                ),
+            ),
+            FieldSpec(
+                name="time_scale",
+                label="Time scale",
+                kind="number",
+                default=1.0,
+                help="2 plays the trajectory at half speed.",
+            ),
+            FieldSpec(
+                name="time_offset",
+                label="Time offset",
+                kind="number",
+                default=0.0,
+                unit="s",
+            ),
+            FieldSpec(
+                name="initial_distance_offset",
+                label="Start this far along",
+                kind="number",
+                default=0.0,
+                unit="m",
+            ),
+            FieldSpec(
+                name="hidden_outside_trajectory",
+                label="Out of the world before its first and after its last vertex",
+                kind="bool",
+                default=False,
+                help=(
+                    "For a road user a recording picks up late or loses early. "
+                    "Needs the Position mode and a time reference."
+                ),
+            ),
+            FieldSpec(
+                name="appear_on_start",
+                label="Appear at the first vertex when the action starts",
+                kind="bool",
+                default=False,
+                required=False,
+                help=(
+                    "For an entity spawned out of the world: placed on its "
+                    "first vertex, facing along the path, moving at the speed "
+                    "above, when the card is triggered -- in any mode."
+                ),
+            ),
+            FieldSpec(
                 name="walking_speed",
                 label="Walking speed",
                 kind="number",
@@ -2457,13 +2458,16 @@ register_action_spec(
             ),
         ),
         description=(
-            "Give a vehicle a destination and let its stack plan the route. "
-            "The ego's destination belongs to the ego and is set there, beside "
-            "its spawn: it is routed once during initialization whether or not "
-            "a card says so, because it cannot start driving until it has. A "
-            "card is for changing that destination mid-run, or for a vehicle "
-            "that is not the ego. A vehicle the traffic backend drives is handed "
-            "the route, through the via lanelets, as a path to follow."
+            "Send a vehicle or pedestrian to a goal, through waypoints, on "
+            "time. The route is a goal lanelet with via lanelets, or "
+            "waypoints written out -- map poses, lanelets, poses relative to "
+            "an entity's lane or to the scenario's route -- each departed on "
+            "its time, on a waypoint condition, or on arrival. Driver mode "
+            "hands the route to the entity's own driver and sets its speed to "
+            "meet the times (an Autoware ego takes the route only); Follow and "
+            "Position move the entity along straight legs themselves. The "
+            "ego's own destination is set on the ego, beside its spawn: a "
+            "card is for changing it mid-run, or for another road user."
         ),
     )
 )
@@ -3700,7 +3704,7 @@ register_condition_spec(
         ),
         description=(
             "A vertex's time: the entity departs the vertex when the "
-            "trajectory's clock reaches it.  Only as a Follow Trajectory "
+            "trajectory's clock reaches it.  Only as a Set Goal "
             "card's whole waypoint condition."
         ),
     )

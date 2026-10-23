@@ -174,7 +174,7 @@ class TestWithAHeldMap:
         )
 
     def test_a_trajectory_resolves_on_the_held_map(self, held_map: MagicMock) -> None:
-        from autoware_carla_scenario.actions.follow_trajectory import (
+        from autoware_carla_scenario.actions._trajectory_run import (
             _resolve_in_world,
         )
 

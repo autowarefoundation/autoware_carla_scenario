@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "urn:autoware-carla-scenario:schema:trajectory",
   "title": "TrajectoryRecord",
-  "description": "One line of a run's `{stem}.trajectory.jsonl`, written by `autoware_carla_scenario.trajectory_recorder.TrajectoryRecorder`, format version 2: one of twelve records, told apart by `type`. Units, frames and the order of a file: docs/trajectory_log.md.",
+  "description": "One line of a run's `{stem}.trajectory.jsonl`, written by `autoware_carla_scenario.trajectory_recorder.TrajectoryRecorder`, format version 2: one of fifteen records, told apart by `type`. Units, frames and the order of a file: docs/trajectory_log.md.",
   "x-schema-version": 2,
   "oneOf": [
     {
@@ -39,6 +39,15 @@
       "$ref": "#/definitions/AdversityRecord"
     },
     {
+      "$ref": "#/definitions/WaypointArrivalRecord"
+    },
+    {
+      "$ref": "#/definitions/CollisionRecord"
+    },
+    {
+      "$ref": "#/definitions/WalkerFallenRecord"
+    },
+    {
       "$ref": "#/definitions/ResultRecord"
     }
   ],
@@ -56,6 +65,9 @@
       "condition": "#/$defs/ConditionRecord",
       "action": "#/$defs/ActionRecord",
       "adversity": "#/$defs/AdversityRecord",
+      "waypoint_arrival": "#/$defs/WaypointArrivalRecord",
+      "collision": "#/$defs/CollisionRecord",
+      "walker_fallen": "#/$defs/WalkerFallenRecord",
       "result": "#/$defs/ResultRecord"
     }
   },
@@ -640,6 +652,179 @@
         "avoidable",
         "victims",
         "response"
+      ],
+      "additionalProperties": false
+    },
+    "WaypointArrivalRecord": {
+      "title": "WaypointArrivalRecord",
+      "description": "A routed entity reached a waypoint that carries an arrival time or a departure condition (`RoutingAction`, any mode): when it was due and when it arrived, so a run can be scored on its timing. Written on the tick the arrival is known: on arrival for a time, and once the condition has held for a condition. Added in version 2, which a reader of version 2 that does not know it skips.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "waypoint_arrival"
+        },
+        "frame": {
+          "description": "The CARLA frame of the tick it belongs to: the `frame` of a tick record (or of a tick left out for having no vehicle or walker in it).",
+          "$ref": "#/definitions/SafeUInt"
+        },
+        "t": {
+          "description": "That tick's simulated time, seconds since the scenario clock started.",
+          "type": "number"
+        },
+        "label": {
+          "description": "The routing action's label.",
+          "type": "string"
+        },
+        "entity": {
+          "description": "`role_name` of the entity routed.",
+          "type": "string"
+        },
+        "vertex": {
+          "description": "The waypoint's index among the route's vertices, from 0.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "kind": {
+          "description": "What timed the waypoint: `time`, its arrival time, or `condition`, its departure condition (the target is the moment it first held).",
+          "type": "string",
+          "enum": [
+            "time",
+            "condition"
+          ]
+        },
+        "mode": {
+          "description": "The routing mode: `driver` (the entity's own driver, paced by speed), `follow` or `position`.",
+          "type": "string",
+          "enum": [
+            "driver",
+            "follow",
+            "position"
+          ]
+        },
+        "target_t": {
+          "description": "Scenario time (s) the entity was due at the waypoint.",
+          "type": "number"
+        },
+        "actual_t": {
+          "description": "Scenario time (s) it arrived there.",
+          "type": "number"
+        },
+        "error_s": {
+          "description": "`actual_t - target_t`: positive late, negative early.",
+          "type": "number"
+        }
+      },
+      "required": [
+        "type",
+        "frame",
+        "t",
+        "label",
+        "entity",
+        "vertex",
+        "kind",
+        "mode",
+        "target_t",
+        "actual_t",
+        "error_s"
+      ],
+      "additionalProperties": false
+    },
+    "CollisionRecord": {
+      "title": "CollisionRecord",
+      "description": "A vehicle other than the ego collided with a vehicle or a walker (`npc_collisions.NpcCollisionMonitor`): logged, not judged -- the ego's own collision condition is what fails a run. One contact is written once per second it lasts. Added in version 2, which a reader of version 2 that does not know it skips.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "collision"
+        },
+        "frame": {
+          "description": "The CARLA frame the collision happened on.",
+          "$ref": "#/definitions/SafeUInt"
+        },
+        "t": {
+          "description": "That tick's simulated time, seconds since the scenario clock started.",
+          "type": "number"
+        },
+        "actors": {
+          "description": "The `role_name` of each side (its type id when it has none): the vehicle that heard it first.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "ids": {
+          "description": "The two actors' ids, in the order of `actors`.",
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ActorId"
+          },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "impulse": {
+          "description": "The magnitude of the collision's normal impulse (N*s).",
+          "type": "number",
+          "minimum": 0
+        },
+        "ego": {
+          "description": "Whether one side is the ego.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "type",
+        "frame",
+        "t",
+        "actors",
+        "ids",
+        "impulse",
+        "ego"
+      ],
+      "additionalProperties": false
+    },
+    "WalkerFallenRecord": {
+      "title": "WalkerFallenRecord",
+      "description": "A walker seen fallen over -- tipped beyond 50 degrees, or dropped more than half its height between two looks while barely moving sideways -- once per walker. It is left where it is. Added in version 2, which a reader of version 2 that does not know it skips.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "walker_fallen"
+        },
+        "frame": {
+          "description": "The CARLA frame of the tick it belongs to: the `frame` of a tick record (or of a tick left out for having no vehicle or walker in it).",
+          "$ref": "#/definitions/SafeUInt"
+        },
+        "t": {
+          "description": "That tick's simulated time, seconds since the scenario clock started.",
+          "type": "number"
+        },
+        "id": {
+          "description": "The walker's actor id.",
+          "$ref": "#/definitions/ActorId"
+        },
+        "role": {
+          "description": "Its `role_name` (its type id when it has none).",
+          "type": "string"
+        },
+        "drop": {
+          "description": "How far (m) it dropped since the look before (0 when it tipped over without dropping).",
+          "type": "number"
+        },
+        "tilt": {
+          "description": "How far (deg) it is tipped over: the larger of its pitch and roll.",
+          "type": "number"
+        }
+      },
+      "required": [
+        "type",
+        "frame",
+        "t",
+        "id",
+        "role",
+        "drop",
+        "tilt"
       ],
       "additionalProperties": false
     },

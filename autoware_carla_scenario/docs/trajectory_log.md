@@ -33,7 +33,7 @@ any later file.
 
 ## Records
 
-Each line is one of eleven records, told apart by `type`. A file starts with one
+Each line is one of fifteen records, told apart by `type`. A file starts with one
 `world` line and one `map` line, then one `traffic_light` line per light and one
 `warmup` line. After that come the ticks: each `tick` line is preceded by an
 `actor` line for every vehicle or walker appearing in it for the first time and
@@ -68,6 +68,9 @@ each condition that changed and an `action` line for each action that moved on. 
 | `condition` (2) | when a condition is first checked, and when it changes | `frame`, `t`, `role` (`pass`/`fail`), `index` (in its list), `label`, `satisfied` |
 | `action` (2) | on the first tick of the loop, and when the action's state changes | `frame`, `t`, `phase` (`pre_tick`/`post_tick`), `index` (in its list), `label`, `action_type` (its class), `state` (`standbyState`, `startTransition`, `runningState`, `endTransition`, `completeState`: OpenSCENARIO's, `ActionState`) |
 | `adversity` (2) | on the tick NADE samples an adversity (`AdversarialTrafficAction`) | `frame`, `t`, `label` (the action's), `agent`, `kind` (`AdversityKind`), `location` (`AdversityLocation`), `probability` (`p`, cut for an unavoidable one), `is_probability` (`q`), `weight` (the run's, once sampled), `avoidable`, `victims`, `response` (`avoid`, `accept` or empty) |
+| `waypoint_arrival` (2) | when a routed entity has reached a waypoint with a time or a departure condition (`RoutingAction`, any mode), and its target is known | `frame`, `t`, `label` (the action's), `entity`, `vertex` (0-based), `kind` (`time`, or `condition`: the target is when it first held), `mode` (`driver`, `follow`, `position`), `target_t`, `actual_t`, `error_s` (`actual_t - target_t`) |
+| `collision` (2) | when a vehicle other than the ego collides with a vehicle or a walker; once per pair per second of contact (`npc_collisions`) | `frame`, `t`, `actors` `[role, role]` (type ids where an actor has no role), `ids` `[id, id]`, `impulse` (N*s), `ego` (one side is the ego) |
+| `walker_fallen` (2) | once per walker seen fallen over (tipped beyond 50 deg, or dropped more than half its height between two looks a quarter second apart while barely moving sideways) | `frame`, `t`, `id`, `role`, `drop` (m), `tilt` (deg) |
 | `result` (2) | last, when the run reached a verdict | `passed`, `message`, `elapsed_seconds`, `conditions` `[{label, role, condition_type, satisfied, message}]` (_result.json's, without the details) |
 
 Fixed-length arrays are tuples: the schema gives each position its meaning, and
