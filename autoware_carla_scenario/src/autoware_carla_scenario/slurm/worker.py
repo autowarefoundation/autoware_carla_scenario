@@ -603,16 +603,13 @@ def run_task(manifest_path: Path, submission_index: int, task_index: int) -> int
 
             logger.info("%s", report(rerun.close()))
         if slot is not None:
-            port_file = layout.task_port(submission_index, task_index)
-            if watchdog is not None:
-                # The watchdog stops CARLA if this is cut short, so the file
-                # (the job script's pointer to CARLA) can go first: nothing
-                # sees CARLA gone while the file is still there.
-                port_file.unlink(missing_ok=True)
             left = kill_carla_on_port(slot.rpc)
             if left:
                 logger.error("CARLA on port %d still runs: %s", slot.rpc, left)
             else:
+                # The file (the job script's pointer to CARLA) goes only once
+                # CARLA is gone; a worker cut short here leaves it to the
+                # watchdog, which removes it after stopping CARLA.
                 port_file.unlink(missing_ok=True)
                 if watchdog is not None:
                     watchdog.finish()

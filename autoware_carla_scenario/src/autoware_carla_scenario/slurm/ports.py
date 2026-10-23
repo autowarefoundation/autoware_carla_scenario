@@ -258,9 +258,9 @@ class CarlaWatchdog:
     lock, so no other task takes the slot before CARLA is gone.
 
     With *port_file* (the task's ``.port`` file, which the worker would have
-    removed), the watchdog removes it before it stops CARLA, so a killed
-    worker leaves neither a stale file nor a window in which CARLA is gone
-    but the file is not.
+    removed), the watchdog removes it once CARLA is gone -- never before: the
+    file is the job script's pointer to a CARLA still running, so a watchdog
+    killed midway must not have dropped it.  A CARLA that survives keeps it.
     """
 
     def __init__(self, slot: PortSlot, port_file: Path | None = None) -> None:
@@ -300,12 +300,12 @@ class CarlaWatchdog:
 def _watch(port: int, port_file: str | None = None) -> int:
     if sys.stdin.buffer.read().startswith(b"done"):
         return 0
-    if port_file is not None:
+    left = kill_carla_on_port(port)
+    if port_file is not None and not left:
         try:
             Path(port_file).unlink(missing_ok=True)
         except OSError:
             pass
-    kill_carla_on_port(port)
     return 0
 
 

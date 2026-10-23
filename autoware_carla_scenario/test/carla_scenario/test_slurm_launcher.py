@@ -358,7 +358,7 @@ def test_a_crashed_task_leaves_its_cases_missing_and_resubmit_runs_only_them(
     assert task0 is not None
     port = task0["ports"]["rpc"]
     _wait_for(lambda: carla_processes_on_port(port) == [], 20, "the orphaned CARLA")
-    assert not layout.task_port(0, 0).exists()
+    _wait_for(lambda: not layout.task_port(0, 0).exists(), 20, "the port file")
 
     # Resubmitted: the two cases with no result, and those that errored (the
     # fake world's errored cases raise again, as a case without ground would).
@@ -424,7 +424,11 @@ def test_scancel_stops_the_tasks_and_their_carla_and_resubmit_finishes_the_batch
     for task in range(2):
         task_status = layout.read_task(0, task)
         assert task_status is not None and task_status["state"] == "cancelled"
-        assert not layout.task_port(0, task).exists()
+        # Removed after CARLA is gone, by the worker or (when it was killed)
+        # its watchdog, so it can lag the CARLA check above (#525).
+        _wait_for(
+            lambda t=task: not layout.task_port(0, t).exists(), 20, "the port file"
+        )
 
     # The collect job ran (once the array ended): every case without a result.
     _wait_for(lambda: (batch / "batch_results.json").exists(), 30, "the collect job")
