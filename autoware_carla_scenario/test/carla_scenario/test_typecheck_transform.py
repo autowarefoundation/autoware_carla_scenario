@@ -30,6 +30,7 @@ from autoware_carla_scenario.typecheck.transform import (
     conflicting_imports,
     flag_member_values,
     inherited_inits,
+    literal_all,
     relative_module_imports,
     split_tuple_excepts,
     transform_source,
@@ -2430,6 +2431,65 @@ def test_an_own_module_imported_as_a_module_is_imported_from_its_directory(
     )
     assert problems == []
     assert out == f"{rewritten}\nx = 1\n"
+
+
+@pytest.mark.parametrize(
+    ("exports", "rewritten"),
+    [
+        (["a", "_b"], "from .helpers import a, _b"),
+        (["a"], "from .helpers import a"),
+        ([], "pass"),
+    ],
+)
+def test_a_star_import_of_an_own_module_imports_its_all(
+    exports: list[str], rewritten: str
+) -> None:
+    # Python binds only `__all__` (#506); Codon binds every public name.
+    out, problems = relative_module_imports(
+        "from .helpers import *\nx = 1\n",
+        "pkg.scenario",
+        False,
+        _OWN_MODULES.__contains__,
+        lambda module: exports if module == "pkg.helpers" else None,
+    )
+    assert problems == []
+    assert out == f"{rewritten}\nx = 1\n"
+
+
+@pytest.mark.parametrize(
+    "star_names",
+    [lambda module: None, None],
+    ids=["no-literal-all", "not-asked"],
+)
+def test_a_star_import_without_a_literal_all_is_left_as_written(star_names) -> None:  # type: ignore[no-untyped-def]
+    out, problems = relative_module_imports(
+        "from .helpers import *\n",
+        "pkg.scenario",
+        False,
+        _OWN_MODULES.__contains__,
+        star_names,
+    )
+    assert (out, problems) == ("from .helpers import *\n", [])
+
+
+@pytest.mark.parametrize(
+    ("source", "names"),
+    [
+        ('__all__ = ["a", "b"]\n', ["a", "b"]),
+        ('__all__ = ("a",)\n', ["a"]),
+        ('__all__: list[str] = ["a"]\n', ["a"]),
+        ('__all__ = ["a"]\n__all__ += ["b"]\n', ["a", "b"]),
+        ("x = 1\n", None),
+        ("__all__ = [n for n in dir()]\n", None),
+        ('__all__ = ["a"]\n__all__.append("b")\n', None),
+        ('__all__ = ["a"]\nif x:\n    __all__ += ["b"]\n', None),
+        ('__all__ += ["b"]\n', None),
+    ],
+)
+def test_literal_all_reads_only_a_literal_list_or_tuple(
+    source: str, names: list[str] | None
+) -> None:
+    assert literal_all(ast.parse(source)) == names
 
 
 def test_the_rewrite_keeps_every_line_and_reaches_functions() -> None:

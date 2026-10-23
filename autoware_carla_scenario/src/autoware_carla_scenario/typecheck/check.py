@@ -88,6 +88,7 @@ from .library_driver import (
     uncalled_nodes,
     workspace_module,
 )
+from .module_cycles import cycle_hint
 from .python_rewrites import REWRITE_HINTS, python_rewrite_refusals
 from .transform import (
     PRELUDE,
@@ -95,6 +96,7 @@ from .transform import (
     classes_with_init,
     conflicting_imports,
     enum_class_names,
+    literal_all,
     redirect_imports,
     relative_module_imports,
     transform_source_lines,
@@ -789,7 +791,11 @@ def _build_workspace(
         dest.parent.mkdir(parents=True, exist_ok=True)
         # An own module imported as a module, in the form Codon resolves (#310).
         source, refused = relative_module_imports(
-            module.text, name, module.is_package, sources.modules.__contains__
+            module.text,
+            name,
+            module.is_package,
+            sources.modules.__contains__,
+            lambda m: literal_all(sources.modules[m].tree),
         )
         problems += [
             Diagnostic(message, str(module.path), line) for line, message in refused
@@ -1163,6 +1169,10 @@ def _data_model_hints(
         message = diagnostic.message
         try:
             hint = _data_model_hint(message, diagnostic.trace, sources)
+            if hint is None:  # a cycle of the package's modules (#507)
+                hint = cycle_hint(
+                    message, diagnostic.path, diagnostic.line, sources.modules
+                )
         except Exception:  # noqa: BLE001 - only a hint: never lose Codon's error
             pass
         if hint is not None:
