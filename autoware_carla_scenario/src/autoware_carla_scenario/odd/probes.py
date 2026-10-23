@@ -43,7 +43,6 @@ from typing import TYPE_CHECKING, Optional, Union
 from ..entity_role import find_actor_in_world
 from ..constants import EGO_ROLE_NAME
 from ..kinematics import Vector3
-from ..road_grip import world_grip
 from ..visibility import world_visibility
 from ..world_reset import episode_of
 from .model import UNDECIDED
@@ -513,10 +512,13 @@ def visibility(world: carla.World) -> Optional[float]:
 
 def tire_friction(world: carla.World) -> Optional[float]:
     """How well the road grips, as a share of the dry road's grip (1.0):
-    what the run's weather left the vehicles' tyres
-    (:mod:`autoware_carla_scenario.road_grip`); ``None`` when the run set
-    none."""
-    return world_grip(episode_of(world))
+    what the run's weather left the vehicles' wheels
+    (:func:`~autoware_carla_scenario.actions.environment.world_tire_friction`);
+    ``None`` when nothing set it in this world."""
+    # Imported here: the actions package is heavier than a probe module.
+    from ..actions.environment import world_tire_friction  # noqa: PLC0415
+
+    return world_tire_friction(episode_of(world))
 
 
 def road_wetness(world: carla.World) -> Optional[str]:

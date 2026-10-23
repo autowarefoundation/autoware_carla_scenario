@@ -109,8 +109,7 @@ BUILT_IN_PROBES: Mapping[str, tuple[Callable[[Any], Any], str]] = _BuiltInProbes
 #: the weather.  The road-wetness knob sets the road's water, which the
 #: vehicles' grip follows (:func:`~autoware_carla_scenario.actions.environment.tire_friction_range`),
 #: and the tire-friction knob names the grip outright, whatever the water:
-#: CARLA's physics and the traffic backends' braking both take it
-#: (:mod:`autoware_carla_scenario.road_grip`).
+#: the vehicles' wheel friction, which CARLA's physics alone reads.
 DEFAULT_KNOBS: dict[Callable[..., Any], OddKnob] = {
     # environment.rain rather than environment.precipitation: precipitation
     # alone barely shows in a camera image, so a "heavy rain" case would look

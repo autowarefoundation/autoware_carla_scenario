@@ -34,7 +34,6 @@ from .base import (
 )
 from .config import TrafficManagerBackendConfig
 from .parameters import VEHICLE_BOUNDS, Spread, VehicleParameters
-from ..road_grip import grip_braking, world_grip
 from ..world_reset import episode_of
 from ..visibility import (
     DEFAULT_DECEL,
@@ -111,8 +110,8 @@ class TrafficManagerBackend(TrafficBackend):
     The TrafficManager has no notion of sight either, so with
     ``follow_visibility: true`` this backend gives it one (:meth:`tick`): each
     vehicle it drives is held to the speed a driver stops from within what
-    they see, worked out from the braking the road's grip leaves.  Off unless
-    asked for, so a scenario's vehicles drive as they always did.
+    they see.  Off unless asked for, so a scenario's vehicles drive as they
+    always did.
 
     The client is injected rather than passed to each call, from either of the
     two places that already hold one: :meth:`prepare`, when
@@ -135,7 +134,6 @@ class TrafficManagerBackend(TrafficBackend):
     _skipped: set[int]
     _lane_changed: List[DrivenEntity]
     _visibility: Optional[float]
-    _grip: Optional[float]
     _draws: Optional[random.Random]
     _drawn: set[int]
     _autopiloted: dict[int, "carla.Actor"]
@@ -183,8 +181,6 @@ class TrafficManagerBackend(TrafficBackend):
         self._lane_changed = []
         #: How far drivers see, m, as last reported; ``None``: nothing set.
         self._visibility = None
-        #: The road's grip, as last reported; ``None``: nothing set.
-        self._grip = None
         #: Every vehicle put on autopilot here, by actor id.
         self._autopiloted = {}
         #: Actor id -> the percentage under the speed limit its own speed
@@ -265,24 +261,19 @@ class TrafficManagerBackend(TrafficBackend):
         ``follow_visibility: true`` each vehicle it drives is held to the
         speed it stops from within the visibility the run's weather set
         (:func:`~autoware_carla_scenario.visibility.sight_speed`, for SUMO's
-        default car's reaction and the braking the road's grip leaves it,
-        :func:`~autoware_carla_scenario.road_grip.grip_braking`): as a
-        percentage under its road's speed limit, never less than its own
+        default car's reaction and braking): as a percentage under its road's speed limit, never less than its own
         speed factor's, worked out again every :data:`SIGHT_UPDATE_S` and
-        whenever the visibility or the grip changes.  A vehicle a scenario
+        whenever the visibility changes.  A vehicle a scenario
         gave a speed of its own (``set_desired_speed``) keeps that.  Without
         it, the visibility is only logged, with the speed it would hold a car
         to.
         """
-        world_id = episode_of(world)
-        seen = world_visibility(world_id)
-        grip = world_grip(world_id)
-        changed = seen != self._visibility or grip != self._grip
+        seen = world_visibility(episode_of(world))
+        changed = seen != self._visibility
         follows = self.vehicle_parameters.follow_visibility is True
         if changed:
             self._visibility = seen
-            self._grip = grip
-            self._log_sight(seen, grip, follows)
+            self._log_sight(seen, follows)
         if not follows and len(self._held) == 0:
             return
         if follows and not changed and elapsed < self._sight_due:
@@ -297,8 +288,7 @@ class TrafficManagerBackend(TrafficBackend):
         # visibility any more: every vehicle held is given its own back.
         limit_kmh = -1.0
         if follows and seen is not None:
-            decel = grip_braking(DEFAULT_DECEL, grip)
-            limit_kmh = sight_speed(seen, decel, DEFAULT_REACTION_S) * 3.6
+            limit_kmh = sight_speed(seen, DEFAULT_DECEL, DEFAULT_REACTION_S) * 3.6
         for actor_id, actor in list(self._autopiloted.items()):
             if actor_id in self._released:
                 continue
@@ -335,14 +325,12 @@ class TrafficManagerBackend(TrafficBackend):
         else:
             self._held[actor.id] = wanted
 
-    def _log_sight(
-        self, seen: Optional[float], grip: Optional[float], follows: bool
-    ) -> None:
+    def _log_sight(self, seen: Optional[float], follows: bool) -> None:
         """Say how far drivers see now, and what that does to the traffic."""
         if seen is None:
             logger.info("TrafficManager: no visibility set any more")
             return
-        decel = grip_braking(DEFAULT_DECEL, grip)
+        decel = DEFAULT_DECEL
         limit_kmh = sight_speed(seen, decel, DEFAULT_REACTION_S) * 3.6
         if follows:
             logger.info(
@@ -387,7 +375,6 @@ class TrafficManagerBackend(TrafficBackend):
         self._released = set()
         self._skipped = set()
         self._visibility = None
-        self._grip = None
         self._autopiloted = {}
         self._speed_differences = {}
         self._held = {}
@@ -412,7 +399,6 @@ class TrafficManagerBackend(TrafficBackend):
         out["random_seed"] = self._random_seed
         out["follow_visibility"] = self.vehicle_parameters.follow_visibility is True
         out["visibility_m"] = self._visibility
-        out["grip"] = self._grip
         return out
 
     # ------------------------------------------------------------------

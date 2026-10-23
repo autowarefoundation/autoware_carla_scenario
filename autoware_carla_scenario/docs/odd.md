@@ -915,8 +915,8 @@ their own:
 `road_wetness` reads the weather's `wetness` alone, which its knob sets, so a
 drawn value reads back as its bucket; the standing water `rain` brings is the
 rain's, and the grip follows the larger of the two. `tire_friction` reads the
-grip the run's weather left the tyres (a share of the dry road's, 1.0) --
-`None` when the run set none -- and its knob names it outright, as
+grip the run's weather left the vehicles' wheels (a share of the dry
+road's, 1.0) -- `None` when nothing set it -- and its knob names it outright, as
 `visibility`'s names the visibility. `wind` and `cloudiness` read CARLA's
 0-100 intensities as levels, as `rain` and `fog` do.
 
@@ -983,13 +983,7 @@ later (background traffic) the same grip. A scenario that sets the weather on
 the tick loop sets the grip with it: a factor applied again replaces the last
 one rather than compounding it.
 
-The grip is also recorded for the run (`autoware_carla_scenario.road_grip`),
-for the traffic backends, which plan their vehicles' braking with it: the
-`sumo` backend gives every vehicle SUMO drives the acceleration and braking
-it leaves, and both backends work the speed a driver stops from within what
-they see out from that braking
-([Grip](traffic_backends.md#the-sumo-backend),
-[Weather and the TrafficManager](traffic_backends.md#weather-and-the-trafficmanager)).
+The grip is CARLA's vehicle physics alone: no traffic backend reads it.
 
 The example scenarios declare these:
 
@@ -1049,8 +1043,8 @@ sets it through its own knob, `environment.visibility_m`, and a case with one
 keeps it. A run that sets no weather records none, and its traffic sees as
 it always did; each run starts with none, whatever the last left.
 
-What follows it is the traffic backend's (`traffic.vehicles.follow_visibility`),
-with the braking the road's grip leaves: the `sumo` backend holds its own
+What follows it is the traffic backend's (`traffic.vehicles.follow_visibility`):
+the `sumo` backend holds its own
 traffic to the speed it stops from within it, by default
 ([Visibility](traffic_backends.md#the-sumo-backend)); the `traffic_manager`
 backend holds every vehicle it drives to it with `follow_visibility: true`,

@@ -79,11 +79,8 @@ parameter is drawn per vehicle and per pedestrian from its spread.  SUMO's own t
 its drivers see (``follow_visibility``, on by default,
 :mod:`autoware_carla_scenario.visibility`): night, rain and fog hold each
 vehicle to the speed it can stop from within that distance, worked out from
-its ``reaction_time_s`` and ``decel``.  The road's grip
-(:mod:`autoware_carla_scenario.road_grip`), which the weather's water leaves,
-is physics rather than choice: every vehicle SUMO drives gets the
-acceleration and braking it leaves (its own, scaled down on a road that grips
-less than a dry one), and the sight speed is worked out from that braking.
+its ``reaction_time_s`` and ``decel``.  The TrafficManager follows it too
+with ``follow_visibility: true``.
 
 The CARLA coupling is one step behind SUMO, as in TeraSim: SUMO steps after
 the world has ticked, and its new state is applied to the actors for the next
@@ -101,7 +98,6 @@ from typing import Any, ClassVar, Collection, Optional
 
 from ...constants import EGO_ROLE_NAME
 from ...coordinate.map_manager import run_carla_map
-from ...road_grip import grip_braking, world_grip
 from ...utils.traffic_light import traffic_light_state_name
 from ...visibility import sight_speed, world_visibility
 from ...world_reset import episode_of
@@ -444,15 +440,6 @@ class SumoTrafficBackend(TrafficBackend):
         #: SUMO id -> its maximum speed (m/s) before the visibility held it
         #: down, its deceleration (m/s²) and its tau (s): read once.
         self._max_speeds: dict[str, tuple[float, float, float]] = {}
-        #: The share of the dry road's grip SUMO's vehicles brake with, as
-        #: last applied (1 at most); ``None``: their own braking.
-        self._grip: Optional[float] = None
-        #: SUMO id -> its own acceleration, deceleration and emergency
-        #: deceleration (m/s²) before the grip scaled them: read once.
-        self._own_braking: dict[str, tuple[float, float, float]] = {}
-        #: Whether every held vehicle's sight speed is to be worked out again
-        #: (its braking changed with the grip).
-        self._rehold = False
         #: SUMO steps per CARLA tick (``step_length_s``).
         self._substeps = 1
         #: The vehicles that departed in this step, read once per step.
@@ -523,7 +510,6 @@ class SumoTrafficBackend(TrafficBackend):
                 )
                 return
             self._draw_vehicle(sumo_id, overrides)
-            self._regrip(sumo_id)
         elif self._tm_drives_scenario:
             shared = overrides.restricted_to(self._tm.supported_vehicle_parameters())
             self._warn_dropped(overrides, shared)
@@ -546,7 +532,6 @@ class SumoTrafficBackend(TrafficBackend):
         for sumo_id in self._traci.vehicle.getIDList():
             if sumo_id not in self._external and self._vclass(sumo_id) != "bicycle":
                 self._draw_vehicle(sumo_id, overrides)
-                self._regrip(sumo_id)
         # The visibility is held anew, from the new draws (or not at all).
         for sumo_id in list(self._max_speeds):
             self._hold_to_sight(sumo_id, None)
@@ -588,7 +573,6 @@ class SumoTrafficBackend(TrafficBackend):
             self._traci.simulationStep()
             self._departed = None
             self._apply_parameters()
-            self._follow_grip(world)
             self._follow_visibility(world)
 
     def _departed_ids(self) -> list[str]:
@@ -954,9 +938,6 @@ class SumoTrafficBackend(TrafficBackend):
         self._feedback_count = 0
         self._visibility = None
         self._max_speeds = {}
-        self._grip = None
-        self._own_braking = {}
-        self._rehold = False
 
     def describe(self) -> dict[str, Any]:
         """The backend, its seed, network and demand, for the result record."""
@@ -1000,7 +981,6 @@ class SumoTrafficBackend(TrafficBackend):
             }
         out["follow_visibility"] = self._follows_visibility
         out["visibility_m"] = self._visibility
-        out["grip"] = self._grip
         return out
 
     def fidelity_census(self) -> dict[str, int]:
@@ -3076,10 +3056,7 @@ class SumoTrafficBackend(TrafficBackend):
         if self._max_speeds:
             for sumo_id in tc.simulation.getArrivedIDList():
                 self._max_speeds.pop(sumo_id, None)
-        if seen is not None and seen == self._visibility and self._rehold:
-            # The same sight, but the braking it is worked out from changed.
-            ids = list(tc.vehicle.getIDList())
-        elif seen == self._visibility:
+        if seen == self._visibility:
             ids = self._departed_ids()
         elif seen is None:
             self._visibility = None
@@ -3092,102 +3069,9 @@ class SumoTrafficBackend(TrafficBackend):
             self._visibility = seen
             logger.info("SUMO: drivers see %.0f m; traffic is held to it", seen)
             ids = list(tc.vehicle.getIDList())
-        self._rehold = False
         for sumo_id in ids:
             if sumo_id not in self._driven and sumo_id not in self._external:
                 self._hold_to_sight(sumo_id, seen)
-
-    # ------------------------------------------------------------------
-    # Internals: what the road grips
-    # ------------------------------------------------------------------
-
-    def _follow_grip(self, world: Any) -> None:
-        """Give every vehicle SUMO drives the acceleration and braking the
-        road's grip leaves it: all of them when the grip changes, the ones
-        that have just departed otherwise.
-
-        Physics rather than a driver's choice, so the scenario's own vehicles
-        SUMO drives get it too, and SUMO's bicycles; not a published one,
-        which CARLA moves.
-        """
-        grip = world_grip(episode_of(world))
-        share = None if grip is None else min(grip, 1.0)
-        if share is None and self._grip is None:
-            return  # nothing set, nothing scaled: no TraCI call at all
-        tc = self._traci
-        if self._own_braking:
-            for sumo_id in tc.simulation.getArrivedIDList():
-                self._own_braking.pop(sumo_id, None)
-        if share == self._grip:
-            ids = self._departed_ids()
-        else:
-            self._grip = share
-            if share is None:
-                logger.info("SUMO: no grip set any more; vehicles brake as their own")
-                ids = list(self._own_braking)
-            else:
-                logger.info(
-                    "SUMO: the road keeps %.2f of the dry grip; vehicles brake "
-                    "with it",
-                    share,
-                )
-                ids = list(tc.vehicle.getIDList())
-            # Their sight speeds were worked out from the braking they had.
-            self._rehold = True
-        present = set(tc.vehicle.getIDList()) if share is None else None
-        for sumo_id in ids:
-            if sumo_id in self._external:
-                continue
-            if present is not None and sumo_id not in present:
-                self._own_braking.pop(sumo_id, None)
-                continue
-            self._hold_to_grip(sumo_id, share)
-
-    def _hold_to_grip(self, sumo_id: str, share: Optional[float]) -> None:
-        """Scale *sumo_id*'s own acceleration and braking by *share* of the
-        dry road's grip; ``None`` gives it its own back."""
-        vehicle = self._traci.vehicle
-        try:
-            own = self._own_braking.get(sumo_id)
-            if share is None:
-                if own is not None:
-                    del self._own_braking[sumo_id]
-                    accel, decel, emergency = own
-                    vehicle.setAccel(sumo_id, accel)
-                    vehicle.setDecel(sumo_id, decel)
-                    vehicle.setEmergencyDecel(sumo_id, emergency)
-                    self._held_decel(sumo_id, decel)
-                return
-            if own is None:
-                # Its own: its draws of the parameters, when set.
-                own = self._own_braking[sumo_id] = (
-                    float(vehicle.getAccel(sumo_id)),
-                    float(vehicle.getDecel(sumo_id)),
-                    float(vehicle.getEmergencyDecel(sumo_id)),
-                )
-            accel, decel, emergency = own
-            decel = grip_braking(decel, share)
-            vehicle.setAccel(sumo_id, grip_braking(accel, share))
-            vehicle.setDecel(sumo_id, decel)
-            vehicle.setEmergencyDecel(
-                sumo_id, max(grip_braking(emergency, share), decel)
-            )
-            self._held_decel(sumo_id, decel)
-        except Exception as exc:  # noqa: BLE001 - one vehicle must not end the run
-            logger.warning("SUMO could not give %s the road's grip: %s", sumo_id, exc)
-
-    def _held_decel(self, sumo_id: str, decel: float) -> None:
-        """Work *sumo_id*'s sight speed out from *decel* from now on."""
-        held = self._max_speeds.get(sumo_id)
-        if held is not None:
-            self._max_speeds[sumo_id] = (held[0], decel, held[2])
-
-    def _regrip(self, sumo_id: str) -> None:
-        """After *sumo_id* drew new parameters: scale what it drew."""
-        if self._grip is None or sumo_id in self._external:
-            return
-        self._own_braking.pop(sumo_id, None)
-        self._hold_to_grip(sumo_id, self._grip)
 
     def _hold_to_sight(self, sumo_id: str, seen: Optional[float]) -> None:
         """Cap *sumo_id*'s maximum speed at the one it stops from within

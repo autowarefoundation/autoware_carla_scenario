@@ -161,7 +161,7 @@ An ODD can draw both the mean and the std of each, per case
 | `imperfection` | Driver imperfection, 0-1 | — | `sigma` |
 | `max_lateral_speed_mps` | Most lateral speed, m/s | — | `maxSpeedLat` |
 | `max_lateral_accel` | Most lateral acceleration, m/s² | — | `lcAccelLat` (sublane model, the default) |
-| `follow_visibility` | Slow to what the drivers see in the weather, braking as the road grips | ✓ (when `true`) | ✓ (on by default) |
+| `follow_visibility` | Slow to what the drivers see in the weather | ✓ (when `true`) | ✓ (on by default) |
 
 `traffic.pedestrians` (the TrafficManager drives no pedestrians — a scenario's
 own walk as the scenario steers them — so every field is `sumo`'s):
@@ -276,8 +276,7 @@ defaults.
 - `follow_visibility` — bool
     - Hold the backend's own traffic to the speed it stops from within what
       its drivers see in the run's weather, `v * tau + v² / (2 * decel)` = the
-      visibility, with `decel` scaled down to the road's grip, and give each
-      its own speed back when the weather lifts.
+      visibility, and give each its own speed back when the weather lifts.
     - `sumo`: SUMO's own traffic (ambient and background vehicles), with each
       vehicle's own `tau` and `decel`. Unset, `true`; `false` ignores the
       visibility. See **Visibility** under [The SUMO backend](#the-sumo-backend).
@@ -707,36 +706,33 @@ no traffic but its own and its traffic sources' unless asked.
 ## Weather and the TrafficManager
 
 CARLA's TrafficManager drives in the weather as on a clear day: its vehicles
-know where every actor is whatever the fog, and its controller does not know
-the road is wet. Two things reach it all the same:
+know where every actor is whatever the fog. With
+`traffic.vehicles.follow_visibility: true` each vehicle it drives is held to
+the speed it stops from within what its driver sees, worked out with SUMO's
+default car's reaction (1 s) and braking (4.5 m/s²): 62 km/h in 50 m of fog.
+The TrafficManager takes a speed as a percentage under the road's limit, so
+each vehicle is given the one that holds it there
+(`vehicle_percentage_speed_difference`), never less than its own
+`speed_factor`'s, worked out again every second and whenever the visibility
+changes; when the weather lifts, or the field is turned off during the run
+(`TrafficParametersAction`), each gets its own back. A vehicle a scenario gave
+a speed of its own (`set_desired_speed`) keeps it. Off by default, so a
+scenario's vehicles drive as they always did; unset, the backend logs the
+speed it would hold traffic to.
 
-- **Grip** is CARLA's physics: an `EnvironmentAction` that sets the road's
-  water, or a grip outright (`environment.tire_friction`), scales every
-  vehicle's wheel friction, the TrafficManager's as well, so they brake and
-  corner on what the road holds.
-- **Sight**, with `traffic.vehicles.follow_visibility: true`: each vehicle it
-  drives is held to the speed it stops from within what its driver sees,
-  worked out with SUMO's default car's reaction (1 s) and braking (4.5 m/s²)
-  scaled to the road's grip -- 62 km/h in 50 m of fog on a dry road, 46 km/h
-  on a soaked one (half the grip). The TrafficManager takes a speed as a
-  percentage under the road's limit, so each vehicle is given the one that
-  holds it there (`vehicle_percentage_speed_difference`), never less than its
-  own `speed_factor`'s, worked out again every second and whenever the
-  visibility or the grip changes; when the weather lifts, or the field is
-  turned off during the run (`TrafficParametersAction`), each gets its own
-  back. A vehicle a scenario gave a speed of its own (`set_desired_speed`)
-  keeps it. Off by default, so a scenario's vehicles drive as they always
-  did; unset, the backend logs the speed it would hold traffic to.
+The road's grip is CARLA's vehicle physics alone (`EnvironmentAction`'s tire
+friction scales every vehicle's wheels, the TrafficManager's as well); the
+sight speed above does not read it.
 
 ```bash
 uv run scenario ... environment.fog_density=80 environment.rain=60 \
     traffic.vehicles.follow_visibility=true
 ```
 
-Both come from the ODD as any other attribute: its `visibility`,
-`tire_friction`, `rain`, `road_wetness` and `fog` knobs
-([The weather and the sun](odd.md)) set what the run's weather leaves, and
-the backend -- this one or `sumo` -- follows.
+The visibility comes from the ODD as any other attribute: its `visibility`,
+`rain`, `fog` and `illumination` knobs ([The weather and the sun](odd.md))
+set what the run's weather leaves, and the backend -- this one or `sumo` --
+follows.
 
 ## Why this exists
 
@@ -997,18 +993,11 @@ scenario. `traffic.vehicles.follow_visibility=false` ignores the visibility.
 It used to be `traffic.options.follow_visibility`, which is now an error
 pointing here.
 
-**Grip**: CARLA's physics gives every vehicle it moves the grip the road's
-water leaves (`EnvironmentAction`,
-[Tire friction follows the weather](odd.md#tire-friction-follows-the-weather)),
-but SUMO plans its vehicles with what it was told. So the backend gives every
-vehicle SUMO drives -- its own traffic, its bicycles, and the scenario's
-vehicles it drives -- the acceleration, braking and emergency braking that
-grip leaves it: its own, times the grip where the road grips less than a dry
-one (a grippier one leaves them as they are), as each departs and whenever
-the grip changes, and its own back when none is set. A vehicle CARLA drives
-and publishes is CARLA's physics'. The sight speed above is worked out from
-that braking, so a wet road holds the traffic slower in the same fog. The
-`grip` of the result record says what was applied.
+The road's grip (`EnvironmentAction`'s tire friction,
+[Tire friction follows the weather](odd.md#tire-friction-follows-the-weather))
+is CARLA's vehicle physics alone: SUMO's models are not told it, and plan
+their vehicles' braking as on a dry road. A car under `vehicle_control:
+physics` follows that plan on the grip CARLA gives its wheels.
 
 **Traffic lights** (`traffic_light_authority`): `carla` (default) gives SUMO's
 signals the states of CARLA's lights every step, so a scenario that sets the

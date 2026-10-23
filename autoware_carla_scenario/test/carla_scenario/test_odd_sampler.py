@@ -612,7 +612,6 @@ def test_the_weather_probes_read_the_levels_their_knobs_draw() -> None:
     import typesafe_carla.carla as carla
 
     from autoware_carla_scenario.odd import probes
-    from autoware_carla_scenario.road_grip import forget_grip, set_world_grip
 
     probes.reset_probes()
     world = MagicMock()
@@ -630,10 +629,7 @@ def test_the_weather_probes_read_the_levels_their_knobs_draw() -> None:
         assert probes.wind(world) == "heavy"
         assert probes.cloudiness(world) == "moderate"
         assert probes.tire_friction(world) is None
-        set_world_grip(77, 0.6)
-        assert probes.tire_friction(world) == 0.6
     finally:
-        forget_grip()
         probes.reset_probes()
 
 

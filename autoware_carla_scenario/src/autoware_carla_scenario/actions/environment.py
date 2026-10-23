@@ -18,7 +18,6 @@ import logging
 from typing import TYPE_CHECKING, Optional
 
 from ..conditions.base import BaseCondition
-from ..road_grip import set_world_grip
 from ..utils.vehicles import as_vehicle
 from ..visibility import (
     at_quantile,
@@ -41,6 +40,7 @@ __all__ = [
     "rain_weather",
     "tire_friction",
     "tire_friction_range",
+    "world_tire_friction",
 ]
 
 #: CARLA's rain presets (``SoftRain``, ``MidRainy``, ``HardRain``; LibCarla's
@@ -196,17 +196,27 @@ def apply_tire_friction(world: "carla.World", factor: float) -> None:
     world_id = world.id
     _tire_state(world_id)
     if world_id in _TIRE_FACTORS and _TIRE_FACTORS[world_id] == factor:
-        # The runner forgets the backends' grip every run; the wheels keep it.
-        set_world_grip(world_id, factor)
         follow_tire_friction(world)
         return
     _TIRE_FACTORS[world_id] = factor
-    # For the traffic backends, which plan their vehicles' braking with it.
-    set_world_grip(world_id, factor)
     count = _scale_vehicles(world, world.get_actors(), factor)
     logger.info(
         "Tire friction set to %.3f of the dry road's on %d vehicle(s)", factor, count
     )
+
+
+def world_tire_friction(world_id: Optional[int]) -> Optional[float]:
+    """The share of the dry road's grip :func:`apply_tire_friction` last gave
+    the vehicles of the world *world_id*, or ``None`` where it gave none.
+
+    What the ODD's ``tire_friction`` probe reads.  The vehicles' wheels are
+    CARLA's physics alone: no traffic backend reads it.
+    """
+    if world_id is None:
+        return None
+    if world_id in _TIRE_FACTORS:
+        return _TIRE_FACTORS[world_id]
+    return None
 
 
 def follow_tire_friction(world: "carla.World") -> None:

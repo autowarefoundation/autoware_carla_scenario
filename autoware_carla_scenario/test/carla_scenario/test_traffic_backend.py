@@ -386,7 +386,6 @@ class TestTrafficManagerClose:
             "random_seed": 11,
             "follow_visibility": False,
             "visibility_m": None,
-            "grip": None,
         }
 
 
@@ -432,14 +431,6 @@ class TestTrafficManagerVisibility:
         assert any("drivers see 20 m" in r.getMessage() for r in caplog.records)
         backend.close()
 
-    @pytest.fixture
-    def _no_grip(self) -> Iterator[None]:
-        from autoware_carla_scenario.road_grip import forget_grip
-
-        forget_grip()
-        yield
-        forget_grip()
-
     def _following(
         self, *actors: Any, speed_factor: Optional[float] = None
     ) -> Tuple[Any, Any, Any]:
@@ -462,7 +453,6 @@ class TestTrafficManagerVisibility:
         backend.start(world)
         return backend, world, client.tm
 
-    @pytest.mark.usefixtures("_no_grip")
     def test_with_follow_visibility_its_traffic_is_held_to_what_it_sees(
         self,
     ) -> None:
@@ -508,27 +498,6 @@ class TestTrafficManagerVisibility:
         assert 1 not in tm.speed_differences
         backend.close()
 
-    @pytest.mark.usefixtures("_no_grip")
-    def test_a_slippery_road_holds_the_traffic_slower(self) -> None:
-        from autoware_carla_scenario.road_grip import set_world_grip
-        from autoware_carla_scenario.visibility import set_world_visibility
-
-        highway = _Actor(2, speed_limit=120.0)
-        backend, world, tm = self._following(highway)
-        set_world_visibility(4, 80.0)
-        backend.tick(world, 0.05)
-        dry = tm.speed_differences[2][-1]
-        set_world_grip(4, 0.5)
-        backend.tick(world, 0.10)
-        assert tm.speed_differences[2][-1] > dry
-        assert backend.describe()["grip"] == 0.5
-        # A grippier road than the dry one brakes no harder than a dry one.
-        set_world_grip(4, 1.1)
-        backend.tick(world, 0.15)
-        assert tm.speed_differences[2][-1] == pytest.approx(dry)
-        backend.close()
-
-    @pytest.mark.usefixtures("_no_grip")
     def test_a_vehicle_is_never_held_faster_than_its_own_speed_factor(
         self,
     ) -> None:
@@ -543,7 +512,6 @@ class TestTrafficManagerVisibility:
         assert tm.speed_differences[2] == [pytest.approx(70.0)]
         backend.close()
 
-    @pytest.mark.usefixtures("_no_grip")
     def test_turning_follow_visibility_off_gives_the_traffic_its_speed_back(
         self,
     ) -> None:
