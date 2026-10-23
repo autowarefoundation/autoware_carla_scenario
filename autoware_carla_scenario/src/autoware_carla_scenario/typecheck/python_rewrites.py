@@ -43,6 +43,12 @@ so a rewrite has to keep the *types*, not the values, of what it replaces.
   differs from ``ascii`` only in the characters it escapes, and only the
   checked copy changes).  A name the module binds itself (``def format``) is
   left alone.
+* ``namedtuple("P", "x y")`` / ``namedtuple("P", "x, y")`` (Codon crashes on a
+  string) becomes ``namedtuple("P", ["x", "y"])`` (#510).  Field names that
+  are not a literal, and ``rename=`` / ``defaults=``, are refused with a hint.
+* A top-level class that defines ``__eq__`` but not ``__ne__`` is given
+  ``__ne__`` (``not (self == other)``): Python derives it, Codon does not, and
+  its set and dict call it (#511).
 * A top-level class that defines ``__lt__`` (what ``sorted()``, ``.sort()``
   and ``heapq`` need in Python) is given the ``__gt__`` and ``__ge__`` Codon's
   timsort calls, with ``@extend``; ``@functools.total_ordering`` is removed
@@ -94,11 +100,14 @@ scenario's classes.)
 from __future__ import annotations
 
 import ast
+import copy
+import json
+import keyword
 import re
 import string
 from collections.abc import Iterator
 
-from .scopes import ShadowScopes
+from .scopes import ShadowScopes, _scope_bindings
 from .transform import (
     _ENUM_BASES,
     _dataclass_options,
@@ -1136,6 +1145,7 @@ class _Pass(ShadowScopes):
 
     def visit_Module(self, node: ast.Module) -> None:
         self.enter_module(node)
+        self._namedtuple_foreign = _foreign_collections_bindings(node)
         self.generic_visit(node)
 
     # -- except* -------------------------------------------------------------
@@ -1218,7 +1228,79 @@ class _Pass(ShadowScopes):
         if text is not None:
             self.edits.replace(*self.edits.node_span(node), text)
             return
+        if self._is_namedtuple(node.func):
+            self._namedtuple(node)
         self.generic_visit(node)
+
+    # -- collections.namedtuple("P", "x y") (#510) ---------------------------
+
+    _namedtuple_foreign: frozenset[str] = frozenset()
+
+    def _is_namedtuple(self, func: ast.expr) -> bool:
+        """``namedtuple`` / ``collections.namedtuple`` as the standard library
+        spells them: not a name the module or an enclosing function binds to
+        something else (the import itself is not such a binding)."""
+        if isinstance(func, ast.Name):
+            name = func.id
+            if name != "namedtuple":
+                return False
+        elif (
+            isinstance(func, ast.Attribute)
+            and func.attr == "namedtuple"
+            and isinstance(func.value, ast.Name)
+            and func.value.id == "collections"
+        ):
+            name = "collections"
+        else:
+            return False
+        return name not in self._namedtuple_foreign and not any(
+            name in bound for bound, _ in self._local_bound
+        )
+
+    def _namedtuple(self, node: ast.Call) -> None:
+        """Codon 0.19 reads the field names of ``namedtuple`` only as a list or
+        tuple display (a string crashes it, a variable too) and takes neither
+        ``rename=`` nor ``defaults=``: a literal string becomes the list; the
+        rest is refused with a hint."""
+        for kw in node.keywords:
+            if kw.arg in ("rename", "defaults", "field_names", "typename", "module"):
+                self._refuse(
+                    node,
+                    f"Codon's namedtuple() does not take {kw.arg}=: pass "
+                    "the type name and a list of field names positionally "
+                    "(a field with a default: a typing.NamedTuple class)",
+                )
+                return
+        if len(node.args) != 2 or isinstance(node.args[1], ast.Starred):
+            return
+        fields = node.args[1]
+        if isinstance(fields, ast.Constant) and isinstance(fields.value, str):
+            names = fields.value.replace(",", " ").split()
+            bad = [
+                n
+                for n in names
+                if not n.isidentifier() or keyword.iskeyword(n) or n.startswith("_")
+            ]
+            if bad or len(set(names)) != len(names):
+                self._refuse(
+                    node,
+                    "namedtuple() field names must be distinct identifiers, not "
+                    f"keywords and not starting with an underscore (a ValueError "
+                    f"in Python): {fields.value!r}",
+                )
+                return
+            self.edits.replace(
+                *self.edits.node_span(fields),
+                "[" + ", ".join(json.dumps(n) for n in names) + "]",
+            )
+        elif not isinstance(fields, (ast.List, ast.Tuple)):
+            self._refuse(
+                node,
+                "Codon's namedtuple() reads its field names only from a list or "
+                'tuple written in the call (["x", "y"]); a variable or an '
+                "expression crashes it: write them out, or use a "
+                "typing.NamedTuple class",
+            )
 
     # -- startswith((a, b)), format(), ascii() (#439) ------------------------
 
@@ -1484,6 +1566,43 @@ def _total_ordering_names(tree: ast.Module) -> set[str]:
     return names
 
 
+def _foreign_collections_bindings(tree: ast.Module) -> frozenset[str]:
+    """Of ``namedtuple`` and ``collections``, those the module binds other than
+    by ``from collections import namedtuple`` / ``import collections``."""
+    stripped = copy.deepcopy(tree)
+    for node in ast.walk(stripped):
+        for field in ("body", "orelse", "finalbody"):
+            body = getattr(node, field, None)
+            if not isinstance(body, list):
+                continue
+            for index, stmt in enumerate(body):
+                if (
+                    isinstance(stmt, ast.ImportFrom)
+                    and stmt.module == "collections"
+                    and stmt.level == 0
+                ):
+                    stmt.names = [
+                        a
+                        for a in stmt.names
+                        if not (a.name == "namedtuple" and not a.asname)
+                    ]
+                elif isinstance(stmt, ast.Import):
+                    stmt.names = [
+                        a
+                        for a in stmt.names
+                        if not (a.name == "collections" and not a.asname)
+                    ]
+                else:
+                    continue
+                if not stmt.names:
+                    body[index] = ast.Pass()
+    bound = _scope_bindings(stripped)
+    for node in ast.walk(stripped):
+        if isinstance(node, ast.Global):
+            bound.update(node.names)
+    return frozenset(bound & {"namedtuple", "collections"})
+
+
 def _ordering_blocks(
     tree: ast.Module, total_ordering: set[str], refused: list[tuple[int, str]]
 ) -> list[tuple[str, str]]:
@@ -1570,6 +1689,15 @@ def _ordering_blocks(
                 "__gt__": "other.__lt__(self)",
                 "__ge__": "not self.__lt__(other)",
             }
+        if (
+            "__eq__" in own
+            and options is None
+            and not defines(node, "__ne__")
+            and "__ne__" not in bodies
+        ):
+            # Python derives != from ==; Codon does not, and its hash table
+            # (a set, a dict key) calls it (#511).
+            bodies["__ne__"] = "not (self == other)"
         lines = [
             f"    def {name}(self, other: {node.name}) -> bool:\n"
             f"        return {body}\n"
