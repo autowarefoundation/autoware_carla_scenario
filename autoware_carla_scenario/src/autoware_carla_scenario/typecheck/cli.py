@@ -12,7 +12,8 @@ the way the runner checks it before a run (docs/typecheck.md).  The exit
 status is 0 when every scenario passed, 1 when one failed, and 2 when there is
 no Codon compiler to check with or the command line does not compose: no config
 matches ``scenario=``, or an override names a key the config does not have
-(the message suggests the closest key; ``+key=value`` adds a new one).
+(the message suggests the closest key; ``+key=value`` adds a new one).  ``HYDRA_FULL_ERROR=1``
+shows the traceback of such an error.
 ``scenario='*'`` is every config, like ``scenario='*/*'`` or no ``scenario=``.
 A package author checks only theirs: ``scenario='my_package/*'``.
 
@@ -119,11 +120,20 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  did you mean: {', '.join(close)}?", file=sys.stderr)  # noqa: T201
         print(f"  scenario configs: {', '.join(known)}", file=sys.stderr)  # noqa: T201
         return 2
-    try:
-        cfgs = [run._compose_config(name, overrides) for name in names]
-    except Exception as exc:  # noqa: BLE001 - hydra, omegaconf: a key, a value
-        print(_compose_error(exc, names[0], overrides, run), file=sys.stderr)  # noqa: T201
-        return 2
+    from hydra.errors import HydraException  # noqa: PLC0415
+    from omegaconf.errors import OmegaConfBaseException  # noqa: PLC0415
+
+    cfgs = []
+    for name in names:
+        try:
+            cfgs.append(run._compose_config(name, overrides))
+        except (HydraException, OmegaConfBaseException) as exc:
+            # A key, a value: what the command line says, not a bug.  Hydra's
+            # own switch shows the traceback (and any other exception does).
+            if os.environ.get("HYDRA_FULL_ERROR") == "1":
+                raise
+            print(_compose_error(exc, name, overrides, run), file=sys.stderr)  # noqa: T201
+            return 2
 
     def check(cfg: Any) -> Any:
         return typecheck_registered(

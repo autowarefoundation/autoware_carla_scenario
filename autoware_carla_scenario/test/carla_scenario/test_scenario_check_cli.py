@@ -37,3 +37,13 @@ def test_an_unknown_scenario_name_lists_the_known_names(
     assert code == 1
     assert "unknown scenario name 'other'" in out
     assert "known names:" in out
+
+
+def test_hydra_full_error_shows_the_traceback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from hydra.errors import HydraException  # noqa: PLC0415
+
+    monkeypatch.setenv("HYDRA_FULL_ERROR", "1")
+    with pytest.raises(HydraException):
+        main(["scenario=intersection_passing/straight", "scenario.timout_seconds=3"])

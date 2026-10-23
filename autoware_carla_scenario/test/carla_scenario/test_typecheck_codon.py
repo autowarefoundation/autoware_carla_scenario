@@ -9327,3 +9327,36 @@ def clamp(x: N, lo: N, hi: N) -> N:
     scenario, config, _ = _data_case(tmp_path, definitions, setup)
     result = typecheck_scenario(scenario, config)
     assert result.ok, result.format()
+
+
+_RAISING_CONFIG = """
+from dataclasses import dataclass
+
+
+@dataclass
+class CaseConfig:
+    name: str = "p"
+    timeout_seconds: float = 5.0
+    label: str = "a"
+
+    def __post_init__(self) -> None:
+        if self.label == "bad":
+            raise ValueError("label must not be bad")
+"""
+
+
+def test_a_config_that_raises_when_built_is_reported(tmp_path: Path) -> None:
+    # The runner builds config_cls(**scenario_dict): a __post_init__ that
+    # raises, or an Enum name that does not convert, stops the run, and the
+    # check says so with the exception (#531).
+    scenario, config, _ = _write_case(tmp_path, "pass\n", config=_RAISING_CONFIG)
+    assert typecheck_scenario(scenario, config, {"label": "ok"}).ok
+    result = typecheck_scenario(scenario, config, {"label": "bad"})
+    assert not result.ok
+    assert "ValueError: label must not be bad" in result.format()
+
+    setup = "logger.info('%s', cfg.mode.value)\n"
+    scenario, config, _ = _write_case(tmp_path, setup, config=_CONVERTING_CHOICE_CONFIG)
+    result = typecheck_scenario(scenario, config, {"mode": "nope"})
+    assert not result.ok
+    assert "ValueError" in result.format()

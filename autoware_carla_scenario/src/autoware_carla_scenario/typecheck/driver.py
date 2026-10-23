@@ -84,6 +84,11 @@ class Driver:
     #: The config values the program builds, each key's ``repr()``: what
     #: tells one case of a sweep from another in a log.
     case: dict[str, str] = field(default_factory=dict)
+    #: What building ``config_cls(**scenario_dict)`` in Python raised, as
+    #: ``"TypeError: ..."``: the runner builds the config the same way, so the
+    #: scenario cannot run.  Not part of the shape: the verdict is cached
+    #: for the types, and this depends on the values.
+    build_error: str = ""
 
 
 class _Imports:
@@ -291,11 +296,13 @@ def render_driver(
     scenario_name = imports.name(scenario_cls)
     config_name = imports.name(config_cls)
     hints = _field_hints(config_cls)
+    build_error = ""
     try:
         # What the runner builds, to render each value as the config holds it.
         built: Any = config_cls(**copy.deepcopy(scenario_dict))
-    except Exception:  # noqa: BLE001 - the driver's constructor call reports it
+    except Exception as exc:  # noqa: BLE001 - reported with the verdict (#531)
         built = _UNKNOWN
+        build_error = f"{type(exc).__name__}: {exc}"
 
     by_assignment = _all_fields_have_defaults(config_cls)
     # The same program with each value a token of its type: the key.
@@ -396,6 +403,7 @@ def render_driver(
         trailer=f"{HOOK_CHECK}()\n",
         shape="\n".join(shape) + "\n",
         case={key: _abbreviated(repr(value)) for key, value in scenario_dict.items()},
+        build_error=build_error,
     )
 
 

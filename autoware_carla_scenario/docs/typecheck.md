@@ -42,7 +42,8 @@ scenario passed, 1 when one failed, and 2 when it could not run: there is no
 Codon compiler, no config matches `scenario=` (the message lists the
 configs), or an override names a key the config does not have
 (`scenario.timout_seconds=3` is reported with the closest key,
-`scenario.timeout_seconds`; `+key=value` adds a new one). A scenario package
+`scenario.timeout_seconds`; `+key=value` adds a new one; `HYDRA_FULL_ERROR=1`
+shows the traceback). A scenario package
 can make the same check in its own tests, with no simulator (the template and
 `scenario-new` packages have one in `tests/test_typecheck.py`):
 
@@ -974,6 +975,9 @@ scenario has to do itself:
   (`self.mode = Mode(self.mode)`), and are refused at `scenario.<key>`
   when it does not. A bad value inside a nested list is refused at its own
   field, e.g. `scenario.legs[1].speed`.
+  A config that raises when built (a `__post_init__` that rejects a value, a
+  name `Mode(...)` does not know) fails the check with the exception, as it
+  stops the run.
 
 - **Annotate every parameter of every function and method**, helpers and
   hook overrides included. Every function of the scenario's modules is
