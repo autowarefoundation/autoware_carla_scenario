@@ -203,6 +203,7 @@ CHECKED: tuple[str, ...] = (
     "autoware_carla_scenario.traffic.context",
     "autoware_carla_scenario.traffic.driven",
     "autoware_carla_scenario.traffic.fidelity",
+    "autoware_carla_scenario.traffic.final_approach",
     "autoware_carla_scenario.traffic.mesoscopic",
     "autoware_carla_scenario.traffic.parameters",
     "autoware_carla_scenario.traffic.traffic_manager",

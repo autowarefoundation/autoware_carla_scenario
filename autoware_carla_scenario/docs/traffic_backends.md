@@ -808,7 +808,13 @@ scenario authored — is kept from it in `tick()`; under `traffic=sumo` with
   the vehicle is taken off autopilot and held braking where it is, logged once,
   until it is given a new route or an action takes it over. On a path it was
   given the walk waits until the path's end is near: the TrafficManager follows
-  the path, which goes on, to there.
+  the path, which goes on, to there. Then, since the TrafficManager plans past a
+  path's end into the dead end beyond it, the vehicle is not held short of its
+  goal but taken off autopilot and drives the rest of its path itself, with the
+  controller a `RoutingAction` in `follow` mode drives with
+  (`traffic.final_approach.FinalApproach`, at 4 m/s, slowing onto the end), and
+  is stopped and held braking on the path's last point, logged once. Off
+  autopilot, the TrafficManager cannot destroy it; a new route puts it back on.
 
 Each kept vehicle is looked at every 0.5 s, the first looks spread over that
 period: a velocity read and, unless it is where the last walk found the road

@@ -20,6 +20,7 @@ import random
 from typing import TYPE_CHECKING, Any, ClassVar, Collection, List, Optional, Tuple
 
 from ..constants import (
+    FIXED_DELTA_SECONDS,
     LANE_CHANGE_CENTER_TOLERANCE_M,
     LANE_CHANGE_HEADING_TOLERANCE_DEG,
 )
@@ -34,6 +35,7 @@ from .base import (
     _entity_name,
 )
 from .config import TrafficManagerBackendConfig
+from .final_approach import FinalApproach
 from .parameters import VEHICLE_BOUNDS, Spread, VehicleParameters
 from ..world_reset import episode_of
 from ..visibility import (
@@ -142,6 +144,7 @@ class _Kept:
     checked_lookahead: float
     held: bool
     refreshed: bool
+    approach: Optional[FinalApproach]
 
     def __init__(self, actor: "carla.Actor") -> None:
         self.actor = actor
@@ -163,6 +166,9 @@ class _Kept:
         self.held = False
         #: Re-registered at least once (logged at info once).
         self.refreshed = False
+        #: Driving the last of its path itself, off autopilot, before a dead
+        #: end the TrafficManager would plan into (:class:`FinalApproach`).
+        self.approach = None
 
 
 class TrafficManagerBackend(TrafficBackend):
@@ -218,6 +224,7 @@ class TrafficManagerBackend(TrafficBackend):
     _held: dict[int, float]
     _sight_due: float
     _kept: dict[int, _Kept]
+    _given: dict[int, List["carla.Location"]]
 
     def __init__(
         self,
@@ -274,6 +281,8 @@ class TrafficManagerBackend(TrafficBackend):
         self._drawn = set()
         #: Every vehicle on autopilot but a background one, by actor id.
         self._kept = {}
+        #: The path each vehicle was last given, by actor id, kept or not yet.
+        self._given = {}
         if vehicles is not None:
             self.set_vehicle_parameters(vehicles)
 
@@ -458,6 +467,7 @@ class TrafficManagerBackend(TrafficBackend):
         self._drawn = set()
         self._draws = None
         self._kept = {}
+        self._given = {}
         self._restore_parameters()
         if self._closed or self._client is None:
             return
@@ -845,7 +855,11 @@ class TrafficManagerBackend(TrafficBackend):
         actor.set_autopilot(True, self.port)
         self._autopiloted[actor.id] = actor
         if keep and actor.id not in self._kept:
-            self._kept[actor.id] = _Kept(actor)
+            kept = _Kept(actor)
+            if actor.id in self._given:
+                # A path given before it was kept (the ego's, at its init).
+                kept.path = list(self._given[actor.id])
+            self._kept[actor.id] = kept
         if actor.id in self._drawn:
             return
         self._drawn.add(actor.id)
@@ -916,6 +930,14 @@ class TrafficManagerBackend(TrafficBackend):
         TrafficManager's removal, each looked at every :data:`_CHECK_PERIOD_S`
         (``docs/traffic_backends.md``)."""
         for actor_id, kept in list(self._kept.items()):
+            approach = kept.approach
+            if approach is not None:
+                driving: FinalApproach = approach
+                try:
+                    driving.step(_tick_seconds(world), elapsed)
+                except RuntimeError:
+                    del self._kept[actor_id]  # Destroyed under us.
+                continue
             if kept.held or elapsed < kept.check_due:
                 continue
             actor = kept.actor
@@ -993,13 +1015,16 @@ class TrafficManagerBackend(TrafficBackend):
     def _remember_path(
         self, actor: "carla.Actor", path: List["carla.Location"]
     ) -> None:
-        """Remember the path a kept vehicle was just given."""
+        """Remember the path a vehicle was just given: for the keeping, now
+        if it is kept, else from when it is put on autopilot."""
+        self._given[actor.id] = list(path)
         if actor.id not in self._kept:
             return
         kept = self._kept[actor.id]
         kept.path = list(path)
         kept.near_route_end = False
         kept.checked_lookahead = -1.0
+        kept.approach = None
 
     def _drive_on(self, actor: "carla.Actor") -> None:
         """Put a vehicle held at a dead end back on autopilot: it was given a
@@ -1052,8 +1077,24 @@ class TrafficManagerBackend(TrafficBackend):
             kept.checked_lookahead = lookahead
             return
         actor.set_autopilot(False, self.port)
-        _vehicle(actor).apply_control(carla.VehicleControl(throttle=0.0, brake=1.0))
         kept.held = True
+        ahead = _ahead_of(kept.path, location)
+        if ahead:
+            # On a path it was given, which ends before the dead end: the
+            # TrafficManager would plan past its end into it.  The rest of the
+            # path is driven here instead, and the vehicle stopped on its end.
+            approach = FinalApproach(actor, location, ahead)
+            kept.approach = approach
+            logger.info(
+                "%s: its road ends within %.0f m, past the end of its path, "
+                "where the TrafficManager would destroy it; off autopilot, "
+                "it drives the last %.0f m of its path itself and stops there",
+                _actor_name(actor),
+                lookahead,
+                approach.length,
+            )
+            return
+        _vehicle(actor).apply_control(carla.VehicleControl(throttle=0.0, brake=1.0))
         logger.info(
             "%s: its road ends within %.0f m, where the TrafficManager would "
             "destroy it; taken off autopilot and held braking until it is "
@@ -1206,6 +1247,15 @@ def _clear_of_junctions(
         if not any(inside[max(0, i - 1) : i + 2]):
             clear.append(location)
     return clear
+
+
+def _tick_seconds(world: "carla.World") -> float:
+    """How much simulated time the last tick covered (the run's fixed step
+    when the world cannot say)."""
+    try:
+        return float(world.get_snapshot().timestamp.delta_seconds)
+    except (AttributeError, RuntimeError):
+        return FIXED_DELTA_SECONDS
 
 
 def _ahead_of(
