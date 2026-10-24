@@ -350,8 +350,9 @@ def wait_for_start_turn(lock: Path, spacing: float) -> float:
     so do the ones started later as slots free up.  How long it waited.
     """
     lock.parent.mkdir(parents=True, exist_ok=True)
-    with open(lock, "a+", encoding="utf-8") as stream, _start_lock(
-        stream, lock, spacing
+    with (
+        open(lock, "a+", encoding="utf-8") as stream,
+        _start_lock(stream, lock, spacing),
     ):
         stream.seek(0)
         try:

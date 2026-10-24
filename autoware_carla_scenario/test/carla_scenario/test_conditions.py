@@ -559,12 +559,15 @@ class TestEntityLanePositionCondition:
         world = _make_world_with_actor("npc1", x=100.0, y=200.0)
 
         fake_od_pose = OpenDrivePose(road_id="1", lane_id=-1, s=5.0, t=-2.0)
-        with unittest.mock.patch(
-            "autoware_carla_scenario.conditions.composition.entity_lane_position.to_opendrive",
-            return_value=fake_od_pose,
-        ), unittest.mock.patch(
-            "autoware_carla_scenario.conditions.composition.entity_lane_position.project_onto_road",
-        ) as mock_project:
+        with (
+            unittest.mock.patch(
+                "autoware_carla_scenario.conditions.composition.entity_lane_position.to_opendrive",
+                return_value=fake_od_pose,
+            ),
+            unittest.mock.patch(
+                "autoware_carla_scenario.conditions.composition.entity_lane_position.project_onto_road",
+            ) as mock_project,
+        ):
             result = condition.check(world, elapsed=3.0)
 
         mock_project.assert_not_called()
@@ -583,13 +586,16 @@ class TestEntityLanePositionCondition:
         nearest_pose = OpenDrivePose(road_id="1", lane_id=-1, s=48.0, t=-1.0)
         # project_onto_road provides accurate s/t for rule evaluation
         projected_pose = OpenDrivePose(road_id="1", lane_id=-1, s=50.0, t=-2.0)
-        with unittest.mock.patch(
-            "autoware_carla_scenario.conditions.composition.entity_lane_position.to_opendrive",
-            return_value=nearest_pose,
-        ), unittest.mock.patch(
-            "autoware_carla_scenario.conditions.composition.entity_lane_position.project_onto_road",
-            return_value=projected_pose,
-        ) as mock_project:
+        with (
+            unittest.mock.patch(
+                "autoware_carla_scenario.conditions.composition.entity_lane_position.to_opendrive",
+                return_value=nearest_pose,
+            ),
+            unittest.mock.patch(
+                "autoware_carla_scenario.conditions.composition.entity_lane_position.project_onto_road",
+                return_value=projected_pose,
+            ) as mock_project,
+        ):
             result = condition.check(world, elapsed=3.0)
 
         mock_project.assert_called_once()

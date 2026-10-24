@@ -358,9 +358,12 @@ class TestTemporaryStopCondition:
     @pytest.fixture(autouse=True)
     def _mock_road_helpers(self) -> Generator[None, None, None]:
         """Mock road helpers to avoid MapManager dependency in unit tests."""
-        with patch.object(
-            TemporaryStopCondition, "_get_road_length", return_value=100.0
-        ), patch.object(TemporaryStopCondition, "_find_linked_roads", return_value=[]):
+        with (
+            patch.object(
+                TemporaryStopCondition, "_get_road_length", return_value=100.0
+            ),
+            patch.object(TemporaryStopCondition, "_find_linked_roads", return_value=[]),
+        ):
             yield
 
     def test_validation_empty_positions(self) -> None:
@@ -686,20 +689,24 @@ class TestAStopMarginReachesAsFarAsItReaches:
                 entity, OpenDrivePose(road_id="0", lane_id=-1, s=0.0), label=label
             )
 
-        with patch.object(
-            TemporaryStopCondition,
-            "_get_lanelet_length",
-            side_effect=lengths.__getitem__,
-        ), patch.object(
-            TemporaryStopCondition,
-            "_find_linked_lanelets",
-            side_effect=lambda lid, d: (following if d == "following" else previous)[
-                lid
-            ],
-        ), patch.object(
-            TemporaryStopCondition,
-            "_make_lanelet_segment_condition",
-            side_effect=record,
+        with (
+            patch.object(
+                TemporaryStopCondition,
+                "_get_lanelet_length",
+                side_effect=lengths.__getitem__,
+            ),
+            patch.object(
+                TemporaryStopCondition,
+                "_find_linked_lanelets",
+                side_effect=lambda lid, d: (
+                    following if d == "following" else previous
+                )[lid],
+            ),
+            patch.object(
+                TemporaryStopCondition,
+                "_make_lanelet_segment_condition",
+                side_effect=record,
+            ),
         ):
             TemporaryStopCondition(
                 "ego",
