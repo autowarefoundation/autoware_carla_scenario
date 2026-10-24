@@ -490,6 +490,18 @@ function of its exact type only, and Codon 0.19 crashes on any other. `set_measu
 `BaseScenario` subclass or `None`, which Python annotates
 `Optional[BaseScenario]`: Codon's `Optional` takes no subclass.
 
+`register_pre_tick()`, `register_post_tick()` and `register_init()` take an
+`Optional` action or callable (#537): Codon does not narrow an `Optional`
+after `if a is not None:`, so the value registered there is still one, and the
+model unwraps it (`None` itself is refused). A reader that is `maybe_float or
+0.0` is a `Union` for Codon and passes the reader check (#538). An `Optional`
+of a subclass held where its base is declared (`c: Optional[BaseCondition] =
+ElapsedTimeCondition(...)`, or an `Optional[BaseCondition]` helper parameter)
+is Codon's to refuse, in the scenario's own code (#541): the message says to
+declare it without `Optional`. `to_lanelet2()` is one untyped definition, as
+`to_carla_world()` is, because Codon tries only the last of two typed
+overloads; `test_typecheck_model.py` fails on a model function defined twice.
+
 An actor is checked by kind for the same reason (#278).
 `follow_with_spectator()` and `log_actor_position()` take a getter Python
 types `Callable[[], Optional[carla.Actor]]`, and `initial_speeds_mps()` an

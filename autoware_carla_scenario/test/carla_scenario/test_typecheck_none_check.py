@@ -824,3 +824,38 @@ def test_the_framework_unions_are_python_s() -> None:
             assert _python_union_members(value) == union.members, union
         else:
             assert union.members in _python_unions(union.module), union
+
+
+def test_an_unnarrowed_optional_action_registered_is_reported(tmp_path: Path) -> None:
+    # The Codon model accepts an Optional action in register_*_tick() (Codon
+    # does not narrow, #537); this pass is what refuses the one that was not
+    # narrowed, since the real signature is not Optional.
+    package = tmp_path / "acs_none_register"
+    package.mkdir()
+    (package / "__init__.py").write_text("")
+    module = package / "probe.py"
+    module.write_text(
+        textwrap.dedent(
+            """\
+            from typing import Optional
+
+            from autoware_carla_scenario import BaseScenario, SetSpeedAction
+
+
+            def register(s: BaseScenario, a: Optional[SetSpeedAction]) -> None:
+                s.register_pre_tick(a)
+                s.register_post_tick(a)
+                if a is not None:
+                    s.register_pre_tick(a)
+            """
+        )
+    )
+
+    findings = find_none_misuses([module])
+
+    assert findings is not None
+    lines = module.read_text().splitlines()
+    assert [lines[f.line - 1].strip() for f in findings] == [
+        "s.register_pre_tick(a)",
+        "s.register_post_tick(a)",
+    ]

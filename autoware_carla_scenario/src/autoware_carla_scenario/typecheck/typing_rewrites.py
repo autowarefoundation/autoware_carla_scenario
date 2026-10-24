@@ -61,6 +61,20 @@ TYPING_HINTS: tuple[tuple[re.Pattern[str], str], ...] = (
         "`str(e)`, or catch `Exception` itself",
     ),
     (
+        re.compile(
+            r"'Optional\[\w*(?:Condition|Action|Scenario)\]' "
+            r"does not match expected type 'Optional\[\w*(?:Condition|Action|Scenario)\]'"
+        ),
+        "Codon 0.19 does not convert an Optional of a subclass to an Optional of "
+        "its base (nor the reverse), so an `Optional[BaseCondition]` or "
+        "`Optional[BaseAction]` that holds an `ElapsedTimeCondition`, a "
+        "`SetSpeedAction` or any other subclass is refused, as is an Optional "
+        "helper parameter given one. Declare the value without Optional "
+        "(`c: BaseCondition = ElapsedTimeCondition(...)`) and test a separate "
+        "flag, register it where it is made, or pass the helper a plain "
+        "`BaseCondition` and a bool",
+    ),
+    (
         re.compile(r"object has no attribute '__(?:deep)?copy__'"),
         "Codon's copy.copy() and copy.deepcopy() call the class's __copy__ and "
         "__deepcopy__. The check writes them for the classes of a module that "
