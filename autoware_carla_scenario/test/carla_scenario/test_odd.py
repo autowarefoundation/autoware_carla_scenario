@@ -1526,3 +1526,72 @@ def test_a_builder_error_that_is_not_a_list_mistake_has_no_hint(
     out = capsys.readouterr().out
     assert "bad_odd_plain.py:7: " in out
     assert "hint" not in out
+
+
+def test_an_odd_installed_in_site_packages_still_names_its_line(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: Any
+) -> None:
+    package = tmp_path / "site-packages" / "installed_odd_pkg"
+    package.mkdir(parents=True)
+    (package / "__init__.py").write_text("")
+    (package / "helper.py").write_text("def boom():\n    return {}['k']\n")
+    (package / "odd.py").write_text(
+        "from . import helper\n\n\ndef build():\n    helper.boom()\n"
+    )
+    monkeypatch.syspath_prepend(str(tmp_path / "site-packages"))
+    monkeypatch.chdir(tmp_path)
+    assert odd_main(["check", "installed_odd_pkg.odd:build"]) == 1
+    out = capsys.readouterr().out
+    assert "helper.py:2: 'k'" in out
+
+
+def test_the_innermost_frame_of_the_authors_files_is_named(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: Any
+) -> None:
+    (tmp_path / "bad_helper_mod.py").write_text("def boom():\n    return {}['k']\n")
+    (tmp_path / "bad_main_mod.py").write_text(
+        "import bad_helper_mod\n\n\ndef build():\n    bad_helper_mod.boom()\n"
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    monkeypatch.chdir(tmp_path)
+    assert odd_main(["check", "bad_main_mod:build"]) == 1
+    assert "bad_helper_mod.py:2: 'k'" in capsys.readouterr().out
+
+
+def test_an_error_without_a_traceback_is_reported_as_is() -> None:
+    from autoware_carla_scenario.odd.cli import describe_error  # noqa: PLC0415
+
+    assert describe_error(ValueError("boom")) == "boom"
+    assert describe_error(ValueError()) == "ValueError"
+
+
+def test_the_hint_names_only_the_parameter_that_holds_the_non_list(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: Any
+) -> None:
+    body = (
+        'OddDefinition("t", [a], [OddModule("m", include_and=[a.between(0, 1)], '
+        "exclude_and=a.between(0, 1))])"
+    )
+    (tmp_path / "bad_odd_which.py").write_text(_BAD_ODD.format(name="which", body=body))
+    monkeypatch.syspath_prepend(str(tmp_path))
+    monkeypatch.chdir(tmp_path)
+    assert odd_main(["check", "bad_odd_which:which"]) == 1
+    out = capsys.readouterr().out
+    assert "exclude_and takes a list" in out
+    assert "include_and takes" not in out
+
+
+def test_the_hint_is_silent_when_two_parameters_hold_non_lists(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: Any
+) -> None:
+    body = (
+        'OddDefinition("t", [a], [OddModule("m", include_and=a.between(0, 1), '
+        "exclude_and=a.between(0, 1))])"
+    )
+    (tmp_path / "bad_odd_both.py").write_text(_BAD_ODD.format(name="both", body=body))
+    monkeypatch.syspath_prepend(str(tmp_path))
+    monkeypatch.chdir(tmp_path)
+    assert odd_main(["check", "bad_odd_both:both"]) == 1
+    out = capsys.readouterr().out
+    assert "bad_odd_both.py:7: " in out
+    assert "hint" not in out

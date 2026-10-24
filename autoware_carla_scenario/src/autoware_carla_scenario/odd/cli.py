@@ -68,46 +68,90 @@ def _frames(tb: Optional[TracebackType]) -> list[TracebackType]:
     return out
 
 
-def _user_location(exc: BaseException) -> Optional[tuple[str, int]]:
-    """The file and line of the innermost frame in the author's own module."""
+def _is_library(tb: TracebackType, library: tuple[str, ...]) -> bool:
+    path = tb.tb_frame.f_code.co_filename
+    if path.startswith("<"):
+        return True
+    return str(Path(path).resolve()).startswith(library)
+
+
+def _own_package(spec: Optional[str]) -> Optional[str]:
+    """The top-level package of the module a ``package.module:function`` spec names."""
+    if not isinstance(spec, str) or ":" not in spec:
+        return None
+    top = spec.split(":", 1)[0].split(".", 1)[0]
+    return top if top and top not in ("openodd", "autoware_carla_scenario") else None
+
+
+def _user_location(
+    exc: BaseException, spec: Optional[str] = None
+) -> Optional[tuple[str, int]]:
+    """The file and line of the innermost frame in the author's own code.
+
+    A frame is the author's when it is in the package of the ODD module
+    (also when that package is installed, i.e. under site-packages), or in a
+    file that is neither the library's, a frozen module nor in site-packages.
+    """
     library = _library_dirs()
+    own = _own_package(spec)
     found = None
     for tb in _frames(exc.__traceback__):
+        if _is_library(tb, library):
+            continue
         path = tb.tb_frame.f_code.co_filename
-        if path.startswith("<") or "site-packages" in path:
-            continue
-        if str(Path(path).resolve()).startswith(library):
-            continue
+        module = str(tb.tb_frame.f_globals.get("__name__", ""))
+        if not (own is not None and module.split(".", 1)[0] == own):
+            if "site-packages" in path:
+                continue
         found = (path, tb.tb_lineno)
     if found is None and isinstance(exc, SyntaxError) and exc.filename:
         return exc.filename, exc.lineno or 0
     return found
 
 
+def _type_names(value: object) -> set[str]:
+    cls = type(value)
+    names = {cls.__qualname__, f"{cls.__module__}.{cls.__qualname__}"}
+    return names
+
+
 def _list_hint(exc: BaseException) -> Optional[str]:
-    """A hint when a single value was passed where a list is expected."""
-    if not isinstance(exc, TypeError) or "not iterable" not in str(exc):
+    """A hint when a single value was passed where a list is expected.
+
+    The parameter named is the one holding a non-iterable of the type the error
+    names, in the innermost library frame that has one; none is named when that
+    frame holds several such parameters.
+    """
+    message = str(exc)
+    if not isinstance(exc, TypeError) or "not iterable" not in message:
         return None
+    library = _library_dirs()
     for tb in reversed(_frames(exc.__traceback__)):
+        if not _is_library(tb, library):
+            continue
+        found = []
         for name, value in tb.tb_frame.f_locals.items():
-            if (
-                name in _LIST_PARAMETERS
-                and value is not None
-                and not isinstance(value, (list, tuple))
-            ):
-                try:
-                    iter(value)
-                except TypeError:
-                    return (
-                        f"{name} takes a list of {_LIST_PARAMETERS[name]}: {name}=[...]"
-                    )
+            if name not in _LIST_PARAMETERS or value is None:
+                continue
+            try:
+                iter(value)
+            except TypeError:
+                if any(
+                    f"'{n}' object is not iterable" in message
+                    for n in _type_names(value)
+                ):
+                    found.append(name)
+        if len(found) == 1:
+            return f"{found[0]} takes a list of {_LIST_PARAMETERS[found[0]]}: {found[0]}=[...]"
+        if found:
+            return None
     return None
 
 
-def describe_error(exc: BaseException) -> str:
+def describe_error(exc: BaseException, spec: Optional[str] = None) -> str:
     """``file:line: message`` (and a hint) for an error raised while an ODD builds."""
     message = str(exc) or type(exc).__name__
-    location = _user_location(exc)
+    location = _user_location(exc, spec)
     if location is not None:
         path, line = location
         try:
@@ -125,7 +169,7 @@ def _check(spec: str) -> int:
     try:
         odd = resolve_odd(spec)
     except Exception as exc:  # noqa: BLE001 - reported, not raised
-        print(f"[FAILED] {spec}: {describe_error(exc)}")  # noqa: T201
+        print(f"[FAILED] {spec}: {describe_error(exc, spec)}")  # noqa: T201
         return 1
     builder = odd_builder(spec)
     if builder is None:
@@ -143,7 +187,7 @@ def _show(spec: str) -> int:
     try:
         odd = resolve_odd(spec)
     except Exception as exc:  # noqa: BLE001 - reported, not raised
-        print(f"scenario-odd: {spec}: {describe_error(exc)}", file=sys.stderr)  # noqa: T201
+        print(f"scenario-odd: {spec}: {describe_error(exc, spec)}", file=sys.stderr)  # noqa: T201
         return 1
     out = odd.describe()
     out["attributes"] = [
@@ -213,7 +257,7 @@ def _route(spec: str, items: Sequence[str], as_json: bool) -> int:
     try:
         odd = resolve_odd(spec)
     except Exception as exc:  # noqa: BLE001 - reported, not raised
-        print(f"scenario-odd: {spec}: {describe_error(exc)}", file=sys.stderr)  # noqa: T201
+        print(f"scenario-odd: {spec}: {describe_error(exc, spec)}", file=sys.stderr)  # noqa: T201
         return 2
     from ..examples import run  # noqa: PLC0415 - composes configs as a run does
     from ..maps import resolve_map_paths  # noqa: PLC0415
