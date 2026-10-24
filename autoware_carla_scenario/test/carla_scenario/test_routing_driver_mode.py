@@ -756,3 +756,45 @@ def test_a_jump_as_the_controller_starts_is_said(
         _walker_ai.drive(walker, path, 0.0, 1.4, SimpleNamespace(x=2.0, y=0.0, z=0.0))
     _walker_ai.release(64)
     assert sum("jumped" in r.getMessage() for r in caplog.records) == 1
+
+
+def test_a_target_on_the_road_is_moved_to_the_nearest_walkway(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A walker that may not use the road is never sent where CARLA finds it
+    no route (it would walk to a random point instead): a target on the road
+    goes to the nearest walkway; at its walk's end so moved, it is held."""
+    from autoware_carla_scenario.entity import _walker_ai
+
+    monkeypatch.setattr(
+        _walker_ai, "_kind_at", lambda x, y: "road" if 5.0 < x < 22.0 else "walk"
+    )
+    monkeypatch.setattr(_walker_ai, "_nearest_walk", lambda x, y: (x, 3.0))
+    world = _AiWorld(True, 107)
+    sent: list[Any] = []
+    world.controller.go_to_location = lambda location: sent.append(  # type: ignore[method-assign]
+        (round(location.x, 1), round(location.y, 1))
+    )
+    where = SimpleNamespace(x=0.0, y=0.0, z=0.0)
+    walker = SimpleNamespace(id=62, get_world=lambda: world)
+    path = path_of(20.0)
+    assert _walker_ai.drive(walker, path, 0.0, 1.4, where, 0.0)
+    assert sent == [(10.0, 3.0)]
+    where.x, where.y = 20.0, 2.0  # near its end, as near as it goes
+    assert _walker_ai.drive(walker, path, 19.0, 1.4, where, 0.0)
+    assert sent[-1] == (20.0, 3.0)
+    assert world.controller.calls[-1] == ("speed", 0.0)
+    _walker_ai.release(62)
+    # A walker that may cross keeps its targets (its road stretches stepped).
+    world = _AiWorld(True, 108)
+    sent.clear()
+    world.controller.go_to_location = lambda location: sent.append(  # type: ignore[method-assign]
+        (round(location.x, 1), round(location.y, 1))
+    )
+    walker = SimpleNamespace(id=63, get_world=lambda: world)
+    monkeypatch.setattr(_walker_ai, "road_stretches", lambda path: [])
+    assert _walker_ai.drive(
+        walker, path, 0.0, 1.4, SimpleNamespace(x=0.0, y=0.0, z=0.0), 1.0
+    )
+    assert sent == [(10.0, 0.0)]
+    _walker_ai.release(63)

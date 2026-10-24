@@ -27,6 +27,17 @@ CARLA gives a walker that has stood 4 s a random new target
 target is sent again every :data:`RETARGET_S` seconds and at once when it
 walks on.
 
+**A target out of the controller's reach is moved.**  CARLA routes a walker
+that may not use the road (its road filter) only to a point within 2 m of a
+walkable polygon off the road (``Navigation::GetAgentRoute``'s pick extent);
+for any other it finds no route and the walker walks to a random point of
+the map instead (``WalkerManager::SetWalkerRoute``), again each time the
+target is sent.  So a walker whose road stretches are not stepped (cross
+factor under a half) is sent, for a target on a road lanelet and on no
+walkway or crossing, to the nearest point of a walkway or crossing instead:
+along a walk recorded on the road's edge it keeps to the pavement beside it.
+Standing at the end of its walk so moved, it is held there.
+
 **Road stretches are stepped.**  CARLA's controller does not take a walker
 across a road where it was recorded crossing it, whatever its cross factor:
 the road costs ten times the pavement in its routing, so any crossing within
@@ -95,6 +106,10 @@ HAND_BACK_PAST_M: float = 1.0
 _SAMPLE_M: float = 1.0
 #: A jump (m) over the tick a controller starts that is said.
 SNAP_M: float = 0.5
+#: How far (m) into a walkway a target moved off the road is put.
+_INTO_WALK_M: float = 0.5
+#: How many lanelets nearest a target are searched for a walkway.
+_NEAREST_LANELETS = 40
 #: The tick, for the retargeting clock where the world does not say.
 _DEFAULT_DT_S = 0.05
 
@@ -204,6 +219,16 @@ def drive(
             along += TARGET_SPACING_M
         end = path.at_distance(path.length)
         targets.append((path.length, carla.Location(x=end.x, y=end.y, z=end.z)))
+        if cross_factor is None or cross_factor < STEP_CROSSING_FROM:
+            moved = _onto_walkways(targets)
+            if moved:
+                logger.info(
+                    "walker %d: %d of its %d targets on the road, out of its "
+                    "controller's reach: sent to the nearest walkway instead",
+                    int(walker.id),
+                    moved,
+                    len(targets),
+                )
         blueprint = world.get_blueprint_library().find("controller.ai.walker")
         controller = world.spawn_actor(blueprint, carla.Transform(), attach_to=walker)
         driven = _Driven(controller, targets, cross_factor)
@@ -233,16 +258,16 @@ def drive(
     stepped = _stepped(driven, here, location)
     if stepped and not driven.stepping:
         driven.stepping = True
-        logger.info("walker %d: stepped over the road from %.1f m", int(walker.id), here)
+        logger.info(
+            "walker %d: stepped over the road from %.1f m", int(walker.id), here
+        )
         if driven.running:
             _stop(driven)
             _own_steps(walker)
     elif not stepped and driven.stepping:
         driven.stepping = False
         driven.since_sent = RETARGET_S
-        logger.info(
-            "walker %d: back on its controller at %.1f m", int(walker.id), here
-        )
+        logger.info("walker %d: back on its controller at %.1f m", int(walker.id), here)
     while driven.index < len(driven.targets) - 1:
         along, target = driven.targets[driven.index]
         near = math.hypot(location.x - target.x, location.y - target.y) <= REACHED_M
@@ -253,6 +278,12 @@ def drive(
     if driven.stepping:
         return False  # the caller steps it, on the road
     wanted = max(speed, 0.0)
+    last = driven.targets[-1][1]
+    if (
+        driven.index == len(driven.targets) - 1
+        and math.hypot(location.x - last.x, location.y - last.y) <= REACHED_M
+    ):
+        wanted = 0.0  # at its walk's end, as near as its controller goes
     if wanted < _HOLD_MPS:
         wanted = 0.0  # held: on its controller, at a standstill
     if driven.speed < _HOLD_MPS <= wanted:
@@ -341,6 +372,68 @@ def _check_snap(walker: Any, driven: _Driven, location: Any) -> None:
             before[0],
             before[1],
         )
+
+
+def _onto_walkways(targets: list[tuple[float, Any]]) -> int:
+    """Move each of *targets* on a road lanelet (and on no walkway or
+    crossing) to the nearest walkway or crossing; how many were moved."""
+    moved = 0
+    for _along, target in targets:
+        try:
+            if _kind_at(target.x, target.y) != "road":
+                continue
+            onto = _nearest_walk(target.x, target.y)
+        except RuntimeError:  # no Lanelet2 map to read
+            return moved
+        if onto is None:
+            continue
+        target.x, target.y = onto
+        moved += 1
+    return moved
+
+
+def _nearest_walk(x: float, y: float) -> Optional[tuple[float, float]]:
+    """The point of a walkway or crossing nearest CARLA ``(x, y)``,
+    :data:`_INTO_WALK_M` inside it where that is still on one, or ``None``
+    with none near."""
+    import lanelet2.core  # noqa: PLC0415
+    import lanelet2.geometry  # noqa: PLC0415
+
+    from ..coordinate.map_manager import MapManager  # noqa: PLC0415
+    from ..route.geometry import MapFeatures  # noqa: PLC0415
+
+    mm = MapManager.get_instance()
+    offset_x, offset_y = mm.mgrs_offset
+    px, py = x + offset_x, -y + offset_y
+    point = lanelet2.core.BasicPoint2d(px, py)
+    best: Optional[tuple[float, float, float]] = None
+    for distance, lanelet in lanelet2.geometry.findNearest(
+        mm.lanelet_map.laneletLayer, point, _NEAREST_LANELETS
+    ):
+        if not MapFeatures.is_walkable(lanelet):
+            continue
+        if best is not None and distance >= best[0]:
+            break
+        corners = [(c.x, c.y) for c in lanelet.polygon2d()]
+        for i, (ax, ay) in enumerate(corners):
+            bx, by = corners[(i + 1) % len(corners)]
+            dx, dy = bx - ax, by - ay
+            span = dx * dx + dy * dy
+            u = 0.0 if span <= 0.0 else ((px - ax) * dx + (py - ay) * dy) / span
+            u = min(1.0, max(0.0, u))
+            qx, qy = ax + u * dx, ay + u * dy
+            gap = math.hypot(px - qx, py - qy)
+            if best is None or gap < best[0]:
+                best = (gap, qx, qy)
+    if best is None:
+        return None
+    gap, qx, qy = best
+    if gap > 1e-6:
+        ix = qx + (qx - px) / gap * _INTO_WALK_M
+        iy = qy + (qy - py) / gap * _INTO_WALK_M
+        if _kind_at(ix - offset_x, -(iy - offset_y)) == "walk":
+            qx, qy = ix, iy
+    return (qx - offset_x, -(qy - offset_y))
 
 
 def _kind_at_or_none(x: float, y: float) -> str:
