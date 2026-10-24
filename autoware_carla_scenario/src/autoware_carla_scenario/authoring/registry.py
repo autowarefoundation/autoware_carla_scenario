@@ -1352,6 +1352,18 @@ register_action_spec(
                 ),
             ),
             FieldSpec(
+                name="lanes",
+                label="Shift along lanelets",
+                kind="lanelet_list",
+                default=[],
+                required=False,
+                help=(
+                    "The lanelets, in order, a shift runs along -- the way its "
+                    "route goes on -- and no further than their last. Empty: on "
+                    "along the lane, the straightest way where it branches."
+                ),
+            ),
+            FieldSpec(
                 name="speed_ms",
                 label="Speed",
                 kind="number",

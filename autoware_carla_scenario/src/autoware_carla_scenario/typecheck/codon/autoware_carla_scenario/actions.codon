@@ -382,9 +382,10 @@ class SpawnAction(BaseAction):
                  timing: TickTiming = TickTiming("pre_tick"), *_kw, label: str = "spawn",
                  once: bool = True, position = None, shift_max: float = 0.0,
                  speed: float = 0.0, name: Optional[str] = None,
-                 blueprint: str = "static.prop.constructioncone", on_ground: bool = True):
+                 blueprint: str = "static.prop.constructioncone", on_ground: bool = True,
+                 lanes = ()):
         _keyword_only(_kw, "SpawnAction(): label, once, position, shift_max, speed, "
-                           "name, blueprint and on_ground")
+                           "name, blueprint, on_ground and lanes")
         if entity_name is not None:
             _expect_role(entity_name)
         if position is not None:

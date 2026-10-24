@@ -37,7 +37,7 @@ from __future__ import annotations
 
 import logging
 import math
-from typing import TYPE_CHECKING, Callable, Optional, Union
+from typing import TYPE_CHECKING, Callable, Optional, Sequence, Union
 
 from ..conditions.base import BaseCondition, find_actor_by_role_name
 from ..constants import EGO_ROLE_NAME
@@ -156,6 +156,10 @@ class SpawnAction(BaseAction):
             put instead, at the nearest place clear of road users, when its
             place is taken as it fires; 0 (the default) puts it there all the
             same, and a prop is not looked at then.
+        lanes: The lanelets, in order, a shift runs along -- the way its
+            route goes on from its place; it goes no further than their last.
+            Empty (the default): on along the lane, the straightest way where
+            it branches.
         speed: The speed (m/s) an entity enters at, along its heading.
         name: A prop's name; a :class:`~.despawn.DespawnAction` removes it by
             this name.  One standing already of that name is replaced.
@@ -180,6 +184,7 @@ class SpawnAction(BaseAction):
     _blueprint: str
     _on_ground: bool
     _ahead: float
+    _lanes: list[int]
     _spawned: list[tuple[str, int]]
 
     def __init__(
@@ -209,6 +214,7 @@ class SpawnAction(BaseAction):
         name: Optional[str] = None,
         blueprint: str = DEFAULT_PROP_BLUEPRINT,
         on_ground: bool = True,
+        lanes: Sequence[int] = (),
     ) -> None:
         if (entity_name is None) == (name is None or name == ""):
             raise ValueError(
@@ -234,6 +240,7 @@ class SpawnAction(BaseAction):
         self._blueprint = blueprint
         self._on_ground = on_ground
         self._ahead = 0.0
+        self._lanes = [int(lanelet) for lanelet in (lanes or ())]
         self._spawned = []
 
     @property
@@ -418,7 +425,7 @@ class SpawnAction(BaseAction):
             lane: Lanelet2Pose = position
             shift = SHIFT_STEP_M
             while shift <= self._shift_max + 1e-9:
-                on = _along_lane(lane, shift)
+                on = _along_lane(lane, shift, self._lanes)
                 if on is None:
                     break
                 further: Lanelet2Pose = on
@@ -480,12 +487,31 @@ class SpawnAction(BaseAction):
             )
 
 
-def _along_lane(pose: Lanelet2Pose, distance: float) -> Optional[Lanelet2Pose]:
-    """*pose* moved *distance* m on along its lane, or ``None`` where the lane
-    ends first."""
+def _along_lane(
+    pose: Lanelet2Pose, distance: float, lanes: Optional[list[int]] = None
+) -> Optional[Lanelet2Pose]:
+    """*pose* moved *distance* m on along *lanes* (in order, from the one it
+    is on) -- or, with none, along its lane -- or ``None`` where they end
+    first."""
+    from ..coordinate import lanelet_length  # noqa: PLC0415
     from ..coordinate.map_manager import MapManager  # noqa: PLC0415
     from ..trajectory.relative_lane import advance_along_lane  # noqa: PLC0415
 
+    if lanes:
+        given: list[int] = lanes
+        if int(pose.lanelet_id) not in given:
+            return None
+        index = given.index(int(pose.lanelet_id))
+        s = float(pose.s) + distance
+        while index < len(given):
+            length = lanelet_length(given[index])
+            if s <= length:
+                return Lanelet2Pose(
+                    lanelet_id=given[index], s=s, t=pose.t, heading=pose.heading
+                )
+            s -= length
+            index += 1
+        return None
     mm = MapManager.get_instance()
     try:
         lanelet_id, along = advance_along_lane(

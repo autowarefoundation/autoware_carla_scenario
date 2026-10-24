@@ -903,7 +903,7 @@ def test_a_spawn_whose_place_is_taken_takes_one_further_on_if_allowed(
     monkeypatch.setattr(
         spawn_module,
         "_along_lane",
-        lambda pose, d: Lanelet2Pose(pose.lanelet_id, pose.s + d),
+        lambda pose, d, lanes=None: Lanelet2Pose(pose.lanelet_id, pose.s + d),
     )
     monkeypatch.setattr(
         spawn_module,
@@ -1162,3 +1162,20 @@ def test_a_spawn_at_speed_needs_room_to_stop_ahead(
     monkeypatch.setattr(clearance, "overlaps", overlaps)
     assert spawn_module._taken(None, 1, 10.0, 0.0, 0.0, 2.3, 1.0, 6.0) == -1  # type: ignore[arg-type]
     assert looked == [(13.0, 5.3, 1.0)]
+
+
+def test_a_shift_runs_along_the_lanes_given_and_no_further(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Along its route's lanelets, not the straightest way on: vehicle_165,
+    shifted 10 m on a 4 m route, and vehicle_12, shifted down another branch,
+    left their routes."""
+    from autoware_carla_scenario import coordinate
+    from autoware_carla_scenario.actions import spawn as spawn_module
+    from autoware_carla_scenario.coordinate import Lanelet2Pose
+
+    monkeypatch.setattr(coordinate, "lanelet_length", lambda lanelet: 10.0)
+    on = spawn_module._along_lane(Lanelet2Pose(7, 6.0), 12.0, [5, 7, 9])
+    assert on is not None and (on.lanelet_id, on.s) == (9, 8.0)
+    assert spawn_module._along_lane(Lanelet2Pose(7, 6.0), 15.0, [5, 7, 9]) is None
+    assert spawn_module._along_lane(Lanelet2Pose(8, 6.0), 1.0, [5, 7, 9]) is None

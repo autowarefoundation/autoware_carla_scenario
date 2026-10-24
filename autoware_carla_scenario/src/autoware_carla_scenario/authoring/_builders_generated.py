@@ -1581,6 +1581,7 @@ def build_spawn_action(
         name=(str(params["name"]) if params["name"] is not None else None),
         blueprint=str(params["blueprint"]),
         on_ground=params["on_ground"],
+        lanes=params["lanes"],
     )
 
 
