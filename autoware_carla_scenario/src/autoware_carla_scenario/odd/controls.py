@@ -84,8 +84,23 @@ def config_keys(node: Any, prefix: str = "") -> list[str]:
 
 
 def _hint(word: str, known: Sequence[str]) -> str:
-    close = difflib.get_close_matches(word, list(known), n=1, cutoff=0.6)
+    close = difflib.get_close_matches(word, list(known), n=1, cutoff=0.75)
     return f" (did you mean {close[0]!r}?)" if close else ""
+
+
+def _key_exists(cfg: Any, key: str) -> bool:
+    """Whether *key* is a key of *cfg*: a ``null`` or ``???`` (mandatory) value is one too."""
+    from omegaconf import DictConfig, OmegaConf  # noqa: PLC0415
+
+    try:
+        if OmegaConf.select(cfg, key, default=_MISSING) is not _MISSING:
+            return True
+        # select() answers the default for a mandatory (`???`) value as well.
+        parent_key, _, leaf = key.rpartition(".")
+        parent = OmegaConf.select(cfg, parent_key) if parent_key else cfg
+        return isinstance(parent, DictConfig) and OmegaConf.is_missing(parent, leaf)
+    except Exception:  # noqa: BLE001 - a malformed key is not found
+        return False
 
 
 def _is_number(value: Any) -> bool:
@@ -142,13 +157,7 @@ def _check_control(
                 ControlDiagnostic(f"{base}.key", f"expected a config key, got {key!r}")
             )
         elif cfg is not None:
-            from omegaconf import OmegaConf  # noqa: PLC0415
-
-            try:
-                found = OmegaConf.select(cfg, key, default=_MISSING)
-            except Exception:  # noqa: BLE001 - a malformed key is not found
-                found = _MISSING
-            if found is _MISSING:
+            if not _key_exists(cfg, key):
                 out.append(
                     ControlDiagnostic(
                         f"{base}.key",

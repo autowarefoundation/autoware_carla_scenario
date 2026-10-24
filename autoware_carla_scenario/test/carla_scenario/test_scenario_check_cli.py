@@ -125,3 +125,27 @@ def test_the_shipped_controls_are_valid() -> None:
         node = OmegaConf.select(cfg, "controls")
         controls = None if node is None else OmegaConf.to_container(node, resolve=True)
         assert validate_controls(controls, cfg) == [], name
+
+
+def test_a_key_with_a_null_or_mandatory_value_is_a_key_of_the_config() -> None:
+    from omegaconf import OmegaConf  # noqa: PLC0415
+
+    from autoware_carla_scenario.odd.controls import validate_controls  # noqa: PLC0415
+
+    cfg = OmegaConf.create({"scenario": {"empty": None, "must": "???", "x": 1}})
+    for key in ("scenario.empty", "scenario.must", "scenario.x"):
+        assert validate_controls({"vehicle_ahead_gap_m": key}, cfg) == [], key
+    found = validate_controls({"vehicle_ahead_gap_m": "scenario.nope"}, cfg)
+    assert [d.path for d in found] == ["controls.vehicle_ahead_gap_m.key"]
+
+
+def test_a_weak_resemblance_is_not_suggested() -> None:
+    from omegaconf import OmegaConf  # noqa: PLC0415
+
+    from autoware_carla_scenario.odd.controls import validate_controls  # noqa: PLC0415
+
+    cfg = OmegaConf.create({"scenario": {"side": "left", "npc_gap_m": 1.0}})
+    far = validate_controls({"vehicle_ahead_gap_m": "scenario.nonexistent"}, cfg)
+    assert "did you mean" not in far[0].message
+    near = validate_controls({"vehicle_ahead_gap_m": "scenario.npc_gap"}, cfg)
+    assert "did you mean 'scenario.npc_gap_m'?" in near[0].message

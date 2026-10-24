@@ -9,7 +9,8 @@
 Each ``scenario=`` config (a name or a glob, as ``scenario`` takes) is composed
 with the remaining overrides, exactly as the runner composes it, and checked
 the way the runner checks it before a run (docs/typecheck.md).  The exit
-status is 0 when every scenario passed, 1 when one failed, and 2 when there is
+status is 0 when every scenario passed, 1 when one failed (or its ``controls:`` are
+invalid), and 2 when there is
 no Codon compiler to check with or the command line does not compose: no config
 matches ``scenario=``, or an override names a key the config does not have
 (the message suggests the closest key; ``+key=value`` adds a new one).  ``HYDRA_FULL_ERROR=1``

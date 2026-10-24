@@ -827,7 +827,7 @@ problem as one line with its config path, not a traceback:
 cut_in/left: controls.vehicle_ahead_gap_m.range: expected [low, high] with low <= high, got [30, 2]
 cut_in/left: controls.vehicle_ahead_gap_m.rnge: unknown field (did you mean 'range'?)
 cut_in/left: controls.vehicle_ahead_gap_m: expected a key or a mapping, got 5
-cut_in/left: controls.vehicle_ahead_gap_m.key: 'scenario.nonexistent' is not a key of the config (did you mean 'scenario.npc_gap_m'?)
+cut_in/left: controls.vehicle_ahead_gap_m.key: 'scenario.npc_gapm' is not a key of the config (did you mean 'scenario.npc_gap_m'?)
 ```
 
 Errors (exit status 1; the config is not compiled): a control that is not a key
