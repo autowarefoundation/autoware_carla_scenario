@@ -404,13 +404,16 @@ def _stepped(driven: _Driven, here: float, location: Any) -> bool:
 
 
 def _own_steps(walker: Any) -> None:
-    """Let *walker* take steps again (``apply_control``) off its controller:
-    a walker CARLA's navigation has moved ignores them until its physics is
-    set on again."""
-    try:
-        walker.set_simulate_physics(True)
-    except (AttributeError, RuntimeError):
-        pass
+    """Let *walker* take steps again (``apply_control``) off its controller.
+    Starting the controller set the walker's physics and its collisions off
+    (``WalkerAIController::Start``) and stopping it sets neither on again: a
+    walker moved by CARLA's navigation ignores steps until its physics is on,
+    and with its collisions off it falls through the ground."""
+    for turn_on in ("set_simulate_physics", "set_collisions"):
+        try:
+            getattr(walker, turn_on)(True)
+        except (AttributeError, RuntimeError):
+            pass
 
 
 def _check_snap(walker: Any, driven: _Driven, location: Any) -> None:

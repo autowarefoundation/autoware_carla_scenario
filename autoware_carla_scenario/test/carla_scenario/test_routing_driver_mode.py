@@ -833,3 +833,17 @@ def test_a_stepped_walker_gives_way_to_a_walker_in_its_way() -> None:
     walker2 = SimpleNamespace(id=70, get_world=lambda: world2)
     assert not _walker_ai.give_way(walker2, path, 0.0, here)
     _walker_ai.release(70)
+
+
+def test_a_walker_off_its_controller_has_its_physics_and_collisions_back() -> None:
+    """Its controller's start set both off; stepping without collisions drops
+    the walker through the ground."""
+    from autoware_carla_scenario.entity import _walker_ai
+
+    calls: list[tuple[str, bool]] = []
+    walker = SimpleNamespace(
+        set_simulate_physics=lambda on: calls.append(("physics", on)),
+        set_collisions=lambda on: calls.append(("collisions", on)),
+    )
+    _walker_ai._own_steps(walker)
+    assert calls == [("physics", True), ("collisions", True)]
