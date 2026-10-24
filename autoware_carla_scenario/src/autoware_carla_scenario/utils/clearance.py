@@ -16,7 +16,7 @@ from __future__ import annotations
 import math
 from typing import Any, Optional
 
-__all__ = ["Obstacle", "first_in_way"]
+__all__ = ["Obstacle", "first_in_way", "occupied"]
 
 #: An actor this far (m) or more below the ground is out of the world.
 _HIDDEN_BELOW_M = -100.0
@@ -93,6 +93,20 @@ def _kind(world: Any, actor_id: int) -> tuple[str, float]:
                 radius = math.hypot(float(extent.x), float(extent.y))
         _CACHE.kinds[actor_id] = (kind, radius)
     return _CACHE.kinds[actor_id]
+
+
+def occupied(world: Any, self_id: int, x: float, y: float, radius: float) -> bool:
+    """Whether a vehicle or walker stands within *radius* (its own size
+    added) of CARLA ``(x, y)``."""
+    for actor_id, ox, oy, oz, _speed in _states(world):
+        if actor_id == self_id or oz < _HIDDEN_BELOW_M:
+            continue
+        if (ox - x) ** 2 + (oy - y) ** 2 > (radius + 4.0) ** 2:
+            continue
+        kind, size = _kind(world, actor_id)
+        if kind and math.hypot(ox - x, oy - y) < radius + size:
+            return True
+    return False
 
 
 def first_in_way(

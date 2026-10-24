@@ -189,6 +189,7 @@ class RoutingAction(TrajectoryRun):
     _start_pose: Optional[CarlaWorldPose]
     _warned_off: bool
     _route_start: Optional[Lanelet2Pose]
+    _warned_spot: bool
 
     def __init__(
         self,
@@ -273,6 +274,7 @@ class RoutingAction(TrajectoryRun):
         self._start_pose = None
         self._warned_off = False
         self._route_start = None
+        self._warned_spot = False
 
     # ------------------------------------------------------------------
     # Public state
@@ -775,6 +777,26 @@ class RoutingAction(TrajectoryRun):
             self._resolved = self._resolve(world)
             if self._resolved is None:
                 return False
+        appearing = self._resolved
+        if self._appear_on_start and appearing is not None and actor is not None:
+            spot: ResolvedTrajectory = appearing
+            sample = spot.at_distance(self._initial_distance_offset)
+            standing: "carla.Actor" = actor
+            if TYPE_CHECKING:
+                taken = False  # utils.clearance is not compiled (docs/typecheck.md)
+            else:
+                taken = _spot_taken(world, standing, sample.x, sample.y)
+            if taken:
+                # Not into a road user standing there: brought in once the
+                # spot is clear (appearing on one sent both off their routes).
+                if not self._warned_spot:
+                    self._warned_spot = True
+                    logger.info(
+                        "%s: '%s' waits for where it appears to clear",
+                        self.label,
+                        str(self._entity_name),
+                    )
+                return False
         self._begun = True
         self._finished = False
         self._start_time = self._elapsed
@@ -1010,6 +1032,19 @@ def _goal_route(
 
 def _vertex_of(point: tuple[int, float, float]) -> int:
     return point[0]
+
+
+def _spot_taken(world: "carla.World", actor: "carla.Actor", x: float, y: float) -> bool:
+    """Whether a vehicle or walker in the world stands where *actor* would
+    appear, at CARLA ``(x, y)`` (their outlines, as circles, overlapping)."""
+    from ..utils.clearance import occupied  # noqa: PLC0415
+
+    try:
+        extent = actor.bounding_box.extent
+        radius = math.hypot(float(extent.x), float(extent.y))
+        return occupied(world, int(actor.id), x, y, radius)
+    except (AttributeError, RuntimeError):
+        return False
 
 
 def _mark_point(index: int, pose: Lanelet2Pose) -> tuple[int, float, float]:
