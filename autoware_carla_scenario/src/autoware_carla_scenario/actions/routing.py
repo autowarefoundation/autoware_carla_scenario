@@ -345,10 +345,13 @@ class RoutingAction(TrajectoryRun):
 
     def _reissues_by_default(self) -> bool:
         """``follow``/``position`` move the entity every tick; ``driver`` mode
-        only while it paces or walks the entity."""
+        while it paces or walks the entity, and until its run has begun: one
+        that could not begin on its trigger's tick (waiting for where it
+        appears to clear, for its actor or its references) tries again on
+        the next."""
         if self._mode is not RoutingMode.DRIVER:
             return True
-        return self._stepping
+        return self._stepping or not self._begun
 
     def execute(self, world: "carla.World") -> None:
         """Route the entity, or move it one tick along its route."""

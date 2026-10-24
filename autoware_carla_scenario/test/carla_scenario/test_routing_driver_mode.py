@@ -995,3 +995,19 @@ def test_a_walker_the_crowd_took_for_run_over_goes_on_as_a_new_one(
     assert entity.actor is spawned[0][2]
     assert entity.walking
     assert any("goes on in its place" in r.getMessage() for r in caplog.records)
+
+
+def test_a_driver_run_that_has_not_begun_is_tried_again_each_tick() -> None:
+    """One that could not begin on its trigger's tick (its spot taken) is
+    executed again on the next; once begun, only while it paces or walks."""
+    from autoware_carla_scenario.actions.routing import RoutingAction, RoutingMode
+
+    action = RoutingAction.__new__(RoutingAction)
+    action._mode = RoutingMode.DRIVER
+    action._stepping = False
+    action._begun = False
+    assert action._reissues_by_default()
+    action._begun = True
+    assert not action._reissues_by_default()
+    action._stepping = True
+    assert action._reissues_by_default()
