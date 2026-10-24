@@ -43,12 +43,16 @@ class FinalApproach:
         actor: The vehicle, off autopilot.
         start: Where it is now.
         points: The path's points still ahead of it, the last one its end.
+        stop: Whether it stops on the path's end (a final approach), or is
+            only done there, at speed, for the TrafficManager to take it on
+            (a way out of the junction it started in).
     """
 
     _actor: "carla.Actor"
     _path: ResolvedTrajectory
     _follower: "TrajectoryFollower"
     _here: float
+    _stop: bool
     done: bool
 
     def __init__(
@@ -56,6 +60,7 @@ class FinalApproach:
         actor: "carla.Actor",
         start: "carla.Location",
         points: List["carla.Location"],
+        stop: bool = True,
     ) -> None:
         from ..driver.control import ControlConfig, TrajectoryFollower  # noqa: PLC0415
         from ..utils.powertrain import ChaosPowertrain  # noqa: PLC0415
@@ -87,6 +92,7 @@ class FinalApproach:
             ),
         )
         self._here = 0.0
+        self._stop = stop
         self.done = False
 
     @property
@@ -110,7 +116,8 @@ class FinalApproach:
         )
         if self._here >= self._path.length - _ARRIVED_M:
             self.done = True
-            vehicle.apply_control(carla.VehicleControl(throttle=0.0, brake=1.0))
+            if self._stop:
+                vehicle.apply_control(carla.VehicleControl(throttle=0.0, brake=1.0))
             return
         velocity = actor.get_velocity()
         if TYPE_CHECKING:
@@ -157,9 +164,12 @@ class FinalApproach:
         previous = distance
         previous_us: Optional[int] = None
         while distance <= last + 1e-9:
-            # Slower towards the end: the speed braking at 1.5 m/s² allows.
+            # Slower towards the end: the speed braking at 1.5 m/s² allows
+            # (not where it only hands the vehicle on).
             room = max(path.length - distance, 0.0)
-            speed = min(APPROACH_SPEED_MPS, max(math.sqrt(3.0 * room), 0.3))
+            speed = APPROACH_SPEED_MPS
+            if self._stop:
+                speed = min(APPROACH_SPEED_MPS, max(math.sqrt(3.0 * room), 0.3))
             stamp += (distance - previous) / speed
             previous = distance
             sample = path.at_distance(distance)

@@ -111,3 +111,57 @@ def test_a_path_given_before_the_vehicle_is_kept_counts(
     (approach,) = _Approach.made
     assert approach.points == path[1:]
     assert ego.controls == []
+
+
+def test_a_lead_out_does_not_stop_at_its_end() -> None:
+    """Driving a vehicle out of a junction it hands it on at speed."""
+    vehicle = _Vehicle(speed=4.0)
+    path = [carla.Location(float(x), 0.0, 0.0) for x in (5, 10, 15, 20)]
+    approach = FinalApproach(vehicle, carla.Location(0.0, 0.0, 0.0), path, stop=False)  # type: ignore[arg-type]
+    elapsed = 0.0
+    while not approach.done and elapsed < 30.0:
+        approach.step(_DT, elapsed)
+        vehicle.step(_DT, driven=True)
+        elapsed += _DT
+    assert approach.done
+    assert vehicle.x == pytest.approx(19.0, abs=2.0)
+    assert vehicle.speed > 2.0
+
+
+class _DoneApproach(_Approach):
+    def __init__(self, actor: Any, start: Any, points: List[Any], stop: bool = True) -> None:
+        super().__init__(actor, start, points)
+        self.stop = stop
+        self.done = False
+
+    def step(self, dt: float, elapsed: float) -> None:
+        super().step(dt, elapsed)
+        self.done = self.steps >= 3
+
+
+def test_a_vehicle_led_out_of_its_junction_is_handed_back_with_its_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Off autopilot while it is driven out of the junction's mouth, then on
+    autopilot again with the rest of its path."""
+    import autoware_carla_scenario.traffic.traffic_manager as tm_module
+
+    _Approach.made = []
+    monkeypatch.setattr(tm_module, "FinalApproach", _DoneApproach)
+    _road(monkeypatch, 500.0, dead=False)
+    npc = _Actor(4)
+    npc.attributes = {"role_name": "npc4"}
+    npc.location = carla.Location(0.0, 0.0, 0.0)
+    backend, client = _on_autopilot(npc)
+    route = [carla.Location(float(x), 0.0, 0.0) for x in (5, 10, 15, 20, 25)]
+    path = route[2:]
+    backend._remember_path(npc, path)  # type: ignore[arg-type]
+    backend._lead_out(npc, carla.Location(0.0, 0.0, 0.0), route, path)  # type: ignore[arg-type]
+    (approach,) = _Approach.made
+    assert approach.points == route[:3] and not approach.stop  # type: ignore[attr-defined]
+    assert npc.autopilot[-1] == (False, 8123)
+    npc.location = carla.Location(15.0, 0.0, 0.0)
+    _stand(backend, 2.0)
+    assert npc.autopilot[-1] == (True, 8123)
+    assert backend._kept[4].approach is None
+    assert client.tm.paths[-1] == (4, route[3:])

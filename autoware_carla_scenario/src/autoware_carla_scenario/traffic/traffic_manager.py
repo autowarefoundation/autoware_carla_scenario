@@ -72,6 +72,15 @@ TURN_POST_JUNCTION_DISTANCE_M: float = 20.0
 #: Metres between the points of a route :meth:`TrafficManagerBackend.follow_route`
 #: sets as a vehicle's path.
 ROUTE_POINT_STEP_M: float = 5.0
+#: How near (m) ahead of a junction a vehicle may start for the
+#: TrafficManager to take its route through it.  It places a vehicle on its
+#: map's waypoint nearest it, and just past a junction's entry the nearest is
+#: on one of the junction's ways through, all starting there: whichever it is,
+#: the vehicle keeps to it, whatever its path (a car meant to turn left went
+#: right and off the map).  Such a vehicle is driven out of the junction
+#: along its route first (:class:`FinalApproach`, not stopping), then handed
+#: to the TrafficManager.
+_JUNCTION_MOUTH_M: float = 2.0
 
 #: Heading change, in degrees, that each turn amounts to.  CARLA's yaw is
 #: left-handed and clockwise-positive seen from above.
@@ -145,6 +154,7 @@ class _Kept:
     held: bool
     refreshed: bool
     approach: Optional[FinalApproach]
+    leading_out: bool
 
     def __init__(self, actor: "carla.Actor") -> None:
         self.actor = actor
@@ -169,6 +179,9 @@ class _Kept:
         #: Driving the last of its path itself, off autopilot, before a dead
         #: end the TrafficManager would plan into (:class:`FinalApproach`).
         self.approach = None
+        #: The approach drives it out of the junction it started in, to be
+        #: handed back to the TrafficManager at its end.
+        self.leading_out = False
 
 
 class TrafficManagerBackend(TrafficBackend):
@@ -764,6 +777,7 @@ class TrafficManagerBackend(TrafficBackend):
             return
         # Not the point it stands on: the TrafficManager waits for each point
         # to come within a few metres, and one behind the vehicle never does.
+        first = to_carla_location(poses[0])
         ahead = [to_carla_location(pose) for pose in poses[1:] or poses]
         carla_map = run_carla_map(world)
         path = _clear_of_junctions(carla_map, ahead)
@@ -792,6 +806,38 @@ class TrafficManagerBackend(TrafficBackend):
         self._remember_path(actor, path)
         self._drive_on(actor)
         logger.info("%s: set a route of %d points", _entity_name(entity), len(path))
+        if _at_junction_mouth(carla_map, first) and path and actor.id in self._kept:
+            self._lead_out(actor, first, ahead, path)
+
+    def _lead_out(
+        self,
+        actor: "carla.Actor",
+        start: "carla.Location",
+        route: List["carla.Location"],
+        path: List["carla.Location"],
+    ) -> None:
+        """Drive *actor*, starting at *start* in a junction's mouth, along
+        *route* out of the junction to its *path*'s first point, off
+        autopilot; :meth:`_keep_scenario_vehicles` hands it to the
+        TrafficManager there (:data:`_JUNCTION_MOUTH_M`)."""
+        out: List["carla.Location"] = []
+        for point in route:
+            out.append(point)
+            if point.distance(path[0]) < 0.1:
+                break
+        kept = self._kept[actor.id]
+        actor.set_autopilot(False, self.port)
+        kept.held = True
+        approach = FinalApproach(actor, start, out, stop=False)
+        kept.approach = approach
+        kept.leading_out = True
+        logger.info(
+            "%s: starts in a junction's mouth, where the TrafficManager would "
+            "take any way through it; off autopilot, it drives the %.0f m of its "
+            "route out of the junction itself, then the TrafficManager takes it on",
+            _actor_name(actor),
+            approach.length,
+        )
 
     def release(self, entity: DrivenEntity, world: "carla.World") -> None:
         """Take *entity*'s vehicle off autopilot, and keep it off at :meth:`start`."""
@@ -937,6 +983,9 @@ class TrafficManagerBackend(TrafficBackend):
                     driving.step(_tick_seconds(world), elapsed)
                 except RuntimeError:
                     del self._kept[actor_id]  # Destroyed under us.
+                    continue
+                if kept.leading_out and driving.done:
+                    self._hand_on(kept)
                 continue
             if kept.held or elapsed < kept.check_due:
                 continue
@@ -1011,6 +1060,20 @@ class TrafficManagerBackend(TrafficBackend):
         tm = self._require_tm("re-registering")
         if tm is not None:
             tm.set_path(_vehicle(kept.actor), kept.path)
+
+    def _hand_on(self, kept: _Kept) -> None:
+        """Give a vehicle driven out of its junction back to the
+        TrafficManager, with the rest of its path."""
+        kept.approach = None
+        kept.leading_out = False
+        kept.held = False
+        kept.check_due = -1.0
+        self._autopilot(kept.actor)
+        self._give_path_again(kept)
+        logger.info(
+            "%s: out of its junction, back on autopilot along its path",
+            _actor_name(kept.actor),
+        )
 
     def _remember_path(
         self, actor: "carla.Actor", path: List["carla.Location"]
@@ -1192,6 +1255,20 @@ def _in_junction(carla_map: "carla.Map", location: "carla.Location") -> bool:
     """Whether *location* is on a junction's road."""
     found = carla_map.get_waypoint(location)
     return found is not None and found.is_junction
+
+
+def _at_junction_mouth(carla_map: "carla.Map", location: "carla.Location") -> bool:
+    """Whether *location* is in a junction or within :data:`_JUNCTION_MOUTH_M`
+    of one ahead along its lane."""
+    found = carla_map.get_waypoint(location)
+    if found is None:
+        return False
+    if found.is_junction:
+        return True
+    for following in found.next(_JUNCTION_MOUTH_M):
+        if following.is_junction:
+            return True
+    return False
 
 
 def _beyond_goal(
