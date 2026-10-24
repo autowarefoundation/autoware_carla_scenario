@@ -2597,7 +2597,11 @@ What Codon 0.19 needs that Python does not, beyond
   `keys()`, `values()`, iteration, `len()`, `in`, `str()`, `int()`,
   `float()`, `bool()`), each returning a `JSONValue` again, and never what
   the document holds; the `ValueError` or `TypeError` CPython raises for a
-  value of the wrong kind is invisible to it. `JSONDecodeError` is a
+  value of the wrong kind is invisible to it. A scenario
+  that reads a document converts what it takes explicitly:
+  `speed = float(cfg["v"])` passes, `speed: float = cfg["v"]` and
+  `cfg["v"] + 1.0` are refused; whether the key exists, or holds a number,
+  is not checked. `JSONDecodeError` is a
   `ValueError` with `msg`, `doc` and `pos`. `shlex` declares
   `quote(s)` and `join(split_command)`, CPython 3.10's on Codon's `re`; a
   `quote()` of a false value that is no `str` (`None`, which CPython quotes

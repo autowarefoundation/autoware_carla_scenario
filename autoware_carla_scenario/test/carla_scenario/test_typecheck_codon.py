@@ -2134,6 +2134,23 @@ def test_an_undeclared_attribute_is_refused_before_compiling(tmp_path: Path) -> 
     assert error.line == _line_of(path, "self._count = 3")
 
 
+def test_a_json_document_is_held_to_the_members_of_jsonvalue(tmp_path: Path) -> None:
+    # What loads() returns has no type the check knows: it is converted
+    # explicitly, and handing it on as a float or a str is refused.
+    scenario, config, _ = _write_case(
+        tmp_path,
+        'import json\ncfg = json.loads("{}")\nspeed = float(cfg["v"])\n'
+        'name = str(cfg["n"])\n',
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+    scenario, config, _ = _write_case(
+        tmp_path, 'import json\ncfg = json.loads("{}")\nspeed: float = cfg["v"]\n'
+    )
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "'float' does not match expected type 'JSONValue'" in error.message
+
+
 def test_a_module_without_a_codon_model_is_named(tmp_path: Path) -> None:
     scenario, config, path = _write_case(
         tmp_path, 'import textwrap\ntextwrap.dedent("")\n'

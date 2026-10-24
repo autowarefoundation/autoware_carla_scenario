@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
 import pytest
-
-import json
-
 from autoware_carla_scenario.maps.z_offset_cache import (
     _entry_json,
     cached_z_offset,
@@ -165,6 +163,52 @@ def test_the_entry_is_what_json_dumps_of_the_whole_mapping_writes(
             "projection": projection,
         }
     )
+
+
+def _whole_mapping(value: float, lanelet2: Path, xodr: Path, *rest: str) -> str:
+    return json.dumps(
+        {
+            "z_offset": value,
+            "lanelet2": str(lanelet2),
+            "xodr": str(xodr),
+            "carla_map": rest[0],
+            "projection": rest[1],
+        }
+    )
+
+
+def test_the_entry_matches_json_dumps_for_random_and_special_values() -> None:
+    import random
+    import struct
+
+    rng = random.Random(557)
+    alphabet = "ab /\\\"'\n\t\u00e9\u65e5\U0001f600\x00{},:"
+    values = [
+        float("nan"),
+        float("inf"),
+        float("-inf"),
+        -0.0,
+        5e-324,
+        1.7976931348623157e308,
+    ]
+    values += [rng.uniform(-100.0, 100.0) for _ in range(100)]
+    values += [
+        struct.unpack("<d", rng.randbytes(8))[0]  # any bit pattern, NaNs too
+        for _ in range(100)
+    ]
+    for value in values:
+        text = ["".join(rng.choice(alphabet) for _ in range(rng.randint(0, 12)))]
+        text += ["".join(rng.choice(alphabet) for _ in range(rng.randint(0, 12)))]
+        lanelet2, xodr = Path("/m/" + text[0]), Path(text[1] + ".xodr")
+        got = _entry_json(value, lanelet2, xodr, text[0], text[1])
+        assert got == _whole_mapping(value, lanelet2, xodr, text[0], text[1])
+        assert got.startswith('{"z_offset": ')
+
+
+def test_a_non_finite_entry_is_written_as_json_dumps_writes_it() -> None:
+    entry = _entry_json(float("nan"), Path("a"), Path("b"), "T", "p")
+    assert entry.startswith('{"z_offset": NaN, "lanelet2"')
+    assert json.loads(entry)["carla_map"] == "T"
 
 
 def test_an_entry_written_before_still_loads(
