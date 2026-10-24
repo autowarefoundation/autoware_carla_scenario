@@ -798,3 +798,32 @@ def test_a_target_on_the_road_is_moved_to_the_nearest_walkway(
     )
     assert sent == [(10.0, 0.0)]
     _walker_ai.release(63)
+
+
+def test_a_stepped_walker_gives_way_to_a_walker_in_its_way() -> None:
+    """Off its controller no crowd steers it round others: it stands for a
+    walker just ahead on its walk, for at most GIVE_WAY_MAX_S at a time."""
+    from autoware_carla_scenario.entity import _walker_ai
+
+    world = _SnapshotWorld(
+        {
+            70: ("walker.pedestrian.0001", 0.0, 0.0, 0.0),
+            71: ("walker.pedestrian.0001", 1.2, 0.1, 0.0),
+        }
+    )
+    world.id = 709  # type: ignore[misc]
+    walker = SimpleNamespace(id=70, get_world=lambda: world)
+    here = SimpleNamespace(x=0.0, y=0.0, z=0.0)
+    path = path_of(20.0)
+    assert _walker_ai.give_way(walker, path, 0.0, here)
+    ticks = 1
+    while _walker_ai.give_way(walker, path, 0.0, here):
+        ticks += 1
+    assert abs(ticks - _walker_ai.GIVE_WAY_MAX_S / 0.05) <= 1.0
+    # The way clear, and then a walker beside the walk: walks on.
+    world.actors[71] = ("walker.pedestrian.0001", 1.2, 1.5, 0.0)
+    world2 = _SnapshotWorld(dict(world.actors))
+    world2.id = 710  # type: ignore[misc]
+    walker2 = SimpleNamespace(id=70, get_world=lambda: world2)
+    assert not _walker_ai.give_way(walker2, path, 0.0, here)
+    _walker_ai.release(70)

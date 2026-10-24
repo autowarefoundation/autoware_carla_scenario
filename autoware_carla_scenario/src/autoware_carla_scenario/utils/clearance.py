@@ -58,6 +58,7 @@ def _states(world: Any) -> list[tuple[int, float, float, float, float]]:
     if episode != _CACHE.episode:
         _CACHE.kinds = {}
         _CACHE.episode = episode
+        _CACHE.frame = -1  # a new episode's frames are read afresh
     if frame != _CACHE.frame:
         states = []
         for seen in snapshot:

@@ -112,6 +112,22 @@ def _walk_by_ai(
         return False  # a walker with no world to ask (a test double)
 
 
+def _gives_way(
+    walker: "carla.Actor",
+    path: "ResolvedTrajectory",
+    here: float,
+    location: "carla.Location",
+) -> bool:
+    """Whether *walker*, stepped, stands this tick for a walker in its way
+    (:func:`._walker_ai.give_way`)."""
+    from ._walker_ai import give_way  # noqa: PLC0415
+
+    try:
+        return give_way(walker, path, here, location)
+    except (AttributeError, RuntimeError):
+        return False  # a walker with no world to ask (a test double)
+
+
 def _release_walker_ai(walker: "carla.Actor") -> None:
     """Stop and destroy *walker*'s controller, if it has one."""
     from ._walker_ai import release  # noqa: PLC0415
@@ -447,7 +463,10 @@ class PedestrianEntity(WalkedEntity):
         if TYPE_CHECKING:
             steer_walker(walker, location, path, here, speed)
         elif not _walk_by_ai(walker, path, here, speed, location, self._walk_cross):
-            # No navigation mesh on this map: stepped along the route.
+            # Stepped along the route (over a road stretch, or on a map with
+            # no navigation mesh), giving way to a walker in its way.
+            if _gives_way(walker, path, here, location):
+                speed = 0.0
             steer_walker(walker, location, path, here, speed)
 
     def release_from_traffic(self, world: "carla.World") -> None:

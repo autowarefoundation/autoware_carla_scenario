@@ -52,7 +52,10 @@ controller only once it stands on a walkway or a crossing again, at least
 the walk ends on the road.  Its position is compared over the tick its
 controller starts again, and a jump of more than :data:`SNAP_M` is said.
 While stepped it is no crowd agent: walkers on the controller do not steer
-round it.
+round it, nor it round them, so it gives way instead (:func:`give_way`): it
+stands while a walker stands within :data:`GIVE_WAY_M` ahead of it on its
+walk, for at most :data:`GIVE_WAY_MAX_S` at a time (two stepped walkers
+facing each other would otherwise wait for ever).
 
 A map without a navigation mesh -- ``get_random_location_from_navigation()``
 finds nothing -- is said once, and its walkers are stepped along the route as
@@ -73,6 +76,7 @@ __all__ = [
     "RETARGET_S",
     "TARGET_SPACING_M",
     "drive",
+    "give_way",
     "has_navmesh",
     "release",
     "road_stretches",
@@ -110,6 +114,15 @@ SNAP_M: float = 0.5
 _INTO_WALK_M: float = 0.5
 #: How many lanelets nearest a target are searched for a walkway.
 _NEAREST_LANELETS = 40
+#: How far ahead (m) along its walk a stepped walker gives way to a walker.
+GIVE_WAY_M: float = 1.5
+#: How far to each side (m) of its walk a walker it gives way to stands
+#: (their own size added).
+_GIVE_WAY_SIDE_M: float = 0.4
+#: The longest (s) a stepped walker gives way at a time.
+GIVE_WAY_MAX_S: float = 4.0
+#: How long (s) each stepped walker has given way, by actor id.
+_GIVING_WAY: dict[int, float] = {}
 #: The tick, for the retargeting clock where the world does not say.
 _DEFAULT_DT_S = 0.05
 
@@ -306,6 +319,44 @@ def drive(
     return True
 
 
+def give_way(walker: Any, path: Any, here: float, location: Any) -> bool:
+    """Whether *walker*, stepped (``here`` m along *path*, at *location*),
+    is to stand this tick for a walker in its way: one within
+    :data:`GIVE_WAY_M` ahead along its walk, for at most
+    :data:`GIVE_WAY_MAX_S` at a time."""
+    from ..utils.clearance import first_in_way  # noqa: PLC0415
+
+    key = int(walker.id)
+    world = walker.get_world()
+    ahead = path.at_distance(min(here + 1.0, path.length))
+    heading = math.degrees(math.atan2(ahead.y - location.y, ahead.x - location.x))
+    found = first_in_way(
+        world,
+        key,
+        location.x,
+        location.y,
+        heading,
+        "walker",
+        GIVE_WAY_M,
+        _GIVE_WAY_SIDE_M,
+    )
+    if found is None:
+        _GIVING_WAY.pop(key, None)
+        return False
+    waited = _GIVING_WAY.get(key, 0.0)
+    if waited >= GIVE_WAY_MAX_S:
+        return False  # walks on; waits again once the way has been clear
+    if waited == 0.0:
+        logger.info(
+            "walker %d: gives way to walker %d, %.1f m along its walk",
+            key,
+            int(found.id),
+            here,
+        )
+    _GIVING_WAY[key] = waited + _tick_seconds(world)
+    return True
+
+
 def road_stretches(path: Any) -> list[tuple[float, float]]:
     """``(start, end)`` along *path* (m) of its stretches on a road lanelet
     and on no walkway or crossing: where it crosses a road away from one."""
@@ -469,6 +520,7 @@ def _kind_at(x: float, y: float) -> str:
 
 def release(walker_id: int) -> None:
     """Stop and destroy *walker_id*'s controller, if it has one."""
+    _GIVING_WAY.pop(int(walker_id), None)
     driven = _DRIVEN.pop(int(walker_id), None)
     if driven is None:
         return
