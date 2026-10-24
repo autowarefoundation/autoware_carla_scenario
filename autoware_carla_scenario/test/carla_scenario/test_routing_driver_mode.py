@@ -1011,3 +1011,17 @@ def test_a_driver_run_that_has_not_begun_is_tried_again_each_tick() -> None:
     assert not action._reissues_by_default()
     action._stepping = True
     assert action._reissues_by_default()
+
+
+def test_a_spot_claimed_this_frame_is_taken_before_the_snapshot_shows_it() -> None:
+    """Two entities due at one spot on one tick: the second waits."""
+    from autoware_carla_scenario.utils import clearance
+
+    world = _SnapshotWorld({})
+    world.id = 812  # type: ignore[misc]
+    assert clearance.overlaps(world, 2, 10.0, 0.0, 0.0, 2.0, 1.0) is None
+    clearance.claim_spot(world, 1, 10.5, 0.0, 0.0, 2.0, 1.0)
+    assert clearance.overlaps(world, 2, 10.0, 0.0, 0.0, 2.0, 1.0) == 1
+    assert clearance.overlaps(world, 1, 10.0, 0.0, 0.0, 2.0, 1.0) is None  # its own
+    clearance._CACHE.claims_frame = -5  # a later frame: shown by the snapshot
+    assert clearance.overlaps(world, 2, 10.0, 0.0, 0.0, 2.0, 1.0) is None

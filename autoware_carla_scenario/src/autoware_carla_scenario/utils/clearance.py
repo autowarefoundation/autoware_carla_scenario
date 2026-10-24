@@ -16,7 +16,7 @@ from __future__ import annotations
 import math
 from typing import Any, Optional
 
-__all__ = ["Obstacle", "first_in_way", "overlaps"]
+__all__ = ["Obstacle", "claim_spot", "first_in_way", "overlaps"]
 
 #: An actor this far (m) or more below the ground is out of the world.
 _HIDDEN_BELOW_M = -100.0
@@ -49,6 +49,10 @@ class _Cache:
         self.yaws: dict[int, float] = {}
         #: Each road user's half length and half width (m), by id.
         self.boxes: dict[int, tuple[float, float]] = {}
+        #: Spots road users were put on this frame, which its snapshot does
+        #: not show yet: ``(id, x, y, yaw, half length, half width)``.
+        self.claims: list[tuple[int, float, float, float, float, float]] = []
+        self.claims_frame = -1
 
 
 _CACHE = _Cache()
@@ -106,6 +110,25 @@ def _kind(world: Any, actor_id: int) -> tuple[str, float]:
     return _CACHE.kinds[actor_id]
 
 
+def claim_spot(
+    world: Any,
+    actor_id: int,
+    x: float,
+    y: float,
+    yaw_deg: float,
+    half_length: float,
+    half_width: float,
+) -> None:
+    """Note that *actor_id* is being put at CARLA ``(x, y)`` this frame:
+    :func:`overlaps` counts it there before the world's next snapshot shows
+    it (two entities due at one spot on the same tick do not both appear)."""
+    frame = int(world.get_snapshot().frame)
+    if frame != _CACHE.claims_frame:
+        _CACHE.claims = []
+        _CACHE.claims_frame = frame
+    _CACHE.claims.append((actor_id, x, y, yaw_deg, half_length, half_width))
+
+
 def overlaps(
     world: Any,
     self_id: int,
@@ -122,7 +145,15 @@ def overlaps(
     user standing where one of that size would be put.  One in the lane
     beside it does not count, as a circle round each would."""
     reach = math.hypot(half_length, half_width) + margin
-    for actor_id, ox, oy, oz, _speed in _states(world):
+    mine = (x, y, math.radians(yaw_deg), half_length + margin, half_width + margin)
+    states = _states(world)
+    if _CACHE.claims_frame == _CACHE.frame:
+        for claimant, cx, cy, cyaw, cl, cw in _CACHE.claims:
+            if claimant != self_id and _rectangles_meet(
+                mine, (cx, cy, math.radians(cyaw), cl, cw)
+            ):
+                return claimant
+    for actor_id, ox, oy, oz, _speed in states:
         if actor_id == self_id or oz < _HIDDEN_BELOW_M:
             continue
         kind, size = _kind(world, actor_id)
@@ -130,7 +161,7 @@ def overlaps(
             continue
         other_length, other_width = _CACHE.boxes.get(actor_id, (size, size))
         if _rectangles_meet(
-            (x, y, math.radians(yaw_deg), half_length + margin, half_width + margin),
+            mine,
             (
                 ox,
                 oy,

@@ -796,6 +796,10 @@ class RoutingAction(TrajectoryRun):
             standing: "carla.Actor" = actor
             if not self._spot_clear(world, spot, standing):
                 return False
+            if TYPE_CHECKING:
+                pass  # utils.clearance is not compiled (docs/typecheck.md)
+            else:
+                _claim_spot(world, standing, spot, self._initial_distance_offset)
         self._begun = True
         self._finished = False
         self._start_time = self._elapsed
@@ -1096,6 +1100,32 @@ def _vertex_of(point: tuple[int, float, float]) -> int:
     return point[0]
 
 
+def _spot_pose(path: ResolvedTrajectory, along: float) -> tuple[float, float, float]:
+    """CARLA ``(x, y, yaw)`` *along* m on *path*, facing along it."""
+    sample = path.at_distance(along)
+    ahead = path.at_distance(min(along + 1.0, path.length))
+    if ahead.x != sample.x or ahead.y != sample.y:
+        yaw = math.degrees(math.atan2(ahead.y - sample.y, ahead.x - sample.x))
+    else:
+        yaw = sample.yaw if sample.yaw is not None else 0.0
+    return (sample.x, sample.y, yaw)
+
+
+def _claim_spot(
+    world: "carla.World", actor: "carla.Actor", path: ResolvedTrajectory, along: float
+) -> None:
+    """Hold where *actor* appears, *along* m on *path*, for this frame: an
+    entity due at the same spot on the same tick waits for it."""
+    from ..utils.clearance import claim_spot  # noqa: PLC0415
+
+    try:
+        x, y, yaw = _spot_pose(path, along)
+        extent = actor.bounding_box.extent
+        claim_spot(world, int(actor.id), x, y, yaw, float(extent.x), float(extent.y))
+    except (AttributeError, RuntimeError):
+        pass
+
+
 def _spot_taken(
     world: "carla.World", actor: "carla.Actor", path: ResolvedTrajectory, along: float
 ) -> int:
@@ -1105,18 +1135,13 @@ def _spot_taken(
     from ..utils.clearance import overlaps  # noqa: PLC0415
 
     try:
-        sample = path.at_distance(along)
-        ahead = path.at_distance(min(along + 1.0, path.length))
-        if ahead.x != sample.x or ahead.y != sample.y:
-            yaw = math.degrees(math.atan2(ahead.y - sample.y, ahead.x - sample.x))
-        else:
-            yaw = sample.yaw if sample.yaw is not None else 0.0
+        x, y, yaw = _spot_pose(path, along)
         extent = actor.bounding_box.extent
         found = overlaps(
             world,
             int(actor.id),
-            sample.x,
-            sample.y,
+            x,
+            y,
             yaw,
             float(extent.x),
             float(extent.y),
