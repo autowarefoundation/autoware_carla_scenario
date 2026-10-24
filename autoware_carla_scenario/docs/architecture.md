@@ -1129,8 +1129,9 @@ walk is searched on `coordinate.walk_graph.WalkGraph`, not on Lanelet2's
 routing graph: a crosswalk is usually drawn across the walkways it joins,
 reaching onto them without sharing a point, so Lanelet2 joins nothing across a
 road. The walk graph joins a walkable lanelet's end to any walkable lanelet it
-lies on (or within 0.5 m of), at that point along it, and walks every walkway
-both ways whatever its `one_way` tag. A leg it has no walk for (a map with no
+lies on (or within 0.5 m of), at that point along it, joins two walkable
+lanelets where their centrelines cross (a crosswalk drawn right across a
+walkway), and walks every walkway both ways whatever its `one_way` tag. A leg it has no walk for (a map with no
 walkways, as most Autoware maps, or a waypoint off them) is a straight line,
 with a warning.
 

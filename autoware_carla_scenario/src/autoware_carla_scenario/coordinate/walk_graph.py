@@ -14,13 +14,15 @@ map has no way across a road at all.
 :class:`WalkGraph` is the graph a pedestrian walks instead.  Its nodes are
 points on the centrelines (a lanelet ``s``) of the walkable lanelets
 (:meth:`~autoware_carla_scenario.route.geometry.MapFeatures.is_walkable`): each
-lanelet's two ends, and every point where the end of another walkable lanelet reaches
-it -- inside its outline, or within :data:`JOIN_TOLERANCE_M` of it.  Along a
-lanelet, consecutive nodes are joined both ways, whatever its ``one_way``
-tag: a pedestrian walks a pavement either way.  An end and the point it
-reaches are joined by the step between them.  So a crosswalk end on a
-walkway is a way on and off it, and two walkways that share an end, as a
-pavement and the corner pavement after it do, are joined at it too.
+lanelet's two ends, every point where the end of another walkable lanelet
+reaches it -- inside its outline, or within :data:`JOIN_TOLERANCE_M` of it --
+and every point where another's centreline crosses its own.  Along a lanelet,
+consecutive nodes are joined both ways, whatever its ``one_way`` tag: a
+pedestrian walks a pavement either way.  An end and the point it reaches are
+joined by the step between them, and two centrelines where they cross.  So a
+crosswalk is a way on and off a walkway whether it ends on it or is drawn
+right across it, and two walkways that share an end, as a pavement and the
+corner pavement after it do, are joined at it too.
 """
 
 from __future__ import annotations
@@ -136,6 +138,33 @@ class _Walkable:
                 best_s = self.arc[i] + f * (self.arc[i + 1] - self.arc[i])
         return best_s
 
+    def crossings(self, other: "_Walkable") -> List[Tuple[float, float]]:
+        """``(s, other's s)`` of each point where the two centrelines cross."""
+        out: List[Tuple[float, float]] = []
+        for i in range(len(self.xs) - 1):
+            ax = self.xs[i]
+            ay = self.ys[i]
+            dx = self.xs[i + 1] - ax
+            dy = self.ys[i + 1] - ay
+            for j in range(len(other.xs) - 1):
+                bx = other.xs[j]
+                by = other.ys[j]
+                ex = other.xs[j + 1] - bx
+                ey = other.ys[j + 1] - by
+                denominator = dx * ey - dy * ex
+                if abs(denominator) < 1e-12:
+                    continue  # parallel
+                f = ((bx - ax) * ey - (by - ay) * ex) / denominator
+                g = ((bx - ax) * dy - (by - ay) * dx) / denominator
+                if 0.0 <= f <= 1.0 and 0.0 <= g <= 1.0:
+                    out.append(
+                        (
+                            self.arc[i] + f * (self.arc[i + 1] - self.arc[i]),
+                            other.arc[j] + g * (other.arc[j + 1] - other.arc[j]),
+                        )
+                    )
+        return out
+
     def outside_by(self, x: float, y: float) -> float:
         """How far ``(x, y)`` is outside the outline: 0 inside it."""
         inside = False
@@ -220,6 +249,22 @@ class WalkGraph:
                     s = other.project(x, y)
                     ox, oy = other.at(s)
                     self._join(end, self._node(other_id, s), math.hypot(ox - x, oy - y))
+        # Where two centrelines cross: a crosswalk drawn right across a
+        # walkway, past its far edge, has no end on it.
+        paired: Dict[Tuple[int, int], bool] = {}
+        for cell in grid:
+            here = grid[cell]
+            for i in range(len(here)):
+                for j in range(i + 1, len(here)):
+                    a_id = min(here[i], here[j])
+                    b_id = max(here[i], here[j])
+                    if (a_id, b_id) in paired:
+                        continue
+                    paired[(a_id, b_id)] = True
+                    first = self._walkables[a_id]
+                    second = self._walkables[b_id]
+                    for s_a, s_b in first.crossings(second):
+                        self._join(self._node(a_id, s_a), self._node(b_id, s_b), 0.0)
         for lanelet_id in self._stations:
             nodes = self._stations[lanelet_id]
             nodes.sort(key=lambda node: self._node_s[node])

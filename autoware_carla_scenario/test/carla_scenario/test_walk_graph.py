@@ -4,14 +4,18 @@ A small synthetic map, drawn as Autoware and roadgen draw one::
 
         C (corner pavement, from the end of N, y 7..30 at x = 51)
         |
-    ====N====================  walkway, y = 6, x -50..50, ``one_way: yes``
-              | X |            crosswalk, x 9..11, reaching 0.3 m onto each
-    ====S====================  walkway, y = -6, x -50..50, ``one_way: yes``
+     |T|
+    =|=|=N===================  walkway, y = 6, x -50..50, ``one_way: yes``
+     | |      | X |            crosswalk, x 9..11, reaching 0.3 m onto each
+    =|=|=S===================  walkway, y = -6, x -50..50, ``one_way: yes``
+     |T|
 
+    T: a crosswalk at x -49..-47 drawn right across both walkways, its ends
+    2 m past their outer edges.
     F: a crosswalk far away, overlapping nothing.
 
 Nothing shares a point but N and C, so Lanelet2's routing graph has no way
-from S to N; the walk graph has, across X.
+from S to N; the walk graph has, across X or T.
 """
 
 from __future__ import annotations
@@ -31,7 +35,7 @@ from autoware_carla_scenario.coordinate.map_manager import MapManager
 from autoware_carla_scenario.coordinate.poses import Lanelet2Pose
 from autoware_carla_scenario.coordinate.walk_graph import WalkGraph, walk_graph
 
-NORTH, SOUTH, CROSSWALK, CORNER, FAR, ROAD = 1, 2, 3, 4, 5, 6
+NORTH, SOUTH, CROSSWALK, CORNER, FAR, ROAD, THROUGH = 1, 2, 3, 4, 5, 6, 7
 
 _ids = iter(range(1000, 1_000_000))
 
@@ -115,6 +119,16 @@ def _map() -> Any:
             "no",
         )
     )
+    # Across both walkways and past them: neither end lies on one.
+    lanelet_map.add(
+        _lanelet(
+            THROUGH,
+            _line([(-49.0, -9.0), (-49.0, 9.0)]),
+            _line([(-47.0, -9.0), (-47.0, 9.0)]),
+            "crosswalk",
+            "no",
+        )
+    )
     return lanelet_map
 
 
@@ -184,6 +198,20 @@ class TestTheWalkGraph:
         walk = graph.walk(Lanelet2Pose(NORTH, 95.0), Lanelet2Pose(SOUTH, 5.0), 1.5)
         assert walk is not None
         assert _runs(walk) == [NORTH, CROSSWALK, SOUTH]
+
+    def test_it_crosses_a_crosswalk_drawn_right_across_the_walkways(
+        self, graph: WalkGraph
+    ) -> None:
+        walk = graph.walk(Lanelet2Pose(SOUTH, 1.0), Lanelet2Pose(NORTH, 1.0), 1.5)
+        assert walk is not None
+        assert _runs(walk) == [SOUTH, THROUGH, NORTH]
+        # On and off where its centreline crosses theirs, at x = -48 (s = 2),
+        # 3 m and 15 m along it from its end at y = -9.
+        on_through = [p.s for p in walk if p.lanelet_id == THROUGH]
+        assert on_through[0] == pytest.approx(3.0)
+        assert on_through[-1] == pytest.approx(15.0)
+        assert [p.s for p in walk if p.lanelet_id == SOUTH][-1] == pytest.approx(2.0)
+        assert [p.s for p in walk if p.lanelet_id == NORTH][0] == pytest.approx(2.0)
 
     def test_lanelets_sharing_an_end_are_joined(self, graph: WalkGraph) -> None:
         walk = graph.walk(Lanelet2Pose(SOUTH, 5.0), Lanelet2Pose(CORNER, 10.0), 1.5)
