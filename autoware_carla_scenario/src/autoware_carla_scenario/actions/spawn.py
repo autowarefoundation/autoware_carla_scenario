@@ -214,7 +214,7 @@ class SpawnAction(BaseAction):
         name: Optional[str] = None,
         blueprint: str = DEFAULT_PROP_BLUEPRINT,
         on_ground: bool = True,
-        lanes: Sequence[int] = (),
+        lanes: Optional[Sequence[int]] = (),
     ) -> None:
         if (entity_name is None) == (name is None or name == ""):
             raise ValueError(
@@ -240,7 +240,12 @@ class SpawnAction(BaseAction):
         self._blueprint = blueprint
         self._on_ground = on_ground
         self._ahead = 0.0
-        self._lanes = [int(lanelet) for lanelet in (lanes or ())]
+        # A card leaves the list empty (None): no lanes.
+        given_lanes: list[int] = []
+        if lanes is not None:
+            for lanelet in lanes:
+                given_lanes.append(int(lanelet))
+        self._lanes = given_lanes
         self._spawned = []
 
     @property
