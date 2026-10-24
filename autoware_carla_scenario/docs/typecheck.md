@@ -1782,8 +1782,8 @@ To check one more module:
 
 ### What is checked of the framework
 
-Every module now has an entry other than `"not yet checked (#45)"`. 198 of
-the package's 295 modules (67%; about 47,300 of 84,500 lines) are `CHECKED`:
+Every module now has an entry other than `"not yet checked (#45)"`. 199 of
+the package's 294 modules (68%; about 47,400 of 84,500 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the conversions between
 Lanelet2, OpenDRIVE and CARLA world poses (`coordinate.transform`), the stop
 lines read off a Lanelet2 map (`utils.stop_line`, `coordinate.stop_line`)
@@ -1842,8 +1842,8 @@ driver's configs and client interface, trajectory follower and observations
 `driver.geometry`), and the `autoware_bridge`, `autoware_stack`, `entity`,
 `driver`, `maps` and `coverage` packages themselves, whose `__init__` re-exports what is not checked
 through models of it (see *A class a checked package only re-exports*
-below). 104
-functions and methods of those modules are `UNCALLED` (24 of them
+below). 103
+functions and methods of those modules are `UNCALLED` (23 of them
 protected helpers, see *What is compiled* below): most of them a
 condition's `get_details()` or a backend's `describe()`, what takes a traffic
 backend's options node (`Mapping[str, Any]`), what reads a route search, a
@@ -1870,21 +1870,19 @@ the result and its environment, `_write_result()`; collecting the condition
 statuses, `_collect_condition_statuses()`), the queue's pytest fixture
 (`ScenarioQueue.as_fixture()`), `maps.config.resolve_map_paths()`,
 which reads the `map` config node of any shape (`Any`), the driver and
-ROS 2 configs' `from_mapping()` (a Hydra node, `Mapping[str, Any]`), what
-builds the ROS 2 ego's published cameras (`entity.ros2_entity._publishing_camera()`,
-which imports `ros2.camera` inside it),
+ROS 2 configs' `from_mapping()` (a Hydra node, `Mapping[str, Any]`),
 `encode_frame_jpeg()` (cv2), and protected helpers of the same kinds: what
 reads a `map` setting, a route search's segment, a signal group or phase, or
 a `TrajectoryVertex` call's arguments, each of any type (`Any`), walks or
 binds a sweeper constraint of any kind, builds a condition's status (its
 details), or takes the list a plain tick callback goes into
 (`BaseScenario._register_tick()`, a `List[Callable[[carla.World], None]]`,
-which the check has no value of). The 97 `EXCLUDED` modules fall in
-four groups. Many fit more than one (about 74 import what Codon cannot
-compile, 29 build on an excluded module and 20 hold values Codon has no type
+which the check has no value of). The 95 `EXCLUDED` modules fall in
+three groups. Many fit more than one (about 73 import what Codon cannot
+compile, 29 build on an excluded module and 19 hold values Codon has no type
 for), so each is counted once, in the first group that fits it:
 
-- **74 import what Codon cannot compile**: pyxodr,
+- **73 import what Codon cannot compile**: pyxodr,
   pydantic, pickle, lxml, grpc, omegaconf and hydra, yaml, openodd (a Rust extension),
   cyclonedds (`ros2.cyclone` and `ros2.messages`, the ROS 2 ego's DDS
   transport and its message types), or
@@ -1899,7 +1897,7 @@ for), so each is counted once, in the first group that fits it:
   stack's dev container, the
   record of a run's environment, the SLURM launcher's submitting side,
   its worker and its manifest, the batch summary they share, the Rerun
-  recordings of a run's logs and LiDAR sweeps, its T4 dataset, and the carla_canvas hookup), the ODD and coverage modules that wrap
+  recordings of a run's logs and LiDAR sweeps, and its T4 dataset), the ODD and coverage modules that wrap
   openodd, and the rest of what reads Lanelet2. A reason names `pathlib`
   only where the module uses more of it than the shim declares, and the
   other shimmed modules likewise; `test_typecheck_library.py` holds every
@@ -1915,16 +1913,14 @@ for), so each is counted once, in the first group that fits it:
   and `value_label()`; it also holds each lanelet's attribute values,
   `dict[str, Any]`, which it hands to openodd, and finds a probe's
   `on_lanelet` reader on any callable) and
-  `traffic.registry` (the `registry`, in its plugin loader); 4 of the 19
+  `traffic.registry` (the `Callable[[Mapping[str, Any]], TrafficBackend]` alias it
+  holds its factories by, and the `registry` its plugin loader imports); 4 of the 19
   also hold values Codon has no type for.
 - **3 hold values Codon has no type for**, and nothing else keeps them out:
   `Any` (`trajectory.authoring`, `authoring.registry`'s
   field defaults), or a class as a value (`utils.config`, which `traffic.config`,
   `traffic.fidelity` and `traffic.sumo.config` import only in their uncalled
   `from_mapping()`).
-- **1 has a callback the check cannot type**: `ros2.camera`, whose camera
-  hands each frame back to the ROS 2 ego from a CARLA sensor thread through
-  `CarlaCameraSensor`'s listen callback.
 
 The scenario check is not limited by this: it compiles every scenario against
 the model. The model does not declare the whole public API: what
@@ -2793,6 +2789,10 @@ What Codon 0.19 needs that Python does not, beyond
   an `os.PathLike` (a stream, an `IO[str]` Codon has no type for, is not
   taken). Nothing else of the package is declared (`dotenv_values()`), and
   a scenario may use what is, as it may the shims.
+- **carla_canvas** is modelled for `canvas.use_canvas()`: `codon/carla_canvas/plugin.codon`
+  declares `plugin_path() -> Path` and nothing else. carla_canvas is not a
+  dependency of this package, so `test_typecheck_model.py` cannot compare it with
+  the installed one.
 - **No `bytes`**: Codon 0.19 has none, and reads a `b"..."` literal as a
   `str`, so the check reads an annotation naming `bytes` as `str`
   (`DriveOutcome.debug_info: bytes = b""`). What a process writes is a `str`

@@ -206,7 +206,7 @@ def test_the_docs_count_the_checked_modules_and_the_uncalled_functions() -> None
         text.index(total) : text.index("The scenario check is not limited")
     ]
     groups = [int(n) for n in re.findall(r"- \*\*(\d+) ", breakdown)]
-    assert len(groups) == 4 and sum(groups) == len(EXCLUDED), (
+    assert len(groups) == 3 and sum(groups) == len(EXCLUDED), (
         f"the EXCLUDED groups in docs/typecheck.md add up to {sum(groups)}, "
         f"not {len(EXCLUDED)}"
     )
@@ -3718,6 +3718,7 @@ def test_the_os_pathlib_and_popen_shims_refuse_what_cpython_refuses(
 _THIRD_PARTY_MODELS = {
     "autoware_carla_scenario",
     "autoware_lanelet2_extension_python",
+    "carla_canvas",
     "carla_driver_interface",
     "dotenv",
     "lanelet2",

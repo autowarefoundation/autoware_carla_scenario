@@ -50,6 +50,11 @@ class CanvasUnavailableError(RuntimeError):
     """``canvas.config`` is set, but carla_canvas's client is not installed,
     or the file is not there."""
 
+    def __init__(self, message: str) -> None:
+        # Explicit for the static check, which cannot build a subclass of an
+        # exception without one (docs/typecheck.md).
+        super().__init__(message)
+
 
 def use_canvas(config: Union[str, Path, None]) -> Optional[Path]:
     """Have the sensors *config* names rendered by carla_canvas; its path.
