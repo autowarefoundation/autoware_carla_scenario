@@ -17,9 +17,11 @@ reporting while it lasts: one pair is recorded once per
 :data:`REPEAT_S` seconds.
 
 **A fallen walker** is told from one world snapshot every few ticks: a walker
-tipped over more than :data:`FALLEN_TILT_DEG`, or dropped more than half its
-height between two looks while barely moving sideways (a ragdoll goes down;
-a walker going downhill or teleported does not look like that).  It is
+tipped over more than :data:`FALLEN_TILT_DEG`, or more than half its height
+below the lowest it stood over the last :data:`_STANDING_LOOKS` looks while
+barely moving sideways (a ragdoll goes down; a walker going downhill or
+teleported does not look like that, nor one pushed off its feet a moment that
+lands where it stood).  It is
 recorded once per walker.
 """
 
@@ -65,6 +67,9 @@ _HIDDEN_BELOW_M = 100.0
 _SETTLE_LOOKS = 8
 #: Sideways (m) between two looks beyond which a drop is a teleport.
 _TELEPORT_M = 2.0
+#: Looks back a walker's standing height is the lowest of: a walker bumped
+#: into the air comes down to where it stood, which is no fall.
+_STANDING_LOOKS = 4
 
 
 @dataclass(frozen=True)
@@ -191,6 +196,8 @@ class NpcCollisionMonitor:
         self._down: dict[int, float] = {}
         self._despawn_fallen_after = despawn_fallen_after_s
         self._walkers: dict[int, tuple[float, float, float, float]] = {}
+        #: Each walker's height (m) at its last looks, the latest last.
+        self._heights: dict[int, list[float]] = {}
         #: How many looks in a row each walker has been in the world for.
         self._settled: dict[int, int] = {}
         #: Actors released before they are destroyed: not heard again.
@@ -224,6 +231,7 @@ class NpcCollisionMonitor:
         if sensed is not None:
             _release(sensed.sensor)
         self._walkers.pop(actor_id, None)
+        self._heights.pop(actor_id, None)
         self._gone.add(actor_id)
 
     def close(self) -> None:
@@ -305,6 +313,7 @@ class NpcCollisionMonitor:
             _release(self._sensed.pop(gone).sensor)
         for gone in [i for i in self._walkers if i not in present]:
             del self._walkers[gone]
+            self._heights.pop(gone, None)
 
     def _on_event(self, parent: int, event: Any) -> None:
         """The sensor's listener, on CARLA's thread: queue the collision."""
@@ -377,7 +386,12 @@ class NpcCollisionMonitor:
             self._walkers[walker_id] = (x, y, z, half)
             if z < -_HIDDEN_BELOW_M:
                 self._settled[walker_id] = 0
+                self._heights.pop(walker_id, None)
                 continue
+            heights = self._heights.setdefault(walker_id, [])
+            standing = min(heights) if heights else z
+            heights.append(z)
+            del heights[:-_STANDING_LOOKS]
             looks = self._settled.get(walker_id, 0) + 1
             self._settled[walker_id] = looks
             if walker_id in self._fallen or looks <= _SETTLE_LOOKS:
@@ -387,7 +401,7 @@ class NpcCollisionMonitor:
             drop = 0.0
             if not math.isnan(z0) and z0 > -_HIDDEN_BELOW_M:
                 if math.hypot(x - x0, y - y0) < _TELEPORT_M:
-                    drop = z0 - z
+                    drop = standing - z
             if tilt < FALLEN_TILT_DEG and drop < 0.5 * max(half, 0.4):
                 continue
             self._fallen.add(walker_id)

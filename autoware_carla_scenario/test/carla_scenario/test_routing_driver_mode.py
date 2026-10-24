@@ -346,6 +346,23 @@ class TestNpcCollisions:
             falls += monitor.tick(world, tick * 0.05)[1]  # type: ignore[arg-type]
         assert [f.role for f in falls] == ["w1"]
 
+    def test_a_walker_bumped_into_the_air_is_not_fallen(self) -> None:
+        """Pushed up half a metre, it lands where it stood: no fall; one that
+        goes down below where it stood has fallen."""
+        walker = _actor(5, "walker.pedestrian.0001", "w1")
+        world = _MonitoredWorld([walker])
+        monitor = NpcCollisionMonitor()
+        falls: list[Any] = []
+        for tick in range(200):
+            z = 0.94
+            if 100 <= tick < 105:
+                z = 1.43  # in the air a moment
+            if tick >= 170:
+                z = 0.2  # down
+            world.poses[5] = (0.01 * tick, 0.0, z, 0.0)
+            falls += monitor.tick(world, tick * 0.05)[1]  # type: ignore[arg-type]
+        assert [round(f.t, 2) for f in falls] == [8.5]
+
     def test_a_walker_that_appears_is_not_fallen(self) -> None:
         walker = _actor(5, "walker.pedestrian.0001", "w1")
         world = _MonitoredWorld([walker])
