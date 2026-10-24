@@ -1466,3 +1466,63 @@ def test_the_unit_spellings_codon_checks_are_openodds() -> None:
 
     for alias in [*unit_names._ALIASES, "KPH", " m/s ", "km/h", "furlong", ""]:
         assert unit_names.normalize_unit(alias) == openodd.normalize_unit(alias), alias
+
+
+_BAD_ODD = """\
+from autoware_carla_scenario import OddAttribute, OddDefinition, OddModule
+from autoware_carla_scenario.odd import speed_limit_kph
+
+
+def {name}() -> OddDefinition:
+    a = OddAttribute("x.a", speed_limit_kph, buckets=[0, 1])
+    return {body}
+"""
+
+
+@pytest.mark.parametrize(
+    ("body", "hint"),
+    [
+        (
+            'OddDefinition("t", [a], [OddModule("m", include_and=a.between(0, 1))])',
+            "include_and takes a list of conditions",
+        ),
+        (
+            'OddDefinition("t", [a], [OddModule("m", exclude_or=a.between(0, 1))])',
+            "exclude_or takes a list of conditions",
+        ),
+        ('OddDefinition("t", a, [])', "attributes takes a list of attributes"),
+        ('OddDefinition("t", [a], OddModule("m"))', "modules takes a list of modules"),
+    ],
+)
+def test_a_python_odd_that_fails_to_build_names_its_line(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: Any,
+    body: str,
+    hint: str,
+) -> None:
+    name = "builder_" + str(abs(hash(body)))
+    module = f"bad_odd_{name}"
+    path = tmp_path / f"{module}.py"
+    path.write_text(_BAD_ODD.format(name=name, body=body))
+    monkeypatch.syspath_prepend(str(tmp_path))
+    monkeypatch.chdir(tmp_path)
+    assert odd_main(["check", f"{module}:{name}"]) == 1
+    out = capsys.readouterr().out
+    assert f"[FAILED] {module}:{name}: {module}.py:7: " in out
+    assert "not iterable" in out
+    assert hint in out
+
+
+def test_a_builder_error_that_is_not_a_list_mistake_has_no_hint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: Any
+) -> None:
+    (tmp_path / "bad_odd_plain.py").write_text(
+        _BAD_ODD.format(name="plain", body='OddDefinition("t", [a], [a.between(0)])')
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    monkeypatch.chdir(tmp_path)
+    assert odd_main(["check", "bad_odd_plain:plain"]) == 1
+    out = capsys.readouterr().out
+    assert "bad_odd_plain.py:7: " in out
+    assert "hint" not in out

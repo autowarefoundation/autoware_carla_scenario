@@ -25,12 +25,98 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import sys
+from pathlib import Path
+from types import TracebackType
 from typing import Any, Optional, Sequence
 
 from .registry import odd_builder, odd_names, resolve_odd
 
 __all__ = ["main"]
+
+#: The parameters of the ODD builders that take a list, and what the list holds.
+_LIST_PARAMETERS = {
+    "include_and": "conditions",
+    "include_or": "conditions",
+    "exclude_and": "conditions",
+    "exclude_or": "conditions",
+    "conditions": "conditions",
+    "attributes": "attributes",
+    "modules": "modules",
+    "labels": "strings",
+    "roots": "module names",
+    "buckets": "numbers",
+    "values": "values",
+}
+
+
+def _library_dirs() -> tuple[str, ...]:
+    import openodd  # noqa: PLC0415
+
+    here = Path(__file__).resolve().parent.parent
+    return tuple(
+        str(Path(p).resolve()) + os.sep for p in (here, Path(openodd.__file__).parent)
+    )
+
+
+def _frames(tb: Optional[TracebackType]) -> list[TracebackType]:
+    out = []
+    while tb is not None:
+        out.append(tb)
+        tb = tb.tb_next
+    return out
+
+
+def _user_location(exc: BaseException) -> Optional[tuple[str, int]]:
+    """The file and line of the innermost frame in the author's own module."""
+    library = _library_dirs()
+    found = None
+    for tb in _frames(exc.__traceback__):
+        path = tb.tb_frame.f_code.co_filename
+        if path.startswith("<") or "site-packages" in path:
+            continue
+        if str(Path(path).resolve()).startswith(library):
+            continue
+        found = (path, tb.tb_lineno)
+    if found is None and isinstance(exc, SyntaxError) and exc.filename:
+        return exc.filename, exc.lineno or 0
+    return found
+
+
+def _list_hint(exc: BaseException) -> Optional[str]:
+    """A hint when a single value was passed where a list is expected."""
+    if not isinstance(exc, TypeError) or "not iterable" not in str(exc):
+        return None
+    for tb in reversed(_frames(exc.__traceback__)):
+        for name, value in tb.tb_frame.f_locals.items():
+            if (
+                name in _LIST_PARAMETERS
+                and value is not None
+                and not isinstance(value, (list, tuple))
+            ):
+                try:
+                    iter(value)
+                except TypeError:
+                    return (
+                        f"{name} takes a list of {_LIST_PARAMETERS[name]}: {name}=[...]"
+                    )
+    return None
+
+
+def describe_error(exc: BaseException) -> str:
+    """``file:line: message`` (and a hint) for an error raised while an ODD builds."""
+    message = str(exc) or type(exc).__name__
+    location = _user_location(exc)
+    if location is not None:
+        path, line = location
+        try:
+            path = os.path.relpath(path)
+        except ValueError:
+            pass
+        message = f"{path}:{line}: {message}"
+    hint = _list_hint(exc)
+    return f"{message} (hint: {hint})" if hint else message
 
 
 def _check(spec: str) -> int:
@@ -39,7 +125,7 @@ def _check(spec: str) -> int:
     try:
         odd = resolve_odd(spec)
     except Exception as exc:  # noqa: BLE001 - reported, not raised
-        print(f"[FAILED] {spec}: {exc}")  # noqa: T201
+        print(f"[FAILED] {spec}: {describe_error(exc)}")  # noqa: T201
         return 1
     builder = odd_builder(spec)
     if builder is None:
@@ -57,7 +143,7 @@ def _show(spec: str) -> int:
     try:
         odd = resolve_odd(spec)
     except Exception as exc:  # noqa: BLE001 - reported, not raised
-        print(f"scenario-odd: {spec}: {exc}", file=sys.stderr)  # noqa: T201
+        print(f"scenario-odd: {spec}: {describe_error(exc)}", file=sys.stderr)  # noqa: T201
         return 1
     out = odd.describe()
     out["attributes"] = [
@@ -127,7 +213,7 @@ def _route(spec: str, items: Sequence[str], as_json: bool) -> int:
     try:
         odd = resolve_odd(spec)
     except Exception as exc:  # noqa: BLE001 - reported, not raised
-        print(f"scenario-odd: {spec}: {exc}", file=sys.stderr)  # noqa: T201
+        print(f"scenario-odd: {spec}: {describe_error(exc)}", file=sys.stderr)  # noqa: T201
         return 2
     from ..examples import run  # noqa: PLC0415 - composes configs as a run does
     from ..maps import resolve_map_paths  # noqa: PLC0415
