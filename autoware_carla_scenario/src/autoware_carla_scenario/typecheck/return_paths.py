@@ -237,9 +237,19 @@ def return_problems(
     flow = _Flow(_no_return_functions([tree for _, tree in modules.values()]))
     problems: list[ReturnProblem] = []
     for _, (path, tree) in sorted(modules.items()):
+        owners = {
+            id(member): cls.name
+            for cls in ast.walk(tree)
+            if isinstance(cls, ast.ClassDef)
+            for member in cls.body
+        }
         for node in ast.walk(tree):
             if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
+            # ``XScenario.f``, as the author calls a method
+            shown = (
+                f"{owners[id(node)]}.{node.name}" if id(node) in owners else node.name
+            )
             declared = _annotation(node)
             if declared is None:
                 continue
@@ -256,7 +266,7 @@ def return_problems(
                                     path,
                                     stmt.lineno,
                                     stmt.col_offset + 1,
-                                    f"{node.name}() returns {found}, but the "
+                                    f"{shown}() returns {found}, but the "
                                     "function is declared -> bool: Codon "
                                     "converts the value to a bool, Python "
                                     f"returns the {found} itself",
@@ -276,7 +286,7 @@ def return_problems(
                         path,
                         node.lineno,
                         node.col_offset + 1,
-                        f"{node.name}() has a path that returns nothing, but "
+                        f"{shown}() has a path that returns nothing, but "
                         f"the function is declared -> {ast.unparse(declared)}: "
                         "Python returns None there",
                     )
