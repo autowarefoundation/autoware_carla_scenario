@@ -595,7 +595,9 @@ class TestEnvironmentTrack:
     def test_the_scope_is_what_actor_required_means(self) -> None:
         """One source of truth: the two cannot drift apart."""
         for spec in action_specs():
-            assert spec.actor_required == (spec.scope == "actor")
+            assert spec.actor_required == (
+                spec.scope == "actor" and not spec.actor_optional
+            )
 
 
 class TestAddingToTheInitPhase:

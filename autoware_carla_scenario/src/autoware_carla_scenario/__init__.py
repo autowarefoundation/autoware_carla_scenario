@@ -78,6 +78,7 @@ if TYPE_CHECKING:
     from .actions import (
         BaseAction as BaseAction,
         DespawnAction as DespawnAction,
+        SpawnAction as SpawnAction,
         EnvironmentAction as EnvironmentAction,
         LaneChangeAction as LaneChangeAction,
         LaneChangeDirection as LaneChangeDirection,
@@ -95,10 +96,6 @@ if TYPE_CHECKING:
         TrafficSinkAction as TrafficSinkAction,
         TrafficSourceAction as TrafficSourceAction,
         WalkStraightAction as WalkStraightAction,
-    )
-    from .actions.prop import (
-        PropAction as PropAction,
-        PropOperation as PropOperation,
     )
     from .actions.stalled_object import (
         StalledObjectAction as StalledObjectAction,
@@ -498,8 +495,6 @@ __all__ = [
     "EnvironmentAction",
     "ConstructionSettings",
     "ConstructionZoneAction",
-    "PropAction",
-    "PropOperation",
     "StalledObjectAction",
     "collision_objects",
     "LaneChangeAction",
@@ -510,6 +505,7 @@ __all__ = [
     "RoutingAction",
     "RoutingMode",
     "DespawnAction",
+    "SpawnAction",
     "SetSpeedAction",
     "TrafficSignalAction",
     "TrafficSignalControllerAction",
@@ -571,8 +567,6 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "ConstructionSettings": (".adversity.construction", "ConstructionSettings"),
     "ConstructionZoneAction": (".actions.construction_zone", "ConstructionZoneAction"),
     "StalledObjectAction": (".actions.stalled_object", "StalledObjectAction"),
-    "PropAction": (".actions.prop", "PropAction"),
-    "PropOperation": (".actions.prop", "PropOperation"),
     "collision_objects": (".actions.stalled_object", "collision_objects"),
     "LaneChangeAction": (".actions", "LaneChangeAction"),
     "TurnIndicatorAction": (".actions", "TurnIndicatorAction"),
@@ -606,6 +600,7 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "TrafficLightTarget": (".actions", "TrafficLightTarget"),
     "RoutingAction": (".actions", "RoutingAction"),
     "DespawnAction": (".actions", "DespawnAction"),
+    "SpawnAction": (".actions", "SpawnAction"),
     "RoutingMode": (".actions", "RoutingMode"),
     "SetSpeedAction": (".actions", "SetSpeedAction"),
     "TrafficSignalAction": (".actions", "TrafficSignalAction"),

@@ -21,7 +21,6 @@ from autoware_carla_scenario import (
     MapPose,
     ReferenceContext,
     RelativeLanePose,
-    TrajectoryFollowingMode,
     TrajectoryTimeCondition,
 )
 from autoware_carla_scenario.authoring.compiler import compile_document
@@ -258,18 +257,6 @@ class TestValidation:
         assert any("at least one lanelet" in m for m in messages)
         assert any("needs a speed" in m for m in messages)
 
-    def test_hiding_needs_a_timed_position_replay(self) -> None:
-        document = _document(
-            {
-                "path_source": "vertices",
-                "vertices": _ROWS,
-                "mode": "follow",
-                "hidden_outside_trajectory": True,
-            },
-            times=_TIMES,
-        )
-        assert any("Position mode" in m for m in _messages(document))
-
     def test_a_pedestrian_may_follow_a_trajectory(self) -> None:
         document = _document(
             {"path_source": "vertices", "vertices": _ROWS},
@@ -284,13 +271,10 @@ class TestValidation:
         )
         assert any("stays there" in m for m in _messages(document, "warning"))
         brought_in = _document(
-            {
-                "path_source": "vertices",
-                "vertices": _ROWS,
-                "hidden_outside_trajectory": True,
-            },
-            hidden=True,
-            times=_TIMES,
+            {"path_source": "vertices", "vertices": _ROWS}, hidden=True, times=_TIMES
+        )
+        brought_in.actions.append(
+            ActionNode(id="enters", type="spawn", actor=brought_in.actions[0].actor)
         )
         assert not any("stays there" in m for m in _messages(brought_in, "warning"))
 
@@ -387,7 +371,6 @@ class TestEditor:
                 "time_offset": "0",
                 "mode": "position",
                 "initial_distance_offset": "0",
-                "hidden_outside_trajectory": "on",
                 "speed_kmh": "30",
                 "lateral_offset_m": "0",
             },
@@ -396,7 +379,6 @@ class TestEditor:
         stored = _stored(store, draft_id).action(card.id)
         assert stored is not None
         assert stored.params["vertices"] == _ROWS
-        assert stored.params["hidden_outside_trajectory"] is True
 
         inspector = client.get(f"/draft/{draft_id}/inspector/{card.id}").text
         assert "3 vertices, 20.0 m" in inspector
@@ -415,9 +397,7 @@ class TestEditor:
             f"/draft/{draft_id}/action",
             data={"type_id": "routing", "actor": actor},
         )
-        card = next(
-            a for a in _stored(store, draft_id).actions if a.type == "routing"
-        )
+        card = next(a for a in _stored(store, draft_id).actions if a.type == "routing")
         page = client.post(
             f"/draft/{draft_id}/action/{card.id}",
             data={
@@ -680,9 +660,7 @@ class TestRelativeEditor:
             f"/draft/{draft_id}/action",
             data={"type_id": "routing", "actor": actor},
         )
-        card = next(
-            a for a in _stored(store, draft_id).actions if a.type == "routing"
-        )
+        card = next(a for a in _stored(store, draft_id).actions if a.type == "routing")
         page = client.post(
             f"/draft/{draft_id}/action/{card.id}",
             data={
@@ -725,9 +703,7 @@ class TestRelativeEditor:
             f"/draft/{draft_id}/action",
             data={"type_id": "routing", "actor": actor},
         )
-        card = next(
-            a for a in _stored(store, draft_id).actions if a.type == "routing"
-        )
+        card = next(a for a in _stored(store, draft_id).actions if a.type == "routing")
         client.post(
             f"/draft/{draft_id}/action/{card.id}",
             data={"path_source": "relative_lane", "relative_vertices": "0\n5, 0, 0.5"},

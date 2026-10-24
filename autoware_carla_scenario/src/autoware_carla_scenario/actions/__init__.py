@@ -2,6 +2,7 @@
 
 from .base import BaseAction, TickTiming
 from .despawn import DespawnAction
+from .spawn import SpawnAction
 from .environment import EnvironmentAction
 from .lane_change import LaneChangeAction, LaneChangeDirection
 from .routing import RoutingAction, RoutingMode
@@ -17,6 +18,7 @@ from .walk_straight import WalkStraightAction
 __all__ = [
     "BaseAction",
     "DespawnAction",
+    "SpawnAction",
     "EnvironmentAction",
     "LaneChangeAction",
     "LaneChangeDirection",

@@ -41,34 +41,47 @@ class DespawnAction(BaseAction):
     still naming it logs that once and does nothing, a condition on it reads
     it as absent.  Instantaneous.
 
+    With *name* instead of *entity_name* it takes away the prop a
+    :class:`~.spawn.SpawnAction` added by that name.
+
     Args:
-        entity_name: ``role_name`` of the vehicle or pedestrian.
+        entity_name: ``role_name`` of the vehicle or pedestrian; or give
+            *name*.
         condition: When it leaves; ``None`` at once.
         timing: Tick phase.
         label: Human-readable identifier.
         once: Whether it fires at most once (the default; a second run finds
             nothing to remove).
+        name: The name of a prop to take away.
 
     Raises:
-        ValueError: For the ego, which a run is measured on.
+        ValueError: For the ego, which a run is measured on; for neither or
+            both of *entity_name* and *name*.
     """
 
     _entity_name: str
+    _name: str
     _despawned: list[tuple[str, int]]
 
     def __init__(
         self,
-        entity_name: Union[EntityRole, str],
+        entity_name: Optional[Union[EntityRole, str]] = None,
         condition: Optional[BaseCondition] = None,
         timing: TickTiming = TickTiming.PRE_TICK,
         *,
         label: str = "despawn",
         once: bool = True,
+        name: Optional[str] = None,
     ) -> None:
-        if str(entity_name) == str(EGO_ROLE_NAME):
+        if (entity_name is None) == (name is None or name == ""):
+            raise ValueError(
+                f"{label}: despawn an entity or a prop (a name), one of the two"
+            )
+        if entity_name is not None and str(entity_name) == str(EGO_ROLE_NAME):
             raise ValueError(f"{label}: the ego cannot be despawned")
         super().__init__(label=label, condition=condition, timing=timing, once=once)
-        self._entity_name = str(entity_name)
+        self._entity_name = "" if entity_name is None else str(entity_name)
+        self._name = "" if name is None else name
         self._despawned = []
 
     @property
@@ -83,7 +96,16 @@ class DespawnAction(BaseAction):
         return out
 
     def execute(self, world: "carla.World") -> None:
-        """Hand the entity back, stop hearing it, destroy it, forget it."""
+        """Hand the entity back, stop hearing it, destroy it, forget it; or
+        take the prop away."""
+        if self._name:
+            from .spawn import remove_prop  # noqa: PLC0415
+
+            if remove_prop(self._name):
+                logger.info("%s: prop '%s' removed", self.label, self._name)
+            else:
+                logger.warning("%s: no prop '%s' to remove", self.label, self._name)
+            return
         actor_id = despawn_entity(world, self._entity_name, self.label)
         if actor_id is not None:
             gone: int = actor_id

@@ -884,44 +884,157 @@ def test_a_road_user_in_the_lane_beside_does_not_take_a_spot() -> None:
     assert clearance.overlaps(world, 99, 25.4, 0.0, 0.0, 2.0, 1.0) is None
 
 
-def test_an_entity_whose_spot_stays_taken_appears_further_along(
-    monkeypatch: pytest.MonkeyPatch,
+def test_a_spawn_whose_place_is_taken_takes_one_further_on_if_allowed(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """Waited for APPEAR_WAIT_S, then the nearest clear spot along its route;
-    with none, where it was due after APPEAR_GIVE_UP_S."""
-    from autoware_carla_scenario.actions import routing as routing_module
+    """SpawnAction does not wait (its trigger does): a place taken as it fires
+    is given up for the nearest clear one within shift_max along its lane,
+    else it spawns where it was due; each said, naming what stood there."""
+    from autoware_carla_scenario.actions import SpawnAction
+    from autoware_carla_scenario.actions import spawn as spawn_module
+    from autoware_carla_scenario.coordinate import Lanelet2Pose
 
-    action = SimpleNamespace(
-        _initial_distance_offset=0.0,
-        _spot_waited_since=None,
-        _elapsed=10.0,
-        label="v",
-        _entity_name="npc1",
-    )
     taken_until = {"m": 7.0}
     monkeypatch.setattr(
-        routing_module,
-        "_spot_taken",
-        lambda world, actor, path, along: 5 if along < taken_until["m"] else -1,
+        spawn_module,
+        "resolve_position",
+        lambda position, reference: (float(position.s), 0.0, 0.0, 0.0),
     )
-    path = path_of(100.0)
-    clear = routing_module.RoutingAction._spot_clear
-    assert not clear(action, None, path, None)  # type: ignore[arg-type]
-    action._elapsed = 12.0
-    assert not clear(action, None, path, None)  # type: ignore[arg-type]
-    action._elapsed = 13.5
-    assert clear(action, None, path, None)  # type: ignore[arg-type]
-    assert action._initial_distance_offset == 8.0
-    # Nothing clear within reach: where it was due, after the give-up time.
-    action._initial_distance_offset = 0.0
-    taken_until["m"] = 999.0
-    action._elapsed = 20.0
-    assert not clear(action, None, path, None)  # type: ignore[arg-type]
-    action._elapsed = 20.0 + routing_module.APPEAR_GIVE_UP_S - 0.1
-    assert not clear(action, None, path, None)  # type: ignore[arg-type]
-    action._elapsed = 20.0 + routing_module.APPEAR_GIVE_UP_S
-    assert clear(action, None, path, None)  # type: ignore[arg-type]
-    assert action._initial_distance_offset == 0.0
+    monkeypatch.setattr(
+        spawn_module,
+        "_along_lane",
+        lambda pose, d: Lanelet2Pose(pose.lanelet_id, pose.s + d),
+    )
+    monkeypatch.setattr(
+        spawn_module,
+        "_taken",
+        lambda world, actor_id, x, y, yaw, hl, hw: 5 if x < taken_until["m"] else -1,
+    )
+    held: list[float] = []
+    monkeypatch.setattr(
+        spawn_module, "_hold", lambda world, actor_id, x, y, yaw, hl, hw: held.append(x)
+    )
+
+    def place(shift: float) -> Any:
+        action = SpawnAction("npc1", position=Lanelet2Pose(3, 0.0), shift_max=shift)
+        return action._place(None, 1, 2.0, 1.0)  # type: ignore[arg-type]
+
+    with caplog.at_level(logging.WARNING):
+        assert place(30.0)[0] == 8.0
+        assert place(0.0)[0] == 0.0
+        taken_until["m"] = 999.0
+        assert place(30.0)[0] == 0.0
+    said = [r.getMessage() for r in caplog.records]
+    assert any("8 m on along its lane" in m and "actor 5" in m for m in said)
+    assert sum("where it was due, on actor 5" in m for m in said) == 2
+    assert held == [8.0, 0.0, 0.0]  # each place claimed for the frame
+    taken_until["m"] = -1.0
+    assert place(30.0)[0] == 0.0
+
+
+def test_what_a_spawn_refuses() -> None:
+    from autoware_carla_scenario.actions import SpawnAction
+    from autoware_carla_scenario.coordinate import Lanelet2Pose
+
+    with pytest.raises(ValueError, match="shift_max"):
+        SpawnAction("npc1", position=Lanelet2Pose(1, 0.0), shift_max=-1.0)
+    with pytest.raises(ValueError, match="ego"):
+        SpawnAction("Ego")
+    with pytest.raises(ValueError, match="one of the two"):
+        SpawnAction()
+
+
+def test_a_spawn_with_no_place_brings_the_entity_up_where_it_was_declared() -> None:
+    """Parked 500 m under its declared spawn: brought straight up."""
+    from autoware_carla_scenario.actions import SpawnAction
+    from autoware_carla_scenario.entity.registry import (
+        register_entity,
+        unregister_entity,
+    )
+
+    transforms: list[Any] = []
+    actor = SimpleNamespace(
+        id=31,
+        type_id="vehicle.mini.cooper",
+        bounding_box=SimpleNamespace(extent=SimpleNamespace(x=2.0, y=1.0, z=0.8)),
+        get_transform=lambda: SimpleNamespace(
+            location=SimpleNamespace(x=4.0, y=5.0, z=-499.8),
+            rotation=SimpleNamespace(yaw=90.0),
+        ),
+        set_simulate_physics=lambda on: None,
+        set_transform=transforms.append,
+        set_target_velocity=lambda v: None,
+    )
+    register_entity("npc31", SimpleNamespace(actor=actor))
+    try:
+        SpawnAction("npc31").tick(None, 0.0)  # type: ignore[arg-type]
+    finally:
+        unregister_entity("npc31")
+    (put,) = transforms
+    assert (put.location.x, put.location.y, put.location.z) == pytest.approx(
+        (4.0, 5.0, 0.2)
+    )
+    assert put.rotation.yaw == pytest.approx(90.0)
+
+
+def test_a_place_clear_condition_holds_while_nothing_stands_there(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A generic place (a lanelet pose) and a footprint: passes while no road
+    user overlaps it, says once what stands there."""
+    from autoware_carla_scenario.conditions import PlaceClearCondition
+    from autoware_carla_scenario.conditions import place_clear as place_module
+    from autoware_carla_scenario.coordinate import Lanelet2Pose
+    from autoware_carla_scenario.coordinate import transform as transform_module
+
+    monkeypatch.setattr(
+        transform_module,
+        "to_carla_world",
+        lambda pose: SimpleNamespace(x=10.0, y=2.0, z=0.0, yaw=90.0),
+    )
+    seen: list[tuple[float, ...]] = []
+    occupant = {"id": 7}
+
+    def look(
+        world: Any, x: float, y: float, yaw: float, hl: float, hw: float, m: float
+    ) -> int:
+        seen.append((x, y, yaw, hl, hw, m))
+        return occupant["id"]
+
+    monkeypatch.setattr(place_module, "_occupant", look)
+    condition = PlaceClearCondition(Lanelet2Pose(3, 5.0, 1.0), 4.0, 2.0, label="p")
+    assert condition.check(None, 1.0) is None  # type: ignore[arg-type]
+    assert seen[-1] == (10.0, 2.0, 90.0, 2.0, 1.0, 0.3)
+    occupant["id"] = -1
+    result = condition.check(None, 2.0)  # type: ignore[arg-type]
+    assert result is not None and result.passed
+    assert condition.get_details()["lanelet_id"] == 3
+    with pytest.raises(ValueError):
+        PlaceClearCondition(Lanelet2Pose(3, 5.0), 0.0, 2.0, label="p")
+
+
+def test_the_place_clear_card_builds_its_condition() -> None:
+    """The card's lanelet pose and footprint reach the condition."""
+    from autoware_carla_scenario.authoring import _builders_generated as builders
+    from autoware_carla_scenario.conditions import PlaceClearCondition
+
+    compiled = SimpleNamespace(
+        label="p",
+        params={
+            "lanelet_id": 12,
+            "s": 3.0,
+            "t": -1.5,
+            "heading": 0.0,
+            "length": 0.5,
+            "width": 0.4,
+            "margin": 0.3,
+        },
+    )
+    built = builders.build_place_clear_condition(compiled, [], None)  # type: ignore[arg-type]
+    assert isinstance(built, PlaceClearCondition)
+    details = built.get_details()
+    assert (details["lanelet_id"], details["s"], details["t"]) == (12, 3.0, -1.5)
+    assert (details["length"], details["width"], details["margin"]) == (0.5, 0.4, 0.3)
 
 
 def test_a_walker_the_crowd_took_for_run_over_goes_on_as_a_new_one(
@@ -1025,63 +1138,3 @@ def test_a_spot_claimed_this_frame_is_taken_before_the_snapshot_shows_it() -> No
     assert clearance.overlaps(world, 1, 10.0, 0.0, 0.0, 2.0, 1.0) is None  # its own
     clearance._CACHE.claims_frame = -5  # a later frame: shown by the snapshot
     assert clearance.overlaps(world, 2, 10.0, 0.0, 0.0, 2.0, 1.0) is None
-
-
-def test_a_place_clear_condition_holds_while_nothing_stands_there(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A generic place (a lanelet pose) and a footprint: passes while no road
-    user overlaps it, says once what stands there."""
-    from autoware_carla_scenario.conditions import PlaceClearCondition
-    from autoware_carla_scenario.conditions import place_clear as place_module
-    from autoware_carla_scenario.coordinate import Lanelet2Pose
-    from autoware_carla_scenario.coordinate import transform as transform_module
-
-    monkeypatch.setattr(
-        transform_module,
-        "to_carla_world",
-        lambda pose: SimpleNamespace(x=10.0, y=2.0, z=0.0, yaw=90.0),
-    )
-    seen: list[tuple[float, ...]] = []
-    occupant = {"id": 7}
-
-    def look(
-        world: Any, x: float, y: float, yaw: float, hl: float, hw: float, m: float
-    ) -> int:
-        seen.append((x, y, yaw, hl, hw, m))
-        return occupant["id"]
-
-    monkeypatch.setattr(place_module, "_occupant", look)
-    condition = PlaceClearCondition(Lanelet2Pose(3, 5.0, 1.0), 4.0, 2.0, label="p")
-    assert condition.check(None, 1.0) is None  # type: ignore[arg-type]
-    assert seen[-1] == (10.0, 2.0, 90.0, 2.0, 1.0, 0.3)
-    occupant["id"] = -1
-    result = condition.check(None, 2.0)  # type: ignore[arg-type]
-    assert result is not None and result.passed
-    assert condition.get_details()["lanelet_id"] == 3
-    with pytest.raises(ValueError):
-        PlaceClearCondition(Lanelet2Pose(3, 5.0), 0.0, 2.0, label="p")
-
-
-def test_the_place_clear_card_builds_its_condition() -> None:
-    """The card's lanelet pose and footprint reach the condition."""
-    from autoware_carla_scenario.authoring import _builders_generated as builders
-    from autoware_carla_scenario.conditions import PlaceClearCondition
-
-    compiled = SimpleNamespace(
-        label="p",
-        params={
-            "lanelet_id": 12,
-            "s": 3.0,
-            "t": -1.5,
-            "heading": 0.0,
-            "length": 0.5,
-            "width": 0.4,
-            "margin": 0.3,
-        },
-    )
-    built = builders.build_place_clear_condition(compiled, [], None)  # type: ignore[arg-type]
-    assert isinstance(built, PlaceClearCondition)
-    details = built.get_details()
-    assert (details["lanelet_id"], details["s"], details["t"]) == (12, 3.0, -1.5)
-    assert (details["length"], details["width"], details["margin"]) == (0.5, 0.4, 0.3)

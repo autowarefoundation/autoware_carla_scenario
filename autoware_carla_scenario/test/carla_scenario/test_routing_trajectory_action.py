@@ -30,7 +30,6 @@ from autoware_carla_scenario import (
 )
 from autoware_carla_scenario.action_state import ActionState
 from autoware_carla_scenario.actions._trajectory_run import (
-    HIDDEN_DEPTH_M,
     TrajectoryRun,
     _entity_actor,
     _ReferenceMissing,
@@ -241,18 +240,6 @@ class TestConstruction:
         with pytest.raises(ValueError, match="no vertex times"):
             _route("npc1", _line(duration=None), TrajectoryTiming())
 
-    def test_hiding_needs_a_timed_position_replay(self) -> None:
-        with pytest.raises(ValueError, match="hidden_outside_trajectory"):
-            _route("npc1", _line(), None, hidden_outside_trajectory=True)
-        with pytest.raises(ValueError, match="hidden_outside_trajectory"):
-            _route(
-                "npc1",
-                _line(),
-                TrajectoryTiming(),
-                RoutingMode.FOLLOW,
-                hidden_outside_trajectory=True,
-            )
-
     def test_a_negative_offset_is_refused(self) -> None:
         with pytest.raises(ValueError, match="initial_distance_offset"):
             _route("npc1", _line(), initial_distance_offset=-1.0)
@@ -354,37 +341,6 @@ class TestPositionWithoutTiming:
         action = _route("npc1", square)
         _run(action, entity.actor, 6.0)
         assert not action.finished
-
-
-class TestHidden:
-    def test_it_is_out_of_the_world_until_its_first_vertex(
-        self, entity: _Entity
-    ) -> None:
-        late = Trajectory(
-            "late",
-            [
-                TrajectoryVertex(CarlaWorldPose(0.0, 0.0, 0.0), _at(1.0)),
-                TrajectoryVertex(CarlaWorldPose(10.0, 0.0, 0.0), _at(2.0)),
-            ],
-        )
-        action = _route(
-            "npc1",
-            late,
-            TrajectoryTiming(ReferenceContext.ABSOLUTE),
-            hidden_outside_trajectory=True,
-        )
-        _run(action, entity.actor, 0.5)
-        assert entity.actor.z == pytest.approx(-HIDDEN_DEPTH_M)
-        assert entity.actor.physics is False
-
-        _run(action, entity.actor, 0.6, start=0.5)
-        assert entity.actor.physics is True
-        assert entity.actor.z == pytest.approx(0.0)
-
-        _run(action, entity.actor, 1.0, start=1.1)
-        assert action.finished
-        assert entity.actor.z == pytest.approx(-HIDDEN_DEPTH_M)
-        assert entity.actor.physics is False
 
 
 class TestLateEntity:

@@ -186,8 +186,9 @@ be made then: they depend on where the reference entity is.
 
 ### Driver mode and timing
 
-In `driver` mode the route starts where the entity is -- at the first waypoint
-when it appears there (`appear_on_start`) -- and passes every waypoint, each
+In `driver` mode the route starts where the entity is -- the nearest point of
+its path within 6 m, a hidden one having been brought in by a `SpawnAction` --
+and passes every waypoint after it, each
 placed on the lanelet under it (a walkable one for a pedestrian). A vehicle
 the traffic backend drives is handed it as a path
 (`BackendDriven.route_to`), a pedestrian walks it (`PedestrianEntity.route_to`),
@@ -264,18 +265,17 @@ where the trajectory ended. Pass `until=` to end it on a condition of your own.
 hands it straight back to traffic, as the adversarial actions do
 (`resume_traffic`).
 
-`hidden_outside_trajectory=True` (an extension, `POSITION` mode with a timing
-only) keeps the entity out of the world -- parked under the map with its physics
-off -- before its first vertex's time and after its last. That is what a road
-user that enters a recording late or leaves it early needs, since an entity
-cannot be spawned once a run has started.
-
-`appear_on_start=True` (an extension, either mode) is the other way in: when a
-run of the action starts, the entity -- spawned hidden -- is put on the first
-vertex facing along the path, physics on, moving at `speed` (standing if
-unset), and then follows the trajectory. Triggered by a `RouteProgressCondition`
-it enters when the ego has come as far as it had when the road user was first
-seen; it cannot be combined with `hidden_outside_trajectory`.
+`RoutingAction` routes an entity that is in the scene; it does not bring one
+in or take it out (`appear_on_start` and `hidden_outside_trajectory` are gone
+from it as of 1.0).  A road user that enters a recording late is spawned
+hidden and brought in by a `SpawnAction` (the `spawn` card): put on its place,
+physics on, facing its heading, moving at `speed`; its routing card is
+triggered on the spawn card completing and starts where it stands.  Triggered
+by a `RouteProgressCondition` it enters when the ego has come as far as it had
+when the road user was first seen; a `PlaceClearCondition` on the same place
+in its trigger waits for the place to be clear, and `shift_max` lets it take
+the nearest clear place further on along its lane once the trigger gives up
+waiting.  One that leaves early is removed by a `DespawnAction`.
 
 Vertices may also be placed against a logical scenario's *route*
 (`RouteLanePose`, `RouteOppositePose`, `RouteCrossingPose`,
@@ -491,9 +491,7 @@ held = recorded.gated({12: ElapsedTimeCondition(20.0, label="not_before_20s")})
   path to its start -- so in `FOLLOW` mode a closed path's conditions are
   reliable on the first lap only. `POSITION` has no such limit.
 
-`hidden_outside_trajectory` keeps the entity out of the world until the first
-vertex is departed on its time, and after the run ends -- for a trajectory of
-times alone, exactly as before. `RoutingAction.held_vertex` names the
+`RoutingAction.held_vertex` names the
 vertex (0-based) the entity waits at for a condition other than a time, or
 `None`.
 

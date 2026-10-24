@@ -25,7 +25,6 @@ import pytest
 from autoware_carla_scenario import (
     CarlaWorldPose,
     ComparisonRule,
-    RoutingAction,
     RoutingMode,
     Lanelet2Pose,
     MapPose,
@@ -399,8 +398,9 @@ class TestTrajectoriesOnTheRoute:
             resolve_trajectory(path, reference=lambda ref: CarlaWorldPose(0, 0, 0, 0))
 
 
-class TestAppearOnStart:
-    """A hidden entity enters on its first vertex when its action starts."""
+class TestSpawnThenRoute:
+    """A hidden entity is brought in by a SpawnAction, then routed from where
+    it stands (RoutingAction does no appearing of its own)."""
 
     @staticmethod
     def _path() -> Trajectory:
@@ -416,16 +416,9 @@ class TestAppearOnStart:
             ],
         )
 
-    def test_it_is_refused_with_hiding_outside(self) -> None:
-        with pytest.raises(ValueError, match="choose one"):
-            _route(
-                "npc1",
-                self._path(),
-                appear_on_start=True,
-                hidden_outside_trajectory=True,
-            )
+    def test_a_vehicle_spawns_moving_then_follows(self, loaded: None) -> None:
+        from autoware_carla_scenario.actions import SpawnAction
 
-    def test_a_vehicle_appears_moving_then_follows(self, loaded: None) -> None:
         actor = _Actor(x=0.0, y=0.0)
         actor.z = -500.0
         actor.physics = False
@@ -433,20 +426,19 @@ class TestAppearOnStart:
         register_entity("npc1", entity)
         ego = _Ego(-60.0, -1.75)  # route s 10
         try:
-            action = _route(
-                "npc1",
-                self._path(),
-                mode=RoutingMode.FOLLOW,
-                speed=5.0,
-                appear_on_start=True,
-            )
             world = _RouteWorld(ego, actor)
-            action.tick(world, 0.0)
+            spawn = SpawnAction(
+                "npc1",
+                position=RouteLanePose(ds=-40.0, anchor="junction:0:entry"),
+                speed=5.0,
+            )
+            spawn.tick(world, 0.0)
             assert actor.physics is True
             # The first vertex: 40 m before the junction, x = -50, facing East.
             assert (actor.x, actor.y) == pytest.approx((-50.0, 1.75))
             assert actor.yaw == pytest.approx(0.0)
             assert actor.speed == pytest.approx(5.0)
+            action = _route("npc1", self._path(), mode=RoutingMode.FOLLOW, speed=5.0)
             # It drives to the second vertex and waits for the ego there.
             elapsed = 0.05
             for _ in range(200):
@@ -465,28 +457,19 @@ class TestAppearOnStart:
         finally:
             unregister_entity("npc1")
 
-    def test_a_walker_appears_walking(self, loaded: None) -> None:
+    def test_a_walker_spawns_walking(self, loaded: None) -> None:
+        from autoware_carla_scenario.actions import SpawnAction
+
         walker = _Actor(type_id="walker.pedestrian.0015")
         walker.physics = False
         register_entity("walker1", _Entity(walker))
         try:
-            path = Trajectory(
-                "cross",
-                [
-                    TrajectoryVertex(RouteCrosswalkPose(leg="exit", side="right")),
-                    TrajectoryVertex(
-                        RouteCrosswalkPose(leg="exit", side="right", along=14.0)
-                    ),
-                ],
-            )
-            action = _route(
+            spawn = SpawnAction(
                 "walker1",
-                path,
-                mode=RoutingMode.FOLLOW,
+                position=RouteCrosswalkPose(leg="exit", side="right"),
                 speed=1.2,
-                appear_on_start=True,
             )
-            action.tick(_RouteWorld(walker), 0.0)
+            spawn.tick(_RouteWorld(walker), 0.0)
             assert walker.physics is True
             # The E crosswalk's end on the ego's right, raised by half a height.
             assert (walker.x, walker.y, walker.z) == pytest.approx((15.0, 7.0, 0.9))

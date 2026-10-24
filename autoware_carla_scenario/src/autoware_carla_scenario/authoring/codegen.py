@@ -852,7 +852,7 @@ def _argument(
     if isinstance(spec, ActionSpec):
         if name in ACTION_PARAMS:
             return ACTION_PARAMS[name]
-        if name == "entity_name" and spec.actor_required:
+        if name == "entity_name" and (spec.actor_required or spec.actor_optional):
             return "compiled.actor_role"
     elif isinstance(spec, ConditionSpec):
         child = _children_expression(spec, name, parameter)

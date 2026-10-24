@@ -552,8 +552,9 @@ box removes it; a malformed one is refused with the reason). A *Follow
 Trajectory* card's **Path** then offers *Along the scenario's route*, whose
 **Route vertices** are edited as text, one `kind key=value ...` per line, and
 the **Route progress** condition is offered for triggers, assertions and
-waypoint conditions. **Appear at the first vertex when the action starts**
-(`appear_on_start`) brings a hidden entity in.
+waypoint conditions. A **Spawn** card brings a hidden entity in (or, with no
+actor, adds a prop by name); trigger its *Set Goal* card on the Spawn card's
+action state.
 
 ## Ego: who drives, and where to
 

@@ -77,7 +77,6 @@ __all__ = [
     "build_run_traffic_rule_action",
     "build_stalled_object_action",
     "build_stop_crossing_action",
-    "build_prop_action",
     "build_traffic_signal_controller_action",
     "build_traffic_signal_action",
     "build_environment_action",
@@ -90,6 +89,7 @@ __all__ = [
     "build_lane_change_action",
     "build_routing_action",
     "build_set_speed_action",
+    "build_spawn_action",
     "build_turn_action",
     "build_vehicle_parameters_action",
 ]
@@ -1173,36 +1173,6 @@ def build_stop_crossing_action(
     )
 
 
-def build_prop_action(
-    compiled: "CompiledAction",
-    condition: "BaseCondition | None",
-    timing: Any,
-    ctx: "BuildContext",
-) -> "BaseAction":
-    """Build a :class:`PropAction`."""
-    from ..actions.prop import PropAction  # noqa: PLC0415
-    from ..coordinate import Lanelet2Pose  # noqa: PLC0415
-    from ..actions.prop import PropOperation  # noqa: PLC0415
-
-    params = compiled.params
-    position = Lanelet2Pose(
-        lanelet_id=params["lanelet_id"],
-        s=params["s"],
-        t=params["t"],
-        heading=params["heading"],
-    )
-    return PropAction(
-        name=str(params["name"]),
-        operation=PropOperation[str(params["operation"]).upper()],
-        position=position,
-        blueprint=str(params["blueprint"]),
-        on_ground=params["on_ground"],
-        condition=condition,
-        timing=timing,
-        label=compiled.label,
-    )
-
-
 def build_traffic_signal_controller_action(
     compiled: "CompiledAction",
     condition: "BaseCondition | None",
@@ -1467,13 +1437,14 @@ def build_despawn_action(
     """Build a :class:`DespawnAction`."""
     from ..actions import DespawnAction  # noqa: PLC0415
 
-    assert compiled.actor_role is not None  # noqa: S101 -- required by the spec
+    params = compiled.params
     return DespawnAction(
         entity_name=compiled.actor_role,
         condition=condition,
         timing=timing,
         label=compiled.label,
         once=compiled.node.once,
+        name=(str(params["name"]) if params["name"] is not None else None),
     )
 
 
@@ -1555,9 +1526,7 @@ def build_routing_action(
         mode=RoutingMode[str(params["mode"]).upper()],
         time_reference=time_reference,
         initial_distance_offset=params["initial_distance_offset"],
-        hidden_outside_trajectory=params["hidden_outside_trajectory"],
         speed=params["speed_ms"],
-        appear_on_start=params["appear_on_start"],
     )
 
 
@@ -1580,6 +1549,38 @@ def build_set_speed_action(
         timing=timing,
         label=compiled.label,
         once=compiled.node.once,
+    )
+
+
+def build_spawn_action(
+    compiled: "CompiledAction",
+    condition: "BaseCondition | None",
+    timing: Any,
+    ctx: "BuildContext",
+) -> "BaseAction":
+    """Build a :class:`SpawnAction`."""
+    from ..actions import SpawnAction  # noqa: PLC0415
+    from ..coordinate import Lanelet2Pose  # noqa: PLC0415
+
+    params = compiled.params
+    position = Lanelet2Pose(
+        lanelet_id=params["lanelet_id"],
+        s=params["s"],
+        t=params["t"],
+        heading=params["heading"],
+    )
+    return SpawnAction(
+        entity_name=compiled.actor_role,
+        condition=condition,
+        timing=timing,
+        label=compiled.label,
+        once=compiled.node.once,
+        position=position,
+        shift_max=params["shift_max"],
+        speed=params["speed_ms"],
+        name=(str(params["name"]) if params["name"] is not None else None),
+        blueprint=str(params["blueprint"]),
+        on_ground=params["on_ground"],
     )
 
 

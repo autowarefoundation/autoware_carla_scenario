@@ -40,13 +40,20 @@ from autoware_carla_scenario.actions._departures import (
     DepartureTimeline,
     TimelineVertex,
 )
-from autoware_carla_scenario.actions._trajectory_run import HIDDEN_DEPTH_M
 from autoware_carla_scenario.conditions.base import ScenarioResult
 from autoware_carla_scenario.entity.pedestrian_entity import _UE5_WALKER_SPEED_SCALE
 from autoware_carla_scenario.entity.registry import register_entity, unregister_entity
 
 from ._fake_world import ActorsById
-from .test_routing_trajectory_action import _DT, _Actor, _Entity, _line, _run, _World, _route
+from .test_routing_trajectory_action import (
+    _DT,
+    _Actor,
+    _Entity,
+    _line,
+    _run,
+    _World,
+    _route,
+)
 
 
 class _Recorder(BaseCondition):
@@ -421,9 +428,7 @@ class TestPosition:
     ) -> None:
         at_start = _Recorder(AlwaysTrueCondition())
         corner = _Recorder(AlwaysTrueCondition())
-        action = _route(
-            "npc1", _square().gated({0: at_start, 1: corner}), speed=10.0
-        )
+        action = _route("npc1", _square().gated({0: at_start, 1: corner}), speed=10.0)
         # A lap is 40 m, 4 s: the start is reached at 0, 4 and 8 s, the
         # corner at 1 and 5 s.
         _run(action, entity.actor, 8.5)
@@ -432,9 +437,7 @@ class TestPosition:
         assert not action.finished
 
     def test_a_closed_path_waits_on_its_last_vertex(self, entity: _Entity) -> None:
-        action = _route(
-            "npc1", _square().gated({3: _Recorder(open=False)}), speed=10.0
-        )
+        action = _route("npc1", _square().gated({3: _Recorder(open=False)}), speed=10.0)
         _run(action, entity.actor, 6.0)
         assert (entity.actor.x, entity.actor.y) == (
             pytest.approx(0.0),
@@ -463,32 +466,6 @@ class TestPosition:
                 ends += 1
         assert ends == 2
         assert len(gate.asked) == 2
-
-
-class TestHidden:
-    def test_hidden_until_its_first_time_and_after_its_end(
-        self, entity: _Entity
-    ) -> None:
-        gate = _Recorder(ElapsedTimeCondition(3.0, label="go"))
-        action = _route(
-            "npc1",
-            _path((0.0, 1.0), (10.0, gate), (20.0, 4.0)),
-            TrajectoryTiming(ReferenceContext.ABSOLUTE),
-            hidden_outside_trajectory=True,
-            speed=10.0,
-        )
-        _run(action, entity.actor, 0.5)
-        assert entity.actor.z == pytest.approx(-HIDDEN_DEPTH_M)
-        _run(action, entity.actor, 2.0, start=0.5)
-        # 2.5 s: waiting at the condition vertex, in the world.
-        assert entity.actor.physics is True
-        assert entity.actor.x == pytest.approx(10.0)
-        assert action.held_vertex == 1
-        _run(action, entity.actor, 1.2, start=2.5)
-        assert not action.finished and entity.actor.physics is True
-        _run(action, entity.actor, 0.5, start=3.7)
-        assert action.finished
-        assert entity.actor.physics is False
 
 
 # ---------------------------------------------------------------------------
@@ -538,9 +515,7 @@ class TestOtherConditions:
                 ElapsedTimeCondition(2.0, label="late_enough"),
             ]
         )
-        action = _route(
-            "npc1", _line(duration=None).gated({1: both}), speed=10.0
-        )
+        action = _route("npc1", _line(duration=None).gated({1: both}), speed=10.0)
         _run(action, entity.actor, 1.9)
         assert entity.actor.x == pytest.approx(5.0)
         _run(action, entity.actor, 0.6, start=1.9)

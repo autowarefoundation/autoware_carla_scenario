@@ -381,6 +381,10 @@ class ActionSpec:
     actor_kinds: tuple[str, ...] = ("ego", "vehicle")
     #: ``instant`` renders as a diamond on the swimlane, ``continuous`` as a bar.
     visual_kind: Literal["instant", "continuous"] = "instant"
+    #: An ``actor`` action whose actor may be left out: it then acts on the
+    #: world (a Spawn or Despawn card for a prop, by name) and belongs to the
+    #: environment track.
+    actor_optional: bool = False
     #: The phase a freshly added card lands in.  ``init`` for anything the run
     #: has to be set up with rather than driven by -- a goal, the starting state
     #: of the lights.
@@ -394,7 +398,7 @@ class ActionSpec:
     @property
     def actor_required(self) -> bool:
         """Whether this action needs a vehicle to perform it."""
-        return self.scope == "actor"
+        return self.scope == "actor" and not self.actor_optional
 
 
 def field_holders(
@@ -1215,14 +1219,154 @@ register_action_spec(
         builder="build_despawn_action",
         target="..actions:DespawnAction",
         actor_kinds=("vehicle", "pedestrian"),
+        actor_optional=True,
         visual_kind="instant",
-        fields=(),
+        fields=(
+            FieldSpec(
+                name="name",
+                label="Prop name",
+                kind="text",
+                default=None,
+                required=False,
+                help="With no actor: the name of the prop a Spawn card added.",
+            ),
+        ),
         description=(
             "Take a vehicle or pedestrian out of the world for good: its "
             "traffic backend lets go of it, its actor is destroyed and it is "
             "forgotten. Trigger it on its Set Goal card's Action state "
             "(Complete) to have a road user leave where its route ends, "
             "rather than drive on wherever its traffic takes it."
+        ),
+    )
+)
+
+register_action_spec(
+    ActionSpec(
+        type_id="spawn",
+        title="Spawn",
+        category="Vehicle / Motion",
+        builder="build_spawn_action",
+        target="..actions:SpawnAction",
+        argmap=(("speed_ms", "speed"),),
+        actor_kinds=("vehicle", "pedestrian"),
+        actor_optional=True,
+        visual_kind="instant",
+        builds=(
+            BuiltArgument(
+                kwarg="position",
+                target="..coordinate:Lanelet2Pose",
+                parts=(
+                    BuiltPart(
+                        args=(
+                            ("lanelet_id", "lanelet_id"),
+                            ("s", "s"),
+                            ("t", "t"),
+                            ("heading", "heading"),
+                        ),
+                    ),
+                ),
+            ),
+        ),
+        fields=(
+            FieldSpec(
+                name="lanelet_id",
+                label="Lanelet",
+                kind="lanelet",
+                default=0,
+                required=False,
+                help=(
+                    "The lanelet of the place it enters at. None (0): where "
+                    "it was declared to spawn, which it waits under."
+                ),
+            ),
+            FieldSpec(
+                name="s",
+                label="s",
+                kind="number",
+                default=0.0,
+                required=False,
+                unit="m",
+                help="Along the lanelet from its start.",
+            ),
+            FieldSpec(
+                name="t",
+                label="t",
+                kind="number",
+                default=0.0,
+                required=False,
+                unit="m",
+                help="Off the centreline, positive to the left.",
+            ),
+            FieldSpec(
+                name="heading",
+                label="Heading",
+                kind="number",
+                default=0.0,
+                required=False,
+                unit="rad",
+                help="Turned from the lane's direction, counter-clockwise.",
+            ),
+            FieldSpec(
+                name="name",
+                label="Prop name",
+                kind="text",
+                default=None,
+                required=False,
+                help=(
+                    "With no actor: the prop's name, which a Despawn card "
+                    "removes it by (one standing of that name is replaced)."
+                ),
+            ),
+            FieldSpec(
+                name="blueprint",
+                label="Prop",
+                kind="text",
+                default="static.prop.constructioncone",
+                required=False,
+                help="With no actor: the CARLA prop (static.prop.*) it is.",
+            ),
+            FieldSpec(
+                name="on_ground",
+                label="On the road surface",
+                kind="bool",
+                default=True,
+                required=False,
+                help=(
+                    "A prop stands on the road surface under its place rather "
+                    "than at the place's own height."
+                ),
+            ),
+            FieldSpec(
+                name="shift_max",
+                label="Or up to this far on",
+                kind="number",
+                default=0.0,
+                required=False,
+                unit="m",
+                help=(
+                    "If a road user stands on the place as the card fires, "
+                    "the nearest clear place up to this far on along the lane "
+                    "(0: there all the same). To wait for the place first, "
+                    "put a Place clear condition in the trigger."
+                ),
+            ),
+            FieldSpec(
+                name="speed_ms",
+                label="Speed",
+                kind="number",
+                default=0.0,
+                required=False,
+                unit="m/s",
+                help="The speed it enters at, along its heading.",
+            ),
+        ),
+        description=(
+            "Bring a vehicle or pedestrian spawned out of the world (Spawn "
+            "hidden) into the scene at a place, facing along its lane, at a "
+            "speed -- or, with no actor, add a prop (a cone, a barrier...) by "
+            "name. The counterpart of Despawn. Trigger an entity's Set Goal "
+            "card on this card's Action state (Complete) to drive it on."
         ),
     )
 )
@@ -1309,105 +1453,6 @@ register_action_spec(
             "from one time to another, out of the world before and after.  "
             "Spawn it out of the world; two of them make a collision's "
             "aftermath."
-        ),
-    )
-)
-
-register_action_spec(
-    ActionSpec(
-        type_id="prop",
-        title="Prop",
-        category="Environment",
-        builder="build_prop_action",
-        target="..actions.prop:PropAction",
-        scope="environment",
-        builds=(
-            BuiltArgument(
-                kwarg="position",
-                target="..coordinate:Lanelet2Pose",
-                parts=(
-                    BuiltPart(
-                        args=(
-                            ("lanelet_id", "lanelet_id"),
-                            ("s", "s"),
-                            ("t", "t"),
-                            ("heading", "heading"),
-                        )
-                    ),
-                ),
-            ),
-        ),
-        fields=(
-            FieldSpec(
-                name="name",
-                label="Name",
-                kind="text",
-                default="prop",
-                help="The prop's name; a later Prop card removes it by this name.",
-            ),
-            FieldSpec(
-                name="operation",
-                label="Operation",
-                kind="select",
-                default="add",
-                options=(
-                    SelectOption("add", "Add"),
-                    SelectOption("remove", "Remove"),
-                ),
-            ),
-            FieldSpec(
-                name="blueprint",
-                label="Prop",
-                kind="text",
-                default="static.prop.constructioncone",
-                required=False,
-                help="The CARLA prop (static.prop.*) an added one is.",
-            ),
-            FieldSpec(
-                name="lanelet_id",
-                label="Lanelet",
-                kind="lanelet",
-                default=0,
-                help="The lanelet an added prop stands on.",
-            ),
-            FieldSpec(
-                name="s",
-                label="s",
-                kind="number",
-                default=0.0,
-                unit="m",
-                help="Along the lanelet from its start.",
-            ),
-            FieldSpec(
-                name="t",
-                label="t",
-                kind="number",
-                default=0.0,
-                required=False,
-                unit="m",
-                help="Off the centreline, positive to the left.",
-            ),
-            FieldSpec(
-                name="heading",
-                label="Heading",
-                kind="number",
-                default=0.0,
-                required=False,
-                unit="rad",
-                help="Turned from the lane's direction, counter-clockwise.",
-            ),
-            FieldSpec(
-                name="on_ground",
-                label="On the road surface",
-                kind="bool",
-                default=True,
-                required=False,
-            ),
-        ),
-        description=(
-            "Add a CARLA prop (a cone, a barrier, a sign) to the world at a "
-            "lanelet position, or remove the one of a name.  A prop added is "
-            "taken away when the run ends."
         ),
     )
 )
@@ -2444,28 +2489,6 @@ register_action_spec(
                 kind="number",
                 default=0.0,
                 unit="m",
-            ),
-            FieldSpec(
-                name="hidden_outside_trajectory",
-                label="Out of the world before its first and after its last vertex",
-                kind="bool",
-                default=False,
-                help=(
-                    "For a road user a recording picks up late or loses early. "
-                    "Needs the Position mode and a time reference."
-                ),
-            ),
-            FieldSpec(
-                name="appear_on_start",
-                label="Appear at the first vertex when the action starts",
-                kind="bool",
-                default=False,
-                required=False,
-                help=(
-                    "For an entity spawned out of the world: placed on its "
-                    "first vertex, facing along the path, moving at the speed "
-                    "above, when the card is triggered -- in any mode."
-                ),
             ),
             FieldSpec(
                 name="cross_factor",

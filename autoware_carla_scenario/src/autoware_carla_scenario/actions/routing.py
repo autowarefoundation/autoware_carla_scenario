@@ -80,16 +80,11 @@ _OFF_PATH_M = 8.0
 _MATCH_STEP_M = 2.0
 #: A speed command that changes less than this (m/s) is not sent again.
 _SPEED_RESEND_MPS = 0.05
-#: How long (s) an entity waits for a road user standing where it appears
-#: before it looks for a clear spot further along its route.
-APPEAR_WAIT_S: float = 3.0
-#: Metres apart the spots further along its route an entity may appear at.
-APPEAR_SHIFT_STEP_M: float = 2.0
-#: The farthest (m) along its route an entity is moved to appear clear.
-APPEAR_SHIFT_MAX_M: float = 30.0
-#: How long (s) an entity with no clear spot waits before it appears where
-#: it was due all the same.
-APPEAR_GIVE_UP_S: float = 20.0
+#: An actor this far down (m) is parked under the map, out of the scene.
+_HIDDEN_BELOW_M: float = 100.0
+#: How far (m) off its path an entity may stand for its run to start where
+#: it stands, the path's nearest point.
+_ON_PATH_M: float = 6.0
 
 
 class RoutingMode(enum.Enum):
@@ -120,9 +115,15 @@ class RoutingAction(TrajectoryRun):
     clock *time_reference* sets; ignored without one), any other condition
     is waited for before the entity goes on.
 
-    **In ``driver`` mode** the route starts where the entity is (on the
-    first vertex if it appears there, *appear_on_start*) and goes through
-    every vertex.  With nothing to time it is handed over once and the run
+    It routes an entity already in the scene: one spawned out of the world
+    is brought in by a :class:`~.spawn.SpawnAction` first (the routing card
+    triggered on the spawn card completing).  A run starts where the entity
+    stands, at the nearest point of its path within :data:`_ON_PATH_M` (past
+    *initial_distance_offset*): a spawn moved along its lane to a clear spot
+    starts its route there.
+
+    **In ``driver`` mode** the route starts where the entity is and goes
+    through every vertex after it.  With nothing to time it is handed over once and the run
     ends at once for a vehicle; a pedestrian's run ends when it arrives.  A
     route with times or conditions keeps running until the entity reaches
     the goal, the action setting its driver's speed every tick.  ``follow``
@@ -163,13 +164,9 @@ class RoutingAction(TrajectoryRun):
         initial_distance_offset: Start this many metres along the trajectory.
         until: Overrides what ends the run.
         control_config: Gains for ``follow`` mode.
-        hidden_outside_trajectory: Keep the entity out of the world outside
-            its trajectory's times (``position`` mode with a time reference).
         speed: The speed (m/s) the entity goes at where no time paces it;
             ``None`` takes its own (``follow``/``position``: the speed it has
             when the run starts; ``driver``: its driver's).
-        appear_on_start: Bring an entity spawned out of the world in at the
-            first waypoint when a run starts.
         stop_at_end: Brake a vehicle to a stop where a ``follow`` or
             ``position`` run ends (default).
 
@@ -180,6 +177,7 @@ class RoutingAction(TrajectoryRun):
     """
 
     _goal: Optional[Lanelet2Pose]
+    _from_where_it_stands: bool
     _initial_pose: Optional[CarlaWorldPose]
     _ground_projection: Optional[GroundProjectionConfig]
     _waypoints: tuple[Lanelet2Pose, ...]
@@ -199,7 +197,6 @@ class RoutingAction(TrajectoryRun):
     _start_pose: Optional[CarlaWorldPose]
     _warned_off: bool
     _route_start: Optional[Lanelet2Pose]
-    _spot_waited_since: Optional[float]
 
     def __init__(
         self,
@@ -221,9 +218,7 @@ class RoutingAction(TrajectoryRun):
         initial_distance_offset: float = 0.0,
         until: Optional[BaseCondition] = None,
         control_config: Optional["ControlConfig"] = None,
-        hidden_outside_trajectory: bool = False,
         speed: Optional[float] = None,
-        appear_on_start: bool = False,
         stop_at_end: bool = True,
     ) -> None:
         if not walking_speed > 0.0:
@@ -259,12 +254,11 @@ class RoutingAction(TrajectoryRun):
             once=once,
             until=until,
             control_config=control_config,
-            hidden_outside_trajectory=hidden_outside_trajectory,
             speed=speed,
-            appear_on_start=appear_on_start,
             stop_at_end=stop_at_end,
         )
         self._goal = goal
+        self._from_where_it_stands = False
         self._initial_pose = initial_pose
         self._ground_projection = ground_projection
         self._waypoints = stops
@@ -284,7 +278,6 @@ class RoutingAction(TrajectoryRun):
         self._start_pose = None
         self._warned_off = False
         self._route_start = None
-        self._spot_waited_since = None
 
     # ------------------------------------------------------------------
     # Public state
@@ -318,7 +311,7 @@ class RoutingAction(TrajectoryRun):
     @property
     def needs_tick_loop(self) -> bool:
         """Anything but a vehicle handed an untimed route keeps acting."""
-        if self._mode is not RoutingMode.DRIVER or self._appear_on_start:
+        if self._mode is not RoutingMode.DRIVER:
             return True
         if self._goal is None:
             return True  # a route written out is followed to its end
@@ -452,9 +445,10 @@ class RoutingAction(TrajectoryRun):
         stops = self._stops(False)
         if not external and self._resolved is not None:
             stops = self._lane_stops(stops)
-        if actor is not None and self._appear_on_start and not external:
-            # Spawned out of the world and kept from its backend until now:
-            # back on it, to drive the route it is about to be given.
+        if actor is not None and not external:
+            # Spawned out of the world and kept from its backend until it was
+            # brought in: back on it, to drive the route it is about to be
+            # given (nothing for one its backend drives already).
             entity.resume_traffic(world)
         initial = self._initial_pose
         if initial is None and self._resolved is not None:
@@ -790,16 +784,6 @@ class RoutingAction(TrajectoryRun):
             self._resolved = self._resolve(world)
             if self._resolved is None:
                 return False
-        appearing = self._resolved
-        if self._appear_on_start and appearing is not None and actor is not None:
-            spot: ResolvedTrajectory = appearing
-            standing: "carla.Actor" = actor
-            if not self._spot_clear(world, spot, standing):
-                return False
-            if TYPE_CHECKING:
-                pass  # utils.clearance is not compiled (docs/typecheck.md)
-            else:
-                _claim_spot(world, standing, spot, self._initial_distance_offset)
         self._begun = True
         self._finished = False
         self._start_time = self._elapsed
@@ -809,88 +793,24 @@ class RoutingAction(TrajectoryRun):
         if actor is None:
             return True
         found: "carla.Actor" = actor
+        standing = found.get_transform()
         resolved = self._resolved
-        if self._appear_on_start and resolved is not None:
+        if resolved is not None and standing.location.z > -_HIDDEN_BELOW_M:
             path: ResolvedTrajectory = resolved
-            self._appear(world, found)
-            sample = path.at_distance(self._initial_distance_offset)
-            # Where it has just been put: the actor reads its old place until
-            # the world ticks.
-            self._start_pose = CarlaWorldPose(
-                x=sample.x, y=sample.y, z=sample.z, yaw=sample.yaw
-            )
-        elif self._start_pose is None:
-            self._start_pose = CarlaWorldPose.from_carla_transform(
-                found.get_transform()
-            )
-        return True
-
-    def _spot_clear(
-        self, world: "carla.World", path: ResolvedTrajectory, actor: "carla.Actor"
-    ) -> bool:
-        """Whether *actor* may appear now: where it appears on *path* is
-        clear of road users.  One standing there is waited for
-        :data:`APPEAR_WAIT_S`; then the entity appears at the nearest clear
-        spot up to :data:`APPEAR_SHIFT_MAX_M` further along its route, and
-        after :data:`APPEAR_GIVE_UP_S` where it was due, all said."""
-        offset = self._initial_distance_offset
-        if TYPE_CHECKING:
-            blocker = -1  # utils.clearance is not compiled (docs/typecheck.md)
-        else:
-            blocker = _spot_taken(world, actor, path, offset)
-        if blocker < 0:
-            self._spot_waited_since = None
-            return True
-        since = self._spot_waited_since
-        if since is None:
-            self._spot_waited_since = self._elapsed
-            logger.info(
-                "%s: '%s' waits for where it appears to clear (actor %d stands there)",
-                self.label,
-                str(self._entity_name),
-                blocker,
-            )
-            return False
-        waited = self._elapsed - since
-        if waited < APPEAR_WAIT_S:
-            return False
-        shift = APPEAR_SHIFT_STEP_M
-        while shift <= APPEAR_SHIFT_MAX_M and offset + shift < path.length:
-            if TYPE_CHECKING:
-                other = -1
-            else:
-                other = _spot_taken(world, actor, path, offset + shift)
-            if other < 0:
-                logger.warning(
-                    "%s: '%s' appears %.0f m further along its route: where it "
-                    "was due stayed taken by actor %d for %.0f s",
-                    self.label,
-                    str(self._entity_name),
-                    shift,
-                    blocker,
-                    waited,
-                )
-                self._initial_distance_offset = offset + shift
-                self._spot_waited_since = None
-                return True
-            shift += APPEAR_SHIFT_STEP_M
-        if waited < APPEAR_GIVE_UP_S:
-            return False
-        logger.warning(
-            "%s: '%s' appears where it was due though actor %d has stood there "
-            "%.0f s and no spot %.0f m on along its route is clear",
-            self.label,
-            str(self._entity_name),
-            blocker,
-            waited,
-            APPEAR_SHIFT_MAX_M,
-        )
-        self._spot_waited_since = None
+            # Where it stands: a spawn may have moved it along its lane.
+            here = path.project(standing.location.x, standing.location.y)
+            on = path.at_distance(here)
+            gap = math.hypot(standing.location.x - on.x, standing.location.y - on.y)
+            if gap <= _ON_PATH_M and here > self._initial_distance_offset:
+                self._initial_distance_offset = here
+            self._from_where_it_stands = gap <= _ON_PATH_M
+        if self._start_pose is None:
+            self._start_pose = CarlaWorldPose.from_carla_transform(standing)
         return True
 
     def _needs_world(self) -> bool:
         """Whether the waypoints have to be placed in the world first."""
-        if self._appear_on_start or self._initial_distance_offset > 0.0:
+        if self._initial_distance_offset > 0.0:
             return True
         for vertex in self._trajectory.vertices:
             if not isinstance(vertex.position, Lanelet2Pose):
@@ -928,8 +848,8 @@ class RoutingAction(TrajectoryRun):
                 along = placed.vertex_distance(index)
                 if along < offset - 1e-6:
                     continue
-                if self._appear_on_start and along <= offset + 0.5:
-                    continue
+                if self._from_where_it_stands and along <= offset + 0.5:
+                    continue  # the vertex it stands on
             position = vertex.position
             if isinstance(position, Lanelet2Pose):
                 # Named as the class: Codon does not narrow a union by
@@ -1098,57 +1018,6 @@ def _goal_route(
 
 def _vertex_of(point: tuple[int, float, float]) -> int:
     return point[0]
-
-
-def _spot_pose(path: ResolvedTrajectory, along: float) -> tuple[float, float, float]:
-    """CARLA ``(x, y, yaw)`` *along* m on *path*, facing along it."""
-    sample = path.at_distance(along)
-    ahead = path.at_distance(min(along + 1.0, path.length))
-    if ahead.x != sample.x or ahead.y != sample.y:
-        yaw = math.degrees(math.atan2(ahead.y - sample.y, ahead.x - sample.x))
-    else:
-        yaw = sample.yaw if sample.yaw is not None else 0.0
-    return (sample.x, sample.y, yaw)
-
-
-def _claim_spot(
-    world: "carla.World", actor: "carla.Actor", path: ResolvedTrajectory, along: float
-) -> None:
-    """Hold where *actor* appears, *along* m on *path*, for this frame: an
-    entity due at the same spot on the same tick waits for it."""
-    from ..utils.clearance import claim_spot  # noqa: PLC0415
-
-    try:
-        x, y, yaw = _spot_pose(path, along)
-        extent = actor.bounding_box.extent
-        claim_spot(world, int(actor.id), x, y, yaw, float(extent.x), float(extent.y))
-    except (AttributeError, RuntimeError):
-        pass
-
-
-def _spot_taken(
-    world: "carla.World", actor: "carla.Actor", path: ResolvedTrajectory, along: float
-) -> int:
-    """The id of a vehicle or walker standing where *actor* would appear,
-    *along* m on *path* (their bounding boxes overlapping, a margin added),
-    or ``-1``."""
-    from ..utils.clearance import overlaps  # noqa: PLC0415
-
-    try:
-        x, y, yaw = _spot_pose(path, along)
-        extent = actor.bounding_box.extent
-        found = overlaps(
-            world,
-            int(actor.id),
-            x,
-            y,
-            yaw,
-            float(extent.x),
-            float(extent.y),
-        )
-    except (AttributeError, RuntimeError):
-        return -1
-    return -1 if found is None else int(found)
 
 
 def _mark_point(index: int, pose: Lanelet2Pose) -> tuple[int, float, float]:

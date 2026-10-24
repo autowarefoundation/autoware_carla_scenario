@@ -73,21 +73,32 @@ entities:
     spawn: {hidden: true}
 
 actions:
-  # The oncoming car: appears when the ego is 40 m short of the junction,
-  # 30 m before the junction on the opposite approach, at 8 m/s; drives FOLLOW
-  # mode and waits at the junction entry until the ego is 5 m from it.
-  - id: oncoming_drive
-    type: routing
+  # The oncoming car: brought in when the ego is 40 m short of the junction,
+  # at 8 m/s (a Spawn card; with no place of its own it enters where it was
+  # declared -- give lanelet_id/s for a place, shift_max to take a clear one
+  # further on); then its Set Goal card, triggered on the Spawn card
+  # completing, drives it FOLLOW mode from 30 m before the junction on the
+  # opposite approach and waits at the junction entry until the ego is 5 m
+  # from it.
+  - id: oncoming_enters
+    type: spawn
     actor: oncoming
     trigger:
       type: route_progress
       params: {value: -40.0, anchor: "junction:0:entry"}     # entity: ego (default)
     params:
+      speed_ms: 8.0               # its speed as it enters
+  - id: oncoming_drive
+    type: routing
+    actor: oncoming
+    trigger:
+      type: action_state
+      params: {action: oncoming_enters, state: completeState}
+    params:
       path_source: route
       mode: follow
       time_domain: none
-      speed_ms: 8.0               # initial speed on appearing, and pace
-      appear_on_start: true
+      speed_ms: 8.0               # its pace
       route_vertices:
         - {kind: crossing, junction: 0, approach: opposite, turn: straight, distance: -30.0}
         - {kind: crossing, junction: 0, approach: opposite, turn: straight, distance: 0.0}
@@ -98,20 +109,27 @@ actions:
           type: route_progress
           params: {value: -5.0, anchor: "junction:0:entry", rule: greater_than_or_equal}
 
-  # A pedestrian: appears on the pavement at the exit crosswalk's right end
-  # when the ego enters the junction, and walks across.
-  - id: walker_cross
-    type: routing
+  # A pedestrian: brought in when the ego enters the junction, and walks
+  # across the exit crosswalk from its right end.
+  - id: walker_enters
+    type: spawn
     actor: walker
     trigger:
       type: route_progress
       params: {value: 0.0, anchor: "junction:0:entry"}
     params:
+      speed_ms: 1.3
+  - id: walker_cross
+    type: routing
+    actor: walker
+    trigger:
+      type: action_state
+      params: {action: walker_enters, state: completeState}
+    params:
       path_source: route
       mode: follow
       time_domain: none
       speed_ms: 1.3
-      appear_on_start: true
       route_vertices: |          # the editor's text form is accepted too
         crosswalk junction=0 leg=exit side=right along=-1.5
         crosswalk junction=0 leg=exit side=right along=6
@@ -264,16 +282,20 @@ assertion, inside `all`/`any`/`not`, and as a **waypoint condition**
 (`advance_conditions`) -- a vertex departs when the ego has progressed to the
 recorded point.
 
-### `appear_on_start`
+### Bringing an entity in: the `spawn` card
 
-A *Set Goal* parameter (bool, default `false`): when a run of the
-action starts, the entity is put on the first vertex (on the point
-`initial_distance_offset` names), facing along the path, physics on, moving at
-`speed_ms` (standing if unset) -- then follows the trajectory as usual, in
-either mode, vehicle or pedestrian. It is what brings in an entity spawned
-`hidden`. It cannot be combined with `hidden_outside_trajectory`
-(validation error). An appearing entity that is not spawned hidden draws a
-warning (it would stand at its spawn until then).
+An entity spawned `hidden` is brought into the scene by a **Spawn** card
+(`SpawnAction`, the counterpart of `despawn`; `appear_on_start` until 1.0):
+set on its place (`lanelet_id`, `s`, `t`, `heading`; none: where it was
+declared to spawn), physics on, facing its heading, moving at `speed_ms`.
+Its *Set Goal* card is triggered on the Spawn card completing (`action_state`
+`completeState`) and routes it from where it stands.  To wait until its place
+is clear, put a `place_clear` condition on the same place in the Spawn card's
+trigger -- with a give-up, e.g.
+`all(<progress>, any(place_clear, persistent(sticky(<progress>), 20)))`; with
+`shift_max` it then takes the nearest clear place that far on along its lane
+if its own is still taken.  An entity a Spawn card brings in that is not
+spawned hidden draws a warning (it would stand at its spawn until then).
 
 ### Entities in a logical scenario
 
@@ -467,5 +489,5 @@ so a hand-written scenario using them passes the [static check](typecheck.md).
 * Without a time reference a `FOLLOW` entity drives every segment at
   `speed_ms`; recorded speed changes between vertices are expressed by waypoint
   conditions only.
-* `appear_on_start` does not take the entity out again at the end; combine with
-  an `until` condition or leave it standing.
+* A Spawn card does not take the entity out again: a `despawn` card does
+  (triggered on its Set Goal card completing, say).

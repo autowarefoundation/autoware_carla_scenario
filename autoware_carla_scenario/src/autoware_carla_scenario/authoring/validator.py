@@ -472,6 +472,8 @@ def _check_action(out: _Collector, path: str, node: ActionNode, refs: _Refs) -> 
     _check_init_is_not_asked_to_wait(out, path, node)
     if node.type == "routing":
         _check_routing(out, path, node)
+    if node.type == "spawn":
+        _check_spawn(out, path, node)
 
     if node.trigger is not None:
         _check_condition(out, f"{path}.trigger", node.trigger, refs, node.id)
@@ -712,23 +714,15 @@ def _check_routing(out: _Collector, path: str, node: ActionNode) -> None:
         )
     if not _positive(params.get("time_scale", 1.0)):
         out.error(f"{path}.time_scale", "Time scale must be positive.", node.id)
-    if params.get("appear_on_start") and params.get("hidden_outside_trajectory"):
-        out.error(
-            f"{path}.appear_on_start",
-            "Appearing when the action starts and keeping the entity out of "
-            "the world outside its trajectory both decide when it enters; "
-            "choose one.",
-            node.id,
-        )
-    if params.get("hidden_outside_trajectory") and (
-        not timed or params.get("mode", "driver") != "position"
-    ):
-        out.error(
-            f"{path}.hidden_outside_trajectory",
-            "Keeping the entity out of the world needs the Position mode and a "
-            "time reference.",
-            node.id,
-        )
+
+
+def _check_spawn(out: _Collector, path: str, node: ActionNode) -> None:
+    """A Spawn card's shift and speed are distances and speeds: not negative."""
+    params = node.params
+    for key, what in (("shift_max", "How far on"), ("speed_ms", "The speed")):
+        value = params.get(key)
+        if not _is_blank(value) and _coercible_float(value) and float(str(value)) < 0.0:
+            out.error(f"{path}.{key}", f"{what} must not be negative.", node.id)
 
 
 def _check_times_for_reference(
@@ -1032,32 +1026,21 @@ def _check_step_order(out: _Collector, document: ScenarioDocument) -> None:
 def _check_hidden_spawns(out: _Collector, document: ScenarioDocument) -> None:
     """An entity spawned out of the world needs something to bring it in.
 
-    Only a *Set Goal* card that keeps its entity out of the world until its
-    first waypoint, or brings it in there, does that; without one the entity stays under the
+    Only a *Spawn* card brings it in; without one the entity stays under the
     map for the whole run -- allowed, but surely not what was meant.  The ego
     is never hidden: the run is measured on it from the first tick.
     """
     brought_in = {
-        str(action.actor)
-        for action in document.actions
-        if action.type == "routing"
-        and (
-            action.params.get("hidden_outside_trajectory")
-            or action.params.get("appear_on_start")
-        )
+        str(action.actor) for action in document.actions if action.type == "spawn"
     }
-    appearing = {
-        str(action.actor)
-        for action in document.actions
-        if action.type == "routing" and action.params.get("appear_on_start")
-    }
+    appearing = brought_in
     for index, entity in enumerate(document.entities):
         if entity.id in appearing and not entity.spawn.hidden and entity.kind != "ego":
             out.warn(
                 f"entities[{index}].spawn.hidden",
-                f"{entity.display_name} appears when its Set Goal card "
-                "starts, but is not spawned out of the world, so it stands at "
-                "its spawn until then. Spawn it hidden.",
+                f"{entity.display_name} is brought in by a Spawn card, but is "
+                "not spawned out of the world, so it stands at its spawn until "
+                "then. Spawn it hidden.",
                 entity.id,
             )
         if not entity.spawn.hidden:
@@ -1068,7 +1051,7 @@ def _check_hidden_spawns(out: _Collector, document: ScenarioDocument) -> None:
         elif entity.id not in brought_in:
             out.warn(
                 path,
-                f"{entity.display_name} spawns out of the world and no Set Goal "
+                f"{entity.display_name} spawns out of the world and no Spawn "
                 "card brings it in, so it stays there for the run.",
                 entity.id,
             )

@@ -931,7 +931,6 @@ def test_a_scenario_following_a_trajectory_compiles(tmp_path: Path) -> None:
                 trajectory=path,
                 time_reference=TrajectoryTiming(),
                 mode=RoutingMode.POSITION,
-                hidden_outside_trajectory=True,
                 label="npc2_follow",
             )
         )
@@ -3178,8 +3177,8 @@ from autoware_carla_scenario import (
     JaywalkAction,
     LaneChangeAbortAction,
     PedestrianRunRedLightAction,
-    PropAction,
-    PropOperation,
+    SpawnAction,
+    DespawnAction,
     RunTrafficRuleAction,
     Lanelet2Pose,
     MapPose,
@@ -3220,13 +3219,13 @@ self.register_pre_tick(StopCrossingAction("p1", AdversityLocation.ANY, seed=3))
 self.register_pre_tick(StalledObjectAction("npc3", Lanelet2Pose(1, 2.0), 1.0, 5.0))
 self.register_pre_tick(StalledObjectAction("npc4", MapPose(1.0, 2.0, 0.5), label="stalled"))
 self.register_pre_tick(
-    PropAction("cone1", PropOperation.ADD, Lanelet2Pose(1, 4.0), blueprint="static.prop.streetbarrier")
+    SpawnAction(name="cone1", position=Lanelet2Pose(1, 4.0), blueprint="static.prop.streetbarrier")
 )
-self.register_pre_tick(PropAction("box", position=MapPose(1.0, 2.0), on_ground=False))
+self.register_pre_tick(SpawnAction(name="box", position=MapPose(1.0, 2.0), on_ground=False))
+self.register_pre_tick(SpawnAction("npc5", position=Lanelet2Pose(1, 8.0), shift_max=30.0, speed=3.0))
 self.register_pre_tick(
-    PropAction(
-        "cone1",
-        PropOperation.REMOVE,
+    DespawnAction(
+        name="cone1",
         condition=ElapsedTimeCondition(8.0, label="gone"),
         label="clear",
     )

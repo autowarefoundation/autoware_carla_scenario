@@ -2,7 +2,7 @@
 
 What a transpiler writes -- the route search, ``route_vertices`` on a *Follow
 Trajectory* card, ``route_progress`` triggers and waypoint conditions,
-``appear_on_start`` -- is read, validated, round-tripped, compiled and built
+``spawn`` cards -- is read, validated, round-tripped, compiled and built
 into the framework's own runtime objects here; the editor shows and edits the
 route search; and :class:`DeclarativeScenario` picks a route on the loaded map.
 """
@@ -109,7 +109,6 @@ actions:
       mode: follow
       time_domain: none
       speed_ms: 8.0
-      appear_on_start: true
       route_vertices:
         - {kind: crossing, junction: 0, approach: opposite, turn: straight, distance: -30}
         - {kind: crossing, junction: 0, approach: opposite, turn: straight, distance: 0}
@@ -130,7 +129,6 @@ actions:
       mode: follow
       time_domain: none
       speed_ms: 1.3
-      appear_on_start: true
       route_vertices: |
         crosswalk junction=0 leg=exit side=right along=-1.5
         crosswalk junction=0 leg=exit side=right along=6
@@ -148,6 +146,20 @@ actions:
         - {kind: lane, ds: 0}
         - {kind: opposite, ds: 10, lane: 1, anchor: "segment:0:start"}
         - {kind: roadside, ds: 20, side: left, kerb_distance: 1.0, anchor: start}
+  - id: oncoming_enters
+    type: spawn
+    actor: oncoming
+    trigger:
+      type: route_progress
+      params: {value: -40, anchor: "junction:0:entry"}
+    params: {speed_ms: 8.0}
+  - id: walker_enters
+    type: spawn
+    actor: walker
+    trigger:
+      type: route_progress
+      params: {value: 0, anchor: "junction:0:entry"}
+    params: {speed_ms: 1.3}
 assertions:
   pass:
     - type: route_progress
@@ -287,13 +299,7 @@ class TestValidation:
         assert any("names a lanelet of one map" in m for m in warnings)
         assert any("not spawned out of the world" in m for m in warnings)
 
-    def test_appear_on_start_and_hiding_outside_together(self) -> None:
-        raw = _raw()
-        raw["actions"][0]["params"]["hidden_outside_trajectory"] = True
-        messages = _messages(ScenarioDocument.model_validate(raw))
-        assert any("choose one" in m for m in messages)
-
-    def test_a_hidden_entity_brought_in_by_appearing_is_not_stranded(self) -> None:
+    def test_a_hidden_entity_brought_in_by_a_spawn_card_is_not_stranded(self) -> None:
         warnings = _messages(_document(), "warning")
         assert not any("stays there for the run" in m for m in warnings)
 
@@ -309,7 +315,6 @@ class TestBuild:
         ctx = BuildContext(scenario=None)
         oncoming = instantiate_action(compiled.actions[0], ctx)
         assert isinstance(oncoming, RoutingAction)
-        assert oncoming._appear_on_start is True
         assert oncoming.mode is RoutingMode.FOLLOW
         vertices = oncoming.trajectory.vertices
         assert vertices[0].position == RouteCrossingPose(
@@ -325,6 +330,12 @@ class TestBuild:
         parked = instantiate_action(compiled.actions[2], ctx)
         assert isinstance(parked, RoutingAction)
         assert parked.trajectory.vertices[0].position == RouteLanePose()
+
+        from autoware_carla_scenario.actions import SpawnAction
+
+        enters = instantiate_action(compiled.actions[3], ctx)
+        assert isinstance(enters, SpawnAction)
+        assert enters.entity_name == oncoming._entity_name
 
     def test_the_assertion_builds(self) -> None:
         compiled = compile_document(_document())
