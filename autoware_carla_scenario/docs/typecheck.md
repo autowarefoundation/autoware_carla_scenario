@@ -1512,8 +1512,8 @@ These are refused at the import line, with a hint saying what to write
 instead:
 
 <!-- stdlib-refused:start -->
-`dataclasses.asdict`, `functools.wraps`, `math.ulp`, `contextlib`, `warnings`,
-`json`, `types`, `textwrap`, `traceback`, `io`
+`dataclasses.asdict`, `functools.wraps`, `math.ulp`, `contextlib.contextmanager`, `warnings`,
+`json.JSONEncoder`, `types`, `textwrap`, `traceback`, `io`
 <!-- stdlib-refused:end -->
 
 - `dataclasses.asdict` returns a `dict[str, Any]`: build the dict from the
@@ -1522,10 +1522,12 @@ instead:
   dataclasses, enums and named tuples").
 - `functools.wraps` (and any other name of `functools`, `itertools`,
   `collections`, `math` or `random` not listed above, such as `math.ulp`) is not modelled.
-- `contextlib`: write a class with `__enter__` and
+- `contextlib` declares `suppress` only: write a class with `__enter__` and
   `__exit__(self, exc_type, exc, tb)` for `contextmanager` (the check rewrites
-  the signature, see "Python the check rewrites for Codon"), and `try/except X: pass` for `suppress`. `warnings`: log
-  with `logger.warning`. `json`: read into a `@dataclass`. `types`: name the
+  the signature, see "Python the check rewrites for Codon"). `warnings`: log
+  with `logger.warning`. `json` declares `dumps`, `dump`, `loads`, `load`
+  and `JSONDecodeError` only (see the shims below), not `JSONEncoder` or the
+  rest. `types`: name the
   type itself. `textwrap`: build the string with `str` methods.
   `traceback`: log with `logger.exception`. `io`: use a `str`, or a
   `pathlib.Path` opened with `open()`.
@@ -1782,8 +1784,8 @@ To check one more module:
 
 ### What is checked of the framework
 
-Every module now has an entry other than `"not yet checked (#45)"`. 199 of
-the package's 294 modules (68%; about 47,400 of 84,500 lines) are `CHECKED`:
+Every module now has an entry other than `"not yet checked (#45)"`. 200 of
+the package's 294 modules (68%; about 47,500 of 84,500 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the conversions between
 Lanelet2, OpenDRIVE and CARLA world poses (`coordinate.transform`), the stop
 lines read off a Lanelet2 map (`utils.stop_line`, `coordinate.stop_line`)
@@ -1877,23 +1879,23 @@ a `TrajectoryVertex` call's arguments, each of any type (`Any`), walks or
 binds a sweeper constraint of any kind, builds a condition's status (its
 details), or takes the list a plain tick callback goes into
 (`BaseScenario._register_tick()`, a `List[Callable[[carla.World], None]]`,
-which the check has no value of). The 95 `EXCLUDED` modules fall in
-three groups. Many fit more than one (about 73 import what Codon cannot
+which the check has no value of). The 94 `EXCLUDED` modules fall in
+three groups. Many fit more than one (about 72 import what Codon cannot
 compile, 29 build on an excluded module and 19 hold values Codon has no type
 for), so each is counted once, in the first group that fits it:
 
-- **73 import what Codon cannot compile**: pyxodr,
+- **72 import what Codon cannot compile**: pyxodr,
   pydantic, pickle, lxml, grpc, omegaconf and hydra, yaml, openodd (a Rust extension),
   cyclonedds (`ros2.cyclone` and `ros2.messages`, the ROS 2 ego's DDS
   transport and its message types), or
-  a standard module Codon lacks (`json`, `inspect`, `concurrent.futures`,
+  a standard module Codon lacks (`inspect`, `concurrent.futures`,
   `importlib`
   beyond `importlib.metadata`, or more of `os`, `pathlib`, `shutil`, `signal`,
   `subprocess`, `tempfile`, `threading`, `dataclasses`, `importlib.metadata`
   or `urllib.parse` than their shims declare), at module level or inside a function the check calls. This is
   the tooling around a run (the editor, the UI, authoring, the sweeper's
   expansion, Hydra sweeper and map loader, the map caches (the map
-  repositories, the Lanelet2 z offset and the pyxodr road network), the Autoware
+  repositories and the pyxodr road network), the Autoware
   stack's dev container, the
   record of a run's environment, the SLURM launcher's submitting side,
   its worker and its manifest, the batch summary they share, the Rerun
@@ -2436,14 +2438,14 @@ What Codon 0.19 needs that Python does not, beyond
   the frame's waypoint, weather, lanelet tags, ... each `Optional`, and
   `read`, so a read that failed is still kept as `None` for the frame, as
   before.
-- Standard modules Codon does not have (`json`, `inspect`,
+- Standard modules Codon does not have (`inspect`,
   `concurrent.futures`, ...) are not available to a checked module; the
   shims of `codon/` are. They are these (`test_shim_list` keeps the list
   and the files of `codon/` in step):
 
   <!-- shims:start -->
-  `__future__`, `abc`, `atexit`, `dataclasses`, `enum`, `hashlib`,
-  `importlib.metadata`, `logging`, `os`, `os.path`, `pathlib`, `queue`,
+  `__future__`, `abc`, `atexit`, `contextlib`, `dataclasses`, `enum`, `hashlib`,
+  `importlib.metadata`, `json`, `logging`, `os`, `os.path`, `pathlib`, `queue`,
   `shlex`, `shutil`, `signal`, `subprocess`, `sys`, `tempfile`, `threading`,
   `typing`, `typing_extensions` and `urllib.parse`
   <!-- shims:end -->
@@ -2497,7 +2499,11 @@ What Codon 0.19 needs that Python does not, beyond
   and `IO[str]` are one type). `typing.IO` declares `name`, `mode`,
   `closed`, `close()`, `fileno()`, `flush()`, `read()`, `readline()`,
   `write()` (of a `str`, read as bytes too), iteration over the lines and
-  `with`. `chmod()`, `write_bytes()` and the rest are not. `os` replaces Codon's own (whose
+  `with`. `stat()` (no argument) returns a result of the five fields the
+  framework reads (`st_dev`, `st_ino`, `st_size`, `st_mtime_ns`, `st_mtime`),
+  all zero, and `replace(target)` (a `str` or an `os.PathLike`) returns the
+  new `Path`; nothing is read or renamed.
+  `chmod()`, `write_bytes()` and the rest are not. `os` replaces Codon's own (whose
   `environ` has no `get()` and iterates over pairs), keeping its `getenv()`,
   which Codon's runtime and typesafe_carla's library call: `environ` is a
   mapping of `str` to `str` (`[key]`, assignment, `del`, `in`, iteration
@@ -2574,7 +2580,29 @@ What Codon 0.19 needs that Python does not, beyond
   returns, the previous handler, is a value nothing is declared of (a
   `Handlers` member, a function or `None` in CPython, which takes no `None`
   as a handler), so it cannot be handed back to `signal()`; `getsignal()`,
-  `alarm()` and the rest of the module are not declared. `shlex` declares
+  `alarm()` and the rest of the module are not declared. `contextlib`
+  declares `suppress(*exceptions)` only, a class with `__enter__` and
+  `__exit__` that does nothing (the exceptions are not checked); a
+  `contextmanager` is not declared, as the scenario check already tells a
+  user to write a class. `json` writes generically and reads opaquely
+  (#557): `dumps(obj, **kwargs)` and `dump(obj, fp, **kwargs)` take a value of
+  any one type (a `dict` of one value type, a `list`, a `float`), with
+  CPython's options accepted and not checked, but a mapping of mixed value
+  types is refused at the argument, as for any `dict` (the Lanelet2 z offset
+  cache dumps its strings as one object and writes the number in front of
+  them, so the file is what CPython writes for the whole mapping). Codon
+  has no `Any`, so `loads(s, **kwargs)` and `load(fp, **kwargs)` return a
+  `JSONValue`, which stands for any part of a document: the check holds a
+  caller to its members only (`[key]` by `str` or `int`, `get()`, `items()`,
+  `keys()`, `values()`, iteration, `len()`, `in`, `str()`, `int()`,
+  `float()`, `bool()`), each returning a `JSONValue` again, and never what
+  the document holds; the `ValueError` or `TypeError` CPython raises for a
+  value of the wrong kind is invisible to it. A scenario
+  that reads a document converts what it takes explicitly:
+  `speed = float(cfg["v"])` passes, `speed: float = cfg["v"]` and
+  `cfg["v"] + 1.0` are refused; whether the key exists, or holds a number,
+  is not checked. `JSONDecodeError` is a
+  `ValueError` with `msg`, `doc` and `pos`. `shlex` declares
   `quote(s)` and `join(split_command)`, CPython 3.10's on Codon's `re`; a
   `quote()` of a false value that is no `str` (`None`, which CPython quotes
   as `''`) is refused. `sys` replaces Codon's, keeping all of it (`argv`,

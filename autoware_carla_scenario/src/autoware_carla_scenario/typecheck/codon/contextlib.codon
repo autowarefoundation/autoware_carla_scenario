@@ -1,0 +1,18 @@
+# The part of Python's contextlib the checked framework names, for the checker
+# (docs/typecheck.md): suppress(*exceptions), a context manager that ignores
+# the exceptions named. Nothing here runs: the check only compiles a
+# `with suppress(OSError):`, so the manager does nothing. The exceptions are
+# not checked beyond being given (CPython takes any class). contextmanager,
+# closing, ExitStack and the rest are not declared; the scenario check
+# already tells a user to write a class with __enter__ and __exit__.
+
+
+class suppress:
+    def __init__(self, *exceptions):
+        pass
+
+    def __enter__(self) -> None:
+        pass
+
+    def __exit__(self) -> None:
+        pass

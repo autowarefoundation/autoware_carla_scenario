@@ -48,8 +48,10 @@ def _file_sha256(path: Path) -> str:
         return _DIGESTS[key]
     digest = hashlib.sha256()
     with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1 << 20), b""):
+        chunk = stream.read(1 << 20)
+        while chunk:
             digest.update(chunk)
+            chunk = stream.read(1 << 20)
     _DIGESTS[key] = digest.hexdigest()
     return _DIGESTS[key]
 
@@ -74,6 +76,30 @@ def z_offset_key(
         digest.update(part.encode())
         digest.update(b"\0")
     return digest.hexdigest()
+
+
+def _entry_json(
+    value: float,
+    lanelet2_path: Path,
+    xodr_path: Path,
+    carla_map_name: str,
+    projection: str,
+) -> str:
+    """The entry's JSON: ``z_offset`` a number, the rest strings.
+
+    A mapping of a float and strings has no type for the check, so the
+    strings are dumped as one object and ``z_offset`` is put in front of them,
+    which is what ``json.dumps`` of the whole mapping writes, byte for byte.
+    """
+    described = json.dumps(
+        {
+            "lanelet2": str(lanelet2_path),
+            "xodr": str(xodr_path),
+            "carla_map": carla_map_name,
+            "projection": projection,
+        }
+    )
+    return '{"z_offset": ' + json.dumps(value) + ", " + described[1:]
 
 
 def cached_z_offset(
@@ -107,15 +133,7 @@ def cached_z_offset(
     try:
         entry.parent.mkdir(parents=True, exist_ok=True)
         temporary.write_text(
-            json.dumps(
-                {
-                    "z_offset": value,
-                    "lanelet2": str(lanelet2_path),
-                    "xodr": str(xodr_path),
-                    "carla_map": carla_map_name,
-                    "projection": projection,
-                }
-            ),
+            _entry_json(value, lanelet2_path, xodr_path, carla_map_name, projection),
             encoding="utf-8",
         )
         temporary.replace(entry)
