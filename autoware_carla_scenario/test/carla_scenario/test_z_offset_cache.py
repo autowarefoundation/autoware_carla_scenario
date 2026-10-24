@@ -7,7 +7,12 @@ from typing import Any
 
 import pytest
 
-from autoware_carla_scenario.maps.z_offset_cache import cached_z_offset
+import json
+
+from autoware_carla_scenario.maps.z_offset_cache import (
+    _entry_json,
+    cached_z_offset,
+)
 
 
 class _Compute:
@@ -130,3 +135,52 @@ def test_a_file_is_hashed_once_while_it_is_unchanged(
     opened.clear()  # write_text() opens it too
     assert _cached(maps, tmp_path, _Compute(2.0)) == 2.0
     assert opened == ["map.xodr"]
+
+
+def test_the_entry_is_a_json_object_with_z_offset_a_number(
+    maps: tuple[Path, Path], tmp_path: Path
+) -> None:
+    _cached(maps, tmp_path, _Compute(-0.0605))
+    (entry,) = (tmp_path / "cache").glob("*.json")
+    document = json.loads(entry.read_text(encoding="utf-8"))
+    assert document["z_offset"] == -0.0605
+    assert type(document["z_offset"]) is float
+    assert list(document) == ["z_offset", "lanelet2", "xodr", "carla_map", "projection"]
+    assert document["carla_map"] == "Town"
+    assert document["projection"] == "mgrs"
+
+
+@pytest.mark.parametrize("value", [-0.0605, 0.0, 1.5, 1e-07, 3.0])
+@pytest.mark.parametrize("projection", ["", "mgrs", 'a "quoted" \u00e9 name'])
+def test_the_entry_is_what_json_dumps_of_the_whole_mapping_writes(
+    value: float, projection: str
+) -> None:
+    lanelet2, xodr = Path("/maps/a.osm"), Path("/maps/b.xodr")
+    assert _entry_json(value, lanelet2, xodr, "Town", projection) == json.dumps(
+        {
+            "z_offset": value,
+            "lanelet2": str(lanelet2),
+            "xodr": str(xodr),
+            "carla_map": "Town",
+            "projection": projection,
+        }
+    )
+
+
+def test_an_entry_written_before_still_loads(
+    maps: tuple[Path, Path], tmp_path: Path
+) -> None:
+    from autoware_carla_scenario.maps.z_offset_cache import z_offset_key
+
+    key = z_offset_key(*maps, "Town", "mgrs")
+    root = tmp_path / "cache"
+    root.mkdir()
+    # Byte for byte what json.dumps wrote before the entry was built by hand.
+    (root / f"{key}.json").write_text(
+        '{"z_offset": -0.0605, "lanelet2": "l.osm", "xodr": "m.xodr", '
+        '"carla_map": "Town", "projection": "mgrs"}',
+        encoding="utf-8",
+    )
+    compute = _Compute(99.0)
+    assert _cached(maps, tmp_path, compute) == -0.0605
+    assert compute.calls == 0

@@ -2135,9 +2135,11 @@ def test_an_undeclared_attribute_is_refused_before_compiling(tmp_path: Path) -> 
 
 
 def test_a_module_without_a_codon_model_is_named(tmp_path: Path) -> None:
-    scenario, config, path = _write_case(tmp_path, "import json\njson.dumps({})\n")
+    scenario, config, path = _write_case(
+        tmp_path, 'import textwrap\ntextwrap.dedent("")\n'
+    )
     error = _only_error(typecheck_scenario(scenario, config))
-    assert "json has no Codon model" in error.message
+    assert "textwrap has no Codon model" in error.message
     assert error.path == str(path)
 
 
@@ -6282,11 +6284,11 @@ _STDLIB_REFUSALS: dict[str, tuple[str, str, str, str]] = {
         "cannot import name 'ulp' from 'math'",
         "docs/typecheck.md",
     ),
-    "contextlib": (
-        "from contextlib import suppress\n",
+    "contextlib.contextmanager": (
+        "from contextlib import contextmanager\n",
         "",
-        "contextlib has no Codon model",
-        "try/except X: pass for suppress",
+        "cannot import name 'contextmanager' from 'contextlib'",
+        "write a class with __enter__ and __exit__",
     ),
     "warnings": (
         "import warnings\n",
@@ -6294,11 +6296,11 @@ _STDLIB_REFUSALS: dict[str, tuple[str, str, str, str]] = {
         "warnings has no Codon model",
         "logger.warning",
     ),
-    "json": (
-        "import json\n",
+    "json.JSONEncoder": (
+        "from json import JSONEncoder\n",
         "",
-        "json has no Codon model",
-        "@dataclass",
+        "cannot import name 'JSONEncoder' from 'json'",
+        "dumps, dump, loads, load and JSONDecodeError",
     ),
     "types": ("import types\n", "", "types has no Codon model", "@dataclass"),
     "textwrap": ("import textwrap\n", "", "textwrap has no Codon model", "join()"),
