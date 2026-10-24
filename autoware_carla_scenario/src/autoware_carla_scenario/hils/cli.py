@@ -7,7 +7,10 @@
     uvx --from 'autoware-carla-scenario[hils]' --with 'carla-canvas[client]>=0.2' \\
         scenario-hils hils.yaml          # with `canvas:` in hils.yaml
 
-It runs until interrupted (Ctrl-C or SIGTERM), across the runner's episodes.
+It is meant to stay up on the HILS PC (a systemd service, say): it runs its
+``startup`` steps, serves scenario runs one after another -- each one's
+``scenario_start`` and ``scenario_end`` steps -- and, when interrupted
+(Ctrl-C or SIGTERM), ends a running scenario and runs its ``shutdown`` steps.
 """
 
 from __future__ import annotations
@@ -22,7 +25,7 @@ from types import FrameType
 from typing import List, Optional
 
 from ..canvas import CanvasUnavailableError
-from .config import HilsConfig, HilsConfigError, load_config
+from .config import PHASES, HilsConfig, HilsConfigError, load_config
 from .signals import SIGNALS
 
 __all__ = ["example_config", "main"]
@@ -56,6 +59,10 @@ def _parser() -> argparse.ArgumentParser:
         "--role-name", help="the ego's role_name (overrides ego.role_name)"
     )
     parser.add_argument(
+        "--listen",
+        help="where runs reach the bridge, host:port (overrides runner.listen)",
+    )
+    parser.add_argument(
         "--check",
         action="store_true",
         help="check the configuration, print what it runs, and exit",
@@ -73,7 +80,14 @@ def _parser() -> argparse.ArgumentParser:
 def _describe(config: HilsConfig) -> str:
     lines = [
         f"CARLA {config.host}:{config.port}, ego {config.role_name!r}, "
-        f"{config.clock} clock" + (f", canvas {config.canvas}" if config.canvas else "")
+        f"{config.clock} clock"
+        + (f", canvas {config.canvas}" if config.canvas else ""),
+        (
+            f"runs reach the bridge at {config.runner_listen}; "
+            f"ECU commands as {config.command_mode}"
+            if config.runner_listen
+            else "no run link: the ego appearing starts a scenario"
+        ),
     ]
     for device in config.devices:
         lines.append(f"  {device.name}: {device.url} ({device.codec})")
@@ -84,6 +98,14 @@ def _describe(config: HilsConfig) -> str:
             lines.append(
                 f"    {message.name} every {period}: {', '.join(message.fields)}"
             )
+        for input_spec in device.inputs:
+            command = ", ".join(input_spec.command)
+            lines.append(f"    <- {input_spec.name}: {command}")
+    for phase in PHASES:
+        steps = config.steps(phase)
+        if steps:
+            lines.append(f"  {phase}:")
+            lines.extend(f"    {step.describe()}" for step in steps)
     return "\n".join(lines)
 
 
@@ -115,6 +137,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         "host": args.host,
         "port": args.port,
         "role_name": args.role_name,
+        "runner_listen": args.listen,
     }
     config = dataclasses.replace(
         config, **{k: v for k, v in overrides.items() if v is not None}
@@ -123,7 +146,11 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(_describe(config))
         return 0
 
-    from .bridge import HilsBridge, HilsUnavailableError  # noqa: PLC0415
+    from .bridge import (  # noqa: PLC0415
+        HilsBridge,
+        HilsStepError,
+        HilsUnavailableError,
+    )
 
     try:
         bridge = HilsBridge(config)
@@ -136,13 +163,17 @@ def main(argv: Optional[List[str]] = None) -> int:
         bridge.stop()
 
     signal.signal(signal.SIGTERM, _stop)
+    status = 0
     try:
         bridge.run()
     except KeyboardInterrupt:
         logger.info("interrupted")
+    except HilsStepError as exc:
+        logger.error("%s", exc)
+        status = 1
     finally:
         bridge.close()
-    return 0
+    return status
 
 
 if __name__ == "__main__":  # pragma: no cover

@@ -24,10 +24,13 @@ one)::
           attributes: {channels: 32, rotation_frequency: 10}
 
 A device is a hilspy channel (``url`` + ``codec`` + ``options``, as
-``hilspy.open`` takes them) with either ``messages`` or a ``sensor``.  A field
-is a constant, ``$signal`` (one of :data:`~.signals.SIGNALS`) or
-``{signal: name, scale: k, offset: c}``; ``$$`` starts a constant beginning
-with ``$``.  Relative files (the configuration's ``canvas``, a codec's file,
+``hilspy.open`` takes them) with ``messages`` (periodic, while a scenario runs)
+and ``inputs`` (ECU messages that carry the command driving the ego), or a
+``sensor``.  A field is a constant, ``$signal`` (one of
+:data:`~.signals.SIGNALS`) or ``{signal: name, scale: k, offset: c}``; ``$$``
+starts a constant beginning with ``$``.  ``runner.listen`` is where runs with
+``ego.entity=hils`` reach the bridge, ``commands.mode`` how the ECUs' command
+drives the ego, and ``lifecycle`` the steps run at :data:`PHASES`.  Relative files (the configuration's ``canvas``, a codec's file,
 a ``profiles`` option) are relative to the configuration file.  Unknown keys
 are refused, so a typo fails loudly instead of being ignored.
 """
@@ -40,16 +43,21 @@ from typing import Any, Dict, Mapping, Optional, Tuple, Union
 
 from ..constants import EGO_ROLE_NAME
 from .measurements import CAMERA_ENCODINGS
+from .protocol import COMMAND_FIELDS, COMMAND_MODES, DEFAULT_PORT
 from .signals import SIGNALS
 
 __all__ = [
     "CLOCKS",
+    "PHASES",
     "DeviceSpec",
     "FieldSource",
     "HilsConfig",
     "HilsConfigError",
+    "InputSource",
+    "InputSpec",
     "MessageSpec",
     "SensorSpec",
+    "StepSpec",
     "load_config",
     "parse_config",
 ]
@@ -71,6 +79,19 @@ LIDAR_BLUEPRINT = "sensor.lidar.ray_cast"
 CAMERA_PREFIX = "sensor.camera."
 
 _TRANSFORM_KEYS = ("x", "y", "z", "roll", "pitch", "yaw")
+
+#: When the bridge runs a lifecycle's steps:
+#:
+#: * ``"startup"`` -- once, when the bridge starts (its devices just opened).
+#: * ``"scenario_start"`` -- when a scenario starts: a run's ``start``, or the
+#:   ego appearing.  The run waits for them (the ECUs being initialized).
+#: * ``"scenario_end"`` -- when the scenario ends: a run's ``end``, the run
+#:   going away, or the ego disappearing.
+#: * ``"shutdown"`` -- once, when the bridge stops (Ctrl-C, SIGTERM).
+PHASES: Tuple[str, ...] = ("startup", "scenario_start", "scenario_end", "shutdown")
+
+#: The phases with no ego, whose steps cannot use a signal.
+_EGOLESS_PHASES = ("startup", "shutdown")
 
 
 class HilsConfigError(ValueError):
@@ -115,6 +136,86 @@ class MessageSpec:
 
 
 @dataclass(frozen=True)
+class InputSource:
+    """Where one command field comes from: an ECU message's field (scaled), or
+    a constant."""
+
+    field: Optional[str] = None
+    constant: Optional[float] = None
+    scale: float = 1.0
+    offset: float = 0.0
+
+    def resolve(self, fields: Mapping[str, Any]) -> Optional[float]:
+        """The command field's value from a decoded message's *fields*;
+        ``None`` when the message lacks the field or it is not a number."""
+        if self.field is None:
+            return self.constant
+        value = fields.get(self.field)
+        if isinstance(value, bool):
+            value = float(value)
+        if not isinstance(value, (int, float)):
+            return None
+        return float(value) * self.scale + self.offset
+
+
+@dataclass(frozen=True)
+class InputSpec:
+    """An ECU message that carries (part of) the command driving the ego.
+
+    Attributes:
+        name: The message's name, as the device's codec decodes it.
+        command: Each command field (:data:`~.protocol.COMMAND_FIELDS` of the
+            configuration's mode) and where it comes from.
+    """
+
+    name: str
+    command: Mapping[str, InputSource]
+
+    def values(self, fields: Mapping[str, Any]) -> Dict[str, float]:
+        """The command fields a decoded message's *fields* give."""
+        values: Dict[str, float] = {}
+        for key, source in self.command.items():
+            value = source.resolve(fields)
+            if value is not None:
+                values[key] = value
+        return values
+
+
+@dataclass(frozen=True)
+class StepSpec:
+    """One step of a lifecycle phase.
+
+    Attributes:
+        kind: ``"send"`` (a message, once), ``"wait"`` (for an ECU's message
+            whose fields match, up to :attr:`timeout`) or ``"sleep"``.
+        device: The device sent to or waited on.
+        name: The message's name; ``None`` for a raw frame (:attr:`data`).
+        fields: What a ``send`` fills the message with.
+        match: The field values a ``wait`` waits for.
+        data: A raw frame's bytes, sent as is.
+        frame_id: A raw frame's identifier (CAN).
+        seconds: A ``sleep``'s length, or a ``wait``'s timeout.
+    """
+
+    kind: str
+    device: str = ""
+    name: Optional[str] = None
+    fields: Mapping[str, FieldSource] = field(default_factory=dict)
+    match: Mapping[str, Constant] = field(default_factory=dict)
+    data: Optional[bytes] = None
+    frame_id: Optional[int] = None
+    seconds: float = 0.0
+
+    def describe(self) -> str:
+        if self.kind == "sleep":
+            return f"sleep {self.seconds} s"
+        what = self.name if self.name is not None else f"frame {self.frame_id}"
+        if self.kind == "wait":
+            return f"wait for {what} from {self.device} (up to {self.seconds} s)"
+        return f"send {what} to {self.device}"
+
+
+@dataclass(frozen=True)
 class SensorSpec:
     """A CARLA sensor the bridge attaches to the ego, forwarding what it measures.
 
@@ -149,8 +250,9 @@ class DeviceSpec:
         url: hilspy's transport URL.
         codec: hilspy's codec (``raw`` when omitted).
         options: hilspy's codec options.
-        messages: Periodic messages, for a device without a sensor.
+        messages: Periodic messages, sent while a scenario runs.
         sensor: The sensor whose measurements the device is sent.
+        inputs: The ECU messages received on it that drive the ego.
     """
 
     name: str
@@ -159,6 +261,7 @@ class DeviceSpec:
     options: Mapping[str, Any] = field(default_factory=dict)
     messages: Tuple[MessageSpec, ...] = ()
     sensor: Optional[SensorSpec] = None
+    inputs: Tuple[InputSpec, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -173,6 +276,16 @@ class HilsConfig:
     ego_wait: float = 120.0
     canvas: Optional[Path] = None
     clock: str = "simulation"
+    #: Where runs reach the bridge (``host:port``); ``""`` takes no run.
+    runner_listen: str = f"0.0.0.0:{DEFAULT_PORT}"
+    #: How the ECUs' command drives the ego (:data:`~.protocol.COMMAND_MODES`).
+    command_mode: str = "control"
+    #: Each phase's steps (:data:`PHASES`).
+    lifecycle: Mapping[str, Tuple[StepSpec, ...]] = field(default_factory=dict)
+
+    def steps(self, phase: str) -> Tuple[StepSpec, ...]:
+        """The steps of *phase*."""
+        return tuple(self.lifecycle.get(phase, ()))
 
 
 def _mapping(value: Any, where: str) -> Mapping[str, Any]:
@@ -315,10 +428,146 @@ def _codec(value: Any, base: Path) -> str:
     return codec
 
 
-def _device(name: str, value: Any, base: Path) -> DeviceSpec:
+def _input_source(value: Any, where: str) -> InputSource:
+    if isinstance(value, Mapping):
+        _only(value, ("field", "scale", "offset"), where)
+        if "field" not in value:
+            raise HilsConfigError(f"{where}: a mapping names a field")
+        return InputSource(
+            field=str(value["field"]),
+            scale=_number(value.get("scale", 1.0), f"{where}.scale"),
+            offset=_number(value.get("offset", 0.0), f"{where}.offset"),
+        )
+    if isinstance(value, str):
+        return InputSource(field=value)
+    if isinstance(value, (bool, int, float)):
+        return InputSource(constant=float(value))
+    raise HilsConfigError(
+        f"{where}: expected a field name, a number or {{field: ...}}, got {value!r}"
+    )
+
+
+def _input(value: Any, mode: str, where: str) -> InputSpec:
+    section = _mapping(value, where)
+    _only(section, ("name", "command"), where)
+    if not section.get("name"):
+        raise HilsConfigError(f"{where}: an input has a name")
+    command = _mapping(section.get("command"), f"{where}.command")
+    if not command:
+        raise HilsConfigError(f"{where}.command: names no command field")
+    allowed = COMMAND_FIELDS[mode]
+    for key in command:
+        if key not in allowed:
+            raise HilsConfigError(
+                f"{where}.command: {key!r} is not a field of a {mode} command; "
+                f"expected {', '.join(allowed)}"
+            )
+    return InputSpec(
+        name=str(section["name"]),
+        command={
+            str(k): _input_source(v, f"{where}.command.{k}") for k, v in command.items()
+        },
+    )
+
+
+_STEP_KINDS = ("send", "wait", "sleep")
+
+
+def _step(
+    value: Any, phase: str, devices: Mapping[str, DeviceSpec], where: str
+) -> StepSpec:
+    section = _mapping(value, where)
+    kinds = [k for k in _STEP_KINDS if k in section]
+    if len(kinds) != 1:
+        raise HilsConfigError(
+            f"{where}: a step is one of {', '.join(_STEP_KINDS)}, got {sorted(section)}"
+        )
+    kind = kinds[0]
+    if kind == "sleep":
+        _only(section, ("sleep",), where)
+        seconds = _number(section["sleep"], f"{where}.sleep")
+        if seconds < 0.0:
+            raise HilsConfigError(f"{where}.sleep: must not be negative")
+        return StepSpec(kind="sleep", seconds=seconds)
+    device = str(section[kind])
+    if device not in devices:
+        raise HilsConfigError(
+            f"{where}: no device {device!r}; devices: {', '.join(devices)}"
+        )
+    if devices[device].sensor is not None:
+        raise HilsConfigError(f"{where}: {device} is a sensor device")
+    name = section.get("name")
+    if kind == "wait":
+        _only(section, ("wait", "name", "fields", "timeout"), where)
+        if not name:
+            raise HilsConfigError(f"{where}: a wait names the message")
+        match = _mapping(section.get("fields"), f"{where}.fields")
+        for key, expected in match.items():
+            if not isinstance(expected, (str, int, float, bool)):
+                raise HilsConfigError(
+                    f"{where}.fields.{key}: expected a constant, got {expected!r}"
+                )
+        timeout = _number(section.get("timeout", 10.0), f"{where}.timeout")
+        if timeout <= 0.0:
+            raise HilsConfigError(f"{where}.timeout: must be positive")
+        return StepSpec(
+            kind="wait",
+            device=device,
+            name=str(name),
+            match=dict(match),
+            seconds=timeout,
+        )
+    _only(section, ("send", "name", "fields", "data", "id"), where)
+    if bool(name) == ("data" in section):
+        raise HilsConfigError(
+            f"{where}: a send has either a name (and fields) or raw data"
+        )
+    if "data" in section:
+        try:
+            data = bytes.fromhex(str(section["data"]))
+        except ValueError as exc:
+            raise HilsConfigError(f"{where}.data: not hexadecimal bytes") from exc
+        frame_id = section.get("id")
+        if frame_id is not None and (
+            isinstance(frame_id, bool) or not isinstance(frame_id, int)
+        ):
+            raise HilsConfigError(f"{where}.id: expected an integer")
+        return StepSpec(kind="send", device=device, data=data, frame_id=frame_id)
+    fields = {
+        str(k): _field(v, f"{where}.fields.{k}")
+        for k, v in _mapping(section.get("fields"), f"{where}.fields").items()
+    }
+    if phase in _EGOLESS_PHASES:
+        signals = [k for k, source in fields.items() if source.signal is not None]
+        if signals:
+            raise HilsConfigError(
+                f"{where}.fields: {', '.join(signals)} use(s) a signal, but there "
+                f"is no ego at {phase}"
+            )
+    return StepSpec(kind="send", device=device, name=str(name), fields=fields)
+
+
+def _lifecycle(
+    value: Any, devices: Mapping[str, DeviceSpec]
+) -> Dict[str, Tuple[StepSpec, ...]]:
+    section = _mapping(value, "lifecycle")
+    _only(section, PHASES, "lifecycle")
+    phases: Dict[str, Tuple[StepSpec, ...]] = {}
+    for phase in PHASES:
+        steps = section.get(phase) or []
+        if not isinstance(steps, list):
+            raise HilsConfigError(f"lifecycle.{phase}: expected a list of steps")
+        phases[phase] = tuple(
+            _step(step, phase, devices, f"lifecycle.{phase}[{i}]")
+            for i, step in enumerate(steps)
+        )
+    return phases
+
+
+def _device(name: str, value: Any, base: Path, mode: str) -> DeviceSpec:
     where = f"devices.{name}"
     section = _mapping(value, where)
-    _only(section, ("url", "codec", "options", "messages", "sensor"), where)
+    _only(section, ("url", "codec", "options", "messages", "sensor", "inputs"), where)
     if not section.get("url"):
         raise HilsConfigError(f"{where}: a device has a url")
     codec = _codec(section.get("codec", "raw"), base)
@@ -337,8 +586,16 @@ def _device(name: str, value: Any, base: Path) -> DeviceSpec:
         if section.get("sensor") is not None
         else None
     )
-    if (sensor is None) == (not messages):
-        raise HilsConfigError(f"{where}: a device has either messages or a sensor")
+    inputs_value = section.get("inputs") or []
+    if not isinstance(inputs_value, list):
+        raise HilsConfigError(f"{where}.inputs: expected a list")
+    inputs = tuple(
+        _input(m, mode, f"{where}.inputs[{i}]") for i, m in enumerate(inputs_value)
+    )
+    if sensor is not None and (messages or inputs):
+        raise HilsConfigError(
+            f"{where}: a device with a sensor has no messages or inputs"
+        )
     return DeviceSpec(
         name=name,
         url=str(section["url"]),
@@ -346,6 +603,7 @@ def _device(name: str, value: Any, base: Path) -> DeviceSpec:
         options=options,
         messages=messages,
         sensor=sensor,
+        inputs=inputs,
     )
 
 
@@ -361,7 +619,20 @@ def parse_config(document: Any, base: Union[str, Path] = ".") -> HilsConfig:
     """
     base = Path(base)
     root = _mapping(document, "configuration")
-    _only(root, ("carla", "ego", "canvas", "clock", "devices"), "configuration")
+    _only(
+        root,
+        (
+            "carla",
+            "ego",
+            "canvas",
+            "clock",
+            "runner",
+            "commands",
+            "devices",
+            "lifecycle",
+        ),
+        "configuration",
+    )
     carla = _mapping(root.get("carla"), "carla")
     _only(carla, ("host", "port", "timeout"), "carla")
     ego = _mapping(root.get("ego"), "ego")
@@ -372,11 +643,28 @@ def parse_config(document: Any, base: Union[str, Path] = ".") -> HilsConfig:
     canvas: Optional[Path] = None
     if root.get("canvas"):
         canvas = (base / Path(str(root["canvas"])).expanduser()).resolve()
-    devices = _mapping(root.get("devices"), "devices")
-    if not devices:
+    runner = _mapping(root.get("runner"), "runner")
+    _only(runner, ("listen",), "runner")
+    listen = runner.get("listen", f"0.0.0.0:{DEFAULT_PORT}")
+    listen = "" if listen is None else str(listen)
+    commands = _mapping(root.get("commands"), "commands")
+    _only(commands, ("mode",), "commands")
+    mode = str(commands.get("mode", "control"))
+    if mode not in COMMAND_MODES:
+        raise HilsConfigError(
+            f"commands.mode: {mode!r} is not one of {', '.join(COMMAND_MODES)}"
+        )
+    devices_section = _mapping(root.get("devices"), "devices")
+    if not devices_section:
         raise HilsConfigError("devices: the configuration names no device")
+    devices = {
+        str(k): _device(str(k), v, base, mode) for k, v in devices_section.items()
+    }
     return HilsConfig(
-        devices=tuple(_device(str(k), v, base) for k, v in devices.items()),
+        devices=tuple(devices.values()),
+        runner_listen=listen,
+        command_mode=mode,
+        lifecycle=_lifecycle(root.get("lifecycle"), devices),
         host=str(carla.get("host", "localhost")),
         port=int(_number(carla.get("port", 2000), "carla.port")),
         timeout=_number(carla.get("timeout", 10.0), "carla.timeout"),

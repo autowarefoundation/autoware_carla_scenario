@@ -20,5 +20,5 @@ ego:
   # particular drive: a scenario rendered from a recorded run leaves the
   # rendered world as soon as the route takes a shortcut the recording did not.
   waypoint_lanelet_ids: []
-  # Which entity drives the ego: autopilot | autoware | carla_driver | ros2
+  # Which entity drives the ego: autopilot | autoware | carla_driver | ros2 | hils
   entity: autopilot

@@ -1783,7 +1783,7 @@ To check one more module:
 ### What is checked of the framework
 
 Every module now has an entry other than `"not yet checked (#45)"`. 199 of
-the package's 300 modules (66%; about 47,500 of 85,300 lines) are `CHECKED`:
+the package's 303 modules (66%; about 47,500 of 86,400 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the conversions between
 Lanelet2, OpenDRIVE and CARLA world poses (`coordinate.transform`), the stop
 lines read off a Lanelet2 map (`utils.stop_line`, `coordinate.stop_line`)
@@ -1879,16 +1879,16 @@ a `TrajectoryVertex` call's arguments, each of any type (`Any`), walks or
 binds a sweeper constraint of any kind, builds a condition's status (its
 details), or takes the list a plain tick callback goes into
 (`BaseScenario._register_tick()`, a `List[Callable[[carla.World], None]]`,
-which the check has no value of). The 101 `EXCLUDED` modules fall in
-four groups. Many fit more than one (about 77 import what Codon cannot
-compile, 32 build on an excluded module and 23 hold values Codon has no type
+which the check has no value of). The 104 `EXCLUDED` modules fall in
+four groups. Many fit more than one (about 80 import what Codon cannot
+compile, 34 build on an excluded module and 23 hold values Codon has no type
 for), so each is counted once, in the first group that fits it:
 
-- **77 import what Codon cannot compile**: pyxodr,
+- **80 import what Codon cannot compile**: pyxodr,
   pydantic, pickle, lxml, grpc, omegaconf and hydra, yaml, openodd and hilspy (Rust extensions), cv2,
   cyclonedds (`ros2.cyclone` and `ros2.messages`, the ROS 2 ego's DDS
   transport and its message types), or
-  a standard module Codon lacks (`json`, `inspect`, `concurrent.futures`,
+  a standard module Codon lacks (`json`, `socket`, `inspect`, `concurrent.futures`,
   `importlib`
   beyond `importlib.metadata`, or more of `os`, `pathlib`, `shutil`, `signal`,
   `subprocess`, `tempfile`, `threading`, `dataclasses`, `importlib.metadata`
@@ -1899,7 +1899,7 @@ for), so each is counted once, in the first group that fits it:
   stack's dev container, the
   record of a run's environment, the SLURM launcher's submitting side,
   its worker and its manifest, the batch summary they share, the Rerun
-  recordings of a run's logs and LiDAR sweeps, its T4 dataset, the carla_canvas hookup, and the HILS bridge), the ODD and coverage modules that wrap
+  recordings of a run's logs and LiDAR sweeps, its T4 dataset, the carla_canvas hookup, and the HILS bridge and its ego entity), the ODD and coverage modules that wrap
   openodd, and the rest of what reads Lanelet2. A reason names `pathlib`
   only where the module uses more of it than the shim declares, and the
   other shimmed modules likewise; `test_typecheck_library.py` holds every

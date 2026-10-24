@@ -5,6 +5,7 @@ defaults:
   - entity: default
   - driver: default
   - ros2: default
+  - hils: default
   - traffic_manager: default
   - traffic: traffic_manager
   - scenario: intersection_passing/left_turn

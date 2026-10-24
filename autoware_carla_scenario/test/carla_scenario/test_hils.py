@@ -6,6 +6,8 @@ from __future__ import annotations
 
 import itertools
 import math
+import threading
+import time
 import types
 from pathlib import Path
 from typing import Any, Callable, List, Optional
@@ -145,7 +147,14 @@ def test_fields_are_constants_signals_or_scaled_signals() -> None:
         ({"device": {}}, "unknown key"),
         (_messages({"a": "$nope"}), "unknown signal 'nope'"),
         (_messages({"a": {"scale": 2}}), "names a signal"),
-        (_device(), "either messages or a sensor"),
+        (
+            _device(
+                codec="raw",
+                sensor={"blueprint": "sensor.camera.rgb"},
+                messages=[{"name": "M"}],
+            ),
+            "has no messages or inputs",
+        ),
         (
             _device(
                 codec="raw",
@@ -293,9 +302,16 @@ class _Ego:
         self.id = actor_id
         self.attributes = {"role_name": role}
         self.is_alive = True
+        self.controls: List[Any] = []
 
     def get_control(self) -> _Control:
         return _Control()
+
+    def apply_control(self, control: Any) -> None:
+        self.controls.append(control)
+
+    def apply_ackermann_control(self, control: Any) -> None:
+        self.controls.append(control)
 
 
 class _Blueprint:
@@ -373,6 +389,7 @@ class _World(ActorsById):
         self.pending: List[_Snapshot] = []
         self.frame = 0
         self.speed = 10.0
+        self._lock = threading.Lock()
 
     def get_actors(self) -> FakeActorList:
         return FakeActorList(a for a in self.actors if a.is_alive)
@@ -390,20 +407,29 @@ class _World(ActorsById):
         self.sensors.append(sensor)
         return sensor
 
-    def tick(self) -> None:
-        self.frame += 1
+    def get_snapshot(self) -> _Snapshot:
         elapsed = self.frame * 0.05
         actors = {
             a.id: _ActorSnapshot(self.speed * elapsed, self.speed)
             for a in self.actors
             if a.is_alive
         }
-        self.pending.append(_Snapshot(self.frame, elapsed, actors))
+        return _Snapshot(self.frame, elapsed, actors)
+
+    def tick(self) -> None:
+        with self._lock:
+            self.frame += 1
+            self.pending.append(self.get_snapshot())
 
     def wait_for_tick(self, timeout: float) -> _Snapshot:
-        if not self.pending:
-            raise RuntimeError("time-out of 0.0 ms while waiting for the simulator")
-        return self.pending.pop(0)
+        deadline = time.monotonic() + timeout
+        while True:
+            with self._lock:
+                if self.pending:
+                    return self.pending.pop(0)
+            if time.monotonic() >= deadline:
+                raise RuntimeError("time-out while waiting for the simulator")
+            time.sleep(0.001)
 
 
 def _carla(world: _World) -> types.SimpleNamespace:
@@ -482,7 +508,7 @@ def test_periodic_messages_follow_the_ego_on_simulated_time(world: _World) -> No
         assert len(later) == 2
         assert later[-1]["latitude"] > first[0]["latitude"]
         # No tick in time: nothing is sent, the bridge carries on.
-        assert not bridge.step()
+        assert not bridge.step(0.01)
     finally:
         bridge.close()
         receiver.close()
@@ -707,3 +733,451 @@ def test_the_command_checks_prints_and_refuses(
     path.write_text("devices: {}\n")
     assert main([str(path)]) == 2
     assert "no device" in capsys.readouterr().err
+
+
+# -- ECU to simulation, and the lifecycle ------------------------------------------
+
+_DBC = """VERSION ""
+
+
+NS_ :
+
+BS_:
+
+BU_: SIM ECU
+
+
+BO_ 256 Wake: 1 SIM
+ SG_ On : 0|1@1+ (1,0) [0|1] "" ECU
+
+BO_ 257 VehicleSpeed: 2 SIM
+ SG_ Speed : 0|16@1+ (0.01,0) [0|655.35] "km/h" ECU
+
+BO_ 512 ControlCmd: 3 ECU
+ SG_ Throttle : 0|8@1+ (0.5,0) [0|127.5] "%" SIM
+ SG_ Steer : 8|16@1- (0.001,0) [-1|1] "" SIM
+
+BO_ 768 EcuStatus: 1 ECU
+ SG_ Ready : 0|1@1+ (1,0) [0|1] "" SIM
+"""
+
+
+class _Ecu:
+    """A device under test on a CAN bus: answers Wake(On=1) with EcuStatus(Ready=1)
+    and, once :attr:`control` is set, sends it as ControlCmd."""
+
+    def __init__(self, url: str, dbc: Path, answers: bool = True) -> None:
+        self.channel = hilspy.open(url, f"dbc:{dbc}")
+        self.received: List[Any] = []
+        self.control: Optional[dict[str, float]] = None
+        self._answers = answers
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._serve, daemon=True)
+        self._thread.start()
+
+    def _serve(self) -> None:
+        while not self._stop.is_set():
+            message = self.channel.recv(0.02)
+            if message is not None:
+                self.received.append(message)
+                if self._answers and message.name == "Wake" and message["On"] == 1:
+                    self.channel.send("EcuStatus", {"Ready": 1})
+            if self.control is not None:
+                self.channel.send("ControlCmd", self.control)
+
+    def names(self) -> List[Any]:
+        return [(m.name, dict(m.fields)) if m.name else m.id for m in self.received]
+
+    def close(self) -> None:
+        self._stop.set()
+        self._thread.join(timeout=2.0)
+        self.channel.close()
+
+
+def _until(condition: Callable[[], bool], world: Optional[_World] = None) -> bool:
+    deadline = time.monotonic() + 5.0
+    while time.monotonic() < deadline:
+        if condition():
+            return True
+        if world is not None:
+            world.tick()
+        time.sleep(0.01)
+    return condition()
+
+
+def _hils_config(url: str, dbc: Path, **extra: Any) -> dict[str, Any]:
+    return {
+        "runner": {"listen": "127.0.0.1:0"},
+        "devices": {
+            "can": {
+                "url": url,
+                "codec": f"dbc:{dbc}",
+                "messages": [
+                    {
+                        "name": "VehicleSpeed",
+                        "period": 0.05,
+                        "fields": {"Speed": "$speed_kmh"},
+                    }
+                ],
+                "inputs": [
+                    {
+                        "name": "ControlCmd",
+                        "command": {
+                            "throttle": {"field": "Throttle", "scale": 0.01},
+                            "steer": "Steer",
+                        },
+                    }
+                ],
+            }
+        },
+        "lifecycle": {
+            "startup": [{"send": "can", "name": "Wake", "fields": {"On": 0}}],
+            "scenario_start": [
+                {"send": "can", "name": "Wake", "fields": {"On": 1}},
+                {
+                    "wait": "can",
+                    "name": "EcuStatus",
+                    "fields": {"Ready": 1},
+                    "timeout": 2,
+                },
+            ],
+            "scenario_end": [{"send": "can", "name": "Wake", "fields": {"On": 0}}],
+            "shutdown": [{"send": "can", "id": 0x7FF, "data": "DE AD"}],
+        },
+        **extra,
+    }
+
+
+@pytest.fixture
+def dbc(tmp_path: Path) -> Path:
+    path = tmp_path / "vehicle.dbc"
+    path.write_text(_DBC)
+    return path
+
+
+def test_inputs_and_lifecycle_parse(dbc: Path) -> None:
+    config = parse_config(_hils_config("mem://x", dbc, commands={"mode": "control"}))
+    assert config.runner_listen == "127.0.0.1:0"
+    [can] = config.devices
+    [control] = can.inputs
+    assert control.values({"Throttle": 40.0, "Steer": -0.25}) == {
+        "throttle": 0.4,
+        "steer": -0.25,
+    }
+    assert control.values({"Throttle": "high"}) == {}
+    kinds = [s.kind for s in config.steps("scenario_start")]
+    assert kinds == ["send", "wait"]
+    [raw] = config.steps("shutdown")
+    assert (raw.data, raw.frame_id) == (b"\xde\xad", 0x7FF)
+    assert (
+        parse_config({**_messages({"a": 1}), "runner": {"listen": None}}).runner_listen
+        == ""
+    )
+
+
+@pytest.mark.parametrize(
+    ("change", "message"),
+    [
+        ({"commands": {"mode": "fly"}}, "'fly'"),
+        (
+            {
+                "lifecycle": {
+                    "startup": [
+                        {"send": "can", "name": "Wake", "fields": {"On": "$speed"}}
+                    ]
+                }
+            },
+            "no ego at startup",
+        ),
+        (
+            {"lifecycle": {"startup": [{"send": "nope", "name": "Wake"}]}},
+            "no device 'nope'",
+        ),
+        ({"lifecycle": {"startup": [{"sleep": 1, "send": "can"}]}}, "a step is one of"),
+        ({"lifecycle": {"startup": [{"send": "can"}]}}, "either a name"),
+        ({"lifecycle": {"startup": [{"send": "can", "data": "zz"}]}}, "hexadecimal"),
+        ({"lifecycle": {"startup": [{"wait": "can"}]}}, "names the message"),
+        ({"lifecycle": {"boot": []}}, "unknown key"),
+    ],
+)
+def test_bad_inputs_and_steps_are_refused(
+    dbc: Path, change: dict[str, Any], message: str
+) -> None:
+    with pytest.raises(HilsConfigError, match=message):
+        parse_config({**_hils_config("mem://x", dbc), **change})
+
+
+def test_an_input_names_fields_of_the_command_mode(dbc: Path) -> None:
+    document = _hils_config("mem://x", dbc, commands={"mode": "ackermann"})
+    with pytest.raises(
+        HilsConfigError, match="'throttle' is not a field of a ackermann"
+    ):
+        parse_config(document)
+
+
+def test_the_resident_bridge_serves_a_run_end_to_end(world: _World, dbc: Path) -> None:
+    """A run's HilsEgoEntity and the bridge, over TCP: the ECU is woken and
+    waited for, drives the ego, and is put to sleep; startup and shutdown run
+    once around it all."""
+    from autoware_carla_scenario.entity.hils_entity import HilsEgoConfig, HilsEgoEntity
+    from autoware_carla_scenario.hils.bridge import HilsBridge
+
+    url = _mem()
+    ecu = _Ecu(url, dbc)
+    bridge = HilsBridge(
+        parse_config(_hils_config(url, dbc)), carla_module=_carla(world)
+    )
+    thread = threading.Thread(target=bridge.run, daemon=True)
+    thread.start()
+    try:
+        assert _until(lambda: bridge.link_address is not None)
+        assert _until(lambda: ("Wake", {"On": 0}) in ecu.names())  # startup
+        host, port = bridge.link_address  # type: ignore[misc]
+        entity = HilsEgoEntity(
+            HilsEgoConfig(host=host, port=port, ready_timeout_s=5.0), episode_name="t"
+        )
+        ego: _Ego = world.actors[0]
+        entity._vehicle = ego  # type: ignore[assignment]
+
+        entity.on_scenario_start(world)  # type: ignore[arg-type]
+        assert not entity.termination_requested
+        tick = lambda: entity.on_tick(world, 0.0)  # type: ignore[arg-type]  # noqa: E731
+        assert _until(lambda: (tick(), entity.is_initialized)[1], world)
+        assert bridge.active and bridge.ego is ego
+        assert ("Wake", {"On": 1}) in ecu.names()
+        # The ECU's inputs flow while the scenario runs.
+        assert _until(
+            lambda: any(m.name == "VehicleSpeed" for m in ecu.received), world
+        )
+        # No command yet: the ego is held on its brakes.
+        tick()
+        assert ego.controls[-1].brake == 1.0
+
+        ecu.control = {"Throttle": 40.0, "Steer": -0.25}
+        assert _until(lambda: (tick(), entity.command is not None)[1], world)
+        tick()
+        control = ego.controls[-1]
+        assert control.throttle == pytest.approx(0.4)
+        assert control.steer == pytest.approx(-0.25)
+        assert control.brake == 0.0
+
+        ecu.control = None
+        entity.on_scenario_end(world)  # type: ignore[arg-type]
+        assert not bridge.active
+        assert _until(lambda: ecu.names()[-1] == ("Wake", {"On": 0}))
+        speeds = sum(1 for m in ecu.received if m.name == "VehicleSpeed")
+        time.sleep(0.2)
+        assert sum(1 for m in ecu.received if m.name == "VehicleSpeed") == speeds
+    finally:
+        bridge.stop()
+        thread.join(timeout=5.0)
+        bridge.close()
+        assert _until(lambda: 0x7FF in ecu.names())  # shutdown
+        ecu.close()
+
+
+def test_an_ecu_that_does_not_answer_fails_the_run(world: _World, dbc: Path) -> None:
+    from autoware_carla_scenario.entity.hils_entity import HilsEgoConfig, HilsEgoEntity
+    from autoware_carla_scenario.hils.bridge import HilsBridge
+
+    url = _mem()
+    ecu = _Ecu(url, dbc, answers=False)
+    document = _hils_config(url, dbc)
+    document["lifecycle"]["scenario_start"][1]["timeout"] = 0.2
+    bridge = HilsBridge(parse_config(document), carla_module=_carla(world))
+    thread = threading.Thread(target=bridge.run, daemon=True)
+    thread.start()
+    try:
+        assert _until(lambda: bridge.link_address is not None)
+        host, port = bridge.link_address  # type: ignore[misc]
+        entity = HilsEgoEntity(HilsEgoConfig(host=host, port=port))
+        entity._vehicle = world.actors[0]  # type: ignore[assignment]
+        entity.on_scenario_start(world)  # type: ignore[arg-type]
+        assert _until(
+            lambda: (
+                entity.on_tick(world, 0.0),  # type: ignore[func-returns-value, arg-type]
+                entity.termination_requested,
+            )[1],
+            world,
+        )
+        assert "sent no EcuStatus with {'Ready': 1}" in str(entity.termination_reason)
+        assert not entity.is_initialized
+        # The run going away ends the scenario on the bridge too.
+        entity.on_scenario_end(world)  # type: ignore[arg-type]
+        assert _until(lambda: not bridge.active)
+        assert ecu.names()[-1] == ("Wake", {"On": 0})
+    finally:
+        bridge.stop()
+        thread.join(timeout=5.0)
+        bridge.close()
+        ecu.close()
+
+
+def test_without_a_run_the_ego_appearing_starts_the_scenario(
+    world: _World, dbc: Path
+) -> None:
+    from autoware_carla_scenario.hils.bridge import HilsBridge
+
+    url = _mem()
+    ecu = _Ecu(url, dbc)
+    document = _hils_config(url, dbc, runner={"listen": None})
+    bridge = HilsBridge(parse_config(document), carla_module=_carla(world))
+    bridge.startup()
+    bridge.connect()
+    try:
+        assert bridge.link_address is None
+        world.tick()
+        assert bridge.step(0.5)
+        assert bridge.active
+        assert ("Wake", {"On": 1}) in ecu.names()
+        world.actors[0].is_alive = False
+        world.tick()
+        bridge.step(0.5)
+        assert not bridge.active
+        assert _until(lambda: ecu.names()[-1] == ("Wake", {"On": 0}))
+    finally:
+        bridge.close()
+        ecu.close()
+
+
+def test_a_failing_startup_step_stops_the_bridge(world: _World, dbc: Path) -> None:
+    from autoware_carla_scenario.hils.bridge import HilsBridge, HilsStepError
+
+    document = _hils_config(_mem(), dbc)
+    document["lifecycle"]["startup"] = [
+        {"wait": "can", "name": "EcuStatus", "timeout": 0.05}
+    ]
+    bridge = HilsBridge(parse_config(document), carla_module=_carla(world))
+    try:
+        with pytest.raises(HilsStepError, match="startup: can sent no EcuStatus"):
+            bridge.run()
+    finally:
+        bridge.close()
+
+
+# -- the run's entity, against a scripted bridge -----------------------------------
+
+
+class _ScriptedBridge:
+    """Accepts one run, greets it, and answers its ``start`` with *answers*."""
+
+    def __init__(self, answers: List[dict[str, Any]], protocol: int = 1) -> None:
+        import socket
+
+        from autoware_carla_scenario.hils.protocol import LineReader, encode
+
+        self.server = socket.create_server(("127.0.0.1", 0))
+        self.port = self.server.getsockname()[1]
+        self.received: List[dict[str, Any]] = []
+        self._answers = answers
+        self._protocol = protocol
+        self._encode = encode
+        self._reader_type = LineReader
+        self.conn: Optional[Any] = None
+        threading.Thread(target=self._serve, daemon=True).start()
+
+    def _serve(self) -> None:
+        conn, _ = self.server.accept()
+        self.conn = conn
+        conn.sendall(self._encode({"type": "hello", "protocol": self._protocol}))
+        reader = self._reader_type(conn)
+        while not reader.closed:
+            for message in reader.read(timeout=0.05):
+                self.received.append(message)
+                if message["type"] == "start":
+                    for answer in self._answers:
+                        conn.sendall(self._encode(answer))
+                elif message["type"] == "end":
+                    conn.sendall(self._encode({"type": "ended"}))
+
+    def send(self, message: dict[str, Any]) -> None:
+        assert self.conn is not None
+        self.conn.sendall(self._encode(message))
+
+
+def _entity(port: int, **config: Any) -> Any:
+    from autoware_carla_scenario.entity.hils_entity import HilsEgoConfig, HilsEgoEntity
+
+    entity = HilsEgoEntity(HilsEgoConfig(host="127.0.0.1", port=port, **config))
+    entity._vehicle = _Ego(1)  # type: ignore[assignment]
+    entity.on_scenario_start(None)  # type: ignore[arg-type]
+    return entity
+
+
+def _ticked(entity: Any, condition: Callable[[], bool]) -> bool:
+    return _until(lambda: (entity.on_tick(None, 0.0), condition())[1])
+
+
+def test_an_unreachable_bridge_ends_the_run() -> None:
+    import socket
+
+    with socket.create_server(("127.0.0.1", 0)) as probe:
+        port = probe.getsockname()[1]
+    entity = _entity(port, connect_timeout_s=0.5)
+    assert entity.termination_requested
+    assert "cannot be reached" in entity.termination_reason
+
+
+def test_another_protocol_ends_the_run() -> None:
+    entity = _entity(_ScriptedBridge([], protocol=99).port)
+    assert "speaks protocol 99" in entity.termination_reason
+
+
+def test_a_bridge_error_or_silence_ends_the_run() -> None:
+    entity = _entity(_ScriptedBridge([{"type": "error", "message": "boom"}]).port)
+    assert _ticked(entity, lambda: entity.termination_requested)
+    assert entity.termination_reason == "The HILS bridge: boom"
+    silent = _entity(_ScriptedBridge([]).port, ready_timeout_s=0.05)
+    assert _ticked(silent, lambda: silent.termination_requested)
+    assert "did not initialize the ECUs within" in silent.termination_reason
+
+
+@pytest.mark.parametrize("on_stale", ["brake", "hold"])
+def test_a_stale_command_brakes_or_holds(on_stale: str) -> None:
+    command = {"type": "command", "mode": "control", "throttle": 0.6, "gear": 3}
+    bridge = _ScriptedBridge([{"type": "ready"}, command])
+    entity = _entity(bridge.port, stale_s=0.1, on_stale=on_stale)
+    ego = entity.actor
+    assert _ticked(entity, lambda: entity.command is not None)
+    assert entity.is_initialized
+    entity.on_tick(None, 0.0)
+    assert ego.controls[-1].throttle == pytest.approx(0.6)
+    assert ego.controls[-1].gear == 3
+    time.sleep(0.15)
+    entity.on_tick(None, 0.0)
+    if on_stale == "brake":
+        assert ego.controls[-1].brake == 1.0
+    else:
+        assert ego.controls[-1].throttle == pytest.approx(0.6)
+    bridge.send(command)
+    assert _ticked(entity, lambda: ego.controls[-1].throttle == pytest.approx(0.6))
+    entity.on_scenario_end(None)
+    assert [m["type"] for m in bridge.received] == ["start", "end"]
+    assert bridge.received[0]["ego_id"] == 1
+
+
+def test_an_ackermann_command_drives_carlas_controller() -> None:
+    command = {"type": "command", "mode": "ackermann", "steer": 0.1, "speed": 5.0}
+    entity = _entity(_ScriptedBridge([{"type": "ready"}, command]).port)
+    assert _ticked(entity, lambda: entity.command is not None)
+    entity.on_tick(None, 0.0)
+    control = entity.actor.controls[-1]
+    assert (control.steer, control.speed) == (pytest.approx(0.1), pytest.approx(5.0))
+
+
+def test_the_runner_builds_the_hils_entity() -> None:
+    from omegaconf import OmegaConf
+
+    from autoware_carla_scenario.entity.hils_entity import HilsEgoEntity
+    from autoware_carla_scenario.examples.run import build_ego_entity
+
+    cfg = OmegaConf.create(
+        {"ego": {"entity": "hils"}, "hils": {"port": 7800}, "scenario": {"name": "s"}}
+    )
+    entity = build_ego_entity(cfg)
+    assert isinstance(entity, HilsEgoEntity)
+    assert entity.config.port == 7800
+    with pytest.raises(ValueError, match="unknown hils setting"):
+        build_ego_entity(
+            OmegaConf.create({"ego": {"entity": "hils"}, "hils": {"prot": 1}})
+        )

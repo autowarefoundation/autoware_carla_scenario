@@ -1,22 +1,34 @@
-"""The HILS bridge: follows a run's ego in CARLA and streams it to devices under test.
+"""The HILS bridge: a resident process between scenario runs and the ECUs under test.
 
-It is a CARLA client of its own, beside the scenario runner, on the HILS PC
-next to the ECUs.  It never ticks the world: it waits for the runner's ticks
-(``World.wait_for_tick``), so it works in synchronous mode as well, and it
-survives the runner's episodes -- when the ego goes away it waits for the
-next one and attaches its sensors to that.
+It stays up on the HILS PC next to the ECUs and is a CARLA client of its own,
+beside the scenario runner.  It never ticks the world: it waits for the
+runner's ticks (``World.wait_for_tick``), so it works in synchronous mode too.
 
-Each tick:
+**Lifecycle.**  The configuration's ``lifecycle`` steps (send a message, wait
+for an ECU's message, sleep) run at four points:
 
-1. The ego's state (:class:`~.signals.EgoState`, from the world snapshot, the
-   map's geo-reference and the vehicle's control) becomes the signals the
-   message devices' periodic messages are updated with (``Periodic.update``).
-2. What the sensor devices' sensors measured since the last tick is sent:
-   LiDAR revolutions through ``lidar:MODEL`` (the sensor's UDP packets),
-   camera frames (``v4l2://`` and friends).
-3. With ``clock: simulation``, the shared ``hilspy.Clock`` advances by the
-   simulated time that passed, which sends the periodic messages and LiDAR
-   packets that fall due within it.
+* ``startup`` -- when the bridge starts, its devices just opened;
+* ``scenario_start`` -- when a scenario starts.  A run with
+  ``ego.entity=hils`` says so over the link (:mod:`.link`, :mod:`.protocol`)
+  and waits for the steps -- the ECUs initialized -- before its clock starts;
+  without one, the ego appearing starts it.  The periodic messages start and
+  the sensors are attached first, so the ECUs have their inputs;
+* ``scenario_end`` -- when it ends: the run's ``end``, the run going away, or
+  the ego disappearing; then the periodic messages stop and the sensors go;
+* ``shutdown`` -- when the bridge stops (Ctrl-C, SIGTERM).
+
+**Each tick** of a scenario: the ego's state (:class:`~.signals.EgoState`)
+becomes the signals the periodic messages are updated with; what the sensors
+measured is sent (LiDAR revolutions as a model's UDP packets, camera frames);
+with ``clock: simulation`` the shared ``hilspy.Clock`` advances by the
+simulated time that passed, sending what falls due in it.  While steps run the
+world is not followed and the clock follows the wall clock, so periodic
+messages keep flowing to an ECU being waited on.
+
+**ECU to simulation.**  Devices with ``inputs`` are received on a thread each;
+an input message's fields become command fields (:data:`~.protocol.COMMAND_FIELDS`)
+merged into the ECUs' command, which is forwarded to the run as it changes.
+The run's ego entity applies it to the ego (:mod:`~autoware_carla_scenario.entity.hils_entity`).
 
 The sensors are CARLA's, or carla_canvas's when the configuration names a
 ``canvas`` file: :func:`~autoware_carla_scenario.canvas.use_canvas` points
@@ -32,13 +44,14 @@ import queue
 import threading
 import time
 from types import ModuleType
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Mapping, Optional, Tuple
 
 import numpy as np
 
 from ..canvas import use_canvas
 from ..entity_role import find_actor_in_world
-from .config import DeviceSpec, HilsConfig, MessageSpec, SensorSpec
+from .config import DeviceSpec, HilsConfig, MessageSpec, SensorSpec, StepSpec
+from .link import Event, RunnerLink
 from .measurements import (
     LidarRevolution,
     camera_frame,
@@ -51,7 +64,7 @@ if TYPE_CHECKING:
     import hilspy
     import typesafe_carla.carla as carla
 
-__all__ = ["INSTALL_HINT", "HilsBridge", "HilsUnavailableError"]
+__all__ = ["INSTALL_HINT", "HilsBridge", "HilsStepError", "HilsUnavailableError"]
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +76,16 @@ _EGO_SCAN_INTERVAL_S = 1.0
 
 #: Seconds between attempts to reach a CARLA server that is not up yet.
 _CONNECT_RETRY_S = 2.0
+
+#: How long the loop waits for a tick before it looks at the runs' requests.
+_TICK_POLL_S = 0.1
+
+#: How often a step waiting (for an ECU, or a sleep) looks again, seconds.
+_STEP_POLL_S = 0.01
+
+#: How long a receiving thread waits for a message before it looks at whether
+#: it is to stop, seconds.
+_RECV_POLL_S = 0.2
 
 #: Sends a sensor device may have waiting with ``clock: wall`` before the
 #: oldest is dropped: a device slower than its sensor gets the newest data.
@@ -78,6 +101,10 @@ class HilsUnavailableError(RuntimeError):
     """hilspy (the ``hils`` extra) is not installed."""
 
 
+class HilsStepError(RuntimeError):
+    """A lifecycle step failed: a send was refused, or an ECU did not answer."""
+
+
 def _require_hilspy() -> ModuleType:
     try:
         import hilspy  # noqa: PLC0415
@@ -90,6 +117,21 @@ def _require_hilspy() -> ModuleType:
 
 def _vector(v: Any) -> Tuple[float, float, float]:
     return (float(v.x), float(v.y), float(v.z))
+
+
+def _matches(fields: Mapping[str, Any], expected: Mapping[str, Any]) -> bool:
+    """Whether a decoded message's *fields* have the *expected* values."""
+    for key, want in expected.items():
+        if key not in fields:
+            return False
+        got = fields[key]
+        numbers = (int, float)
+        if isinstance(want, numbers) and isinstance(got, numbers):
+            if abs(float(got) - float(want)) > 1e-9:
+                return False
+        elif got != want:
+            return False
+    return True
 
 
 class _Failures:
@@ -111,8 +153,64 @@ class _Failures:
         self._count += 1
 
 
+class _Receiver:
+    """Receives what an ECU sends on a device, on a thread of its own.
+
+    Each decoded message is remembered (the newest of each name, with when it
+    came, for a ``wait`` step) and handed to *on_message* (the inputs).
+    """
+
+    def __init__(
+        self,
+        spec: DeviceSpec,
+        channel: "hilspy.Channel",
+        on_message: Callable[[DeviceSpec, Any], None],
+    ) -> None:
+        self.spec = spec
+        self._channel = channel
+        self._on_message = on_message
+        self._latest: Dict[str, Tuple[float, Dict[str, Any]]] = {}
+        self._lock = threading.Lock()
+        self._stop = threading.Event()
+        self._thread = threading.Thread(
+            target=self._receive, name=f"hils-rx-{spec.name}", daemon=True
+        )
+        self._thread.start()
+
+    def _receive(self) -> None:
+        while not self._stop.is_set():
+            try:
+                message = self._channel.recv(_RECV_POLL_S)
+            except Exception as exc:  # noqa: BLE001 - closed, or a broken transport
+                if not self._stop.is_set():
+                    logger.warning("%s: receiving stopped: %s", self.spec.name, exc)
+                return
+            if message is None or message.name is None:
+                continue
+            fields = dict(message.fields)
+            with self._lock:
+                self._latest[message.name] = (time.monotonic(), fields)
+            try:
+                self._on_message(self.spec, message)
+            except Exception:  # noqa: BLE001 - a receiving thread must not die
+                logger.exception(
+                    "%s: failed to handle %s", self.spec.name, message.name
+                )
+
+    def seen(self, name: str, match: Mapping[str, Any], since: float) -> bool:
+        """Whether *name* with the *match*ing fields came at or after *since*."""
+        with self._lock:
+            latest = self._latest.get(name)
+        return latest is not None and latest[0] >= since and _matches(latest[1], match)
+
+    def close(self) -> None:
+        self._stop.set()
+        self._thread.join(timeout=2.0)
+
+
 class _MessageDevice:
-    """A device sent periodic messages filled from the ego's signals."""
+    """A device sent periodic messages filled from the ego's signals, while a
+    scenario runs."""
 
     def __init__(self, spec: DeviceSpec, channel: "hilspy.Channel") -> None:
         self.spec = spec
@@ -120,18 +218,20 @@ class _MessageDevice:
         self._periodics: List[Tuple[MessageSpec, "hilspy.Periodic"]] = []
         self._errors: Dict[str, Optional[str]] = {}
 
-    def update(self, signals: Dict[str, float]) -> None:
-        """Start the messages on the first call; update their fields after."""
-        if not self._periodics:
-            for message in self.spec.messages:
-                periodic = self.channel.every(
-                    message.period, message.name, message.values(signals)
-                )
-                self._periodics.append((message, periodic))
-                logger.info(
-                    "%s: %s every %.3f s", self.spec.name, message.name, periodic.period
-                )
-            return
+    def start(self, signals: Mapping[str, float]) -> None:
+        """Start sending the messages, filled from *signals*."""
+        self.stop()
+        for message in self.spec.messages:
+            periodic = self.channel.every(
+                message.period, message.name, message.values(signals)
+            )
+            self._periodics.append((message, periodic))
+            logger.info(
+                "%s: %s every %.3f s", self.spec.name, message.name, periodic.period
+            )
+
+    def update(self, signals: Mapping[str, float]) -> None:
+        """Refill the messages from *signals*."""
         for message, periodic in self._periodics:
             periodic.update(message.name, message.values(signals))
             error = periodic.last_error
@@ -140,7 +240,8 @@ class _MessageDevice:
                 if error:
                     logger.warning("%s: %s: %s", self.spec.name, message.name, error)
 
-    def close(self) -> None:
+    def stop(self) -> None:
+        """Stop sending the messages."""
         for _, periodic in self._periodics:
             periodic.stop()
         self._periodics.clear()
@@ -307,7 +408,7 @@ class _SensorDevice:
 
 
 class HilsBridge:
-    """Streams a run's ego to the devices *config* describes.
+    """The resident bridge the configuration *config* describes.
 
     Args:
         config: The bridge's configuration.
@@ -342,25 +443,48 @@ class HilsBridge:
             if config.clock == "simulation"
             else None
         )
+        self._channels: Dict[str, "hilspy.Channel"] = {}
         self._messages: List[_MessageDevice] = []
         self._sensors: List[_SensorDevice] = []
+        self._receivers: Dict[str, _Receiver] = {}
+        self._events: "queue.Queue[Event]" = queue.Queue()
+        self._link: Optional[RunnerLink] = None
         self._client: Optional["carla.Client"] = None
         self._world: Optional["carla.World"] = None
         self._map: Optional["carla.Map"] = None
         self._ego: Optional["carla.Actor"] = None
+        self._signals: Dict[str, float] = {}
         self._last_time: Optional[float] = None
+        self._last_tick = time.monotonic()
         self._next_scan = 0.0
+        self._started = False
+        #: Whether a scenario runs (its scenario_start steps ran).
+        self._active = False
+        #: Whether a run is connected: then the run, not the ego appearing,
+        #: starts scenarios.
+        self._session = False
+        #: Whether the ECUs' commands go to the run (after its ``ready``).
+        self._forwarding = False
+        self._command: Dict[str, float] = {}
+        self._command_lock = threading.Lock()
         self._stop = threading.Event()
 
-    # -- set-up --------------------------------------------------------------
+    # -- set-up and shut-down ------------------------------------------------
 
     def open_devices(self) -> None:
-        """Open every device's channel."""
+        """Open every device's channel, and receive on those that need it."""
+        waited = {
+            step.device
+            for phase in self.config.lifecycle.values()
+            for step in phase
+            if step.kind == "wait"
+        }
         for spec in self.config.devices:
             options: Dict[str, Any] = dict(spec.options)
             if self.clock is not None:
                 options["clock"] = self.clock
             channel = self._open(spec.url, spec.codec, **options)
+            self._channels[spec.name] = channel
             logger.info("%s: %s (%s)", spec.name, spec.url, spec.codec)
             if spec.sensor is not None:
                 self._sensors.append(
@@ -368,8 +492,31 @@ class HilsBridge:
                         spec, spec.sensor, channel, self._hilspy, self.clock is None
                     )
                 )
-            else:
+                continue
+            if spec.messages:
                 self._messages.append(_MessageDevice(spec, channel))
+            if spec.inputs or spec.name in waited:
+                self._receivers[spec.name] = _Receiver(spec, channel, self._on_input)
+
+    def startup(self) -> None:
+        """Open the devices and run the ``startup`` steps.
+
+        Raises:
+            HilsStepError: A startup step failed.
+        """
+        if self._started:
+            return
+        self._started = True
+        self.open_devices()
+        self._run_steps("startup", strict=True)
+        if self.config.runner_listen:
+            self._link = RunnerLink(self.config.runner_listen, self._events)
+            self._link.start()
+
+    @property
+    def link_address(self) -> Optional[Tuple[str, int]]:
+        """Where runs reach the bridge, once started; ``None`` without a link."""
+        return self._link.address if self._link is not None else None
 
     def connect(self) -> None:
         """Connect to CARLA."""
@@ -379,14 +526,229 @@ class HilsBridge:
         self._world = self._client.get_world()
         logger.info("connected to CARLA at %s:%d", cfg.host, cfg.port)
 
-    # -- the ego -------------------------------------------------------------
+    def close(self) -> None:
+        """End a running scenario, run the ``shutdown`` steps, close everything."""
+        if self._active:
+            self._finish()
+        if self._started:
+            self._run_steps("shutdown", strict=False)
+        if self._link is not None:
+            self._link.close()
+            self._link = None
+        for receiver in self._receivers.values():
+            receiver.close()
+        for sensor_device in self._sensors:
+            sensor_device.close()
+        for message_device in self._messages:
+            message_device.stop()
+        for channel in self._channels.values():
+            channel.close()
+        self._receivers.clear()
+        self._sensors.clear()
+        self._messages.clear()
+        self._channels.clear()
+        self._started = False
+
+    # -- lifecycle steps -----------------------------------------------------
+
+    def _run_steps(self, phase: str, strict: bool) -> None:
+        """Run *phase*'s steps; the first failure raises when *strict*, else
+        each is logged and the rest still run."""
+        steps = self.config.steps(phase)
+        if not steps:
+            return
+        logger.info("%s: %d step(s)", phase, len(steps))
+        since = time.monotonic()
+        try:
+            for step in steps:
+                try:
+                    self._run_step(step, since)
+                except HilsStepError as exc:
+                    if strict:
+                        raise HilsStepError(f"{phase}: {exc}") from exc
+                    logger.warning("%s: %s", phase, exc)
+        finally:
+            # The clock followed the wall clock meanwhile: the next tick must
+            # not add the world time that passed as well.
+            self._last_time = None
+
+    def _run_step(self, step: StepSpec, since: float) -> None:
+        logger.info("  %s", step.describe())
+        if step.kind == "sleep":
+            self._pump(lambda: False, step.seconds)
+            return
+        if step.kind == "wait":
+            receiver = self._receivers[step.device]
+            assert step.name is not None
+            name: str = step.name
+            if not self._pump(
+                lambda: receiver.seen(name, step.match, since), step.seconds
+            ):
+                expected = f" with {dict(step.match)}" if step.match else ""
+                raise HilsStepError(
+                    f"{step.device} sent no {step.name}{expected} within {step.seconds} s"
+                )
+            return
+        channel = self._channels[step.device]
+        try:
+            if step.name is None:
+                channel.send(self._hilspy.Message(data=step.data, id=step.frame_id))
+            else:
+                values = {k: v.resolve(self._signals) for k, v in step.fields.items()}
+                channel.send(step.name, values)
+        except Exception as exc:  # noqa: BLE001 - hilspy.Error, or a missing signal
+            raise HilsStepError(f"{step.describe()} failed: {exc}") from exc
+
+    def _pump(self, done: Callable[[], bool], seconds: float) -> bool:
+        """Wait up to *seconds* for *done*; the simulated clock follows the wall
+        clock meanwhile.  Whether *done* came true."""
+        start = last = time.monotonic()
+        while True:
+            if done():
+                return True
+            now = time.monotonic()
+            if now - start >= seconds:
+                return False
+            time.sleep(min(_STEP_POLL_S, seconds - (now - start)))
+            now = time.monotonic()
+            if self.clock is not None:
+                self.clock.advance(now - last)
+            last = now
+
+    # -- scenarios -----------------------------------------------------------
 
     @property
     def ego(self) -> Optional["carla.Actor"]:
-        """The ego the bridge follows, once found."""
+        """The ego of the scenario running, if any."""
         return self._ego
 
-    def _find_ego(self, snapshot: "carla.WorldSnapshot") -> None:
+    @property
+    def active(self) -> bool:
+        """Whether a scenario runs."""
+        return self._active
+
+    def _begin(self, ego: "carla.Actor", scenario: str) -> None:
+        """Start a scenario for *ego*: periodic messages, sensors, then the
+        ``scenario_start`` steps.
+
+        Raises:
+            HilsStepError: A scenario_start step failed (the scenario is still
+                running, and ends as any other).
+        """
+        assert self._world is not None
+        self._ego = ego
+        self._active = True
+        self._map = self._world.get_map()
+        snapshot = self._world.get_snapshot()
+        state = self._state(snapshot)
+        if state is None:
+            state = EgoState(
+                time=float(snapshot.timestamp.elapsed_seconds),
+                frame=int(snapshot.frame),
+                location=(0.0, 0.0, 0.0),
+                rotation=(0.0, 0.0, 0.0),
+            )
+        self._signals = ego_signals(state)
+        logger.info(
+            "scenario %sstarts: ego %d (%s)",
+            f"{scenario!r} " if scenario else "",
+            ego.id,
+            ego.type_id,
+        )
+        for message_device in self._messages:
+            message_device.start(self._signals)
+        dt = float(snapshot.delta_seconds) or 0.05
+        for sensor_device in self._sensors:
+            try:
+                sensor_device.attach(self._carla, self._world, ego, dt)
+            except Exception:
+                logger.exception(
+                    "%s: failed to attach the sensor", sensor_device.spec.name
+                )
+        self._run_steps("scenario_start", strict=True)
+
+    def _finish(self) -> None:
+        """End the scenario: the ``scenario_end`` steps, then stop the periodic
+        messages and remove the sensors."""
+        self._forwarding = False
+        self._run_steps("scenario_end", strict=False)
+        for message_device in self._messages:
+            message_device.stop()
+        for sensor_device in self._sensors:
+            sensor_device.detach()
+        with self._command_lock:
+            self._command = {}
+        self._ego = None
+        self._active = False
+        logger.info("scenario ended")
+
+    def _on_input(self, spec: DeviceSpec, message: Any) -> None:
+        """A receiving thread's message: merge its command fields, forward them."""
+        values: Dict[str, float] = {}
+        for input_spec in spec.inputs:
+            if input_spec.name == message.name:
+                values.update(input_spec.values(message.fields))
+        if not values:
+            return
+        with self._command_lock:
+            self._command.update(values)
+            command = dict(self._command)
+        if self._forwarding and self._link is not None:
+            self._link.send(
+                {"type": "command", "mode": self.config.command_mode, **command}
+            )
+
+    @property
+    def command(self) -> Dict[str, float]:
+        """The ECUs' latest command fields."""
+        with self._command_lock:
+            return dict(self._command)
+
+    def _handle(self, event: Event) -> None:
+        """A run's request (:class:`~.link.RunnerLink`)."""
+        kind, message = event
+        link = self._link
+        if kind == "connect":
+            self._session = True
+            return
+        if kind == "gone":
+            self._session = False
+            if self._active:
+                logger.warning("the run went away during its scenario")
+                self._finish()
+            return
+        assert link is not None
+        if kind == "end":
+            if self._active:
+                self._finish()
+            link.send({"type": "ended"})
+            return
+        # start
+        if self._active:
+            self._finish()
+        if self._client is not None:
+            # The run may have loaded another map: a new world.
+            self._world = self._client.get_world()
+        assert self._world is not None
+        ego_id = message.get("ego_id")
+        ego = self._world.get_actor(int(ego_id)) if isinstance(ego_id, int) else None
+        if ego is None:
+            link.send({"type": "error", "message": f"no ego with actor id {ego_id}"})
+            return
+        try:
+            self._begin(ego, str(message.get("scenario", "")))
+        except HilsStepError as exc:
+            logger.error("%s", exc)
+            link.send({"type": "error", "message": str(exc)})
+            return
+        link.send({"type": "ready"})
+        self._forwarding = True
+        command = self.command
+        if command:
+            link.send({"type": "command", "mode": self.config.command_mode, **command})
+
+    def _find_ego(self) -> None:
+        """Without a run connected, the ego appearing starts a scenario."""
         now = time.monotonic()
         if now < self._next_scan:
             return
@@ -395,21 +757,10 @@ class HilsBridge:
         ego = find_actor_in_world(self._world, self.config.role_name)
         if ego is None:
             return
-        self._ego = ego
-        self._map = self._world.get_map()
-        dt = float(snapshot.delta_seconds) or 0.05
-        logger.info("following ego %d (%s)", ego.id, ego.type_id)
-        for device in self._sensors:
-            try:
-                device.attach(self._carla, self._world, ego, dt)
-            except Exception:
-                logger.exception("%s: failed to attach the sensor", device.spec.name)
-
-    def _lose_ego(self) -> None:
-        logger.info("the ego is gone; waiting for the next one")
-        self._ego = None
-        for device in self._sensors:
-            device.detach()
+        try:
+            self._begin(ego, "")
+        except HilsStepError as exc:
+            logger.error("%s", exc)
 
     def _state(self, snapshot: "carla.WorldSnapshot") -> Optional[EgoState]:
         assert self._ego is not None and self._map is not None
@@ -446,31 +797,51 @@ class HilsBridge:
 
     # -- the loop ------------------------------------------------------------
 
-    def step(self) -> bool:
-        """Wait for the next tick and serve it; ``False`` when none came in time."""
+    def handle_events(self) -> None:
+        """Serve the runs' requests that arrived."""
+        while True:
+            try:
+                event = self._events.get_nowait()
+            except queue.Empty:
+                return
+            try:
+                self._handle(event)
+            except Exception:
+                logger.exception("failed to serve a run's %s", event[0])
+
+    def step(self, timeout: Optional[float] = None) -> bool:
+        """Wait up to *timeout* s (the configuration's when ``None``) for the next
+        tick and serve it; ``False`` when none came."""
         assert self._world is not None
         try:
-            snapshot = self._world.wait_for_tick(self.config.timeout)
+            snapshot = self._world.wait_for_tick(
+                self.config.timeout if timeout is None else timeout
+            )
         except RuntimeError as exc:
-            # No tick in time: the runner is between runs, or loaded another
-            # map (a new episode, whose world object is a new one).
-            logger.debug("no tick: %s", exc)
-            if self._client is not None:
-                self._world = self._client.get_world()
-            if self._ego is not None and not self._ego.is_alive:
-                self._lose_ego()
+            if time.monotonic() - self._last_tick >= self.config.timeout:
+                # Quiet for long: the runner is between runs, or loaded another
+                # map (a new episode, whose world object is a new one).
+                logger.debug("no tick: %s", exc)
+                self._last_tick = time.monotonic()
+                if self._client is not None:
+                    self._world = self._client.get_world()
+                if self._ego is not None and not self._ego.is_alive:
+                    logger.info("the ego is gone")
+                    self._finish()
             return False
-        if self._ego is None:
-            self._find_ego(snapshot)
-        if self._ego is not None:
+        self._last_tick = time.monotonic()
+        if not self._active and not self._session:
+            self._find_ego()
+        if self._active and self._ego is not None:
             state = self._state(snapshot)
             if state is None:
-                self._lose_ego()
+                logger.info("the ego is gone")
+                self._finish()
             else:
-                signals = ego_signals(state)
+                self._signals = ego_signals(state)
                 for message_device in self._messages:
                     try:
-                        message_device.update(signals)
+                        message_device.update(self._signals)
                     except Exception:
                         logger.exception(
                             "%s: failed to update", message_device.spec.name
@@ -493,10 +864,15 @@ class HilsBridge:
             self.clock.advance(dt)
 
     def run(self) -> None:
-        """Connect, open the devices and serve ticks until :meth:`stop`.
+        """Start up, connect, and serve runs and ticks until :meth:`stop`.
 
-        A CARLA server that is not up yet is waited for.
+        A CARLA server that is not up yet is waited for (the startup steps
+        have run by then).
+
+        Raises:
+            HilsStepError: A startup step failed.
         """
+        self.startup()
         attempts = 0
         while self._world is None and not self._stop.is_set():
             try:
@@ -512,36 +888,11 @@ class HilsBridge:
                 )
                 attempts += 1
                 self._stop.wait(_CONNECT_RETRY_S)
-        if self._stop.is_set():
-            return
-        if not self._messages and not self._sensors:
-            self.open_devices()
-        logger.info("waiting for ego %r", self.config.role_name)
-        waited_since = time.monotonic()
+        logger.info("ready: waiting for scenarios (ego %r)", self.config.role_name)
         while not self._stop.is_set():
-            self.step()
-            if self._ego is not None:
-                waited_since = time.monotonic()
-            elif time.monotonic() - waited_since > self.config.ego_wait > 0.0:
-                logger.warning(
-                    "no ego %r for %.0f s; still waiting",
-                    self.config.role_name,
-                    self.config.ego_wait,
-                )
-                waited_since = time.monotonic()
+            self.handle_events()
+            self.step(_TICK_POLL_S)
 
     def stop(self) -> None:
         """Have :meth:`run` return after the tick it is serving."""
         self._stop.set()
-
-    def close(self) -> None:
-        """Destroy the sensors and close every channel."""
-        for message_device in self._messages:
-            message_device.close()
-            message_device.channel.close()
-        for sensor_device in self._sensors:
-            sensor_device.close()
-            sensor_device.channel.close()
-        self._messages.clear()
-        self._sensors.clear()
-        self._ego = None
