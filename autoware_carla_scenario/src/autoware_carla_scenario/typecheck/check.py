@@ -179,13 +179,7 @@ _STDLIB_EXTENSIONS = "_stdlib"
 #: Why a module Codon has no model for is refused, and what to write instead
 #: (#378): appended to the refusal at the import line.
 _UNMODELLED_HINTS = {
-    "contextlib": "write a class with __enter__ and __exit__(self, exc_type, "
-    "exc, tb) for contextmanager (the check calls __exit__ with no arguments, "
-    "so those parameters are None in it), and try/except X: pass for suppress",
     "warnings": "log with logger.warning(...) instead of warnings.warn(...)",
-    "json": "the check has no dict[str, Any] to load or dump: read the "
-    "configuration into a @dataclass, and leave serialisation to a module the "
-    "check does not compile",
     "types": "name the type itself (SimpleNamespace is a @dataclass or a plain "
     "class; MappingProxyType is a dict; annotate the tb of __exit__ as object)",
     "textwrap": "build the string with str methods and join()",
@@ -909,6 +903,19 @@ _VARIADIC_LIMITS = (
         "the check adds only some names to Codon's functools, itertools, "
         'collections, math and random: docs/typecheck.md ("standard library '
         'names") lists them',
+    ),
+    (
+        re.compile(r"cannot import name '\w+' from 'contextlib'"),
+        "the check models only suppress of contextlib: write a class with "
+        "__enter__ and __exit__(self, exc_type, exc, tb) for contextmanager "
+        "(the check calls __exit__ with no arguments, so those parameters are "
+        "None in it)",
+    ),
+    (
+        re.compile(r"cannot import name '\w+' from 'json'"),
+        "the check models only dumps, dump, loads, load and JSONDecodeError of "
+        'json: docs/typecheck.md ("standard library names") lists what they '
+        "take and return",
     ),
     (
         re.compile(r"cannot import name '\w+' from 'typing'"),

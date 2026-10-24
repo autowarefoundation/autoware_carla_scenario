@@ -1,0 +1,97 @@
+# The part of Python's json the checked framework names, for the checker
+# (docs/typecheck.md). Nothing here runs: the check only compiles a call.
+#
+# Writing is generic: dumps(obj) and dump(obj, fp) take a value of any one
+# type (a dict of one value type, a list, a str, a float, ...), and CPython's
+# keyword options are accepted and not checked. A document of mixed value
+# types (a dict literal with a float and a str) has no type in Codon and is
+# refused at the argument, as for any dict.
+#
+# Reading cannot be checked, because what a document holds is known only when
+# it is read: loads(s) and load(fp) return a JSONValue, which stands for any
+# part of one. A module is checked against the members of JSONValue only
+# (indexing by str or int, get(), items(), keys(), values(), iteration, len(),
+# `in`, str(), int(), float() and bool()); what the document holds is not
+# checked, and every member returns a JSONValue again. CPython's conversions
+# raise (ValueError, TypeError) for a value of the wrong kind, which the
+# check cannot see either.
+
+from typing import IO
+
+
+class JSONDecodeError(Static[ValueError]):
+    msg: str
+    doc: str
+    pos: int
+
+    def __init__(self, msg: str, doc: str, pos: int):
+        super().__init__(msg)
+        self.msg = msg
+        self.doc = doc
+        self.pos = pos
+
+
+class JSONValue:
+    """Any part of a document read by loads() or load()."""
+
+    def __init__(self):
+        pass
+
+    def __getitem__(self, key: str) -> JSONValue:
+        return JSONValue()
+
+    def __getitem__(self, index: int) -> JSONValue:
+        return JSONValue()
+
+    def get(self, key: str, default: Optional[JSONValue] = None) -> JSONValue:
+        return JSONValue()
+
+    def items(self) -> Generator[Tuple[str, JSONValue]]:
+        if False:
+            yield ("", self)
+
+    def keys(self) -> Generator[str]:
+        if False:
+            yield ""
+
+    def values(self) -> Generator[JSONValue]:
+        if False:
+            yield self
+
+    def __iter__(self) -> Generator[JSONValue]:
+        if False:
+            yield self
+
+    def __len__(self) -> int:
+        return 0
+
+    def __contains__(self, key: str) -> bool:
+        return False
+
+    def __str__(self) -> str:
+        return ""
+
+    def __int__(self) -> int:
+        return 0
+
+    def __float__(self) -> float:
+        return 0.0
+
+    def __bool__(self) -> bool:
+        return False
+
+
+def dumps(obj, **kwargs) -> str:
+    return ""
+
+
+def dump(obj, fp: IO[str], **kwargs) -> None:
+    pass
+
+
+def loads(s: str, **kwargs) -> JSONValue:
+    return JSONValue()
+
+
+def load(fp: IO[str], **kwargs) -> JSONValue:
+    return JSONValue()

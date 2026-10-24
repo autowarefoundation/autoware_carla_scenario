@@ -2300,9 +2300,9 @@ class Shape(ABC):
     def area(self) -> float: ...
 
     def summary(self) -> dict[str, Any]:
-        import json  # noqa: PLC0415
+        import textwrap  # noqa: PLC0415
 
-        return json.loads(json.dumps({"area": self.area(), "kind": "shape"}))
+        return {"area": self.area(), "kind": textwrap.dedent("shape")}
 
 
 class Square(Shape):
@@ -2324,12 +2324,12 @@ def total(shape: Shape) -> float:
 def test_abc_and_an_uncalled_method_compile(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # Without the entry, summary() is called: json is reported.
+    # Without the entry, summary() is called: textwrap is reported.
     result = _check_case(_ABSTRACT, tmp_path, monkeypatch)
     assert not result.ok
-    assert "json has no Codon model" in result.diagnostics[0].message
+    assert "textwrap has no Codon model" in result.diagnostics[0].message
     # With it, neither its import nor its mixed dict reaches Codon.
-    monkeypatch.setitem(check.UNCALLED, f"{_FAKE}.Shape.summary", "uses json")
+    monkeypatch.setitem(check.UNCALLED, f"{_FAKE}.Shape.summary", "uses textwrap")
     result = _check_case(_ABSTRACT, tmp_path, monkeypatch)
     assert result.ok, result.format()
 
@@ -2351,9 +2351,9 @@ def wait(steps: int) -> None:
         for _ in range(steps):
             time.sleep(0.1)
     else:
-        import json  # noqa: PLC0415
+        import textwrap  # noqa: PLC0415
 
-        for _ in tqdm(range(steps), desc=json.dumps("wait")):
+        for _ in tqdm(range(steps), desc=textwrap.dedent("wait")):
             time.sleep(0.1)
 """
 
@@ -2393,9 +2393,9 @@ if not TYPE_CHECKING:
 
 def wait(steps: int) -> None:
     if not TYPE_CHECKING:
-        import json  # noqa: PLC0415
+        import textwrap  # noqa: PLC0415
 
-        for _ in tqdm(range(steps), desc=json.dumps("wait")):
+        for _ in tqdm(range(steps), desc=textwrap.dedent("wait")):
             time.sleep(0.1)
     else:
         for _ in range(steps):
@@ -2412,7 +2412,7 @@ def test_the_body_of_not_type_checking_is_run_time_only() -> None:
         for node in check._run_time_only_nodes(tree)
         if isinstance(node, (ast.Import, ast.ImportFrom))
     }
-    assert skipped == {"tqdm", "json"}
+    assert skipped == {"tqdm", "textwrap"}
     compiled = {
         id(node)
         for node in ast.walk(tree)
@@ -3597,6 +3597,98 @@ def test_the_shlex_sys_signal_and_file_shims_refuse_what_cpython_refuses(
 
 
 # ---------------------------------------------------------------------------
+# The json and contextlib shims, Path.stat() and Path.replace() (#557)
+# ---------------------------------------------------------------------------
+
+
+_JSON = """
+from __future__ import annotations
+
+import contextlib
+import json
+from pathlib import Path
+
+
+def entry(value: float, names: dict[str, str]) -> str:
+    return '{"z_offset": ' + json.dumps(value) + ", " + json.dumps(names)[1:]
+
+
+def read(path: Path) -> float:
+    document = json.loads(path.read_text(encoding="utf-8"))
+    for key, item in document.items():
+        print(key, str(item))
+    return float(document["z_offset"]) + float(document.get("x")) + len(document)
+
+
+def store(path: Path, other: Path) -> int:
+    path.write_text(entry(1.5, {"a": "b"}), encoding="utf-8")
+    with path.open("r") as stream:
+        document = json.load(stream)
+    with other.open("w") as stream:
+        json.dump([1, 2], stream, indent=2)
+    stat = path.stat()
+    path.replace(other)
+    with contextlib.suppress(OSError, ValueError):
+        other.unlink(missing_ok=True)
+    try:
+        json.loads("{")
+    except json.JSONDecodeError as error:
+        return error.pos
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    return stat.st_size + stat.st_mtime_ns + stat.st_dev + stat.st_ino + int(stat.st_mtime) + int(document)
+
+
+def used() -> float:
+    return read(Path("x")) + store(Path("x"), Path("y"))
+"""
+
+
+@needs_codon
+def test_the_json_contextlib_and_path_stat_shims_take_what_cpython_takes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for shim in ("json.codon", "contextlib.codon"):
+        assert (model_dir() / shim).is_file(), shim
+    result = _check_case(_JSON, tmp_path, monkeypatch)
+    assert result.ok, result.format()
+
+
+@needs_codon
+@pytest.mark.parametrize(
+    ("right", "wrong"),
+    [
+        # dumps() takes any one type, but the caller's own parameter is typed.
+        ('entry(1.5, {"a": "b"})', 'entry(1.5, {"a": 1})'),
+        ('document["z_offset"]', "document[1.5]"),
+        ('document.get("x")', "document.get(1)"),
+        ('json.loads(path.read_text(encoding="utf-8"))', "json.loads(1)"),
+        ("stat.st_size +", "stat.st_name +"),
+        ("path.replace(other)", "path.replace()"),
+        ("json.JSONDecodeError as error", "json.JSONEncoder as error"),
+    ],
+    ids=[
+        "dumps-mixed-dict",
+        "value-index-float",
+        "value-get-int",
+        "loads-non-str",
+        "stat-unknown-field",
+        "replace-target",
+        "json-unknown-name",
+    ],
+)
+def test_the_json_contextlib_and_path_stat_shims_refuse_what_cpython_refuses(
+    right: str,
+    wrong: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assert right in _JSON, right
+    result = _check_case(_JSON.replace(right, wrong, 1), tmp_path, monkeypatch)
+    assert not result.ok
+
+
+# ---------------------------------------------------------------------------
 # What autoware_stack.docker reads: the ids, a link, a file's text and bytes,
 # a recursive glob, the path queries and a Popen's output by line (#128)
 # ---------------------------------------------------------------------------
@@ -3762,5 +3854,5 @@ def test_shim_list() -> None:
         "mkstemp"
     ]
     # The standard modules the docs call missing are not shimmed.
-    unavailable = {"json", "inspect", "concurrent.futures"}
+    unavailable = {"inspect", "concurrent.futures"}
     assert not unavailable & listed

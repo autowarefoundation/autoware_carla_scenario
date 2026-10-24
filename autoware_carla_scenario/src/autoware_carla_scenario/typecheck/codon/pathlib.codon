@@ -60,6 +60,24 @@ class _PathParents:
         return path in self._paths
 
 
+class _StatResult:
+    """What Path.stat() returns (CPython's os.stat_result): the fields the
+    framework reads. Nothing is read from a file: all are zero."""
+
+    st_dev: int
+    st_ino: int
+    st_size: int
+    st_mtime_ns: int
+    st_mtime: float
+
+    def __init__(self):
+        self.st_dev = 0
+        self.st_ino = 0
+        self.st_size = 0
+        self.st_mtime_ns = 0
+        self.st_mtime = 0.0
+
+
 class Path:
     _path: str
 
@@ -273,3 +291,14 @@ class Path:
     # an os.PathLike.
     def symlink_to(self, target, target_is_directory: bool = False) -> None:
         _part(target)
+
+    # stat(): with no argument (the keyword-only `follow_symlinks` is not
+    # declared). The result carries st_dev, st_ino, st_size, st_mtime_ns and
+    # st_mtime only, all zero.
+    def stat(self) -> _StatResult:
+        return _StatResult()
+
+    # replace(target): rename onto target, a str or an os.PathLike; returns
+    # the new Path (3.8+). Nothing is renamed.
+    def replace(self, target) -> Path:
+        return Path(target)

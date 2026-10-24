@@ -2134,10 +2134,29 @@ def test_an_undeclared_attribute_is_refused_before_compiling(tmp_path: Path) -> 
     assert error.line == _line_of(path, "self._count = 3")
 
 
-def test_a_module_without_a_codon_model_is_named(tmp_path: Path) -> None:
-    scenario, config, path = _write_case(tmp_path, "import json\njson.dumps({})\n")
+def test_a_json_document_is_held_to_the_members_of_jsonvalue(tmp_path: Path) -> None:
+    # What loads() returns has no type the check knows: it is converted
+    # explicitly, and handing it on as a float or a str is refused.
+    scenario, config, _ = _write_case(
+        tmp_path,
+        'import json\ncfg = json.loads("{}")\nspeed = float(cfg["v"])\n'
+        'name = str(cfg["n"])\n',
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+    scenario, config, _ = _write_case(
+        tmp_path, 'import json\ncfg = json.loads("{}")\nspeed: float = cfg["v"]\n'
+    )
     error = _only_error(typecheck_scenario(scenario, config))
-    assert "json has no Codon model" in error.message
+    assert "'float' does not match expected type 'JSONValue'" in error.message
+
+
+def test_a_module_without_a_codon_model_is_named(tmp_path: Path) -> None:
+    scenario, config, path = _write_case(
+        tmp_path, 'import textwrap\ntextwrap.dedent("")\n'
+    )
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "textwrap has no Codon model" in error.message
     assert error.path == str(path)
 
 
@@ -6282,11 +6301,11 @@ _STDLIB_REFUSALS: dict[str, tuple[str, str, str, str]] = {
         "cannot import name 'ulp' from 'math'",
         "docs/typecheck.md",
     ),
-    "contextlib": (
-        "from contextlib import suppress\n",
+    "contextlib.contextmanager": (
+        "from contextlib import contextmanager\n",
         "",
-        "contextlib has no Codon model",
-        "try/except X: pass for suppress",
+        "cannot import name 'contextmanager' from 'contextlib'",
+        "write a class with __enter__ and __exit__",
     ),
     "warnings": (
         "import warnings\n",
@@ -6294,11 +6313,11 @@ _STDLIB_REFUSALS: dict[str, tuple[str, str, str, str]] = {
         "warnings has no Codon model",
         "logger.warning",
     ),
-    "json": (
-        "import json\n",
+    "json.JSONEncoder": (
+        "from json import JSONEncoder\n",
         "",
-        "json has no Codon model",
-        "@dataclass",
+        "cannot import name 'JSONEncoder' from 'json'",
+        "dumps, dump, loads, load and JSONDecodeError",
     ),
     "types": ("import types\n", "", "types has no Codon model", "@dataclass"),
     "textwrap": ("import textwrap\n", "", "textwrap has no Codon model", "join()"),
