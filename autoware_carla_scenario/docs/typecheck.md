@@ -1784,8 +1784,8 @@ To check one more module:
 
 ### What is checked of the framework
 
-Every module now has an entry other than `"not yet checked (#45)"`. 200 of
-the package's 294 modules (68%; about 47,500 of 84,500 lines) are `CHECKED`:
+Every module now has an entry other than `"not yet checked (#45)"`. 201 of
+the package's 294 modules (68%; about 48,000 of 84,500 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the conversions between
 Lanelet2, OpenDRIVE and CARLA world poses (`coordinate.transform`), the stop
 lines read off a Lanelet2 map (`utils.stop_line`, `coordinate.stop_line`)
@@ -1820,7 +1820,8 @@ a subprocess on a thread (`ui.runner`, over a model of the pydantic
 the traffic backend interface and its run context with the TrafficManager
 backend and the SUMO backend's options, the map source URIs and what
 resolves them to files on disk (`maps.resolver`, with the repository listing
-of `maps.catalogue`, the `map` config's paths of `maps.config` and the
+of `maps.catalogue`, the `map` config's paths of `maps.config`, the clone
+cache of map repositories, `maps.cache`, and the
 OpenDRIVE taken from CARLA by `maps.opendrive`), what an exported scenario
 package pins the framework to and how it runs `uv` (`authoring.framework_pin`,
 `authoring.uv_tool`), the CARLA server manager (`server`), the markers an ego
@@ -1879,12 +1880,12 @@ a `TrajectoryVertex` call's arguments, each of any type (`Any`), walks or
 binds a sweeper constraint of any kind, builds a condition's status (its
 details), or takes the list a plain tick callback goes into
 (`BaseScenario._register_tick()`, a `List[Callable[[carla.World], None]]`,
-which the check has no value of). The 94 `EXCLUDED` modules fall in
-three groups. Many fit more than one (about 72 import what Codon cannot
+which the check has no value of). The 93 `EXCLUDED` modules fall in
+three groups. Many fit more than one (about 71 import what Codon cannot
 compile, 29 build on an excluded module and 19 hold values Codon has no type
 for), so each is counted once, in the first group that fits it:
 
-- **72 import what Codon cannot compile**: pyxodr,
+- **71 import what Codon cannot compile**: pyxodr,
   pydantic, pickle, lxml, grpc, omegaconf and hydra, yaml, openodd (a Rust extension),
   cyclonedds (`ros2.cyclone` and `ros2.messages`, the ROS 2 ego's DDS
   transport and its message types), or
@@ -2451,11 +2452,11 @@ What Codon 0.19 needs that Python does not, beyond
   <!-- shims:end -->
 
   `tempfile` declares `mkstemp(suffix=None, prefix=None, dir=None,
-  text=False)` only, with CPython 3.10's signature (a `str` or an
+  text=False)` and `mkdtemp(suffix=None, prefix=None, dir=None)` only, with CPython 3.10's signature (a `str` or an
   `os.PathLike` directory; bytes affixes are not declared). The check only
   compiles it, so its body is a stub that makes no file (it is typed to give
-  `(int, str)`, the descriptor and the name). `mkdtemp()`,
-  `NamedTemporaryFile()`, `TemporaryDirectory()`, `gettempdir()` and the
+  `(int, str)`, the descriptor and the name; `mkdtemp()` gives the `str`
+  name). `NamedTemporaryFile()`, `TemporaryDirectory()`, `gettempdir()` and the
   rest are not declared and fail the check. Two more modules are not
   shims but extensions of Codon's own `collections` and `itertools`, in
   `codon/_stdlib/` (#422): they add
@@ -3411,8 +3412,9 @@ What Codon 0.19 needs that Python does not, beyond
   in a model module of their own (`_vehicle_entity.codon`), which
   `REPLACED_MODELS` replaces with `entity._spawn` and
   `entity.vehicle_entity`: the model's `EgoConfig` then holds the checked
-  `SpawnLocation`. The model of `maps.cache` (`maps/cache.codon`,
-  subprocess and json) takes and returns a `MapSource` from a model module
+  `SpawnLocation`. `maps.cache` is itself checked, and the library check compiles its source; its
+  model (`maps/cache.codon`) stays for the scenario check, which imports models
+  and not sources, and takes and returns a `MapSource` from a model module
   of its own (`_map_source.codon`), which `REPLACED_MODELS` replaces with the
   checked `maps.source`, so the checked `maps.resolver` hands the model's
   `GitMapCache` its own `MapSource`. Likewise `GroundProjectionConfig` (`_ground_projection.codon`,

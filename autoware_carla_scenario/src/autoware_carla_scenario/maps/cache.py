@@ -38,9 +38,9 @@ import shutil
 import subprocess
 import tempfile
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, Optional, Sequence
+from typing import Optional, Sequence
 
 from .source import MapSource
 
@@ -137,6 +137,22 @@ def map_root() -> Path:
 
 
 @dataclass(frozen=True)
+class _EntryMeta:
+    """What an entry's ``meta.json`` records; ``None`` where it holds no value.
+
+    The file is a JSON object of these five keys, which is all this module ever
+    wrote to it: ``repo_url``, ``ref`` and ``commit`` strings, ``fetched_at`` a
+    Unix time, and ``materialised`` the checked-out directory or ``null``.
+    """
+
+    repo_url: Optional[str] = None
+    ref: Optional[str] = None
+    commit: Optional[str] = None
+    fetched_at: Optional[float] = None
+    materialised: Optional[str] = None
+
+
+@dataclass(frozen=True)
 class CachedRepo:
     """One cloned repository in the cache.
 
@@ -159,6 +175,8 @@ class CachedRepo:
 
 class GitMapCache:
     """Clones map repositories into a local directory, and reuses them."""
+
+    root: Path
 
     def __init__(self, root: Optional[Path] = None) -> None:
         """Store maps under *root*, defaulting to :func:`map_root`."""
@@ -197,7 +215,7 @@ class GitMapCache:
             directory = directory.parent
         if not directory.is_dir():
             return None
-        return directory if any(directory.glob("*.osm")) else None
+        return directory if any(True for _ in directory.glob("*.osm")) else None
 
     def tip_file(self, source: MapSource) -> Path:
         """Return where *source*'s ref-to-commit note is kept."""
@@ -257,14 +275,13 @@ class GitMapCache:
         path = self.tip_file(source)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(
-            json.dumps(
-                {
-                    "repo_url": source.repo_url,
-                    "ref": source.ref,
-                    "commit": commit,
-                    "resolved_at": time.time(),
-                },
-                indent=2,
+            _json_object(
+                [
+                    ("repo_url", json.dumps(source.repo_url)),
+                    ("ref", json.dumps(source.ref)),
+                    ("commit", json.dumps(commit)),
+                    ("resolved_at", json.dumps(time.time())),
+                ]
             ),
             encoding="utf-8",
         )
@@ -279,10 +296,9 @@ class GitMapCache:
             return ""
         try:
             raw = self.tip_file(source).read_text(encoding="utf-8")
-            data = json.loads(raw)
-        except (OSError, json.JSONDecodeError):
+        except OSError:
             return ""
-        commit = str(data.get("commit", "")) if isinstance(data, dict) else ""
+        commit = _json_field(raw, "commit") or ""
         return commit if source.at(commit).pinned else ""
 
     # -- reading --------------------------------------------------------
@@ -298,12 +314,8 @@ class GitMapCache:
             source=source,
             root=entry,
             worktree=worktree,
-            commit=str(meta.get("commit", "")),
-            materialised=(
-                str(meta["materialised"])
-                if meta.get("materialised") is not None
-                else None
-            ),
+            commit=meta.commit or "",
+            materialised=meta.materialised,
         )
 
     def list_files(self, source: MapSource, *, refresh: bool = False) -> list[str]:
@@ -313,7 +325,7 @@ class GitMapCache:
         repository without materialising any of it -- which is what makes
         browsing a repository cost one clone of its commit and tree objects.
         """
-        repo = self.checkout(source, include=(), materialise=False, refresh=refresh)
+        repo = self.checkout(source, materialise=False, refresh=refresh)
         out = self._git(
             repo.worktree, "ls-tree", "-r", "--name-only", "HEAD", capture=True
         )
@@ -325,7 +337,7 @@ class GitMapCache:
         self,
         source: MapSource,
         *,
-        include: Sequence[str] = (),
+        include: Optional[Sequence[str]] = None,
         materialise: bool = True,
         refresh: bool = False,
     ) -> CachedRepo:
@@ -335,6 +347,7 @@ class GitMapCache:
             source: The repository and ref to have locally.
             include: Gitignore-style patterns, relative to the repository root,
                 whose LFS content is needed.  Everything else stays a pointer.
+                ``None`` (the default) and an empty sequence both mean none.
             materialise: Check the files out.  Left off, only the commit and
                 tree objects are needed, which is enough to list what it holds.
             refresh: Fetch the ref again even when the cache already has it.
@@ -439,7 +452,7 @@ class GitMapCache:
         logger.info("Refreshed %s@%s to %s", source.repo_url, ref, commit[:10])
 
     def _materialise(
-        self, cached: CachedRepo, *, include: Sequence[str], refresh: bool
+        self, cached: CachedRepo, *, include: Optional[Sequence[str]], refresh: bool
     ) -> None:
         """Check out *source*'s directory and pull the LFS content asked for.
 
@@ -451,7 +464,9 @@ class GitMapCache:
         """
         source = cached.source
         worktree = cached.worktree
-        wanted = [pattern for pattern in include if pattern]
+        wanted: list[str] = []
+        if include is not None:
+            wanted = [pattern for pattern in include if pattern]
 
         if not refresh and cached.materialised == source.path:
             if not wanted or self._content_present(worktree, wanted):
@@ -463,7 +478,9 @@ class GitMapCache:
 
         if wanted and (refresh or not self._content_present(worktree, wanted)):
             self._git(worktree, "lfs", "pull", f"--include={','.join(wanted)}")
-        self._record(cached.root, materialised=source.path)
+        self._write_entry_meta(
+            cached.root, replace(self._read_meta(cached.root), materialised=source.path)
+        )
 
     @staticmethod
     def _content_present(worktree: Path, wanted: Sequence[str]) -> bool:
@@ -512,36 +529,97 @@ class GitMapCache:
     # -- metadata -------------------------------------------------------
 
     @staticmethod
-    def _read_meta(entry: Path) -> dict[str, Any]:
-        """Return the entry's recorded metadata, or an empty mapping."""
+    def _read_meta(entry: Path) -> _EntryMeta:
+        """Return the entry's recorded metadata, empty where there is none."""
         try:
             raw = (entry / "meta.json").read_text(encoding="utf-8")
         except OSError:
-            return {}
-        try:
-            loaded = json.loads(raw)
-        except json.JSONDecodeError:
-            return {}
-        return loaded if isinstance(loaded, dict) else {}
+            return _EntryMeta()
+        return _EntryMeta(
+            repo_url=_json_field(raw, "repo_url"),
+            ref=_json_field(raw, "ref"),
+            commit=_json_field(raw, "commit"),
+            fetched_at=_json_number(raw, "fetched_at"),
+            materialised=_json_field(raw, "materialised"),
+        )
 
     @classmethod
     def _write_meta(cls, entry: Path, source: MapSource, commit: str) -> None:
         """Record what the entry holds, so a cache hit can describe itself."""
-        cls._record(
+        cls._write_entry_meta(
             entry,
-            repo_url=source.repo_url,
-            ref=source.ref,
-            commit=commit,
-            fetched_at=time.time(),
-            materialised=None,
+            _EntryMeta(
+                repo_url=source.repo_url,
+                ref=source.ref,
+                commit=commit,
+                fetched_at=time.time(),
+                materialised=None,
+            ),
         )
 
-    @classmethod
-    def _record(cls, entry: Path, **fields: Any) -> None:
-        """Merge *fields* into the entry's metadata."""
-        meta = cls._read_meta(entry)
-        meta.update(fields)
-        (entry / "meta.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
+    @staticmethod
+    def _write_entry_meta(entry: Path, meta: _EntryMeta) -> None:
+        """Write *meta* as the entry's ``meta.json``.
+
+        A field that was never recorded is left out, as it was when the file
+        was a dict that only held the keys it had been given;
+        ``materialised`` is always written, ``null`` when nothing is checked out.
+        """
+        fields: list[tuple[str, str]] = []
+        if meta.repo_url is not None:
+            fields.append(("repo_url", json.dumps(meta.repo_url)))
+        if meta.ref is not None:
+            fields.append(("ref", json.dumps(meta.ref)))
+        if meta.commit is not None:
+            fields.append(("commit", json.dumps(meta.commit)))
+        if meta.fetched_at is not None:
+            fields.append(("fetched_at", json.dumps(meta.fetched_at)))
+        fields.append(
+            (
+                "materialised",
+                "null" if meta.materialised is None else json.dumps(meta.materialised),
+            )
+        )
+        (entry / "meta.json").write_text(_json_object(fields), encoding="utf-8")
+
+
+def _json_field(raw: str, key: str) -> Optional[str]:
+    """Return ``str(value)`` of *key* in the JSON object *raw*, else ``None``.
+
+    ``None`` for text that is not JSON, JSON that is not an object, a missing
+    key and a ``null`` value alike: a file this module did not write reads as
+    one that records nothing.
+    """
+    try:
+        document = json.loads(raw)
+        if key in document and document[key] is not None:
+            return str(document[key])
+    except (TypeError, ValueError):
+        pass
+    return None
+
+
+def _json_number(raw: str, key: str) -> Optional[float]:
+    """Return the number at *key* in the JSON object *raw*, else ``None``."""
+    try:
+        document = json.loads(raw)
+        if key in document and document[key] is not None:
+            return float(document[key])
+    except (TypeError, ValueError):
+        pass
+    return None
+
+
+def _json_object(fields: list[tuple[str, str]]) -> str:
+    """Return a JSON object of the *fields* (key, JSON text of the value).
+
+    Laid out as ``json.dumps(..., indent=2)`` lays out a flat object, which is
+    how both files of this module were written when they were dicts.
+    """
+    if not fields:
+        return "{}"
+    body = ",\n".join(f"  {json.dumps(key)}: {value}" for key, value in fields)
+    return "{\n" + body + "\n}"
 
 
 #: The first bytes of a git-lfs pointer file, which is what a checkout made with
