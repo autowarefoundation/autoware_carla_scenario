@@ -45,8 +45,10 @@ __all__ = ["BLOCK_WAIT_S", "HOLD_MARGIN_M", "PaceMark", "RoutePacer"]
 #: How long (s) the measured entity of a ``route_progress`` hold has to stand
 #: still, the held entity in its way ahead, before the hold is let go.
 BLOCK_WAIT_S: float = 3.0
-#: How far (m) from the route's line the held entity counts as in its lane.
-_IN_LANE_M: float = 2.0
+#: How far (m) from the route's line the held entity counts as in the
+#: measured entity's way: its lane and the next, so a walker held on a
+#: crossing of its road, or a car in the lane beside it, counts.
+_IN_LANE_M: float = 4.0
 #: How far (m) ahead of the measured entity, along the route, it counts as in
 #: its way.
 _BLOCK_RANGE_M: float = 30.0
