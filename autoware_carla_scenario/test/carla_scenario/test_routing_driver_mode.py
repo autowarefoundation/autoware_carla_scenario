@@ -922,3 +922,74 @@ def test_an_entity_whose_spot_stays_taken_appears_further_along(
     action._elapsed = 20.0 + routing_module.APPEAR_GIVE_UP_S
     assert clear(action, None, path, None)  # type: ignore[arg-type]
     assert action._initial_distance_offset == 0.0
+
+
+def test_a_walker_the_crowd_took_for_run_over_goes_on_as_a_new_one(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """CARLA's crowd kills a walker a vehicle merely came near (and removes
+    it ten seconds on): a new walker of the same role takes its place and
+    walks on."""
+    import typesafe_carla.carla as tcarla
+
+    from autoware_carla_scenario.entity import (
+        PedestrianEntity,
+        PedestrianEntityConfig,
+        SpawnTransform,
+    )
+    from autoware_carla_scenario.entity import pedestrian_entity as pe
+
+    spawned: list[Any] = []
+
+    class _Blueprint:
+        def __init__(self) -> None:
+            self.attributes: dict[str, str] = {}
+
+        def set_attribute(self, key: str, value: str) -> None:
+            self.attributes[key] = value
+
+        def has_attribute(self, key: str) -> bool:
+            return True
+
+    class _Walker:
+        def __init__(self, walker_id: int) -> None:
+            self.id = walker_id
+            self.destroyed = False
+
+        def get_world(self) -> Any:
+            return world
+
+        def get_transform(self) -> Any:
+            return tcarla.Transform(tcarla.Location(3.0, 4.0, 1.0), tcarla.Rotation())
+
+        def destroy(self) -> None:
+            self.destroyed = True
+
+        def apply_control(self, control: Any) -> None:
+            pass
+
+    def try_spawn_actor(blueprint: Any, transform: Any) -> Any:
+        new = _Walker(80 + len(spawned))
+        spawned.append((blueprint.attributes["role_name"], transform.location.x, new))
+        return new
+
+    world = SimpleNamespace(
+        get_blueprint_library=lambda: SimpleNamespace(find=lambda name: _Blueprint()),
+        try_spawn_actor=try_spawn_actor,
+    )
+    entity = PedestrianEntity(
+        PedestrianEntityConfig(role_name="w9", spawn_location=SpawnTransform(tcarla.Transform()))
+    )
+    old = _Walker(70)
+    entity._walker = old  # type: ignore[assignment]
+    entity.walk_along(path_of(20.0), 1.2)
+    killed = {70}
+    monkeypatch.setattr(pe, "_killed_by_crowd", lambda walker: int(walker.id) in killed)
+    monkeypatch.setattr(pe, "_walk_by_ai", lambda *args: True)
+    with caplog.at_level(logging.WARNING):
+        entity.walk_on()
+    assert old.destroyed
+    assert [(role, x) for role, x, _ in spawned] == [("w9", 3.0)]
+    assert entity.actor is spawned[0][2]
+    assert entity.walking
+    assert any("goes on in its place" in r.getMessage() for r in caplog.records)

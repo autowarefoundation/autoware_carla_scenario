@@ -78,6 +78,7 @@ __all__ = [
     "TARGET_SPACING_M",
     "drive",
     "give_way",
+    "killed_by_crowd",
     "has_navmesh",
     "release",
     "road_stretches",
@@ -524,6 +525,21 @@ def _kind_at(x: float, y: float) -> str:
         if MapFeatures.is_road(lanelet):
             kind = "road"
     return kind
+
+
+def killed_by_crowd(walker_id: int) -> bool:
+    """Whether CARLA's crowd has taken *walker_id* for run over: a vehicle
+    came within its avoidance radius (``dtCrowd`` marks the agent dead with
+    no contact -- a walker on its controller has its collisions off), and
+    ``WalkerNavigation`` then destroys its controller and starts the walker's
+    death life span, which removes it some ten seconds later."""
+    driven = _DRIVEN.get(int(walker_id))
+    if driven is None or not driven.running:
+        return False
+    try:
+        return not bool(driven.controller.is_alive)
+    except (AttributeError, RuntimeError):
+        return False
 
 
 def release(walker_id: int) -> None:

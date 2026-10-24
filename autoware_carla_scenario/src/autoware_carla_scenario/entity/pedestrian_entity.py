@@ -128,6 +128,17 @@ def _gives_way(
         return False  # a walker with no world to ask (a test double)
 
 
+def _killed_by_crowd(walker: "carla.Actor") -> bool:
+    """Whether CARLA's crowd has taken *walker* for run over
+    (:func:`._walker_ai.killed_by_crowd`)."""
+    from ._walker_ai import killed_by_crowd  # noqa: PLC0415
+
+    try:
+        return killed_by_crowd(int(walker.id))
+    except (AttributeError, RuntimeError):
+        return False
+
+
 def _release_walker_ai(walker: "carla.Actor") -> None:
     """Stop and destroy *walker*'s controller, if it has one."""
     from ._walker_ai import release  # noqa: PLC0415
@@ -446,6 +457,13 @@ class PedestrianEntity(WalkedEntity):
         # Typed locals: Codon unwraps the Optionals here.
         path: "ResolvedTrajectory" = walk
         walker: "carla.Actor" = actor
+        if TYPE_CHECKING:
+            pass  # the walker controller is not compiled (docs/typecheck.md)
+        elif _killed_by_crowd(walker):
+            revived = self._revive(walker)
+            if revived is None:
+                return
+            walker = revived
         location = walker.get_transform().location
         here = path.project(location.x, location.y, near=self._walk_distance)
         self._walk_distance = here
@@ -468,6 +486,58 @@ class PedestrianEntity(WalkedEntity):
             if _gives_way(walker, path, here, location):
                 speed = 0.0
             steer_walker(walker, location, path, here, speed)
+
+    def _revive(self, walker: "carla.Actor") -> "Optional[carla.Actor]":
+        """Put a new walker where *walker* stands, CARLA's crowd having taken
+        it for run over with no contact (it would remove it in ten seconds):
+        the same blueprint and role, so the scenario finds it as before; its
+        walk goes on from there.  ``None`` if CARLA refuses the spot."""
+        world = walker.get_world()
+        transform = walker.get_transform()
+        blueprint = world.get_blueprint_library().find(self._config.walker_type)
+        blueprint.set_attribute("role_name", self._config.role_name)
+        if blueprint.has_attribute("is_invincible"):
+            blueprint.set_attribute("is_invincible", "false")
+        old_id = int(walker.id)
+        if TYPE_CHECKING:
+            pass  # the walker controller is not compiled (docs/typecheck.md)
+        else:
+            _release_walker_ai(walker)
+        walker.destroy()
+        self._walker = None
+        revived: "Optional[carla.Actor]" = None
+        for lift in (0.0,) + _SPAWN_LIFTS_M:
+            spot = carla.Transform(
+                carla.Location(
+                    x=transform.location.x,
+                    y=transform.location.y,
+                    z=transform.location.z + lift,
+                ),
+                transform.rotation,
+            )
+            revived = world.try_spawn_actor(blueprint, spot)
+            if revived is not None:
+                break
+        if revived is None:
+            logger.warning(
+                "pedestrian '%s': CARLA's crowd took walker %d for run over by a "
+                "vehicle that did not touch it, and no new walker could be put "
+                "where it stood",
+                self._config.role_name,
+                old_id,
+            )
+            self._walk = None
+            return None
+        self._walker = revived
+        logger.warning(
+            "pedestrian '%s': CARLA's crowd took walker %d for run over by a "
+            "vehicle that did not touch it (it would remove it); walker %d "
+            "goes on in its place",
+            self._config.role_name,
+            old_id,
+            int(revived.id),
+        )
+        return revived
 
     def release_from_traffic(self, world: "carla.World") -> None:
         """Take this pedestrian back from the traffic backend that walks it,
