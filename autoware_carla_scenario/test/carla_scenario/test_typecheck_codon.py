@@ -7146,8 +7146,8 @@ def test_builtins_codon_lacks_compile(tmp_path: Path) -> None:
         ("r = s.endswith(('a', 2))", "'int' does not match expected type 'str'"),
         ("r = s.startswith(('a', 'b'), 'x')", "'str' does not match expected"),
         ("r = format(s, 5)", "'int' does not match expected type 'str'"),
-        ("r: int = format(5)", "'int' does not match expected type 'str'"),
-        ("r: int = ascii(5)", "'int' does not match expected type 'str'"),
+        ("r: int = format(5)", "r is assigned a str, but is declared int"),
+        ("r: int = ascii(5)", "r is assigned a str, but is declared int"),
     ],
     ids=[
         "startswith-ints",
