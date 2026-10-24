@@ -76,6 +76,7 @@ CHECKED: tuple[str, ...] = (
     "autoware_carla_scenario.actions.traffic_parameters",
     "autoware_carla_scenario.actions.turn",
     "autoware_carla_scenario.actions.turn_indicator",
+    "autoware_carla_scenario.actions._road_threat",
     "autoware_carla_scenario.actions.walk_straight",
     "autoware_carla_scenario.adversity",
     "autoware_carla_scenario.adversity.avoidance",
