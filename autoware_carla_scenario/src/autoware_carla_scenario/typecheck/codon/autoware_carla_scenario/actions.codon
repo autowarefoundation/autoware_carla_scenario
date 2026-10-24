@@ -322,12 +322,16 @@ class RoutingAction(BaseAction):
                  timing: TickTiming = TickTiming("pre_tick"), *_kw, label: str = "routing",
                  once: bool = True, initial_pose: Optional[CarlaWorldPose] = None,
                  ground_projection = None, waypoints = (), walking_speed: float = 1.4,
-                 cross_factor = None, trajectory: Optional[Trajectory] = None,
+                 cross_factor = None, turn_back_ttc_s: Optional[float] = None,
+                 turn_back_distance_m: Optional[float] = None,
+                 turn_back_within_m: float = 1.0,
+                 trajectory: Optional[Trajectory] = None,
                  mode: RoutingMode = RoutingMode("driver"), time_reference = None,
                  initial_distance_offset: float = 0.0, until = None,
                  control_config = None, speed = None, stop_at_end: bool = True):
         _keyword_only(_kw, "RoutingAction(): label, once, initial_pose, ground_projection, "
-                           "waypoints, walking_speed, cross_factor, trajectory, mode, time_reference, "
+                           "waypoints, walking_speed, cross_factor, turn_back_ttc_s, "
+                           "turn_back_distance_m, turn_back_within_m, trajectory, mode, time_reference, "
                            "initial_distance_offset, until, control_config, "
                            "speed and stop_at_end")
         _expect_role(entity_name)

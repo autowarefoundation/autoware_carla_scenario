@@ -101,13 +101,15 @@ def _walk_by_ai(
     speed: float,
     location: "carla.Location",
     cross_factor: Optional[float],
+    turn_back: Optional[tuple[Optional[float], Optional[float], float]] = None,
 ) -> bool:
     """One tick of *walker* on CARLA's walker controller
-    (:mod:`._walker_ai`); ``False`` on a map without a navigation mesh."""
+    (:mod:`._walker_ai`); ``False`` on a map without a navigation mesh, or
+    while it is stepped over a road stretch."""
     from ._walker_ai import drive  # noqa: PLC0415
 
     try:
-        return drive(walker, path, here, speed, location, cross_factor)
+        return drive(walker, path, here, speed, location, cross_factor, turn_back)
     except AttributeError:
         return False  # a walker with no world to ask (a test double)
 
@@ -202,6 +204,7 @@ class PedestrianEntity(WalkedEntity):
     _walk_distance: float
     _walk_speed: float
     _walk_cross: Optional[float]
+    _walk_turn_back: Optional[tuple[Optional[float], Optional[float], float]]
 
     def __init__(self, config: PedestrianEntityConfig) -> None:
         self._config = config
@@ -211,6 +214,7 @@ class PedestrianEntity(WalkedEntity):
         self._walk_distance = 0.0
         self._walk_speed = DEFAULT_WALKING_SPEED_MPS
         self._walk_cross = None
+        self._walk_turn_back = None
 
     def set_traffic_backend(self, backend: TrafficBackend) -> None:
         """Hand this pedestrian's walks to *backend*, the run's traffic backend
@@ -436,6 +440,23 @@ class PedestrianEntity(WalkedEntity):
         self._walk_speed = walking_speed
         self._walk_cross = cross_factor
 
+    def set_turn_back(
+        self,
+        distance_m: Optional[float],
+        ttc_s: Optional[float],
+        within_m: float,
+    ) -> None:
+        """How the walks it is given wait at a kerb and turn back where they
+        are stepped over a road stretch: a vehicle at most *distance_m* along
+        the road or *ttc_s* from it is a threat, and one within *within_m* of
+        the kerb turns it back (the thresholds and the test of
+        :class:`~..actions.walk_straight.WalkStraightAction`); no threshold:
+        neither, but the light at the kerb is still waited for."""
+        if distance_m is None and ttc_s is None:
+            self._walk_turn_back = None
+        else:
+            self._walk_turn_back = (distance_m, ttc_s, within_m)
+
     @property
     def walking(self) -> bool:
         """Whether a walk :meth:`route_to` laid out is still being walked."""
@@ -480,7 +501,9 @@ class PedestrianEntity(WalkedEntity):
             speed = speed_mps
         if TYPE_CHECKING:
             steer_walker(walker, location, path, here, speed)
-        elif not _walk_by_ai(walker, path, here, speed, location, self._walk_cross):
+        elif not _walk_by_ai(
+            walker, path, here, speed, location, self._walk_cross, self._walk_turn_back
+        ):
             # Stepped along the route (over a road stretch, or on a map with
             # no navigation mesh), giving way to a walker in its way.
             if _gives_way(walker, path, here, location):

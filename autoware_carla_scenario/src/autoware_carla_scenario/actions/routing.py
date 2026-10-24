@@ -53,6 +53,7 @@ from ..trajectory.model import (
 )
 from ..waypoint_arrival import WaypointArrival
 from ._route_pacing import PaceMark, RoutePacer
+from ._road_threat import DEFAULT_TURN_BACK_WITHIN_M
 from ._trajectory_run import ARRIVAL_TOLERANCE_M, TrajectoryRun, _entity_actor
 from .base import TickTiming
 
@@ -150,6 +151,17 @@ class RoutingAction(TrajectoryRun):
         waypoints: Lanelet2 poses the route passes through, with *goal*.
         walking_speed: How fast a pedestrian walks the route in ``driver``
             mode where *speed* does not say, in m/s.
+        turn_back_ttc_s: For a pedestrian stepped over a road stretch: a
+            vehicle at most this (s) from it, along the road, is a threat --
+            it waits at the kerb for it, and turns back from it within
+            *turn_back_within_m* of the kerb.  ``None`` (default): not by time
+            to collision.  The names, meanings and test of
+            :class:`~.walk_straight.WalkStraightAction`'s.
+        turn_back_distance_m: Likewise, a vehicle at most this far (m) along
+            the road.  ``None`` (default): not by distance.  With neither, a
+            pedestrian waits at the kerb only for the light.
+        turn_back_within_m: How far onto the road, from the kerb, it may be
+            and still turn back (m).
         cross_factor: The probability (0..1) that a pedestrian walked by
             CARLA's walker controller (``driver`` mode, a map with a
             navigation mesh) may cross a road away from a crossing: 1 for a
@@ -183,6 +195,9 @@ class RoutingAction(TrajectoryRun):
     _waypoints: tuple[Lanelet2Pose, ...]
     _walking_speed: float
     _cross_factor: Optional[float]
+    _turn_back_ttc_s: Optional[float]
+    _turn_back_distance_m: Optional[float]
+    _turn_back_within_m: float
     _mode: RoutingMode
     _walking: bool
     _stepping: bool
@@ -212,6 +227,9 @@ class RoutingAction(TrajectoryRun):
         waypoints: Sequence[Lanelet2Pose] = (),
         walking_speed: float = DEFAULT_WALKING_SPEED_MPS,
         cross_factor: Optional[float] = None,
+        turn_back_ttc_s: Optional[float] = None,
+        turn_back_distance_m: Optional[float] = None,
+        turn_back_within_m: float = DEFAULT_TURN_BACK_WITHIN_M,
         trajectory: Optional[Trajectory] = None,
         mode: RoutingMode = RoutingMode.DRIVER,
         time_reference: Optional[TrajectoryTiming] = None,
@@ -223,6 +241,12 @@ class RoutingAction(TrajectoryRun):
     ) -> None:
         if not walking_speed > 0.0:
             raise ValueError("walking_speed must be positive")
+        if turn_back_ttc_s is not None and turn_back_ttc_s < 0.0:
+            raise ValueError("turn_back_ttc_s must not be negative")
+        if turn_back_distance_m is not None and turn_back_distance_m < 0.0:
+            raise ValueError("turn_back_distance_m must not be negative")
+        if turn_back_within_m < 0.0:
+            raise ValueError("turn_back_within_m must not be negative")
         if cross_factor is not None:
             share: float = cross_factor
             if not 0.0 <= share <= 1.0:
@@ -264,6 +288,9 @@ class RoutingAction(TrajectoryRun):
         self._waypoints = stops
         self._walking_speed = float(walking_speed)
         self._cross_factor = cross_factor
+        self._turn_back_ttc_s = turn_back_ttc_s
+        self._turn_back_distance_m = turn_back_distance_m
+        self._turn_back_within_m = float(turn_back_within_m)
         self._mode = mode
         self._walking = False
         self._stepping = False
@@ -658,6 +685,11 @@ class RoutingAction(TrajectoryRun):
             initial = self._initial_pose
             if initial is None and self._resolved is not None:
                 initial = self._start_pose
+            walker.set_turn_back(
+                self._turn_back_distance_m,
+                self._turn_back_ttc_s,
+                self._turn_back_within_m,
+            )
             track = self._walked_track()
             if track is not None:
                 # A recorded walk, its points a few metres apart: walked as it

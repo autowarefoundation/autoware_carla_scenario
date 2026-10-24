@@ -1216,3 +1216,137 @@ def test_a_bicycle_spawn_checks_the_place_of_its_recorded_size(
     finally:
         unregister_entity("npc41")
     assert sizes == [(0.9, 0.35), (0.215, 0.08)]
+
+
+def test_a_walker_waits_at_the_kerb_for_the_light_and_a_threat(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Before it steps onto a road stretch: while the light nearest it is
+    green or yellow for the vehicles (CARLA's walker rule), and while a
+    vehicle is a threat by WalkStraight's test; at most 60 s."""
+    from autoware_carla_scenario.actions import _road_threat
+    from autoware_carla_scenario.entity import _walker_ai
+
+    class _Light:
+        id = 3
+
+        def __init__(self) -> None:
+            self.state = "TrafficLightState.Green"
+
+        def get_state(self) -> str:
+            return self.state
+
+    asked: list[tuple[Any, ...]] = []
+    threat = {"on": True}
+
+    def road_threat(
+        world: Any, location: Any, wx: float, wy: float, d: Any, t: Any, near: Any
+    ) -> Any:
+        asked.append((wx, wy, d, t))
+        return "vehicle 9 4.0 m away along the road" if threat["on"] else None
+
+    monkeypatch.setattr(_road_threat, "road_threat", road_threat)
+    light = _Light()
+    walker = SimpleNamespace(id=7, get_world=lambda: SimpleNamespace(id=917))
+    driven = _walker_ai._Driven(None, [], 1.0)
+    driven.stretches = [(1.0, 9.0)]
+    driven.kerb_light, driven.kerb_light_read = light, True
+    driven.turn_back = (6.0, 3.0, 1.0)
+    path = path_of(20.0)
+    here = SimpleNamespace(x=0.5, y=0.0, z=0.0)
+    assert _walker_ai._kerb_wait(walker, driven, path, 0.5, here)  # green
+    assert asked == []
+    light.state = "TrafficLightState.Red"
+    assert _walker_ai._kerb_wait(walker, driven, path, 0.5, here)  # the threat
+    assert asked == [(0.0, 0.0, 6.0, 3.0)]  # as standing at the kerb
+    threat["on"] = False
+    assert not _walker_ai._kerb_wait(walker, driven, path, 0.5, here)
+    # No thresholds: the light only.
+    driven.turn_back = None
+    threat["on"] = True
+    assert not _walker_ai._kerb_wait(walker, driven, path, 0.5, here)
+    # Bounded: past 60 s it steps whatever stands there.
+    driven.kerb_waited = _walker_ai.KERB_WAIT_MAX_S
+    light.state = "TrafficLightState.Green"
+    assert not _walker_ai._kerb_wait(walker, driven, path, 0.5, here)
+
+
+def test_a_stepped_walker_turns_back_within_reach_of_the_kerb(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Off the kerb, a threat within turn_back_within_m turns it back to half
+    a metre behind the kerb, where it checks again; further out it goes on."""
+    from autoware_carla_scenario.actions import _road_threat
+    from autoware_carla_scenario.entity import _walker_ai
+
+    threat = {"on": False}
+    monkeypatch.setattr(
+        _road_threat,
+        "road_threat",
+        lambda *args: "vehicle 9 2.0 s away along the road" if threat["on"] else None,
+    )
+    monkeypatch.setattr(_walker_ai, "_kerb_wait", lambda *args: threat["on"])
+    controls: list[Any] = []
+    walker = SimpleNamespace(
+        id=8,
+        get_world=lambda: SimpleNamespace(id=918),
+        get_velocity=lambda: SimpleNamespace(x=1.0, y=0.0, z=0.0),
+        apply_control=controls.append,
+    )
+    driven = _walker_ai._Driven(None, [], 1.0)
+    driven.turn_back = (6.0, 3.0, 1.0)
+    driven.stepping = True
+    driven.kerb_here = 4.0  # stepped off the kerb 4 m along its walk
+    path = path_of(20.0)
+    at = SimpleNamespace(x=4.6, y=0.0, z=0.0)
+    assert not _walker_ai._turns_back(walker, driven, path, 4.6, at, 1.4)  # clear
+    threat["on"] = True
+    assert _walker_ai._turns_back(walker, driven, path, 4.6, at, 1.4)
+    assert driven.turning_back and driven.back_to.x == pytest.approx(3.5)
+    assert controls[-1].direction.x < 0.0  # walking back
+    back = SimpleNamespace(x=3.6, y=0.0, z=0.0)
+    assert _walker_ai._turns_back(walker, driven, path, 3.6, back, 1.4)
+    assert driven.waiting_back and not driven.turning_back
+    assert _walker_ai._turns_back(
+        walker, driven, path, 3.6, back, 1.4
+    )  # still a threat
+    threat["on"] = False
+    assert not _walker_ai._turns_back(walker, driven, path, 3.6, back, 1.4)  # off again
+    assert driven.kerb_here == 3.6
+    # Further out than within_m: it carries on whatever comes.
+    threat["on"] = True
+    far = SimpleNamespace(x=5.0, y=0.0, z=0.0)
+    assert not _walker_ai._turns_back(walker, driven, path, 5.0, far, 1.4)
+    assert driven.kerb_here < 0.0
+
+
+def test_a_stepped_walker_waits_for_a_vehicle_standing_in_its_way_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from autoware_carla_scenario.entity import _walker_ai
+
+    standing = _SnapshotWorld(
+        {
+            70: ("walker.pedestrian.0001", 0.0, 0.0, 0.0),
+            2: ("vehicle.mini", 3.4, 0.0, 0.0),
+        }
+    )
+    standing.id = 915  # type: ignore[misc]
+    walker = SimpleNamespace(
+        id=70,
+        get_world=lambda: standing,
+        bounding_box=SimpleNamespace(extent=SimpleNamespace(x=0.2, y=0.3, z=0.9)),
+    )
+    here = SimpleNamespace(x=0.0, y=0.0, z=0.0)
+    assert _walker_ai.give_way(walker, path_of(20.0), 0.0, here)
+    _walker_ai.release(70)
+    coming = _SnapshotWorld(
+        {
+            70: ("walker.pedestrian.0001", 0.0, 0.0, 0.0),
+            2: ("vehicle.mini", 3.4, 0.0, 6.0),
+        }
+    )
+    coming.id = 916  # type: ignore[misc]
+    walker.get_world = lambda: coming  # type: ignore[assignment]
+    assert not _walker_ai.give_way(walker, path_of(20.0), 0.0, here)
+    _walker_ai.release(70)

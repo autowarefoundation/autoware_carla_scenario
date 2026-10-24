@@ -452,6 +452,11 @@ NOT_MODELLED_MEMBERS: dict[str, dict[str, str]] = {
             "routes the pedestrian with a RoutingAction instead"
         ),
         "set_traffic_backend": _SET_TRAFFIC_BACKEND,
+        "set_turn_back": (
+            "how the walks it is given wait at a kerb and turn back, which the "
+            "routing action sets from its turn_back_* thresholds; a scenario "
+            "sets them on the RoutingAction"
+        ),
     },
     "SpawnAction": {
         "take_spawns": (

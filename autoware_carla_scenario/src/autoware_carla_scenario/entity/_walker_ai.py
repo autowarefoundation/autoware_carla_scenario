@@ -54,9 +54,22 @@ the walk ends on the road.  Its position is compared over the tick its
 controller starts again, and a jump of more than :data:`SNAP_M` is said.
 While stepped it is no crowd agent: walkers on the controller do not steer
 round it, nor it round them, so it gives way instead (:func:`give_way`): it
-stands while a walker stands within :data:`GIVE_WAY_M` ahead of it on its
-walk, for at most :data:`GIVE_WAY_MAX_S` at a time (two stepped walkers
-facing each other would otherwise wait for ever).
+stands while a walker -- or a vehicle -- stands within :data:`GIVE_WAY_M`
+ahead of it on its walk, for at most :data:`GIVE_WAY_MAX_S` at a time (two
+stepped walkers facing each other would otherwise wait for ever); it does not
+stop in the road for traffic coming.
+
+**At the kerb** it checks before it steps off, up to :data:`KERB_WAIT_MAX_S`:
+it waits while the traffic light nearest it (the one whose stop waypoint is
+nearest, ``WalkerManager::GetTrafficLightAffecting``, any distance) is green
+or yellow for the vehicles -- the light rule CARLA's own walkers keep
+(``WalkerEventStopAndCheck``) -- and, given turn-back thresholds, while a
+vehicle is a threat by the test :class:`~..actions.walk_straight.WalkStraightAction`
+turns back by (:func:`~..actions._road_threat.road_threat`: along the road,
+by distance or by time to collision).  Once off the kerb it keeps watching:
+a threat while it is within its turn-back distance of the kerb turns it back
+to just behind the kerb, where it checks again; further out it carries
+on.
 
 A map without a navigation mesh -- ``get_random_location_from_navigation()``
 finds nothing -- is said once, and its walkers are stepped along the route as
@@ -123,6 +136,19 @@ GIVE_WAY_M: float = 1.5
 _GIVE_WAY_SIDE_M: float = 0.4
 #: The longest (s) a stepped walker gives way at a time.
 GIVE_WAY_MAX_S: float = 4.0
+#: Below this speed (m/s) a vehicle in a stepped walker's way stands.
+_STANDING_MPS: float = 0.5
+#: The longest (s) a walker waits at the kerb before it steps off
+#: (``WalkerEventStopAndCheck(60)``).
+KERB_WAIT_MAX_S: float = 60.0
+#: How far (m) beyond what a threat reaches a vehicle is not looked at
+#: (to spare the lane search for the far ones).
+_THREAT_MARGIN_M: float = 10.0
+#: The fastest (m/s) a vehicle is taken to close on a walker at, to bound
+#: how far out a time to collision reaches.
+_THREAT_SPEED_MPS: float = 20.0
+#: How near (m) the place behind the kerb a turned-back walker has reached.
+_BACK_REACHED_M: float = 0.3
 #: How long (s) each stepped walker has given way, by actor id.
 _GIVING_WAY: dict[int, float] = {}
 #: The tick, for the retargeting clock where the world does not say.
@@ -153,6 +179,21 @@ class _Driven:
         self.stepping = False
         #: Where the walker stood as its controller last started, to compare.
         self.started_at: Optional[tuple[float, float]] = None
+        #: How long (s) it has waited at the kerb of the stretch ahead, and
+        #: the light it checks there (read once, as CARLA does), if any.
+        self.kerb_waited = 0.0
+        self.kerb_light: Any = None
+        self.kerb_light_read = False
+        self.kerb_said = ""
+        #: ``(distance_m, ttc_s, within_m)`` it waits and turns back by, or
+        #: ``None``: neither.
+        self.turn_back: Optional[tuple[Optional[float], Optional[float], float]] = None
+        #: Where along its walk it stepped off the kerb (negative: past
+        #: turning back, or no kerb), turning back to, or waiting behind it.
+        self.kerb_here = -1.0
+        self.turning_back = False
+        self.back_to: Any = None
+        self.waiting_back = False
 
 
 #: Each driven walker, by actor id.
@@ -202,11 +243,14 @@ def drive(
     speed: float,
     location: Any = None,
     cross_factor: Optional[float] = None,
+    turn_back: Optional[tuple[Optional[float], Optional[float], float]] = None,
 ) -> bool:
     """One tick of *walker* (``here`` m along *path*, a ResolvedTrajectory, at
     *location*) on CARLA's walker controller at *speed* m/s, crossing roads
-    away from crossings with probability *cross_factor*; ``False`` when the
-    map has no navigation mesh, for the caller to step it instead."""
+    away from crossings with probability *cross_factor*, waiting at a kerb and
+    turning back by *turn_back* (``(distance_m, ttc_s, within_m)``); ``False``
+    when the map has no navigation mesh, or while it is stepped, for the
+    caller to step it."""
     import typesafe_carla.carla as carla  # noqa: PLC0415
 
     world = walker.get_world()
@@ -273,10 +317,25 @@ def drive(
             targets[-1][1].x,
             targets[-1][1].y,
         )
+    driven.turn_back = turn_back
     _check_snap(walker, driven, location)
     stepped = _stepped(driven, here, location)
+    if stepped and not driven.stepping and driven.running:
+        waiting = _kerb_wait(walker, driven, path, here, location)
+        if waiting:
+            # Stands at the kerb on its controller until the way is clear.
+            if driven.speed != 0.0:
+                driven.controller.set_max_speed(0.0)
+                driven.speed = 0.0
+            return True
     if stepped and not driven.stepping:
         driven.stepping = True
+        # Off the kerb it watches for a threat to turn back from; one that
+        # set off on the road has no kerb behind it.
+        driven.kerb_here = here if driven.running else -1.0
+        driven.kerb_waited = 0.0
+        driven.kerb_light_read = False
+        driven.kerb_said = ""
         logger.info(
             "walker %d: stepped over the road from %.1f m", int(walker.id), here
         )
@@ -294,6 +353,9 @@ def drive(
             break
         driven.index += 1
         driven.since_sent = RETARGET_S
+    if driven.stepping and driven.turn_back is not None:
+        if _turns_back(walker, driven, path, here, location, speed):
+            return True  # walking back to the kerb, or waiting behind it
     if driven.stepping:
         return False  # the caller steps it, on the road
     wanted = max(speed, 0.0)
@@ -325,6 +387,190 @@ def drive(
     return True
 
 
+def _threat(
+    walker: Any,
+    location: Any,
+    turn_back: Optional[tuple[Optional[float], Optional[float], float]],
+    standing: bool,
+) -> str:
+    """What threatens *walker* at *location* by its turn-back thresholds
+    (:func:`~..actions._road_threat.road_threat`), or ``""``; *standing*: as
+    if it stood (at the kerb), not walking at its velocity."""
+    if turn_back is None:
+        return ""
+    from ..actions._road_threat import road_threat  # noqa: PLC0415
+
+    distance_m, ttc_s, _within = turn_back
+    reach = _THREAT_MARGIN_M
+    if distance_m is not None:
+        reach += distance_m
+    if ttc_s is not None:
+        reach = max(reach, ttc_s * _THREAT_SPEED_MPS + _THREAT_MARGIN_M)
+    walking_x = walking_y = 0.0
+    if not standing:
+        try:
+            velocity = walker.get_velocity()
+            walking_x, walking_y = float(velocity.x), float(velocity.y)
+        except (AttributeError, RuntimeError):
+            pass
+    try:
+        found = road_threat(
+            walker.get_world(), location, walking_x, walking_y, distance_m, ttc_s, reach
+        )
+    except (AttributeError, RuntimeError):
+        return ""  # a world with no vehicles to ask (a test double)
+    return "" if found is None else found
+
+
+def _turns_back(
+    walker: Any, driven: _Driven, path: Any, here: float, location: Any, speed: float
+) -> bool:
+    """One tick of a stepped walker watching for a threat off the kerb
+    (``turn_back``): whether it walks back to the kerb, or waits behind it,
+    this tick -- else the caller steps it on.  Within ``within_m`` of the
+    kerb a threat turns it back to :data:`~..actions._road_threat.STEP_BACK_M`
+    behind it (no further back than where its walk began), where it checks at
+    the kerb again; further out it carries on, as a
+    :class:`~..actions.walk_straight.WalkStraightAction` pedestrian does."""
+    import typesafe_carla.carla as carla  # noqa: PLC0415
+
+    from ..actions._road_threat import STEP_BACK_M  # noqa: PLC0415
+    from .pedestrian_entity import walker_control_speed  # noqa: PLC0415
+
+    turn_back = driven.turn_back
+    assert turn_back is not None
+    _distance, _ttc, within_m = turn_back
+    if driven.waiting_back:
+        if _kerb_wait(walker, driven, path, here, location):
+            walker.apply_control(carla.WalkerControl(speed=0.0))
+            return True
+        driven.waiting_back = False
+        driven.kerb_here = here  # off the kerb again
+        driven.kerb_waited = 0.0
+        driven.kerb_light_read = False
+        driven.kerb_said = ""
+        return False
+    if driven.turning_back:
+        target = driven.back_to
+        dx, dy = target.x - location.x, target.y - location.y
+        gap = math.hypot(dx, dy)
+        if gap <= _BACK_REACHED_M:
+            walker.apply_control(carla.WalkerControl(speed=0.0))
+            driven.turning_back = False
+            driven.waiting_back = True
+            logger.info("walker %d: is back behind the kerb", int(walker.id))
+            return True
+        walker.apply_control(
+            carla.WalkerControl(
+                direction=carla.Vector3D(x=dx / gap, y=dy / gap, z=0.0),
+                speed=walker_control_speed(max(speed, 1.0)),
+            )
+        )
+        return True
+    if driven.kerb_here < 0.0:
+        return False
+    out_m = here - driven.kerb_here
+    if out_m > within_m:
+        driven.kerb_here = -1.0  # too far out to turn back: it carries on
+        return False
+    threat = _threat(walker, location, turn_back, standing=False)
+    if not threat:
+        return False
+    back = path.at_distance(max(0.0, driven.kerb_here - STEP_BACK_M))
+    driven.back_to = back
+    driven.turning_back = True
+    logger.info(
+        "walker %d: turns back %.2f m onto the road (%s)",
+        int(walker.id),
+        max(out_m, 0.0),
+        threat,
+    )
+    return _turns_back(walker, driven, path, here, location, speed)
+
+
+def _kerb_wait(
+    walker: Any, driven: _Driven, path: Any, here: float, location: Any
+) -> bool:
+    """Whether *walker*, at the kerb of the road stretch ahead (``here`` m
+    along *path*, at *location*), waits this tick before it steps off: the
+    light nearest it green or yellow for the vehicles, or a vehicle a threat
+    by its turn-back thresholds -- for at most :data:`KERB_WAIT_MAX_S`."""
+    world = walker.get_world()
+    if driven.kerb_waited >= KERB_WAIT_MAX_S:
+        if driven.kerb_said != "timeout":
+            driven.kerb_said = "timeout"
+            logger.info(
+                "walker %d: steps off the kerb after %.0f s waiting",
+                int(walker.id),
+                driven.kerb_waited,
+            )
+        return False
+    if not driven.kerb_light_read:
+        driven.kerb_light_read = True
+        driven.kerb_light = _nearest_light(world, location)
+    why = ""
+    light = driven.kerb_light
+    if light is not None:
+        try:
+            state = str(light.get_state())
+        except RuntimeError:
+            state = ""
+        if state.endswith("Green") or state.endswith("Yellow"):
+            why = "the light (%d) %s for the vehicles" % (
+                int(light.id),
+                state.rsplit(".", 1)[-1],
+            )
+    if not why:
+        threat = _threat(walker, location, driven.turn_back, standing=True)
+        if threat:
+            why = threat
+    if not why:
+        if driven.kerb_waited > 0.0:
+            logger.info(
+                "walker %d: steps off the kerb after %.1f s waiting",
+                int(walker.id),
+                driven.kerb_waited,
+            )
+        return False
+    # Said once per light or vehicle waited for, not as its distance changes.
+    said = why.split(" m away")[0].split(" s away")[0]
+    said = said.rsplit(" ", 1)[0] if said != why else said
+    if said != driven.kerb_said:
+        driven.kerb_said = said
+        logger.info("walker %d: waits at the kerb for %s", int(walker.id), why)
+    driven.kerb_waited += _tick_seconds(world)
+    return True
+
+
+#: Each episode's traffic lights' stop waypoints, by world id.
+_LIGHTS: dict[int, list[tuple[Any, float, float, float]]] = {}
+
+
+def _nearest_light(world: Any, location: Any) -> Any:
+    """The traffic light whose stop waypoint is nearest *location*, at any
+    distance (``WalkerManager::GetTrafficLightAffecting``, max_distance -1),
+    or ``None`` on a map with none."""
+    key = int(world.id) if hasattr(world, "id") else 0
+    if key not in _LIGHTS:
+        stops: list[tuple[Any, float, float, float]] = []
+        try:
+            for light in world.get_actors().filter("traffic.traffic_light"):
+                for waypoint in light.get_stop_waypoints():
+                    at = waypoint.transform.location
+                    stops.append((light, at.x, at.y, at.z))
+        except (AttributeError, RuntimeError):
+            stops = []
+        _LIGHTS.clear()
+        _LIGHTS[key] = stops
+    best: Any = None
+    nearest = float("inf")
+    for light, x, y, z in _LIGHTS[key]:
+        d = (location.x - x) ** 2 + (location.y - y) ** 2 + (location.z - z) ** 2
+        if d < nearest:
+            nearest, best = d, light
+    return best
+
+
 def give_way(walker: Any, path: Any, here: float, location: Any) -> bool:
     """Whether *walker*, stepped (``here`` m along *path*, at *location*),
     is to stand this tick for a walker in its way: one within
@@ -346,6 +592,20 @@ def give_way(walker: Any, path: Any, here: float, location: Any) -> bool:
         GIVE_WAY_M,
         _GIVE_WAY_SIDE_M,
     )
+    what = "walker"
+    if found is None:
+        # A vehicle standing in its way (its width and the margin across);
+        # traffic coming is not stopped for in the middle of the road.
+        try:
+            half = float(walker.bounding_box.extent.y) + _GIVE_WAY_SIDE_M
+        except AttributeError:
+            half = _GIVE_WAY_SIDE_M
+        found = first_in_way(
+            world, key, location.x, location.y, heading, "vehicle", GIVE_WAY_M, half
+        )
+        if found is not None and found.speed >= _STANDING_MPS:
+            found = None  # coming: not waited for in the middle of the road
+        what = "vehicle"
     if found is None:
         _GIVING_WAY.pop(key, None)
         return False
@@ -354,8 +614,9 @@ def give_way(walker: Any, path: Any, here: float, location: Any) -> bool:
         return False  # walks on; waits again once the way has been clear
     if waited == 0.0:
         logger.info(
-            "walker %d: gives way to walker %d, %.1f m along its walk",
+            "walker %d: gives way to %s %d, %.1f m along its walk",
             key,
+            what,
             int(found.id),
             here,
         )
