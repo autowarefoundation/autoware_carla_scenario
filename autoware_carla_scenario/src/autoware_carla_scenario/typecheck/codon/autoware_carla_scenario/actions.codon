@@ -383,9 +383,9 @@ class SpawnAction(BaseAction):
                  once: bool = True, position = None, shift_max: float = 0.0,
                  speed: float = 0.0, name: Optional[str] = None,
                  blueprint: str = "static.prop.constructioncone", on_ground: bool = True,
-                 lanes = ()):
+                 lanes = (), length: float = 0.0, width: float = 0.0):
         _keyword_only(_kw, "SpawnAction(): label, once, position, shift_max, speed, "
-                           "name, blueprint, on_ground and lanes")
+                           "name, blueprint, on_ground, lanes, length and width")
         if entity_name is not None:
             _expect_role(entity_name)
         if position is not None:

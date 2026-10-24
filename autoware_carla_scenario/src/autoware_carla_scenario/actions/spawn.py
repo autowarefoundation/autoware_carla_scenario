@@ -156,6 +156,10 @@ class SpawnAction(BaseAction):
             put instead, at the nearest place clear of road users, when its
             place is taken as it fires; 0 (the default) puts it there all the
             same, and a prop is not looked at then.
+        length: The length (m) of the place it needs, along its heading, where
+            its actor's outline does not say it -- a bicycle ridden by a
+            walker mesh; 0 (the default): its actor's bounding box.
+        width: Its width (m), likewise.
         lanes: The lanelets, in order, a shift runs along -- the way its
             route goes on from its place; it goes no further than their last.
             Empty (the default): on along the lane, the straightest way where
@@ -184,6 +188,8 @@ class SpawnAction(BaseAction):
     _blueprint: str
     _on_ground: bool
     _ahead: float
+    _length: float
+    _width: float
     _lanes: list[int]
     _spawned: list[tuple[str, int]]
 
@@ -215,6 +221,8 @@ class SpawnAction(BaseAction):
         blueprint: str = DEFAULT_PROP_BLUEPRINT,
         on_ground: bool = True,
         lanes: Optional[Sequence[int]] = (),
+        length: float = 0.0,
+        width: float = 0.0,
     ) -> None:
         if (entity_name is None) == (name is None or name == ""):
             raise ValueError(
@@ -228,6 +236,8 @@ class SpawnAction(BaseAction):
             raise ValueError(f"{label}: shift_max must not be negative")
         if speed < 0.0:
             raise ValueError(f"{label}: speed must not be negative")
+        if length < 0.0 or width < 0.0:
+            raise ValueError(f"{label}: length and width must not be negative")
         super().__init__(label=label, condition=condition, timing=timing, once=once)
         self._entity_name = "" if entity_name is None else str(entity_name)
         self._name = "" if name is None else name
@@ -240,6 +250,8 @@ class SpawnAction(BaseAction):
         self._blueprint = blueprint
         self._on_ground = on_ground
         self._ahead = 0.0
+        self._length = float(length)
+        self._width = float(width)
         # A card leaves the list empty (None): no lanes.
         given_lanes: list[int] = []
         if lanes is not None:
@@ -301,7 +313,13 @@ class SpawnAction(BaseAction):
         self._ahead = self._speed * self._speed / (2.0 * _ENTRY_BRAKING_MPS2)
         if self._speed > 0.0 and not _is_walker(found):
             self._ahead += _ENTRY_GAP_M
-        place = self._place(world, int(found.id), float(extent.x), float(extent.y))
+        half_length = float(extent.x)
+        half_width = float(extent.y)
+        if self._length > 0.0:
+            half_length = self._length / 2.0
+        if self._width > 0.0:
+            half_width = self._width / 2.0
+        place = self._place(world, int(found.id), half_length, half_width)
         if place is None:
             standing = found.get_transform()
             place = (

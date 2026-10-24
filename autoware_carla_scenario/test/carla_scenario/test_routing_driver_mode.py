@@ -1179,3 +1179,40 @@ def test_a_shift_runs_along_the_lanes_given_and_no_further(
     assert on is not None and (on.lanelet_id, on.s) == (9, 8.0)
     assert spawn_module._along_lane(Lanelet2Pose(7, 6.0), 15.0, [5, 7, 9]) is None
     assert spawn_module._along_lane(Lanelet2Pose(8, 6.0), 1.0, [5, 7, 9]) is None
+
+
+def test_a_bicycle_spawn_checks_the_place_of_its_recorded_size(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ridden by a walker mesh (0.43 x 0.16 m), a bicycle needs 1.8 x 0.7 m:
+    its footprint, not its actor's outline, is what the place is checked for."""
+    from autoware_carla_scenario.actions import SpawnAction
+    from autoware_carla_scenario.actions import spawn as spawn_module
+    from autoware_carla_scenario.coordinate import Lanelet2Pose
+    from autoware_carla_scenario.entity.registry import (
+        register_entity,
+        unregister_entity,
+    )
+
+    sizes: list[tuple[float, float]] = []
+
+    def place(self: Any, world: Any, actor_id: int, hl: float, hw: float) -> Any:
+        sizes.append((hl, hw))
+        return (0.0, 0.0, 0.0, 0.0)
+
+    monkeypatch.setattr(spawn_module.SpawnAction, "_place", place)
+    monkeypatch.setattr(spawn_module, "_put", lambda *args: None)
+    actor = SimpleNamespace(
+        id=41,
+        type_id="walker.pedestrian.0015",
+        bounding_box=SimpleNamespace(extent=SimpleNamespace(x=0.215, y=0.08, z=0.9)),
+    )
+    register_entity("npc41", SimpleNamespace(actor=actor))
+    try:
+        SpawnAction("npc41", position=Lanelet2Pose(1, 0.0), length=1.8, width=0.7).tick(
+            None, 0.0
+        )  # type: ignore[arg-type]
+        SpawnAction("npc41", position=Lanelet2Pose(1, 0.0)).tick(None, 0.0)  # type: ignore[arg-type]
+    finally:
+        unregister_entity("npc41")
+    assert sizes == [(0.9, 0.35), (0.215, 0.08)]

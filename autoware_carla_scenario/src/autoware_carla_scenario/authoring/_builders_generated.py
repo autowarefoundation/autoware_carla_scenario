@@ -1582,6 +1582,8 @@ def build_spawn_action(
         blueprint=str(params["blueprint"]),
         on_ground=params["on_ground"],
         lanes=params["lanes"],
+        length=params["length"],
+        width=params["width"],
     )
 
 

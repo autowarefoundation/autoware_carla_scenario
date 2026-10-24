@@ -1352,6 +1352,28 @@ register_action_spec(
                 ),
             ),
             FieldSpec(
+                name="length",
+                label="Footprint length",
+                kind="number",
+                default=0.0,
+                required=False,
+                unit="m",
+                help=(
+                    "The length of the place it needs where its actor's outline "
+                    "does not say it (a bicycle on a walker mesh); 0: its "
+                    "actor's bounding box."
+                ),
+            ),
+            FieldSpec(
+                name="width",
+                label="Footprint width",
+                kind="number",
+                default=0.0,
+                required=False,
+                unit="m",
+                help="Its width, likewise; 0: its actor's bounding box.",
+            ),
+            FieldSpec(
                 name="lanes",
                 label="Shift along lanelets",
                 kind="lanelet_list",
