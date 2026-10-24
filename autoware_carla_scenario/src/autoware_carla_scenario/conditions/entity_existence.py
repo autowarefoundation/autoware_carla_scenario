@@ -75,7 +75,7 @@ class EntityExistenceCondition(BaseCondition):
         actor = find_actor_by_role_name(world, self._entity_name)
 
         if actor is not None and not (
-            self._quiet and actor.get_location().z < HIDDEN_BELOW_M
+            self._quiet and float(actor.get_location().z) < HIDDEN_BELOW_M
         ):
             self._said_absent = False
             return None
