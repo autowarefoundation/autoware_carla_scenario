@@ -81,6 +81,10 @@ SHIFT_STEP_M: float = 2.0
 _LIFT_M = 0.05
 #: Half the size (m) a prop is taken to have where its place is looked at.
 _PROP_HALF_M = 0.5
+#: The braking (m/s²) a place entered at speed has to leave room ahead for.
+_ENTRY_BRAKING_MPS2 = 4.0
+#: The room (m) a vehicle entering at speed keeps beyond that.
+_ENTRY_GAP_M = 2.0
 #: How deep (m) under the map a hidden entity is parked (``HIDDEN_DEPTH_M``).
 _PARKED_DEPTH_M: float = 500.0
 
@@ -175,6 +179,7 @@ class SpawnAction(BaseAction):
     _speed: float
     _blueprint: str
     _on_ground: bool
+    _ahead: float
     _spawned: list[tuple[str, int]]
 
     def __init__(
@@ -228,6 +233,7 @@ class SpawnAction(BaseAction):
         self._speed = float(speed)
         self._blueprint = blueprint
         self._on_ground = on_ground
+        self._ahead = 0.0
         self._spawned = []
 
     @property
@@ -276,6 +282,13 @@ class SpawnAction(BaseAction):
             return False
         found: "carla.Actor" = actor
         extent = found.bounding_box.extent
+        # Entering at speed, it needs the room to stop ahead of it clear too
+        # (a car put 0.3 m behind a slower one ran into it).
+        from ._trajectory_run import _is_walker  # noqa: PLC0415
+
+        self._ahead = self._speed * self._speed / (2.0 * _ENTRY_BRAKING_MPS2)
+        if self._speed > 0.0 and not _is_walker(found):
+            self._ahead += _ENTRY_GAP_M
         place = self._place(world, int(found.id), float(extent.x), float(extent.y))
         if place is None:
             standing = found.get_transform()
@@ -395,7 +408,9 @@ class SpawnAction(BaseAction):
         if TYPE_CHECKING:
             blocker = -1  # utils.clearance is not compiled (docs/typecheck.md)
         else:
-            blocker = _taken(world, actor_id, x, y, yaw, half_length, half_width)
+            blocker = _taken(
+                world, actor_id, x, y, yaw, half_length, half_width, self._ahead
+            )
         if blocker < 0:
             self._claim(world, actor_id, due, half_length, half_width)
             return due
@@ -426,6 +441,7 @@ class SpawnAction(BaseAction):
                         there[3],
                         half_length,
                         half_width,
+                        self._ahead,
                     )
                 if other < 0:
                     logger.warning(
@@ -533,13 +549,20 @@ def _taken(
     yaw: float,
     half_length: float,
     half_width: float,
+    ahead: float = 0.0,
 ) -> int:
     """The id of a road user whose outline overlaps the rectangle at CARLA
-    ``(x, y)`` facing *yaw* (0.3 m margin), or ``-1``."""
+    ``(x, y)`` facing *yaw*, stretched *ahead* m further forward (the room to
+    stop in), with a 0.3 m margin; or ``-1``."""
     from ..utils.clearance import overlaps  # noqa: PLC0415
 
+    heading = math.radians(yaw)
+    cx = x + math.cos(heading) * ahead / 2.0
+    cy = y + math.sin(heading) * ahead / 2.0
     try:
-        found = overlaps(world, actor_id, x, y, yaw, half_length, half_width)
+        found = overlaps(
+            world, actor_id, cx, cy, yaw, half_length + ahead / 2.0, half_width
+        )
     except (AttributeError, RuntimeError):
         return -1
     return -1 if found is None else int(found)

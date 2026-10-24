@@ -908,7 +908,9 @@ def test_a_spawn_whose_place_is_taken_takes_one_further_on_if_allowed(
     monkeypatch.setattr(
         spawn_module,
         "_taken",
-        lambda world, actor_id, x, y, yaw, hl, hw: 5 if x < taken_until["m"] else -1,
+        lambda world, actor_id, x, y, yaw, hl, hw, ahead=0.0: (
+            5 if x < taken_until["m"] else -1
+        ),
     )
     held: list[float] = []
     monkeypatch.setattr(
@@ -1138,3 +1140,25 @@ def test_a_spot_claimed_this_frame_is_taken_before_the_snapshot_shows_it() -> No
     assert clearance.overlaps(world, 1, 10.0, 0.0, 0.0, 2.0, 1.0) is None  # its own
     clearance._CACHE.claims_frame = -5  # a later frame: shown by the snapshot
     assert clearance.overlaps(world, 2, 10.0, 0.0, 0.0, 2.0, 1.0) is None
+
+
+def test_a_spawn_at_speed_needs_room_to_stop_ahead(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A car entering at 5.7 m/s 0.3 m behind a slower one ran into it: the
+    place checked is stretched forward by its stopping distance and 2 m."""
+    from autoware_carla_scenario.actions import spawn as spawn_module
+
+    looked: list[tuple[float, float, float]] = []
+
+    def overlaps(
+        world: Any, actor_id: int, x: float, y: float, yaw: float, hl: float, hw: float
+    ) -> Any:
+        looked.append((round(x, 3), round(hl, 3), round(hw, 3)))
+        return None
+
+    from autoware_carla_scenario.utils import clearance
+
+    monkeypatch.setattr(clearance, "overlaps", overlaps)
+    assert spawn_module._taken(None, 1, 10.0, 0.0, 0.0, 2.3, 1.0, 6.0) == -1  # type: ignore[arg-type]
+    assert looked == [(13.0, 5.3, 1.0)]
