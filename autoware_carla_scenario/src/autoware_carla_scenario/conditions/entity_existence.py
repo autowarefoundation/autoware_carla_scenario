@@ -13,6 +13,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+#: An actor this far down (m) is parked under the map, out of the scene.
+HIDDEN_BELOW_M = -100.0
+
 
 class EntityExistenceCondition(BaseCondition):
     """Fail condition that triggers whenever a named actor is absent from the world.
@@ -32,7 +35,10 @@ class EntityExistenceCondition(BaseCondition):
         quiet: An absent actor is expected, not an error: a guard (a
             composition condition's on its entity, which waits until the
             entity is there and reads one that is gone as nothing to check)
-            says so at debug level only, once.
+            says so at debug level only, once.  For a guard an actor parked
+            under the map (:data:`HIDDEN_BELOW_M`: spawned out of sight, not
+            yet brought in) is not there either -- how far it is from the ego,
+            or that it stands still, says nothing of the scene.
     """
 
     # Declared for the static check (docs/typecheck.md).
@@ -68,7 +74,9 @@ class EntityExistenceCondition(BaseCondition):
         """
         actor = find_actor_by_role_name(world, self._entity_name)
 
-        if actor is not None:
+        if actor is not None and not (
+            self._quiet and actor.get_location().z < HIDDEN_BELOW_M
+        ):
             self._said_absent = False
             return None
 

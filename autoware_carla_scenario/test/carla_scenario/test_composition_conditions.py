@@ -796,3 +796,25 @@ def test_a_guard_reads_a_gone_entity_quietly(caplog: pytest.LogCaptureFixture) -
         caplog.clear()
         loud.check(world, 0.0)  # type: ignore[arg-type]
         assert [r.levelno for r in caplog.records] == [_logging.ERROR]
+
+
+def test_a_guard_reads_an_entity_parked_under_the_map_as_not_there() -> None:
+    """Not yet brought in: a despawn trigger's standstill and distance say
+    nothing of it (it was despawned before it ever appeared)."""
+    from types import SimpleNamespace as _NS
+
+    from autoware_carla_scenario.conditions import EntityExistenceCondition
+    from autoware_carla_scenario.conditions import base as base_module
+
+    where = _NS(x=415.0, y=57.0, z=-499.7)
+    actor = _NS(get_location=lambda: where)
+    original = base_module.find_actor_in_world
+    base_module.find_actor_in_world = lambda world, name: actor  # type: ignore[assignment]
+    try:
+        guard = EntityExistenceCondition("npc9", label="g", quiet=True)
+        assert guard.check(None, 1.0) is not None  # type: ignore[arg-type]
+        assert EntityExistenceCondition("npc9", label="e").check(None, 1.0) is None  # type: ignore[arg-type]
+        where.z = 0.9
+        assert guard.check(None, 2.0) is None  # type: ignore[arg-type]
+    finally:
+        base_module.find_actor_in_world = original  # type: ignore[assignment]
