@@ -3800,8 +3800,8 @@ method of a checked module.</p>
 <li>Run <code>uv run pytest autoware_carla_scenario/test/carla_scenario/test_typecheck_library.py</code>.</li>
 </ol>
 <h3 id="what-is-checked-of-the-framework">What is checked of the framework<a class="headerlink" href="#what-is-checked-of-the-framework" title="Permanent link">&para;</a></h3>
-<p>Every module now has an entry other than <code>"not yet checked (#45)"</code>. 198 of
-the package's 295 modules (67%; about 47,300 of 84,500 lines) are <code>CHECKED</code>:
+<p>Every module now has an entry other than <code>"not yet checked (#45)"</code>. 199 of
+the package's 294 modules (68%; about 47,400 of 84,500 lines) are <code>CHECKED</code>:
 the kinematics, the coordinate frames and poses, the conversions between
 Lanelet2, OpenDRIVE and CARLA world poses (<code>coordinate.transform</code>), the stop
 lines read off a Lanelet2 map (<code>utils.stop_line</code>, <code>coordinate.stop_line</code>)
@@ -3860,8 +3860,8 @@ driver's configs and client interface, trajectory follower and observations
 <code>driver.geometry</code>), and the <code>autoware_bridge</code>, <code>autoware_stack</code>, <code>entity</code>,
 <code>driver</code>, <code>maps</code> and <code>coverage</code> packages themselves, whose <code>__init__</code> re-exports what is not checked
 through models of it (see <em>A class a checked package only re-exports</em>
-below). 104
-functions and methods of those modules are <code>UNCALLED</code> (24 of them
+below). 103
+functions and methods of those modules are <code>UNCALLED</code> (23 of them
 protected helpers, see <em>What is compiled</em> below): most of them a
 condition's <code>get_details()</code> or a backend's <code>describe()</code>, what takes a traffic
 backend's options node (<code>Mapping[str, Any]</code>), what reads a route search, a
@@ -3888,21 +3888,19 @@ the result and its environment, <code>_write_result()</code>; collecting the con
 statuses, <code>_collect_condition_statuses()</code>), the queue's pytest fixture
 (<code>ScenarioQueue.as_fixture()</code>), <code>maps.config.resolve_map_paths()</code>,
 which reads the <code>map</code> config node of any shape (<code>Any</code>), the driver and
-ROS 2 configs' <code>from_mapping()</code> (a Hydra node, <code>Mapping[str, Any]</code>), what
-builds the ROS 2 ego's published cameras (<code>entity.ros2_entity._publishing_camera()</code>,
-which imports <code>ros2.camera</code> inside it),
+ROS 2 configs' <code>from_mapping()</code> (a Hydra node, <code>Mapping[str, Any]</code>),
 <code>encode_frame_jpeg()</code> (cv2), and protected helpers of the same kinds: what
 reads a <code>map</code> setting, a route search's segment, a signal group or phase, or
 a <code>TrajectoryVertex</code> call's arguments, each of any type (<code>Any</code>), walks or
 binds a sweeper constraint of any kind, builds a condition's status (its
 details), or takes the list a plain tick callback goes into
 (<code>BaseScenario._register_tick()</code>, a <code>List[Callable[[carla.World], None]]</code>,
-which the check has no value of). The 97 <code>EXCLUDED</code> modules fall in
-four groups. Many fit more than one (about 74 import what Codon cannot
-compile, 29 build on an excluded module and 20 hold values Codon has no type
+which the check has no value of). The 95 <code>EXCLUDED</code> modules fall in
+three groups. Many fit more than one (about 73 import what Codon cannot
+compile, 29 build on an excluded module and 19 hold values Codon has no type
 for), so each is counted once, in the first group that fits it:</p>
 <ul>
-<li><strong>74 import what Codon cannot compile</strong>: pyxodr,
+<li><strong>73 import what Codon cannot compile</strong>: pyxodr,
   pydantic, pickle, lxml, grpc, omegaconf and hydra, yaml, openodd (a Rust extension),
   cyclonedds (<code>ros2.cyclone</code> and <code>ros2.messages</code>, the ROS 2 ego's DDS
   transport and its message types), or
@@ -3917,7 +3915,7 @@ for), so each is counted once, in the first group that fits it:</p>
   stack's dev container, the
   record of a run's environment, the SLURM launcher's submitting side,
   its worker and its manifest, the batch summary they share, the Rerun
-  recordings of a run's logs and LiDAR sweeps, its T4 dataset, and the carla_canvas hookup), the ODD and coverage modules that wrap
+  recordings of a run's logs and LiDAR sweeps, and its T4 dataset), the ODD and coverage modules that wrap
   openodd, and the rest of what reads Lanelet2. A reason names <code>pathlib</code>
   only where the module uses more of it than the shim declares, and the
   other shimmed modules likewise; <code>test_typecheck_library.py</code> holds every
@@ -3933,16 +3931,14 @@ for), so each is counted once, in the first group that fits it:</p>
   and <code>value_label()</code>; it also holds each lanelet's attribute values,
   <code>dict[str, Any]</code>, which it hands to openodd, and finds a probe's
   <code>on_lanelet</code> reader on any callable) and
-  <code>traffic.registry</code> (the <code>registry</code>, in its plugin loader); 4 of the 19
+  <code>traffic.registry</code> (the <code>Callable[[Mapping[str, Any]], TrafficBackend]</code> alias it
+  holds its factories by, and the <code>registry</code> its plugin loader imports); 4 of the 19
   also hold values Codon has no type for.</li>
 <li><strong>3 hold values Codon has no type for</strong>, and nothing else keeps them out:
   <code>Any</code> (<code>trajectory.authoring</code>, <code>authoring.registry</code>'s
   field defaults), or a class as a value (<code>utils.config</code>, which <code>traffic.config</code>,
   <code>traffic.fidelity</code> and <code>traffic.sumo.config</code> import only in their uncalled
   <code>from_mapping()</code>).</li>
-<li><strong>1 has a callback the check cannot type</strong>: <code>ros2.camera</code>, whose camera
-  hands each frame back to the ROS 2 ego from a CARLA sensor thread through
-  <code>CarlaCameraSensor</code>'s listen callback.</li>
 </ul>
 <p>The scenario check is not limited by this: it compiles every scenario against
 the model. The model does not declare the whole public API: what
@@ -4770,6 +4766,10 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   an <code>os.PathLike</code> (a stream, an <code>IO[str]</code> Codon has no type for, is not
   taken). Nothing else of the package is declared (<code>dotenv_values()</code>), and
   a scenario may use what is, as it may the shims.
+- <strong>carla_canvas</strong> is modelled for <code>canvas.use_canvas()</code>: <code>codon/carla_canvas/plugin.codon</code>
+  declares <code>plugin_path() -&gt; Path</code> and nothing else. carla_canvas is not a
+  dependency of this package, so <code>test_typecheck_model.py</code> cannot compare it with
+  the installed one.
 - <strong>No <code>bytes</code></strong>: Codon 0.19 has none, and reads a <code>b"..."</code> literal as a
   <code>str</code>, so the check reads an annotation naming <code>bytes</code> as <code>str</code>
   (<code>DriveOutcome.debug_info: bytes = b""</code>). What a process writes is a <code>str</code>
@@ -5586,7 +5586,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 24, 2026 05:38:56 UTC"><span class="timeago" datetime="2026-10-24T05:38:56+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 24, 2026 05:38:56 UTC">2026-10-24</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 24, 2026 09:25:29 UTC"><span class="timeago" datetime="2026-10-24T09:25:29+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 24, 2026 09:25:29 UTC">2026-10-24</span>
   </span>
 
     
