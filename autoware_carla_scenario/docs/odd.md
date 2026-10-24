@@ -817,6 +817,31 @@ controls:
 | `integer` | Write an integer. A rounded numeric value that falls in another bucket is drawn again |
 | `limits` | Numeric: `[low, high]` the **written** value must lie in, `null` for an open end -- what the key takes, whatever `offset` comes to. A bucket only values outside it would reach is not drawn |
 
+#### Checking controls
+
+`scenario-check` validates `controls:` of every config it checks, and
+`scenario-expand`, a sweep and a `--multirun` batch refuse invalid ones, each
+problem as one line with its config path, not a traceback:
+
+```text
+cut_in/left: controls.vehicle_ahead_gap_m.range: expected [low, high] with low <= high, got [30, 2]
+cut_in/left: controls.vehicle_ahead_gap_m.rnge: unknown field (did you mean 'range'?)
+cut_in/left: controls.vehicle_ahead_gap_m: expected a key or a mapping, got 5
+cut_in/left: controls.vehicle_ahead_gap_m.key: 'scenario.nonexistent' is not a key of the config (did you mean 'scenario.npc_gap_m'?)
+```
+
+Errors (exit status 1; the config is not compiled): a control that is not a key
+or a mapping, an unknown field, a missing or unknown `key` (it must be a key
+of the composed config), a `target` that is neither `setting` nor `measure`,
+`scale`/`offset`/`integer`/`values` under `target: measure`, a `range` or
+`limits` that is not `[low, high]` with `low <= high`.
+
+A measure name that is not a built-in one is only a **warning**
+(`controls.vehicle_ahead_gap: not a built-in measure (did you mean
+'vehicle_ahead_gap_m'?)`): a scenario may register measures of its own at run
+time (`register_measure`), which a check of the config cannot see, so it
+cannot tell a typo from such a measure.
+
 `{measure: key}` is short for `{measure: {key: key}}`. The ODD's attribute
 and the measure share a unit: the binding takes the measure's.
 
