@@ -32,11 +32,12 @@ that may not use the road (its road filter) only to a point within 2 m of a
 walkable polygon off the road (``Navigation::GetAgentRoute``'s pick extent);
 for any other it finds no route and the walker walks to a random point of
 the map instead (``WalkerManager::SetWalkerRoute``), again each time the
-target is sent.  So a walker whose road stretches are not stepped (cross
-factor under a half) is sent, for a target on a road lanelet and on no
-walkway or crossing, to the nearest point of a walkway or crossing instead:
-along a walk recorded on the road's edge it keeps to the pavement beside it.
-Standing at the end of its walk so moved, it is held there.
+target is sent.  A walk recorded on the road is given a cross factor of 1 and
+its road stretches are stepped (below); as a safety net for one that is not
+(cross factor under a half: the scenario and the map disagree, which is
+warned of), a target on a road lanelet and on no walkway or crossing is
+moved to the nearest point of a walkway or crossing.  Standing at the end of
+its walk so moved, the walker is held there.
 
 **Road stretches are stepped.**  CARLA's controller does not take a walker
 across a road where it was recorded crossing it, whatever its cross factor:
@@ -235,12 +236,16 @@ def drive(
         if cross_factor is None or cross_factor < STEP_CROSSING_FROM:
             moved = _onto_walkways(targets)
             if moved:
-                logger.info(
-                    "walker %d: %d of its %d targets on the road, out of its "
-                    "controller's reach: sent to the nearest walkway instead",
+                # Its walk is on the road where it may not be: the document
+                # (its cross factor) and the map disagree.
+                logger.warning(
+                    "walker %d: %d of its %d targets on the road, where its "
+                    "cross factor (%s) keeps it off -- the scenario and the map "
+                    "disagree; sent to the nearest walkway instead",
                     int(walker.id),
                     moved,
                     len(targets),
+                    "default" if cross_factor is None else "%.2f" % cross_factor,
                 )
         blueprint = world.get_blueprint_library().find("controller.ai.walker")
         controller = world.spawn_actor(blueprint, carla.Transform(), attach_to=walker)

@@ -693,6 +693,12 @@ def test_a_walks_road_stretches_are_found_along_its_line(
     # Ending on the road: the stretch runs to the walk's end.
     _road_between(monkeypatch, 10.0, 99.0)
     assert _walker_ai.road_stretches(path_of(30.0)) == [(10.5, 30.0)]
+    # Starting on the road (a walk along its edge from where it appears).
+    _road_between(monkeypatch, -5.0, 12.0)
+    assert _walker_ai.road_stretches(path_of(30.0)) == [(0.0, 11.5)]
+    # Along the road's edge all the way, however long.
+    _road_between(monkeypatch, -5.0, 999.0)
+    assert _walker_ai.road_stretches(path_of(240.0)) == [(0.0, 240.0)]
 
 
 def test_a_walker_that_may_cross_is_stepped_over_the_road_and_handed_back(
