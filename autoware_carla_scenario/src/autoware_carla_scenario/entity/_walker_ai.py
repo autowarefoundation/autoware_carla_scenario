@@ -19,12 +19,13 @@ back to CARLA's default straight after -- deterministic for 0 and 1, the
 draw CARLA makes for a share in between.  Everything runs on the tick loop's
 thread, so no two walkers' factors meet.
 
-**Holding.**  CARLA gives a walker that has stood 4 s a random new target
-(``Navigation::UpdateCrowd``, "unblocking").  A walker held by its route's
-timing is therefore taken off its controller while it stands, and put back
-on it -- with its own cross factor -- when it walks on; and every walker's
-current target is sent again every :data:`RETARGET_S` seconds, so an unblock
-elsewhere costs it at most that.
+**Holding.**  A walker held by its route's timing stays on its controller
+with a top speed of 0: taken off it, it would be put back on the navigation
+mesh's nearest point when it walked on -- a jump, for one that stood off it.
+CARLA gives a walker that has stood 4 s a random new target
+(``Navigation::UpdateCrowd``, "unblocking"), so every walker's current
+target is sent again every :data:`RETARGET_S` seconds and at once when it
+walks on.
 
 **Road stretches are stepped.**  CARLA's controller does not take a walker
 across a road where it was recorded crossing it, whatever its cross factor:
@@ -232,12 +233,16 @@ def drive(
     stepped = _stepped(driven, here, location)
     if stepped and not driven.stepping:
         driven.stepping = True
+        logger.info("walker %d: stepped over the road from %.1f m", int(walker.id), here)
         if driven.running:
             _stop(driven)
             _own_steps(walker)
     elif not stepped and driven.stepping:
         driven.stepping = False
         driven.since_sent = RETARGET_S
+        logger.info(
+            "walker %d: back on its controller at %.1f m", int(walker.id), here
+        )
     while driven.index < len(driven.targets) - 1:
         along, target = driven.targets[driven.index]
         near = math.hypot(location.x - target.x, location.y - target.y) <= REACHED_M
@@ -249,15 +254,15 @@ def drive(
         return False  # the caller steps it, on the road
     wanted = max(speed, 0.0)
     if wanted < _HOLD_MPS:
-        # Held: off the controller, which would send a walker standing 4 s to
-        # a random place, and standing.
-        if driven.running:
-            # Standing: off its controller, its movement left as the
-            # navigation set it (on again, the walker would drop to the
-            # ground from wherever the navigation held it).
-            _stop(driven)
-        return True
+        wanted = 0.0  # held: on its controller, at a standstill
+    if driven.speed < _HOLD_MPS <= wanted:
+        driven.since_sent = RETARGET_S  # walking on: its target, at once
     if not driven.running:
+        if _kind_at_or_none(location.x, location.y) == "road":
+            # Not started standing on the road, where the navigation mesh
+            # would put it back on its nearest walkable point (a jump): stepped
+            # along its walk until it stands on a walkway or a crossing.
+            return False
         driven.started_at = (location.x, location.y)
         _start(world, driven)
     driven.since_sent += _tick_seconds(world)
@@ -336,6 +341,14 @@ def _check_snap(walker: Any, driven: _Driven, location: Any) -> None:
             before[0],
             before[1],
         )
+
+
+def _kind_at_or_none(x: float, y: float) -> str:
+    """:func:`_kind_at`, or ``""`` without a Lanelet2 map to read."""
+    try:
+        return _kind_at(x, y)
+    except RuntimeError:
+        return ""
 
 
 def _kind_at(x: float, y: float) -> str:

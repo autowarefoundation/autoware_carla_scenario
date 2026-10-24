@@ -612,16 +612,15 @@ def test_a_routed_walker_is_walked_by_carlas_controller() -> None:
     where.z = 0.0
     assert _walker_ai.drive(walker, path, 0.0, 1.4, where)
     assert _walker_ai.drive(walker, path, 9.0, 1.4, where)  # 2 m short: reached
-    assert _walker_ai.drive(walker, path, 9.5, 0.0, where)  # held: off it
-    assert _walker_ai.drive(walker, path, 9.5, 1.0, where)  # on again
+    assert _walker_ai.drive(walker, path, 9.5, 0.0, where)  # held: speed 0
+    assert _walker_ai.drive(walker, path, 9.5, 1.0, where)  # on: target again
     _walker_ai.release(55)
     assert world.controller.calls == [
         "start",
         ("go", 10.0),
         ("speed", 1.4),
         ("go", 20.0),
-        "stop",
-        "start",
+        ("speed", 0.0),
         ("go", 20.0),
         ("speed", 1.0),
         "stop",
