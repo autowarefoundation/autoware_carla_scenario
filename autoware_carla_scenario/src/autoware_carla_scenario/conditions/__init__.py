@@ -47,6 +47,7 @@ from .not_condition import NotCondition
 from .off_road_fraction import OffRoadFractionCondition
 from .or_condition import OrCondition
 from .persistent import PersistentCondition
+from .place_clear import PlaceClearCondition
 from .route_progress import RouteProgressCondition
 from .trajectory_time import TrajectoryTimeCondition
 from .lane_change_settled import LaneChangeSettledCondition
@@ -81,6 +82,7 @@ __all__ = [
     "OffRoadFractionCondition",
     "OrCondition",
     "PersistentCondition",
+    "PlaceClearCondition",
     "RelativeDistanceType",
     "RelativeSpeedCondition",
     "RouteProgressCondition",

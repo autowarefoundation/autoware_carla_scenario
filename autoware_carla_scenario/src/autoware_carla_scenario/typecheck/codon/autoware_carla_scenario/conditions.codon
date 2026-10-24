@@ -898,6 +898,18 @@ class TimeHeadwayCondition(BaseCondition):
         super().__init__(_required_str(label, "TimeHeadwayCondition(): label"))
 
 
+class PlaceClearCondition(BaseCondition):
+    def __init__(self, label):
+        compile_error("PlaceClearCondition(): no constructor takes these arguments "
+                      "(required: position, length, width, keyword label)")
+
+    def __init__(self, position, length: float, width: float, margin: float = 0.3,
+                 *_kw, label = _Required()):
+        _keyword_only(_kw, "PlaceClearCondition(): label")
+        _expect_pose(position)
+        super().__init__(_required_str(label, "PlaceClearCondition(): label"))
+
+
 class TimeToCollisionCondition(BaseCondition):
     def __init__(self, label):
         compile_error("TimeToCollisionCondition(): no constructor takes these arguments "

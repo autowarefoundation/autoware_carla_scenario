@@ -60,6 +60,7 @@ __all__ = [
     "build_elapsed_time_condition",
     "build_traffic_signal_controller_condition",
     "build_metric_condition",
+    "build_place_clear_condition",
     "build_timeout_condition",
     "build_traffic_signal_condition",
     "build_trajectory_time_condition",
@@ -745,6 +746,31 @@ def build_metric_condition(
         metric=str(params["metric"]),
         rule=ComparisonRule[str(params["rule"]).upper()],
         value=params["value"],
+        label=compiled.label,
+    )
+
+
+def build_place_clear_condition(
+    compiled: "CompiledCondition",
+    children: "list[BaseCondition]",
+    ctx: "BuildContext",
+) -> "BaseCondition":
+    """Build a :class:`PlaceClearCondition`."""
+    from ..conditions import PlaceClearCondition  # noqa: PLC0415
+    from ..coordinate import Lanelet2Pose  # noqa: PLC0415
+
+    params = compiled.params
+    position = Lanelet2Pose(
+        lanelet_id=params["lanelet_id"],
+        s=params["s"],
+        t=params["t"],
+        heading=params["heading"],
+    )
+    return PlaceClearCondition(
+        position=position,
+        length=params["length"],
+        width=params["width"],
+        margin=params["margin"],
         label=compiled.label,
     )
 

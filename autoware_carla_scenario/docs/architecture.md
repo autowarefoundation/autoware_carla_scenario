@@ -390,6 +390,7 @@ classDiagram
     class CollisionCondition
     class EntityExistenceCondition
     class OffRoadFractionCondition
+    class PlaceClearCondition
     class TrafficSignalCondition
     class TrafficSignalControllerCondition
 
@@ -417,6 +418,7 @@ classDiagram
     BaseCondition <|-- CollisionCondition
     BaseCondition <|-- EntityExistenceCondition
     BaseCondition <|-- OffRoadFractionCondition
+    BaseCondition <|-- PlaceClearCondition
     BaseCondition <|-- TrafficSignalCondition
     BaseCondition <|-- TrafficSignalControllerCondition
     BaseCondition <|-- EntityLanePositionCondition
@@ -445,7 +447,7 @@ classDiagram
 | Category | Conditions | Description |
 |----------|-----------|-------------|
 | **Temporal** | `TimeoutCondition`, `ElapsedTimeCondition` | Time-based triggers |
-| **Safety** | `CollisionCondition`, `EntityExistenceCondition`, `OffRoadFractionCondition` | Collision detection — with anything, or with a named entity or class of object — actor alive checks, and leaving the driving lanes by more than a tolerance |
+| **Safety** | `CollisionCondition`, `EntityExistenceCondition`, `OffRoadFractionCondition`, `PlaceClearCondition` | Collision detection — with anything, or with a named entity or class of object — actor alive checks, leaving the driving lanes by more than a tolerance, and a place clear of road users |
 | **Position** | `EntityLanePositionCondition`, `WaypointCondition` | Road/lane position, waypoint crossing |
 | **Relative** | `EntityDistanceCondition`, `EntityPositionDistanceCondition`, `TimeToCollisionCondition`, `TimeHeadwayCondition`, `RelativeSpeedCondition` | Gap to another entity or to a place on the map (along the road with `measure: lane`; `signed` there for ahead of the subject, the way it faces, positive, behind negative), time to collision, following headway and speed difference |
 | **Motion** | `SpeedCondition`, `AccelerationCondition`, `StandstillCondition`, `TemporaryStopCondition` | Speed and acceleration thresholds, standstill detection, stop-and-go |

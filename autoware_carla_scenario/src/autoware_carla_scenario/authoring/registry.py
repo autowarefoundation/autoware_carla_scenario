@@ -3681,6 +3681,102 @@ register_condition_spec(
     )
 )
 
+register_condition_spec(
+    ConditionSpec(
+        type_id="place_clear",
+        title="Place clear",
+        category="World",
+        builder="build_place_clear_condition",
+        target="..conditions:PlaceClearCondition",
+        builds=(
+            BuiltArgument(
+                kwarg="position",
+                target="..coordinate:Lanelet2Pose",
+                parts=(
+                    BuiltPart(
+                        args=(
+                            ("lanelet_id", "lanelet_id"),
+                            ("s", "s"),
+                            ("t", "t"),
+                            ("heading", "heading"),
+                        )
+                    ),
+                ),
+            ),
+        ),
+        visual=ConditionVisual(
+            metric="Place clear",
+            target="lanelet_id",
+            target_prefix="Lanelet",
+            details=("s",),
+        ),
+        fields=(
+            FieldSpec(
+                name="lanelet_id",
+                label="Lanelet",
+                kind="lanelet",
+                default=0,
+                help="The lanelet holding the place's centre.",
+            ),
+            FieldSpec(
+                name="s",
+                label="s",
+                kind="number",
+                default=0.0,
+                unit="m",
+                help="Along the lanelet from its start.",
+            ),
+            FieldSpec(
+                name="t",
+                label="t",
+                kind="number",
+                default=0.0,
+                required=False,
+                unit="m",
+                help="Off the centreline, positive to the left.",
+            ),
+            FieldSpec(
+                name="heading",
+                label="Heading",
+                kind="number",
+                default=0.0,
+                required=False,
+                unit="rad",
+                help="Turned from the lane's direction, counter-clockwise.",
+            ),
+            FieldSpec(
+                name="length",
+                label="Length",
+                kind="number",
+                default=4.6,
+                unit="m",
+                help="Along its heading: a car's, a walker's, whatever is to stand there.",
+            ),
+            FieldSpec(
+                name="width",
+                label="Width",
+                kind="number",
+                default=2.0,
+                unit="m",
+            ),
+            FieldSpec(
+                name="margin",
+                label="Margin",
+                kind="number",
+                default=0.3,
+                required=False,
+                unit="m",
+                help="How near another road user's outline may come.",
+            ),
+        ),
+        description=(
+            "No vehicle's or walker's bounding box overlaps a rectangle at a "
+            "place on the map (a margin added) -- where an entity is to "
+            "appear, so it is not brought in on top of another road user."
+        ),
+    )
+)
+
 #: The metrics a Metric card can watch.
 METRIC_OPTIONS: tuple[SelectOption, ...] = tuple(
     SelectOption(metric.key, metric.title) for metric in BUILT_IN_METRICS.values()

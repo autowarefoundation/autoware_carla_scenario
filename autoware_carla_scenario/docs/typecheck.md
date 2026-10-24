@@ -1676,8 +1676,8 @@ To check one more module:
 
 ### What is checked of the framework
 
-Every module now has an entry other than `"not yet checked (#45)"`. 202 of
-the package's 302 modules (67%; about 47,300 of 84,200 lines) are `CHECKED`:
+Every module now has an entry other than `"not yet checked (#45)"`. 203 of
+the package's 303 modules (67%; about 47,300 of 84,200 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the conversions between
 Lanelet2, OpenDRIVE and CARLA world poses (`coordinate.transform`), the stop
 lines read off a Lanelet2 map (`utils.stop_line`, `coordinate.stop_line`)
@@ -1736,8 +1736,8 @@ driver's configs and client interface, trajectory follower and observations
 `driver.geometry`), and the `autoware_bridge`, `autoware_stack`, `entity`,
 `driver`, `maps` and `coverage` packages themselves, whose `__init__` re-exports what is not checked
 through models of it (see *A class a checked package only re-exports*
-below). 115
-functions and methods of those modules are `UNCALLED` (35 of them
+below). 117
+functions and methods of those modules are `UNCALLED` (36 of them
 protected helpers, see *What is compiled* below): most of them a
 condition's `get_details()` or a backend's `describe()`, what takes a traffic
 backend's options node (`Mapping[str, Any]`), what reads a route search, a

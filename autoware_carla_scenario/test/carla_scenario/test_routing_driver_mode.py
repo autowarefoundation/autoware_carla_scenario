@@ -1025,3 +1025,63 @@ def test_a_spot_claimed_this_frame_is_taken_before_the_snapshot_shows_it() -> No
     assert clearance.overlaps(world, 1, 10.0, 0.0, 0.0, 2.0, 1.0) is None  # its own
     clearance._CACHE.claims_frame = -5  # a later frame: shown by the snapshot
     assert clearance.overlaps(world, 2, 10.0, 0.0, 0.0, 2.0, 1.0) is None
+
+
+def test_a_place_clear_condition_holds_while_nothing_stands_there(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A generic place (a lanelet pose) and a footprint: passes while no road
+    user overlaps it, says once what stands there."""
+    from autoware_carla_scenario.conditions import PlaceClearCondition
+    from autoware_carla_scenario.conditions import place_clear as place_module
+    from autoware_carla_scenario.coordinate import Lanelet2Pose
+    from autoware_carla_scenario.coordinate import transform as transform_module
+
+    monkeypatch.setattr(
+        transform_module,
+        "to_carla_world",
+        lambda pose: SimpleNamespace(x=10.0, y=2.0, z=0.0, yaw=90.0),
+    )
+    seen: list[tuple[float, ...]] = []
+    occupant = {"id": 7}
+
+    def look(
+        world: Any, x: float, y: float, yaw: float, hl: float, hw: float, m: float
+    ) -> int:
+        seen.append((x, y, yaw, hl, hw, m))
+        return occupant["id"]
+
+    monkeypatch.setattr(place_module, "_occupant", look)
+    condition = PlaceClearCondition(Lanelet2Pose(3, 5.0, 1.0), 4.0, 2.0, label="p")
+    assert condition.check(None, 1.0) is None  # type: ignore[arg-type]
+    assert seen[-1] == (10.0, 2.0, 90.0, 2.0, 1.0, 0.3)
+    occupant["id"] = -1
+    result = condition.check(None, 2.0)  # type: ignore[arg-type]
+    assert result is not None and result.passed
+    assert condition.get_details()["lanelet_id"] == 3
+    with pytest.raises(ValueError):
+        PlaceClearCondition(Lanelet2Pose(3, 5.0), 0.0, 2.0, label="p")
+
+
+def test_the_place_clear_card_builds_its_condition() -> None:
+    """The card's lanelet pose and footprint reach the condition."""
+    from autoware_carla_scenario.authoring import _builders_generated as builders
+    from autoware_carla_scenario.conditions import PlaceClearCondition
+
+    compiled = SimpleNamespace(
+        label="p",
+        params={
+            "lanelet_id": 12,
+            "s": 3.0,
+            "t": -1.5,
+            "heading": 0.0,
+            "length": 0.5,
+            "width": 0.4,
+            "margin": 0.3,
+        },
+    )
+    built = builders.build_place_clear_condition(compiled, [], None)  # type: ignore[arg-type]
+    assert isinstance(built, PlaceClearCondition)
+    details = built.get_details()
+    assert (details["lanelet_id"], details["s"], details["t"]) == (12, 3.0, -1.5)
+    assert (details["length"], details["width"], details["margin"]) == (0.5, 0.4, 0.3)
