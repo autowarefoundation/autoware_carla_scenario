@@ -1,5 +1,5 @@
 version = 1
-revision = 5
+revision = 3
 requires-python = ">=3.10, <3.15"
 resolution-markers = [
     "python_full_version >= '3.13' and sys_platform == 'emscripten'",
@@ -36,6 +36,7 @@ dev = [
     { name = "cyclonedds", marker = "python_full_version < '3.14' and platform_machine == 'x86_64' and sys_platform == 'linux'", specifier = ">=11.0.1" },
     { name = "eclipse-sumo", specifier = ">=1.23" },
     { name = "grpcio-tools", marker = "python_full_version < '3.13'", specifier = ">=1.60,<1.63" },
+    { name = "hilspy", specifier = ">=0.14,<0.15" },
     { name = "httpx2", specifier = ">=2.12.0" },
     { name = "hypothesis", specifier = ">=6.100" },
     { name = "jsonschema", specifier = ">=4.18" },
@@ -205,6 +206,9 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+hils = [
+    { name = "hilspy" },
+]
 map = [
     { name = "roadgen" },
 ]
@@ -243,6 +247,7 @@ requires-dist = [
     { name = "eclipse-sumo", marker = "extra == 'sumo'", specifier = ">=1.23" },
     { name = "fastapi", specifier = ">=0.115.0" },
     { name = "grpcio", specifier = ">=1.60" },
+    { name = "hilspy", marker = "extra == 'hils'", specifier = ">=0.14,<0.15" },
     { name = "hydra-core", specifier = ">=1.3.2" },
     { name = "jinja2", specifier = ">=3.1.0" },
     { name = "libsumo", marker = "extra == 'sumo'", specifier = ">=1.23" },
@@ -271,7 +276,7 @@ requires-dist = [
     { name = "typesafe-carla", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux')", specifier = ">=0.8.1,<0.9" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.34.0" },
 ]
-provides-extras = ["sumo", "map", "ros2", "rerun", "rerun-lidar", "t4", "viewer"]
+provides-extras = ["sumo", "map", "ros2", "rerun", "rerun-lidar", "t4", "hils", "viewer"]
 
 [[package]]
 name = "autoware-carla-scenario-rerun"
@@ -1409,6 +1414,19 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/01/ee/02a2c011bdab74c6fb3c75474d40b3052059d95df7e73351460c8588d963/h11-0.16.0.tar.gz", hash = "sha256:4e35b956cf45792e4caa5885e69fba00bdbc6ffafbfa020300e549b208ee5ff1", size = 101250, upload-time = "2025-04-24T03:35:25.427Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/04/4b/29cac41a4d98d144bf5f6d33995617b185d14b22401f75ca86f384e87ff1/h11-0.16.0-py3-none-any.whl", hash = "sha256:63cf8bbe7522de3bf65932fda1d9c2772064ffb3dae62d55932da54b31cb6c86", size = 37515, upload-time = "2025-04-24T03:35:24.344Z" },
+]
+
+[[package]]
+name = "hilspy"
+version = "0.14.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/1a/ee/9a94ef119d7ae9c6ecc611877b73becd157810c7ff007466ff5807736018/hilspy-0.14.0.tar.gz", hash = "sha256:d273933914aed78517254b0f484595866566b882ac97ee12818b86e5c39ef78b", size = 247049, upload-time = "2026-10-24T02:53:19.362Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a5/63/6817487e30ec1d794ffafb3f3b17476084de10d02bbc064011c3e652b335/hilspy-0.14.0-cp310-abi3-macosx_10_12_x86_64.whl", hash = "sha256:c1b0114069542efc6e5f8a68bfd9a1d82e64e469068df5ed5fca59a6967e9403", size = 2605969, upload-time = "2026-10-24T02:53:10.631Z" },
+    { url = "https://files.pythonhosted.org/packages/7c/b8/bf02ce181432f8a2ec1ff8078cb923ec2cbef1f33683298141449099743a/hilspy-0.14.0-cp310-abi3-macosx_11_0_arm64.whl", hash = "sha256:51efee1a25f3549c0da8bbdac06fae1c06faa41196891661d61a9f52986b3740", size = 2456705, upload-time = "2026-10-24T02:53:12.678Z" },
+    { url = "https://files.pythonhosted.org/packages/52/da/8c28f685497a05344490879ba7f7092bd409ca80828e8a261b02bcbb0183/hilspy-0.14.0-cp310-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:cba7148a44a9c96f5a03d747d9e554d1672cfe3b2e56cfb692bcd9bf2199e4aa", size = 2584872, upload-time = "2026-10-24T02:53:14.347Z" },
+    { url = "https://files.pythonhosted.org/packages/ac/f6/d1437da9228f020f511b0c1e4be6581d202bcdeac3a90c3b782080398f7f/hilspy-0.14.0-cp310-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:acd3ad2ea68078f6512aac595606db75183ed148250d94019794ba601696b9ba", size = 2690884, upload-time = "2026-10-24T02:53:16.039Z" },
+    { url = "https://files.pythonhosted.org/packages/7a/50/e91545d1b02f83b487148317f847483cdde522257a9e65fcb40d417a9bb0/hilspy-0.14.0-cp310-abi3-win_amd64.whl", hash = "sha256:d53b822a8b07846c69e43f61cd14c34777a89dcdb3023f2859fa1b19e806ce6b", size = 2682946, upload-time = "2026-10-24T02:53:17.74Z" },
 ]
 
 [[package]]

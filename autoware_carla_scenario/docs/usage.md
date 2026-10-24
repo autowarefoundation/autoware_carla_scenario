@@ -693,6 +693,21 @@ the nodes' path.
 
 ---
 
+## `scenario-hils` - Streaming the Ego to ECUs (HILS)
+
+A separate process that follows a run's ego in CARLA and sends ECUs under test
+their sensors' and buses' traffic (CAN, GNSS, LiDAR packets, camera frames)
+through hilspy, configured by one YAML file:
+
+```bash
+uvx --from 'autoware-carla-scenario[hils]' scenario-hils --example > hils.yaml
+uvx --from 'autoware-carla-scenario[hils]' scenario-hils hils.yaml
+```
+
+See [HILS Bridge](hils.md).
+
+---
+
 ## `detect-no-3d-model` - 3D Model Detection
 
 Detects lanelets that do not have a matching 3D ground model in CARLA. Useful for identifying areas where vehicle ground-projection ray casting will fail. Requires a running CARLA server with the target map loaded.
