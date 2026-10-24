@@ -1035,15 +1035,21 @@ def _expand_batch(scenario_names: list[str], overrides: list[str]) -> list[Batch
     Scenarios that draw from one ODD go on from each other's draws: a later
     one aims at what the earlier ones left uncovered (``strategy: coverage``)
     and does not draw their values again."""
+    from ..odd.controls import ControlsError, format_diagnostics  # noqa: PLC0415
     from ..odd.sampler import OddDraws  # noqa: PLC0415
     from ..sweeper.expand import expand_config  # noqa: PLC0415 -- loads Lanelet2
 
     drawn = OddDraws()
     cases: list[BatchCase] = []
     for name in scenario_names:
-        expanded = expand_config(
-            _compose_config(name, overrides), overrides, drawn=drawn
-        )
+        try:
+            expanded = expand_config(
+                _compose_config(name, overrides), overrides, drawn=drawn
+            )
+        except ControlsError as exc:
+            for line in format_diagnostics(exc.diagnostics, name):
+                print(line, file=sys.stderr)  # noqa: T201
+            sys.exit(1)
         logger.info("%s: %d case(s)", name, len(expanded))
         cases.extend((name, case) for case in expanded)
     return cases
