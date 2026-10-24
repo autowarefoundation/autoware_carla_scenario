@@ -3226,6 +3226,16 @@ def test_isinstance_in_a_module_that_uses_json_is_given_a_json_test() -> None:
         "from json import loads, JSONValue as _acs_JSONValue\n"
     )
     assert "isinstance(v, _acs_JSONValue)" in from_import
+    # A parenthesised list, with or without a trailing comma, stays valid and
+    # keeps its lines.
+    for tail in (",\n)", ")"):
+        spread_import = (
+            f"from json import (\n    loads,\n    dumps{tail}\nisinstance(v, list)\n"
+        )
+        out = _rewritten(spread_import)
+        compile(out, "<rewritten>", "exec")
+        assert out.count("\n") == spread_import.count("\n")
+        assert "dumps, JSONValue as _acs_JSONValue" in out
     # A function-local import serves that function only.
     local = _rewritten(
         "def f(v):\n    import json\n    return isinstance(v, list)\n"

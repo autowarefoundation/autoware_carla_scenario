@@ -2601,7 +2601,9 @@ What Codon 0.19 needs that Python does not, beyond
   value of the wrong kind is invisible to it. `get(key, default)` takes a
   default of any type and returns a `JSONValue` (`float(doc.get("speed", 5.0))`),
   a list takes a slice (`doc["wps"][1:3]`), and `load(fp)` / `dump(obj, fp)`
-  take any file, a builtin `open()` among them (its `encoding=`, `errors=`
+  take any file, a builtin `open()` among them (untyped: Codon 0.19 crashes on a
+  `Union[File, IO[str]]` parameter, so `json.load(5)` passes the check and
+  CPython refuses it; its `encoding=`, `errors=`
   and `newline=`, which Codon's `open` lacks, are dropped from the checked
   copy, #562). A scenario that reads a document converts what it takes
   explicitly: `speed = float(cfg["v"])` passes, `speed: float = cfg["v"]` and

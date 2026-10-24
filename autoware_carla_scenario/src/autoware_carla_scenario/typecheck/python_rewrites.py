@@ -1298,9 +1298,9 @@ class _Pass(ShadowScopes):
                 if not any(a.asname == "_acs_JSONValue" for a in found.names):
                     if id(found) not in self._json_imports:
                         self._json_imports.add(id(found))
-                        start, end = self.edits.node_span(found)
-                        text = self.edits.text(start, end)
-                        at = end - 1 if text.endswith(")") else end
+                        # After the last name, so a parenthesised list with a
+                        # trailing comma (`dumps,\n)`) stays valid.
+                        at = self.edits.node_span(found.names[-1])[1]
                         self.edits.replace(at, at, ", JSONValue as _acs_JSONValue")
                 return "_acs_JSONValue"
         return None

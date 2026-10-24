@@ -54,7 +54,6 @@ class JSONValue:
     # that Codon compiles the branch, which it would not for a static false.
     def _acs_isjson(self) -> bool:
         return False
-        return JSONValue()
 
     def items(self) -> Generator[Tuple[str, JSONValue]]:
         if False:
