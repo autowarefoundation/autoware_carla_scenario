@@ -26,6 +26,22 @@ on it -- with its own cross factor -- when it walks on; and every walker's
 current target is sent again every :data:`RETARGET_S` seconds, so an unblock
 elsewhere costs it at most that.
 
+**Road stretches are stepped.**  CARLA's controller does not take a walker
+across a road where it was recorded crossing it, whatever its cross factor:
+the road costs ten times the pavement in its routing, so any crossing within
+that is taken instead, and stepping off a kerb starts a stop-and-check that
+re-sending a target restarts.  So for a walker that may cross (cross factor
+at least a half) the walk is read along its line, a point a metre, against
+the Lanelet2 map: a stretch on a road lanelet and on no walkway or crossing
+is walked with the framework's own stepping (``drive`` answers ``False`` and
+the caller steps it), off the controller.  It is handed back to the
+controller only once it stands on a walkway or a crossing again, at least
+:data:`HAND_BACK_PAST_M` past the stretch's end along the walk -- never if
+the walk ends on the road.  Its position is compared over the tick its
+controller starts again, and a jump of more than :data:`SNAP_M` is said.
+While stepped it is no crowd agent: walkers on the controller do not steer
+round it.
+
 A map without a navigation mesh -- ``get_random_location_from_navigation()``
 finds nothing -- is said once, and its walkers are stepped along the route as
 before (:func:`~.pedestrian_entity.steer_walker`).
@@ -47,6 +63,7 @@ __all__ = [
     "drive",
     "has_navmesh",
     "release",
+    "road_stretches",
 ]
 
 #: CARLA's own pedestrian cross factor (``Navigation::_probability_crossing``).
@@ -67,6 +84,16 @@ _START_NEAR_M = 3.0
 _HIDDEN_BELOW_M = -100.0
 #: Below this (m/s) a walker is held, off its controller.
 _HOLD_MPS = 0.05
+#: The share of a walker's cross factor from which its road stretches are
+#: stepped.
+STEP_CROSSING_FROM: float = 0.5
+#: How far (m) past a road stretch's end, along the walk, a stepped walker is
+#: handed back to its controller (on a walkway or a crossing).
+HAND_BACK_PAST_M: float = 1.0
+#: How far (m) a walk is sampled apart to find its road stretches.
+_SAMPLE_M: float = 1.0
+#: A jump (m) over the tick a controller starts that is said.
+SNAP_M: float = 0.5
 #: The tick, for the retargeting clock where the world does not say.
 _DEFAULT_DT_S = 0.05
 
@@ -90,6 +117,11 @@ class _Driven:
         self.speed = -1.0
         self.running = False
         self.since_sent = 0.0
+        #: ``(start, end)`` along the walk of its road stretches, stepped.
+        self.stretches: list[tuple[float, float]] = []
+        self.stepping = False
+        #: Where the walker stood as its controller last started, to compare.
+        self.started_at: Optional[tuple[float, float]] = None
 
 
 #: Each driven walker, by actor id.
@@ -174,6 +206,18 @@ def drive(
         blueprint = world.get_blueprint_library().find("controller.ai.walker")
         controller = world.spawn_actor(blueprint, carla.Transform(), attach_to=walker)
         driven = _Driven(controller, targets, cross_factor)
+        if cross_factor is not None and cross_factor >= STEP_CROSSING_FROM:
+            try:
+                driven.stretches = road_stretches(path)
+            except RuntimeError:  # no Lanelet2 map to read the walk against
+                driven.stretches = []
+            if driven.stretches:
+                logger.info(
+                    "walker %d crosses a road away from a crossing: %s m of "
+                    "its walk stepped",
+                    int(walker.id),
+                    ", ".join("%.0f-%.0f" % stretch for stretch in driven.stretches),
+                )
         _DRIVEN[int(walker.id)] = driven
         logger.debug(
             "walker %d: on CARLA's controller (cross factor %s), %d targets to "
@@ -184,6 +228,16 @@ def drive(
             targets[-1][1].x,
             targets[-1][1].y,
         )
+    _check_snap(walker, driven, location)
+    stepped = _stepped(driven, here, location)
+    if stepped and not driven.stepping:
+        driven.stepping = True
+        if driven.running:
+            _stop(driven)
+            _own_steps(walker)
+    elif not stepped and driven.stepping:
+        driven.stepping = False
+        driven.since_sent = RETARGET_S
     while driven.index < len(driven.targets) - 1:
         along, target = driven.targets[driven.index]
         near = math.hypot(location.x - target.x, location.y - target.y) <= REACHED_M
@@ -191,15 +245,20 @@ def drive(
             break
         driven.index += 1
         driven.since_sent = RETARGET_S
+    if driven.stepping:
+        return False  # the caller steps it, on the road
     wanted = max(speed, 0.0)
     if wanted < _HOLD_MPS:
         # Held: off the controller, which would send a walker standing 4 s to
         # a random place, and standing.
         if driven.running:
+            # Standing: off its controller, its movement left as the
+            # navigation set it (on again, the walker would drop to the
+            # ground from wherever the navigation held it).
             _stop(driven)
-            walker.apply_control(carla.WalkerControl(speed=0.0))
         return True
     if not driven.running:
+        driven.started_at = (location.x, location.y)
         _start(world, driven)
     driven.since_sent += _tick_seconds(world)
     if driven.since_sent >= RETARGET_S:
@@ -209,6 +268,97 @@ def drive(
         driven.controller.set_max_speed(wanted)
         driven.speed = wanted
     return True
+
+
+def road_stretches(path: Any) -> list[tuple[float, float]]:
+    """``(start, end)`` along *path* (m) of its stretches on a road lanelet
+    and on no walkway or crossing: where it crosses a road away from one."""
+    stretches: list[tuple[float, float]] = []
+    start: Optional[float] = None
+    along = 0.0
+    while True:
+        point = path.at_distance(min(along, path.length))
+        if _kind_at(point.x, point.y) == "road":
+            if start is None:
+                start = max(0.0, along - _SAMPLE_M / 2.0)
+        elif start is not None:
+            stretches.append((start, along - _SAMPLE_M / 2.0))
+            start = None
+        if along >= path.length:
+            break
+        along += _SAMPLE_M
+    if start is not None:
+        stretches.append((start, path.length))
+    return stretches
+
+
+def _stepped(driven: _Driven, here: float, location: Any) -> bool:
+    """Whether the walker, *here* m along its walk, is to be stepped: in a
+    road stretch (from just before it), or past one and not yet on a
+    walkway or a crossing :data:`HAND_BACK_PAST_M` beyond it."""
+    for start, end in driven.stretches:
+        if here < start - 0.5:
+            return False
+        if here <= end:
+            return True
+        if driven.stepping and not (
+            here >= end + HAND_BACK_PAST_M
+            and _kind_at(location.x, location.y) == "walk"
+        ):
+            # Past the stretch: back to the controller only standing on a
+            # walkway or a crossing, a metre on from the kerb.
+            return True
+    return False
+
+
+def _own_steps(walker: Any) -> None:
+    """Let *walker* take steps again (``apply_control``) off its controller:
+    a walker CARLA's navigation has moved ignores them until its physics is
+    set on again."""
+    try:
+        walker.set_simulate_physics(True)
+    except (AttributeError, RuntimeError):
+        pass
+
+
+def _check_snap(walker: Any, driven: _Driven, location: Any) -> None:
+    """Say a jump over the tick the walker's controller started."""
+    before = driven.started_at
+    if before is None:
+        return
+    driven.started_at = None
+    jump = math.hypot(location.x - before[0], location.y - before[1])
+    if jump > SNAP_M:
+        logger.warning(
+            "walker %d jumped %.1f m as its controller started at (%.1f, %.1f)",
+            int(walker.id),
+            jump,
+            before[0],
+            before[1],
+        )
+
+
+def _kind_at(x: float, y: float) -> str:
+    """``"walk"`` on a walkway or a crossing, ``"road"`` on a road lanelet
+    only, ``""`` on none: what the Lanelet2 map has at CARLA ``(x, y)``."""
+    import lanelet2.core  # noqa: PLC0415
+    import lanelet2.geometry  # noqa: PLC0415
+
+    from ..coordinate.map_manager import MapManager  # noqa: PLC0415
+    from ..route.geometry import MapFeatures  # noqa: PLC0415
+
+    mm = MapManager.get_instance()
+    offset_x, offset_y = mm.mgrs_offset
+    point = lanelet2.core.BasicPoint2d(x + offset_x, -y + offset_y)
+    kind = ""
+    for _distance, lanelet in lanelet2.geometry.findWithin2d(
+        mm.lanelet_map.laneletLayer, point, 0.0
+    ):
+        if MapFeatures.is_walkable(lanelet):
+            return "walk"
+        if MapFeatures.is_road(lanelet):
+            kind = "road"
+    return kind
 
 
 def release(walker_id: int) -> None:

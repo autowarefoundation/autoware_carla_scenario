@@ -621,7 +621,6 @@ def test_a_routed_walker_is_walked_by_carlas_controller() -> None:
         ("speed", 1.4),
         ("go", 20.0),
         "stop",
-        "stand",
         "start",
         ("go", 20.0),
         ("speed", 1.0),
@@ -674,3 +673,87 @@ def test_a_target_near_enough_counts_as_reached_off_the_walk() -> None:
     assert _walker_ai.drive(walker, path_of(25.0), 3.0, 1.4, beside)
     _walker_ai.release(59)
     assert ("go", 20.0) in world.controller.calls
+
+
+def _road_between(monkeypatch: pytest.MonkeyPatch, a: float, b: float) -> None:
+    """A map whose road runs across the walk from x=a to x=b; walkway else."""
+    from autoware_carla_scenario.entity import _walker_ai
+
+    monkeypatch.setattr(
+        _walker_ai, "_kind_at", lambda x, y: "road" if a < x < b else "walk"
+    )
+
+
+def test_a_walks_road_stretches_are_found_along_its_line(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from autoware_carla_scenario.entity import _walker_ai
+
+    _road_between(monkeypatch, 10.0, 17.0)
+    assert _walker_ai.road_stretches(path_of(30.0)) == [(10.5, 16.5)]
+    # Ending on the road: the stretch runs to the walk's end.
+    _road_between(monkeypatch, 10.0, 99.0)
+    assert _walker_ai.road_stretches(path_of(30.0)) == [(10.5, 30.0)]
+
+
+def test_a_walker_that_may_cross_is_stepped_over_the_road_and_handed_back(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """On the controller to the kerb, stepped across, back on it only on the
+    far pavement a metre on; one that may not cross is never stepped."""
+    from autoware_carla_scenario.entity import _walker_ai
+
+    _road_between(monkeypatch, 10.0, 17.0)
+    world = _AiWorld(True, 105)
+    path = path_of(30.0)
+    steps: dict[float, bool] = {}
+    for factor, walker_id in ((1.0, 61), (0.0, 62)):
+        walker = SimpleNamespace(
+            id=walker_id, get_world=lambda: world, apply_control=lambda c: None
+        )
+        for here in (0.0, 5.0, 10.2, 14.0, 17.0, 17.6, 19.0, 25.0):
+            where = SimpleNamespace(x=here, y=0.0, z=0.0)
+            on = _walker_ai.drive(walker, path, here, 1.4, where, factor)
+            if factor == 1.0:
+                steps[here] = not on
+            else:
+                assert on  # never stepped
+        _walker_ai.release(walker_id)
+    # Stepped from just before the kerb to a metre past the far one.
+    assert [here for here, stepped in steps.items() if stepped] == [10.2, 14.0, 17.0]
+
+
+def test_a_walk_ending_on_the_road_is_stepped_to_its_end(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from autoware_carla_scenario.entity import _walker_ai
+
+    _road_between(monkeypatch, 10.0, 99.0)
+    world = _AiWorld(True, 106)
+    walker = SimpleNamespace(
+        id=63, get_world=lambda: world, apply_control=lambda c: None
+    )
+    path = path_of(30.0)
+    stepped = []
+    for here in (0.0, 12.0, 29.0):
+        where = SimpleNamespace(x=here, y=0.0, z=0.0)
+        stepped.append(not _walker_ai.drive(walker, path, here, 1.4, where, 1.0))
+    _walker_ai.release(63)
+    assert stepped == [False, True, True]
+
+
+def test_a_jump_as_the_controller_starts_is_said(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from autoware_carla_scenario.entity import _walker_ai
+
+    world = _AiWorld(True, 107)
+    walker = SimpleNamespace(
+        id=64, get_world=lambda: world, apply_control=lambda c: None
+    )
+    path = path_of(30.0)
+    with caplog.at_level(logging.WARNING):
+        _walker_ai.drive(walker, path, 0.0, 1.4, SimpleNamespace(x=0.0, y=0.0, z=0.0))
+        _walker_ai.drive(walker, path, 0.0, 1.4, SimpleNamespace(x=2.0, y=0.0, z=0.0))
+    _walker_ai.release(64)
+    assert sum("jumped" in r.getMessage() for r in caplog.records) == 1
