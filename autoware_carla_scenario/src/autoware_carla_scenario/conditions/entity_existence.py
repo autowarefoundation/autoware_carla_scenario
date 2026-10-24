@@ -29,15 +29,25 @@ class EntityExistenceCondition(BaseCondition):
     Args:
         entity_name: The ``role_name`` attribute of the actor to monitor.
             Accepts both :class:`EntityRole` and plain ``str``.
+        quiet: An absent actor is expected, not an error: a guard (a
+            composition condition's on its entity, which waits until the
+            entity is there and reads one that is gone as nothing to check)
+            says so at debug level only, once.
     """
 
     # Declared for the static check (docs/typecheck.md).
     _entity_name: str
+    _quiet: bool
+    _said_absent: bool
 
-    def __init__(self, entity_name: Union[EntityRole, str], *, label: str) -> None:
+    def __init__(
+        self, entity_name: Union[EntityRole, str], *, label: str, quiet: bool = False
+    ) -> None:
         super().__init__(label=label)
         # Kept as its string, the one thing every use of it reads.
         self._entity_name = str(entity_name)
+        self._quiet = quiet
+        self._said_absent = False
 
     def get_details(self) -> dict[str, Any]:
         return {"entity_name": str(self._entity_name)}
@@ -59,12 +69,17 @@ class EntityExistenceCondition(BaseCondition):
         actor = find_actor_by_role_name(world, self._entity_name)
 
         if actor is not None:
+            self._said_absent = False
             return None
 
         msg = (
             f"Actor '{self._entity_name}' not found in the world " f"at {elapsed:.2f}s"
         )
-        logger.error(msg)
+        if not self._quiet:
+            logger.error(msg)
+        elif not self._said_absent:
+            self._said_absent = True
+            logger.debug(msg)
 
         return ScenarioResult(
             passed=False,

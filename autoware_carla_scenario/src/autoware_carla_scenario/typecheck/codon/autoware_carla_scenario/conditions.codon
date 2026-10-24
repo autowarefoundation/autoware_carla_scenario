@@ -660,8 +660,8 @@ class EntityExistenceCondition(BaseCondition):
         compile_error("EntityExistenceCondition(): no constructor takes these arguments "
                       "(required: entity_name, keyword label)")
 
-    def __init__(self, entity_name, *_kw, label = _Required()):
-        _keyword_only(_kw, "EntityExistenceCondition(): label")
+    def __init__(self, entity_name, *_kw, label = _Required(), quiet: bool = False):
+        _keyword_only(_kw, "EntityExistenceCondition(): label and quiet")
         _expect_role(entity_name)
         super().__init__(_required_str(label, "EntityExistenceCondition(): label"))
 

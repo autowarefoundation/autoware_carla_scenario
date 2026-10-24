@@ -767,3 +767,32 @@ class TestAnOpenDriveAddressNeedsNoMap:
         details = condition.get_details()
         assert details["road_id"] == "80"
         assert details["lane_id"] == 2
+
+
+def test_a_guard_reads_a_gone_entity_quietly(caplog: pytest.LogCaptureFixture) -> None:
+    """A composition condition's guard on an entity that is gone (despawned)
+    is nothing to check, not an error each tick; the ego's own existence
+    condition still says it."""
+    import logging as _logging
+
+    from autoware_carla_scenario.conditions import EntityExistenceCondition
+
+    class _Empty:
+        id = 4242
+
+        def get_actors(self) -> list:
+            return []
+
+        def get_actor(self, actor_id: int) -> None:
+            return None
+
+    world = _Empty()
+    guard = EntityExistenceCondition("npc9", label="g", quiet=True)
+    loud = EntityExistenceCondition("ego", label="e")
+    with caplog.at_level(_logging.DEBUG):
+        for t in range(5):
+            assert guard.check(world, float(t)) is not None  # type: ignore[arg-type]
+        assert [r.levelno for r in caplog.records] == [_logging.DEBUG]
+        caplog.clear()
+        loud.check(world, 0.0)  # type: ignore[arg-type]
+        assert [r.levelno for r in caplog.records] == [_logging.ERROR]
