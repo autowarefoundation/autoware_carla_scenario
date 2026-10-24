@@ -415,9 +415,18 @@ class UndeclaredAttribute:
     name: str
     lineno: int
     suggested_type: str | None = None
+    #: The method that annotates it (``self.x: T = ...``), when one does.
+    annotated_in: str | None = None
 
     def message(self) -> str:
         hint = self.suggested_type or "<type>"
+        if self.annotated_in is not None:
+            return (
+                f"{self.class_name}.{self.name} is annotated in "
+                f"`{self.annotated_in}`; Codon needs it declared in the class "
+                f"body: `{self.name}: {hint}` (a bare annotation, which Python "
+                "ignores)"
+            )
         return (
             f"{self.class_name}.{self.name} is assigned without a type: declare it "
             f"in the class body, e.g. `{self.name}: {hint}` (a bare annotation, "
@@ -5005,6 +5014,9 @@ def undeclared_attributes(
                                 target.attr,
                                 target.lineno,
                                 annotation or _suggest_type(value),
+                                method.name
+                                if isinstance(stmt, ast.AnnAssign)
+                                else None,
                             )
                         )
     return found

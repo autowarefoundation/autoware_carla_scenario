@@ -974,8 +974,7 @@ def test_a_missing_return_names_the_class() -> None:
 def test_a_bare_call_of_a_method_gets_the_self_hint(tmp_path: Path) -> None:
     refined = _refine(tmp_path, _OWN, "name 'flag' is not defined", "flag()", 2)
     assert refined[0] == (
-        "name 'flag' is not defined: S has a method flag(), "
-        "did you mean `self.flag()`?"
+        "name 'flag' is not defined: S has a method flag(), did you mean `self.flag()`?"
     )
     line, column = _at(_OWN.splitlines(), "flag()", 2)
     assert (refined[1], refined[2]) == (line, column)
@@ -1213,6 +1212,25 @@ def test_a_bare_call_of_a_static_or_class_method_keeps_its_parentheses(
         "    def run(self) -> None:\n        if flag():\n            pass\n"
     )
     assert _refine(tmp_path, source, "name 'flag' is not defined", "flag():")[0] == (
-        "name 'flag' is not defined: S has a method flag(), "
-        "did you mean `self.flag()`?"
+        "name 'flag' is not defined: S has a method flag(), did you mean `self.flag()`?"
     )
+
+
+@pytest.mark.parametrize(
+    ("expr", "flagged"),
+    [
+        ("'yes' if x else 'no'", True),
+        ("[1] if x else [2]", True),
+        ("'yes' if x else 1", False),
+        ("'yes' if x else y", False),
+        ("'yes' if x else None", False),
+        ("'a' if x else ('b' if y else 'c')", True),
+        ("True if x else False", False),
+    ],
+)
+def test_a_conditional_of_literals_is_a_certain_return_type(
+    expr: str, flagged: bool
+) -> None:
+    tree = ast.parse(f"def f(x: int, y: int) -> bool:\n    return {expr}\n")
+    problems = return_problems({"m": ("m.py", tree)})
+    assert bool(problems) is flagged, problems

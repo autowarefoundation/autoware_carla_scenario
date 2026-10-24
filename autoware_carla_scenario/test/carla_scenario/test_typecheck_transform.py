@@ -1692,6 +1692,26 @@ def test_a_class_with_a_class_level_annotation_declares_every_attribute() -> Non
     ]
 
 
+def test_an_annotated_attribute_in_init_asks_for_the_class_body() -> None:
+    source = textwrap.dedent(
+        """
+        class Base:
+            pass
+
+        class Tracker(Base):
+            def __init__(self):
+                self._seen: list[float] = []
+        """
+    )
+    (found,) = undeclared_attributes(ast.parse(source), {})
+    assert found.message() == (
+        "Tracker._seen is annotated in `__init__`; Codon needs it declared in "
+        "the class body: `_seen: list[float]` (a bare annotation, which Python "
+        "ignores)"
+    )
+    assert "without a type" not in found.message()
+
+
 def test_a_class_named_in_also_is_checked_whatever_it_declares() -> None:
     source = "class Helper:\n    def __init__(self):\n        self.x = []\n"
     found = undeclared_attributes(ast.parse(source), {}, also={"Helper"})
@@ -4797,10 +4817,7 @@ def _cycle_modules(tmp_path: Path, a: str, b: str) -> dict[str, Any]:
 
 
 _CYCLE_A_TEXT = (
-    "from typing import Optional\n"
-    "class A:\n"
-    "    peer: {annotation}\n"
-    "from .b import B\n"
+    "from typing import Optional\nclass A:\n    peer: {annotation}\nfrom .b import B\n"
 )
 
 

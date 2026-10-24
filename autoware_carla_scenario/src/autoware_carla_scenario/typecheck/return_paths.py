@@ -215,6 +215,10 @@ def _certain_type(expr: ast.expr | None) -> str | None:
         return "dict"
     if isinstance(expr, ast.Set):
         return "set"
+    if isinstance(expr, ast.IfExp):
+        # certain only when both branches are certain, and of the same type
+        body = _certain_type(expr.body)
+        return body if body is not None and body == _certain_type(expr.orelse) else None
     return None
 
 
