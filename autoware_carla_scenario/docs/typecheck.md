@@ -2598,11 +2598,29 @@ What Codon 0.19 needs that Python does not, beyond
   `keys()`, `values()`, iteration, `len()`, `in`, `str()`, `int()`,
   `float()`, `bool()`), each returning a `JSONValue` again, and never what
   the document holds; the `ValueError` or `TypeError` CPython raises for a
-  value of the wrong kind is invisible to it. A scenario
-  that reads a document converts what it takes explicitly:
-  `speed = float(cfg["v"])` passes, `speed: float = cfg["v"]` and
-  `cfg["v"] + 1.0` are refused; whether the key exists, or holds a number,
-  is not checked. `JSONDecodeError` is a
+  value of the wrong kind is invisible to it. `get(key, default)` takes a
+  default of any type and returns a `JSONValue` (`float(doc.get("speed", 5.0))`),
+  a list takes a slice (`doc["wps"][1:3]`), and `load(fp)` / `dump(obj, fp)`
+  take any file, a builtin `open()` among them (its `encoding=`, `errors=`
+  and `newline=`, which Codon's `open` lacks, are dropped from the checked
+  copy, #562). A scenario that reads a document converts what it takes
+  explicitly: `speed = float(cfg["v"])` passes, `speed: float = cfg["v"]` and
+  `cfg["v"] + 1.0` are refused, with a hint to convert the value (`speed is
+  assigned a JSONValue, but is declared float`, #564; assigning into a
+  document is refused as read-only); whether the key exists, or holds a
+  number, is not checked. `isinstance(v, dict)` of a `JSONValue` is
+  compiled as a run-time test (#563): Codon decides `isinstance` by the static
+  type and a `JSONValue` is none of `dict`, `list`, `str`, so it would not
+  compile the branch the test guards, and wrong code in it would pass. In a
+  module that imports `json`, the python rewrites turn `isinstance(x, T)` into
+  `isinstance(x, T) or (isinstance(x, JSONValue) and x._acs_isjson())`, which
+  changes nothing for any other type; both branches are then checked against
+  the members of `JSONValue`. (Codon does the same for any value whose static type is not the class: after
+  `x = 5`, the body of `if isinstance(x, str):` is not compiled, as dead code
+  is not; that is Codon's, and only `JSONValue`, whose type is opaque by
+  design, is rewritten.) (A module that never imports `json` but gets a
+  `JSONValue` from another module's function is not rewritten, and a call
+  that spans lines is not either.) `JSONDecodeError` is a
   `ValueError` with `msg`, `doc` and `pos`. `shlex` declares
   `quote(s)` and `join(split_command)`, CPython 3.10's on Codon's `re`; a
   `quote()` of a false value that is no `str` (`None`, which CPython quotes

@@ -34,6 +34,13 @@ so a rewrite has to keep the *types*, not the values, of what it replaces.
   spec ``(p).__format__(spec)``, ``{p=}`` ``"p=" + repr(p)``; ``.format`` is
   an f-string first, so it ends up lowered too.  ``!a`` there is ``repr``.
 * ``zip(..., strict=...)`` becomes ``zip(...)``.
+* ``open(p, encoding=..., errors=..., newline=...)`` loses those keywords
+  (Codon's ``open`` has none, #562): they change the decoding, not the type.
+* ``isinstance(x, T)`` in a module that uses ``json`` becomes ``isinstance(x,
+  T) or (isinstance(x, JSONValue) and x._acs_isjson())`` (#563): Codon decides
+  ``isinstance`` by the static type and would not compile the branch of a
+  ``JSONValue``, which is none of ``dict``, ``list``, ``str``.  Unchanged for
+  any other type.
 * Builtins and str methods Codon lacks (#439), each with the type of what it
   replaces: ``s.startswith((a, b))`` (also ``endswith``, and with a ``start``
   / ``end``) becomes ``(s.startswith(a) or s.startswith(b))``, the receiver and
@@ -280,6 +287,16 @@ _ORDERING = ("__lt__", "__le__", "__gt__", "__ge__")
 _MAX_PASSES = 20
 _FORMAT_REFERENCE = re.compile(r"(?:\.\w+|\[[^\]\[]+\])*")
 _ACCESS = re.compile(r"\.(\w+)|\[([^\]\[]+)\]")
+
+
+#: ``open()`` keywords of CPython that Codon's ``open`` lacks (#562): they
+#: change how the bytes are decoded, not the type of what ``open`` returns.
+_OPEN_TEXT_KEYWORDS = frozenset({"encoding", "errors", "newline"})
+
+
+def _kept_keywords(node: ast.Call, names: set[str] | frozenset[str]) -> bool:
+    """Whether the call passes any keyword of *names*."""
+    return any(k.arg in names for k in node.keywords)
 
 
 def _literal(node: ast.AST) -> bool:
@@ -730,6 +747,10 @@ class _Pass(ShadowScopes):
         #: dotted path of a class, ``None`` for a function (a class defined in
         #: one has no name Codon can resolve there).
         self._paths: list[str | None] = []
+        #: The ``from json import ...`` nodes given ``JSONValue`` (#563).
+        self._json_imports: set[int] = set()
+        self._json_done: set[int] = set()
+        self._module: ast.Module | None = None
 
     def _text(self, node: ast.AST) -> str:
         return self.edits.text(*self.edits.node_span(node))
@@ -1145,6 +1166,7 @@ class _Pass(ShadowScopes):
 
     def visit_Module(self, node: ast.Module) -> None:
         self.enter_module(node)
+        self._module = node
         self._namedtuple_foreign = _foreign_collections_bindings(node)
         self.generic_visit(node)
 
@@ -1192,14 +1214,18 @@ class _Pass(ShadowScopes):
     # -- zip(strict=), "...".format(...) ------------------------------------
 
     def visit_Call(self, node: ast.Call) -> None:
-        if (
-            isinstance(node.func, ast.Name)
-            and node.func.id == "zip"
-            and any(k.arg == "strict" for k in node.keywords)
+        if isinstance(node.func, ast.Name) and (
+            (node.func.id == "zip" and _kept_keywords(node, {"strict"}))
+            or (
+                node.func.id == "open"
+                and not self._shadowed("open")
+                and _kept_keywords(node, _OPEN_TEXT_KEYWORDS)
+            )
         ):
             # Remove the keyword with the comma before it, in place, so a call
             # spread over lines keeps its line breaks inside its brackets.
-            for keyword in [k for k in node.keywords if k.arg == "strict"]:
+            dropped = {"strict"} if node.func.id == "zip" else _OPEN_TEXT_KEYWORDS
+            for keyword in [k for k in node.keywords if k.arg in dropped]:
                 start, end = self.edits.node_span(keyword)
                 before = [
                     self.edits.node_span(other)[1]
@@ -1224,6 +1250,10 @@ class _Pass(ShadowScopes):
             if text is not None:
                 self.edits.replace(*self.edits.node_span(node), text)
                 return
+        text = self._json_isinstance(node)
+        if text is not None:
+            self.edits.replace(*self.edits.node_span(node), text)
+            return
         text = self._missing_builtin(node)
         if text is not None:
             self.edits.replace(*self.edits.node_span(node), text)
@@ -1231,6 +1261,96 @@ class _Pass(ShadowScopes):
         if self._is_namedtuple(node.func):
             self._namedtuple(node)
         self.generic_visit(node)
+
+    # -- isinstance(<JSONValue>, T) (#563) -------------------------------------
+
+    def _json_reference(self) -> str | None:
+        """How the enclosing scopes name ``json.JSONValue``: through an
+        ``import json`` (innermost scope first), else through a name a
+        ``from json import ...`` brings in (added to that import if it is not
+        there yet).  ``None`` where the module does not use ``json``."""
+        scopes: list[ast.AST] = [f for f, _ in reversed(self._functions)]
+        if self._module is not None:
+            scopes.append(self._module)
+        for scope in scopes:
+            found: ast.ImportFrom | None = None
+            stack = list(ast.iter_child_nodes(scope))
+            while stack:
+                node = stack.pop()
+                if isinstance(
+                    node,
+                    (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda),
+                ):
+                    continue
+                if isinstance(node, ast.Import):
+                    for alias in node.names:
+                        if alias.name == "json":
+                            return f"{alias.asname or 'json'}.JSONValue"
+                elif (
+                    isinstance(node, ast.ImportFrom)
+                    and node.module == "json"
+                    and not node.level
+                    and all(a.name != "*" for a in node.names)
+                ):
+                    found = node
+                stack.extend(ast.iter_child_nodes(node))
+            if found is not None:
+                if not any(a.asname == "_acs_JSONValue" for a in found.names):
+                    if id(found) not in self._json_imports:
+                        self._json_imports.add(id(found))
+                        start, end = self.edits.node_span(found)
+                        text = self.edits.text(start, end)
+                        at = end - 1 if text.endswith(")") else end
+                        self.edits.replace(at, at, ", JSONValue as _acs_JSONValue")
+                return "_acs_JSONValue"
+        return None
+
+    def visit_BoolOp(self, node: ast.BoolOp) -> None:
+        # The ``isinstance(x, T)`` this pass wrote earlier: not rewritten again.
+        if (
+            isinstance(node.op, ast.Or)
+            and len(node.values) == 2
+            and isinstance(node.values[1], ast.BoolOp)
+            and isinstance(node.values[1].op, ast.And)
+            and "_acs_isjson" in ast.dump(node.values[1])
+        ):
+            self._json_done.add(id(node.values[0]))
+        self.generic_visit(node)
+
+    def _json_isinstance(self, node: ast.Call) -> str | None:
+        """``isinstance(x, T)`` in a module that uses ``json`` (#563).
+
+        Codon decides ``isinstance`` by the static type, and a ``JSONValue``
+        (what ``json.load`` returns) is none of ``dict``, ``list``, ``str``:
+        the branch it guards would not be compiled, so wrong code in it would
+        pass.  The call becomes ``isinstance(x, T) or (isinstance(x,
+        JSONValue) and x._acs_isjson())``: unchanged for any other type (both
+        tests are static, and false), and for a ``JSONValue`` a run-time
+        ``bool``, so both branches are compiled."""
+        if (
+            not isinstance(node.func, ast.Name)
+            or node.func.id != "isinstance"
+            or self._shadowed("isinstance")
+            or len(node.args) != 2
+            or node.keywords
+            or any(isinstance(a, ast.Starred) for a in node.args)
+        ):
+            return None
+        subject, kinds = (self._text(a) for a in node.args)
+        if (
+            "\n" in subject
+            or "\n" in kinds
+            or id(node) in self._json_done
+            or kinds.endswith("JSONValue")
+        ):
+            return None  # one line, as every rewrite; our own output
+        reference = self._json_reference()
+        if reference is None:
+            return None
+        return (
+            f"(isinstance({subject}, {kinds}) or "
+            f"(isinstance({subject}, {reference}) and ({subject})._acs_isjson()))"
+        )
 
     # -- collections.namedtuple("P", "x y") (#510) ---------------------------
 

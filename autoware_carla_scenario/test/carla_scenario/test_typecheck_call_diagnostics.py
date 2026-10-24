@@ -602,6 +602,44 @@ def test_a_return_of_a_nested_function_is_not_the_outer_functions(
     )
 
 
+def test_an_annotated_assignment_is_reported_declared_type_last(
+    tmp_path: Path,
+) -> None:
+    from autoware_carla_scenario.typecheck.call_diagnostics import (
+        _Files,
+        annotated_message,
+        json_hint,
+    )
+
+    path = tmp_path / "m.py"
+    path.write_text(
+        "def f(doc):\n    speed: float = doc['speed']\n    n: int = 'x'\n"
+        "    m: int | None = 1.5\n    k: int\n"
+    )
+    files = _Files()
+    got = annotated_message(
+        "'float' does not match expected type 'JSONValue'", str(path), 2, 5, files
+    )
+    assert got == "speed is assigned a JSONValue, but is declared float"
+    assert "convert it where you use it" in json_hint(got)
+    assert annotated_message(
+        "'int' does not match expected type 'str'", str(path), 3, 5, files
+    ) == ("n is assigned a str, but is declared int")
+    assert annotated_message(
+        "'Optional[int]' does not match expected type 'float'", str(path), 4, 5, files
+    ) == ("m is assigned a float, but is declared int | None")
+    # Another type on that line, or not an assignment: Codon's text stays.
+    assert (
+        annotated_message(
+            "'str' does not match expected type 'int'", str(path), 2, 5, files
+        )
+        is None
+    )
+    assert annotated_message("not a mismatch", str(path), 2, 5, files) is None
+    assert json_hint("an unrelated message") == "an unrelated message"
+    assert "read-only" in json_hint("'JSONValue' object has no attribute '__setitem__'")
+
+
 # ---------------------------------------------------------------------------
 # Own callables, `X | None` returns, a forgotten `self` (#539, #540, #542):
 # the rewrites on their own, with Codon's messages written out

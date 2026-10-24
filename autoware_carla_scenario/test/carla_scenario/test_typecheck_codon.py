@@ -2148,7 +2148,138 @@ def test_a_json_document_is_held_to_the_members_of_jsonvalue(tmp_path: Path) -> 
         tmp_path, 'import json\ncfg = json.loads("{}")\nspeed: float = cfg["v"]\n'
     )
     error = _only_error(typecheck_scenario(scenario, config))
-    assert "'float' does not match expected type 'JSONValue'" in error.message
+    # The declared type is named first, as for a return (#564), with a hint.
+    assert "speed is assigned a JSONValue, but is declared float" in error.message
+    assert 'convert it where you use it, `float(doc["speed"])`' in error.message
+    assert "does not match expected type" not in error.message
+
+
+def test_a_json_document_is_read_from_a_file_and_given_defaults(
+    tmp_path: Path,
+) -> None:
+    # The usual ways to read a side file (#562): a builtin open() (with
+    # CPython's text keywords), a default for get(), a slice of a list.
+    scenario, config, _ = _write_case(
+        tmp_path,
+        "import json\n"
+        'with open("wp.json") as f:\n'
+        "    doc = json.load(f)\n"
+        'other = json.load(open("wp.json", "r", encoding="utf-8"))\n'
+        'lane = int(doc.get("lane", 1))\n'
+        'speed = float(doc.get("speed", 5.0))\n'
+        'name = str(other.get("name", "x"))\n'
+        'sub = doc["wps"][1:3]\n'
+        "for wp in sub:\n"
+        '    speed += float(wp["v"])\n'
+        'with open("out.json", "w", encoding="utf-8", newline="") as g:\n'
+        '    json.dump({"a": speed}, g)\n',
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+    # What the get() default allows is not a way round the conversion.
+    scenario, config, _ = _write_case(
+        tmp_path,
+        'import json\ndoc = json.loads("{}")\nspeed: float = doc.get("v", 5.0)\n',
+    )
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "speed is assigned a JSONValue, but is declared float" in error.message
+
+
+@pytest.mark.parametrize(
+    ("setup", "needle"),
+    [
+        ('xs: list[float] = doc["xs"]\n', "xs is assigned a JSONValue"),
+        ('a = doc["v"] + 1.0\n', "unsupported operand"),
+        ('a = doc["v"] > 3.0\n', "unsupported operand"),
+        ('a = sum(doc["xs"])\n', "unsupported operand"),
+        ('for wp in doc["wps"]:\n    b = wp.x\n', "no attribute 'x'"),
+        ('doc["v"] = 2.0\n', "read-only here"),
+    ],
+)
+def test_a_json_misuse_says_to_convert_the_value(
+    tmp_path: Path, setup: str, needle: str
+) -> None:
+    scenario, config, _ = _write_case(
+        tmp_path, 'import json\ndoc = json.loads("{}")\n' + setup
+    )
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert needle in error.message
+    assert " a JSON " in error.message, error.message  # the hint
+
+
+@pytest.mark.parametrize(
+    "import_line",
+    ["import json\n", "import json as js\n", "from json import loads\n"],
+)
+def test_wrong_code_in_an_isinstance_branch_of_a_json_value_is_refused(
+    tmp_path: Path, import_line: str
+) -> None:
+    # Codon decides isinstance by the static type and a JSONValue is none of
+    # dict/list/str, so the branch it guards was not compiled (#563).
+    loads = "loads" if "from" in import_line else import_line.split()[-1] + ".loads"
+    for branch, needle in (
+        ('    q: int = "wrong"\n', "q is assigned a str"),
+        ("    z = v.nonexistent()\n", "nonexistent"),
+        ("    total = 0\n    for x in v:\n        total += x\n", "operand"),
+    ):
+        scenario, config, _ = _write_case(
+            tmp_path,
+            import_line
+            + f'v = {loads}("{{}}")["k"]\nif isinstance(v, (dict, list)):\n'
+            + branch,
+        )
+        error = _only_error(typecheck_scenario(scenario, config))
+        assert needle in error.message, error.message
+
+
+def test_a_json_value_is_told_apart_with_isinstance(tmp_path: Path) -> None:
+    scenario, config, _ = _write_case(
+        tmp_path,
+        "import json\n"
+        'doc = json.loads("{}")\n'
+        "def total(v) -> float:\n"
+        "    out = 0.0\n"
+        "    if isinstance(v, list):\n"
+        "        for x in v:\n"
+        "            out += float(x)\n"
+        "    elif isinstance(v, dict):\n"
+        "        for k, x in v.items():\n"
+        "            out += float(x)\n"
+        "    elif isinstance(v, str):\n"
+        "        out = float(len(v))\n"
+        "    else:\n"
+        "        out = float(v)\n"
+        "    return out\n"
+        'top = total(doc["k"])\n'
+        'wps = doc["wps"]\n'
+        "if isinstance(wps, list):\n"
+        "    first = wps[0]\n"
+        "    top += float(first)\n"
+        "elif isinstance(wps, str):\n"
+        "    top += float(wps)\n",
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+    # The else branch of the same test is compiled too.
+    scenario, config, _ = _write_case(
+        tmp_path,
+        'import json\nv = json.loads("{}")["k"]\n'
+        'if isinstance(v, list):\n    n = len(v)\nelse:\n    q: int = "wrong"\n',
+    )
+    assert "q is assigned" in _only_error(typecheck_scenario(scenario, config)).message
+
+
+def test_isinstance_of_a_known_type_is_left_alone_in_a_json_module(
+    tmp_path: Path,
+) -> None:
+    # The rewrite adds a static false for any type but a JSONValue: dead code
+    # of a known type stays uncompiled, as in a module without json.
+    scenario, config, _ = _write_case(
+        tmp_path,
+        'import json\ny = 5\nif isinstance(y, str):\n    q: int = "wrong"\n',
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
 
 
 def test_a_module_without_a_codon_model_is_named(tmp_path: Path) -> None:

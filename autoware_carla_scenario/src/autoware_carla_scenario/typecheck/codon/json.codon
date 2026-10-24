@@ -16,8 +16,6 @@
 # raise (ValueError, TypeError) for a value of the wrong kind, which the
 # check cannot see either.
 
-from typing import IO
-
 
 class JSONDecodeError(Static[ValueError]):
     msg: str
@@ -43,7 +41,19 @@ class JSONValue:
     def __getitem__(self, index: int) -> JSONValue:
         return JSONValue()
 
-    def get(self, key: str, default: Optional[JSONValue] = None) -> JSONValue:
+    def __getitem__(self, span: Slice) -> JSONValue:
+        return JSONValue()
+
+    # The default is any value (`doc.get("speed", 5.0)`), and what comes back
+    # is a JSONValue whichever it is: the check cannot tell it from the
+    # document's own.
+    def get(self, key: str, default=None) -> JSONValue:
+        return JSONValue()
+
+    # `isinstance(v, dict)` of a JSONValue: the rewrite (#563) calls this so
+    # that Codon compiles the branch, which it would not for a static false.
+    def _acs_isjson(self) -> bool:
+        return False
         return JSONValue()
 
     def items(self) -> Generator[Tuple[str, JSONValue]]:
@@ -85,7 +95,7 @@ def dumps(obj, **kwargs) -> str:
     return ""
 
 
-def dump(obj, fp: IO[str], **kwargs) -> None:
+def dump(obj, fp, **kwargs) -> None:
     pass
 
 
@@ -93,5 +103,5 @@ def loads(s: str, **kwargs) -> JSONValue:
     return JSONValue()
 
 
-def load(fp: IO[str], **kwargs) -> JSONValue:
+def load(fp, **kwargs) -> JSONValue:
     return JSONValue()
