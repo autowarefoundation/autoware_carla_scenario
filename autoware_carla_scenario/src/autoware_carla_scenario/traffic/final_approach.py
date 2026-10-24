@@ -34,6 +34,10 @@ _ARRIVED_M: float = 1.0
 _HORIZON_M: float = 30.0
 #: Metres between the points of the plan.
 _STEP_M: float = 1.0
+#: How long (s) a vehicle driven out of its junction waits for a vehicle in
+#: its way before it is handed to the TrafficManager all the same (two such
+#: vehicles facing each other would wait for ever).
+LEAD_OUT_WAIT_S: float = 5.0
 
 
 class FinalApproach:
@@ -53,6 +57,7 @@ class FinalApproach:
     _follower: "TrajectoryFollower"
     _here: float
     _stop: bool
+    _blocked_s: float
     done: bool
 
     def __init__(
@@ -93,6 +98,7 @@ class FinalApproach:
         )
         self._here = 0.0
         self._stop = stop
+        self._blocked_s = 0.0
         self.done = False
 
     @property
@@ -123,11 +129,21 @@ class FinalApproach:
         if TYPE_CHECKING:
             pass  # utils.clearance is not compiled (docs/typecheck.md)
         else:
-            from ..actions._trajectory_run import _walker_in_way  # noqa: PLC0415
+            from ..actions._trajectory_run import (  # noqa: PLC0415
+                _vehicle_in_way,
+                _walker_in_way,
+            )
 
-            if _walker_in_way(actor, transform, math.hypot(velocity.x, velocity.y)):
+            speed = math.hypot(velocity.x, velocity.y)
+            if _walker_in_way(actor, transform, speed) or _vehicle_in_way(
+                actor, transform, speed
+            ):
                 vehicle.apply_control(carla.VehicleControl(throttle=0.0, brake=1.0))
+                self._blocked_s += dt
+                if not self._stop and self._blocked_s >= LEAD_OUT_WAIT_S:
+                    self.done = True  # the TrafficManager takes it on as it is
                 return
+            self._blocked_s = 0.0
         angular = actor.get_angular_velocity()
         control = vehicle.get_control()
         try:

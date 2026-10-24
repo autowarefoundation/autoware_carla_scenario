@@ -73,14 +73,15 @@ TURN_POST_JUNCTION_DISTANCE_M: float = 20.0
 #: sets as a vehicle's path.
 ROUTE_POINT_STEP_M: float = 5.0
 #: How near (m) ahead of a junction a vehicle may start for the
-#: TrafficManager to take its route through it.  It places a vehicle on its
+#: TrafficManager to take its route through it (from its route's start, which
+#: may lie a few metres short of where it appears).  It places a vehicle on its
 #: map's waypoint nearest it, and just past a junction's entry the nearest is
 #: on one of the junction's ways through, all starting there: whichever it is,
 #: the vehicle keeps to it, whatever its path (a car meant to turn left went
 #: right and off the map).  Such a vehicle is driven out of the junction
 #: along its route first (:class:`FinalApproach`, not stopping), then handed
 #: to the TrafficManager.
-_JUNCTION_MOUTH_M: float = 2.0
+_JUNCTION_MOUTH_M: float = 4.0
 
 #: Heading change, in degrees, that each turn amounts to.  CARLA's yaw is
 #: left-handed and clockwise-positive seen from above.

@@ -1226,6 +1226,31 @@ def _walker_in_way(
     return found is not None
 
 
+def _vehicle_in_way(
+    actor: "carla.Actor", transform: "carla.Transform", speed: float
+) -> bool:
+    """Whether another vehicle stands in *actor*'s way within its stopping
+    distance (braking at 4 m/s²) past its own front and 2 m more, across its
+    width and 0.3 m."""
+    from ..utils.clearance import first_in_way  # noqa: PLC0415
+
+    try:
+        extent = actor.bounding_box.extent
+        found = first_in_way(
+            actor.get_world(),
+            int(actor.id),
+            transform.location.x,
+            transform.location.y,
+            transform.rotation.yaw,
+            "vehicle",
+            speed * speed / 8.0 + float(extent.x) + 2.0,
+            float(extent.y) + 0.3,
+        )
+    except (AttributeError, RuntimeError):
+        return False
+    return found is not None
+
+
 def _gate_at(timeline: DepartureTimeline, k: int) -> BaseCondition:
     """The condition vertex number *k* waits for, which it has."""
     condition = timeline.vertex(k).gate

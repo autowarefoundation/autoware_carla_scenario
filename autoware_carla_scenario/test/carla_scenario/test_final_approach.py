@@ -167,3 +167,32 @@ def test_a_vehicle_led_out_of_its_junction_is_handed_back_with_its_path(
     assert npc.autopilot[-1] == (True, 8123)
     assert backend._kept[4].approach is None
     assert client.tm.paths[-1] == (4, route[3:])
+
+
+def test_a_vehicle_driven_out_of_its_junction_waits_for_one_in_its_way(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """It brakes for a vehicle in its way; after LEAD_OUT_WAIT_S it is handed
+    on all the same.  A final approach waits as long as it takes."""
+    import autoware_carla_scenario.actions._trajectory_run as run_module
+    from autoware_carla_scenario.traffic import final_approach as fa
+
+    monkeypatch.setattr(run_module, "_vehicle_in_way", lambda *args: True)
+    monkeypatch.setattr(run_module, "_walker_in_way", lambda *args: False)
+    path = [carla.Location(float(x), 0.0, 0.0) for x in (5, 10, 15, 20)]
+    for stop in (False, True):
+        vehicle = _Vehicle(speed=0.0)
+        approach = FinalApproach(
+            vehicle, carla.Location(0.0, 0.0, 0.0), path, stop=stop
+        )  # type: ignore[arg-type]
+        elapsed = 0.0
+        while not approach.done and elapsed < 2 * fa.LEAD_OUT_WAIT_S:
+            approach.step(_DT, elapsed)
+            vehicle.step(_DT, driven=True)
+            elapsed += _DT
+        assert vehicle.x == pytest.approx(0.0, abs=0.5)
+        if stop:
+            assert not approach.done
+        else:
+            assert approach.done
+            assert elapsed == pytest.approx(fa.LEAD_OUT_WAIT_S, abs=2 * _DT)
