@@ -178,6 +178,18 @@ def test_the_listener_queues_the_frame_it_is_handed() -> None:
     assert sensor._frame_queue.get_nowait() is frame
 
 
+def test_the_listener_hands_the_frame_to_on_frame_instead_of_queueing_it() -> None:
+    seen: list[object] = []
+    sensor = CarlaCameraSensor(
+        CarlaCameraSensorConfig(image_width=1, image_height=1), seen.append
+    )
+    frame = _frame(3)
+    sensor._on_sensor_data(frame)  # type: ignore[arg-type]
+    sensor._on_sensor_data(SimpleNamespace(as_image=lambda: frame))  # type: ignore[arg-type]
+    assert seen == [frame, frame]
+    assert sensor._frame_queue.empty()
+
+
 def test_the_listener_drops_the_oldest_frame_instead_of_blocking() -> None:
     """Nothing drains the queue once a scenario ends; a blocking put would hang
     CARLA's delivery thread, and the replay's recorder would get no frames."""
