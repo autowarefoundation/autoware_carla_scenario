@@ -674,6 +674,43 @@ def _enclosing_function(
     return best
 
 
+def _binds(scope: ast.AST, name: str) -> int:
+    """How many times *scope* (a function) binds *name*: a parameter, an
+    assignment target, a nested ``def`` or ``class``, an import, an ``except``."""
+    count = 0
+    for n in ast.walk(scope):
+        if isinstance(n, ast.arg) and n.arg == name:
+            count += 1
+        elif (
+            isinstance(n, ast.Name) and n.id == name and not isinstance(n.ctx, ast.Load)
+        ):
+            count += 1
+        elif (
+            isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+            and n is not scope
+            and n.name == name
+        ):
+            count += 1
+        elif isinstance(n, ast.ExceptHandler) and n.name == name:
+            count += 1
+        elif isinstance(n, (ast.Import, ast.ImportFrom)) and any(
+            (a.asname or a.name.partition(".")[0]) == name for a in n.names
+        ):
+            count += 1
+    return count
+
+
+def _enclosing_functions(
+    tree: ast.Module, line: int
+) -> list[ast.FunctionDef | ast.AsyncFunctionDef]:
+    return [
+        n
+        for n in ast.walk(tree)
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and n.lineno <= line <= (n.end_lineno or n.lineno)
+    ]
+
+
 def _certain_argument_type(
     node: ast.expr, function: ast.FunctionDef | ast.AsyncFunctionDef | None
 ) -> str | None:
@@ -693,12 +730,9 @@ def _certain_argument_type(
         found = [a for a in every if a.arg == node.id]
         if len(found) != 1 or found[0].annotation is None:
             return None
-        if any(
-            isinstance(n, ast.Name)
-            and n.id == node.id
-            and not isinstance(n.ctx, ast.Load)
-            for n in ast.walk(function)
-        ):
+        # the parameter itself is the only binding of the name (no lambda or
+        # nested function parameter of that name, no assignment)
+        if _binds(function, node.id) != 1:
             return None
         return canonical_annotation(found[0].annotation)
     return None
@@ -714,6 +748,8 @@ def _own_callee(
     it can be told from the author's source alone."""
     func = call.func
     if isinstance(func, ast.Name):
+        if any(_binds(f, func.id) for f in _enclosing_functions(tree, call.lineno)):
+            return None  # a local of that name shadows the callable
         if isinstance(resolve_class(func.id), type):
             return _target(
                 f"{func.id}.__init__", call, tree, resolve_class, resolve_callable
@@ -1035,14 +1071,16 @@ def forgotten_self(
             isinstance(c, ast.Call) and c.func is names[0] for c in ast.walk(tree)
         )
         member = inspect.getattr_static(cls, name, None)
-        if member is not None and inspect.isfunction(member):
+        suffix = "()" if called else ""
+        if isinstance(member, (staticmethod, classmethod)) or inspect.isfunction(
+            member
+        ):
             what = f"{owner} has a method {name}()"
-            fix = f"{self_name}.{name}()" if called else f"{self_name}.{name}"
         elif name in getattr(cls, "__annotations__", {}) or member is not None:
             what = f"{owner} has an attribute {name}"
-            fix = f"{self_name}.{name}"
         else:
             return None
+        fix = f"{self_name}.{name}{suffix}"
         return f"{message}: {what}, did you mean `{fix}`?", line, column
     bound = _BOUND_METHOD_TRUTH.match(message)
     if bound is None:

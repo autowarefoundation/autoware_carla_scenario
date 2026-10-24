@@ -1177,3 +1177,42 @@ def test_a_method_used_as_a_condition_is_told_to_be_called(tmp_path: Path) -> No
     assert error.line == _line_of(path, "if self.flag")
     source = path.read_text().splitlines()[error.line - 1]
     assert source[error.column - 1 :].startswith("self.flag")
+
+
+def test_a_local_that_shadows_the_callee_is_not_the_callee(tmp_path: Path) -> None:
+    source = (
+        "def f(a: int) -> int:\n    return a\n\n\n"
+        "def run() -> None:\n    def f(a: str) -> int:\n        return 1\n"
+        "    f('s')\n"
+    )
+    assert _refine(tmp_path, source, _INT, "f('s')")[0] == _INT
+    source = source.replace(
+        "    def f(a: str)", "    f = len\n    def h(a: str)"
+    ).replace("        return 1\n    f('s')", "        return 1\n    f('s')")
+    assert _refine(tmp_path, source, _INT, "f('s')")[0] == _INT
+
+
+def test_a_lambda_parameter_is_not_the_enclosing_functions_parameter(
+    tmp_path: Path,
+) -> None:
+    source = (
+        "def f(a: int) -> int:\n    return a\n\n\n"
+        "def run(s: str) -> None:\n    g = lambda s: f(s)\n    g(1)\n"
+    )
+    assert _refine(tmp_path, source, _INT, "f(s)")[0] == _INT
+
+
+@pytest.mark.parametrize("decorator", ["staticmethod", "classmethod"])
+def test_a_bare_call_of_a_static_or_class_method_keeps_its_parentheses(
+    tmp_path: Path, decorator: str
+) -> None:
+    first = "cls" if decorator == "classmethod" else ""
+    source = (
+        "class S:\n"
+        f"    @{decorator}\n    def flag({first}) -> bool:\n        return True\n\n"
+        "    def run(self) -> None:\n        if flag():\n            pass\n"
+    )
+    assert _refine(tmp_path, source, "name 'flag' is not defined", "flag():")[0] == (
+        "name 'flag' is not defined: S has a method flag(), "
+        "did you mean `self.flag()`?"
+    )
