@@ -978,7 +978,9 @@ def test_a_walker_the_crowd_took_for_run_over_goes_on_as_a_new_one(
         try_spawn_actor=try_spawn_actor,
     )
     entity = PedestrianEntity(
-        PedestrianEntityConfig(role_name="w9", spawn_location=SpawnTransform(tcarla.Transform()))
+        PedestrianEntityConfig(
+            role_name="w9", spawn_location=SpawnTransform(tcarla.Transform())
+        )
     )
     old = _Walker(70)
     entity._walker = old  # type: ignore[assignment]

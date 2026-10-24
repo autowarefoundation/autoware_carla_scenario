@@ -129,7 +129,9 @@ def test_a_lead_out_does_not_stop_at_its_end() -> None:
 
 
 class _DoneApproach(_Approach):
-    def __init__(self, actor: Any, start: Any, points: List[Any], stop: bool = True) -> None:
+    def __init__(
+        self, actor: Any, start: Any, points: List[Any], stop: bool = True
+    ) -> None:
         super().__init__(actor, start, points)
         self.stop = stop
         self.done = False

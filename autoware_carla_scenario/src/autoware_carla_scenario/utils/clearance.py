@@ -16,7 +16,7 @@ from __future__ import annotations
 import math
 from typing import Any, Optional
 
-__all__ = ["Obstacle", "first_in_way", "occupied"]
+__all__ = ["Obstacle", "first_in_way", "overlaps"]
 
 #: An actor this far (m) or more below the ground is out of the world.
 _HIDDEN_BELOW_M = -100.0
@@ -131,7 +131,13 @@ def overlaps(
         other_length, other_width = _CACHE.boxes.get(actor_id, (size, size))
         if _rectangles_meet(
             (x, y, math.radians(yaw_deg), half_length + margin, half_width + margin),
-            (ox, oy, math.radians(_CACHE.yaws.get(actor_id, 0.0)), other_length, other_width),
+            (
+                ox,
+                oy,
+                math.radians(_CACHE.yaws.get(actor_id, 0.0)),
+                other_length,
+                other_width,
+            ),
         ):
             return actor_id
     return None
