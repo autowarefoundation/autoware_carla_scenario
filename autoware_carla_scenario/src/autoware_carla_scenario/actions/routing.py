@@ -80,6 +80,16 @@ _OFF_PATH_M = 8.0
 _MATCH_STEP_M = 2.0
 #: A speed command that changes less than this (m/s) is not sent again.
 _SPEED_RESEND_MPS = 0.05
+#: How long (s) an entity waits for a road user standing where it appears
+#: before it looks for a clear spot further along its route.
+APPEAR_WAIT_S: float = 3.0
+#: Metres apart the spots further along its route an entity may appear at.
+APPEAR_SHIFT_STEP_M: float = 2.0
+#: The farthest (m) along its route an entity is moved to appear clear.
+APPEAR_SHIFT_MAX_M: float = 30.0
+#: How long (s) an entity with no clear spot waits before it appears where
+#: it was due all the same.
+APPEAR_GIVE_UP_S: float = 20.0
 
 
 class RoutingMode(enum.Enum):
@@ -189,7 +199,7 @@ class RoutingAction(TrajectoryRun):
     _start_pose: Optional[CarlaWorldPose]
     _warned_off: bool
     _route_start: Optional[Lanelet2Pose]
-    _warned_spot: bool
+    _spot_waited_since: Optional[float]
 
     def __init__(
         self,
@@ -274,7 +284,7 @@ class RoutingAction(TrajectoryRun):
         self._start_pose = None
         self._warned_off = False
         self._route_start = None
-        self._warned_spot = False
+        self._spot_waited_since = None
 
     # ------------------------------------------------------------------
     # Public state
@@ -780,22 +790,8 @@ class RoutingAction(TrajectoryRun):
         appearing = self._resolved
         if self._appear_on_start and appearing is not None and actor is not None:
             spot: ResolvedTrajectory = appearing
-            sample = spot.at_distance(self._initial_distance_offset)
             standing: "carla.Actor" = actor
-            if TYPE_CHECKING:
-                taken = False  # utils.clearance is not compiled (docs/typecheck.md)
-            else:
-                taken = _spot_taken(world, standing, sample.x, sample.y)
-            if taken:
-                # Not into a road user standing there: brought in once the
-                # spot is clear (appearing on one sent both off their routes).
-                if not self._warned_spot:
-                    self._warned_spot = True
-                    logger.info(
-                        "%s: '%s' waits for where it appears to clear",
-                        self.label,
-                        str(self._entity_name),
-                    )
+            if not self._spot_clear(world, spot, standing):
                 return False
         self._begun = True
         self._finished = False
@@ -820,6 +816,69 @@ class RoutingAction(TrajectoryRun):
             self._start_pose = CarlaWorldPose.from_carla_transform(
                 found.get_transform()
             )
+        return True
+
+    def _spot_clear(
+        self, world: "carla.World", path: ResolvedTrajectory, actor: "carla.Actor"
+    ) -> bool:
+        """Whether *actor* may appear now: where it appears on *path* is
+        clear of road users.  One standing there is waited for
+        :data:`APPEAR_WAIT_S`; then the entity appears at the nearest clear
+        spot up to :data:`APPEAR_SHIFT_MAX_M` further along its route, and
+        after :data:`APPEAR_GIVE_UP_S` where it was due, all said."""
+        offset = self._initial_distance_offset
+        if TYPE_CHECKING:
+            blocker = -1  # utils.clearance is not compiled (docs/typecheck.md)
+        else:
+            blocker = _spot_taken(world, actor, path, offset)
+        if blocker < 0:
+            self._spot_waited_since = None
+            return True
+        since = self._spot_waited_since
+        if since is None:
+            self._spot_waited_since = self._elapsed
+            logger.info(
+                "%s: '%s' waits for where it appears to clear (actor %d stands there)",
+                self.label,
+                str(self._entity_name),
+                blocker,
+            )
+            return False
+        waited = self._elapsed - since
+        if waited < APPEAR_WAIT_S:
+            return False
+        shift = APPEAR_SHIFT_STEP_M
+        while shift <= APPEAR_SHIFT_MAX_M and offset + shift < path.length:
+            if TYPE_CHECKING:
+                other = -1
+            else:
+                other = _spot_taken(world, actor, path, offset + shift)
+            if other < 0:
+                logger.warning(
+                    "%s: '%s' appears %.0f m further along its route: where it "
+                    "was due stayed taken by actor %d for %.0f s",
+                    self.label,
+                    str(self._entity_name),
+                    shift,
+                    blocker,
+                    waited,
+                )
+                self._initial_distance_offset = offset + shift
+                self._spot_waited_since = None
+                return True
+            shift += APPEAR_SHIFT_STEP_M
+        if waited < APPEAR_GIVE_UP_S:
+            return False
+        logger.warning(
+            "%s: '%s' appears where it was due though actor %d has stood there "
+            "%.0f s and no spot %.0f m on along its route is clear",
+            self.label,
+            str(self._entity_name),
+            blocker,
+            waited,
+            APPEAR_SHIFT_MAX_M,
+        )
+        self._spot_waited_since = None
         return True
 
     def _needs_world(self) -> bool:
@@ -1034,17 +1093,34 @@ def _vertex_of(point: tuple[int, float, float]) -> int:
     return point[0]
 
 
-def _spot_taken(world: "carla.World", actor: "carla.Actor", x: float, y: float) -> bool:
-    """Whether a vehicle or walker in the world stands where *actor* would
-    appear, at CARLA ``(x, y)`` (their outlines, as circles, overlapping)."""
-    from ..utils.clearance import occupied  # noqa: PLC0415
+def _spot_taken(
+    world: "carla.World", actor: "carla.Actor", path: ResolvedTrajectory, along: float
+) -> int:
+    """The id of a vehicle or walker standing where *actor* would appear,
+    *along* m on *path* (their bounding boxes overlapping, a margin added),
+    or ``-1``."""
+    from ..utils.clearance import overlaps  # noqa: PLC0415
 
     try:
+        sample = path.at_distance(along)
+        ahead = path.at_distance(min(along + 1.0, path.length))
+        if ahead.x != sample.x or ahead.y != sample.y:
+            yaw = math.degrees(math.atan2(ahead.y - sample.y, ahead.x - sample.x))
+        else:
+            yaw = sample.yaw if sample.yaw is not None else 0.0
         extent = actor.bounding_box.extent
-        radius = math.hypot(float(extent.x), float(extent.y))
-        return occupied(world, int(actor.id), x, y, radius)
+        found = overlaps(
+            world,
+            int(actor.id),
+            sample.x,
+            sample.y,
+            yaw,
+            float(extent.x),
+            float(extent.y),
+        )
     except (AttributeError, RuntimeError):
-        return False
+        return -1
+    return -1 if found is None else int(found)
 
 
 def _mark_point(index: int, pose: Lanelet2Pose) -> tuple[int, float, float]:

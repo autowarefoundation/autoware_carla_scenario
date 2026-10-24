@@ -511,7 +511,8 @@ class _SnapshotWorld:
             return SimpleNamespace(
                 id=actor_id,
                 get_transform=lambda: SimpleNamespace(
-                    location=SimpleNamespace(x=x, y=y, z=0.0)
+                    location=SimpleNamespace(x=x, y=y, z=0.0),
+                    rotation=SimpleNamespace(yaw=0.0),
                 ),
                 get_velocity=lambda: SimpleNamespace(x=speed, y=0.0, z=0.0),
             )
@@ -847,3 +848,60 @@ def test_a_walker_off_its_controller_has_its_physics_and_collisions_back() -> No
     )
     _walker_ai._own_steps(walker)
     assert calls == [("physics", True), ("collisions", True)]
+
+
+def test_a_road_user_in_the_lane_beside_does_not_take_a_spot() -> None:
+    """Outlines, not circles: a car 3.5 m to the side leaves the spot clear,
+    one overlapping it (a margin added) takes it."""
+    from autoware_carla_scenario.utils import clearance
+
+    world = _SnapshotWorld(
+        {
+            1: ("vehicle.mini", 0.0, 3.5, 0.0),
+            2: ("vehicle.mini", 30.0, 0.0, 0.0),
+        }
+    )
+    world.id = 811  # type: ignore[misc]
+    assert clearance.overlaps(world, 99, 0.0, 0.0, 0.0, 2.0, 1.0) is None
+    assert clearance.overlaps(world, 99, 26.0, 0.5, 0.0, 2.0, 1.0) == 2
+    assert clearance.overlaps(world, 99, 25.4, 0.0, 0.0, 2.0, 1.0) is None
+
+
+def test_an_entity_whose_spot_stays_taken_appears_further_along(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Waited for APPEAR_WAIT_S, then the nearest clear spot along its route;
+    with none, where it was due after APPEAR_GIVE_UP_S."""
+    from autoware_carla_scenario.actions import routing as routing_module
+
+    action = SimpleNamespace(
+        _initial_distance_offset=0.0,
+        _spot_waited_since=None,
+        _elapsed=10.0,
+        label="v",
+        _entity_name="npc1",
+    )
+    taken_until = {"m": 7.0}
+    monkeypatch.setattr(
+        routing_module,
+        "_spot_taken",
+        lambda world, actor, path, along: 5 if along < taken_until["m"] else -1,
+    )
+    path = path_of(100.0)
+    clear = routing_module.RoutingAction._spot_clear
+    assert not clear(action, None, path, None)  # type: ignore[arg-type]
+    action._elapsed = 12.0
+    assert not clear(action, None, path, None)  # type: ignore[arg-type]
+    action._elapsed = 13.5
+    assert clear(action, None, path, None)  # type: ignore[arg-type]
+    assert action._initial_distance_offset == 8.0
+    # Nothing clear within reach: where it was due, after the give-up time.
+    action._initial_distance_offset = 0.0
+    taken_until["m"] = 999.0
+    action._elapsed = 20.0
+    assert not clear(action, None, path, None)  # type: ignore[arg-type]
+    action._elapsed = 20.0 + routing_module.APPEAR_GIVE_UP_S - 0.1
+    assert not clear(action, None, path, None)  # type: ignore[arg-type]
+    action._elapsed = 20.0 + routing_module.APPEAR_GIVE_UP_S
+    assert clear(action, None, path, None)  # type: ignore[arg-type]
+    assert action._initial_distance_offset == 0.0

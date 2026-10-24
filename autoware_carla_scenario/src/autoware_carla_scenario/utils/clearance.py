@@ -45,6 +45,10 @@ class _Cache:
         self.episode = -1
         self.states: list[tuple[int, float, float, float, float]] = []
         self.kinds: dict[int, tuple[str, float]] = {}
+        #: Each actor's heading (deg) this frame, by id.
+        self.yaws: dict[int, float] = {}
+        #: Each road user's half length and half width (m), by id.
+        self.boxes: dict[int, tuple[float, float]] = {}
 
 
 _CACHE = _Cache()
@@ -57,12 +61,16 @@ def _states(world: Any) -> list[tuple[int, float, float, float, float]]:
     episode = int(world.id) if hasattr(world, "id") else 0
     if episode != _CACHE.episode:
         _CACHE.kinds = {}
+        _CACHE.boxes = {}
         _CACHE.episode = episode
         _CACHE.frame = -1  # a new episode's frames are read afresh
     if frame != _CACHE.frame:
         states = []
+        yaws: dict[int, float] = {}
         for seen in snapshot:
-            location = seen.get_transform().location
+            transform = seen.get_transform()
+            location = transform.location
+            yaws[int(seen.id)] = float(transform.rotation.yaw)
             velocity = seen.get_velocity()
             states.append(
                 (
@@ -74,6 +82,7 @@ def _states(world: Any) -> list[tuple[int, float, float, float, float]]:
                 )
             )
         _CACHE.states = states
+        _CACHE.yaws = yaws
         _CACHE.frame = frame
     return _CACHE.states
 
@@ -92,22 +101,63 @@ def _kind(world: Any, actor_id: int) -> tuple[str, float]:
             if kind:
                 extent = actor.bounding_box.extent
                 radius = math.hypot(float(extent.x), float(extent.y))
+                _CACHE.boxes[actor_id] = (float(extent.x), float(extent.y))
         _CACHE.kinds[actor_id] = (kind, radius)
     return _CACHE.kinds[actor_id]
 
 
-def occupied(world: Any, self_id: int, x: float, y: float, radius: float) -> bool:
-    """Whether a vehicle or walker stands within *radius* (its own size
-    added) of CARLA ``(x, y)``."""
+def overlaps(
+    world: Any,
+    self_id: int,
+    x: float,
+    y: float,
+    yaw_deg: float,
+    half_length: float,
+    half_width: float,
+    margin: float = 0.3,
+) -> Optional[int]:
+    """The id of a vehicle or walker whose outline (a rectangle, its
+    bounding box) comes within *margin* of the rectangle *half_length* by
+    *half_width* at CARLA ``(x, y)`` facing *yaw_deg*, or ``None``: a road
+    user standing where one of that size would be put.  One in the lane
+    beside it does not count, as a circle round each would."""
+    reach = math.hypot(half_length, half_width) + margin
     for actor_id, ox, oy, oz, _speed in _states(world):
         if actor_id == self_id or oz < _HIDDEN_BELOW_M:
             continue
-        if (ox - x) ** 2 + (oy - y) ** 2 > (radius + 4.0) ** 2:
-            continue
         kind, size = _kind(world, actor_id)
-        if kind and math.hypot(ox - x, oy - y) < radius + size:
-            return True
-    return False
+        if not kind or math.hypot(ox - x, oy - y) > reach + size:
+            continue
+        other_length, other_width = _CACHE.boxes.get(actor_id, (size, size))
+        if _rectangles_meet(
+            (x, y, math.radians(yaw_deg), half_length + margin, half_width + margin),
+            (ox, oy, math.radians(_CACHE.yaws.get(actor_id, 0.0)), other_length, other_width),
+        ):
+            return actor_id
+    return None
+
+
+def _rectangles_meet(
+    a: tuple[float, float, float, float, float],
+    b: tuple[float, float, float, float, float],
+) -> bool:
+    """Whether two rectangles ``(x, y, heading rad, half length, half width)``
+    overlap (separating axes)."""
+    ax, ay, ah, al, aw = a
+    bx, by, bh, bl, bw = b
+    dx, dy = bx - ax, by - ay
+    for heading in (ah, ah + math.pi / 2.0, bh, bh + math.pi / 2.0):
+        ux, uy = math.cos(heading), math.sin(heading)
+        gap = abs(dx * ux + dy * uy)
+        reach_a = abs(al * (math.cos(ah) * ux + math.sin(ah) * uy)) + abs(
+            aw * (-math.sin(ah) * ux + math.cos(ah) * uy)
+        )
+        reach_b = abs(bl * (math.cos(bh) * ux + math.sin(bh) * uy)) + abs(
+            bw * (-math.sin(bh) * ux + math.cos(bh) * uy)
+        )
+        if gap > reach_a + reach_b:
+            return False
+    return True
 
 
 def first_in_way(
