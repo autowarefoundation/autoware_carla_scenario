@@ -72,6 +72,8 @@ TURN_POST_JUNCTION_DISTANCE_M: float = 20.0
 #: Metres between the points of a route :meth:`TrafficManagerBackend.follow_route`
 #: sets as a vehicle's path.
 ROUTE_POINT_STEP_M: float = 5.0
+#: An actor this far down (m) is parked under the map, out of the scene.
+_HIDDEN_BELOW_M: float = 100.0
 #: How near (m) ahead of a junction a vehicle may start for the
 #: TrafficManager to take its route through it (from its route's start, which
 #: may lie a few metres short of where it appears).  It places a vehicle on its
@@ -832,6 +834,14 @@ class TrafficManagerBackend(TrafficBackend):
                 through = _in_junction(carla_map, point)
             elif any(point.distance(kept_point) < 0.1 for kept_point in path):
                 break
+        # From where it stands, if it is in the world already (brought in by
+        # a spawn, which may have put it on along its lane): the route's
+        # points behind it are passed, and a path starting behind it would
+        # steer it back (vehicle_129, wedged on the kerb).
+        standing = actor.get_location()
+        if standing.z > -_HIDDEN_BELOW_M:
+            start = standing
+            out = _from_here(out, standing)
         kept = self._kept[actor.id]
         actor.set_autopilot(False, self.port)
         kept.held = True
@@ -988,8 +998,18 @@ class TrafficManagerBackend(TrafficBackend):
                 driving: FinalApproach = approach
                 try:
                     driving.step(_tick_seconds(world), elapsed)
-                except RuntimeError:
-                    del self._kept[actor_id]  # Destroyed under us.
+                except RuntimeError as error:
+                    if not kept.actor.is_alive:
+                        del self._kept[actor_id]  # Destroyed under us.
+                        continue
+                    # Alive: not left standing off autopilot for the run.
+                    logger.warning(
+                        "%s: driving its path itself failed (%s); the "
+                        "TrafficManager takes it on",
+                        _actor_name(kept.actor),
+                        error,
+                    )
+                    self._hand_on(kept)
                     continue
                 if kept.leading_out and driving.done:
                     self._hand_on(kept)
@@ -1340,6 +1360,26 @@ def _tick_seconds(world: "carla.World") -> float:
         return float(world.get_snapshot().timestamp.delta_seconds)
     except (AttributeError, RuntimeError):
         return FIXED_DELTA_SECONDS
+
+
+def _from_here(
+    path: List["carla.Location"], location: "carla.Location"
+) -> List["carla.Location"]:
+    """The points of *path* from *location* on: the one nearest it and those
+    after, less that nearest one where *location* is already past it (nearer
+    the next point than it is)."""
+    nearest = 0
+    best = float("inf")
+    for i, point in enumerate(path):
+        gap = location.distance(point)
+        if gap < best:
+            best = gap
+            nearest = i
+    if nearest + 1 < len(path) and location.distance(path[nearest + 1]) < path[
+        nearest
+    ].distance(path[nearest + 1]):
+        nearest += 1
+    return path[nearest:]
 
 
 def _ahead_of(

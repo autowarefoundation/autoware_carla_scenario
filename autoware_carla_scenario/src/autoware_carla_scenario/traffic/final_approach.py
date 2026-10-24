@@ -36,8 +36,20 @@ _HORIZON_M: float = 30.0
 _STEP_M: float = 1.0
 #: How long (s) a vehicle driven out of its junction waits for a vehicle in
 #: its way before it is handed to the TrafficManager all the same (two such
-#: vehicles facing each other would wait for ever).
-LEAD_OUT_WAIT_S: float = 5.0
+#: vehicles facing each other would wait for ever).  Long: handed over still
+#: in the junction, the TrafficManager may take any way out of it (vehicle_178
+#: waited 5 s behind a car standing at a light and went straight on).
+LEAD_OUT_WAIT_S: float = 30.0
+#: How long (s) it waits for a walker in its way before it is handed on: a
+#: walker held on the road (at a waypoint, by its route's timing) may stand
+#: there far longer, and the TrafficManager drives round it.
+LEAD_OUT_WALKER_WAIT_S: float = 5.0
+#: How long (s) a vehicle driven out of its junction may make no way along
+#: its path, nothing in its way, before it is handed on (wedged on a kerb, it
+#: would push against it for the rest of the run).
+LEAD_OUT_STUCK_S: float = 5.0
+#: Progress (m) along its path that counts as making way.
+_PROGRESS_M: float = 0.2
 
 
 class FinalApproach:
@@ -58,6 +70,8 @@ class FinalApproach:
     _here: float
     _stop: bool
     _blocked_s: float
+    _stuck_s: float
+    _progress_at: float
     done: bool
 
     def __init__(
@@ -99,6 +113,8 @@ class FinalApproach:
         self._here = 0.0
         self._stop = stop
         self._blocked_s = 0.0
+        self._stuck_s = 0.0
+        self._progress_at = 0.0
         self.done = False
 
     @property
@@ -135,15 +151,25 @@ class FinalApproach:
             )
 
             speed = math.hypot(velocity.x, velocity.y)
-            if _walker_in_way(actor, transform, speed) or _vehicle_in_way(
-                actor, transform, speed
-            ):
+            walker = _walker_in_way(actor, transform, speed)
+            if walker or _vehicle_in_way(actor, transform, speed):
                 vehicle.apply_control(carla.VehicleControl(throttle=0.0, brake=1.0))
                 self._blocked_s += dt
-                if not self._stop and self._blocked_s >= LEAD_OUT_WAIT_S:
+                wait = LEAD_OUT_WALKER_WAIT_S if walker else LEAD_OUT_WAIT_S
+                if not self._stop and self._blocked_s >= wait:
                     self.done = True  # the TrafficManager takes it on as it is
                 return
             self._blocked_s = 0.0
+        if not self._stop:
+            # Making no way, nothing in its way: wedged; handed on.
+            if self._here > self._progress_at + _PROGRESS_M:
+                self._progress_at = self._here
+                self._stuck_s = 0.0
+            else:
+                self._stuck_s += dt
+                if self._stuck_s >= LEAD_OUT_STUCK_S:
+                    self.done = True
+                    return
         angular = actor.get_angular_velocity()
         control = vehicle.get_control()
         try:
