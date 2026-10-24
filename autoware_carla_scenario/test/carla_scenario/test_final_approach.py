@@ -4,6 +4,7 @@ itself (traffic.final_approach), instead of being held short of its goal."""
 from __future__ import annotations
 
 import logging
+from types import SimpleNamespace
 from typing import Any, List
 
 import pytest
@@ -154,7 +155,18 @@ def test_a_vehicle_led_out_of_its_junction_is_handed_back_with_its_path(
     npc = _Actor(4)
     npc.attributes = {"role_name": "npc4"}
     npc.location = carla.Location(0.0, 0.0, 0.0)
+    npc.get_world = lambda: None  # type: ignore[attr-defined]
     backend, client = _on_autopilot(npc)
+    # The junction spans x 8-12: the route's point at 10 is in it.
+    from .test_traffic_backend import _Waypoint
+
+    def waypoint(location: Any) -> Any:
+        found = _Waypoint(500.0, False)
+        found.is_junction = 8.0 <= location.x <= 12.0  # type: ignore[attr-defined]
+        return found
+
+    junction = SimpleNamespace(get_waypoint=waypoint)
+    monkeypatch.setattr(tm_module, "run_carla_map", lambda world: junction)
     route = [carla.Location(float(x), 0.0, 0.0) for x in (5, 10, 15, 20, 25)]
     path = route[2:]
     backend._remember_path(npc, path)  # type: ignore[arg-type]

@@ -818,13 +818,19 @@ class TrafficManagerBackend(TrafficBackend):
         path: List["carla.Location"],
     ) -> None:
         """Drive *actor*, starting at *start* in a junction's mouth, along
-        *route* out of the junction to its *path*'s first point, off
+        *route* out of the junction to its *path*'s first point past it, off
         autopilot; :meth:`_keep_scenario_vehicles` hands it to the
         TrafficManager there (:data:`_JUNCTION_MOUTH_M`)."""
+        # To the first point of its path past the junction: the route's points
+        # up to its first one in a junction lie on the road it comes from.
+        carla_map = run_carla_map(actor.get_world())
         out: List["carla.Location"] = []
+        through = False
         for point in route:
             out.append(point)
-            if point.distance(path[0]) < 0.1:
+            if not through:
+                through = _in_junction(carla_map, point)
+            elif any(point.distance(kept_point) < 0.1 for kept_point in path):
                 break
         kept = self._kept[actor.id]
         actor.set_autopilot(False, self.port)
