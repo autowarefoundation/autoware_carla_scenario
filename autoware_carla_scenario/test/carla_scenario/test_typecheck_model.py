@@ -765,6 +765,8 @@ _MODULE_MODELS: dict[str, tuple[Any, tuple[str, ...]]] = {
     "driver/egodriver_client": (egodriver_client, ("EgoDriverGrpcClient",)),
     # MapSource is shared with the checked maps.source (REPLACED_MODELS).
     "_map_source": (maps_source, ("MapSource",)),
+    # What a scenario sees of the map cache; the library check compiles the
+    # checked maps.cache from its source.
     "maps/cache": (
         maps_cache,
         (

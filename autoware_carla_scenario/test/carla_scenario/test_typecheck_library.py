@@ -3848,10 +3848,11 @@ def test_shim_list() -> None:
     listed = set(re.findall(r"`([\w.]+)`", block))
     assert listed == _shim_modules()
     assert "tempfile" in listed
-    # The shim of tempfile declares mkstemp() and nothing else.
+    # The shim of tempfile declares mkstemp() and mkdtemp() and nothing else.
     tempfile = ast.parse((model_dir() / "tempfile.codon").read_text())
     assert [n.name for n in tempfile.body if isinstance(n, ast.FunctionDef)] == [
-        "mkstemp"
+        "mkstemp",
+        "mkdtemp",
     ]
     # The standard modules the docs call missing are not shimmed.
     unavailable = {"inspect", "concurrent.futures"}

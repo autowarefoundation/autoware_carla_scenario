@@ -1,8 +1,8 @@
 # The part of Python's tempfile the checked framework names, for the checker
-# (docs/typecheck.md): mkstemp(), with CPython 3.10's signature, the oldest
+# (docs/typecheck.md): mkstemp() and mkdtemp(), with CPython 3.10's signature, the oldest
 # Python the package supports. A directory is a str or a pathlib.Path
 # (os.PathLike); bytes prefixes and suffixes are not declared. Nothing here
-# runs: no file is made, the descriptor is -1 and the name is "".
+# runs: no file or directory is made, the descriptor is -1 and the names are "".
 
 from os import fspath
 
@@ -18,3 +18,16 @@ def mkstemp(
     if dir is not None:
         fspath(dir)
     return (-1, "")
+
+
+# mkdtemp(suffix=None, prefix=None, dir=None): the absolute name of the
+# directory, a str (a str `dir` gives a str; a pathlib.Path one gives a str too
+# in CPython when the prefix is a str).
+def mkdtemp(
+    suffix: Optional[str] = None,
+    prefix: Optional[str] = None,
+    dir=None,
+) -> str:
+    if dir is not None:
+        fspath(dir)
+    return ""
