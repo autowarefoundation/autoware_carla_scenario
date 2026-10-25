@@ -1407,6 +1407,30 @@ def test_an_incompatible_override_is_found(tmp_path: Path) -> None:
     assert all(f.code == "override" for f in findings if f.kind == "override")
 
 
+def test_an_override_of_a_method_two_superclasses_define_is_found_once(
+    tmp_path: Path,
+) -> None:
+    # mypy reports it against `Mid` and again against `Base`.
+    module = tmp_path / "chain_mod.py"
+    module.write_text(
+        "class Base:\n"
+        "    def done(self) -> bool:\n"
+        "        return True\n\n\n"
+        "class Mid(Base):\n"
+        "    def done(self) -> bool:\n"
+        "        return False\n\n\n"
+        "class Sub(Mid):\n"
+        "    def done(self, strict: bool) -> bool:\n"
+        "        return strict\n",
+        encoding="utf-8",
+    )
+    findings = [f for f in run_none_check([module]) if f.kind == "override"]
+    assert [(f.line, sum("Superclass:" in n for n in f.notes)) for f in findings] == [
+        (12, 1)
+    ], findings
+    assert '"Mid"' in findings[0].message
+
+
 def test_mutating_a_read_only_abc_is_found(tmp_path: Path) -> None:
     findings = _contract_findings(tmp_path)
     assert _contract_found(findings, "read-only-abc") == [

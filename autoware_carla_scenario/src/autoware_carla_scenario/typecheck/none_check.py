@@ -1039,5 +1039,15 @@ def run_none_check(paths: list[Path], timeout: float = 600.0) -> list[NoneFindin
             code,
             kind=kind,
         )
+        # mypy reports an override once per superclass that defines the
+        # method; the nearest one (reported first) is the one to fix.
+        if kind == OVERRIDE and any(
+            f.kind == OVERRIDE
+            and (f.path, f.line, f.column)
+            == (current.path, current.line, current.column)
+            for f in findings
+        ):
+            current = None  # nor its notes, which repeat the first one's
+            continue
         findings.append(current)
     return _merged_items(findings)
