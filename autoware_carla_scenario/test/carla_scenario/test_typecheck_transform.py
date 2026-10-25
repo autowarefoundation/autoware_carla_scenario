@@ -5233,7 +5233,7 @@ def test_a_dropped_decorator_under_a_kept_one_leaves_no_blank_line(
     imports, stack, kept = _STACKED[case]
     decorators = "".join(f"    {line}\n" for line in stack)
     source = f"{imports}class A:\n{decorators}    def f() -> int:\n        return 1\n"
-    out = _transform(source)
+    out = _without_identity(_transform(source))
     assert out.count("\n") == source.count("\n")
     def_line = "    def f() -> int:"
     assert out.split("\n").index(def_line) == source.split("\n").index(def_line)
