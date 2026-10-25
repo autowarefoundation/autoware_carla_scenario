@@ -4575,11 +4575,31 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   <code>keys()</code>, <code>values()</code>, iteration, <code>len()</code>, <code>in</code>, <code>str()</code>, <code>int()</code>,
   <code>float()</code>, <code>bool()</code>), each returning a <code>JSONValue</code> again, and never what
   the document holds; the <code>ValueError</code> or <code>TypeError</code> CPython raises for a
-  value of the wrong kind is invisible to it. A scenario
-  that reads a document converts what it takes explicitly:
-  <code>speed = float(cfg["v"])</code> passes, <code>speed: float = cfg["v"]</code> and
-  <code>cfg["v"] + 1.0</code> are refused; whether the key exists, or holds a number,
-  is not checked. <code>JSONDecodeError</code> is a
+  value of the wrong kind is invisible to it. <code>get(key, default)</code> takes a
+  default of any type and returns a <code>JSONValue</code> (<code>float(doc.get("speed", 5.0))</code>),
+  a list takes a slice (<code>doc["wps"][1:3]</code>), and <code>load(fp)</code> / <code>dump(obj, fp)</code>
+  take any file, a builtin <code>open()</code> among them (untyped: Codon 0.19 crashes on a
+  <code>Union[File, IO[str]]</code> parameter, so <code>json.load(5)</code> passes the check and
+  CPython refuses it; its <code>encoding=</code>, <code>errors=</code>
+  and <code>newline=</code>, which Codon's <code>open</code> lacks, are dropped from the checked
+  copy, #562). A scenario that reads a document converts what it takes
+  explicitly: <code>speed = float(cfg["v"])</code> passes, <code>speed: float = cfg["v"]</code> and
+  <code>cfg["v"] + 1.0</code> are refused, with a hint to convert the value (<code>speed is
+  assigned a JSONValue, but is declared float</code>, #564; assigning into a
+  document is refused as read-only); whether the key exists, or holds a
+  number, is not checked. <code>isinstance(v, dict)</code> of a <code>JSONValue</code> is
+  compiled as a run-time test (#563): Codon decides <code>isinstance</code> by the static
+  type and a <code>JSONValue</code> is none of <code>dict</code>, <code>list</code>, <code>str</code>, so it would not
+  compile the branch the test guards, and wrong code in it would pass. In a
+  module that imports <code>json</code>, the python rewrites turn <code>isinstance(x, T)</code> into
+  <code>isinstance(x, T) or (isinstance(x, JSONValue) and x._acs_isjson())</code>, which
+  changes nothing for any other type; both branches are then checked against
+  the members of <code>JSONValue</code>. (Codon does the same for any value whose static type is not the class: after
+  <code>x = 5</code>, the body of <code>if isinstance(x, str):</code> is not compiled, as dead code
+  is not; that is Codon's, and only <code>JSONValue</code>, whose type is opaque by
+  design, is rewritten.) (A module that never imports <code>json</code> but gets a
+  <code>JSONValue</code> from another module's function is not rewritten, and a call
+  that spans lines is not either.) <code>JSONDecodeError</code> is a
   <code>ValueError</code> with <code>msg</code>, <code>doc</code> and <code>pos</code>. <code>shlex</code> declares
   <code>quote(s)</code> and <code>join(split_command)</code>, CPython 3.10's on Codon's <code>re</code>; a
   <code>quote()</code> of a false value that is no <code>str</code> (<code>None</code>, which CPython quotes
@@ -5616,7 +5636,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 24, 2026 18:10:52 UTC"><span class="timeago" datetime="2026-10-24T18:10:52+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 24, 2026 18:10:52 UTC">2026-10-24</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 25, 2026 00:35:52 UTC"><span class="timeago" datetime="2026-10-25T00:35:52+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 25, 2026 00:35:52 UTC">2026-10-25</span>
   </span>
 
     
