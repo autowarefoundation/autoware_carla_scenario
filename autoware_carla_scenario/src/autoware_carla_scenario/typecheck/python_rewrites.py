@@ -48,8 +48,11 @@ so a rewrite has to keep the *types*, not the values, of what it replaces.
   constants; ``format(x, spec)`` becomes ``x.__format__(spec)`` and
   ``format(x)`` ``str(x)``; ``ascii(x)`` becomes ``repr(x)`` (the same type: it
   differs from ``ascii`` only in the characters it escapes, and only the
-  checked copy changes).  A name the module binds itself (``def format``) is
-  left alone.
+  checked copy changes).  ``round(x)`` and ``round(x, None)`` become
+  ``int(round(x))`` (#585): Codon's ``round(x, n=0)`` always returns a
+  ``float``, Python's an ``int`` without ``ndigits``; Python's keywords
+  (``round(number=x, ndigits=n)``), which Codon's lacks, are passed by
+  position.  A name the module binds itself (``def format``) is left alone.
 * ``namedtuple("P", "x y")`` / ``namedtuple("P", "x, y")`` (Codon crashes on a
   string) becomes ``namedtuple("P", ["x", "y"])`` (#510).  Field names that
   are not a literal, and ``rename=`` / ``defaults=``, are refused with a hint.
@@ -751,6 +754,8 @@ class _Pass(ShadowScopes):
         self._json_imports: set[int] = set()
         self._json_done: set[int] = set()
         self._module: ast.Module | None = None
+        #: The ``round(x)`` calls that are the argument of an ``int()`` (#585).
+        self._int_rounds: set[int] = set()
 
     def _text(self, node: ast.AST) -> str:
         return self.edits.text(*self.edits.node_span(node))
@@ -1214,6 +1219,14 @@ class _Pass(ShadowScopes):
     # -- zip(strict=), "...".format(...) ------------------------------------
 
     def visit_Call(self, node: ast.Call) -> None:
+        if (
+            isinstance(node.func, ast.Name)
+            and node.func.id == "int"
+            and len(node.args) == 1
+            and not node.keywords
+            and isinstance(node.args[0], ast.Call)
+        ):
+            self._int_rounds.add(id(node.args[0]))
         if isinstance(node.func, ast.Name) and (
             (node.func.id == "zip" and _kept_keywords(node, {"strict"}))
             or (
@@ -1445,6 +1458,8 @@ class _Pass(ShadowScopes):
                 return f"{value}.__format__({self._text(node.args[1])})"
             if func.id == "ascii" and plain_call and len(node.args) == 1:
                 return f"repr({self._text(node.args[0])})"
+            if func.id == "round":
+                return self._round(node)
             return None
         if (
             isinstance(func, ast.Attribute)
@@ -1458,6 +1473,42 @@ class _Pass(ShadowScopes):
         ):
             return self._affix_tuple(node, func)
         return None
+
+    def _round(self, node: ast.Call) -> str | None:
+        """``int(round(x))`` for ``round(x)`` / ``round(x, None)`` (#585), and
+        ``round(x, n)`` for Python's keywords (``number=``, ``ndigits=``), which
+        Codon's ``round(x, n=0)`` does not have; ``None`` if *node* is already
+        ``round(x, n)`` or cannot be read.
+
+        Codon's ``round`` always returns a ``float``; Python's returns an
+        ``int`` when ``ndigits`` is left out or ``None``."""
+        if any(isinstance(a, ast.Starred) for a in node.args) or len(node.args) > 2:
+            return None
+        given: dict[str, ast.expr] = dict(zip(("number", "ndigits"), node.args))
+        for given_keyword in node.keywords:
+            if (
+                given_keyword.arg not in ("number", "ndigits")
+                or given_keyword.arg in given
+            ):
+                return None
+            given[given_keyword.arg] = given_keyword.value
+        number, ndigits = given.get("number"), given.get("ndigits")
+        if number is None:
+            return None
+        lost = self._text(node).count("\n")
+        text = self._text(number)
+        if ndigits is None or (
+            isinstance(ndigits, ast.Constant) and ndigits.value is None
+        ):
+            if len(node.args) == 1 and id(node) in self._int_rounds:
+                return None  # already int(round(x)): not again
+            lost -= text.count("\n")
+            return f"int(round({text}{chr(10) * max(lost, 0)}))"
+        if not node.keywords:
+            return None
+        digits = self._text(ndigits)
+        lost -= text.count("\n") + digits.count("\n")
+        return f"round({text}, {digits}{chr(10) * max(lost, 0)})"
 
     def _operand(self, node: ast.expr) -> str:
         """The text of *node*, parenthesised where a ``.attr`` needs it."""

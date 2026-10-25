@@ -7306,6 +7306,40 @@ def test_a_builtin_codon_lacks_is_refused_with_a_hint(
     assert error.line == _line_of(path, last)
 
 
+def test_one_argument_round_is_an_int(tmp_path: Path) -> None:
+    # #585: Codon's round(x, n=0) always returns a float, Python's an int
+    # without ndigits; the check writes int(round(x)).
+    definitions = """
+def pick(xs: list[int], x: float) -> int:
+    return xs[round(x)]
+
+
+def steps(x: float) -> int:
+    n: int = round(x)
+    total = 0
+    for i in range(round(x, None)):
+        total += i
+    return n + total + round(number=x, ndigits=None)
+
+
+def tenths(x: float) -> float:
+    y: float = round(x)
+    return y + round(x, 1) + round(x, ndigits=2)
+"""
+    setup = 'logger.info("%d %d %f", pick([1, 2], 0.6), steps(2.4), tenths(1.25))\n'
+    scenario, config, _ = _data_case(tmp_path, definitions, setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_rewritten_round_is_still_type_checked(tmp_path: Path) -> None:
+    line = "r: str = round(2.5)"
+    scenario, config, path = _data_case(tmp_path, "", line + "\n")
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "r is assigned an int, but is declared str" in error.message, error.format()
+    assert error.line == _line_of(path, line)
+
+
 def test_dict_update_with_a_dict_or_pairs_compiles(tmp_path: Path) -> None:
     setup = """
         d = {"a": 1}
@@ -9321,6 +9355,72 @@ def test_a_typing_extensions_name_typing_lacks_is_refused_with_a_hint(
     error = _only_error(typecheck_scenario(scenario, config))
     assert "cannot import name 'deprecated' from 'typing_extensions'" in error.message
     assert "docs/typecheck.md" in error.message, error.format()
+
+
+# ---------------------------------------------------------------------------
+# collections.abc (#586)
+# ---------------------------------------------------------------------------
+
+
+def test_collections_abc_names_compile_as_typing_ones(tmp_path: Path) -> None:
+    header = _HEADER.replace(
+        "from .configs import CaseConfig\n",
+        "from collections.abc import (\n    Callable,\n    Iterator,\n    Mapping,\n"
+        "    Sequence,\n    Set,\n)\n\nfrom .configs import CaseConfig\n",
+        1,
+    )
+    helper = """
+
+
+def total(xs: Sequence[float], f: Callable[[float], float]) -> float:
+    return sum(f(v) for v in xs)
+
+
+def count(n: int) -> Iterator[int]:
+    for i in range(n):
+        yield i
+
+
+def has(s: Set[int], k: int) -> bool:
+    return k in s
+
+
+def get(m: Mapping[str, int]) -> int:
+    return m["a"]
+"""
+    setup = _TIMEOUT_SETUP + (
+        'logger.info("%f %d %s %d", total([1.0, 2.0], lambda v: v * 2.0), '
+        'sum(count(3)), has({1, 2}, 1), get({"a": 1}))\n'
+    )
+    scenario, config, _ = _write_case(tmp_path, setup, helper, header=header)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+@pytest.mark.parametrize(
+    ("statement", "needle"),
+    [
+        (
+            "from collections.abc import KeysView",
+            "collections.abc.KeysView is not modelled by the check",
+        ),
+        ("import collections.abc", "`import collections.abc` is not supported"),
+    ],
+    ids=["unmodelled-name", "module-import"],
+)
+def test_collections_abc_the_check_cannot_read_is_refused_with_a_hint(
+    tmp_path: Path, statement: str, needle: str
+) -> None:
+    header = _HEADER.replace(
+        "from .configs import CaseConfig\n",
+        f"{statement}\n\nfrom .configs import CaseConfig\n",
+        1,
+    )
+    scenario, config, path = _write_case(tmp_path, _TIMEOUT_SETUP, header=header)
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert needle in error.message, error.format()
+    assert "from typing" in error.message, error.format()
+    assert error.line == _line_of(path, statement)
 
 
 # ---------------------------------------------------------------------------
