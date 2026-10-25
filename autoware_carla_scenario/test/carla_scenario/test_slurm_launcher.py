@@ -1025,6 +1025,47 @@ def test_the_worker_takes_its_slot_in_launcher_port_lock_dir(
     assert status is not None and "stop here" in status["error"]
 
 
+def test_a_failing_task_port_propagates_and_releases_the_slot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from autoware_carla_scenario.examples import run
+    from autoware_carla_scenario.slurm import worker
+    from autoware_carla_scenario.slurm.manifest import write_json
+
+    layout = _batch_on_disk(tmp_path, cases=1)
+    manifest = layout.read_manifest()
+    manifest["cases"][0].update(scenario="x", overrides=[], stem="S")
+    write_json(layout.manifest, manifest)
+    released: list[bool] = []
+    slot = SimpleNamespace(
+        rpc=31500, release=lambda keep_lock=False: released.append(keep_lock)
+    )
+
+    def task_port(*_args: object) -> Path:
+        raise OSError("no port file")
+
+    monkeypatch.setattr(worker, "acquire_slot", lambda *_a, **_k: slot)
+    monkeypatch.setattr(BatchLayout, "task_port", lambda self, *a: task_port(*a))
+    monkeypatch.setattr(worker, "kill_carla_on_port", lambda _port: [])
+    monkeypatch.setattr(run, "load_scenario_plugins", lambda: None)
+    monkeypatch.setattr(run, "_cap_malloc_arenas", lambda: None)
+    monkeypatch.delenv("DISPLAY", raising=False)
+    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+    handlers = {sig: signal.getsignal(sig) for sig in (signal.SIGTERM, signal.SIGUSR1)}
+    try:
+        assert worker.run_task(layout.manifest, 0, 0) == 1
+    finally:
+        for sig, handler in handlers.items():
+            signal.signal(sig, handler)
+    # The original error is recorded, not an UnboundLocalError from the cleanup.
+    status = layout.read_task(0, 0)
+    assert status is not None
+    assert status["state"] == "failed"
+    assert "OSError: no port file" in status["error"]
+    assert "UnboundLocalError" not in status["traceback"]
+    assert released == [False]
+
+
 def test_secrets_are_not_recorded_through_a_pattern() -> None:
     env = {
         "AUTOWARE_API_TOKEN": "t",

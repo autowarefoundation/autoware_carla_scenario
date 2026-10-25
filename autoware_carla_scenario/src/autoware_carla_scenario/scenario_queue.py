@@ -220,6 +220,13 @@ class ScenarioQueue:
         self._timeout_seconds = timeout_seconds
         self._output_dir = output_dir
         self._cooldown_seconds = cooldown_seconds
+        if cooldown_max_retries < 0:
+            # A zero-attempt loop would record every scenario as errored
+            # (or raise) without ever running it.
+            raise ValueError(
+                "ScenarioQueue: cooldown_max_retries must be >= 0, "
+                f"got {cooldown_max_retries}."
+            )
         self._cooldown_max_retries = cooldown_max_retries
         self._max_tick_rate_hz = max_tick_rate_hz
         self._projector_type = projector_type
