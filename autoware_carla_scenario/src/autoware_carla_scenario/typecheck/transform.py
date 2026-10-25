@@ -22,6 +22,10 @@ which :func:`transform_source_lines` maps back onto the handler):
   ``@dataclass`` generates besides ``__init__`` are appended after the module
   with ``@extend`` (:func:`_dataclass_dunders`): ``__eq__`` / ``__ne__``,
   ``__hash__`` (``frozen`` or ``unsafe_hash``), ordering (``order=True``).
+* A plain class (no ``__eq__``, plain bases) is given identity ``__eq__`` /
+  ``__ne__`` and ``__hash__`` with ``@extend`` right after it
+  (:func:`_identity_dunders`, #596), as Python's ``object`` compares and
+  hashes it.
 * ``replace(obj, a=x, b=y)`` (``dataclasses.replace``) becomes
   ``replace(obj)._acs_with__a(x)._acs_with__b(y)`` (:func:`lower_replace_calls`):
   each dataclass of the module gets one ``_acs_with__<field>`` method per field
@@ -218,7 +222,7 @@ PRELUDE = (
     "from autoware_carla_scenario._lists import _acs_list, _acs_base, "
     "_acs_dict_into, _acs_list_into\n"
     "from autoware_carla_scenario._tc import _Required as _acs_Required, "
-    "_acs_Returning, _acs_callable, _acs_tuple, _acs_reduce\n"
+    "_acs_Returning, _acs_callable, _acs_tuple, _acs_reduce, _acs_some\n"
     "from enum import IntEnum as _acs_IntEnum, IntFlag as _acs_IntFlag, "
     "StrEnum as _acs_StrEnum\n"
     "from autoware_carla_scenario._exceptions import "
@@ -3229,6 +3233,16 @@ def transform_source_lines(
             at_end.append((name, block))
         else:
             after_class[end] = (name, block)
+    # A plain class's identity == and hash (#596) follow it too, so module-level
+    # code and a subclass of the module read them.
+    for name, block in _identity_dunders(tree, exceptions):
+        end = next(
+            n.end_lineno
+            for n in tree.body
+            if isinstance(n, ast.ClassDef) and n.name == name
+        )
+        if end is not None:
+            after_class[end] = (name, block)
     appended = [
         *at_end,
         *_inherited_init_extensions(_inherited_bases(tree, init_classes, exceptions)),
@@ -4130,6 +4144,68 @@ def _dataclass_dunders(tree: ast.Module, exceptions: set[str]) -> list[tuple[str
             out.append(
                 (node.name, f"\n\n@extend\nclass {node.name}:\n" + "".join(lines))
             )
+    return out
+
+
+def _class_level_names(node: ast.ClassDef) -> set[str]:
+    """The methods *node* defines and the names its body assigns
+    (``__hash__ = None``, ``__eq__ = other_eq``)."""
+    names = _defined_methods(node)
+    for stmt in node.body:
+        if isinstance(stmt, ast.Assign):
+            names.update(t.id for t in stmt.targets if isinstance(t, ast.Name))
+        elif isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name):
+            if stmt.value is not None:
+                names.add(stmt.target.id)
+    return names
+
+
+def _identity_dunders(tree: ast.Module, exceptions: set[str]) -> list[tuple[str, str]]:
+    """Identity ``==``, ``!=`` and hash for the plain classes of a module (#596).
+
+    A Python class that defines no ``__eq__`` compares and hashes by identity
+    (``object``'s), so ``a in npcs``, ``npcs.remove(a)``, ``{t}`` and
+    ``{t: 1}`` work; Codon gives a class neither.  Each top-level class whose
+    bases are plain (none, ``object``, ``ABC``) and which does
+    not define ``__eq__`` is given ``__eq__`` / ``__ne__`` (``self is other``)
+    and ``__hash__`` (``id(self)``), with ``@extend`` right after the class, so
+    a subclass of the module inherits them; a method the class defines itself
+    (``__hash__`` alone) is kept.  Left as they are: a class that defines
+    ``__eq__`` (Python makes it unhashable unless it defines ``__hash__``
+    too), a ``@dataclass`` with ``eq=True`` (:func:`_dataclass_dunders`), an
+    exception, an Enum, a NamedTuple, a Protocol, and a class with any other
+    base (a class of the module inherits its root's; a framework class, the
+    model's).  Each is (the class, the lines).
+    """
+    out: list[tuple[str, str]] = []
+    for node in tree.body:
+        if not isinstance(node, ast.ClassDef) or node.name in exceptions:
+            continue
+        if node.keywords or any(
+            _dotted(d) == "tuple" for d in node.decorator_list
+        ):  # a metaclass, a NamedTuple made a @tuple
+            continue
+        if not all(_dotted(b) in _PLAIN_BASES for b in node.bases):
+            continue
+        options = _dataclass_options(node)
+        if options is not None and options["eq"]:
+            continue
+        own = _class_level_names(node)
+        if "__eq__" in own:
+            continue
+        lines = [
+            f"    def __eq__(self, other: {node.name}) -> bool:\n"
+            "        return self is other\n",
+        ]
+        if "__ne__" not in own:
+            lines.append(
+                f"    def __ne__(self, other: {node.name}) -> bool:\n"
+                "        return self is not other\n"
+            )
+        # A @dataclass(eq=False, unsafe_hash=True) is hashed by its fields.
+        if "__hash__" not in own and not (options and options["unsafe_hash"]):
+            lines.append("    def __hash__(self) -> int:\n        return id(self)\n")
+        out.append((node.name, f"\n\n@extend\nclass {node.name}:\n" + "".join(lines)))
     return out
 
 

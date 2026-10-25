@@ -50,7 +50,9 @@ Some annotations give the check nothing to call with (``Any``, ``object``,
 ``Callable[..., R]``, none at all): each is reported as a problem of the
 module, to be fixed there with a type Codon can check.  ``object`` is
 accepted for the other operand of ``__eq__`` and ``__ne__``, which Python
-requires; it is given a value of the class itself.  A ``Callable[[A], R]``
+requires; it is given a value of the class itself, and the call is written
+``a == b`` (``a != b``), as Python makes it: Codon refuses an explicit
+``a.__eq__(b)`` of an ``__eq__`` overriding a base's.  A ``Callable[[A], R]``
 with types Codon can express is given a value of Codon's ``Callable`` type
 (:func:`callable_annotation`); one with a union among its argument types,
 which Codon 0.19 crashes on, a callable of as many arguments, of any type,
@@ -126,6 +128,8 @@ _SKIPPED_DECORATORS = {"overload", "typing.overload"}
 _PROPERTIES = {"property", "functools.cached_property", "cached_property"}
 _CLASS_VAR = {"ClassVar", "typing.ClassVar"}
 _OBJECT_OPERAND = {"__eq__", "__ne__"}
+#: The comparisons a method call of the check is written as.
+_OPERATORS = {"__eq__": "==", "__ne__": "!="}
 
 
 def workspace_module(module: str) -> str:
@@ -627,8 +631,15 @@ class _Renderer:
             signature = ", ".join(
                 f"{a.arg}: {t}" for a, t in zip([*positional, *keyword], combo)
             )
+            call = f"{head}({', '.join(values)})"
+            operand, _, method = head.rpartition(".")
+            if method in _OPERATORS and receiver is None and len(values) == 1:
+                # `a == b`, not `a.__eq__(b)`: Codon refuses the explicit call
+                # of an __eq__ overriding a base's (the identity one of
+                # BaseCondition, #596), and `==` is how Python calls it.
+                call = f"({operand} {_OPERATORS[method]} {values[0]})"
             self.emit(
-                self.hooked(f"{head}({', '.join(values)})", hook),
+                self.hooked(call, hook),
                 f"{where}({signature})",
                 line,
             )

@@ -59,6 +59,11 @@ so a rewrite has to keep the *types*, not the values, of what it replaces.
   when it compiles, so only the branch the type takes is compiled, and the
   first item keeps the default compiled, as Python evaluates it either way.  A name the module binds itself (``def
   format``) is left alone.
+* ``a if x else None`` (``x is not None``, ``not x``, ``None if x is None
+  else a``) where ``a`` reads the narrowed ``x`` (``m.group(1) if m else
+  None``) becomes ``_acs_some(a) if x else None`` (#597): Codon cannot unify
+  the narrowed branch's type with the ``None``; ``_acs_some`` makes it an
+  ``Optional`` itself, the type Python gives the expression.
 * ``namedtuple("P", "x y")`` / ``namedtuple("P", "x, y")`` (Codon crashes on a
   string) becomes ``namedtuple("P", ["x", "y"])`` (#510).  Field names that
   are not a literal, and ``rename=`` / ``defaults=``, are refused with a hint.
@@ -1324,6 +1329,18 @@ class _Pass(ShadowScopes):
                 return "_acs_JSONValue"
         return None
 
+    def visit_IfExp(self, node: ast.IfExp) -> None:
+        # `m.group(1) if m else None` (#597): Codon narrows `m` in the branch
+        # and then cannot unify its str with the None ("'Optional[str]' does
+        # not match expected type 'str'"); `_acs_some(...)` makes the branch
+        # an Optional itself.
+        branch = _narrowed_branch(node)
+        if branch is not None:
+            start, end = self.edits.node_span(branch)
+            self.edits.replace(start, start, "_acs_some(")
+            self.edits.replace(end, end, ")")
+        self.generic_visit(node)
+
     def visit_BoolOp(self, node: ast.BoolOp) -> None:
         # The ``isinstance(x, T)`` this pass wrote earlier: not rewritten again.
         if (
@@ -1924,6 +1941,48 @@ def _ordering_blocks(
                 (node.name, f"\n\n@extend\nclass {node.name}:\n" + "".join(lines))
             )
     return out
+
+
+def _narrowed_name(test: ast.expr) -> str | None:
+    """The name or attribute chain *test* narrows: ``x``, ``not x``,
+    ``x is None``, ``x is not None``."""
+    if isinstance(test, ast.UnaryOp) and isinstance(test.op, ast.Not):
+        test = test.operand
+    elif (
+        isinstance(test, ast.Compare)
+        and len(test.ops) == 1
+        and isinstance(test.ops[0], (ast.Is, ast.IsNot))
+        and _is_none(test.comparators[0])
+    ):
+        test = test.left
+    return _dotted(test)
+
+
+def _narrowed_branch(node: ast.IfExp) -> ast.expr | None:
+    """The branch of ``a if x else None`` (or ``None if x is None else a``)
+    that reads the narrowed ``x``, when the other one is ``None`` (#597)."""
+    if _is_none(node.orelse) and not _is_none(node.body):
+        branch = node.body
+    elif _is_none(node.body) and not _is_none(node.orelse):
+        branch = node.orelse
+    else:
+        return None
+    narrowed = _narrowed_name(node.test)
+    if narrowed is None or isinstance(branch, ast.Constant):
+        return None
+    if (
+        isinstance(branch, ast.Call)
+        and isinstance(branch.func, ast.Name)
+        and branch.func.id == "_acs_some"
+    ):
+        return None  # written by an earlier pass
+    if not any(
+        _dotted(sub) == narrowed
+        for sub in ast.walk(branch)
+        if isinstance(sub, (ast.Name, ast.Attribute))
+    ):
+        return None
+    return branch
 
 
 def _run(source: str) -> tuple[str, list[tuple[str, str]], list[tuple[int, str]]]:
