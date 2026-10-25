@@ -138,6 +138,25 @@ def test_the_sweeper_refuses_a_sweep_asking_for_recordings_without_the_extra(
     resolve.assert_not_called()
 
 
+def test_the_sweeper_refuses_a_negative_cooldown_max_retries() -> None:
+    from omegaconf import OmegaConf
+
+    from autoware_carla_scenario.sweeper import lanelet_constraint_sweeper as mod
+
+    sweeper = mod.LaneletConstraintSweeper()
+    sweeper.config = OmegaConf.create(
+        {"sweep": {}, "server": {"cooldown_max_retries": -1}}
+    )
+    sweeper.launcher = MagicMock()
+    with (
+        patch.object(mod, "resolve_map_paths"),
+        patch.object(mod, "load_map"),
+        patch.object(mod, "expand_sweep", return_value=[("a=1",)]),
+        pytest.raises(ValueError, match="cooldown_max_retries must be >= 0"),
+    ):
+        sweeper.sweep([])
+
+
 # ---------------------------------------------------------------------------
 # The configuration
 # ---------------------------------------------------------------------------
