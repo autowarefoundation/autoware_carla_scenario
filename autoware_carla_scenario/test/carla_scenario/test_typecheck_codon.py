@@ -2131,6 +2131,51 @@ def test_a_bad_value_in_a_nested_list_names_its_field(tmp_path: Path) -> None:
     assert error.path == "scenario.legs[1].speed"
 
 
+_BOOL_CONFIG = """
+from dataclasses import dataclass
+
+
+@dataclass
+class CaseConfig:
+    timeout_seconds: float = 10.0
+    enabled: bool = True
+"""
+
+_REQUIRED_BOOL_CONFIG = """
+from dataclasses import dataclass
+
+
+@dataclass
+class CaseConfig:
+    enabled: bool
+    timeout_seconds: float = 10.0
+"""
+
+
+@pytest.mark.parametrize(
+    "config_source", [_BOOL_CONFIG, _REQUIRED_BOOL_CONFIG], ids=["default", "required"]
+)
+def test_a_string_for_a_top_level_bool_is_reported_at_its_key(
+    tmp_path: Path, config_source: str
+) -> None:
+    # Hydra reads `scenario.enabled=no` as the str "no", which Codon converts
+    # to a bool field (#598): the value is checked strictly, as a nested
+    # field's is, by assignment and by the constructor (a required field)
+    # alike.  An int for a float field still passes.
+    setup = "if cfg.enabled:\n    logger.info('%f', cfg.timeout_seconds)\n"
+    scenario, config, _ = _write_case(tmp_path, setup, config=config_source)
+    error = _only_error(typecheck_scenario(scenario, config, {"enabled": "no"}))
+    assert error.path == "scenario.enabled", error.format()
+    assert "'str' does not match expected type 'bool'" in error.message
+    if config_source is _REQUIRED_BOOL_CONFIG:
+        return  # _HEADER's `config or CaseConfig()` needs every default
+
+    result = typecheck_scenario(
+        scenario, config, {"enabled": False, "timeout_seconds": 3}
+    )
+    assert result.ok, result.format()
+
+
 def test_an_undeclared_attribute_is_refused_before_compiling(tmp_path: Path) -> None:
     scenario, config, path = _write_case(tmp_path, "self._count = 3\n")
     error = _only_error(typecheck_scenario(scenario, config))
@@ -9471,6 +9516,86 @@ def test_codons_lambda_type_names_are_not_shown() -> None:
     assert check._plain_lambda_names(text) == (
         "'Optional[a lambda]' does not match; cb: a lambda"
     )
+
+
+# ---------------------------------------------------------------------------
+# A dropped decorator stacked under a kept one (#595)
+# ---------------------------------------------------------------------------
+
+_STACK_IMPORTS = """
+
+import functools
+from abc import ABC, abstractmethod
+
+from typing_extensions import override
+"""
+
+#: Each case: the base class's member and the subclass's (#595).
+_STACKED_DECORATORS = {
+    "property_abstractmethod": (
+        "    @property\n    @abstractmethod\n    def area(self) -> float: ...\n",
+        "    @property\n    def area(self) -> float:\n        return 4.0\n",
+    ),
+    "property_override": (
+        "    @property\n    def area(self) -> float:\n        return 0.0\n",
+        "    @property\n    @override\n    def area(self) -> float:\n"
+        "        return 4.0\n",
+    ),
+    "staticmethod_abstractmethod": (
+        "    @staticmethod\n    @abstractmethod\n    def area() -> float: ...\n",
+        "    @staticmethod\n    def area() -> float:\n        return 4.0\n",
+    ),
+    "property_cache": (
+        "    @property\n    def area(self) -> float:\n        return 0.0\n",
+        "    @property\n    @functools.cache\n    def area(self) -> float:\n"
+        "        return 4.0\n",
+    ),
+    "staticmethod_lru_cache": (
+        "    @staticmethod\n    def area() -> float:\n        return 0.0\n",
+        "    @staticmethod\n    @functools.lru_cache(maxsize=None)\n"
+        "    def area() -> float:\n        return 4.0\n",
+    ),
+    "multi_line_with_comments": (
+        "    @property\n    @abstractmethod\n    def area(self) -> float: ...\n",
+        "    @property  # read as an attribute\n"
+        "    # cached, and an override\n"
+        "    @functools.lru_cache(\n        maxsize=8,\n    )\n"
+        "    @override\n"
+        "    def area(self) -> float:\n        return 4.0\n",
+    ),
+}
+
+
+@pytest.mark.parametrize("case", sorted(_STACKED_DECORATORS))
+def test_a_dropped_decorator_under_a_kept_one_compiles(
+    tmp_path: Path, case: str
+) -> None:
+    # `@property` / `@staticmethod` over `@abstractmethod`, `@override`,
+    # `@functools.cache` or `@functools.lru_cache(...)`: the dropped one left
+    # a blank line in the decorator list, a Codon syntax error (#595).
+    base, sub = _STACKED_DECORATORS[case]
+    read = "s.area()" if "staticmethod" in case else "s.area"
+    setup = f's: Shape = Sq()\nlogger.info("%f", {read})\n'
+    extra = f"{_STACK_IMPORTS}\n\nclass Shape(ABC):\n{base}\n\nclass Sq(Shape):\n{sub}"
+    scenario, config, _ = _write_case(tmp_path, setup, extra)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_an_error_on_a_moved_decorator_is_at_its_line(tmp_path: Path) -> None:
+    # The kept decorator moves down over the dropped `@abstractmethod`
+    # (#595): its error names the line it is written on.
+    extra = (
+        "\n\nfrom abc import ABC, abstractmethod\n\n\n"
+        "def tag(n: int):\n    def wrap(f):\n        return f\n\n    return wrap\n\n\n"
+        "class Shape(ABC):\n"
+        '    @tag("a")\n    @abstractmethod\n    def area(self) -> float: ...\n\n\n'
+        "class Sq(Shape):\n    def area(self) -> float:\n        return 4.0\n"
+    )
+    setup = 's: Shape = Sq()\nlogger.info("%f", s.area())\n'
+    scenario, config, path = _write_case(tmp_path, setup, extra)
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert error.line == _line_of(path, '@tag("a")'), error.format()
 
 
 # ---------------------------------------------------------------------------

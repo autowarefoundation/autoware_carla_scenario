@@ -48,6 +48,7 @@ __all__ = [
     "copy_dunders",
     "typing_rewrite_refusals",
     "typing_rewrites",
+    "typing_rewrites_lines",
 ]
 
 #: Codon's refusals of what this pass leaves alone, and what to write.
@@ -411,14 +412,14 @@ class _Pass(ShadowScopes):
         self._function(node)
 
     def _function(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
+        dropped: list[ast.expr] = []
         for decorator in node.decorator_list:
             if self.names.typing_name(decorator) == "override":
-                start, end = self.edits.node_span(decorator)
-                while self.edits.text(start - 1, start) != "@":
-                    start -= 1  # `@ override`
-                self.edits.replace(start - 1, end, "")  # with its "@"
+                dropped.append(decorator)
             else:
                 self.visit(decorator)
+        # The kept ones stay contiguous with the `def` (#595).
+        self.edits.drop_decorators(node, dropped)
         every = [
             *node.args.posonlyargs,
             *node.args.args,
@@ -757,27 +758,37 @@ class _Pass(ShadowScopes):
                 self._store(by_name[keyword.arg], keyword.value)
 
 
-def _run(source: str) -> tuple[str, list[tuple[int, str]]]:
+def _run(source: str) -> tuple[str, list[tuple[int, str]], list[int]]:
     if not source.endswith("\n"):
         source += "\n"
     refused: list[tuple[int, str]] = []
+    origin = list(range(1, len(source.encode().splitlines()) + 1))
     for _ in range(_MAX_PASSES):
         tree = ast.parse(source)
         edits = _Edits(source.encode().splitlines(keepends=True))
         walker = _Pass(edits, tree, _Names(tree))
         walker.visit(tree)
-        for problem in walker.refused:
+        for line, message in walker.refused:
+            problem = (origin[line - 1], message)
             if problem not in refused:
                 refused.append(problem)
         if not edits.edits:
             break
         source = edits.apply()
-    return source, sorted(refused)
+        origin = [origin[line - 1] for line in edits.line_origin()]
+    return source, sorted(refused), origin
 
 
 def typing_rewrites(source: str) -> str:
     """*source* rewritten, every statement on its line."""
     return _run(source)[0]
+
+
+def typing_rewrites_lines(source: str) -> tuple[str, list[int]]:
+    """:func:`typing_rewrites`, and the line of *source* each line comes from:
+    a decorator moved down to its ``def`` (#595) maps to its line."""
+    text, _, origin = _run(source)
+    return text, origin
 
 
 def typing_rewrite_refusals(source: str) -> list[tuple[int, str]]:

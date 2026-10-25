@@ -1870,6 +1870,43 @@ def test_a_config_with_a_mandatory_field_is_built_by_its_constructor() -> None:
     assert "        lanelet_id=3," in driver.source.splitlines()
 
 
+@pytest.mark.parametrize("required", [False, True])
+def test_a_top_level_scalar_is_checked_strictly_at_its_key(required: bool) -> None:
+    # Codon converts a str assigned to a bool field (#598): a top-level
+    # scalar goes through `_acs_as_<type>` first, as a nested one does.
+    @dataclasses.dataclass
+    class Flags:
+        enabled: bool = True
+        timeout_seconds: float = 5.0
+        name: str = "n"
+        retries: int = 0
+
+    @dataclasses.dataclass
+    class Required:
+        enabled: bool
+        timeout_seconds: float = 5.0
+        name: str = "n"
+        retries: int = 0
+
+    values = {"enabled": "no", "timeout_seconds": 3, "name": "a", "retries": 2}
+    driver = render_driver(_Scenario, Required if required else Flags, values)
+    lines = driver.source.splitlines()
+    checks = {
+        key: lines[line - 1].strip()
+        for line, key in driver.config_lines.items()
+        if "_acs_as_" in lines[line - 1]
+    }
+    assert checks == {
+        "scenario.enabled": "_acs_as_bool('no')",
+        # An int for a float field is rendered as a float, and passes.
+        "scenario.timeout_seconds": "_acs_as_float(3.0)",
+        "scenario.name": "_acs_as_str('a')",
+        "scenario.retries": "_acs_as_int(2)",
+    }
+    assert "def _acs_as_bool(value: bool): pass" in lines
+    assert "_acs_as_bool(<str>)" in driver.shape
+
+
 # ---------------------------------------------------------------------------
 # When the runner checks: the typecheck mode
 # ---------------------------------------------------------------------------
@@ -5109,6 +5146,142 @@ def test_override_is_dropped_on_its_line() -> None:
     assert "override\n" not in out.replace("import override", "")
     assert out.count("\n") == textwrap.dedent(source).count("\n")
     assert "@property" in out
+
+
+def _decorator_block(out: str, def_line: str) -> list[str]:
+    """The lines from the first non-blank one above *def_line* to it."""
+    lines = out.split("\n")
+    at = lines.index(def_line)
+    start = at
+    while start > 0 and lines[start - 1].strip():
+        start -= 1
+    return lines[start : at + 1]
+
+
+_STACKED = {
+    "property_abstractmethod": (
+        "from abc import abstractmethod\n",
+        ["@property", "@abstractmethod"],
+        ["@property"],
+    ),
+    "property_override": (
+        "from typing_extensions import override\n",
+        ["@property", "@override"],
+        ["@property"],
+    ),
+    "staticmethod_abstractmethod": (
+        "import abc\n",
+        ["@staticmethod", "@abc.abstractmethod"],
+        ["@staticmethod"],
+    ),
+    "property_cache": (
+        "import functools\n",
+        ["@property", "@functools.cache"],
+        ["@property"],
+    ),
+    "staticmethod_lru_cache": (
+        "import functools\n",
+        ["@staticmethod", "@functools.lru_cache(maxsize=None)"],
+        ["@staticmethod"],
+    ),
+    "several_and_a_comment": (
+        "import functools\nfrom abc import abstractmethod\n",
+        [
+            "@abstractmethod",
+            "@staticmethod  # kept",
+            "@functools.lru_cache(",
+            "    maxsize=None,",
+            ")",
+            "# why",
+            "",
+            "@abstractmethod",
+        ],
+        ["@staticmethod  # kept"],
+    ),
+    "a_comment_between_kept_ones": (
+        "",
+        ["@staticmethod", "# why", "@some_decorator(", "    # inside", ")"],
+        ["@staticmethod", "@some_decorator(", "# inside", ")"],
+    ),
+    # A decorator's `@` or bracket on a line of its own is its line: the
+    # whole logical line is kept, or dropped.
+    "a_bracketed_kept_one": (
+        "import functools\n",
+        ["@(", "    staticmethod", ")", "# why", "@functools.cache"],
+        ["@(", "staticmethod", ")"],
+    ),
+    "a_bracketed_dropped_one": (
+        "import functools\n",
+        ["@staticmethod", "@(", "    functools.cache", ")", "@some_decorator"],
+        ["@staticmethod", "@some_decorator"],
+    ),
+    "a_continued_line": (
+        "",
+        ["@staticmethod", "# why", "@\\", "    some_decorator"],
+        ["@staticmethod", "@\\", "some_decorator"],
+    ),
+}
+
+
+@pytest.mark.parametrize("case", sorted(_STACKED))
+def test_a_dropped_decorator_under_a_kept_one_leaves_no_blank_line(
+    case: str,
+) -> None:
+    # Codon's parser refuses a blank or comment line inside a decorator list
+    # (#595): the kept decorators move down to the `def`, which keeps its
+    # line.
+    imports, stack, kept = _STACKED[case]
+    decorators = "".join(f"    {line}\n" for line in stack)
+    source = f"{imports}class A:\n{decorators}    def f() -> int:\n        return 1\n"
+    out = _transform(source)
+    assert out.count("\n") == source.count("\n")
+    def_line = "    def f() -> int:"
+    assert out.split("\n").index(def_line) == source.split("\n").index(def_line)
+    assert [line.strip() for line in _decorator_block(out, def_line)] == [
+        *kept,
+        def_line.strip(),
+    ]
+
+
+def test_a_moved_decorator_maps_to_its_line() -> None:
+    # A diagnostic on a kept decorator moved down to its `def` names the line
+    # the author wrote it on, through both passes that move one (#595).
+    source = (
+        "import functools\n"
+        "from typing import override\n"
+        "class A:\n"
+        "    @staticmethod\n"
+        "    @override\n"
+        "    # why\n"
+        "    @tag(\n"
+        "        1)\n"
+        "    @functools.cache\n"
+        "    def f() -> int:\n"
+        "        return 1\n"
+    )
+    out, origin = transform_source_lines(source)
+    lines = out[len(PRELUDE) :].split("\n")
+    assert lines[6:10] == [
+        "    @staticmethod",
+        "    @tag(",
+        "        1)",
+        "    def f() -> int:",
+    ]
+    assert origin[6:10] == [4, 7, 8, 10]
+
+
+def test_override_under_a_kept_decorator_leaves_no_blank_line() -> None:
+    source = """
+        from typing import override
+        class A:
+            @property
+            @override
+            def g(self) -> int:
+                return 1
+        """
+    out = _typing_rewritten(source)
+    lines = out.split("\n")
+    assert lines[3:6] == ["", "    @property", "    def g(self) -> int:"]
 
 
 def test_a_new_type_is_its_base_and_a_call_of_it_its_argument() -> None:
