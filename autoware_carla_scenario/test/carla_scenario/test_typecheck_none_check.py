@@ -859,3 +859,139 @@ def test_an_unnarrowed_optional_action_registered_is_reported(tmp_path: Path) ->
         "s.register_pre_tick(a)",
         "s.register_post_tick(a)",
     ]
+
+
+# ---------------------------------------------------------------------------
+# A field of a frozen dataclass assigned (#567)
+# ---------------------------------------------------------------------------
+
+_FROZEN_MODULE = """
+from __future__ import annotations
+
+import dataclasses
+from dataclasses import dataclass, replace
+from typing import Any
+
+
+@dataclass(frozen=True)
+class Pt:
+    x: float
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "x", float(self.x))
+
+    def bump(self) -> None:
+        self.x = 3.0
+
+
+@dataclass(frozen=True)
+class Sub(Pt):
+    y: float = 0.0
+
+
+@dataclass
+class Free:
+    x: float = 0.0
+
+
+class Plain:
+    x: float = 0.0
+
+
+def run(items: list[Pt], free: Free, plain: Plain, anything: Any) -> None:
+    p = Pt(1.0)
+    p.x = 2.0
+    p.x += 1.0
+    for it in items:
+        it.x = 2.0
+    s = Sub(1.0)
+    s.y = 5.0
+    free.x = 1.0
+    plain.x = 1.0
+    anything.x = 1.0
+    q = replace(p, x=1.0)
+    r = dataclasses.replace(p, x=2.0)
+    print(p.x, q, r)
+"""
+
+
+def test_a_field_of_a_frozen_dataclass_assigned_is_found(tmp_path: Path) -> None:
+    module = tmp_path / "frozen_mod.py"
+    module.write_text(_FROZEN_MODULE, encoding="utf-8")
+    findings = run_none_check([module])
+    assert {f.kind for f in findings} == {"frozen"}
+    lines = _FROZEN_MODULE.splitlines()
+    assert sorted(lines[f.line - 1].strip() for f in findings) == sorted(
+        [
+            "self.x = 3.0",
+            "p.x = 2.0",
+            "p.x += 1.0",
+            "it.x = 2.0",
+            "s.y = 5.0",
+        ]
+    )
+    assert {f.read_only for f in findings} == {("Pt", "x"), ("Sub", "y")}
+
+
+def test_a_read_only_property_of_a_class_that_is_no_frozen_dataclass_is_left_alone(
+    tmp_path: Path,
+) -> None:
+    module = tmp_path / "prop_mod.py"
+    module.write_text(
+        "class A:\n"
+        "    @property\n"
+        "    def v(self) -> int:\n"
+        "        return 1\n\n\n"
+        "def f(a: A) -> None:\n"
+        "    a.v = 2\n",
+        encoding="utf-8",
+    )
+    assert run_none_check([module]) == []
+
+
+def test_frozen_dataclass_forms_and_a_same_named_plain_class(tmp_path: Path) -> None:
+    helper = tmp_path / "helper_mod.py"
+    helper.write_text(
+        "import dataclasses as dcs\n"
+        "from dataclasses import dataclass as dc\n\n\n"
+        "@dc(slots=True, frozen=True)\n"
+        "class Aliased:\n"
+        "    x: float = 0.0\n\n\n"
+        "@dcs.dataclass(order=True, frozen=True)\n"
+        "class Attr:\n"
+        "    x: float = 0.0\n\n\n"
+        "class Plain:\n"
+        "    @property\n"
+        "    def v(self) -> int:\n"
+        "        return 1\n",
+        encoding="utf-8",
+    )
+    other = tmp_path / "other_mod.py"
+    other.write_text(
+        "from dataclasses import dataclass\n\n\n"
+        "@dataclass(frozen=True)\n"
+        "class Plain:\n"
+        "    x: float = 0.0\n\n\n"
+        "class Outer:\n"
+        "    @dataclass(frozen=True)\n"
+        "    class Inner:\n"
+        "        x: float = 0.0\n\n\n"
+        "def f(c: 'Outer.Inner') -> None:\n"
+        "    c.x = 1.0\n",
+        encoding="utf-8",
+    )
+    use = tmp_path / "use_mod.py"
+    use.write_text(
+        "from helper_mod import Aliased, Attr, Plain\n\n\n"
+        "def g(a: Aliased, b: Attr, p: Plain) -> None:\n"
+        "    a.x = 1.0\n"
+        "    b.x = 1.0\n"
+        "    p.v = 2\n",
+        encoding="utf-8",
+    )
+    findings = run_none_check([helper, other, use])
+    assert sorted((f.path.rpartition("/")[2], f.line) for f in findings) == [
+        ("other_mod.py", 16),
+        ("use_mod.py", 5),
+        ("use_mod.py", 6),
+    ]

@@ -80,7 +80,9 @@ from .library import (
     UNCALLED,
     package_modules,
 )
+from .dead_isinstance import dead_isinstances
 from .none_check import (
+    FROZEN,
     NoneCheckSkipped,
     NoneFinding,
     none_given,
@@ -837,6 +839,12 @@ def _build_workspace(
             ws.warnings.append(
                 _unchecked_warning(message, module.path, line, driver.reaches)
             )
+        ws.warnings += [
+            Diagnostic(
+                d.message, str(module.path), d.line, d.column, severity="warning"
+            )
+            for d in dead_isinstances(module.tree)
+        ]
         dest.write_text(text + checks.source)
         key = rel.as_posix()
         ws.files[key] = str(module.path)
@@ -2485,6 +2493,13 @@ def _with_none_misuses(
 
 def _none_check_advice(finding: NoneFinding) -> str:
     """The message of a :class:`.none_check.NoneFinding`, with what to do."""
+    if finding.kind == FROZEN and finding.read_only is not None:
+        cls, attr = finding.read_only
+        return (
+            f"{cls} is a frozen dataclass; use dataclasses.replace(x, {attr}=...) "
+            f"instead of assigning its field {attr!r}, or Python raises "
+            f"FrozenInstanceError here (mypy: {finding.code})"
+        )
     union = finding.union
     if union is None:
         wanted = none_given(finding.message)
