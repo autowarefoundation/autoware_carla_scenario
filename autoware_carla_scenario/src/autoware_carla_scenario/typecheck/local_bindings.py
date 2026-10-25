@@ -38,12 +38,13 @@ _OTHER_SCOPES = (
 
 #: Codon's refusal of a float where an int literal fixed the type (#583).
 _INT_MISMATCH = re.compile(
-    r"^'(?P<got>[^']*)' does not match expected type '(?P<want>int|Optional\[int\])'"
+    r"^'(?P<got>[^']*float[^']*)' does not match expected type "
+    r"'(?P<want>int|Optional\[int\])'"
 )
 #: Codon's refusal of a value where a ``None`` fixed the type (#584).
 _NONE_MISMATCH = re.compile(
-    r"^'(?:Optional\[)?(?P<got>[^']*?)\]?' does not match expected type "
-    r"'Optional\[NoneType\]'"
+    r"^'(?:Optional\[(?P<optional>[^']*)\]|(?P<got>[^']*))' does not match "
+    r"expected type 'Optional\[NoneType\]'"
 )
 
 
@@ -146,6 +147,22 @@ def _scope_at(tree: ast.Module, line: int) -> ast.AST:
     return best
 
 
+def _parameters(scope: ast.AST) -> set[str]:
+    """The parameter names of *scope*, a function (none for the module)."""
+    if not isinstance(scope, _SCOPES):
+        return set()
+    params = scope.args
+    return {
+        arg.arg
+        for arg in [
+            *params.posonlyargs,
+            *params.args,
+            *params.kwonlyargs,
+            *filter(None, (params.vararg, params.kwarg)),
+        ]
+    }
+
+
 def _int_literal(node: ast.expr | None) -> str | None:
     """The source of *node* when it is an int literal (``0``, ``-1``)."""
     inner = node
@@ -187,7 +204,8 @@ def int_literal_hint(message: str, line: int, tree: ast.Module) -> str | None:
         return None
     scope = _scope_at(tree, line)
     bindings = _bindings(scope)
-    elsewhere = _declared_elsewhere(scope)
+    # A parameter is typed by its annotation or its caller, not by a literal.
+    elsewhere = _declared_elsewhere(scope) | _parameters(scope)
     first: dict[str, _Binding] = {}
     for binding in bindings:
         first.setdefault(binding.name, binding)
@@ -199,9 +217,17 @@ def int_literal_hint(message: str, line: int, tree: ast.Module) -> str | None:
             continue
         literal = _int_literal(start.value)
         if literal is not None and start.line < line:
+            # With a call in the value, the refused float may be one of its
+            # arguments instead: say which case the hint is for.
+            when = (
+                f"if the float is the value stored in `{binding.name}` here, "
+                if binding.value is not None
+                and any(isinstance(n, ast.Call) for n in ast.walk(binding.value))
+                else ""
+            )
             return (
-                f"Codon fixes the type of the local `{binding.name}` at its "
-                f"first assignment, `{binding.name} = {literal}` on line "
+                f"{when}Codon fixes the type of the local `{binding.name}` at "
+                f"its first assignment, `{binding.name} = {literal}` on line "
                 f"{start.line}, which makes it an int: write "
                 f"`{binding.name} = {_float_of(literal)}` to store a float in it"
             )
@@ -378,7 +404,7 @@ def none_mismatch_hint(
     found = _NONE_MISMATCH.match(message)
     if found is None:
         return None
-    got = found["got"]
+    got = found["optional"] if found["optional"] is not None else found["got"]
     for codon, python in (("List[", "list["), ("Dict[", "dict["), ("Set[", "set[")):
         got = got.replace(codon, python)
     got = got.replace("Tuple[", "tuple[")

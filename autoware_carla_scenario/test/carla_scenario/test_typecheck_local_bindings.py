@@ -118,6 +118,46 @@ def test_no_int_literal_hint_for_other_lines_or_messages() -> None:
     )
 
 
+def test_an_int_literal_hint_needs_a_float_and_no_parameter() -> None:
+    source = """
+    def f(n: int, s: str, m=0) -> int:
+        k = 0
+        k = s
+        n = 0
+        n = 1.5
+        m = 1.5
+        return k
+    """
+    tree = _tree(source)
+    # Codon refusing a str: storing a float is not the fix.
+    assert (
+        int_literal_hint(
+            "'str' does not match expected type 'int'", _line(source, "k = s"), tree
+        )
+        is None
+    )
+    # A parameter is typed by its annotation or caller, not by `n = 0`.
+    assert int_literal_hint(_INT, _line(source, "n = 1.5"), tree) is None
+    assert int_literal_hint(_INT, _line(source, "m = 1.5"), tree) is None
+
+
+def test_an_int_literal_hint_with_a_call_says_which_float_it_means() -> None:
+    # Codon reports `half(y)`'s float argument on this line too.
+    source = """
+    def use(y: float) -> int:
+        k = 0
+        k = half(y)
+        return k
+    """
+    hint = int_literal_hint(_INT, _line(source, "k = half"), _tree(source))
+    assert hint is not None
+    assert hint.startswith("if the float is the value stored in `k` here, ")
+    plain = int_literal_hint(
+        _INT, _line(_ACCUMULATOR, "total += v"), _tree(_ACCUMULATOR)
+    )
+    assert plain is not None and plain.startswith("Codon fixes")
+
+
 _RUNNING_MIN = """
 def seen_low(xs: list[float]) -> bool:
     best = None
@@ -163,6 +203,14 @@ def test_the_none_mismatch_names_the_first_binding() -> None:
         tree,
     )
     assert listed is not None and "`best: list[int] | None = None`" in listed[0]
+    # Not wrapped in Optional: the type is kept whole.
+    for codon, python in (("List[float]", "list[float]"), ("float", "float")):
+        bare = none_mismatch_hint(
+            f"'{codon}' does not match expected type 'Optional[NoneType]'",
+            _line(_RUNNING_MIN, "best = x"),
+            tree,
+        )
+        assert bare is not None and f"`best: {python} | None = None`" in bare[0]
     assert none_mismatch_hint(_OPT_NONE, 1, tree) is None
     assert none_mismatch_hint(_INT, _line(_RUNNING_MIN, "best = x"), tree) is None
 

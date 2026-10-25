@@ -1013,6 +1013,10 @@ scenario has to do itself:
     scenario.py:72:9: error: 'Optional[float]' does not match expected type 'Optional[int]': Codon fixes the type of the local `s` at its first assignment (here), a conditional expression whose int literal branch `0` makes it an int: write `0.0`
     ```
 
+    Codon reports a float passed to an `int` parameter in the same words, so
+    when the stored value holds a call (`k = half(y)`), the hint begins "if
+    the float is the value stored in `k` here".
+
   - A local first assigned `None` and rebound later without an annotation,
     as in a running minimum (`best = None`, then `best = x` in a loop).
     Annotate it: `best: float | None = None`. Without the annotation, Codon
