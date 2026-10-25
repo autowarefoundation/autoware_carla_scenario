@@ -410,7 +410,8 @@ or `attr-defined` error is a finding; Codon reports attribute errors itself):
   `update`, `setdefault`, `popitem`, `add`, `discard`, the set `*_update`
   methods, `__delitem__`) on a receiver typed exactly as one of those three
   counts; a typo (`s.appnd`) or a missing attribute of another type is not
-  reported here. Import them from `typing` (`collections.abc` is unsupported).
+  reported here. Import them from `typing` or `collections.abc` (read as
+  `typing`'s, #586; its `Set` is `AbstractSet`): the check is the same.
 
 **Not checked: a name bound on one path only** (#576). Python raises
 `UnboundLocalError` for `if c: y = 1` followed by `use(y)`, and mypy reports it
