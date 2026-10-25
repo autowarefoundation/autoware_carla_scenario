@@ -104,6 +104,12 @@ from .library_driver import (
     uncalled_nodes,
     workspace_module,
 )
+from .local_bindings import (
+    int_literal_hint,
+    none_first_binding_message,
+    none_first_bindings,
+    none_mismatch_hint,
+)
 from .module_cycles import cycle_hint
 from .python_rewrites import REWRITE_HINTS, python_rewrite_refusals
 from .transform import (
@@ -1407,10 +1413,55 @@ def _data_model_hints(
             pass
         if hint is None and message.startswith("expected iterable expression"):
             hint = _self_iterator_hint(diagnostic, sources)
+        if hint is None:
+            try:
+                hint = _local_binding_hint(diagnostic, sources)
+            except Exception:  # noqa: BLE001 - only a hint: never lose Codon's error
+                pass
         if hint is not None:
             diagnostic = dataclasses.replace(diagnostic, message=f"{message}: {hint}")
         out.append(diagnostic)
     return out
+
+
+def _author_tree(path: str | None, sources: _Sources) -> ast.Module | None:
+    """The AST of the checked module at *path* (the author's file)."""
+    if path is None:
+        return None
+    for module in sources.modules.values():
+        if str(module.path) == path:
+            return module.tree
+    return None
+
+
+def _local_binding_hint(diagnostic: Diagnostic, sources: _Sources) -> str | None:
+    """A local Codon typed by its first assignment, an int literal or
+    ``None``, where the refused value is stored in it (#583, #584)."""
+    tree = _author_tree(diagnostic.path, sources)
+    if tree is None or diagnostic.line is None:
+        return None
+    hint = int_literal_hint(diagnostic.message, diagnostic.line, tree)
+    if hint is None:
+        found = none_mismatch_hint(diagnostic.message, diagnostic.line, tree)
+        hint = found[0] if found is not None else None
+    return hint
+
+
+def _none_first_binding_hints(sources: _Sources, why: str) -> list[Diagnostic]:
+    """Each unannotated local of the checked modules first bound to ``None``
+    and rebound later, at its ``= None`` line, as a likely cause of *why*
+    (Codon's crash, or its ``Optional[NoneType]`` refusal elsewhere) (#584)."""
+    found: list[Diagnostic] = []
+    for module in sources.modules.values():
+        for binding in none_first_bindings(module.tree):
+            found.append(
+                Diagnostic(
+                    f"{why}; a likely cause: " f"{none_first_binding_message(binding)}",
+                    str(module.path),
+                    binding.line,
+                )
+            )
+    return found
 
 
 _FOR_LINE = re.compile(r"\bfor\b.*?\bin\b(?P<iterable>.*)$")
@@ -2728,6 +2779,10 @@ def _compile(
                 diagnostics += _uninferred_attributes(diagnostics, sources)
             except Exception:  # only a hint: never lose Codon's own errors to it
                 pass
+            try:
+                diagnostics += _unplaced_none_mismatches(diagnostics, sources)
+            except Exception:  # only a hint: never lose Codon's own errors to it
+                pass
     seconds = time.monotonic() - started
     refiner = Refiner(
         lambda name, path: _python_class(name, sources, path),
@@ -2757,6 +2812,14 @@ def _compile(
             f"exit status {proc.returncode}"
         ]
         diagnostics = [Diagnostic(f"Codon failed without a diagnostic: {tail[0]}")]
+        try:
+            # Codon 0.19 segfaults on some locals first bound to None (#584):
+            # name each, after the crash itself (which may have another cause).
+            diagnostics += _none_first_binding_hints(
+                sources, f"Codon crashed ({tail[0]})"
+            )
+        except Exception:  # only a hint: the crash is reported either way
+            pass
     return TypeCheckResult(
         name,
         ok=proc.returncode == 0,
@@ -2768,6 +2831,24 @@ def _compile(
         output=output,
         seconds=seconds,
     )
+
+
+def _unplaced_none_mismatches(
+    diagnostics: list[Diagnostic], sources: _Sources
+) -> list[Diagnostic]:
+    """The locals first bound to ``None`` when Codon refused a value as
+    ``Optional[NoneType]`` at a line that rebinds none of them (#584)."""
+    if not any(
+        _NONE_TYPE_MISMATCH in d.message and "Codon fixes the type" not in d.message
+        for d in diagnostics
+    ):
+        return []
+    return _none_first_binding_hints(
+        sources, f"Codon refused a value as {_NONE_TYPE_MISMATCH}"
+    )
+
+
+_NONE_TYPE_MISMATCH = "expected type 'Optional[NoneType]'"
 
 
 def _callable_signature_hints(output: str, sources: _Sources) -> list[Diagnostic]:
