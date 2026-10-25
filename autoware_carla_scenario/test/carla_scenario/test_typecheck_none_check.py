@@ -995,3 +995,256 @@ def test_frozen_dataclass_forms_and_a_same_named_plain_class(tmp_path: Path) -> 
         ("use_mod.py", 5),
         ("use_mod.py", 6),
     ]
+
+
+# ---------------------------------------------------------------------------
+# bytes and str mixed (#574), an always-False comparison (#575)
+# ---------------------------------------------------------------------------
+
+_MIX_MODULE = """
+from __future__ import annotations
+
+import enum
+from typing import Any, Final
+
+
+class Color(enum.Enum):
+    RED = "red"
+    BLUE = "blue"
+
+
+class Mode(enum.Enum):
+    A = 1
+    B = 2
+
+
+class Level(enum.IntEnum):
+    LOW = 1
+
+
+class Phase(str, enum.Enum):
+    GO = "go"
+
+
+class Text(enum.StrEnum):
+    X = "x"
+
+
+class Plain:
+    pass
+
+
+def up(s: str) -> str:
+    return s.upper()
+
+
+def raw_in(b: bytes) -> bytes:
+    return b
+
+
+def bad_operator(name: str, raw: bytes) -> None:
+    a = b"x" + "y"
+    b = "sent " + name.encode()
+    c = "x" in raw
+    d = raw[0:1] + "z"
+
+
+def bad_return(name: str) -> str:
+    return name.encode()
+
+
+def bad_argument(name: str, raw: bytes) -> None:
+    up(raw)
+    raw_in(name)
+
+
+def bad_assignment(name: str, raw: bytes) -> None:
+    x: str = raw
+    y: bytes = name
+    items: list[str] = [raw]
+    table: dict[str, str] = {"k": raw}
+
+
+def bad_equality(raw: bytes) -> None:
+    a = raw == "ab"
+    b = "ab" != raw
+
+
+def bad_enum(c: Color, m: Mode, name: str) -> None:
+    a = c == "red"
+    b = m == 1
+    d = m in (1, 2)
+    e = Color.RED == Mode.A
+    f = name == Color.RED
+
+
+def bad_literals() -> None:
+    a = Color.RED == "red"
+    b = Color.RED == Mode.A
+
+
+def literal_look_alikes() -> None:
+    a = Level.LOW == 1
+    b = Level.LOW in (1, 2)
+    c = Phase.GO == "go"
+    d = Text.X == "x"
+    e = Color.RED != Color.BLUE
+    f = Color.RED == Color.RED
+
+
+MODE: Final = 1
+
+
+def bad_other(a: list[int], b: list[str]) -> None:
+    c = a == b
+    d = MODE == 2
+
+
+def good(
+    name: str, raw: bytes, c: Color, m: Mode, lv: Level, p: Phase, t: Text,
+    u: str | bytes, ba: bytearray, anything: Any, plain: Plain,
+) -> str:
+    a = raw + raw
+    b = name + name
+    d = name.encode() + b"x"
+    e = raw == b"ab"
+    f = c == Color.RED
+    g = c.value == "red"
+    h = m.value == 1
+    i = lv == 1
+    j = lv in (1, 2)
+    k = p == "go"
+    l = t == "x"
+    n = anything == c
+    o = c is None
+    q = c != Color.BLUE
+    r = u == "a"
+    s = plain == plain
+    v = raw.decode() + name
+    return name + raw.decode()
+"""
+
+
+def _mix_findings(tmp_path: Path) -> list[none_check.NoneFinding]:
+    module = tmp_path / "mix_mod.py"
+    module.write_text(_MIX_MODULE, encoding="utf-8")
+    return run_none_check([module])
+
+
+def _found(findings: list[none_check.NoneFinding], kind: str) -> list[str]:
+    lines = _MIX_MODULE.splitlines()
+    return [lines[f.line - 1].strip() for f in findings if f.kind == kind]
+
+
+def test_bytes_and_str_mixed_are_found(tmp_path: Path) -> None:
+    findings = _mix_findings(tmp_path)
+    assert _found(findings, "bytes-str") == [
+        'a = b"x" + "y"',
+        'b = "sent " + name.encode()',
+        'c = "x" in raw',
+        'd = raw[0:1] + "z"',
+        "return name.encode()",
+        "up(raw)",
+        "raw_in(name)",
+        "x: str = raw",
+        "y: bytes = name",
+        "items: list[str] = [raw]",
+        'table: dict[str, str] = {"k": raw}',
+        'a = raw == "ab"',
+        'b = "ab" != raw',
+    ]
+
+
+def test_an_enum_compared_with_something_it_never_equals_is_found(
+    tmp_path: Path,
+) -> None:
+    findings = _mix_findings(tmp_path)
+    assert _found(findings, "enum-eq") == [
+        'a = c == "red"',
+        "b = m == 1",
+        "d = m in (1, 2)",
+        "e = Color.RED == Mode.A",
+        "f = name == Color.RED",
+        'a = Color.RED == "red"',
+        "b = Color.RED == Mode.A",
+    ]
+    assert all(f.code == "comparison-overlap" for f in findings if f.kind == "enum-eq")
+
+
+def test_a_non_enum_always_false_comparison_is_left_alone(tmp_path: Path) -> None:
+    # list[int] == list[str], and two different literals (a Final switch).
+    findings = _mix_findings(tmp_path)
+    lines = _MIX_MODULE.splitlines()
+    assert not [f for f in findings if "c = a == b" in lines[f.line - 1]]
+    assert not [f for f in findings if "MODE == 2" in lines[f.line - 1]]
+
+
+def test_valid_bytes_str_and_enum_code_is_not_found(tmp_path: Path) -> None:
+    # `good`, the member literals of an IntEnum, a (str, Enum) and a StrEnum
+    # (mypy reports them, Python's is True) and two members of one enum.
+    findings = _mix_findings(tmp_path)
+    lines = _MIX_MODULE.splitlines()
+    first = lines.index("def literal_look_alikes() -> None:")
+    last = lines.index("def bad_other(a: list[int], b: list[str]) -> None:")
+    assert [f for f in findings if first < f.line < last] == []
+    assert [f for f in findings if f.line > lines.index("def good(")] == []
+    assert {f.kind for f in findings} == {"bytes-str", "enum-eq"}
+
+
+@pytest.mark.parametrize(
+    ("code", "message", "expected"),
+    [
+        ("operator", 'Unsupported operand types for + ("bytes" and "str")', True),
+        ("operator", 'Unsupported operand types for + ("str" and "bytes")', True),
+        ("operator", 'Unsupported operand types for in ("str" and "bytes")', True),
+        ("operator", 'Unsupported operand types for + ("int" and "str")', False),
+        (
+            "arg-type",
+            'Argument 1 to "up" has incompatible type "bytes"; expected "str"',
+            True,
+        ),
+        (
+            "arg-type",
+            'Argument 1 to "up" has incompatible type "str | bytes"; expected "str"',
+            False,
+        ),
+        (
+            "arg-type",
+            'Argument 1 to "f" has incompatible type "bytearray"; expected "bytes"',
+            False,
+        ),
+        (
+            "arg-type",
+            'Argument 1 to "f" has incompatible type "int"; expected "str"',
+            False,
+        ),
+        (
+            "return-value",
+            'Incompatible return value type (got "bytes", expected "str")',
+            True,
+        ),
+        (
+            "comparison-overlap",
+            'Non-overlapping equality check (left operand type: "bytes", '
+            "right operand type: \"Literal['ab']\")",
+            True,
+        ),
+        (
+            "comparison-overlap",
+            'Non-overlapping equality check (left operand type: "Color", '
+            "right operand type: \"Literal['red']\")",
+            False,
+        ),
+    ],
+)
+def test_is_bytes_str_mix_takes_the_exact_pair_only(
+    code: str, message: str, expected: bool
+) -> None:
+    assert none_check.is_bytes_str_mix(code, message) is expected
+
+
+def test_strict_equality_changes_no_other_finding(tmp_path: Path) -> None:
+    # The None check's own module reports what it did before the flag.
+    module = tmp_path / "plain_mod.py"
+    module.write_text(_MODULE, encoding="utf-8")
+    assert {f.kind for f in run_none_check([module])} <= {"none", "union"}
