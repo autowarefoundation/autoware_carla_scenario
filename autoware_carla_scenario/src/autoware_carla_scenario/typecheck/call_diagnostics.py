@@ -1005,6 +1005,74 @@ def return_message(
 
 
 # ---------------------------------------------------------------------------
+# An annotated assignment of the wrong type (#564)
+# ---------------------------------------------------------------------------
+
+
+def annotated_message(
+    message: str,
+    path: str | None,
+    line: int | None,
+    column: int | None,
+    files: _Files,
+) -> str | None:
+    """``speed is assigned a JSONValue, but is declared float`` for Codon's
+    ``'float' does not match expected type 'JSONValue'`` at ``speed: float =
+    doc["speed"]``: Codon names the declared type first, as for a ``return``."""
+    found = _MISMATCH.match(message)
+    parsed = files.get(path)
+    if found is None or parsed is None or line is None or column is None:
+        return None
+    tree, lines = parsed
+    statements = [
+        n
+        for n in ast.walk(tree)
+        if isinstance(n, ast.AnnAssign)
+        and n.value is not None
+        and n.lineno == line
+        and _column(lines, line, n.col_offset) == column
+    ]
+    if len(statements) != 1:
+        return None
+    statement = statements[0]
+    want = canonical_annotation(codon_type(found["declared"]))
+    have = canonical_annotation(statement.annotation)
+    if want.lower() != have.lower():
+        return None  # not the declared type: another mismatch on this line
+    shown = canonical_annotation(codon_type(found["got"]))
+    target = ast.unparse(statement.target)
+    article = "an" if shown[:1] in "aeiouAEIOU" else "a"
+    value = "None" if shown == "None" else f"{article} {shown}"
+    return f"{target} is assigned {value}, but is declared {have}"
+
+
+#: What to write instead of a use of a ``JSONValue`` the check refuses (#564).
+_JSON_CONVERT = (
+    "a value read from a JSON document has no type the check knows "
+    '(JSONValue): convert it where you use it, `float(doc["speed"])`, '
+    "`int(v)`, `str(v)`, `[float(x) for x in v]`"
+)
+_JSON_READ_ONLY = (
+    "a JSON document is read-only here: copy what you need into a typed local"
+)
+_JSON_ATTRIBUTE = (
+    'a JSON object has no attributes: index it, `v["x"]`, and convert what '
+    "you take (JSONValue is none of the types the check knows)"
+)
+
+
+def json_hint(message: str) -> str:
+    """*message* with a hint when it is about a ``JSONValue``."""
+    if "JSONValue" not in message or "(JSONValue)" in message:
+        return message
+    if "'__setitem__'" in message or "'__delitem__'" in message:
+        return f"{message}: {_JSON_READ_ONLY}"
+    if "object has no attribute" in message:
+        return f"{message}: {_JSON_ATTRIBUTE}"
+    return f"{message}: {_JSON_CONVERT}"
+
+
+# ---------------------------------------------------------------------------
 # A forgotten ``self`` (#542)
 # ---------------------------------------------------------------------------
 
@@ -1146,8 +1214,10 @@ class Refiner:
                 if changed is not None:
                     return changed
             returned = return_message(message, path, line, column, self.files)
+            if returned is None:
+                returned = annotated_message(message, path, line, column, self.files)
             if returned is not None:
-                return returned, line, column
+                return json_hint(returned), line, column
             changed = forgotten_self(
                 message, path, line, column, self.files, resolvers[0]
             )
@@ -1155,4 +1225,4 @@ class Refiner:
                 return changed
         except Exception:  # noqa: BLE001 - only a hint: never lose Codon's error
             pass
-        return message, line, column
+        return json_hint(message), line, column

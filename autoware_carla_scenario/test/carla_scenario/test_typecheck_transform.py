@@ -3202,6 +3202,58 @@ def test_an_fstring_with_a_brace_in_an_expression_is_refused(
     assert hint in refused[0][1]
 
 
+def test_open_text_keywords_are_dropped() -> None:
+    assert _rewritten('open(p, "r", encoding="utf-8")\n') == 'open(p, "r")\n'
+    assert _rewritten('open(p, encoding="utf-8", errors="x")\n') == "open(p)\n"
+    assert _rewritten('open(p, "w", newline="")\n') == 'open(p, "w")\n'
+    assert _rewritten("open(p, encoding=e)\n") == "open(p)\n"
+    assert _rewritten("def open(p, encoding=1): ...\nopen(p, encoding=2)\n") == (
+        "def open(p, encoding=1): ...\nopen(p, encoding=2)\n"
+    )
+
+
+def test_isinstance_in_a_module_that_uses_json_is_given_a_json_test() -> None:
+    rewritten = _rewritten("import json\nif isinstance(v, dict):\n    pass\n")
+    assert rewritten == (
+        "import json\nif (isinstance(v, dict) or "
+        "(isinstance(v, json.JSONValue) and (v)._acs_isjson())):\n    pass\n"
+    )
+    assert "js.JSONValue" in _rewritten(
+        "import json as js\nisinstance(v, (int, str))\n"
+    )
+    from_import = _rewritten("from json import loads\nisinstance(v, list)\n")
+    assert from_import.startswith(
+        "from json import loads, JSONValue as _acs_JSONValue\n"
+    )
+    assert "isinstance(v, _acs_JSONValue)" in from_import
+    # A parenthesised list, with or without a trailing comma, stays valid and
+    # keeps its lines.
+    for tail in (",\n)", ")"):
+        spread_import = (
+            f"from json import (\n    loads,\n    dumps{tail}\nisinstance(v, list)\n"
+        )
+        out = _rewritten(spread_import)
+        compile(out, "<rewritten>", "exec")
+        assert out.count("\n") == spread_import.count("\n")
+        assert "dumps, JSONValue as _acs_JSONValue" in out
+    # A function-local import serves that function only.
+    local = _rewritten(
+        "def f(v):\n    import json\n    return isinstance(v, list)\n"
+        "def g(v):\n    return isinstance(v, list)\n"
+    )
+    assert local.count("_acs_isjson") == 1
+    # No json and a shadowed isinstance are left alone.
+    for source in (
+        "isinstance(v, list)\n",
+        "import json\ndef isinstance(a, b): ...\nisinstance(v, list)\n",
+    ):
+        assert "_acs_isjson" not in _rewritten(source)
+    # A call over several lines keeps the lines of the statement.
+    spread = "import json\nx = isinstance(\n    v, list)\ny = 1\n"
+    assert _rewritten(spread).count("\n") == spread.count("\n")
+    assert _rewritten(spread).endswith("y = 1\n")
+
+
 def test_zip_strict_is_dropped() -> None:
     assert _rewritten("zip(a, b, strict=True)\n") == "zip(a, b)\n"
     assert _rewritten("zip(strict=False)\n") == "zip()\n"
