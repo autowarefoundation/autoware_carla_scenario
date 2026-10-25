@@ -2315,6 +2315,37 @@ of one enum (<code>Color.RED != Color.BLUE</code>) are not a comparison with a r
 error, so the None check's other findings are unchanged; the framework's
 modules and the built-in scenarios have none of these comparisons. Like the
 rest of this section it rests on mypy.</p>
+<p><strong>A string formatting Python fails on is refused</strong> (#589). The None check
+keeps mypy's <code>str-format</code> findings of a <code>str.format</code> call or a <code>%</code> on a
+literal format string where Python raises at the call: a conversion the value
+does not take (<code>"{:d} km/h".format(speed)</code> for a <code>float</code> and <code>"{:.2f}".format(name)</code>
+for a <code>str</code> raise <code>ValueError</code>, <code>"%d km/h" % name</code> and <code>"%x" % speed</code> raise
+<code>TypeError</code>), too few or too many arguments (<code>"%s %s" % (name,)</code>,
+<code>"{} {}".format(name)</code>), a missing named field or mapping key, an unknown
+format character or conversion (<code>"%q"</code>, <code>"{!x}"</code>), a malformed spec
+(<code>"{:abc}"</code>, an unmatched <code>{</code>), and mixing automatic and manual field
+numbering. Codon formats with its own rules and compiles all of them. The
+advice is <code>Python raises ValueError, TypeError, IndexError or KeyError on this
+format string with these values (...); convert the value first (int(x),
+str(x)) or use "{}" / "%s"</code>. <code>"%d" % speed</code> (a <code>float</code>) and <code>"{:.2f}".format(n)</code>
+(an <code>int</code>) are valid, as in Python. A conversion the value does not take is
+kept only for a built-in type that fails for every value (<code>str</code>, <code>float</code>,
+<code>None</code>, <code>bytes</code>, <code>complex</code>, a <code>list</code>, ...): mypy does not count a class's
+<code>__index__</code> (<code>"%x" % obj</code> runs) or a <code>__getitem__</code> without <code>keys</code>
+(<code>"%(k)s" % obj</code> runs), and refuses <code>"{:.2f}"</code> of a <code>complex</code> or a
+<code>Fraction</code>, which run. Too many arguments is kept only for a <code>%</code> whose right
+operand is a tuple display or a constant: <code>"{}".format(a, b)</code> ignores the
+extra argument, and <code>"abc" % d</code> formats no key of a dict (or of a list, or
+bytes). An unknown spec is kept where the Python running the check refuses
+it (<code>"{:z.1f}"</code> runs on 3.11). Three more of mypy's <code>str-format</code> messages are
+not kept, because mypy gives them to valid code as well: <code>Numeric flags are
+only allowed for numeric types</code> (<code>"{:05}".format(name)</code> runs; <code>"{:+}".format(name)</code>
+does not, and the message does not say which flag), <code>Syntax error in format
+specifier</code> and the field-accessor ones (<code>"{0[my key]}".format(d)</code> and
+<code>"{0['k']}".format(d)</code> index <code>d</code> with <code>"my key"</code> and <code>"'k'"</code>). An f-string's
+spec (<code>f"{speed:d}"</code>) is not checked: mypy does not check it, and rewriting it
+into a <code>.format</code> call for mypy would move the columns mypy reports. Like the
+rest of this section it rests on mypy.</p>
 <p><strong>Typing contracts you declared must hold</strong> (#577). Python mostly does not
 enforce these and Codon does not read them, so mypy's verdict is used, each
 kept only on its exact code and message (no other <code>misc</code>, <code>override</code>, <code>index</code>
@@ -3250,7 +3281,9 @@ value whose members are <code>int</code>, not as a type: it becomes <code>int</c
     appends <code>==</code> and <code>!=</code> (<code>eq=True</code>, the default), <code>&lt;</code>, <code>&lt;=</code>, <code>&gt;</code> and <code>&gt;=</code>
     (<code>order=True</code>) and <code>hash()</code> (<code>frozen=True</code>, or <code>unsafe_hash=True</code>) after
     the module, comparing the fields in order (a dataclass base's first;
-    <code>field(compare=False)</code>, <code>ClassVar</code> and <code>InitVar</code> are left out). A method
+    <code>field(compare=False)</code> and <code>ClassVar</code> are left out; <code>InitVar</code> and
+    <code>KW_ONLY</code> cannot be imported in the check, see "Standard library names
+    Codon lacks"). A method
     the class defines itself is kept. This holds for a dataclass whose bases
     are dataclasses of the same module (or none): one deriving from a class
     the check cannot see the fields of, such as a framework dataclass, gets
@@ -3360,6 +3393,11 @@ cannot express is refused at its line, with what to write instead.</p>
 <td><code>ascii(x)</code> (#439)</td>
 <td><code>repr(x)</code>: the same <code>str</code> type; the check does not run it, so the escaping of non-ASCII characters is unchanged at run time</td>
 <td><code>ascii</code> is bound where the call is, as for <code>format</code> (#471)</td>
+</tr>
+<tr>
+<td><code>getattr(x, "name", default)</code> with a literal name, <code>x</code> a name or an attribute chain, the default on one line (#590)</td>
+<td><code>((default), x.name if hasattr(x, "name") else (default))[1]</code>: Codon's <code>getattr</code> takes no default, and Codon decides <code>hasattr</code> when it compiles, so only the branch <code>x</code>'s type takes is compiled, typed as that branch (the attribute's type where the class declares it, the default's where it does not). The first item keeps the default compiled either way, as Python evaluates it either way (<code>getattr(x, "name", x.typo)</code> is refused). <code>hasattr</code> on an <code>Optional</code> is decided on the <code>Optional</code> (see "Making a module compile"), so the default's branch is the one compiled there</td>
+<td>a name built at run time, another receiver (a call, a subscript), a default over several lines or <code>hasattr</code> bound where the call is: refused with <code>getattr() takes 2 arguments (3 given)</code> and a hint to write the <code>hasattr</code> test</td>
 </tr>
 <tr>
 <td><code>round(x)</code>, <code>round(x, None)</code>, <code>round(number=x, ndigits=None)</code> (#585)</td>
@@ -3698,14 +3736,15 @@ class is a <code>HasArea</code> only if it lists <code>HasArea</code> among its 
 the same code either way, because a <code>Protocol</code> base is only a marker there.</p>
 <h3 id="standard-library-names-codon-lacks">Standard library names Codon lacks<a class="headerlink" href="#standard-library-names-codon-lacks" title="Permanent link">&para;</a></h3>
 <p>Codon ships its own <code>functools</code> (only <code>partial</code>), <code>itertools</code>, <code>collections</code>,
-<code>math</code> and <code>random</code>, and a name it lacks fails with a bare "cannot import
-name". The check supplies these (#378, #515, #516); <code>test_stdlib_names</code> keeps
+<code>math</code>, <code>random</code> and <code>statistics</code>, and a name it lacks fails with a bare
+"cannot import name". The check supplies these (#378, #515, #516); <code>test_stdlib_names</code> keeps
 this list, the check's additions and the tests in step:</p>
 <!-- stdlib-names:start -->
 <p><code>functools.reduce</code>, <code>functools.lru_cache</code>, <code>functools.cache</code>,
 <code>functools.cached_property</code>, <code>itertools.pairwise</code>, <code>collections.OrderedDict</code>,
 <code>collections.deque</code>, <code>math.dist</code>, <code>math.isqrt</code>, <code>math.comb</code>, <code>math.perm</code>,
-<code>math.cbrt</code>, <code>math.exp2</code>, <code>random.Random</code>, <code>random.choices</code>, <code>random.triangular</code></p>
+<code>math.cbrt</code>, <code>math.exp2</code>, <code>math.hypot</code>, <code>random.Random</code>, <code>random.choices</code>,
+<code>random.triangular</code>, <code>statistics.fmean</code></p>
 <!-- stdlib-names:end -->
 
 <ul>
@@ -3737,7 +3776,14 @@ this list, the check's additions and the tests in step:</p>
   where Python's would not. <code>math.cbrt</code> and <code>math.exp2</code> are Python 3.11
   functions: the check accepts them on 3.10 too (run time is where 3.10
   refuses them), so a scenario meant for 3.10 has to avoid them itself.
-  <code>nextafter</code> and <code>ulp</code> are not declared.</li>
+  <code>nextafter</code> and <code>ulp</code> are not declared. <code>math.hypot</code> takes any number of
+  coordinates (Python 3.8's, #590), <code>hypot(x, y, z)</code> included; Codon's took
+  exactly two, and a call with two keeps Codon's (and its <code>float32</code> one).</li>
+<li><code>statistics.fmean(data)</code> is Python's mean of the values as floats (#590);
+  Codon's own is commented out. <code>fmean(data, weights)</code> is the weighted mean
+  of Python 3.11, accepted on 3.10 too, like <code>math.cbrt</code>. The rest of
+  <code>statistics</code> is Codon's (<code>mean</code>, <code>median</code>, <code>stdev</code>, ...), which takes a
+  <code>list[float]</code>.</li>
 <li><code>random.Random.choices</code> (and <code>random.choices</code>) take <code>weights</code> of ints or
   floats, or <code>cum_weights=</code>, and <code>k=</code>, as Python's do, and
   <code>triangular(low, high)</code> (the method and the function) takes the midpoint as the mode. Codon's
@@ -3747,7 +3793,7 @@ this list, the check's additions and the tests in step:</p>
 <p>These are refused at the import line, with a hint saying what to write
 instead:</p>
 <!-- stdlib-refused:start -->
-<p><code>dataclasses.asdict</code>, <code>functools.wraps</code>, <code>math.ulp</code>, <code>contextlib.contextmanager</code>, <code>warnings</code>,
+<p><code>dataclasses.asdict</code>, <code>dataclasses.InitVar</code>, <code>dataclasses.KW_ONLY</code>, <code>functools.wraps</code>, <code>math.ulp</code>, <code>contextlib.contextmanager</code>, <code>warnings</code>,
 <code>json.JSONEncoder</code>, <code>types</code>, <code>textwrap</code>, <code>traceback</code>, <code>io</code>, <code>csv</code>, <code>uuid</code></p>
 <!-- stdlib-refused:end -->
 
@@ -3756,6 +3802,13 @@ instead:</p>
   fields you need. The <code>dataclasses</code> shim declares only <code>dataclass</code>, <code>field</code>
   and <code>replace</code> (a call is rewritten and checked per field, see "Your own
   dataclasses, enums and named tuples").</li>
+<li><code>dataclasses.InitVar</code> and <code>KW_ONLY</code> (#590): Codon's constructor of a
+  dataclass takes every annotated field and does not call <code>__post_init__</code>,
+  so an init-only value has nowhere to go and the <code>KW_ONLY</code> marker would be a
+  field. Pass an <code>InitVar</code>'s value to a <code>@classmethod</code> (or a function) that
+  computes the fields and builds the instance, or keep it as an ordinary
+  field; drop <code>KW_ONLY</code> and pass the fields by keyword (a field without a
+  default then goes before the defaulted ones).</li>
 <li><code>functools.wraps</code> (and any other name of <code>functools</code>, <code>itertools</code>,
   <code>collections</code>, <code>math</code> or <code>random</code> not listed above, such as <code>math.ulp</code>) is not modelled.</li>
 <li><code>contextlib</code> declares <code>suppress</code> only: write a class with <code>__enter__</code> and
@@ -4618,13 +4671,17 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   or of a checked one.</li>
 <li><strong><code>hasattr()</code> instead of <code>getattr(x, name, default)</code></strong>: Codon decides
   <code>hasattr</code> when it compiles, so the branch for a type without the attribute
-  is never compiled.</li>
+  is never compiled. The check rewrites <code>getattr(x, "name", default)</code> so
+  itself where the name is a literal and <code>x</code> a name or an attribute chain
+  (#590, "Python the check rewrites for Codon").</li>
 <li>An exception's <code>__init__</code> passes one message string to <code>super().__init__</code>.
   An exception class with nothing in its body but a docstring needs that
   <code>__init__</code> written out (<code>def __init__(self, message: str) -&gt; None:</code>).</li>
 <li><strong><code>d.get(key, default)</code> takes a default of the value's type</strong>, as Codon's
   <code>dict.get</code> does; <code>d.get(key)</code> is an <code>Optional</code> of it, as in Python (the
-  model's <code>_tc.codon</code> declares it). Likewise <code>if not x: continue</code> instead
+  model's <code>_tc.codon</code> declares it). So does <code>d.pop(key, default)</code> (#590,
+  Codon's <code>pop</code> takes the key only), and <code>d.pop(key, None)</code> is an <code>Optional</code>
+  of the value's type. Likewise <code>if not x: continue</code> instead
   of <code>(x or {})</code>, <code>s.startswith(a) or s.startswith(b)</code> instead of
   <code>s.startswith((a, b))</code>, and <code>if x is None: return None</code> / <code>return x.attr</code>
   instead of <code>None if x is None else x.attr</code>.</li>
@@ -5885,7 +5942,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 25, 2026 20:34:11 UTC"><span class="timeago" datetime="2026-10-25T20:34:11+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 25, 2026 20:34:11 UTC">2026-10-25</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 25, 2026 21:51:42 UTC"><span class="timeago" datetime="2026-10-25T21:51:42+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 25, 2026 21:51:42 UTC">2026-10-25</span>
   </span>
 
     
