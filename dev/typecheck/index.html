@@ -2130,6 +2130,13 @@ compiles a small program that does what the runner does:</p>
 <a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="n">scenario</span><span class="o">.</span><span class="n">setup</span><span class="p">()</span>
 <a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="n">scenario</span><span class="o">.</span><span class="n">is_done</span><span class="p">()</span>
 </code></pre></div>
+<p>A value for a <code>bool</code>, <code>int</code>, <code>float</code> or <code>str</code> field, at the top level as in a
+nested dataclass, is first passed to a function that takes that type only,
+on a line of its own (#598): Codon converts any value with <code>__bool__</code> that is
+assigned to a <code>bool</code> field, so <code>scenario.enabled=no</code> (which Hydra, like a
+quoted <code>"false"</code> in YAML, reads as the str <code>"no"</code>) would otherwise pass, and
+the feature would be on. It is refused at <code>scenario.enabled</code>, whether the
+field has a default or not. An int for a <code>float</code> field still passes.</p>
 <p>Codon checks a function only when something calls it. The program checks
 everything <code>setup()</code> and <code>is_done()</code> reach: the calls into the framework, the
 scenario's own helpers, and, through <code>register_pass_condition()</code> and the
@@ -3757,6 +3764,16 @@ this list, the check's additions and the tests in step:</p>
   attribute (<code>self.area = 3</code> is legal in Python, not on a <code>property</code>). A name
   the module binds again (a parameter <code>reduce</code>, a <code>def cache</code>) is left alone.
   The names are handled where the module imports them, not in a function.</li>
+<li>A decorator the check drops (<code>lru_cache</code>, <code>cache</code>, <code>@abstractmethod</code>,
+  <code>@override</code>) may sit under one it keeps (<code>@property</code>, <code>@staticmethod</code>,
+  <code>@classmethod</code>), as in <code>@property</code> over <code>@abstractmethod</code> (#595). Codon's
+  parser refuses a blank or comment-only line inside a decorator list, so
+  the check removes the dropped decorators' lines, and any comment or blank
+  line, between the first kept decorator and the <code>def</code>, and moves the kept
+  decorators down to the <code>def</code>: the <code>def</code> and every line after it keep
+  their line numbers, and an error on a kept decorator is reported at the
+  line it was written on. A decorator is its whole logical line, from its
+  <code>@</code> to its end (<code>@(</code> / <code>name</code> / <code>)</code> on three lines).</li>
 <li>The initial value of <code>reduce</code> must have the type of the accumulator the
   function returns: <code>reduce(add, [1.5, 2.5], 0)</code> is refused (write <code>0.0</code>).</li>
 <li><code>itertools.pairwise</code> is added to Codon's <code>itertools</code>, and
@@ -5942,7 +5959,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 25, 2026 21:51:42 UTC"><span class="timeago" datetime="2026-10-25T21:51:42+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 25, 2026 21:51:42 UTC">2026-10-25</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 25, 2026 23:33:08 UTC"><span class="timeago" datetime="2026-10-25T23:33:08+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 25, 2026 23:33:08 UTC">2026-10-25</span>
   </span>
 
     
