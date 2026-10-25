@@ -997,6 +997,42 @@ scenario has to do itself:
   ```text
   scenario.py:34: error: GapTracker._samples is assigned without a type: declare it in the class body, e.g. `_samples: list[...]` ...
   ```
+- **Give a local its type at its first assignment.** Codon fixes the type of
+  an unannotated local where it is first assigned; Python and mypy let it
+  widen later. Two common patterns are refused:
+
+  - A float accumulator started at an int literal (`total = 0`, then
+    `total += v` with a float `v`), or a conditional expression with an int
+    literal branch (`s = v if v is not None else 0` with `v: float | None`).
+    Write `0.0`. Codon names neither the first assignment nor the literal, so
+    the check adds them (#583):
+
+    ```text
+    scenario.py:74:9: error: 'float' does not match expected type 'int': Codon fixes the type of the local `total` at its first assignment, `total = 0` on line 72, which makes it an int: write `total = 0.0` to store a float in it
+    scenario.py:72:9: error: 'Optional[float]' does not match expected type 'Optional[int]': Codon fixes the type of the local `s` at its first assignment (here), a conditional expression whose int literal branch `0` makes it an int: write `0.0`
+    ```
+
+  - A local first assigned `None` and rebound later without an annotation,
+    as in a running minimum (`best = None`, then `best = x` in a loop).
+    Annotate it: `best: float | None = None`. Without the annotation, Codon
+    0.19 either refuses the rebinding (`'Optional[float]' does not match
+    expected type 'Optional[NoneType]'`, which the check completes with the
+    `= None` line and the annotation) or crashes with no location at all
+    (#584). After such a crash the check keeps the crash and adds, at its
+    `= None` line, each unannotated local of the checked modules that is first
+    bound to `None` and rebound, as a likely cause. The type comes from what
+    the local is rebound to where the source says it plainly (a literal, an
+    annotated parameter, the element of an annotated list it loops over);
+    otherwise it is written `<T>`:
+
+    ```text
+    error: Codon failed without a diagnostic: exit status -11
+    scenario.py:72: error: Codon crashed (exit status -11); a likely cause: Codon fixes the type of the local `best` at its first assignment, `best = None` on line 72, and cannot widen it when it is rebound (line 75): annotate it: `best: float | None = None`
+    ```
+
+    Codon compiles some of these as written (a `None` first binding read
+    only after an `is None` test), so a local named after a crash is a
+    candidate, not a verdict: the crash may have another cause.
 - **Write the element types of a class attribute** (#482): `xs: list[int] =
   field(default_factory=list)`, `d: dict[str, float]`, `ids: set[int]`,
   `xy: tuple[float, float] = (0.0, 0.0)` or `tuple[X, ...]`. Codon types a
