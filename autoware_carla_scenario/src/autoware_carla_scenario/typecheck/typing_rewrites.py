@@ -19,6 +19,12 @@ only the checked copy of a module changes: what runs is the code as written.
 * ``operator.itemgetter(1)`` and ``attrgetter("n")`` with literal arguments
   become lambdas: Codon's call the function with the argument wrapped in a
   tuple, so they cannot be a sort key.
+* ``from collections.abc import Sequence, Callable`` becomes ``from typing
+  import (Sequence, Callable)`` (#586): Codon has no ``collections.abc``, and
+  the typing shim has the abstract collections (``Set`` is its
+  ``AbstractSet``).  A name the shim does not have, ``import
+  collections.abc`` and ``from collections import abc`` are refused with a
+  hint.
 * A caught exception put in a variable, attribute, list or parameter
   annotated ``Exception`` is rebuilt as an ``Exception`` of its type name and
   message: Codon does not upcast an exception to its base.
@@ -98,6 +104,32 @@ _TYPING_MODULES = {"typing", "typing_extensions"}
 _ATTRIBUTE_PATH = re.compile(r"^[A-Za-z_]\w*(\.[A-Za-z_]\w*)*$")
 _ASSERT_NEVER = 'raise AssertionError("Expected code to be unreachable")'
 _ADDERS = {"append", "add", "appendleft"}
+#: The names of ``collections.abc`` the typing shim has, by their name there
+#: (#586): ``from collections.abc import X`` is read as ``from typing import X``.
+_ABC_NAMES = {
+    **{
+        name: name
+        for name in (
+            "Callable",
+            "Collection",
+            "Container",
+            "Generator",
+            "Hashable",
+            "Iterable",
+            "Iterator",
+            "Mapping",
+            "MutableMapping",
+            "MutableSequence",
+            "Sequence",
+            "Sized",
+        )
+    },
+    "Set": "AbstractSet",
+}
+_ABC_HINT = (
+    "the check reads `from collections.abc import ...` as an import from "
+    "typing, of these names only: {names} (`Set` is typing's `AbstractSet`)"
+).format(names=", ".join(f"`{n}`" for n in sorted(_ABC_NAMES)))
 _LISTS = {"list", "List", "set", "Set", "Deque", "deque", "Sequence", "Iterable"}
 _DICTS = {"dict", "Dict", "Mapping", "MutableMapping", "DefaultDict", "defaultdict"}
 
@@ -413,6 +445,71 @@ class _Pass(ShadowScopes):
         self._scope.pop()
         self._returns.pop()
         self._annotations.pop()
+
+    # -- from collections.abc import ... (#586) ------------------------------
+
+    def visit_Import(self, node: ast.Import) -> None:
+        for alias in node.names:
+            if alias.name == "collections.abc" or alias.name.startswith(
+                "collections.abc."
+            ):
+                self.refused.append(
+                    (
+                        node.lineno,
+                        "`import collections.abc` is not supported by the check "
+                        "(Codon has no collections.abc): write `from "
+                        "collections.abc import Sequence` (or `from typing "
+                        "import Sequence`) and annotate with the bare name; "
+                        + _ABC_HINT,
+                    )
+                )
+
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+        if node.level:
+            return
+        if node.module == "collections":
+            if any(alias.name == "abc" for alias in node.names):
+                self.refused.append(
+                    (
+                        node.lineno,
+                        "`from collections import abc` is not supported by the "
+                        "check (Codon has no collections.abc): write `from "
+                        "collections.abc import Sequence` (or `from typing "
+                        "import Sequence`) and annotate with the bare name; "
+                        + _ABC_HINT,
+                    )
+                )
+            return
+        if node.module != "collections.abc":
+            return
+        kept: list[str] = []
+        for alias in node.names:
+            name = _ABC_NAMES.get(alias.name)
+            if name is None:
+                what = (
+                    "`from collections.abc import *`"
+                    if alias.name == "*"
+                    else f"collections.abc.{alias.name}"
+                )
+                self.refused.append(
+                    (
+                        getattr(alias, "lineno", node.lineno),
+                        f"{what} is not modelled by the check (Codon has no "
+                        f"collections.abc): {_ABC_HINT}; annotate with one of "
+                        "them, or with a concrete type (list, dict, set), "
+                        'instead (docs/typecheck.md, "typing names")',
+                    )
+                )
+                continue
+            local = alias.asname or alias.name
+            kept.append(name if name == local else f"{name} as {local}")
+        start, end = self.edits.node_span(node)
+        lost = self.edits.text(start, end).count("\n")
+        if kept:
+            text = "from typing import (" + ", ".join(kept) + "\n" * lost + ")"
+        else:  # refused: kept on its lines for the line numbers
+            text = "(" + "\n" * lost + ")" if lost else "pass"
+        self.edits.replace(start, end, text)
 
     def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
         if self.names.typing_name(node.annotation) == "TypeAlias" and node.value:

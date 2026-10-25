@@ -410,7 +410,8 @@ or `attr-defined` error is a finding; Codon reports attribute errors itself):
   `update`, `setdefault`, `popitem`, `add`, `discard`, the set `*_update`
   methods, `__delitem__`) on a receiver typed exactly as one of those three
   counts; a typo (`s.appnd`) or a missing attribute of another type is not
-  reported here. Import them from `typing` (`collections.abc` is unsupported).
+  reported here. Import them from `typing` or `collections.abc` (read as
+  `typing`'s, #586; its `Set` is `AbstractSet`): the check is the same.
 
 **Not checked: a name bound on one path only** (#576). Python raises
 `UnboundLocalError` for `if c: y = 1` followed by `use(y)`, and mypy reports it
@@ -1381,6 +1382,7 @@ cannot express is refused at its line, with what to write instead.
 | `s.startswith((a, b))`, `s.endswith((a, b), start)` with the tuple written in the call (#439) | `(s.startswith(a) or s.startswith(b))`; a receiver or item that is not a name, attribute or constant is bound once by a lambda | the tuple is held in a name (`s.startswith(PREFIXES)`), is empty, or the call has `*args` / keywords; each item is still checked as a `str` |
 | `format(x, spec)`, `format(x)` (#439) | `x.__format__(spec)`, `str(x)` | `format` is bound where the call is: by the module (an assignment, import, `def` or `class` at module level) or by an enclosing function or lambda (a parameter or local); a method named `format` or a class attribute binds nothing there, so it does not disable the rewrite (#471) |
 | `ascii(x)` (#439) | `repr(x)`: the same `str` type; the check does not run it, so the escaping of non-ASCII characters is unchanged at run time | `ascii` is bound where the call is, as for `format` (#471) |
+| `round(x)`, `round(x, None)`, `round(number=x, ndigits=None)` (#585) | `int(round(x))`: Codon's `round(x, n=0)` always returns a `float`, Python's an `int` when `ndigits` is left out or `None`, so `xs[round(x)]`, `n: int = round(x)` and `range(round(x))` check. `round(x, ndigits=2)` is `round(x, 2)` (Codon's has no Python keywords). `round(x, 2)` stays a `float`, also for an `int` `x` (Python returns an `int` there). Being an `int`, `round(x)` is refused inside a `list[float]` or `dict[str, float]` display (`[round(x), 1.5]`), as any `int` is: write `float(round(x))` there | `round` is bound where the call is, as for `format` (#471); an `ndigits` that is a variable is passed as it is: an `int \| None` one is read as a `float`, one bound to `None` only fails in Codon's `round` (`__pow__() cannot be called with (None)`) |
 | `sorted(xs)`, `xs.sort()`, `min` / `max` of a class that defines `__lt__` only | the class gets `__gt__` (`other < self`) and `__ge__` (`not self < other`), which Codon's sort calls | the class defines no ordering (use `@dataclass(order=True)` or `key=`) |
 | a class that defines `__eq__` but not `__ne__` (a value object in a `set` or as a `dict` key) | the class gets `__ne__` (`not (self == other)`): Python derives it, Codon does not and its hash table calls it | (a `@dataclass` already has one) |
 | `namedtuple("P", "x y")` / `"x, y"` | the string becomes the list `["x", "y"]` (Codon crashes on a string) | field names that are not a literal (a variable, `.split()`), and `rename=` / `defaults=` / `field_names=` / `module=` as keywords, and field names Python rejects (a duplicate, a keyword, a leading underscore); a `namedtuple` the module defines or imports from elsewhere is left alone; use a list written in the call or a `typing.NamedTuple` class |
@@ -1493,6 +1495,16 @@ in step:
 `NewType`, `Never`, `assert_never`, `TypeGuard`, `TypeIs`, `Container`
 <!-- typing-names:end -->
 
+- `from collections.abc import Sequence, Callable` (what ruff's UP035
+  suggests) is read as `from typing import Sequence, Callable` (#586), on the
+  same lines. The names of `collections.abc` the check has are `Callable`,
+  `Collection`, `Container`, `Generator`, `Hashable`, `Iterable`,
+  `Iterator`, `Mapping`, `MutableMapping`, `MutableSequence`, `Sequence`,
+  `Sized` and `Set` (typing's `AbstractSet`); any other (`KeysView`,
+  `MutableSet`, `Awaitable`) is refused at its import line with that list.
+  `import collections.abc` and `from collections import abc` (annotations
+  spelled `collections.abc.Sequence`, `abc.Sequence`) are refused too, with
+  the hint to import the names.
 - `typing_extensions` has the same names as far as `typing` has them, so a
   scenario for Python 3.10 imports `Self`, `override`, `Never`,
   `assert_never` and `TypeIs` (which `typing` gained later) from there; any other
@@ -2852,8 +2864,10 @@ What Codon 0.19 needs that Python does not, beyond
   its check wherever Codon compiles it. The model's top-level package declares `__file__` (a
   `str`, as CPython sets it on a regular package), which
   `authoring.framework_pin` imports (`from .. import __file__`).
-  `collections.abc` is not: import `Sequence` and the other
-  abstract collections from `typing`. `@abstractmethod` is dropped, since
+  `collections.abc` has no model of its own: `from collections.abc import
+  Sequence` is read as an import from `typing` (#586), for the names listed
+  under "The names of `typing` a scenario may import", and `import
+  collections.abc` is refused. `@abstractmethod` is dropped, since
   Codon 0.19 cannot decorate a method; `ABC` is an empty base, and so is
   `typing.Protocol`, whose `@runtime_checkable` is dropped too.
   `typing.Any` imports, and every annotation naming it is dropped.

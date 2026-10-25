@@ -3444,6 +3444,67 @@ def test_format_keeps_its_lines() -> None:
     assert text.startswith("r = x.__format__(spec)")
 
 
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        ("xs[round(x)]", "xs[int(round(x))]"),
+        ("n = round(a + b)", "n = int(round(a + b))"),
+        ("round(x, None)", "int(round(x))"),
+        ("round(x, ndigits=None)", "int(round(x))"),
+        ("round(number=x)", "int(round(x))"),
+        ("round(number=x, ndigits=None)", "int(round(x))"),
+        ("round(x, ndigits=2)", "round(x, 2)"),
+        ("round(number=x, ndigits=k)", "round(x, k)"),
+        ("round(round(x))", "int(round(int(round(x))))"),
+        ('f"{round(x)}"', 'f"{int(round(x))}"'),
+        ("f = lambda v: round(v)", "f = lambda v: int(round(v))"),
+    ],
+)
+def test_one_argument_round_is_an_int(source: str, expected: str) -> None:
+    # #585: Codon's round(x, n=0) always returns a float.
+    assert _rewritten(source + "\n") == expected + "\n"
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "round(x, 2)",
+        "round(x, n)",
+        "int(round(x))",
+        "round()",
+        "round(*a)",
+        "round(x, 1, 2)",
+        "round(x, y=1)",
+        "round(x, ndigits=1, number=2)",
+        "np.round(x)",
+        "self.round(x)",
+    ],
+)
+def test_round_it_need_not_rewrite_is_left_alone(source: str) -> None:
+    assert _rewritten(source + "\n") == source + "\n"
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "def round(x):\n    return 1\nr = round(1.5)",
+        "from mymath import round\nr = round(1.5)",
+        "round = int\nr = round(1.5)",
+        "def f(round):\n    return round(1.5)",
+    ],
+)
+def test_round_bound_by_the_module_or_function_is_left_alone(source: str) -> None:
+    assert _rewritten(source + "\n") == source + "\n"
+
+
+def test_round_keeps_its_lines() -> None:
+    source = "r = round(\n    x,\n    None,\n)\nz = 1\n"
+    text = _rewritten(source)
+    assert text.count("\n") == source.count("\n")
+    assert text.startswith("r = int(round(x")
+    assert _rewritten("r = round(x\n)\n") == "r = int(round(x\n))\n"
+
+
 def test_startswith_with_a_tuple_matches_cpython() -> None:
     # Differential: the rewritten text and the original give the same value and
     # evaluate the same parts in the same order (all of them, as CPython does,
@@ -5028,6 +5089,101 @@ def test_assert_never_inside_an_expression_is_refused() -> None:
     assert typing_rewrites(source) == source
     ((line, message),) = typing_rewrite_refusals(source)
     assert line == 4 and "line of its own" in message
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        (
+            "from collections.abc import Callable, Iterator, Sequence",
+            "from typing import (Callable, Iterator, Sequence)",
+        ),
+        (
+            "from collections.abc import Set, Mapping as M",
+            "from typing import (AbstractSet as Set, Mapping as M)",
+        ),
+        (
+            "from collections.abc import Set as S",
+            "from typing import (AbstractSet as S)",
+        ),
+        (
+            "if TYPE_CHECKING:\n    from collections.abc import Iterable",
+            "if TYPE_CHECKING:\n    from typing import (Iterable)",
+        ),
+    ],
+)
+def test_collections_abc_is_imported_from_typing(source: str, expected: str) -> None:
+    # #586: Codon has no collections.abc; the typing shim has these names.
+    assert typing_rewrites(source + "\n") == expected + "\n"
+    assert typing_rewrite_refusals(source + "\n") == []
+
+
+def test_collections_abc_keeps_its_lines() -> None:
+    source = (
+        "from collections.abc import (\n"
+        "    Callable,\n"
+        "    Sequence,\n"
+        ")\n"
+        "x: Sequence[int] = []\n"
+    )
+    out = typing_rewrites(source)
+    assert out.count("\n") == source.count("\n")
+    assert out.startswith("from typing import (Callable, Sequence\n")
+    assert out.splitlines()[4] == "x: Sequence[int] = []"
+    ast.parse(out)
+
+
+@pytest.mark.parametrize(
+    ("source", "line", "needle"),
+    [
+        (
+            "from collections.abc import KeysView",
+            1,
+            "collections.abc.KeysView is not modelled by the check",
+        ),
+        (
+            "from collections.abc import (\n    Sequence,\n    MutableSet,\n)",
+            3,
+            "collections.abc.MutableSet is not modelled by the check",
+        ),
+        (
+            "from collections.abc import *",
+            1,
+            "`from collections.abc import *` is not modelled by the check",
+        ),
+        (
+            "import collections.abc",
+            1,
+            "`import collections.abc` is not supported by the check",
+        ),
+        (
+            "import collections.abc as cabc",
+            1,
+            "`import collections.abc` is not supported by the check",
+        ),
+        (
+            "from collections import abc, deque",
+            1,
+            "`from collections import abc` is not supported by the check",
+        ),
+    ],
+)
+def test_collections_abc_it_cannot_read_is_refused_with_a_hint(
+    source: str, line: int, needle: str
+) -> None:
+    refused = typing_rewrite_refusals(source + "\n")
+    assert [r[0] for r in refused] == [line], refused
+    assert needle in refused[0][1]
+    assert "`Sequence`" in refused[0][1] and "from typing" in refused[0][1]
+    out = typing_rewrites(source + "\n")
+    assert out.count("\n") == (source + "\n").count("\n")
+    ast.parse(out)
+
+
+def test_collections_without_abc_is_left_alone() -> None:
+    source = "import collections\nfrom collections import deque\n"
+    assert typing_rewrites(source) == source
+    assert typing_rewrite_refusals(source) == []
 
 
 def test_a_local_name_is_not_the_new_type_nor_the_typing_name() -> None:
