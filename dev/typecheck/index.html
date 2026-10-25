@@ -2345,7 +2345,8 @@ or <code>attr-defined</code> error is a finding; Codon reports attribute errors 
   <code>update</code>, <code>setdefault</code>, <code>popitem</code>, <code>add</code>, <code>discard</code>, the set <code>*_update</code>
   methods, <code>__delitem__</code>) on a receiver typed exactly as one of those three
   counts; a typo (<code>s.appnd</code>) or a missing attribute of another type is not
-  reported here. Import them from <code>typing</code> (<code>collections.abc</code> is unsupported).</li>
+  reported here. Import them from <code>typing</code> or <code>collections.abc</code> (read as
+  <code>typing</code>'s, #586; its <code>Set</code> is <code>AbstractSet</code>): the check is the same.</li>
 </ul>
 <p><strong>Not checked: a name bound on one path only</strong> (#576). Python raises
 <code>UnboundLocalError</code> for <code>if c: y = 1</code> followed by <code>use(y)</code>, and mypy reports it
@@ -3279,6 +3280,11 @@ cannot express is refused at its line, with what to write instead.</p>
 <td><code>ascii</code> is bound where the call is, as for <code>format</code> (#471)</td>
 </tr>
 <tr>
+<td><code>round(x)</code>, <code>round(x, None)</code>, <code>round(number=x, ndigits=None)</code> (#585)</td>
+<td><code>int(round(x))</code>: Codon's <code>round(x, n=0)</code> always returns a <code>float</code>, Python's an <code>int</code> when <code>ndigits</code> is left out or <code>None</code>, so <code>xs[round(x)]</code>, <code>n: int = round(x)</code> and <code>range(round(x))</code> check. <code>round(x, ndigits=2)</code> is <code>round(x, 2)</code> (Codon's has no Python keywords). <code>round(x, 2)</code> stays a <code>float</code>, also for an <code>int</code> <code>x</code> (Python returns an <code>int</code> there). Being an <code>int</code>, <code>round(x)</code> is refused inside a <code>list[float]</code> or <code>dict[str, float]</code> display (<code>[round(x), 1.5]</code>), as any <code>int</code> is: write <code>float(round(x))</code> there</td>
+<td><code>round</code> is bound where the call is, as for <code>format</code> (#471); an <code>ndigits</code> that is a variable is passed as it is: an <code>int \| None</code> one is read as a <code>float</code>, one bound to <code>None</code> only fails in Codon's <code>round</code> (<code>__pow__() cannot be called with (None)</code>)</td>
+</tr>
+<tr>
 <td><code>sorted(xs)</code>, <code>xs.sort()</code>, <code>min</code> / <code>max</code> of a class that defines <code>__lt__</code> only</td>
 <td>the class gets <code>__gt__</code> (<code>other &lt; self</code>) and <code>__ge__</code> (<code>not self &lt; other</code>), which Codon's sort calls</td>
 <td>the class defines no ordering (use <code>@dataclass(order=True)</code> or <code>key=</code>)</td>
@@ -3442,6 +3448,16 @@ in step:</p>
 <!-- typing-names:end -->
 
 <ul>
+<li><code>from collections.abc import Sequence, Callable</code> (what ruff's UP035
+  suggests) is read as <code>from typing import Sequence, Callable</code> (#586), on the
+  same lines. The names of <code>collections.abc</code> the check has are <code>Callable</code>,
+  <code>Collection</code>, <code>Container</code>, <code>Generator</code>, <code>Hashable</code>, <code>Iterable</code>,
+  <code>Iterator</code>, <code>Mapping</code>, <code>MutableMapping</code>, <code>MutableSequence</code>, <code>Sequence</code>,
+  <code>Sized</code> and <code>Set</code> (typing's <code>AbstractSet</code>); any other (<code>KeysView</code>,
+  <code>MutableSet</code>, <code>Awaitable</code>) is refused at its import line with that list.
+  <code>import collections.abc</code> and <code>from collections import abc</code> (annotations
+  spelled <code>collections.abc.Sequence</code>, <code>abc.Sequence</code>) are refused too, with
+  the hint to import the names.</li>
 <li><code>typing_extensions</code> has the same names as far as <code>typing</code> has them, so a
   scenario for Python 3.10 imports <code>Self</code>, <code>override</code>, <code>Never</code>,
   <code>assert_never</code> and <code>TypeIs</code> (which <code>typing</code> gained later) from there; any other
@@ -4789,8 +4805,10 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   its check wherever Codon compiles it. The model's top-level package declares <code>__file__</code> (a
   <code>str</code>, as CPython sets it on a regular package), which
   <code>authoring.framework_pin</code> imports (<code>from .. import __file__</code>).
-  <code>collections.abc</code> is not: import <code>Sequence</code> and the other
-  abstract collections from <code>typing</code>. <code>@abstractmethod</code> is dropped, since
+  <code>collections.abc</code> has no model of its own: <code>from collections.abc import
+  Sequence</code> is read as an import from <code>typing</code> (#586), for the names listed
+  under "The names of <code>typing</code> a scenario may import", and <code>import
+  collections.abc</code> is refused. <code>@abstractmethod</code> is dropped, since
   Codon 0.19 cannot decorate a method; <code>ABC</code> is an empty base, and so is
   <code>typing.Protocol</code>, whose <code>@runtime_checkable</code> is dropped too.
   <code>typing.Any</code> imports, and every annotation naming it is dropped.
@@ -5771,7 +5789,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 25, 2026 15:33:00 UTC"><span class="timeago" datetime="2026-10-25T15:33:00+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 25, 2026 15:33:00 UTC">2026-10-25</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 25, 2026 17:47:58 UTC"><span class="timeago" datetime="2026-10-25T17:47:58+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 25, 2026 17:47:58 UTC">2026-10-25</span>
   </span>
 
     
