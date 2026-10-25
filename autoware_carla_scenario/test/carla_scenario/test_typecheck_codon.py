@@ -7324,7 +7324,8 @@ def steps(x: float) -> int:
 
 def tenths(x: float) -> float:
     y: float = round(x)
-    return y + round(x, 1) + round(x, ndigits=2)
+    ws: list[float] = [float(round(x)), 1.5]
+    return y + ws[0] + round(x, 1) + round(x, ndigits=2)
 """
     setup = 'logger.info("%d %d %f", pick([1, 2], 0.6), steps(2.4), tenths(1.25))\n'
     scenario, config, _ = _data_case(tmp_path, definitions, setup)
