@@ -69,3 +69,16 @@ def test_the_message_says_the_branch_is_not_checked() -> None:
 )
 def test_valid_code_is_not_flagged(source: str) -> None:
     assert dead_isinstances(ast.parse(source)) == []
+
+
+def test_a_match_capture_rebinding_the_subject_is_silent() -> None:
+    source = (
+        "def f(v: object) -> None:\n"
+        "    x = 1\n"
+        "    match v:\n"
+        "        case str() as x:\n"
+        "            pass\n"
+        "    if isinstance(x, str):\n"
+        "        pass\n"
+    )
+    assert dead_isinstances(ast.parse(source)) == []

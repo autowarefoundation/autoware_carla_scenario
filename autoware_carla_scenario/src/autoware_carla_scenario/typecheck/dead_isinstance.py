@@ -153,6 +153,10 @@ def _names_bound(function: _Function) -> dict[str, int]:
             add_targets(node.target)
         elif isinstance(node, ast.ExceptHandler) and node.name:
             add(node.name, 2)
+        elif isinstance(node, (ast.MatchAs, ast.MatchStar)) and node.name:
+            add(node.name, 2)
+        elif isinstance(node, ast.MatchMapping) and node.rest:
+            add(node.rest, 2)
         elif isinstance(node, (ast.Import, ast.ImportFrom)):
             for alias in node.names:
                 add((alias.asname or alias.name).split(".")[0], 2)

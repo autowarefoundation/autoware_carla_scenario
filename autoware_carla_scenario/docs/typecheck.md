@@ -341,6 +341,14 @@ and a frozen subclass's field are refused as `Pt is a frozen dataclass; use
 dataclasses.replace(x, x=...)`, where the receiver's type is known to mypy (a
 value of unknown type, `Any`, is not). `dataclasses.replace` and
 `object.__setattr__(self, ...)` in `__post_init__` stay valid.
+The class is found by its name: a name is treated as a frozen dataclass only
+where every class of that name in the scenario's modules is one (a same-named
+plain class with a read-only property is left alone, at the cost of a missed
+frozen assignment). The decorator may be `@dataclass(frozen=True, ...)`,
+`@dataclasses.dataclass(frozen=True)` or an aliased import. This rests on
+mypy, as the None check does: without it the check warns `the None check did
+not run` and a frozen assignment is not reported. `setattr(p, "x", 1)` is not
+caught.
 
 **The CARLA API's `Optional` results are checked too** (#267).
 typesafe_carla's CPython package is a prebuilt extension with no `.pyi` and

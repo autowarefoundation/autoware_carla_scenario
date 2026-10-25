@@ -947,3 +947,51 @@ def test_a_read_only_property_of_a_class_that_is_no_frozen_dataclass_is_left_alo
         encoding="utf-8",
     )
     assert run_none_check([module]) == []
+
+
+def test_frozen_dataclass_forms_and_a_same_named_plain_class(tmp_path: Path) -> None:
+    helper = tmp_path / "helper_mod.py"
+    helper.write_text(
+        "import dataclasses as dcs\n"
+        "from dataclasses import dataclass as dc\n\n\n"
+        "@dc(slots=True, frozen=True)\n"
+        "class Aliased:\n"
+        "    x: float = 0.0\n\n\n"
+        "@dcs.dataclass(order=True, frozen=True)\n"
+        "class Attr:\n"
+        "    x: float = 0.0\n\n\n"
+        "class Plain:\n"
+        "    @property\n"
+        "    def v(self) -> int:\n"
+        "        return 1\n",
+        encoding="utf-8",
+    )
+    other = tmp_path / "other_mod.py"
+    other.write_text(
+        "from dataclasses import dataclass\n\n\n"
+        "@dataclass(frozen=True)\n"
+        "class Plain:\n"
+        "    x: float = 0.0\n\n\n"
+        "class Outer:\n"
+        "    @dataclass(frozen=True)\n"
+        "    class Inner:\n"
+        "        x: float = 0.0\n\n\n"
+        "def f(c: 'Outer.Inner') -> None:\n"
+        "    c.x = 1.0\n",
+        encoding="utf-8",
+    )
+    use = tmp_path / "use_mod.py"
+    use.write_text(
+        "from helper_mod import Aliased, Attr, Plain\n\n\n"
+        "def g(a: Aliased, b: Attr, p: Plain) -> None:\n"
+        "    a.x = 1.0\n"
+        "    b.x = 1.0\n"
+        "    p.v = 2\n",
+        encoding="utf-8",
+    )
+    findings = run_none_check([helper, other, use])
+    assert sorted((f.path.rpartition("/")[2], f.line) for f in findings) == [
+        ("other_mod.py", 16),
+        ("use_mod.py", 5),
+        ("use_mod.py", 6),
+    ]

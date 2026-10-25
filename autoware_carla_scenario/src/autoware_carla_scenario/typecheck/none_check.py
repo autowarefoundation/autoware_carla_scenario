@@ -432,33 +432,66 @@ def _merged_items(findings: list[NoneFinding]) -> list[NoneFinding]:
     return out
 
 
+def _dataclass_names(tree: ast.Module) -> tuple[set[str], set[str]]:
+    """The names *tree* binds to ``dataclasses.dataclass`` (``from dataclasses
+    import dataclass as dc``) and to the ``dataclasses`` module."""
+    functions = {"dataclass"}
+    modules = {"dataclasses"}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module == "dataclasses":
+            functions |= {
+                a.asname for a in node.names if a.name == "dataclass" and a.asname
+            }
+        elif isinstance(node, ast.Import):
+            modules |= {
+                a.asname for a in node.names if a.name == "dataclasses" and a.asname
+            }
+    return functions, modules
+
+
+def _is_frozen(node: ast.ClassDef, functions: set[str], modules: set[str]) -> bool:
+    for deco in node.decorator_list:
+        if not isinstance(deco, ast.Call):
+            continue
+        func = deco.func
+        if not (
+            (isinstance(func, ast.Name) and func.id in functions)
+            or (
+                isinstance(func, ast.Attribute)
+                and func.attr == "dataclass"
+                and isinstance(func.value, ast.Name)
+                and func.value.id in modules
+            )
+        ):
+            continue
+        if any(
+            k.arg == "frozen"
+            and isinstance(k.value, ast.Constant)
+            and k.value.value is True
+            for k in deco.keywords
+        ):
+            return True
+    return False
+
+
 def frozen_dataclasses(trees: Iterable[ast.Module]) -> frozenset[str]:
     """The names of the classes of *trees* decorated ``@dataclass(frozen=True)``
-    (``@dataclasses.dataclass(frozen=True)``), at any depth."""
-    names: set[str] = set()
+    (``@dataclasses.dataclass(frozen=True)``, an aliased import), at any depth.
+
+    mypy names the class that defines a read-only property, not its module, so
+    a name is kept only where every class of that name in *trees* is frozen:
+    a read-only property of a same-named plain class is not a frozen field.
+    """
+    frozen: set[str] = set()
+    other: set[str] = set()
     for tree in trees:
+        functions, modules = _dataclass_names(tree)
         for node in ast.walk(tree):
-            if not isinstance(node, ast.ClassDef):
-                continue
-            for deco in node.decorator_list:
-                if not isinstance(deco, ast.Call):
-                    continue
-                func = deco.func
-                called = (
-                    func.id
-                    if isinstance(func, ast.Name)
-                    else func.attr
-                    if isinstance(func, ast.Attribute)
-                    else None
+            if isinstance(node, ast.ClassDef):
+                (frozen if _is_frozen(node, functions, modules) else other).add(
+                    node.name
                 )
-                if called == "dataclass" and any(
-                    k.arg == "frozen"
-                    and isinstance(k.value, ast.Constant)
-                    and k.value.value is True
-                    for k in deco.keywords
-                ):
-                    names.add(node.name)
-    return frozenset(names)
+    return frozenset(frozen - other)
 
 
 def _parsed(paths: list[Path]) -> list[ast.Module]:
