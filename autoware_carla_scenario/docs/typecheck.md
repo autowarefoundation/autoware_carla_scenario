@@ -1698,8 +1698,9 @@ this list, the check's additions and the tests in step:
   the check removes the dropped decorators' lines, and any comment or blank
   line, between the first kept decorator and the `def`, and moves the kept
   decorators down to the `def`: the `def` and every line after it keep
-  their line numbers, and an error on a kept decorator is reported up to as
-  many lines lower as there were lines removed.
+  their line numbers, and an error on a kept decorator is reported at the
+  line it was written on. A decorator is its whole logical line, from its
+  `@` to its end (`@(` / `name` / `)` on three lines).
 - The initial value of `reduce` must have the type of the accumulator the
   function returns: `reduce(add, [1.5, 2.5], 0)` is refused (write `0.0`).
 - `itertools.pairwise` is added to Codon's `itertools`, and

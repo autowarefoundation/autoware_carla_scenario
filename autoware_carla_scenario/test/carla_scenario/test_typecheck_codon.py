@@ -9525,6 +9525,22 @@ def test_a_dropped_decorator_under_a_kept_one_compiles(
     assert result.ok, result.format()
 
 
+def test_an_error_on_a_moved_decorator_is_at_its_line(tmp_path: Path) -> None:
+    # The kept decorator moves down over the dropped `@abstractmethod`
+    # (#595): its error names the line it is written on.
+    extra = (
+        "\n\nfrom abc import ABC, abstractmethod\n\n\n"
+        "def tag(n: int):\n    def wrap(f):\n        return f\n\n    return wrap\n\n\n"
+        "class Shape(ABC):\n"
+        '    @tag("a")\n    @abstractmethod\n    def area(self) -> float: ...\n\n\n'
+        "class Sq(Shape):\n    def area(self) -> float:\n        return 4.0\n"
+    )
+    setup = 's: Shape = Sq()\nlogger.info("%f", s.area())\n'
+    scenario, config, path = _write_case(tmp_path, setup, extra)
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert error.line == _line_of(path, '@tag("a")'), error.format()
+
+
 # ---------------------------------------------------------------------------
 # typing_extensions (#514)
 # ---------------------------------------------------------------------------

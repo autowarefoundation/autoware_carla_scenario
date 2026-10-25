@@ -5133,6 +5133,23 @@ _STACKED = {
         ["@staticmethod", "# why", "@some_decorator(", "    # inside", ")"],
         ["@staticmethod", "@some_decorator(", "# inside", ")"],
     ),
+    # A decorator's `@` or bracket on a line of its own is its line: the
+    # whole logical line is kept, or dropped.
+    "a_bracketed_kept_one": (
+        "import functools\n",
+        ["@(", "    staticmethod", ")", "# why", "@functools.cache"],
+        ["@(", "staticmethod", ")"],
+    ),
+    "a_bracketed_dropped_one": (
+        "import functools\n",
+        ["@staticmethod", "@(", "    functools.cache", ")", "@some_decorator"],
+        ["@staticmethod", "@some_decorator"],
+    ),
+    "a_continued_line": (
+        "",
+        ["@staticmethod", "# why", "@\\", "    some_decorator"],
+        ["@staticmethod", "@\\", "some_decorator"],
+    ),
 }
 
 
@@ -5154,6 +5171,33 @@ def test_a_dropped_decorator_under_a_kept_one_leaves_no_blank_line(
         *kept,
         def_line.strip(),
     ]
+
+
+def test_a_moved_decorator_maps_to_its_line() -> None:
+    # A diagnostic on a kept decorator moved down to its `def` names the line
+    # the author wrote it on, through both passes that move one (#595).
+    source = (
+        "import functools\n"
+        "from typing import override\n"
+        "class A:\n"
+        "    @staticmethod\n"
+        "    @override\n"
+        "    # why\n"
+        "    @tag(\n"
+        "        1)\n"
+        "    @functools.cache\n"
+        "    def f() -> int:\n"
+        "        return 1\n"
+    )
+    out, origin = transform_source_lines(source)
+    lines = out[len(PRELUDE) :].split("\n")
+    assert lines[6:10] == [
+        "    @staticmethod",
+        "    @tag(",
+        "        1)",
+        "    def f() -> int:",
+    ]
+    assert origin[6:10] == [4, 7, 8, 10]
 
 
 def test_override_under_a_kept_decorator_leaves_no_blank_line() -> None:
