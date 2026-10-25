@@ -380,6 +380,59 @@ error, so the None check's other findings are unchanged; the framework's
 modules and the built-in scenarios have none of these comparisons. Like the
 rest of this section it rests on mypy.
 
+**Typing contracts you declared must hold** (#577). Python mostly does not
+enforce these and Codon does not read them, so mypy's verdict is used, each
+kept only on its exact code and message (no other `misc`, `override`, `index`
+or `attr-defined` error is a finding; Codon reports attribute errors itself):
+
+- **`Final` assigned again** (`MAX_SPEED: Final = 30.0`, then `MAX_SPEED = 40.0`,
+  `self.LIMIT = 40.0`, `Cls.LIMIT = 1.0` or a `Final` local rebound): `a name
+  declared Final is bound once; ...`. Bind a new name or drop `Final`.
+- **A `ClassVar` assigned through an instance** (`self.count += 1`,
+  `c.count = 5`): `a ClassVar is shared by the class; ...`. Python creates a
+  shadowing instance attribute and Codon treats the annotated name as an
+  instance field, so what runs can differ. Assign through the class
+  (`Cls.count += 1`) or drop `ClassVar`.
+- **A method incompatible with the one it overrides**: a narrowed argument
+  type, a different return type, a required parameter added, or a parameter
+  removed (`the override must accept what the overridden method accepts ...`).
+  This covers the framework's hooks too: `BaseScenario.is_done(self) -> bool`
+  overridden as `is_done(self, strict: bool)` is refused, since the framework
+  calls it with the base signature. An extra parameter with a default, or a
+  wider argument type, is fine, and `# type: ignore[override]` on the `def`
+  line (mypy's own) silences it. The dunder methods are not checked
+  (`__eq__(self, other: Pt)` is common and benign), nor is a method overriding
+  `object`'s. The built-in scenarios and the template produce none.
+- **A `Mapping`, `Sequence` or `AbstractSet` mutated** (`m["k"] = 1`, `del m[k]`,
+  `s.append(3)`, `s.sort()`, `m.update(...)`, `a.add(1)`): `... is read-only
+  by its annotation; copy it first ...`. Only an attribute that mutates
+  (`append`, `extend`, `insert`, `pop`, `remove`, `sort`, `reverse`, `clear`,
+  `update`, `setdefault`, `popitem`, `add`, `discard`, the set `*_update`
+  methods, `__delitem__`) on a receiver typed exactly as one of those three
+  counts; a typo (`s.appnd`) or a missing attribute of another type is not
+  reported here. Import them from `typing` (`collections.abc` is unsupported).
+
+**Not checked: a name bound on one path only** (#576). Python raises
+`UnboundLocalError` for `if c: y = 1` followed by `use(y)`, and mypy reports it
+only with `--enable-error-code possibly-undefined`. That code is not enabled:
+mypy's flow analysis cannot see that the branch that binds a name and the
+branch that reads it test the same condition (`if x is not None: v = ...`
+then `if x is not None: use(v)`), nor that a `for` over a non-empty constant
+runs, so valid code is refused and the cure is to restructure correct code.
+Run over the framework's 313 modules it reports 15 times in 11 modules: 9 are
+a condition tested twice or a `try`/`with` that binds on every path that
+reads, 4 are a loop mypy cannot see always binds (a `for` over a non-empty
+constant, a `for`/`break`/`else`), and 2 are latent edge cases in the
+framework (an unbound `exit_code` when `server.cooldown_max_retries` is
+negative, and an unbound `port_file` in `slurm/worker.py`'s `finally` when
+`layout.task_port` raises after the port slot was taken), not scenario
+patterns. Probes of
+scenario-style branches showed the same: `if/else`, an exhaustive enum
+`if/elif`, `try`/`except` that raises or returns, `match` with a default and
+`for/else` pass, but a loop variable read after a `for` and a guard tested
+twice are refused. Bind the name before the branch when you mean to read it
+later.
+
 **The CARLA API's `Optional` results are checked too** (#267).
 typesafe_carla's CPython package is a prebuilt extension with no `.pyi` and
 no `py.typed`, so mypy alone reads `typesafe_carla.carla` as `Any`. The
