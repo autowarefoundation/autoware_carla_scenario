@@ -36,6 +36,16 @@ the model, so it follows the model), as :data:`UNION` findings with their
 own advice.  mypy reports an attribute missing on several members once per
 member; the check reports it once, naming them all.
 
+A third kind (#567): a field of one of the modules' own ``@dataclass(frozen=True)``
+classes assigned (``p.x = 2.0``, ``p.x += 1.0``, ``self.x = ...`` in a method of
+the class).  Codon compiles a frozen dataclass as an ordinary mutable class, so
+the assignment compiles, and Python raises ``FrozenInstanceError``.  mypy knows
+the type of the receiver and reports ``Property "x" defined in "Pt" is
+read-only`` (``misc``); it is kept (:data:`FROZEN`) where ``Pt`` is a frozen
+dataclass of the given modules (:func:`frozen_dataclasses`).  A receiver of an
+unknown type (``Any``) is not reported, and ``object.__setattr__(self, ...)``,
+the idiom of a frozen ``__post_init__``, is not an assignment to mypy.
+
 mypy runs as its own process (``python -m mypy``), with no configuration file
 (the scenario package's own mypy settings do not apply), following imports
 silently: it reads the framework and the scenario package's other modules for
@@ -64,6 +74,7 @@ check reports as a warning.
 
 from __future__ import annotations
 
+import ast
 import dataclasses
 import importlib.util
 import os
@@ -73,6 +84,7 @@ import sys
 import tempfile
 from dataclasses import dataclass
 from functools import lru_cache
+from collections.abc import Iterable
 from pathlib import Path
 
 from .carla_stubs import carla_stub_root
@@ -82,8 +94,10 @@ __all__ = [
     "NoneFinding",
     "NONE",
     "UNION",
+    "FROZEN",
     "FrameworkUnion",
     "find_none_misuses",
+    "frozen_dataclasses",
     "framework_unions",
     "is_none_misuse",
     "is_union_misuse",
@@ -114,6 +128,14 @@ UNION_CODES = frozenset({"union-attr", "arg-type"})
 NONE = "none"
 #: :attr:`NoneFinding.kind`: a framework union used as one of its members.
 UNION = "union"
+#: :attr:`NoneFinding.kind`: a field of a frozen dataclass assigned (#567).
+FROZEN = "frozen"
+
+#: ``Property "x" defined in "Pt" is read-only`` (``misc``): an assignment to
+#: a field of a frozen dataclass (or to a property with no setter).
+_READ_ONLY = re.compile(
+    r'^Property "(?P<attr>\w+)" defined in "(?P<cls>[\w.]+)" is read-only$'
+)
 
 #: An ``assignment`` that only declares (see the module's docstring): a
 #: ``None`` default or value for a non-Optional annotation, or a value for a
@@ -352,6 +374,12 @@ class NoneFinding:
     kind: str = NONE
 
     @property
+    def read_only(self) -> tuple[str, str] | None:
+        """The (class, field) a :data:`FROZEN` finding is of."""
+        match = _READ_ONLY.match(self.message) if self.kind == FROZEN else None
+        return (match["cls"].rpartition(".")[2], match["attr"]) if match else None
+
+    @property
     def union(self) -> FrameworkUnion | None:
         """The framework union a :data:`UNION` finding is of."""
         if self.kind != UNION:
@@ -402,6 +430,45 @@ def _merged_items(findings: list[NoneFinding]) -> list[NoneFinding]:
             first, message=message, notes=(*first.notes, *finding.notes)
         )
     return out
+
+
+def frozen_dataclasses(trees: Iterable[ast.Module]) -> frozenset[str]:
+    """The names of the classes of *trees* decorated ``@dataclass(frozen=True)``
+    (``@dataclasses.dataclass(frozen=True)``), at any depth."""
+    names: set[str] = set()
+    for tree in trees:
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ClassDef):
+                continue
+            for deco in node.decorator_list:
+                if not isinstance(deco, ast.Call):
+                    continue
+                func = deco.func
+                called = (
+                    func.id
+                    if isinstance(func, ast.Name)
+                    else func.attr
+                    if isinstance(func, ast.Attribute)
+                    else None
+                )
+                if called == "dataclass" and any(
+                    k.arg == "frozen"
+                    and isinstance(k.value, ast.Constant)
+                    and k.value.value is True
+                    for k in deco.keywords
+                ):
+                    names.add(node.name)
+    return frozenset(names)
+
+
+def _parsed(paths: list[Path]) -> list[ast.Module]:
+    trees: list[ast.Module] = []
+    for path in paths:
+        try:
+            trees.append(ast.parse(path.read_text(encoding="utf-8")))
+        except (OSError, SyntaxError, UnicodeDecodeError):
+            continue  # the compile reports it
+    return trees
 
 
 class NoneCheckSkipped(Exception):
@@ -604,6 +671,7 @@ def run_none_check(paths: list[Path], timeout: float = 600.0) -> list[NoneFindin
     findings: list[NoneFinding] = []
     current: NoneFinding | None = None
     reported = ""
+    frozen = frozen_dataclasses(_parsed(paths))
     for raw in proc.stdout.splitlines():
         match = _LINE.match(raw.strip())
         if match is None:
@@ -621,6 +689,12 @@ def run_none_check(paths: list[Path], timeout: float = 600.0) -> list[NoneFindin
             kind = NONE
         elif is_union_misuse(code, match["message"]):
             kind = UNION
+        elif (
+            code == "misc"
+            and (ro := _READ_ONLY.match(match["message"])) is not None
+            and ro["cls"].rpartition(".")[2] in frozen
+        ):
+            kind = FROZEN
         else:
             continue
         if code == "assignment" and _DECLARATION.search(match["message"]):

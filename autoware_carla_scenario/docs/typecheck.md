@@ -334,6 +334,14 @@ so does the union passed on where the union is taken
 (`TrajectoryVertex(v.position, advance=v.advance)`, a `TrajectoryPosition`
 parameter).
 
+**A field of a frozen dataclass of your own is read-only** (#567). Codon compiles
+a frozen dataclass as an ordinary class, so mypy's verdict is used: `p.x = 2.0`,
+`p.x += 1.0`, `self.x = ...` in a method of the class, a loop variable's field
+and a frozen subclass's field are refused as `Pt is a frozen dataclass; use
+dataclasses.replace(x, x=...)`, where the receiver's type is known to mypy (a
+value of unknown type, `Any`, is not). `dataclasses.replace` and
+`object.__setattr__(self, ...)` in `__post_init__` stay valid.
+
 **The CARLA API's `Optional` results are checked too** (#267).
 typesafe_carla's CPython package is a prebuilt extension with no `.pyi` and
 no `py.typed`, so mypy alone reads `typesafe_carla.carla` as `Any`. The
@@ -2620,7 +2628,12 @@ What Codon 0.19 needs that Python does not, beyond
   the members of `JSONValue`. (Codon does the same for any value whose static type is not the class: after
   `x = 5`, the body of `if isinstance(x, str):` is not compiled, as dead code
   is not; that is Codon's, and only `JSONValue`, whose type is opaque by
-  design, is rewritten.) (A module that never imports `json` but gets a
+  design, is rewritten. The check warns, without failing, when the static
+  type of the subject is certain from the syntax (an annotated parameter or
+  local, a local bound once to a literal, an annotated `self` attribute) and
+  cannot be the class: `isinstance(x, str): x is statically int here, so this
+  branch is not checked by the static check; an error in it is not reported`,
+  #565.) (A module that never imports `json` but gets a
   `JSONValue` from another module's function is not rewritten, and a call
   that spans lines is not either.) `JSONDecodeError` is a
   `ValueError` with `msg`, `doc` and `pos`. `shlex` declares

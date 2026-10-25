@@ -9725,3 +9725,138 @@ def test_the_optional_hint_is_not_given_for_unrelated_optionals(
     scenario, config, _ = _write_case(tmp_path, setup, extra=extra, header=_R29_HEADER)
     result = typecheck_scenario(scenario, config)
     assert "does not convert an Optional of a subclass" not in result.format()
+
+
+# ---------------------------------------------------------------------------
+# A field of a scenario's own frozen dataclass cannot be assigned (#567)
+# ---------------------------------------------------------------------------
+
+_FROZEN_EXTRA = """
+
+@dataclass(frozen=True)
+class Pt:
+    x: float
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "x", float(self.x))
+
+    def moved(self, dx: float) -> Pt:
+        return replace(self, x=self.x + dx)
+
+    def bump(self) -> None:
+        BUMP
+
+
+@dataclass(frozen=True)
+class Sub(Pt):
+    y: float = 0.0
+
+
+@dataclass
+class Free:
+    x: float = 0.0
+
+"""
+_FROZEN_HEADER = _HEADER.replace(
+    "import logging\n",
+    "import logging\nfrom dataclasses import dataclass, replace\n",
+    1,
+)
+
+
+def _frozen_case(
+    tmp_path: Path, setup: str, bump: str = "pass"
+) -> tuple[Any, Any, Path]:
+    return _write_case(
+        tmp_path,
+        setup,
+        extra=_FROZEN_EXTRA.replace("BUMP", bump),
+        header=_FROZEN_HEADER,
+    )
+
+
+def test_frozen_dataclass_idioms_compile(tmp_path: Path) -> None:
+    # Reading a field, replace(), object.__setattr__ in __post_init__ and
+    # assigning a field of a dataclass that is not frozen are all valid.
+    scenario, config, _ = _frozen_case(
+        tmp_path,
+        """
+        p = Pt(1.0)
+        q = p.moved(2.0)
+        s = replace(Sub(1.0), y=2.0)
+        f = Free(1.0)
+        f.x = 2.0
+        assert q.x + s.y + f.x > 0.0
+        """,
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "p.x = 2.0",
+        "p.x += 1.0",
+        "for it in [Pt(1.0)]:\n    it.x = 2.0",
+        "s = Sub(1.0)\ns.y = 5.0",
+    ],
+)
+def test_assigning_a_field_of_a_frozen_dataclass_is_refused(
+    tmp_path: Path, statement: str
+) -> None:
+    scenario, config, path = _frozen_case(tmp_path, f"p = Pt(1.0)\n{statement}\n")
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "is a frozen dataclass; use dataclasses.replace(x," in error.message
+    assert error.path == str(path)
+    assert error.line == _line_of(path, statement.splitlines()[-1].strip())
+
+
+def test_assigning_self_field_in_a_frozen_dataclass_method_is_refused(
+    tmp_path: Path,
+) -> None:
+    scenario, config, path = _frozen_case(tmp_path, "pass\n", bump="self.x = 3.0")
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "Pt is a frozen dataclass" in error.message
+    assert error.line == _line_of(path, "self.x = 3.0")
+
+
+# ---------------------------------------------------------------------------
+# An isinstance branch the check does not compile warns (#565)
+# ---------------------------------------------------------------------------
+
+
+_DEAD_HELPER = """
+    def helper(self, r: float) -> None:
+        if isinstance(r, int):
+            q: int = 1
+"""
+
+
+@pytest.mark.parametrize(
+    ("setup", "extra"),
+    [
+        ('x = 5\nif isinstance(x, str):\n    q: int = "wrong"\n', ""),
+        ("pass\n", _DEAD_HELPER),
+    ],
+)
+def test_a_statically_false_isinstance_warns_that_its_branch_is_not_checked(
+    tmp_path: Path, setup: str, extra: str
+) -> None:
+    scenario, config, path = _write_case(tmp_path, setup, extra=extra)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+    warning = next(w for w in result.warnings if "isinstance(" in w.message)
+    assert warning.severity == "warning"
+    assert "not checked by the static check" in warning.message
+    assert warning.line == _line_of(path, "if isinstance(")
+
+
+def test_a_valid_isinstance_does_not_warn(tmp_path: Path) -> None:
+    scenario, config, _ = _write_case(
+        tmp_path,
+        "n = 5\nif isinstance(n, int):\n    q: int = n\n",
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+    assert not [w for w in result.warnings if "isinstance(" in w.message]
