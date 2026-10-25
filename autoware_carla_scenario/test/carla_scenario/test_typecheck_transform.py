@@ -3542,6 +3542,60 @@ def test_round_keeps_its_lines() -> None:
     assert _rewritten("r = round(x\n)\n") == "r = int(round(x\n))\n"
 
 
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        (
+            'v = getattr(x, "a", 0.0)',
+            "v = (((0.0), x.a if hasattr(x, 'a') else (0.0))[1])",
+        ),
+        (
+            'v = getattr(self.cfg, "speed", round(y))',
+            "v = (((int(round(y))), self.cfg.speed if hasattr(self.cfg, 'speed') "
+            "else (int(round(y))))[1])",
+        ),
+        (
+            'v = getattr(x, "a", getattr(y, "b", None))',
+            "v = ((((((None), y.b if hasattr(y, 'b') else (None))[1])), x.a if "
+            "hasattr(x, 'a') else ((((None), y.b if hasattr(y, 'b') else (None))[1])))[1])",
+        ),
+    ],
+)
+def test_getattr_with_a_default_becomes_a_hasattr_test(
+    source: str, expected: str
+) -> None:
+    # #590: Codon's getattr takes no default; it decides hasattr when it compiles.
+    assert _rewritten(source + "\n") == expected + "\n"
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        'v = getattr(f(), "a", 1)',
+        'v = getattr(xs[0], "a", 1)',
+        "v = getattr(x, name, 1)",
+        'v = getattr(x, "a")',
+        'v = getattr(x, "class", 1)',
+        'v = getattr(x, "a b", 1)',
+        'v = getattr(x, "a", default=1)',
+        "v = getattr(*args)",
+        'def getattr(a, b, c):\n    return a\nv = getattr(x, "a", 1)',
+        'v = obj.getattr(x, "a", 1)',
+        'def hasattr(a, b):\n    return True\nv = getattr(x, "a", 1)',
+        'v = getattr(x, "a", f(\n    1,\n))',
+    ],
+)
+def test_getattr_it_cannot_rewrite_is_left_alone(source: str) -> None:
+    assert _rewritten(source + "\n") == source + "\n"
+
+
+def test_getattr_keeps_its_lines() -> None:
+    source = 'v = getattr(\n    x,\n    "a",\n    None,\n)\nz = 1\n'
+    text = _rewritten(source)
+    assert text.count("\n") == source.count("\n")
+    assert text.startswith("v = (((None), x.a if hasattr(x, 'a') else (None))[1]")
+
+
 def test_startswith_with_a_tuple_matches_cpython() -> None:
     # Differential: the rewritten text and the original give the same value and
     # evaluate the same parts in the same order (all of them, as CPython does,

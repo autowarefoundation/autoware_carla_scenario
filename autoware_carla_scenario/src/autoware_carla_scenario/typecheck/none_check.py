@@ -85,6 +85,31 @@ mypy's own ``# type: ignore[override]`` is honoured), and a ``Mapping``,
 ``Sequence`` or ``AbstractSet`` mutated (:data:`READ_ONLY_ABC`; ``m[k] = v``,
 ``del m[k]`` and the mutating methods only, so a stub gap or a typo is not one).
 
+A seventh (#589): a string formatting that fails at run time, which mypy
+reports as ``str-format`` for a ``str.format`` call and a ``%`` with a literal
+format string: a conversion the value does not take (``"{:d}".format(speed)``
+for a ``float``, ``"%d" % name`` for a ``str``), too few or too many
+arguments, a missing replacement field or mapping key, a malformed or unknown
+specifier or conversion.  Python raises ``ValueError``, ``TypeError``,
+``IndexError`` or ``KeyError`` at the call; Codon formats with its own rules
+and compiles it.  Only the messages that are a run-time failure are kept
+(:func:`is_str_format_failure`, :data:`STR_FORMAT`), and one naming the
+value's type only for a built-in type that fails for every value
+(``str``, ``float``, ``None``, ...): mypy does not count ``__index__``
+(``"%x" % obj`` runs) nor a ``__getitem__`` without ``keys`` (``"%(k)s"``),
+and refuses ``"{:.2f}"`` of a ``complex`` or a ``Fraction``, which run.
+``Not all arguments converted`` is kept of a ``%`` whose right operand is a
+tuple display or a constant: ``"{}".format(a, b)`` ignores the extra one, and
+``"abc" % d`` formats no key of a dict (or any operand with ``__getitem__``).
+``Unrecognized format specification`` is kept where the Python running the
+check refuses the spec (``"{:z.1f}"`` runs on 3.11).  Left alone, because
+mypy reports valid code with them: ``Numeric flags are only allowed for
+numeric types`` (``"{:05}".format(name)`` and ``"{:<05}"`` run, though
+``"{:+}"`` does not, and the message does not say which flag), ``Syntax error
+in format specifier`` and the field-accessor messages (``"{0[my key]}"`` and
+``"{0['k']}"`` index a dict with ``"my key"`` and ``"'k'"``).  mypy does not
+check the spec of an f-string field (``f"{speed:d}"``): it is not reported.
+
 Not kept, on purpose (#576): ``possibly-undefined`` (a name bound on one path
 only, ``UnboundLocalError`` in Python).  mypy's flow analysis cannot see that
 the branch that binds a name and the branch that reads it are the same
@@ -148,6 +173,7 @@ __all__ = [
     "CLASS_VAR",
     "OVERRIDE",
     "READ_ONLY_ABC",
+    "STR_FORMAT",
     "FrameworkUnion",
     "find_none_misuses",
     "frozen_dataclasses",
@@ -157,6 +183,7 @@ __all__ = [
     "is_bytes_str_mix",
     "is_equality_overlap",
     "contract_kind",
+    "is_str_format_failure",
     "run_none_check",
 ]
 
@@ -200,6 +227,53 @@ CLASS_VAR = "class-var"
 OVERRIDE = "override"
 #: :attr:`NoneFinding.kind`: a ``Mapping`` / ``Sequence`` / ``AbstractSet`` mutated (#577).
 READ_ONLY_ABC = "read-only-abc"
+#: :attr:`NoneFinding.kind`: a string formatting that fails at run time (#589).
+STR_FORMAT = "str-format"
+
+#: The ``str-format`` messages of a formatting Python fails on (#589); the
+#: others mypy also reports of valid code (see the module's docstring).  A
+#: message naming the value's type is kept only where :data:`_UNFORMATTABLE`
+#: names it, ``Not all arguments converted`` only of a ``%`` whose right
+#: operand is a tuple display or a constant (:func:`_too_many_fail`), and an
+#: unrecognized spec only where Python refuses it (:func:`_spec_refused`).
+_STR_FORMAT_FAILURE = re.compile(
+    r"^(?:Not enough arguments for format string$"
+    r"|Not all arguments converted during string formatting$"
+    r"|Cannot find replacement for (?:positional|named) format specifier "
+    r"|Invalid conversion specifier in format string"
+    r"|Cannot combine automatic field numbering and manual field specification$"
+    r'|Invalid conversion type ".*", must be one of'
+    r"|Formatting nesting must be at most two levels deep$"
+    r'|Key ".*" not found in mapping$'
+    r'|Unsupported format character "'
+    r'|"[%:]c" requires (?:int or char|an integer in range\(256\) or a single byte)$'
+    r"|\* wants int$"
+    r'|Format character "b" is only supported on bytes patterns$'
+    r"|String interpolation (?:contains both stars and mapping keys"
+    r"|mixes specifier with and without mapping keys)$"
+    r"|On Python 3 b'%s' requires bytes, not string$"
+    r"|Dictionary keys in bytes formatting must be bytes, not strings$)"
+)
+#: A ``str-format`` message naming the type of the value formatted.
+_STR_FORMAT_TYPED = re.compile(
+    r"^(?:Incompatible types in string interpolation"
+    r"|Format requires a mapping"
+    r'|"[%:]c" requires (?:int or char|an integer in range\(256\) or a single byte))'
+    r' \(expression has type "(?P<actual>[^"]*)"'
+    r'(?:, placeholder has type "(?P<placeholder>[^"]*)")?'
+)
+#: The types whose value no conversion mypy refuses it for formats in Python,
+#: nor a ``%(key)s`` takes as a mapping: a class of the scenario's may define
+#: ``__index__`` (``"%x"``, ``"%c"``) or ``__getitem__`` (``"%(k)s"``), which
+#: mypy does not count, and Python's ``Fraction`` formats with ``"{:.2f}"``.
+_UNFORMATTABLE = re.compile(
+    r"^(?:str|float|bytes|bytearray|None|int|bool|complex"
+    r"|(?:list|dict|set|frozenset|tuple)\[.*\])$"
+)
+#: ``Unrecognized format specification "spec"``.
+_UNRECOGNIZED_SPEC = re.compile(r'^Unrecognized format specification "(?P<spec>.*)"$')
+#: ``Not all arguments converted during string formatting``.
+_TOO_MANY = "Not all arguments converted during string formatting"
 
 #: ``Cannot assign to final name "X"`` / ``... final attribute "X"`` (``misc``).
 _FINAL_ASSIGNED = re.compile(
@@ -625,6 +699,78 @@ def contract_kind(code: str, message: str) -> str | None:
     return None
 
 
+def is_str_format_failure(code: str, message: str) -> bool:
+    """Whether mypy's error *message* (of *code*) is of a string formatting
+    Python fails on at run time (#589), for every value of the types it names.
+
+    ``Not all arguments converted during string formatting`` is one only of a
+    ``%`` (not of ``str.format``, which ignores the extra arguments), which
+    :func:`run_none_check` decides at the place mypy reports.
+    """
+    if code != "str-format":
+        return False
+    typed = _STR_FORMAT_TYPED.match(message)
+    if typed is not None:
+        actual = typed["actual"]
+        if _UNFORMATTABLE.match(actual) is None:
+            return False
+        if actual in ("int", "bool"):
+            # Formatted as a number everywhere but by b"%b" / b"%s" and as a
+            # mapping, which mypy reports with no placeholder.
+            return typed["placeholder"] in (None, "bytes")
+        # A complex takes the float specs of str.format ("{:.2f}"), the only
+        # placeholder mypy writes "int | float" for.
+        return not (actual == "complex" and typed["placeholder"] == "int | float")
+    spec = _UNRECOGNIZED_SPEC.match(message)
+    if spec is not None:
+        return _spec_refused(spec["spec"])
+    return _STR_FORMAT_FAILURE.match(message) is not None
+
+
+def _spec_refused(spec: str) -> bool:
+    """Whether this Python refuses the format *spec* for an int, a float, a
+    complex and a str alike: mypy refuses ``"{:z.1f}"`` (Python 3.11)."""
+    for value in (0, 0.0, 0j, ""):
+        try:
+            format(value, spec)
+        except (ValueError, TypeError):
+            continue
+        return False
+    return True
+
+
+def _too_many_fail(path: str, line: int, column: int | None) -> bool:
+    """Whether the ``Not all arguments converted`` mypy reports at *line* and
+    *column* of *path* fails in Python: one of a ``%`` whose right operand,
+    where mypy reports it, is a tuple display or a constant other than bytes.
+    ``str.format`` ignores extra arguments, and a ``%`` takes any other
+    operand with ``__getitem__`` (a dict, a list, bytes) as a mapping and
+    formats no key of it (#589)."""
+    if column is None:
+        return False
+    try:
+        source = Path(path).read_text(encoding="utf-8")
+        tree = ast.parse(source)
+    except (OSError, SyntaxError, UnicodeDecodeError, ValueError):
+        return False
+    lines = source.splitlines()
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.BinOp) and isinstance(node.op, ast.Mod)):
+            continue
+        right = node.right
+        if right.lineno != line or line > len(lines):
+            continue
+        prefix = lines[line - 1].encode("utf-8")[: right.col_offset]
+        if len(prefix.decode("utf-8", errors="replace")) + 1 != column:
+            continue
+        if isinstance(right, ast.Tuple):
+            return bool(right.elts) and not any(
+                isinstance(e, ast.Starred) for e in right.elts
+            )
+        return isinstance(right, ast.Constant) and not isinstance(right.value, bytes)
+    return False
+
+
 def is_union_misuse(code: str, message: str) -> bool:
     """Whether mypy's error *message* (of *code*) uses a framework union as one member.
 
@@ -1025,16 +1171,27 @@ def run_none_check(paths: list[Path], timeout: float = 600.0) -> list[NoneFindin
             kind = FROZEN
         elif (contract := contract_kind(code, match["message"])) is not None:
             kind = contract
+        elif is_str_format_failure(code, match["message"]):
+            kind = STR_FORMAT
         else:
             continue
         if code == "assignment" and _DECLARATION.search(match["message"]):
             continue
         reported = match["path"]
         own = given.get(reported)
+        own_path = str(own) if own is not None else _own_path(reported, paths)
+        line = int(match["line"])
+        column = int(match["col"]) if match["col"] else None
+        if (
+            kind == STR_FORMAT
+            and match["message"] == _TOO_MANY
+            and not _too_many_fail(own_path, line, column)
+        ):
+            continue
         current = NoneFinding(
-            str(own) if own is not None else _own_path(reported, paths),
-            int(match["line"]),
-            int(match["col"]) if match["col"] else None,
+            own_path,
+            line,
+            column,
             match["message"],
             code,
             kind=kind,

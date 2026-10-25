@@ -84,3 +84,44 @@ def cbrt(x: float) -> float:
 def exp2(x: float) -> float:
     """math.exp2 (Python 3.11): 2 raised to the power x."""
     return _check1(x, 2.0**x, True)
+
+
+# math.hypot of any number of coordinates (Python 3.8, #590): Codon's takes
+# exactly two floats (and two float32s). Codon tries the overload defined last
+# first, so the variadic one comes first and Codon's two are declared again
+# after it: a call with two arguments keeps their fast path and float32 type.
+@overload
+def hypot(*coordinates) -> float:
+    """math.hypot: the Euclidean norm, sqrt(sum(x * x for x in coordinates))."""
+    values = List[float](len(coordinates))
+    for c in coordinates:
+        values.append(float(c))
+    biggest = 0.0
+    has_nan = False
+    for v in values:
+        d = fabs(v)
+        if isnan(d):
+            has_nan = True
+        elif d > biggest:
+            biggest = d
+    if isinf(biggest):
+        return inf
+    if has_nan:
+        return nan
+    if biggest == 0.0:
+        return 0.0
+    total = 0.0
+    for v in values:
+        r = v / biggest
+        total += r * r
+    return biggest * sqrt(total)
+
+
+@overload
+def hypot(x: float, y: float) -> float:
+    return _check2(x, y, _C.hypot(x, y), True)
+
+
+@overload
+def hypot(x: float32, y: float32) -> float32:
+    return _C.hypotf(x, y)

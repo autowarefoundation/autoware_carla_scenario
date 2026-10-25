@@ -314,3 +314,18 @@ class Dict:
         if _acs_key in self:
             return self[_acs_key]
         return None
+
+    # Python's dict.pop(key, default, /) (#590): Codon's own takes the key
+    # only. A default of the value's type gives the value's type; a None
+    # default an Optional of it, as Python's does. Codon tries the overload
+    # defined last first; a None would also pass for the first one's `V`
+    # (Codon unwraps an Optional implicitly), so the None one is last.
+    def pop(self, _acs_key: K, _acs_default: V) -> V:
+        if _acs_key in self:
+            return self.pop(_acs_key)
+        return _acs_default
+
+    def pop(self, _acs_key: K, _acs_default: Optional[NoneType]) -> Optional[V]:
+        if _acs_key in self:
+            return self.pop(_acs_key)
+        return None
