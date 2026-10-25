@@ -904,8 +904,9 @@ _VARIADIC_LIMITS = (
         "Codon's getattr takes no default: write "
         '`x.name if hasattr(x, "name") else default`, which Codon decides '
         'when it compiles (the check rewrites getattr(x, "name", default) '
-        "itself where the name is a literal and x a name or an attribute "
-        "chain); a name built at run time has no Codon spelling, so spell the "
+        "itself where the name is a literal, x a name or an attribute chain "
+        "and the default on one line); a name built at run time has no Codon "
+        "spelling, so spell the "
         "attributes out",
     ),
     (

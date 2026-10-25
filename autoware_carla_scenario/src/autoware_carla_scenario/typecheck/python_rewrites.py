@@ -53,10 +53,11 @@ so a rewrite has to keep the *types*, not the values, of what it replaces.
   ``float``, Python's an ``int`` without ``ndigits``; Python's keywords
   (``round(number=x, ndigits=n)``), which Codon's lacks, are passed by
   position.  ``getattr(x, "name", default)``, which Codon's two-argument
-  ``getattr`` refuses, becomes ``(x.name if hasattr(x, "name") else
-  default)`` (#590) for a literal name and a receiver that is a name or an
-  attribute chain: Codon decides ``hasattr`` when it compiles, so only the
-  branch the type takes is compiled.  A name the module binds itself (``def
+  ``getattr`` refuses, becomes ``((default), x.name if hasattr(x, "name")
+  else (default))[1]`` (#590) for a literal name, a receiver that is a name
+  or an attribute chain and a default on one line: Codon decides ``hasattr``
+  when it compiles, so only the branch the type takes is compiled, and the
+  first item keeps the default compiled, as Python evaluates it either way.  A name the module binds itself (``def
   format``) is left alone.
 * ``namedtuple("P", "x y")`` / ``namedtuple("P", "x, y")`` (Codon crashes on a
   string) becomes ``namedtuple("P", ["x", "y"])`` (#510).  Field names that
@@ -1526,9 +1527,14 @@ class _Pass(ShadowScopes):
 
         Codon decides ``hasattr`` when it compiles, so only the branch the
         type takes is compiled, typed as that branch: the attribute's type
-        where the class has it, the default's where it has not."""
+        where the class has it, the default's where it has not.  Python
+        evaluates the default either way, so it is compiled either way too, as
+        the first item of a tuple the value is the second item of:
+        ``((default), x.name if hasattr(x, "name") else (default))[1]``.  A
+        default on more than one line is not written twice (the lines would
+        move): ``None``, and refused with the hint."""
         obj, name, default = node.args
-        if not (
+        if self._shadowed("hasattr") or not (
             isinstance(name, ast.Constant)
             and isinstance(name.value, str)
             and name.value.isidentifier()
@@ -1538,14 +1544,15 @@ class _Pass(ShadowScopes):
         ):
             return None
         receiver = self._text(obj)
-        if "\n" in receiver:
+        fallback = self._text(default)
+        if "\n" in receiver or "\n" in fallback:
             return None
         attribute = name.value
         inner = (
-            f"{receiver}.{attribute} if hasattr({receiver}, {attribute!r}) "
-            f"else ({self._text(default)})"
+            f"({fallback}), {receiver}.{attribute} if hasattr({receiver}, "
+            f"{attribute!r}) else ({fallback})"
         )
-        return self._wrapped(node, inner)
+        return self._wrapped(node, f"({inner})[1]")
 
     def _operand(self, node: ast.expr) -> str:
         """The text of *node*, parenthesised where a ``.attr`` needs it."""

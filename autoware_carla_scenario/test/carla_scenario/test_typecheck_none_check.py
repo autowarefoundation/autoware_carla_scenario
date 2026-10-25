@@ -6,6 +6,7 @@ No Codon needed: these run mypy alone on a module written for the test.
 from __future__ import annotations
 
 import os
+import sys
 import textwrap
 from pathlib import Path
 
@@ -1546,6 +1547,7 @@ def test_contract_kind_takes_the_exact_messages_only(
 
 _FORMAT_MODULE = """
 import datetime
+import fractions
 
 
 def bad(speed: float, name: str, n: int, opt: int | None, kw: dict[str, int]) -> list[str]:
@@ -1565,6 +1567,9 @@ def bad(speed: float, name: str, n: int, opt: int | None, kw: dict[str, int]) ->
         "%q" % n,
         "{!x}".format(n),
         "{:d}".format(opt),
+        "abc" % 5,
+        "%c" % speed,
+        "{:d}".format(1j),
     ]
 
 
@@ -1586,12 +1591,35 @@ def fine(
     ]
 
 
-def doubtful(name: str, d: dict[str, int]) -> list[str]:
+class Index:
+    def __index__(self) -> int:
+        return 65
+
+
+class Lookup:
+    def __getitem__(self, key: str) -> int:
+        return 1
+
+
+def doubtful(
+    name: str, d: dict[str, int], n: int, ix: Index, lookup: Lookup, c: complex
+) -> list[str]:
     # mypy reports these, and Python runs them.
     return [
         "{:05}".format(name),
         "{0[my key]}".format(d),
         "{0['k']}".format(d),
+        "{}".format(n, n),
+        "{}".format(n, extra=n),
+        "abc" % d,
+        "abc" % [n],
+        "abc" % b"x",
+        "%x" % ix,
+        "%d" % ix,
+        "%c" % ix,
+        "%(a)s" % lookup,
+        "{:.2f}".format(c),
+        "{:.2f}".format(fractions.Fraction(1, 3)),
     ]
 """
 
@@ -1654,6 +1682,51 @@ def test_a_valid_or_doubtful_string_formatting_is_left_alone(tmp_path: Path) -> 
         ("str-format", '"%c" requires int or char', True),
         ("str-format", '":c" requires int or char', True),
         ("str-format", "* wants int", True),
+        (
+            "str-format",
+            '"%c" requires int or char (expression has type "float")',
+            True,
+        ),
+        (
+            "str-format",
+            '"%c" requires int or char (expression has type "Index")',
+            False,
+        ),
+        (
+            "str-format",
+            'Incompatible types in string interpolation (expression has type "Index", placeholder has type "int")',
+            False,
+        ),
+        (
+            "str-format",
+            'Incompatible types in string interpolation (expression has type "complex", placeholder has type "int | float")',
+            False,
+        ),
+        (
+            "str-format",
+            'Incompatible types in string interpolation (expression has type "complex", placeholder has type "int")',
+            True,
+        ),
+        (
+            "str-format",
+            'Incompatible types in string interpolation (expression has type "int", placeholder has type "bytes")',
+            True,
+        ),
+        (
+            "str-format",
+            'Incompatible types in string interpolation (expression has type "int | str", placeholder has type "int")',
+            False,
+        ),
+        (
+            "str-format",
+            'Format requires a mapping (expression has type "int", expected type for mapping is "SupportsKeysAndGetItem[str, Any]")',
+            True,
+        ),
+        (
+            "str-format",
+            'Format requires a mapping (expression has type "Lookup", expected type for mapping is "SupportsKeysAndGetItem[str, Any]")',
+            False,
+        ),
         ("str-format", "Numeric flags are only allowed for numeric types", False),
         ("str-format", 'Syntax error in format specifier "0[my key]"', False),
         (
@@ -1674,3 +1747,11 @@ def test_is_str_format_failure_takes_the_run_time_failures_only(
     code: str, message: str, expected: bool
 ) -> None:
     assert none_check.is_str_format_failure(code, message) is expected
+
+
+def test_an_unrecognized_spec_is_kept_where_this_python_refuses_it() -> None:
+    # "z" (negative zero to zero) is Python 3.11's; mypy refuses it anywhere.
+    message = 'Unrecognized format specification "z.1f"'
+    assert none_check.is_str_format_failure("str-format", message) is (
+        sys.version_info < (3, 11)
+    )

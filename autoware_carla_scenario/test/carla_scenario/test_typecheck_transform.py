@@ -3508,14 +3508,19 @@ def test_round_keeps_its_lines() -> None:
 @pytest.mark.parametrize(
     ("source", "expected"),
     [
-        ('v = getattr(x, "a", 0.0)', "v = (x.a if hasattr(x, 'a') else (0.0))"),
+        (
+            'v = getattr(x, "a", 0.0)',
+            "v = (((0.0), x.a if hasattr(x, 'a') else (0.0))[1])",
+        ),
         (
             'v = getattr(self.cfg, "speed", round(y))',
-            "v = (self.cfg.speed if hasattr(self.cfg, 'speed') else (int(round(y))))",
+            "v = (((int(round(y))), self.cfg.speed if hasattr(self.cfg, 'speed') "
+            "else (int(round(y))))[1])",
         ),
         (
             'v = getattr(x, "a", getattr(y, "b", None))',
-            "v = (x.a if hasattr(x, 'a') else ((y.b if hasattr(y, 'b') else (None))))",
+            "v = ((((((None), y.b if hasattr(y, 'b') else (None))[1])), x.a if "
+            "hasattr(x, 'a') else ((((None), y.b if hasattr(y, 'b') else (None))[1])))[1])",
         ),
     ],
 )
@@ -3539,6 +3544,8 @@ def test_getattr_with_a_default_becomes_a_hasattr_test(
         "v = getattr(*args)",
         'def getattr(a, b, c):\n    return a\nv = getattr(x, "a", 1)',
         'v = obj.getattr(x, "a", 1)',
+        'def hasattr(a, b):\n    return True\nv = getattr(x, "a", 1)',
+        'v = getattr(x, "a", f(\n    1,\n))',
     ],
 )
 def test_getattr_it_cannot_rewrite_is_left_alone(source: str) -> None:
@@ -3549,7 +3556,7 @@ def test_getattr_keeps_its_lines() -> None:
     source = 'v = getattr(\n    x,\n    "a",\n    None,\n)\nz = 1\n'
     text = _rewritten(source)
     assert text.count("\n") == source.count("\n")
-    assert text.startswith("v = (x.a if hasattr(x, 'a') else (None)")
+    assert text.startswith("v = (((None), x.a if hasattr(x, 'a') else (None))[1]")
 
 
 def test_startswith_with_a_tuple_matches_cpython() -> None:

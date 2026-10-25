@@ -393,7 +393,16 @@ numbering. Codon formats with its own rules and compiles all of them. The
 advice is `Python raises ValueError, TypeError, IndexError or KeyError on this
 format string with these values (...); convert the value first (int(x),
 str(x)) or use "{}" / "%s"`. `"%d" % speed` (a `float`) and `"{:.2f}".format(n)`
-(an `int`) are valid, as in Python. Three of mypy's `str-format` messages are
+(an `int`) are valid, as in Python. A conversion the value does not take is
+kept only for a built-in type that fails for every value (`str`, `float`,
+`None`, `bytes`, `complex`, a `list`, ...): mypy does not count a class's
+`__index__` (`"%x" % obj` runs) or a `__getitem__` without `keys`
+(`"%(k)s" % obj` runs), and refuses `"{:.2f}"` of a `complex` or a
+`Fraction`, which run. Too many arguments is kept only for a `%` whose right
+operand is a tuple display or a constant: `"{}".format(a, b)` ignores the
+extra argument, and `"abc" % d` formats no key of a dict (or of a list, or
+bytes). An unknown spec is kept where the Python running the check refuses
+it (`"{:z.1f}"` runs on 3.11). Three more of mypy's `str-format` messages are
 not kept, because mypy gives them to valid code as well: `Numeric flags are
 only allowed for numeric types` (`"{:05}".format(name)` runs; `"{:+}".format(name)`
 does not, and the message does not say which flag), `Syntax error in format
@@ -1411,7 +1420,7 @@ cannot express is refused at its line, with what to write instead.
 | `s.startswith((a, b))`, `s.endswith((a, b), start)` with the tuple written in the call (#439) | `(s.startswith(a) or s.startswith(b))`; a receiver or item that is not a name, attribute or constant is bound once by a lambda | the tuple is held in a name (`s.startswith(PREFIXES)`), is empty, or the call has `*args` / keywords; each item is still checked as a `str` |
 | `format(x, spec)`, `format(x)` (#439) | `x.__format__(spec)`, `str(x)` | `format` is bound where the call is: by the module (an assignment, import, `def` or `class` at module level) or by an enclosing function or lambda (a parameter or local); a method named `format` or a class attribute binds nothing there, so it does not disable the rewrite (#471) |
 | `ascii(x)` (#439) | `repr(x)`: the same `str` type; the check does not run it, so the escaping of non-ASCII characters is unchanged at run time | `ascii` is bound where the call is, as for `format` (#471) |
-| `getattr(x, "name", default)` with a literal name, `x` a name or an attribute chain (#590) | `(x.name if hasattr(x, "name") else default)`: Codon's `getattr` takes no default, and Codon decides `hasattr` when it compiles, so only the branch `x`'s type takes is compiled, typed as that branch (the attribute's type where the class declares it, the default's where it does not). `hasattr` on an `Optional` is decided on the `Optional` (see "Making a module compile"), so the default's branch is the one compiled there | a name built at run time, or another receiver (a call, a subscript): refused with `getattr() takes 2 arguments (3 given)` and a hint to write the `hasattr` test |
+| `getattr(x, "name", default)` with a literal name, `x` a name or an attribute chain, the default on one line (#590) | `((default), x.name if hasattr(x, "name") else (default))[1]`: Codon's `getattr` takes no default, and Codon decides `hasattr` when it compiles, so only the branch `x`'s type takes is compiled, typed as that branch (the attribute's type where the class declares it, the default's where it does not). The first item keeps the default compiled either way, as Python evaluates it either way (`getattr(x, "name", x.typo)` is refused). `hasattr` on an `Optional` is decided on the `Optional` (see "Making a module compile"), so the default's branch is the one compiled there | a name built at run time, another receiver (a call, a subscript), a default over several lines or `hasattr` bound where the call is: refused with `getattr() takes 2 arguments (3 given)` and a hint to write the `hasattr` test |
 | `round(x)`, `round(x, None)`, `round(number=x, ndigits=None)` (#585) | `int(round(x))`: Codon's `round(x, n=0)` always returns a `float`, Python's an `int` when `ndigits` is left out or `None`, so `xs[round(x)]`, `n: int = round(x)` and `range(round(x))` check. `round(x, ndigits=2)` is `round(x, 2)` (Codon's has no Python keywords). `round(x, 2)` stays a `float`, also for an `int` `x` (Python returns an `int` there). Being an `int`, `round(x)` is refused inside a `list[float]` or `dict[str, float]` display (`[round(x), 1.5]`), as any `int` is: write `float(round(x))` there | `round` is bound where the call is, as for `format` (#471); an `ndigits` that is a variable is passed as it is: an `int \| None` one is read as a `float`, one bound to `None` only fails in Codon's `round` (`__pow__() cannot be called with (None)`) |
 | `sorted(xs)`, `xs.sort()`, `min` / `max` of a class that defines `__lt__` only | the class gets `__gt__` (`other < self`) and `__ge__` (`not self < other`), which Codon's sort calls | the class defines no ordering (use `@dataclass(order=True)` or `key=`) |
 | a class that defines `__eq__` but not `__ne__` (a value object in a `set` or as a `dict` key) | the class gets `__ne__` (`not (self == other)`): Python derives it, Codon does not and its hash table calls it | (a `@dataclass` already has one) |

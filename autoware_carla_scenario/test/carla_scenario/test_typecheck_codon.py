@@ -10297,6 +10297,21 @@ def test_getattr_with_a_name_built_at_run_time_is_refused_with_a_hint(
     assert error.line == _line_of(path, '"v" + ""')
 
 
+def test_getattr_default_is_checked_where_the_attribute_exists(
+    tmp_path: Path,
+) -> None:
+    # Python evaluates the default even when the attribute exists, so a typo
+    # in it fails every call: the rewrite keeps it compiled (#590).
+    scenario, config, path = _write_case(
+        tmp_path,
+        'logger.info("%s", read(HasV(), NoV()))\n',
+        extra=_DEFAULTS_EXTRA.replace("READ", 'getattr(a, "v", float(a.vv))'),
+    )
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "has no attribute 'vv'" in error.message, error.format()
+    assert error.line == _line_of(path, "a.vv")
+
+
 # ---------------------------------------------------------------------------
 # Typing contracts broken: Final, ClassVar, override, read-only ABCs (#577)
 # ---------------------------------------------------------------------------
