@@ -10492,3 +10492,100 @@ def test_a_valid_isinstance_does_not_warn(tmp_path: Path) -> None:
     result = typecheck_scenario(scenario, config)
     assert result.ok, result.format()
     assert not [w for w in result.warnings if "isinstance(" in w.message]
+
+
+# ---------------------------------------------------------------------------
+# A local typed by its first assignment: an int literal, None (#583, #584)
+# ---------------------------------------------------------------------------
+
+
+_INT_ACCUMULATOR = """
+
+
+def mean_speed(speeds: list[float]) -> float:
+    total = {start}
+    for v in speeds:
+        total += v
+    return total / max(len(speeds), 1)
+"""
+
+
+@pytest.mark.parametrize(("start", "ok"), [("0", False), ("0.0", True)])
+def test_a_float_stored_in_a_local_first_bound_to_an_int_literal_names_it(
+    tmp_path: Path, start: str, ok: bool
+) -> None:
+    scenario, config, path = _write_case(
+        tmp_path, "pass\n", extra=_INT_ACCUMULATOR.format(start=start)
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok == ok, result.format()
+    if ok:
+        return
+    error = _only_error(result)
+    assert error.line == _line_of(path, "total += v")
+    first = _line_of(path, "total = 0")
+    assert f"`total = 0` on line {first}" in error.message, error.format()
+    assert "`total = 0.0`" in error.message
+
+
+def test_an_int_literal_branch_of_a_conditional_expression_is_named(
+    tmp_path: Path,
+) -> None:
+    extra = (
+        "\n\ndef floor_speed(v: float | None) -> float:\n"
+        "    s = v if v is not None else 0\n"
+        "    return s * 2.0\n"
+    )
+    scenario, config, path = _write_case(tmp_path, "pass\n", extra=extra)
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert error.line == _line_of(path, "s = v if")
+    assert "Optional[int]" in error.message
+    assert "int literal branch `0`" in error.message, error.format()
+    assert "`0.0`" in error.message
+
+
+_RUNNING_MIN = """
+
+
+def seen_low(xs: list[float]) -> {result}:
+    best{annotation} = None
+    for x in xs:
+        if best is None or x < best:
+            best = x
+{tail}"""
+
+
+@pytest.mark.parametrize(
+    ("annotation", "result", "tail"),
+    [
+        ("", "bool", "    return best is not None\n"),
+        ("", "None", ""),
+        (": float | None", "bool", "    return best is not None\n"),
+    ],
+    ids=["crash", "optional-nonetype", "annotated"],
+)
+def test_a_local_first_bound_to_none_and_rebound_names_its_annotation(
+    tmp_path: Path, annotation: str, result: str, tail: str
+) -> None:
+    extra = _RUNNING_MIN.format(annotation=annotation, result=result, tail=tail)
+    scenario, config, path = _write_case(tmp_path, "pass\n", extra=extra)
+    checked = typecheck_scenario(scenario, config)
+    if annotation:
+        assert checked.ok, checked.format()
+        return
+    assert not checked.ok, checked.format()
+    hinted = [
+        d
+        for d in checked.diagnostics
+        if "annotate it: `best: float | None = None`" in d.message
+    ]
+    assert hinted, checked.format()
+    first = _line_of(path, "best = None")
+    assert f"`best = None` on line {first}" in hinted[0].message
+    if checked.crashed:
+        # Codon 0.19 segfaults: the crash is kept, the cause is located.
+        assert "Codon failed without a diagnostic" in checked.diagnostics[0].message
+        assert hinted[0].line == first
+    else:
+        assert "Optional[NoneType]" in hinted[0].message
+        assert hinted[0].line == _line_of(path, "best = x")
