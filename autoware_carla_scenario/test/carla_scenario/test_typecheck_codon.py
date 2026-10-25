@@ -6477,6 +6477,27 @@ _STDLIB_CASES: dict[str, tuple[str, str, str]] = {
         "def power(x: float) -> float:\n    return math.exp2(x)\n",
         "assert power(10.0) == 1024.0\nlogger.info('%f', power(1.0))\n",
     ),
+    "math.hypot": (
+        "import math\nfrom math import hypot\n",
+        "def norm3(x: float, y: float, z: float) -> float:\n"
+        "    return math.hypot(x, y, z)\n"
+        "def norm2(x: float, y: float) -> float:\n    return hypot(x, y)\n"
+        "def norm_mixed() -> float:\n    return hypot(1, 2.0, 2) + hypot() + hypot(-3)\n",
+        "assert norm3(1.0, 2.0, 2.0) == 3.0 and norm2(3.0, 4.0) == 5.0\n"
+        "assert norm_mixed() == 6.0\n"
+        "logger.info('%f', norm3(1.0, 2.0, 2.0))\n",
+    ),
+    "statistics.fmean": (
+        "import statistics\nfrom statistics import fmean\n",
+        "def average(xs: list[float]) -> float:\n    return fmean(xs)\n"
+        "def average_ints(xs: list[int]) -> float:\n"
+        "    return statistics.fmean(xs)\n"
+        "def weighted(xs: list[float], ws: list[float]) -> float:\n"
+        "    return fmean(xs, ws) + fmean(xs, None)\n",
+        "assert average([1.0, 2.0, 4.5]) == 2.5 and average_ints([1, 2, 3]) == 2.0\n"
+        "assert weighted([1.0, 2.0, 4.5], [1.0, 0.0, 1.0]) == 5.25\n"
+        "logger.info('%f', average([1.0, 2.0]))\n",
+    ),
     "random.Random (choices, triangular)": (
         "import random\n",
         "def draw(rng: random.Random) -> int:\n"
@@ -6521,6 +6542,18 @@ _STDLIB_REFUSALS: dict[str, tuple[str, str, str, str]] = {
         "",
         "cannot import name 'asdict' from 'dataclasses'",
         "build the dict from the fields you need",
+    ),
+    "dataclasses.InitVar": (
+        "from dataclasses import InitVar\n",
+        "",
+        "cannot import name 'InitVar' from 'dataclasses'",
+        "make the value a parameter of a @classmethod",
+    ),
+    "dataclasses.KW_ONLY": (
+        "from dataclasses import KW_ONLY\n",
+        "",
+        "cannot import name 'KW_ONLY' from 'dataclasses'",
+        "drop the marker and pass the fields by keyword",
     ),
     "functools.wraps": (
         "from functools import wraps\n",
@@ -6834,6 +6867,7 @@ def test_stdlib_names() -> None:
     import functools
     import math
     import random
+    import statistics
 
     from autoware_carla_scenario.typecheck.transform import FUNCTOOLS_NAMES
 
@@ -6868,6 +6902,7 @@ def test_stdlib_names() -> None:
                 "collections": collections,
                 "math": math,
                 "random": random,
+                "statistics": statistics,
             }[module],
             attribute,
         ), name
@@ -10158,6 +10193,108 @@ def test_bytes_str_and_enum_look_alikes_compile(tmp_path: Path) -> None:
     )
     result = typecheck_scenario(scenario, config)
     assert result.ok, result.format()
+
+
+# ---------------------------------------------------------------------------
+# A string formatting Python fails on (#589)
+# ---------------------------------------------------------------------------
+
+_FORMAT_EXTRA = """
+
+
+def label(speed: float, name: str) -> str:
+    return LABEL
+"""
+
+
+@pytest.mark.parametrize(
+    "label",
+    ['"{:d} km/h".format(speed)', '"%d km/h" % name', '"%s at %s" % (name,)'],
+    ids=["format-spec", "percent-type", "percent-count"],
+)
+def test_a_string_formatting_python_fails_on_is_refused(
+    tmp_path: Path, label: str
+) -> None:
+    scenario, config, path = _write_case(
+        tmp_path,
+        'logger.info("%s", label(3.5, "ego"))\n',
+        extra=_FORMAT_EXTRA.replace("LABEL", label),
+    )
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "Python raises ValueError, TypeError" in error.message, error.format()
+    assert "(mypy: str-format)" in error.message
+    assert error.path == str(path)
+    assert error.line == _line_of(path, label)
+
+
+def test_a_valid_string_formatting_compiles(tmp_path: Path) -> None:
+    # A float for "%d", an int for "{:.2f}", "{:05}" of a str (mypy's
+    # "numeric flags" message, which Python runs) and an f-string spec.
+    scenario, config, _ = _write_case(
+        tmp_path,
+        'logger.info("%s", label(3.5, "ego"))\n',
+        extra=_FORMAT_EXTRA.replace(
+            "LABEL",
+            '"%d km/h" % speed + " {:.2f} {:05}".format(int(speed), name)'
+            ' + f" {speed:.1f}"',
+        ),
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+# ---------------------------------------------------------------------------
+# dict.pop and getattr with a default (#590)
+# ---------------------------------------------------------------------------
+
+_DEFAULTS_EXTRA = """
+
+
+class HasV:
+    v: float
+
+    def __init__(self) -> None:
+        self.v = 1.0
+
+
+class NoV:
+    pass
+
+
+def take(d: dict[str, float], names: dict[str, str]) -> float:
+    a = d.pop("a", 0.0)
+    b = d.pop("zz", None)
+    c = names.pop("k", "default")
+    return a + (b if b is not None else 1.0) + len(c)
+
+
+def read(a: HasV, b: NoV) -> float:
+    return getattr(a, "v", 0.0) + getattr(b, "v", 2.0) + READ
+"""
+
+
+def test_dict_pop_and_getattr_with_a_default_compile(tmp_path: Path) -> None:
+    scenario, config, _ = _write_case(
+        tmp_path,
+        'logger.info("%s %s", take({"a": 1.0}, {"k": "v"}), read(HasV(), NoV()))\n',
+        extra=_DEFAULTS_EXTRA.replace("READ", "0.0"),
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_getattr_with_a_name_built_at_run_time_is_refused_with_a_hint(
+    tmp_path: Path,
+) -> None:
+    scenario, config, path = _write_case(
+        tmp_path,
+        'logger.info("%s", read(HasV(), NoV()))\n',
+        extra=_DEFAULTS_EXTRA.replace("READ", 'getattr(a, "v" + "", 0.0)'),
+    )
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "getattr() takes 2 arguments (3 given)" in error.message, error.format()
+    assert 'x.name if hasattr(x, "name") else default' in error.message
+    assert error.line == _line_of(path, '"v" + ""')
 
 
 # ---------------------------------------------------------------------------

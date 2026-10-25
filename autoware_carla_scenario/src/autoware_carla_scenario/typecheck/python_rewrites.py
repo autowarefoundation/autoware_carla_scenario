@@ -52,7 +52,12 @@ so a rewrite has to keep the *types*, not the values, of what it replaces.
   ``int(round(x))`` (#585): Codon's ``round(x, n=0)`` always returns a
   ``float``, Python's an ``int`` without ``ndigits``; Python's keywords
   (``round(number=x, ndigits=n)``), which Codon's lacks, are passed by
-  position.  A name the module binds itself (``def format``) is left alone.
+  position.  ``getattr(x, "name", default)``, which Codon's two-argument
+  ``getattr`` refuses, becomes ``(x.name if hasattr(x, "name") else
+  default)`` (#590) for a literal name and a receiver that is a name or an
+  attribute chain: Codon decides ``hasattr`` when it compiles, so only the
+  branch the type takes is compiled.  A name the module binds itself (``def
+  format``) is left alone.
 * ``namedtuple("P", "x y")`` / ``namedtuple("P", "x, y")`` (Codon crashes on a
   string) becomes ``namedtuple("P", ["x", "y"])`` (#510).  Field names that
   are not a literal, and ``rename=`` / ``defaults=``, are refused with a hint.
@@ -1460,6 +1465,8 @@ class _Pass(ShadowScopes):
                 return f"repr({self._text(node.args[0])})"
             if func.id == "round":
                 return self._round(node)
+            if func.id == "getattr" and plain_call and len(node.args) == 3:
+                return self._getattr_default(node)
             return None
         if (
             isinstance(func, ast.Attribute)
@@ -1509,6 +1516,36 @@ class _Pass(ShadowScopes):
         digits = self._text(ndigits)
         lost -= text.count("\n") + digits.count("\n")
         return f"round({text}, {digits}{chr(10) * max(lost, 0)})"
+
+    def _getattr_default(self, node: ast.Call) -> str | None:
+        """``(x.name if hasattr(x, "name") else default)`` for
+        ``getattr(x, "name", default)`` (#590), which Codon's two-argument
+        ``getattr`` refuses; ``None`` (left to Codon, and its hint) unless the
+        name is a literal identifier and *x* a name or attribute chain on one
+        line, which can be written twice.
+
+        Codon decides ``hasattr`` when it compiles, so only the branch the
+        type takes is compiled, typed as that branch: the attribute's type
+        where the class has it, the default's where it has not."""
+        obj, name, default = node.args
+        if not (
+            isinstance(name, ast.Constant)
+            and isinstance(name.value, str)
+            and name.value.isidentifier()
+            and not keyword.iskeyword(name.value)
+            and isinstance(obj, (ast.Name, ast.Attribute))
+            and _plain(obj)
+        ):
+            return None
+        receiver = self._text(obj)
+        if "\n" in receiver:
+            return None
+        attribute = name.value
+        inner = (
+            f"{receiver}.{attribute} if hasattr({receiver}, {attribute!r}) "
+            f"else ({self._text(default)})"
+        )
+        return self._wrapped(node, inner)
 
     def _operand(self, node: ast.expr) -> str:
         """The text of *node*, parenthesised where a ``.attr`` needs it."""

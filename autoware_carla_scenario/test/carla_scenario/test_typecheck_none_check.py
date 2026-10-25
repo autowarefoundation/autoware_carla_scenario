@@ -1538,3 +1538,139 @@ def test_contract_kind_takes_the_exact_messages_only(
     code: str, message: str, expected: str | None
 ) -> None:
     assert none_check.contract_kind(code, message) == expected
+
+
+# ---------------------------------------------------------------------------
+# A string formatting that fails at run time (#589)
+# ---------------------------------------------------------------------------
+
+_FORMAT_MODULE = """
+import datetime
+
+
+def bad(speed: float, name: str, n: int, opt: int | None, kw: dict[str, int]) -> list[str]:
+    return [
+        "{:d} km/h".format(speed),
+        "%d km/h" % name,
+        "{:.2f}".format(name),
+        "%x" % speed,
+        "%s %s" % (name,),
+        "%s" % (name, n),
+        "{} {}".format(name),
+        "{x}".format(y=n),
+        "{:abc}".format(n),
+        "{} {1}".format(n, n),
+        "{".format(n),
+        '%(a)d' % {"b": n},
+        "%q" % n,
+        "{!x}".format(n),
+        "{:d}".format(opt),
+    ]
+
+
+def fine(
+    speed: float, name: str, n: int, opt: int | None, kw: dict[str, int],
+    when: datetime.datetime, args: tuple[int, ...],
+) -> list[str]:
+    return [
+        "%d km/h" % speed,
+        "{:.2f}".format(n),
+        "{:,}".format(speed),
+        "{:%Y-%m-%d}".format(when),
+        "{x}".format(**kw),
+        "{} {}".format(*args),
+        "{0[0]}".format([n]),
+        "{:>10}".format(n),
+        "{!r:>{}}".format(name, n),
+        f"{speed:d}",
+    ]
+
+
+def doubtful(name: str, d: dict[str, int]) -> list[str]:
+    # mypy reports these, and Python runs them.
+    return [
+        "{:05}".format(name),
+        "{0[my key]}".format(d),
+        "{0['k']}".format(d),
+    ]
+"""
+
+
+def _format_findings(tmp_path: Path) -> list[none_check.NoneFinding]:
+    module = tmp_path / "format_mod.py"
+    module.write_text(_FORMAT_MODULE, encoding="utf-8")
+    return run_none_check([module])
+
+
+def test_a_string_formatting_python_fails_on_is_found(tmp_path: Path) -> None:
+    findings = _format_findings(tmp_path)
+    lines = _FORMAT_MODULE.splitlines()
+    found = sorted(
+        {lines[f.line - 1].strip() for f in findings if f.kind == "str-format"}
+    )
+    start = next(i for i, ln in enumerate(lines) if ln.startswith("def bad("))
+    end = next(i for i, ln in enumerate(lines) if ln.startswith("def fine("))
+    expected = sorted(
+        ln.strip() for ln in lines[start:end] if ln.strip().startswith(("'", '"'))
+    )
+    assert found == expected
+    assert all(f.code == "str-format" for f in findings if f.kind == "str-format")
+
+
+def test_a_valid_or_doubtful_string_formatting_is_left_alone(tmp_path: Path) -> None:
+    # Including the f-string spec, which mypy does not check, and the
+    # messages mypy also gives valid code.
+    findings = _format_findings(tmp_path)
+    lines = _FORMAT_MODULE.splitlines()
+    start = next(i for i, ln in enumerate(lines) if ln.startswith("def fine("))
+    assert [f for f in findings if f.line > start] == []
+    assert {f.kind for f in findings} == {"str-format"}
+
+
+@pytest.mark.parametrize(
+    ("code", "message", "expected"),
+    [
+        (
+            "str-format",
+            'Incompatible types in string interpolation (expression has type "float", placeholder has type "int")',
+            True,
+        ),
+        ("str-format", "Not enough arguments for format string", True),
+        ("str-format", "Not all arguments converted during string formatting", True),
+        (
+            "str-format",
+            "Cannot find replacement for positional format specifier 1",
+            True,
+        ),
+        ("str-format", 'Cannot find replacement for named format specifier "x"', True),
+        ("str-format", 'Unrecognized format specification "abc"', True),
+        (
+            "str-format",
+            "Invalid conversion specifier in format string: unmatched {",
+            True,
+        ),
+        ("str-format", 'Key "a" not found in mapping', True),
+        ("str-format", 'Unsupported format character "q"', True),
+        ("str-format", '"%c" requires int or char', True),
+        ("str-format", '":c" requires int or char', True),
+        ("str-format", "* wants int", True),
+        ("str-format", "Numeric flags are only allowed for numeric types", False),
+        ("str-format", 'Syntax error in format specifier "0[my key]"', False),
+        (
+            "str-format",
+            "Invalid index expression in format field accessor \"['k']\"",
+            False,
+        ),
+        (
+            "str-format",
+            'Only index and member expressions are allowed in format field accessors; got "0()"',
+            False,
+        ),
+        ("misc", "Not enough arguments for format string", False),
+        ("str-bytes-safe", "If x = b'abc' then \"%s\" % x produces \"b'abc'\"", False),
+    ],
+)
+def test_is_str_format_failure_takes_the_run_time_failures_only(
+    code: str, message: str, expected: bool
+) -> None:
+    assert none_check.is_str_format_failure(code, message) is expected

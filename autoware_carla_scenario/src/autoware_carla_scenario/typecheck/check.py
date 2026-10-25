@@ -89,6 +89,7 @@ from .none_check import (
     FROZEN,
     OVERRIDE,
     READ_ONLY_ABC,
+    STR_FORMAT,
     NoneCheckSkipped,
     NoneFinding,
     none_given,
@@ -891,6 +892,17 @@ _VARIADIC_LIMITS = (
         "len(t) > 0 instead of the tuple t itself",
     ),
     (
+        # getattr(x, "name", default) with a literal name and a plain receiver
+        # is rewritten (python_rewrites.py); this is any other (#590).
+        re.compile(r"^getattr\(\) takes 2 arguments \(3 given\)"),
+        "Codon's getattr takes no default: write "
+        '`x.name if hasattr(x, "name") else default`, which Codon decides '
+        'when it compiles (the check rewrites getattr(x, "name", default) '
+        "itself where the name is a literal and x a name or an attribute "
+        "chain); a name built at run time has no Codon spelling, so spell the "
+        "attributes out",
+    ),
+    (
         re.compile(r"cannot import name 'Generic' from 'typing'"),
         "typing.Generic is not available in the check: leave the type "
         "parameters of a class or function unannotated (Codon makes it generic "
@@ -910,6 +922,16 @@ _VARIADIC_LIMITS = (
         '({"x": point.x, "y": point.y})',
     ),
     (
+        re.compile(r"cannot import name '(?:InitVar|KW_ONLY)' from 'dataclasses'"),
+        "dataclasses.InitVar and KW_ONLY are not modelled: Codon's constructor "
+        "of a dataclass takes every annotated field and does not pass an "
+        "init-only value to __post_init__. For an InitVar, make the value a "
+        "parameter of a @classmethod or a function that builds the instance "
+        "(or keep it as an ordinary field); for KW_ONLY, drop the marker and "
+        "pass the fields by keyword (a field without a default goes before "
+        "the defaulted ones)",
+    ),
+    (
         re.compile(r"cannot import name '\w+' from 'dataclasses'"),
         "the check models only dataclass, field and replace of dataclasses: "
         'docs/typecheck.md ("standard library names") lists the names',
@@ -917,11 +939,11 @@ _VARIADIC_LIMITS = (
     (
         re.compile(
             r"cannot import name '\w+' from "
-            "'(functools|itertools|collections|math|random)'"
+            "'(functools|itertools|collections|math|random|statistics)'"
         ),
         "the check adds only some names to Codon's functools, itertools, "
-        'collections, math and random: docs/typecheck.md ("standard library '
-        'names") lists them',
+        'collections, math, random and statistics: docs/typecheck.md ("standard '
+        'library names") lists them',
     ),
     (
         re.compile(r"cannot import name '\w+' from 'contextlib'"),
@@ -2555,6 +2577,15 @@ def _none_check_advice(finding: NoneFinding) -> str:
             f"mutable type (dict, list, set). Python fails here when the "
             f"caller passes a tuple or a MappingProxyType, and Codon does not "
             f"enforce the annotation (mypy: {finding.code})"
+        )
+    if finding.kind == STR_FORMAT:
+        return (
+            f"{finding.message}: Python raises ValueError, TypeError, "
+            f"IndexError or KeyError on this format string with these values "
+            f'("{{:d}}" and "{{:x}}" take an int, "%d" and "{{:.2f}}" a number; '
+            f"each field needs a value); convert the value first (int(x), "
+            f'str(x)) or use "{{}}" / "%s". Codon formats with its own '
+            f"rules, so this compiles (mypy: {finding.code})"
         )
     union = finding.union
     if union is None:

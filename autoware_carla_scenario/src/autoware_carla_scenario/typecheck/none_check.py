@@ -85,6 +85,22 @@ mypy's own ``# type: ignore[override]`` is honoured), and a ``Mapping``,
 ``Sequence`` or ``AbstractSet`` mutated (:data:`READ_ONLY_ABC`; ``m[k] = v``,
 ``del m[k]`` and the mutating methods only, so a stub gap or a typo is not one).
 
+A seventh (#589): a string formatting that fails at run time, which mypy
+reports as ``str-format`` for a ``str.format`` call and a ``%`` with a literal
+format string: a conversion the value does not take (``"{:d}".format(speed)``
+for a ``float``, ``"%d" % name`` for a ``str``), too few or too many
+arguments, a missing replacement field or mapping key, a malformed or unknown
+specifier or conversion.  Python raises ``ValueError``, ``TypeError``,
+``IndexError`` or ``KeyError`` at the call; Codon formats with its own rules
+and compiles it.  Only the messages that are a run-time failure are kept
+(:func:`is_str_format_failure`, :data:`STR_FORMAT`).  Left alone, because
+mypy reports valid code with them: ``Numeric flags are only allowed for
+numeric types`` (``"{:05}".format(name)`` and ``"{:<05}"`` run, though
+``"{:+}"`` does not, and the message does not say which flag), ``Syntax error
+in format specifier`` and the field-accessor messages (``"{0[my key]}"`` and
+``"{0['k']}"`` index a dict with ``"my key"`` and ``"'k'"``).  mypy does not
+check the spec of an f-string field (``f"{speed:d}"``): it is not reported.
+
 Not kept, on purpose (#576): ``possibly-undefined`` (a name bound on one path
 only, ``UnboundLocalError`` in Python).  mypy's flow analysis cannot see that
 the branch that binds a name and the branch that reads it are the same
@@ -148,6 +164,7 @@ __all__ = [
     "CLASS_VAR",
     "OVERRIDE",
     "READ_ONLY_ABC",
+    "STR_FORMAT",
     "FrameworkUnion",
     "find_none_misuses",
     "frozen_dataclasses",
@@ -157,6 +174,7 @@ __all__ = [
     "is_bytes_str_mix",
     "is_equality_overlap",
     "contract_kind",
+    "is_str_format_failure",
     "run_none_check",
 ]
 
@@ -200,6 +218,32 @@ CLASS_VAR = "class-var"
 OVERRIDE = "override"
 #: :attr:`NoneFinding.kind`: a ``Mapping`` / ``Sequence`` / ``AbstractSet`` mutated (#577).
 READ_ONLY_ABC = "read-only-abc"
+#: :attr:`NoneFinding.kind`: a string formatting that fails at run time (#589).
+STR_FORMAT = "str-format"
+
+#: The ``str-format`` messages of a formatting Python fails on (#589); the
+#: others mypy also reports of valid code (see the module's docstring).
+_STR_FORMAT_FAILURE = re.compile(
+    r"^(?:Incompatible types in string interpolation \("
+    r"|Not enough arguments for format string$"
+    r"|Not all arguments converted during string formatting$"
+    r"|Cannot find replacement for (?:positional|named) format specifier "
+    r'|Unrecognized format specification "'
+    r"|Invalid conversion specifier in format string"
+    r"|Cannot combine automatic field numbering and manual field specification$"
+    r'|Invalid conversion type ".*", must be one of'
+    r"|Formatting nesting must be at most two levels deep$"
+    r'|Key ".*" not found in mapping$'
+    r"|Format requires a mapping \("
+    r'|Unsupported format character "'
+    r'|"[%:]c" requires (?:int or char|an integer in range\(256\) or a single byte)$'
+    r"|\* wants int"
+    r'|Format character "b" is only supported on bytes patterns$'
+    r"|String interpolation (?:contains both stars and mapping keys"
+    r"|mixes specifier with and without mapping keys)$"
+    r"|On Python 3 b'%s' requires bytes, not string$"
+    r"|Dictionary keys in bytes formatting must be bytes, not strings$)"
+)
 
 #: ``Cannot assign to final name "X"`` / ``... final attribute "X"`` (``misc``).
 _FINAL_ASSIGNED = re.compile(
@@ -625,6 +669,13 @@ def contract_kind(code: str, message: str) -> str | None:
     return None
 
 
+def is_str_format_failure(code: str, message: str) -> bool:
+    """Whether mypy's error *message* (of *code*) is of a string formatting
+    Python fails on at run time (#589): a ``str-format`` error whose message
+    is one of :data:`_STR_FORMAT_FAILURE`'s."""
+    return code == "str-format" and _STR_FORMAT_FAILURE.match(message) is not None
+
+
 def is_union_misuse(code: str, message: str) -> bool:
     """Whether mypy's error *message* (of *code*) uses a framework union as one member.
 
@@ -1025,6 +1076,8 @@ def run_none_check(paths: list[Path], timeout: float = 600.0) -> list[NoneFindin
             kind = FROZEN
         elif (contract := contract_kind(code, match["message"])) is not None:
             kind = contract
+        elif is_str_format_failure(code, match["message"]):
+            kind = STR_FORMAT
         else:
             continue
         if code == "assignment" and _DECLARATION.search(match["message"]):
