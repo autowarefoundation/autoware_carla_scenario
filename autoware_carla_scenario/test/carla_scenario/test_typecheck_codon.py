@@ -2742,6 +2742,16 @@ def test_a_scenario_may_use_the_file_helpers_of_pathlib_os_and_shutil(
             "not modelled",
         ),
         (
+            'from pathlib import Path\nPath("a").with_sufix(".x")\n',
+            "'Path' object has no attribute 'with_sufix'",
+            "did you mean 'with_suffix'?",
+        ),
+        (
+            "import shutil\nshutil.copytre('a', 'b')\n",
+            "cannot import name 'copytre' from 'shutil'",
+            "did you mean 'copytree'?",
+        ),
+        (
             "import time\ntime.strftime('%Y')\n",
             "cannot import name 'strftime' from 'time'",
             "datetime.datetime.now()",
@@ -2752,9 +2762,18 @@ def test_a_scenario_may_use_the_file_helpers_of_pathlib_os_and_shutil(
             "now.year:04d",
         ),
     ],
-    ids=["path", "os", "os-path", "shutil", "time-strftime", "datetime-strftime"],
+    ids=[
+        "path",
+        "os",
+        "os-path",
+        "shutil",
+        "path-typo",
+        "shutil-typo",
+        "time-strftime",
+        "datetime-strftime",
+    ],
 )
-def test_a_name_the_file_and_time_shims_lack_is_refused_as_not_modelled(
+def test_a_name_the_file_and_time_shims_lack_is_refused_as_not_modelled_or_misspelt(
     tmp_path: Path, setup: str, message: str, hint: str
 ) -> None:
     scenario, config, _ = _write_case(tmp_path, setup)
@@ -9810,3 +9829,25 @@ def test_the_optional_hint_is_not_given_for_unrelated_optionals(
     scenario, config, _ = _write_case(tmp_path, setup, extra=extra, header=_R29_HEADER)
     result = typecheck_scenario(scenario, config)
     assert "does not convert an Optional of a subclass" not in result.format()
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        'logger.info("%s", base.parts[-1])',
+        'logger.info("%s", "a" in base.parts)',
+        'logger.info("%d", len(base.parts))',
+        'logger.info("%s", base.parts[1:])',
+        'logger.info("%s", [p.upper() for p in base.parts])',
+        'logger.info("%s", "/".join(base.parts[1:]))',
+        'logger.info("%s", base.parts[0] == "/")',
+    ],
+)
+def test_a_scenario_may_index_slice_and_iterate_path_parts(
+    tmp_path: Path, line: str
+) -> None:
+    scenario, config, _ = _write_case(
+        tmp_path, f'from pathlib import Path\nbase = Path("/a/b.txt")\n{line}\n'
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()

@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import ast
 import dataclasses
+import difflib
 import enum
 import hashlib
 import importlib.metadata
@@ -1128,6 +1129,60 @@ def _replace_thunk_message(diagnostic: Diagnostic) -> Diagnostic:
     return diagnostic
 
 
+_SHIM_MEMBER = re.compile(
+    r"^'Path' object has no attribute '(?P<path_name>\w+)'"
+    r"|cannot import name '(?P<name>\w+)' from "
+    r"'(?P<module>os|os\.__init__|os\.path|shutil)'"
+)
+
+
+@lru_cache(maxsize=8)
+def _shim_members(shim: str) -> tuple[str, ...]:
+    """The public names the shim *shim* (``pathlib``, ``os``, ``os/path`` or
+    ``shutil``) declares: the methods of ``Path``, or the module's functions
+    and constants."""
+    file = model_dir() / f"{shim}.codon"
+    if not file.is_file():
+        file = model_dir() / shim / "__init__.codon"
+    try:
+        text = file.read_text(encoding="utf-8")
+    except OSError:
+        return ()
+    if shim == "pathlib":
+        text = text[text.index("\nclass Path:") :]
+        names = re.findall(r"^    def (\w+)", text, re.MULTILINE)
+    else:
+        pairs = re.findall(r"^(?:def (\w+)|(\w+) =)", text, re.MULTILINE)
+        names = [a or b for a, b in pairs]
+    return tuple(sorted({n for n in names if not n.startswith("_")}))
+
+
+def _misspelt_member(message: str) -> str | None:
+    """The hint for a refused ``Path`` member or ``os``, ``os.path`` or
+    ``shutil`` name that CPython lacks too (a typo), or None when CPython has
+    it (then it is only not modelled)."""
+    found = _SHIM_MEMBER.search(message)
+    if found is None:
+        return None
+    owner: object
+    if found["path_name"] is not None:
+        name, shim, owner, label = found["path_name"], "pathlib", Path, "Path"
+    else:
+        name, module = found["name"], found["module"]
+        if module == "shutil":
+            shim, owner = "shutil", shutil
+        elif module == "os.path":
+            shim, owner = "os/path", os.path
+        else:
+            shim, owner = "os", os
+        label = module.removesuffix(".__init__")
+    if hasattr(owner, name):
+        return None
+    close = difflib.get_close_matches(name, _shim_members(shim), n=1)
+    suggestion = f", did you mean '{close[0]}'?" if close else ""
+    return f"CPython's {label} has no '{name}' either (a typo?){suggestion}"
+
+
 def _variadic_hints(diagnostics: list[Diagnostic]) -> list[Diagnostic]:
     """*diagnostics*, each refusal of a Codon limit on ``**kwargs``, on
     ``*args`` or on a tuple saying why and what to write instead (#266)."""
@@ -1144,6 +1199,13 @@ def _variadic_hints(diagnostics: list[Diagnostic]) -> list[Diagnostic]:
                     f for f in diagnostic.trace if not _LIST_DISPLAY_FRAME.match(f)
                 ),
             )
+        typo = _misspelt_member(diagnostic.message)
+        if typo is not None:
+            diagnostic = dataclasses.replace(
+                diagnostic, message=f"{diagnostic.message}: {typo}"
+            )
+            out.append(diagnostic)
+            continue
         for pattern, hint in (*_VARIADIC_LIMITS, *REWRITE_HINTS, *TYPING_HINTS):
             if pattern.search(diagnostic.message):
                 diagnostic = dataclasses.replace(

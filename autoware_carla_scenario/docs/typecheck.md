@@ -2495,7 +2495,10 @@ What Codon 0.19 needs that Python does not, beyond
   Python 3.10 also joins more parts, but 3.14 refuses them, so the check
   does too; 3.12's `walk_up` is refused), `is_relative_to(other)` (one path,
   by position, likewise), `is_absolute()` and the ordering of two `Path`s, so
-  `sorted()` takes them. Nothing
+  `sorted()` takes them. `parts` is not a tuple here: `parts == ("a", "b")`,
+  `a, *rest = p.parts` and `tuple(p.parts)` are not supported (use `list(p.parts)`
+  or index it). A `Path` member, or an `os`, `os.path` or `shutil` name, that
+  CPython lacks too is refused as a typo, with the closest declared name. Nothing
   touches the file system: a query is `False` and a glob, or `iterdir()`,
   yields nothing; `samefile(other_path)` and `match(path_pattern)` are `False`.
   `is_symlink()` takes no argument, as in every supported Python. Of what
