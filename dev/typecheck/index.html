@@ -3570,7 +3570,7 @@ this list, the check's additions and the tests in step:</p>
 instead:</p>
 <!-- stdlib-refused:start -->
 <p><code>dataclasses.asdict</code>, <code>functools.wraps</code>, <code>math.ulp</code>, <code>contextlib.contextmanager</code>, <code>warnings</code>,
-<code>json.JSONEncoder</code>, <code>types</code>, <code>textwrap</code>, <code>traceback</code>, <code>io</code></p>
+<code>json.JSONEncoder</code>, <code>types</code>, <code>textwrap</code>, <code>traceback</code>, <code>io</code>, <code>csv</code>, <code>uuid</code></p>
 <!-- stdlib-refused:end -->
 
 <ul>
@@ -3588,7 +3588,19 @@ instead:</p>
   rest. <code>types</code>: name the
   type itself. <code>textwrap</code>: build the string with <code>str</code> methods.
   <code>traceback</code>: log with <code>logger.exception</code>. <code>io</code>: use a <code>str</code>, or a
-  <code>pathlib.Path</code> opened with <code>open()</code>.</li>
+  <code>pathlib.Path</code> opened with <code>open()</code>. <code>csv</code>: read the file with
+  <code>Path.read_text().splitlines()</code> and <code>split(",")</code> each line, and write one
+  with <code>",".join(fields)</code> and <code>Path.write_text()</code>. <code>uuid</code>: use a counter, or
+  <code>os.getpid()</code> for an id that differs per process.</li>
+<li><code>time.strftime()</code> and <code>datetime.strftime()</code> are not modelled (Codon's
+  <code>datetime</code> has neither, nor <code>__format__</code>): the error says so; format the
+  fields instead, <code>f"{now.year:04d}{now.month:02d}{now.day:02d}"</code> for <code>now =
+  datetime.datetime.now()</code>.</li>
+<li>A name of <code>os</code>, <code>os.path</code>, <code>shutil</code> or a member of <code>pathlib.Path</code> that the
+  shims below do not declare is refused with Codon's <code>cannot import name</code> or
+  <code>'Path' object has no attribute</code>, to which the check adds that it is not
+  modelled (the shim declares only the names listed below), so it does not
+  read as invalid Python.</li>
 </ul>
 <h3 id="iterating-an-enum">Iterating an enum<a class="headerlink" href="#iterating-an-enum" title="Permanent link">&para;</a></h3>
 <p>For an <code>Enum</code> class, a scenario's own (any of <code>Enum</code>, <code>IntEnum</code>, <code>StrEnum</code>,
@@ -4468,12 +4480,19 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   3.10's signatures (3.12 and 3.13 added the keyword-only <code>follow_symlinks</code>,
   <code>case_sensitive</code> and <code>recurse_symlinks</code>, which are refused), and <code>name</code>,
   <code>suffix</code>, <code>parent</code>, <code>parents</code> (indexed, iterated, <code>len()</code> and <code>in</code>; not
-  sliced), <code>stem</code>, <code>with_name(name)</code> (of a <code>str</code>), <code>as_posix()</code>, <code>relative_to(other)</code> (one path, by position:
+  sliced), <code>stem</code>, <code>suffixes</code>, <code>parts</code> (indexed, sliced, iterated, <code>len()</code> and <code>in</code>),
+  <code>root</code>, <code>drive</code>, <code>anchor</code>, <code>as_uri()</code>, <code>with_name(name)</code>,
+  <code>with_suffix(suffix)</code> and <code>with_stem(stem)</code> (of a <code>str</code>), <code>joinpath(*other)</code>,
+  <code>as_posix()</code>, <code>relative_to(other)</code> (one path, by position:
   Python 3.10 also joins more parts, but 3.14 refuses them, so the check
   does too; 3.12's <code>walk_up</code> is refused), <code>is_relative_to(other)</code> (one path,
   by position, likewise), <code>is_absolute()</code> and the ordering of two <code>Path</code>s, so
-  <code>sorted()</code> takes them. Nothing
-  touches the file system: a query is <code>False</code> and a glob yields nothing.
+  <code>sorted()</code> takes them. <code>parts</code> is not a tuple here: <code>parts == ("a", "b")</code>,
+  <code>a, *rest = p.parts</code> and <code>tuple(p.parts)</code> are not supported (use <code>list(p.parts)</code>
+  or index it). A <code>Path</code> member, or an <code>os</code>, <code>os.path</code> or <code>shutil</code> name, that
+  CPython lacks too is refused as a typo, with the closest declared name. Nothing
+  touches the file system: a query is <code>False</code> and a glob, or <code>iterdir()</code>,
+  yields nothing; <code>samefile(other_path)</code> and <code>match(path_pattern)</code> are <code>False</code>.
   <code>is_symlink()</code> takes no argument, as in every supported Python. Of what
   reads, <code>read_text(encoding=None, errors=None)</code> (3.13's <code>newline</code> is
   refused) and <code>read_bytes()</code> are declared (<code>autoware_stack.docker</code> reads a
@@ -4494,9 +4513,12 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   <code>write()</code> (of a <code>str</code>, read as bytes too), iteration over the lines and
   <code>with</code>. <code>stat()</code> (no argument) returns a result of the five fields the
   framework reads (<code>st_dev</code>, <code>st_ino</code>, <code>st_size</code>, <code>st_mtime_ns</code>, <code>st_mtime</code>),
-  all zero, and <code>replace(target)</code> (a <code>str</code> or an <code>os.PathLike</code>) returns the
-  new <code>Path</code>; nothing is read or renamed.
-  <code>chmod()</code>, <code>write_bytes()</code> and the rest are not. <code>os</code> replaces Codon's own (whose
+  all zero (<code>lstat()</code> too), and <code>replace(target)</code> and <code>rename(target)</code> (a
+  <code>str</code> or an <code>os.PathLike</code>) return the new <code>Path</code>; nothing is read or
+  renamed. <code>touch(mode=0o666, exist_ok=True)</code>, <code>rmdir()</code>,
+  <code>chmod(mode, *, follow_symlinks=True)</code>, <code>write_bytes(data)</code> (a <code>str</code> here, as
+  bytes are), <code>readlink()</code>, <code>owner()</code> and <code>group()</code> do nothing. The rest
+  (<code>is_socket()</code>, <code>PurePath</code>, ...) is not declared. <code>os</code> replaces Codon's own (whose
   <code>environ</code> has no <code>get()</code> and iterates over pairs), keeping its <code>getenv()</code>,
   which Codon's runtime and typesafe_carla's library call: <code>environ</code> is a
   mapping of <code>str</code> to <code>str</code> (<code>[key]</code>, assignment, <code>del</code>, <code>in</code>, iteration
@@ -4509,15 +4531,28 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   <code>os.PathLike</code>, a <code>str</code>; a bytes path is not declared),
   <code>kill(pid, signal, /)</code>, <code>killpg(pgid, signal, /)</code> (of an <code>int</code> or a
   <code>signal.Signals</code>), <code>system(command)</code>,
-  <code>mkdir()</code> (Codon's had one), the separators (<code>sep</code>, <code>pathsep</code>, <code>linesep</code>,
+  <code>mkdir()</code> (Codon's had one), <code>getcwd()</code>, <code>listdir(path=".")</code> (empty),
+  <code>makedirs(name, mode=0o777, exist_ok=False)</code>, <code>remove()</code>, <code>unlink()</code>,
+  <code>rmdir()</code>, <code>rename()</code> and <code>replace()</code> (each with its keyword-only
+  <code>dir_fd</code>), <code>walk(top, topdown=True, onerror=None, followlinks=False)</code> (a
+  generator that yields nothing; the callable <code>onerror</code> is not declared), the
+  separators (<code>sep</code>, <code>pathsep</code>, <code>linesep</code>,
   <code>devnull</code>, ...) and the <code>access()</code> modes. <code>os.path</code> declares <code>join()</code>,
   <code>basename()</code>, <code>dirname()</code>, <code>splitext()</code>, <code>isabs()</code>, <code>exists()</code>, <code>isfile()</code>,
-  <code>isdir()</code>, <code>expanduser()</code> and <code>abspath()</code>, of a <code>str</code> or a <code>Path</code>, with
-  CPython's parameter names. <code>shutil</code> declares <code>copy2(src, dst, *,
+  <code>isdir()</code>, <code>expanduser()</code> and <code>abspath()</code>, and <code>getsize()</code>, <code>getmtime()</code>,
+  <code>getatime()</code>, <code>getctime()</code>, <code>islink()</code>, <code>lexists()</code>, <code>realpath()</code>,
+  <code>relpath()</code>, <code>expandvars()</code>, <code>split()</code> and <code>normpath()</code>, of a <code>str</code> or a
+  <code>Path</code>, with CPython's parameter names (nothing is read: a size is <code>0</code>,
+  <code>realpath()</code>, <code>relpath()</code> and <code>expandvars()</code> return the path as it is).
+  <code>shutil</code> declares <code>copy(src, dst, *, follow_symlinks=True)</code>, <code>copyfile()</code>
+  (likewise), <code>copytree(src, dst, symlinks=False, ignore=None,
+  copy_function=None, ignore_dangling_symlinks=False, dirs_exist_ok=False)</code>,
+  <code>copy2(src, dst, *,
   follow_symlinks=True)</code>, <code>move(src, dst)</code>, <code>rmtree(path,
   ignore_errors=False)</code> and <code>which(cmd, mode=1, path=None)</code> of a <code>str</code>
   command; the callables CPython also takes (<code>onerror</code>, <code>copy_function</code>)
-  are not declared. <code>subprocess</code> declares <code>run(args, *, input=None,
+  are not declared (nor <code>copytree()</code>'s <code>ignore</code> and <code>copy_function</code>).
+  <code>subprocess</code> declares <code>run(args, *, input=None,
   capture_output=False, timeout=None, check=False, ...)</code> and <code>Popen(args,
   *, ...)</code> with the keywords of CPython's <code>Popen</code> the framework passes
   (<code>stdin</code>, <code>stdout</code>, <code>stderr</code>, <code>cwd</code>, <code>env</code>, <code>text</code>, <code>encoding</code>, <code>errors</code>,
@@ -4668,8 +4703,8 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   with <code>signal.signal()</code>, register a function to run at exit with
   <code>atexit.register()</code>, read an installed
   distribution's version with <code>importlib.metadata.version()</code>, and catch the
-  exceptions above. Any other name of them (<code>Path.chmod()</code>, <code>hashlib.md5()</code>,
-  <code>shutil.copytree()</code>, <code>subprocess.check_output()</code>, <code>os.listdir()</code>,
+  exceptions above. Any other name of them (<code>Path.is_socket()</code>, <code>hashlib.md5()</code>,
+  <code>shutil.disk_usage()</code>, <code>subprocess.check_output()</code>, <code>os.scandir()</code>,
   <code>importlib.import_module()</code>, <code>urllib.request</code>, <code>signal.getsignal()</code>) fails
   its check wherever Codon compiles it. The model's top-level package declares <code>__file__</code> (a
   <code>str</code>, as CPython sets it on a regular package), which
@@ -5656,7 +5691,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 25, 2026 05:50:39 UTC"><span class="timeago" datetime="2026-10-25T05:50:39+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 25, 2026 05:50:39 UTC">2026-10-25</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 25, 2026 07:18:36 UTC"><span class="timeago" datetime="2026-10-25T07:18:36+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 25, 2026 07:18:36 UTC">2026-10-25</span>
   </span>
 
     
