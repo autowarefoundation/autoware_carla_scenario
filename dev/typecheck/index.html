@@ -2315,6 +2315,58 @@ of one enum (<code>Color.RED != Color.BLUE</code>) are not a comparison with a r
 error, so the None check's other findings are unchanged; the framework's
 modules and the built-in scenarios have none of these comparisons. Like the
 rest of this section it rests on mypy.</p>
+<p><strong>Typing contracts you declared must hold</strong> (#577). Python mostly does not
+enforce these and Codon does not read them, so mypy's verdict is used, each
+kept only on its exact code and message (no other <code>misc</code>, <code>override</code>, <code>index</code>
+or <code>attr-defined</code> error is a finding; Codon reports attribute errors itself):</p>
+<ul>
+<li><strong><code>Final</code> assigned again</strong> (<code>MAX_SPEED: Final = 30.0</code>, then <code>MAX_SPEED = 40.0</code>,
+  <code>self.LIMIT = 40.0</code>, <code>Cls.LIMIT = 1.0</code> or a <code>Final</code> local rebound): <code>a name
+  declared Final is bound once; ...</code>. Bind a new name or drop <code>Final</code>.</li>
+<li><strong>A <code>ClassVar</code> assigned through an instance</strong> (<code>self.count += 1</code>,
+  <code>c.count = 5</code>): <code>a ClassVar is shared by the class; ...</code>. Python creates a
+  shadowing instance attribute and Codon treats the annotated name as an
+  instance field, so what runs can differ. Assign through the class
+  (<code>Cls.count += 1</code>) or drop <code>ClassVar</code>.</li>
+<li><strong>A method incompatible with the one it overrides</strong>: a narrowed argument
+  type, a different return type, a required parameter added, or a parameter
+  removed (<code>the override must accept what the overridden method accepts ...</code>).
+  This covers the framework's hooks too: <code>BaseScenario.is_done(self) -&gt; bool</code>
+  overridden as <code>is_done(self, strict: bool)</code> is refused, since the framework
+  calls it with the base signature. An extra parameter with a default, or a
+  wider argument type, is fine, and <code># type: ignore[override]</code> on the <code>def</code>
+  line (mypy's own) silences it. The dunder methods are not checked
+  (<code>__eq__(self, other: Pt)</code> is common and benign), nor is a method overriding
+  <code>object</code>'s. The built-in scenarios and the template produce none.</li>
+<li><strong>A <code>Mapping</code>, <code>Sequence</code> or <code>AbstractSet</code> mutated</strong> (<code>m["k"] = 1</code>, <code>del m[k]</code>,
+  <code>s.append(3)</code>, <code>s.sort()</code>, <code>m.update(...)</code>, <code>a.add(1)</code>): <code>... is read-only
+  by its annotation; copy it first ...</code>. Only an attribute that mutates
+  (<code>append</code>, <code>extend</code>, <code>insert</code>, <code>pop</code>, <code>remove</code>, <code>sort</code>, <code>reverse</code>, <code>clear</code>,
+  <code>update</code>, <code>setdefault</code>, <code>popitem</code>, <code>add</code>, <code>discard</code>, the set <code>*_update</code>
+  methods, <code>__delitem__</code>) on a receiver typed exactly as one of those three
+  counts; a typo (<code>s.appnd</code>) or a missing attribute of another type is not
+  reported here. Import them from <code>typing</code> (<code>collections.abc</code> is unsupported).</li>
+</ul>
+<p><strong>Not checked: a name bound on one path only</strong> (#576). Python raises
+<code>UnboundLocalError</code> for <code>if c: y = 1</code> followed by <code>use(y)</code>, and mypy reports it
+only with <code>--enable-error-code possibly-undefined</code>. That code is not enabled:
+mypy's flow analysis cannot see that the branch that binds a name and the
+branch that reads it test the same condition (<code>if x is not None: v = ...</code>
+then <code>if x is not None: use(v)</code>), nor that a <code>for</code> over a non-empty constant
+runs, so valid code is refused and the cure is to restructure correct code.
+Run over the framework's 313 modules it reports 15 times in 11 modules: 9 are
+a condition tested twice or a <code>try</code>/<code>with</code> that binds on every path that
+reads, 4 are a loop mypy cannot see always binds (a <code>for</code> over a non-empty
+constant, a <code>for</code>/<code>break</code>/<code>else</code>), and 2 are latent edge cases in the
+framework (an unbound <code>exit_code</code> when <code>server.cooldown_max_retries</code> is
+negative, and an unbound <code>port_file</code> in <code>slurm/worker.py</code>'s <code>finally</code> when
+<code>layout.task_port</code> raises after the port slot was taken), not scenario
+patterns. Probes of
+scenario-style branches showed the same: <code>if/else</code>, an exhaustive enum
+<code>if/elif</code>, <code>try</code>/<code>except</code> that raises or returns, <code>match</code> with a default and
+<code>for/else</code> pass, but a loop variable read after a <code>for</code> and a guard tested
+twice are refused. Bind the name before the branch when you mean to read it
+later.</p>
 <p><strong>The CARLA API's <code>Optional</code> results are checked too</strong> (#267).
 typesafe_carla's CPython package is a prebuilt extension with no <code>.pyi</code> and
 no <code>py.typed</code>, so mypy alone reads <code>typesafe_carla.carla</code> as <code>Any</code>. The
@@ -5719,7 +5771,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 25, 2026 12:43:48 UTC"><span class="timeago" datetime="2026-10-25T12:43:48+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 25, 2026 12:43:48 UTC">2026-10-25</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 25, 2026 15:33:00 UTC"><span class="timeago" datetime="2026-10-25T15:33:00+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 25, 2026 15:33:00 UTC">2026-10-25</span>
   </span>
 
     
