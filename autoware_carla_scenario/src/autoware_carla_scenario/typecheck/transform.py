@@ -475,6 +475,47 @@ class _Edits:
         self.edits = [e for e in self.edits if (e[0], e[1]) != (start, end)]
         self.replace(start, end, text)
 
+    def drop_decorators(
+        self,
+        node: ast.FunctionDef | ast.AsyncFunctionDef,
+        dropped: Collection[ast.expr],
+    ) -> None:
+        """Remove the *dropped* ones of *node*'s decorators (#595).
+
+        Codon's parser refuses a blank or comment-only line inside a
+        decorator list, which blanking a decorator stacked under a kept one
+        leaves.  A dropped decorator above every kept one is blanked (blank
+        lines before the list are fine).  Below the first kept decorator,
+        every line that is not a kept decorator's (a dropped decorator's, a
+        comment, a blank line) is removed, and as many blank lines go above
+        the first kept decorator: the kept decorators move down, contiguous
+        with the ``def``, and the ``def`` and every line after it stay on
+        their lines.  A moved decorator's line is reported that many lines
+        lower.
+        """
+        ids = {id(d) for d in dropped}
+        kept = [d for d in node.decorator_list if id(d) not in ids]
+        first = kept[0].lineno if kept else node.lineno
+        for decorator in node.decorator_list:
+            if id(decorator) in ids and decorator.lineno < first:
+                # Up to the line break of its last line: blank lines.
+                start = self.starts[decorator.lineno - 1]
+                last = decorator.end_lineno or decorator.lineno
+                self.replace(start, self.starts[last] - 1, "")
+        if not kept:
+            return
+        keep: set[int] = set()
+        for decorator in kept:
+            keep.update(range(decorator.lineno, (decorator.end_lineno or 0) + 1))
+        moved = 0
+        for line in range(first, node.lineno):
+            if line not in keep:
+                self.edits.append((self.starts[line - 1], self.starts[line], ""))
+                moved += 1
+        if moved:
+            at = self.starts[first - 1]
+            self.edits.append((at, at, "\n" * moved))
+
     def apply(self) -> str:
         data = self.data
         last = len(data) + 1
@@ -1801,6 +1842,7 @@ class _Rewriter(ShadowScopes):
             and bool([*node.args.posonlyargs, *node.args.args])
             and any(_dotted(d) == "classmethod" for d in node.decorator_list)
         )
+        dropped: list[ast.expr] = []
         for decorator in node.decorator_list:
             wrapped = self._functools_name(
                 decorator.func if isinstance(decorator, ast.Call) else decorator
@@ -1810,19 +1852,16 @@ class _Rewriter(ShadowScopes):
             elif wrapped == "cached_property":
                 # Computed once, read as an attribute: a property types the same.
                 self.edits.replace(*self.edits.node_span(decorator), "property")
-            elif wrapped in _FUNCTOOLS_DROPPED:
-                start, end = self.edits.node_span(decorator)
-                # Keep the lines of a decorator broken over several.
-                lines = "\n" * self.edits.text(start, end).count("\n")
-                self.edits.replace(start - 1, end, lines)
             elif (
-                _dotted(decorator) in _DROPPED_FUNCTION_DECORATORS
+                wrapped in _FUNCTOOLS_DROPPED
+                or _dotted(decorator) in _DROPPED_FUNCTION_DECORATORS
                 or _dotted(decorator) in self._dropped_decorators
             ):
-                start, end = self.edits.node_span(decorator)
-                self.edits.replace(start - 1, end, "")  # with its "@"
+                dropped.append(decorator)
             else:
                 self.visit(decorator)
+        # The kept ones stay contiguous with the `def` (#595).
+        self.edits.drop_decorators(node, dropped)
         if classmethod_ and self._class_name is not None:
             self._rewrite_classmethod(node, self._class_name)
         self._rewrite_defaults(node.args, node.body)

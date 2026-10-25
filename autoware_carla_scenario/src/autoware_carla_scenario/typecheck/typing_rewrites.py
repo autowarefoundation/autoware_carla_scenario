@@ -411,14 +411,14 @@ class _Pass(ShadowScopes):
         self._function(node)
 
     def _function(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
+        dropped: list[ast.expr] = []
         for decorator in node.decorator_list:
             if self.names.typing_name(decorator) == "override":
-                start, end = self.edits.node_span(decorator)
-                while self.edits.text(start - 1, start) != "@":
-                    start -= 1  # `@ override`
-                self.edits.replace(start - 1, end, "")  # with its "@"
+                dropped.append(decorator)
             else:
                 self.visit(decorator)
+        # The kept ones stay contiguous with the `def` (#595).
+        self.edits.drop_decorators(node, dropped)
         every = [
             *node.args.posonlyargs,
             *node.args.args,
