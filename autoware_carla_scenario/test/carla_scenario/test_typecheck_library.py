@@ -3317,6 +3317,9 @@ def test_the_file_helpers_are_declared_with_the_parameters_cpython_3_10_has() ->
             "write_bytes samefile lstat readlink owner group as_uri",
         ),
     ]
+    # Keyword-only parameters CPython added after 3.10, which the 3.10 shims
+    # do not declare (Path.owner/group(follow_symlinks=) is 3.13).
+    newer = {"owner": {"follow_symlinks"}, "group": {"follow_symlinks"}}
     for path, owner, python, names in cases:
         shim = declared(path, owner)
         for name in names.split():
@@ -3330,6 +3333,7 @@ def test_the_file_helpers_are_declared_with_the_parameters_cpython_3_10_has() ->
                 p.name
                 for p in signature.parameters.values()
                 if p.kind is inspect.Parameter.KEYWORD_ONLY
+                and not (owner is not None and p.name in newer.get(name, set()))
             ]
             if owner is not None:
                 positional = (
