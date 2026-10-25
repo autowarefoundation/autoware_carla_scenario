@@ -6058,7 +6058,7 @@ def test_enum_members_are_dictionary_keys_and_a_plain_enum_equals_only_members(
         e = {Level.LOW: 1}
         assert d[Plain.A] == 1 and e[Level.LOW] == 1
         assert Plain.A == Plain.A and Plain.A != Plain.B
-        assert not (Plain.A == 1) and Plain.A != 1
+        assert Plain.A.value == 1 and Plain.A.value != 2
         assert Word.A == "a"
     """
     scenario, config, _ = _data_case(
@@ -9945,6 +9945,118 @@ def test_assigning_self_field_in_a_frozen_dataclass_method_is_refused(
     error = _only_error(typecheck_scenario(scenario, config))
     assert "Pt is a frozen dataclass" in error.message
     assert error.line == _line_of(path, "self.x = 3.0")
+
+
+# ---------------------------------------------------------------------------
+# bytes and str mixed, an Enum compared with a raw value (#574, #575)
+# ---------------------------------------------------------------------------
+
+_MIX_EXTRA = """
+
+class Color(enum.Enum):
+    RED = "red"
+    BLUE = "blue"
+
+
+class Mode(enum.Enum):
+    A = 1
+    B = 2
+
+
+class Level(enum.IntEnum):
+    LOW = 1
+
+
+class Phase(str, enum.Enum):
+    GO = "go"
+
+
+def label(name: str) -> str:
+    payload = name.encode()
+    return LABEL
+
+
+def up(s: str) -> str:
+    return s.upper()
+
+"""
+_MIX_HEADER = _HEADER.replace("import logging\n", "import enum\nimport logging\n", 1)
+
+
+def _mix_case(tmp_path: Path, setup: str, label: str = '"sent " + name') -> Any:
+    return _write_case(
+        tmp_path, setup, extra=_MIX_EXTRA.replace("LABEL", label), header=_MIX_HEADER
+    )
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        's = b"x" + "y"',
+        'raw = "ab".encode()\ns = "x" in raw',
+        'raw = "ab".encode()\nok = raw == "ab"',
+        'logger.info("%s", up("ego".encode("utf-8")))',
+        'x: str = "ego".encode()',
+    ],
+    ids=["operator", "in", "equality", "argument", "assignment"],
+)
+def test_mixing_bytes_and_str_is_refused(tmp_path: Path, statement: str) -> None:
+    scenario, config, path = _mix_case(tmp_path, f"{statement}\n")
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "bytes and str do not mix in Python" in error.message, error.format()
+    assert ".decode()" in error.message and ".encode()" in error.message
+    assert error.path == str(path)
+    assert error.line == _line_of(path, statement.splitlines()[-1])
+
+
+def test_a_bytes_returned_for_a_str_is_refused(tmp_path: Path) -> None:
+    scenario, config, path = _mix_case(tmp_path, "pass\n", label="payload")
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "bytes and str do not mix in Python" in error.message, error.format()
+    assert error.line == _line_of(path, "return payload")
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        'c = Color.RED\nok = c == "red"',
+        "m = Mode.A\nok = m == 1",
+        "m = Mode.A\nok = m in (1, 2)",
+        "ok = Color.RED == Mode.A",
+    ],
+    ids=["str", "int", "container", "other-enum"],
+)
+def test_an_enum_compared_with_its_raw_value_is_refused(
+    tmp_path: Path, statement: str
+) -> None:
+    scenario, config, path = _mix_case(tmp_path, f"{statement}\n")
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "an Enum member never equals its raw value" in error.message, error.format()
+    assert error.path == str(path)
+    assert error.line == _line_of(path, statement.splitlines()[-1])
+
+
+def test_bytes_str_and_enum_look_alikes_compile(tmp_path: Path) -> None:
+    # bytes with bytes, str with str, .encode() used as bytes, a member with
+    # a member or its .value, an IntEnum with an int and a (str, Enum) with a
+    # str (both overlap their raw value in Python as well).
+    scenario, config, _ = _mix_case(
+        tmp_path,
+        """
+        raw = "ab".encode()
+        joined = raw + raw
+        both = "x" + "y"
+        same = raw == b"ab"
+        c = Color.RED
+        logger.info(
+            "%s %s %s %s %s %s %s %s",
+            len(joined), both, same, c == Color.RED, c.value == "red",
+            Level.LOW == 1, Phase.GO == "go", label("a"),
+        )
+        """,
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
 
 
 # ---------------------------------------------------------------------------

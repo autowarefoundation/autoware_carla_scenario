@@ -350,6 +350,36 @@ mypy, as the None check does: without it the check warns `the None check did
 not run` and a frozen assignment is not reported. `setattr(p, "x", 1)` is not
 caught.
 
+**`bytes` and `str` do not mix** (#574). Codon's `bytes` is a `str`, so
+`b"x" + "y"`, `"sent " + name.encode()`, a `bytes` returned for a `-> str`,
+passed to a `str` parameter or assigned to a `str`, `"x" in raw` and
+`raw == "ab"` compile, and Python raises `TypeError` (or the comparison is
+always `False`). They are refused with mypy's verdict, only where the offending
+pair is exactly `bytes` and `str`: `bytes and str do not mix in Python: decode
+with .decode() / encode with .encode()`. A `str | bytes` union, a `bytearray`
+and every other incompatible type are left alone, and `b + b`, `s + s` and
+`.encode()` used as bytes stay valid.
+
+**A comparison that is always `False` is refused** (#575). The None check runs
+mypy with `--strict-equality` and keeps its `comparison-overlap` findings: an
+`Enum` member compared with its raw value (`Color.RED == "red"`, `mode == 1`,
+`mode in (1, 2)`) or with a member of another enum is `False` in Python, and
+Codon compiles it. The advice is `an Enum member never equals its raw value:
+compare with Color.RED, or use Color.RED.value`. Only the findings with an
+enum as an operand are kept, not every `comparison-overlap`: mypy also reports
+two different literals (`MODE: Final = 1` and `if MODE == 2`), a deliberate
+switch. The enum is found among the classes of the scenario's own modules (an
+enum imported from elsewhere is not recognised, so its non-literal comparisons
+are missed). mypy skips a class that defines `__eq__`, and `IntEnum`, `StrEnum` and `(str, Enum)` overlap their raw
+value in Python as well, so `Level.LOW == 1` and `Phase.GO == "go"` are valid.
+`Color.RED.value == "red"` is the valid spelling. A member written out as a
+literal (`Level.LOW == 1`) is judged by mypy on identity, so it is kept only for
+a plain `Enum` / `Flag` defined in the scenario's own modules, and two members
+of one enum (`Color.RED != Color.BLUE`) are not a comparison with a raw value. The flag adds no other
+error, so the None check's other findings are unchanged; the framework's
+modules and the built-in scenarios have none of these comparisons. Like the
+rest of this section it rests on mypy.
+
 **The CARLA API's `Optional` results are checked too** (#267).
 typesafe_carla's CPython package is a prebuilt extension with no `.pyi` and
 no `py.typed`, so mypy alone reads `typesafe_carla.carla` as `Any`. The

@@ -82,6 +82,8 @@ from .library import (
 )
 from .dead_isinstance import dead_isinstances
 from .none_check import (
+    BYTES_STR,
+    ENUM_EQ,
     FROZEN,
     NoneCheckSkipped,
     NoneFinding,
@@ -2499,6 +2501,19 @@ def _none_check_advice(finding: NoneFinding) -> str:
             f"{cls} is a frozen dataclass; use dataclasses.replace(x, {attr}=...) "
             f"instead of assigning its field {attr!r}, or Python raises "
             f"FrozenInstanceError here (mypy: {finding.code})"
+        )
+    if finding.kind == BYTES_STR:
+        return (
+            f"{finding.message}: bytes and str do not mix in Python: decode with "
+            f".decode() / encode with .encode(); Codon's bytes is a str, so this "
+            f"compiles, and Python raises TypeError here or the comparison is "
+            f"always False (mypy: {finding.code})"
+        )
+    if finding.kind == ENUM_EQ:
+        return (
+            f"{finding.message}: an Enum member never equals its raw value: "
+            f"compare with Color.RED, or use Color.RED.value; Python evaluates "
+            f"this comparison to False (mypy: {finding.code})"
         )
     union = finding.union
     if union is None:

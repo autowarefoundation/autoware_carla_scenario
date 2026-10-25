@@ -46,6 +46,33 @@ dataclass of the given modules (:func:`frozen_dataclasses`).  A receiver of an
 unknown type (``Any``) is not reported, and ``object.__setattr__(self, ...)``,
 the idiom of a frozen ``__post_init__``, is not an assignment to mypy.
 
+A fourth kind (#574): ``bytes`` and ``str`` mixed.  Codon's ``bytes`` is a
+``str``, so ``b"x" + "y"``, ``"sent " + name.encode()``, a ``bytes`` returned
+for a ``str`` or passed to a ``str`` parameter, ``"x" in raw`` and
+``raw == "ab"`` all compile, and Python raises ``TypeError`` (or the
+comparison is always ``False``).  mypy reports them (``operator``,
+``arg-type``, ``return-value``, ``assignment``, ``list-item``, ``dict-item``,
+``index`` and ``comparison-overlap``); they are kept (:data:`BYTES_STR`) only
+where the offending pair is exactly ``{bytes, str}`` (:func:`is_bytes_str_mix`),
+so no other incompatible type is admitted and a ``str | bytes`` union, which
+mypy names as a union, is left alone.
+
+A fifth (#575): a comparison that is always ``False``, which mypy reports with
+``--strict-equality`` as ``comparison-overlap``: an ``Enum`` member compared
+with its raw value (``Color.RED == "red"``, ``mode == 1``, ``mode in (1, 2)``)
+or with a member of another enum.  Python evaluates these to ``False``; Codon
+compiles them.  Only the ``comparison-overlap`` findings with an enum as an
+operand are kept (:data:`ENUM_EQ`), not all of them: mypy also reports a
+comparison of two different literals, which is a deliberate switch
+(``MODE: Final = 1`` and ``if MODE == 2``), so ``list[int] == list[str]`` and
+the like are left alone.  mypy skips the classes that define ``__eq__`` and
+the mixins that do overlap (``IntEnum``, ``(str, Enum)``, ``StrEnum``).  mypy compares
+the member *literals* of those by identity (``Level.LOW == 1`` is reported
+for an ``IntEnum``, though Python's is ``True``), so a comparison of a member
+literal is kept only for an enum of the modules whose bases are only ``Enum``
+or ``Flag``, and not for two members of one enum (:func:`_is_doubtful_enum_literal`).
+The framework and the template produce none.  ``--strict-equality`` adds no other error.
+
 mypy runs as its own process (``python -m mypy``), with no configuration file
 (the scenario package's own mypy settings do not apply), following imports
 silently: it reads the framework and the scenario package's other modules for
@@ -95,12 +122,16 @@ __all__ = [
     "NONE",
     "UNION",
     "FROZEN",
+    "BYTES_STR",
+    "ENUM_EQ",
     "FrameworkUnion",
     "find_none_misuses",
     "frozen_dataclasses",
     "framework_unions",
     "is_none_misuse",
     "is_union_misuse",
+    "is_bytes_str_mix",
+    "is_equality_overlap",
     "run_none_check",
 ]
 
@@ -130,6 +161,28 @@ NONE = "none"
 UNION = "union"
 #: :attr:`NoneFinding.kind`: a field of a frozen dataclass assigned (#567).
 FROZEN = "frozen"
+
+#: :attr:`NoneFinding.kind`: ``bytes`` and ``str`` mixed (#574).
+BYTES_STR = "bytes-str"
+#: :attr:`NoneFinding.kind`: an enum compared with a type it never equals (#575).
+ENUM_EQ = "enum-eq"
+
+#: The mypy error codes ``bytes`` and ``str`` mixed is reported with (#574).
+BYTES_STR_CODES = frozenset(
+    {
+        "operator",
+        "arg-type",
+        "return-value",
+        "assignment",
+        "list-item",
+        "dict-item",
+        "index",
+        "comparison-overlap",
+    }
+)
+
+#: The mypy error code of a comparison that is always False (``--strict-equality``).
+OVERLAP_CODE = "comparison-overlap"
 
 #: ``Property "x" defined in "Pt" is read-only`` (``misc``): an assignment to
 #: a field of a frozen dataclass (or to a property with no setter).
@@ -213,6 +266,143 @@ def _holds_none(type_text: str) -> bool:
 def _offends(actual: str, expected: str) -> bool:
     """Whether *actual* holds ``None`` and *expected* does not."""
     return _holds_none(actual) and not _holds_none(expected)
+
+
+#: An operand type mypy spells ``Literal[...]``: ``Literal['ab']`` is a ``str``,
+#: ``Literal[b'ab']`` a ``bytes``; an enum member is ``Literal[Color.RED]``.
+_LITERAL = re.compile(r"^Literal\[(?P<value>.*)\]$")
+_ENUM_LITERAL = re.compile(r"^Literal\[[A-Za-z_][\w.]*\.[A-Za-z_]\w*\]$")
+
+
+def _plain_type(type_text: str) -> str:
+    """*type_text* with a ``Literal['x']`` / ``Literal[b'x']`` as ``str`` / ``bytes``."""
+    text = type_text.strip()
+    literal = _LITERAL.match(text)
+    if literal is None:
+        return text
+    value = literal["value"]
+    if value[:2] in ("b'", 'b"'):
+        return "bytes"
+    if value[:1] in ("'", '"'):
+        return "str"
+    return text
+
+
+def _is_bytes_str(first: str, second: str) -> bool:
+    return {_plain_type(first), _plain_type(second)} == {"bytes", "str"}
+
+
+def _overlap_operands(message: str) -> list[str]:
+    """The two operand types of a ``comparison-overlap`` *message*, as mypy
+    spells them (``left operand type: "A", right operand type: "B"``,
+    ``left "A", right "B"``, ``element type: "A", container item type: "B"``)."""
+    return _QUOTED.findall(message)
+
+
+def is_equality_overlap(code: str, message: str) -> bool:
+    """Whether mypy's error *message* (of *code*) is of a comparison that is
+    always False (``--strict-equality``, #575)."""
+    return code == OVERLAP_CODE and len(_overlap_operands(message)) == 2
+
+
+def is_bytes_str_mix(code: str, message: str) -> bool:
+    """Whether mypy's error *message* (of *code*) is of ``bytes`` and ``str``
+    mixed (#574): the offending pair is exactly ``{bytes, str}``.
+
+    A ``str | bytes`` union, ``bytearray`` and every other incompatible type
+    are not.  mypy's message gives the pair as the type given and the type
+    expected, as the two operands of an operator, or as the two sides of a
+    comparison.
+    """
+    if code not in BYTES_STR_CODES:
+        return False
+    if code == "comparison-overlap":
+        operands = _overlap_operands(message)
+        return len(operands) == 2 and _is_bytes_str(*operands)
+    if code == "dict-item":
+        entry = _DICT_ENTRY.search(message)
+        return entry is not None and (
+            _is_bytes_str(entry["key"], entry["expected_key"])
+            or _is_bytes_str(entry["value"], entry["expected_value"])
+        )
+    expected = _EXPECTED.search(message)
+    if expected is not None:
+        return _is_bytes_str(expected["actual"], expected["expected"])
+    if code == "operator":
+        operands = _QUOTED.findall(message)
+        return len(operands) == 2 and _is_bytes_str(*operands)
+    return False
+
+
+def _enum_classes(trees: Iterable[ast.Module]) -> tuple[frozenset[str], frozenset[str]]:
+    """The enums of *trees*: (plain, all) by class name.
+
+    An enum is a class with a base named ``...Enum`` or ``...Flag``
+    (``enum.Enum``, ``IntEnum``, ``StrEnum``, ``IntFlag``); it is *plain* where
+    its bases are only ``Enum`` / ``Flag`` (no ``int`` or ``str`` mixin, no
+    ``IntEnum``), and every class of that name is.
+    """
+    plain: set[str] = set()
+    mixed: set[str] = set()
+    for tree in trees:
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ClassDef):
+                continue
+            names = [
+                (
+                    base.id
+                    if isinstance(base, ast.Name)
+                    else base.attr
+                    if isinstance(base, ast.Attribute)
+                    else ""
+                )
+                for base in node.bases
+            ]
+            if not any(n.endswith(("Enum", "Flag")) for n in names):
+                continue
+            (plain if set(names) <= {"Enum", "Flag"} else mixed).add(node.name)
+    return frozenset(plain - mixed), frozenset(plain | mixed)
+
+
+def _enum_members(message: str) -> list[str | None]:
+    """The enum class of each operand of a ``comparison-overlap`` *message*
+    that is an enum member literal (``Literal[Color.RED]``), else ``None``."""
+    out: list[str | None] = []
+    for operand in _overlap_operands(message):
+        if _ENUM_LITERAL.match(operand):
+            out.append(operand[len("Literal[") : -1].split(".")[-2])
+        else:
+            out.append(None)
+    return out
+
+
+def _is_doubtful_enum_literal(message: str, plain: frozenset[str]) -> bool:
+    """Whether a ``comparison-overlap`` *message* is of a comparison mypy reads
+    wrongly or that is no confusion of an enum and a raw value.
+
+    mypy compares enum member literals by identity, so for ``Level.LOW == 1``
+    of an ``IntEnum`` or ``Mode.FAST == "fast"`` of a ``(str, Enum)`` it
+    reports non-overlap although Python's is ``True``; and two members of one
+    enum (``Color.RED != Color.BLUE``) are a comparison of members, not of a
+    member with a raw value.  Neither is kept; nor is a literal of an enum the
+    modules do not define (its bases are unknown).
+    """
+    members = _enum_members(message)
+    classes = [m for m in members if m is not None]
+    if not classes:
+        return False
+    if any(c not in plain for c in classes):
+        return True
+    return len(classes) == 2 and classes[0] == classes[1]
+
+
+def _involves_enum(message: str, enums: frozenset[str]) -> bool:
+    """Whether an operand of a ``comparison-overlap`` *message* is an enum:
+    an enum member literal, or a class of *enums*."""
+    for operand in _overlap_operands(message):
+        if _ENUM_LITERAL.match(operand) or operand.rpartition(".")[2] in enums:
+            return True
+    return False
 
 
 def none_given(message: str) -> str | None:
@@ -662,6 +852,9 @@ def run_none_check(paths: list[Path], timeout: float = 600.0) -> list[NoneFindin
         # The body of a function without annotations too: the check compiles
         # every function of the scenario's modules.
         "--check-untyped-defs",
+        # A comparison that is always False (an Enum member and its raw
+        # value, bytes and str): ``comparison-overlap``, the only error it adds.
+        "--strict-equality",
         "--show-column-numbers",
         "--show-error-codes",
         "--no-pretty",
@@ -704,7 +897,9 @@ def run_none_check(paths: list[Path], timeout: float = 600.0) -> list[NoneFindin
     findings: list[NoneFinding] = []
     current: NoneFinding | None = None
     reported = ""
-    frozen = frozen_dataclasses(_parsed(paths))
+    trees = _parsed(paths)
+    frozen = frozen_dataclasses(trees)
+    plain_enums, enums = _enum_classes(trees)
     for raw in proc.stdout.splitlines():
         match = _LINE.match(raw.strip())
         if match is None:
@@ -722,6 +917,14 @@ def run_none_check(paths: list[Path], timeout: float = 600.0) -> list[NoneFindin
             kind = NONE
         elif is_union_misuse(code, match["message"]):
             kind = UNION
+        elif is_bytes_str_mix(code, match["message"]):
+            kind = BYTES_STR
+        elif is_equality_overlap(code, match["message"]):
+            if _is_doubtful_enum_literal(match["message"], plain_enums):
+                continue
+            if not _involves_enum(match["message"], enums):
+                continue
+            kind = ENUM_EQ
         elif (
             code == "misc"
             and (ro := _READ_ONLY.match(match["message"])) is not None
