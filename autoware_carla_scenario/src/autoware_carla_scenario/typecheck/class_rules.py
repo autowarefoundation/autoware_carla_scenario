@@ -14,7 +14,8 @@ Python raises ``AttributeError``.  Two ways an author gets there:
   the framework package, whose ``__init__`` (as written, or the one
   ``@dataclass`` generates) assigns an attribute of ``self``.  One whose
   ``__init__`` assigns nothing is left alone, as is a class deriving from no
-  framework class.  The base counts as called when the ``__init__`` names
+  framework class, and so is an ``__init__`` that itself assigns every
+  attribute the base's would.  The base counts as called when the ``__init__`` names
   ``__init__`` anywhere in its body, on any path (``super().__init__(...)``,
   ``super(Cls, self).__init__(...)``, ``Base.__init__(self, ...)``, inside
   an ``if`` or a ``try``), or calls a method of ``self`` while a method of the
@@ -226,10 +227,11 @@ def skipped_base_inits(
 
     problems: list[ClassProblem] = []
     for _name, path, node, cls in _classes(modules):
+        # The last one: Python binds it, an earlier one is an @overload stub.
         init = next(
             (
                 stmt
-                for stmt in node.body
+                for stmt in reversed(node.body)
                 if isinstance(stmt, _Function) and stmt.name == "__init__"
             ),
             None,
@@ -238,24 +240,34 @@ def skipped_base_inits(
             continue
         if _calls_base_init(node, init):
             continue
-        for base in cls.__mro__[1:]:
-            if "__init__" not in base.__dict__ or not framework(base):
-                continue
-            assigned = _init_assigns(base)
-            if not assigned:
-                continue
-            shown = ", ".join(assigned[:4]) + (", ..." if len(assigned) > 4 else "")
-            problems.append(
-                ClassProblem(
-                    path,
-                    init.lineno,
-                    f"{node.name}.__init__ never calls {base.__name__}.__init__, "
-                    f"which sets {shown} on self: Codon zero-initialises them, "
-                    "and Python raises AttributeError where the framework reads "
-                    f"them; call super().__init__(...) in {node.name}.__init__",
-                )
+        me = _self_name(init)
+        own = {
+            attr
+            for obj, attr in _stored_attributes(init)
+            if isinstance(obj, ast.Name) and obj.id == me
+        }
+        skipped = [
+            (base, assigned)
+            for base in cls.__mro__[1:]
+            if "__init__" in base.__dict__ and framework(base)
+            for assigned in [_init_assigns(base)]
+            if assigned
+        ]
+        # One that sets all the bases would itself is left alone.
+        if not skipped or own.issuperset(a for _b, names in skipped for a in names):
+            continue
+        base, assigned = skipped[0]
+        shown = ", ".join(assigned[:4]) + (", ..." if len(assigned) > 4 else "")
+        problems.append(
+            ClassProblem(
+                path,
+                init.lineno,
+                f"{node.name}.__init__ never calls {base.__name__}.__init__, "
+                f"which sets {shown} on self: Codon zero-initialises them, "
+                "and Python raises AttributeError where the framework reads "
+                f"them; call super().__init__(...) in {node.name}.__init__",
             )
-            break
+        )
     return problems
 
 

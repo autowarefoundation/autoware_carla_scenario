@@ -1085,14 +1085,16 @@ scenario has to do itself:
   The bases are the framework's classes after yours in the method resolution
   order whose own `__init__` (written, or the one `@dataclass` generates)
   assigns an attribute of `self`; a base whose `__init__` assigns nothing,
-  and a class with no framework base, are left alone. So is a subclass of
+  a class with no framework base, and an `__init__` that itself assigns
+  every attribute those bases' would, are left alone. So is a subclass of
   your own condition that defines no `__init__`; one that defines its own
   and does not call `super().__init__` skips the framework's too, through
   yours, and is refused. Any mention of `__init__` in the body counts as the
   call, on any path (`super().__init__(...)`, `super(Cls, self).__init__(...)`,
   `BaseCondition.__init__(self, ...)`, inside an `if` or a `try`), as does a
   call of a method of `self` when a method of the class calls the base's
-  `__init__`: the check does not follow paths.
+  `__init__`: the check does not follow paths. With `@overload` stubs, the
+  last `def __init__`, the one Python binds, is the one checked.
 - **Pass numbers of the declared type.** An `int` is accepted for a `float`,
   but not inside a container: a `list[float]` parameter wants `[1.0, 2.0]`.
   YAML values are converted for you.

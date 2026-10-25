@@ -146,6 +146,44 @@ def test_a_helper_calling_the_base_init_counts(tmp_path: Path) -> None:
     assert skipped_base_inits(modules) == []
 
 
+def test_an_init_setting_all_the_base_would_is_left_alone(tmp_path: Path) -> None:
+    # Python never reads past what it assigns itself; one it leaves out is
+    # still refused.
+    every = 'self.label = "late"\nself._last_satisfied = False\n'
+    every += 'self._last_message = ""\nself._after = after\n'
+    modules, _ = _modules(tmp_path, _late(every))
+    assert skipped_base_inits(modules) == []
+    modules, _ = _modules(tmp_path, _late('self.label = "late"\n'))
+    assert "never calls BaseCondition.__init__" in (
+        _only(skipped_base_inits(modules)).message
+    )
+
+
+def test_the_init_python_binds_is_the_one_checked(tmp_path: Path) -> None:
+    # The @overload stubs before it call nothing; the last one is checked,
+    # and refused at its own line.
+    stubs = """
+    from typing import overload
+
+
+    class LateCondition(BaseCondition):
+        @overload
+        def __init__(self, after: float) -> None: ...
+        @overload
+        def __init__(self, after: int) -> None: ...
+        def __init__(self, after: float) -> None:  # the one
+            {init}
+
+        def check(self, world: carla.World, elapsed: float) -> ScenarioResult | None:
+            return None
+    """
+    calls = stubs.replace("{init}", 'super().__init__("late")')
+    modules, _ = _modules(tmp_path, calls)
+    assert skipped_base_inits(modules) == []
+    modules, path = _modules(tmp_path, stubs.replace("{init}", "pass"))
+    assert _only(skipped_base_inits(modules)).line == _line_of(path, "# the one")
+
+
 def test_a_scenario_init_without_super_is_refused(tmp_path: Path) -> None:
     body = """
     class CaseScenario(BaseScenario):
