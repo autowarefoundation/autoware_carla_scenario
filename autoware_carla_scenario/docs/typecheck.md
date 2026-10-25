@@ -166,6 +166,14 @@ scenario.setup()
 scenario.is_done()
 ```
 
+A value for a `bool`, `int`, `float` or `str` field, at the top level as in a
+nested dataclass, is first passed to a function that takes that type only,
+on a line of its own (#598): Codon converts any value with `__bool__` that is
+assigned to a `bool` field, so `scenario.enabled=no` (which Hydra, like a
+quoted `"false"` in YAML, reads as the str `"no"`) would otherwise pass, and
+the feature would be on. It is refused at `scenario.enabled`, whether the
+field has a default or not. An int for a `float` field still passes.
+
 Codon checks a function only when something calls it. The program checks
 everything `setup()` and `is_done()` reach: the calls into the framework, the
 scenario's own helpers, and, through `register_pass_condition()` and the
@@ -1719,6 +1727,16 @@ this list, the check's additions and the tests in step:
   attribute (`self.area = 3` is legal in Python, not on a `property`). A name
   the module binds again (a parameter `reduce`, a `def cache`) is left alone.
   The names are handled where the module imports them, not in a function.
+- A decorator the check drops (`lru_cache`, `cache`, `@abstractmethod`,
+  `@override`) may sit under one it keeps (`@property`, `@staticmethod`,
+  `@classmethod`), as in `@property` over `@abstractmethod` (#595). Codon's
+  parser refuses a blank or comment-only line inside a decorator list, so
+  the check removes the dropped decorators' lines, and any comment or blank
+  line, between the first kept decorator and the `def`, and moves the kept
+  decorators down to the `def`: the `def` and every line after it keep
+  their line numbers, and an error on a kept decorator is reported at the
+  line it was written on. A decorator is its whole logical line, from its
+  `@` to its end (`@(` / `name` / `)` on three lines).
 - The initial value of `reduce` must have the type of the accumulator the
   function returns: `reduce(add, [1.5, 2.5], 0)` is refused (write `0.0`).
 - `itertools.pairwise` is added to Codon's `itertools`, and

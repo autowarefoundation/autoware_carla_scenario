@@ -168,8 +168,11 @@ annotation, which Python ignores, so adding it changes nothing at run time.
 from __future__ import annotations
 
 import ast
+import bisect
 import builtins
 import functools
+import io
+import tokenize
 from collections.abc import Callable, Collection, Iterator, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -442,6 +445,14 @@ class _Edits:
     starts: list[int] = field(default_factory=list)
     edits: list[tuple[int, int, str]] = field(default_factory=list)
     data: bytes = b""
+    #: The positions of the ``@`` tokens and the lines of the NEWLINE tokens
+    #: (logical line ends) of :attr:`data`, tokenized on first use.
+    _tokens: tuple[list[tuple[int, int]], list[int]] | None = field(
+        default=None, repr=False
+    )
+    #: Lines :meth:`drop_decorators` moved: their line after :meth:`apply`
+    #: -> their line before.
+    moves: dict[int, int] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         self.data = b"".join(self.lines)
@@ -474,6 +485,79 @@ class _Edits:
         exactly this span (the first one made on a span otherwise wins)."""
         self.edits = [e for e in self.edits if (e[0], e[1]) != (start, end)]
         self.replace(start, end, text)
+
+    def decorator_lines(self, decorator: ast.expr) -> range:
+        """The lines of *decorator*'s logical line, from its ``@`` to its end.
+
+        Wider than the expression's own lines when the ``@`` or a bracket
+        is on another line (``@(`` / ``deco`` / ``)``, ``@`` and a
+        backslash).
+        """
+        if self._tokens is None:
+            ats: list[tuple[int, int]] = []
+            ends: list[int] = []
+            for token in tokenize.tokenize(io.BytesIO(self.data).readline):
+                if token.type == tokenize.OP and token.string == "@":
+                    ats.append(token.start)
+                elif token.type == tokenize.NEWLINE:
+                    ends.append(token.start[0])
+            self._tokens = (ats, ends)
+        ats, ends = self._tokens
+        # Only brackets, blanks and line continuations come between a
+        # decorator's `@` and its expression: the last `@` before it is its.
+        at = bisect.bisect_left(ats, (decorator.lineno, decorator.col_offset))
+        first = ats[at - 1][0] if at else decorator.lineno
+        last = decorator.end_lineno or decorator.lineno
+        end = bisect.bisect_left(ends, last)
+        return range(first, (ends[end] if end < len(ends) else last) + 1)
+
+    def drop_decorators(
+        self,
+        node: ast.FunctionDef | ast.AsyncFunctionDef,
+        dropped: Collection[ast.expr],
+    ) -> None:
+        """Remove the *dropped* ones of *node*'s decorators (#595).
+
+        Codon's parser refuses a blank or comment-only line inside a
+        decorator list, which blanking a decorator stacked under a kept one
+        leaves.  A dropped decorator above every kept one is blanked (blank
+        lines before the list are fine).  Below the first kept decorator,
+        every line that is not a kept decorator's (a dropped decorator's, a
+        comment, a blank line) is removed, and as many blank lines go above
+        the first kept decorator: the kept decorators move down, contiguous
+        with the ``def``, and the ``def`` and every line after it stay on
+        their lines.  :attr:`moves` records the moved lines, for the
+        origin of each line (:meth:`line_origin`).
+        """
+        ids = {id(d) for d in dropped}
+        kept = [d for d in node.decorator_list if id(d) not in ids]
+        if not node.decorator_list:
+            return
+        first = self.decorator_lines(kept[0])[0] if kept else node.lineno
+        for decorator in node.decorator_list:
+            lines = self.decorator_lines(decorator)
+            if id(decorator) in ids and lines[0] < first:
+                # Up to the line break of its last line: blank lines.
+                start = self.starts[lines[0] - 1]
+                self.replace(start, self.starts[lines[-1]] - 1, "")
+        if not kept:
+            return
+        keep: set[int] = set()
+        for decorator in kept:
+            keep.update(self.decorator_lines(decorator))
+        removed = [line for line in range(first, node.lineno) if line not in keep]
+        for line in removed:
+            self.edits.append((self.starts[line - 1], self.starts[line], ""))
+        if removed:
+            at = self.starts[first - 1]
+            self.edits.append((at, at, "\n" * len(removed)))
+            # The blank lines, then the kept decorators.
+            for line, was in enumerate([*removed, *sorted(keep)], start=first):
+                self.moves[line] = was
+
+    def line_origin(self) -> list[int]:
+        """For each line after :meth:`apply`, the line it comes from."""
+        return [self.moves.get(line, line) for line in range(1, len(self.lines) + 1)]
 
     def apply(self) -> str:
         data = self.data
@@ -1801,6 +1885,7 @@ class _Rewriter(ShadowScopes):
             and bool([*node.args.posonlyargs, *node.args.args])
             and any(_dotted(d) == "classmethod" for d in node.decorator_list)
         )
+        dropped: list[ast.expr] = []
         for decorator in node.decorator_list:
             wrapped = self._functools_name(
                 decorator.func if isinstance(decorator, ast.Call) else decorator
@@ -1810,19 +1895,16 @@ class _Rewriter(ShadowScopes):
             elif wrapped == "cached_property":
                 # Computed once, read as an attribute: a property types the same.
                 self.edits.replace(*self.edits.node_span(decorator), "property")
-            elif wrapped in _FUNCTOOLS_DROPPED:
-                start, end = self.edits.node_span(decorator)
-                # Keep the lines of a decorator broken over several.
-                lines = "\n" * self.edits.text(start, end).count("\n")
-                self.edits.replace(start - 1, end, lines)
             elif (
-                _dotted(decorator) in _DROPPED_FUNCTION_DECORATORS
+                wrapped in _FUNCTOOLS_DROPPED
+                or _dotted(decorator) in _DROPPED_FUNCTION_DECORATORS
                 or _dotted(decorator) in self._dropped_decorators
             ):
-                start, end = self.edits.node_span(decorator)
-                self.edits.replace(start - 1, end, "")  # with its "@"
+                dropped.append(decorator)
             else:
                 self.visit(decorator)
+        # The kept ones stay contiguous with the `def` (#595).
+        self.edits.drop_decorators(node, dropped)
         if classmethod_ and self._class_name is not None:
             self._rewrite_classmethod(node, self._class_name)
         self._rewrite_defaults(node.args, node.body)
@@ -3168,15 +3250,16 @@ def transform_source_lines(
 
     # Type-only names, stored exceptions, operator getters (#512-#517): before
     # the class-body lambdas, which hoist the lambdas it writes.
-    from .typing_rewrites import copy_dunders, typing_rewrites
+    from .typing_rewrites import copy_dunders, typing_rewrites_lines
 
-    source = typing_rewrites(source)
+    # Its decorators moved down to their `def` (#595) map to their lines.
+    source, typed = typing_rewrites_lines(source)
     # Class-body lambdas and method defaults become functions first, so the
     # rewrites see the function (#482); its extra lines map to their origin.
     source, early = class_body_lambdas(source)
     source, ordering = python_rewrites(source)
     source, origin = split_tuple_excepts(source)
-    origin = [early[line - 1] for line in origin]
+    origin = [typed[early[line - 1] - 1] for line in origin]
     source, origin = tuple_named_tuples(source, origin)
     source, origin = hoist_class_bodies(
         source,
@@ -3204,6 +3287,8 @@ def transform_source_lines(
     enum_iteration(tree, edits, own | (model_enum_names() - other))
     repeated_imports(tree, edits)
     lower_replace_calls(tree, edits)
+    # The decorators moved down to their `def` (#595).
+    origin = [origin[line - 1] for line in edits.line_origin()]
     lines = {
         node.name: origin[node.lineno - 1]
         for node in tree.body
