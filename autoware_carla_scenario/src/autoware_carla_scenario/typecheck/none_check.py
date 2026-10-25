@@ -73,6 +73,26 @@ literal is kept only for an enum of the modules whose bases are only ``Enum``
 or ``Flag``, and not for two members of one enum (:func:`_is_doubtful_enum_literal`).
 The framework and the template produce none.  ``--strict-equality`` adds no other error.
 
+A sixth (#577): a contract the author declared with a type and then broke, which
+Python mostly does not enforce and Codon does not read.  Four kinds are kept,
+each matched on mypy's code *and* message and no other ``misc``, ``override``,
+``index`` or ``attr-defined`` error (Codon reports attribute errors itself):
+a ``Final`` name or attribute assigned again (:data:`FINAL`), a ``ClassVar``
+assigned through an instance (:data:`CLASS_VAR`), a method overriding the
+superclass's with an incompatible signature (:data:`OVERRIDE`; not the dunder
+methods, whose narrowed ``__eq__(self, other: Pt)`` is common and benign, and
+mypy's own ``# type: ignore[override]`` is honoured), and a ``Mapping``,
+``Sequence`` or ``AbstractSet`` mutated (:data:`READ_ONLY_ABC`; ``m[k] = v``,
+``del m[k]`` and the mutating methods only, so a stub gap or a typo is not one).
+
+Not kept, on purpose (#576): ``possibly-undefined`` (a name bound on one path
+only, ``UnboundLocalError`` in Python).  mypy's flow analysis cannot see that
+the branch that binds a name and the branch that reads it are the same
+condition (``if x is not None: v = ...`` and later ``if x is not None: use(v)``),
+nor that a loop over a non-empty constant runs; run over the framework's 313
+modules it reports 15 times, 13 of them false.  Fixing a false report means
+restructuring correct code, so the code is not enabled.
+
 mypy runs as its own process (``python -m mypy``), with no configuration file
 (the scenario package's own mypy settings do not apply), following imports
 silently: it reads the framework and the scenario package's other modules for
@@ -124,6 +144,10 @@ __all__ = [
     "FROZEN",
     "BYTES_STR",
     "ENUM_EQ",
+    "FINAL",
+    "CLASS_VAR",
+    "OVERRIDE",
+    "READ_ONLY_ABC",
     "FrameworkUnion",
     "find_none_misuses",
     "frozen_dataclasses",
@@ -132,6 +156,7 @@ __all__ = [
     "is_union_misuse",
     "is_bytes_str_mix",
     "is_equality_overlap",
+    "contract_kind",
     "run_none_check",
 ]
 
@@ -166,6 +191,44 @@ FROZEN = "frozen"
 BYTES_STR = "bytes-str"
 #: :attr:`NoneFinding.kind`: an enum compared with a type it never equals (#575).
 ENUM_EQ = "enum-eq"
+
+#: :attr:`NoneFinding.kind`: a ``Final`` name or attribute assigned again (#577).
+FINAL = "final"
+#: :attr:`NoneFinding.kind`: a ``ClassVar`` assigned through an instance (#577).
+CLASS_VAR = "class-var"
+#: :attr:`NoneFinding.kind`: a method incompatible with the one it overrides (#577).
+OVERRIDE = "override"
+#: :attr:`NoneFinding.kind`: a ``Mapping`` / ``Sequence`` / ``AbstractSet`` mutated (#577).
+READ_ONLY_ABC = "read-only-abc"
+
+#: ``Cannot assign to final name "X"`` / ``... final attribute "X"`` (``misc``).
+_FINAL_ASSIGNED = re.compile(
+    r'^Cannot assign to final (?:name|attribute) "(?P<name>\w+)"$'
+)
+#: ``Cannot assign to class variable "X" via instance`` (``misc``).
+_CLASS_VAR_VIA_INSTANCE = re.compile(
+    r'^Cannot assign to class variable "(?P<name>\w+)" via instance$'
+)
+#: What mypy says of a method that does not fit the superclass's (``override``).
+#: ``(?P<method>...)`` is the method; a dunder one is not kept (see the module's docstring).
+_OVERRIDE = re.compile(
+    r'^(?:Argument \d+ of "(?P<m1>\w+)" is incompatible with supertype "(?P<s1>[\w.]+)"'
+    r'|Return type ".*" of "(?P<m2>\w+)" incompatible with return type ".*" in supertype "(?P<s2>[\w.]+)"'
+    r'|Signature of "(?P<m3>\w+)" incompatible with supertype "(?P<s3>[\w.]+)")'
+)
+#: The read-only ABCs of the contract and what mutates each.
+_READ_ONLY_TARGET = re.compile(
+    r'^Unsupported target for indexed assignment \("(?:Mapping|Sequence)\[.*\]"\)$'
+)
+_MUTATORS = (
+    "append|extend|insert|pop|remove|sort|reverse|clear|update|setdefault|popitem"
+    "|add|discard|difference_update|intersection_update|symmetric_difference_update"
+    "|__delitem__"
+)
+_READ_ONLY_MUTATED = re.compile(
+    r'^"(?P<abc>Mapping|Sequence|AbstractSet)\[.*\]" has no attribute '
+    rf'"(?P<attr>{_MUTATORS})"(?:;|$)'
+)
 
 #: The mypy error codes ``bytes`` and ``str`` mixed is reported with (#574).
 BYTES_STR_CODES = frozenset(
@@ -531,6 +594,35 @@ def framework_union_of(type_text: str) -> FrameworkUnion | None:
     found = [u for u in framework_unions() if members <= u.members]
     found.sort(key=lambda u: ("." in u.name, len(u.members)))
     return found[0] if found else None
+
+
+def contract_kind(code: str, message: str) -> str | None:
+    """The kind of contract violation (#577) mypy's error *message* (of *code*)
+    reports, or ``None`` when it is none of them.
+
+    Both the code and the message must fit, so no other ``misc``,
+    ``override``, ``index`` or ``attr-defined`` error is admitted.
+    """
+    if code == "misc":
+        if _FINAL_ASSIGNED.match(message):
+            return FINAL
+        if _CLASS_VAR_VIA_INSTANCE.match(message):
+            return CLASS_VAR
+    elif code == "override":
+        found = _OVERRIDE.match(message)
+        if found is not None:
+            method = found["m1"] or found["m2"] or found["m3"]
+            supertype = found["s1"] or found["s2"] or found["s3"]
+            if not (method.startswith("__") and method.endswith("__")) and (
+                supertype.rpartition(".")[2] != "object"
+            ):
+                return OVERRIDE
+    elif code == "index":
+        if _READ_ONLY_TARGET.match(message):
+            return READ_ONLY_ABC
+    elif code == "attr-defined" and _READ_ONLY_MUTATED.match(message):
+        return READ_ONLY_ABC
+    return None
 
 
 def is_union_misuse(code: str, message: str) -> bool:
@@ -931,6 +1023,8 @@ def run_none_check(paths: list[Path], timeout: float = 600.0) -> list[NoneFindin
             and ro["cls"].rpartition(".")[2] in frozen
         ):
             kind = FROZEN
+        elif (contract := contract_kind(code, match["message"])) is not None:
+            kind = contract
         else:
             continue
         if code == "assignment" and _DECLARATION.search(match["message"]):
@@ -945,5 +1039,15 @@ def run_none_check(paths: list[Path], timeout: float = 600.0) -> list[NoneFindin
             code,
             kind=kind,
         )
+        # mypy reports an override once per superclass that defines the
+        # method; the nearest one (reported first) is the one to fix.
+        if kind == OVERRIDE and any(
+            f.kind == OVERRIDE
+            and (f.path, f.line, f.column)
+            == (current.path, current.line, current.column)
+            for f in findings
+        ):
+            current = None  # nor its notes, which repeat the first one's
+            continue
         findings.append(current)
     return _merged_items(findings)
