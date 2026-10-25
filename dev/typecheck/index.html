@@ -2287,6 +2287,34 @@ frozen assignment). The decorator may be <code>@dataclass(frozen=True, ...)</cod
 mypy, as the None check does: without it the check warns <code>the None check did
 not run</code> and a frozen assignment is not reported. <code>setattr(p, "x", 1)</code> is not
 caught.</p>
+<p><strong><code>bytes</code> and <code>str</code> do not mix</strong> (#574). Codon's <code>bytes</code> is a <code>str</code>, so
+<code>b"x" + "y"</code>, <code>"sent " + name.encode()</code>, a <code>bytes</code> returned for a <code>-&gt; str</code>,
+passed to a <code>str</code> parameter or assigned to a <code>str</code>, <code>"x" in raw</code> and
+<code>raw == "ab"</code> compile, and Python raises <code>TypeError</code> (or the comparison is
+always <code>False</code>). They are refused with mypy's verdict, only where the offending
+pair is exactly <code>bytes</code> and <code>str</code>: <code>bytes and str do not mix in Python: decode
+with .decode() / encode with .encode()</code>. A <code>str | bytes</code> union, a <code>bytearray</code>
+and every other incompatible type are left alone, and <code>b + b</code>, <code>s + s</code> and
+<code>.encode()</code> used as bytes stay valid.</p>
+<p><strong>A comparison that is always <code>False</code> is refused</strong> (#575). The None check runs
+mypy with <code>--strict-equality</code> and keeps its <code>comparison-overlap</code> findings: an
+<code>Enum</code> member compared with its raw value (<code>Color.RED == "red"</code>, <code>mode == 1</code>,
+<code>mode in (1, 2)</code>) or with a member of another enum is <code>False</code> in Python, and
+Codon compiles it. The advice is <code>an Enum member never equals its raw value:
+compare with Color.RED, or use Color.RED.value</code>. Only the findings with an
+enum as an operand are kept, not every <code>comparison-overlap</code>: mypy also reports
+two different literals (<code>MODE: Final = 1</code> and <code>if MODE == 2</code>), a deliberate
+switch. The enum is found among the classes of the scenario's own modules (an
+enum imported from elsewhere is not recognised, so its non-literal comparisons
+are missed). mypy skips a class that defines <code>__eq__</code>, and <code>IntEnum</code>, <code>StrEnum</code> and <code>(str, Enum)</code> overlap their raw
+value in Python as well, so <code>Level.LOW == 1</code> and <code>Phase.GO == "go"</code> are valid.
+<code>Color.RED.value == "red"</code> is the valid spelling. A member written out as a
+literal (<code>Level.LOW == 1</code>) is judged by mypy on identity, so it is kept only for
+a plain <code>Enum</code> / <code>Flag</code> defined in the scenario's own modules, and two members
+of one enum (<code>Color.RED != Color.BLUE</code>) are not a comparison with a raw value. The flag adds no other
+error, so the None check's other findings are unchanged; the framework's
+modules and the built-in scenarios have none of these comparisons. Like the
+rest of this section it rests on mypy.</p>
 <p><strong>The CARLA API's <code>Optional</code> results are checked too</strong> (#267).
 typesafe_carla's CPython package is a prebuilt extension with no <code>.pyi</code> and
 no <code>py.typed</code>, so mypy alone reads <code>typesafe_carla.carla</code> as <code>Any</code>. The
@@ -5691,7 +5719,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 25, 2026 07:18:36 UTC"><span class="timeago" datetime="2026-10-25T07:18:36+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 25, 2026 07:18:36 UTC">2026-10-25</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 25, 2026 12:43:48 UTC"><span class="timeago" datetime="2026-10-25T12:43:48+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 25, 2026 12:43:48 UTC">2026-10-25</span>
   </span>
 
     
