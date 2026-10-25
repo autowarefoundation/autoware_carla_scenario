@@ -10060,6 +10060,172 @@ def test_bytes_str_and_enum_look_alikes_compile(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Typing contracts broken: Final, ClassVar, override, read-only ABCs (#577)
+# ---------------------------------------------------------------------------
+
+_CONTRACT_EXTRA = """
+
+MAX_SPEED: Final = 30.0
+
+
+class Counter:
+    total: ClassVar[int] = 0
+    free: int = 0
+    LIMIT: Final = 5.0
+
+    def bump(self) -> None:
+        BUMP
+
+
+class Sub(CaseScenario):
+    SUB_BODY
+
+
+def total_of(items: Sequence[float], table: Mapping[str, int]) -> float:
+    ordered = sorted(items)
+    own = dict(table)
+    own["k"] = 1
+    return ordered[0] + own["k"]
+
+"""
+_CONTRACT_HEADER = _HEADER.replace(
+    "import logging\n",
+    "import logging\nfrom typing import ClassVar, Final, Mapping, Sequence\n",
+    1,
+)
+
+
+def _contract_case(
+    tmp_path: Path,
+    setup: str = "pass\n",
+    bump: str = "pass",
+    sub: str = "pass",
+    extra: str = "",
+) -> tuple[Any, Any, Path]:
+    return _write_case(
+        tmp_path,
+        setup,
+        extra=_CONTRACT_EXTRA.replace("BUMP", bump).replace("SUB_BODY", sub) + extra,
+        header=_CONTRACT_HEADER,
+    )
+
+
+def test_final_classvar_override_and_mapping_idioms_compile(tmp_path: Path) -> None:
+    # Reading a Final, a ClassVar assigned through the class, a hook
+    # overridden with a compatible signature (an extra parameter with a
+    # default, a wider argument), and a copy of a Mapping that is mutated.
+    scenario, config, _ = _contract_case(
+        tmp_path,
+        """
+        Counter.total += 1
+        Counter().free += 1
+        logger.info("%s %s", MAX_SPEED, total_of([2.0, 1.0], {"a": 1}))
+        """,
+        bump="Counter.total += 1\n        self.free += 1",
+        sub=(
+            "def is_done(self, tolerance: float = 0.0) -> bool:\n"
+            "        return False\n\n"
+            "    @property\n"
+            "    def importance_sampling_weight(self) -> float:\n"
+            "        return 1.0"
+        ),
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "global MAX_SPEED\nMAX_SPEED = 40.0",
+        "speed: Final = 10.0\nspeed = 20.0",
+        "Counter.LIMIT = 1.0",
+        "Counter().LIMIT += 1.0",
+    ],
+    ids=["module", "local", "attribute-of-class", "attribute-augmented"],
+)
+def test_a_final_assigned_again_is_refused(tmp_path: Path, statement: str) -> None:
+    scenario, config, path = _contract_case(tmp_path, f"{statement}\n")
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "a name declared Final is bound once" in error.message, error.format()
+    assert error.path == str(path)
+    assert error.line == _line_of(path, statement.splitlines()[-1])
+
+
+def test_a_final_assigned_through_self_is_refused(tmp_path: Path) -> None:
+    scenario, config, path = _contract_case(tmp_path, bump="self.LIMIT = 40.0")
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "a name declared Final is bound once" in error.message, error.format()
+    assert error.line == _line_of(path, "self.LIMIT = 40.0")
+
+
+@pytest.mark.parametrize(
+    "statement",
+    ["Counter().total = 5", "c = Counter()\nc.total += 1"],
+    ids=["assign", "augmented"],
+)
+def test_a_classvar_assigned_through_an_instance_is_refused(
+    tmp_path: Path, statement: str
+) -> None:
+    scenario, config, path = _contract_case(tmp_path, f"{statement}\n")
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "a ClassVar is shared by the class" in error.message, error.format()
+    assert error.line == _line_of(path, statement.splitlines()[-1])
+
+
+@pytest.mark.parametrize(
+    "sub",
+    [
+        "def is_done(self, strict: bool) -> bool:\n        return strict",
+        "def is_done(self) -> str:\n        return ''",
+        "def setup(self, mode: str) -> None:\n        pass",
+    ],
+    ids=["required-parameter", "return-type", "setup-parameter"],
+)
+def test_a_framework_hook_overridden_incompatibly_is_refused(
+    tmp_path: Path, sub: str
+) -> None:
+    scenario, config, path = _contract_case(tmp_path, sub=sub)
+    result = typecheck_scenario(scenario, config)
+    errors = [d for d in result.diagnostics if "the override must accept" in d.message]
+    assert len(errors) == 1, result.format()
+    assert "# type: ignore[override]" in errors[0].message
+    assert errors[0].path == str(path)
+    assert errors[0].line == _line_of(path, sub.splitlines()[0])
+
+
+def test_an_override_with_type_ignore_compiles(tmp_path: Path) -> None:
+    scenario, config, _ = _contract_case(
+        tmp_path,
+        sub=(
+            "def is_done(self, strict: bool) -> bool:  # type: ignore[override]\n"
+            "        return strict"
+        ),
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        "def f(m: Mapping[str, int]) -> None:\n    m['k'] = 1",
+        "def f(s: Sequence[int]) -> None:\n    s.append(3)",
+        "def f(s: Sequence[float]) -> None:\n    s.sort()",
+        "def f(m: Mapping[str, int]) -> None:\n    m.update({'a': 2})",
+    ],
+    ids=["index", "append", "sort", "update"],
+)
+def test_mutating_a_mapping_or_sequence_parameter_is_refused(
+    tmp_path: Path, extra: str
+) -> None:
+    scenario, config, path = _contract_case(tmp_path, extra="\n\n" + extra + "\n")
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "is read-only by its annotation" in error.message, error.format()
+    assert error.line == _line_of(path, extra.splitlines()[-1].strip())
+
+
+# ---------------------------------------------------------------------------
 # An isinstance branch the check does not compile warns (#565)
 # ---------------------------------------------------------------------------
 

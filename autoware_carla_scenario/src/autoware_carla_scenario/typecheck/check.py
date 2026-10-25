@@ -83,8 +83,12 @@ from .library import (
 from .dead_isinstance import dead_isinstances
 from .none_check import (
     BYTES_STR,
+    CLASS_VAR,
     ENUM_EQ,
+    FINAL,
     FROZEN,
+    OVERRIDE,
+    READ_ONLY_ABC,
     NoneCheckSkipped,
     NoneFinding,
     none_given,
@@ -2514,6 +2518,43 @@ def _none_check_advice(finding: NoneFinding) -> str:
             f"{finding.message}: an Enum member never equals its raw value: "
             f"compare with Color.RED, or use Color.RED.value; Python evaluates "
             f"this comparison to False (mypy: {finding.code})"
+        )
+    if finding.kind == FINAL:
+        return (
+            f"{finding.message}: a name declared Final is bound once; drop the "
+            f"assignment, bind a new name, or drop Final from the declaration. "
+            f"Python does not stop it and Codon ignores Final, so this runs "
+            f"with the value the declaration promised never to change "
+            f"(mypy: {finding.code})"
+        )
+    if finding.kind == CLASS_VAR:
+        return (
+            f"{finding.message}: a ClassVar is shared by the class; assign it "
+            f"through the class (ClassName.name = ...), or declare it without "
+            f"ClassVar to make it an instance field. Python creates a "
+            f"shadowing instance attribute here and Codon treats the "
+            f"annotated name as an instance field, so what runs can differ "
+            f"(mypy: {finding.code})"
+        )
+    if finding.kind == OVERRIDE:
+        return (
+            f"{finding.message}: the override must accept what the overridden "
+            f"method accepts and return what it returns, as the caller (the "
+            f"framework, for a hook of BaseScenario) calls it with the "
+            f"superclass's signature; Python fails on the call that does not "
+            f"fit, and Codon does not compare the two. Match the "
+            f"superclass's signature (extra parameters need a default), or "
+            f"add `# type: ignore[override]` if the narrowing is intended "
+            f"(mypy: {finding.code})"
+        )
+    if finding.kind == READ_ONLY_ABC:
+        return (
+            f"{finding.message}: a Mapping / Sequence / AbstractSet parameter "
+            f"is read-only by its annotation; copy it first (dict(x), "
+            f"list(x), set(x)) and mutate the copy, or annotate it with the "
+            f"mutable type (dict, list, set). Python fails here when the "
+            f"caller passes a tuple or a MappingProxyType, and Codon does not "
+            f"enforce the annotation (mypy: {finding.code})"
         )
     union = finding.union
     if union is None:

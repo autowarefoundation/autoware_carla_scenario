@@ -1248,3 +1248,269 @@ def test_strict_equality_changes_no_other_finding(tmp_path: Path) -> None:
     module = tmp_path / "plain_mod.py"
     module.write_text(_MODULE, encoding="utf-8")
     assert {f.kind for f in run_none_check([module])} <= {"none", "union"}
+
+
+# ---------------------------------------------------------------------------
+# Typing contracts broken: Final, ClassVar, override, read-only ABCs (#577)
+# ---------------------------------------------------------------------------
+
+_CONTRACT_MODULE = """
+from __future__ import annotations
+
+from typing import AbstractSet, Any, ClassVar, Final, Mapping, Sequence
+
+MAX_SPEED: Final = 30.0
+
+
+class Cfg:
+    LIMIT: Final = 30.0
+    count: ClassVar[int] = 0
+    free: int = 0
+
+    def bump(self) -> None:
+        self.LIMIT = 40.0
+        self.count += 1
+        self.free += 1
+
+
+class Base:
+    def f(self, x: int) -> int:
+        return x
+
+    def g(self, x: int) -> int:
+        return x
+
+    def h(self, x: int) -> int:
+        return x
+
+    def i(self, x: int) -> int:
+        return x
+
+    def j(self, x: int) -> int:
+        return x
+
+    def __eq__(self, other: object) -> bool:
+        return True
+
+
+class Narrow(Base):
+    def f(self, x: str) -> int:
+        return len(x)
+
+    def g(self, x: int) -> str:
+        return ""
+
+    def h(self, x: int, y: int) -> int:
+        return x
+
+    def __eq__(self, other: Narrow) -> bool:
+        return True
+
+
+class Fine(Base):
+    def f(self, x: int, y: int = 0) -> int:
+        return x
+
+    def g(self, x: object) -> bool:
+        return True
+
+    def h(self, x: int) -> int:
+        return x
+
+    def i(self, x: str) -> int:  # type: ignore[override]
+        return len(x)
+
+
+def final_reassigned() -> None:
+    global MAX_SPEED
+    MAX_SPEED = 40.0
+    speed: Final = 10.0
+    speed = 20.0
+    Cfg.LIMIT = 3.0
+
+
+def class_var_via_instance() -> None:
+    c = Cfg()
+    c.count = 5
+    Cfg.count = 6
+    c.free = 1
+
+
+def read_only(
+    m: Mapping[str, int], s: Sequence[int], a: AbstractSet[int], anything: Any
+) -> None:
+    m["k"] = 1
+    del m["k"]
+    s[0] = 2
+    s.append(3)
+    s.sort()
+    m.update({})
+    m.pop("k")
+    a.add(1)
+    a.discard(1)
+
+
+def typos_and_stub_gaps(m: Mapping[str, int], s: Sequence[int], ok: dict[str, int]) -> None:
+    s.nope()
+    m.nope
+    ok["k"] = 1
+    ok.update({})
+    ls = list(s)
+    ls.append(1)
+    ls.sort()
+    copy = dict(m)
+    copy["k"] = 2
+    n: int = "wrong"
+"""
+
+
+def _contract_findings(tmp_path: Path) -> list[none_check.NoneFinding]:
+    module = tmp_path / "contract_mod.py"
+    module.write_text(_CONTRACT_MODULE, encoding="utf-8")
+    return run_none_check([module])
+
+
+def _contract_found(findings: list[none_check.NoneFinding], kind: str) -> list[str]:
+    lines = _CONTRACT_MODULE.splitlines()
+    return [lines[f.line - 1].strip() for f in findings if f.kind == kind]
+
+
+def test_a_final_assigned_again_is_found(tmp_path: Path) -> None:
+    findings = _contract_findings(tmp_path)
+    assert _contract_found(findings, "final") == [
+        "self.LIMIT = 40.0",
+        "MAX_SPEED = 40.0",
+        "speed = 20.0",
+        "Cfg.LIMIT = 3.0",
+    ]
+    assert all(f.code == "misc" for f in findings if f.kind == "final")
+
+
+def test_a_class_variable_assigned_through_an_instance_is_found(
+    tmp_path: Path,
+) -> None:
+    findings = _contract_findings(tmp_path)
+    # Through the class (`Cfg.count = 6`) and a plain field are fine.
+    assert _contract_found(findings, "class-var") == ["self.count += 1", "c.count = 5"]
+
+
+def test_an_incompatible_override_is_found(tmp_path: Path) -> None:
+    findings = _contract_findings(tmp_path)
+    # A narrowed argument, a return type, an extra required parameter.  Not
+    # `Fine` (a wider argument, a default parameter, `type: ignore[override]`)
+    # and not the dunder `__eq__`, narrowed to `Narrow`.
+    assert _contract_found(findings, "override") == [
+        "def f(self, x: str) -> int:",
+        "def g(self, x: int) -> str:",
+        "def h(self, x: int, y: int) -> int:",
+    ]
+    assert all(f.code == "override" for f in findings if f.kind == "override")
+
+
+def test_mutating_a_read_only_abc_is_found(tmp_path: Path) -> None:
+    findings = _contract_findings(tmp_path)
+    assert _contract_found(findings, "read-only-abc") == [
+        'm["k"] = 1',
+        'del m["k"]',
+        "s[0] = 2",
+        "s.append(3)",
+        "s.sort()",
+        "m.update({})",
+        'm.pop("k")',
+        "a.add(1)",
+        "a.discard(1)",
+    ]
+
+
+def test_contract_findings_leave_valid_code_and_other_errors_alone(
+    tmp_path: Path,
+) -> None:
+    # A missing attribute of a Sequence / Mapping (a typo), a dict, a copy,
+    # and an unrelated mypy error: Codon's, or no business of the check.
+    findings = _contract_findings(tmp_path)
+    lines = _CONTRACT_MODULE.splitlines()
+    start = next(
+        i for i, ln in enumerate(lines) if ln.startswith("def typos_and_stub_gaps(")
+    )
+    assert [f for f in findings if f.line > start] == []
+    assert {f.kind for f in findings} == {
+        "final",
+        "class-var",
+        "override",
+        "read-only-abc",
+    }
+
+
+@pytest.mark.parametrize(
+    ("code", "message", "expected"),
+    [
+        ("misc", 'Cannot assign to final name "X"', "final"),
+        ("misc", 'Cannot assign to final attribute "LIMIT"', "final"),
+        ("misc", 'Cannot assign to class variable "n" via instance', "class-var"),
+        (
+            "misc",
+            'Cannot override final attribute "x" (previously declared in base class "A")',
+            None,
+        ),
+        ("misc", 'Cannot determine type of "x"', None),
+        ("assignment", 'Cannot assign to final name "X"', None),
+        (
+            "override",
+            'Argument 1 of "f" is incompatible with supertype "A"; supertype defines the argument type as "int"',
+            "override",
+        ),
+        (
+            "override",
+            'Return type "str" of "g" incompatible with return type "int" in supertype "A"',
+            "override",
+        ),
+        ("override", 'Signature of "h" incompatible with supertype "A"', "override"),
+        (
+            "override",
+            'Argument 1 of "__eq__" is incompatible with supertype "A"; supertype defines the argument type as "object"',
+            None,
+        ),
+        (
+            "override",
+            'Argument 1 of "run" is incompatible with supertype "builtins.object"',
+            None,
+        ),
+        (
+            "override",
+            'Cannot override instance variable (previously declared on base class "A") with class variable',
+            None,
+        ),
+        (
+            "index",
+            'Unsupported target for indexed assignment ("Mapping[str, int]")',
+            "read-only-abc",
+        ),
+        (
+            "index",
+            'Unsupported target for indexed assignment ("Sequence[int]")',
+            "read-only-abc",
+        ),
+        ("index", 'Unsupported target for indexed assignment ("Foo")', None),
+        ("attr-defined", '"Sequence[int]" has no attribute "append"', "read-only-abc"),
+        (
+            "attr-defined",
+            '"Mapping[str, int]" has no attribute "update"',
+            "read-only-abc",
+        ),
+        ("attr-defined", '"AbstractSet[int]" has no attribute "add"', "read-only-abc"),
+        (
+            "attr-defined",
+            '"Sequence[int]" has no attribute "__delitem__"; maybe "__getitem__"?',
+            "read-only-abc",
+        ),
+        ("attr-defined", '"Sequence[int]" has no attribute "foo"', None),
+        ("attr-defined", '"list[int]" has no attribute "appendd"', None),
+        ("attr-defined", '"ndarray[Any, Any]" has no attribute "append"', None),
+        ("attr-defined", '"Foo" has no attribute "append"', None),
+        ("attr-defined", 'Module has no attribute "append"', None),
+    ],
+)
+def test_contract_kind_takes_the_exact_messages_only(
+    code: str, message: str, expected: str | None
+) -> None:
+    assert none_check.contract_kind(code, message) == expected
