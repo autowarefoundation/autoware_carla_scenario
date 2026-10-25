@@ -122,6 +122,7 @@ from .call_diagnostics import (
     is_internal_frame,
     plain_literal_types,
 )
+from .class_rules import skipped_base_inits, unassigned_attributes
 from .return_paths import return_problems
 from .typing_rewrites import TYPING_HINTS, typing_rewrite_refusals
 
@@ -2232,6 +2233,7 @@ def typecheck_scenario(
         refuse=lambda sources: [
             *_abstract_classes_built(sources, scenario_cls),
             *_returns_not_kept(sources),
+            *_class_problems(sources),
         ],
     )
     if built and built[0].build_error and result.skipped is None and not result.crashed:
@@ -2259,6 +2261,32 @@ def _returns_not_kept(sources: _Sources) -> list[Diagnostic]:
     return [
         Diagnostic(p.message, p.path, p.line, p.column)
         for p in return_problems(modules)
+    ]
+
+
+def _of_package(cls: type) -> bool:
+    return cls.__module__ == _PACKAGE or cls.__module__.startswith(_PACKAGE + ".")
+
+
+def _class_problems(sources: _Sources, *, library: bool = False) -> list[Diagnostic]:
+    """Each class of the collected modules Codon builds and Python does not
+    (:mod:`.class_rules`): an ``__init__`` that skips a framework base's
+    (#587) and an attribute declared at class level that nothing assigns
+    (#588).  The framework is the package outside the scenario's modules;
+    in the library check, the whole package."""
+    modules = {
+        name: (str(module.path), module.tree)
+        for name, module in sources.modules.items()
+    }
+    framework: Callable[[type], bool] | None = None
+    if library:
+        framework = _of_package
+    return [
+        Diagnostic(p.message, p.path, p.line)
+        for p in [
+            *skipped_base_inits(modules, framework=framework),
+            *unassigned_attributes(modules),
+        ]
     ]
 
 
@@ -3305,6 +3333,12 @@ def typecheck_library(
         )
     names = sorted([*names, *dependencies])
     _library_imports(sources, toolchain, codon_path)
+    for name in names:
+        try:
+            importlib.import_module(name)
+        except Exception:  # noqa: BLE001 - its classes are then left alone
+            logger.debug("%s does not import: its classes are not checked", name)
+    sources.problems += _class_problems(sources, library=True)
     files = _library_files(names, sources, every)
     driver = render_library_driver(names)
     key = _cache_key(
