@@ -380,6 +380,38 @@ error, so the None check's other findings are unchanged; the framework's
 modules and the built-in scenarios have none of these comparisons. Like the
 rest of this section it rests on mypy.
 
+**A string formatting Python fails on is refused** (#589). The None check
+keeps mypy's `str-format` findings of a `str.format` call or a `%` on a
+literal format string where Python raises at the call: a conversion the value
+does not take (`"{:d} km/h".format(speed)` for a `float` and `"{:.2f}".format(name)`
+for a `str` raise `ValueError`, `"%d km/h" % name` and `"%x" % speed` raise
+`TypeError`), too few or too many arguments (`"%s %s" % (name,)`,
+`"{} {}".format(name)`), a missing named field or mapping key, an unknown
+format character or conversion (`"%q"`, `"{!x}"`), a malformed spec
+(`"{:abc}"`, an unmatched `{`), and mixing automatic and manual field
+numbering. Codon formats with its own rules and compiles all of them. The
+advice is `Python raises ValueError, TypeError, IndexError or KeyError on this
+format string with these values (...); convert the value first (int(x),
+str(x)) or use "{}" / "%s"`. `"%d" % speed` (a `float`) and `"{:.2f}".format(n)`
+(an `int`) are valid, as in Python. A conversion the value does not take is
+kept only for a built-in type that fails for every value (`str`, `float`,
+`None`, `bytes`, `complex`, a `list`, ...): mypy does not count a class's
+`__index__` (`"%x" % obj` runs) or a `__getitem__` without `keys`
+(`"%(k)s" % obj` runs), and refuses `"{:.2f}"` of a `complex` or a
+`Fraction`, which run. Too many arguments is kept only for a `%` whose right
+operand is a tuple display or a constant: `"{}".format(a, b)` ignores the
+extra argument, and `"abc" % d` formats no key of a dict (or of a list, or
+bytes). An unknown spec is kept where the Python running the check refuses
+it (`"{:z.1f}"` runs on 3.11). Three more of mypy's `str-format` messages are
+not kept, because mypy gives them to valid code as well: `Numeric flags are
+only allowed for numeric types` (`"{:05}".format(name)` runs; `"{:+}".format(name)`
+does not, and the message does not say which flag), `Syntax error in format
+specifier` and the field-accessor ones (`"{0[my key]}".format(d)` and
+`"{0['k']}".format(d)` index `d` with `"my key"` and `"'k'"`). An f-string's
+spec (`f"{speed:d}"`) is not checked: mypy does not check it, and rewriting it
+into a `.format` call for mypy would move the columns mypy reports. Like the
+rest of this section it rests on mypy.
+
 **Typing contracts you declared must hold** (#577). Python mostly does not
 enforce these and Codon does not read them, so mypy's verdict is used, each
 kept only on its exact code and message (no other `misc`, `override`, `index`
@@ -1366,7 +1398,9 @@ Two things Python does that Codon 0.19 does not are filled in for you:
     appends `==` and `!=` (`eq=True`, the default), `<`, `<=`, `>` and `>=`
     (`order=True`) and `hash()` (`frozen=True`, or `unsafe_hash=True`) after
     the module, comparing the fields in order (a dataclass base's first;
-    `field(compare=False)`, `ClassVar` and `InitVar` are left out). A method
+    `field(compare=False)` and `ClassVar` are left out; `InitVar` and
+    `KW_ONLY` cannot be imported in the check, see "Standard library names
+    Codon lacks"). A method
     the class defines itself is kept. This holds for a dataclass whose bases
     are dataclasses of the same module (or none): one deriving from a class
     the check cannot see the fields of, such as a framework dataclass, gets
@@ -1436,6 +1470,7 @@ cannot express is refused at its line, with what to write instead.
 | `s.startswith((a, b))`, `s.endswith((a, b), start)` with the tuple written in the call (#439) | `(s.startswith(a) or s.startswith(b))`; a receiver or item that is not a name, attribute or constant is bound once by a lambda | the tuple is held in a name (`s.startswith(PREFIXES)`), is empty, or the call has `*args` / keywords; each item is still checked as a `str` |
 | `format(x, spec)`, `format(x)` (#439) | `x.__format__(spec)`, `str(x)` | `format` is bound where the call is: by the module (an assignment, import, `def` or `class` at module level) or by an enclosing function or lambda (a parameter or local); a method named `format` or a class attribute binds nothing there, so it does not disable the rewrite (#471) |
 | `ascii(x)` (#439) | `repr(x)`: the same `str` type; the check does not run it, so the escaping of non-ASCII characters is unchanged at run time | `ascii` is bound where the call is, as for `format` (#471) |
+| `getattr(x, "name", default)` with a literal name, `x` a name or an attribute chain, the default on one line (#590) | `((default), x.name if hasattr(x, "name") else (default))[1]`: Codon's `getattr` takes no default, and Codon decides `hasattr` when it compiles, so only the branch `x`'s type takes is compiled, typed as that branch (the attribute's type where the class declares it, the default's where it does not). The first item keeps the default compiled either way, as Python evaluates it either way (`getattr(x, "name", x.typo)` is refused). `hasattr` on an `Optional` is decided on the `Optional` (see "Making a module compile"), so the default's branch is the one compiled there | a name built at run time, another receiver (a call, a subscript), a default over several lines or `hasattr` bound where the call is: refused with `getattr() takes 2 arguments (3 given)` and a hint to write the `hasattr` test |
 | `round(x)`, `round(x, None)`, `round(number=x, ndigits=None)` (#585) | `int(round(x))`: Codon's `round(x, n=0)` always returns a `float`, Python's an `int` when `ndigits` is left out or `None`, so `xs[round(x)]`, `n: int = round(x)` and `range(round(x))` check. `round(x, ndigits=2)` is `round(x, 2)` (Codon's has no Python keywords). `round(x, 2)` stays a `float`, also for an `int` `x` (Python returns an `int` there). Being an `int`, `round(x)` is refused inside a `list[float]` or `dict[str, float]` display (`[round(x), 1.5]`), as any `int` is: write `float(round(x))` there | `round` is bound where the call is, as for `format` (#471); an `ndigits` that is a variable is passed as it is: an `int \| None` one is read as a `float`, one bound to `None` only fails in Codon's `round` (`__pow__() cannot be called with (None)`) |
 | `sorted(xs)`, `xs.sort()`, `min` / `max` of a class that defines `__lt__` only | the class gets `__gt__` (`other < self`) and `__ge__` (`not self < other`), which Codon's sort calls | the class defines no ordering (use `@dataclass(order=True)` or `key=`) |
 | a class that defines `__eq__` but not `__ne__` (a value object in a `set` or as a `dict` key) | the class gets `__ne__` (`not (self == other)`): Python derives it, Codon does not and its hash table calls it | (a `@dataclass` already has one) |
@@ -1663,15 +1698,16 @@ the same code either way, because a `Protocol` base is only a marker there.
 ### Standard library names Codon lacks
 
 Codon ships its own `functools` (only `partial`), `itertools`, `collections`,
-`math` and `random`, and a name it lacks fails with a bare "cannot import
-name". The check supplies these (#378, #515, #516); `test_stdlib_names` keeps
+`math`, `random` and `statistics`, and a name it lacks fails with a bare
+"cannot import name". The check supplies these (#378, #515, #516); `test_stdlib_names` keeps
 this list, the check's additions and the tests in step:
 
 <!-- stdlib-names:start -->
 `functools.reduce`, `functools.lru_cache`, `functools.cache`,
 `functools.cached_property`, `itertools.pairwise`, `collections.OrderedDict`,
 `collections.deque`, `math.dist`, `math.isqrt`, `math.comb`, `math.perm`,
-`math.cbrt`, `math.exp2`, `random.Random`, `random.choices`, `random.triangular`
+`math.cbrt`, `math.exp2`, `math.hypot`, `random.Random`, `random.choices`,
+`random.triangular`, `statistics.fmean`
 <!-- stdlib-names:end -->
 
 - `functools.reduce` (with or without an initial value) is a function of the
@@ -1702,7 +1738,14 @@ this list, the check's additions and the tests in step:
   where Python's would not. `math.cbrt` and `math.exp2` are Python 3.11
   functions: the check accepts them on 3.10 too (run time is where 3.10
   refuses them), so a scenario meant for 3.10 has to avoid them itself.
-  `nextafter` and `ulp` are not declared.
+  `nextafter` and `ulp` are not declared. `math.hypot` takes any number of
+  coordinates (Python 3.8's, #590), `hypot(x, y, z)` included; Codon's took
+  exactly two, and a call with two keeps Codon's (and its `float32` one).
+- `statistics.fmean(data)` is Python's mean of the values as floats (#590);
+  Codon's own is commented out. `fmean(data, weights)` is the weighted mean
+  of Python 3.11, accepted on 3.10 too, like `math.cbrt`. The rest of
+  `statistics` is Codon's (`mean`, `median`, `stdev`, ...), which takes a
+  `list[float]`.
 - `random.Random.choices` (and `random.choices`) take `weights` of ints or
   floats, or `cum_weights=`, and `k=`, as Python's do, and
   `triangular(low, high)` (the method and the function) takes the midpoint as the mode. Codon's
@@ -1713,7 +1756,7 @@ These are refused at the import line, with a hint saying what to write
 instead:
 
 <!-- stdlib-refused:start -->
-`dataclasses.asdict`, `functools.wraps`, `math.ulp`, `contextlib.contextmanager`, `warnings`,
+`dataclasses.asdict`, `dataclasses.InitVar`, `dataclasses.KW_ONLY`, `functools.wraps`, `math.ulp`, `contextlib.contextmanager`, `warnings`,
 `json.JSONEncoder`, `types`, `textwrap`, `traceback`, `io`, `csv`, `uuid`
 <!-- stdlib-refused:end -->
 
@@ -1721,6 +1764,13 @@ instead:
   fields you need. The `dataclasses` shim declares only `dataclass`, `field`
   and `replace` (a call is rewritten and checked per field, see "Your own
   dataclasses, enums and named tuples").
+- `dataclasses.InitVar` and `KW_ONLY` (#590): Codon's constructor of a
+  dataclass takes every annotated field and does not call `__post_init__`,
+  so an init-only value has nowhere to go and the `KW_ONLY` marker would be a
+  field. Pass an `InitVar`'s value to a `@classmethod` (or a function) that
+  computes the fields and builds the instance, or keep it as an ordinary
+  field; drop `KW_ONLY` and pass the fields by keyword (a field without a
+  default then goes before the defaulted ones).
 - `functools.wraps` (and any other name of `functools`, `itertools`,
   `collections`, `math` or `random` not listed above, such as `math.ulp`) is not modelled.
 - `contextlib` declares `suppress` only: write a class with `__enter__` and
@@ -2649,13 +2699,17 @@ What Codon 0.19 needs that Python does not, beyond
   or of a checked one.
 - **`hasattr()` instead of `getattr(x, name, default)`**: Codon decides
   `hasattr` when it compiles, so the branch for a type without the attribute
-  is never compiled.
+  is never compiled. The check rewrites `getattr(x, "name", default)` so
+  itself where the name is a literal and `x` a name or an attribute chain
+  (#590, "Python the check rewrites for Codon").
 - An exception's `__init__` passes one message string to `super().__init__`.
   An exception class with nothing in its body but a docstring needs that
   `__init__` written out (`def __init__(self, message: str) -> None:`).
 - **`d.get(key, default)` takes a default of the value's type**, as Codon's
   `dict.get` does; `d.get(key)` is an `Optional` of it, as in Python (the
-  model's `_tc.codon` declares it). Likewise `if not x: continue` instead
+  model's `_tc.codon` declares it). So does `d.pop(key, default)` (#590,
+  Codon's `pop` takes the key only), and `d.pop(key, None)` is an `Optional`
+  of the value's type. Likewise `if not x: continue` instead
   of `(x or {})`, `s.startswith(a) or s.startswith(b)` instead of
   `s.startswith((a, b))`, and `if x is None: return None` / `return x.attr`
   instead of `None if x is None else x.attr`.

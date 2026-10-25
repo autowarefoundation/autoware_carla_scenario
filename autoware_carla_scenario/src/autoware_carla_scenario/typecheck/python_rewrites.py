@@ -52,7 +52,13 @@ so a rewrite has to keep the *types*, not the values, of what it replaces.
   ``int(round(x))`` (#585): Codon's ``round(x, n=0)`` always returns a
   ``float``, Python's an ``int`` without ``ndigits``; Python's keywords
   (``round(number=x, ndigits=n)``), which Codon's lacks, are passed by
-  position.  A name the module binds itself (``def format``) is left alone.
+  position.  ``getattr(x, "name", default)``, which Codon's two-argument
+  ``getattr`` refuses, becomes ``((default), x.name if hasattr(x, "name")
+  else (default))[1]`` (#590) for a literal name, a receiver that is a name
+  or an attribute chain and a default on one line: Codon decides ``hasattr``
+  when it compiles, so only the branch the type takes is compiled, and the
+  first item keeps the default compiled, as Python evaluates it either way.  A name the module binds itself (``def
+  format``) is left alone.
 * ``namedtuple("P", "x y")`` / ``namedtuple("P", "x, y")`` (Codon crashes on a
   string) becomes ``namedtuple("P", ["x", "y"])`` (#510).  Field names that
   are not a literal, and ``rename=`` / ``defaults=``, are refused with a hint.
@@ -1460,6 +1466,8 @@ class _Pass(ShadowScopes):
                 return f"repr({self._text(node.args[0])})"
             if func.id == "round":
                 return self._round(node)
+            if func.id == "getattr" and plain_call and len(node.args) == 3:
+                return self._getattr_default(node)
             return None
         if (
             isinstance(func, ast.Attribute)
@@ -1509,6 +1517,42 @@ class _Pass(ShadowScopes):
         digits = self._text(ndigits)
         lost -= text.count("\n") + digits.count("\n")
         return f"round({text}, {digits}{chr(10) * max(lost, 0)})"
+
+    def _getattr_default(self, node: ast.Call) -> str | None:
+        """``(x.name if hasattr(x, "name") else default)`` for
+        ``getattr(x, "name", default)`` (#590), which Codon's two-argument
+        ``getattr`` refuses; ``None`` (left to Codon, and its hint) unless the
+        name is a literal identifier and *x* a name or attribute chain on one
+        line, which can be written twice.
+
+        Codon decides ``hasattr`` when it compiles, so only the branch the
+        type takes is compiled, typed as that branch: the attribute's type
+        where the class has it, the default's where it has not.  Python
+        evaluates the default either way, so it is compiled either way too, as
+        the first item of a tuple the value is the second item of:
+        ``((default), x.name if hasattr(x, "name") else (default))[1]``.  A
+        default on more than one line is not written twice (the lines would
+        move): ``None``, and refused with the hint."""
+        obj, name, default = node.args
+        if self._shadowed("hasattr") or not (
+            isinstance(name, ast.Constant)
+            and isinstance(name.value, str)
+            and name.value.isidentifier()
+            and not keyword.iskeyword(name.value)
+            and isinstance(obj, (ast.Name, ast.Attribute))
+            and _plain(obj)
+        ):
+            return None
+        receiver = self._text(obj)
+        fallback = self._text(default)
+        if "\n" in receiver or "\n" in fallback:
+            return None
+        attribute = name.value
+        inner = (
+            f"({fallback}), {receiver}.{attribute} if hasattr({receiver}, "
+            f"{attribute!r}) else ({fallback})"
+        )
+        return self._wrapped(node, f"({inner})[1]")
 
     def _operand(self, node: ast.expr) -> str:
         """The text of *node*, parenthesised where a ``.attr`` needs it."""
