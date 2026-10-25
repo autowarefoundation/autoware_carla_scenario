@@ -2646,10 +2646,11 @@ def test_a_scenario_may_use_the_pathlib_shim_and_nothing_beyond_it(
     assert result.ok, result.format()
     scenario, config, path = _write_case(
         tmp_path,
-        'from pathlib import Path\nlogger.info("%s", Path("a").chmod(0o644))\n',
+        'from pathlib import Path\nlogger.info("%s", Path("a").is_socket())\n',
     )
     error = _only_error(typecheck_scenario(scenario, config))
-    assert "chmod" in error.message
+    assert "is_socket" in error.message
+    assert "not modelled" in error.message, error.format()
     assert error.path == str(path)
 
 
@@ -2673,11 +2674,112 @@ def test_a_scenario_may_use_the_os_and_shutil_shims_and_nothing_beyond_them(
     result = typecheck_scenario(scenario, config)
     assert result.ok, result.format()
     scenario, config, path = _write_case(
-        tmp_path, 'import shutil\nshutil.copytree("a", "b")\n'
+        tmp_path, 'import shutil\nshutil.disk_usage("a")\n'
     )
     error = _only_error(typecheck_scenario(scenario, config))
-    assert "copytree" in error.message
+    assert "disk_usage" in error.message
+    assert "not modelled" in error.message, error.format()
     assert error.path == str(path)
+
+
+#: The file helpers #568 and #569 added to the pathlib, os, os.path and shutil
+#: shims, each used in a scenario (the library check holds their signatures,
+#: ``test_typecheck_library.py``).
+_FILE_HELPER_SETUP = """
+import os
+import os.path
+import shutil
+from pathlib import Path
+base = Path("/tmp/acs") / "a.txt"
+logger.info("%s %s", base.with_suffix(".csv").name, base.with_stem("b").name)
+logger.info("%s %d", base.joinpath("x", "y").as_posix(), len(base.parts))
+logger.info("%s %s", base.suffixes, sorted(Path("/tmp").iterdir()))
+base.touch()
+base.rename("/tmp/acs/b.txt")
+Path("/tmp/acs").rmdir()
+logger.info("%d", base.write_bytes(b"x"))
+logger.info("%d", len(os.listdir("/tmp")))
+os.makedirs("/tmp/acs", exist_ok=True)
+os.remove("/tmp/acs/a.txt")
+for root, dirs, files in os.walk("/tmp"):
+    logger.info("%s %d %d", root, len(dirs), len(files))
+logger.info("%d", os.path.getsize("/tmp/a"))
+logger.info("%s %s", os.path.relpath("/tmp/a", "/tmp"), os.path.realpath("/tmp"))
+shutil.copy("/tmp/a", "/tmp/b")
+shutil.copytree("/tmp/a", "/tmp/b", dirs_exist_ok=True)
+"""
+
+
+def test_a_scenario_may_use_the_file_helpers_of_pathlib_os_and_shutil(
+    tmp_path: Path,
+) -> None:
+    scenario, config, _ = _write_case(tmp_path, _FILE_HELPER_SETUP)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+@pytest.mark.parametrize(
+    ("setup", "message", "hint"),
+    [
+        (
+            'from pathlib import Path\nPath("a").is_socket()\n',
+            "'Path' object has no attribute 'is_socket'",
+            "not modelled",
+        ),
+        (
+            "import os\nos.scandir('a')\n",
+            "cannot import name 'scandir' from 'os",
+            "not modelled",
+        ),
+        (
+            "import os\nos.path.commonpath(['a'])\n",
+            "cannot import name 'commonpath' from 'os.path'",
+            "not modelled",
+        ),
+        (
+            "import shutil\nshutil.disk_usage('a')\n",
+            "cannot import name 'disk_usage' from 'shutil'",
+            "not modelled",
+        ),
+        (
+            'from pathlib import Path\nPath("a").with_sufix(".x")\n',
+            "'Path' object has no attribute 'with_sufix'",
+            "did you mean 'with_suffix'?",
+        ),
+        (
+            "import shutil\nshutil.copytre('a', 'b')\n",
+            "cannot import name 'copytre' from 'shutil'",
+            "did you mean 'copytree'?",
+        ),
+        (
+            "import time\ntime.strftime('%Y')\n",
+            "cannot import name 'strftime' from 'time'",
+            "datetime.datetime.now()",
+        ),
+        (
+            "import datetime\ndatetime.datetime.now().strftime('%Y')\n",
+            "'datetime' object has no attribute 'strftime'",
+            "now.year:04d",
+        ),
+    ],
+    ids=[
+        "path",
+        "os",
+        "os-path",
+        "shutil",
+        "path-typo",
+        "shutil-typo",
+        "time-strftime",
+        "datetime-strftime",
+    ],
+)
+def test_a_name_the_file_and_time_shims_lack_is_refused_as_not_modelled_or_misspelt(
+    tmp_path: Path, setup: str, message: str, hint: str
+) -> None:
+    scenario, config, _ = _write_case(tmp_path, setup)
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert message in error.message, error.format()
+    assert hint in error.message, error.format()
 
 
 def test_a_scenario_may_use_the_subprocess_and_metadata_shims_and_nothing_beyond_them(
@@ -6459,6 +6561,8 @@ _STDLIB_REFUSALS: dict[str, tuple[str, str, str, str]] = {
         "logger.exception",
     ),
     "io": ("import io\n", "", "io has no Codon model", "pathlib.Path"),
+    "csv": ("import csv\n", "", "csv has no Codon model", "split(',')"),
+    "uuid": ("import uuid\n", "", "uuid has no Codon model", "os.getpid()"),
 }
 
 
@@ -9725,6 +9829,28 @@ def test_the_optional_hint_is_not_given_for_unrelated_optionals(
     scenario, config, _ = _write_case(tmp_path, setup, extra=extra, header=_R29_HEADER)
     result = typecheck_scenario(scenario, config)
     assert "does not convert an Optional of a subclass" not in result.format()
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        'logger.info("%s", base.parts[-1])',
+        'logger.info("%s", "a" in base.parts)',
+        'logger.info("%d", len(base.parts))',
+        'logger.info("%s", base.parts[1:])',
+        'logger.info("%s", [p.upper() for p in base.parts])',
+        'logger.info("%s", "/".join(base.parts[1:]))',
+        'logger.info("%s", base.parts[0] == "/")',
+    ],
+)
+def test_a_scenario_may_index_slice_and_iterate_path_parts(
+    tmp_path: Path, line: str
+) -> None:
+    scenario, config, _ = _write_case(
+        tmp_path, f'from pathlib import Path\nbase = Path("/a/b.txt")\n{line}\n'
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
 
 
 # ---------------------------------------------------------------------------

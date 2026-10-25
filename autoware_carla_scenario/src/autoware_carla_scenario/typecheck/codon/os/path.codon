@@ -5,7 +5,14 @@
 # CPython returns for either. Nothing touches the file system: a query is
 # False, and expanduser() and abspath() return the path as it is.
 
+import internal.static as static
 from os import fspath
+
+
+def _keyword_only(extra, where: Literal[str]):
+    # Codon 0.19 has no `*,`: what follows `*_kw` is passed by keyword only.
+    if static.len(extra) > 0:
+        compile_error(where + " is keyword-only")
 
 
 def _join(a: str, b: str) -> str:
@@ -75,3 +82,90 @@ def expanduser(path) -> str:
 
 def abspath(path) -> str:
     return fspath(path)
+
+
+# getsize(filename), getmtime(filename), getatime(filename) and
+# getctime(filename): nothing is read, so all are zero.
+def getsize(filename) -> int:
+    fspath(filename)
+    return 0
+
+
+def getmtime(filename) -> float:
+    fspath(filename)
+    return 0.0
+
+
+def getatime(filename) -> float:
+    fspath(filename)
+    return 0.0
+
+
+def getctime(filename) -> float:
+    fspath(filename)
+    return 0.0
+
+
+def islink(path) -> bool:
+    fspath(path)
+    return False
+
+
+def lexists(path) -> bool:
+    fspath(path)
+    return False
+
+
+# realpath(filename, *, strict=False) (strict: 3.10), relpath(path,
+# start=None) and expandvars(path): the path as it is, as abspath() does
+# (nothing is resolved, made relative or expanded).
+def realpath(filename, *_kw, strict: bool = False) -> str:
+    _keyword_only(_kw, "realpath(): strict")
+    return fspath(filename)
+
+
+def relpath(path, start=None) -> str:
+    if start is not None:
+        fspath(start)
+    return fspath(path)
+
+
+def expandvars(path) -> str:
+    return fspath(path)
+
+
+# split(p): (head, tail), the tail being what follows the last "/" and the
+# head what precedes it, without its trailing "/" unless it is all "/".
+def split(p) -> Tuple[str, str]:
+    path = fspath(p)
+    i = path.rfind("/") + 1
+    head = path[:i]
+    tail = path[i:]
+    if head and head != "/" * len(head):
+        head = head.rstrip("/")
+    return head, tail
+
+
+# normpath(path): "." and empty parts, repeated "/" and "a/.." removed; "//"
+# at the start is kept, three or more are one.
+def normpath(path) -> str:
+    text = fspath(path)
+    if not text:
+        return "."
+    initial = 1 if text.startswith("/") else 0
+    if initial == 1 and text.startswith("//") and not text.startswith("///"):
+        initial = 2
+    parts = List[str]()
+    for comp in text.split("/"):
+        if comp == "" or comp == ".":
+            continue
+        if comp != ".." or (initial == 0 and len(parts) == 0) or (
+            len(parts) > 0 and parts[-1] == ".."
+        ):
+            parts.append(comp)
+        elif len(parts) > 0:
+            parts.pop()
+    result = "/".join(parts)
+    if initial > 0:
+        result = "/" * initial + result
+    return result if result else "."
