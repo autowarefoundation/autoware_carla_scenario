@@ -235,3 +235,76 @@ def chmod(
 ) -> None:
     _keyword_only(_kw, "chmod(): dir_fd, follow_symlinks")
     fspath(path)
+
+
+# getcwd(): the current directory, a str; "." here.
+def getcwd() -> str:
+    return "."
+
+
+# listdir(path="."): the names in a directory, a list of str for a str or an
+# os.PathLike (bytes and descriptors are not declared); empty here.
+def listdir(path=".") -> List[str]:
+    fspath(path)
+    return List[str]()
+
+
+# makedirs(name, mode=0o777, exist_ok=False).
+def makedirs(name, mode: int = 511, exist_ok: bool = False) -> None:
+    fspath(name)
+
+
+# remove(path, *, dir_fd=None) and unlink(path, *, dir_fd=None).
+def remove(path, *_kw, dir_fd: Optional[int] = None) -> None:
+    _keyword_only(_kw, "remove(): dir_fd")
+    fspath(path)
+
+
+def unlink(path, *_kw, dir_fd: Optional[int] = None) -> None:
+    _keyword_only(_kw, "unlink(): dir_fd")
+    fspath(path)
+
+
+# rmdir(path, *, dir_fd=None).
+def rmdir(path, *_kw, dir_fd: Optional[int] = None) -> None:
+    _keyword_only(_kw, "rmdir(): dir_fd")
+    fspath(path)
+
+
+# rename(src, dst, *, src_dir_fd=None, dst_dir_fd=None) and replace(...).
+def rename(
+    src,
+    dst,
+    *_kw,
+    src_dir_fd: Optional[int] = None,
+    dst_dir_fd: Optional[int] = None,
+) -> None:
+    _keyword_only(_kw, "rename(): src_dir_fd, dst_dir_fd")
+    fspath(src)
+    fspath(dst)
+
+
+def replace(
+    src,
+    dst,
+    *_kw,
+    src_dir_fd: Optional[int] = None,
+    dst_dir_fd: Optional[int] = None,
+) -> None:
+    _keyword_only(_kw, "replace(): src_dir_fd, dst_dir_fd")
+    fspath(src)
+    fspath(dst)
+
+
+# walk(top, topdown=True, onerror=None, followlinks=False): a generator of
+# (dirpath, dirnames, filenames), which yields nothing here. The callable
+# `onerror` takes is not declared, so the check refuses it.
+def walk(
+    top,
+    topdown: bool = True,
+    onerror: NoneType = None,
+    followlinks: bool = False,
+) -> Generator[Tuple[str, List[str], List[str]]]:
+    fspath(top)
+    if False:
+        yield ("", List[str](), List[str]())

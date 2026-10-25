@@ -2870,7 +2870,7 @@ def test_the_file_system_shims_take_what_cpython_takes(
         ("candidate.exists()", "candidate.exists(True)"),
         ("suffix = path.suffix", "suffix = path.suffix()"),
         ("real.parents[0] <= root", 'real.parents[0] <= "/"'),
-        ("candidate.absolute()", "candidate.chmod(0o644)"),
+        ("candidate.absolute()", "candidate.chmod(420)"),
         (".hexdigest()[:10]", ".hexdigest(10)[:10]"),
         ("hashlib.sha256(usedforsecurity=False)", 'hashlib.sha256(b"", False)'),
         ('h.update(b"-")', 'h.update(data=b"-")'),
@@ -3099,6 +3099,249 @@ def test_what_shutil_returns_for_a_path_is_only_a_path(
     result = _check_case(wrong, tmp_path, monkeypatch)
     assert not result.ok
     assert "name" in result.format()
+
+
+# ---------------------------------------------------------------------------
+# The file helpers of pathlib, os, os.path and shutil (#568, #569)
+# ---------------------------------------------------------------------------
+
+
+_FILE_HELPERS = """
+from __future__ import annotations
+
+import os
+import os.path
+import shutil
+from pathlib import Path
+
+
+def names(directory: Path) -> list[str]:
+    found: list[str] = []
+    for entry in sorted(directory.iterdir()):
+        found.append(entry.with_suffix(".csv").name)
+        found.append(entry.with_stem("x").name)
+    found += [str(directory.joinpath("a", "b.txt")), directory.parts[0]]
+    found += list(directory.parts[1:]) + entry_suffixes(directory)
+    found += [directory.root, directory.drive, directory.anchor, directory.as_uri()]
+    return found
+
+
+def entry_suffixes(path: Path) -> list[str]:
+    first: str = path.suffixes[0] if len(path.suffixes) > 0 else ""
+    return [first, str(len(path.parts)), "a" if "a" in path.parts else ""]
+
+
+def touch(path: Path, other: Path) -> int:
+    path.touch()
+    path.touch(exist_ok=False)
+    path.touch(384, True)
+    moved: Path = path.rename(other)
+    moved.rename(target="x")
+    other.rmdir()
+    path.chmod(420, follow_symlinks=False)
+    path.lstat()
+    link: Path = path.readlink()
+    same = path.samefile(other) or path.match("*.txt") or link == path
+    return path.write_bytes(b"x") + len(path.owner()) + len(path.group()) + int(same)
+
+
+def listing(directory: str) -> int:
+    count = len(os.listdir(directory)) + len(os.listdir()) + len(os.listdir(Path(directory)))
+    os.makedirs(directory, exist_ok=True)
+    os.makedirs(Path(directory) / "x", 493, True)
+    os.remove(directory)
+    os.unlink(Path(directory))
+    os.rename(directory, "other")
+    os.replace("other", Path(directory))
+    os.rmdir(directory)
+    for root, dirs, files in os.walk(directory):
+        count += len(dirs) + len(files) + len(root)
+    for root, dirs, files in os.walk(Path(directory), topdown=False, followlinks=True):
+        count += len(dirs) + len(files) + len(root)
+    return count + len(os.getcwd())
+
+
+def measuring(path: Path, other: str) -> str:
+    size: int = os.path.getsize(path)
+    mtime: float = os.path.getmtime(other)
+    relative: str = os.path.relpath(path, other)
+    relative = os.path.relpath(other)
+    real: str = os.path.realpath(path)
+    real = os.path.realpath(other, strict=True)
+    head, tail = os.path.split(other)
+    flat: str = os.path.normpath(path) + os.path.expandvars(other)
+    return f"{size} {mtime} {relative} {real} {head} {tail} {flat}"
+
+
+def copying(source: Path, destination: Path) -> str:
+    shutil.copy(source, destination)
+    a: str = shutil.copy("a", "b", follow_symlinks=False)
+    shutil.copyfile(source, destination)
+    b: str = shutil.copyfile("a", "b")
+    shutil.copytree(source, destination, dirs_exist_ok=True)
+    c: str = shutil.copytree("a", "b", True, None)
+    return f"{a} {b} {c} {Path(shutil.copy(source, destination))}"
+"""
+
+
+@needs_codon
+def test_the_file_helpers_of_pathlib_os_and_shutil_take_what_cpython_takes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    result = _check_case(_FILE_HELPERS, tmp_path, monkeypatch)
+    assert result.ok, result.format()
+
+
+@needs_codon
+@pytest.mark.parametrize(
+    ("right", "wrong"),
+    [
+        # Each is a TypeError in CPython 3.10, the oldest Python the package
+        # supports (`Path.walk()` and `follow_symlinks` of copy() are newer or
+        # keyword-only).
+        ('with_suffix(".csv")', "with_suffix(1)"),
+        ('with_stem("x")', "with_stem(1)"),
+        ('joinpath("a", "b.txt")', "joinpath(1)"),
+        ("directory.parts[0]", "directory.parts[0] + 1"),
+        ("path.touch(exist_ok=False)", "path.touch(missing_ok=False)"),
+        ("path.touch(384, True)", "path.touch(384, True, 1)"),
+        ('moved.rename(target="x")', "moved.rename()"),
+        ("other.rmdir()", "other.rmdir(True)"),
+        ("follow_symlinks=False)\n    path.lstat", "False)\n    path.lstat"),
+        ('write_bytes(b"x")', "write_bytes(1)"),
+        ("os.listdir(directory)", "os.listdir(directory, 1)"),
+        ("exist_ok=True)\n    os.makedirs(Path", "exist_ok=1)\n    os.makedirs(Path"),
+        ("os.remove(directory)", "os.remove(directory, 1)"),
+        ("os.walk(Path(directory), topdown=False", "os.walk(Path(directory), 1.5"),
+        ("os.walk(directory)", "os.walk(directory, True, print)"),
+        ("os.path.getsize(path)", "os.path.getsize(1)"),
+        ("os.path.relpath(path, other)", "os.path.relpath(path, 1)"),
+        ("os.path.realpath(other, strict=True)", "os.path.realpath(other, True)"),
+        ("os.path.split(other)", "os.path.split(other, other)"),
+        (
+            'shutil.copy("a", "b", follow_symlinks=False)',
+            'shutil.copy("a", "b", False)',
+        ),
+        ('shutil.copyfile("a", "b")', 'shutil.copyfile("a")'),
+        ("dirs_exist_ok=True)", "dirs_exist_ok=True, ignore=print)"),
+        ('copytree("a", "b", True, None)', 'copytree("a", "b", True, print)'),
+    ],
+    ids=[
+        "with-suffix-str",
+        "with-stem-str",
+        "joinpath-parts",
+        "parts-are-str",
+        "touch-keyword",
+        "touch-arguments",
+        "rename-target",
+        "rmdir-arguments",
+        "chmod-keyword-only",
+        "write-bytes-data",
+        "listdir-arguments",
+        "makedirs-exist-ok-bool",
+        "remove-keyword-only",
+        "walk-topdown-bool",
+        "walk-onerror-callable",
+        "getsize-path",
+        "relpath-start",
+        "realpath-strict-keyword-only",
+        "split-arguments",
+        "copy-follow-symlinks-keyword-only",
+        "copyfile-arguments",
+        "copytree-ignore-callable",
+        "copytree-ignore-positional",
+    ],
+)
+def test_the_file_helpers_refuse_what_cpython_refuses(
+    right: str, wrong: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = _FILE_HELPERS.replace(right, wrong, 1)
+    assert source != _FILE_HELPERS
+    result = _check_case(source, tmp_path, monkeypatch)
+    assert not result.ok, wrong
+
+
+def test_the_file_helpers_are_declared_with_the_parameters_cpython_3_10_has() -> None:
+    # The shims' parameter names, in order, are CPython's: the positional ones
+    # first, then (after `*_kw`) the keyword-only ones. A name that CPython
+    # takes by position only, or as a callable, is not compared.
+    import inspect
+    import os
+    import os.path
+    import pathlib
+    import shutil
+
+    def declared(
+        path: Path, owner: str | None
+    ) -> dict[str, tuple[list[str], list[str]]]:
+        tree = ast.parse(path.read_text())
+        body = tree.body
+        if owner is not None:
+            body = next(
+                n for n in body if isinstance(n, ast.ClassDef) and n.name == owner
+            ).body
+        out = {}
+        for node in body:
+            if isinstance(node, ast.FunctionDef):
+                args = node.args
+                positional = [a.arg for a in args.args if a.arg != "self"]
+                keyword = [a.arg for a in args.kwonlyargs]
+                out[node.name] = (positional, keyword)
+        return out
+
+    cases = [
+        (
+            model_dir() / "os" / "__init__.codon",
+            None,
+            os,
+            "getcwd listdir makedirs remove unlink rmdir rename replace walk",
+        ),
+        (
+            model_dir() / "os" / "path.codon",
+            None,
+            os.path,
+            "getsize getmtime getatime getctime islink lexists realpath relpath "
+            "expandvars split normpath",
+        ),
+        (
+            model_dir() / "shutil.codon",
+            None,
+            shutil,
+            "copy copyfile copytree",
+        ),
+        (
+            model_dir() / "pathlib.codon",
+            "Path",
+            pathlib.Path,
+            "with_suffix with_stem joinpath iterdir touch rename rmdir chmod "
+            "write_bytes samefile lstat readlink owner group as_uri",
+        ),
+    ]
+    for path, owner, python, names in cases:
+        shim = declared(path, owner)
+        for name in names.split():
+            signature = inspect.signature(getattr(python, name))
+            positional = [
+                p.name
+                for p in signature.parameters.values()
+                if p.kind is inspect.Parameter.POSITIONAL_OR_KEYWORD
+            ]
+            keyword = [
+                p.name
+                for p in signature.parameters.values()
+                if p.kind is inspect.Parameter.KEYWORD_ONLY
+            ]
+            if owner is not None:
+                positional = (
+                    positional[1:] if positional[:1] == ["self"] else positional
+                )
+            got_positional, got_keyword = shim[name]
+            assert (
+                got_positional == positional
+            ), f"{getattr(python, '__name__', 'Path')}.{name}"
+            assert (
+                got_keyword == keyword
+            ), f"{getattr(python, '__name__', 'Path')}.{name}"
 
 
 # ---------------------------------------------------------------------------

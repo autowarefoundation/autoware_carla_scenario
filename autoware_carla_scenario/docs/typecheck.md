@@ -1513,7 +1513,7 @@ instead:
 
 <!-- stdlib-refused:start -->
 `dataclasses.asdict`, `functools.wraps`, `math.ulp`, `contextlib.contextmanager`, `warnings`,
-`json.JSONEncoder`, `types`, `textwrap`, `traceback`, `io`
+`json.JSONEncoder`, `types`, `textwrap`, `traceback`, `io`, `csv`, `uuid`
 <!-- stdlib-refused:end -->
 
 - `dataclasses.asdict` returns a `dict[str, Any]`: build the dict from the
@@ -1530,7 +1530,19 @@ instead:
   rest. `types`: name the
   type itself. `textwrap`: build the string with `str` methods.
   `traceback`: log with `logger.exception`. `io`: use a `str`, or a
-  `pathlib.Path` opened with `open()`.
+  `pathlib.Path` opened with `open()`. `csv`: read the file with
+  `Path.read_text().splitlines()` and `split(",")` each line, and write one
+  with `",".join(fields)` and `Path.write_text()`. `uuid`: use a counter, or
+  `os.getpid()` for an id that differs per process.
+- `time.strftime()` and `datetime.strftime()` are not modelled (Codon's
+  `datetime` has neither, nor `__format__`): the error says so; format the
+  fields instead, `f"{now.year:04d}{now.month:02d}{now.day:02d}"` for `now =
+  datetime.datetime.now()`.
+- A name of `os`, `os.path`, `shutil` or a member of `pathlib.Path` that the
+  shims below do not declare is refused with Codon's `cannot import name` or
+  `'Path' object has no attribute`, to which the check adds that it is not
+  modelled (the shim declares only the names listed below), so it does not
+  read as invalid Python.
 
 ### Iterating an enum
 
@@ -2476,12 +2488,16 @@ What Codon 0.19 needs that Python does not, beyond
   3.10's signatures (3.12 and 3.13 added the keyword-only `follow_symlinks`,
   `case_sensitive` and `recurse_symlinks`, which are refused), and `name`,
   `suffix`, `parent`, `parents` (indexed, iterated, `len()` and `in`; not
-  sliced), `stem`, `with_name(name)` (of a `str`), `as_posix()`, `relative_to(other)` (one path, by position:
+  sliced), `stem`, `suffixes`, `parts` (indexed, sliced, iterated, `len()` and `in`),
+  `root`, `drive`, `anchor`, `as_uri()`, `with_name(name)`,
+  `with_suffix(suffix)` and `with_stem(stem)` (of a `str`), `joinpath(*other)`,
+  `as_posix()`, `relative_to(other)` (one path, by position:
   Python 3.10 also joins more parts, but 3.14 refuses them, so the check
   does too; 3.12's `walk_up` is refused), `is_relative_to(other)` (one path,
   by position, likewise), `is_absolute()` and the ordering of two `Path`s, so
   `sorted()` takes them. Nothing
-  touches the file system: a query is `False` and a glob yields nothing.
+  touches the file system: a query is `False` and a glob, or `iterdir()`,
+  yields nothing; `samefile(other_path)` and `match(path_pattern)` are `False`.
   `is_symlink()` takes no argument, as in every supported Python. Of what
   reads, `read_text(encoding=None, errors=None)` (3.13's `newline` is
   refused) and `read_bytes()` are declared (`autoware_stack.docker` reads a
@@ -2502,9 +2518,12 @@ What Codon 0.19 needs that Python does not, beyond
   `write()` (of a `str`, read as bytes too), iteration over the lines and
   `with`. `stat()` (no argument) returns a result of the five fields the
   framework reads (`st_dev`, `st_ino`, `st_size`, `st_mtime_ns`, `st_mtime`),
-  all zero, and `replace(target)` (a `str` or an `os.PathLike`) returns the
-  new `Path`; nothing is read or renamed.
-  `chmod()`, `write_bytes()` and the rest are not. `os` replaces Codon's own (whose
+  all zero (`lstat()` too), and `replace(target)` and `rename(target)` (a
+  `str` or an `os.PathLike`) return the new `Path`; nothing is read or
+  renamed. `touch(mode=0o666, exist_ok=True)`, `rmdir()`,
+  `chmod(mode, *, follow_symlinks=True)`, `write_bytes(data)` (a `str` here, as
+  bytes are), `readlink()`, `owner()` and `group()` do nothing. The rest
+  (`is_socket()`, `PurePath`, ...) is not declared. `os` replaces Codon's own (whose
   `environ` has no `get()` and iterates over pairs), keeping its `getenv()`,
   which Codon's runtime and typesafe_carla's library call: `environ` is a
   mapping of `str` to `str` (`[key]`, assignment, `del`, `in`, iteration
@@ -2517,15 +2536,28 @@ What Codon 0.19 needs that Python does not, beyond
   `os.PathLike`, a `str`; a bytes path is not declared),
   `kill(pid, signal, /)`, `killpg(pgid, signal, /)` (of an `int` or a
   `signal.Signals`), `system(command)`,
-  `mkdir()` (Codon's had one), the separators (`sep`, `pathsep`, `linesep`,
+  `mkdir()` (Codon's had one), `getcwd()`, `listdir(path=".")` (empty),
+  `makedirs(name, mode=0o777, exist_ok=False)`, `remove()`, `unlink()`,
+  `rmdir()`, `rename()` and `replace()` (each with its keyword-only
+  `dir_fd`), `walk(top, topdown=True, onerror=None, followlinks=False)` (a
+  generator that yields nothing; the callable `onerror` is not declared), the
+  separators (`sep`, `pathsep`, `linesep`,
   `devnull`, ...) and the `access()` modes. `os.path` declares `join()`,
   `basename()`, `dirname()`, `splitext()`, `isabs()`, `exists()`, `isfile()`,
-  `isdir()`, `expanduser()` and `abspath()`, of a `str` or a `Path`, with
-  CPython's parameter names. `shutil` declares `copy2(src, dst, *,
+  `isdir()`, `expanduser()` and `abspath()`, and `getsize()`, `getmtime()`,
+  `getatime()`, `getctime()`, `islink()`, `lexists()`, `realpath()`,
+  `relpath()`, `expandvars()`, `split()` and `normpath()`, of a `str` or a
+  `Path`, with CPython's parameter names (nothing is read: a size is `0`,
+  `realpath()`, `relpath()` and `expandvars()` return the path as it is).
+  `shutil` declares `copy(src, dst, *, follow_symlinks=True)`, `copyfile()`
+  (likewise), `copytree(src, dst, symlinks=False, ignore=None,
+  copy_function=None, ignore_dangling_symlinks=False, dirs_exist_ok=False)`,
+  `copy2(src, dst, *,
   follow_symlinks=True)`, `move(src, dst)`, `rmtree(path,
   ignore_errors=False)` and `which(cmd, mode=1, path=None)` of a `str`
   command; the callables CPython also takes (`onerror`, `copy_function`)
-  are not declared. `subprocess` declares `run(args, *, input=None,
+  are not declared (nor `copytree()`'s `ignore` and `copy_function`).
+  `subprocess` declares `run(args, *, input=None,
   capture_output=False, timeout=None, check=False, ...)` and `Popen(args,
   *, ...)` with the keywords of CPython's `Popen` the framework passes
   (`stdin`, `stdout`, `stderr`, `cwd`, `env`, `text`, `encoding`, `errors`,
@@ -2671,8 +2703,8 @@ What Codon 0.19 needs that Python does not, beyond
   with `signal.signal()`, register a function to run at exit with
   `atexit.register()`, read an installed
   distribution's version with `importlib.metadata.version()`, and catch the
-  exceptions above. Any other name of them (`Path.chmod()`, `hashlib.md5()`,
-  `shutil.copytree()`, `subprocess.check_output()`, `os.listdir()`,
+  exceptions above. Any other name of them (`Path.is_socket()`, `hashlib.md5()`,
+  `shutil.disk_usage()`, `subprocess.check_output()`, `os.scandir()`,
   `importlib.import_module()`, `urllib.request`, `signal.getsignal()`) fails
   its check wherever Codon compiles it. The model's top-level package declares `__file__` (a
   `str`, as CPython sets it on a regular package), which

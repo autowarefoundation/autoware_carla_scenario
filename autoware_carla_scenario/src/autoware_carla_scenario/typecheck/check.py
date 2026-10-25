@@ -185,6 +185,10 @@ _UNMODELLED_HINTS = {
     "textwrap": "build the string with str methods and join()",
     "traceback": "log the exception with logger.exception(...)",
     "io": "use a str, or a pathlib.Path opened with open()",
+    "csv": "read the file with Path.read_text().splitlines() and split(',') "
+    "on each line (a quoted field needs more care), and write one with "
+    "','.join(fields) and Path.write_text()",
+    "uuid": "use a counter, or os.getpid() for an id that differs per process",
 }
 
 
@@ -916,6 +920,43 @@ _VARIADIC_LIMITS = (
         "the check models only dumps, dump, loads, load and JSONDecodeError of "
         'json: docs/typecheck.md ("standard library names") lists what they '
         "take and return",
+    ),
+    (
+        re.compile(r"^'Path' object has no attribute '\w+'"),
+        "the check models only some members of pathlib.Path: if CPython's Path "
+        'has it, it is not modelled (docs/typecheck.md, "pathlib" among the '
+        "shims lists the members); build the path with str methods and the "
+        "declared members (name, stem, suffix, parent, with_name(), "
+        "with_suffix(), joinpath(), /, ...)",
+    ),
+    (
+        re.compile(r"cannot import name '\w+' from 'os(?:\.__init__)?'"),
+        "the check models only some names of os: if CPython's os has it, it "
+        'is not modelled (docs/typecheck.md, "os" among the shims lists the '
+        "names); use the declared names or pathlib.Path",
+    ),
+    (
+        re.compile(r"cannot import name '\w+' from 'os\.path'"),
+        "the check models only some names of os.path: if CPython's os.path has "
+        'it, it is not modelled (docs/typecheck.md, "os.path" among the shims '
+        "lists the names); use the declared names or pathlib.Path",
+    ),
+    (
+        re.compile(r"cannot import name '\w+' from 'shutil'"),
+        "the check models only some names of shutil: if CPython's shutil has "
+        'it, it is not modelled (docs/typecheck.md, "shutil" among the shims '
+        "lists the names)",
+    ),
+    (
+        re.compile(r"cannot import name 'strftime' from 'time'"),
+        "time.strftime is not modelled: take now = datetime.datetime.now() and "
+        "format its fields, f'{now.year:04d}{now.month:02d}{now.day:02d}'",
+    ),
+    (
+        re.compile(r"^'datetime' object has no attribute 'strftime'"),
+        "datetime.strftime is not modelled (Codon's datetime has no "
+        "strftime() or format): format the fields, "
+        "f'{now.year:04d}{now.month:02d}{now.day:02d}'",
     ),
     (
         re.compile(r"cannot import name '\w+' from 'typing'"),
