@@ -1030,6 +1030,32 @@ scenario has to do itself:
   ```text
   scenario.py:34: error: GapTracker._samples is assigned without a type: declare it in the class body, e.g. `_samples: list[...]` ...
   ```
+
+  **And assign each attribute you declare** (#588). Codon gives every field
+  its zero value when the object is built, so a declared attribute nothing
+  assigns reads as `0` (or `""`, an empty list) in the check, and Python
+  raises `AttributeError` at its first read. The check refuses a bare
+  class-level annotation (no default; not a dataclass, `NamedTuple`,
+  `TypedDict` or `Protocol` field, nor a `ClassVar`) that a method of the
+  class or of a subclass reads (`self._count`, `self._count += 1`: an
+  augmented assignment reads first) when nothing assigns it, at the
+  annotation:
+
+  ```text
+  scenario.py:41: error: CountCondition._count is declared but never assigned: Codon zero-initialises it, and Python raises AttributeError where a method reads self._count; assign self._count in CountCondition.__init__, or give it a default (_count: ... = <value>)
+  ```
+
+  The rule is conservative: the attribute counts as assigned when any
+  module of the scenario stores an attribute of that name, on any object
+  and in any form (`self._count = 0`, `self._count: int = 0`, `self.a,
+  self._count = ...`, `setattr(self, "_count", 0)`, `object.__setattr__(self,
+  "_count", 0)`, `other._count = 0`), when a framework base assigns it (the
+  base's source, or the framework assigning it from outside), and when the
+  class or a base gives it a value (a class attribute, a property). A class
+  that assigns attributes by a computed name (`setattr(self, name, v)`,
+  `self.__dict__`, `vars(self)`), defines `__getattr__`, or derives from a
+  class outside the scenario, the framework and the built-ins is left alone.
+
 - **Give a local its type at its first assignment.** Codon fixes the type of
   an unannotated local where it is first assigned; Python and mypy let it
   widen later. Two common patterns are refused:
@@ -1118,6 +1144,30 @@ scenario has to do itself:
   A class only derived from, such as an abstract base of the scenario's own
   conditions with an `@abstractmethod` of its own, is never called and may
   stay abstract.
+- **Call the framework base's `__init__` from yours** (#587). A scenario,
+  condition, action or entity whose `__init__` never calls
+  `super().__init__(...)` compiles, since Codon zero-initialises what the
+  base would set, and Python raises `AttributeError` when the runner reads
+  `condition.label` or the scenario's `ego_config`. The check refuses such an
+  `__init__` at its `def` line, naming the base and what its `__init__` sets:
+
+  ```text
+  scenario.py:52: error: LateCondition.__init__ never calls BaseCondition.__init__, which sets label, _last_satisfied, _last_message on self: Codon zero-initialises them, and Python raises AttributeError where the framework reads them; call super().__init__(...) in LateCondition.__init__
+  ```
+
+  The bases are the framework's classes after yours in the method resolution
+  order whose own `__init__` (written, or the one `@dataclass` generates)
+  assigns an attribute of `self`; a base whose `__init__` assigns nothing,
+  a class with no framework base, and an `__init__` that itself assigns
+  every attribute those bases' would, are left alone. So is a subclass of
+  your own condition that defines no `__init__`; one that defines its own
+  and does not call `super().__init__` skips the framework's too, through
+  yours, and is refused. Any mention of `__init__` in the body counts as the
+  call, on any path (`super().__init__(...)`, `super(Cls, self).__init__(...)`,
+  `BaseCondition.__init__(self, ...)`, inside an `if` or a `try`), as does a
+  call of a method of `self` when a method of the class calls the base's
+  `__init__`: the check does not follow paths. With `@overload` stubs, the
+  last `def __init__`, the one Python binds, is the one checked.
 - **Pass numbers of the declared type.** An `int` is accepted for a `float`,
   but not inside a container: a `list[float]` parameter wants `[1.0, 2.0]`.
   YAML values are converted for you.
@@ -1850,6 +1900,12 @@ The known gaps:
   classes the scenario defines (a class-level `tuple[A | B, ...]`, held as
   `List[Union[A, B]]`) is converted at run time as Codon converts any union,
   and an un-narrowed use of one member's attribute compiles.
+- **An attribute set on some paths only.** Codon zero-initialises every
+  field, and the class rules (#587, #588) follow no paths: an `__init__`
+  that calls `super().__init__(...)` in one branch only, or an attribute
+  assigned in a method that may run after its first read, compiles and can
+  raise `AttributeError` in Python. A class that is not a module-level name
+  (one defined in a function) is not given the rules at all.
 - **A helper with `**kwargs` or `*args` that nothing calls and that reads
   `**kwargs` by key** is not compiled, with a warning: the check has no
   keyword to call it with (#266). One the scenario calls that reads them is
@@ -1936,6 +1992,15 @@ with it warm, to a compile of about a minute. A verdict kept between runs
 (below) holds the None check's too: the key already covers what it reads.
 `test_typecheck_none_check.py` runs the same None check over `CHECKED`
 without Codon, so a machine without a Codon compiler catches it as well.
+
+**So do the class rules** (#587, #588): before the compile, the library
+check imports each module it compiles and refuses an `__init__` that skips
+a base's (any class of the package counts as the framework here) and an
+attribute declared at class level that nothing assigns, as the scenario
+check does ([*Writing a scenario that type-checks*](#writing-a-scenario-that-type-checks)).
+A module that does not import in Python has its classes left alone.
+`test_typecheck_class_rules.py` runs both rules over every module of the
+package without Codon.
 
 A run that names modules is a slice of the full run. With the named
 modules, it compiles from their source the `CHECKED` modules they import,

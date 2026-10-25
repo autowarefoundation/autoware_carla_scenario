@@ -524,6 +524,11 @@ _ACTOR_GETTERS = """
 
     def _pedestrian_or_none(self) -> carla.Walker | None:
         return None
+
+    def _spawned(self, npc: carla.Vehicle, pedestrian: carla.Walker) -> None:
+        # Assigned, or Python raises AttributeError at the first read (#588).
+        self._npc = npc
+        self._pedestrian = pedestrian
 """
 
 
@@ -2528,6 +2533,128 @@ class GapCondition(_GapBase):
     )
     setup = "self.register_pass_condition(GapCondition())\n"
     scenario, config, _ = _write_case(tmp_path, setup, extra, header=header)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+_NO_SUPER_CONDITION = """
+
+class LateCondition(BaseCondition):
+    _after: float
+
+    def __init__(self, after: float) -> None:
+        self._after = after
+
+    def check(self, world: carla.World, elapsed: float) -> ScenarioResult | None:
+        if elapsed > self._after:
+            return ScenarioResult(passed=True, message="late", elapsed_seconds=elapsed)
+        return None
+"""
+
+_UNASSIGNED_CONDITION = """
+
+class CountCondition(BaseCondition):
+    _count: int
+    _limit: int
+
+    def __init__(self, limit: int, *, label: str) -> None:
+        super().__init__(label=label)
+        self._limit = limit
+
+    def check(self, world: carla.World, elapsed: float) -> ScenarioResult | None:
+        self._count += 1
+        if self._count > self._limit:
+            return ScenarioResult(passed=True, message="count", elapsed_seconds=elapsed)
+        return None
+"""
+
+
+@pytest.mark.parametrize(
+    ("setup", "extra", "header", "needle", "message"),
+    [
+        (
+            "self.register_pass_condition(LateCondition(3.0))\n",
+            _NO_SUPER_CONDITION,
+            _HEADER,
+            "def __init__(self, after: float)",
+            "LateCondition.__init__ never calls BaseCondition.__init__, "
+            "which sets label",
+        ),
+        (
+            "",
+            "",
+            _HEADER.replace(
+                "super().__init__(ego_config, spawn_pose=spawn_pose, "
+                "ground_projection=ground_projection)",
+                "self.ego_spawn = spawn_pose",
+            ),
+            "def __init__(",
+            "CaseScenario.__init__ never calls BaseScenario.__init__",
+        ),
+        (
+            'self.register_pass_condition(CountCondition(3, label="c"))\n',
+            _UNASSIGNED_CONDITION,
+            _HEADER,
+            "    _count: int",
+            "CountCondition._count is declared but never assigned",
+        ),
+    ],
+    ids=["condition-without-super", "scenario-without-super", "never-assigned"],
+)
+def test_an_attribute_python_never_sets_is_refused(
+    tmp_path: Path, setup: str, extra: str, header: str, needle: str, message: str
+) -> None:
+    # Codon zero-initialises every field, so these compiled; Python raises
+    # AttributeError at the first read (#587, #588).
+    scenario, config, path = _write_case(
+        tmp_path, _TIMEOUT_SETUP + setup, extra, header=header
+    )
+    result = typecheck_scenario(scenario, config)
+    error = _only_error(result)
+    assert len(result.diagnostics) == 1, result.format()
+    assert message in error.message, error.format()
+    assert error.path == str(path)
+    assert error.line == _line_of(path, needle)
+
+
+def test_inits_calling_the_base_and_assigned_attributes_compile(
+    tmp_path: Path,
+) -> None:
+    # The look-alikes: a subclass of the scenario's own condition calling
+    # super(), a base called by name inside an `if`, and attributes assigned
+    # by a tuple target or only in another method (#587, #588).
+    extra = """
+
+class LateCondition(BaseCondition):
+    _after: float
+    _seen: int
+    _last: float
+
+    def __init__(self, after: float) -> None:
+        if after >= 0.0:
+            super().__init__("late")
+        else:
+            BaseCondition.__init__(self, "never")
+        self._after, self._seen = after, 0
+
+    def check(self, world: carla.World, elapsed: float) -> ScenarioResult | None:
+        self._seen += 1
+        self._last = elapsed
+        if elapsed > self._after:
+            return ScenarioResult(passed=True, message="late", elapsed_seconds=elapsed)
+        return None
+
+
+class LaterCondition(LateCondition):
+    def __init__(self) -> None:
+        super().__init__(9.0)
+"""
+    setup = (
+        _TIMEOUT_SETUP
+        + "self.register_pass_condition(LateCondition(3.0))\n"
+        + "self.register_pass_condition(LaterCondition())\n"
+    )
+    scenario, config, _ = _write_case(tmp_path, setup, extra)
     result = typecheck_scenario(scenario, config)
     assert result.ok, result.format()
 
