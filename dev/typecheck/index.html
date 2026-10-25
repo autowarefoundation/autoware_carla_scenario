@@ -2272,6 +2272,21 @@ check reports it once, naming them all, with its own advice:</p>
 so does the union passed on where the union is taken
 (<code>TrajectoryVertex(v.position, advance=v.advance)</code>, a <code>TrajectoryPosition</code>
 parameter).</p>
+<p><strong>A field of a frozen dataclass of your own is read-only</strong> (#567). Codon compiles
+a frozen dataclass as an ordinary class, so mypy's verdict is used: <code>p.x = 2.0</code>,
+<code>p.x += 1.0</code>, <code>self.x = ...</code> in a method of the class, a loop variable's field
+and a frozen subclass's field are refused as <code>Pt is a frozen dataclass; use
+dataclasses.replace(x, x=...)</code>, where the receiver's type is known to mypy (a
+value of unknown type, <code>Any</code>, is not). <code>dataclasses.replace</code> and
+<code>object.__setattr__(self, ...)</code> in <code>__post_init__</code> stay valid.
+The class is found by its name: a name is treated as a frozen dataclass only
+where every class of that name in the scenario's modules is one (a same-named
+plain class with a read-only property is left alone, at the cost of a missed
+frozen assignment). The decorator may be <code>@dataclass(frozen=True, ...)</code>,
+<code>@dataclasses.dataclass(frozen=True)</code> or an aliased import. This rests on
+mypy, as the None check does: without it the check warns <code>the None check did
+not run</code> and a frozen assignment is not reported. <code>setattr(p, "x", 1)</code> is not
+caught.</p>
 <p><strong>The CARLA API's <code>Optional</code> results are checked too</strong> (#267).
 typesafe_carla's CPython package is a prebuilt extension with no <code>.pyi</code> and
 no <code>py.typed</code>, so mypy alone reads <code>typesafe_carla.carla</code> as <code>Any</code>. The
@@ -4597,7 +4612,12 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   the members of <code>JSONValue</code>. (Codon does the same for any value whose static type is not the class: after
   <code>x = 5</code>, the body of <code>if isinstance(x, str):</code> is not compiled, as dead code
   is not; that is Codon's, and only <code>JSONValue</code>, whose type is opaque by
-  design, is rewritten.) (A module that never imports <code>json</code> but gets a
+  design, is rewritten. The check warns, without failing, when the static
+  type of the subject is certain from the syntax (an annotated parameter or
+  local, a local bound once to a literal, an annotated <code>self</code> attribute) and
+  cannot be the class: <code>isinstance(x, str): x is statically int here, so this
+  branch is not checked by the static check; an error in it is not reported</code>,
+  #565.) (A module that never imports <code>json</code> but gets a
   <code>JSONValue</code> from another module's function is not rewritten, and a call
   that spans lines is not either.) <code>JSONDecodeError</code> is a
   <code>ValueError</code> with <code>msg</code>, <code>doc</code> and <code>pos</code>. <code>shlex</code> declares
@@ -5636,7 +5656,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 25, 2026 00:35:52 UTC"><span class="timeago" datetime="2026-10-25T00:35:52+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 25, 2026 00:35:52 UTC">2026-10-25</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 25, 2026 05:50:39 UTC"><span class="timeago" datetime="2026-10-25T05:50:39+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 25, 2026 05:50:39 UTC">2026-10-25</span>
   </span>
 
     
