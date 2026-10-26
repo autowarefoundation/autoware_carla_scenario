@@ -411,6 +411,17 @@ class BaseCondition:
         """Marks a condition for _acs_list (lists.codon)."""
         return 0
 
+    # Python compares and hashes a BaseCondition by identity (it defines no __eq__),
+    # so one goes in a set, keys a dict and is found with `in` (#596).
+    def __eq__(self, other: BaseCondition) -> bool:
+        return self is other
+
+    def __ne__(self, other: BaseCondition) -> bool:
+        return self is not other
+
+    def __hash__(self) -> int:
+        return id(self)
+
     @staticmethod
     def _acs_hook_returns(name: Literal[str], r):
         """The return type of each method an override of which the scenario

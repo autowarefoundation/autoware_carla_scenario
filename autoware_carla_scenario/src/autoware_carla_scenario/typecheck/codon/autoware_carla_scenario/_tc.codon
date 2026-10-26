@@ -131,6 +131,17 @@ def _acs_tuple(values):
         return list(values)
 
 
+def _acs_some(value):
+    """What the checker puts around the branch of `a if x else None` that
+    reads the narrowed x (typecheck/python_rewrites.py, #597): Codon cannot
+    unify that branch's type with the None, so the branch is made an Optional
+    itself (a branch that already is one is kept)."""
+    if isinstance(value, Optional):
+        return value
+    else:
+        return Optional[type(value)](value)
+
+
 def _acs_reduce(function, iterable, *initial):
     """What the checker puts in place of functools.reduce(function, iterable[,
     initial]) (typecheck/transform.py): Codon's functools has only partial."""
