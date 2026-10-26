@@ -84,9 +84,16 @@ so a rewrite has to keep the *types*, not the values, of what it replaces.
   parameter is ``self`` becomes ``super()`` (Codon's takes no arguments).
 * ``a if x else None`` (``x is not None``, ``not x``, ``None if x is None
   else a``) where ``a`` reads the narrowed ``x`` (``m.group(1) if m else
-  None``) becomes ``_acs_some(a) if x else None`` (#597): Codon cannot unify
-  the narrowed branch's type with the ``None``; ``_acs_some`` makes it an
-  ``Optional`` itself, the type Python gives the expression.
+  None``) becomes ``_acs_some_if(lambda: a, x) if not isinstance(x,
+  Optional[NoneType]) else None`` (#597, #621): Codon cannot unify the
+  narrowed branch's type with the ``None``, and leaves an unresolved
+  ``Optional[T]`` where that type is known only later (``npc.speed`` of an
+  ``Optional`` ``npc``).  Codon decides the ``isinstance`` test from the
+  type, so it compiles only the branch it picks (the ``None`` where ``x`` is
+  always ``None``) and unifies nothing; ``_acs_some_if`` returns ``a`` as an
+  ``Optional``, the type Python gives the expression.  In a class body, or
+  where ``a`` cannot be in a lambda (a walrus, ``yield``, ``super()`` or
+  ``super(Cls, self)``), the branch is ``_acs_some(a)``.
 * ``a.__eq__(b)`` / ``a.__ne__(b)`` becomes ``(a == (b))`` / ``(a != (b))``
   (#596): Codon refuses the explicit call of an ``__eq__`` that overrides an
   inherited one (the identity ``__eq__`` the check gives a plain class, or
@@ -1628,15 +1635,39 @@ class _Pass(ShadowScopes):
             and isinstance(node.body, ast.Call)
         ):
             self._sequence_done.add(id(node.body))
-        # `m.group(1) if m else None` (#597): Codon narrows `m` in the branch
-        # and then cannot unify its str with the None ("'Optional[str]' does
-        # not match expected type 'str'"); `_acs_some(...)` makes the branch
-        # an Optional itself.
+        # `m.group(1) if m else None` (#597, #621): Codon cannot unify the
+        # branch's type with the None ("'Optional[str]' does not match
+        # expected type 'str'"), and where that type is known only later (an
+        # attribute or a method of the Optional `m`) it leaves the expression
+        # an unresolved `Optional[T]`.  The test becomes one Codon decides
+        # from the type, `not isinstance(m, Optional[NoneType])`, so it
+        # compiles only the branch it picks (the None where `m` is always
+        # None) and unifies nothing, and the branch `_acs_some_if(lambda: a,
+        # m)`, which returns `a` as an Optional, the type Python gives the
+        # expression.  A lambda, as a call's type is resolved with its
+        # argument's, where the branch's may not be known yet when Codon
+        # decides the test (the `isinstance` of a value typed by such a
+        # conditional expression).
         branch = _narrowed_branch(node)
         if branch is not None:
+            subject = _dotted(_narrowed_subject(node.test))
             start, end = self.edits.node_span(branch)
-            self.edits.replace(start, start, "_acs_some(")
-            self.edits.replace(end, end, ")")
+            if self._class_body or any(
+                isinstance(n, _NOT_IN_A_LAMBDA) or _is_super(n)
+                for n in ast.walk(branch)
+            ):
+                # Not in a lambda (#597): enough where the branch's type is
+                # known when Codon decides the test.
+                self.edits.replace(start, start, "_acs_some(")
+                self.edits.replace(end, end, ")")
+            else:
+                self.edits.replace(start, start, "_acs_some_if(lambda: ")
+                self.edits.replace(end, end, f", {subject})")
+            test = f"isinstance({subject}, Optional[NoneType])"
+            self.edits.replace(
+                *self.edits.node_span(node.test),
+                f"not {test}" if branch is node.body else test,
+            )
         self.generic_visit(node)
 
     def visit_BoolOp(self, node: ast.BoolOp) -> None:
@@ -2360,6 +2391,32 @@ def _ordering_blocks(
                 (node.name, f"\n\n@extend\nclass {node.name}:\n" + "".join(lines))
             )
     return out
+
+
+#: What a branch made a lambda cannot hold: a walrus would bind in the lambda,
+#: a ``yield`` / ``await`` would be the lambda's (#621).
+_NOT_IN_A_LAMBDA = (ast.NamedExpr, ast.Yield, ast.YieldFrom, ast.Await)
+
+
+def _is_super(node: ast.AST) -> bool:
+    """``super()``, which needs the method's own frame, not a lambda's, and
+    ``super(Cls, self)``, which this pass makes ``super()`` only outside a
+    lambda (#601)."""
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "super"
+    )
+
+
+def _narrowed_subject(test: ast.expr) -> ast.expr:
+    """What *test* narrows: ``x`` of ``x``, ``not x``, ``x is None``, ``x is
+    not None``."""
+    if isinstance(test, ast.UnaryOp) and isinstance(test.op, ast.Not):
+        return test.operand
+    if isinstance(test, ast.Compare):
+        return test.left
+    return test
 
 
 def _narrowed_name(test: ast.expr) -> str | None:
