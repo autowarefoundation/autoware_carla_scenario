@@ -3474,12 +3474,12 @@ cannot express is refused at its line, with what to write instead.</p>
 </tr>
 <tr>
 <td><code>getattr(x, "name", default)</code> with a literal name, <code>x</code> a name or an attribute chain, the default on one line (#590)</td>
-<td><code>((default), x.name if hasattr(x, "name") else (default))[1]</code>: Codon's <code>getattr</code> takes no default, and Codon decides <code>hasattr</code> when it compiles, so only the branch <code>x</code>'s type takes is compiled, typed as that branch (the attribute's type where the class declares it, the default's where it does not). The first item keeps the default compiled either way, as Python evaluates it either way (<code>getattr(x, "name", x.typo)</code> is refused). <code>hasattr</code> on an <code>Optional</code> is decided on the <code>Optional</code> (see "Making a module compile"), so the default's branch is the one compiled there</td>
+<td><code>((default), x.name if hasattr(x, "name") else (default))[1]</code>: Codon's <code>getattr</code> takes no default, and Codon decides <code>hasattr</code> when it compiles, so only the branch <code>x</code>'s type takes is compiled, typed as that branch (the attribute's type where the class declares it, the default's where it does not). The first item keeps the default compiled either way, as Python evaluates it either way (<code>getattr(x, "name", x.typo)</code> is refused). <code>hasattr</code> on an <code>Optional</code> is decided on the <code>Optional</code> (see "Making a module compile"), so the default's branch is the one compiled there. Inside an f-string field the name is quoted with the quote the f-string does not use (<code>f'{getattr(o, "a", 1)}'</code> gives <code>hasattr(o, "a")</code>), as is every string a rewrite writes into a field (#609): Codon's parser ends the f-string at its own quote</td>
 <td>a name built at run time, another receiver (a call, a subscript), a default over several lines or <code>hasattr</code> bound where the call is: refused with <code>getattr() takes 2 arguments (3 given)</code> and a hint to write the <code>hasattr</code> test</td>
 </tr>
 <tr>
 <td><code>t.count(x)</code>, <code>t.index(x[, start[, stop]])</code> with <code>t</code> a name or an attribute chain (#601)</td>
-<td><code>(t.count(x) if hasattr(t, "count") else _acs_count(t, x))</code>: Codon's tuple has no <code>count</code> / <code>index</code> and cannot be extended, and only Codon knows <code>t</code>'s type, so a list, a str or a class of yours keeps its own call, compiled as written, and only a tuple goes to the helper (an item of another type than <code>x</code> never equals it). A tuple display, <code>(1, 2).index(2)</code>, goes to the helper directly</td>
+<td><code>(t.count(x) if hasattr(t, "count") else _acs_count(t, x))</code>: Codon's tuple has no <code>count</code> / <code>index</code> and cannot be extended, and only Codon knows <code>t</code>'s type, so a list, a str or a class of yours keeps its own call, compiled as written, and only a tuple goes to the helper (an item of another type than <code>x</code> never equals it). A tuple display, <code>(1, 2).index(2)</code>, goes to the helper directly. A tuple narrowed from an <code>Optional</code> (<code>t.count(1) if t is not None else 0</code>) is still <code>Optional</code> to Codon: the helper unwraps it (#609). Where Codon crashes with no diagnostic in a module that has these rewrites (an earlier error left the helper a wrong type, as <code>lst: list[Npc \| None] = [None, a]</code> then <code>lst.index(a)</code>), the module is compiled once more without them, and that compile's error is reported; a rerun that passes, crashes too or refuses a tuple's <code>count</code> / <code>index</code> (the crash had another cause) leaves the crash reported</td>
 <td>the receiver is a module (<code>itertools.count</code>), a builtin type (<code>str.index(s, "a")</code>), a call or a subscript (<code>f().count(x)</code>, <code>rows[0].index(x)</code>: bind it to a name), or the call spans lines; then a tuple's is refused (<code>'Tuple[int,int]' object has no attribute 'count'</code>)</td>
 </tr>
 <tr>
@@ -3569,7 +3569,7 @@ cannot express is refused at its line, with what to write instead.</p>
 </tr>
 <tr>
 <td><code>dict(a=1)</code></td>
-<td><code>{"a": 1}</code> (Codon's <code>dict</code> takes no keywords)</td>
+<td><code>{"a": 1}</code> (Codon's <code>dict</code> takes no keywords). In an f-string field, <code>f"{dict(a=1)}"</code>, the f-string becomes a <code>+</code> of its parts first (<code>str({"a": 1})</code>): a brace ends the field for Codon's parser (#609)</td>
 <td></td>
 </tr>
 </tbody>
@@ -3632,6 +3632,21 @@ cannot express is refused at its line, with what to write instead.</p>
   local first (<code>label = "{:&gt;3}".format(x)</code>, then <code>f"{label}"</code>).
   A syntax error Codon still reports inside an f-string field is shown at
   the line of the f-string that has it, not at a line before the file.</li>
+<li><strong>A type error inside an f-string field is shown at the f-string's line,
+  with no column (#610).</strong> Codon reports it on the line after the line the
+  f-string starts on, at the faulting expression's column plus the length of
+  the field's text: a column past the end of that line, or no line of the
+  file when the f-string is on its last line. The check moves such an error
+  back when no expression on the reported line starts at the reported column
+  with the reported width (as Codon locates an error on that line itself) and
+  an f-string that starts on the line before has a field holding an
+  expression of that width that ends at or before the column (and, on a
+  one-line f-string, no further from it than the f-string's end). The line
+  shown is the expression's own (a field on a later line of a triple-quoted
+  f-string is shown on its line). An error of the line itself always has
+  such an expression (a comprehension's <code>for c in n</code> clause, which Codon
+  locates from its <code>for</code>, is matched by where it ends), so it stays where it
+  is, column and all.</li>
 <li>A class constant read in the class body (#433): Python resolves the name in
   the class scope, Codon in the module's (<code>name 'LIMIT' is not defined</code>), so
   the check writes <code>Class.LIMIT</code>. It rewrites exactly what Python resolves
@@ -6147,7 +6162,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 26, 2026 07:02:33 UTC"><span class="timeago" datetime="2026-10-26T07:02:33+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 26, 2026 07:02:33 UTC">2026-10-26</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 26, 2026 11:07:19 UTC"><span class="timeago" datetime="2026-10-26T11:07:19+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 26, 2026 11:07:19 UTC">2026-10-26</span>
   </span>
 
     
