@@ -34,9 +34,11 @@ from __future__ import annotations
 import ast
 import builtins
 import importlib
+import inspect
 import os
 import sys
 from functools import lru_cache
+import typing
 from typing import Any, NamedTuple
 
 __all__ = [
@@ -361,6 +363,56 @@ def _literal(node: ast.expr) -> Any:
         return _NOT_LITERAL
 
 
+def _fits(value: Any, hint: Any) -> bool:
+    """Whether the literal *value* is of the type *hint* declares; a hint
+    this cannot read counts as not fitting, so the call is left to Codon."""
+    if hint is Any:
+        return True
+    if hint is float:
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+    if hint in (int, str, bool, bytes):
+        if hint is int and isinstance(value, bool):
+            return False
+        return isinstance(value, hint)
+    if hint is type(None) or hint is None:
+        return value is None
+    origin = typing.get_origin(hint)
+    args = typing.get_args(hint)
+    if origin is typing.Union or (
+        sys.version_info >= (3, 10)
+        and origin is getattr(__import__("types"), "UnionType")
+    ):
+        return any(_fits(value, a) for a in args)
+    if origin is typing.Literal:
+        return value in args
+    if origin in (tuple, list):
+        if not isinstance(value, (tuple, list)):
+            return False
+        if origin is tuple and len(args) == 2 and args[1] is Ellipsis:
+            return all(_fits(v, args[0]) for v in value)
+        if origin is tuple:
+            return len(args) == len(value) and all(
+                _fits(v, a) for v, a in zip(value, args)
+            )
+        return all(_fits(v, args[0]) for v in value) if args else True
+    return False
+
+
+def _arguments_fit(cls: type, args: list[Any], kwargs: dict[str, Any]) -> bool:
+    """Whether *args* and *kwargs* bind to *cls*'s constructor with each value
+    of its parameter's declared type: a type mismatch is Codon's to report,
+    with its own message, not a ValueError the constructor happens to raise."""
+    try:
+        bound = inspect.signature(cls).bind(*args, **kwargs)
+        hints = typing.get_type_hints(getattr(cls, "__init__"))
+    except Exception:  # noqa: BLE001 -- unreadable: leave the call to Codon
+        return False
+    return all(
+        name in hints and _fits(value, hints[name])
+        for name, value in bound.arguments.items()
+    )
+
+
 def literal_argument_refusals(tree: ast.Module) -> list[StaticRaise]:
     """Each call of a class of :data:`LITERAL_CHECKED` in *tree* whose
     arguments are all literals and that raises ``ValueError`` when built."""
@@ -389,6 +441,8 @@ def literal_argument_refusals(tree: ast.Module) -> list[StaticRaise]:
         args = [_literal(a) for a in node.args]
         kwargs = {k.arg: _literal(k.value) for k in node.keywords if k.arg}
         if any(v is _NOT_LITERAL for v in (*args, *kwargs.values())):
+            continue
+        if not _arguments_fit(cls, args, kwargs):
             continue
         try:
             cls(*args, **kwargs)

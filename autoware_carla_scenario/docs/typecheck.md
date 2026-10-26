@@ -1771,7 +1771,10 @@ runs (`typecheck/static_raises.py`):
   `RouteOppositePose` and `RouteRoadsidePose` (`LITERAL_CHECKED`). A call
   with any argument that is not a literal (a config field, a constant's name
   such as `OFFROAD`, an enum member such as `ComparisonRule.LESS_THAN`,
-  `*args`) is left to the run, as is a `TypeError` (Codon reports the type).
+  `*args`) is left to the run, as is a `TypeError` (Codon reports the type)
+  and a literal of another type than its parameter declares (a str for a
+  float, an int for a str: Codon reports the mismatch, though the constructor
+  would raise `ValueError` for it; an int for a float fits).
   The check imports these classes only for a module that calls one of them
   by name. The conditions import `typesafe_carla.carla`: where its first
   import would build the CPython package (no prebuilt one applies, 15-50

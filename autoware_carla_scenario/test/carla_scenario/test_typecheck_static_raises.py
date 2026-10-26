@@ -148,6 +148,8 @@ def test_a_rebound_name_is_not_taken_for_the_builtin() -> None:
         ('acs.RouteRoadsidePose(side="kerb")', "got 'kerb'"),
         ('acs.RouteLanePose(anchor="")', "RouteLanePose.anchor"),
         ("acs.RouteOppositePose(lane=0)", "RouteOppositePose.lane counts from 1"),
+        # An int for a float parameter fits, as Python takes it.
+        ('acs.RouteLanePose(ds=1, anchor="nowhere")', "RouteLanePose.anchor"),
         ('acs.RouteCrosswalkPose(leg="middle")', "RouteCrosswalkPose.leg"),
         ('acs.OffRoadFractionCondition(1.5, label="x")', "fraction must be in"),
         ('acs.RouteProgressCondition(tolerance=-1.0, label="x")', "tolerance"),
@@ -181,6 +183,11 @@ def test_a_literal_call_the_framework_refuses_is_refused(
         # A type error is Codon's to report, not this pass's.
         "ElapsedTimeCondition('soon', label='x')",
         "ElapsedTimeCondition(1.0, 2.0, 3.0, 4.0, label='x')",
+        # A value of the wrong type raises ValueError in the constructor, but
+        # Codon reports the mismatch better ("expected a float").
+        "acs.RouteProgressCondition('near', label='x')",
+        "acs.RouteLanePose(anchor=3)",
+        "RouteRoadsidePose(side=1)",
     ],
 )
 def test_a_call_the_framework_accepts_or_cannot_be_decided_passes(call: str) -> None:
