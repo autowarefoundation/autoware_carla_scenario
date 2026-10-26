@@ -5843,3 +5843,143 @@ def test_an_explicit_eq_call_keeps_its_lines_and_inner_rewrites() -> None:
     assert text.splitlines()[0].startswith("r = (a == (")
     assert ".format(" not in text and ".__eq__(" not in text
     assert text.splitlines()[3] == "z = 1"
+
+
+# ---------------------------------------------------------------------------
+# Builtin gaps (#601) and Enum values (#600)
+# ---------------------------------------------------------------------------
+
+
+def test_count_and_index_go_to_the_tuple_helper_only_without_the_method() -> None:
+    text = _rewritten(
+        """
+        import itertools
+        a = t.count(2) + t.index(2, 1)
+        b = (1, 2).index(2)
+        c = self.xs.index(3, 0, 2)
+        d = itertools.count(5)
+        e = str.index(s, "a")
+        f = "abc".count("a")
+        g = xs.count()
+        h = xs.index(1, start=0)
+        i = f(x).count(1)
+        """
+    )
+    assert (
+        "a = (t.count(2) if hasattr(t, 'count') else _acs_count(t, 2)) + "
+        "(t.index(2, 1) if hasattr(t, 'index') else _acs_index(t, 2, 1))"
+    ) in text
+    assert "b = (_acs_index((1, 2), 2))" in text
+    assert (
+        "c = (self.xs.index(3, 0, 2) if hasattr(self.xs, 'index') else "
+        "_acs_index(self.xs, 3, 0, 2))"
+    ) in text
+    for unchanged in (
+        "d = itertools.count(5)",
+        'e = str.index(s, "a")',
+        'f = "abc".count("a")',
+        "g = xs.count()",
+        "h = xs.index(1, start=0)",
+        "i = f(x).count(1)",
+    ):
+        assert unchanged in text, text
+
+
+def test_count_is_left_alone_where_hasattr_is_shadowed() -> None:
+    text = _rewritten("def hasattr(a, b):\n    return True\nn = t.count(1)\n")
+    assert text.endswith("n = t.count(1)\n")
+
+
+def test_dict_view_set_operators_become_sets() -> None:
+    text = _rewritten(
+        """
+        a = d.keys() & e.keys()
+        b = d.keys() - {"a"}
+        c = d.items() <= e.items()
+        f = d.keys() | ["x"]
+        g = d.keys() & e.keys() & h.keys()
+        k = d.values() == e.values()
+        m = x - y
+        """
+    )
+    assert "a = (set(d.keys()) & set(e.keys()))" in text
+    assert 'b = (set(d.keys()) - {"a"})' in text
+    assert "c = set(d.items()) <= set(e.items())" in text
+    assert 'f = (set(d.keys()) | set(["x"]))' in text
+    assert "g = (set((set(d.keys()) & set(e.keys()))) & set(h.keys()))" in text
+    assert "k = d.values() == e.values()" in text
+    assert "m = x - y" in text
+
+
+def test_super_with_the_class_and_self_becomes_super() -> None:
+    text = _rewritten(
+        """
+        class Derived(Base):
+            def __init__(self, k):
+                super(Derived, self).__init__(k)
+                f = lambda: super(Derived, self).run()
+
+            @classmethod
+            def make(cls):
+                return super(Derived, cls).make()
+
+            def other(this):
+                super(Base, this).run()
+                super(Derived, this).run()
+
+            def rebound(self):
+                self = other
+                super(Derived, self).run()
+        """
+    )
+    lines = text.splitlines()
+    assert lines[3].strip() == "super().__init__(k)"
+    assert lines[4].strip() == "f = lambda: super(Derived, self).run()"
+    assert "super(Derived, cls).make()" in text
+    assert "super(Base, this).run()" in text
+    assert lines[12].strip() == "super().run()"
+    assert lines[16].strip() == "super(Derived, self).run()"
+
+
+@pytest.mark.parametrize(
+    ("members", "why"),
+    [
+        ('A = (1, "a")', "its member `A` has a tuple value"),
+        ('A = 1\n    B = "b"', "its members' values are of different types (int, str)"),
+        ("A = WIDTH", "the value of its member `A` is not an int, float or str"),
+        ("A = True", "the value of its member `A` is not an int, float or str"),
+    ],
+)
+def test_an_enum_of_values_the_check_cannot_type_is_refused(
+    members: str, why: str
+) -> None:
+    source = f"from enum import Enum\n\n\nclass E(Enum):\n    {members}\n"
+    refused = python_rewrite_refusals(source)
+    assert len(refused) == 1, refused
+    line, message = refused[0]
+    assert line == 4
+    assert f"Enum E cannot be checked: {why}" in message
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "A = -1\n    B = 1",
+        "A = -1.5\n    B = 2.0",
+        "A = auto()\n    B = auto()",
+        "def describe(self) -> str:\n        return self.name",
+        # A lambda is a method, not a member: it becomes a def (#482).
+        "A = 1\n    B = 2\n    double = lambda self: self.value * 2",
+        "A = 1\n    B = 2\n    zero = staticmethod(lambda: 0)",
+    ],
+    ids=["negative", "negative-float", "auto", "no-member", "lambda", "static"],
+)
+def test_an_enum_the_check_can_type_is_not_refused(body: str) -> None:
+    source = f"from enum import Enum, auto\n\n\nclass E(Enum):\n    {body}\n"
+    assert python_rewrite_refusals(source) == []
+
+
+def test_a_negative_enum_value_is_rewritten() -> None:
+    source = "from enum import Enum\n\n\nclass E(Enum):\n    A = -1\n    B = 1\n"
+    out = transform_source(source)
+    assert "A: ClassVar[E] = E('A', -1)" in out, out
