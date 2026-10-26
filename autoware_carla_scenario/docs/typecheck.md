@@ -1538,6 +1538,8 @@ cannot express is refused at its line, with what to write instead.
 | `namedtuple("P", "x y")` / `"x, y"` | the string becomes the list `["x", "y"]` (Codon crashes on a string) | field names that are not a literal (a variable, `.split()`), and `rename=` / `defaults=` / `field_names=` / `module=` as keywords, and field names Python rejects (a duplicate, a keyword, a leading underscore); a `namedtuple` the module defines or imports from elsewhere is left alone; use a list written in the call or a `typing.NamedTuple` class |
 | `@functools.total_ordering` | the decorator and its import are dropped, and the class gets the comparisons it would add from its `__lt__`, `__le__`, `__gt__` or `__ge__` (and `==`, or identity without `__eq__`) | the class is not at module level, or defines none of the four |
 | `lambda x, k=k: x + k` (a default that is not a literal) | `(lambda k: lambda x: x + k)(k)`: the default is bound by a call, once, as in Python | |
+| a `def` in a function whose parameter default is a local of an enclosing function (#612): `for name in names: def log_it(world, n: str = name)`, `scale = 2; def f(k: int = scale)` | `(name,)[0]`: Codon refuses the bare name ("name 'name' cannot be captured") but evaluates any other expression once, when the `def` runs, as Python does. The tuple holds the same value and type, and the parameter can still be passed | a default that is no bare name is left as written (Codon takes it); a method of a class defined in a function is not rewritten. Another `cannot be captured` is hinted: bind the value with `functools.partial(f, n=value)`, or read the local in the body |
+| an f-string in a decorator (#616): `@tag(f"lane-{N}")`, `@tag(f"plain")` | `str()` parts joined by `+`, as in a lambda above: `@tag(("lane-" + str(N)))`. Codon reads an f-string there as an attribute of the string ("'str' object has no attribute '__prefix_f__'"), with or without fields. An f-string in a default, an argument or a body is no decorator and is left as written | a brace or a nested f-string inside an expression (as above) |
 | `def __exit__(self, exc_type, exc, tb)` (annotated `type[BaseException] \| None`, `BaseException \| None`, `object`, ... or not) | each parameter without a default gets `=None`: Codon calls `__exit__()` with no arguments, even when the block raised (#435). An annotation of `BaseException` or `Exception` (alone or `\| None`, `Optional[...]`) is kept as `X \| None`; any other annotation is dropped | |
 | `fs: list[Callable[[int], int]] = [inc, lambda x: x * 2]`, `table: dict[str, Callable[[int], int]] = {"a": inc, "b": dbl}`, or a `return` of such a display from a function annotated so (a dispatch table) | each function, module function (`mod.f`) or lambda element is wrapped in Codon's `Callable[Tuple[int], int](...)`, so they share one type (#436) | the element is a bound method, a lambda using a local variable of its function, or a call (not wrapped, then Codon's own refusal and a hint); the table is a `set`, an attribute of a class, is unannotated, or is built another way than a display (a comprehension) |
 | a class constant read in its own class body (#433): `DOUBLE = LIMIT * 2`, `x: int = SIZE` (a dataclass default), `def f(self, n=LIMIT)`, `@register(LIMIT)` | `Class.LIMIT` (`Outer.Inner.LIMIT` in a nested class) | the constant is annotated and not a single-line literal (`LIMIT: int = 2 * 3`), it is assigned again later in the body, the class is defined in a function, the read is a `NamedTuple` field default, or it is an Enum member with a non-literal value |
@@ -1615,8 +1617,10 @@ Notes:
   f-string starts on, at the faulting expression's column plus the length of
   the field's text: a column past the end of that line, or no line of the
   file when the f-string is on its last line. The check moves such an error
-  back when no expression on the reported line starts at the reported column
-  with the reported width (as Codon locates an error on that line itself) and
+  back when nothing on the reported line starts at the reported column, of
+  any width (Codon locates an error on that line itself there; its width of
+  a call on several lines counts the characters across the line breaks,
+  that of a `with` or `for` statement is one more than Python's), and
   an f-string that starts on the line before has a field holding an
   expression of that width that ends at or before the column (and, on a
   one-line f-string, no further from it than the f-string's end). The line
@@ -1625,6 +1629,16 @@ Notes:
   such an expression (a comprehension's `for c in n` clause, which Codon
   locates from its `for`, is matched by where it ends), so it stays where it
   is, column and all.
+  An implicitly concatenated f-string (`"a" f"b{n + 'x'}"`, also on several
+  lines, #616) is reported on the line after its first literal's line too,
+  at a column the bound above does not hold for: the first literal's
+  0-based column, plus the offset of the field's `{` in its own literal,
+  plus the field's length, plus the expression's offset from the `{`. The
+  check computes that column for each field of an f-string that starts on
+  the line before (a triple-quoted literal, a field on several lines and a
+  line that is not ASCII excepted) and moves an error that matches it,
+  column and width, to the field's line, with the same guard (anything
+  that starts on the reported line at that column keeps it).
 - A class constant read in the class body (#433): Python resolves the name in
   the class scope, Codon in the module's (`name 'LIMIT' is not defined`), so
   the check writes `Class.LIMIT`. It rewrites exactly what Python resolves

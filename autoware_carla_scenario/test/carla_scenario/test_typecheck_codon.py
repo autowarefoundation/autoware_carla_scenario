@@ -7460,6 +7460,44 @@ def _parsed_at(tmp_path: Path, source: str, line: int, span: str) -> Any:
         # A column further from the field than the f-string's end is not
         # one of its fields.
         ('a = 1\ns = f"{a + 1}"\nb = 2\n', 3, "15-20", (3, 15)),
+        # Implicitly concatenated f-strings (#616), at the columns Codon
+        # reports: the first literal's column, plus the field's offset in
+        # its own literal, its length and the expression's offset in it.
+        ('n = 1\ns = "aaaa" f"b{n + \'x\'}"\nt = 2\n', 3, "15-22", (2, None)),
+        ('n = 1\ns = ("a" f"b{n + \'x\'}")\nt = 2\n', 3, "16-23", (2, None)),
+        ('n = 1\ns = "a" f"b{n} {n + \'x\'}"\nt = 2\n', 3, "19-26", (2, None)),
+        (
+            'n = 1\ns = "a" f"b{1 + (n + \'x\'):>4}" "z"\nt = 2\n',
+            3,
+            "29-36",
+            (2, None),
+        ),
+        # On several lines: the field's own line.
+        (
+            'n = 1\ns = ("aaa"\n  "bb"\n     f"b{n + \'x\'}")\nt = 2\n',
+            3,
+            "16-23",
+            (4, None),
+        ),
+        ('n = 1\ns = "a" \\\n    f"b{n + \'x\'}"\nt = 2\n', 3, "15-22", (3, None)),
+        # The line's own error stays, column and all.
+        (
+            "n = 1\ns = \"aaaa\" f\"b{n + 'x'}\"\nt = [0, 1, 2, n + 'x']\n",
+            3,
+            "15-22",
+            (3, 15),
+        ),
+        # So does one of a call on several lines that starts at that column,
+        # whose width Codon counts across the line break.
+        (
+            'n = 1\ns = "" f"{n + 100000000000000}"\n'
+            'result_value_long_name = g(\n            "x")\n',
+            3,
+            "26-45",
+            (3, 26),
+        ),
+        # A form feed is no line break for Python.
+        ('n = 1  # a\fb\ns = "a" f"b{n + \'x\'}"\nt = 2\n', 3, "15-22", (2, None)),
     ],
 )
 def test_an_error_in_an_fstring_field_is_moved_to_its_line(
@@ -7838,6 +7876,74 @@ def test_a_lambda_capturing_a_default_is_still_typed(tmp_path: Path) -> None:
     assert "for +: 'str' and 'int'" in error.message, error.format()
     call = _line_of(path, 'r = fs[0]("x")')
     assert any(f"scenario.py:{call}]" in frame for frame in error.trace), error.format()
+
+
+def test_a_nested_def_default_reading_an_enclosing_local_compiles(
+    tmp_path: Path,
+) -> None:
+    # Codon refuses a bare local of the enclosing function as a default
+    # ("name 'name' cannot be captured"); the check writes `(name,)[0]` (#612).
+    setup = """
+        names = ["a", "b"]
+        scale = 2
+        for name in names:
+            def log_it(world: carla.World, n: str = name) -> None:
+                logger.info("%s", n)
+            self.register_post_tick(log_it)
+        def f(k: int = scale, *, label: str = cfg.name, tag=name) -> int:
+            def g(m: int = k) -> int:
+                return m * 2
+            return g() + len(label) + len(tag)
+        logger.info("%d %d", f(), f(3, label="x"))
+    """
+    scenario, config, _ = _write_case(tmp_path, setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_a_nested_def_default_is_still_typed(tmp_path: Path) -> None:
+    setup = """
+        name = "a"
+        def f(k: int = name) -> int:
+            return k * 2
+        logger.info("%d", f())
+    """
+    scenario, config, _ = _write_case(tmp_path, setup)
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "'str' does not match expected type 'int'" in error.message, error.format()
+
+
+def test_an_fstring_in_a_decorator_compiles(tmp_path: Path) -> None:
+    # Codon reads it as "'str' object has no attribute '__prefix_f__'" (#616).
+    extra = """
+
+
+N = 3
+
+
+def tag(label: str, extra: str = ""):
+    def deco(f):
+        return f
+    return deco
+
+
+@tag(f"lane-{N}", extra=f"x{N!r:>4}")
+@tag(f"plain")
+def plain() -> int:
+    return 1
+
+
+def helper(k: int) -> int:
+    @tag(f"inner-{k}")
+    def inner() -> int:
+        return k
+    return inner()
+"""
+    scenario, config, _ = _write_case(
+        tmp_path, 'logger.info("%d %d", plain(), helper(2))\n', extra=extra
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
 
 
 @pytest.mark.parametrize("call", ["fs[0](1, k=5)", "fs[0](1, 5)"])
@@ -11647,6 +11753,22 @@ def test_a_crash_of_the_tuple_helpers_is_compiled_again_for_a_diagnostic(
             'logger.info("%s", label(1))\n',
             "\n\ndef label(n: int) -> str:\n    return f\"{n + 'x'}\"\n",
             "return f",
+        ),
+        # Implicitly concatenated, on one line and on several (#616).
+        ('n = 1\ns = "a" f"b{n + \'x\'}"\nt = 2\n', "", "s = "),
+        (
+            'n = 1\ns = ("aaa"\n     "bb"\n     f"b{n} {n + \'x\'}")\nt = 2\n',
+            "",
+            "f\"b{n} {n + 'x'}\"",
+        ),
+        # An error of a decorator's f-string, which the check lowers (#616).
+        (
+            'logger.info("%d", helper(2))\n',
+            "\n\ndef tag(label: str):\n    def deco(f):\n        return f\n"
+            "    return deco\n\n\ndef helper(k: int) -> int:\n"
+            "    @tag(f\"lane-{k + 'x'}\")\n    def inner() -> int:\n"
+            "        return k\n    return inner()\n",
+            "@tag(f",
         ),
     ],
 )

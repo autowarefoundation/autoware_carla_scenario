@@ -1871,8 +1871,171 @@ def _fstring_line(
     return _original_line(origin, fields[0][0])
 
 
+def _string_pieces(text: str) -> list[tuple[int, int, bool, bool]] | None:
+    """The literals of the (implicitly concatenated) string *text*, the
+    source of its node, as (where the content starts, where it ends, whether
+    it is an f-string, whether it is triple-quoted); ``None`` when it cannot
+    be read."""
+    pieces: list[tuple[int, int, bool, bool]] = []
+    i, n = 0, len(text)
+    while i < n:
+        if text[i] in " \t\r\n\\":
+            i += 1
+            continue
+        if text[i] == "#":  # a comment between two literals
+            i = text.find("\n", i)
+            if i < 0:
+                break
+            continue
+        prefix = i
+        while i < n and text[i].isalpha():
+            i += 1
+        if i >= n or text[i] not in "'\"":
+            return None
+        quote = text[i : i + 3] if text[i : i + 3] in ("'''", '"""') else text[i]
+        letters = text[prefix:i].lower()
+        fstring, raw = "f" in letters, "r" in letters
+        i += len(quote)
+        begin = i
+        depth = 0
+        while i < n and not (depth == 0 and text.startswith(quote, i)):
+            char = text[i]
+            if char == "\\" and not (raw and depth == 0):
+                i += 1
+            elif fstring and char == "{":
+                if depth == 0 and text.startswith("{{", i):
+                    i += 1
+                else:
+                    depth += 1
+            elif fstring and char == "}" and depth:
+                depth -= 1
+            elif depth and char in "'\"":
+                i = text.find(char, i + 1)  # a string inside a field
+                if i < 0:
+                    return None
+            i += 1
+        if i >= n:
+            return None
+        pieces.append((begin, i, fstring, len(quote) == 3))
+        i += len(quote)
+    return pieces
+
+
+def _field_expression(part: str) -> str:
+    """The expression of the text of an f-string field (inside its braces),
+    without its ``=``, conversion and format spec."""
+    depth = 0
+    i = 0
+    while i < len(part):
+        char = part[i]
+        if char in "([{":
+            depth += 1
+        elif char in ")]}":
+            depth -= 1
+        elif char in "'\"":
+            close = part.find(char, i + 1)
+            i = len(part) if close < 0 else close
+        elif depth == 0 and (
+            (char == "!" and not part.startswith("!=", i)) or char == ":"
+        ):
+            part = part[:i]
+            break
+        i += 1
+    part = part.rstrip()
+    return part[:-1] if part.endswith("=") and not part.endswith("==") else part
+
+
+def _fields(content: str) -> Iterator[tuple[int, str]]:
+    """(the offset of the ``{`` in *content*, the field's text with its
+    braces) of each field of the f-string literal whose content (between its
+    quotes) is *content*."""
+    i = 0
+    while i < len(content):
+        if content.startswith("{{", i) or content.startswith("}}", i):
+            i += 2
+            continue
+        if content[i] == "\\":
+            i += 2
+            continue
+        if content[i] != "{":
+            i += 1
+            continue
+        brace, depth, j = i, 0, i
+        while j < len(content):
+            char = content[j]
+            if char in "{[(":
+                depth += 1
+            elif char in "}])":
+                depth -= 1
+                if depth == 0:
+                    break
+            elif char in "'\"":
+                j = content.find(char, j + 1)
+                if j < 0:
+                    return
+            j += 1
+        if j >= len(content):
+            return
+        yield brace, content[brace : j + 1]
+        i = j + 1
+
+
+def _concatenated_field_line(
+    node: ast.JoinedStr, lines: list[str], start: int, width: int
+) -> int | None:
+    """The line of the field of the f-string *node* (implicitly concatenated
+    or not) that Codon's error at column *start*, *width* wide, is in, or
+    ``None`` (#616).
+
+    Codon 0.19 reports an error in an f-string field on the line after the
+    one the string's first literal starts on, at the column that is that
+    literal's 0-based column, plus the offset of the field's ``{`` in its
+    own literal's content, plus the length of the field's text (``{n +
+    'x'}``), plus the expression's offset from the ``{``.  Measured and
+    exact for one or more literals on one line or several, plain literals
+    before or after, prefixes, specs and other fields.  A triple-quoted
+    literal, a field on several lines and a string that is not ASCII (whose
+    offsets Python counts in bytes) are not mapped.
+    """
+    if node.end_lineno is None or node.end_col_offset is None:
+        return None
+    first, last = node.lineno - 1, node.end_lineno - 1
+    if last >= len(lines):
+        return None
+    chunk = list(lines[first : last + 1])
+    if not all(part.isascii() for part in chunk):
+        return None
+    chunk[-1] = chunk[-1][: node.end_col_offset]
+    chunk[0] = chunk[0][node.col_offset :]
+    text = "\n".join(chunk)
+    for begin, close, fstring, triple in _string_pieces(text) or []:
+        if not fstring or triple:
+            continue
+        for brace, shown in _fields(text[begin:close]):
+            if "\n" in shown:
+                continue
+            try:
+                parsed = ast.parse(f"({_field_expression(shown[1:-1])}\n)", mode="eval")
+            except SyntaxError:
+                continue
+            for inner in ast.walk(parsed):
+                if (
+                    isinstance(inner, ast.expr)
+                    and inner.lineno == inner.end_lineno == 1
+                    and inner.end_col_offset is not None
+                    and inner.end_col_offset - inner.col_offset == width
+                    and node.col_offset + brace + len(shown) + inner.col_offset == start
+                ):
+                    return node.lineno + text.count("\n", 0, begin + brace)
+    return None
+
+
 def _fstring_field_line(
-    tree: ast.Module, line: int, start: int | None, end: int | None
+    tree: ast.Module,
+    line: int,
+    start: int | None,
+    end: int | None,
+    lines: list[str] | None = None,
 ) -> int | None:
     """The line of the f-string field an error Codon reports at *line* (its
     columns *start*-*end*) is in, or ``None`` when it is not one (#610).
@@ -1886,7 +2049,7 @@ def _fstring_field_line(
 
     The rule, on the checked copy *tree*: the error is moved when no node on
     *line* itself starts at *start* (Codon's 1-based column of an ordinary
-    error) with that width, and an f-string that starts on the line before
+    error), whatever its width, and an f-string that starts on the line before
     has a field holding an expression of that width that ends at or before
     *start* (the field's text holds the expression).  An ordinary error on
     *line* always has such a node, so it is never moved: a comprehension's
@@ -1897,26 +2060,34 @@ def _fstring_field_line(
     past that is not one of its fields.  The line returned is the
     expression's own (a field on a later line of a triple-quoted f-string is
     on its line); the column is dropped by the caller.
+
+    With the checked copy's *lines*, the field is first looked for where
+    :func:`_concatenated_field_line` computes Codon's column exactly: that
+    also finds a field of an implicitly concatenated f-string (``"a"
+    f"b{n + 'x'}"``), whose column the rule above cannot bound (#616).
     """
     if start is None or end is None or line < 2:
         return None
     width = end - start
     found: set[int] = set()
+    strings: list[ast.JoinedStr] = []
     for node in ast.walk(tree):
         if (
             getattr(node, "lineno", None) == line
-            and getattr(node, "end_lineno", None) == line
             and getattr(node, "col_offset", -1) + 1 == start
-            and getattr(node, "end_col_offset", -1) - node.col_offset  # type: ignore[attr-defined]
-            == width
         ):
-            return None  # an ordinary error on the line itself
+            # An ordinary error on the line itself.  Any width: Codon's
+            # width of an expression on several lines (a call) counts its
+            # characters across the line breaks, and that of a `with` or
+            # `for` statement is one more than Python's.
+            return None
         if isinstance(node, ast.comprehension):
             last = node.ifs[-1] if node.ifs else node.iter
             if last.end_lineno == line and last.end_col_offset == end - 1:
                 return None  # a comprehension's `for` clause on the line
         if not isinstance(node, ast.JoinedStr) or node.lineno != line - 1:
             continue
+        strings.append(node)
         one_line = node.end_lineno == node.lineno and node.end_col_offset is not None
         for value in node.values:
             if not isinstance(value, ast.FormattedValue):
@@ -1936,6 +2107,14 @@ def _fstring_field_line(
                     )
                 ):
                     found.add(inner.lineno)
+    for node in strings:
+        exact = (
+            None
+            if lines is None
+            else _concatenated_field_line(node, lines, start, width)
+        )
+        if exact is not None:
+            return exact
     return min(found) if found else None
 
 
@@ -2029,12 +2208,16 @@ def _parse_output(output: str, ws: _Workspace) -> list[Diagnostic]:
     #: The (file, line) of Codon's of each error in an f-string field, which
     #: Codon puts a line late at no column of the line (#610).
     in_fields: set[tuple[str, int]] = set()
-    trees: dict[str, ast.Module | None] = {}
+    trees: dict[str, tuple[ast.Module, list[str]] | None] = {}
 
-    def checked_tree(rel: str) -> ast.Module | None:
+    def checked_tree(rel: str) -> tuple[ast.Module, list[str]] | None:
+        """The checked copy *rel*, parsed, and its lines."""
         if rel not in trees:
             try:
-                trees[rel] = ast.parse((ws.root / rel).read_text())
+                text = (ws.root / rel).read_text()
+                # Split at "\n" only, as Python numbers the lines: splitlines()
+                # also splits at a form feed or U+2028, which do not end one.
+                trees[rel] = (ast.parse(text), text.split("\n"))
             except (OSError, SyntaxError, ValueError):
                 trees[rel] = None
         return trees[rel]
@@ -2055,9 +2238,11 @@ def _parse_output(output: str, ws: _Workspace) -> list[Diagnostic]:
             return None
         rel = candidates[0]
         if line > _PRELUDE_LINES + 1 and not message.startswith("syntax error"):
-            tree = checked_tree(rel)
+            checked = checked_tree(rel)
             field = (
-                None if tree is None else _fstring_field_line(tree, line, column, end)
+                None
+                if checked is None
+                else _fstring_field_line(checked[0], line, column, end, checked[1])
             )
             if field is not None:
                 in_fields.add((file, line))
