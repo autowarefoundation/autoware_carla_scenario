@@ -11623,19 +11623,18 @@ def test_a_crash_of_the_tuple_helpers_is_compiled_again_for_a_diagnostic(
 ) -> None:
     # Codon crashed (exit -11) instantiating `_acs_index` with the type the
     # list display's error left; compiled again without the rewrite, the
-    # display's error is reported (#609).
+    # display's error is reported (#609). The display is unannotated: an
+    # annotated one is written from its annotation and compiles (#611).
     scenario, config, path = _write_case(
         tmp_path,
-        "a = Npc()\n"
-        "lst: list[Npc | None] = [None, a]\n"
-        'logger.info("%d", lst.index(a))\n',
+        "a = Npc()\n" "lst = [None, a]\n" 'logger.info("%d", lst.index(a))\n',
         extra="\n\nclass Npc:\n    pass\n",
     )
     result = typecheck_scenario(scenario, config)
     error = _only_error(result)
     assert not result.crashed, result.format()
     assert "Optional[NoneType]" in error.message, error.format()
-    assert error.line == _line_of(path, "lst: list[Npc | None]"), error.format()
+    assert error.line == _line_of(path, "lst = [None, a]"), error.format()
 
 
 @pytest.mark.parametrize(

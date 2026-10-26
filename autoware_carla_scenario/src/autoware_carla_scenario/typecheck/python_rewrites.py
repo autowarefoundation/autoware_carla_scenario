@@ -336,7 +336,7 @@ def without_sequence_helpers() -> Iterator[None]:
 
     Codon 0.19 crashes with no diagnostic when the model's ``_acs_count`` /
     ``_acs_index`` is instantiated with a type an earlier error left wrong
-    (``lst: list[Npc | None] = [None, a]`` then ``lst.index(a)``): the check
+    (``lst = [None, a]`` then ``lst.index(a)``): the check
     compiles such a module once more without the rewrite, for Codon's own
     diagnostic."""
     token = _SEQUENCE_REWRITES.set(False)
