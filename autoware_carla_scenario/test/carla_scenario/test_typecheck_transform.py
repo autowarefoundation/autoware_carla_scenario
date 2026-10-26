@@ -6105,6 +6105,11 @@ def test_a_negative_enum_value_is_rewritten() -> None:
             "def f() -> None:\n    n: list[Later] = []\nclass Later:\n    pass\n",
             "n = List[Later]()",
         ),
+        (
+            # A method body runs once its class is defined.
+            "class Node:\n    def m(self) -> None:\n        n: list[Node] = []\n",
+            "n: list[Node] = List[Node]()",
+        ),
     ],
 )
 def test_an_empty_or_none_first_display_takes_its_annotation(
@@ -6132,6 +6137,21 @@ def test_an_empty_or_none_first_display_takes_its_annotation(
         ("def f(list) -> None:\n    t: set[int] = list()\n", "= list()"),
         ("def f() -> None:\n    t: list[int] = list(range(3))\n", "list(range(3))"),
         ("def f() -> None:\n    t: dict[str, int] = []\n", "= []"),
+        # The class whose body this is is not defined yet: Codon crashes on
+        # `List[Node]()` there, and Python's `__init__` usually rebinds it.
+        (
+            "from __future__ import annotations\nclass Node:\n"
+            "    children: list[Node] = []\n",
+            "children: list[Node] = []",
+        ),
+        (
+            "class Node:\n    class Inner:\n        up: list['Node'] = []\n",
+            "up: list[Node] = []",
+        ),
+        (
+            "def f() -> None:\n    class Node:\n        kids: list[Node] = []\n",
+            "kids: list[Node] = []",
+        ),
     ],
 )
 def test_a_display_its_annotation_cannot_type_is_left_alone(

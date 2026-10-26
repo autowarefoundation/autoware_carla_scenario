@@ -1201,6 +1201,9 @@ class _Rewriter(ShadowScopes):
         self._exceptions = exceptions
         #: The class whose body is being visited (``None`` in a function).
         self._class_name: str | None = None
+        #: The classes whose bodies enclose the statement being visited, not
+        #: yet defined there (reset in a function body, which runs later).
+        self._open_classes: tuple[str, ...] = ()
         self._forwards: _Forwards = {}
         #: The class whose method (or a function inside one) is being visited.
         self._method_class: str | None = None
@@ -2026,6 +2029,7 @@ class _Rewriter(ShadowScopes):
                 self.visit(default)
         class_depth, self._class_depth = self._class_depth, 0
         class_name, self._class_name = self._class_name, None
+        open_classes, self._open_classes = self._open_classes, ()
         method_class = self._method_class
         if class_name is not None:
             self._method_class = class_name
@@ -2052,6 +2056,7 @@ class _Rewriter(ShadowScopes):
         self._function_depth -= 1
         self._class_depth = class_depth
         self._class_name = class_name
+        self._open_classes = open_classes
         self._method_class = method_class
 
     def _rewrite_classmethod(
@@ -2097,6 +2102,8 @@ class _Rewriter(ShadowScopes):
             for base in node.bases:
                 self.visit(base)
         class_name, self._class_name = self._class_name, node.name
+        open_classes = self._open_classes
+        self._open_classes = (*open_classes, node.name)
         forwards, self._forwards = self._forwards, forwarded_stores(node)
         self._class_depth += 1
         for stmt in node.body:
@@ -2104,6 +2111,7 @@ class _Rewriter(ShadowScopes):
                 self.visit(stmt)
         self._class_depth -= 1
         self._class_name = class_name
+        self._open_classes = open_classes
         self._forwards = forwards
 
     def _rewrite_enum(self, node: ast.ClassDef) -> list[ast.stmt] | None:
@@ -2285,8 +2293,8 @@ class _Rewriter(ShadowScopes):
         whose first element (value) is ``None`` puts its elements into one
         (``_acs_list_into(List[Optional[Npc]](), None, a)``).  ``True`` when
         *value* was replaced as a whole.  An annotation Codon cannot name
-        here (``Any``, a ``TypeVar``, a class defined further down) is left
-        alone.
+        here (``Any``, a ``TypeVar``, a class defined further down, or one
+        whose body this is) is left alone.
         """
         if not isinstance(annotation, ast.Subscript):
             return False
@@ -2297,6 +2305,10 @@ class _Rewriter(ShadowScopes):
             return False
         names = _annotation_names(annotation)
         if names & self._type_vars or any(self._later(n) for n in names):
+            return False
+        if names & set(self._open_classes):
+            # `children: list[Node] = []` in the body of `Node`: the class is
+            # not defined yet, and Codon crashes on `List[Node]()` there.
             return False
         typed = codon_annotation(annotation, class_level=class_level)
         if typed is None or "[" not in typed:

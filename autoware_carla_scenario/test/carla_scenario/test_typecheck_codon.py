@@ -11542,6 +11542,15 @@ class Bag:
         self.seen.add(str(v))
 
 
+class Node:
+    # Its own class is not defined in its body: left `[]` (Codon crashes on
+    # `List[Node]()` there), and the `__init__` rebinds it.
+    children: list[Node] = []
+
+    def __init__(self) -> None:
+        self.children = []
+
+
 def displays(a: Npc) -> str:
     lst: list[Npc | None] = [None, a]
     d: dict[str, Npc | None] = {"x": None, "y": a}
@@ -11559,7 +11568,9 @@ def test_annotated_empty_and_none_first_displays_compile(tmp_path: Path) -> None
         tmp_path,
         "b = Bag()\n"
         "b.add(1)\n"
-        'logger.info("%d %s", len(b.items), displays(Npc()))\n',
+        "n = Node()\n"
+        "n.children.append(Node())\n"
+        'logger.info("%d %d %s", len(b.items), len(n.children), displays(Npc()))\n',
         extra=_ANNOTATED_DISPLAYS,
     )
     result = typecheck_scenario(scenario, config)
