@@ -3294,10 +3294,30 @@ value whose members are <code>int</code>, not as a type: it becomes <code>int</c
     the class defines itself is kept. This holds for a dataclass whose bases
     are dataclasses of the same module (or none): one deriving from a class
     the check cannot see the fields of, such as a framework dataclass, gets
-    none, and <code>==</code> on it is refused. <code>eq=False</code> (identity comparison) is not
-    modelled either: write <code>a is b</code>. Python refuses <code>&lt;</code> without <code>order=True</code>
-    and <code>hash()</code> of a non-frozen dataclass, and so does the check, with a
-    hint naming the flag.</li>
+    none, and <code>==</code> on it is refused. <code>eq=False</code> compares and hashes by
+    identity, as a plain class does (below). Python refuses <code>&lt;</code> without
+    <code>order=True</code> and <code>hash()</code> of a non-frozen dataclass, and so does the
+    check, with a hint naming the flag.</li>
+<li>A plain class (one that does not define <code>__eq__</code>) compares and hashes by
+    identity, as Python's <code>object</code> does (#596): <code>a in npcs</code>,
+    <code>npcs.remove(a)</code>, <code>a == b</code>, <code>{t}</code>, <code>{t: 1}</code> and <code>dict[Npc, float]</code>
+    compile. The check gives each top-level class of the checked modules
+    whose bases are plain (none, <code>object</code>, <code>ABC</code>) <code>__eq__</code> / <code>__ne__</code>
+    (<code>self is other</code>) and <code>__hash__</code> (<code>id(self)</code>), with <code>@extend</code> right
+    after the class, so module-level code and the module's subclasses have
+    them; a <code>__hash__</code> (or <code>__ne__</code>) the class defines is kept, and a
+    <code>@dataclass(eq=False, unsafe_hash=True)</code> keeps the hash of its fields.
+    A class deriving from a framework class gets the framework model's:
+    <code>BaseCondition</code>, <code>BaseAction</code>, <code>VehicleEntity</code>, <code>PedestrianEntity</code> and
+    <code>EgoVehicle</code> compare and hash by identity in the model, as in Python
+    (<code>{TimeoutCondition(1.0, label="a")}</code> compiles). Enums, named tuples,
+    exceptions, protocols and a class with a metaclass get nothing.
+    A class that defines <code>__eq__</code> and not <code>__hash__</code> is unhashable in Python
+    (it sets <code>__hash__ = None</code>), and the check refuses a set of them, or a
+    dict keyed by one, with a hint to define <code>__hash__</code>. The gap: such a
+    class <em>deriving</em> from a plain class of the module (or from a framework
+    class above) inherits the identity hash in the check, so a set of them
+    compiles there and raises <code>TypeError</code> in Python.</li>
 <li><code>dataclasses.replace(obj, a=x, b=y)</code> is checked as the typed copy it is
     (#487): the check appends to each dataclass of the module one
     <code>_acs_with__&lt;field&gt;</code> method per field the constructor takes, and writes
@@ -3415,6 +3435,16 @@ cannot express is refused at its line, with what to write instead.</p>
 <td><code>sorted(xs)</code>, <code>xs.sort()</code>, <code>min</code> / <code>max</code> of a class that defines <code>__lt__</code> only</td>
 <td>the class gets <code>__gt__</code> (<code>other &lt; self</code>) and <code>__ge__</code> (<code>not self &lt; other</code>), which Codon's sort calls</td>
 <td>the class defines no ordering (use <code>@dataclass(order=True)</code> or <code>key=</code>)</td>
+</tr>
+<tr>
+<td><code>a if x else None</code>, <code>a if x is not None else None</code>, <code>None if x is None else a</code> (also <code>not x</code>), where <code>a</code> reads the narrowed <code>x</code>: <code>m.group(1) if m else None</code>, <code>n.name if n else None</code> (#597)</td>
+<td><code>_acs_some(a) if x else None</code>: Codon narrows <code>x</code> in <code>a</code> and then cannot unify the type of <code>a</code> with the <code>None</code> (<code>'Optional[str]' does not match expected type 'str'</code>); <code>_acs_some</code> makes <code>a</code> an <code>Optional</code> itself (a branch that already is one is kept), the type Python gives the expression</td>
+<td></td>
+</tr>
+<tr>
+<td><code>a.__eq__(b)</code>, <code>a.__ne__(b)</code> (#596)</td>
+<td><code>(a == (b))</code>, <code>(a != (b))</code>: Codon cannot call by name an <code>__eq__</code> that overrides an inherited one (the identity <code>__eq__</code> the check gives a plain class, or the model's <code>BaseCondition</code>), as a <code>__ne__</code> written <code>return not self.__eq__(other)</code> does; <code>==</code> is how Python calls it, too</td>
+<td><code>super().__eq__(b)</code>, <code>A.__eq__(a, b)</code> and a parenthesized receiver are left alone</td>
 </tr>
 <tr>
 <td>a class that defines <code>__eq__</code> but not <code>__ne__</code> (a value object in a <code>set</code> or as a <code>dict</code> key)</td>
@@ -3751,7 +3781,7 @@ this list, the check's additions and the tests in step:</p>
 <code>functools.cached_property</code>, <code>itertools.pairwise</code>, <code>collections.OrderedDict</code>,
 <code>collections.deque</code>, <code>math.dist</code>, <code>math.isqrt</code>, <code>math.comb</code>, <code>math.perm</code>,
 <code>math.cbrt</code>, <code>math.exp2</code>, <code>math.hypot</code>, <code>random.Random</code>, <code>random.choices</code>,
-<code>random.triangular</code>, <code>statistics.fmean</code></p>
+<code>random.triangular</code>, <code>statistics.fmean</code>, <code>re.Match</code>, <code>re.Pattern</code></p>
 <!-- stdlib-names:end -->
 
 <ul>
@@ -3801,6 +3831,17 @@ this list, the check's additions and the tests in step:</p>
   of Python 3.11, accepted on 3.10 too, like <code>math.cbrt</code>. The rest of
   <code>statistics</code> is Codon's (<code>mean</code>, <code>median</code>, <code>stdev</code>, ...), which takes a
   <code>list[float]</code>.</li>
+<li><code>re.Match.group(n)</code>, <code>group(a, b)</code>, <code>m[n]</code>, <code>groups()</code> and <code>groupdict()</code>
+  are <code>str</code> (#597), as typeshed declares them (<code>str | Any</code>), so
+  <code>m.group(1) if m else ""</code> compiles; Codon's are <code>Optional[str]</code>, and
+  their <code>Optional[str]</code> and the <code>""</code> did not unify. The caveat is
+  typeshed's too: a group that did not take part in the match (<code>(-x)?</code>) is
+  <code>None</code> in Python, which the check does not see: test an optional group
+  with <code>is not None</code> before using it as a <code>str</code> (the check compiles the
+  test), or read it through <code>groups(default)</code> / <code>groupdict(default)</code>,
+  which keep Codon's <code>Optional[str]</code>. <code>re.Pattern.split</code>
+  keeps its <code>Optional[str]</code> items, a group that did not take part splitting
+  off as <code>None</code>, as in Python. The rest of <code>re</code> is Codon's.</li>
 <li><code>random.Random.choices</code> (and <code>random.choices</code>) take <code>weights</code> of ints or
   floats, or <code>cum_weights=</code>, and <code>k=</code>, as Python's do, and
   <code>triangular(low, high)</code> (the method and the function) takes the midpoint as the mode. Codon's
@@ -5569,9 +5610,9 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   <code>stated or DEFAULT</code> with <code>stated: Optional[str]</code>: branch on the cases
   into an annotated <code>str</code> local (<code>coordinate.projection.resolve_projector</code>).
 - <strong>A regex group used as a <code>str</code></strong> (<code>m.group(1)</code> handed to <code>re.search</code>, or
-  to a <code>str</code> local): Codon's <code>Match.group()</code> is an <code>Optional[str]</code> whose
-  type Codon 0.19 cannot settle from such a use. Take <code>str(m.group(1))</code>,
-  the same <code>str</code> in Python (<code>coordinate.projection._parse_geo_reference</code>).
+  to a <code>str</code> local) compiles now that the check's <code>Match.group()</code> is a <code>str</code>
+  (#597); <code>str(m.group(1))</code>, the same <code>str</code> in Python, is still found in
+  older modules (<code>coordinate.projection._parse_geo_reference</code>).
 - <strong>Projectors of different classes return through one <code>-&gt; Projector</code></strong>
   (<code>coordinate.projection.make_projector</code>): the lanelet2 model derives each
   from <code>Projector</code>, and Codon 0.19 converts a subclass to it at <code>return</code>.
@@ -5959,7 +6000,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 25, 2026 23:33:08 UTC"><span class="timeago" datetime="2026-10-25T23:33:08+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 25, 2026 23:33:08 UTC">2026-10-25</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 26, 2026 02:17:17 UTC"><span class="timeago" datetime="2026-10-26T02:17:17+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 26, 2026 02:17:17 UTC">2026-10-26</span>
   </span>
 
     
