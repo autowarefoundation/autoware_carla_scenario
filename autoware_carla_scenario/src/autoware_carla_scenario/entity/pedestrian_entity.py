@@ -375,14 +375,17 @@ class PedestrianEntity(WalkedEntity):
         *cross_factor* is the probability that CARLA's walker controller may
         take it across a road away from a crossing (``None``: CARLA's).
 
-        Each leg is the shortest path on the walkable lanelets where there is
-        one, and straight where there is none -- across a road whose crosswalks
-        only overlap its walkways, unless a crosswalk is a waypoint.
+        Each leg is the shortest walk on the walkable lanelets
+        (:class:`~autoware_carla_scenario.coordinate.walk_graph.WalkGraph`),
+        which crosses a road at a crosswalk that only overlaps the walkways and
+        walks a walkway either way, whatever its ``one_way`` tag.  A leg with no
+        such walk -- a map with nothing joining them, or a waypoint off them --
+        is straight, and says so in a warning.
         """
         from ..coordinate.map_manager import MapManager  # noqa: PLC0415
         from ..coordinate.poses import CarlaWorldPose  # noqa: PLC0415
         from ..coordinate.transform import to_carla_world  # noqa: PLC0415
-        from ..odd.route_plan import PlannedRoute, route_poses  # noqa: PLC0415
+        from ..coordinate.walk_graph import walk_graph  # noqa: PLC0415
         from ..trajectory.model import ResolvedTrajectory  # noqa: PLC0415
 
         self._walk = None
@@ -399,20 +402,29 @@ class PedestrianEntity(WalkedEntity):
         if start is None:
             start = CarlaWorldPose.from_carla_transform(walking.get_transform())
         here: CarlaWorldPose = start
-        mm = MapManager.get_instance()
-        on = _on_walkable_lanelet(here)
-        poses: list[Lanelet2Pose] = list(waypoints)
-        poses.append(goal)
-        if on is not None:
-            walk_from: Lanelet2Pose = on
-            poses = route_poses(
-                PlannedRoute(start=walk_from, goal=goal, via=tuple(waypoints)),
-                mm.lanelet_map,
-                mm.pedestrian_routing_graph,
-                WALK_POINT_STEP_M,
-                bidirectional=True,
-                straight_legs=True,
-            )
+        graph = walk_graph(MapManager.get_instance().lanelet_map)
+        current = _on_walkable_lanelet(here)
+        stops: list[Lanelet2Pose] = list(waypoints)
+        stops.append(goal)
+        poses: list[Lanelet2Pose] = []
+        for stop in stops:
+            walk: Optional[list[Lanelet2Pose]] = None
+            if current is not None:
+                walk_from: Lanelet2Pose = current
+                walk = graph.walk(walk_from, stop, WALK_POINT_STEP_M)
+            if walk is None:
+                # The end pose alone: the walk goes straight there.
+                logger.warning(
+                    "PedestrianEntity '%s': no walk to lanelet %d on the walkable "
+                    "lanelets, walks straight there",
+                    self._config.role_name,
+                    stop.lanelet_id,
+                )
+                poses.append(stop)
+            else:
+                found: list[Lanelet2Pose] = walk
+                poses.extend(found)
+            current = stop
         xs, ys, zs = [here.x], [here.y], [here.z]
         yaws: list[Optional[float]] = [None]
         for pose in poses:

@@ -154,6 +154,7 @@ CHECKED: tuple[str, ...] = (
     "autoware_carla_scenario.coordinate.stop_line",
     "autoware_carla_scenario.coordinate.traffic_light",
     "autoware_carla_scenario.coordinate.transform",
+    "autoware_carla_scenario.coordinate.walk_graph",
     "autoware_carla_scenario.coverage",
     "autoware_carla_scenario.debug_markers",
     "autoware_carla_scenario.driver",
