@@ -388,11 +388,24 @@ class List:
         raise ValueError(f"{_acs_x} is not in list")
 
     # `xs += (4, 5)` (#601): Python's list += takes any iterable (only `+`
-    # wants a list); Codon's takes a list. Defined last, it is the overload
-    # Codon tries first, so it serves a list too.
+    # wants a list); Codon's takes a list.
     def __iadd__(self, _acs_other) -> List[T]:
         for a in _acs_other:
             self.append(a)
+        return self
+
+    # Codon's own, again, defined after the one above so that Codon tries it
+    # first: a list operand is typed by the receiver (`xs += []`, `xs = []`
+    # then `xs += [1]`, a list of Optional or of a base class), which the
+    # untyped overload would type by its first element (or as NoneType).
+    def __iadd__(self, _acs_other: List[T]) -> List[T]:
+        n = self.len + _acs_other.len
+        if self.arr.len < n:
+            self._resize(n)
+        str.memcpy((self.arr.ptr + self.len).as_byte(),
+                   _acs_other.arr.ptr.as_byte(),
+                   _acs_other.len * gc.sizeof(T))
+        self.len = n
         return self
 
 

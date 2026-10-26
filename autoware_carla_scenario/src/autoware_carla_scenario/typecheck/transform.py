@@ -2926,12 +2926,22 @@ def _enum_value_type(
     return kinds.pop() if len(kinds) == 1 else None
 
 
+def _enum_value_members(
+    node: ast.ClassDef,
+) -> list[tuple[ast.Assign, str, ast.expr]]:
+    """:func:`_enum_members` of the source as written, less the lambdas
+    (``f = lambda self: ...``), which are methods, not members, and which
+    :func:`class_body_lambdas` turns into ``def`` before the Enum is
+    rewritten."""
+    return [m for m in _enum_members(node) if _wrapped_lambda(m[2])[1] is None]
+
+
 def _unchecked_enum(node: ast.ClassDef) -> bool:
     """Whether *node* is an Enum with members whose value type the check
     cannot tell (:func:`enum_value_refusals`)."""
     if _enum_base_kind(node) is None:
         return False
-    members = _enum_members(node)
+    members = _enum_value_members(node)
     return bool(members) and _enum_value_type(node, members) is None
 
 
@@ -2952,7 +2962,7 @@ def enum_value_refusals(tree: ast.Module) -> list[tuple[int, str]]:
     for node in ast.walk(tree):
         if not isinstance(node, ast.ClassDef) or not _unchecked_enum(node):
             continue
-        members = _enum_members(node)
+        members = _enum_value_members(node)
         names = {n for _, n, _ in members}
         tuples = [n for _, n, v in members if isinstance(v, ast.Tuple)]
         # A member read by a later one (an alias, `B = A`) is refused by the

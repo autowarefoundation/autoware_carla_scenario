@@ -5750,8 +5750,11 @@ def test_an_enum_of_values_the_check_cannot_type_is_refused(
         "A = -1.5\n    B = 2.0",
         "A = auto()\n    B = auto()",
         "def describe(self) -> str:\n        return self.name",
+        # A lambda is a method, not a member: it becomes a def (#482).
+        "A = 1\n    B = 2\n    double = lambda self: self.value * 2",
+        "A = 1\n    B = 2\n    zero = staticmethod(lambda: 0)",
     ],
-    ids=["negative", "negative-float", "auto", "no-member"],
+    ids=["negative", "negative-float", "auto", "no-member", "lambda", "static"],
 )
 def test_an_enum_the_check_can_type_is_not_refused(body: str) -> None:
     source = f"from enum import Enum, auto\n\n\nclass E(Enum):\n    {body}\n"

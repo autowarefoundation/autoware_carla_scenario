@@ -10991,6 +10991,7 @@ _BUILTIN_GAPS = """
 
 
 import itertools
+from typing import Optional
 
 
 class Base:
@@ -11024,6 +11025,16 @@ def gaps(d: dict[str, int], e: dict[str, int], pair: tuple[int, str]) -> str:
     c: int = Counted().count(2) + next(itertools.count(5))
     xs += (4, 5)
     xs += [6]
+    xs += []
+    grown = []
+    grown += [1]
+    maybe: list[Optional[int]] = []
+    maybe += [1]
+    maybe += [None]
+    floats: list[float] = [1.0]
+    floats += [2, 3]
+    bases: list[Base] = []
+    bases += [Derived(1.0)]
     common: set[str] = d.keys() & e.keys()
     only: set[str] = d.keys() - {"a"}
     either: set[str] = d.keys() | ["z"]
@@ -11035,7 +11046,7 @@ def gaps(d: dict[str, int], e: dict[str, int], pair: tuple[int, str]) -> str:
     a = "hello".translate(table)
     b = "hello".translate(str.maketrans("l", "L", "o"))
     f = "hello".translate(str.maketrans({"h": "H"}))
-    return f"{i} {n} {m} {c} {xs} {common} {only} {either} {pairs} {sub} {same} {back} {a} {b} {f} {Derived(2.0).k}"
+    return f"{i} {n} {m} {c} {xs} {common} {only} {either} {pairs} {sub} {same} {back} {a} {b} {f} {Derived(2.0).k} {grown} {len(maybe)} {floats} {len(bases)}"
 """
 
 
