@@ -6017,7 +6017,7 @@ def test_a_keyword_dict_in_an_fstring_field_is_lowered() -> None:
 def test_a_based_keyword_dict_in_an_fstring_field_is_lowered() -> None:
     # `dict(base, a=1)` becomes `(dict(base) | {"a": 1})` (#613): its brace
     # too would end the field.
-    out = _body("s = f\"{dict(base, a=1)} {n}\"\nt = f'{dict(base, b='x')!r}'\n")
+    out = _body('s = f"{dict(base, a=1)} {n}"\nt = f\'{dict(base, b="x")!r}\'\n')
     assert 's = (str((dict(base) | {"a": 1})) + f" {n}")' in out, out
     assert "t = (repr((dict(base) | {\"b\": 'x'})))" in out, out
 
