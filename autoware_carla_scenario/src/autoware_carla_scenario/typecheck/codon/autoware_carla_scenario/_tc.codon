@@ -145,6 +145,16 @@ def _keyword_only(extra, where: Literal[str]):
         compile_error(where + " is keyword-only")
 
 
+class _acs_KeywordOnly:
+    """What the checker annotates the `*_acs_kw` it puts in place of a bare
+    `*` with (typecheck/transform.py, #622): no argument is of this type, so
+    a positional argument for a keyword-only parameter, which Python
+    refuses, is a compile error at the call, and W says why."""
+    # Codon's generic parameter, in a form Python can parse too:
+    # `class _acs_KeywordOnly[W: Literal[str]]` needs Python 3.12.
+    W: Literal[str]
+
+
 def _acs_tuple(values):
     """What the checker puts in place of tuple(values) (typecheck/transform.py):
     Codon's tuples have a fixed length, so a tuple of a list or a generator is
@@ -157,14 +167,27 @@ def _acs_tuple(values):
 
 
 def _acs_some(value):
-    """What the checker puts around the branch of `a if x else None` that
-    reads the narrowed x (typecheck/python_rewrites.py, #597): Codon cannot
-    unify that branch's type with the None, so the branch is made an Optional
-    itself (a branch that already is one is kept)."""
+    """The branch of `a if x else None` that reads the narrowed x as an
+    Optional (a branch that already is one is kept): what the checker puts
+    in its place where it cannot be a lambda (typecheck/python_rewrites.py,
+    #597), and what _acs_some_if returns."""
     if isinstance(value, Optional):
         return value
     else:
         return Optional[type(value)](value)
+
+
+def _acs_some_if(value, subject):
+    """What the checker puts in place of the branch a of `a if x else None`
+    (and `None if x is None else a`) that reads the narrowed x:
+    `_acs_some_if(lambda: a, x) if not isinstance(x, Optional[NoneType]) else
+    None` (typecheck/python_rewrites.py, #597, #621). Codon decides that test
+    from the type and unifies nothing, and a call's type is resolved with its
+    argument's even where it is not known yet when Codon decides the test."""
+    if isinstance(subject, NoneType) or isinstance(subject, Optional[NoneType]):
+        return None
+    else:
+        return _acs_some(value())
 
 
 def _acs_reduce(function, iterable, *initial):

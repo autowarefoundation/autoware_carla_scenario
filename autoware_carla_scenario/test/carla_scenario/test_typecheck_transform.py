@@ -18,6 +18,7 @@ from typing import Any, Optional
 import pytest
 
 from autoware_carla_scenario.typecheck import model_dir
+from autoware_carla_scenario.typecheck.check import Diagnostic, _keyword_only_hint
 from autoware_carla_scenario.typecheck.driver import render_driver
 from autoware_carla_scenario.typecheck.python_rewrites import (
     REWRITE_HINTS,
@@ -171,7 +172,11 @@ def test_parameters_and_returns_are_rewritten_in_place() -> None:
             return a
         """
     )
-    assert "def f(a: Optional[float], b, *_acs_kw, c = 1):" in out
+    assert (
+        "def f(a: Optional[float], b, *_acs_kw: _acs_KeywordOnly["
+        '"f() takes 2 positional arguments but more were given: c is '
+        'keyword-only (pass it by name: `c=...`)"], c = 1):'
+    ) in out
     assert "    x = 3" in out
 
 
@@ -186,10 +191,54 @@ def test_a_required_keyword_after_a_default_gets_a_placeholder_default() -> None
         """
     )
     assert (
-        "def f(a: float = 0.0, *_acs_kw, label: str = _acs_Required(), n: int = 1, "
-        "tag = _acs_Required()) -> None:"
+        "def f(a: float = 0.0, *_acs_kw: _acs_KeywordOnly["
+        '"f() takes 1 positional argument but more were given: label, n and tag '
+        'are keyword-only (pass them by name: `label=...`)"], '
+        "label: str = _acs_Required(), n: int = 1, tag = _acs_Required()) -> None:"
     ) in out
-    assert "def g(a: float, *_acs_kw, label: str) -> None:" in out
+    assert "def g(a: float, *_acs_kw: _acs_KeywordOnly[" in out
+    assert 'label is keyword-only (pass it by name: `label=...`)"], label: str)' in out
+
+
+def test_a_positional_argument_for_a_keyword_only_parameter_is_of_no_type() -> None:
+    # #622: the `*_acs_kw` Codon needs in place of the bare `*` would take it.
+    out = _transform(
+        """
+        class Box:
+            def m(self, a: float, *, s: float = 1.0) -> float:
+                def inner(*, k: int) -> int:
+                    return k
+                return a * s
+
+        def star(*args: float, k: float = 0.0) -> float:
+            return k
+
+        def only(*, k: float) -> float:
+            return k
+        """
+    )
+    assert (
+        "    def m(self, a: float, *_acs_kw: _acs_KeywordOnly["
+        '"Box.m() takes 2 positional arguments but more were given: s is '
+        'keyword-only (pass it by name: `s=...`)"], s: float = 1.0) -> float:'
+    ) in out
+    assert '"inner() takes 0 positional arguments but more were given: k is ' in out
+    assert "def star(*args: float, k: float = 0.0) -> float:" in out
+    assert '"only() takes 0 positional arguments but more' in out
+
+
+def test_the_keyword_only_refusal_is_read_out_of_the_type() -> None:
+    message = (
+        "gap() takes 1 positional argument but more were given: scale is "
+        "keyword-only (pass it by name: `scale=...`)"
+    )
+    codon = f"'float' does not match expected type '_acs_KeywordOnly['{message}']'"
+    hinted = _keyword_only_hint(Diagnostic(codon, "scenario.py", 3, 5))
+    assert hinted == Diagnostic(message, "scenario.py", 3, 5)
+    assert (
+        _keyword_only_hint(Diagnostic("'float' does not match expected type 'str'"))
+        is None
+    )
 
 
 def test_an_empty_collection_default_takes_the_type_of_its_field() -> None:
@@ -1642,7 +1691,11 @@ def test_a_classmethod_becomes_a_staticmethod_of_its_class() -> None:
     assert out.count("\n") == source.count("\n")
     assert "@classmethod" not in out
     assert "    def origin() -> Pose:\n        return Pose(0.0)" in out
-    assert "    def at(x: Optional[float], *_acs_kw, y: float = 0.0) -> Pose:" in out
+    assert (
+        "    def at(x: Optional[float], *_acs_kw: _acs_KeywordOnly["
+        '"Pose.at() takes 2 positional arguments but more were given: y is '
+        'keyword-only (pass it by name: `y=...`)"], y: float = 0.0) -> Pose:'
+    ) in out
     assert "        return Pose.make(Pose(x))" in out
 
 
@@ -5888,8 +5941,10 @@ def test_classes_compared_another_way_get_no_identity_methods() -> None:
 
 
 # ---------------------------------------------------------------------------
-# `a if x else None` with x narrowed in a (#597)
+# `a if x else None` with x narrowed in a (#597, #621)
 # ---------------------------------------------------------------------------
+
+_NOT_NONE = "not isinstance({}, Optional[NoneType])"
 
 
 @pytest.mark.parametrize(
@@ -5897,30 +5952,86 @@ def test_classes_compared_another_way_get_no_identity_methods() -> None:
     [
         (
             "a = m.group(1) if m else None",
-            "a = _acs_some(m.group(1)) if m else None",
+            f"a = _acs_some_if(lambda: m.group(1), m) if {_NOT_NONE.format('m')} "
+            "else None",
         ),
         (
             "a = m[1] if m is not None else None",
-            "a = _acs_some(m[1]) if m is not None else None",
+            f"a = _acs_some_if(lambda: m[1], m) if {_NOT_NONE.format('m')} else None",
         ),
         (
             "a = None if m is None else m.group(1)",
-            "a = None if m is None else _acs_some(m.group(1))",
+            "a = None if isinstance(m, Optional[NoneType]) else "
+            "_acs_some_if(lambda: m.group(1), m)",
         ),
         (
             "a = None if not self.n else self.n.name",
-            "a = None if not self.n else _acs_some(self.n.name)",
+            "a = None if isinstance(self.n, Optional[NoneType]) else "
+            "_acs_some_if(lambda: self.n.name, self.n)",
         ),
         (
             "a = f(m.group(1).upper()) if m else None",
-            "a = _acs_some(f(m.group(1).upper())) if m else None",
+            "a = _acs_some_if(lambda: f(m.group(1).upper()), m) if "
+            f"{_NOT_NONE.format('m')} else None",
+        ),
+        (
+            "a = npc.speed if npc is not None else None",
+            "a = _acs_some_if(lambda: npc.speed, npc) if "
+            f"{_NOT_NONE.format('npc')} else None",
+        ),
+        (  # brackets around the parts stay where they are
+            "a = (m.group(1)) if (m) else (None)",
+            f"a = (_acs_some_if(lambda: m.group(1), m)) if ({_NOT_NONE.format('m')}) "
+            "else (None)",
+        ),
+        (  # what a lambda cannot hold: the branch is only made an Optional
+            "a = (n := m.group(1)) if m else None",
+            f"a = (_acs_some(n := m.group(1))) if {_NOT_NONE.format('m')} else None",
+        ),
+        (
+            "a = super().f(m) if m else None",
+            f"a = _acs_some(super().f(m)) if {_NOT_NONE.format('m')} else None",
         ),
     ],
 )
-def test_the_branch_reading_the_narrowed_value_is_made_optional(
+def test_the_conditional_reading_the_narrowed_value_is_decided_from_the_type(
     line: str, expected: str
 ) -> None:
     assert _rewritten(line + "\n") == expected + "\n"
+
+
+def test_the_narrowed_branch_is_no_lambda_in_a_class_body() -> None:
+    text = _rewritten(
+        textwrap.dedent(
+            """
+            class K:
+                z = q.x if q else None
+
+                def w(self):
+                    return q.x if q else None
+            """
+        )
+    )
+    assert f"    z = _acs_some(q.x) if {_NOT_NONE.format('q')} else None\n" in text
+    assert (
+        f"        return _acs_some_if(lambda: q.x, q) if {_NOT_NONE.format('q')}"
+        in (text)
+    )
+
+
+def test_the_narrowed_conditional_keeps_every_line_and_comment() -> None:
+    source = (
+        "a = (m.x  # if else\n"
+        "     if m is not None  # else if\n"
+        "     else None)\n"
+        "b = f'{m.x if m else None}'\n"
+    )
+    assert _rewritten(source) == (
+        "a = (_acs_some_if(lambda: m.x, m)  # if else\n"
+        f"     if {_NOT_NONE.format('m')}  # else if\n"
+        "     else None)\n"
+        f"b = f'{{_acs_some_if(lambda: m.x, m) if {_NOT_NONE.format('m')} else None}}'\n"
+    )
 
 
 @pytest.mark.parametrize(
@@ -5938,11 +6049,11 @@ def test_other_conditional_expressions_are_left_alone(line: str) -> None:
     assert _rewritten(line + "\n") == line + "\n"
 
 
-def test_the_some_branch_is_wrapped_once_whatever_else_is_rewritten() -> None:
+def test_the_narrowed_branch_is_wrapped_once_whatever_else_is_rewritten() -> None:
     text = _rewritten('a = "{}".format(m.group(1)) if m else None\n')
-    assert text.count("_acs_some(") == 1
-    assert text.startswith("a = _acs_some(") and ".format(" not in text
-    assert text.endswith(") if m else None\n")
+    assert text.count("_acs_some_if(") == 1
+    assert text.startswith("a = _acs_some_if(lambda: ") and ".format(" not in text
+    assert text.endswith(f", m) if {_NOT_NONE.format('m')} else None\n")
 
 
 # ---------------------------------------------------------------------------

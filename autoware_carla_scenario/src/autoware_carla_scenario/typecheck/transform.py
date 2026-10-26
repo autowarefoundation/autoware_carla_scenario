@@ -54,7 +54,9 @@ which :func:`transform_source_lines` maps back onto the handler):
   ``frozenset(...)`` becomes ``set(...)``, ``frozenset[X](...)`` becomes
   ``Set[X](...)``, and an annotation
   ``frozenset[X]`` / ``FrozenSet[X]`` becomes ``Set[X]``.
-* A bare ``*`` in a signature (keyword-only parameters) becomes ``*_acs_kw``.
+* A bare ``*`` in a signature (keyword-only parameters) becomes ``*_acs_kw:
+  _acs_KeywordOnly["<message>"]``: a positional argument for a keyword-only
+  parameter is of no such type, a compile error at the call (#622).
 * A list display of two or more elements that are not all literals, e.g.
   ``[ElapsedTimeCondition(...), SpeedCondition(...)]``, becomes
   ``_acs_list(...)``: Codon types a display by its first element, and
@@ -227,7 +229,7 @@ PRELUDE = (
     "_acs_dict_into, _acs_list_into\n"
     "from autoware_carla_scenario._tc import _Required as _acs_Required, "
     "_acs_Returning, _acs_callable, _acs_tuple, _acs_reduce, _acs_some, "
-    "_acs_count, _acs_index\n"
+    "_acs_some_if, _acs_count, _acs_index, _acs_KeywordOnly\n"
     "from enum import IntEnum as _acs_IntEnum, IntFlag as _acs_IntFlag, "
     "StrEnum as _acs_StrEnum\n"
     "from autoware_carla_scenario._exceptions import "
@@ -1857,6 +1859,7 @@ class _Rewriter(ShadowScopes):
         *,
         skip_first: bool,
         body: list[ast.stmt] | None = None,
+        name: str = "",
     ) -> None:
         every = [*args.posonlyargs, *args.args, *args.kwonlyargs]
         if skip_first:
@@ -1877,7 +1880,7 @@ class _Rewriter(ShadowScopes):
                     name_end, self.edits.node_span(arg.annotation)[1], ""
                 )
         if args.kwonlyargs and args.vararg is None:
-            self._rewrite_bare_star(args)
+            self._rewrite_bare_star(args, name)
         self._default_required_keywords(args)
 
     def _kept_optional_callable(self, arg: ast.arg, body: list[ast.stmt]) -> bool:
@@ -1995,7 +1998,16 @@ class _Rewriter(ShadowScopes):
             )
             self.edits.replace(end, end, " = _acs_Required()")
 
-    def _rewrite_bare_star(self, args: ast.arguments) -> None:
+    def _rewrite_bare_star(self, args: ast.arguments, name: str) -> None:
+        """``*`` becomes ``*_acs_kw: _acs_KeywordOnly["<message>"]`` (#622).
+
+        Codon has no keyword-only parameters: the ``*_acs_kw`` takes what
+        Python refuses, a positional argument for one.  No argument is of the
+        type its annotation names, so such a call is a compile error at the
+        call; the check reads the message out of the type
+        (``check._keyword_only_hint``).  A call without one passes an empty
+        tuple, which needs no element of that type.
+        """
         first_kw = args.kwonlyargs[0]
         end = self.edits.offset(first_kw.lineno, first_kw.col_offset)
         positional = [*args.posonlyargs, *args.args]
@@ -2015,7 +2027,8 @@ class _Rewriter(ShadowScopes):
         star = self.edits.text(start, end).rfind("*")
         if star >= 0:
             pos = start + len(self.edits.text(start, end)[:star].encode())
-            self.edits.replace(pos, pos + 1, "*_acs_kw")
+            message = _keyword_only_message(args, name, self._class_name)
+            self.edits.replace(pos, pos + 1, f'*_acs_kw: _acs_KeywordOnly["{message}"]')
 
     def _rewrite_returns(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
         if node.returns is None:
@@ -2115,7 +2128,9 @@ class _Rewriter(ShadowScopes):
         if classmethod_ and self._class_name is not None:
             self._rewrite_classmethod(node, self._class_name)
         self._rewrite_defaults(node.args, node.body)
-        self._rewrite_arguments(node.args, skip_first=classmethod_, body=node.body)
+        self._rewrite_arguments(
+            node.args, skip_first=classmethod_, body=node.body, name=node.name
+        )
         self._rewrite_returns(node)
         for default in [*node.args.defaults, *node.args.kw_defaults]:
             if default is not None:
@@ -2891,6 +2906,26 @@ def _lambda_factory(call: ast.Call) -> ast.Lambda | None:
         if kw.arg == "default_factory" and isinstance(kw.value, ast.Lambda):
             return kw.value
     return None
+
+
+def _keyword_only_message(
+    args: ast.arguments, name: str, class_name: str | None
+) -> str:
+    """What a call that passes a positional argument for a keyword-only
+    parameter of *name* is refused with (#622), in Python's words: the
+    count of positional parameters includes ``self``, as Python's does."""
+    where = f"{class_name}.{name}" if class_name and name else name or "<lambda>"
+    count = len(args.posonlyargs) + len(args.args)
+    names = [a.arg for a in args.kwonlyargs]
+    listed = (
+        names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
+    )
+    return (
+        f"{where}() takes {count} positional argument{'' if count == 1 else 's'} "
+        f"but more were given: {listed} {'is' if len(names) == 1 else 'are'} "
+        f"keyword-only (pass {'it' if len(names) == 1 else 'them'} by name: "
+        f"`{names[0]}=...`)"
+    )
 
 
 def _parameters(

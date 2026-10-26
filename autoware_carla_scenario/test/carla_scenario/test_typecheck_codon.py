@@ -11974,3 +11974,217 @@ def test_a_tuple_display_replace_it_cannot_type_is_refused_at_the_call(
     ), error.format()
     assert "`tuple([1, 2, 1])`" in error.message
     assert error.line == _line_of(path, "q = replace(p, lanes=")
+
+
+# ---------------------------------------------------------------------------
+# A conditional expression narrowing an attribute chain (#621)
+# ---------------------------------------------------------------------------
+
+_NARROWED_NPC = r"""
+
+
+class Npc:
+    speed: float
+    name: str
+
+    def __init__(self, speed: float, name: str) -> None:
+        self.speed = speed
+        self.name = name
+
+    def label(self) -> str:
+        return self.name.upper()
+
+
+class Holder:
+    npc: Optional[Npc]
+
+    def __init__(self) -> None:
+        self.npc = None
+
+
+def npc_name(npc: Optional[Npc]) -> str | None:
+    return npc.name if npc is not None else None
+
+
+def npc_label(h: Holder) -> Optional[str]:
+    return None if h.npc is None else h.npc.label()
+
+
+def lane_number(name: str) -> str | None:
+    m = re.match(r"lane_(\d+)", name)
+    return m.group(1) if m else None
+
+
+def describe(h: Holder) -> str:
+    speed = h.npc.speed if h.npc is not None else None
+    rounded = round(speed) if speed is not None else None
+    doubled = 0.0
+    if speed is not None:
+        doubled = speed * 2.0 + 1.0
+    text = f"{speed:.1f}" if speed is not None else "n/a"
+    shown = str(speed) if speed is not None else "n/a"
+    count = rounded + 1 if rounded is not None else 0
+    label = h.npc.label() if h.npc else None
+    upper = label.upper() if label is not None else "?"
+    return text + shown + upper + str(doubled) + str(count)
+
+
+def npc_speed(npc: Optional[Npc]) -> str | None:
+    return npc.speed if npc is not None else None
+"""
+
+
+def test_a_narrowed_attribute_chain_is_an_optional_of_its_type(
+    tmp_path: Path,
+) -> None:
+    # The value of `npc.speed if npc is not None else None` was an unresolved
+    # `Optional[T]`: `str()` of it, a format spec or a `round()` of it were
+    # refused, or crashed Codon (exit -11).  Only `npc_speed()`, which returns
+    # the float as a str, is wrong.
+    scenario, config, path = _write_case(
+        tmp_path,
+        "h = Holder()\n"
+        'h.npc = Npc(3.0, "a")\n'
+        'logger.info("%s", describe(h))\n'
+        "name = npc_name(h.npc)\n"
+        'logger.info("%s", name.upper() if name is not None else "-")\n'
+        'logger.info("%s", npc_label(h))\n'
+        'number = lane_number("lane_7")\n'
+        'logger.info("%s", f"{number}" if number else "?")\n'
+        'logger.info("%s", npc_speed(h.npc))\n',
+        _NARROWED_NPC,
+        header=_stdlib_header("import re\nfrom typing import Optional\n"),
+    )
+    result = typecheck_scenario(scenario, config)
+    error = _only_error(result)
+    assert len(result.diagnostics) == 1, result.format()
+    assert (
+        "npc_speed() returns float | None, but the function is declared -> str | None"
+        in error.message
+    ), error.format()
+    assert error.line == _line_of(path, "return npc.speed if npc is not None")
+
+
+def test_a_narrowed_branch_is_compiled_only_where_its_value_can_be_something(
+    tmp_path: Path,
+) -> None:
+    # The branch of a conditional expression narrowed at module level, in a
+    # comprehension, or of a parameter that is always None (never compiled,
+    # as Codon compiles neither branch of a test it decides); a wrong one is
+    # reported at its line.
+    extra = r"""
+
+
+class Npc:
+    speed: float
+
+    def __init__(self, speed: float) -> None:
+        self.speed = speed
+
+
+DEFAULT: Optional[Npc] = Npc(1.0)
+DEFAULT_SPEED = DEFAULT.speed if DEFAULT is not None else None
+
+
+class Ref:
+    name: Optional[str]
+
+    def __init__(self, name=None) -> None:
+        self.name = str(name) if name is not None else None
+
+
+def table(env=None):
+    return None if env is None else dict(env)
+
+
+def speeds(npcs: list[Optional[Npc]]) -> list[Optional[float]]:
+    return [n.speed if n else None for n in npcs]
+
+
+def broken(npc: Optional[Npc]) -> Optional[float]:
+    return npc.nope if npc is not None else None
+"""
+    scenario, config, path = _write_case(
+        tmp_path,
+        'logger.info("%s %s %s", DEFAULT_SPEED, Ref().name, speeds([Npc(1.0), None]))\n'
+        'logger.info("%s %s", table(), broken(None))\n',
+        extra,
+        header=_stdlib_header("from typing import Optional\n"),
+    )
+    result = typecheck_scenario(scenario, config)
+    error = _only_error(result)
+    assert len(result.diagnostics) == 1, result.format()
+    assert "'Npc' object has no attribute 'nope'" in error.message, error.format()
+    assert error.line == _line_of(path, "return npc.nope if")
+    assert not any(".codon" in frame for frame in error.trace), error.format()
+
+
+# ---------------------------------------------------------------------------
+# A positional argument for a keyword-only parameter (#622)
+# ---------------------------------------------------------------------------
+
+_KEYWORD_ONLY = r"""
+
+
+def gap(a: float, *, scale: float = 1.0) -> float:
+    return a * scale
+
+
+def total(*args: float, k: float = 0.0) -> float:
+    return sum(args) + k
+
+
+class Box:
+    v: float
+
+    def __init__(self, v: float, *, w: float = 0.0) -> None:
+        self.v = v + w
+
+    def m(self, a: float, *, s: float = 1.0, t: float = 2.0) -> float:
+        return a * s * t
+"""
+
+
+@pytest.mark.parametrize(
+    ("call", "message"),
+    [
+        (
+            "gap(1.0, 2.0)",
+            "gap() takes 1 positional argument but more were given: scale is "
+            "keyword-only (pass it by name: `scale=...`)",
+        ),
+        (
+            "b.m(1.0, 2.0)",
+            "Box.m() takes 2 positional arguments but more were given: s and t "
+            "are keyword-only (pass them by name: `s=...`)",
+        ),
+        (
+            "Box(1.0, 2.0).v",
+            "Box.__init__() takes 2 positional arguments but more were given: w "
+            "is keyword-only (pass it by name: `w=...`)",
+        ),
+    ],
+)
+def test_a_positional_argument_for_a_keyword_only_parameter_is_refused_at_the_call(
+    tmp_path: Path, call: str, message: str
+) -> None:
+    # The `*_acs_kw` Codon needs in place of the bare `*` took it silently;
+    # what passes keywords by name, `*args`, and `functools.partial` with a
+    # keyword-only argument still compile.
+    scenario, config, path = _write_case(
+        tmp_path,
+        'logger.info("%s", gap(1.0, scale=2.0))\n'
+        'logger.info("%s", total(1.0, 2.0, k=1.0))\n'
+        "p = functools.partial(gap, scale=3.0)\n"
+        'logger.info("%s", p(1.0))\n'
+        "b = Box(1.0, w=2.0)\n"
+        'logger.info("%s", b.m(1.0, s=2.0) + Box(v=1.0).v)\n'
+        f'logger.info("%s", {call})\n',
+        _KEYWORD_ONLY,
+        header=_stdlib_header("import functools\n"),
+    )
+    result = typecheck_scenario(scenario, config)
+    error = _only_error(result)
+    assert len(result.diagnostics) == 1, result.format()
+    assert error.message == message, error.format()
+    assert error.line == _line_of(path, call)
