@@ -33,6 +33,14 @@ so a rewrite has to keep the *types*, not the values, of what it replaces.
   lambda's own scope ("name 'p' is not defined").  ``!r`` is ``repr(p)``, a
   spec ``(p).__format__(spec)``, ``{p=}`` ``"p=" + repr(p)``; ``.format`` is
   an f-string first, so it ends up lowered too.  ``!a`` there is ``repr``.
+  So does any f-string of a decorator (``@tag(f"lane-{n}")``, #616), which
+  Codon reads as an attribute of the string ("'str' object has no attribute
+  '__prefix_f__'"), with or without fields.
+* A parameter default of a ``def`` nested in a function that is a bare local
+  of an enclosing function (``for name in names: def log(world, n: str =
+  name)``) becomes ``(name,)[0]`` (#612): Codon refuses the bare name ("name
+  'name' cannot be captured") but evaluates any other expression once, when
+  the ``def`` runs, as Python does.  The parameter can still be passed.
 * ``zip(..., strict=...)`` becomes ``zip(...)``.
 * ``open(p, encoding=..., errors=..., newline=...)`` loses those keywords
   (Codon's ``open`` has none, #562): they change the decoding, not the type.
@@ -310,6 +318,13 @@ REWRITE_HINTS: tuple[tuple[re.Pattern[str], str], ...] = (
         re.compile(r"argument after \*\* must be a named tuple, not 'Dict\["),
         "Codon unpacks only a named tuple with **: pass the keywords "
         "(f(a=d['a'], b=d['b'])), or take the dict as a parameter",
+    ),
+    (
+        re.compile(r"name '\w+' cannot be captured"),
+        "Codon cannot read a local of the enclosing function here (the check "
+        "rewrites a nested def's parameter default that is the bare name): "
+        "bind the value with functools.partial(f, n=value), or read "
+        "the local in the function's body",
     ),
 )
 
@@ -659,6 +674,9 @@ def _lambda_fstring_rewrite(node: ast.JoinedStr) -> str:
     For the body of a lambda that reads a captured name (#470): Codon looks
     the names of an f-string up in the lambda's own scope, so ``f"{v}{p}"``
     is "name 'p' is not defined" there while ``str(v) + str(p)`` is not.
+    For any f-string of a decorator, too (#616): Codon reads one there as an
+    attribute of the string (``'str' object has no attribute
+    '__prefix_f__'``), whatever its fields.
     A field is ``str(x)``, ``repr(x)`` for ``!r``, and ``x.__format__(spec)``
     with a spec, as Python's ``format`` calls it; ``{x=}`` is already a text
     part and a ``!r`` field in the tree.  Each value is evaluated once, in order.
@@ -870,6 +888,9 @@ class _Pass(ShadowScopes):
         self._class_names: list[str] = []
         #: The ``super(Cls, self)`` calls to write as ``super()`` (#601).
         self._super_calls: set[int] = set()
+        #: The f-strings in a decorator (``@tag(f"lane-{n}")``), which Codon
+        #: reads as ``"...".__prefix_f__`` there (#616): lowered to ``+``.
+        self._decorator_fstrings: set[int] = set()
 
     def _text(self, node: ast.AST) -> str:
         return self.edits.text(*self.edits.node_span(node))
@@ -888,6 +909,7 @@ class _Pass(ShadowScopes):
             else None
         )
         self._class_constants(node, path)
+        self._note_decorator_fstrings(node)
         for decorator in node.decorator_list:
             if _dotted(decorator) in self.total_ordering:
                 if self._depth:
@@ -927,6 +949,8 @@ class _Pass(ShadowScopes):
     def _function(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
         if self._class_body and self._class_names:
             self._super_calls.update(self._explicit_supers(node))
+        self._captured_defaults(node)
+        self._note_decorator_fstrings(node)
         self._depth += 1
         outer, self._class_body = self._class_body, False
         names = {a.arg for a in ast.walk(node.args) if isinstance(a, ast.arg)}
@@ -945,6 +969,48 @@ class _Pass(ShadowScopes):
 
     visit_FunctionDef = _function  # noqa: N815
     visit_AsyncFunctionDef = _function  # noqa: N815
+
+    def _note_decorator_fstrings(
+        self, node: ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef
+    ) -> None:
+        self._decorator_fstrings.update(
+            id(inner)
+            for decorator in node.decorator_list
+            for inner in ast.walk(decorator)
+            if isinstance(inner, ast.JoinedStr)
+        )
+
+    # -- def f(k=local) in a function (#612) ---------------------------------
+
+    def _captured_defaults(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
+        """Write a default that is a bare local of an enclosing function as
+        ``(name,)[0]``.
+
+        Codon refuses a parameter default that is a name bound by the
+        function around the ``def`` (``for name in names: def log(world, n:
+        str = name)``, ``scale = 2; def f(k: int = scale)``) with "name
+        'name' cannot be captured", while any other expression reading it
+        compiles, evaluated, as in Python, once when the ``def`` runs.  The
+        one-element tuple indexed by a constant has the name's type and
+        value, and the parameter stays one a caller may pass.  A ``def`` in
+        a class body (a method) is left alone: its defaults are read in the
+        class scope.
+        """
+        # `_local_bound[-1]` is this function's own scope (ShadowScopes).
+        enclosing = self._local_bound[:-1]
+        if not enclosing or enclosing[-1][1]:
+            return  # at module level, or a method
+        args = node.args
+        for default in (*args.defaults, *args.kw_defaults):
+            if not isinstance(default, ast.Name):
+                continue
+            for bound, is_class in reversed(enclosing):
+                if is_class or default.id not in bound:
+                    continue
+                self.edits.replace(
+                    *self.edits.node_span(default), f"({default.id},)[0]"
+                )
+                break
 
     # -- super(Cls, self) (#601) -----------------------------------------------
 
@@ -1385,7 +1451,9 @@ class _Pass(ShadowScopes):
         if problem is not None:
             self._refuse(node, problem)
             return
-        lambda_lowered = bool(self._lambdas) and _reads_outside(node, self._lambdas[-1])
+        lambda_lowered = (
+            bool(self._lambdas) and _reads_outside(node, self._lambdas[-1])
+        ) or id(node) in self._decorator_fstrings
         if lambda_lowered or _fstring_needs_rewrite(node):
             try:
                 text = (

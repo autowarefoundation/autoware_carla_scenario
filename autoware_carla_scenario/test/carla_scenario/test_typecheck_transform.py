@@ -20,6 +20,7 @@ import pytest
 from autoware_carla_scenario.typecheck import model_dir
 from autoware_carla_scenario.typecheck.driver import render_driver
 from autoware_carla_scenario.typecheck.python_rewrites import (
+    REWRITE_HINTS,
     python_rewrite_refusals,
     python_rewrites,
 )
@@ -3918,6 +3919,68 @@ def test_a_lambda_default_that_is_not_a_literal_is_bound_by_a_call() -> None:
     assert _rewritten("g = lambda a, b=2, c=-1, d=None: a\n") == (
         "g = lambda a, b=2, c=-1, d=None: a\n"
     )
+
+
+def test_a_nested_def_default_that_is_an_enclosing_local_is_wrapped() -> None:
+    # Codon refuses the bare name ("name 'name' cannot be captured") and
+    # evaluates any other expression once, when the def runs (#612).
+    source = """
+        def outer(param, *, kw=1):
+            scale = 2
+            for name in names:
+                def log_it(world, n: str = name, *, k=scale, g=GLOBAL):
+                    def inner(m=n, s=param, t=kw):
+                        return m
+            def f(k=scale + 1, h=param.upper(), z=None):
+                return k
+            class C:
+                x = 1
+                def m(self, v=x, w=scale):
+                    return v
+        def top(k=GLOBAL):
+            return k
+        """
+    text = _rewritten(source)
+    assert text.count("\n") == textwrap.dedent(source).count("\n")
+    assert "def log_it(world, n: str = (name,)[0], *, k=(scale,)[0], g=GLOBAL):" in (
+        text
+    )
+    assert "def inner(m=(n,)[0], s=(param,)[0], t=(kw,)[0]):" in text
+    # Not a bare name, a method's default and a module-level def: unchanged.
+    assert "def f(k=scale + 1, h=param.upper(), z=None):" in text
+    assert "def m(self, v=x, w=scale):" in text
+    assert "def top(k=GLOBAL):" in text
+
+
+def test_an_fstring_in_a_decorator_is_a_concatenation() -> None:
+    # Codon reads an f-string in a decorator as an attribute of the string,
+    # "'str' object has no attribute '__prefix_f__'" (#616).
+    text = _rewritten(
+        """
+        @tag(f"lane-{N}", extra=f"x{N!r:>4}")
+        @other(f"plain")
+        def a():
+            return f"{N}"
+        @tag(f"c{N}")
+        class D:
+            @tag(f"m{N}")
+            def m(self, k=f"d{N}"):
+                return 1
+        """
+    )
+    assert '@tag(("lane-" + str(N)), extra=("x" + repr(N).__format__(">4")))' in text
+    assert '@other(("plain"))' in text
+    assert 'return f"{N}"' in text
+    assert '@tag(("c" + str(N)))' in text
+    assert '@tag(("m" + str(N)))' in text
+    # A default is no decorator: Codon takes the f-string there.
+    assert 'def m(self, k=f"d{N}"):' in text
+
+
+def test_a_captured_name_is_hinted() -> None:
+    message = "name 'name' cannot be captured"
+    hints = [hint for pattern, hint in REWRITE_HINTS if pattern.search(message)]
+    assert len(hints) == 1 and "functools.partial" in hints[0]
 
 
 def test_the_rewrites_leave_a_module_with_none_of_them_unchanged() -> None:
