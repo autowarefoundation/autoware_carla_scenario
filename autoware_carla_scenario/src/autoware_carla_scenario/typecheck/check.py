@@ -170,6 +170,9 @@ _LOCATION = re.compile(
 )
 _ERROR = re.compile(r"error: ?(?P<message>.*)$")
 _CRASH_MARKERS = ("Assert failed", "Segmentation fault", "Aborted")
+#: Codon's error on ``t.count(x)`` / ``t.index(x)`` of a tuple left as
+#: written, as in a compile without the rewrite (#609).
+_UNREWRITTEN_SEQUENCE_METHOD = re.compile(r"no attribute '(?:count|index)'")
 #: Codon 0.19's code generation refusing the IR it generated itself: a bug of
 #: Codon's, no error of the program (#263).
 _LLVM_ERROR = "LLVM: error:"
@@ -1835,9 +1838,14 @@ def _fstring_field_line(
     error) with that width, and an f-string that starts on the line before
     has a field holding an expression of that width that ends at or before
     *start* (the field's text holds the expression).  An ordinary error on
-    *line* always has such a node, so it is never moved.  The line returned
-    is the expression's own (a field on a later line of a triple-quoted
-    f-string is on its line); the column is dropped by the caller.
+    *line* always has such a node, so it is never moved: a comprehension's
+    ``for`` clause, which has no position in Python's tree, is matched by
+    where it ends (Codon reports ``for c in n`` from its ``for``).  On a
+    one-line f-string, Codon's offset from the expression (the field's text)
+    is no longer than the rest of the f-string from the field on, so a column
+    past that is not one of its fields.  The line returned is the
+    expression's own (a field on a later line of a triple-quoted f-string is
+    on its line); the column is dropped by the caller.
     """
     if start is None or end is None or line < 2:
         return None
@@ -1852,8 +1860,13 @@ def _fstring_field_line(
             == width
         ):
             return None  # an ordinary error on the line itself
+        if isinstance(node, ast.comprehension):
+            last = node.ifs[-1] if node.ifs else node.iter
+            if last.end_lineno == line and last.end_col_offset == end - 1:
+                return None  # a comprehension's `for` clause on the line
         if not isinstance(node, ast.JoinedStr) or node.lineno != line - 1:
             continue
+        one_line = node.end_lineno == node.lineno and node.end_col_offset is not None
         for value in node.values:
             if not isinstance(value, ast.FormattedValue):
                 continue
@@ -1864,6 +1877,12 @@ def _fstring_field_line(
                     and inner.end_col_offset is not None
                     and inner.end_col_offset - inner.col_offset == width
                     and inner.end_col_offset <= start
+                    and not (
+                        one_line
+                        and inner.lineno == node.lineno
+                        and start - inner.col_offset
+                        > node.end_col_offset - value.value.col_offset  # type: ignore[operator]
+                    )
                 ):
                     found.add(inner.lineno)
     return min(found) if found else None
@@ -3052,12 +3071,23 @@ def _compile(
         # type the model's `_acs_count` / `_acs_index` is instantiated with
         # wrong (#609): compiled again without that rewrite, the error is
         # Codon's own diagnostic. A rerun that passes or crashes too says
-        # nothing more: the crash is reported.
+        # nothing more: the crash is reported. So does one that refuses a
+        # tuple's count() / index() the rewrite made valid: the crash had
+        # another cause (a local first bound to None, #584), which the rerun
+        # would hide behind an error in valid code.
         with without_sequence_helpers():
             rerun = _compile(
                 name, sources, driver, toolchain, codon_path, timeout, build
             )
-        if rerun is not None and not rerun.ok and not rerun.crashed:
+        if (
+            rerun is not None
+            and not rerun.ok
+            and not rerun.crashed
+            and not any(
+                _UNREWRITTEN_SEQUENCE_METHOD.search(d.message)
+                for d in rerun.diagnostics
+            )
+        ):
             return dataclasses.replace(rerun, seconds=seconds + rerun.seconds)
     if proc.returncode != 0 and not diagnostics:
         tail = _ANSI.sub("", output).strip().splitlines()[-1:] or [

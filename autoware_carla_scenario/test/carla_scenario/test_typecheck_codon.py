@@ -7448,6 +7448,18 @@ def _parsed_at(tmp_path: Path, source: str, line: int, span: str) -> Any:
         ("a = 1\ns = f\"{a} {a + 'x'}\"\nb = a + 'x'\n", 3, "5-12", (3, 5)),
         # No f-string on the line before: left alone.
         ("a = 1\ns = 2\nb = a + 'x'\n", 3, "5-12", (3, 5)),
+        # A comprehension's `for c in nnnn`, which Codon locates from its
+        # `for` and Python's tree gives no position, is the line's own.
+        (
+            'abcd = 1\nnnnn = 5\ns = f"{abcd + 123456}"\n'
+            "x = [cc * 22222222 for c in nnnn]\n",
+            4,
+            "20-33",
+            (4, 20),
+        ),
+        # A column further from the field than the f-string's end is not
+        # one of its fields.
+        ('a = 1\ns = f"{a + 1}"\nb = 2\n', 3, "15-20", (3, 15)),
     ],
 )
 def test_an_error_in_an_fstring_field_is_moved_to_its_line(
@@ -11653,8 +11665,46 @@ def test_an_error_in_an_fstring_field_is_reported_at_its_line(
     ), error.format()
 
 
-def test_an_error_after_an_fstring_stays_on_its_line(tmp_path: Path) -> None:
-    scenario, config, path = _write_case(tmp_path, "n = 1\ns = f\"{n}\"\nt = n + 'x'\n")
+@pytest.mark.parametrize(
+    ("setup", "needle"),
+    [
+        ("n = 1\ns = f\"{n}\"\nt = n + 'x'\n", "t = n + 'x'"),
+        # Codon locates a comprehension's error from its `for`, which no node
+        # of Python's tree starts at: the f-string's field of the same width
+        # did not take it (#610).
+        (
+            'abcd = 1\nnnnn = 5\ns = f"{abcd + 123456}"\n'
+            'x = [str(c) + "-suffix-" for c in nnnn]\n',
+            "x = [str(c)",
+        ),
+    ],
+)
+def test_an_error_after_an_fstring_stays_on_its_line(
+    tmp_path: Path, setup: str, needle: str
+) -> None:
+    scenario, config, path = _write_case(tmp_path, setup)
     error = _only_error(typecheck_scenario(scenario, config))
-    assert error.line == _line_of(path, "t = n + 'x'"), error.format()
+    assert error.line == _line_of(path, needle), error.format()
     assert error.column is not None, error.format()
+
+
+def test_a_crash_with_another_cause_is_not_hidden_by_the_rerun(
+    tmp_path: Path,
+) -> None:
+    # Compiled again without the count / index rewrite, a valid
+    # `t.count(1)` of a tuple is refused: that is no diagnostic of the crash
+    # (a local first bound to None, #584), which stays reported (#609).
+    scenario, config, path = _write_case(
+        tmp_path,
+        't = (1, 2)\nlogger.info("%d", t.count(1))\n',
+        extra=_RUNNING_MIN.format(
+            annotation="", result="bool", tail="    return best is not None\n"
+        ),
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.crashed, result.format()
+    assert not [d for d in result.diagnostics if "count" in d.message], result.format()
+    assert any(
+        "annotate it: `best: float | None = None`" in d.message
+        for d in result.diagnostics
+    ), result.format()
