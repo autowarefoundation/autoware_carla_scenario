@@ -1094,6 +1094,23 @@ _VARIADIC_LIMITS = (
 )
 
 
+#: A positional argument for a keyword-only parameter of the author's own
+#: function (#622): the message is in the type (transform._keyword_only_message).
+_KEYWORD_ONLY = re.compile(
+    r"^'[^']*' does not match expected type "
+    r"'_acs_KeywordOnly\['(?P<message>[^']*)'\]'$"
+)
+
+
+def _keyword_only_hint(diagnostic: Diagnostic) -> Diagnostic | None:
+    """*diagnostic* in Python's words when it is the refusal of a positional
+    argument for a keyword-only parameter (#622), else ``None``."""
+    found = _KEYWORD_ONLY.match(diagnostic.message)
+    if found is None:
+        return None
+    return dataclasses.replace(diagnostic, message=found["message"])
+
+
 _LIST_DISPLAY_FRAME = re.compile(r"during the realization of _acs_list(?:_into)?\(")
 _LIST_DISPLAY_HINT = (
     "a list display is typed by its first element, so its elements must share "
@@ -1418,6 +1435,10 @@ def _variadic_hints(
         diagnostic = _replace_helper_location(
             _replace_thunk_message(diagnostic), modules
         )
+        keyword_only = _keyword_only_hint(diagnostic)
+        if keyword_only is not None:
+            out.append(keyword_only)
+            continue
         in_display = any(_LIST_DISPLAY_FRAME.match(frame) for frame in diagnostic.trace)
         if in_display:
             # A list display `_acs_list` could not make one list (#480): the
