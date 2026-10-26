@@ -6639,6 +6639,13 @@ def test_fstring_requoting_leaves_source_before_3_12_syntax_alone() -> None:
             'x = f"""{d["k"]} {f"{a}"}"""\n',
             'x = f"""{d["k"]} {f"{a}"}"""\n',
         ),
+        # A form feed or U+2028 does not end a line for the tokenizer: the
+        # requoted quote stays on the token's row (an IndexError before).
+        (
+            '\x0c\ns = "a\x0cb"\nx = f"{d["k"]}"\n',
+            '\x0c\ns = "a\x0cb"\nx = f"{d[\'k\']}"\n',
+        ),
+        ('# \u2028\nx = f"{d["k"]}"\n', "# \u2028\nx = f\"{d['k']}\"\n"),
     ],
 )
 def test_a_same_quote_fstring_field_is_requoted(source: str, requoted: str) -> None:

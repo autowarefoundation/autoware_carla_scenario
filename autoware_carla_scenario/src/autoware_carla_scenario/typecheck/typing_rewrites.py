@@ -877,7 +877,9 @@ def requote_fstring_fields(source: str) -> tuple[str, list[tuple[int, str]]]:
         tokens = list(tokenize.generate_tokens(io.StringIO(source).readline))
     except (tokenize.TokenError, SyntaxError):
         return source, []
-    lines = source.splitlines(keepends=True)
+    # The tokenizer's rows: split at "\n" only, as `str.splitlines` would
+    # also split at a form feed or "\u2028" a line of the source may hold.
+    lines = io.StringIO(source).readlines()
     #: (row, column, the quote there now, the quote to put there).
     changes: list[tuple[int, int, str, str]] = []
     refused: list[tuple[int, str]] = []
