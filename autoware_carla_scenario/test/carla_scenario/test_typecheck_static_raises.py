@@ -66,10 +66,20 @@ def test_a_subscripted_generic_given_to_isinstance_is_refused(
     assert found.line == _IMPORTS.count("\n") + 2
     assert found.column == 5
     assert "Python raises TypeError" in found.message
-    assert "argument 2 cannot be a parameterized generic" in found.message
+    function = call.split("(")[0]
+    typing_alias = found.message.split("`")[1].split("[")[0] in (
+        "List",
+        "t.Sequence",
+        "typing.Dict",
+        "Sequence",
+    )
+    assert (
+        "Subscripted generics cannot be used with class and instance checks"
+        if typing_alias
+        else f"{function}() argument 2 cannot be a parameterized generic"
+    ) in found.message
     if generic is not None:
         assert f"`{generic}`" in found.message
-    function = call.split("(")[0]
     assert found.message.startswith(f"{function}() cannot take")
 
 
@@ -187,6 +197,101 @@ def test_a_class_not_listed_or_not_the_frameworks_is_not_built() -> None:
         "SpeedCondition(label='')\n"
     )
     assert literal_argument_refusals(tree) == []
+
+
+def test_a_name_two_imports_bind_is_not_resolved() -> None:
+    # Either order of a try/except ImportError fallback: the name is neither.
+    for first, second in (
+        ("autoware_carla_scenario", "mylib"),
+        ("mylib", "autoware_carla_scenario"),
+    ):
+        tree = ast.parse(
+            "try:\n"
+            f"    from {first} import RouteRoadsidePose\n"
+            "except ImportError:\n"
+            f"    from {second} import RouteRoadsidePose\n"
+            "RouteRoadsidePose(side='kerb')\n"
+        )
+        assert literal_argument_refusals(tree) == []
+    # Nor is a builtin name an import binds twice taken for the builtin.
+    tree = ast.parse(
+        "from a import list\nfrom b import list\nisinstance(1, list[int])\n"
+    )
+    assert subscripted_isinstances(tree) == []
+
+
+def test_a_framework_call_not_listed_imports_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from autoware_carla_scenario.typecheck import static_raises
+
+    def refuse(*_: object) -> None:
+        raise AssertionError("imported a framework module")
+
+    monkeypatch.setattr(static_raises, "_resolve", refuse)
+    monkeypatch.setattr(static_raises, "_resolve_unbuilt", refuse)
+    monkeypatch.setattr(static_raises, "_checked_classes", refuse)
+    tree = ast.parse(
+        "import autoware_carla_scenario as acs\n"
+        "from autoware_carla_scenario.ros2.bridge import Bridge\n"
+        "Bridge('x')\n"
+        "acs.ScenarioRunner('x')\n"
+        "acs.autoware_bridge.Something(1)\n"
+    )
+    assert literal_argument_refusals(tree) == []
+
+
+def test_typesafe_carla_is_not_built_for_the_check(tmp_path: Path) -> None:
+    """Where importing typesafe_carla.carla would build it (no prebuilt
+    package applies), the conditions are left to the run: the check builds
+    nothing.  The poses, which do not import CARLA, are still built."""
+    script = textwrap.dedent(
+        """
+        import ast, os, sys
+        from typesafe_carla import carla_build
+        carla_build.prebuilt_is_current = lambda *a: False
+        builds = []
+        def no_build(*_a, **_k):  # stands in for the 15-50 min build
+            builds.append(_a)
+            raise ImportError("no build in this test")
+        carla_build._build = no_build
+        from autoware_carla_scenario.typecheck.static_raises import (
+            literal_argument_refusals,
+        )
+        tree = ast.parse(
+            "from autoware_carla_scenario import MetricCondition, RouteRoadsidePose\\n"
+            "MetricCondition('nope', label='m')\\n"
+            "RouteRoadsidePose(side='kerb')\\n"
+        )
+        found = literal_argument_refusals(tree)
+        assert [f.line for f in found] == [3], found
+        assert builds == [], "the check started a pycarla build"
+        assert "typesafe_carla.carla" not in sys.modules
+        assert "TYPESAFE_CARLA_PYCARLA_BUILD" not in os.environ
+        print("ok")
+        """
+    )
+    import os
+    import subprocess
+    import sys
+
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if not k.startswith("TYPESAFE_CARLA_PYCARLA")
+    }
+    env["TYPESAFE_CARLA_PYCARLA_DIR"] = str(tmp_path / "pycarla")
+    done = subprocess.run(
+        [sys.executable, "-c", script],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=300,
+        check=False,
+    )
+    assert done.returncode == 0, done.stderr
+    assert done.stdout.strip() == "ok"
+    assert not (tmp_path / "pycarla").exists()
 
 
 def test_every_listed_class_is_importable() -> None:

@@ -21,6 +21,12 @@ CPython.  Two kinds are decidable without running the scenario:
   stores its arguments, without CARLA, a world, a map or any other side
   effect.  An argument that is not a literal (a name, a call, an enum member,
   ``*args``) leaves the call to the run.
+
+  Nothing of the framework is imported unless a module calls one of those
+  classes by name.  The conditions import ``typesafe_carla.carla``, whose
+  first import builds its CPython package where no prebuilt one applies
+  (15-50 min): where that would happen, the check imports them with
+  ``TYPESAFE_CARLA_PYCARLA_BUILD=0``, so they are left to the run instead.
 """
 
 from __future__ import annotations
@@ -28,6 +34,8 @@ from __future__ import annotations
 import ast
 import builtins
 import importlib
+import os
+import sys
 from functools import lru_cache
 from typing import Any, NamedTuple
 
@@ -130,22 +138,35 @@ class StaticRaise(NamedTuple):
     message: str
 
 
-def _imported_names(tree: ast.Module) -> dict[str, str]:
-    """Each name an absolute import binds, and the dotted name it stands for."""
+def _imported_names(tree: ast.Module) -> dict[str, str | None]:
+    """Each name an absolute import binds, and the dotted name it stands for.
+
+    A name two imports bind to different things (``try``/``except
+    ImportError`` fallbacks, a function's own import) stands for neither:
+    ``None``."""
     names: dict[str, str] = {}
+    ambiguous: set[str] = set()
+
+    def bind(name: str, dotted: str) -> None:
+        if names.setdefault(name, dotted) != dotted:
+            ambiguous.add(name)
+
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
             for alias in node.names:
                 if alias.name != "*":
-                    names[alias.asname or alias.name] = f"{node.module}.{alias.name}"
+                    bind(alias.asname or alias.name, f"{node.module}.{alias.name}")
+        elif isinstance(node, ast.ImportFrom):  # relative: the author's own
+            for alias in node.names:
+                bind(alias.asname or alias.name, f".{alias.name}")
         elif isinstance(node, ast.Import):
             for alias in node.names:
                 if alias.asname is not None:
-                    names[alias.asname] = alias.name
+                    bind(alias.asname, alias.name)
                 else:
                     top = alias.name.split(".")[0]
-                    names[top] = top
-    return names
+                    bind(top, top)
+    return {n: None if n in ambiguous else d for n, d in names.items()}
 
 
 def _rebound(tree: ast.Module) -> set[str]:
@@ -236,14 +257,19 @@ def subscripted_isinstances(tree: ast.Module) -> list[StaticRaise]:
             f"test against the bare class (`{ast.unparse(subscript.value)}`) and "
             "check the elements separately if they matter",
         )
+        # Python's own words: typing's aliases refuse the check themselves.
+        says = (
+            "Subscripted generics cannot be used with class and instance checks"
+            if name.startswith("typing.")
+            else f"{node.func.id}() argument 2 cannot be a parameterized generic"
+        )
         found.append(
             StaticRaise(
                 node.lineno,
                 node.col_offset + 1,
                 f"{node.func.id}() cannot take the subscripted generic "
                 f"`{ast.unparse(subscript)}`: Python raises TypeError "
-                f"({node.func.id}() argument 2 cannot be a parameterized "
-                f"generic) when it evaluates it, though Codon compiles it; "
+                f"({says}) when it evaluates it, though Codon compiles it; "
                 f"{instead}",
             )
         )
@@ -272,12 +298,54 @@ def _resolve(dotted: str) -> Any:
     return None
 
 
+#: The names of :data:`LITERAL_CHECKED`: a call by any other name imports
+#: nothing.
+_CHECKED_NAMES = frozenset(dotted.rsplit(".", 1)[1] for dotted in LITERAL_CHECKED)
+_CARLA = "typesafe_carla.carla"
+_PYCARLA_BUILD = "TYPESAFE_CARLA_PYCARLA_BUILD"
+
+
+def _carla_loads_without_building() -> bool:
+    """Whether importing ``typesafe_carla.carla`` loads a built package
+    rather than building one (15-50 min, ~14 GB of memory)."""
+    if _CARLA in sys.modules:
+        return True
+    try:
+        from typesafe_carla import carla_build  # noqa: PLC0415
+
+        if (
+            not os.environ.get(carla_build.ENV_DIR)
+            and carla_build.prebuilt_is_current()
+        ):
+            return True
+        return bool(carla_build.is_current(carla_build.build_dir()))
+    except Exception:  # noqa: BLE001 -- unknown layout: assume it would build
+        return False
+
+
+@lru_cache(maxsize=None)
+def _resolve_unbuilt(dotted: str) -> Any:
+    """:func:`_resolve`, where importing ``typesafe_carla.carla`` would not
+    build it; else ``None`` for what imports it."""
+    saved = os.environ.get(_PYCARLA_BUILD)
+    if not _carla_loads_without_building():
+        os.environ[_PYCARLA_BUILD] = "0"  # an ImportError instead of a build
+    try:
+        return _resolve(dotted)
+    finally:
+        if saved is None:
+            os.environ.pop(_PYCARLA_BUILD, None)
+        else:
+            os.environ[_PYCARLA_BUILD] = saved
+
+
 @lru_cache(maxsize=1)
 def _checked_classes() -> dict[Any, str]:
-    """Each class of :data:`LITERAL_CHECKED`, to its name."""
+    """Each class of :data:`LITERAL_CHECKED` that imports without building
+    ``typesafe_carla.carla``, to its name."""
     out: dict[Any, str] = {}
     for dotted in LITERAL_CHECKED:
-        cls = _resolve(dotted)
+        cls = _resolve_unbuilt(dotted)
         if cls is not None:
             out[cls] = dotted.rsplit(".", 1)[1]
     return out
@@ -296,20 +364,22 @@ def _literal(node: ast.expr) -> Any:
 def literal_argument_refusals(tree: ast.Module) -> list[StaticRaise]:
     """Each call of a class of :data:`LITERAL_CHECKED` in *tree* whose
     arguments are all literals and that raises ``ValueError`` when built."""
-    checked = _checked_classes()
-    if not checked:
-        return []
     names = _Names(tree)
     found: list[StaticRaise] = []
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
         dotted = names.dotted(node.func)
-        if dotted is None or not (
-            dotted == _PACKAGE or dotted.startswith(_PACKAGE + ".")
+        # By name first: resolving imports the module, and only the modules
+        # of LITERAL_CHECKED are known to be cheap and free of side effects.
+        if (
+            dotted is None
+            or not dotted.startswith(_PACKAGE + ".")
+            or dotted.rsplit(".", 1)[1] not in _CHECKED_NAMES
         ):
             continue
-        cls = _resolve(dotted)
+        checked = _checked_classes()
+        cls = _resolve_unbuilt(dotted)
         if not isinstance(cls, type) or cls not in checked:
             continue
         if any(isinstance(a, ast.Starred) for a in node.args) or any(

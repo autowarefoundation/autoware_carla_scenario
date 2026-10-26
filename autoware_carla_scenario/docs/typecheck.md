@@ -1740,8 +1740,10 @@ runs (`typecheck/static_raises.py`):
   `isinstance(v, typing.List[int])`, also inside a tuple of classes
   (`(str, list[int])`), a `|` union (`int | list[int]`) or a
   `typing.Union` / `Optional`. Python raises `TypeError` ("isinstance()
-  argument 2 cannot be a parameterized generic"); in a tuple or a union, as
-  soon as the value is none of the classes before it. Test against the bare
+  argument 2 cannot be a parameterized generic"; for `typing.List[int]` and
+  the other aliases of `typing`, "Subscripted generics cannot be used with
+  class and instance checks"); in a tuple or a union, once the value is none
+  of the classes before it (a `|` union on Python 3.10: at once). Test against the bare
   class (`isinstance(v, list)`) and check the elements separately; for a
   `Literal[...]`, compare the value. `isinstance(x, int | float)`, an
   unsubscripted `typing.List`, `Optional[int]` and an index into a tuple of
@@ -1770,6 +1772,10 @@ runs (`typecheck/static_raises.py`):
   with any argument that is not a literal (a config field, a constant's name
   such as `OFFROAD`, an enum member such as `ComparisonRule.LESS_THAN`,
   `*args`) is left to the run, as is a `TypeError` (Codon reports the type).
+  The check imports these classes only for a module that calls one of them
+  by name. The conditions import `typesafe_carla.carla`: where its first
+  import would build the CPython package (no prebuilt one applies, 15-50
+  min), the check does not build it, and leaves the conditions to the run.
 
 ### Standard library names Codon lacks
 
