@@ -41,6 +41,8 @@ so a rewrite has to keep the *types*, not the values, of what it replaces.
   name)``) becomes ``(name,)[0]`` (#612): Codon refuses the bare name ("name
   'name' cannot be captured") but evaluates any other expression once, when
   the ``def`` runs, as Python does.  The parameter can still be passed.
+* ``filter(None, xs)`` becomes ``(_acs_v for _acs_v in xs if _acs_v)``
+  (#613): Codon's ``filter`` takes a function, not ``None``.
 * ``zip(..., strict=...)`` becomes ``zip(...)``.
 * ``open(p, encoding=..., errors=..., newline=...)`` loses those keywords
   (Codon's ``open`` has none, #562): they change the decoding, not the type.
@@ -349,7 +351,7 @@ def without_sequence_helpers() -> Iterator[None]:
 
     Codon 0.19 crashes with no diagnostic when the model's ``_acs_count`` /
     ``_acs_index`` is instantiated with a type an earlier error left wrong
-    (``lst: list[Npc | None] = [None, a]`` then ``lst.index(a)``): the check
+    (``lst = [None, a]`` then ``lst.index(a)``): the check
     compiles such a module once more without the rewrite, for Codon's own
     diagnostic."""
     token = _SEQUENCE_REWRITES.set(False)
@@ -559,12 +561,16 @@ def _field_needs_rewrite(field: ast.FormattedValue) -> bool:
 
 
 def _keyword_dict(node: ast.AST) -> bool:
-    """``dict(k=v, ...)``: what the transform writes as ``{"k": v, ...}``."""
+    """``dict(k=v, ...)`` / ``dict(base, k=v, ...)``: what the transform writes
+    as ``{"k": v, ...}`` / ``(dict(base) | {"k": v, ...})`` (#613)."""
     return (
         isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
         and node.func.id == "dict"
-        and not node.args
+        and (
+            not node.args
+            or (len(node.args) == 1 and not isinstance(node.args[0], ast.Starred))
+        )
         and bool(node.keywords)
         and all(k.arg is not None for k in node.keywords)
     )
@@ -1777,6 +1783,16 @@ class _Pass(ShadowScopes):
                 return self._round(node)
             if func.id == "getattr" and plain_call and len(node.args) == 3:
                 return self._getattr_default(node)
+            if (
+                func.id == "filter"
+                and plain_call
+                and len(node.args) == 2
+                and isinstance(node.args[0], ast.Constant)
+                and node.args[0].value is None
+            ):
+                # `filter(None, xs)` (#613): Codon's filter takes a function.
+                # The generator yields the truthy items, as filter does.
+                return f"(_acs_v for _acs_v in {self._text(node.args[1])} if _acs_v)"
             return None
         if (
             isinstance(func, ast.Attribute)
