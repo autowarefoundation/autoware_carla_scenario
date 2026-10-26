@@ -126,8 +126,10 @@ from .transform import (
 )
 from .call_diagnostics import (
     Refiner,
+    _Files,
     is_internal_frame,
     plain_literal_types,
+    slip_hint,
 )
 from .class_rules import skipped_base_inits, unassigned_attributes
 from .return_paths import return_problems
@@ -993,6 +995,22 @@ _VARIADIC_LIMITS = (
         "lists the names)",
     ),
     (
+        re.compile(
+            r"cannot import name '(?:version_info|version|hexversion)' from 'sys'"
+        ),
+        "sys.version_info (and sys.version, sys.hexversion) is not modelled: "
+        "the check compiles every branch of a version test, so the code has "
+        "to be valid on every supported Python (3.10 and later) anyway: "
+        "write that code without the test, or keep the version-dependent part "
+        "out of the checked modules",
+    ),
+    (
+        re.compile(r"cannot import name '\w+' from 'sys'"),
+        "the check models only argv, stdin, stdout, stderr, exit, maxsize, "
+        'platform and executable of sys (docs/typecheck.md, "sys" among the '
+        "shims): if CPython's sys has it, it is not modelled",
+    ),
+    (
         re.compile(r"cannot import name 'strftime' from 'time'"),
         "time.strftime is not modelled: take now = datetime.datetime.now() and "
         "format its fields, f'{now.year:04d}{now.month:02d}{now.day:02d}'",
@@ -1231,6 +1249,7 @@ def _variadic_hints(diagnostics: list[Diagnostic]) -> list[Diagnostic]:
     """*diagnostics*, each refusal of a Codon limit on ``**kwargs``, on
     ``*args`` or on a tuple saying why and what to write instead (#266)."""
     out = []
+    files = _Files()
     for diagnostic in diagnostics:
         diagnostic = _replace_thunk_message(diagnostic)
         in_display = any(_LIST_DISPLAY_FRAME.match(frame) for frame in diagnostic.trace)
@@ -1248,6 +1267,22 @@ def _variadic_hints(diagnostics: list[Diagnostic]) -> list[Diagnostic]:
             diagnostic = dataclasses.replace(
                 diagnostic, message=f"{diagnostic.message}: {typo}"
             )
+            out.append(diagnostic)
+            continue
+        try:
+            slip = slip_hint(
+                diagnostic.message,
+                diagnostic.trace,
+                diagnostic.path,
+                diagnostic.line,
+                diagnostic.column,
+                files,
+            )
+        except Exception:  # noqa: BLE001 - only a hint: never lose Codon's error
+            slip = None
+        if slip is not None:
+            # The refiner adds it, to its own wording (_authors_terms): no
+            # other hint here, which would not apply.
             out.append(diagnostic)
             continue
         for pattern, hint in (*_VARIADIC_LIMITS, *REWRITE_HINTS, *TYPING_HINTS):
@@ -1742,7 +1777,11 @@ def _authors_terms(diagnostic: Diagnostic, refiner: Refiner) -> Diagnostic:
     refused call or ``return`` says what is wrong with it, a static string
     type is ``str``, and the frames of the model's own helpers are gone."""
     message, line, column = refiner.refine(
-        diagnostic.message, diagnostic.path, diagnostic.line, diagnostic.column
+        diagnostic.message,
+        diagnostic.path,
+        diagnostic.line,
+        diagnostic.column,
+        diagnostic.trace,
     )
     return dataclasses.replace(
         diagnostic,

@@ -266,6 +266,20 @@ are left out of the trace, and a literal `None` given where a type is
 expected is told that the parameter does not take `None` rather than to test
 the value.
 
+Some common slips get a hint after Codon's message (#599), each only where
+both the message and your source at the line say it is that slip:
+
+| You write | Codon says | The hint |
+| --- | --- | --- |
+| `range(len(ids) / 2)` | `range() cannot be called with (float)` | `range()` takes ints, and `/` always gives a float: divide with `//`, or convert with `int()` |
+| `ids[len(ids) / 2]` | `__getitem__() cannot be called with (float)` | an index must be an int: divide with `//` |
+| `",".join(ids)` of a `list[int]` | `'Generator[int]' does not match expected type 'Generator[str]'` | `",".join(map(str, ids))` or `",".join(str(v) for v in ids)` |
+| `self.register_pre_tick(lambda: None)` (also `register_post_tick`, `register_init`, a `register_measure` read function, a `register_cover` expression, or a `def` of no parameter) | `a lambda() takes 0 arguments (1 given)` | the callback is called with the world: `lambda world: ...` |
+| `self.register_measure("flag", lambda w: True)` | `expected a float (or an int)` | names the measure and what its read function returns (a bool is no number to a measure: `1.0 if ... else 0.0`, or a cover) |
+
+A `range()` or index of a float without a `/` written there, and a `join` of
+something that is not a call of `join` at that column, get none.
+
 Two declared return types Codon does not enforce are refused from the syntax,
 before Codon runs (#529): a `return` of a literal, an f-string or a display in
 a function declared `-> bool` (Codon converts it to a `bool`; Python returns
@@ -1452,6 +1466,17 @@ Two things Python does that Codon 0.19 does not are filled in for you:
     **not** an `int` or a `str` otherwise: passing it to an `int` / `str`
     parameter or doing arithmetic on it (`M.A + 1`) is refused with a hint.
     Write `M.A.value`.
+  - An enum is typed by its members' values, which must be literals of one
+    type: all `int` (a signed one, `LEFT = -1`, too), all `float`, all `str`,
+    or `auto()`, unless the base gives the type (`IntEnum`, `class M(str,
+    Enum)`). An enum whose values are tuples (`LEFT = (-3.5, "left")`,
+    unpacked into an `__init__` that sets `self.offset`), of different types
+    (`A = 1`, `B = "b"`), or not literals (`A = WIDTH`, `A = 2 * WIDTH`, `A =
+    True`) is refused at its class line (#600), with what to write instead:
+    for a record per member, a `@dataclass(frozen=True)` or a `NamedTuple`
+    and a module-level dict keyed by a plain enum (`LANES = {Lane.LEFT:
+    LaneInfo(-3.5, "left")}`), or one enum per field. An enum with no member
+    (a base for others) is not refused.
   - A `class Pt(typing.NamedTuple)` is checked as a Codon `@tuple` class: its
     fields, defaults and methods, `==`, ordering, `hash()`, iteration and
     `len()` work. Codon indexes and unpacks it (`p[0]`, `x, y = p`) only when
@@ -1479,6 +1504,9 @@ cannot express is refused at its line, with what to write instead.
 | `format(x, spec)`, `format(x)` (#439) | `x.__format__(spec)`, `str(x)` | `format` is bound where the call is: by the module (an assignment, import, `def` or `class` at module level) or by an enclosing function or lambda (a parameter or local); a method named `format` or a class attribute binds nothing there, so it does not disable the rewrite (#471) |
 | `ascii(x)` (#439) | `repr(x)`: the same `str` type; the check does not run it, so the escaping of non-ASCII characters is unchanged at run time | `ascii` is bound where the call is, as for `format` (#471) |
 | `getattr(x, "name", default)` with a literal name, `x` a name or an attribute chain, the default on one line (#590) | `((default), x.name if hasattr(x, "name") else (default))[1]`: Codon's `getattr` takes no default, and Codon decides `hasattr` when it compiles, so only the branch `x`'s type takes is compiled, typed as that branch (the attribute's type where the class declares it, the default's where it does not). The first item keeps the default compiled either way, as Python evaluates it either way (`getattr(x, "name", x.typo)` is refused). `hasattr` on an `Optional` is decided on the `Optional` (see "Making a module compile"), so the default's branch is the one compiled there | a name built at run time, another receiver (a call, a subscript), a default over several lines or `hasattr` bound where the call is: refused with `getattr() takes 2 arguments (3 given)` and a hint to write the `hasattr` test |
+| `t.count(x)`, `t.index(x[, start[, stop]])` with `t` a name or an attribute chain (#601) | `(t.count(x) if hasattr(t, "count") else _acs_count(t, x))`: Codon's tuple has no `count` / `index` and cannot be extended, and only Codon knows `t`'s type, so a list, a str or a class of yours keeps its own call, compiled as written, and only a tuple goes to the helper (an item of another type than `x` never equals it). A tuple display, `(1, 2).index(2)`, goes to the helper directly | the receiver is a module (`itertools.count`), a builtin type (`str.index(s, "a")`), a call or a subscript (`f().count(x)`, `rows[0].index(x)`: bind it to a name), or the call spans lines; then a tuple's is refused (`'Tuple[int,int]' object has no attribute 'count'`) |
+| `d.keys() & e.keys()`, `\|`, `-`, `^`; `d.items() <= e.items()`, `<`, `>`, `>=`, `==`, `!=` (#601) | `set(d.keys()) & set(e.keys())`, the other operand of `&`, `\|`, `-`, `^` a set too (a view takes any iterable there, and gives a set); a comparison makes a set of each view and leaves the other side as it is (a view orders only against a set) | the view is held in a name (`k = d.keys()`, then `k & e`): write `set(d) & set(e)` |
+| `super(Derived, self).__init__(k)` in a method of `Derived` whose first parameter is `self` (#601) | `super().__init__(k)`: Codon's `super` takes no arguments | another class (`super(Base, self)`, which skips `Derived`'s bases up to `Base`), a `@classmethod` / `@staticmethod`, the class or `self` rebound in the method, or the call inside a nested function, lambda or comprehension: Codon's `super() takes 0 arguments (2 given)` |
 | `round(x)`, `round(x, None)`, `round(number=x, ndigits=None)` (#585) | `int(round(x))`: Codon's `round(x, n=0)` always returns a `float`, Python's an `int` when `ndigits` is left out or `None`, so `xs[round(x)]`, `n: int = round(x)` and `range(round(x))` check. `round(x, ndigits=2)` is `round(x, 2)` (Codon's has no Python keywords). `round(x, 2)` stays a `float`, also for an `int` `x` (Python returns an `int` there). Being an `int`, `round(x)` is refused inside a `list[float]` or `dict[str, float]` display (`[round(x), 1.5]`), as any `int` is: write `float(round(x))` there | `round` is bound where the call is, as for `format` (#471); an `ndigits` that is a variable is passed as it is: an `int \| None` one is read as a `float`, one bound to `None` only fails in Codon's `round` (`__pow__() cannot be called with (None)`) |
 | `sorted(xs)`, `xs.sort()`, `min` / `max` of a class that defines `__lt__` only | the class gets `__gt__` (`other < self`) and `__ge__` (`not self < other`), which Codon's sort calls | the class defines no ordering (use `@dataclass(order=True)` or `key=`) |
 | a class that defines `__eq__` but not `__ne__` (a value object in a `set` or as a `dict` key) | the class gets `__ne__` (`not (self == other)`): Python derives it, Codon does not and its hash table calls it | (a `@dataclass` already has one) |
@@ -2985,7 +3013,16 @@ What Codon 0.19 needs that Python does not, beyond
   encoded first). `bytes.decode()` is not declared, since it would be a
   `str`'s too and pass `"text".decode()`; the check refuses
   `data.decode()`, which CPython takes. `str.removeprefix(prefix, /)` and
-  `str.removesuffix(suffix, /)` (Python 3.9) are declared too. `urllib.parse`
+  `str.removesuffix(suffix, /)` (Python 3.9) are declared too, and so are
+  `str.maketrans(x, y[, z])` and `str.maketrans(dict_of_str)` (#601), whose
+  table `str.translate()` takes (Python's also maps to ints, which Codon's
+  `translate` does not). `list.index(value, start[, stop])`, `xs += (4, 5)`
+  (a list `+=` any iterable, as in Python; `xs + (4, 5)` stays refused, as
+  there) and `reversed(d)` of a dict (its keys, last first) are declared in
+  `_tc.codon` (#601); `reversed()` of a dict view is not. `sys.version_info`,
+  `sys.version` and `sys.hexversion` are not modelled, and refused with a
+  hint: the check compiles every branch of a version test, so the code must
+  be valid on every supported Python anyway. `urllib.parse`
   declares `urlsplit()`, `urlunsplit()` and `SplitResult` (its five parts,
   as attributes and as a tuple, `hostname`, `port`, `username`, `password`
   and `geturl()`). A scenario sees the same shims: it may import `pathlib`,
