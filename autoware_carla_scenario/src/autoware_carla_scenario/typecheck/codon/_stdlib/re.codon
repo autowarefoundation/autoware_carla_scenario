@@ -1,0 +1,55 @@
+# What the checker changes in Codon's re (docs/typecheck.md). The workspace
+# gets Codon's own stdlib/re.codon followed by this file (typecheck/check.py,
+# _base_workspace), so every name Codon has stays.
+#
+# Codon's Match.group(n), group(a, b), m[n], groups() and groupdict() return
+# Optional[str] (a group that did not take part in the match is None), so the
+# usual `m.group(1) if m else ""` does not compile: an Optional[str] and a str
+# do not unify (#597). Python's typeshed declares them `str | Any`, so a type
+# checker reads a str: these return str, as group() (the whole match) already
+# does in Codon. The caveat is typeshed's too: an optional group that did not
+# match is None in Python, which the check does not see. groups(default) and
+# groupdict(default) keep Codon's Optional[str], as the default may be None.
+
+
+@extend
+class Match:
+    def group(self, *args):
+        if static.len(args) == 0:
+            return self._get_match(0, 1).__val__()
+        elif static.len(args) == 1:
+            return self._get_match(args[0], self.re.groups).__val__()
+        else:
+            return self._group_multi(self.re.groups, *args)
+
+    # group(a, b, ...): a tuple of str too.
+    def _group_multi(self, n: int, *args):
+        if static.len(args) == 1:
+            return (self._get_match(args[0], n).__val__(),)
+        else:
+            return (self._get_match(args[0], n).__val__(),
+                    *self._group_multi(n, *args[1:]))
+
+    def __getitem__(self, g):
+        return self._get_match(g, self.re.groups).__val__()
+
+    def groups(self):
+        return [self._span_match(self._spans[i]).__val__()
+                for i in range(1, self.re.groups + 1)]
+
+    def groupdict(self):
+        d: Dict[str, str] = {}
+        for group, index in self.re.groupindex.items():
+            d[group] = self[index]
+        return d
+
+
+@extend
+class Pattern:
+    # Codon's split() reads each group with m[n]: it keeps Optional[str] (a
+    # group that did not take part splits off as None, as in Python).
+    def split(self, string: str, maxsplit: int = 0):
+        cb = lambda match: [match._get_match(group, self.groups)
+                            for group in range(1, self.groups + 1)]
+        pieces, _ = self._split(cb, string, maxsplit, Optional[str])
+        return pieces

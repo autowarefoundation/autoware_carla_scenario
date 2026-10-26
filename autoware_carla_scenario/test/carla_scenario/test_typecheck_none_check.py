@@ -6,6 +6,7 @@ No Codon needed: these run mypy alone on a module written for the test.
 from __future__ import annotations
 
 import os
+import sys
 import textwrap
 from pathlib import Path
 
@@ -824,3 +825,933 @@ def test_the_framework_unions_are_python_s() -> None:
             assert _python_union_members(value) == union.members, union
         else:
             assert union.members in _python_unions(union.module), union
+
+
+def test_an_unnarrowed_optional_action_registered_is_reported(tmp_path: Path) -> None:
+    # The Codon model accepts an Optional action in register_*_tick() (Codon
+    # does not narrow, #537); this pass is what refuses the one that was not
+    # narrowed, since the real signature is not Optional.
+    package = tmp_path / "acs_none_register"
+    package.mkdir()
+    (package / "__init__.py").write_text("")
+    module = package / "probe.py"
+    module.write_text(
+        textwrap.dedent(
+            """\
+            from typing import Optional
+
+            from autoware_carla_scenario import BaseScenario, SetSpeedAction
+
+
+            def register(s: BaseScenario, a: Optional[SetSpeedAction]) -> None:
+                s.register_pre_tick(a)
+                s.register_post_tick(a)
+                if a is not None:
+                    s.register_pre_tick(a)
+            """
+        )
+    )
+
+    findings = find_none_misuses([module])
+
+    assert findings is not None
+    lines = module.read_text().splitlines()
+    assert [lines[f.line - 1].strip() for f in findings] == [
+        "s.register_pre_tick(a)",
+        "s.register_post_tick(a)",
+    ]
+
+
+# ---------------------------------------------------------------------------
+# A field of a frozen dataclass assigned (#567)
+# ---------------------------------------------------------------------------
+
+_FROZEN_MODULE = """
+from __future__ import annotations
+
+import dataclasses
+from dataclasses import dataclass, replace
+from typing import Any
+
+
+@dataclass(frozen=True)
+class Pt:
+    x: float
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "x", float(self.x))
+
+    def bump(self) -> None:
+        self.x = 3.0
+
+
+@dataclass(frozen=True)
+class Sub(Pt):
+    y: float = 0.0
+
+
+@dataclass
+class Free:
+    x: float = 0.0
+
+
+class Plain:
+    x: float = 0.0
+
+
+def run(items: list[Pt], free: Free, plain: Plain, anything: Any) -> None:
+    p = Pt(1.0)
+    p.x = 2.0
+    p.x += 1.0
+    for it in items:
+        it.x = 2.0
+    s = Sub(1.0)
+    s.y = 5.0
+    free.x = 1.0
+    plain.x = 1.0
+    anything.x = 1.0
+    q = replace(p, x=1.0)
+    r = dataclasses.replace(p, x=2.0)
+    print(p.x, q, r)
+"""
+
+
+def test_a_field_of_a_frozen_dataclass_assigned_is_found(tmp_path: Path) -> None:
+    module = tmp_path / "frozen_mod.py"
+    module.write_text(_FROZEN_MODULE, encoding="utf-8")
+    findings = run_none_check([module])
+    assert {f.kind for f in findings} == {"frozen"}
+    lines = _FROZEN_MODULE.splitlines()
+    assert sorted(lines[f.line - 1].strip() for f in findings) == sorted(
+        [
+            "self.x = 3.0",
+            "p.x = 2.0",
+            "p.x += 1.0",
+            "it.x = 2.0",
+            "s.y = 5.0",
+        ]
+    )
+    assert {f.read_only for f in findings} == {("Pt", "x"), ("Sub", "y")}
+
+
+def test_a_read_only_property_of_a_class_that_is_no_frozen_dataclass_is_left_alone(
+    tmp_path: Path,
+) -> None:
+    module = tmp_path / "prop_mod.py"
+    module.write_text(
+        "class A:\n"
+        "    @property\n"
+        "    def v(self) -> int:\n"
+        "        return 1\n\n\n"
+        "def f(a: A) -> None:\n"
+        "    a.v = 2\n",
+        encoding="utf-8",
+    )
+    assert run_none_check([module]) == []
+
+
+def test_frozen_dataclass_forms_and_a_same_named_plain_class(tmp_path: Path) -> None:
+    helper = tmp_path / "helper_mod.py"
+    helper.write_text(
+        "import dataclasses as dcs\n"
+        "from dataclasses import dataclass as dc\n\n\n"
+        "@dc(slots=True, frozen=True)\n"
+        "class Aliased:\n"
+        "    x: float = 0.0\n\n\n"
+        "@dcs.dataclass(order=True, frozen=True)\n"
+        "class Attr:\n"
+        "    x: float = 0.0\n\n\n"
+        "class Plain:\n"
+        "    @property\n"
+        "    def v(self) -> int:\n"
+        "        return 1\n",
+        encoding="utf-8",
+    )
+    other = tmp_path / "other_mod.py"
+    other.write_text(
+        "from dataclasses import dataclass\n\n\n"
+        "@dataclass(frozen=True)\n"
+        "class Plain:\n"
+        "    x: float = 0.0\n\n\n"
+        "class Outer:\n"
+        "    @dataclass(frozen=True)\n"
+        "    class Inner:\n"
+        "        x: float = 0.0\n\n\n"
+        "def f(c: 'Outer.Inner') -> None:\n"
+        "    c.x = 1.0\n",
+        encoding="utf-8",
+    )
+    use = tmp_path / "use_mod.py"
+    use.write_text(
+        "from helper_mod import Aliased, Attr, Plain\n\n\n"
+        "def g(a: Aliased, b: Attr, p: Plain) -> None:\n"
+        "    a.x = 1.0\n"
+        "    b.x = 1.0\n"
+        "    p.v = 2\n",
+        encoding="utf-8",
+    )
+    findings = run_none_check([helper, other, use])
+    assert sorted((f.path.rpartition("/")[2], f.line) for f in findings) == [
+        ("other_mod.py", 16),
+        ("use_mod.py", 5),
+        ("use_mod.py", 6),
+    ]
+
+
+# ---------------------------------------------------------------------------
+# bytes and str mixed (#574), an always-False comparison (#575)
+# ---------------------------------------------------------------------------
+
+_MIX_MODULE = """
+from __future__ import annotations
+
+import enum
+from typing import Any, Final
+
+
+class Color(enum.Enum):
+    RED = "red"
+    BLUE = "blue"
+
+
+class Mode(enum.Enum):
+    A = 1
+    B = 2
+
+
+class Level(enum.IntEnum):
+    LOW = 1
+
+
+class Phase(str, enum.Enum):
+    GO = "go"
+
+
+class Text(enum.StrEnum):
+    X = "x"
+
+
+class Plain:
+    pass
+
+
+def up(s: str) -> str:
+    return s.upper()
+
+
+def raw_in(b: bytes) -> bytes:
+    return b
+
+
+def bad_operator(name: str, raw: bytes) -> None:
+    a = b"x" + "y"
+    b = "sent " + name.encode()
+    c = "x" in raw
+    d = raw[0:1] + "z"
+
+
+def bad_return(name: str) -> str:
+    return name.encode()
+
+
+def bad_argument(name: str, raw: bytes) -> None:
+    up(raw)
+    raw_in(name)
+
+
+def bad_assignment(name: str, raw: bytes) -> None:
+    x: str = raw
+    y: bytes = name
+    items: list[str] = [raw]
+    table: dict[str, str] = {"k": raw}
+
+
+def bad_equality(raw: bytes) -> None:
+    a = raw == "ab"
+    b = "ab" != raw
+
+
+def bad_enum(c: Color, m: Mode, name: str) -> None:
+    a = c == "red"
+    b = m == 1
+    d = m in (1, 2)
+    e = Color.RED == Mode.A
+    f = name == Color.RED
+
+
+def bad_literals() -> None:
+    a = Color.RED == "red"
+    b = Color.RED == Mode.A
+
+
+def literal_look_alikes() -> None:
+    a = Level.LOW == 1
+    b = Level.LOW in (1, 2)
+    c = Phase.GO == "go"
+    d = Text.X == "x"
+    e = Color.RED != Color.BLUE
+    f = Color.RED == Color.RED
+
+
+MODE: Final = 1
+
+
+def bad_other(a: list[int], b: list[str]) -> None:
+    c = a == b
+    d = MODE == 2
+
+
+def good(
+    name: str, raw: bytes, c: Color, m: Mode, lv: Level, p: Phase, t: Text,
+    u: str | bytes, ba: bytearray, anything: Any, plain: Plain,
+) -> str:
+    a = raw + raw
+    b = name + name
+    d = name.encode() + b"x"
+    e = raw == b"ab"
+    f = c == Color.RED
+    g = c.value == "red"
+    h = m.value == 1
+    i = lv == 1
+    j = lv in (1, 2)
+    k = p == "go"
+    l = t == "x"
+    n = anything == c
+    o = c is None
+    q = c != Color.BLUE
+    r = u == "a"
+    s = plain == plain
+    v = raw.decode() + name
+    return name + raw.decode()
+"""
+
+
+def _mix_findings(tmp_path: Path) -> list[none_check.NoneFinding]:
+    module = tmp_path / "mix_mod.py"
+    module.write_text(_MIX_MODULE, encoding="utf-8")
+    return run_none_check([module])
+
+
+def _found(findings: list[none_check.NoneFinding], kind: str) -> list[str]:
+    lines = _MIX_MODULE.splitlines()
+    return [lines[f.line - 1].strip() for f in findings if f.kind == kind]
+
+
+def test_bytes_and_str_mixed_are_found(tmp_path: Path) -> None:
+    findings = _mix_findings(tmp_path)
+    assert _found(findings, "bytes-str") == [
+        'a = b"x" + "y"',
+        'b = "sent " + name.encode()',
+        'c = "x" in raw',
+        'd = raw[0:1] + "z"',
+        "return name.encode()",
+        "up(raw)",
+        "raw_in(name)",
+        "x: str = raw",
+        "y: bytes = name",
+        "items: list[str] = [raw]",
+        'table: dict[str, str] = {"k": raw}',
+        'a = raw == "ab"',
+        'b = "ab" != raw',
+    ]
+
+
+def test_an_enum_compared_with_something_it_never_equals_is_found(
+    tmp_path: Path,
+) -> None:
+    findings = _mix_findings(tmp_path)
+    assert _found(findings, "enum-eq") == [
+        'a = c == "red"',
+        "b = m == 1",
+        "d = m in (1, 2)",
+        "e = Color.RED == Mode.A",
+        "f = name == Color.RED",
+        'a = Color.RED == "red"',
+        "b = Color.RED == Mode.A",
+    ]
+    assert all(f.code == "comparison-overlap" for f in findings if f.kind == "enum-eq")
+
+
+def test_a_non_enum_always_false_comparison_is_left_alone(tmp_path: Path) -> None:
+    # list[int] == list[str], and two different literals (a Final switch).
+    findings = _mix_findings(tmp_path)
+    lines = _MIX_MODULE.splitlines()
+    assert not [f for f in findings if "c = a == b" in lines[f.line - 1]]
+    assert not [f for f in findings if "MODE == 2" in lines[f.line - 1]]
+
+
+def test_valid_bytes_str_and_enum_code_is_not_found(tmp_path: Path) -> None:
+    # `good`, the member literals of an IntEnum, a (str, Enum) and a StrEnum
+    # (mypy reports them, Python's is True) and two members of one enum.
+    findings = _mix_findings(tmp_path)
+    lines = _MIX_MODULE.splitlines()
+    first = lines.index("def literal_look_alikes() -> None:")
+    last = lines.index("def bad_other(a: list[int], b: list[str]) -> None:")
+    assert [f for f in findings if first < f.line < last] == []
+    assert [f for f in findings if f.line > lines.index("def good(")] == []
+    assert {f.kind for f in findings} == {"bytes-str", "enum-eq"}
+
+
+@pytest.mark.parametrize(
+    ("code", "message", "expected"),
+    [
+        ("operator", 'Unsupported operand types for + ("bytes" and "str")', True),
+        ("operator", 'Unsupported operand types for + ("str" and "bytes")', True),
+        ("operator", 'Unsupported operand types for in ("str" and "bytes")', True),
+        ("operator", 'Unsupported operand types for + ("int" and "str")', False),
+        (
+            "arg-type",
+            'Argument 1 to "up" has incompatible type "bytes"; expected "str"',
+            True,
+        ),
+        (
+            "arg-type",
+            'Argument 1 to "up" has incompatible type "str | bytes"; expected "str"',
+            False,
+        ),
+        (
+            "arg-type",
+            'Argument 1 to "f" has incompatible type "bytearray"; expected "bytes"',
+            False,
+        ),
+        (
+            "arg-type",
+            'Argument 1 to "f" has incompatible type "int"; expected "str"',
+            False,
+        ),
+        (
+            "return-value",
+            'Incompatible return value type (got "bytes", expected "str")',
+            True,
+        ),
+        (
+            "comparison-overlap",
+            'Non-overlapping equality check (left operand type: "bytes", '
+            "right operand type: \"Literal['ab']\")",
+            True,
+        ),
+        (
+            "comparison-overlap",
+            'Non-overlapping equality check (left operand type: "Color", '
+            "right operand type: \"Literal['red']\")",
+            False,
+        ),
+    ],
+)
+def test_is_bytes_str_mix_takes_the_exact_pair_only(
+    code: str, message: str, expected: bool
+) -> None:
+    assert none_check.is_bytes_str_mix(code, message) is expected
+
+
+def test_strict_equality_changes_no_other_finding(tmp_path: Path) -> None:
+    # The None check's own module reports what it did before the flag.
+    module = tmp_path / "plain_mod.py"
+    module.write_text(_MODULE, encoding="utf-8")
+    assert {f.kind for f in run_none_check([module])} <= {"none", "union"}
+
+
+# ---------------------------------------------------------------------------
+# Typing contracts broken: Final, ClassVar, override, read-only ABCs (#577)
+# ---------------------------------------------------------------------------
+
+_CONTRACT_MODULE = """
+from __future__ import annotations
+
+from typing import AbstractSet, Any, ClassVar, Final, Mapping, Sequence
+
+MAX_SPEED: Final = 30.0
+
+
+class Cfg:
+    LIMIT: Final = 30.0
+    count: ClassVar[int] = 0
+    free: int = 0
+
+    def bump(self) -> None:
+        self.LIMIT = 40.0
+        self.count += 1
+        self.free += 1
+
+
+class Base:
+    def f(self, x: int) -> int:
+        return x
+
+    def g(self, x: int) -> int:
+        return x
+
+    def h(self, x: int) -> int:
+        return x
+
+    def i(self, x: int) -> int:
+        return x
+
+    def j(self, x: int) -> int:
+        return x
+
+    def __eq__(self, other: object) -> bool:
+        return True
+
+
+class Narrow(Base):
+    def f(self, x: str) -> int:
+        return len(x)
+
+    def g(self, x: int) -> str:
+        return ""
+
+    def h(self, x: int, y: int) -> int:
+        return x
+
+    def __eq__(self, other: Narrow) -> bool:
+        return True
+
+
+class Fine(Base):
+    def f(self, x: int, y: int = 0) -> int:
+        return x
+
+    def g(self, x: object) -> bool:
+        return True
+
+    def h(self, x: int) -> int:
+        return x
+
+    def i(self, x: str) -> int:  # type: ignore[override]
+        return len(x)
+
+
+def final_reassigned() -> None:
+    global MAX_SPEED
+    MAX_SPEED = 40.0
+    speed: Final = 10.0
+    speed = 20.0
+    Cfg.LIMIT = 3.0
+
+
+def class_var_via_instance() -> None:
+    c = Cfg()
+    c.count = 5
+    Cfg.count = 6
+    c.free = 1
+
+
+def read_only(
+    m: Mapping[str, int], s: Sequence[int], a: AbstractSet[int], anything: Any
+) -> None:
+    m["k"] = 1
+    del m["k"]
+    s[0] = 2
+    s.append(3)
+    s.sort()
+    m.update({})
+    m.pop("k")
+    a.add(1)
+    a.discard(1)
+
+
+def typos_and_stub_gaps(m: Mapping[str, int], s: Sequence[int], ok: dict[str, int]) -> None:
+    s.nope()
+    m.nope
+    ok["k"] = 1
+    ok.update({})
+    ls = list(s)
+    ls.append(1)
+    ls.sort()
+    copy = dict(m)
+    copy["k"] = 2
+    n: int = "wrong"
+"""
+
+
+def _contract_findings(tmp_path: Path) -> list[none_check.NoneFinding]:
+    module = tmp_path / "contract_mod.py"
+    module.write_text(_CONTRACT_MODULE, encoding="utf-8")
+    return run_none_check([module])
+
+
+def _contract_found(findings: list[none_check.NoneFinding], kind: str) -> list[str]:
+    lines = _CONTRACT_MODULE.splitlines()
+    return [lines[f.line - 1].strip() for f in findings if f.kind == kind]
+
+
+def test_a_final_assigned_again_is_found(tmp_path: Path) -> None:
+    findings = _contract_findings(tmp_path)
+    assert _contract_found(findings, "final") == [
+        "self.LIMIT = 40.0",
+        "MAX_SPEED = 40.0",
+        "speed = 20.0",
+        "Cfg.LIMIT = 3.0",
+    ]
+    assert all(f.code == "misc" for f in findings if f.kind == "final")
+
+
+def test_a_class_variable_assigned_through_an_instance_is_found(
+    tmp_path: Path,
+) -> None:
+    findings = _contract_findings(tmp_path)
+    # Through the class (`Cfg.count = 6`) and a plain field are fine.
+    assert _contract_found(findings, "class-var") == ["self.count += 1", "c.count = 5"]
+
+
+def test_an_incompatible_override_is_found(tmp_path: Path) -> None:
+    findings = _contract_findings(tmp_path)
+    # A narrowed argument, a return type, an extra required parameter.  Not
+    # `Fine` (a wider argument, a default parameter, `type: ignore[override]`)
+    # and not the dunder `__eq__`, narrowed to `Narrow`.
+    assert _contract_found(findings, "override") == [
+        "def f(self, x: str) -> int:",
+        "def g(self, x: int) -> str:",
+        "def h(self, x: int, y: int) -> int:",
+    ]
+    assert all(f.code == "override" for f in findings if f.kind == "override")
+
+
+def test_an_override_of_a_method_two_superclasses_define_is_found_once(
+    tmp_path: Path,
+) -> None:
+    # mypy reports it against `Mid` and again against `Base`.
+    module = tmp_path / "chain_mod.py"
+    module.write_text(
+        "class Base:\n"
+        "    def done(self) -> bool:\n"
+        "        return True\n\n\n"
+        "class Mid(Base):\n"
+        "    def done(self) -> bool:\n"
+        "        return False\n\n\n"
+        "class Sub(Mid):\n"
+        "    def done(self, strict: bool) -> bool:\n"
+        "        return strict\n",
+        encoding="utf-8",
+    )
+    findings = [f for f in run_none_check([module]) if f.kind == "override"]
+    assert [(f.line, sum("Superclass:" in n for n in f.notes)) for f in findings] == [
+        (12, 1)
+    ], findings
+    assert '"Mid"' in findings[0].message
+
+
+def test_mutating_a_read_only_abc_is_found(tmp_path: Path) -> None:
+    findings = _contract_findings(tmp_path)
+    assert _contract_found(findings, "read-only-abc") == [
+        'm["k"] = 1',
+        'del m["k"]',
+        "s[0] = 2",
+        "s.append(3)",
+        "s.sort()",
+        "m.update({})",
+        'm.pop("k")',
+        "a.add(1)",
+        "a.discard(1)",
+    ]
+
+
+def test_contract_findings_leave_valid_code_and_other_errors_alone(
+    tmp_path: Path,
+) -> None:
+    # A missing attribute of a Sequence / Mapping (a typo), a dict, a copy,
+    # and an unrelated mypy error: Codon's, or no business of the check.
+    findings = _contract_findings(tmp_path)
+    lines = _CONTRACT_MODULE.splitlines()
+    start = next(
+        i for i, ln in enumerate(lines) if ln.startswith("def typos_and_stub_gaps(")
+    )
+    assert [f for f in findings if f.line > start] == []
+    assert {f.kind for f in findings} == {
+        "final",
+        "class-var",
+        "override",
+        "read-only-abc",
+    }
+
+
+@pytest.mark.parametrize(
+    ("code", "message", "expected"),
+    [
+        ("misc", 'Cannot assign to final name "X"', "final"),
+        ("misc", 'Cannot assign to final attribute "LIMIT"', "final"),
+        ("misc", 'Cannot assign to class variable "n" via instance', "class-var"),
+        (
+            "misc",
+            'Cannot override final attribute "x" (previously declared in base class "A")',
+            None,
+        ),
+        ("misc", 'Cannot determine type of "x"', None),
+        ("assignment", 'Cannot assign to final name "X"', None),
+        (
+            "override",
+            'Argument 1 of "f" is incompatible with supertype "A"; supertype defines the argument type as "int"',
+            "override",
+        ),
+        (
+            "override",
+            'Return type "str" of "g" incompatible with return type "int" in supertype "A"',
+            "override",
+        ),
+        ("override", 'Signature of "h" incompatible with supertype "A"', "override"),
+        (
+            "override",
+            'Argument 1 of "__eq__" is incompatible with supertype "A"; supertype defines the argument type as "object"',
+            None,
+        ),
+        (
+            "override",
+            'Argument 1 of "run" is incompatible with supertype "builtins.object"',
+            None,
+        ),
+        (
+            "override",
+            'Cannot override instance variable (previously declared on base class "A") with class variable',
+            None,
+        ),
+        (
+            "index",
+            'Unsupported target for indexed assignment ("Mapping[str, int]")',
+            "read-only-abc",
+        ),
+        (
+            "index",
+            'Unsupported target for indexed assignment ("Sequence[int]")',
+            "read-only-abc",
+        ),
+        ("index", 'Unsupported target for indexed assignment ("Foo")', None),
+        ("attr-defined", '"Sequence[int]" has no attribute "append"', "read-only-abc"),
+        (
+            "attr-defined",
+            '"Mapping[str, int]" has no attribute "update"',
+            "read-only-abc",
+        ),
+        ("attr-defined", '"AbstractSet[int]" has no attribute "add"', "read-only-abc"),
+        (
+            "attr-defined",
+            '"Sequence[int]" has no attribute "__delitem__"; maybe "__getitem__"?',
+            "read-only-abc",
+        ),
+        ("attr-defined", '"Sequence[int]" has no attribute "foo"', None),
+        ("attr-defined", '"list[int]" has no attribute "appendd"', None),
+        ("attr-defined", '"ndarray[Any, Any]" has no attribute "append"', None),
+        ("attr-defined", '"Foo" has no attribute "append"', None),
+        ("attr-defined", 'Module has no attribute "append"', None),
+    ],
+)
+def test_contract_kind_takes_the_exact_messages_only(
+    code: str, message: str, expected: str | None
+) -> None:
+    assert none_check.contract_kind(code, message) == expected
+
+
+# ---------------------------------------------------------------------------
+# A string formatting that fails at run time (#589)
+# ---------------------------------------------------------------------------
+
+_FORMAT_MODULE = """
+import datetime
+import fractions
+
+
+def bad(speed: float, name: str, n: int, opt: int | None, kw: dict[str, int]) -> list[str]:
+    return [
+        "{:d} km/h".format(speed),
+        "%d km/h" % name,
+        "{:.2f}".format(name),
+        "%x" % speed,
+        "%s %s" % (name,),
+        "%s" % (name, n),
+        "{} {}".format(name),
+        "{x}".format(y=n),
+        "{:abc}".format(n),
+        "{} {1}".format(n, n),
+        "{".format(n),
+        '%(a)d' % {"b": n},
+        "%q" % n,
+        "{!x}".format(n),
+        "{:d}".format(opt),
+        "abc" % 5,
+        "%c" % speed,
+        "{:d}".format(1j),
+    ]
+
+
+def fine(
+    speed: float, name: str, n: int, opt: int | None, kw: dict[str, int],
+    when: datetime.datetime, args: tuple[int, ...],
+) -> list[str]:
+    return [
+        "%d km/h" % speed,
+        "{:.2f}".format(n),
+        "{:,}".format(speed),
+        "{:%Y-%m-%d}".format(when),
+        "{x}".format(**kw),
+        "{} {}".format(*args),
+        "{0[0]}".format([n]),
+        "{:>10}".format(n),
+        "{!r:>{}}".format(name, n),
+        f"{speed:d}",
+    ]
+
+
+class Index:
+    def __index__(self) -> int:
+        return 65
+
+
+class Lookup:
+    def __getitem__(self, key: str) -> int:
+        return 1
+
+
+def doubtful(
+    name: str, d: dict[str, int], n: int, ix: Index, lookup: Lookup, c: complex
+) -> list[str]:
+    # mypy reports these, and Python runs them.
+    return [
+        "{:05}".format(name),
+        "{0[my key]}".format(d),
+        "{0['k']}".format(d),
+        "{}".format(n, n),
+        "{}".format(n, extra=n),
+        "abc" % d,
+        "abc" % [n],
+        "abc" % b"x",
+        "%x" % ix,
+        "%d" % ix,
+        "%c" % ix,
+        "%(a)s" % lookup,
+        "{:.2f}".format(c),
+        "{:.2f}".format(fractions.Fraction(1, 3)),
+    ]
+"""
+
+
+def _format_findings(tmp_path: Path) -> list[none_check.NoneFinding]:
+    module = tmp_path / "format_mod.py"
+    module.write_text(_FORMAT_MODULE, encoding="utf-8")
+    return run_none_check([module])
+
+
+def test_a_string_formatting_python_fails_on_is_found(tmp_path: Path) -> None:
+    findings = _format_findings(tmp_path)
+    lines = _FORMAT_MODULE.splitlines()
+    found = sorted(
+        {lines[f.line - 1].strip() for f in findings if f.kind == "str-format"}
+    )
+    start = next(i for i, ln in enumerate(lines) if ln.startswith("def bad("))
+    end = next(i for i, ln in enumerate(lines) if ln.startswith("def fine("))
+    expected = sorted(
+        ln.strip() for ln in lines[start:end] if ln.strip().startswith(("'", '"'))
+    )
+    assert found == expected
+    assert all(f.code == "str-format" for f in findings if f.kind == "str-format")
+
+
+def test_a_valid_or_doubtful_string_formatting_is_left_alone(tmp_path: Path) -> None:
+    # Including the f-string spec, which mypy does not check, and the
+    # messages mypy also gives valid code.
+    findings = _format_findings(tmp_path)
+    lines = _FORMAT_MODULE.splitlines()
+    start = next(i for i, ln in enumerate(lines) if ln.startswith("def fine("))
+    assert [f for f in findings if f.line > start] == []
+    assert {f.kind for f in findings} == {"str-format"}
+
+
+@pytest.mark.parametrize(
+    ("code", "message", "expected"),
+    [
+        (
+            "str-format",
+            'Incompatible types in string interpolation (expression has type "float", placeholder has type "int")',
+            True,
+        ),
+        ("str-format", "Not enough arguments for format string", True),
+        ("str-format", "Not all arguments converted during string formatting", True),
+        (
+            "str-format",
+            "Cannot find replacement for positional format specifier 1",
+            True,
+        ),
+        ("str-format", 'Cannot find replacement for named format specifier "x"', True),
+        ("str-format", 'Unrecognized format specification "abc"', True),
+        (
+            "str-format",
+            "Invalid conversion specifier in format string: unmatched {",
+            True,
+        ),
+        ("str-format", 'Key "a" not found in mapping', True),
+        ("str-format", 'Unsupported format character "q"', True),
+        ("str-format", '"%c" requires int or char', True),
+        ("str-format", '":c" requires int or char', True),
+        ("str-format", "* wants int", True),
+        (
+            "str-format",
+            '"%c" requires int or char (expression has type "float")',
+            True,
+        ),
+        (
+            "str-format",
+            '"%c" requires int or char (expression has type "Index")',
+            False,
+        ),
+        (
+            "str-format",
+            'Incompatible types in string interpolation (expression has type "Index", placeholder has type "int")',
+            False,
+        ),
+        (
+            "str-format",
+            'Incompatible types in string interpolation (expression has type "complex", placeholder has type "int | float")',
+            False,
+        ),
+        (
+            "str-format",
+            'Incompatible types in string interpolation (expression has type "complex", placeholder has type "int")',
+            True,
+        ),
+        (
+            "str-format",
+            'Incompatible types in string interpolation (expression has type "int", placeholder has type "bytes")',
+            True,
+        ),
+        (
+            "str-format",
+            'Incompatible types in string interpolation (expression has type "int | str", placeholder has type "int")',
+            False,
+        ),
+        (
+            "str-format",
+            'Format requires a mapping (expression has type "int", expected type for mapping is "SupportsKeysAndGetItem[str, Any]")',
+            True,
+        ),
+        (
+            "str-format",
+            'Format requires a mapping (expression has type "Lookup", expected type for mapping is "SupportsKeysAndGetItem[str, Any]")',
+            False,
+        ),
+        ("str-format", "Numeric flags are only allowed for numeric types", False),
+        ("str-format", 'Syntax error in format specifier "0[my key]"', False),
+        (
+            "str-format",
+            "Invalid index expression in format field accessor \"['k']\"",
+            False,
+        ),
+        (
+            "str-format",
+            'Only index and member expressions are allowed in format field accessors; got "0()"',
+            False,
+        ),
+        ("misc", "Not enough arguments for format string", False),
+        ("str-bytes-safe", "If x = b'abc' then \"%s\" % x produces \"b'abc'\"", False),
+    ],
+)
+def test_is_str_format_failure_takes_the_run_time_failures_only(
+    code: str, message: str, expected: bool
+) -> None:
+    assert none_check.is_str_format_failure(code, message) is expected
+
+
+def test_an_unrecognized_spec_is_kept_where_this_python_refuses_it() -> None:
+    # "z" (negative zero to zero) is Python 3.11's; mypy refuses it anywhere.
+    message = 'Unrecognized format specification "z.1f"'
+    assert none_check.is_str_format_failure("str-format", message) is (
+        sys.version_info < (3, 11)
+    )

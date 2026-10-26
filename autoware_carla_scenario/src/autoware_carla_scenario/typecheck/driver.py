@@ -84,6 +84,11 @@ class Driver:
     #: The config values the program builds, each key's ``repr()``: what
     #: tells one case of a sweep from another in a log.
     case: dict[str, str] = field(default_factory=dict)
+    #: What building ``config_cls(**scenario_dict)`` in Python raised, as
+    #: ``"TypeError: ..."``: the runner builds the config the same way, so the
+    #: scenario cannot run.  Not part of the shape: the verdict is cached
+    #: for the types, and this depends on the values.
+    build_error: str = ""
 
 
 class _Imports:
@@ -91,6 +96,11 @@ class _Imports:
         self.lines: list[str] = []
         #: Render each value as a token of its type (:func:`_literal`).
         self.shape = shape
+        #: ``(statement, config path)``: a scalar field of a nested dataclass,
+        #: passed to a function taking that type first, so that Codon's
+        #: error for it is at a line of its own (it reports a call's
+        #: argument at the call): the path names the field (#531).
+        self.checks: list[tuple[str, str]] = []
 
     def name(self, cls: type) -> str:
         """The name *cls* is imported as in the driver."""
@@ -149,16 +159,34 @@ def _literal(value: Any, rendered: str, imports: _Imports) -> str:
     return rendered
 
 
-def _render(value: Any, hint: Any, imports: _Imports, actual: Any = _UNKNOWN) -> str:
+#: Marks a line of a rendered value with the config path it holds (#531).
+_PATH_MARK = "  #@acs-path:"
+
+
+def _render(
+    value: Any,
+    hint: Any,
+    imports: _Imports,
+    actual: Any = _UNKNOWN,
+    path: str = "",
+) -> str:
     """*value* as a Codon expression of the type *hint* names (Any: its own).
 
     *actual* is what the config built in Python holds for *value*: a mapping
-    becomes the dataclass *hint* names only if that holds one.
+    becomes the dataclass *hint* names only if that holds one, and a string
+    or list the config's ``__post_init__`` turned into an Enum member or a
+    tuple is rendered as that (#531).  *path* is the config path of *value*
+    (``scenario.legs[1]``): a nested dataclass is rendered one field to a
+    line, each marked with its path (:data:`_PATH_MARK`).
     """
     origin, args = typing.get_origin(hint), typing.get_args(hint)
     if origin is typing.Union or isinstance(hint, types.UnionType):
         rest = [a for a in args if a is not type(None)]
-        return _render(value, rest[0] if len(rest) == 1 else Any, imports, actual)
+        return _render(value, rest[0] if len(rest) == 1 else Any, imports, actual, path)
+    if isinstance(actual, enum.Enum) and not isinstance(value, enum.Enum):
+        value = actual
+    elif isinstance(actual, tuple) and isinstance(value, list):
+        value = actual
     if isinstance(value, enum.Enum):
         cls = imports.name(type(value))
         return f"<{cls}>" if imports.shape else f"{cls}.{value.name}"
@@ -183,18 +211,19 @@ def _render(value: Any, hint: Any, imports: _Imports, actual: Any = _UNKNOWN) ->
             and dataclasses.is_dataclass(hint)
             and (actual is _UNKNOWN or isinstance(actual, hint))
         ):
-            return _render_dataclass(hint, value, imports, actual)
+            return _render_dataclass(hint, value, imports, actual, path)
         key_hint, value_hint = (args + (Any, Any))[:2] if origin is dict else (Any, Any)
         items = ", ".join(
             f"{_render(k, key_hint, imports)}: "
-            f"{_render(v, value_hint, imports, _at(actual, k))}"
+            f"{_render(v, value_hint, imports, _at(actual, k), f'{path}[{k!r}]')}"
             for k, v in value.items()
         )
         return "{" + items + "}"
     if isinstance(value, (list, tuple)):
         item_hint = args[0] if origin in (list, tuple) and args else Any
         items = ", ".join(
-            _render(v, item_hint, imports, _at(actual, i)) for i, v in enumerate(value)
+            _render(v, item_hint, imports, _at(actual, i), f"{path}[{i}]")
+            for i, v in enumerate(value)
         )
         return f"({items},)" if isinstance(value, tuple) and value else f"[{items}]"
     return repr(value)
@@ -208,14 +237,55 @@ def _field_hints(cls: type) -> dict[str, Any]:
 
 
 def _render_dataclass(
-    cls: type, values: dict[str, Any], imports: _Imports, actual: Any = _UNKNOWN
+    cls: type,
+    values: dict[str, Any],
+    imports: _Imports,
+    actual: Any = _UNKNOWN,
+    path: str = "",
 ) -> str:
     hints = _field_hints(cls)
-    args = ", ".join(
-        f"{key}={_render(value, hints.get(key, Any), imports, _at(actual, key))}"
-        for key, value in values.items()
-    )
-    return f"{imports.name(cls)}({args})"
+    if not path:
+        args = ", ".join(
+            f"{key}={_render(value, hints.get(key, Any), imports, _at(actual, key))}"
+            for key, value in values.items()
+        )
+        return f"{imports.name(cls)}({args})"
+    # One field to a line, so that Codon's error names the field (#531).
+    pieces = []
+    for key, value in values.items():
+        hint = hints.get(key, Any)
+        rendered = _render(value, hint, imports, _at(actual, key), f"{path}.{key}")
+        _check_scalar(value, hint, rendered, imports, f"{path}.{key}")
+        pieces.append(f"\n{key}={rendered},{_PATH_MARK}{path}.{key}")
+    fields = "".join(pieces)
+    return f"{imports.name(cls)}({_PATH_MARK}{path}{fields}\n)"
+
+
+def _check_scalar(
+    value: Any, hint: Any, rendered: str, imports: _Imports, path: str
+) -> None:
+    """Check a scalar field's *rendered* value strictly, on a line of its own.
+
+    Codon converts any value with ``__bool__`` assigned to a ``bool`` field
+    or passed as one (``enabled = "no"``), so a field annotated ``bool``,
+    ``int``, ``float`` or ``str`` given a value of one of those types is also
+    passed to ``_acs_as_<hint>``, which takes that type only: its error is
+    at the line, which names *path* (#531, #598).  An int given to a float
+    field is rendered as a float (:func:`_render`) and passes.
+    """
+    if hint in (bool, int, float, str) and (
+        type(value) is hint or type(value) in (int, float, str)
+    ):
+        imports.checks.append((f"_acs_as_{hint.__name__}({rendered})", path))
+
+
+def _split_marks(text: str, path: str) -> list[tuple[str, str]]:
+    """The lines of rendered *text*, each with the config path it holds."""
+    out: list[tuple[str, str]] = []
+    for line in text.split("\n"):
+        code, mark, where = line.partition(_PATH_MARK)
+        out.append((code, where if mark else path))
+    return out
 
 
 def _all_fields_have_defaults(cls: type) -> bool:
@@ -239,13 +309,35 @@ def render_driver(
     scenario_name = imports.name(scenario_cls)
     config_name = imports.name(config_cls)
     hints = _field_hints(config_cls)
+    build_error = ""
     try:
         # What the runner builds, to render each value as the config holds it.
         built: Any = config_cls(**copy.deepcopy(scenario_dict))
-    except Exception:  # noqa: BLE001 - the driver's constructor call reports it
+    except Exception as exc:  # noqa: BLE001 - reported with the verdict (#531)
         built = _UNKNOWN
+        build_error = f"{type(exc).__name__}: {exc}"
 
     by_assignment = _all_fields_have_defaults(config_cls)
+    # The same program with each value a token of its type: the key.
+    shape_imports = _Imports(shape=True)
+    config_args: list[tuple[str, str, str]] = []  # (key, line, shaped line)
+    for key, value in scenario_dict.items():
+        hint = hints.get(key, Any)
+        rendered_lines = []
+        for imports_ in (imports, shape_imports):
+            rendered = _render(
+                value, hint, imports_, _at(built, key), f"scenario.{key}"
+            )
+            # Strictly, as a nested field's (#598): `config.enabled = "no"`
+            # passes, as Codon converts a str to a bool field.
+            _check_scalar(value, hint, rendered, imports_, f"scenario.{key}")
+            rendered_lines.append(
+                f"    config.{key} = {rendered}"
+                if by_assignment
+                else f"        {key}={rendered},"
+            )
+        line, shaped = rendered_lines
+        config_args.append((key, line, shaped))
     body = [
         "def _acs_expect_scenario(scenario: BaseScenario):",
         "    pass",
@@ -256,20 +348,6 @@ def render_driver(
         if by_assignment
         else f"    config = {config_name}(",
     ]
-    # The same program with each value a token of its type: the key.
-    shape_imports = _Imports(shape=True)
-    config_args: list[tuple[str, str, str]] = []
-    for key, value in scenario_dict.items():
-        line, shaped = (
-            f"    config.{key} = {rendered}"
-            if by_assignment
-            else f"        {key}={rendered},"
-            for rendered in (
-                _render(value, hints.get(key, Any), imports_, _at(built, key))
-                for imports_ in (imports, shape_imports)
-            )
-        )
-        config_args.append((key, line, shaped))
     tail = [
         *([] if by_assignment else ["    )"]),
         f"    scenario = {scenario_name}(",
@@ -306,16 +384,30 @@ def render_driver(
         *imports.lines,
         "",
         "",
+        *(
+            f"def _acs_as_{name}(value: {name}): pass"
+            for name in ("bool", "int", "float", "str")
+            if any(c.startswith(f"_acs_as_{name}(") for c, _ in imports.checks)
+        ),
     ]
-    lines = head + body
     # Rendering a value imports the same classes (its enum, its dataclass)
     # whatever the value is, so the shape keeps the program's imports.
-    shape = head + body
     config_lines: dict[int, str] = {}
+    opening = body.index("def _acs_check_scenario():") + 1
+    lines = head + body[:opening]
+    shape = head + body[:opening]
+    for code, where in imports.checks:
+        lines.append(f"    {code}")
+        config_lines[len(lines)] = where
+    shape.extend(f"    {code}" for code, _ in shape_imports.checks)
+    lines += body[opening:]
+    shape += body[opening:]
     for key, line, shaped in config_args:
-        lines.append(line)
-        shape.append(shaped)
-        config_lines[len(lines)] = f"scenario.{key}"
+        parts = _split_marks(line, f"scenario.{key}")
+        for code, where in parts:
+            lines.append(code)
+            config_lines[len(lines)] = where
+        shape.extend(code for code, _ in _split_marks(shaped, ""))
     lines += tail
     shape += tail
     return Driver(
@@ -324,6 +416,7 @@ def render_driver(
         trailer=f"{HOOK_CHECK}()\n",
         shape="\n".join(shape) + "\n",
         case={key: _abbreviated(repr(value)) for key, value in scenario_dict.items()},
+        build_error=build_error,
     )
 
 

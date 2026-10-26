@@ -45,6 +45,7 @@ _FILE_MANIFEST: dict[str, str] = {
     "package__init__.py.jinja": "src/{package_name}/__init__.py",
     "scenario.py.jinja": "src/{package_name}/{scenario_name}.py",
     "configs.py.jinja": "src/{package_name}/configs.py",
+    "test_typecheck.py.jinja": "tests/test_typecheck.py",
     "default.yaml.jinja": (
         "src/{package_name}/conf/scenario/{scenario_name}/default.yaml"
     ),
@@ -243,6 +244,10 @@ def main(argv: list[str] | None = None) -> int:
     print(f"  uv pip install -e {root}")  # noqa: T201
     print(  # noqa: T201
         f"  uv run scenario scenario={names['scenario_name']}/default map=nishishinjuku"
+    )
+    print(  # noqa: T201
+        f"  uv run scenario-check scenario={names['scenario_name']}/default"
+        "   # static check, before CARLA starts"
     )
     return 0
 

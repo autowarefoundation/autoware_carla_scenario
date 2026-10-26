@@ -1111,6 +1111,7 @@ def test_a_scenarios_controls_are_drawn_without_naming_them_in_the_sweep() -> No
         {
             "odd": "default",
             "ego": {"initial_speed_kmh": 30.0},
+            "scenario": {"npc_initial_speed_kmh": 0.0},
             "controls": {
                 "vehicle_ahead_relative_speed_kph": {
                     "key": "scenario.npc_initial_speed_kmh",

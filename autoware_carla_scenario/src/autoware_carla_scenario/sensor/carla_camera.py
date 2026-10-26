@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 import queue
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Optional, Union
+from typing import TYPE_CHECKING, Callable, Optional, Union
 
 import numpy as np
 
@@ -160,15 +160,24 @@ class CarlaCameraSensor(CameraSensorBase):
 
     Args:
         config: CARLA camera sensor configuration.
+        on_frame: Called with each frame from the sensor's own thread, instead
+            of queueing it: :meth:`get_image` then has nothing to return.
+            ``None`` (the default) queues the frames.
     """
 
     _carla_config: CarlaCameraSensorConfig
     _sensor: Optional[carla.Actor]
     _frame_queue: queue.Queue[carla.Image]
+    _on_frame: Optional[Callable[[carla.Image], None]]
 
-    def __init__(self, config: CarlaCameraSensorConfig) -> None:
+    def __init__(
+        self,
+        config: CarlaCameraSensorConfig,
+        on_frame: Optional[Callable[[carla.Image], None]] = None,
+    ) -> None:
         super().__init__(config)
         self._carla_config = config
+        self._on_frame = on_frame
         self._sensor = None
         self._frame_queue = queue.Queue(maxsize=2)
 
@@ -294,6 +303,8 @@ class CarlaCameraSensor(CameraSensorBase):
     def _on_sensor_data(self, data: Union["carla.Image", "carla.SensorData"]) -> None:
         """The sensor's listener: queues the frame for :meth:`get_image`.
 
+        With an ``on_frame`` callback the frame goes to it instead, unqueued.
+
         It runs on a CARLA thread, which delivers every sensor's data, so it must
         never block: when the queue is full it drops the oldest frame.  Once the
         policy stops calling :meth:`get_image` (a finished scenario), a blocking
@@ -306,6 +317,10 @@ class CarlaCameraSensor(CameraSensorBase):
         ``as_image``, never takes it.
         """
         image = data.as_image() if hasattr(data, "as_image") else data
+        on_frame = self._on_frame
+        if on_frame is not None:
+            on_frame(image)
+            return
         # Never block CARLA's delivery thread: drop the oldest frame when full.
         while True:
             try:

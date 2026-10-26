@@ -51,6 +51,12 @@ Ubuntu 22.04 image, an apt step in CI, and a Python 3.10 cap.
 # Run the full pytest suite (matches CI's `test` job)
 uv run pytest -n auto
 
+# Fast iteration loop: only re-run tests whose executed code changed.
+# Opt-in -- testmon never re-selects tests that depend on the set of files
+# or on docs text (e.g. the test_typecheck_library.py count tests), so a
+# green --testmon run does not mean CI is green.
+uv run pytest --testmon
+
 # Run a single test file
 uv run pytest autoware_carla_scenario/test/carla_scenario/test_coordinate.py
 
@@ -65,10 +71,15 @@ change end-to-end:
 
 1. Run `uv sync --dev` once, then `uv run pytest -n auto`. No apt packages, no
    Docker, no compiler.
-2. Prefer a targeted `uv run pytest <file>` while iterating — the `slow`
+2. `uv run pytest` selects every test, as CI does (`-n auto`, no testmon).
+   Before opening a PR, run what CI runs: `uv run pytest -n auto -o addopts= -m "not slow"`.
+3. Prefer a targeted `uv run pytest <file>` while iterating — the `slow`
    tests that build a wheelhouse take minutes.
-3. Static checks (`ruff`, `ruff-format`, `mypy --ignore-missing-imports`) are
-   still the fastest signal and should be used first.
+4. Static checks (`ruff`, `ruff-format`, `mypy --ignore-missing-imports`) are
+   still the fastest signal and should be used first. Ruff targets `py310`
+   and bans names missing on 3.10 (`typing.Self`, `assert_never`, ...; import
+   them from `typing_extensions`). mypy cannot be pinned to 3.10 because
+   numpy's stubs use 3.12 syntax, so 3.10 is otherwise only checked in CI.
 
 ### Rationale
 

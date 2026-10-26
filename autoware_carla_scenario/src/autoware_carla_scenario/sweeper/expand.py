@@ -560,14 +560,22 @@ def expand_config(
 
 
 def scenario_controls(cfg: DictConfig) -> dict[str, Any]:
-    """The config's ``controls``, resolved: what the scenario's parameters set."""
+    """The config's ``controls``, resolved: what the scenario's parameters set.
+
+    Raises:
+        ControlsError: When they are invalid; its ``diagnostics`` give each
+            problem with its config path (:func:`~..odd.controls.validate_controls`).
+    """
+    from ..odd.controls import ControlsError, validate_controls  # noqa: PLC0415
+
     node = OmegaConf.select(cfg, "controls")
     if node is None:
         return {}
     controls = OmegaConf.to_container(node, resolve=True)
-    if not isinstance(controls, dict):
-        raise ValueError("controls: expected a mapping of measure -> control")
-    return {str(k): v for k, v in controls.items()}
+    errors = [d for d in validate_controls(controls, cfg) if d.severity == "error"]
+    if errors:
+        raise ControlsError(errors)
+    return {str(k): v for k, v in controls.items()}  # type: ignore[union-attr]
 
 
 __all__ = ["expand_config", "expand_route", "expand_sweep", "scenario_controls"]

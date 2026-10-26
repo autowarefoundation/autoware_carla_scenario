@@ -358,7 +358,7 @@ def test_a_crashed_task_leaves_its_cases_missing_and_resubmit_runs_only_them(
     assert task0 is not None
     port = task0["ports"]["rpc"]
     _wait_for(lambda: carla_processes_on_port(port) == [], 20, "the orphaned CARLA")
-    assert not layout.task_port(0, 0).exists()
+    _wait_for(lambda: not layout.task_port(0, 0).exists(), 20, "the port file")
 
     # Resubmitted: the two cases with no result, and those that errored (the
     # fake world's errored cases raise again, as a case without ground would).
@@ -424,7 +424,11 @@ def test_scancel_stops_the_tasks_and_their_carla_and_resubmit_finishes_the_batch
     for task in range(2):
         task_status = layout.read_task(0, task)
         assert task_status is not None and task_status["state"] == "cancelled"
-        assert not layout.task_port(0, task).exists()
+        # Removed after CARLA is gone, by the worker or (when it was killed)
+        # its watchdog, so it can lag the CARLA check above (#525).
+        _wait_for(
+            lambda t=task: not layout.task_port(0, t).exists(), 20, "the port file"
+        )
 
     # The collect job ran (once the array ended): every case without a result.
     _wait_for(lambda: (batch / "batch_results.json").exists(), 30, "the collect job")
@@ -752,6 +756,33 @@ def test_a_kept_lock_survives_the_release_while_the_watchdog_holds_it(
     again.release()
 
 
+def test_the_watchdog_removes_the_port_file_of_a_worker_that_died(
+    tmp_path: Path,
+) -> None:
+    """A SIGKILLed worker never removes its ``.port`` file (#525): the watchdog,
+    which sees the pipe close without ``done``, does."""
+    from autoware_carla_scenario.slurm.ports import CarlaWatchdog
+
+    slot = acquire_slot(31800, 1, start=0, lock_dir=tmp_path)
+    port_file = tmp_path / "0-0.port"
+    port_file.write_text(f"{slot.rpc}\n", encoding="utf-8")
+    watchdog = CarlaWatchdog(slot, port_file)
+    slot.release(keep_lock=True)
+    process = watchdog._process
+    assert process is not None and process.stdin is not None
+    process.stdin.close()  # the worker died: end of file, no "done"
+    process.wait(timeout=30)
+    assert not port_file.exists()
+
+    # A worker that finished cleans up itself: the watchdog leaves the file.
+    slot = acquire_slot(31800, 1, start=0, lock_dir=tmp_path)
+    port_file.write_text("x\n", encoding="utf-8")
+    watchdog = CarlaWatchdog(slot, port_file)
+    slot.release(keep_lock=True)
+    watchdog.finish()
+    assert port_file.exists()
+
+
 def test_first_slot_differs_by_task() -> None:
     env = {"SLURM_ARRAY_JOB_ID": "120", "SLURM_ARRAY_TASK_ID": "3"}
     assert first_slot(env, 1000) == 123
@@ -992,6 +1023,47 @@ def test_the_worker_takes_its_slot_in_launcher_port_lock_dir(
     assert seen["lock_dir"] == tmp_path / "locks"
     status = layout.read_task(0, 0)
     assert status is not None and "stop here" in status["error"]
+
+
+def test_a_failing_task_port_propagates_and_releases_the_slot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from autoware_carla_scenario.examples import run
+    from autoware_carla_scenario.slurm import worker
+    from autoware_carla_scenario.slurm.manifest import write_json
+
+    layout = _batch_on_disk(tmp_path, cases=1)
+    manifest = layout.read_manifest()
+    manifest["cases"][0].update(scenario="x", overrides=[], stem="S")
+    write_json(layout.manifest, manifest)
+    released: list[bool] = []
+    slot = SimpleNamespace(
+        rpc=31500, release=lambda keep_lock=False: released.append(keep_lock)
+    )
+
+    def task_port(*_args: object) -> Path:
+        raise OSError("no port file")
+
+    monkeypatch.setattr(worker, "acquire_slot", lambda *_a, **_k: slot)
+    monkeypatch.setattr(BatchLayout, "task_port", lambda self, *a: task_port(*a))
+    monkeypatch.setattr(worker, "kill_carla_on_port", lambda _port: [])
+    monkeypatch.setattr(run, "load_scenario_plugins", lambda: None)
+    monkeypatch.setattr(run, "_cap_malloc_arenas", lambda: None)
+    monkeypatch.delenv("DISPLAY", raising=False)
+    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+    handlers = {sig: signal.getsignal(sig) for sig in (signal.SIGTERM, signal.SIGUSR1)}
+    try:
+        assert worker.run_task(layout.manifest, 0, 0) == 1
+    finally:
+        for sig, handler in handlers.items():
+            signal.signal(sig, handler)
+    # The original error is recorded, not an UnboundLocalError from the cleanup.
+    status = layout.read_task(0, 0)
+    assert status is not None
+    assert status["state"] == "failed"
+    assert "OSError: no port file" in status["error"]
+    assert "UnboundLocalError" not in status["traceback"]
+    assert released == [False]
 
 
 def test_secrets_are_not_recorded_through_a_pattern() -> None:

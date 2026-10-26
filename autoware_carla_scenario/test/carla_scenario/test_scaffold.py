@@ -98,6 +98,21 @@ class TestCreateScenarioPackage:
         yaml_text = yaml_path.read_text(encoding="utf-8")
         assert "name: reach_goal" in yaml_text
 
+    def test_mentions_the_static_check(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from autoware_carla_scenario.scaffold.generator import main  # noqa: PLC0415
+
+        assert main(["reach_goal_pkg", "-o", str(tmp_path)]) == 0
+        assert "scenario-check scenario=reach_goal/default" in capsys.readouterr().out
+        root = tmp_path / "reach_goal_pkg"
+        readme = (root / "README.md").read_text(encoding="utf-8")
+        assert "scenario-check scenario='reach_goal/*'" in readme
+        test = root / "tests" / "test_typecheck.py"
+        compile(test.read_text(encoding="utf-8"), str(test), "exec")
+        assert "typecheck_scenario" in test.read_text(encoding="utf-8")
+        assert 'dev = ["pytest"]' in (root / "pyproject.toml").read_text()
+
     def test_refuses_existing_without_force(self, tmp_path: Path) -> None:
         create_scenario_package("dup_pkg", output_dir=tmp_path)
         with pytest.raises(FileExistsError):

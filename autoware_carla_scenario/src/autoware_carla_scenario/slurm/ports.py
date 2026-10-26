@@ -256,12 +256,24 @@ class CarlaWatchdog:
     the write end of.  End of file without a ``done`` first means the worker
     died: it then runs :func:`kill_carla_on_port`.  It also holds the slot's
     lock, so no other task takes the slot before CARLA is gone.
+
+    With *port_file* (the task's ``.port`` file, which the worker would have
+    removed), the watchdog removes it once CARLA is gone -- never before: the
+    file is the job script's pointer to a CARLA still running, so a watchdog
+    killed midway must not have dropped it.  A CARLA that survives keeps it.
     """
 
-    def __init__(self, slot: PortSlot) -> None:
+    def __init__(self, slot: PortSlot, port_file: Path | None = None) -> None:
         pass_fds = [] if slot._lock is None else [slot._lock.fileno()]
         self._process: subprocess.Popen[bytes] | None = subprocess.Popen(
-            [sys.executable, "-m", __name__, "--watch", str(slot.rpc)],
+            [
+                sys.executable,
+                "-m",
+                __name__,
+                "--watch",
+                str(slot.rpc),
+                *([str(port_file)] if port_file is not None else []),
+            ],
             stdin=subprocess.PIPE,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -285,14 +297,19 @@ class CarlaWatchdog:
             pass  # exits by itself; not worth holding the worker up
 
 
-def _watch(port: int) -> int:
+def _watch(port: int, port_file: str | None = None) -> int:
     if sys.stdin.buffer.read().startswith(b"done"):
         return 0
-    kill_carla_on_port(port)
+    left = kill_carla_on_port(port)
+    if port_file is not None and not left:
+        try:
+            Path(port_file).unlink(missing_ok=True)
+        except OSError:
+            pass
     return 0
 
 
 if __name__ == "__main__":
-    if len(sys.argv) == 3 and sys.argv[1] == "--watch":
-        sys.exit(_watch(int(sys.argv[2])))
+    if len(sys.argv) in (3, 4) and sys.argv[1] == "--watch":
+        sys.exit(_watch(int(sys.argv[2]), sys.argv[3] if len(sys.argv) == 4 else None))
     sys.exit(2)

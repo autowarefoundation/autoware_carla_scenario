@@ -1,0 +1,127 @@
+# What the checker adds to Codon's math (docs/typecheck.md). The workspace gets
+# Codon's own stdlib/math.codon followed by this file (typecheck/check.py,
+# _base_workspace), so every name Codon has stays.
+#
+# An int is 64 bits in Codon: isqrt, comb and perm overflow where Python's
+# arbitrary-precision int would not.
+
+def dist(p, q) -> float:
+    """math.dist: the Euclidean distance between two points."""
+    if len(p) != len(q):
+        raise ValueError("both points must have the same number of dimensions")
+    biggest = 0.0
+    has_nan = False
+    for a, b in zip(p, q):
+        d = fabs(float(a) - float(b))
+        if isnan(d):
+            has_nan = True
+        elif d > biggest:
+            biggest = d
+    if isinf(biggest):
+        return inf
+    if has_nan:
+        return nan
+    if biggest == 0.0:
+        return 0.0
+    total = 0.0
+    for a, b in zip(p, q):
+        r = (float(a) - float(b)) / biggest
+        total += r * r
+    return biggest * sqrt(total)
+
+
+def isqrt(n: int) -> int:
+    """math.isqrt: the integer square root of a non-negative int."""
+    if n < 0:
+        raise ValueError("isqrt() argument must be nonnegative")
+    x = int(sqrt(float(n)))
+    # 3037000499 is the largest x with x * x inside 64 bits.
+    if x > 3037000499:
+        x = 3037000499
+    while x * x > n:
+        x -= 1
+    while x < 3037000499 and (x + 1) * (x + 1) <= n:
+        x += 1
+    return x
+
+
+def comb(n: int, k: int) -> int:
+    """math.comb: the number of ways to choose k of n items."""
+    if n < 0:
+        raise ValueError("n must be a non-negative integer")
+    if k < 0:
+        raise ValueError("k must be a non-negative integer")
+    if k > n:
+        return 0
+    if k > n - k:
+        k = n - k
+    result = 1
+    for i in range(1, k + 1):
+        result = result * (n - k + i) // i
+    return result
+
+
+def perm(n: int, k: Optional[int] = None) -> int:
+    """math.perm: the number of ways to arrange k of n items."""
+    if n < 0:
+        raise ValueError("n must be a non-negative integer")
+    count = n if k is None else k
+    if count < 0:
+        raise ValueError("k must be a non-negative integer")
+    if count > n:
+        return 0
+    result = 1
+    for i in range(count):
+        result *= n - i
+    return result
+
+
+def cbrt(x: float) -> float:
+    """math.cbrt (Python 3.11): the cube root of x."""
+    return _C.cbrt(x)
+
+
+def exp2(x: float) -> float:
+    """math.exp2 (Python 3.11): 2 raised to the power x."""
+    return _check1(x, 2.0**x, True)
+
+
+# math.hypot of any number of coordinates (Python 3.8, #590): Codon's takes
+# exactly two floats (and two float32s). Codon tries the overload defined last
+# first, so the variadic one comes first and Codon's two are declared again
+# after it: a call with two arguments keeps their fast path and float32 type.
+@overload
+def hypot(*coordinates) -> float:
+    """math.hypot: the Euclidean norm, sqrt(sum(x * x for x in coordinates))."""
+    values = List[float](len(coordinates))
+    for c in coordinates:
+        values.append(float(c))
+    biggest = 0.0
+    has_nan = False
+    for v in values:
+        d = fabs(v)
+        if isnan(d):
+            has_nan = True
+        elif d > biggest:
+            biggest = d
+    if isinf(biggest):
+        return inf
+    if has_nan:
+        return nan
+    if biggest == 0.0:
+        return 0.0
+    total = 0.0
+    for v in values:
+        r = v / biggest
+        total += r * r
+    return biggest * sqrt(total)
+
+
+@overload
+def hypot(x: float, y: float) -> float:
+    return _check2(x, y, _C.hypot(x, y), True)
+
+
+@overload
+def hypot(x: float32, y: float32) -> float32:
+    return _C.hypotf(x, y)

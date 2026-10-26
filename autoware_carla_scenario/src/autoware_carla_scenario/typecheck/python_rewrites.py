@@ -34,6 +34,13 @@ so a rewrite has to keep the *types*, not the values, of what it replaces.
   spec ``(p).__format__(spec)``, ``{p=}`` ``"p=" + repr(p)``; ``.format`` is
   an f-string first, so it ends up lowered too.  ``!a`` there is ``repr``.
 * ``zip(..., strict=...)`` becomes ``zip(...)``.
+* ``open(p, encoding=..., errors=..., newline=...)`` loses those keywords
+  (Codon's ``open`` has none, #562): they change the decoding, not the type.
+* ``isinstance(x, T)`` in a module that uses ``json`` becomes ``isinstance(x,
+  T) or (isinstance(x, JSONValue) and x._acs_isjson())`` (#563): Codon decides
+  ``isinstance`` by the static type and would not compile the branch of a
+  ``JSONValue``, which is none of ``dict``, ``list``, ``str``.  Unchanged for
+  any other type.
 * Builtins and str methods Codon lacks (#439), each with the type of what it
   replaces: ``s.startswith((a, b))`` (also ``endswith``, and with a ``start``
   / ``end``) becomes ``(s.startswith(a) or s.startswith(b))``, the receiver and
@@ -41,8 +48,36 @@ so a rewrite has to keep the *types*, not the values, of what it replaces.
   constants; ``format(x, spec)`` becomes ``x.__format__(spec)`` and
   ``format(x)`` ``str(x)``; ``ascii(x)`` becomes ``repr(x)`` (the same type: it
   differs from ``ascii`` only in the characters it escapes, and only the
-  checked copy changes).  A name the module binds itself (``def format``) is
-  left alone.
+  checked copy changes).  ``round(x)`` and ``round(x, None)`` become
+  ``int(round(x))`` (#585): Codon's ``round(x, n=0)`` always returns a
+  ``float``, Python's an ``int`` without ``ndigits``; Python's keywords
+  (``round(number=x, ndigits=n)``), which Codon's lacks, are passed by
+  position.  ``getattr(x, "name", default)``, which Codon's two-argument
+  ``getattr`` refuses, becomes ``((default), x.name if hasattr(x, "name")
+  else (default))[1]`` (#590) for a literal name, a receiver that is a name
+  or an attribute chain and a default on one line: Codon decides ``hasattr``
+  when it compiles, so only the branch the type takes is compiled, and the
+  first item keeps the default compiled, as Python evaluates it either way.  A name the module binds itself (``def
+  format``) is left alone.
+* ``t.count(x)`` / ``t.index(x[, start[, stop]])`` with ``t`` a name or an
+  attribute chain becomes ``(t.count(x) if hasattr(t, "count") else
+  _acs_count(t, x))`` (#601): Codon's ``Tuple`` has neither method and cannot
+  be extended, so only a tuple goes to the model's helper; a tuple display
+  receiver goes to it directly.  ``d.keys() & e.keys()`` (also ``|``, ``-``,
+  ``^``) becomes ``set(d.keys()) & set(e.keys())``, and ``d.items() <=
+  e.items()`` (any comparison) compares ``set()`` of each view: Codon's views
+  are generators.  ``super(Cls, self)`` in a method of ``Cls`` whose first
+  parameter is ``self`` becomes ``super()`` (Codon's takes no arguments).
+* ``a if x else None`` (``x is not None``, ``not x``, ``None if x is None
+  else a``) where ``a`` reads the narrowed ``x`` (``m.group(1) if m else
+  None``) becomes ``_acs_some(a) if x else None`` (#597): Codon cannot unify
+  the narrowed branch's type with the ``None``; ``_acs_some`` makes it an
+  ``Optional`` itself, the type Python gives the expression.
+* ``a.__eq__(b)`` / ``a.__ne__(b)`` becomes ``(a == (b))`` / ``(a != (b))``
+  (#596): Codon refuses the explicit call of an ``__eq__`` that overrides an
+  inherited one (the identity ``__eq__`` the check gives a plain class, or
+  the model's ``BaseCondition``), and ``==`` is how Python calls it.
+  ``super().__eq__(b)`` is left alone.
 * ``namedtuple("P", "x y")`` / ``namedtuple("P", "x, y")`` (Codon crashes on a
   string) becomes ``namedtuple("P", ["x", "y"])`` (#510).  Field names that
   are not a literal, and ``rename=`` / ``defaults=``, are refused with a hint.
@@ -276,10 +311,38 @@ _SEQUENCES = frozenset({"list", "List", "Sequence", "MutableSequence"})
 _MAPPINGS = frozenset({"dict", "Dict", "Mapping", "MutableMapping"})
 
 _DISPLAYS = (ast.List, ast.Set, ast.Dict)
+#: What ``t.count(x)`` / ``t.index(x[, start[, stop]])`` goes to when the
+#: receiver has no such method, a tuple (#601): Codon's ``Tuple`` cannot be
+#: extended.
+_SEQUENCE_HELPERS = {"count": "_acs_count", "index": "_acs_index"}
+#: The builtin types whose methods are also called through the class
+#: (``str.index(s, "a")``): such a receiver is left alone.
+_BUILTIN_TYPE_NAMES = frozenset(
+    {"str", "bytes", "list", "tuple", "dict", "set", "frozenset", "int", "float"}
+)
+#: The set operators of a dict's ``keys()`` / ``items()`` view (#601).
+_VIEW_SET_OPERATORS: dict[type[ast.operator], str] = {
+    ast.BitAnd: "&",
+    ast.BitOr: "|",
+    ast.Sub: "-",
+    ast.BitXor: "^",
+}
+_VIEW_COMPARISONS = (ast.Lt, ast.LtE, ast.Gt, ast.GtE, ast.Eq, ast.NotEq)
+_COMPREHENSION_NODES = (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
 _ORDERING = ("__lt__", "__le__", "__gt__", "__ge__")
 _MAX_PASSES = 20
 _FORMAT_REFERENCE = re.compile(r"(?:\.\w+|\[[^\]\[]+\])*")
 _ACCESS = re.compile(r"\.(\w+)|\[([^\]\[]+)\]")
+
+
+#: ``open()`` keywords of CPython that Codon's ``open`` lacks (#562): they
+#: change how the bytes are decoded, not the type of what ``open`` returns.
+_OPEN_TEXT_KEYWORDS = frozenset({"encoding", "errors", "newline"})
+
+
+def _kept_keywords(node: ast.Call, names: set[str] | frozenset[str]) -> bool:
+    """Whether the call passes any keyword of *names*."""
+    return any(k.arg in names for k in node.keywords)
 
 
 def _literal(node: ast.AST) -> bool:
@@ -730,6 +793,23 @@ class _Pass(ShadowScopes):
         #: dotted path of a class, ``None`` for a function (a class defined in
         #: one has no name Codon can resolve there).
         self._paths: list[str | None] = []
+        #: The ``from json import ...`` nodes given ``JSONValue`` (#563).
+        self._json_imports: set[int] = set()
+        self._json_done: set[int] = set()
+        self._module: ast.Module | None = None
+        #: The ``round(x)`` calls that are the argument of an ``int()`` (#585).
+        self._int_rounds: set[int] = set()
+        #: The ``t.count(x)`` / ``t.index(x)`` calls already written as the
+        #: first branch of their ``hasattr`` test (#601): not again.
+        self._sequence_done: set[int] = set()
+        #: Every name an ``import x`` of the module binds, wherever it is: a
+        #: module's ``count`` / ``index`` (``itertools.count``) is no method.
+        self._imported_modules: set[str] = set()
+        #: The names of the classes whose bodies are being visited, innermost
+        #: last.
+        self._class_names: list[str] = []
+        #: The ``super(Cls, self)`` calls to write as ``super()`` (#601).
+        self._super_calls: set[int] = set()
 
     def _text(self, node: ast.AST) -> str:
         return self.edits.text(*self.edits.node_span(node))
@@ -776,13 +856,17 @@ class _Pass(ShadowScopes):
         self._depth += 1
         outer, self._class_body = self._class_body, True
         self._paths.append(path)
+        self._class_names.append(node.name)
         for stmt in node.body:
             self.visit(stmt)
+        self._class_names.pop()
         self._paths.pop()
         self._class_body = outer
         self._depth -= 1
 
     def _function(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
+        if self._class_body and self._class_names:
+            self._super_calls.update(self._explicit_supers(node))
         self._depth += 1
         outer, self._class_body = self._class_body, False
         names = {a.arg for a in ast.walk(node.args) if isinstance(a, ast.arg)}
@@ -801,6 +885,72 @@ class _Pass(ShadowScopes):
 
     visit_FunctionDef = _function  # noqa: N815
     visit_AsyncFunctionDef = _function  # noqa: N815
+
+    # -- super(Cls, self) (#601) -----------------------------------------------
+
+    def _explicit_supers(
+        self, node: ast.FunctionDef | ast.AsyncFunctionDef
+    ) -> Iterator[int]:
+        """The ``super(Cls, self)`` calls of method *node* of the class being
+        visited that are ``super()``: ``Cls`` is that class and ``self`` the
+        method's first parameter, neither rebound in the method, and the call
+        is in the method's own body (not in a nested function, lambda, class
+        or comprehension, where ``super()`` would not find them).  Codon's
+        ``super`` takes no arguments."""
+        positional = [*node.args.posonlyargs, *node.args.args]
+        if not positional or any(
+            _dotted(d) in ("staticmethod", "classmethod") for d in node.decorator_list
+        ):
+            return
+        cls, first = self._class_names[-1], positional[0].arg
+        bound = {
+            a.arg
+            for a in ast.walk(node.args)
+            if isinstance(a, ast.arg) and a is not positional[0]
+        }
+        for inner in ast.walk(node):
+            if isinstance(inner, ast.Name) and isinstance(
+                inner.ctx, (ast.Store, ast.Del)
+            ):
+                bound.add(inner.id)
+            elif isinstance(inner, (ast.Global, ast.Nonlocal)):
+                bound.update(inner.names)
+            elif isinstance(inner, (ast.Import, ast.ImportFrom)):
+                bound.update((a.asname or a.name).split(".")[0] for a in inner.names)
+            elif (
+                isinstance(inner, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+                and inner is not node
+            ):
+                bound.add(inner.name)
+        if cls in bound or first in bound:
+            return
+        stack: list[ast.AST] = list(node.body)
+        while stack:
+            inner = stack.pop()
+            if isinstance(
+                inner,
+                (
+                    ast.FunctionDef,
+                    ast.AsyncFunctionDef,
+                    ast.ClassDef,
+                    ast.Lambda,
+                    *_COMPREHENSION_NODES,
+                ),
+            ):
+                continue
+            if (
+                isinstance(inner, ast.Call)
+                and isinstance(inner.func, ast.Name)
+                and inner.func.id == "super"
+                and not inner.keywords
+                and len(inner.args) == 2
+                and isinstance(inner.args[0], ast.Name)
+                and inner.args[0].id == cls
+                and isinstance(inner.args[1], ast.Name)
+                and inner.args[1].id == first
+            ):
+                yield id(inner)
+            stack.extend(ast.iter_child_nodes(inner))
 
     # -- def __exit__(self, exc_type, exc, tb) ------------------------------
 
@@ -1145,6 +1295,13 @@ class _Pass(ShadowScopes):
 
     def visit_Module(self, node: ast.Module) -> None:
         self.enter_module(node)
+        self._module = node
+        self._imported_modules = {
+            (alias.asname or alias.name).partition(".")[0]
+            for inner in ast.walk(node)
+            if isinstance(inner, ast.Import)
+            for alias in inner.names
+        }
         self._namedtuple_foreign = _foreign_collections_bindings(node)
         self.generic_visit(node)
 
@@ -1192,14 +1349,29 @@ class _Pass(ShadowScopes):
     # -- zip(strict=), "...".format(...) ------------------------------------
 
     def visit_Call(self, node: ast.Call) -> None:
+        if id(node) in self._super_calls and not self._shadowed("super"):
+            self.edits.replace(*self.edits.node_span(node), "super()")
+            return
         if (
             isinstance(node.func, ast.Name)
-            and node.func.id == "zip"
-            and any(k.arg == "strict" for k in node.keywords)
+            and node.func.id == "int"
+            and len(node.args) == 1
+            and not node.keywords
+            and isinstance(node.args[0], ast.Call)
+        ):
+            self._int_rounds.add(id(node.args[0]))
+        if isinstance(node.func, ast.Name) and (
+            (node.func.id == "zip" and _kept_keywords(node, {"strict"}))
+            or (
+                node.func.id == "open"
+                and not self._shadowed("open")
+                and _kept_keywords(node, _OPEN_TEXT_KEYWORDS)
+            )
         ):
             # Remove the keyword with the comma before it, in place, so a call
             # spread over lines keeps its line breaks inside its brackets.
-            for keyword in [k for k in node.keywords if k.arg == "strict"]:
+            dropped = {"strict"} if node.func.id == "zip" else _OPEN_TEXT_KEYWORDS
+            for keyword in [k for k in node.keywords if k.arg in dropped]:
                 start, end = self.edits.node_span(keyword)
                 before = [
                     self.edits.node_span(other)[1]
@@ -1224,13 +1396,161 @@ class _Pass(ShadowScopes):
             if text is not None:
                 self.edits.replace(*self.edits.node_span(node), text)
                 return
+        text = self._json_isinstance(node)
+        if text is not None:
+            self.edits.replace(*self.edits.node_span(node), text)
+            return
         text = self._missing_builtin(node)
         if text is not None:
             self.edits.replace(*self.edits.node_span(node), text)
             return
+        text = self._dunder_comparison(node)
+        if text is not None:
+            # An edit inside it this pass wins; this one is made on the next.
+            self.edits.replace(*self.edits.node_span(node), text)
         if self._is_namedtuple(node.func):
             self._namedtuple(node)
         self.generic_visit(node)
+
+    def _dunder_comparison(self, node: ast.Call) -> str | None:
+        """``(a == (b))`` for ``a.__eq__(b)`` (``!=`` for ``__ne__``, #596):
+        Codon cannot pick between an ``__eq__`` and the one it overrides when
+        it is called by name, but ``==`` it resolves."""
+        func = node.func
+        if (
+            not isinstance(func, ast.Attribute)
+            or func.attr not in ("__eq__", "__ne__")
+            or len(node.args) != 1
+            or node.keywords
+            or isinstance(node.args[0], ast.Starred)
+        ):
+            return None
+        value = func.value
+        if isinstance(value, ast.Call) and _dotted(value.func) == "super":
+            return None  # the base's method, which `==` would not call
+        start, value_end = self.edits.node_span(value)
+        arg_start, arg_end = self.edits.node_span(node.args[0])
+        if self.edits.node_span(node)[0] != start:
+            return None  # a parenthesized receiver: `(a or b).__eq__(c)`
+        op = "==" if func.attr == "__eq__" else "!="
+        return (
+            f"({self.edits.text(start, value_end)} {op} "
+            f"({self.edits.text(arg_start, arg_end)}))"
+        )
+
+    # -- isinstance(<JSONValue>, T) (#563) -------------------------------------
+
+    def _json_reference(self) -> str | None:
+        """How the enclosing scopes name ``json.JSONValue``: through an
+        ``import json`` (innermost scope first), else through a name a
+        ``from json import ...`` brings in (added to that import if it is not
+        there yet).  ``None`` where the module does not use ``json``."""
+        scopes: list[ast.AST] = [f for f, _ in reversed(self._functions)]
+        if self._module is not None:
+            scopes.append(self._module)
+        for scope in scopes:
+            found: ast.ImportFrom | None = None
+            stack = list(ast.iter_child_nodes(scope))
+            while stack:
+                node = stack.pop()
+                if isinstance(
+                    node,
+                    (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda),
+                ):
+                    continue
+                if isinstance(node, ast.Import):
+                    for alias in node.names:
+                        if alias.name == "json":
+                            return f"{alias.asname or 'json'}.JSONValue"
+                elif (
+                    isinstance(node, ast.ImportFrom)
+                    and node.module == "json"
+                    and not node.level
+                    and all(a.name != "*" for a in node.names)
+                ):
+                    found = node
+                stack.extend(ast.iter_child_nodes(node))
+            if found is not None:
+                if not any(a.asname == "_acs_JSONValue" for a in found.names):
+                    if id(found) not in self._json_imports:
+                        self._json_imports.add(id(found))
+                        # After the last name, so a parenthesised list with a
+                        # trailing comma (`dumps,\n)`) stays valid.
+                        at = self.edits.node_span(found.names[-1])[1]
+                        self.edits.replace(at, at, ", JSONValue as _acs_JSONValue")
+                return "_acs_JSONValue"
+        return None
+
+    def visit_IfExp(self, node: ast.IfExp) -> None:
+        # The ``t.count(x) if hasattr(t, "count") else _acs_count(t, x)`` this
+        # pass wrote earlier (#601): its first branch is not rewritten again.
+        if (
+            isinstance(node.test, ast.Call)
+            and isinstance(node.test.func, ast.Name)
+            and node.test.func.id == "hasattr"
+            and isinstance(node.orelse, ast.Call)
+            and isinstance(node.orelse.func, ast.Name)
+            and node.orelse.func.id in _SEQUENCE_HELPERS.values()
+            and isinstance(node.body, ast.Call)
+        ):
+            self._sequence_done.add(id(node.body))
+        # `m.group(1) if m else None` (#597): Codon narrows `m` in the branch
+        # and then cannot unify its str with the None ("'Optional[str]' does
+        # not match expected type 'str'"); `_acs_some(...)` makes the branch
+        # an Optional itself.
+        branch = _narrowed_branch(node)
+        if branch is not None:
+            start, end = self.edits.node_span(branch)
+            self.edits.replace(start, start, "_acs_some(")
+            self.edits.replace(end, end, ")")
+        self.generic_visit(node)
+
+    def visit_BoolOp(self, node: ast.BoolOp) -> None:
+        # The ``isinstance(x, T)`` this pass wrote earlier: not rewritten again.
+        if (
+            isinstance(node.op, ast.Or)
+            and len(node.values) == 2
+            and isinstance(node.values[1], ast.BoolOp)
+            and isinstance(node.values[1].op, ast.And)
+            and "_acs_isjson" in ast.dump(node.values[1])
+        ):
+            self._json_done.add(id(node.values[0]))
+        self.generic_visit(node)
+
+    def _json_isinstance(self, node: ast.Call) -> str | None:
+        """``isinstance(x, T)`` in a module that uses ``json`` (#563).
+
+        Codon decides ``isinstance`` by the static type, and a ``JSONValue``
+        (what ``json.load`` returns) is none of ``dict``, ``list``, ``str``:
+        the branch it guards would not be compiled, so wrong code in it would
+        pass.  The call becomes ``isinstance(x, T) or (isinstance(x,
+        JSONValue) and x._acs_isjson())``: unchanged for any other type (both
+        tests are static, and false), and for a ``JSONValue`` a run-time
+        ``bool``, so both branches are compiled."""
+        if (
+            not isinstance(node.func, ast.Name)
+            or node.func.id != "isinstance"
+            or self._shadowed("isinstance")
+            or len(node.args) != 2
+            or node.keywords
+            or any(isinstance(a, ast.Starred) for a in node.args)
+        ):
+            return None
+        subject, kinds = (self._text(a) for a in node.args)
+        if (
+            "\n" in subject
+            or "\n" in kinds
+            or id(node) in self._json_done
+            or kinds.endswith("JSONValue")
+        ):
+            return None  # one line, as every rewrite; our own output
+        reference = self._json_reference()
+        if reference is None:
+            return None
+        return (
+            f"(isinstance({subject}, {kinds}) or "
+            f"(isinstance({subject}, {reference}) and ({subject})._acs_isjson()))"
+        )
 
     # -- collections.namedtuple("P", "x y") (#510) ---------------------------
 
@@ -1325,6 +1645,10 @@ class _Pass(ShadowScopes):
                 return f"{value}.__format__({self._text(node.args[1])})"
             if func.id == "ascii" and plain_call and len(node.args) == 1:
                 return f"repr({self._text(node.args[0])})"
+            if func.id == "round":
+                return self._round(node)
+            if func.id == "getattr" and plain_call and len(node.args) == 3:
+                return self._getattr_default(node)
             return None
         if (
             isinstance(func, ast.Attribute)
@@ -1337,7 +1661,189 @@ class _Pass(ShadowScopes):
             and not any(isinstance(e, ast.Starred) for e in node.args[0].elts)
         ):
             return self._affix_tuple(node, func)
+        if isinstance(func, ast.Attribute) and func.attr in _SEQUENCE_HELPERS:
+            return self._sequence_method(node, func, plain_call)
         return None
+
+    def _sequence_method(
+        self, node: ast.Call, func: ast.Attribute, plain_call: bool
+    ) -> str | None:
+        """``t.count(x)`` / ``t.index(x[, start[, stop]])`` that also works on
+        a tuple (#601), or ``None``.
+
+        Codon's ``Tuple`` has neither method and cannot be extended, and the
+        receiver's type is known only to Codon, so the call becomes
+        ``(t.count(x) if hasattr(t, "count") else _acs_count(t, x))``: Codon
+        decides ``hasattr`` when it compiles, so a list, a str or a class of
+        the author's keeps its own call, compiled as written, and only a tuple
+        goes to the model's helper.  A tuple display receiver goes to the
+        helper directly.  Only a receiver that can be written twice (a name
+        or an attribute chain on one line) is rewritten, not a module
+        (``itertools.count``) nor a builtin type (``str.index(s, "a")``)."""
+        count = func.attr == "count"
+        if (
+            not plain_call
+            or id(node) in self._sequence_done
+            or not (len(node.args) == 1 if count else 1 <= len(node.args) <= 3)
+        ):
+            return None
+        helper = _SEQUENCE_HELPERS[func.attr]
+        receiver = func.value
+        arguments = ", ".join(self._text(a) for a in node.args)
+        if "\n" in arguments:
+            return None
+        if isinstance(receiver, ast.Tuple):
+            if any(isinstance(e, ast.Starred) for e in receiver.elts) or (
+                "\n" in self._text(receiver)
+            ):
+                return None
+            return self._wrapped(node, f"{helper}({self._text(receiver)}, {arguments})")
+        if not _plain(receiver) or isinstance(receiver, ast.Constant):
+            return None
+        root = receiver
+        while isinstance(root, ast.Attribute):
+            root = root.value
+        assert isinstance(root, ast.Name)
+        if root.id in self._imported_modules or self._shadowed("hasattr"):
+            return None
+        if root is receiver and (
+            root.id in _BUILTIN_TYPE_NAMES and not self._shadowed(root.id)
+        ):
+            return None
+        text = self._text(receiver)
+        call = self._text(node)
+        if "\n" in text or "\n" in call:
+            return None
+        return self._wrapped(
+            node,
+            f"{call} if hasattr({text}, {func.attr!r}) else "
+            f"{helper}({text}, {arguments})",
+        )
+
+    # -- d.keys() & e.keys(), d.items() <= e.items() (#601) ---------------------
+
+    @staticmethod
+    def _is_view(node: ast.expr) -> bool:
+        """``x.keys()`` or ``x.items()``: a dict view, which Codon's dict gives
+        as a generator, with no set operators."""
+        return (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr in ("keys", "items")
+            and not node.args
+            and not node.keywords
+        )
+
+    def visit_BinOp(self, node: ast.BinOp) -> None:
+        operator = _VIEW_SET_OPERATORS.get(type(node.op))
+        if (
+            operator is not None
+            and (self._is_view(node.left) or self._is_view(node.right))
+            and not self._shadowed("set")
+        ):
+            # Python's view takes any iterable on the other side, and gives a
+            # set: so does a set of each operand.
+            parts = []
+            for operand in (node.left, node.right):
+                text = self._text(operand)
+                if not isinstance(operand, (ast.Set, ast.SetComp)):
+                    text = f"set({text})"
+                parts.append(text)
+            self.edits.replace(
+                *self.edits.node_span(node),
+                self._wrapped(node, f"{parts[0]} {operator} {parts[1]}"),
+            )
+            return
+        self.generic_visit(node)
+
+    def visit_Compare(self, node: ast.Compare) -> None:
+        if (
+            len(node.ops) == 1
+            and isinstance(node.ops[0], _VIEW_COMPARISONS)
+            and (self._is_view(node.left) or self._is_view(node.comparators[0]))
+            and not self._shadowed("set")
+        ):
+            # A view compares as a set; the other side is left as it is
+            # (Python orders a view only against a set).
+            for operand in (node.left, node.comparators[0]):
+                if self._is_view(operand):
+                    self.edits.replace(
+                        *self.edits.node_span(operand), f"set({self._text(operand)})"
+                    )
+            return
+        self.generic_visit(node)
+
+    def _round(self, node: ast.Call) -> str | None:
+        """``int(round(x))`` for ``round(x)`` / ``round(x, None)`` (#585), and
+        ``round(x, n)`` for Python's keywords (``number=``, ``ndigits=``), which
+        Codon's ``round(x, n=0)`` does not have; ``None`` if *node* is already
+        ``round(x, n)`` or cannot be read.
+
+        Codon's ``round`` always returns a ``float``; Python's returns an
+        ``int`` when ``ndigits`` is left out or ``None``."""
+        if any(isinstance(a, ast.Starred) for a in node.args) or len(node.args) > 2:
+            return None
+        given: dict[str, ast.expr] = dict(zip(("number", "ndigits"), node.args))
+        for given_keyword in node.keywords:
+            if (
+                given_keyword.arg not in ("number", "ndigits")
+                or given_keyword.arg in given
+            ):
+                return None
+            given[given_keyword.arg] = given_keyword.value
+        number, ndigits = given.get("number"), given.get("ndigits")
+        if number is None:
+            return None
+        lost = self._text(node).count("\n")
+        text = self._text(number)
+        if ndigits is None or (
+            isinstance(ndigits, ast.Constant) and ndigits.value is None
+        ):
+            if len(node.args) == 1 and id(node) in self._int_rounds:
+                return None  # already int(round(x)): not again
+            lost -= text.count("\n")
+            return f"int(round({text}{chr(10) * max(lost, 0)}))"
+        if not node.keywords:
+            return None
+        digits = self._text(ndigits)
+        lost -= text.count("\n") + digits.count("\n")
+        return f"round({text}, {digits}{chr(10) * max(lost, 0)})"
+
+    def _getattr_default(self, node: ast.Call) -> str | None:
+        """``(x.name if hasattr(x, "name") else default)`` for
+        ``getattr(x, "name", default)`` (#590), which Codon's two-argument
+        ``getattr`` refuses; ``None`` (left to Codon, and its hint) unless the
+        name is a literal identifier and *x* a name or attribute chain on one
+        line, which can be written twice.
+
+        Codon decides ``hasattr`` when it compiles, so only the branch the
+        type takes is compiled, typed as that branch: the attribute's type
+        where the class has it, the default's where it has not.  Python
+        evaluates the default either way, so it is compiled either way too, as
+        the first item of a tuple the value is the second item of:
+        ``((default), x.name if hasattr(x, "name") else (default))[1]``.  A
+        default on more than one line is not written twice (the lines would
+        move): ``None``, and refused with the hint."""
+        obj, name, default = node.args
+        if self._shadowed("hasattr") or not (
+            isinstance(name, ast.Constant)
+            and isinstance(name.value, str)
+            and name.value.isidentifier()
+            and not keyword.iskeyword(name.value)
+            and isinstance(obj, (ast.Name, ast.Attribute))
+            and _plain(obj)
+        ):
+            return None
+        receiver = self._text(obj)
+        fallback = self._text(default)
+        if "\n" in receiver or "\n" in fallback:
+            return None
+        attribute = name.value
+        inner = (
+            f"({fallback}), {receiver}.{attribute} if hasattr({receiver}, "
+            f"{attribute!r}) else ({fallback})"
+        )
+        return self._wrapped(node, f"({inner})[1]")
 
     def _operand(self, node: ast.expr) -> str:
         """The text of *node*, parenthesised where a ``.attr`` needs it."""
@@ -1709,6 +2215,48 @@ def _ordering_blocks(
                 (node.name, f"\n\n@extend\nclass {node.name}:\n" + "".join(lines))
             )
     return out
+
+
+def _narrowed_name(test: ast.expr) -> str | None:
+    """The name or attribute chain *test* narrows: ``x``, ``not x``,
+    ``x is None``, ``x is not None``."""
+    if isinstance(test, ast.UnaryOp) and isinstance(test.op, ast.Not):
+        test = test.operand
+    elif (
+        isinstance(test, ast.Compare)
+        and len(test.ops) == 1
+        and isinstance(test.ops[0], (ast.Is, ast.IsNot))
+        and _is_none(test.comparators[0])
+    ):
+        test = test.left
+    return _dotted(test)
+
+
+def _narrowed_branch(node: ast.IfExp) -> ast.expr | None:
+    """The branch of ``a if x else None`` (or ``None if x is None else a``)
+    that reads the narrowed ``x``, when the other one is ``None`` (#597)."""
+    if _is_none(node.orelse) and not _is_none(node.body):
+        branch = node.body
+    elif _is_none(node.body) and not _is_none(node.orelse):
+        branch = node.orelse
+    else:
+        return None
+    narrowed = _narrowed_name(node.test)
+    if narrowed is None or isinstance(branch, ast.Constant):
+        return None
+    if (
+        isinstance(branch, ast.Call)
+        and isinstance(branch.func, ast.Name)
+        and branch.func.id == "_acs_some"
+    ):
+        return None  # written by an earlier pass
+    if not any(
+        _dotted(sub) == narrowed
+        for sub in ast.walk(branch)
+        if isinstance(sub, (ast.Name, ast.Attribute))
+    ):
+        return None
+    return branch
 
 
 def _run(source: str) -> tuple[str, list[tuple[str, str]], list[tuple[int, str]]]:

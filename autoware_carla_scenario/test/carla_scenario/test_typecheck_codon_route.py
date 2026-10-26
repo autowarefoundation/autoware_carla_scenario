@@ -130,7 +130,7 @@ def test_a_logical_scenario_compiles(tmp_path: Path) -> None:
         (
             'SpawnAction("npc1", shift_max="far")\n',
             'SpawnAction("npc1"',
-            "no function 'SpawnAction.__init__'",
+            "SpawnAction(): shift_max: expected float, got str",
         ),
     ],
     ids=["missing-label", "str-for-float", "int-anchor", "str-shift-max"],

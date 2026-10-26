@@ -26,8 +26,18 @@ from .entity import (EgoConfig, EgoVehicle, VehicleEntity, PedestrianEntity,
 
 
 def _expect_action_or_callback(cb):
-    """A Union[BaseAction, Callable[[carla.World], None]] argument."""
-    if hasattr(cb, "_acs_action"):
+    """A Union[BaseAction, Callable[[carla.World], None]] argument. An Optional
+    of either is unwrapped (#537): Codon 0.19 does not narrow an Optional after
+    an `is not None` test, so the value a scenario registers inside the test
+    is still an Optional here. None itself is refused (Python would append it
+    to the callbacks and fail on the first tick)."""
+    if isinstance(cb, None):
+        compile_error("register_*_tick() takes an action or a callable, not None")
+    elif isinstance(cb, Optional[NoneType]):
+        compile_error("register_*_tick() takes an action or a callable, not None")
+    elif isinstance(cb, Optional):
+        _expect_action_or_callback(unwrap(cb))
+    elif hasattr(cb, "_acs_action"):
         _expect_action(cb)
     else:
         cb(carla.Client().get_world())

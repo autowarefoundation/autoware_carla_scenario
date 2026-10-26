@@ -1,0 +1,22 @@
+# What the checker adds to Codon's statistics (docs/typecheck.md). The
+# workspace gets Codon's own stdlib/statistics.codon followed by this file
+# (typecheck/check.py, _base_workspace), so every name Codon has stays.
+
+
+def fmean(data, weights=None) -> float:
+    """statistics.fmean (#590): the arithmetic mean of data, converted to
+    floats; with weights (Python 3.11), the weighted mean. Codon's own is
+    commented out."""
+    values = [float(x) for x in data]
+    if weights is None:
+        if len(values) == 0:
+            raise StatisticsError("fmean requires at least one data point")
+        return _fsum(values) / len(values)
+    else:
+        scales = [float(w) for w in weights]
+        if len(scales) != len(values):
+            raise StatisticsError("data and weights must be the same length")
+        total = _fsum(scales)
+        if total == 0.0:
+            raise StatisticsError("sum of weights must be non-zero")
+        return _fsum([v * w for v, w in zip(values, scales)]) / total

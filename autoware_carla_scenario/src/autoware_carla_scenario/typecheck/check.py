@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import ast
 import dataclasses
+import difflib
 import enum
 import hashlib
 import importlib.metadata
@@ -79,7 +80,22 @@ from .library import (
     UNCALLED,
     package_modules,
 )
-from .none_check import NoneCheckSkipped, NoneFinding, run_none_check, search_path
+from .dead_isinstance import dead_isinstances
+from .none_check import (
+    BYTES_STR,
+    CLASS_VAR,
+    ENUM_EQ,
+    FINAL,
+    FROZEN,
+    OVERRIDE,
+    READ_ONLY_ABC,
+    STR_FORMAT,
+    NoneCheckSkipped,
+    NoneFinding,
+    none_given,
+    run_none_check,
+    search_path,
+)
 from .not_modelled import NOT_MODELLED, not_modelled_member
 from .library_driver import (
     call_sites,
@@ -87,6 +103,12 @@ from .library_driver import (
     render_library_driver,
     uncalled_nodes,
     workspace_module,
+)
+from .local_bindings import (
+    int_literal_hint,
+    none_first_binding_message,
+    none_first_bindings,
+    none_mismatch_hint,
 )
 from .module_cycles import cycle_hint
 from .python_rewrites import REWRITE_HINTS, python_rewrite_refusals
@@ -102,6 +124,16 @@ from .transform import (
     transform_source_lines,
     undeclared_attributes,
 )
+from .call_diagnostics import (
+    Refiner,
+    _Files,
+    is_internal_frame,
+    plain_literal_types,
+    slip_hint,
+)
+from .class_rules import skipped_base_inits, unassigned_attributes
+from .return_paths import return_problems
+from .typing_rewrites import TYPING_HINTS, typing_rewrite_refusals
 
 __all__ = [
     "Diagnostic",
@@ -166,18 +198,16 @@ _STDLIB_EXTENSIONS = "_stdlib"
 #: Why a module Codon has no model for is refused, and what to write instead
 #: (#378): appended to the refusal at the import line.
 _UNMODELLED_HINTS = {
-    "contextlib": "write a class with __enter__ and __exit__(self, exc_type, "
-    "exc, tb) for contextmanager (the check calls __exit__ with no arguments, "
-    "so those parameters are None in it), and try/except X: pass for suppress",
     "warnings": "log with logger.warning(...) instead of warnings.warn(...)",
-    "json": "the check has no dict[str, Any] to load or dump: read the "
-    "configuration into a @dataclass, and leave serialisation to a module the "
-    "check does not compile",
     "types": "name the type itself (SimpleNamespace is a @dataclass or a plain "
     "class; MappingProxyType is a dict; annotate the tb of __exit__ as object)",
     "textwrap": "build the string with str methods and join()",
     "traceback": "log the exception with logger.exception(...)",
     "io": "use a str, or a pathlib.Path opened with open()",
+    "csv": "read the file with Path.read_text().splitlines() and split(',') "
+    "on each line (a quoted field needs more care), and write one with "
+    "','.join(fields) and Path.write_text()",
+    "uuid": "use a counter, or os.getpid() for an id that differs per process",
 }
 
 
@@ -805,10 +835,14 @@ def _build_workspace(
             for line, message in [
                 *conflicting_imports(source),
                 *python_rewrite_refusals(source),
+                *typing_rewrite_refusals(source),
             ]
         ]
         text, origin = transform_source_lines(
-            source, init_classes=init_classes, enum_classes=enum_class_names(classes)
+            source,
+            init_classes=init_classes,
+            enum_classes=enum_class_names(classes),
+            file=str(module.path),
         )
         checks = render_library_checks(
             module.tree,
@@ -821,6 +855,12 @@ def _build_workspace(
             ws.warnings.append(
                 _unchecked_warning(message, module.path, line, driver.reaches)
             )
+        ws.warnings += [
+            Diagnostic(
+                d.message, str(module.path), d.line, d.column, severity="warning"
+            )
+            for d in dead_isinstances(module.tree)
+        ]
         dest.write_text(text + checks.source)
         key = rel.as_posix()
         ws.files[key] = str(module.path)
@@ -861,10 +901,24 @@ _VARIADIC_LIMITS = (
         "len(t) > 0 instead of the tuple t itself",
     ),
     (
+        # getattr(x, "name", default) with a literal name and a plain receiver
+        # is rewritten (python_rewrites.py); this is any other (#590).
+        re.compile(r"^getattr\(\) takes 2 arguments \(3 given\)"),
+        "Codon's getattr takes no default: write "
+        '`x.name if hasattr(x, "name") else default`, which Codon decides '
+        'when it compiles (the check rewrites getattr(x, "name", default) '
+        "itself where the name is a literal, x a name or an attribute chain "
+        "and the default on one line); a name built at run time has no Codon "
+        "spelling, so spell the "
+        "attributes out",
+    ),
+    (
         re.compile(r"cannot import name 'Generic' from 'typing'"),
         "typing.Generic is not available in the check: leave the type "
         "parameters of a class or function unannotated (Codon makes it generic "
-        "over them), or write the concrete type",
+        "over them), or write the concrete type; a container with a typed "
+        "attribute (`items: list[T]`) declares the concrete element type "
+        "(`items: list[int]`)",
     ),
     (
         re.compile(r"cannot import name 'TypedDict' from 'typing'"),
@@ -878,16 +932,94 @@ _VARIADIC_LIMITS = (
         '({"x": point.x, "y": point.y})',
     ),
     (
+        re.compile(r"cannot import name '(?:InitVar|KW_ONLY)' from 'dataclasses'"),
+        "dataclasses.InitVar and KW_ONLY are not modelled: Codon's constructor "
+        "of a dataclass takes every annotated field and does not pass an "
+        "init-only value to __post_init__. For an InitVar, make the value a "
+        "parameter of a @classmethod or a function that builds the instance "
+        "(or keep it as an ordinary field); for KW_ONLY, drop the marker and "
+        "pass the fields by keyword (a field without a default goes before "
+        "the defaulted ones)",
+    ),
+    (
         re.compile(r"cannot import name '\w+' from 'dataclasses'"),
         "the check models only dataclass, field and replace of dataclasses: "
         'docs/typecheck.md ("standard library names") lists the names',
     ),
     (
         re.compile(
-            r"cannot import name '\w+' from '(functools|itertools|collections)'"
+            r"cannot import name '\w+' from "
+            "'(functools|itertools|collections|math|random|statistics)'"
         ),
-        "the check adds only some names to Codon's functools, itertools and "
-        'collections: docs/typecheck.md ("standard library names") lists them',
+        "the check adds only some names to Codon's functools, itertools, "
+        'collections, math, random and statistics: docs/typecheck.md ("standard '
+        'library names") lists them',
+    ),
+    (
+        re.compile(r"cannot import name '\w+' from 'contextlib'"),
+        "the check models only suppress of contextlib: write a class with "
+        "__enter__ and __exit__(self, exc_type, exc, tb) for contextmanager "
+        "(the check calls __exit__ with no arguments, so those parameters are "
+        "None in it)",
+    ),
+    (
+        re.compile(r"cannot import name '\w+' from 'json'"),
+        "the check models only dumps, dump, loads, load and JSONDecodeError of "
+        'json: docs/typecheck.md ("standard library names") lists what they '
+        "take and return",
+    ),
+    (
+        re.compile(r"^'Path' object has no attribute '\w+'"),
+        "the check models only some members of pathlib.Path: if CPython's Path "
+        'has it, it is not modelled (docs/typecheck.md, "pathlib" among the '
+        "shims lists the members); build the path with str methods and the "
+        "declared members (name, stem, suffix, parent, with_name(), "
+        "with_suffix(), joinpath(), /, ...)",
+    ),
+    (
+        re.compile(r"cannot import name '\w+' from 'os(?:\.__init__)?'"),
+        "the check models only some names of os: if CPython's os has it, it "
+        'is not modelled (docs/typecheck.md, "os" among the shims lists the '
+        "names); use the declared names or pathlib.Path",
+    ),
+    (
+        re.compile(r"cannot import name '\w+' from 'os\.path'"),
+        "the check models only some names of os.path: if CPython's os.path has "
+        'it, it is not modelled (docs/typecheck.md, "os.path" among the shims '
+        "lists the names); use the declared names or pathlib.Path",
+    ),
+    (
+        re.compile(r"cannot import name '\w+' from 'shutil'"),
+        "the check models only some names of shutil: if CPython's shutil has "
+        'it, it is not modelled (docs/typecheck.md, "shutil" among the shims '
+        "lists the names)",
+    ),
+    (
+        re.compile(
+            r"cannot import name '(?:version_info|version|hexversion)' from 'sys'"
+        ),
+        "sys.version_info (and sys.version, sys.hexversion) is not modelled: "
+        "the check compiles every branch of a version test, so the code has "
+        "to be valid on every supported Python (3.10 and later) anyway: "
+        "write that code without the test, or keep the version-dependent part "
+        "out of the checked modules",
+    ),
+    (
+        re.compile(r"cannot import name '\w+' from 'sys'"),
+        "the check models only argv, stdin, stdout, stderr, exit, maxsize, "
+        'platform and executable of sys (docs/typecheck.md, "sys" among the '
+        "shims): if CPython's sys has it, it is not modelled",
+    ),
+    (
+        re.compile(r"cannot import name 'strftime' from 'time'"),
+        "time.strftime is not modelled: take now = datetime.datetime.now() and "
+        "format its fields, f'{now.year:04d}{now.month:02d}{now.day:02d}'",
+    ),
+    (
+        re.compile(r"^'datetime' object has no attribute 'strftime'"),
+        "datetime.strftime is not modelled (Codon's datetime has no "
+        "strftime() or format): format the fields, "
+        "f'{now.year:04d}{now.month:02d}{now.day:02d}'",
     ),
     (
         re.compile(r"cannot import name '\w+' from 'typing'"),
@@ -1059,10 +1191,65 @@ def _replace_thunk_message(diagnostic: Diagnostic) -> Diagnostic:
     return diagnostic
 
 
+_SHIM_MEMBER = re.compile(
+    r"^'Path' object has no attribute '(?P<path_name>\w+)'"
+    r"|cannot import name '(?P<name>\w+)' from "
+    r"'(?P<module>os|os\.__init__|os\.path|shutil)'"
+)
+
+
+@lru_cache(maxsize=8)
+def _shim_members(shim: str) -> tuple[str, ...]:
+    """The public names the shim *shim* (``pathlib``, ``os``, ``os/path`` or
+    ``shutil``) declares: the methods of ``Path``, or the module's functions
+    and constants."""
+    file = model_dir() / f"{shim}.codon"
+    if not file.is_file():
+        file = model_dir() / shim / "__init__.codon"
+    try:
+        text = file.read_text(encoding="utf-8")
+    except OSError:
+        return ()
+    if shim == "pathlib":
+        text = text[text.index("\nclass Path:") :]
+        names = re.findall(r"^    def (\w+)", text, re.MULTILINE)
+    else:
+        pairs = re.findall(r"^(?:def (\w+)|(\w+) =)", text, re.MULTILINE)
+        names = [a or b for a, b in pairs]
+    return tuple(sorted({n for n in names if not n.startswith("_")}))
+
+
+def _misspelt_member(message: str) -> str | None:
+    """The hint for a refused ``Path`` member or ``os``, ``os.path`` or
+    ``shutil`` name that CPython lacks too (a typo), or None when CPython has
+    it (then it is only not modelled)."""
+    found = _SHIM_MEMBER.search(message)
+    if found is None:
+        return None
+    owner: object
+    if found["path_name"] is not None:
+        name, shim, owner, label = found["path_name"], "pathlib", Path, "Path"
+    else:
+        name, module = found["name"], found["module"]
+        if module == "shutil":
+            shim, owner = "shutil", shutil
+        elif module == "os.path":
+            shim, owner = "os/path", os.path
+        else:
+            shim, owner = "os", os
+        label = module.removesuffix(".__init__")
+    if hasattr(owner, name):
+        return None
+    close = difflib.get_close_matches(name, _shim_members(shim), n=1)
+    suggestion = f", did you mean '{close[0]}'?" if close else ""
+    return f"CPython's {label} has no '{name}' either (a typo?){suggestion}"
+
+
 def _variadic_hints(diagnostics: list[Diagnostic]) -> list[Diagnostic]:
     """*diagnostics*, each refusal of a Codon limit on ``**kwargs``, on
     ``*args`` or on a tuple saying why and what to write instead (#266)."""
     out = []
+    files = _Files()
     for diagnostic in diagnostics:
         diagnostic = _replace_thunk_message(diagnostic)
         in_display = any(_LIST_DISPLAY_FRAME.match(frame) for frame in diagnostic.trace)
@@ -1075,7 +1262,30 @@ def _variadic_hints(diagnostics: list[Diagnostic]) -> list[Diagnostic]:
                     f for f in diagnostic.trace if not _LIST_DISPLAY_FRAME.match(f)
                 ),
             )
-        for pattern, hint in (*_VARIADIC_LIMITS, *REWRITE_HINTS):
+        typo = _misspelt_member(diagnostic.message)
+        if typo is not None:
+            diagnostic = dataclasses.replace(
+                diagnostic, message=f"{diagnostic.message}: {typo}"
+            )
+            out.append(diagnostic)
+            continue
+        try:
+            slip = slip_hint(
+                diagnostic.message,
+                diagnostic.trace,
+                diagnostic.path,
+                diagnostic.line,
+                diagnostic.column,
+                files,
+            )
+        except Exception:  # noqa: BLE001 - only a hint: never lose Codon's error
+            slip = None
+        if slip is not None:
+            # The refiner adds it, to its own wording (_authors_terms): no
+            # other hint here, which would not apply.
+            out.append(diagnostic)
+            continue
+        for pattern, hint in (*_VARIADIC_LIMITS, *REWRITE_HINTS, *TYPING_HINTS):
             if pattern.search(diagnostic.message):
                 diagnostic = dataclasses.replace(
                     diagnostic, message=f"{diagnostic.message}: {hint}"
@@ -1172,10 +1382,19 @@ def _uninferred_attributes(
 _NO_ATTRIBUTE = re.compile(r"'(?P<cls>\w+)' object has no attribute '(?P<attr>\w+)'")
 
 
-def _python_class(name: str, sources: _Sources) -> type | None:
+def _lookup_order(sources: _Sources, path: str | None) -> list[str]:
+    """The modules to look a name up in: the one in the file *path* first
+    (its name is what that file's calls mean, whatever another module
+    defines), then the other checked modules, then the modelled ones."""
+    own = [n for n, m in sources.modules.items() if path and str(m.path) == path]
+    rest = [n for n in sources.modules if n not in own]
+    return [*own, *rest, *sorted(_model_modules())]
+
+
+def _python_class(name: str, sources: _Sources, path: str | None = None) -> type | None:
     """The Python class Codon calls *name*: one of the checked modules' (a
     scenario's own subclass), else one a modelled module defines."""
-    for module in [*sources.modules, *sorted(_model_modules())]:
+    for module in _lookup_order(sources, path):
         try:
             found = getattr(importlib.import_module(module), name, None)
         except Exception:  # noqa: BLE001 - only a hint: a module that does not import
@@ -1196,7 +1415,9 @@ _OPERAND = re.compile(
     r"^unsupported operand type\(s\) for (?P<op>[^:]+): '(?P<cls>\w+)' and"
 )
 _GETITEM = re.compile(r"__getitem__\(self: (?P<cls>\w+),")
-_NO_HASH = re.compile(r"^'(?P<cls>\w+)' object has no attribute '__hash__'")
+_NO_HASH = re.compile(
+    r"^'(?P<cls>\w+)(?:\[[^']*\])?' object has no attribute '__hash__'"
+)
 _NAMED_TUPLE_ONLY = ("_replace", "_asdict", "_fields", "_field_defaults", "_make")
 
 
@@ -1231,10 +1452,55 @@ def _data_model_hints(
             pass
         if hint is None and message.startswith("expected iterable expression"):
             hint = _self_iterator_hint(diagnostic, sources)
+        if hint is None:
+            try:
+                hint = _local_binding_hint(diagnostic, sources)
+            except Exception:  # noqa: BLE001 - only a hint: never lose Codon's error
+                pass
         if hint is not None:
             diagnostic = dataclasses.replace(diagnostic, message=f"{message}: {hint}")
         out.append(diagnostic)
     return out
+
+
+def _author_tree(path: str | None, sources: _Sources) -> ast.Module | None:
+    """The AST of the checked module at *path* (the author's file)."""
+    if path is None:
+        return None
+    for module in sources.modules.values():
+        if str(module.path) == path:
+            return module.tree
+    return None
+
+
+def _local_binding_hint(diagnostic: Diagnostic, sources: _Sources) -> str | None:
+    """A local Codon typed by its first assignment, an int literal or
+    ``None``, where the refused value is stored in it (#583, #584)."""
+    tree = _author_tree(diagnostic.path, sources)
+    if tree is None or diagnostic.line is None:
+        return None
+    hint = int_literal_hint(diagnostic.message, diagnostic.line, tree)
+    if hint is None:
+        found = none_mismatch_hint(diagnostic.message, diagnostic.line, tree)
+        hint = found[0] if found is not None else None
+    return hint
+
+
+def _none_first_binding_hints(sources: _Sources, why: str) -> list[Diagnostic]:
+    """Each unannotated local of the checked modules first bound to ``None``
+    and rebound later, at its ``= None`` line, as a likely cause of *why*
+    (Codon's crash, or its ``Optional[NoneType]`` refusal elsewhere) (#584)."""
+    found: list[Diagnostic] = []
+    for module in sources.modules.values():
+        for binding in none_first_bindings(module.tree):
+            found.append(
+                Diagnostic(
+                    f"{why}; a likely cause: " f"{none_first_binding_message(binding)}",
+                    str(module.path),
+                    binding.line,
+                )
+            )
+    return found
 
 
 _FOR_LINE = re.compile(r"\bfor\b.*?\bin\b(?P<iterable>.*)$")
@@ -1339,10 +1605,8 @@ def _data_model_hint(
             if operand["op"] in ("==", "!="):
                 return (
                     "the check gives a @dataclass its == and != only with "
-                    "eq=True (the default) and bases it can see the fields "
-                    "of (dataclasses of this module); with eq=False Python "
-                    "compares by identity: write `a is b`, or compare the "
-                    "fields"
+                    "bases it can see the fields of (dataclasses of this "
+                    "module): compare the fields"
                 )
             return (
                 "the check gives a @dataclass ordering only with "
@@ -1358,6 +1622,16 @@ def _data_model_hint(
                 "the check generates hash() for a @dataclass(frozen=True) "
                 "(or unsafe_hash=True) whose bases are dataclasses of this "
                 "module; key on a field or a tuple of fields instead"
+            )
+        if cls is not None and cls.__hash__ is None:
+            # Python sets __hash__ = None on a class that defines __eq__ and
+            # not __hash__ (#596).
+            return (
+                f"{cls.__name__} defines __eq__ and not __hash__, so Python "
+                f"makes it unhashable (it sets __hash__ = None): a set of "
+                f"them, or a dict keyed by one, raises TypeError; define "
+                f"__hash__ consistent with __eq__ (`return hash((self.x, "
+                f"self.y))`), or key on a field"
             )
     if message.startswith("expected iterable expression"):
         for frame in trace:
@@ -1493,6 +1767,41 @@ def _column_survives(column: int, compiled: str, written: str) -> bool:
 #: Codon's internal name of a lambda's type (``%_lambda_981(...)``,
 #: ``%_lambda_88[T1]``), which names nothing in the scenario's source.
 _LAMBDA_TYPE = re.compile(r"%_lambda_\d+(?:\(\.\.\.\)|\[[^\]]*\])?")
+
+
+def _python_callable(name: str, sources: _Sources, path: str | None = None) -> Any:
+    """The Python function Codon calls *name*: one of the checked modules',
+    else one a modelled module defines."""
+    for module in _lookup_order(sources, path):
+        try:
+            found = getattr(importlib.import_module(module), name, None)
+        except Exception:  # noqa: BLE001 - only a hint: a module that does not import
+            continue
+        if inspect.isfunction(found):
+            return found
+    return None
+
+
+def _authors_terms(diagnostic: Diagnostic, refiner: Refiner) -> Diagnostic:
+    """*diagnostic* in the author's terms, not Codon's (#527, #528, #530): a
+    refused call or ``return`` says what is wrong with it, a static string
+    type is ``str``, and the frames of the model's own helpers are gone."""
+    message, line, column = refiner.refine(
+        diagnostic.message,
+        diagnostic.path,
+        diagnostic.line,
+        diagnostic.column,
+        diagnostic.trace,
+    )
+    return dataclasses.replace(
+        diagnostic,
+        message=plain_literal_types(message),
+        line=line,
+        column=column,
+        trace=tuple(
+            plain_literal_types(t) for t in diagnostic.trace if not is_internal_frame(t)
+        ),
+    )
 
 
 def _without_lambda_names(diagnostic: Diagnostic) -> Diagnostic:
@@ -2031,15 +2340,77 @@ def typecheck_scenario(
     """
     name = f"{scenario_cls.__module__}.{scenario_cls.__qualname__}"
     roots = sorted({scenario_cls.__module__, config_cls.__module__})
-    return _typecheck(
+    built: list[Any] = []
+
+    def driver() -> Any:
+        built.append(render_driver(scenario_cls, config_cls, dict(scenario_dict or {})))
+        return built[0]
+
+    result = _typecheck(
         name,
         roots,
-        lambda: render_driver(scenario_cls, config_cls, dict(scenario_dict or {})),
+        driver,
         toolchain,
         timeout,
         what="scenario",
-        refuse=lambda sources: _abstract_classes_built(sources, scenario_cls),
+        refuse=lambda sources: [
+            *_abstract_classes_built(sources, scenario_cls),
+            *_returns_not_kept(sources),
+            *_class_problems(sources),
+        ],
     )
+    if built and built[0].build_error and result.skipped is None and not result.crashed:
+        # The runner builds the config as the driver does, so a constructor
+        # or __post_init__ that raises stops the run, whatever Codon says (#531).
+        error = Diagnostic(
+            f"building {config_cls.__qualname__}(**scenario) raised "
+            f"{built[0].build_error}: the runner builds the config the same way",
+            "scenario",
+        )
+        result = dataclasses.replace(
+            result, ok=False, diagnostics=[*result.diagnostics, error]
+        )
+    return result
+
+
+def _returns_not_kept(sources: _Sources) -> list[Diagnostic]:
+    """Each function of the scenario's modules whose declared return type
+    Codon does not enforce: a literal returned from a ``-> bool`` and a path
+    that returns nothing (#529, :mod:`.return_paths`)."""
+    modules = {
+        name: (str(module.path), module.tree)
+        for name, module in sources.modules.items()
+    }
+    return [
+        Diagnostic(p.message, p.path, p.line, p.column)
+        for p in return_problems(modules)
+    ]
+
+
+def _of_package(cls: type) -> bool:
+    return cls.__module__ == _PACKAGE or cls.__module__.startswith(_PACKAGE + ".")
+
+
+def _class_problems(sources: _Sources, *, library: bool = False) -> list[Diagnostic]:
+    """Each class of the collected modules Codon builds and Python does not
+    (:mod:`.class_rules`): an ``__init__`` that skips a framework base's
+    (#587) and an attribute declared at class level that nothing assigns
+    (#588).  The framework is the package outside the scenario's modules;
+    in the library check, the whole package."""
+    modules = {
+        name: (str(module.path), module.tree)
+        for name, module in sources.modules.items()
+    }
+    framework: Callable[[type], bool] | None = None
+    if library:
+        framework = _of_package
+    return [
+        Diagnostic(p.message, p.path, p.line)
+        for p in [
+            *skipped_base_inits(modules, framework=framework),
+            *unassigned_attributes(modules),
+        ]
+    ]
 
 
 def _abstract_classes_built(sources: _Sources, scenario_cls: type) -> list[Diagnostic]:
@@ -2279,8 +2650,77 @@ def _with_none_misuses(
 
 def _none_check_advice(finding: NoneFinding) -> str:
     """The message of a :class:`.none_check.NoneFinding`, with what to do."""
+    if finding.kind == FROZEN and finding.read_only is not None:
+        cls, attr = finding.read_only
+        return (
+            f"{cls} is a frozen dataclass; use dataclasses.replace(x, {attr}=...) "
+            f"instead of assigning its field {attr!r}, or Python raises "
+            f"FrozenInstanceError here (mypy: {finding.code})"
+        )
+    if finding.kind == BYTES_STR:
+        return (
+            f"{finding.message}: bytes and str do not mix in Python: decode with "
+            f".decode() / encode with .encode(); Codon's bytes is a str, so this "
+            f"compiles, and Python raises TypeError here or the comparison is "
+            f"always False (mypy: {finding.code})"
+        )
+    if finding.kind == ENUM_EQ:
+        return (
+            f"{finding.message}: an Enum member never equals its raw value: "
+            f"compare with Color.RED, or use Color.RED.value; Python evaluates "
+            f"this comparison to False (mypy: {finding.code})"
+        )
+    if finding.kind == FINAL:
+        return (
+            f"{finding.message}: a name declared Final is bound once; drop the "
+            f"assignment, bind a new name, or drop Final from the declaration. "
+            f"Python does not stop it and Codon ignores Final, so this runs "
+            f"with the value the declaration promised never to change "
+            f"(mypy: {finding.code})"
+        )
+    if finding.kind == CLASS_VAR:
+        return (
+            f"{finding.message}: a ClassVar is shared by the class; assign it "
+            f"through the class (ClassName.name = ...), or declare it without "
+            f"ClassVar to make it an instance field. Python creates a "
+            f"shadowing instance attribute here and Codon treats the "
+            f"annotated name as an instance field, so what runs can differ "
+            f"(mypy: {finding.code})"
+        )
+    if finding.kind == OVERRIDE:
+        return (
+            f"{finding.message}: the override must accept what the overridden "
+            f"method accepts and return what it returns, as the caller (the "
+            f"framework, for a hook of BaseScenario) calls it with the "
+            f"superclass's signature; Python fails on the call that does not "
+            f"fit, and Codon does not compare the two. Match the "
+            f"superclass's signature (extra parameters need a default), or "
+            f"add `# type: ignore[override]` if the narrowing is intended "
+            f"(mypy: {finding.code})"
+        )
+    if finding.kind == READ_ONLY_ABC:
+        return (
+            f"{finding.message}: a Mapping / Sequence / AbstractSet parameter "
+            f"is read-only by its annotation; copy it first (dict(x), "
+            f"list(x), set(x)) and mutate the copy, or annotate it with the "
+            f"mutable type (dict, list, set). Python fails here when the "
+            f"caller passes a tuple or a MappingProxyType, and Codon does not "
+            f"enforce the annotation (mypy: {finding.code})"
+        )
+    if finding.kind == STR_FORMAT:
+        return (
+            f"{finding.message}: Python raises ValueError, TypeError, "
+            f"IndexError or KeyError on this format string with these values "
+            f'("{{:d}}" and "{{:x}}" take an int, "%d" and "{{:.2f}}" a number; '
+            f"each field needs a value); convert the value first (int(x), "
+            f'str(x)) or use "{{}}" / "%s". Codon formats with its own '
+            f"rules, so this compiles (mypy: {finding.code})"
+        )
     union = finding.union
     if union is None:
+        wanted = none_given(finding.message)
+        if wanted is not None:  # None itself: there is no value to test
+            return _none_not_taken(finding, wanted)
         return (
             f"{finding.message}: Codon unwraps an Optional implicitly, so test "
             f"the value for None before this use, or Python fails here when it "
@@ -2292,6 +2732,26 @@ def _none_check_advice(finding: NoneFinding) -> str:
         f"time, so narrow it with isinstance first, or Python fails here on "
         f"any other member (mypy: {finding.code})"
     )
+
+
+_ARGUMENT = re.compile(r'^Argument (?P<n>\d+) to "(?P<callee>[^"]+)"')
+
+
+def _none_not_taken(finding: NoneFinding, wanted: str) -> str:
+    """The message for ``None`` itself given where *wanted* is expected."""
+    argument = _ARGUMENT.match(finding.message)
+    if argument is not None:
+        what = (
+            f"argument {argument['n']} of {argument['callee']}() does not take "
+            f"None, it takes {wanted}"
+        )
+    elif finding.message.startswith("Incompatible return value type"):
+        what = f"the function is declared -> {wanted}, so it cannot return None"
+    elif finding.message.startswith("Incompatible types in assignment"):
+        what = f"this is declared {wanted}, so it cannot be assigned None"
+    else:
+        what = f"None is given where {wanted} is expected, and it does not take None"
+    return f"{what} (mypy: {finding.code})"
 
 
 def typecheck_odd(
@@ -2397,7 +2857,15 @@ def _compile(
                 diagnostics += _uninferred_attributes(diagnostics, sources)
             except Exception:  # only a hint: never lose Codon's own errors to it
                 pass
+            try:
+                diagnostics += _unplaced_none_mismatches(diagnostics, sources)
+            except Exception:  # only a hint: never lose Codon's own errors to it
+                pass
     seconds = time.monotonic() - started
+    refiner = Refiner(
+        lambda name, path: _python_class(name, sources, path),
+        lambda name, path: _python_callable(name, sources, path),
+    )
     codegen = proc.returncode != 0 and _LLVM_ERROR in output
     if codegen:
         diagnostics = [_codegen_crash(output, sources)]
@@ -2422,15 +2890,43 @@ def _compile(
             f"exit status {proc.returncode}"
         ]
         diagnostics = [Diagnostic(f"Codon failed without a diagnostic: {tail[0]}")]
+        try:
+            # Codon 0.19 segfaults on some locals first bound to None (#584):
+            # name each, after the crash itself (which may have another cause).
+            diagnostics += _none_first_binding_hints(
+                sources, f"Codon crashed ({tail[0]})"
+            )
+        except Exception:  # only a hint: the crash is reported either way
+            pass
     return TypeCheckResult(
         name,
         ok=proc.returncode == 0,
-        diagnostics=[_without_lambda_names(d) for d in diagnostics],
+        diagnostics=[
+            _without_lambda_names(_authors_terms(d, refiner)) for d in diagnostics
+        ],
         warnings=list(ws.warnings),
         crashed=crashed,
         output=output,
         seconds=seconds,
     )
+
+
+def _unplaced_none_mismatches(
+    diagnostics: list[Diagnostic], sources: _Sources
+) -> list[Diagnostic]:
+    """The locals first bound to ``None`` when Codon refused a value as
+    ``Optional[NoneType]`` at a line that rebinds none of them (#584)."""
+    if not any(
+        _NONE_TYPE_MISMATCH in d.message and "Codon fixes the type" not in d.message
+        for d in diagnostics
+    ):
+        return []
+    return _none_first_binding_hints(
+        sources, f"Codon refused a value as {_NONE_TYPE_MISMATCH}"
+    )
+
+
+_NONE_TYPE_MISMATCH = "expected type 'Optional[NoneType]'"
 
 
 def _callable_signature_hints(output: str, sources: _Sources) -> list[Diagnostic]:
@@ -2748,6 +3244,7 @@ def _library_files(
             *problems,
             *checks.problems,
             *python_rewrite_refusals(redirected),
+            *typing_rewrite_refusals(redirected),
         ]:
             sources.problems.append(Diagnostic(message, str(module.path), line))
         # A function the check never compiles cannot decorate one it does: a
@@ -2758,18 +3255,14 @@ def _library_files(
             dropped_decorators=[n for n in uncalled if "." not in n],
             init_classes=init_classes,
             enum_classes=enum_class_names(classes),
+            file=str(module.path),
         )
         rel = workspace_module(name).replace(".", "/") + ".codon"
-        # Python sets a module's `__file__`, which Codon 0.19 does not: a
-        # checked module importing it from another (`from ..autoware_bridge
-        # import __file__`, in bridge_node) finds it here, after the checks so
-        # no line of the module moves.
-        file_global = f"\n__file__: str = {str(module.path)!r}\n"
         files.append(
             _LibraryFile(
                 name,
                 rel,
-                body + checks.source + file_global,
+                body + checks.source,
                 body.count("\n"),
                 checks.labels,
                 origin,
@@ -3002,6 +3495,12 @@ def typecheck_library(
         )
     names = sorted([*names, *dependencies])
     _library_imports(sources, toolchain, codon_path)
+    for name in names:
+        try:
+            importlib.import_module(name)
+        except Exception:  # noqa: BLE001 - its classes are then left alone
+            logger.debug("%s does not import: its classes are not checked", name)
+    sources.problems += _class_problems(sources, library=True)
     files = _library_files(names, sources, every)
     driver = render_library_driver(names)
     key = _cache_key(

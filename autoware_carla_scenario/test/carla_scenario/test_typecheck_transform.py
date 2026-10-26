@@ -38,6 +38,11 @@ from autoware_carla_scenario.typecheck.transform import (
     transform_source_lines,
     undeclared_attributes,
 )
+from autoware_carla_scenario.typecheck.typing_rewrites import (
+    TYPING_HINTS,
+    typing_rewrite_refusals,
+    typing_rewrites,
+)
 
 
 def test_the_prelude_imports_the_builtin_exceptions_codon_lacks() -> None:
@@ -50,7 +55,9 @@ def test_the_prelude_imports_the_builtin_exceptions_codon_lacks() -> None:
     bases = {
         node.name: ast.unparse(node.bases[0])
         for node in tree.body
-        if isinstance(node, ast.ClassDef) and node.name != "OSError"
+        if isinstance(node, ast.ClassDef)
+        and node.name != "OSError"
+        and not node.decorator_list  # the `@extend`s that add `args`
     }
     assert sorted(bases) == sorted(MISSING_BUILTIN_EXCEPTIONS)
     for name in MISSING_BUILTIN_EXCEPTIONS:
@@ -72,6 +79,21 @@ def _transform(source: str) -> str:
 def _without_extensions(out: str) -> str:
     """*out* without its ``@extend`` blocks (each follows its class)."""
     return re.sub(r"\n@extend\nclass \w+:\n(?:(?:[ ].*)?\n)*", "", out)
+
+
+#: The identity ==, != and hash a plain class is given after it (#596).
+_IDENTITY = re.compile(
+    r"\n@extend\nclass (\w+):\n"
+    r"    def __eq__\(self, other: \1\) -> bool:\n        return self is other\n"
+    r"(?:    def __ne__\(self, other: \1\) -> bool:\n"
+    r"        return self is not other\n)?"
+    r"(?:    def __hash__\(self\) -> int:\n        return id\(self\)\n)?"
+)
+
+
+def _without_identity(out: str) -> str:
+    """*out* without the identity methods given to its plain classes (#596)."""
+    return _IDENTITY.sub("", out)
 
 
 def _annotation(text: str, *, class_level: bool = False) -> str | None:
@@ -869,7 +891,7 @@ def test_object_setattr_with_a_constant_name_is_an_assignment() -> None:
                 object.__setattr__(self, name, 1)
         """
     )
-    out = _transform(source)
+    out = _without_identity(_transform(source))
     assert out.count("\n") == source.count("\n")
     lines = out.splitlines()
     assert lines[3] == "        self.lane = (int(self.lane))"
@@ -930,7 +952,7 @@ def test_a_decorator_the_library_check_leaves_uncalled_is_dropped() -> None:
         """
     )
     out = transform_source(source, dropped_decorators=["_refusing_old_calls"])
-    body = out[len(PRELUDE) :]
+    body = _without_identity(out[len(PRELUDE) :])
     assert body.count("\n") == source.count("\n")
     assert "@_refusing_old_calls" not in body
     assert "    @other" in body
@@ -1595,7 +1617,7 @@ def test_abstractmethod_is_dropped() -> None:
                 pass
         """
     )
-    out = _transform(source)
+    out = _without_identity(_transform(source))
     assert out.count("\n") == source.count("\n")
     assert "@" not in out
     assert "    def is_ready(self) -> bool:" in out
@@ -1615,7 +1637,7 @@ def test_a_classmethod_becomes_a_staticmethod_of_its_class() -> None:
                 return cls.make(cls(x))
         """
     )
-    out = _transform(source)
+    out = _without_identity(_transform(source))
     assert out.count("\n") == source.count("\n")
     assert "@classmethod" not in out
     assert "    def origin() -> Pose:\n        return Pose(0.0)" in out
@@ -1683,6 +1705,26 @@ def test_a_class_with_a_class_level_annotation_declares_every_attribute() -> Non
     assert [(f.class_name, f.name, f.suggested_type) for f in found] == [
         ("Tracker", "_samples", "list[...]")
     ]
+
+
+def test_an_annotated_attribute_in_init_asks_for_the_class_body() -> None:
+    source = textwrap.dedent(
+        """
+        class Base:
+            pass
+
+        class Tracker(Base):
+            def __init__(self):
+                self._seen: list[float] = []
+        """
+    )
+    (found,) = undeclared_attributes(ast.parse(source), {})
+    assert found.message() == (
+        "Tracker._seen is annotated in `__init__`; Codon needs it declared in "
+        "the class body: `_seen: list[float]` (a bare annotation, which Python "
+        "ignores)"
+    )
+    assert "without a type" not in found.message()
 
 
 def test_a_class_named_in_also_is_checked_whatever_it_declares() -> None:
@@ -1782,7 +1824,11 @@ def test_the_driver_renders_the_yaml_values_with_the_config_types() -> None:
         "scenario.timeout_seconds": "config.timeout_seconds = 5.0",
         "scenario.min_speed_kmh": "config.min_speed_kmh = 3.0",
         "scenario.ids": "config.ids = [460, 265]",
-        "scenario.npcs": "config.npcs = [_Npc(spawn_lanelet_id=1, spawn_s=2.0)]",
+        # A nested dataclass is one field to a line (#531).
+        "scenario.npcs[0]": "config.npcs = [_Npc(",
+        "scenario.npcs[0].spawn_lanelet_id": "spawn_lanelet_id=1,",
+        "scenario.npcs[0].spawn_s": "spawn_s=2.0,",
+        "scenario.npcs": ")]",
         "scenario.turn": "config.turn = _Turn.LEFT",
     }
     assert f"from {__name__} import _Npc" in lines
@@ -1822,6 +1868,43 @@ def test_a_config_with_a_mandatory_field_is_built_by_its_constructor() -> None:
 
     driver = render_driver(_Scenario, Mandatory, {"lanelet_id": 3})
     assert "        lanelet_id=3," in driver.source.splitlines()
+
+
+@pytest.mark.parametrize("required", [False, True])
+def test_a_top_level_scalar_is_checked_strictly_at_its_key(required: bool) -> None:
+    # Codon converts a str assigned to a bool field (#598): a top-level
+    # scalar goes through `_acs_as_<type>` first, as a nested one does.
+    @dataclasses.dataclass
+    class Flags:
+        enabled: bool = True
+        timeout_seconds: float = 5.0
+        name: str = "n"
+        retries: int = 0
+
+    @dataclasses.dataclass
+    class Required:
+        enabled: bool
+        timeout_seconds: float = 5.0
+        name: str = "n"
+        retries: int = 0
+
+    values = {"enabled": "no", "timeout_seconds": 3, "name": "a", "retries": 2}
+    driver = render_driver(_Scenario, Required if required else Flags, values)
+    lines = driver.source.splitlines()
+    checks = {
+        key: lines[line - 1].strip()
+        for line, key in driver.config_lines.items()
+        if "_acs_as_" in lines[line - 1]
+    }
+    assert checks == {
+        "scenario.enabled": "_acs_as_bool('no')",
+        # An int for a float field is rendered as a float, and passes.
+        "scenario.timeout_seconds": "_acs_as_float(3.0)",
+        "scenario.name": "_acs_as_str('a')",
+        "scenario.retries": "_acs_as_int(2)",
+    }
+    assert "def _acs_as_bool(value: bool): pass" in lines
+    assert "_acs_as_bool(<str>)" in driver.shape
 
 
 # ---------------------------------------------------------------------------
@@ -2245,7 +2328,7 @@ def test_a_class_inheriting_an_init_is_given_one_passing_everything_on() -> None
         """
     )
     out, origin = transform_source_lines(source)
-    body = out[len(PRELUDE) :]
+    body = _without_identity(out[len(PRELUDE) :])
     module, _, appended = body.partition("\n\n@extend\n")
     assert module.count("\n") == source.count("\n")  # no line of the source moves
     assert _INHERITED_INIT.format(name="B") in out
@@ -2706,7 +2789,7 @@ def test_a_dataclass_gets_eq_and_ne_comparing_its_fields() -> None:
     )
     assert _methods(block) == {"__eq__", "__ne__"}
     assert "return self.a == other.a and self.b == other.b" in block
-    assert "return not self.__eq__(other)" in block
+    assert "return not (self == other)" in block
     ast.parse(block.replace("class Fz", "@extend\nclass Fz", 1))
 
 
@@ -2714,10 +2797,11 @@ def test_a_dataclass_gets_eq_and_ne_comparing_its_fields() -> None:
     ("decorator", "methods"),
     [
         ("@dataclass", {"__eq__", "__ne__"}),
-        ("@dataclass(eq=False)", set()),
+        # eq=False: Python's identity == and hash (#596), right after the class.
+        ("@dataclass(eq=False)", {"__eq__", "__ne__", "__hash__"}),
         ("@dataclass(frozen=True)", {"__eq__", "__ne__", "__hash__"}),
         ("@dataclass(unsafe_hash=True)", {"__eq__", "__ne__", "__hash__"}),
-        ("@dataclass(eq=False, unsafe_hash=True)", {"__hash__"}),
+        ("@dataclass(eq=False, unsafe_hash=True)", {"__eq__", "__ne__", "__hash__"}),
         (
             "@dataclasses.dataclass(order=True)",
             {"__eq__", "__ne__", "__lt__", "__le__", "__gt__", "__ge__"},
@@ -2862,7 +2946,7 @@ def test_final_and_annotated_are_read_as_what_they_wrap() -> None:
     assert _annotation("Sized") is None
     assert _annotation("Hashable") is None
     assert _transform("LIMIT: Final = 3\n") == "LIMIT = 3\n"
-    out = _transform("class C:\n    LIMIT: Final = 3\n")
+    out = _without_identity(_transform("class C:\n    LIMIT: Final = 3\n"))
     assert out == "class C:\n    LIMIT = 3\n"
 
 
@@ -2907,7 +2991,7 @@ def test_functools_caching_decorators_are_dropped() -> None:
                 return x
         """
     )
-    out = _transform(source)
+    out = _without_identity(_transform(source))
     assert out.count("\n") == source.count("\n")
     assert "@" not in out
     assert "lru_cache" not in out.replace("import functools\n", "")
@@ -3171,6 +3255,58 @@ def test_an_fstring_with_a_brace_in_an_expression_is_refused(
     assert hint in refused[0][1]
 
 
+def test_open_text_keywords_are_dropped() -> None:
+    assert _rewritten('open(p, "r", encoding="utf-8")\n') == 'open(p, "r")\n'
+    assert _rewritten('open(p, encoding="utf-8", errors="x")\n') == "open(p)\n"
+    assert _rewritten('open(p, "w", newline="")\n') == 'open(p, "w")\n'
+    assert _rewritten("open(p, encoding=e)\n") == "open(p)\n"
+    assert _rewritten("def open(p, encoding=1): ...\nopen(p, encoding=2)\n") == (
+        "def open(p, encoding=1): ...\nopen(p, encoding=2)\n"
+    )
+
+
+def test_isinstance_in_a_module_that_uses_json_is_given_a_json_test() -> None:
+    rewritten = _rewritten("import json\nif isinstance(v, dict):\n    pass\n")
+    assert rewritten == (
+        "import json\nif (isinstance(v, dict) or "
+        "(isinstance(v, json.JSONValue) and (v)._acs_isjson())):\n    pass\n"
+    )
+    assert "js.JSONValue" in _rewritten(
+        "import json as js\nisinstance(v, (int, str))\n"
+    )
+    from_import = _rewritten("from json import loads\nisinstance(v, list)\n")
+    assert from_import.startswith(
+        "from json import loads, JSONValue as _acs_JSONValue\n"
+    )
+    assert "isinstance(v, _acs_JSONValue)" in from_import
+    # A parenthesised list, with or without a trailing comma, stays valid and
+    # keeps its lines.
+    for tail in (",\n)", ")"):
+        spread_import = (
+            f"from json import (\n    loads,\n    dumps{tail}\nisinstance(v, list)\n"
+        )
+        out = _rewritten(spread_import)
+        compile(out, "<rewritten>", "exec")
+        assert out.count("\n") == spread_import.count("\n")
+        assert "dumps, JSONValue as _acs_JSONValue" in out
+    # A function-local import serves that function only.
+    local = _rewritten(
+        "def f(v):\n    import json\n    return isinstance(v, list)\n"
+        "def g(v):\n    return isinstance(v, list)\n"
+    )
+    assert local.count("_acs_isjson") == 1
+    # No json and a shadowed isinstance are left alone.
+    for source in (
+        "isinstance(v, list)\n",
+        "import json\ndef isinstance(a, b): ...\nisinstance(v, list)\n",
+    ):
+        assert "_acs_isjson" not in _rewritten(source)
+    # A call over several lines keeps the lines of the statement.
+    spread = "import json\nx = isinstance(\n    v, list)\ny = 1\n"
+    assert _rewritten(spread).count("\n") == spread.count("\n")
+    assert _rewritten(spread).endswith("y = 1\n")
+
+
 def test_zip_strict_is_dropped() -> None:
     assert _rewritten("zip(a, b, strict=True)\n") == "zip(a, b)\n"
     assert _rewritten("zip(strict=False)\n") == "zip()\n"
@@ -3359,6 +3495,121 @@ def test_format_keeps_its_lines() -> None:
     text = _rewritten(source)
     assert text.count("\n") == source.count("\n")
     assert text.startswith("r = x.__format__(spec)")
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        ("xs[round(x)]", "xs[int(round(x))]"),
+        ("n = round(a + b)", "n = int(round(a + b))"),
+        ("round(x, None)", "int(round(x))"),
+        ("round(x, ndigits=None)", "int(round(x))"),
+        ("round(number=x)", "int(round(x))"),
+        ("round(number=x, ndigits=None)", "int(round(x))"),
+        ("round(x, ndigits=2)", "round(x, 2)"),
+        ("round(number=x, ndigits=k)", "round(x, k)"),
+        ("round(round(x))", "int(round(int(round(x))))"),
+        ('f"{round(x)}"', 'f"{int(round(x))}"'),
+        ("f = lambda v: round(v)", "f = lambda v: int(round(v))"),
+    ],
+)
+def test_one_argument_round_is_an_int(source: str, expected: str) -> None:
+    # #585: Codon's round(x, n=0) always returns a float.
+    assert _rewritten(source + "\n") == expected + "\n"
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "round(x, 2)",
+        "round(x, n)",
+        "int(round(x))",
+        "round()",
+        "round(*a)",
+        "round(x, 1, 2)",
+        "round(x, y=1)",
+        "round(x, ndigits=1, number=2)",
+        "np.round(x)",
+        "self.round(x)",
+    ],
+)
+def test_round_it_need_not_rewrite_is_left_alone(source: str) -> None:
+    assert _rewritten(source + "\n") == source + "\n"
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "def round(x):\n    return 1\nr = round(1.5)",
+        "from mymath import round\nr = round(1.5)",
+        "round = int\nr = round(1.5)",
+        "def f(round):\n    return round(1.5)",
+    ],
+)
+def test_round_bound_by_the_module_or_function_is_left_alone(source: str) -> None:
+    assert _rewritten(source + "\n") == source + "\n"
+
+
+def test_round_keeps_its_lines() -> None:
+    source = "r = round(\n    x,\n    None,\n)\nz = 1\n"
+    text = _rewritten(source)
+    assert text.count("\n") == source.count("\n")
+    assert text.startswith("r = int(round(x")
+    assert _rewritten("r = round(x\n)\n") == "r = int(round(x\n))\n"
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        (
+            'v = getattr(x, "a", 0.0)',
+            "v = (((0.0), x.a if hasattr(x, 'a') else (0.0))[1])",
+        ),
+        (
+            'v = getattr(self.cfg, "speed", round(y))',
+            "v = (((int(round(y))), self.cfg.speed if hasattr(self.cfg, 'speed') "
+            "else (int(round(y))))[1])",
+        ),
+        (
+            'v = getattr(x, "a", getattr(y, "b", None))',
+            "v = ((((((None), y.b if hasattr(y, 'b') else (None))[1])), x.a if "
+            "hasattr(x, 'a') else ((((None), y.b if hasattr(y, 'b') else (None))[1])))[1])",
+        ),
+    ],
+)
+def test_getattr_with_a_default_becomes_a_hasattr_test(
+    source: str, expected: str
+) -> None:
+    # #590: Codon's getattr takes no default; it decides hasattr when it compiles.
+    assert _rewritten(source + "\n") == expected + "\n"
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        'v = getattr(f(), "a", 1)',
+        'v = getattr(xs[0], "a", 1)',
+        "v = getattr(x, name, 1)",
+        'v = getattr(x, "a")',
+        'v = getattr(x, "class", 1)',
+        'v = getattr(x, "a b", 1)',
+        'v = getattr(x, "a", default=1)',
+        "v = getattr(*args)",
+        'def getattr(a, b, c):\n    return a\nv = getattr(x, "a", 1)',
+        'v = obj.getattr(x, "a", 1)',
+        'def hasattr(a, b):\n    return True\nv = getattr(x, "a", 1)',
+        'v = getattr(x, "a", f(\n    1,\n))',
+    ],
+)
+def test_getattr_it_cannot_rewrite_is_left_alone(source: str) -> None:
+    assert _rewritten(source + "\n") == source + "\n"
+
+
+def test_getattr_keeps_its_lines() -> None:
+    source = 'v = getattr(\n    x,\n    "a",\n    None,\n)\nz = 1\n'
+    text = _rewritten(source)
+    assert text.count("\n") == source.count("\n")
+    assert text.startswith("v = (((None), x.a if hasattr(x, 'a') else (None))[1]")
 
 
 def test_startswith_with_a_tuple_matches_cpython() -> None:
@@ -4786,10 +5037,7 @@ def _cycle_modules(tmp_path: Path, a: str, b: str) -> dict[str, Any]:
 
 
 _CYCLE_A_TEXT = (
-    "from typing import Optional\n"
-    "class A:\n"
-    "    peer: {annotation}\n"
-    "from .b import B\n"
+    "from typing import Optional\nclass A:\n    peer: {annotation}\nfrom .b import B\n"
 )
 
 
@@ -4828,3 +5076,910 @@ def test_the_cycle_hint_needs_the_other_module_to_import_back(
     assert cycle_hint(message, str(cycle["pkg.a"].path), 1, cycle) is not None
     typo = _cycle_modules(tmp_path, "from .b import B\n", "x = 1\n")
     assert cycle_hint(message, str(typo["pkg.a"].path), 1, typo) is None
+
+
+# ---------------------------------------------------------------------------
+# Type-only typing names, stored exceptions, operator getters, copy
+# (#512, #513, #514, #517)
+# ---------------------------------------------------------------------------
+
+
+def _typing_rewritten(source: str) -> str:
+    return typing_rewrites(textwrap.dedent(source))
+
+
+def test_a_type_alias_loses_its_annotation() -> None:
+    out = _typing_rewritten(
+        """
+        from typing import TypeAlias
+        Pose: TypeAlias = tuple[float, float, float]
+        """
+    )
+    assert "Pose = tuple[float, float, float]" in out
+    assert "TypeAlias =" not in out
+
+
+@pytest.mark.parametrize("module", ["typing", "typing_extensions"])
+def test_self_is_the_enclosing_class(module: str) -> None:
+    out = _typing_rewritten(
+        f"""
+        from {module} import Self
+        class Counter:
+            n: int
+            def inc(self, by: Self | None = None) -> Self:
+                return self
+            def me(self) -> list[Self]:
+                return [self]
+        """
+    )
+    assert "def inc(self, by: Counter | None = None) -> Counter:" in out
+    assert "-> list[Counter]:" in out
+    assert "Self" not in out.split("\n", 2)[2]
+
+
+def test_self_through_the_module_is_the_enclosing_class() -> None:
+    out = _typing_rewritten(
+        """
+        import typing as t
+        class A:
+            def f(self) -> t.Self:
+                return self
+        """
+    )
+    assert "def f(self) -> A:" in out
+
+
+def test_override_is_dropped_on_its_line() -> None:
+    source = """
+        from typing import override
+        import typing
+        class A:
+            @override
+            def f(self) -> int:
+                return 1
+            @typing.override
+            @property
+            def g(self) -> int:
+                return 1
+        """
+    out = _typing_rewritten(source)
+    assert "override\n" not in out.replace("import override", "")
+    assert out.count("\n") == textwrap.dedent(source).count("\n")
+    assert "@property" in out
+
+
+def _decorator_block(out: str, def_line: str) -> list[str]:
+    """The lines from the first non-blank one above *def_line* to it."""
+    lines = out.split("\n")
+    at = lines.index(def_line)
+    start = at
+    while start > 0 and lines[start - 1].strip():
+        start -= 1
+    return lines[start : at + 1]
+
+
+_STACKED = {
+    "property_abstractmethod": (
+        "from abc import abstractmethod\n",
+        ["@property", "@abstractmethod"],
+        ["@property"],
+    ),
+    "property_override": (
+        "from typing_extensions import override\n",
+        ["@property", "@override"],
+        ["@property"],
+    ),
+    "staticmethod_abstractmethod": (
+        "import abc\n",
+        ["@staticmethod", "@abc.abstractmethod"],
+        ["@staticmethod"],
+    ),
+    "property_cache": (
+        "import functools\n",
+        ["@property", "@functools.cache"],
+        ["@property"],
+    ),
+    "staticmethod_lru_cache": (
+        "import functools\n",
+        ["@staticmethod", "@functools.lru_cache(maxsize=None)"],
+        ["@staticmethod"],
+    ),
+    "several_and_a_comment": (
+        "import functools\nfrom abc import abstractmethod\n",
+        [
+            "@abstractmethod",
+            "@staticmethod  # kept",
+            "@functools.lru_cache(",
+            "    maxsize=None,",
+            ")",
+            "# why",
+            "",
+            "@abstractmethod",
+        ],
+        ["@staticmethod  # kept"],
+    ),
+    "a_comment_between_kept_ones": (
+        "",
+        ["@staticmethod", "# why", "@some_decorator(", "    # inside", ")"],
+        ["@staticmethod", "@some_decorator(", "# inside", ")"],
+    ),
+    # A decorator's `@` or bracket on a line of its own is its line: the
+    # whole logical line is kept, or dropped.
+    "a_bracketed_kept_one": (
+        "import functools\n",
+        ["@(", "    staticmethod", ")", "# why", "@functools.cache"],
+        ["@(", "staticmethod", ")"],
+    ),
+    "a_bracketed_dropped_one": (
+        "import functools\n",
+        ["@staticmethod", "@(", "    functools.cache", ")", "@some_decorator"],
+        ["@staticmethod", "@some_decorator"],
+    ),
+    "a_continued_line": (
+        "",
+        ["@staticmethod", "# why", "@\\", "    some_decorator"],
+        ["@staticmethod", "@\\", "some_decorator"],
+    ),
+}
+
+
+@pytest.mark.parametrize("case", sorted(_STACKED))
+def test_a_dropped_decorator_under_a_kept_one_leaves_no_blank_line(
+    case: str,
+) -> None:
+    # Codon's parser refuses a blank or comment line inside a decorator list
+    # (#595): the kept decorators move down to the `def`, which keeps its
+    # line.
+    imports, stack, kept = _STACKED[case]
+    decorators = "".join(f"    {line}\n" for line in stack)
+    source = f"{imports}class A:\n{decorators}    def f() -> int:\n        return 1\n"
+    out = _without_identity(_transform(source))
+    assert out.count("\n") == source.count("\n")
+    def_line = "    def f() -> int:"
+    assert out.split("\n").index(def_line) == source.split("\n").index(def_line)
+    assert [line.strip() for line in _decorator_block(out, def_line)] == [
+        *kept,
+        def_line.strip(),
+    ]
+
+
+def test_a_moved_decorator_maps_to_its_line() -> None:
+    # A diagnostic on a kept decorator moved down to its `def` names the line
+    # the author wrote it on, through both passes that move one (#595).
+    source = (
+        "import functools\n"
+        "from typing import override\n"
+        "class A:\n"
+        "    @staticmethod\n"
+        "    @override\n"
+        "    # why\n"
+        "    @tag(\n"
+        "        1)\n"
+        "    @functools.cache\n"
+        "    def f() -> int:\n"
+        "        return 1\n"
+    )
+    out, origin = transform_source_lines(source)
+    lines = out[len(PRELUDE) :].split("\n")
+    assert lines[6:10] == [
+        "    @staticmethod",
+        "    @tag(",
+        "        1)",
+        "    def f() -> int:",
+    ]
+    assert origin[6:10] == [4, 7, 8, 10]
+
+
+def test_override_under_a_kept_decorator_leaves_no_blank_line() -> None:
+    source = """
+        from typing import override
+        class A:
+            @property
+            @override
+            def g(self) -> int:
+                return 1
+        """
+    out = _typing_rewritten(source)
+    lines = out.split("\n")
+    assert lines[3:6] == ["", "    @property", "    def g(self) -> int:"]
+
+
+def test_a_new_type_is_its_base_and_a_call_of_it_its_argument() -> None:
+    out = _typing_rewritten(
+        """
+        from typing import NewType
+        LaneId = NewType("LaneId", int)
+        Pair = NewType("Pair", tuple[float, float])
+        lane = LaneId(LaneId(3) + 1)
+        pair = Pair((1.0, 2.0))
+        """
+    )
+    assert "LaneId = int" in out
+    assert "Pair = tuple[float, float]" in out
+    assert "lane = ((3) + 1)" in out
+    assert "pair = ((1.0, 2.0))" in out
+
+
+def test_assert_never_statement_and_return_raise() -> None:
+    out = _typing_rewritten(
+        """
+        from typing import assert_never
+        def f(x) -> int:
+            if x:
+                return 1
+            else:
+                assert_never(x)
+        def g(x) -> int:
+            return assert_never(x)
+        h = lambda x: assert_never(x)
+        """
+    )
+    assert out.count('raise AssertionError("Expected code to be unreachable")') == 2
+    assert "h = lambda x: assert_never(x)" in out
+
+
+def test_assert_never_inside_an_expression_is_refused() -> None:
+    # Codon types the call of a function that always raises as None, which
+    # would refuse a correct `1 if ok else assert_never(x)` with a message
+    # about NoneType: say what to write instead.
+    source = textwrap.dedent(
+        """
+        from typing import assert_never
+        def g(x: int) -> int:
+            return 1 if x else assert_never(x)
+        """
+    )
+    assert typing_rewrites(source) == source
+    ((line, message),) = typing_rewrite_refusals(source)
+    assert line == 4 and "line of its own" in message
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        (
+            "from collections.abc import Callable, Iterator, Sequence",
+            "from typing import (Callable, Iterator, Sequence)",
+        ),
+        (
+            "from collections.abc import Set, Mapping as M",
+            "from typing import (AbstractSet as Set, Mapping as M)",
+        ),
+        (
+            "from collections.abc import Set as S",
+            "from typing import (AbstractSet as S)",
+        ),
+        (
+            "if TYPE_CHECKING:\n    from collections.abc import Iterable",
+            "if TYPE_CHECKING:\n    from typing import (Iterable)",
+        ),
+    ],
+)
+def test_collections_abc_is_imported_from_typing(source: str, expected: str) -> None:
+    # #586: Codon has no collections.abc; the typing shim has these names.
+    assert typing_rewrites(source + "\n") == expected + "\n"
+    assert typing_rewrite_refusals(source + "\n") == []
+
+
+def test_collections_abc_keeps_its_lines() -> None:
+    source = (
+        "from collections.abc import (\n"
+        "    Callable,\n"
+        "    Sequence,\n"
+        ")\n"
+        "x: Sequence[int] = []\n"
+    )
+    out = typing_rewrites(source)
+    assert out.count("\n") == source.count("\n")
+    assert out.startswith("from typing import (Callable, Sequence\n")
+    assert out.splitlines()[4] == "x: Sequence[int] = []"
+    ast.parse(out)
+
+
+@pytest.mark.parametrize(
+    ("source", "line", "needle"),
+    [
+        (
+            "from collections.abc import KeysView",
+            1,
+            "collections.abc.KeysView is not modelled by the check",
+        ),
+        (
+            "from collections.abc import (\n    Sequence,\n    MutableSet,\n)",
+            3,
+            "collections.abc.MutableSet is not modelled by the check",
+        ),
+        (
+            "from collections.abc import *",
+            1,
+            "`from collections.abc import *` is not modelled by the check",
+        ),
+        (
+            "import collections.abc",
+            1,
+            "`import collections.abc` is not supported by the check",
+        ),
+        (
+            "import collections.abc as cabc",
+            1,
+            "`import collections.abc` is not supported by the check",
+        ),
+        (
+            "from collections import abc, deque",
+            1,
+            "`from collections import abc` is not supported by the check",
+        ),
+    ],
+)
+def test_collections_abc_it_cannot_read_is_refused_with_a_hint(
+    source: str, line: int, needle: str
+) -> None:
+    refused = typing_rewrite_refusals(source + "\n")
+    assert [r[0] for r in refused] == [line], refused
+    assert needle in refused[0][1]
+    assert "`Sequence`" in refused[0][1] and "from typing" in refused[0][1]
+    out = typing_rewrites(source + "\n")
+    assert out.count("\n") == (source + "\n").count("\n")
+    ast.parse(out)
+
+
+def test_collections_without_abc_is_left_alone() -> None:
+    source = "import collections\nfrom collections import deque\n"
+    assert typing_rewrites(source) == source
+    assert typing_rewrite_refusals(source) == []
+
+
+def test_a_local_name_is_not_the_new_type_nor_the_typing_name() -> None:
+    # A parameter called like a NewType is not it: `LaneId(5)` on an int is
+    # a real error that must not become `(5)`.
+    source = textwrap.dedent(
+        """
+        from typing import NewType, override
+        LaneId = NewType("LaneId", int)
+        def f(LaneId: int, override) -> int:
+            return LaneId(5) + override(1)
+        def g() -> LaneId:
+            return LaneId(1)
+        """
+    )
+    out = typing_rewrites(source)
+    assert "return LaneId(5) + override(1)" in out
+    assert "return (1)" in out
+
+
+@pytest.mark.parametrize(
+    ("annotation", "codon"),
+    [
+        ("TypeGuard[int]", "bool"),
+        ("typing.TypeIs[int]", "bool"),
+        ("Never", None),
+        ("Container[int]", None),
+        ("Sized", None),
+    ],
+)
+def test_the_type_only_annotations_are_dropped_or_bool(
+    annotation: str, codon: str | None
+) -> None:
+    assert _annotation(annotation) == codon
+
+
+def test_a_bound_or_constrained_type_var_is_a_plain_one() -> None:
+    out = _typing_rewritten(
+        """
+        from typing import TypeVar
+        B = TypeVar("B", bound=Base)
+        N = TypeVar("N", int, float)
+        C = TypeVar("C", covariant=True)
+        T = TypeVar("T")
+        """
+    )
+    assert out.count("TypeVar(") == 5 - 1  # the import is not a call
+    for name in "BNCT":
+        assert f'{name} = TypeVar("{name}")' in out
+
+
+def test_literal_getters_become_lambdas() -> None:
+    out = _typing_rewritten(
+        """
+        import operator
+        from operator import itemgetter as ig, attrgetter
+        a = sorted(xs, key=operator.itemgetter(1))
+        b = sorted(xs, key=ig(0, -1))
+        c = sorted(xs, key=attrgetter("n"))
+        d = sorted(xs, key=operator.attrgetter("a.b", "c"))
+        e = ig("k")
+        """
+    )
+    assert "a = sorted(xs, key=(lambda v: v[1]))" in out
+    assert "b = sorted(xs, key=(lambda v: (v[0], v[-1])))" in out
+    assert "c = sorted(xs, key=(lambda v: v.n))" in out
+    assert "d = sorted(xs, key=(lambda v: (v.a.b, v.c)))" in out
+    assert "e = (lambda v: v['k'])" in out or 'e = (lambda v: v["k"])' in out
+
+
+def test_a_getter_with_a_variable_argument_is_refused_with_a_hint() -> None:
+    refused = typing_rewrite_refusals(
+        textwrap.dedent(
+            """
+            import operator
+            i = 1
+            a = sorted(xs, key=operator.itemgetter(i))
+            b = sorted(xs, key=operator.attrgetter(name))
+            ok = operator.itemgetter(1)
+            """
+        )
+    )
+    assert [line for line, _ in refused] == [4, 5]
+    assert all("write a lambda" in message for _, message in refused)
+
+
+def test_a_names_not_from_the_modules_are_left_alone() -> None:
+    source = textwrap.dedent(
+        """
+        def Self(): ...
+        def itemgetter(i): ...
+        def TypeVar(*a, **k): ...
+        x = itemgetter(1)
+        T = TypeVar("T", bound=int)
+        """
+    )
+    assert typing_rewrites(source) == source
+
+
+def test_a_caught_exception_stored_as_an_exception_is_rebuilt() -> None:
+    out = _typing_rewritten(
+        """
+        class MyErr(Exception): ...
+        class Holder:
+            last: Exception | None
+            errs: list[Exception]
+            def run(self) -> None:
+                try:
+                    pass
+                except MyErr as e:
+                    self.last = e
+                    self.errs.append(e)
+                    self.keep(e)
+            def keep(self, err: Exception) -> None:
+                pass
+        def f(c) -> Exception | None:
+            last: Exception = Exception("none")
+            errs: list[Exception] = []
+            d: dict[str, Exception] = {}
+            try:
+                pass
+            except ValueError as e:
+                last = e
+                errs = [e]
+                errs.append(e)
+                d["k"] = e
+                return e
+            except Exception as other:
+                last = other
+            return None
+        """
+    )
+    rebuilt = "Exception(e.typename, e.message)"
+    assert out.count(rebuilt) == 8
+    assert "last = other" in out
+    assert "self.errs.append(Exception(e.typename, e.message))" in out
+    assert "return Exception(e.typename, e.message)" in out
+
+
+def test_an_exception_stored_where_its_own_class_is_expected_is_left_alone() -> None:
+    source = textwrap.dedent(
+        """
+        last: ValueError | None = None
+        errs: list[ValueError] = []
+        try:
+            pass
+        except ValueError as e:
+            last = e
+            errs.append(e)
+            other = e
+        """
+    )
+    assert typing_rewrites(source) == source
+
+
+def test_the_exception_hint_fires_on_codons_message() -> None:
+    message = (
+        "'Optional[ValueError]' does not match expected type 'Optional[Exception]'"
+    )
+    hints = [h for pattern, h in TYPING_HINTS if pattern.search(message)]
+    assert hints and "str(e)" in hints[0]
+    assert any(
+        p.search("'MyErr' does not match expected type 'Exception'")
+        for p, _ in TYPING_HINTS
+    )
+    assert any(
+        p.search("'Exception' does not match expected type 'ValueError'")
+        for p, _ in TYPING_HINTS
+    )
+    assert not any(
+        p.search("'int' does not match expected type 'str'") for p, _ in TYPING_HINTS
+    )
+
+
+def test_copy_gets_the_dunders_of_the_declared_fields() -> None:
+    source = textwrap.dedent(
+        """
+        import copy
+        from dataclasses import dataclass
+        @dataclass
+        class P:
+            x: float
+        @dataclass
+        class Q(P):
+            tags: list[str]
+            LIMIT: ClassVar[int] = 3
+        class Own:
+            n: int
+            def __copy__(self):
+                return self
+        class Framework(BaseScenario):
+            n: int
+        class Failure(Exception):
+            n: int
+        """
+    )
+    out = _without_identity(transform_source(source))
+    assert "def __copy__(self) -> P:" in out
+    assert "r.x = self.x" in out
+    # A derived class copies the fields of its base first.
+    q = out[out.index("class Q:", out.index("@extend")) :]
+    assert q.index("r.x = self.x") < q.index("r.tags = self.tags")
+    assert "LIMIT = self" not in out and "r.LIMIT" not in out
+    assert "r.tags = _acs_deepcopy(self.tags)" in out
+    # Defining one of the two keeps it, and the other is added.
+    own = out[out.index("class Own:", out.index("@extend")) :]
+    assert "def __copy__" not in own and "def __deepcopy__" in own
+    assert "class Framework:" not in out and "class Failure:" not in out
+
+
+def test_copy_dunders_need_the_copy_module() -> None:
+    out = transform_source("class A:\n    n: int\n")
+    assert "__copy__" not in out
+    assert "__deepcopy__" not in out
+
+
+# ---------------------------------------------------------------------------
+# Identity == and hash of a plain class (#596)
+# ---------------------------------------------------------------------------
+
+
+def _identity_methods(out: str) -> dict[str, set[str]]:
+    """Class -> the identity methods given to it after the module's classes."""
+    found: dict[str, set[str]] = {}
+    for match in _IDENTITY.finditer(out):
+        block = match.group(0)
+        found[match.group(1)] = {
+            name for name in ("__eq__", "__ne__", "__hash__") if f"def {name}(" in block
+        }
+    return found
+
+
+def test_a_plain_class_compares_and_hashes_by_identity_right_after_it() -> None:
+    source = textwrap.dedent(
+        """
+        class Npc:
+            name: str
+
+            def __init__(self, name: str) -> None:
+                self.name = name
+        SEEN = {Npc("a")}
+        """
+    )
+    out, origin = transform_source_lines(source)
+    body = out[len(PRELUDE) :]
+    assert _identity_methods(body) == {"Npc": {"__eq__", "__ne__", "__hash__"}}
+    assert "        return self is other\n" in body
+    assert "        return self is not other\n" in body
+    assert "        return id(self)\n" in body
+    # Before the module-level code that hashes one, and mapped to the class.
+    assert body.index("return id(self)") < body.index("SEEN = ")
+    lines = body.splitlines()
+    assert len(origin) == len(lines)
+    at = next(i for i, line in enumerate(lines) if "return self is other" in line)
+    assert source.splitlines()[origin[at] - 1] == "class Npc:"
+    ast.parse(_without_identity(body))
+
+
+def test_a_method_a_plain_class_defines_is_kept_and_eq_alone_gets_nothing() -> None:
+    source = textwrap.dedent(
+        """
+        from abc import ABC
+        from dataclasses import dataclass
+        class Hashed:
+            def __hash__(self) -> int:
+                return 1
+        class Unhashable:
+            __hash__ = None
+        class Base(ABC):
+            pass
+        class Sub(Base):
+            pass
+        @dataclass(eq=False)
+        class Loose:
+            x: float
+        class Keyed:
+            def __eq__(self, other: object) -> bool:
+                return True
+        """
+    )
+    assert _identity_methods(transform_source(source)) == {
+        "Hashed": {"__eq__", "__ne__"},
+        "Unhashable": {"__eq__", "__ne__"},
+        # A subclass of the module inherits its base's.
+        "Base": {"__eq__", "__ne__", "__hash__"},
+        "Loose": {"__eq__", "__ne__", "__hash__"},
+    }
+
+
+def test_classes_compared_another_way_get_no_identity_methods() -> None:
+    source = textwrap.dedent(
+        """
+        from abc import ABCMeta
+        from dataclasses import dataclass
+        from enum import Enum
+        from typing import NamedTuple, Protocol
+        @dataclass
+        class Value:
+            x: float
+        @dataclass(frozen=True)
+        class Frozen:
+            x: float
+        class Color(Enum):
+            RED = 1
+        class Pt(NamedTuple):
+            x: float
+        class Shape(Protocol):
+            def area(self) -> float: ...
+        class Failure(Exception):
+            pass
+        class Mine(BaseCondition):
+            pass
+        class Meta(metaclass=ABCMeta):
+            pass
+        """
+    )
+    assert _identity_methods(transform_source(source)) == {}
+
+
+# ---------------------------------------------------------------------------
+# `a if x else None` with x narrowed in a (#597)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("line", "expected"),
+    [
+        (
+            "a = m.group(1) if m else None",
+            "a = _acs_some(m.group(1)) if m else None",
+        ),
+        (
+            "a = m[1] if m is not None else None",
+            "a = _acs_some(m[1]) if m is not None else None",
+        ),
+        (
+            "a = None if m is None else m.group(1)",
+            "a = None if m is None else _acs_some(m.group(1))",
+        ),
+        (
+            "a = None if not self.n else self.n.name",
+            "a = None if not self.n else _acs_some(self.n.name)",
+        ),
+        (
+            "a = f(m.group(1).upper()) if m else None",
+            "a = _acs_some(f(m.group(1).upper())) if m else None",
+        ),
+    ],
+)
+def test_the_branch_reading_the_narrowed_value_is_made_optional(
+    line: str, expected: str
+) -> None:
+    assert _rewritten(line + "\n") == expected + "\n"
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        'a = m.group(1) if m else ""',  # no None: Codon unifies the two str
+        "a = 1 if m else None",  # a constant
+        "a = n.name if m else None",  # does not read the narrowed m
+        "a = m.name if m.ok else None",  # m.ok is not what m.name reads
+        "a = m.name if f(m) else None",  # not a narrowing test
+        "a = None if m else None",
+    ],
+)
+def test_other_conditional_expressions_are_left_alone(line: str) -> None:
+    assert _rewritten(line + "\n") == line + "\n"
+
+
+def test_the_some_branch_is_wrapped_once_whatever_else_is_rewritten() -> None:
+    text = _rewritten('a = "{}".format(m.group(1)) if m else None\n')
+    assert text.count("_acs_some(") == 1
+    assert text.startswith("a = _acs_some(") and ".format(" not in text
+    assert text.endswith(") if m else None\n")
+
+
+# ---------------------------------------------------------------------------
+# a.__eq__(b) is written a == b (#596)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("line", "expected"),
+    [
+        ("r = not self.__eq__(other)", "r = not (self == (other))"),
+        ("r = a.b.__ne__(c)", "r = (a.b != (c))"),
+        ("r = a.__eq__(x if c else y)", "r = (a == (x if c else y))"),
+        ("r = f(a).__eq__(b)", "r = (f(a) == (b))"),
+    ],
+)
+def test_an_explicit_eq_call_is_written_as_the_operator(
+    line: str, expected: str
+) -> None:
+    assert _rewritten(line + "\n") == expected + "\n"
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "r = super().__eq__(other)",  # the base's own method
+        "r = (a or b).__eq__(c)",  # a parenthesized receiver
+        "r = A.__eq__(a, b)",  # through the class
+        "r = a.__eq__(*b)",
+        "r = a.__lt__(b)",
+    ],
+)
+def test_other_dunder_calls_are_left_alone(line: str) -> None:
+    assert _rewritten(line + "\n") == line + "\n"
+
+
+def test_an_explicit_eq_call_keeps_its_lines_and_inner_rewrites() -> None:
+    text = _rewritten('r = a.__eq__(\n    "{}".format(b),\n)\nz = 1\n')
+    assert text.splitlines()[0].startswith("r = (a == (")
+    assert ".format(" not in text and ".__eq__(" not in text
+    assert text.splitlines()[3] == "z = 1"
+
+
+# ---------------------------------------------------------------------------
+# Builtin gaps (#601) and Enum values (#600)
+# ---------------------------------------------------------------------------
+
+
+def test_count_and_index_go_to_the_tuple_helper_only_without_the_method() -> None:
+    text = _rewritten(
+        """
+        import itertools
+        a = t.count(2) + t.index(2, 1)
+        b = (1, 2).index(2)
+        c = self.xs.index(3, 0, 2)
+        d = itertools.count(5)
+        e = str.index(s, "a")
+        f = "abc".count("a")
+        g = xs.count()
+        h = xs.index(1, start=0)
+        i = f(x).count(1)
+        """
+    )
+    assert (
+        "a = (t.count(2) if hasattr(t, 'count') else _acs_count(t, 2)) + "
+        "(t.index(2, 1) if hasattr(t, 'index') else _acs_index(t, 2, 1))"
+    ) in text
+    assert "b = (_acs_index((1, 2), 2))" in text
+    assert (
+        "c = (self.xs.index(3, 0, 2) if hasattr(self.xs, 'index') else "
+        "_acs_index(self.xs, 3, 0, 2))"
+    ) in text
+    for unchanged in (
+        "d = itertools.count(5)",
+        'e = str.index(s, "a")',
+        'f = "abc".count("a")',
+        "g = xs.count()",
+        "h = xs.index(1, start=0)",
+        "i = f(x).count(1)",
+    ):
+        assert unchanged in text, text
+
+
+def test_count_is_left_alone_where_hasattr_is_shadowed() -> None:
+    text = _rewritten("def hasattr(a, b):\n    return True\nn = t.count(1)\n")
+    assert text.endswith("n = t.count(1)\n")
+
+
+def test_dict_view_set_operators_become_sets() -> None:
+    text = _rewritten(
+        """
+        a = d.keys() & e.keys()
+        b = d.keys() - {"a"}
+        c = d.items() <= e.items()
+        f = d.keys() | ["x"]
+        g = d.keys() & e.keys() & h.keys()
+        k = d.values() == e.values()
+        m = x - y
+        """
+    )
+    assert "a = (set(d.keys()) & set(e.keys()))" in text
+    assert 'b = (set(d.keys()) - {"a"})' in text
+    assert "c = set(d.items()) <= set(e.items())" in text
+    assert 'f = (set(d.keys()) | set(["x"]))' in text
+    assert "g = (set((set(d.keys()) & set(e.keys()))) & set(h.keys()))" in text
+    assert "k = d.values() == e.values()" in text
+    assert "m = x - y" in text
+
+
+def test_super_with_the_class_and_self_becomes_super() -> None:
+    text = _rewritten(
+        """
+        class Derived(Base):
+            def __init__(self, k):
+                super(Derived, self).__init__(k)
+                f = lambda: super(Derived, self).run()
+
+            @classmethod
+            def make(cls):
+                return super(Derived, cls).make()
+
+            def other(this):
+                super(Base, this).run()
+                super(Derived, this).run()
+
+            def rebound(self):
+                self = other
+                super(Derived, self).run()
+        """
+    )
+    lines = text.splitlines()
+    assert lines[3].strip() == "super().__init__(k)"
+    assert lines[4].strip() == "f = lambda: super(Derived, self).run()"
+    assert "super(Derived, cls).make()" in text
+    assert "super(Base, this).run()" in text
+    assert lines[12].strip() == "super().run()"
+    assert lines[16].strip() == "super(Derived, self).run()"
+
+
+@pytest.mark.parametrize(
+    ("members", "why"),
+    [
+        ('A = (1, "a")', "its member `A` has a tuple value"),
+        ('A = 1\n    B = "b"', "its members' values are of different types (int, str)"),
+        ("A = WIDTH", "the value of its member `A` is not an int, float or str"),
+        ("A = True", "the value of its member `A` is not an int, float or str"),
+    ],
+)
+def test_an_enum_of_values_the_check_cannot_type_is_refused(
+    members: str, why: str
+) -> None:
+    source = f"from enum import Enum\n\n\nclass E(Enum):\n    {members}\n"
+    refused = python_rewrite_refusals(source)
+    assert len(refused) == 1, refused
+    line, message = refused[0]
+    assert line == 4
+    assert f"Enum E cannot be checked: {why}" in message
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "A = -1\n    B = 1",
+        "A = -1.5\n    B = 2.0",
+        "A = auto()\n    B = auto()",
+        "def describe(self) -> str:\n        return self.name",
+        # A lambda is a method, not a member: it becomes a def (#482).
+        "A = 1\n    B = 2\n    double = lambda self: self.value * 2",
+        "A = 1\n    B = 2\n    zero = staticmethod(lambda: 0)",
+    ],
+    ids=["negative", "negative-float", "auto", "no-member", "lambda", "static"],
+)
+def test_an_enum_the_check_can_type_is_not_refused(body: str) -> None:
+    source = f"from enum import Enum, auto\n\n\nclass E(Enum):\n    {body}\n"
+    assert python_rewrite_refusals(source) == []
+
+
+def test_a_negative_enum_value_is_rewritten() -> None:
+    source = "from enum import Enum\n\n\nclass E(Enum):\n    A = -1\n    B = 1\n"
+    out = transform_source(source)
+    assert "A: ClassVar[E] = E('A', -1)" in out, out

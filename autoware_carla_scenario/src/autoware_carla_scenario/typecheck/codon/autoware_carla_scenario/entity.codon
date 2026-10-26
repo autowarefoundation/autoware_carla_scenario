@@ -74,6 +74,17 @@ class PedestrianEntity:
     def __init__(self, config: PedestrianEntityConfig):
         pass
 
+    # Python compares and hashes a PedestrianEntity by identity (it defines no __eq__),
+    # so one goes in a set, keys a dict and is found with `in` (#596).
+    def __eq__(self, other: PedestrianEntity) -> bool:
+        return self is other
+
+    def __ne__(self, other: PedestrianEntity) -> bool:
+        return self is not other
+
+    def __hash__(self) -> int:
+        return id(self)
+
     @property
     def role_name(self) -> str:
         raise NotImplementedError()
@@ -122,6 +133,17 @@ class EgoVehicle:
 
     def __init__(self):
         pass
+
+    # Python compares and hashes an EgoVehicle by identity (it defines no __eq__),
+    # so one goes in a set, keys a dict and is found with `in` (#596).
+    def __eq__(self, other: EgoVehicle) -> bool:
+        return self is other
+
+    def __ne__(self, other: EgoVehicle) -> bool:
+        return self is not other
+
+    def __hash__(self) -> int:
+        return id(self)
 
     def _acs_ego_vehicle(self) -> int:
         return 0

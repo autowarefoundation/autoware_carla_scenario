@@ -11,6 +11,10 @@ dependencies = [
     "autoware-carla-scenario",
 ]
 
+[dependency-groups]
+# `uv run pytest` runs tests/test_typecheck.py, the static check of the scenarios.
+dev = ["pytest"]
+
 # This entry point makes the package discoverable: when it is installed,
 # `uv run scenario ...` calls `{{ package_name }}:register` automatically at
 # start-up, which registers the scenario and its conf dir.

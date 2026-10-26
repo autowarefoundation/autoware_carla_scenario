@@ -80,7 +80,7 @@ class GitMapCache:
         _keyword_only(_kw, "GitMapCache.list_files(): refresh")
         raise NotImplementedError()
 
-    def checkout(self, source: MapSource, *_kw, include: List[str] = List[str](),
+    def checkout(self, source: MapSource, *_kw, include: Optional[List[str]] = None,
                  materialise: bool = True, refresh: bool = False) -> CachedRepo:
         _keyword_only(_kw, "GitMapCache.checkout(): include, materialise and refresh")
         raise NotImplementedError()

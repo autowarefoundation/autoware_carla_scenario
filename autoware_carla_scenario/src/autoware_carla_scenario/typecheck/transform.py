@@ -22,6 +22,10 @@ which :func:`transform_source_lines` maps back onto the handler):
   ``@dataclass`` generates besides ``__init__`` are appended after the module
   with ``@extend`` (:func:`_dataclass_dunders`): ``__eq__`` / ``__ne__``,
   ``__hash__`` (``frozen`` or ``unsafe_hash``), ordering (``order=True``).
+* A plain class (no ``__eq__``, plain bases) is given identity ``__eq__`` /
+  ``__ne__`` and ``__hash__`` with ``@extend`` right after it
+  (:func:`_identity_dunders`, #596), as Python's ``object`` compares and
+  hashes it.
 * ``replace(obj, a=x, b=y)`` (``dataclasses.replace``) becomes
   ``replace(obj)._acs_with__a(x)._acs_with__b(y)`` (:func:`lower_replace_calls`):
   each dataclass of the module gets one ``_acs_with__<field>`` method per field
@@ -168,8 +172,11 @@ annotation, which Python ignores, so adding it changes nothing at run time.
 from __future__ import annotations
 
 import ast
+import bisect
 import builtins
 import functools
+import io
+import tokenize
 from collections.abc import Callable, Collection, Iterator, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -218,7 +225,8 @@ PRELUDE = (
     "from autoware_carla_scenario._lists import _acs_list, _acs_base, "
     "_acs_dict_into, _acs_list_into\n"
     "from autoware_carla_scenario._tc import _Required as _acs_Required, "
-    "_acs_Returning, _acs_callable, _acs_tuple, _acs_reduce\n"
+    "_acs_Returning, _acs_callable, _acs_tuple, _acs_reduce, _acs_some, "
+    "_acs_count, _acs_index\n"
     "from enum import IntEnum as _acs_IntEnum, IntFlag as _acs_IntFlag, "
     "StrEnum as _acs_StrEnum\n"
     "from autoware_carla_scenario._exceptions import "
@@ -307,9 +315,16 @@ _UNEXPRESSIBLE = {
     "Literal",
     "Final",
     "NoReturn",
+    "Never",
     "Sized",
     "Hashable",
+    "Container",
+    "Self",
+    "TypeAlias",
 }
+#: ``TypeGuard[X]`` / ``TypeIs[X]``: what a function returns when it tells a
+#: type checker about its argument, a ``bool`` (#514).
+_BOOL_GUARDS = {"TypeGuard", "TypeIs"}
 #: Annotations that wrap another: ``Final[X]`` and ``Annotated[X, ...]`` are
 #: checked as ``X`` (a bare ``Final`` is dropped).
 _WRAPPERS = {"Final", "Annotated"}
@@ -408,9 +423,18 @@ class UndeclaredAttribute:
     name: str
     lineno: int
     suggested_type: str | None = None
+    #: The method that annotates it (``self.x: T = ...``), when one does.
+    annotated_in: str | None = None
 
     def message(self) -> str:
         hint = self.suggested_type or "<type>"
+        if self.annotated_in is not None:
+            return (
+                f"{self.class_name}.{self.name} is annotated in "
+                f"`{self.annotated_in}`; Codon needs it declared in the class "
+                f"body: `{self.name}: {hint}` (a bare annotation, which Python "
+                "ignores)"
+            )
         return (
             f"{self.class_name}.{self.name} is assigned without a type: declare it "
             f"in the class body, e.g. `{self.name}: {hint}` (a bare annotation, "
@@ -426,6 +450,14 @@ class _Edits:
     starts: list[int] = field(default_factory=list)
     edits: list[tuple[int, int, str]] = field(default_factory=list)
     data: bytes = b""
+    #: The positions of the ``@`` tokens and the lines of the NEWLINE tokens
+    #: (logical line ends) of :attr:`data`, tokenized on first use.
+    _tokens: tuple[list[tuple[int, int]], list[int]] | None = field(
+        default=None, repr=False
+    )
+    #: Lines :meth:`drop_decorators` moved: their line after :meth:`apply`
+    #: -> their line before.
+    moves: dict[int, int] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         self.data = b"".join(self.lines)
@@ -458,6 +490,79 @@ class _Edits:
         exactly this span (the first one made on a span otherwise wins)."""
         self.edits = [e for e in self.edits if (e[0], e[1]) != (start, end)]
         self.replace(start, end, text)
+
+    def decorator_lines(self, decorator: ast.expr) -> range:
+        """The lines of *decorator*'s logical line, from its ``@`` to its end.
+
+        Wider than the expression's own lines when the ``@`` or a bracket
+        is on another line (``@(`` / ``deco`` / ``)``, ``@`` and a
+        backslash).
+        """
+        if self._tokens is None:
+            ats: list[tuple[int, int]] = []
+            ends: list[int] = []
+            for token in tokenize.tokenize(io.BytesIO(self.data).readline):
+                if token.type == tokenize.OP and token.string == "@":
+                    ats.append(token.start)
+                elif token.type == tokenize.NEWLINE:
+                    ends.append(token.start[0])
+            self._tokens = (ats, ends)
+        ats, ends = self._tokens
+        # Only brackets, blanks and line continuations come between a
+        # decorator's `@` and its expression: the last `@` before it is its.
+        at = bisect.bisect_left(ats, (decorator.lineno, decorator.col_offset))
+        first = ats[at - 1][0] if at else decorator.lineno
+        last = decorator.end_lineno or decorator.lineno
+        end = bisect.bisect_left(ends, last)
+        return range(first, (ends[end] if end < len(ends) else last) + 1)
+
+    def drop_decorators(
+        self,
+        node: ast.FunctionDef | ast.AsyncFunctionDef,
+        dropped: Collection[ast.expr],
+    ) -> None:
+        """Remove the *dropped* ones of *node*'s decorators (#595).
+
+        Codon's parser refuses a blank or comment-only line inside a
+        decorator list, which blanking a decorator stacked under a kept one
+        leaves.  A dropped decorator above every kept one is blanked (blank
+        lines before the list are fine).  Below the first kept decorator,
+        every line that is not a kept decorator's (a dropped decorator's, a
+        comment, a blank line) is removed, and as many blank lines go above
+        the first kept decorator: the kept decorators move down, contiguous
+        with the ``def``, and the ``def`` and every line after it stay on
+        their lines.  :attr:`moves` records the moved lines, for the
+        origin of each line (:meth:`line_origin`).
+        """
+        ids = {id(d) for d in dropped}
+        kept = [d for d in node.decorator_list if id(d) not in ids]
+        if not node.decorator_list:
+            return
+        first = self.decorator_lines(kept[0])[0] if kept else node.lineno
+        for decorator in node.decorator_list:
+            lines = self.decorator_lines(decorator)
+            if id(decorator) in ids and lines[0] < first:
+                # Up to the line break of its last line: blank lines.
+                start = self.starts[lines[0] - 1]
+                self.replace(start, self.starts[lines[-1]] - 1, "")
+        if not kept:
+            return
+        keep: set[int] = set()
+        for decorator in kept:
+            keep.update(self.decorator_lines(decorator))
+        removed = [line for line in range(first, node.lineno) if line not in keep]
+        for line in removed:
+            self.edits.append((self.starts[line - 1], self.starts[line], ""))
+        if removed:
+            at = self.starts[first - 1]
+            self.edits.append((at, at, "\n" * len(removed)))
+            # The blank lines, then the kept decorators.
+            for line, was in enumerate([*removed, *sorted(keep)], start=first):
+                self.moves[line] = was
+
+    def line_origin(self) -> list[int]:
+        """For each line after :meth:`apply`, the line it comes from."""
+        return [self.moves.get(line, line) for line in range(1, len(self.lines) + 1)]
 
     def apply(self) -> str:
         data = self.data
@@ -637,6 +742,8 @@ def codon_annotation(node: ast.AST, *, class_level: bool = False) -> str | None:
         return codon_annotation(wrapped, class_level=class_level)
     if base in _UNEXPRESSIBLE or (base in _ABSTRACT_GENERICS and not class_level):
         return None
+    if subscript and base.rsplit(".", 1)[-1] in _BOOL_GUARDS:
+        return "bool"
     if base_name in _FROZENSET_NAMES:
         if not subscript:
             return None  # a bare frozenset: the element type is unknown
@@ -1783,6 +1890,7 @@ class _Rewriter(ShadowScopes):
             and bool([*node.args.posonlyargs, *node.args.args])
             and any(_dotted(d) == "classmethod" for d in node.decorator_list)
         )
+        dropped: list[ast.expr] = []
         for decorator in node.decorator_list:
             wrapped = self._functools_name(
                 decorator.func if isinstance(decorator, ast.Call) else decorator
@@ -1792,19 +1900,16 @@ class _Rewriter(ShadowScopes):
             elif wrapped == "cached_property":
                 # Computed once, read as an attribute: a property types the same.
                 self.edits.replace(*self.edits.node_span(decorator), "property")
-            elif wrapped in _FUNCTOOLS_DROPPED:
-                start, end = self.edits.node_span(decorator)
-                # Keep the lines of a decorator broken over several.
-                lines = "\n" * self.edits.text(start, end).count("\n")
-                self.edits.replace(start - 1, end, lines)
             elif (
-                _dotted(decorator) in _DROPPED_FUNCTION_DECORATORS
+                wrapped in _FUNCTOOLS_DROPPED
+                or _dotted(decorator) in _DROPPED_FUNCTION_DECORATORS
                 or _dotted(decorator) in self._dropped_decorators
             ):
-                start, end = self.edits.node_span(decorator)
-                self.edits.replace(start - 1, end, "")  # with its "@"
+                dropped.append(decorator)
             else:
                 self.visit(decorator)
+        # The kept ones stay contiguous with the `def` (#595).
+        self.edits.drop_decorators(node, dropped)
         if classmethod_ and self._class_name is not None:
             self._rewrite_classmethod(node, self._class_name)
         self._rewrite_defaults(node.args, node.body)
@@ -1899,8 +2004,9 @@ class _Rewriter(ShadowScopes):
         """Rewrite an Enum class for the ``enum`` shim; its members, or ``None``.
 
         ``None`` too for an Enum whose value type cannot be told from its
-        members (values of different types, or not literals): it is left as
-        written, and Codon reports it.
+        members (tuples, values of different types, or not literals): it is
+        left as written, and refused at its class line
+        (:func:`enum_value_refusals`, #600).
         """
         bases = [_dotted(b) or "" for b in node.bases]
         enum_base = next(
@@ -1909,36 +2015,12 @@ class _Rewriter(ShadowScopes):
         if enum_base is None or node.keywords:
             return None
         kind = enum_base.rsplit(".", 1)[-1]
-        members: list[tuple[ast.Assign, str, ast.expr]] = []
-        for stmt in node.body:
-            if (
-                isinstance(stmt, ast.Assign)
-                and len(stmt.targets) == 1
-                and isinstance(stmt.targets[0], ast.Name)
-                and not stmt.targets[0].id.startswith("_")
-            ):
-                members.append((stmt, stmt.targets[0].id, stmt.value))
+        members = _enum_members(node)
+        is_auto = _is_auto
 
-        def is_auto(value: ast.expr) -> bool:
-            return isinstance(value, ast.Call) and _dotted(value.func) in _AUTO
-
-        value_type = _ENUM_VALUE_TYPES.get(kind) or next(
-            (b for b in bases if b in _ENUM_MIXINS), None
-        )
+        value_type = _enum_value_type(node, members)
         if value_type is None:
-
-            def literal_type(value: ast.expr) -> str | None:
-                if is_auto(value):
-                    return "int"
-                if isinstance(value, ast.Constant):
-                    name = type(value.value).__name__  # bool is not int here
-                    return name if name in _ENUM_MIXINS else None
-                return None
-
-            kinds = {literal_type(v) for _, _, v in members}
-            value_type = kinds.pop() if len(kinds) == 1 else None
-            if value_type is None:
-                return None
+            return None
         flag = kind in {"Flag", "IntFlag"}
         last = 0
         seen_values: set[str] = set()
@@ -1967,8 +2049,8 @@ class _Rewriter(ShadowScopes):
                     text = str(number)
                 else:
                     text = self.edits.text(*self.edits.node_span(value))
-                if isinstance(value, ast.Constant) and isinstance(value.value, int):
-                    last = value.value
+                if _enum_literal_type(value) == "int" and not is_auto(value):
+                    last = ast.literal_eval(value)
             if number is not None:
                 known[name] = number
                 every |= max(number, 0)
@@ -2783,6 +2865,159 @@ def _class_body_hoists(
     return hoists, refused
 
 
+def _is_auto(value: ast.expr) -> bool:
+    return isinstance(value, ast.Call) and _dotted(value.func) in _AUTO
+
+
+def _enum_members(node: ast.ClassDef) -> list[tuple[ast.Assign, str, ast.expr]]:
+    """The members of an Enum class body: (the assignment, the name, the value)."""
+    members: list[tuple[ast.Assign, str, ast.expr]] = []
+    for stmt in node.body:
+        if (
+            isinstance(stmt, ast.Assign)
+            and len(stmt.targets) == 1
+            and isinstance(stmt.targets[0], ast.Name)
+            and not stmt.targets[0].id.startswith("_")
+        ):
+            members.append((stmt, stmt.targets[0].id, stmt.value))
+    return members
+
+
+def _enum_literal_type(value: ast.expr) -> str | None:
+    """``int``, ``float`` or ``str`` for a member value that is a literal of
+    that type (a signed number, ``-1``, too, and ``auto()``), else ``None``."""
+    if _is_auto(value):
+        return "int"
+    if (
+        isinstance(value, ast.UnaryOp)
+        and isinstance(value.op, (ast.USub, ast.UAdd))
+        and isinstance(value.operand, ast.Constant)
+        and type(value.operand.value) in (int, float)  # bool is not int here
+    ):
+        return type(value.operand.value).__name__
+    if isinstance(value, ast.Constant):
+        name = type(value.value).__name__  # bool is not int here
+        return name if name in _ENUM_MIXINS else None
+    return None
+
+
+def _enum_base_kind(node: ast.ClassDef) -> str | None:
+    """``Enum``, ``IntEnum``, ... for a class deriving from one, else ``None``."""
+    if node.keywords:
+        return None
+    for base in node.bases:
+        name = (_dotted(base) or "").rsplit(".", 1)[-1]
+        if name in _ENUM_BASES:
+            return name
+    return None
+
+
+def _enum_value_type(
+    node: ast.ClassDef, members: list[tuple[ast.Assign, str, ast.expr]]
+) -> str | None:
+    """The type of an Enum's values: its base's (``IntEnum``, ``(str, Enum)``)
+    or that of its literal values, if they all have one; else ``None``."""
+    kind = _enum_base_kind(node)
+    if kind is None:
+        return None
+    bases = [_dotted(b) or "" for b in node.bases]
+    value_type = _ENUM_VALUE_TYPES.get(kind) or next(
+        (b for b in bases if b in _ENUM_MIXINS), None
+    )
+    if value_type is not None:
+        return value_type
+    kinds = {_enum_literal_type(v) for _, _, v in members}
+    return kinds.pop() if len(kinds) == 1 else None
+
+
+def _enum_value_members(
+    node: ast.ClassDef,
+) -> list[tuple[ast.Assign, str, ast.expr]]:
+    """:func:`_enum_members` of the source as written, less the lambdas
+    (``f = lambda self: ...``), which are methods, not members, and which
+    :func:`class_body_lambdas` turns into ``def`` before the Enum is
+    rewritten."""
+    return [m for m in _enum_members(node) if _wrapped_lambda(m[2])[1] is None]
+
+
+def _unchecked_enum(node: ast.ClassDef) -> bool:
+    """Whether *node* is an Enum with members whose value type the check
+    cannot tell (:func:`enum_value_refusals`)."""
+    if _enum_base_kind(node) is None:
+        return False
+    members = _enum_value_members(node)
+    return bool(members) and _enum_value_type(node, members) is None
+
+
+def enum_value_refusals(tree: ast.Module) -> list[tuple[int, str]]:
+    """The Enum classes whose value type the check cannot tell, as (line,
+    message) at the class line (#600).
+
+    The ``enum`` shim types an Enum by its values (``Enum[T]``), which must
+    be literals of one type (``int``, ``float``, ``str`` or ``auto()``) unless
+    the base gives it (``IntEnum``, ``class M(str, Enum)``).  A class with
+    tuple values (``LEFT = (-3.5, "left")`` unpacked into ``__init__``),
+    values of different types, or values that are not literals, would be left
+    as written, and Codon would misread its members as plain values
+    (``'Tuple[float,str]' object has no attribute 'offset'``).  An Enum with
+    no member (a base for others) is left alone.
+    """
+    refused: list[tuple[int, str]] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ClassDef) or not _unchecked_enum(node):
+            continue
+        members = _enum_value_members(node)
+        names = {n for _, n, _ in members}
+        tuples = [n for _, n, v in members if isinstance(v, ast.Tuple)]
+        # A member read by a later one (an alias, `B = A`) is refused by the
+        # class-constant rewrite when it cannot write the value (python_rewrites).
+        others = [
+            n
+            for _, n, v in members
+            if _enum_literal_type(v) is None
+            and not (isinstance(v, ast.Name) and v.id in names)
+        ]
+        kinds = sorted(
+            {k for _, _, v in members if (k := _enum_literal_type(v)) is not None}
+        )
+        if tuples:
+            why = (
+                f"its member `{tuples[0]}` has a tuple value, which the check "
+                "does not model (nor an __init__ that unpacks it)"
+            )
+            fix = (
+                "make the record a @dataclass(frozen=True) or a NamedTuple and "
+                "keep the instances in a module-level dict keyed by a plain "
+                'Enum (`LANES = {Lane.LEFT: LaneInfo(-3.5, "left")}`), or '
+                "use one Enum per field"
+            )
+        elif others:
+            why = (
+                f"the value of its member `{others[0]}` is not an int, float "
+                "or str literal (or auto())"
+            )
+            fix = (
+                "write the literal value (the check does not work out a "
+                "named constant or an expression), or keep the values in a "
+                "module-level dict keyed by the Enum"
+            )
+        elif len(kinds) <= 1:
+            continue
+        else:
+            why = f"its members' values are of different types ({', '.join(kinds)})"
+            fix = "give every member a value of one type"
+        refused.append(
+            (
+                node.lineno,
+                f"Enum {node.name} cannot be checked: {why}. The check types an "
+                "Enum by its values, which must be literals of one type (all "
+                "int, all float, all str, or auto()): "
+                f"{fix}",
+            )
+        )
+    return refused
+
+
 def class_body_refusals(source: str) -> list[tuple[int, str]]:
     """What :func:`hoist_class_bodies` and :func:`class_body_lambdas` cannot
     move or rewrite, and the fields Codon cannot type, as (line, message)."""
@@ -2792,6 +3027,7 @@ def class_body_refusals(source: str) -> list[tuple[int, str]]:
         *lambda_default_refusals(source),
         *bare_collection_refusals(tree),
         *replace_refusals(tree),
+        *enum_value_refusals(tree),
     ]
 
 
@@ -3110,6 +3346,7 @@ def transform_source(
     dropped_decorators: Collection[str] = (),
     init_classes: Collection[str] = (),
     enum_classes: Collection[str] = (),
+    file: str | None = None,
 ) -> str:
     """Rewrite *source* for Codon; the result starts with :data:`PRELUDE`.
 
@@ -3120,9 +3357,10 @@ def transform_source(
     model) that define an ``__init__``, their own or a base's
     (:func:`classes_with_init`): a class of *source* deriving from one
     without an ``__init__`` of its own inherits it (:func:`inherited_inits`).
+    *file* is the module's path, bound to ``__file__`` (#515).
     """
     return transform_source_lines(
-        source, dropped_decorators, init_classes, enum_classes
+        source, dropped_decorators, init_classes, enum_classes, file
     )[0]
 
 
@@ -3131,6 +3369,7 @@ def transform_source_lines(
     dropped_decorators: Collection[str] = (),
     init_classes: Collection[str] = (),
     enum_classes: Collection[str] = (),
+    file: str | None = None,
 ) -> tuple[str, list[int]]:
     """:func:`transform_source`, and the line of *source* each line comes from.
 
@@ -3145,12 +3384,18 @@ def transform_source_lines(
     # Valid Python Codon refuses or crashes on (#376): python_rewrites.py.
     from .python_rewrites import python_rewrites
 
+    # Type-only names, stored exceptions, operator getters (#512-#517): before
+    # the class-body lambdas, which hoist the lambdas it writes.
+    from .typing_rewrites import copy_dunders, typing_rewrites_lines
+
+    # Its decorators moved down to their `def` (#595) map to their lines.
+    source, typed = typing_rewrites_lines(source)
     # Class-body lambdas and method defaults become functions first, so the
     # rewrites see the function (#482); its extra lines map to their origin.
     source, early = class_body_lambdas(source)
     source, ordering = python_rewrites(source)
     source, origin = split_tuple_excepts(source)
-    origin = [early[line - 1] for line in origin]
+    origin = [typed[early[line - 1] - 1] for line in origin]
     source, origin = tuple_named_tuples(source, origin)
     source, origin = hoist_class_bodies(
         source,
@@ -3178,6 +3423,8 @@ def transform_source_lines(
     enum_iteration(tree, edits, own | (model_enum_names() - other))
     repeated_imports(tree, edits)
     lower_replace_calls(tree, edits)
+    # The decorators moved down to their `def` (#595).
+    origin = [origin[line - 1] for line in edits.line_origin()]
     lines = {
         node.name: origin[node.lineno - 1]
         for node in tree.body
@@ -3203,11 +3450,22 @@ def transform_source_lines(
             at_end.append((name, block))
         else:
             after_class[end] = (name, block)
+    # A plain class's identity == and hash (#596) follow it too, so module-level
+    # code and a subclass of the module read them.
+    for name, block in _identity_dunders(tree, exceptions):
+        end = next(
+            n.end_lineno
+            for n in tree.body
+            if isinstance(n, ast.ClassDef) and n.name == name
+        )
+        if end is not None:
+            after_class[end] = (name, block)
     appended = [
         *at_end,
         *_inherited_init_extensions(_inherited_bases(tree, init_classes, exceptions)),
         *_dataclass_dunders(tree, exceptions),
         *_dataclass_replacers(tree, exceptions),
+        *copy_dunders(tree, exceptions),
         *ordering,
     ]
     origin = list(origin)
@@ -3215,11 +3473,20 @@ def transform_source_lines(
         at = edits.starts[end] if end < len(edits.starts) else len(edits.data)
         edits.replace(at, at, block[1:])
         origin[end:end] = [lines[name]] * (block.count("\n") - 1)
-    text = PRELUDE + edits.apply()
+    # Python sets a module's `__file__`, which Codon 0.19 does not (#515): it
+    # is bound on the prelude's last line, before any code of the module and
+    # with no line moved.
+    prelude = PRELUDE if file is None else _with_file(PRELUDE, file)
+    text = prelude + edits.apply()
     for name, block in appended:
         text += block
         origin += [lines[name]] * block.count("\n")
     return text, origin
+
+
+def _with_file(prelude: str, file: str) -> str:
+    """*prelude*, its last line also binding ``__file__`` to *file*."""
+    return f"{prelude[:-1]}; __file__: str = {file!r}\n"
 
 
 def _import_bindings(
@@ -4067,7 +4334,9 @@ def _dataclass_dunders(tree: ast.Module, exceptions: set[str]) -> list[tuple[str
         if options["eq"]:
             same = " and ".join(f"self.{n} == other.{n}" for n in names) or "True"
             method("__eq__", "bool", same)
-            method("__ne__", "bool", "not self.__eq__(other)")
+            # `==`, not `self.__eq__(other)`: Codon refuses the call by name
+            # of an __eq__ overriding a base's identity one (#596).
+            method("__ne__", "bool", "not (self == other)")
             if options["frozen"] or options["unsafe_hash"]:
                 method(
                     "__hash__",
@@ -4094,6 +4363,68 @@ def _dataclass_dunders(tree: ast.Module, exceptions: set[str]) -> list[tuple[str
             out.append(
                 (node.name, f"\n\n@extend\nclass {node.name}:\n" + "".join(lines))
             )
+    return out
+
+
+def _class_level_names(node: ast.ClassDef) -> set[str]:
+    """The methods *node* defines and the names its body assigns
+    (``__hash__ = None``, ``__eq__ = other_eq``)."""
+    names = _defined_methods(node)
+    for stmt in node.body:
+        if isinstance(stmt, ast.Assign):
+            names.update(t.id for t in stmt.targets if isinstance(t, ast.Name))
+        elif isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name):
+            if stmt.value is not None:
+                names.add(stmt.target.id)
+    return names
+
+
+def _identity_dunders(tree: ast.Module, exceptions: set[str]) -> list[tuple[str, str]]:
+    """Identity ``==``, ``!=`` and hash for the plain classes of a module (#596).
+
+    A Python class that defines no ``__eq__`` compares and hashes by identity
+    (``object``'s), so ``a in npcs``, ``npcs.remove(a)``, ``{t}`` and
+    ``{t: 1}`` work; Codon gives a class neither.  Each top-level class whose
+    bases are plain (none, ``object``, ``ABC``) and which does
+    not define ``__eq__`` is given ``__eq__`` / ``__ne__`` (``self is other``)
+    and ``__hash__`` (``id(self)``), with ``@extend`` right after the class, so
+    a subclass of the module inherits them; a method the class defines itself
+    (``__hash__`` alone) is kept.  Left as they are: a class that defines
+    ``__eq__`` (Python makes it unhashable unless it defines ``__hash__``
+    too), a ``@dataclass`` with ``eq=True`` (:func:`_dataclass_dunders`), an
+    exception, an Enum, a NamedTuple, a Protocol, and a class with any other
+    base (a class of the module inherits its root's; a framework class, the
+    model's).  Each is (the class, the lines).
+    """
+    out: list[tuple[str, str]] = []
+    for node in tree.body:
+        if not isinstance(node, ast.ClassDef) or node.name in exceptions:
+            continue
+        if node.keywords or any(
+            _dotted(d) == "tuple" for d in node.decorator_list
+        ):  # a metaclass, a NamedTuple made a @tuple
+            continue
+        if not all(_dotted(b) in _PLAIN_BASES for b in node.bases):
+            continue
+        options = _dataclass_options(node)
+        if options is not None and options["eq"]:
+            continue
+        own = _class_level_names(node)
+        if "__eq__" in own:
+            continue
+        lines = [
+            f"    def __eq__(self, other: {node.name}) -> bool:\n"
+            "        return self is other\n",
+        ]
+        if "__ne__" not in own:
+            lines.append(
+                f"    def __ne__(self, other: {node.name}) -> bool:\n"
+                "        return self is not other\n"
+            )
+        # A @dataclass(eq=False, unsafe_hash=True) is hashed by its fields.
+        if "__hash__" not in own and not (options and options["unsafe_hash"]):
+            lines.append("    def __hash__(self) -> int:\n        return id(self)\n")
+        out.append((node.name, f"\n\n@extend\nclass {node.name}:\n" + "".join(lines)))
     return out
 
 
@@ -4933,8 +5264,8 @@ def undeclared_attributes(
 
     found: list[UndeclaredAttribute] = []
     for node in tree.body:
-        if not isinstance(node, ast.ClassDef):
-            continue
+        if not isinstance(node, ast.ClassDef) or _unchecked_enum(node):
+            continue  # an Enum refused as a whole (enum_value_refusals)
         bases, _ = classes[node.name]
         annotated = any(
             isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name)
@@ -4978,6 +5309,9 @@ def undeclared_attributes(
                                 target.attr,
                                 target.lineno,
                                 annotation or _suggest_type(value),
+                                method.name
+                                if isinstance(stmt, ast.AnnAssign)
+                                else None,
                             )
                         )
     return found

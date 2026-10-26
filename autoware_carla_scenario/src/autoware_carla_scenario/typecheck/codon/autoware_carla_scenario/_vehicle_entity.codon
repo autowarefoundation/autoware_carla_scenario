@@ -76,6 +76,17 @@ class VehicleEntity:
     def __init__(self, config: VehicleEntityConfig):
         pass
 
+    # Python compares and hashes a VehicleEntity by identity (it defines no __eq__),
+    # so one goes in a set, keys a dict and is found with `in` (#596).
+    def __eq__(self, other: VehicleEntity) -> bool:
+        return self is other
+
+    def __ne__(self, other: VehicleEntity) -> bool:
+        return self is not other
+
+    def __hash__(self) -> int:
+        return id(self)
+
     @property
     def role_name(self) -> str:
         raise NotImplementedError()

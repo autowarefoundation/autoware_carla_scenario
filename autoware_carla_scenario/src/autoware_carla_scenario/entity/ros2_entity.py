@@ -30,7 +30,7 @@ from __future__ import annotations
 import logging
 import math
 import threading
-from typing import TYPE_CHECKING, List, Optional, Tuple
+from typing import TYPE_CHECKING, Callable, List, Optional, Tuple
 
 from ..constants import FIXED_DELTA_SECONDS, US_PER_S
 from ..debug_markers import DebugMarkers, plan_markers
@@ -48,7 +48,7 @@ from ..ros2.commands import (
 )
 from ..ros2.config import Ros2EgoConfig
 from ..ros2.transport import CameraFrame, Ros2EgoTransport
-from ..sensor.carla_camera import CarlaCameraSensor, CarlaCameraSensorConfig
+from ..sensor.carla_camera import CarlaCameraSensor
 from ..utils.powertrain import ChaosPowertrain
 from ..utils.turn_indicator import (
     autoware_report,
@@ -215,17 +215,15 @@ class Ros2EgoEntity(ExternallyDrivenEgo):
         self._open = True
         self._turn_command = None
         self._transport.publish_state(self._state(world, actor)[0])
-        if TYPE_CHECKING:
-            # The cameras' listener (ros2.camera) is outside the static check.
-            pass
-        else:
-            for index, camera in enumerate(self._config.cameras):
-                sensor = _publishing_camera(camera.to_sensor_config(), self, index)
-                sensor.attach(world, actor)
-                self._cameras.append(sensor)
-                logger.info(
-                    "Publishing camera %r on %s", camera.logical_id, camera.topic
-                )
+        # The actor, not narrowed by the check above for the camera's attach().
+        mount: "carla.Actor" = actor
+        for index, camera in enumerate(self._config.cameras):
+            sensor = CarlaCameraSensor(
+                camera.to_sensor_config(), self._frame_publisher(index)
+            )
+            sensor.attach(world, mount)
+            self._cameras.append(sensor)
+            logger.info("Publishing camera %r on %s", camera.logical_id, camera.topic)
 
     def on_tick(self, world: "carla.World", elapsed: float) -> None:
         """Publish the ego's state, take the commands, and apply the one that drives."""
@@ -289,6 +287,14 @@ class Ros2EgoEntity(ExternallyDrivenEgo):
             except Exception:  # noqa: BLE001 - teardown must not raise
                 logger.exception("Failed to close the ROS 2 transport")
         self._open = False
+
+    def _frame_publisher(self, index: int) -> Callable[["carla.Image"], None]:
+        """The listener of camera *index*: it hands each frame to :meth:`_publish_frame`."""
+
+        def publish(image: "carla.Image") -> None:
+            self._publish_frame(index, image)
+
+        return publish
 
     def _publish_frame(self, index: int, image: "carla.Image") -> None:
         """A published camera's listener: hand its frame to the transport.
@@ -477,15 +483,6 @@ def _steering_tire_angle(actor: "carla.Actor") -> float:
     right = float(actor.get_wheel_steer_angle(wheels.FR_Wheel))
     # CARLA reports degrees, positive to the right.
     return -math.radians(0.5 * (left + right))
-
-
-def _publishing_camera(
-    config: CarlaCameraSensorConfig, entity: Ros2EgoEntity, index: int
-) -> CarlaCameraSensor:
-    """A camera that publishes each frame through *entity* (:mod:`..ros2.camera`)."""
-    from ..ros2.camera import PublishingCamera  # noqa: PLC0415
-
-    return PublishingCamera(config, entity, index)
 
 
 def _cyclone_transport(config: Ros2EgoConfig) -> Ros2EgoTransport:

@@ -35,9 +35,17 @@ uv run scenario-check scenario='lane_change/*' scenario.timeout_seconds=20
 ```
 
 `scenario-check` composes each config exactly as the runner does, so the same
-overrides apply. It exits with 0 when every scenario passed, 1 when one
-failed, and 2 when there is no Codon compiler. A scenario package can make
-the same check in its own tests, with no simulator:
+overrides apply. `scenario='*'` is every config, like no `scenario=`; a
+package author checks only theirs (`scenario='my_package/*'`, about 15 s per
+config), as every built-in config takes minutes. It exits with 0 when every
+scenario passed, 1 when one failed, and 2 when it could not run: there is no
+Codon compiler, no config matches `scenario=` (the message lists the
+configs), or an override names a key the config does not have
+(`scenario.timout_seconds=3` is reported with the closest key,
+`scenario.timeout_seconds`; `+key=value` adds a new one; `HYDRA_FULL_ERROR=1`
+shows the traceback). A scenario package
+can make the same check in its own tests, with no simulator (the template and
+`scenario-new` packages have one in `tests/test_typecheck.py`):
 
 ```python
 from autoware_carla_scenario.typecheck import typecheck_scenario
@@ -158,6 +166,14 @@ scenario.setup()
 scenario.is_done()
 ```
 
+A value for a `bool`, `int`, `float` or `str` field, at the top level as in a
+nested dataclass, is first passed to a function that takes that type only,
+on a line of its own (#598): Codon converts any value with `__bool__` that is
+assigned to a `bool` field, so `scenario.enabled=no` (which Hydra, like a
+quoted `"false"` in YAML, reads as the str `"no"`) would otherwise pass, and
+the feature would be on. It is refused at `scenario.enabled`, whether the
+field has a default or not. An int for a `float` field still passes.
+
 Codon checks a function only when something calls it. The program checks
 everything `setup()` and `is_done()` reach: the calls into the framework, the
 scenario's own helpers, and, through `register_pass_condition()` and the
@@ -228,6 +244,54 @@ an abstract one (`@abstractmethod`) or one that only raises
 also checks what the scenario's own `setup()` and `is_done()` return, after
 the module checks, for one the appended calls leave out.
 
+**A wrong call or `return` is reported in the author's terms** (#527, #528,
+#529, #530). Codon says `no function 'SetSpeedAction.__init__' with arguments
+(SetSpeedAction, EntityRole, str, str)` for a call it cannot match, and
+`'float' does not match expected type 'str'` (the two types swapped) for a
+`return` of the wrong type. The check reads the call or the `return` in your
+file, binds it to the real Python signature of the class, method or function,
+and says what is wrong, at the argument:
+
+```text
+scenario.py:28:62: error: SetSpeedAction(): target_speed_kmh: expected float, got str
+scenario.py:28:60: error: TimeoutCondition(): 'lable' is an invalid keyword argument (did you mean 'label'?); TimeoutCondition takes (timeout_seconds: float = 60.0, *, label: str)
+scenario.py:36:9: error: val() returns str, but the function is declared -> float
+```
+
+A message that cannot be tied to a parameter is `X() takes (...); got
+(EntityRole, str, label=str)`, with `self` dropped and a keyword argument
+marked. A static string type prints as `'str'` (not `''3''`), the frames of
+the model's own helpers (`_keyword_only`, `_required_str`, `actions.codon`)
+are left out of the trace, and a literal `None` given where a type is
+expected is told that the parameter does not take `None` rather than to test
+the value.
+
+Some common slips get a hint after Codon's message (#599), each only where
+both the message and your source at the line say it is that slip:
+
+| You write | Codon says | The hint |
+| --- | --- | --- |
+| `range(len(ids) / 2)` | `range() cannot be called with (float)` | `range()` takes ints, and `/` always gives a float: divide with `//`, or convert with `int()` |
+| `ids[len(ids) / 2]` | `__getitem__() cannot be called with (float)` | an index must be an int: divide with `//` |
+| `",".join(ids)` of a `list[int]` | `'Generator[int]' does not match expected type 'Generator[str]'` | `",".join(map(str, ids))` or `",".join(str(v) for v in ids)` |
+| `self.register_pre_tick(lambda: None)` (also `register_post_tick`, `register_init`, a `register_measure` read function, a `register_cover` expression, or a `def` of no parameter) | `a lambda() takes 0 arguments (1 given)` | the callback is called with the world: `lambda world: ...` |
+| `self.register_measure("flag", lambda w: True)` | `expected a float (or an int)` | names the measure and what its read function returns (a bool is no number to a measure: `1.0 if ... else 0.0`, or a cover) |
+
+A `range()` or index of a float without a `/` written there, and a `join` of
+something that is not a call of `join` at that column, get none.
+
+Two declared return types Codon does not enforce are refused from the syntax,
+before Codon runs (#529): a `return` of a literal, an f-string or a display in
+a function declared `-> bool` (Codon converts it to a `bool`; Python returns
+the `str`), and a function declared to return a type other than `None`,
+`Optional[...]`, `Any` or `NoReturn` whose body can run off its end. The flow
+analysis follows `if`, `while`, `for`, `try`, `with` and `match`; a `while
+True` without a `break`, a `raise`, `assert False`, `sys.exit()` and a call of
+a function declared `NoReturn` end a path, and a body that is only `...`,
+`pass` or a docstring (an abstract method, an overload) is not checked. A
+returned expression whose type is not obvious from its syntax
+(`return some_str`) is not judged.
+
 **Then mypy checks that an `Optional` is tested for `None` before it is
 used** (#239). Codon unwraps an `Optional[T]` implicitly wherever a `T` is
 needed, so `cfg.min_speed_kmh / 3.6` of a `float | None` field compiled, and
@@ -291,6 +355,138 @@ Narrowed code passes (`if isinstance(p, Lanelet2Pose): p.lanelet_id`), and
 so does the union passed on where the union is taken
 (`TrajectoryVertex(v.position, advance=v.advance)`, a `TrajectoryPosition`
 parameter).
+
+**A field of a frozen dataclass of your own is read-only** (#567). Codon compiles
+a frozen dataclass as an ordinary class, so mypy's verdict is used: `p.x = 2.0`,
+`p.x += 1.0`, `self.x = ...` in a method of the class, a loop variable's field
+and a frozen subclass's field are refused as `Pt is a frozen dataclass; use
+dataclasses.replace(x, x=...)`, where the receiver's type is known to mypy (a
+value of unknown type, `Any`, is not). `dataclasses.replace` and
+`object.__setattr__(self, ...)` in `__post_init__` stay valid.
+The class is found by its name: a name is treated as a frozen dataclass only
+where every class of that name in the scenario's modules is one (a same-named
+plain class with a read-only property is left alone, at the cost of a missed
+frozen assignment). The decorator may be `@dataclass(frozen=True, ...)`,
+`@dataclasses.dataclass(frozen=True)` or an aliased import. This rests on
+mypy, as the None check does: without it the check warns `the None check did
+not run` and a frozen assignment is not reported. `setattr(p, "x", 1)` is not
+caught.
+
+**`bytes` and `str` do not mix** (#574). Codon's `bytes` is a `str`, so
+`b"x" + "y"`, `"sent " + name.encode()`, a `bytes` returned for a `-> str`,
+passed to a `str` parameter or assigned to a `str`, `"x" in raw` and
+`raw == "ab"` compile, and Python raises `TypeError` (or the comparison is
+always `False`). They are refused with mypy's verdict, only where the offending
+pair is exactly `bytes` and `str`: `bytes and str do not mix in Python: decode
+with .decode() / encode with .encode()`. A `str | bytes` union, a `bytearray`
+and every other incompatible type are left alone, and `b + b`, `s + s` and
+`.encode()` used as bytes stay valid.
+
+**A comparison that is always `False` is refused** (#575). The None check runs
+mypy with `--strict-equality` and keeps its `comparison-overlap` findings: an
+`Enum` member compared with its raw value (`Color.RED == "red"`, `mode == 1`,
+`mode in (1, 2)`) or with a member of another enum is `False` in Python, and
+Codon compiles it. The advice is `an Enum member never equals its raw value:
+compare with Color.RED, or use Color.RED.value`. Only the findings with an
+enum as an operand are kept, not every `comparison-overlap`: mypy also reports
+two different literals (`MODE: Final = 1` and `if MODE == 2`), a deliberate
+switch. The enum is found among the classes of the scenario's own modules (an
+enum imported from elsewhere is not recognised, so its non-literal comparisons
+are missed). mypy skips a class that defines `__eq__`, and `IntEnum`, `StrEnum` and `(str, Enum)` overlap their raw
+value in Python as well, so `Level.LOW == 1` and `Phase.GO == "go"` are valid.
+`Color.RED.value == "red"` is the valid spelling. A member written out as a
+literal (`Level.LOW == 1`) is judged by mypy on identity, so it is kept only for
+a plain `Enum` / `Flag` defined in the scenario's own modules, and two members
+of one enum (`Color.RED != Color.BLUE`) are not a comparison with a raw value. The flag adds no other
+error, so the None check's other findings are unchanged; the framework's
+modules and the built-in scenarios have none of these comparisons. Like the
+rest of this section it rests on mypy.
+
+**A string formatting Python fails on is refused** (#589). The None check
+keeps mypy's `str-format` findings of a `str.format` call or a `%` on a
+literal format string where Python raises at the call: a conversion the value
+does not take (`"{:d} km/h".format(speed)` for a `float` and `"{:.2f}".format(name)`
+for a `str` raise `ValueError`, `"%d km/h" % name` and `"%x" % speed` raise
+`TypeError`), too few or too many arguments (`"%s %s" % (name,)`,
+`"{} {}".format(name)`), a missing named field or mapping key, an unknown
+format character or conversion (`"%q"`, `"{!x}"`), a malformed spec
+(`"{:abc}"`, an unmatched `{`), and mixing automatic and manual field
+numbering. Codon formats with its own rules and compiles all of them. The
+advice is `Python raises ValueError, TypeError, IndexError or KeyError on this
+format string with these values (...); convert the value first (int(x),
+str(x)) or use "{}" / "%s"`. `"%d" % speed` (a `float`) and `"{:.2f}".format(n)`
+(an `int`) are valid, as in Python. A conversion the value does not take is
+kept only for a built-in type that fails for every value (`str`, `float`,
+`None`, `bytes`, `complex`, a `list`, ...): mypy does not count a class's
+`__index__` (`"%x" % obj` runs) or a `__getitem__` without `keys`
+(`"%(k)s" % obj` runs), and refuses `"{:.2f}"` of a `complex` or a
+`Fraction`, which run. Too many arguments is kept only for a `%` whose right
+operand is a tuple display or a constant: `"{}".format(a, b)` ignores the
+extra argument, and `"abc" % d` formats no key of a dict (or of a list, or
+bytes). An unknown spec is kept where the Python running the check refuses
+it (`"{:z.1f}"` runs on 3.11). Three more of mypy's `str-format` messages are
+not kept, because mypy gives them to valid code as well: `Numeric flags are
+only allowed for numeric types` (`"{:05}".format(name)` runs; `"{:+}".format(name)`
+does not, and the message does not say which flag), `Syntax error in format
+specifier` and the field-accessor ones (`"{0[my key]}".format(d)` and
+`"{0['k']}".format(d)` index `d` with `"my key"` and `"'k'"`). An f-string's
+spec (`f"{speed:d}"`) is not checked: mypy does not check it, and rewriting it
+into a `.format` call for mypy would move the columns mypy reports. Like the
+rest of this section it rests on mypy.
+
+**Typing contracts you declared must hold** (#577). Python mostly does not
+enforce these and Codon does not read them, so mypy's verdict is used, each
+kept only on its exact code and message (no other `misc`, `override`, `index`
+or `attr-defined` error is a finding; Codon reports attribute errors itself):
+
+- **`Final` assigned again** (`MAX_SPEED: Final = 30.0`, then `MAX_SPEED = 40.0`,
+  `self.LIMIT = 40.0`, `Cls.LIMIT = 1.0` or a `Final` local rebound): `a name
+  declared Final is bound once; ...`. Bind a new name or drop `Final`.
+- **A `ClassVar` assigned through an instance** (`self.count += 1`,
+  `c.count = 5`): `a ClassVar is shared by the class; ...`. Python creates a
+  shadowing instance attribute and Codon treats the annotated name as an
+  instance field, so what runs can differ. Assign through the class
+  (`Cls.count += 1`) or drop `ClassVar`.
+- **A method incompatible with the one it overrides**: a narrowed argument
+  type, a different return type, a required parameter added, or a parameter
+  removed (`the override must accept what the overridden method accepts ...`).
+  This covers the framework's hooks too: `BaseScenario.is_done(self) -> bool`
+  overridden as `is_done(self, strict: bool)` is refused, since the framework
+  calls it with the base signature. An extra parameter with a default, or a
+  wider argument type, is fine, and `# type: ignore[override]` on the `def`
+  line (mypy's own) silences it. The dunder methods are not checked
+  (`__eq__(self, other: Pt)` is common and benign), nor is a method overriding
+  `object`'s. The built-in scenarios and the template produce none.
+- **A `Mapping`, `Sequence` or `AbstractSet` mutated** (`m["k"] = 1`, `del m[k]`,
+  `s.append(3)`, `s.sort()`, `m.update(...)`, `a.add(1)`): `... is read-only
+  by its annotation; copy it first ...`. Only an attribute that mutates
+  (`append`, `extend`, `insert`, `pop`, `remove`, `sort`, `reverse`, `clear`,
+  `update`, `setdefault`, `popitem`, `add`, `discard`, the set `*_update`
+  methods, `__delitem__`) on a receiver typed exactly as one of those three
+  counts; a typo (`s.appnd`) or a missing attribute of another type is not
+  reported here. Import them from `typing` or `collections.abc` (read as
+  `typing`'s, #586; its `Set` is `AbstractSet`): the check is the same.
+
+**Not checked: a name bound on one path only** (#576). Python raises
+`UnboundLocalError` for `if c: y = 1` followed by `use(y)`, and mypy reports it
+only with `--enable-error-code possibly-undefined`. That code is not enabled:
+mypy's flow analysis cannot see that the branch that binds a name and the
+branch that reads it test the same condition (`if x is not None: v = ...`
+then `if x is not None: use(v)`), nor that a `for` over a non-empty constant
+runs, so valid code is refused and the cure is to restructure correct code.
+Run over the framework's 313 modules it reports 15 times in 11 modules: 9 are
+a condition tested twice or a `try`/`with` that binds on every path that
+reads, 4 are a loop mypy cannot see always binds (a `for` over a non-empty
+constant, a `for`/`break`/`else`), and 2 are latent edge cases in the
+framework (an unbound `exit_code` when `server.cooldown_max_retries` is
+negative, and an unbound `port_file` in `slurm/worker.py`'s `finally` when
+`layout.task_port` raises after the port slot was taken), not scenario
+patterns. Probes of
+scenario-style branches showed the same: `if/else`, an exhaustive enum
+`if/elif`, `try`/`except` that raises or returns, `match` with a default and
+`for/else` pass, but a loop variable read after a `for` and a guard tested
+twice are refused. Bind the name before the branch when you mean to read it
+later.
 
 **The CARLA API's `Optional` results are checked too** (#267).
 typesafe_carla's CPython package is a prebuilt extension with no `.pyi` and
@@ -447,6 +643,18 @@ and `Measure` is defined there too, so `BaseScenario.measures` can return a
 function of its exact type only, and Codon 0.19 crashes on any other. `set_measured_scenario()` takes a scenario of any
 `BaseScenario` subclass or `None`, which Python annotates
 `Optional[BaseScenario]`: Codon's `Optional` takes no subclass.
+
+`register_pre_tick()`, `register_post_tick()` and `register_init()` take an
+`Optional` action or callable (#537): Codon does not narrow an `Optional`
+after `if a is not None:`, so the value registered there is still one, and the
+model unwraps it (`None` itself is refused). A reader that is `maybe_float or
+0.0` is a `Union` for Codon and passes the reader check (#538). An `Optional`
+of a subclass held where its base is declared (`c: Optional[BaseCondition] =
+ElapsedTimeCondition(...)`, or an `Optional[BaseCondition]` helper parameter)
+is Codon's to refuse, in the scenario's own code (#541): the message says to
+declare it without `Optional`. `to_lanelet2()` is one untyped definition, as
+`to_carla_world()` is, because Codon tries only the last of two typed
+overloads; `test_typecheck_model.py` fails on a model function defined twice.
 
 An actor is checked by kind for the same reason (#278).
 `follow_with_spectator()` and `log_actor_position()` take a getter Python
@@ -844,6 +1052,72 @@ scenario has to do itself:
   ```text
   scenario.py:34: error: GapTracker._samples is assigned without a type: declare it in the class body, e.g. `_samples: list[...]` ...
   ```
+
+  **And assign each attribute you declare** (#588). Codon gives every field
+  its zero value when the object is built, so a declared attribute nothing
+  assigns reads as `0` (or `""`, an empty list) in the check, and Python
+  raises `AttributeError` at its first read. The check refuses a bare
+  class-level annotation (no default; not a dataclass, `NamedTuple`,
+  `TypedDict` or `Protocol` field, nor a `ClassVar`) that a method of the
+  class or of a subclass reads (`self._count`, `self._count += 1`: an
+  augmented assignment reads first) when nothing assigns it, at the
+  annotation:
+
+  ```text
+  scenario.py:41: error: CountCondition._count is declared but never assigned: Codon zero-initialises it, and Python raises AttributeError where a method reads self._count; assign self._count in CountCondition.__init__, or give it a default (_count: ... = <value>)
+  ```
+
+  The rule is conservative: the attribute counts as assigned when any
+  module of the scenario stores an attribute of that name, on any object
+  and in any form (`self._count = 0`, `self._count: int = 0`, `self.a,
+  self._count = ...`, `setattr(self, "_count", 0)`, `object.__setattr__(self,
+  "_count", 0)`, `other._count = 0`), when a framework base assigns it (the
+  base's source, or the framework assigning it from outside), and when the
+  class or a base gives it a value (a class attribute, a property). A class
+  that assigns attributes by a computed name (`setattr(self, name, v)`,
+  `self.__dict__`, `vars(self)`), defines `__getattr__`, or derives from a
+  class outside the scenario, the framework and the built-ins is left alone.
+
+- **Give a local its type at its first assignment.** Codon fixes the type of
+  an unannotated local where it is first assigned; Python and mypy let it
+  widen later. Two common patterns are refused:
+
+  - A float accumulator started at an int literal (`total = 0`, then
+    `total += v` with a float `v`), or a conditional expression with an int
+    literal branch (`s = v if v is not None else 0` with `v: float | None`).
+    Write `0.0`. Codon names neither the first assignment nor the literal, so
+    the check adds them (#583):
+
+    ```text
+    scenario.py:74:9: error: 'float' does not match expected type 'int': Codon fixes the type of the local `total` at its first assignment, `total = 0` on line 72, which makes it an int: write `total = 0.0` to store a float in it
+    scenario.py:72:9: error: 'Optional[float]' does not match expected type 'Optional[int]': Codon fixes the type of the local `s` at its first assignment (here), a conditional expression whose int literal branch `0` makes it an int: write `0.0`
+    ```
+
+    Codon reports a float passed to an `int` parameter in the same words, so
+    when the stored value holds a call (`k = half(y)`), the hint begins "if
+    the float is the value stored in `k` here".
+
+  - A local first assigned `None` and rebound later without an annotation,
+    as in a running minimum (`best = None`, then `best = x` in a loop).
+    Annotate it: `best: float | None = None`. Without the annotation, Codon
+    0.19 either refuses the rebinding (`'Optional[float]' does not match
+    expected type 'Optional[NoneType]'`, which the check completes with the
+    `= None` line and the annotation) or crashes with no location at all
+    (#584). After such a crash the check keeps the crash and adds, at its
+    `= None` line, each unannotated local of the checked modules that is first
+    bound to `None` and rebound, as a likely cause. The type comes from what
+    the local is rebound to where the source says it plainly (a literal, an
+    annotated parameter, the element of an annotated list it loops over);
+    otherwise it is written `<T>`:
+
+    ```text
+    error: Codon failed without a diagnostic: exit status -11
+    scenario.py:72: error: Codon crashed (exit status -11); a likely cause: Codon fixes the type of the local `best` at its first assignment, `best = None` on line 72, and cannot widen it when it is rebound (line 75): annotate it: `best: float | None = None`
+    ```
+
+    Codon compiles some of these as written (a `None` first binding read
+    only after an `is None` test), so a local named after a crash is a
+    candidate, not a verdict: the crash may have another cause.
 - **Write the element types of a class attribute** (#482): `xs: list[int] =
   field(default_factory=list)`, `d: dict[str, float]`, `ids: set[int]`,
   `xy: tuple[float, float] = (0.0, 0.0)` or `tuple[X, ...]`. Codon types a
@@ -892,6 +1166,30 @@ scenario has to do itself:
   A class only derived from, such as an abstract base of the scenario's own
   conditions with an `@abstractmethod` of its own, is never called and may
   stay abstract.
+- **Call the framework base's `__init__` from yours** (#587). A scenario,
+  condition, action or entity whose `__init__` never calls
+  `super().__init__(...)` compiles, since Codon zero-initialises what the
+  base would set, and Python raises `AttributeError` when the runner reads
+  `condition.label` or the scenario's `ego_config`. The check refuses such an
+  `__init__` at its `def` line, naming the base and what its `__init__` sets:
+
+  ```text
+  scenario.py:52: error: LateCondition.__init__ never calls BaseCondition.__init__, which sets label, _last_satisfied, _last_message on self: Codon zero-initialises them, and Python raises AttributeError where the framework reads them; call super().__init__(...) in LateCondition.__init__
+  ```
+
+  The bases are the framework's classes after yours in the method resolution
+  order whose own `__init__` (written, or the one `@dataclass` generates)
+  assigns an attribute of `self`; a base whose `__init__` assigns nothing,
+  a class with no framework base, and an `__init__` that itself assigns
+  every attribute those bases' would, are left alone. So is a subclass of
+  your own condition that defines no `__init__`; one that defines its own
+  and does not call `super().__init__` skips the framework's too, through
+  yours, and is refused. Any mention of `__init__` in the body counts as the
+  call, on any path (`super().__init__(...)`, `super(Cls, self).__init__(...)`,
+  `BaseCondition.__init__(self, ...)`, inside an `if` or a `try`), as does a
+  call of a method of `self` when a method of the class calls the base's
+  `__init__`: the check does not follow paths. With `@overload` stubs, the
+  last `def __init__`, the one Python binds, is the one checked.
 - **Pass numbers of the declared type.** An `int` is accepted for a `float`,
   but not inside a container: a `list[float]` parameter wants `[1.0, 2.0]`.
   YAML values are converted for you.
@@ -961,7 +1259,15 @@ scenario has to do itself:
   (`goal: Goal`) holds one at run time unless the config's `__post_init__`
   turns it into a `Goal`, as the built-in configs do for their NPC lists.
   The check builds the config the same way and refuses an unconverted
-  mapping at its `scenario.<key>`.
+  mapping at its `scenario.<key>`. The same goes for an Enum field (YAML
+  gives its name or value as a `str`) and a tuple field (YAML gives a
+  list): they compile when the `__post_init__` converts them
+  (`self.mode = Mode(self.mode)`), and are refused at `scenario.<key>`
+  when it does not. A bad value inside a nested list is refused at its own
+  field, e.g. `scenario.legs[1].speed`.
+  A config that raises when built (a `__post_init__` that rejects a value, a
+  name `Mode(...)` does not know) fails the check with the exception, as it
+  stops the run.
 
 - **Annotate every parameter of every function and method**, helpers and
   hook overrides included. Every function of the scenario's modules is
@@ -1114,14 +1420,36 @@ Two things Python does that Codon 0.19 does not are filled in for you:
     appends `==` and `!=` (`eq=True`, the default), `<`, `<=`, `>` and `>=`
     (`order=True`) and `hash()` (`frozen=True`, or `unsafe_hash=True`) after
     the module, comparing the fields in order (a dataclass base's first;
-    `field(compare=False)`, `ClassVar` and `InitVar` are left out). A method
+    `field(compare=False)` and `ClassVar` are left out; `InitVar` and
+    `KW_ONLY` cannot be imported in the check, see "Standard library names
+    Codon lacks"). A method
     the class defines itself is kept. This holds for a dataclass whose bases
     are dataclasses of the same module (or none): one deriving from a class
     the check cannot see the fields of, such as a framework dataclass, gets
-    none, and `==` on it is refused. `eq=False` (identity comparison) is not
-    modelled either: write `a is b`. Python refuses `<` without `order=True`
-    and `hash()` of a non-frozen dataclass, and so does the check, with a
-    hint naming the flag.
+    none, and `==` on it is refused. `eq=False` compares and hashes by
+    identity, as a plain class does (below). Python refuses `<` without
+    `order=True` and `hash()` of a non-frozen dataclass, and so does the
+    check, with a hint naming the flag.
+  - A plain class (one that does not define `__eq__`) compares and hashes by
+    identity, as Python's `object` does (#596): `a in npcs`,
+    `npcs.remove(a)`, `a == b`, `{t}`, `{t: 1}` and `dict[Npc, float]`
+    compile. The check gives each top-level class of the checked modules
+    whose bases are plain (none, `object`, `ABC`) `__eq__` / `__ne__`
+    (`self is other`) and `__hash__` (`id(self)`), with `@extend` right
+    after the class, so module-level code and the module's subclasses have
+    them; a `__hash__` (or `__ne__`) the class defines is kept, and a
+    `@dataclass(eq=False, unsafe_hash=True)` keeps the hash of its fields.
+    A class deriving from a framework class gets the framework model's:
+    `BaseCondition`, `BaseAction`, `VehicleEntity`, `PedestrianEntity` and
+    `EgoVehicle` compare and hash by identity in the model, as in Python
+    (`{TimeoutCondition(1.0, label="a")}` compiles). Enums, named tuples,
+    exceptions, protocols and a class with a metaclass get nothing.
+    A class that defines `__eq__` and not `__hash__` is unhashable in Python
+    (it sets `__hash__ = None`), and the check refuses a set of them, or a
+    dict keyed by one, with a hint to define `__hash__`. The gap: such a
+    class *deriving* from a plain class of the module (or from a framework
+    class above) inherits the identity hash in the check, so a set of them
+    compiles there and raises `TypeError` in Python.
   - `dataclasses.replace(obj, a=x, b=y)` is checked as the typed copy it is
     (#487): the check appends to each dataclass of the module one
     `_acs_with__<field>` method per field the constructor takes, and writes
@@ -1158,6 +1486,17 @@ Two things Python does that Codon 0.19 does not are filled in for you:
     **not** an `int` or a `str` otherwise: passing it to an `int` / `str`
     parameter or doing arithmetic on it (`M.A + 1`) is refused with a hint.
     Write `M.A.value`.
+  - An enum is typed by its members' values, which must be literals of one
+    type: all `int` (a signed one, `LEFT = -1`, too), all `float`, all `str`,
+    or `auto()`, unless the base gives the type (`IntEnum`, `class M(str,
+    Enum)`). An enum whose values are tuples (`LEFT = (-3.5, "left")`,
+    unpacked into an `__init__` that sets `self.offset`), of different types
+    (`A = 1`, `B = "b"`), or not literals (`A = WIDTH`, `A = 2 * WIDTH`, `A =
+    True`) is refused at its class line (#600), with what to write instead:
+    for a record per member, a `@dataclass(frozen=True)` or a `NamedTuple`
+    and a module-level dict keyed by a plain enum (`LANES = {Lane.LEFT:
+    LaneInfo(-3.5, "left")}`), or one enum per field. An enum with no member
+    (a base for others) is not refused.
   - A `class Pt(typing.NamedTuple)` is checked as a Codon `@tuple` class: its
     fields, defaults and methods, `==`, ordering, `hash()`, iteration and
     `len()` work. Codon indexes and unpacks it (`p[0]`, `x, y = p`) only when
@@ -1184,7 +1523,14 @@ cannot express is refused at its line, with what to write instead.
 | `s.startswith((a, b))`, `s.endswith((a, b), start)` with the tuple written in the call (#439) | `(s.startswith(a) or s.startswith(b))`; a receiver or item that is not a name, attribute or constant is bound once by a lambda | the tuple is held in a name (`s.startswith(PREFIXES)`), is empty, or the call has `*args` / keywords; each item is still checked as a `str` |
 | `format(x, spec)`, `format(x)` (#439) | `x.__format__(spec)`, `str(x)` | `format` is bound where the call is: by the module (an assignment, import, `def` or `class` at module level) or by an enclosing function or lambda (a parameter or local); a method named `format` or a class attribute binds nothing there, so it does not disable the rewrite (#471) |
 | `ascii(x)` (#439) | `repr(x)`: the same `str` type; the check does not run it, so the escaping of non-ASCII characters is unchanged at run time | `ascii` is bound where the call is, as for `format` (#471) |
+| `getattr(x, "name", default)` with a literal name, `x` a name or an attribute chain, the default on one line (#590) | `((default), x.name if hasattr(x, "name") else (default))[1]`: Codon's `getattr` takes no default, and Codon decides `hasattr` when it compiles, so only the branch `x`'s type takes is compiled, typed as that branch (the attribute's type where the class declares it, the default's where it does not). The first item keeps the default compiled either way, as Python evaluates it either way (`getattr(x, "name", x.typo)` is refused). `hasattr` on an `Optional` is decided on the `Optional` (see "Making a module compile"), so the default's branch is the one compiled there | a name built at run time, another receiver (a call, a subscript), a default over several lines or `hasattr` bound where the call is: refused with `getattr() takes 2 arguments (3 given)` and a hint to write the `hasattr` test |
+| `t.count(x)`, `t.index(x[, start[, stop]])` with `t` a name or an attribute chain (#601) | `(t.count(x) if hasattr(t, "count") else _acs_count(t, x))`: Codon's tuple has no `count` / `index` and cannot be extended, and only Codon knows `t`'s type, so a list, a str or a class of yours keeps its own call, compiled as written, and only a tuple goes to the helper (an item of another type than `x` never equals it). A tuple display, `(1, 2).index(2)`, goes to the helper directly | the receiver is a module (`itertools.count`), a builtin type (`str.index(s, "a")`), a call or a subscript (`f().count(x)`, `rows[0].index(x)`: bind it to a name), or the call spans lines; then a tuple's is refused (`'Tuple[int,int]' object has no attribute 'count'`) |
+| `d.keys() & e.keys()`, `\|`, `-`, `^`; `d.items() <= e.items()`, `<`, `>`, `>=`, `==`, `!=` (#601) | `set(d.keys()) & set(e.keys())`, the other operand of `&`, `\|`, `-`, `^` a set too (a view takes any iterable there, and gives a set); a comparison makes a set of each view and leaves the other side as it is (a view orders only against a set) | the view is held in a name (`k = d.keys()`, then `k & e`): write `set(d) & set(e)` |
+| `super(Derived, self).__init__(k)` in a method of `Derived` whose first parameter is `self` (#601) | `super().__init__(k)`: Codon's `super` takes no arguments | another class (`super(Base, self)`, which skips `Derived`'s bases up to `Base`), a `@classmethod` / `@staticmethod`, the class or `self` rebound in the method, or the call inside a nested function, lambda or comprehension: Codon's `super() takes 0 arguments (2 given)` |
+| `round(x)`, `round(x, None)`, `round(number=x, ndigits=None)` (#585) | `int(round(x))`: Codon's `round(x, n=0)` always returns a `float`, Python's an `int` when `ndigits` is left out or `None`, so `xs[round(x)]`, `n: int = round(x)` and `range(round(x))` check. `round(x, ndigits=2)` is `round(x, 2)` (Codon's has no Python keywords). `round(x, 2)` stays a `float`, also for an `int` `x` (Python returns an `int` there). Being an `int`, `round(x)` is refused inside a `list[float]` or `dict[str, float]` display (`[round(x), 1.5]`), as any `int` is: write `float(round(x))` there | `round` is bound where the call is, as for `format` (#471); an `ndigits` that is a variable is passed as it is: an `int \| None` one is read as a `float`, one bound to `None` only fails in Codon's `round` (`__pow__() cannot be called with (None)`) |
 | `sorted(xs)`, `xs.sort()`, `min` / `max` of a class that defines `__lt__` only | the class gets `__gt__` (`other < self`) and `__ge__` (`not self < other`), which Codon's sort calls | the class defines no ordering (use `@dataclass(order=True)` or `key=`) |
+| `a if x else None`, `a if x is not None else None`, `None if x is None else a` (also `not x`), where `a` reads the narrowed `x`: `m.group(1) if m else None`, `n.name if n else None` (#597) | `_acs_some(a) if x else None`: Codon narrows `x` in `a` and then cannot unify the type of `a` with the `None` (`'Optional[str]' does not match expected type 'str'`); `_acs_some` makes `a` an `Optional` itself (a branch that already is one is kept), the type Python gives the expression | |
+| `a.__eq__(b)`, `a.__ne__(b)` (#596) | `(a == (b))`, `(a != (b))`: Codon cannot call by name an `__eq__` that overrides an inherited one (the identity `__eq__` the check gives a plain class, or the model's `BaseCondition`), as a `__ne__` written `return not self.__eq__(other)` does; `==` is how Python calls it, too | `super().__eq__(b)`, `A.__eq__(a, b)` and a parenthesized receiver are left alone |
 | a class that defines `__eq__` but not `__ne__` (a value object in a `set` or as a `dict` key) | the class gets `__ne__` (`not (self == other)`): Python derives it, Codon does not and its hash table calls it | (a `@dataclass` already has one) |
 | `namedtuple("P", "x y")` / `"x, y"` | the string becomes the list `["x", "y"]` (Codon crashes on a string) | field names that are not a literal (a variable, `.split()`), and `rename=` / `defaults=` / `field_names=` / `module=` as keywords, and field names Python rejects (a duplicate, a keyword, a leading underscore); a `namedtuple` the module defines or imports from elsewhere is left alone; use a list written in the call or a `typing.NamedTuple` class |
 | `@functools.total_ordering` | the decorator and its import are dropped, and the class gets the comparisons it would add from its `__lt__`, `__le__`, `__gt__` or `__ge__` (and `==`, or identity without `__eq__`) | the class is not at module level, or defines none of the four |
@@ -1292,8 +1638,41 @@ in step:
 `Protocol`, `runtime_checkable`, `Literal`, `IO`, `Iterator`, `Deque`,
 `DefaultDict`, `Counter`, `Final`, `Annotated`, `NoReturn`, `Type`, `Sized`,
 `Hashable`, `cast`, `Optional`, `List`, `Dict`, `Set`, `Tuple`, `Callable`,
-`Union`, `ClassVar`, `Generator`, `overload`
+`Union`, `ClassVar`, `Generator`, `overload`, `Self`, `override`, `TypeAlias`,
+`NewType`, `Never`, `assert_never`, `TypeGuard`, `TypeIs`, `Container`
 <!-- typing-names:end -->
+
+- `from collections.abc import Sequence, Callable` (what ruff's UP035
+  suggests) is read as `from typing import Sequence, Callable` (#586), on the
+  same lines. The names of `collections.abc` the check has are `Callable`,
+  `Collection`, `Container`, `Generator`, `Hashable`, `Iterable`,
+  `Iterator`, `Mapping`, `MutableMapping`, `MutableSequence`, `Sequence`,
+  `Sized` and `Set` (typing's `AbstractSet`); any other (`KeysView`,
+  `MutableSet`, `Awaitable`) is refused at its import line with that list.
+  `import collections.abc` and `from collections import abc` (annotations
+  spelled `collections.abc.Sequence`, `abc.Sequence`) are refused too, with
+  the hint to import the names.
+- `typing_extensions` has the same names as far as `typing` has them, so a
+  scenario for Python 3.10 imports `Self`, `override`, `Never`,
+  `assert_never` and `TypeIs` (which `typing` gained later) from there; any other
+  name of it (`deprecated`, `ReadOnly`) is refused with a hint to this list.
+- The type-only names are rewritten before Codon reads the code (#514), and
+  none of them is checked: `@override` is dropped (not that the method
+  overrides one); `X: TypeAlias = T` is `X = T`; `Self` in an annotation of a
+  class is the class (`-> Self` is `-> Counter`, so a subclass's method is
+  checked as returning its base, and a call of `Twice(1).inc().twice_only()`
+  is refused although Python accepts it); `NewType("LaneId", int)` is `LaneId
+  = int` and `LaneId(v)` is `(v)`, so the new type is checked as its base (a
+  `LaneId` is any `int`, as Python runs it); `assert_never(x)`, as a
+  statement or a `return`, is `raise AssertionError(...)`, and anywhere else
+  (a ternary, a lambda body, an argument) it is refused, since Codon types the
+  call as `None`; `Never` and `Container`
+  annotations are dropped, like `NoReturn` and `Sized`; `TypeGuard[X]` and
+  `TypeIs[X]` are `bool`, which they are at run time.
+- A `TypeVar` with a `bound=` or constraints (`TypeVar("B", bound=Base)`,
+  `TypeVar("N", int, float)`) is rewritten to `TypeVar("B")` (#513): Codon's
+  takes a name only, and makes a function generic over its unannotated
+  parameters anyway, so the bound or the constraints are not checked.
 
 - `Final` and `Annotated` are read as what they wrap (`Final[int]` and
   `Annotated[int, "m"]` are `int`; a bare `Final` is dropped). `NoReturn`,
@@ -1376,14 +1755,17 @@ the same code either way, because a `Protocol` base is only a marker there.
 
 ### Standard library names Codon lacks
 
-Codon ships its own `functools` (only `partial`), `itertools` and
-`collections`, and a name it lacks fails with a bare "cannot import name".
-The check supplies these (#378); `test_stdlib_names` keeps this list, the
-check's additions and the tests in step:
+Codon ships its own `functools` (only `partial`), `itertools`, `collections`,
+`math`, `random` and `statistics`, and a name it lacks fails with a bare
+"cannot import name". The check supplies these (#378, #515, #516); `test_stdlib_names` keeps
+this list, the check's additions and the tests in step:
 
 <!-- stdlib-names:start -->
 `functools.reduce`, `functools.lru_cache`, `functools.cache`,
-`functools.cached_property`, `itertools.pairwise`, `collections.OrderedDict`
+`functools.cached_property`, `itertools.pairwise`, `collections.OrderedDict`,
+`collections.deque`, `math.dist`, `math.isqrt`, `math.comb`, `math.perm`,
+`math.cbrt`, `math.exp2`, `math.hypot`, `random.Random`, `random.choices`,
+`random.triangular`, `statistics.fmean`, `re.Match`, `re.Pattern`
 <!-- stdlib-names:end -->
 
 - `functools.reduce` (with or without an initial value) is a function of the
@@ -1395,34 +1777,102 @@ check's additions and the tests in step:
   attribute (`self.area = 3` is legal in Python, not on a `property`). A name
   the module binds again (a parameter `reduce`, a `def cache`) is left alone.
   The names are handled where the module imports them, not in a function.
+- A decorator the check drops (`lru_cache`, `cache`, `@abstractmethod`,
+  `@override`) may sit under one it keeps (`@property`, `@staticmethod`,
+  `@classmethod`), as in `@property` over `@abstractmethod` (#595). Codon's
+  parser refuses a blank or comment-only line inside a decorator list, so
+  the check removes the dropped decorators' lines, and any comment or blank
+  line, between the first kept decorator and the `def`, and moves the kept
+  decorators down to the `def`: the `def` and every line after it keep
+  their line numbers, and an error on a kept decorator is reported at the
+  line it was written on. A decorator is its whole logical line, from its
+  `@` to its end (`@(` / `name` / `)` on three lines).
 - The initial value of `reduce` must have the type of the accumulator the
   function returns: `reduce(add, [1.5, 2.5], 0)` is refused (write `0.0`).
 - `itertools.pairwise` is added to Codon's `itertools`, and
   `collections.OrderedDict` is a `dict`, which keeps its insertion order;
   `move_to_end()` and `popitem(last=...)` are not declared, and are
   refused when called.
+- `collections.deque` gets what Codon's lacks: `deque(iterable, maxlen)`,
+  `extend`, `extendleft`, `rotate`, `count`, `index`, `insert`, `remove`,
+  `reverse`, item assignment and deletion and `==`/`!=`, all as Python's
+  (`maxlen` drops items from the other end, `rotate(-n)` turns left). Codon's
+  own `deque(maxlen=n)` kept one item too many when `n + 1` was a power of
+  two; the check's is fixed. `deque(iterable, maxlen=None)` and `reversed(d)`
+  are not declared, and `d.maxlen` is `-1`, not `None`, for a deque with no
+  limit (Codon's).
+- `math.dist`, `isqrt`, `comb` and `perm` are Python's (the same
+  `ValueError`s); an `int` is 64 bits in Codon, so `comb` and `perm` overflow
+  where Python's would not. `math.cbrt` and `math.exp2` are Python 3.11
+  functions: the check accepts them on 3.10 too (run time is where 3.10
+  refuses them), so a scenario meant for 3.10 has to avoid them itself.
+  `nextafter` and `ulp` are not declared. `math.hypot` takes any number of
+  coordinates (Python 3.8's, #590), `hypot(x, y, z)` included; Codon's took
+  exactly two, and a call with two keeps Codon's (and its `float32` one).
+- `statistics.fmean(data)` is Python's mean of the values as floats (#590);
+  Codon's own is commented out. `fmean(data, weights)` is the weighted mean
+  of Python 3.11, accepted on 3.10 too, like `math.cbrt`. The rest of
+  `statistics` is Codon's (`mean`, `median`, `stdev`, ...), which takes a
+  `list[float]`.
+- `re.Match.group(n)`, `group(a, b)`, `m[n]`, `groups()` and `groupdict()`
+  are `str` (#597), as typeshed declares them (`str | Any`), so
+  `m.group(1) if m else ""` compiles; Codon's are `Optional[str]`, and
+  their `Optional[str]` and the `""` did not unify. The caveat is
+  typeshed's too: a group that did not take part in the match (`(-x)?`) is
+  `None` in Python, which the check does not see: test an optional group
+  with `is not None` before using it as a `str` (the check compiles the
+  test), or read it through `groups(default)` / `groupdict(default)`,
+  which keep Codon's `Optional[str]`. `re.Pattern.split`
+  keeps its `Optional[str]` items, a group that did not take part splitting
+  off as `None`, as in Python. The rest of `re` is Codon's.
+- `random.Random.choices` (and `random.choices`) take `weights` of ints or
+  floats, or `cum_weights=`, and `k=`, as Python's do, and
+  `triangular(low, high)` (the method and the function) takes the midpoint as the mode. Codon's
+  `choices` wanted int weights and all four arguments. `cum_weights` and `k`
+  can be passed by position here, where Python makes them keyword-only.
 
 These are refused at the import line, with a hint saying what to write
 instead:
 
 <!-- stdlib-refused:start -->
-`dataclasses.asdict`, `functools.wraps`, `contextlib`, `warnings`, `json`,
-`types`, `textwrap`, `traceback`, `io`
+`dataclasses.asdict`, `dataclasses.InitVar`, `dataclasses.KW_ONLY`, `functools.wraps`, `math.ulp`, `contextlib.contextmanager`, `warnings`,
+`json.JSONEncoder`, `types`, `textwrap`, `traceback`, `io`, `csv`, `uuid`
 <!-- stdlib-refused:end -->
 
 - `dataclasses.asdict` returns a `dict[str, Any]`: build the dict from the
   fields you need. The `dataclasses` shim declares only `dataclass`, `field`
   and `replace` (a call is rewritten and checked per field, see "Your own
   dataclasses, enums and named tuples").
-- `functools.wraps` (and any other name of `functools`, `itertools` or
-  `collections` not listed above) is not modelled.
-- `contextlib`: write a class with `__enter__` and
+- `dataclasses.InitVar` and `KW_ONLY` (#590): Codon's constructor of a
+  dataclass takes every annotated field and does not call `__post_init__`,
+  so an init-only value has nowhere to go and the `KW_ONLY` marker would be a
+  field. Pass an `InitVar`'s value to a `@classmethod` (or a function) that
+  computes the fields and builds the instance, or keep it as an ordinary
+  field; drop `KW_ONLY` and pass the fields by keyword (a field without a
+  default then goes before the defaulted ones).
+- `functools.wraps` (and any other name of `functools`, `itertools`,
+  `collections`, `math` or `random` not listed above, such as `math.ulp`) is not modelled.
+- `contextlib` declares `suppress` only: write a class with `__enter__` and
   `__exit__(self, exc_type, exc, tb)` for `contextmanager` (the check rewrites
-  the signature, see "Python the check rewrites for Codon"), and `try/except X: pass` for `suppress`. `warnings`: log
-  with `logger.warning`. `json`: read into a `@dataclass`. `types`: name the
+  the signature, see "Python the check rewrites for Codon"). `warnings`: log
+  with `logger.warning`. `json` declares `dumps`, `dump`, `loads`, `load`
+  and `JSONDecodeError` only (see the shims below), not `JSONEncoder` or the
+  rest. `types`: name the
   type itself. `textwrap`: build the string with `str` methods.
   `traceback`: log with `logger.exception`. `io`: use a `str`, or a
-  `pathlib.Path` opened with `open()`.
+  `pathlib.Path` opened with `open()`. `csv`: read the file with
+  `Path.read_text().splitlines()` and `split(",")` each line, and write one
+  with `",".join(fields)` and `Path.write_text()`. `uuid`: use a counter, or
+  `os.getpid()` for an id that differs per process.
+- `time.strftime()` and `datetime.strftime()` are not modelled (Codon's
+  `datetime` has neither, nor `__format__`): the error says so; format the
+  fields instead, `f"{now.year:04d}{now.month:02d}{now.day:02d}"` for `now =
+  datetime.datetime.now()`.
+- A name of `os`, `os.path`, `shutil` or a member of `pathlib.Path` that the
+  shims below do not declare is refused with Codon's `cannot import name` or
+  `'Path' object has no attribute`, to which the check adds that it is not
+  modelled (the shim declares only the names listed below), so it does not
+  read as invalid Python.
 
 ### Iterating an enum
 
@@ -1529,6 +1979,12 @@ The known gaps:
   classes the scenario defines (a class-level `tuple[A | B, ...]`, held as
   `List[Union[A, B]]`) is converted at run time as Codon converts any union,
   and an un-narrowed use of one member's attribute compiles.
+- **An attribute set on some paths only.** Codon zero-initialises every
+  field, and the class rules (#587, #588) follow no paths: an `__init__`
+  that calls `super().__init__(...)` in one branch only, or an attribute
+  assigned in a method that may run after its first read, compiles and can
+  raise `AttributeError` in Python. A class that is not a module-level name
+  (one defined in a function) is not given the rules at all.
 - **A helper with `**kwargs` or `*args` that nothing calls and that reads
   `**kwargs` by key** is not compiled, with a warning: the check has no
   keyword to call it with (#266). One the scenario calls that reads them is
@@ -1538,7 +1994,7 @@ The known gaps:
   or are in a function the check does not compile.
 - **A value converted by an annotated assignment.** Codon 0.19 converts any
   value with `__bool__` in an annotated assignment: `done: bool = "no"`
-  compiles, and is `True`. The check binds hook results strictly (#238) and
+  compiles, and is `True`. (A literal returned from a function declared `-> bool` is refused, #529.) The check binds hook results strictly (#238) and
   class-level `bool` defaults through `_expect_bool` (#190), but an annotated
   local of the scenario's own code is converted as written. A local
   `x: bool = some_str` is no `bool` in Python.
@@ -1616,6 +2072,15 @@ with it warm, to a compile of about a minute. A verdict kept between runs
 `test_typecheck_none_check.py` runs the same None check over `CHECKED`
 without Codon, so a machine without a Codon compiler catches it as well.
 
+**So do the class rules** (#587, #588): before the compile, the library
+check imports each module it compiles and refuses an `__init__` that skips
+a base's (any class of the package counts as the framework here) and an
+attribute declared at class level that nothing assigns, as the scenario
+check does ([*Writing a scenario that type-checks*](#writing-a-scenario-that-type-checks)).
+A module that does not import in Python has its classes left alone.
+`test_typecheck_class_rules.py` runs both rules over every module of the
+package without Codon.
+
 A run that names modules is a slice of the full run. With the named
 modules, it compiles from their source the `CHECKED` modules they import,
 transitively. It does not follow an import that `MODELLED_IMPORTS` routes
@@ -1676,8 +2141,8 @@ To check one more module:
 
 ### What is checked of the framework
 
-Every module now has an entry other than `"not yet checked (#45)"`. 204 of
-the package's 304 modules (67%; about 47,300 of 84,200 lines) are `CHECKED`:
+Every module now has an entry other than `"not yet checked (#45)"`. 207 of
+the package's 304 modules (68%; about 47,400 of 85,600 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the conversions between
 Lanelet2, OpenDRIVE and CARLA world poses (`coordinate.transform`), the stop
 lines read off a Lanelet2 map (`utils.stop_line`, `coordinate.stop_line`)
@@ -1712,7 +2177,8 @@ a subprocess on a thread (`ui.runner`, over a model of the pydantic
 the traffic backend interface and its run context with the TrafficManager
 backend and the SUMO backend's options, the map source URIs and what
 resolves them to files on disk (`maps.resolver`, with the repository listing
-of `maps.catalogue`, the `map` config's paths of `maps.config` and the
+of `maps.catalogue`, the `map` config's paths of `maps.config`, the clone
+cache of map repositories, `maps.cache`, and the
 OpenDRIVE taken from CARLA by `maps.opendrive`), what an exported scenario
 package pins the framework to and how it runs `uv` (`authoring.framework_pin`,
 `authoring.uv_tool`), the CARLA server manager (`server`), the markers an ego
@@ -1736,8 +2202,8 @@ driver's configs and client interface, trajectory follower and observations
 `driver.geometry`), and the `autoware_bridge`, `autoware_stack`, `entity`,
 `driver`, `maps` and `coverage` packages themselves, whose `__init__` re-exports what is not checked
 through models of it (see *A class a checked package only re-exports*
-below). 117
-functions and methods of those modules are `UNCALLED` (36 of them
+below). 116
+functions and methods of those modules are `UNCALLED` (35 of them
 protected helpers, see *What is compiled* below): most of them a
 condition's `get_details()` or a backend's `describe()`, what takes a traffic
 backend's options node (`Mapping[str, Any]`), what reads a route search, a
@@ -1764,36 +2230,34 @@ the result and its environment, `_write_result()`; collecting the condition
 statuses, `_collect_condition_statuses()`), the queue's pytest fixture
 (`ScenarioQueue.as_fixture()`), `maps.config.resolve_map_paths()`,
 which reads the `map` config node of any shape (`Any`), the driver and
-ROS 2 configs' `from_mapping()` (a Hydra node, `Mapping[str, Any]`), what
-builds the ROS 2 ego's published cameras (`entity.ros2_entity._publishing_camera()`,
-which imports `ros2.camera` inside it),
+ROS 2 configs' `from_mapping()` (a Hydra node, `Mapping[str, Any]`),
 `encode_frame_jpeg()` (cv2), and protected helpers of the same kinds: what
 reads a `map` setting, a route search's segment, a signal group or phase, or
 a `TrajectoryVertex` call's arguments, each of any type (`Any`), walks or
 binds a sweeper constraint of any kind, builds a condition's status (its
 details), or takes the list a plain tick callback goes into
 (`BaseScenario._register_tick()`, a `List[Callable[[carla.World], None]]`,
-which the check has no value of). The 100 `EXCLUDED` modules fall in
-four groups. Many fit more than one (about 73 import what Codon cannot
+which the check has no value of). The 97 `EXCLUDED` modules fall in
+three groups. Many fit more than one (about 71 import what Codon cannot
 compile, 29 build on an excluded module and 24 hold values Codon has no type
 for), so each is counted once, in the first group that fits it:
 
-- **73 import what Codon cannot compile**: pyxodr,
+- **71 import what Codon cannot compile**: pyxodr,
   pydantic, pickle, lxml, grpc, omegaconf and hydra, yaml, openodd (a Rust extension),
   cyclonedds (`ros2.cyclone` and `ros2.messages`, the ROS 2 ego's DDS
   transport and its message types), or
-  a standard module Codon lacks (`json`, `inspect`, `concurrent.futures`,
+  a standard module Codon lacks (`inspect`, `concurrent.futures`,
   `importlib`
   beyond `importlib.metadata`, or more of `os`, `pathlib`, `shutil`, `signal`,
   `subprocess`, `tempfile`, `threading`, `dataclasses`, `importlib.metadata`
   or `urllib.parse` than their shims declare), at module level or inside a function the check calls. This is
   the tooling around a run (the editor, the UI, authoring, the sweeper's
   expansion, Hydra sweeper and map loader, the map caches (the map
-  repositories, the Lanelet2 z offset and the pyxodr road network), the Autoware
+  repositories and the pyxodr road network), the Autoware
   stack's dev container, the
   record of a run's environment, the SLURM launcher's submitting side,
   its worker and its manifest, the batch summary they share, the Rerun
-  recordings of a run's logs and LiDAR sweeps, its T4 dataset, and the carla_canvas hookup), the ODD and coverage modules that wrap
+  recordings of a run's logs and LiDAR sweeps, and its T4 dataset), the ODD and coverage modules that wrap
   openodd, and the rest of what reads Lanelet2. A reason names `pathlib`
   only where the module uses more of it than the shim declares, and the
   other shimmed modules likewise; `test_typecheck_library.py` holds every
@@ -1809,7 +2273,8 @@ for), so each is counted once, in the first group that fits it:
   and `value_label()`; it also holds each lanelet's attribute values,
   `dict[str, Any]`, which it hands to openodd, and finds a probe's
   `on_lanelet` reader on any callable) and
-  `traffic.registry` (the `registry`, in its plugin loader); 4 of the 19
+  `traffic.registry` (the `Callable[[Mapping[str, Any]], TrafficBackend]` alias it
+  holds its factories by, and the `registry` its plugin loader imports); 4 of the 19
   also hold values Codon has no type for.
 - **7 hold values Codon has no type for**, and nothing else keeps them out:
   `Any` (`trajectory.authoring`, `authoring.registry`'s
@@ -1819,9 +2284,6 @@ for), so each is counted once, in the first group that fits it:
   controllers), or a class as a value (`utils.config`, which `traffic.config`,
   `traffic.fidelity` and `traffic.sumo.config` import only in their uncalled
   `from_mapping()`).
-- **1 has a callback the check cannot type**: `ros2.camera`, whose camera
-  hands each frame back to the ROS 2 ego from a CARLA sensor thread through
-  `CarlaCameraSensor`'s listen callback.
 
 The scenario check is not limited by this: it compiles every scenario against
 the model. The model does not declare the whole public API: what
@@ -2179,8 +2641,11 @@ stands in for it in the check's workspace:
   checked itself.
 
 Each checked module gets the `__file__` Python sets on it (its source's path,
-a `str`), which Codon 0.19 does not, appended after the calls of the check
-so no line moves: `autoware_stack.bridge_node` finds the installed
+a `str`), which Codon 0.19 does not, bound on the last line of the prelude so
+it exists before any code of the module and no line moves (#515), so
+`Path(__file__).resolve().parent / "data"` and
+`os.path.dirname(os.path.abspath(__file__))` compile at module level and in a
+function: `autoware_stack.bridge_node` finds the installed
 `autoware_bridge` package with `from ..autoware_bridge import __file__`.
 Codon has no module object, so `from .. import autoware_bridge` and
 `autoware_bridge.__file__` do not compile.
@@ -2316,13 +2781,17 @@ What Codon 0.19 needs that Python does not, beyond
   or of a checked one.
 - **`hasattr()` instead of `getattr(x, name, default)`**: Codon decides
   `hasattr` when it compiles, so the branch for a type without the attribute
-  is never compiled.
+  is never compiled. The check rewrites `getattr(x, "name", default)` so
+  itself where the name is a literal and `x` a name or an attribute chain
+  (#590, "Python the check rewrites for Codon").
 - An exception's `__init__` passes one message string to `super().__init__`.
   An exception class with nothing in its body but a docstring needs that
   `__init__` written out (`def __init__(self, message: str) -> None:`).
 - **`d.get(key, default)` takes a default of the value's type**, as Codon's
   `dict.get` does; `d.get(key)` is an `Optional` of it, as in Python (the
-  model's `_tc.codon` declares it). Likewise `if not x: continue` instead
+  model's `_tc.codon` declares it). So does `d.pop(key, default)` (#590,
+  Codon's `pop` takes the key only), and `d.pop(key, None)` is an `Optional`
+  of the value's type. Likewise `if not x: continue` instead
   of `(x or {})`, `s.startswith(a) or s.startswith(b)` instead of
   `s.startswith((a, b))`, and `if x is None: return None` / `return x.attr`
   instead of `None if x is None else x.attr`.
@@ -2334,24 +2803,24 @@ What Codon 0.19 needs that Python does not, beyond
   the frame's waypoint, weather, lanelet tags, ... each `Optional`, and
   `read`, so a read that failed is still kept as `None` for the frame, as
   before.
-- Standard modules Codon does not have (`json`, `inspect`,
+- Standard modules Codon does not have (`inspect`,
   `concurrent.futures`, ...) are not available to a checked module; the
   shims of `codon/` are. They are these (`test_shim_list` keeps the list
   and the files of `codon/` in step):
 
   <!-- shims:start -->
-  `__future__`, `abc`, `atexit`, `dataclasses`, `enum`, `hashlib`,
-  `importlib.metadata`, `logging`, `os`, `os.path`, `pathlib`, `queue`,
+  `__future__`, `abc`, `atexit`, `contextlib`, `dataclasses`, `enum`, `hashlib`,
+  `importlib.metadata`, `json`, `logging`, `os`, `os.path`, `pathlib`, `queue`,
   `shlex`, `shutil`, `signal`, `subprocess`, `sys`, `tempfile`, `threading`,
-  `typing` and `urllib.parse`
+  `typing`, `typing_extensions` and `urllib.parse`
   <!-- shims:end -->
 
   `tempfile` declares `mkstemp(suffix=None, prefix=None, dir=None,
-  text=False)` only, with CPython 3.10's signature (a `str` or an
+  text=False)` and `mkdtemp(suffix=None, prefix=None, dir=None)` only, with CPython 3.10's signature (a `str` or an
   `os.PathLike` directory; bytes affixes are not declared). The check only
   compiles it, so its body is a stub that makes no file (it is typed to give
-  `(int, str)`, the descriptor and the name). `mkdtemp()`,
-  `NamedTemporaryFile()`, `TemporaryDirectory()`, `gettempdir()` and the
+  `(int, str)`, the descriptor and the name; `mkdtemp()` gives the `str`
+  name). `NamedTemporaryFile()`, `TemporaryDirectory()`, `gettempdir()` and the
   rest are not declared and fail the check. Two more modules are not
   shims but extensions of Codon's own `collections` and `itertools`, in
   `codon/_stdlib/` (#422): they add
@@ -2371,12 +2840,19 @@ What Codon 0.19 needs that Python does not, beyond
   3.10's signatures (3.12 and 3.13 added the keyword-only `follow_symlinks`,
   `case_sensitive` and `recurse_symlinks`, which are refused), and `name`,
   `suffix`, `parent`, `parents` (indexed, iterated, `len()` and `in`; not
-  sliced), `stem`, `with_name(name)` (of a `str`), `as_posix()`, `relative_to(other)` (one path, by position:
+  sliced), `stem`, `suffixes`, `parts` (indexed, sliced, iterated, `len()` and `in`),
+  `root`, `drive`, `anchor`, `as_uri()`, `with_name(name)`,
+  `with_suffix(suffix)` and `with_stem(stem)` (of a `str`), `joinpath(*other)`,
+  `as_posix()`, `relative_to(other)` (one path, by position:
   Python 3.10 also joins more parts, but 3.14 refuses them, so the check
   does too; 3.12's `walk_up` is refused), `is_relative_to(other)` (one path,
   by position, likewise), `is_absolute()` and the ordering of two `Path`s, so
-  `sorted()` takes them. Nothing
-  touches the file system: a query is `False` and a glob yields nothing.
+  `sorted()` takes them. `parts` is not a tuple here: `parts == ("a", "b")`,
+  `a, *rest = p.parts` and `tuple(p.parts)` are not supported (use `list(p.parts)`
+  or index it). A `Path` member, or an `os`, `os.path` or `shutil` name, that
+  CPython lacks too is refused as a typo, with the closest declared name. Nothing
+  touches the file system: a query is `False` and a glob, or `iterdir()`,
+  yields nothing; `samefile(other_path)` and `match(path_pattern)` are `False`.
   `is_symlink()` takes no argument, as in every supported Python. Of what
   reads, `read_text(encoding=None, errors=None)` (3.13's `newline` is
   refused) and `read_bytes()` are declared (`autoware_stack.docker` reads a
@@ -2395,7 +2871,14 @@ What Codon 0.19 needs that Python does not, beyond
   and `IO[str]` are one type). `typing.IO` declares `name`, `mode`,
   `closed`, `close()`, `fileno()`, `flush()`, `read()`, `readline()`,
   `write()` (of a `str`, read as bytes too), iteration over the lines and
-  `with`. `chmod()`, `write_bytes()` and the rest are not. `os` replaces Codon's own (whose
+  `with`. `stat()` (no argument) returns a result of the five fields the
+  framework reads (`st_dev`, `st_ino`, `st_size`, `st_mtime_ns`, `st_mtime`),
+  all zero (`lstat()` too), and `replace(target)` and `rename(target)` (a
+  `str` or an `os.PathLike`) return the new `Path`; nothing is read or
+  renamed. `touch(mode=0o666, exist_ok=True)`, `rmdir()`,
+  `chmod(mode, *, follow_symlinks=True)`, `write_bytes(data)` (a `str` here, as
+  bytes are), `readlink()`, `owner()` and `group()` do nothing. The rest
+  (`is_socket()`, `PurePath`, ...) is not declared. `os` replaces Codon's own (whose
   `environ` has no `get()` and iterates over pairs), keeping its `getenv()`,
   which Codon's runtime and typesafe_carla's library call: `environ` is a
   mapping of `str` to `str` (`[key]`, assignment, `del`, `in`, iteration
@@ -2408,15 +2891,28 @@ What Codon 0.19 needs that Python does not, beyond
   `os.PathLike`, a `str`; a bytes path is not declared),
   `kill(pid, signal, /)`, `killpg(pgid, signal, /)` (of an `int` or a
   `signal.Signals`), `system(command)`,
-  `mkdir()` (Codon's had one), the separators (`sep`, `pathsep`, `linesep`,
+  `mkdir()` (Codon's had one), `getcwd()`, `listdir(path=".")` (empty),
+  `makedirs(name, mode=0o777, exist_ok=False)`, `remove()`, `unlink()`,
+  `rmdir()`, `rename()` and `replace()` (each with its keyword-only
+  `dir_fd`), `walk(top, topdown=True, onerror=None, followlinks=False)` (a
+  generator that yields nothing; the callable `onerror` is not declared), the
+  separators (`sep`, `pathsep`, `linesep`,
   `devnull`, ...) and the `access()` modes. `os.path` declares `join()`,
   `basename()`, `dirname()`, `splitext()`, `isabs()`, `exists()`, `isfile()`,
-  `isdir()`, `expanduser()` and `abspath()`, of a `str` or a `Path`, with
-  CPython's parameter names. `shutil` declares `copy2(src, dst, *,
+  `isdir()`, `expanduser()` and `abspath()`, and `getsize()`, `getmtime()`,
+  `getatime()`, `getctime()`, `islink()`, `lexists()`, `realpath()`,
+  `relpath()`, `expandvars()`, `split()` and `normpath()`, of a `str` or a
+  `Path`, with CPython's parameter names (nothing is read: a size is `0`,
+  `realpath()`, `relpath()` and `expandvars()` return the path as it is).
+  `shutil` declares `copy(src, dst, *, follow_symlinks=True)`, `copyfile()`
+  (likewise), `copytree(src, dst, symlinks=False, ignore=None,
+  copy_function=None, ignore_dangling_symlinks=False, dirs_exist_ok=False)`,
+  `copy2(src, dst, *,
   follow_symlinks=True)`, `move(src, dst)`, `rmtree(path,
   ignore_errors=False)` and `which(cmd, mode=1, path=None)` of a `str`
   command; the callables CPython also takes (`onerror`, `copy_function`)
-  are not declared. `subprocess` declares `run(args, *, input=None,
+  are not declared (nor `copytree()`'s `ignore` and `copy_function`).
+  `subprocess` declares `run(args, *, input=None,
   capture_output=False, timeout=None, check=False, ...)` and `Popen(args,
   *, ...)` with the keywords of CPython's `Popen` the framework passes
   (`stdin`, `stdout`, `stderr`, `cwd`, `env`, `text`, `encoding`, `errors`,
@@ -2472,7 +2968,54 @@ What Codon 0.19 needs that Python does not, beyond
   returns, the previous handler, is a value nothing is declared of (a
   `Handlers` member, a function or `None` in CPython, which takes no `None`
   as a handler), so it cannot be handed back to `signal()`; `getsignal()`,
-  `alarm()` and the rest of the module are not declared. `shlex` declares
+  `alarm()` and the rest of the module are not declared. `contextlib`
+  declares `suppress(*exceptions)` only, a class with `__enter__` and
+  `__exit__` that does nothing (the exceptions are not checked); a
+  `contextmanager` is not declared, as the scenario check already tells a
+  user to write a class. `json` writes generically and reads opaquely
+  (#557): `dumps(obj, **kwargs)` and `dump(obj, fp, **kwargs)` take a value of
+  any one type (a `dict` of one value type, a `list`, a `float`), with
+  CPython's options accepted and not checked, but a mapping of mixed value
+  types is refused at the argument, as for any `dict` (the Lanelet2 z offset
+  cache dumps its strings as one object and writes the number in front of
+  them, so the file is what CPython writes for the whole mapping). Codon
+  has no `Any`, so `loads(s, **kwargs)` and `load(fp, **kwargs)` return a
+  `JSONValue`, which stands for any part of a document: the check holds a
+  caller to its members only (`[key]` by `str` or `int`, `get()`, `items()`,
+  `keys()`, `values()`, iteration, `len()`, `in`, `str()`, `int()`,
+  `float()`, `bool()`), each returning a `JSONValue` again, and never what
+  the document holds; the `ValueError` or `TypeError` CPython raises for a
+  value of the wrong kind is invisible to it. `get(key, default)` takes a
+  default of any type and returns a `JSONValue` (`float(doc.get("speed", 5.0))`),
+  a list takes a slice (`doc["wps"][1:3]`), and `load(fp)` / `dump(obj, fp)`
+  take any file, a builtin `open()` among them (untyped: Codon 0.19 crashes on a
+  `Union[File, IO[str]]` parameter, so `json.load(5)` passes the check and
+  CPython refuses it; its `encoding=`, `errors=`
+  and `newline=`, which Codon's `open` lacks, are dropped from the checked
+  copy, #562). A scenario that reads a document converts what it takes
+  explicitly: `speed = float(cfg["v"])` passes, `speed: float = cfg["v"]` and
+  `cfg["v"] + 1.0` are refused, with a hint to convert the value (`speed is
+  assigned a JSONValue, but is declared float`, #564; assigning into a
+  document is refused as read-only); whether the key exists, or holds a
+  number, is not checked. `isinstance(v, dict)` of a `JSONValue` is
+  compiled as a run-time test (#563): Codon decides `isinstance` by the static
+  type and a `JSONValue` is none of `dict`, `list`, `str`, so it would not
+  compile the branch the test guards, and wrong code in it would pass. In a
+  module that imports `json`, the python rewrites turn `isinstance(x, T)` into
+  `isinstance(x, T) or (isinstance(x, JSONValue) and x._acs_isjson())`, which
+  changes nothing for any other type; both branches are then checked against
+  the members of `JSONValue`. (Codon does the same for any value whose static type is not the class: after
+  `x = 5`, the body of `if isinstance(x, str):` is not compiled, as dead code
+  is not; that is Codon's, and only `JSONValue`, whose type is opaque by
+  design, is rewritten. The check warns, without failing, when the static
+  type of the subject is certain from the syntax (an annotated parameter or
+  local, a local bound once to a literal, an annotated `self` attribute) and
+  cannot be the class: `isinstance(x, str): x is statically int here, so this
+  branch is not checked by the static check; an error in it is not reported`,
+  #565.) (A module that never imports `json` but gets a
+  `JSONValue` from another module's function is not rewritten, and a call
+  that spans lines is not either.) `JSONDecodeError` is a
+  `ValueError` with `msg`, `doc` and `pos`. `shlex` declares
   `quote(s)` and `join(split_command)`, CPython 3.10's on Codon's `re`; a
   `quote()` of a false value that is no `str` (`None`, which CPython quotes
   as `''`) is refused. `sys` replaces Codon's, keeping all of it (`argv`,
@@ -2506,7 +3049,16 @@ What Codon 0.19 needs that Python does not, beyond
   encoded first). `bytes.decode()` is not declared, since it would be a
   `str`'s too and pass `"text".decode()`; the check refuses
   `data.decode()`, which CPython takes. `str.removeprefix(prefix, /)` and
-  `str.removesuffix(suffix, /)` (Python 3.9) are declared too. `urllib.parse`
+  `str.removesuffix(suffix, /)` (Python 3.9) are declared too, and so are
+  `str.maketrans(x, y[, z])` and `str.maketrans(dict_of_str)` (#601), whose
+  table `str.translate()` takes (Python's also maps to ints, which Codon's
+  `translate` does not). `list.index(value, start[, stop])`, `xs += (4, 5)`
+  (a list `+=` any iterable, as in Python; `xs + (4, 5)` stays refused, as
+  there) and `reversed(d)` of a dict (its keys, last first) are declared in
+  `_tc.codon` (#601); `reversed()` of a dict view is not. `sys.version_info`,
+  `sys.version` and `sys.hexversion` are not modelled, and refused with a
+  hint: the check compiles every branch of a version test, so the code must
+  be valid on every supported Python anyway. `urllib.parse`
   declares `urlsplit()`, `urlunsplit()` and `SplitResult` (its five parts,
   as attributes and as a tuple, `hostname`, `port`, `username`, `password`
   and `geturl()`). A scenario sees the same shims: it may import `pathlib`,
@@ -2520,14 +3072,16 @@ What Codon 0.19 needs that Python does not, beyond
   with `signal.signal()`, register a function to run at exit with
   `atexit.register()`, read an installed
   distribution's version with `importlib.metadata.version()`, and catch the
-  exceptions above. Any other name of them (`Path.chmod()`, `hashlib.md5()`,
-  `shutil.copytree()`, `subprocess.check_output()`, `os.listdir()`,
+  exceptions above. Any other name of them (`Path.is_socket()`, `hashlib.md5()`,
+  `shutil.disk_usage()`, `subprocess.check_output()`, `os.scandir()`,
   `importlib.import_module()`, `urllib.request`, `signal.getsignal()`) fails
   its check wherever Codon compiles it. The model's top-level package declares `__file__` (a
   `str`, as CPython sets it on a regular package), which
   `authoring.framework_pin` imports (`from .. import __file__`).
-  `collections.abc` is not: import `Sequence` and the other
-  abstract collections from `typing`. `@abstractmethod` is dropped, since
+  `collections.abc` has no model of its own: `from collections.abc import
+  Sequence` is read as an import from `typing` (#586), for the names listed
+  under "The names of `typing` a scenario may import", and `import
+  collections.abc` is refused. `@abstractmethod` is dropped, since
   Codon 0.19 cannot decorate a method; `ABC` is an empty base, and so is
   `typing.Protocol`, whose `@runtime_checkable` is dropped too.
   `typing.Any` imports, and every annotation naming it is dropped.
@@ -2687,6 +3241,10 @@ What Codon 0.19 needs that Python does not, beyond
   an `os.PathLike` (a stream, an `IO[str]` Codon has no type for, is not
   taken). Nothing else of the package is declared (`dotenv_values()`), and
   a scenario may use what is, as it may the shims.
+- **carla_canvas** is modelled for `canvas.use_canvas()`: `codon/carla_canvas/plugin.codon`
+  declares `plugin_path() -> Path` and nothing else. carla_canvas is not a
+  dependency of this package, so `test_typecheck_model.py` cannot compare it with
+  the installed one.
 - **No `bytes`**: Codon 0.19 has none, and reads a `b"..."` literal as a
   `str`, so the check reads an annotation naming `bytes` as `str`
   (`DriveOutcome.debug_info: bytes = b""`). What a process writes is a `str`
@@ -3015,6 +3573,49 @@ What Codon 0.19 needs that Python does not, beyond
   as it is (`raise NotImplementedError`, an abstract stub) is rewritten to
   an instance (`raise NotImplementedError()`), which Python raises anyway:
   Codon 0.19 crashes on the class.
+- **A caught exception kept as an `Exception`** (#512): Codon does not
+  convert an exception to its base class (`'ValueError' does not match
+  expected type 'Exception'`), so `last: Exception = ...; except ValueError
+  as e: last = e` (also `Exception | None`, `BaseException`, `list[Exception]`
+  and `dict[K, Exception]` with `append`, `add`, an item assignment or a
+  display, a `return` of `-> Exception | None`, and an argument of a function,
+  method or class of the module whose parameter is annotated so) is
+  rewritten to `last = Exception(e.typename, e.message)`: the stored value is
+  a plain `Exception` with the caught one's type name and message, so
+  `str(last)` and `logger` show the same, but `raise last` is not caught by
+  `except ValueError:` in the check, and the fields of a subclass are not
+  kept. Only a handler variable (`except X as e`, X not `Exception`) is
+  rebuilt: any other value (`last: Exception = ValueError("x")`, an
+  exception held in a local first) is refused with the hint to store `str(e)`
+  or catch `Exception`. `raise last` of an `Exception | None` is refused by
+  Codon (`exceptions must derive from BaseException`): test `last is not
+  None` and raise a local `Exception` instead.
+- **`e.args`** (#512): Codon's exceptions have no `args`; the model declares
+  it on Codon's own exception classes (`_exceptions.codon`) as the one-value
+  tuple of the message, which CPython's is for an exception raised with one
+  message. An exception raised with none or several values has other `args`
+  there (`len(e.args)` is 1 here, 0 for `ValueError()`).
+- **`operator.itemgetter(i)` and `attrgetter("n")` are lambdas** (#517):
+  Codon's pass the argument wrapped in a tuple (`tuple index out of range`,
+  `'Tuple[A]' object has no attribute 'n'`), so they cannot be a sort key.
+  With literal arguments (an int or str key, a string of dotted attribute
+  names, several of each for a tuple) the check writes the lambda
+  (`key=lambda v: v[1]`, `lambda v: v.n`, `lambda v: (v[0], v[2])`), however
+  it is imported (`operator.itemgetter`, `from operator import itemgetter as
+  ig`); with a variable it refuses the call and says to write the lambda.
+- **`copy.copy` and `copy.deepcopy` of a class of the module** (#517): Codon
+  calls the class's `__copy__` and `__deepcopy__`, which a class has not. In a
+  module that imports `copy` the check writes both, with `@extend`, for each
+  top-level class whose bases it can see (none, `object`, `ABC`, or classes
+  of the module): `__copy__` makes a new instance holding the same field
+  values, `__deepcopy__` one holding a deep copy of each, over the class-level
+  annotated fields (a base's first, `ClassVar` left out), as Python copies the
+  attributes. A method the class defines itself is kept. A class with another
+  base (a framework class), an exception, an Enum and a NamedTuple get none,
+  and a class defined in a module that does not import `copy` has none:
+  copying it from another module is refused with the hint to define the two
+  methods on the class (`def __copy__(self) -> Self`) or to build the copy
+  from its fields. `copy.copy` of a list, dict or set compiles as it is.
 - **`frozenset` is checked as a `set`**: Codon 0.19 has none, so the check
   rewrites `frozenset(...)` to `set(...)`, `frozenset[X](...)` to
   `Set[X](...)` and `frozenset[X]` / `FrozenSet[X]` to `Set[X]`; the source
@@ -3076,9 +3677,9 @@ What Codon 0.19 needs that Python does not, beyond
   `stated or DEFAULT` with `stated: Optional[str]`: branch on the cases
   into an annotated `str` local (`coordinate.projection.resolve_projector`).
 - **A regex group used as a `str`** (`m.group(1)` handed to `re.search`, or
-  to a `str` local): Codon's `Match.group()` is an `Optional[str]` whose
-  type Codon 0.19 cannot settle from such a use. Take `str(m.group(1))`,
-  the same `str` in Python (`coordinate.projection._parse_geo_reference`).
+  to a `str` local) compiles now that the check's `Match.group()` is a `str`
+  (#597); `str(m.group(1))`, the same `str` in Python, is still found in
+  older modules (`coordinate.projection._parse_geo_reference`).
 - **Projectors of different classes return through one `-> Projector`**
   (`coordinate.projection.make_projector`): the lanelet2 model derives each
   from `Projector`, and Codon 0.19 converts a subclass to it at `return`.
@@ -3234,8 +3835,9 @@ What Codon 0.19 needs that Python does not, beyond
   in a model module of their own (`_vehicle_entity.codon`), which
   `REPLACED_MODELS` replaces with `entity._spawn` and
   `entity.vehicle_entity`: the model's `EgoConfig` then holds the checked
-  `SpawnLocation`. The model of `maps.cache` (`maps/cache.codon`,
-  subprocess and json) takes and returns a `MapSource` from a model module
+  `SpawnLocation`. `maps.cache` is itself checked, and the library check compiles its source; its
+  model (`maps/cache.codon`) stays for the scenario check, which imports models
+  and not sources, and takes and returns a `MapSource` from a model module
   of its own (`_map_source.codon`), which `REPLACED_MODELS` replaces with the
   checked `maps.source`, so the checked `maps.resolver` hands the model's
   `GitMapCache` its own `MapSource`. Likewise `GroundProjectionConfig` (`_ground_projection.codon`,
@@ -3298,10 +3900,11 @@ What Codon 0.19 needs that Python does not, beyond
   `to_map_frame` returns to the checked `AutowareBridge.configure()`
   (it imports `coordinate.transform` itself, which is checked, so the library
   check compiles the real `to_map_frame` there).
-- **No `math.dist`** in Codon's `math`: `math.hypot` of the differences,
-  which is the computation CPython's `math.dist` makes (`AutowareEgoEntity`,
-  `actions.background_traffic`, where `test_background_traffic.py` pins the
-  two to the same number).
+- **`math.hypot` of the differences** where CPython's `math.dist` would do
+  (`AutowareEgoEntity`, `actions.background_traffic`, where
+  `test_background_traffic.py` pins the two to the same number): Codon's
+  `math` had no `math.dist` when these were written; the check adds it now
+  (see "Standard library names Codon lacks").
 - **A function whose only return is `return None`**: with an `Optional[X]`
   return annotation, the check returns `Optional[X]()` and realizes `X`
   before calling it ([*Writing a scenario that
