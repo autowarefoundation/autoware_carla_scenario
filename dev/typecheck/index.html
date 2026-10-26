@@ -2991,7 +2991,11 @@ scenario has to do itself:</p>
   and in any form (<code>self._count = 0</code>, <code>self._count: int = 0</code>, <code>self.a,
   self._count = ...</code>, <code>setattr(self, "_count", 0)</code>, <code>object.__setattr__(self,
   "_count", 0)</code>, <code>other._count = 0</code>), when a framework base assigns it (the
-  base's source, or the framework assigning it from outside), and when the
+  base's source, or the framework assigning it from outside; for a mixin,
+  when the framework bases of every scenario class deriving from it assign
+  it: <code>class VehicleInfoMixin: ego_config: EgoConfig</code> mixed into a
+  <code>BaseScenario</code>, but not when a <code>class Plain(VehicleInfoMixin)</code> derives
+  from it too), and when the
   class or a base gives it a value (a class attribute, a property). A class
   that assigns attributes by a computed name (<code>setattr(self, name, v)</code>,
   <code>self.__dict__</code>, <code>vars(self)</code>), defines <code>__getattr__</code>, or derives from a
@@ -6221,7 +6225,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 26, 2026 16:51:45 UTC"><span class="timeago" datetime="2026-10-26T16:51:45+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 26, 2026 16:51:45 UTC">2026-10-26</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 26, 2026 20:29:55 UTC"><span class="timeago" datetime="2026-10-26T20:29:55+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 26, 2026 20:29:55 UTC">2026-10-26</span>
   </span>
 
     
