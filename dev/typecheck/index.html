@@ -3370,7 +3370,10 @@ value whose members are <code>int</code>, not as a type: it becomes <code>int</c
     one a subclass redeclares and in a frozen hierarchy (#494): the value goes
     by position, as Codon cannot pass a keyword to a method a subclass
     overrides. A wrong value for it is reported as
-    <code>dataclasses.replace: field 'a' of Derived is declared int, not str</code>. It holds for a dataclass the scenario package defines, in
+    <code>dataclasses.replace: field 'a' of Derived is declared int, not str</code>.
+    Any other error raised inside the <code>_acs_with__&lt;field&gt;</code> method is
+    reported at the <code>replace(...)</code> call of the same file, not at the class
+    (#614). It holds for a dataclass the scenario package defines, in
     any of its modules, whose bases are dataclasses of the same module (or
     none) and which has no <code>__init__</code> of its own; for any other class (a
     framework or library dataclass) the call is refused with a hint to build
@@ -3479,7 +3482,7 @@ cannot express is refused at its line, with what to write instead.</p>
 </tr>
 <tr>
 <td><code>t.count(x)</code>, <code>t.index(x[, start[, stop]])</code> with <code>t</code> a name or an attribute chain (#601)</td>
-<td><code>(t.count(x) if hasattr(t, "count") else _acs_count(t, x))</code>: Codon's tuple has no <code>count</code> / <code>index</code> and cannot be extended, and only Codon knows <code>t</code>'s type, so a list, a str or a class of yours keeps its own call, compiled as written, and only a tuple goes to the helper (an item of another type than <code>x</code> never equals it). A tuple display, <code>(1, 2).index(2)</code>, goes to the helper directly. A tuple narrowed from an <code>Optional</code> (<code>t.count(1) if t is not None else 0</code>) is still <code>Optional</code> to Codon: the helper unwraps it (#609). Where Codon crashes with no diagnostic in a module that has these rewrites (an earlier error left the helper a wrong type, as <code>lst: list[Npc \| None] = [None, a]</code> then <code>lst.index(a)</code>), the module is compiled once more without them, and that compile's error is reported; a rerun that passes, crashes too or refuses a tuple's <code>count</code> / <code>index</code> (the crash had another cause) leaves the crash reported</td>
+<td><code>(t.count(x) if hasattr(t, "count") else _acs_count(t, x))</code>: Codon's tuple has no <code>count</code> / <code>index</code> and cannot be extended, and only Codon knows <code>t</code>'s type, so a list, a str or a class of yours keeps its own call, compiled as written, and only a tuple goes to the helper (an item of another type than <code>x</code> never equals it). A tuple display, <code>(1, 2).index(2)</code>, goes to the helper directly. A tuple narrowed from an <code>Optional</code> (<code>t.count(1) if t is not None else 0</code>) is still <code>Optional</code> to Codon: the helper unwraps it (#609). Where Codon crashes with no diagnostic in a module that has these rewrites (an earlier error left the helper a wrong type, as <code>lst = [None, a]</code> then <code>lst.index(a)</code>), the module is compiled once more without them, and that compile's error is reported; a rerun that passes, crashes too or refuses a tuple's <code>count</code> / <code>index</code> (the crash had another cause) leaves the crash reported</td>
 <td>the receiver is a module (<code>itertools.count</code>), a builtin type (<code>str.index(s, "a")</code>), a call or a subscript (<code>f().count(x)</code>, <code>rows[0].index(x)</code>: bind it to a name), or the call spans lines; then a tuple's is refused (<code>'Tuple[int,int]' object has no attribute 'count'</code>)</td>
 </tr>
 <tr>
@@ -3571,6 +3574,31 @@ cannot express is refused at its line, with what to write instead.</p>
 <td><code>dict(a=1)</code></td>
 <td><code>{"a": 1}</code> (Codon's <code>dict</code> takes no keywords). In an f-string field, <code>f"{dict(a=1)}"</code>, the f-string becomes a <code>+</code> of its parts first (<code>str({"a": 1})</code>): a brace ends the field for Codon's parser (#609)</td>
 <td></td>
+</tr>
+<tr>
+<td><code>dict(base, a=1)</code> (#613)</td>
+<td><code>(dict(base) \| {"a": 1})</code>: the same dict, the keywords winning (in an f-string field, the f-string is lowered first, as for <code>dict(a=1)</code>)</td>
+<td><code>dict(base, **more)</code>, or a <code>dict</code> the module binds itself</td>
+</tr>
+<tr>
+<td><code>filter(None, xs)</code> (#613)</td>
+<td><code>(_acs_v for _acs_v in xs if _acs_v)</code>: the truthy items, as Python's <code>filter</code> yields them (Codon's takes a function)</td>
+<td>a <code>filter</code> the module binds itself; the items still need a truth value (an enum member has none, see <a href="#iterating-an-enum">Iterating an enum</a>)</td>
+</tr>
+<tr>
+<td><code>items: list[int] = []</code>, <code>tags: dict[str, int] = {}</code>, <code>seen: set[str] = set()</code> (annotated, in a class body, a function or the module, #611)</td>
+<td>an empty one of the annotated type, <code>List[int]()</code>: Codon types a display from its elements, and an empty one is a container of <code>None</code> (a class with no <code>__init__</code> of its own was refused at its constructor call)</td>
+<td>an annotation Codon cannot name there (<code>Any</code>, a <code>TypeVar</code>, a class defined further down outside a function)</td>
+</tr>
+<tr>
+<td><code>lst: list[Npc \| None] = [None, a]</code>, <code>d: dict[str, Npc \| None] = {"x": None, "y": a}</code> (a display whose first element or value is <code>None</code>, #611)</td>
+<td>the elements put into a list (dict) of the annotated type, each <code>None</code> the <code>Optional</code>'s (<code>_acs_list_into(List[Optional[Npc]](), Optional[Npc](), a)</code>): Codon types a display by its first element</td>
+<td>as above</td>
+</tr>
+<tr>
+<td><code>Plan(lanes=(1, 2, 1))</code>, <code>replace(Plan(), lanes=(1, 2))</code>, <code>replace(self, lanes=())</code>, for a dataclass field <code>lanes: tuple[int, ...]</code> (or <code>Sequence[int]</code>) of the module (#614)</td>
+<td><code>List[int]([1, 2, 1])</code> / <code>List[int]()</code>, the list the field is checked as, as for its default</td>
+<td>a tuple held in a name, a positional argument of a dataclass with a base, <code>ClassVar</code> or <code>init=False</code> field, or <code>replace()</code> of an object whose class is not told by a constructor call or <code>self</code>: refused with <code>'Tuple[int,int,int]' does not match expected type 'List[int]'</code> and a hint to write <code>tuple([1, 2, 1])</code></td>
 </tr>
 </tbody>
 </table>
@@ -3859,6 +3887,11 @@ the check needs the other spelling.</p>
 <td><code>if obj:</code> (<code>not obj</code>, <code>bool(obj)</code>) on an object of a class with no <code>__bool__</code>: a plain object, or one with only <code>__len__</code> (#603)</td>
 <td><code>'Bag[List[int]]' object has no attribute '__bool__'</code></td>
 <td>say what is meant: <code>obj is not None</code> for a value that may be missing, <code>len(obj) &gt; 0</code> for a container, or define <code>__bool__</code> on the class</td>
+</tr>
+<tr>
+<td><code>class Registry(dict[str, int])</code>, <code>class Bag(list)</code>, <code>class Meters(int)</code>: a class deriving from a builtin type alone (<code>dict</code>, <code>list</code>, <code>set</code>, <code>frozenset</code>, <code>tuple</code>, <code>int</code>, <code>float</code>, <code>str</code>, <code>bytes</code>, or their <code>typing</code> names), #613</td>
+<td><code>__init__() missing 1 required positional argument: '_n_buckets'</code>, at the call (Codon's builtins are its own classes); refused at the class line</td>
+<td>hold one as an attribute (<code>items: dict[str, int]</code>) and give the class the methods it needs; a class with another base besides (<code>class Mode(str, Enum)</code>) and exceptions are left alone</td>
 </tr>
 <tr>
 <td><code>x = a if c else 3</code> with branches of different types (#603)</td>
@@ -4173,6 +4206,10 @@ The known gaps:</p>
 <li><strong>What only a tuple does</strong>: a <code>tuple[X, ...]</code> is checked as a <code>List[X]</code>,
   so its hash, its equality with another tuple and its immutability are not
   checked.</li>
+<li><strong>An <code>int</code> is 64 bits, and no value is computed</strong> (#613): Codon's <code>int</code>
+  is a 64-bit integer, and the check compiles the code without running it,
+  so an overflow (<code>2**64</code>, <code>math.factorial(25)</code>) and <code>2 ** -1</code> (a <code>float</code>
+  in Python) assigned to an <code>int</code> are not caught.</li>
 <li><strong><code>bytes</code> is read as <code>str</code></strong>: <code>path.read_bytes() + "text"</code> compiles, and
   CPython refuses it.</li>
 <li><strong>A <code>values=</code> that only Codon iterates</strong> (<code>register_cover()</code>,
@@ -6162,7 +6199,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 26, 2026 11:07:19 UTC"><span class="timeago" datetime="2026-10-26T11:07:19+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 26, 2026 11:07:19 UTC">2026-10-26</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 26, 2026 15:10:12 UTC"><span class="timeago" datetime="2026-10-26T15:10:12+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 26, 2026 15:10:12 UTC">2026-10-26</span>
   </span>
 
     
