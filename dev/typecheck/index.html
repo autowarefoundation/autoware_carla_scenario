@@ -2893,8 +2893,11 @@ those models declare.</p>
 places, and the checker smooths over most of them (it rewrites <code>X | None</code> into
 <code>Optional[X]</code>, drops <code>@dataclass</code> (and appends the <code>==</code>, ordering and hash it
 generates) and resolves <code>field(...)</code> defaults, accepts
-keyword-only parameters, required ones after a default included, gives a list of different conditions the type
-<code>list[BaseCondition]</code>, checks a <code>tuple[X, ...]</code> return annotation as a
+keyword-only parameters, required ones after a default included (a call
+that passes one by position is refused at the call, as Python refuses it:
+<code>gap() takes 1 positional argument but more were given: scale is keyword-only</code>,</p>
+<h1 id="622-gives-a-list-of-different-conditions-the-type">622), gives a list of different conditions the type<a class="headerlink" href="#622-gives-a-list-of-different-conditions-the-type" title="Permanent link">&para;</a></h1>
+<p><code>list[BaseCondition]</code>, checks a <code>tuple[X, ...]</code> return annotation as a
 <code>List[X]</code>, drops a parameter or return annotation naming a
 class the module defines further down, which Codon cannot name yet, gives a
 subclass that keeps its base's <code>__init__</code> that <code>__init__</code>, and types the
@@ -3510,8 +3513,8 @@ cannot express is refused at its line, with what to write instead.</p>
 <td>the class defines no ordering (use <code>@dataclass(order=True)</code> or <code>key=</code>)</td>
 </tr>
 <tr>
-<td><code>a if x else None</code>, <code>a if x is not None else None</code>, <code>None if x is None else a</code> (also <code>not x</code>), where <code>a</code> reads the narrowed <code>x</code>: <code>m.group(1) if m else None</code>, <code>n.name if n else None</code> (#597)</td>
-<td><code>_acs_some(a) if x else None</code>: Codon narrows <code>x</code> in <code>a</code> and then cannot unify the type of <code>a</code> with the <code>None</code> (<code>'Optional[str]' does not match expected type 'str'</code>); <code>_acs_some</code> makes <code>a</code> an <code>Optional</code> itself (a branch that already is one is kept), the type Python gives the expression</td>
+<td><code>a if x else None</code>, <code>a if x is not None else None</code>, <code>None if x is None else a</code> (also <code>not x</code>), where <code>a</code> reads the narrowed <code>x</code>: <code>m.group(1) if m else None</code>, <code>npc.speed if npc is not None else None</code> (#597, #621)</td>
+<td><code>_acs_some_if(lambda: a, x) if not isinstance(x, Optional[NoneType]) else None</code>. Codon cannot unify the type of <code>a</code> with the <code>None</code> (<code>'Optional[str]' does not match expected type 'str'</code>), and where that type is known only later (an attribute or a method of an <code>Optional</code>) it left the expression an unresolved <code>Optional[T]</code>, so a later <code>str()</code>, <code>round()</code> or format spec of it was refused or crashed Codon. Codon decides the <code>isinstance</code> test from the type, so it compiles only the branch it picks (the <code>None</code> where <code>x</code> is always <code>None</code>, as Python never evaluates <code>a</code> there) and unifies nothing; <code>_acs_some_if</code> returns <code>a</code> as an <code>Optional</code> (one that already is one is kept), the type Python gives the expression. In a class body, or where <code>a</code> cannot be in a lambda (a walrus, <code>yield</code>, <code>await</code>, <code>super()</code> or <code>super(Cls, self)</code>), the branch is <code>_acs_some(a)</code></td>
 <td></td>
 </tr>
 <tr>
@@ -6225,7 +6228,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 26, 2026 20:29:55 UTC"><span class="timeago" datetime="2026-10-26T20:29:55+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 26, 2026 20:29:55 UTC">2026-10-26</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 26, 2026 23:15:39 UTC"><span class="timeago" datetime="2026-10-26T23:15:39+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 26, 2026 23:15:39 UTC">2026-10-26</span>
   </span>
 
     
