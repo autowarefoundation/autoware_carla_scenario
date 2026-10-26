@@ -1291,17 +1291,48 @@ _REPLACE_HELPER_FRAME = re.compile(
 )
 
 
-def _replace_helper_location(diagnostic: Diagnostic) -> Diagnostic:
+def _replace_helper_location(
+    diagnostic: Diagnostic, files: Mapping[str, str] | None = None
+) -> Diagnostic:
     """*diagnostic* raised inside a ``replace`` method, at the ``replace(...)``
-    call of the same file that reached it, rather than at the class."""
+    call that reached it, rather than at the class.
+
+    The frame names the call's file by its basename, as Codon does: *files*
+    maps the basename of each checked module that no other checked module
+    shares to its path (:func:`_unique_basenames`), so a call in another
+    module than the class's (``replace(cfg.lanes, ids=...)`` in
+    ``scenario.py`` of a class of ``configs.py``) is found too (#623).  An
+    ambiguous basename leaves the diagnostic at the class.  Without *files*,
+    only a call in the class's own file is.
+    """
     if not diagnostic.trace or diagnostic.path is None:
         return diagnostic
     found = _REPLACE_HELPER_FRAME.match(diagnostic.trace[0])
-    if found is None or Path(diagnostic.path).name != found["file"]:
+    if found is None:
+        return diagnostic
+    if files is None:
+        path = diagnostic.path if Path(diagnostic.path).name == found["file"] else None
+    else:
+        path = files.get(found["file"])
+    if path is None:
         return diagnostic
     return dataclasses.replace(
-        diagnostic, line=int(found["line"]), column=None, trace=diagnostic.trace[1:]
+        diagnostic,
+        path=path,
+        line=int(found["line"]),
+        column=None,
+        trace=diagnostic.trace[1:],
     )
+
+
+def _unique_basenames(ws: _Workspace) -> dict[str, str]:
+    """The path of each checked module of *ws* by its basename, for the
+    basenames no other checked module has (Codon's frames name a file by its
+    basename alone)."""
+    by_name: dict[str, list[str]] = {}
+    for rel, original in ws.files.items():
+        by_name.setdefault(Path(rel).name, []).append(original)
+    return {name: paths[0] for name, paths in by_name.items() if len(paths) == 1}
 
 
 def _replace_thunk_message(diagnostic: Diagnostic) -> Diagnostic:
@@ -1373,13 +1404,20 @@ def _misspelt_member(message: str) -> str | None:
     return f"CPython's {label} has no '{name}' either (a typo?){suggestion}"
 
 
-def _variadic_hints(diagnostics: list[Diagnostic]) -> list[Diagnostic]:
+def _variadic_hints(
+    diagnostics: list[Diagnostic], modules: Mapping[str, str] | None = None
+) -> list[Diagnostic]:
     """*diagnostics*, each refusal of a Codon limit on ``**kwargs``, on
-    ``*args`` or on a tuple saying why and what to write instead (#266)."""
+    ``*args`` or on a tuple saying why and what to write instead (#266).
+
+    *modules* is :func:`_unique_basenames` of the workspace, which places an
+    error inside a ``replace`` method (:func:`_replace_helper_location`)."""
     out = []
     files = _Files()
     for diagnostic in diagnostics:
-        diagnostic = _replace_helper_location(_replace_thunk_message(diagnostic))
+        diagnostic = _replace_helper_location(
+            _replace_thunk_message(diagnostic), modules
+        )
         in_display = any(_LIST_DISPLAY_FRAME.match(frame) for frame in diagnostic.trace)
         if in_display:
             # A list display `_acs_list` could not make one list (#480): the
@@ -3261,7 +3299,10 @@ def _compile(
             return None
         output = proc.stdout + proc.stderr
         diagnostics = _data_model_hints(
-            _with_member_reasons(_variadic_hints(_parse_output(output, ws)), sources),
+            _with_member_reasons(
+                _variadic_hints(_parse_output(output, ws), _unique_basenames(ws)),
+                sources,
+            ),
             sources,
         )
         if proc.returncode != 0:

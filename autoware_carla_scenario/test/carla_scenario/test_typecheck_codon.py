@@ -12054,3 +12054,227 @@ def test_a_tuple_display_replace_it_cannot_type_is_refused_at_the_call(
     ), error.format()
     assert "`tuple([1, 2, 1])`" in error.message
     assert error.line == _line_of(path, "q = replace(p, lanes=")
+
+
+# ---------------------------------------------------------------------------
+# replace() of a class of another module, of a nested dataclass (#623)
+# ---------------------------------------------------------------------------
+
+_LANES_CONFIG = """
+from dataclasses import dataclass, field
+
+
+@dataclass(frozen=True)
+class Lanes:
+    ids: tuple[int, ...] = (460, 265)
+
+
+@dataclass
+class CaseConfig:
+    name: str = "case"
+    goal_lanelet_ids: list[int] = field(default_factory=lambda: [460, 265])
+    timeout_seconds: float = 10.0
+    min_speed_kmh: float | None = None
+    lanes: Lanes = field(default_factory=Lanes)
+"""
+
+
+def test_a_wrong_replace_of_a_class_of_another_module_is_refused_at_the_call(
+    tmp_path: Path,
+) -> None:
+    # The method `replace` is lowered to is in configs.py, the call in
+    # scenario.py: the error is at the call, not at the class.
+    scenario, config, path = _write_case(
+        tmp_path,
+        "lanes = replace(cfg.lanes, ids=(1, 2, 3))\n"
+        'logger.info("%d", len(lanes.ids))\n',
+        config=_LANES_CONFIG,
+        header=_FROZEN_HEADER,
+    )
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "'Tuple[int,int,int]' does not match expected type 'List[int]'" in (
+        error.message
+    ), error.format()
+    assert error.path == str(path), error.format()
+    assert error.line == _line_of(path, "lanes = replace(cfg.lanes")
+
+
+_NESTED_DATACLASSES = """
+
+
+class Plans:
+    @dataclass(frozen=True)
+    class Leg:
+        lanelet: int = 0
+        speed: float = 1.0
+
+    def faster(self, leg: Plans.Leg) -> Plans.Leg:
+        return replace(leg, speed=leg.speed * 2)
+
+
+def segments() -> int:
+    @dataclass(frozen=True)
+    class Seg:
+        a: int = 0
+
+        @dataclass(order=True)
+        class Part:
+            b: int = 0
+
+    kept = {replace(Seg(1), a=2), Seg(2)}
+    lower = Seg.Part(1) < replace(Seg.Part(1), b=3)
+    return len(kept) + replace(Seg(1), a=2).a + int(lower)
+"""
+
+
+def test_replace_and_hash_of_a_nested_dataclass_compile(tmp_path: Path) -> None:
+    # A dataclass in a class or in a function gets its `replace` methods and
+    # its ==, hash and ordering in its body, as `@extend` cannot name it.
+    scenario, config, _ = _write_case(
+        tmp_path,
+        "leg = Plans().faster(Plans.Leg(3, 2.0))\n"
+        "legs = {leg, Plans.Leg(3, 4.0)}\n"
+        'logger.info("%f %d %d", leg.speed, len(legs), segments())\n',
+        extra=_NESTED_DATACLASSES,
+        header=_FROZEN_HEADER,
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_a_wrong_replace_of_a_nested_dataclass_is_refused_at_the_call(
+    tmp_path: Path,
+) -> None:
+    scenario, config, path = _write_case(
+        tmp_path,
+        'leg = replace(Plans.Leg(), speed="fast")\n' 'logger.info("%f", leg.speed)\n',
+        extra=_NESTED_DATACLASSES,
+        header=_FROZEN_HEADER,
+    )
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "'str' does not match expected type 'float'" in error.message, error.format()
+    assert error.line == _line_of(path, "leg = replace(Plans.Leg()")
+
+
+# ---------------------------------------------------------------------------
+# Python 3.12+ syntax (#624): kept in strings, as the suite runs on 3.10
+# ---------------------------------------------------------------------------
+
+_PY312 = pytest.mark.skipif(
+    sys.version_info < (3, 12), reason="Python 3.12+ syntax (PEP 695, PEP 701)"
+)
+
+_PY312_DEFINITIONS = """
+
+
+type LaneIds = list[int]
+
+
+def total(ids: LaneIds) -> int:
+    return sum(ids)
+
+
+def first[T](xs: list[T]) -> T:
+    return xs[0]
+
+
+class Base:
+    def v(self) -> int:
+        return 1
+
+
+def pick[B: Base](a: B, b: B) -> B:
+    return a if a.v() >= b.v() else b
+
+
+class Box[T]:
+    item: T
+
+    def __init__(self, item: T) -> None:
+        self.item = item
+
+    def get(self) -> T:
+        return self.item
+
+
+@dataclass(frozen=True)
+class Pair[K, V]:
+    k: K
+    v: V
+"""
+
+
+@_PY312
+def test_python_3_12_syntax_compiles(tmp_path: Path) -> None:
+    # Same-quote f-string fields are requoted, `type X = T` is an alias, and
+    # type parameters are Codon's generics; a generic function or class is
+    # compiled where it is used, with a warning each.
+    scenario, config, path = _write_case(
+        tmp_path,
+        'd = {"k": 1}\n'
+        'p = replace(Pair(1, "a"), v="b")\n'
+        'logger.info(f"{cfg.name.replace("_", "-")} {d["k"]} '
+        '{total(cfg.goal_lanelet_ids)} {first(cfg.goal_lanelet_ids)}")\n'
+        'logger.info(f"{pick(Base(), Base()).v()} {Box(1).get()} {Box("x").get()} '
+        '{p.v} {hash(p) == hash(Pair(1, "b"))}")\n',
+        extra=_PY312_DEFINITIONS,
+        header=_FROZEN_HEADER,
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+    lines = {w.line for w in result.warnings}
+    assert lines == {
+        _line_of(path, "def first["),
+        _line_of(path, "def pick["),
+        _line_of(path, "class Box["),
+        _line_of(path, "class Pair["),
+    }, result.format()
+
+
+@_PY312
+def test_a_generic_class_is_checked_where_it_is_used(tmp_path: Path) -> None:
+    scenario, config, path = _write_case(
+        tmp_path,
+        'n = Box("a").get() + 1\nlogger.info("%d", n)\n',
+        extra=_PY312_DEFINITIONS,
+        header=_FROZEN_HEADER,
+    )
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "unsupported operand type(s) for +: 'str'" in error.message, error.format()
+    assert error.line == _line_of(path, 'n = Box("a")')
+
+
+@_PY312
+@pytest.mark.parametrize(
+    ("code", "needle", "hint"),
+    [
+        (
+            'd = {"it\'s": 1}\nlogger.info(f"{d["it\'s"]}")\n',
+            "logger.info(f",
+            "cannot quote it with the other quote",
+        ),
+        (
+            'd = {"a\\n": 1}\nlogger.info(f"{d["a\\n"]}")\n',
+            "logger.info(f",
+            "holds a backslash",
+        ),
+        (
+            'x: Pair2[int] = (1, 2)\nlogger.info("%d", x[0])\n',
+            "type Pair2[",
+            "no generic alias",
+        ),
+    ],
+)
+def test_python_3_12_syntax_codon_cannot_parse_is_refused_at_its_line(
+    tmp_path: Path, code: str, needle: str, hint: str
+) -> None:
+    scenario, config, path = _write_case(
+        tmp_path,
+        code,
+        extra="\n\ntype Pair2[T] = tuple[T, T]\n",
+        header=_FROZEN_HEADER,
+    )
+    errors = typecheck_scenario(scenario, config).diagnostics
+    found = [e for e in errors if hint in e.message]
+    assert found, "\n".join(e.format() for e in errors)
+    assert found[0].line == _line_of(path, needle)
