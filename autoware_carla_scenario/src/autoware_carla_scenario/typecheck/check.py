@@ -898,6 +898,24 @@ def _build_workspace(
 #: or on any tuple's truth, and what to write instead.
 _VARIADIC_LIMITS = (
     (
+        # An empty container with no annotation, an unannotated class
+        # attribute `items = []` most often (#611): Codon types it from what
+        # it holds, and it holds nothing, so its elements are `None`.
+        re.compile(r"^'[^']+' does not match expected type 'NoneType'$"),
+        "Codon typed the target from its first value with no element type: "
+        "an empty `[]`, `{}` or `set()` with no annotation (a class attribute "
+        "`items = []`) holds `None`, and so does a name first bound to `None`: "
+        "annotate it (`items: list[str] = []`, `x: int | None = None`)",
+    ),
+    (
+        # A tuple display given for a `tuple[X, ...]` the check could not
+        # rewrite (#614): Codon's tuples have a fixed length.
+        re.compile(r"^'Tuple\[[^']*\]' does not match expected type 'List\[[^']*\]'"),
+        "a variable-length `tuple[X, ...]` is checked as a list (Codon's "
+        "tuples have a fixed length): build it with `tuple([...])` "
+        "(`tuple([1, 2, 1])`) instead of a tuple display",
+    ),
+    (
         re.compile(r"^'NamedTuple(?:\[[^']*\])?' object has no attribute '"),
         "Codon makes **kwargs a NamedTuple of the keywords passed, not a dict: "
         'read one with kw.get("name", default) or declare it as a keyword '
@@ -1078,6 +1096,15 @@ _LIST_DISPLAY_HINT = (
 )
 
 
+#: A list display assigned to an annotated target (``xs: list[B] = [...]``),
+#: which the check already makes a list of the annotated element type (#611).
+_ANNOTATED_DISPLAY = re.compile(r"^\s*[A-Za-z_][\w.]*\s*:[^=]+=\s*\[")
+_ANNOTATED_DISPLAY_HINT = (
+    "the display is a list of the target's annotated element type, so an "
+    "element that is not of it (or of a subclass) is refused"
+)
+
+
 _DICT_DISPLAY_HINT = (
     "a dict display is typed by its first value, so its values must share a "
     "class of the scenario's own that the check can infer from literal keys "
@@ -1217,6 +1244,8 @@ def _display_hint(diagnostic: Diagnostic, in_display: bool) -> str | None:
         )
         if later is not None and not in_body:
             return _define_above(later)
+        if _ANNOTATED_DISPLAY.match(_source_line(diagnostic)):
+            return _ANNOTATED_DISPLAY_HINT
         return _LIST_DISPLAY_HINT
     if any("_acs_dict_into" in frame for frame in diagnostic.trace):
         return None  # already a dict of the target type: the value is refused
@@ -1243,6 +1272,28 @@ _REPLACE_THUNK_FRAME = re.compile(
     r"^(?:during the realization of )?class_thunk_dispatch\(slf: \w+, cls_id: int, \*args: Tuple\[(?P<got>[^\]]*)\], "
     r"F: _acs_with__(?P<field>\w+)\[(?P<cls>\w+),(?P<want>[^\]]*)\]\)"
 )
+
+
+#: The frame of the method ``replace(obj, a=x)`` is lowered to (#614): its
+#: lines are appended after the module and map to the class's line, while the
+#: frame names the line of the call.
+_REPLACE_HELPER_FRAME = re.compile(
+    r"^during the realization of _acs_with__\w+\(self: \w+\b.*"
+    r" \[(?:[^\]]*, )?(?P<file>[^\]\s:]+):(?P<line>\d+)\]$"
+)
+
+
+def _replace_helper_location(diagnostic: Diagnostic) -> Diagnostic:
+    """*diagnostic* raised inside a ``replace`` method, at the ``replace(...)``
+    call of the same file that reached it, rather than at the class."""
+    if not diagnostic.trace or diagnostic.path is None:
+        return diagnostic
+    found = _REPLACE_HELPER_FRAME.match(diagnostic.trace[0])
+    if found is None or Path(diagnostic.path).name != found["file"]:
+        return diagnostic
+    return dataclasses.replace(
+        diagnostic, line=int(found["line"]), column=None, trace=diagnostic.trace[1:]
+    )
 
 
 def _replace_thunk_message(diagnostic: Diagnostic) -> Diagnostic:
@@ -1320,7 +1371,7 @@ def _variadic_hints(diagnostics: list[Diagnostic]) -> list[Diagnostic]:
     out = []
     files = _Files()
     for diagnostic in diagnostics:
-        diagnostic = _replace_thunk_message(diagnostic)
+        diagnostic = _replace_helper_location(_replace_thunk_message(diagnostic))
         in_display = any(_LIST_DISPLAY_FRAME.match(frame) for frame in diagnostic.trace)
         if in_display:
             # A list display `_acs_list` could not make one list (#480): the

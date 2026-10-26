@@ -3612,6 +3612,45 @@ def test_getattr_keeps_its_lines() -> None:
     assert text.startswith("v = (((None), x.a if hasattr(x, 'a') else (None))[1]")
 
 
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        (
+            "nz = list(filter(None, xs))",
+            "nz = list((_acs_v for _acs_v in xs if _acs_v))",
+        ),
+        (
+            "nz = filter(None, [0, 1, f(x)])",
+            "nz = (_acs_v for _acs_v in [0, 1, f(x)] if _acs_v)",
+        ),
+    ],
+)
+def test_filter_none_becomes_a_generator(source: str, expected: str) -> None:
+    # #613: Codon's filter takes a function, not None.
+    assert _rewritten(source + "\n") == expected + "\n"
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "nz = filter(f, xs)",
+        "nz = filter(None, *args)",
+        "nz = filter(None)",
+        "def filter(a, b):\n    return b\nnz = filter(None, xs)",
+        "def g(filter):\n    return filter(None, xs)",
+    ],
+)
+def test_filter_it_cannot_rewrite_is_left_alone(source: str) -> None:
+    assert _rewritten(source + "\n") == source + "\n"
+
+
+def test_filter_none_keeps_its_lines() -> None:
+    source = "nz = filter(\n    None,\n    xs,\n)\nz = 1\n"
+    text = _rewritten(source)
+    assert text.count("\n") == source.count("\n")
+    assert text.splitlines()[4] == "z = 1"
+
+
 def test_startswith_with_a_tuple_matches_cpython() -> None:
     # Differential: the rewritten text and the original give the same value and
     # evaluate the same parts in the same order (all of them, as CPython does,
@@ -4400,6 +4439,45 @@ def test_dict_with_keywords_is_rewritten_where_dict_is_the_builtin(
 def test_dict_with_keywords_is_left_alone_where_the_module_binds_dict() -> None:
     out = transform_source("def f(dict):\n    return dict(a=1)\nx = dict(b=2, **y)\n")
     assert "return dict(a=1)" in out and "x = dict(b=2, **y)" in out
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        ("d = dict(base, a=1)", 'd = (dict(base) | {"a": 1})'),
+        (
+            "d = dict(base, a=1, b=dict(base, c=2))",
+            'd = (dict(base) | {"a": 1, "b": (dict(base) | {"c": 2})})',
+        ),
+        ('d = dict({"x": 1}, y=f(2))', 'd = (dict({"x": 1}) | {"y": f(2)})'),
+    ],
+)
+def test_dict_of_a_mapping_and_keywords_becomes_a_union(
+    source: str, expected: str
+) -> None:
+    # #613: Codon's dict takes no keywords; `|` keeps the keywords' values.
+    out = transform_source(source + "\n")
+    assert expected in out
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "d = dict(base, **more)",
+        "d = dict(*args, a=1)",
+        "d = dict(a, b, c=1)",
+        "def f(dict):\n    return dict(base, a=1)",
+    ],
+)
+def test_dict_of_a_mapping_it_cannot_rewrite_is_left_alone(source: str) -> None:
+    out = transform_source(source + "\n")
+    assert source.splitlines()[-1].strip() in out
+
+
+def test_dict_of_a_mapping_and_keywords_keeps_its_lines() -> None:
+    lines, origin = _lines("d = dict(\n    base,\n    a=1,\n)\nz = 1\n")
+    assert lines[origin.index(5)] == "z = 1"
+    assert "(dict(" in lines[origin.index(1)]
 
 
 # ---------------------------------------------------------------------------
@@ -5983,3 +6061,285 @@ def test_a_negative_enum_value_is_rewritten() -> None:
     source = "from enum import Enum\n\n\nclass E(Enum):\n    A = -1\n    B = 1\n"
     out = transform_source(source)
     assert "A: ClassVar[E] = E('A', -1)" in out, out
+
+
+# ---------------------------------------------------------------------------
+# Displays typed from their annotation (#611), tuple displays of a
+# `tuple[X, ...]` field (#614), builtin bases (#613)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        ("class Bag:\n    items: list[int] = []\n", "items: list[int] = List[int]()"),
+        (
+            "class Bag:\n    tags: dict[str, int] = {}\n",
+            "tags: dict[str, int] = Dict[str, int]()",
+        ),
+        ("class Bag:\n    seen: set[str] = set()\n", "seen: set[str] = Set[str]()"),
+        (
+            "from typing import List\nclass Bag:\n    items: List[float] = list()\n",
+            "items: List[float] = List[float]()",
+        ),
+        ("def f() -> None:\n    e: list[int] = []\n", "e: list[int] = List[int]()"),
+        (
+            "x: dict[str, list[int]] = {}\n",
+            "x: dict[str, list[int]] = Dict[str, list[int]]()",
+        ),
+        (
+            "class Npc:\n    pass\ndef f(a: Npc) -> None:\n"
+            "    lst: list[Npc | None] = [None, a, None]\n",
+            "lst: list[Optional[Npc]] = _acs_list_into(List[Optional[Npc]](), "
+            "Optional[Npc](), a, Optional[Npc]())",
+        ),
+        (
+            "class Npc:\n    pass\ndef f(a: Npc) -> None:\n"
+            '    d: dict[str, Npc | None] = {"x": None, "y": a}\n',
+            "d: dict[str, Optional[Npc]] = _acs_dict_into(Dict[str, Optional[Npc]](), "
+            '("x", Optional[Npc]()), ("y", a))',
+        ),
+        (
+            # A function body is typed after the module: a class further down
+            # can be named there.
+            "def f() -> None:\n    n: list[Later] = []\nclass Later:\n    pass\n",
+            "n = List[Later]()",
+        ),
+    ],
+)
+def test_an_empty_or_none_first_display_takes_its_annotation(
+    source: str, expected: str
+) -> None:
+    # #611: Codon types a display from its elements, not from its target.
+    assert expected in _transform(source)
+
+
+@pytest.mark.parametrize(
+    ("source", "kept"),
+    [
+        (
+            "from typing import Any\nclass Bag:\n    items: list[Any] = []\n",
+            "items: list[Any] = []",
+        ),
+        ("class Bag:\n    items: list[Later] = []\nclass Later:\n    pass\n", "= []"),
+        (
+            'from typing import TypeVar\nT = TypeVar("T")\n'
+            "def f() -> None:\n    t: list[T] = []\n",
+            "t = []",
+        ),
+        ("def f() -> None:\n    t: list[int] = [1, 2]\n", "t: list[int] = [1, 2]"),
+        ("def f() -> None:\n    t: tuple[int, ...] = ()\n", "= ()"),
+        ("def f(list) -> None:\n    t: set[int] = list()\n", "= list()"),
+        ("def f() -> None:\n    t: list[int] = list(range(3))\n", "list(range(3))"),
+        ("def f() -> None:\n    t: dict[str, int] = []\n", "= []"),
+    ],
+)
+def test_a_display_its_annotation_cannot_type_is_left_alone(
+    source: str, kept: str
+) -> None:
+    assert kept in _transform(source)
+
+
+def test_dataclass_factories_are_unaffected_by_annotated_displays() -> None:
+    out = _transform(
+        """\
+        from dataclasses import dataclass, field
+
+        @dataclass
+        class Cfg:
+            items: list[int] = field(default_factory=list)
+            tags: dict[str, int] = field(default_factory=dict)
+        """
+    )
+    assert "items: list[int] = list[int]()" in out
+    assert "tags: dict[str, int] = dict[str, int]()" in out
+
+
+_PLAN = """\
+from __future__ import annotations
+import dataclasses
+from dataclasses import dataclass, replace
+from typing import Sequence
+
+
+@dataclass(frozen=True)
+class Plan:
+    lanes: tuple[int, ...] = ()
+    names: Sequence[str] = ()
+    pair: tuple[int, int] = (0, 0)
+
+    def more(self) -> Plan:
+        return replace(self, lanes=(1, 2))
+
+
+@dataclass(frozen=True)
+class Sub(Plan):
+    x: int = 0
+
+
+"""
+
+
+@pytest.mark.parametrize(
+    ("call", "expected"),
+    [
+        (
+            'Plan(lanes=(1, 2, 1), names=("a",), pair=(1, 2))',
+            'Plan(lanes=List[int]([1, 2, 1]), names=List[str](["a",]), pair=(1, 2))',
+        ),
+        (
+            '(Plan((3, 4), ("b", "c"), (1, 1)))',
+            '(Plan(List[int]([3, 4]), List[str](["b", "c"]), (1, 1)))',
+        ),
+        ("Plan(lanes=())", "Plan(lanes=List[int]())"),
+        (
+            "replace(Plan(), lanes=(1, 2, 1))",
+            "replace(Plan())._acs_with__lanes(List[int]([1, 2, 1]))",
+        ),
+        (
+            "dataclasses.replace(Plan(), lanes=())",
+            "dataclasses.replace(Plan())._acs_with__lanes(List[int]())",
+        ),
+        # An inherited field by keyword; not by position (Sub has a base).
+        ("Sub((1,), x=1, lanes=(2,))", "Sub((1,), x=1, lanes=List[int]([2,]))"),
+        # The class is not told: left to the hint (#614).
+        ("replace(p, lanes=(1,))", "replace(p)._acs_with__lanes((1,))"),
+        ("Plan(lanes=xs)", "Plan(lanes=xs)"),
+    ],
+)
+def test_a_tuple_display_for_a_variable_length_field_is_a_list(
+    call: str, expected: str
+) -> None:
+    # #614: a `tuple[X, ...]` field is checked as a `List[X]`.
+    out = _transform(
+        _PLAN + f"def f(p: Plan, xs: list[int]) -> None:\n    v = {call}\n"
+    )
+    assert f"    v = {expected}\n" in out
+    assert "return replace(self)._acs_with__lanes(List[int]([1, 2]))" in out
+
+
+def test_a_tuple_display_for_a_dataclass_with_an_init_is_left_alone() -> None:
+    out = _transform(
+        _PLAN.replace(
+            "    x: int = 0\n",
+            "    x: int = 0\n\n    def __init__(self) -> None:\n        pass\n",
+        )
+        + "class Other:\n    def __init__(self, lanes: tuple[int, ...]) -> None:\n"
+        "        self.lanes = lanes\n"
+        "def f() -> None:\n    v = Other(lanes=(1, 2))\n"
+    )
+    assert "v = Other(lanes=(1, 2))" in out
+
+
+def test_a_tuple_display_argument_keeps_its_lines() -> None:
+    lines, origin = _lines(
+        _PLAN + "v = Plan(\n    lanes=(\n        1,\n        2,\n    ),\n)\nz = 1\n"
+    )
+    start = _PLAN.count("\n") + 1
+    assert lines[origin.index(start + 6)] == "z = 1"
+    assert "List[int]([" in lines[origin.index(start + 1)]
+
+
+@pytest.mark.parametrize(
+    ("source", "line", "spelled"),
+    [
+        ("class Registry(dict[str, int]):\n    pass\n", 1, "dict[str, int]"),
+        ("x = 1\nclass Bag(list):\n    pass\n", 2, "list"),
+        ("class M(int):\n    pass\n", 1, "int"),
+        ("class S(str):\n    pass\n", 1, "str"),
+        ("class T(tuple[int, ...]):\n    pass\n", 1, "tuple[int, ...]"),
+        (
+            "from typing import Dict\nclass D(Dict[str, int]):\n    pass\n",
+            2,
+            "Dict[str, int]",
+        ),
+        ("def f():\n    class L(list):\n        pass\n", 2, "list"),
+    ],
+)
+def test_a_class_deriving_from_a_builtin_is_refused(
+    source: str, line: int, spelled: str
+) -> None:
+    from autoware_carla_scenario.typecheck.transform import class_body_refusals
+
+    [(at, message)] = class_body_refusals(source)
+    assert at == line
+    assert f"builtin `{spelled}`" in message and "as an attribute" in message
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "from enum import Enum\nclass Mode(str, Enum):\n    A = 'a'\n",
+        "class E(Exception):\n    pass\n",
+        "class E(ValueError):\n    pass\n",
+        "class Mixin:\n    pass\nclass R(dict, Mixin):\n    pass\n",
+        "dict = object\nclass R(dict):\n    pass\n",
+        "class P:\n    pass\nclass Q(P):\n    pass\n",
+    ],
+)
+def test_a_class_with_another_base_is_not_refused(source: str) -> None:
+    from autoware_carla_scenario.typecheck.transform import builtin_base_refusals
+
+    assert builtin_base_refusals(ast.parse(source)) == []
+
+
+def test_a_tuple_given_for_a_list_gets_its_hint() -> None:
+    from autoware_carla_scenario.typecheck.check import Diagnostic, _variadic_hints
+
+    message = "'Tuple[int,int,int]' does not match expected type 'List[int]'"
+    (out,) = _variadic_hints([Diagnostic(message)])
+    assert out.message.startswith(message + ": ")
+    assert "`tuple([1, 2, 1])`" in out.message
+
+
+def test_a_container_of_none_gets_its_hint() -> None:
+    from autoware_carla_scenario.typecheck.check import Diagnostic, _variadic_hints
+
+    message = "'str' does not match expected type 'NoneType'"
+    (out,) = _variadic_hints([Diagnostic(message)])
+    assert "`items: list[str] = []`" in out.message
+    other = "'str' does not match expected type 'Optional[NoneType]'"
+    (kept,) = _variadic_hints([Diagnostic(other)])
+    assert "items: list[str]" not in kept.message
+
+
+def test_an_error_inside_a_replace_method_is_located_at_the_call(
+    tmp_path: Path,
+) -> None:
+    from autoware_carla_scenario.typecheck.check import Diagnostic, _variadic_hints
+
+    path = tmp_path / "scenario.py"
+    path.write_text("x = 1\n" * 80)
+    message = "'Tuple[int,int,int]' does not match expected type 'List[int]'"
+    frame = (
+        "during the realization of _acs_with__lanes(self: Plan, lanes: "
+        "Tuple[int,int,int]) [scenario.py:69]"
+    )
+    outer = "during the realization of setup(self: CaseScenario) [scenario.py:60]"
+    (out,) = _variadic_hints([Diagnostic(message, str(path), 75, None, (frame, outer))])
+    assert (out.line, out.column, out.trace) == (69, None, (outer,))
+    assert "tuple([1, 2, 1])" in out.message
+    # The call in another file: left at the class.
+    other = frame.replace("scenario.py", "helpers.py")
+    (kept,) = _variadic_hints([Diagnostic(message, str(path), 75, None, (other,))])
+    assert (kept.line, kept.trace) == (75, (other,))
+
+
+def test_a_list_display_of_an_annotated_target_gets_no_annotate_hint(
+    tmp_path: Path,
+) -> None:
+    from autoware_carla_scenario.typecheck.check import Diagnostic, _variadic_hints
+
+    path = tmp_path / "scenario.py"
+    path.write_text("lst: list[Npc] = [None, a]\nrules = [A(), B()]\n")
+    message = "'Optional[NoneType]' does not match expected type 'Optional[Npc]'"
+    frame = "during the realization of _acs_list_into(out: List[Npc]) [scenario.py:1]"
+    annotated, bare = _variadic_hints(
+        [
+            Diagnostic(message, str(path), 1, None, (frame,)),
+            Diagnostic(message, str(path), 2, None, (frame,)),
+        ]
+    )
+    assert "annotated element type" in annotated.message
+    assert "annotate the target" not in annotated.message
+    assert "annotate the target" in bare.message

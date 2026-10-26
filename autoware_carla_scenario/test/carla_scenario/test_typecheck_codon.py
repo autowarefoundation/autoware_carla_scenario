@@ -11522,3 +11522,136 @@ def test_sys_version_info_is_refused_with_a_hint(tmp_path: Path) -> None:
         error.message
     ), error.format()
     assert error.line == _line_of(path, "sys.version_info")
+
+
+_ANNOTATED_DISPLAYS = """
+
+
+class Npc:
+    pass
+
+
+class Bag:
+    items: list[int] = []
+    tags: dict[str, int] = {}
+    seen: set[str] = set()
+
+    def add(self, v: int) -> None:
+        self.items.append(v)
+        self.tags[str(v)] = v
+        self.seen.add(str(v))
+
+
+def displays(a: Npc) -> str:
+    lst: list[Npc | None] = [None, a]
+    d: dict[str, Npc | None] = {"x": None, "y": a}
+    e: list[int] = []
+    e.append(1)
+    return f"{lst.index(a)} {len(d)} {e}"
+"""
+
+
+def test_annotated_empty_and_none_first_displays_compile(tmp_path: Path) -> None:
+    # #611: an empty display, or one whose first element is None, is typed
+    # from the annotation of its target, also as a class-level default of a
+    # class with no __init__ (which Codon's constructor takes).
+    scenario, config, _ = _write_case(
+        tmp_path,
+        "b = Bag()\n"
+        "b.add(1)\n"
+        'logger.info("%d %s", len(b.items), displays(Npc()))\n',
+        extra=_ANNOTATED_DISPLAYS,
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_an_unannotated_empty_class_attribute_gets_a_hint(tmp_path: Path) -> None:
+    scenario, config, path = _write_case(
+        tmp_path,
+        'Registry.items.append("x")\nlogger.info("%d", len(Registry.items))\n',
+        extra="\n\nclass Registry:\n    items = []\n",
+    )
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "expected type 'NoneType'" in error.message, error.format()
+    assert "`items: list[str] = []`" in error.message, error.format()
+    assert error.line == _line_of(path, 'Registry.items.append("x")')
+
+
+def test_the_builtin_idioms_of_613_compile(tmp_path: Path) -> None:
+    # dict(base, a=1) is `(dict(base) | {"a": 1})`, filter(None, xs) a
+    # generator of the truthy items.
+    scenario, config, _ = _write_case(
+        tmp_path,
+        'base = {"x": 1}\n'
+        "merged = dict(base, a=1, b=2)\n"
+        "xs = [0, 1, 2]\n"
+        "nz = list(filter(None, xs))\n"
+        'logger.info("%d %s", merged["a"], nz)\n',
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_a_class_deriving_from_a_builtin_is_refused_at_its_line(
+    tmp_path: Path,
+) -> None:
+    scenario, config, path = _write_case(
+        tmp_path,
+        'r = Registry()\nr["a"] = 1\nlogger.info("%d", len(r))\n',
+        extra="\n\nclass Registry(dict[str, int]):\n    pass\n",
+    )
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "derives from the builtin `dict[str, int]`" in error.message
+    assert "`items: dict[K, V]`" in error.message
+    assert error.line == _line_of(path, "class Registry(")
+
+
+_LANES = """
+
+
+@dataclass(frozen=True)
+class Plan:
+    lanes: tuple[int, ...] = ()
+
+    def wider(self) -> Plan:
+        return replace(self, lanes=(1, 1, 1, 1))
+"""
+
+
+def test_a_tuple_display_for_a_variable_length_field_compiles(
+    tmp_path: Path,
+) -> None:
+    # #614: a `tuple[X, ...]` field is checked as a `List[X]`; a tuple display
+    # given to it, by the constructor or `replace()` of a told class, is one.
+    scenario, config, _ = _write_case(
+        tmp_path,
+        "p = Plan(lanes=(1, 2, 1))\n"
+        "q = replace(Plan(), lanes=(1, 2))\n"
+        'logger.info("%d %d %d", len(p.lanes), len(q.lanes), len(p.wider().lanes))\n',
+        extra=_LANES,
+        header=_FROZEN_HEADER,
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_a_tuple_display_replace_it_cannot_type_is_refused_at_the_call(
+    tmp_path: Path,
+) -> None:
+    # The object's class is not told: refused with a hint, at the `replace`
+    # call rather than at the class line of the method it is lowered to.
+    scenario, config, path = _write_case(
+        tmp_path,
+        "p = Plan()\n"
+        "q = replace(p, lanes=(1, 2, 1))\n"
+        'logger.info("%d", len(q.lanes))\n',
+        extra=_LANES,
+        header=_FROZEN_HEADER,
+    )
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "'Tuple[int,int,int]' does not match expected type 'List[int]'" in (
+        error.message
+    ), error.format()
+    assert "`tuple([1, 2, 1])`" in error.message
+    assert error.line == _line_of(path, "q = replace(p, lanes=")

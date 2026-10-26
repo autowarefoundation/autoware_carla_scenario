@@ -1462,7 +1462,10 @@ Two things Python does that Codon 0.19 does not are filled in for you:
     one a subclass redeclares and in a frozen hierarchy (#494): the value goes
     by position, as Codon cannot pass a keyword to a method a subclass
     overrides. A wrong value for it is reported as
-    `dataclasses.replace: field 'a' of Derived is declared int, not str`. It holds for a dataclass the scenario package defines, in
+    `dataclasses.replace: field 'a' of Derived is declared int, not str`.
+    Any other error raised inside the `_acs_with__<field>` method is
+    reported at the `replace(...)` call of the same file, not at the class
+    (#614). It holds for a dataclass the scenario package defines, in
     any of its modules, whose bases are dataclasses of the same module (or
     none) and which has no `__init__` of its own; for any other class (a
     framework or library dataclass) the call is refused with a hint to build
@@ -1543,6 +1546,11 @@ cannot express is refused at its line, with what to write instead.
 | `staticmethod(lambda a, b=2: a + b)`, `classmethod(lambda cls: ...)` in a class body (#482) | an `@staticmethod` / `@classmethod` def of the same name | |
 | a lambda default of a method (#482): `def sort(self, xs: list[int], key=lambda v: -v)` | a module-level function above the outermost class (`def _acs_lambda_P_3_27(v): return (-v)`) that the default names; Python evaluates a default once and the lambda reads only globals, so it is the same value | the class is inside a function or a block, or the lambda has defaults that are not literals: write a module-level `def` and name it as the default |
 | `dict(a=1)` | `{"a": 1}` (Codon's `dict` takes no keywords) | |
+| `dict(base, a=1)` (#613) | `(dict(base) \| {"a": 1})`: the same dict, the keywords winning | `dict(base, **more)`, or a `dict` the module binds itself |
+| `filter(None, xs)` (#613) | `(_acs_v for _acs_v in xs if _acs_v)`: the truthy items, as Python's `filter` yields them (Codon's takes a function) | a `filter` the module binds itself; the items still need a truth value (an enum member has none, see [Iterating an enum](#iterating-an-enum)) |
+| `items: list[int] = []`, `tags: dict[str, int] = {}`, `seen: set[str] = set()` (annotated, in a class body, a function or the module, #611) | an empty one of the annotated type, `List[int]()`: Codon types a display from its elements, and an empty one is a container of `None` (a class with no `__init__` of its own was refused at its constructor call) | an annotation Codon cannot name there (`Any`, a `TypeVar`, a class defined further down outside a function) |
+| `lst: list[Npc \| None] = [None, a]`, `d: dict[str, Npc \| None] = {"x": None, "y": a}` (a display whose first element or value is `None`, #611) | the elements put into a list (dict) of the annotated type, each `None` the `Optional`'s (`_acs_list_into(List[Optional[Npc]](), Optional[Npc](), a)`): Codon types a display by its first element | as above |
+| `Plan(lanes=(1, 2, 1))`, `replace(Plan(), lanes=(1, 2))`, `replace(self, lanes=())`, for a dataclass field `lanes: tuple[int, ...]` (or `Sequence[int]`) of the module (#614) | `List[int]([1, 2, 1])` / `List[int]()`, the list the field is checked as, as for its default | a tuple held in a name, a positional argument of a dataclass with a base, `ClassVar` or `init=False` field, or `replace()` of an object whose class is not told by a constructor call or `self`: refused with `'Tuple[int,int,int]' does not match expected type 'List[int]'` and a hint to write `tuple([1, 2, 1])` |
 
 Notes:
 
@@ -1748,6 +1756,7 @@ the check needs the other spelling.
 | A class decorator other than those the check drops (`@register`, adding the class to a registry, #603) | `unsupported class decorator` | drop it, and choose the class with an `if`/`elif` chain (or a `match`) on the name: Codon cannot hold a class as a value. `@dataclass`, `@enum.unique`, `@typing.runtime_checkable` and `@functools.total_ordering` are handled by the check |
 | `async def`, `await`, `async for`, `async with` anywhere in a checked module, called or not (#603) | `async not yet supported` | a plain `def`: the runner calls the scenario synchronously; or move the coroutine to a module the scenario does not import |
 | `if obj:` (`not obj`, `bool(obj)`) on an object of a class with no `__bool__`: a plain object, or one with only `__len__` (#603) | `'Bag[List[int]]' object has no attribute '__bool__'` | say what is meant: `obj is not None` for a value that may be missing, `len(obj) > 0` for a container, or define `__bool__` on the class |
+| `class Registry(dict[str, int])`, `class Bag(list)`, `class Meters(int)`: a class deriving from a builtin type alone (`dict`, `list`, `set`, `frozenset`, `tuple`, `int`, `float`, `str`, `bytes`, or their `typing` names), #613 | `__init__() missing 1 required positional argument: '_n_buckets'`, at the call (Codon's builtins are its own classes); refused at the class line | hold one as an attribute (`items: dict[str, int]`) and give the class the methods it needs; a class with another base besides (`class Mode(str, Enum)`) and exceptions are left alone |
 | `x = a if c else 3` with branches of different types (#603) | `'str' does not match expected type 'int'`, at the conditional expression | one type for both branches (`str(3)`, `float(n)`), or an `if`/`else` statement that uses each value in its own branch |
 
 Plain value, or-pattern, guard, sequence (without `*`) and enum-member
@@ -2071,6 +2080,10 @@ The known gaps:
 - **What only a tuple does**: a `tuple[X, ...]` is checked as a `List[X]`,
   so its hash, its equality with another tuple and its immutability are not
   checked.
+- **An `int` is 64 bits, and no value is computed** (#613): Codon's `int`
+  is a 64-bit integer, and the check compiles the code without running it,
+  so an overflow (`2**64`, `math.factorial(25)`) and `2 ** -1` (a `float`
+  in Python) assigned to an `int` are not caught.
 - **`bytes` is read as `str`**: `path.read_bytes() + "text"` compiles, and
   CPython refuses it.
 - **A `values=` that only Codon iterates** (`register_cover()`,

@@ -33,6 +33,8 @@ so a rewrite has to keep the *types*, not the values, of what it replaces.
   lambda's own scope ("name 'p' is not defined").  ``!r`` is ``repr(p)``, a
   spec ``(p).__format__(spec)``, ``{p=}`` ``"p=" + repr(p)``; ``.format`` is
   an f-string first, so it ends up lowered too.  ``!a`` there is ``repr``.
+* ``filter(None, xs)`` becomes ``(_acs_v for _acs_v in xs if _acs_v)``
+  (#613): Codon's ``filter`` takes a function, not ``None``.
 * ``zip(..., strict=...)`` becomes ``zip(...)``.
 * ``open(p, encoding=..., errors=..., newline=...)`` loses those keywords
   (Codon's ``open`` has none, #562): they change the decoding, not the type.
@@ -1649,6 +1651,16 @@ class _Pass(ShadowScopes):
                 return self._round(node)
             if func.id == "getattr" and plain_call and len(node.args) == 3:
                 return self._getattr_default(node)
+            if (
+                func.id == "filter"
+                and plain_call
+                and len(node.args) == 2
+                and isinstance(node.args[0], ast.Constant)
+                and node.args[0].value is None
+            ):
+                # `filter(None, xs)` (#613): Codon's filter takes a function.
+                # The generator yields the truthy items, as filter does.
+                return f"(_acs_v for _acs_v in {self._text(node.args[1])} if _acs_v)"
             return None
         if (
             isinstance(func, ast.Attribute)
