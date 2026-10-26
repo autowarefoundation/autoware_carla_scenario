@@ -555,6 +555,33 @@ def test_a_mixin_attribute_no_base_of_a_subclass_assigns_is_refused(
     assert "VehicleInfoMixin.fleet_config" in problem.message
 
 
+def test_a_mixin_attribute_one_subclass_has_no_base_to_assign_is_refused(
+    tmp_path: Path,
+) -> None:
+    # Plain().vehicle_label() raises AttributeError: BaseScenario assigns
+    # ego_config on CaseScenario only (#620).
+    body = _MIXIN.replace("{bases}", "BaseScenario, VehicleInfoMixin") + (
+        "\n\nclass Plain(VehicleInfoMixin):\n    pass\n"
+    )
+    modules, path = _modules(tmp_path, body)
+    problem = _only(unassigned_attributes(modules))
+    assert problem.line == _line_of(path, "ego_config: EgoConfig")
+    assert "VehicleInfoMixin.ego_config" in problem.message
+
+
+def test_a_mixin_attribute_assigned_below_an_intermediate_class_is_left_alone(
+    tmp_path: Path,
+) -> None:
+    # Only CaseScenario, below Middle, is built; BaseScenario assigns
+    # ego_config on it (#620).
+    body = _MIXIN.replace("{bases}", "BaseScenario, Middle").replace(
+        "class CaseScenario(",
+        "class Middle(VehicleInfoMixin):\n    pass\n\n\nclass CaseScenario(",
+    )
+    modules, _ = _modules(tmp_path, body)
+    assert unassigned_attributes(modules) == []
+
+
 # ---------------------------------------------------------------------------
 # #619: the framework's stores, parsed only when needed, once
 # ---------------------------------------------------------------------------

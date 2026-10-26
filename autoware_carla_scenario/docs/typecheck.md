@@ -1073,9 +1073,10 @@ scenario has to do itself:
   self._count = ...`, `setattr(self, "_count", 0)`, `object.__setattr__(self,
   "_count", 0)`, `other._count = 0`), when a framework base assigns it (the
   base's source, or the framework assigning it from outside; for a mixin,
-  the framework bases of the scenario's classes deriving from it count too:
-  `class VehicleInfoMixin: ego_config: EgoConfig` mixed into a
-  `BaseScenario`), and when the
+  when the framework bases of every scenario class deriving from it assign
+  it: `class VehicleInfoMixin: ego_config: EgoConfig` mixed into a
+  `BaseScenario`, but not when a `class Plain(VehicleInfoMixin)` derives
+  from it too), and when the
   class or a base gives it a value (a class attribute, a property). A class
   that assigns attributes by a computed name (`setattr(self, name, v)`,
   `self.__dict__`, `vars(self)`), defines `__getattr__`, or derives from a

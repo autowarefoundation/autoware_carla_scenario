@@ -30,9 +30,9 @@ Python raises ``AttributeError``.  Two ways an author gets there:
   stores an attribute of that name, on any object (``x.name = ...``,
   ``self.name: T = ...``, ``self.a, self.name = ...``, ``for self.name in``,
   ``setattr(x, "name", ...)``, ``object.__setattr__(x, "name", ...)``), when
-  the source of a framework base stores one (a base of the class, or of a
-  class of the scenario's modules deriving from it, as a mixin's subclass
-  derives from ``BaseScenario``), or the framework stores one on
+  the source of a framework base stores one (a base of the class, or of
+  every class of the scenario's modules deriving from it, as a mixin's
+  subclass derives from ``BaseScenario``), or the framework stores one on
   an object not its own ``self`` (``scenario.name = ...``), and when the
   class (or a base) gives it a value (a class attribute, a property, a
   slot); the class is left alone when it is a dataclass field, a
@@ -474,19 +474,27 @@ def unassigned_attributes(
         if any(_dynamic(nodes[k]) for k in kin):
             continue
         # A mixin's attribute may be assigned by the framework base of a
-        # class of the modules that derives from it (#620): what the bases
-        # outside the modules of each such subclass assign counts too.
-        unknown = False
-        for k in kin:
-            if k is cls or cls not in k.__mro__:
+        # class of the modules that derives from it (#620). It is excused
+        # when the bases outside the modules of every such class with no
+        # subclass of its own assign it: Python raises for one whose bases
+        # do not (`class Plain(VehicleInfoMixin)` next to a `BaseScenario`
+        # subclass). A class whose bases are unknown may assign anything.
+        leaves = [
+            k
+            for k in kin
+            if k is not cls
+            and cls in k.__mro__
+            and not any(o is not k and k in o.__mro__ for o in nodes)
+        ]
+        if leaves:
+            common: set[str] | None = None
+            for k in leaves:
+                below = _inherited_stores(k, nodes)
+                if below is not None:
+                    common = below if common is None else common & below
+            if common is None:
                 continue
-            below = _inherited_stores(k, nodes)
-            if below is None:
-                unknown = True
-                break
-            inherited |= below
-        if unknown:
-            continue
+            inherited |= common
         for stmt in declared:
             name = stmt.target.id  # type: ignore[union-attr]
             if name in stored or name in inherited or hasattr(cls, name):
