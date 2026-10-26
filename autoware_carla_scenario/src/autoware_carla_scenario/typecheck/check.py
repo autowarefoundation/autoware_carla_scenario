@@ -1998,7 +1998,7 @@ def _fstring_field_line(
 
     The rule, on the checked copy *tree*: the error is moved when no node on
     *line* itself starts at *start* (Codon's 1-based column of an ordinary
-    error) with that width, and an f-string that starts on the line before
+    error), whatever its width, and an f-string that starts on the line before
     has a field holding an expression of that width that ends at or before
     *start* (the field's text holds the expression).  An ordinary error on
     *line* always has such a node, so it is never moved: a comprehension's
@@ -2023,12 +2023,13 @@ def _fstring_field_line(
     for node in ast.walk(tree):
         if (
             getattr(node, "lineno", None) == line
-            and getattr(node, "end_lineno", None) == line
             and getattr(node, "col_offset", -1) + 1 == start
-            and getattr(node, "end_col_offset", -1) - node.col_offset  # type: ignore[attr-defined]
-            == width
         ):
-            return None  # an ordinary error on the line itself
+            # An ordinary error on the line itself.  Any width: Codon's
+            # width of an expression on several lines (a call) counts its
+            # characters across the line breaks, and that of a `with` or
+            # `for` statement is one more than Python's.
+            return None
         if isinstance(node, ast.comprehension):
             last = node.ifs[-1] if node.ifs else node.iter
             if last.end_lineno == line and last.end_col_offset == end - 1:
@@ -2163,7 +2164,9 @@ def _parse_output(output: str, ws: _Workspace) -> list[Diagnostic]:
         if rel not in trees:
             try:
                 text = (ws.root / rel).read_text()
-                trees[rel] = (ast.parse(text), text.splitlines())
+                # Split at "\n" only, as Python numbers the lines: splitlines()
+                # also splits at a form feed or U+2028, which do not end one.
+                trees[rel] = (ast.parse(text), text.split("\n"))
             except (OSError, SyntaxError, ValueError):
                 trees[rel] = None
         return trees[rel]

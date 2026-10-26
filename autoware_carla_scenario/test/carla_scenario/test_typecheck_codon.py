@@ -7487,6 +7487,17 @@ def _parsed_at(tmp_path: Path, source: str, line: int, span: str) -> Any:
             "15-22",
             (3, 15),
         ),
+        # So does one of a call on several lines that starts at that column,
+        # whose width Codon counts across the line break.
+        (
+            'n = 1\ns = "" f"{n + 100000000000000}"\n'
+            'result_value_long_name = g(\n            "x")\n',
+            3,
+            "26-45",
+            (3, 26),
+        ),
+        # A form feed is no line break for Python.
+        ('n = 1  # a\fb\ns = "a" f"b{n + \'x\'}"\nt = 2\n', 3, "15-22", (2, None)),
     ],
 )
 def test_an_error_in_an_fstring_field_is_moved_to_its_line(

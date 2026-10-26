@@ -1609,8 +1609,10 @@ Notes:
   f-string starts on, at the faulting expression's column plus the length of
   the field's text: a column past the end of that line, or no line of the
   file when the f-string is on its last line. The check moves such an error
-  back when no expression on the reported line starts at the reported column
-  with the reported width (as Codon locates an error on that line itself) and
+  back when nothing on the reported line starts at the reported column, of
+  any width (Codon locates an error on that line itself there; its width of
+  a call on several lines counts the characters across the line breaks,
+  that of a `with` or `for` statement is one more than Python's), and
   an f-string that starts on the line before has a field holding an
   expression of that width that ends at or before the column (and, on a
   one-line f-string, no further from it than the f-string's end). The line
@@ -1627,8 +1629,8 @@ Notes:
   check computes that column for each field of an f-string that starts on
   the line before (a triple-quoted literal, a field on several lines and a
   line that is not ASCII excepted) and moves an error that matches it,
-  column and width, to the field's line, with the same guard (an
-  expression of the reported line at that column and width keeps it).
+  column and width, to the field's line, with the same guard (anything
+  that starts on the reported line at that column keeps it).
 - A class constant read in the class body (#433): Python resolves the name in
   the class scope, Codon in the module's (`name 'LIMIT' is not defined`), so
   the check writes `Class.LIMIT`. It rewrites exactly what Python resolves
