@@ -1426,10 +1426,30 @@ Two things Python does that Codon 0.19 does not are filled in for you:
     the class defines itself is kept. This holds for a dataclass whose bases
     are dataclasses of the same module (or none): one deriving from a class
     the check cannot see the fields of, such as a framework dataclass, gets
-    none, and `==` on it is refused. `eq=False` (identity comparison) is not
-    modelled either: write `a is b`. Python refuses `<` without `order=True`
-    and `hash()` of a non-frozen dataclass, and so does the check, with a
-    hint naming the flag.
+    none, and `==` on it is refused. `eq=False` compares and hashes by
+    identity, as a plain class does (below). Python refuses `<` without
+    `order=True` and `hash()` of a non-frozen dataclass, and so does the
+    check, with a hint naming the flag.
+  - A plain class (one that does not define `__eq__`) compares and hashes by
+    identity, as Python's `object` does (#596): `a in npcs`,
+    `npcs.remove(a)`, `a == b`, `{t}`, `{t: 1}` and `dict[Npc, float]`
+    compile. The check gives each top-level class of the checked modules
+    whose bases are plain (none, `object`, `ABC`) `__eq__` / `__ne__`
+    (`self is other`) and `__hash__` (`id(self)`), with `@extend` right
+    after the class, so module-level code and the module's subclasses have
+    them; a `__hash__` (or `__ne__`) the class defines is kept, and a
+    `@dataclass(eq=False, unsafe_hash=True)` keeps the hash of its fields.
+    A class deriving from a framework class gets the framework model's:
+    `BaseCondition`, `BaseAction`, `VehicleEntity`, `PedestrianEntity` and
+    `EgoVehicle` compare and hash by identity in the model, as in Python
+    (`{TimeoutCondition(1.0, label="a")}` compiles). Enums, named tuples,
+    exceptions, protocols and a class with a metaclass get nothing.
+    A class that defines `__eq__` and not `__hash__` is unhashable in Python
+    (it sets `__hash__ = None`), and the check refuses a set of them, or a
+    dict keyed by one, with a hint to define `__hash__`. The gap: such a
+    class *deriving* from a plain class of the module (or from a framework
+    class above) inherits the identity hash in the check, so a set of them
+    compiles there and raises `TypeError` in Python.
   - `dataclasses.replace(obj, a=x, b=y)` is checked as the typed copy it is
     (#487): the check appends to each dataclass of the module one
     `_acs_with__<field>` method per field the constructor takes, and writes
@@ -1509,6 +1529,8 @@ cannot express is refused at its line, with what to write instead.
 | `super(Derived, self).__init__(k)` in a method of `Derived` whose first parameter is `self` (#601) | `super().__init__(k)`: Codon's `super` takes no arguments | another class (`super(Base, self)`, which skips `Derived`'s bases up to `Base`), a `@classmethod` / `@staticmethod`, the class or `self` rebound in the method, or the call inside a nested function, lambda or comprehension: Codon's `super() takes 0 arguments (2 given)` |
 | `round(x)`, `round(x, None)`, `round(number=x, ndigits=None)` (#585) | `int(round(x))`: Codon's `round(x, n=0)` always returns a `float`, Python's an `int` when `ndigits` is left out or `None`, so `xs[round(x)]`, `n: int = round(x)` and `range(round(x))` check. `round(x, ndigits=2)` is `round(x, 2)` (Codon's has no Python keywords). `round(x, 2)` stays a `float`, also for an `int` `x` (Python returns an `int` there). Being an `int`, `round(x)` is refused inside a `list[float]` or `dict[str, float]` display (`[round(x), 1.5]`), as any `int` is: write `float(round(x))` there | `round` is bound where the call is, as for `format` (#471); an `ndigits` that is a variable is passed as it is: an `int \| None` one is read as a `float`, one bound to `None` only fails in Codon's `round` (`__pow__() cannot be called with (None)`) |
 | `sorted(xs)`, `xs.sort()`, `min` / `max` of a class that defines `__lt__` only | the class gets `__gt__` (`other < self`) and `__ge__` (`not self < other`), which Codon's sort calls | the class defines no ordering (use `@dataclass(order=True)` or `key=`) |
+| `a if x else None`, `a if x is not None else None`, `None if x is None else a` (also `not x`), where `a` reads the narrowed `x`: `m.group(1) if m else None`, `n.name if n else None` (#597) | `_acs_some(a) if x else None`: Codon narrows `x` in `a` and then cannot unify the type of `a` with the `None` (`'Optional[str]' does not match expected type 'str'`); `_acs_some` makes `a` an `Optional` itself (a branch that already is one is kept), the type Python gives the expression | |
+| `a.__eq__(b)`, `a.__ne__(b)` (#596) | `(a == (b))`, `(a != (b))`: Codon cannot call by name an `__eq__` that overrides an inherited one (the identity `__eq__` the check gives a plain class, or the model's `BaseCondition`), as a `__ne__` written `return not self.__eq__(other)` does; `==` is how Python calls it, too | `super().__eq__(b)`, `A.__eq__(a, b)` and a parenthesized receiver are left alone |
 | a class that defines `__eq__` but not `__ne__` (a value object in a `set` or as a `dict` key) | the class gets `__ne__` (`not (self == other)`): Python derives it, Codon does not and its hash table calls it | (a `@dataclass` already has one) |
 | `namedtuple("P", "x y")` / `"x, y"` | the string becomes the list `["x", "y"]` (Codon crashes on a string) | field names that are not a literal (a variable, `.split()`), and `rename=` / `defaults=` / `field_names=` / `module=` as keywords, and field names Python rejects (a duplicate, a keyword, a leading underscore); a `namedtuple` the module defines or imports from elsewhere is left alone; use a list written in the call or a `typing.NamedTuple` class |
 | `@functools.total_ordering` | the decorator and its import are dropped, and the class gets the comparisons it would add from its `__lt__`, `__le__`, `__gt__` or `__ge__` (and `==`, or identity without `__eq__`) | the class is not at module level, or defines none of the four |
@@ -1743,7 +1765,7 @@ this list, the check's additions and the tests in step:
 `functools.cached_property`, `itertools.pairwise`, `collections.OrderedDict`,
 `collections.deque`, `math.dist`, `math.isqrt`, `math.comb`, `math.perm`,
 `math.cbrt`, `math.exp2`, `math.hypot`, `random.Random`, `random.choices`,
-`random.triangular`, `statistics.fmean`
+`random.triangular`, `statistics.fmean`, `re.Match`, `re.Pattern`
 <!-- stdlib-names:end -->
 
 - `functools.reduce` (with or without an initial value) is a function of the
@@ -1792,6 +1814,17 @@ this list, the check's additions and the tests in step:
   of Python 3.11, accepted on 3.10 too, like `math.cbrt`. The rest of
   `statistics` is Codon's (`mean`, `median`, `stdev`, ...), which takes a
   `list[float]`.
+- `re.Match.group(n)`, `group(a, b)`, `m[n]`, `groups()` and `groupdict()`
+  are `str` (#597), as typeshed declares them (`str | Any`), so
+  `m.group(1) if m else ""` compiles; Codon's are `Optional[str]`, and
+  their `Optional[str]` and the `""` did not unify. The caveat is
+  typeshed's too: a group that did not take part in the match (`(-x)?`) is
+  `None` in Python, which the check does not see: test an optional group
+  with `is not None` before using it as a `str` (the check compiles the
+  test), or read it through `groups(default)` / `groupdict(default)`,
+  which keep Codon's `Optional[str]`. `re.Pattern.split`
+  keeps its `Optional[str]` items, a group that did not take part splitting
+  off as `None`, as in Python. The rest of `re` is Codon's.
 - `random.Random.choices` (and `random.choices`) take `weights` of ints or
   floats, or `cum_weights=`, and `k=`, as Python's do, and
   `triangular(low, high)` (the method and the function) takes the midpoint as the mode. Codon's
@@ -3641,9 +3674,9 @@ What Codon 0.19 needs that Python does not, beyond
   `stated or DEFAULT` with `stated: Optional[str]`: branch on the cases
   into an annotated `str` local (`coordinate.projection.resolve_projector`).
 - **A regex group used as a `str`** (`m.group(1)` handed to `re.search`, or
-  to a `str` local): Codon's `Match.group()` is an `Optional[str]` whose
-  type Codon 0.19 cannot settle from such a use. Take `str(m.group(1))`,
-  the same `str` in Python (`coordinate.projection._parse_geo_reference`).
+  to a `str` local) compiles now that the check's `Match.group()` is a `str`
+  (#597); `str(m.group(1))`, the same `str` in Python, is still found in
+  older modules (`coordinate.projection._parse_geo_reference`).
 - **Projectors of different classes return through one `-> Projector`**
   (`coordinate.projection.make_projector`): the lanelet2 model derives each
   from `Projector`, and Codon 0.19 converts a subclass to it at `return`.

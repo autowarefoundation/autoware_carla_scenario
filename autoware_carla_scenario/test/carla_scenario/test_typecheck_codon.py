@@ -6149,9 +6149,8 @@ def test_a_namedtuple_class_is_a_tuple_class(tmp_path: Path) -> None:
     [
         (_DATACLASSES, "Fz(1) < Fz(2)", "order=True"),
         (_DATACLASSES, "{Fz(1): 2}", "frozen=True"),
-        (_DATACLASSES, "ByIdentity(1) == ByIdentity(1)", "a is b"),
     ],
-    ids=["unordered", "unhashable", "eq-false"],
+    ids=["unordered", "unhashable"],
 )
 def test_what_a_dataclass_does_not_generate_is_refused_with_a_hint(
     tmp_path: Path, definitions: str, line: str, hint: str
@@ -6687,6 +6686,28 @@ _STDLIB_CASES: dict[str, tuple[str, str, str]] = {
         "assert 0.0 <= skew(rng) <= 3.0\n"
         "logger.info('%d', draw(rng))\n",
     ),
+    "re.Match (group, m[n], groups, groupdict)": (
+        "import re\n",
+        "def number(text: str) -> str:\n"
+        "    m = re.match(r'(?P<word>[a-z]+)(\\d+)', text)\n"
+        "    if m is None:\n"
+        "        return ''\n"
+        "    word, digits = m.groups()\n"
+        "    first, second = m.group(1, 2)\n"
+        "    kept: str = m.groupdict()['word']\n"
+        "    return m.group(2) + m[1] + word + digits + first + second + kept\n"
+        "def number_or_empty(text: str) -> str:\n"
+        "    m = re.search(r'(\\d+)', text)\n"
+        "    return m.group(1) if m else ''\n",
+        "assert number('npc12') == '12npcnpc12npc12npc'\n"
+        "logger.info('%s %s', number(cfg.name), number_or_empty(cfg.name))\n",
+    ),
+    "re.Pattern (split)": (
+        "import re\n",
+        "def pieces(text: str) -> int:\n"
+        "    return len(re.compile(r'(-)').split(text)) + len(re.split(r'-', text))\n",
+        "logger.info('%d', pieces(cfg.name))\n",
+    ),
     "random.triangular": (
         "import random\nfrom random import triangular\n",
         "def skew() -> float:\n"
@@ -7075,6 +7096,7 @@ def test_stdlib_names() -> None:
                 "math": math,
                 "random": random,
                 "statistics": statistics,
+                "re": re,
             }[module],
             attribute,
         ), name
@@ -10866,6 +10888,225 @@ def test_a_local_first_bound_to_none_and_rebound_names_its_annotation(
     else:
         assert "Optional[NoneType]" in hinted[0].message
         assert hinted[0].line == _line_of(path, "best = x")
+
+
+# ---------------------------------------------------------------------------
+# Identity == and hash of a plain class (#596)
+# ---------------------------------------------------------------------------
+
+_IDENTITY_CLASSES = """
+
+
+from abc import ABC
+from dataclasses import dataclass
+
+
+class Npc:
+    name: str
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+
+class Car(Npc):
+    def describe(self) -> str:
+        return self.name
+
+
+class Hashed:
+    def __hash__(self) -> int:
+        return 3
+
+
+@dataclass(eq=False)
+class Loose:
+    x: float
+
+
+class Root(ABC):
+    pass
+
+
+class Leaf(Root):
+    pass
+
+
+class Mine(BaseCondition):
+    def __init__(self, label: str) -> None:
+        super().__init__(label=label)
+
+    def check(self, world: carla.World, elapsed: float) -> ScenarioResult | None:
+        return None
+
+
+class Keyed(BaseCondition):
+    def __init__(self, label: str) -> None:
+        super().__init__(label=label)
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, Keyed) and other.label == self.label
+
+    # Called by name, over the model's identity __eq__ it overrides.
+    def __ne__(self, other: object) -> bool:
+        return not self.__eq__(other)
+
+    def __hash__(self) -> int:
+        return hash(self.label)
+
+    def check(self, world: carla.World, elapsed: float) -> ScenarioResult | None:
+        return None
+
+
+@dataclass
+class Fielded(Loose):
+    y: float
+
+    # Over Loose's identity __eq__: the generated __ne__ calls it.
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, Fielded) and other.y == self.y
+
+    def __hash__(self) -> int:
+        return hash(self.y)
+
+
+KNOWN = {Npc("known")}
+"""
+
+
+def test_a_plain_class_compares_and_hashes_by_identity(tmp_path: Path) -> None:
+    setup = """
+        a = Npc("a")
+        c = Car("c")
+        npcs: list[Npc] = [a, c]
+        if a in npcs:
+            npcs.remove(a)
+        gaps: dict[Npc, float] = {}
+        gaps[c] = 1.0
+        seen: set[Npc] = set()
+        seen.add(a)
+        index = {a: 1, c: 2}
+        r = Root()
+        logger.info(
+            "%s %s %d %d %d %d %d %d %d",
+            a == c, a != c, npcs.index(c), len(gaps), len(seen), index[c],
+            len({Hashed()}), len({Loose(1.0)}) + int(Loose(1.0) == Loose(1.0)),
+            len(KNOWN) + len({r, Leaf()}),
+        )
+        t = TimeoutCondition(1.0, label="a")
+        turn = TurnAction(EGO_ROLE_NAME, TurnDirection.LEFT, timing=TickTiming.PRE_TICK)
+        conds = {t, TimeoutCondition(2.0, label="b")}
+        by_cond = {t: "a"}
+        mine = Mine("m")
+        listed = [mine, t]
+        logger.info(
+            "%d %s %s %d %s %d %d",
+            len(conds), by_cond[t], mine in listed, len({turn}), turn == turn,
+            len({Keyed("k"), Keyed("k")}), len({mine: 1}),
+        )
+        f = Fielded(1.0, 2.0)
+        logger.info(
+            "%s %s %s", Keyed("k") != Keyed("j"), Keyed("k").__eq__(t), f != f
+        )
+        if self.ego_entity is not None:
+            logger.info("%d", len({self.ego_entity}))
+    """
+    scenario, config, _ = _write_case(
+        tmp_path, _TIMEOUT_SETUP + textwrap.dedent(setup), _IDENTITY_CLASSES
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+@pytest.mark.parametrize(
+    ("extra", "use", "hint"),
+    [
+        (
+            # Python sets __hash__ = None on a class defining __eq__ alone.
+            "\n\nclass Pt:\n    x: int\n\n    def __init__(self, x: int) -> None:\n"
+            "        self.x = x\n\n    def __eq__(self, other: object) -> bool:\n"
+            "        return isinstance(other, Pt) and other.x == self.x\n",
+            "seen = {Pt(1), Pt(1)}",
+            "Pt defines __eq__ and not __hash__, so Python makes it unhashable",
+        ),
+        (
+            # A plain @dataclass: eq=True and not frozen, unhashable too.
+            "\n\nfrom dataclasses import dataclass\n\n\n@dataclass\nclass Goal:\n"
+            "    x: float\n",
+            "seen = {Goal(1.0)}",
+            "the check generates hash() for a @dataclass(frozen=True)",
+        ),
+    ],
+    ids=["eq-only", "dataclass"],
+)
+def test_a_class_python_cannot_hash_is_refused_as_a_key_with_a_hint(
+    tmp_path: Path, extra: str, use: str, hint: str
+) -> None:
+    scenario, config, path = _write_case(
+        tmp_path, _TIMEOUT_SETUP + use + '\nlogger.info("%d", len(seen))\n', extra
+    )
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "has no attribute '__hash__'" in error.message, error.format()
+    assert hint in error.message, error.format()
+    assert error.line == _line_of(path, use), error.format()
+
+
+# ---------------------------------------------------------------------------
+# re.Match.group() is a str (#597)
+# ---------------------------------------------------------------------------
+
+
+def test_a_regex_group_is_a_str_and_a_narrowed_branch_unifies_with_none(
+    tmp_path: Path,
+) -> None:
+    setup = r"""
+        m = re.match(r"npc(\d+)", cfg.name)
+        a = m.group(1) if m else ""
+        b = m.group(1) if m is not None else ""
+        c = "" if m is None else m.group(1)
+        d = m[1] if m else ""
+        e: str = m.group() if m else ""
+        f = m.group(1).upper() if m else ""
+        named = re.fullmatch(r"(?P<word>\w+)-(\d+)?", cfg.name)
+        g = ""
+        if named:
+            first, second = named.groups()
+            h: str = named.groupdict()["word"]
+            g = first + second + h + named.group("word") + named["word"]
+            whole, word = named.group(0, 1)
+            g += whole + word
+        parts = re.split(r"(-)", cfg.name)
+        logger.info(
+            "%s %s %s %s %s %s %s %d %s %s",
+            a, b, c, d, e, f, g, len(parts), group_or_none(cfg.name),
+            name_or_none(None),
+        )
+    """
+    extra = r"""
+
+
+class Named:
+    name: str
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+
+def group_or_none(text: str) -> str | None:
+    m = re.search(r"(\d+)", text)
+    return m.group(1) if m else None
+
+
+def name_or_none(n: Named | None) -> str | None:
+    return n.name if n is not None else None
+"""
+    scenario, config, _ = _write_case(
+        tmp_path,
+        _TIMEOUT_SETUP + textwrap.dedent(setup),
+        extra,
+        header=_stdlib_header("import re\n"),
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
 
 
 # ---------------------------------------------------------------------------

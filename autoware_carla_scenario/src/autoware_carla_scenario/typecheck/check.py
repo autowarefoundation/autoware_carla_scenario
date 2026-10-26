@@ -1415,7 +1415,9 @@ _OPERAND = re.compile(
     r"^unsupported operand type\(s\) for (?P<op>[^:]+): '(?P<cls>\w+)' and"
 )
 _GETITEM = re.compile(r"__getitem__\(self: (?P<cls>\w+),")
-_NO_HASH = re.compile(r"^'(?P<cls>\w+)' object has no attribute '__hash__'")
+_NO_HASH = re.compile(
+    r"^'(?P<cls>\w+)(?:\[[^']*\])?' object has no attribute '__hash__'"
+)
 _NAMED_TUPLE_ONLY = ("_replace", "_asdict", "_fields", "_field_defaults", "_make")
 
 
@@ -1603,10 +1605,8 @@ def _data_model_hint(
             if operand["op"] in ("==", "!="):
                 return (
                     "the check gives a @dataclass its == and != only with "
-                    "eq=True (the default) and bases it can see the fields "
-                    "of (dataclasses of this module); with eq=False Python "
-                    "compares by identity: write `a is b`, or compare the "
-                    "fields"
+                    "bases it can see the fields of (dataclasses of this "
+                    "module): compare the fields"
                 )
             return (
                 "the check gives a @dataclass ordering only with "
@@ -1622,6 +1622,16 @@ def _data_model_hint(
                 "the check generates hash() for a @dataclass(frozen=True) "
                 "(or unsafe_hash=True) whose bases are dataclasses of this "
                 "module; key on a field or a tuple of fields instead"
+            )
+        if cls is not None and cls.__hash__ is None:
+            # Python sets __hash__ = None on a class that defines __eq__ and
+            # not __hash__ (#596).
+            return (
+                f"{cls.__name__} defines __eq__ and not __hash__, so Python "
+                f"makes it unhashable (it sets __hash__ = None): a set of "
+                f"them, or a dict keyed by one, raises TypeError; define "
+                f"__hash__ consistent with __eq__ (`return hash((self.x, "
+                f"self.y))`), or key on a field"
             )
     if message.startswith("expected iterable expression"):
         for frame in trace:

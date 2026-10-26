@@ -81,6 +81,21 @@ def _without_extensions(out: str) -> str:
     return re.sub(r"\n@extend\nclass \w+:\n(?:(?:[ ].*)?\n)*", "", out)
 
 
+#: The identity ==, != and hash a plain class is given after it (#596).
+_IDENTITY = re.compile(
+    r"\n@extend\nclass (\w+):\n"
+    r"    def __eq__\(self, other: \1\) -> bool:\n        return self is other\n"
+    r"(?:    def __ne__\(self, other: \1\) -> bool:\n"
+    r"        return self is not other\n)?"
+    r"(?:    def __hash__\(self\) -> int:\n        return id\(self\)\n)?"
+)
+
+
+def _without_identity(out: str) -> str:
+    """*out* without the identity methods given to its plain classes (#596)."""
+    return _IDENTITY.sub("", out)
+
+
 def _annotation(text: str, *, class_level: bool = False) -> str | None:
     return codon_annotation(ast.parse(text, mode="eval").body, class_level=class_level)
 
@@ -876,7 +891,7 @@ def test_object_setattr_with_a_constant_name_is_an_assignment() -> None:
                 object.__setattr__(self, name, 1)
         """
     )
-    out = _transform(source)
+    out = _without_identity(_transform(source))
     assert out.count("\n") == source.count("\n")
     lines = out.splitlines()
     assert lines[3] == "        self.lane = (int(self.lane))"
@@ -937,7 +952,7 @@ def test_a_decorator_the_library_check_leaves_uncalled_is_dropped() -> None:
         """
     )
     out = transform_source(source, dropped_decorators=["_refusing_old_calls"])
-    body = out[len(PRELUDE) :]
+    body = _without_identity(out[len(PRELUDE) :])
     assert body.count("\n") == source.count("\n")
     assert "@_refusing_old_calls" not in body
     assert "    @other" in body
@@ -1602,7 +1617,7 @@ def test_abstractmethod_is_dropped() -> None:
                 pass
         """
     )
-    out = _transform(source)
+    out = _without_identity(_transform(source))
     assert out.count("\n") == source.count("\n")
     assert "@" not in out
     assert "    def is_ready(self) -> bool:" in out
@@ -1622,7 +1637,7 @@ def test_a_classmethod_becomes_a_staticmethod_of_its_class() -> None:
                 return cls.make(cls(x))
         """
     )
-    out = _transform(source)
+    out = _without_identity(_transform(source))
     assert out.count("\n") == source.count("\n")
     assert "@classmethod" not in out
     assert "    def origin() -> Pose:\n        return Pose(0.0)" in out
@@ -2313,7 +2328,7 @@ def test_a_class_inheriting_an_init_is_given_one_passing_everything_on() -> None
         """
     )
     out, origin = transform_source_lines(source)
-    body = out[len(PRELUDE) :]
+    body = _without_identity(out[len(PRELUDE) :])
     module, _, appended = body.partition("\n\n@extend\n")
     assert module.count("\n") == source.count("\n")  # no line of the source moves
     assert _INHERITED_INIT.format(name="B") in out
@@ -2774,7 +2789,7 @@ def test_a_dataclass_gets_eq_and_ne_comparing_its_fields() -> None:
     )
     assert _methods(block) == {"__eq__", "__ne__"}
     assert "return self.a == other.a and self.b == other.b" in block
-    assert "return not self.__eq__(other)" in block
+    assert "return not (self == other)" in block
     ast.parse(block.replace("class Fz", "@extend\nclass Fz", 1))
 
 
@@ -2782,10 +2797,11 @@ def test_a_dataclass_gets_eq_and_ne_comparing_its_fields() -> None:
     ("decorator", "methods"),
     [
         ("@dataclass", {"__eq__", "__ne__"}),
-        ("@dataclass(eq=False)", set()),
+        # eq=False: Python's identity == and hash (#596), right after the class.
+        ("@dataclass(eq=False)", {"__eq__", "__ne__", "__hash__"}),
         ("@dataclass(frozen=True)", {"__eq__", "__ne__", "__hash__"}),
         ("@dataclass(unsafe_hash=True)", {"__eq__", "__ne__", "__hash__"}),
-        ("@dataclass(eq=False, unsafe_hash=True)", {"__hash__"}),
+        ("@dataclass(eq=False, unsafe_hash=True)", {"__eq__", "__ne__", "__hash__"}),
         (
             "@dataclasses.dataclass(order=True)",
             {"__eq__", "__ne__", "__lt__", "__le__", "__gt__", "__ge__"},
@@ -2930,7 +2946,7 @@ def test_final_and_annotated_are_read_as_what_they_wrap() -> None:
     assert _annotation("Sized") is None
     assert _annotation("Hashable") is None
     assert _transform("LIMIT: Final = 3\n") == "LIMIT = 3\n"
-    out = _transform("class C:\n    LIMIT: Final = 3\n")
+    out = _without_identity(_transform("class C:\n    LIMIT: Final = 3\n"))
     assert out == "class C:\n    LIMIT = 3\n"
 
 
@@ -2975,7 +2991,7 @@ def test_functools_caching_decorators_are_dropped() -> None:
                 return x
         """
     )
-    out = _transform(source)
+    out = _without_identity(_transform(source))
     assert out.count("\n") == source.count("\n")
     assert "@" not in out
     assert "lru_cache" not in out.replace("import functools\n", "")
@@ -5217,7 +5233,7 @@ def test_a_dropped_decorator_under_a_kept_one_leaves_no_blank_line(
     imports, stack, kept = _STACKED[case]
     decorators = "".join(f"    {line}\n" for line in stack)
     source = f"{imports}class A:\n{decorators}    def f() -> int:\n        return 1\n"
-    out = _transform(source)
+    out = _without_identity(_transform(source))
     assert out.count("\n") == source.count("\n")
     def_line = "    def f() -> int:"
     assert out.split("\n").index(def_line) == source.split("\n").index(def_line)
@@ -5607,7 +5623,7 @@ def test_copy_gets_the_dunders_of_the_declared_fields() -> None:
             n: int
         """
     )
-    out = transform_source(source)
+    out = _without_identity(transform_source(source))
     assert "def __copy__(self) -> P:" in out
     assert "r.x = self.x" in out
     # A derived class copies the fields of its base first.
@@ -5625,6 +5641,208 @@ def test_copy_dunders_need_the_copy_module() -> None:
     out = transform_source("class A:\n    n: int\n")
     assert "__copy__" not in out
     assert "__deepcopy__" not in out
+
+
+# ---------------------------------------------------------------------------
+# Identity == and hash of a plain class (#596)
+# ---------------------------------------------------------------------------
+
+
+def _identity_methods(out: str) -> dict[str, set[str]]:
+    """Class -> the identity methods given to it after the module's classes."""
+    found: dict[str, set[str]] = {}
+    for match in _IDENTITY.finditer(out):
+        block = match.group(0)
+        found[match.group(1)] = {
+            name for name in ("__eq__", "__ne__", "__hash__") if f"def {name}(" in block
+        }
+    return found
+
+
+def test_a_plain_class_compares_and_hashes_by_identity_right_after_it() -> None:
+    source = textwrap.dedent(
+        """
+        class Npc:
+            name: str
+
+            def __init__(self, name: str) -> None:
+                self.name = name
+        SEEN = {Npc("a")}
+        """
+    )
+    out, origin = transform_source_lines(source)
+    body = out[len(PRELUDE) :]
+    assert _identity_methods(body) == {"Npc": {"__eq__", "__ne__", "__hash__"}}
+    assert "        return self is other\n" in body
+    assert "        return self is not other\n" in body
+    assert "        return id(self)\n" in body
+    # Before the module-level code that hashes one, and mapped to the class.
+    assert body.index("return id(self)") < body.index("SEEN = ")
+    lines = body.splitlines()
+    assert len(origin) == len(lines)
+    at = next(i for i, line in enumerate(lines) if "return self is other" in line)
+    assert source.splitlines()[origin[at] - 1] == "class Npc:"
+    ast.parse(_without_identity(body))
+
+
+def test_a_method_a_plain_class_defines_is_kept_and_eq_alone_gets_nothing() -> None:
+    source = textwrap.dedent(
+        """
+        from abc import ABC
+        from dataclasses import dataclass
+        class Hashed:
+            def __hash__(self) -> int:
+                return 1
+        class Unhashable:
+            __hash__ = None
+        class Base(ABC):
+            pass
+        class Sub(Base):
+            pass
+        @dataclass(eq=False)
+        class Loose:
+            x: float
+        class Keyed:
+            def __eq__(self, other: object) -> bool:
+                return True
+        """
+    )
+    assert _identity_methods(transform_source(source)) == {
+        "Hashed": {"__eq__", "__ne__"},
+        "Unhashable": {"__eq__", "__ne__"},
+        # A subclass of the module inherits its base's.
+        "Base": {"__eq__", "__ne__", "__hash__"},
+        "Loose": {"__eq__", "__ne__", "__hash__"},
+    }
+
+
+def test_classes_compared_another_way_get_no_identity_methods() -> None:
+    source = textwrap.dedent(
+        """
+        from abc import ABCMeta
+        from dataclasses import dataclass
+        from enum import Enum
+        from typing import NamedTuple, Protocol
+        @dataclass
+        class Value:
+            x: float
+        @dataclass(frozen=True)
+        class Frozen:
+            x: float
+        class Color(Enum):
+            RED = 1
+        class Pt(NamedTuple):
+            x: float
+        class Shape(Protocol):
+            def area(self) -> float: ...
+        class Failure(Exception):
+            pass
+        class Mine(BaseCondition):
+            pass
+        class Meta(metaclass=ABCMeta):
+            pass
+        """
+    )
+    assert _identity_methods(transform_source(source)) == {}
+
+
+# ---------------------------------------------------------------------------
+# `a if x else None` with x narrowed in a (#597)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("line", "expected"),
+    [
+        (
+            "a = m.group(1) if m else None",
+            "a = _acs_some(m.group(1)) if m else None",
+        ),
+        (
+            "a = m[1] if m is not None else None",
+            "a = _acs_some(m[1]) if m is not None else None",
+        ),
+        (
+            "a = None if m is None else m.group(1)",
+            "a = None if m is None else _acs_some(m.group(1))",
+        ),
+        (
+            "a = None if not self.n else self.n.name",
+            "a = None if not self.n else _acs_some(self.n.name)",
+        ),
+        (
+            "a = f(m.group(1).upper()) if m else None",
+            "a = _acs_some(f(m.group(1).upper())) if m else None",
+        ),
+    ],
+)
+def test_the_branch_reading_the_narrowed_value_is_made_optional(
+    line: str, expected: str
+) -> None:
+    assert _rewritten(line + "\n") == expected + "\n"
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        'a = m.group(1) if m else ""',  # no None: Codon unifies the two str
+        "a = 1 if m else None",  # a constant
+        "a = n.name if m else None",  # does not read the narrowed m
+        "a = m.name if m.ok else None",  # m.ok is not what m.name reads
+        "a = m.name if f(m) else None",  # not a narrowing test
+        "a = None if m else None",
+    ],
+)
+def test_other_conditional_expressions_are_left_alone(line: str) -> None:
+    assert _rewritten(line + "\n") == line + "\n"
+
+
+def test_the_some_branch_is_wrapped_once_whatever_else_is_rewritten() -> None:
+    text = _rewritten('a = "{}".format(m.group(1)) if m else None\n')
+    assert text.count("_acs_some(") == 1
+    assert text.startswith("a = _acs_some(") and ".format(" not in text
+    assert text.endswith(") if m else None\n")
+
+
+# ---------------------------------------------------------------------------
+# a.__eq__(b) is written a == b (#596)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("line", "expected"),
+    [
+        ("r = not self.__eq__(other)", "r = not (self == (other))"),
+        ("r = a.b.__ne__(c)", "r = (a.b != (c))"),
+        ("r = a.__eq__(x if c else y)", "r = (a == (x if c else y))"),
+        ("r = f(a).__eq__(b)", "r = (f(a) == (b))"),
+    ],
+)
+def test_an_explicit_eq_call_is_written_as_the_operator(
+    line: str, expected: str
+) -> None:
+    assert _rewritten(line + "\n") == expected + "\n"
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "r = super().__eq__(other)",  # the base's own method
+        "r = (a or b).__eq__(c)",  # a parenthesized receiver
+        "r = A.__eq__(a, b)",  # through the class
+        "r = a.__eq__(*b)",
+        "r = a.__lt__(b)",
+    ],
+)
+def test_other_dunder_calls_are_left_alone(line: str) -> None:
+    assert _rewritten(line + "\n") == line + "\n"
+
+
+def test_an_explicit_eq_call_keeps_its_lines_and_inner_rewrites() -> None:
+    text = _rewritten('r = a.__eq__(\n    "{}".format(b),\n)\nz = 1\n')
+    assert text.splitlines()[0].startswith("r = (a == (")
+    assert ".format(" not in text and ".__eq__(" not in text
+    assert text.splitlines()[3] == "z = 1"
 
 
 # ---------------------------------------------------------------------------

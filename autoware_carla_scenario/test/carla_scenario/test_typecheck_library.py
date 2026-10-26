@@ -601,7 +601,8 @@ def test_every_public_function_and_method_is_called_with_typed_values() -> None:
     assert "    where(_acs_value(OpenDrivePose))" in calls
     assert "    total(_acs_value(Sequence[float]))" in calls
     assert "    Vector(_acs_value(float))" in calls
-    assert "    _acs_value(Vector).__eq__(_acs_value(Vector))" in calls
+    # `==`, as Python calls it (an explicit __eq__ override call fails, #596).
+    assert "    (_acs_value(Vector) == _acs_value(Vector))" in calls
     assert "    _acs_value(Vector).norm" in calls
     assert "    Vector.zero()" in calls
     assert "    Vector.unit(_acs_value(float))" in calls
@@ -1031,7 +1032,7 @@ def test_the_scenario_check_binds_each_method_result_as_a_hook() -> None:
     ]
     assert "helper(_acs_value(float))" in lines
     assert "Gap.build()" in lines
-    assert "_acs_value(Gap).__eq__(_acs_value(Gap))" in lines
+    assert "(_acs_value(Gap) == _acs_value(Gap))" in lines
 
 
 def test_an_abstract_or_raising_method_is_called_but_not_bound_as_a_hook() -> None:
