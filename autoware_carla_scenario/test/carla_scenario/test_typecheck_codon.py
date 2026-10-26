@@ -7414,6 +7414,49 @@ def test_a_syntax_error_in_an_fstring_field_is_reported_at_its_line(
     assert diagnostic.message == message
 
 
+def _parsed_at(tmp_path: Path, source: str, line: int, span: str) -> Any:
+    """Codon's error at *line* of *source* (after the prelude), columns
+    *span*, parsed for a checked copy that is *source* unchanged."""
+    from autoware_carla_scenario.typecheck import check
+
+    rel = "pkg/scenario.py"
+    (tmp_path / "pkg").mkdir()
+    (tmp_path / rel).write_text(check.PRELUDE + source)
+    ws = check._Workspace(tmp_path, None)
+    ws.files[rel] = "/user/scenario.py"
+    ws.origins[rel] = list(range(1, source.count("\n") + 1))
+    output = f"{rel}:{check._PRELUDE_LINES + line} ({span}): error: bad operand\n"
+    (diagnostic,) = check._parse_output(output, ws)
+    assert diagnostic.path == "/user/scenario.py"
+    return diagnostic
+
+
+@pytest.mark.parametrize(
+    ("source", "line", "span", "expected"),
+    [
+        # Codon puts an error in an f-string field on the line after the
+        # f-string, at the expression's column plus the field's length (#610).
+        ("a = 1\ns = f\"{a} {a + 'x'}\"\nb = 2\n", 3, "18-25", (2, None)),
+        # A field in a call's argument: the f-string's own line.
+        ("a = 1\nprint(1,\n  f\"{len(a + 'x')}\")\nb = 2\n", 4, "21-28", (3, None)),
+        # On the last line: past the end of the file.
+        ("a = 1\ns = f\"{a + 'x'}\"\n", 3, "14-21", (2, None)),
+        # A field on the second line of a triple-quoted f-string.
+        ('a = 1\ns = f"""{a}\n  {a + \'x\'}"""\nb = 2\n', 3, "20-27", (3, None)),
+        # An ordinary error on the line after an f-string with a field of the
+        # same width stays where Codon puts it, column and all.
+        ("a = 1\ns = f\"{a} {a + 'x'}\"\nb = a + 'x'\n", 3, "5-12", (3, 5)),
+        # No f-string on the line before: left alone.
+        ("a = 1\ns = 2\nb = a + 'x'\n", 3, "5-12", (3, 5)),
+    ],
+)
+def test_an_error_in_an_fstring_field_is_moved_to_its_line(
+    tmp_path: Path, source: str, line: int, span: str, expected: tuple[int, Any]
+) -> None:
+    diagnostic = _parsed_at(tmp_path, source, line, span)
+    assert (diagnostic.line, diagnostic.column) == expected
+
+
 def test_a_format_spec_on_a_bool_is_hinted(tmp_path: Path) -> None:
     line = 'r = f"{True:+d}"'
     scenario, config, path = _data_case(tmp_path, "", line + "\n")
@@ -11522,3 +11565,96 @@ def test_sys_version_info_is_refused_with_a_hint(tmp_path: Path) -> None:
         error.message
     ), error.format()
     assert error.line == _line_of(path, "sys.version_info")
+
+
+_REWRITES_IN_FSTRINGS = """
+
+
+class Obj:
+    a: int = 1
+
+
+class Hits:
+    hits: tuple[int, int] | None = (1, 2)
+"""
+
+
+def test_rewrites_inside_fstrings_and_on_optional_tuples_compile(
+    tmp_path: Path,
+) -> None:
+    # A rewrite's string in a single-quoted f-string ended it ("unexpected
+    # dedent"), `dict(a=1)` became an escaped brace, and `count` / `index` of
+    # a tuple narrowed from an Optional was refused (#609).
+    scenario, config, _ = _write_case(
+        tmp_path,
+        "o = Obj()\n"
+        "xs = [1, 2, 1]\n"
+        "t = (1, 2)\n"
+        'name = "lane_a_b"\n'
+        "logger.info(f'{xs.count(1)} {name.count(\"_\")} {xs.index(2)} {t.count(1)}')\n"
+        'logger.info(f\'{getattr(o, "a", 1)} {name.startswith(("a", "b"))}\')\n'
+        'logger.info(f"{dict(a=1)} {dict(b=2)!r}")\n'
+        "tup: tuple[int, int] | None = (1, 1) if cfg.name else None\n"
+        "c = tup.count(1) if tup is not None else 0\n"
+        "i = tup.index(1) if tup is not None else 0\n"
+        "h = Hits()\n"
+        "n = h.hits.count(1) if h.hits is not None else 0\n"
+        'logger.info("%d %d %d", c, i, n)\n',
+        extra=_REWRITES_IN_FSTRINGS,
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_a_crash_of_the_tuple_helpers_is_compiled_again_for_a_diagnostic(
+    tmp_path: Path,
+) -> None:
+    # Codon crashed (exit -11) instantiating `_acs_index` with the type the
+    # list display's error left; compiled again without the rewrite, the
+    # display's error is reported (#609).
+    scenario, config, path = _write_case(
+        tmp_path,
+        "a = Npc()\n"
+        "lst: list[Npc | None] = [None, a]\n"
+        'logger.info("%d", lst.index(a))\n',
+        extra="\n\nclass Npc:\n    pass\n",
+    )
+    result = typecheck_scenario(scenario, config)
+    error = _only_error(result)
+    assert not result.crashed, result.format()
+    assert "Optional[NoneType]" in error.message, error.format()
+    assert error.line == _line_of(path, "lst: list[Npc | None]"), error.format()
+
+
+@pytest.mark.parametrize(
+    ("setup", "extra", "needle"),
+    [
+        ("o = Obj()\ns = f\"{o.a} {o.a + 'x'}\"\n", _REWRITES_IN_FSTRINGS, "s = f"),
+        ('n = 1\ns = "a" + f"{n + \'x\'}"\nt = 2\n', "", "s = "),
+        # On the last line of the file: Codon put it past its end.
+        (
+            'logger.info("%s", label(1))\n',
+            "\n\ndef label(n: int) -> str:\n    return f\"{n + 'x'}\"\n",
+            "return f",
+        ),
+    ],
+)
+def test_an_error_in_an_fstring_field_is_reported_at_its_line(
+    tmp_path: Path, setup: str, extra: str, needle: str
+) -> None:
+    # Codon reports it on the next line, at no column of it (#610).
+    scenario, config, path = _write_case(tmp_path, setup, extra=extra)
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "unsupported operand" in error.message, error.format()
+    assert (error.path, error.line, error.column) == (
+        str(path),
+        _line_of(path, needle),
+        None,
+    ), error.format()
+
+
+def test_an_error_after_an_fstring_stays_on_its_line(tmp_path: Path) -> None:
+    scenario, config, path = _write_case(tmp_path, "n = 1\ns = f\"{n}\"\nt = n + 'x'\n")
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert error.line == _line_of(path, "t = n + 'x'"), error.format()
+    assert error.column is not None, error.format()

@@ -62,8 +62,12 @@ so a rewrite has to keep the *types*, not the values, of what it replaces.
 * ``t.count(x)`` / ``t.index(x[, start[, stop]])`` with ``t`` a name or an
   attribute chain becomes ``(t.count(x) if hasattr(t, "count") else
   _acs_count(t, x))`` (#601): Codon's ``Tuple`` has neither method and cannot
-  be extended, so only a tuple goes to the model's helper; a tuple display
-  receiver goes to it directly.  ``d.keys() & e.keys()`` (also ``|``, ``-``,
+  be extended, so only a tuple goes to the model's helper (which unwraps an
+  ``Optional``, #609); a tuple display receiver goes to it directly.  A
+  crash with no diagnostic is compiled again without this rewrite
+  (:func:`without_sequence_helpers`).  In an f-string field the strings a
+  rewrite writes take the quote the f-string does not use
+  (:meth:`.transform._Edits.replace`, #609).  ``d.keys() & e.keys()`` (also ``|``, ``-``,
   ``^``) becomes ``set(d.keys()) & set(e.keys())``, and ``d.items() <=
   e.items()`` (any comparison) compares ``set()`` of each view: Codon's views
   are generators.  ``super(Cls, self)`` in a method of ``Cls`` whose first
@@ -135,6 +139,8 @@ scenario's classes.)
 from __future__ import annotations
 
 import ast
+import contextlib
+import contextvars
 import copy
 import json
 import keyword
@@ -315,6 +321,41 @@ _DISPLAYS = (ast.List, ast.Set, ast.Dict)
 #: receiver has no such method, a tuple (#601): Codon's ``Tuple`` cannot be
 #: extended.
 _SEQUENCE_HELPERS = {"count": "_acs_count", "index": "_acs_index"}
+#: Whether ``t.count(x)`` / ``t.index(x)`` are rewritten (#601): off only
+#: while :func:`without_sequence_helpers` is in effect.
+_SEQUENCE_REWRITES: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "acs_sequence_rewrites", default=True
+)
+
+
+@contextlib.contextmanager
+def without_sequence_helpers() -> Iterator[None]:
+    """Leave ``t.count(x)`` / ``t.index(x)`` as written, in this context (#609).
+
+    Codon 0.19 crashes with no diagnostic when the model's ``_acs_count`` /
+    ``_acs_index`` is instantiated with a type an earlier error left wrong
+    (``lst: list[Npc | None] = [None, a]`` then ``lst.index(a)``): the check
+    compiles such a module once more without the rewrite, for Codon's own
+    diagnostic."""
+    token = _SEQUENCE_REWRITES.set(False)
+    try:
+        yield
+    finally:
+        _SEQUENCE_REWRITES.reset(token)
+
+
+def uses_sequence_helpers(source: str) -> bool:
+    """Whether the checked copy of *source* calls ``_acs_count`` /
+    ``_acs_index`` (#601)."""
+    if not any(f".{m}(" in source for m in _SEQUENCE_HELPERS):
+        return False
+    try:
+        text = python_rewrites(source)[0]
+    except SyntaxError:
+        return False
+    return any(f"{h}(" in text for h in _SEQUENCE_HELPERS.values())
+
+
 #: The builtin types whose methods are also called through the class
 #: (``str.index(s, "a")``): such a receiver is left alone.
 _BUILTIN_TYPE_NAMES = frozenset(
@@ -491,8 +532,27 @@ def _spec_text(spec: ast.expr | None) -> str | None:
 
 
 def _field_needs_rewrite(field: ast.FormattedValue) -> bool:
+    """Whether Codon's parser refuses *field* as written: a spec it does not
+    take, or a ``dict(k=v)`` call, which the transform writes as a display
+    (#469) whose brace would end the field (``f"{dict(a=1)}"``, #609)."""
     text = _spec_text(field.format_spec)
-    return text is None or _CODON_SPEC.fullmatch(text) is None
+    return (
+        text is None
+        or _CODON_SPEC.fullmatch(text) is None
+        or any(_keyword_dict(sub) for sub in ast.walk(field.value))
+    )
+
+
+def _keyword_dict(node: ast.AST) -> bool:
+    """``dict(k=v, ...)``: what the transform writes as ``{"k": v, ...}``."""
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "dict"
+        and not node.args
+        and bool(node.keywords)
+        and all(k.arg is not None for k in node.keywords)
+    )
 
 
 def _fstring_needs_rewrite(node: ast.JoinedStr) -> bool:
@@ -1682,7 +1742,8 @@ class _Pass(ShadowScopes):
         (``itertools.count``) nor a builtin type (``str.index(s, "a")``)."""
         count = func.attr == "count"
         if (
-            not plain_call
+            not _SEQUENCE_REWRITES.get()
+            or not plain_call
             or id(node) in self._sequence_done
             or not (len(node.args) == 1 if count else 1 <= len(node.args) <= 3)
         ):

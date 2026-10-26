@@ -111,7 +111,12 @@ from .local_bindings import (
     none_mismatch_hint,
 )
 from .module_cycles import cycle_hint
-from .python_rewrites import REWRITE_HINTS, python_rewrite_refusals
+from .python_rewrites import (
+    REWRITE_HINTS,
+    python_rewrite_refusals,
+    uses_sequence_helpers,
+    without_sequence_helpers,
+)
 from .transform import (
     PRELUDE,
     class_declarations,
@@ -161,7 +166,7 @@ _PRELUDE_LINES = PRELUDE.count("\n")
 
 _ANSI = re.compile(r"\x1b\[[0-9;]*m")
 _LOCATION = re.compile(
-    r"^(?P<file>[^\s:][^:]*):(?P<line>\d+)(?: \((?P<col>\d+)(?:-\d+)?\))?: "
+    r"^(?P<file>[^\s:][^:]*):(?P<line>\d+)(?: \((?P<col>\d+)(?:-(?P<end>\d+))?\))?: "
 )
 _ERROR = re.compile(r"error: ?(?P<message>.*)$")
 _CRASH_MARKERS = ("Assert failed", "Segmentation fault", "Aborted")
@@ -1812,6 +1817,58 @@ def _fstring_line(
     return _original_line(origin, fields[0][0])
 
 
+def _fstring_field_line(
+    tree: ast.Module, line: int, start: int | None, end: int | None
+) -> int | None:
+    """The line of the f-string field an error Codon reports at *line* (its
+    columns *start*-*end*) is in, or ``None`` when it is not one (#610).
+
+    Codon 0.19 parses an f-string field on its own and reports an error in it
+    on the line after the line the f-string starts on, at the column of the
+    faulting expression plus the length of the field's text: one line late,
+    at a column that is no position of that line (past its end, or past the
+    end of the file when the f-string is on its last line).  Its width
+    (*end* - *start*) is the expression's.
+
+    The rule, on the checked copy *tree*: the error is moved when no node on
+    *line* itself starts at *start* (Codon's 1-based column of an ordinary
+    error) with that width, and an f-string that starts on the line before
+    has a field holding an expression of that width that ends at or before
+    *start* (the field's text holds the expression).  An ordinary error on
+    *line* always has such a node, so it is never moved.  The line returned
+    is the expression's own (a field on a later line of a triple-quoted
+    f-string is on its line); the column is dropped by the caller.
+    """
+    if start is None or end is None or line < 2:
+        return None
+    width = end - start
+    found: set[int] = set()
+    for node in ast.walk(tree):
+        if (
+            getattr(node, "lineno", None) == line
+            and getattr(node, "end_lineno", None) == line
+            and getattr(node, "col_offset", -1) + 1 == start
+            and getattr(node, "end_col_offset", -1) - node.col_offset  # type: ignore[attr-defined]
+            == width
+        ):
+            return None  # an ordinary error on the line itself
+        if not isinstance(node, ast.JoinedStr) or node.lineno != line - 1:
+            continue
+        for value in node.values:
+            if not isinstance(value, ast.FormattedValue):
+                continue
+            for inner in ast.walk(value.value):
+                if (
+                    isinstance(inner, ast.expr)
+                    and inner.lineno == inner.end_lineno
+                    and inner.end_col_offset is not None
+                    and inner.end_col_offset - inner.col_offset == width
+                    and inner.end_col_offset <= start
+                ):
+                    found.add(inner.lineno)
+    return min(found) if found else None
+
+
 def _rewritten_lines(
     checked: Path, line: int, original: str, original_line: int
 ) -> tuple[str, str] | None:
@@ -1899,9 +1956,25 @@ def _parse_output(output: str, ws: _Workspace) -> list[Diagnostic]:
     #: The (compiled, author's) text of each (file, line) of Codon's that the
     #: check rewrote: a column after the rewrite is not the author's.
     moved: dict[tuple[str, int], tuple[str, str]] = {}
+    #: The (file, line) of Codon's of each error in an f-string field, which
+    #: Codon puts a line late at no column of the line (#610).
+    in_fields: set[tuple[str, int]] = set()
+    trees: dict[str, ast.Module | None] = {}
+
+    def checked_tree(rel: str) -> ast.Module | None:
+        if rel not in trees:
+            try:
+                trees[rel] = ast.parse((ws.root / rel).read_text())
+            except (OSError, SyntaxError, ValueError):
+                trees[rel] = None
+        return trees[rel]
 
     def locate(
-        file: str, line: int, column: int | None = None, message: str = ""
+        file: str,
+        line: int,
+        column: int | None = None,
+        message: str = "",
+        end: int | None = None,
     ) -> tuple[str, int, bool, str | None] | None:
         """(path to show, line, is the scenario's own file, the appended call)."""
         if file == DRIVER_MODULE:
@@ -1911,6 +1984,14 @@ def _parse_output(output: str, ws: _Workspace) -> list[Diagnostic]:
         if len(candidates) != 1:
             return None
         rel = candidates[0]
+        if line > _PRELUDE_LINES + 1 and not message.startswith("syntax error"):
+            tree = checked_tree(rel)
+            field = (
+                None if tree is None else _fstring_field_line(tree, line, column, end)
+            )
+            if field is not None:
+                in_fields.add((file, line))
+                line = field
         if rel in ws.appended and line > ws.appended[rel][0]:
             # A call the check appended: name the call it makes, and, in a
             # scenario, report it at the line of what it compiles (a
@@ -1941,6 +2022,8 @@ def _parse_output(output: str, ws: _Workspace) -> list[Diagnostic]:
         return (ws.files[rel], original, True, None)
 
     errors: list[tuple[str, list[tuple[str, int, int | None, str]]]] = []
+    #: The end column of each frame that has one (by the frame's id).
+    ends: dict[int, int] = {}
     for raw in output.splitlines():
         text = _ANSI.sub("", raw)
         nested = text.lstrip().startswith(("├─", "╰─", "│"))
@@ -1961,6 +2044,8 @@ def _parse_output(output: str, ws: _Workspace) -> list[Diagnostic]:
             if match
             else ("", 0, None, text_)
         )
+        if match and match["end"]:
+            ends[id(frame)] = int(match["end"])
         if nested and errors:
             errors[-1][1].append(frame)
         else:
@@ -1969,13 +2054,16 @@ def _parse_output(output: str, ws: _Workspace) -> list[Diagnostic]:
     diagnostics: list[Diagnostic] = []
     for message, frames in errors:
         located = [
-            (f, locate(f[0], f[1], f[2], f[3])) if f[0] else (f, None) for f in frames
+            (f, locate(f[0], f[1], f[2], f[3], ends.get(id(f)))) if f[0] else (f, None)
+            for f in frames
         ]
         pf, primary = next(
             ((f, loc) for f, loc in located if loc and loc[2]), None
         ) or next(((f, loc) for f, loc in located if loc), (None, None))
         column = pf[2] if pf is not None else None
-        if column is not None and pf is not None and (pf[0], pf[1]) in moved:
+        if pf is not None and (pf[0], pf[1]) in in_fields:
+            column = None  # Codon's column in an f-string field is no column (#610)
+        elif column is not None and pf is not None and (pf[0], pf[1]) in moved:
             if not _column_survives(column, *moved[(pf[0], pf[1])]):
                 column = None  # a column of the rewritten line (#494)
         trace = []
@@ -2954,6 +3042,23 @@ def _compile(
             diagnostics = _bad_alloc_hints(sources)
         except Exception:  # only a hint: the crash is reported either way
             diagnostics = []
+    if (
+        crashed
+        and not codegen
+        and not diagnostics
+        and any(uses_sequence_helpers(m.text) for m in sources.modules.values())
+    ):
+        # Codon 0.19 crashes with no diagnostic where an earlier error left a
+        # type the model's `_acs_count` / `_acs_index` is instantiated with
+        # wrong (#609): compiled again without that rewrite, the error is
+        # Codon's own diagnostic. A rerun that passes or crashes too says
+        # nothing more: the crash is reported.
+        with without_sequence_helpers():
+            rerun = _compile(
+                name, sources, driver, toolchain, codon_path, timeout, build
+            )
+        if rerun is not None and not rerun.ok and not rerun.crashed:
+            return dataclasses.replace(rerun, seconds=seconds + rerun.seconds)
     if proc.returncode != 0 and not diagnostics:
         tail = _ANSI.sub("", output).strip().splitlines()[-1:] or [
             f"exit status {proc.returncode}"
