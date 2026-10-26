@@ -6019,6 +6019,24 @@ def test_the_narrowed_branch_is_no_lambda_in_a_class_body() -> None:
     )
 
 
+def test_a_narrowed_branch_calling_super_with_the_class_is_no_lambda() -> None:
+    # `super(D, self)` becomes `super()` only outside a lambda (#601), and a
+    # `super()` in a lambda finds no method: the branch stays where it is.
+    text = _rewritten(
+        textwrap.dedent(
+            """
+            class D(B):
+                def f(self, m):
+                    a = super(D, self).f(m) if m else None
+                    b = m + super(D, self).f(m) if m else None
+            """
+        )
+    )
+    not_none = _NOT_NONE.format("m")
+    assert f"        a = _acs_some(super().f(m)) if {not_none} else None\n" in text
+    assert f"        b = _acs_some(m + super().f(m)) if {not_none} else None\n" in text
+
+
 def test_the_narrowed_conditional_keeps_every_line_and_comment() -> None:
     source = (
         "a = (m.x  # if else\n"

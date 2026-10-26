@@ -92,8 +92,8 @@ so a rewrite has to keep the *types*, not the values, of what it replaces.
   type, so it compiles only the branch it picks (the ``None`` where ``x`` is
   always ``None``) and unifies nothing; ``_acs_some_if`` returns ``a`` as an
   ``Optional``, the type Python gives the expression.  In a class body, or
-  where ``a`` cannot be in a lambda (a walrus, ``yield``, ``super()``), the
-  branch is ``_acs_some(a)``.
+  where ``a`` cannot be in a lambda (a walrus, ``yield``, ``super()`` or
+  ``super(Cls, self)``), the branch is ``_acs_some(a)``.
 * ``a.__eq__(b)`` / ``a.__ne__(b)`` becomes ``(a == (b))`` / ``(a != (b))``
   (#596): Codon refuses the explicit call of an ``__eq__`` that overrides an
   inherited one (the identity ``__eq__`` the check gives a plain class, or
@@ -1653,7 +1653,7 @@ class _Pass(ShadowScopes):
             subject = _dotted(_narrowed_subject(node.test))
             start, end = self.edits.node_span(branch)
             if self._class_body or any(
-                isinstance(n, _NOT_IN_A_LAMBDA) or _is_bare_super(n)
+                isinstance(n, _NOT_IN_A_LAMBDA) or _is_super(n)
                 for n in ast.walk(branch)
             ):
                 # Not in a lambda (#597): enough where the branch's type is
@@ -2398,13 +2398,14 @@ def _ordering_blocks(
 _NOT_IN_A_LAMBDA = (ast.NamedExpr, ast.Yield, ast.YieldFrom, ast.Await)
 
 
-def _is_bare_super(node: ast.AST) -> bool:
-    """``super()``, which needs the method's own frame, not a lambda's."""
+def _is_super(node: ast.AST) -> bool:
+    """``super()``, which needs the method's own frame, not a lambda's, and
+    ``super(Cls, self)``, which this pass makes ``super()`` only outside a
+    lambda (#601)."""
     return (
         isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
         and node.func.id == "super"
-        and not node.args
     )
 
 
