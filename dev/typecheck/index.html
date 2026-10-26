@@ -2211,6 +2211,46 @@ the model's own helpers (<code>_keyword_only</code>, <code>_required_str</code>,
 are left out of the trace, and a literal <code>None</code> given where a type is
 expected is told that the parameter does not take <code>None</code> rather than to test
 the value.</p>
+<p>Some common slips get a hint after Codon's message (#599), each only where
+both the message and your source at the line say it is that slip:</p>
+<table>
+<thead>
+<tr>
+<th>You write</th>
+<th>Codon says</th>
+<th>The hint</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>range(len(ids) / 2)</code></td>
+<td><code>range() cannot be called with (float)</code></td>
+<td><code>range()</code> takes ints, and <code>/</code> always gives a float: divide with <code>//</code>, or convert with <code>int()</code></td>
+</tr>
+<tr>
+<td><code>ids[len(ids) / 2]</code></td>
+<td><code>__getitem__() cannot be called with (float)</code></td>
+<td>an index must be an int: divide with <code>//</code></td>
+</tr>
+<tr>
+<td><code>",".join(ids)</code> of a <code>list[int]</code></td>
+<td><code>'Generator[int]' does not match expected type 'Generator[str]'</code></td>
+<td><code>",".join(map(str, ids))</code> or <code>",".join(str(v) for v in ids)</code></td>
+</tr>
+<tr>
+<td><code>self.register_pre_tick(lambda: None)</code> (also <code>register_post_tick</code>, <code>register_init</code>, a <code>register_measure</code> read function, a <code>register_cover</code> expression, or a <code>def</code> of no parameter)</td>
+<td><code>a lambda() takes 0 arguments (1 given)</code></td>
+<td>the callback is called with the world: <code>lambda world: ...</code></td>
+</tr>
+<tr>
+<td><code>self.register_measure("flag", lambda w: True)</code></td>
+<td><code>expected a float (or an int)</code></td>
+<td>names the measure and what its read function returns (a bool is no number to a measure: <code>1.0 if ... else 0.0</code>, or a cover)</td>
+</tr>
+</tbody>
+</table>
+<p>A <code>range()</code> or index of a float without a <code>/</code> written there, and a <code>join</code> of
+something that is not a call of <code>join</code> at that column, get none.</p>
 <p>Two declared return types Codon does not enforce are refused from the syntax,
 before Codon runs (#529): a <code>return</code> of a literal, an f-string or a display in
 a function declared <code>-&gt; bool</code> (Codon converts it to a <code>bool</code>; Python returns
@@ -3354,6 +3394,17 @@ value whose members are <code>int</code>, not as a type: it becomes <code>int</c
     <strong>not</strong> an <code>int</code> or a <code>str</code> otherwise: passing it to an <code>int</code> / <code>str</code>
     parameter or doing arithmetic on it (<code>M.A + 1</code>) is refused with a hint.
     Write <code>M.A.value</code>.</li>
+<li>An enum is typed by its members' values, which must be literals of one
+    type: all <code>int</code> (a signed one, <code>LEFT = -1</code>, too), all <code>float</code>, all <code>str</code>,
+    or <code>auto()</code>, unless the base gives the type (<code>IntEnum</code>, <code>class M(str,
+    Enum)</code>). An enum whose values are tuples (<code>LEFT = (-3.5, "left")</code>,
+    unpacked into an <code>__init__</code> that sets <code>self.offset</code>), of different types
+    (<code>A = 1</code>, <code>B = "b"</code>), or not literals (<code>A = WIDTH</code>, <code>A = 2 * WIDTH</code>, <code>A =
+    True</code>) is refused at its class line (#600), with what to write instead:
+    for a record per member, a <code>@dataclass(frozen=True)</code> or a <code>NamedTuple</code>
+    and a module-level dict keyed by a plain enum (<code>LANES = {Lane.LEFT:
+    LaneInfo(-3.5, "left")}</code>), or one enum per field. An enum with no member
+    (a base for others) is not refused.</li>
 <li>A <code>class Pt(typing.NamedTuple)</code> is checked as a Codon <code>@tuple</code> class: its
     fields, defaults and methods, <code>==</code>, ordering, <code>hash()</code>, iteration and
     <code>len()</code> work. Codon indexes and unpacks it (<code>p[0]</code>, <code>x, y = p</code>) only when
@@ -3425,6 +3476,21 @@ cannot express is refused at its line, with what to write instead.</p>
 <td><code>getattr(x, "name", default)</code> with a literal name, <code>x</code> a name or an attribute chain, the default on one line (#590)</td>
 <td><code>((default), x.name if hasattr(x, "name") else (default))[1]</code>: Codon's <code>getattr</code> takes no default, and Codon decides <code>hasattr</code> when it compiles, so only the branch <code>x</code>'s type takes is compiled, typed as that branch (the attribute's type where the class declares it, the default's where it does not). The first item keeps the default compiled either way, as Python evaluates it either way (<code>getattr(x, "name", x.typo)</code> is refused). <code>hasattr</code> on an <code>Optional</code> is decided on the <code>Optional</code> (see "Making a module compile"), so the default's branch is the one compiled there</td>
 <td>a name built at run time, another receiver (a call, a subscript), a default over several lines or <code>hasattr</code> bound where the call is: refused with <code>getattr() takes 2 arguments (3 given)</code> and a hint to write the <code>hasattr</code> test</td>
+</tr>
+<tr>
+<td><code>t.count(x)</code>, <code>t.index(x[, start[, stop]])</code> with <code>t</code> a name or an attribute chain (#601)</td>
+<td><code>(t.count(x) if hasattr(t, "count") else _acs_count(t, x))</code>: Codon's tuple has no <code>count</code> / <code>index</code> and cannot be extended, and only Codon knows <code>t</code>'s type, so a list, a str or a class of yours keeps its own call, compiled as written, and only a tuple goes to the helper (an item of another type than <code>x</code> never equals it). A tuple display, <code>(1, 2).index(2)</code>, goes to the helper directly</td>
+<td>the receiver is a module (<code>itertools.count</code>), a builtin type (<code>str.index(s, "a")</code>), a call or a subscript (<code>f().count(x)</code>, <code>rows[0].index(x)</code>: bind it to a name), or the call spans lines; then a tuple's is refused (<code>'Tuple[int,int]' object has no attribute 'count'</code>)</td>
+</tr>
+<tr>
+<td><code>d.keys() &amp; e.keys()</code>, <code>\|</code>, <code>-</code>, <code>^</code>; <code>d.items() &lt;= e.items()</code>, <code>&lt;</code>, <code>&gt;</code>, <code>&gt;=</code>, <code>==</code>, <code>!=</code> (#601)</td>
+<td><code>set(d.keys()) &amp; set(e.keys())</code>, the other operand of <code>&amp;</code>, <code>\|</code>, <code>-</code>, <code>^</code> a set too (a view takes any iterable there, and gives a set); a comparison makes a set of each view and leaves the other side as it is (a view orders only against a set)</td>
+<td>the view is held in a name (<code>k = d.keys()</code>, then <code>k &amp; e</code>): write <code>set(d) &amp; set(e)</code></td>
+</tr>
+<tr>
+<td><code>super(Derived, self).__init__(k)</code> in a method of <code>Derived</code> whose first parameter is <code>self</code> (#601)</td>
+<td><code>super().__init__(k)</code>: Codon's <code>super</code> takes no arguments</td>
+<td>another class (<code>super(Base, self)</code>, which skips <code>Derived</code>'s bases up to <code>Base</code>), a <code>@classmethod</code> / <code>@staticmethod</code>, the class or <code>self</code> rebound in the method, or the call inside a nested function, lambda or comprehension: Codon's <code>super() takes 0 arguments (2 given)</code></td>
 </tr>
 <tr>
 <td><code>round(x)</code>, <code>round(x, None)</code>, <code>round(number=x, ndigits=None)</code> (#585)</td>
@@ -4996,7 +5062,16 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   encoded first). <code>bytes.decode()</code> is not declared, since it would be a
   <code>str</code>'s too and pass <code>"text".decode()</code>; the check refuses
   <code>data.decode()</code>, which CPython takes. <code>str.removeprefix(prefix, /)</code> and
-  <code>str.removesuffix(suffix, /)</code> (Python 3.9) are declared too. <code>urllib.parse</code>
+  <code>str.removesuffix(suffix, /)</code> (Python 3.9) are declared too, and so are
+  <code>str.maketrans(x, y[, z])</code> and <code>str.maketrans(dict_of_str)</code> (#601), whose
+  table <code>str.translate()</code> takes (Python's also maps to ints, which Codon's
+  <code>translate</code> does not). <code>list.index(value, start[, stop])</code>, <code>xs += (4, 5)</code>
+  (a list <code>+=</code> any iterable, as in Python; <code>xs + (4, 5)</code> stays refused, as
+  there) and <code>reversed(d)</code> of a dict (its keys, last first) are declared in
+  <code>_tc.codon</code> (#601); <code>reversed()</code> of a dict view is not. <code>sys.version_info</code>,
+  <code>sys.version</code> and <code>sys.hexversion</code> are not modelled, and refused with a
+  hint: the check compiles every branch of a version test, so the code must
+  be valid on every supported Python anyway. <code>urllib.parse</code>
   declares <code>urlsplit()</code>, <code>urlunsplit()</code> and <code>SplitResult</code> (its five parts,
   as attributes and as a tuple, <code>hostname</code>, <code>port</code>, <code>username</code>, <code>password</code>
   and <code>geturl()</code>). A scenario sees the same shims: it may import <code>pathlib</code>,
@@ -6000,7 +6075,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 26, 2026 02:17:17 UTC"><span class="timeago" datetime="2026-10-26T02:17:17+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 26, 2026 02:17:17 UTC">2026-10-26</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 26, 2026 05:23:19 UTC"><span class="timeago" datetime="2026-10-26T05:23:19+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 26, 2026 05:23:19 UTC">2026-10-26</span>
   </span>
 
     
