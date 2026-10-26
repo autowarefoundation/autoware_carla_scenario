@@ -1608,7 +1608,11 @@ def test_a_type_error_mentioning_none_is_not_called_optional_misuse(
     result = typecheck_scenario(scenario, config)
     error = _only_error(result)
     assert "expected a float" in error.message, result.format()
-    assert not [d for d in result.diagnostics if "None" in d.message], result.format()
+    # The error's own hint may say a measure can be None (#599); no other
+    # diagnostic may.
+    assert not [
+        d for d in result.diagnostics if d is not error and "None" in d.message
+    ], result.format()
 
 
 _VARIADIC_HELPERS = """
