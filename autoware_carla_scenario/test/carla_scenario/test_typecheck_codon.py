@@ -10946,11 +10946,27 @@ class Keyed(BaseCondition):
     def __eq__(self, other: object) -> bool:
         return isinstance(other, Keyed) and other.label == self.label
 
+    # Called by name, over the model's identity __eq__ it overrides.
+    def __ne__(self, other: object) -> bool:
+        return not self.__eq__(other)
+
     def __hash__(self) -> int:
         return hash(self.label)
 
     def check(self, world: carla.World, elapsed: float) -> ScenarioResult | None:
         return None
+
+
+@dataclass
+class Fielded(Loose):
+    y: float
+
+    # Over Loose's identity __eq__: the generated __ne__ calls it.
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, Fielded) and other.y == self.y
+
+    def __hash__(self) -> int:
+        return hash(self.y)
 
 
 KNOWN = {Npc("known")}
@@ -10986,6 +11002,10 @@ def test_a_plain_class_compares_and_hashes_by_identity(tmp_path: Path) -> None:
             "%d %s %s %d %s %d %d",
             len(conds), by_cond[t], mine in listed, len({turn}), turn == turn,
             len({Keyed("k"), Keyed("k")}), len({mine: 1}),
+        )
+        f = Fielded(1.0, 2.0)
+        logger.info(
+            "%s %s %s", Keyed("k") != Keyed("j"), Keyed("k").__eq__(t), f != f
         )
         if self.ego_entity is not None:
             logger.info("%d", len({self.ego_entity}))

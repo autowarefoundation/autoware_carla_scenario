@@ -4202,7 +4202,9 @@ def _dataclass_dunders(tree: ast.Module, exceptions: set[str]) -> list[tuple[str
         if options["eq"]:
             same = " and ".join(f"self.{n} == other.{n}" for n in names) or "True"
             method("__eq__", "bool", same)
-            method("__ne__", "bool", "not self.__eq__(other)")
+            # `==`, not `self.__eq__(other)`: Codon refuses the call by name
+            # of an __eq__ overriding a base's identity one (#596).
+            method("__ne__", "bool", "not (self == other)")
             if options["frozen"] or options["unsafe_hash"]:
                 method(
                     "__hash__",

@@ -2789,7 +2789,7 @@ def test_a_dataclass_gets_eq_and_ne_comparing_its_fields() -> None:
     )
     assert _methods(block) == {"__eq__", "__ne__"}
     assert "return self.a == other.a and self.b == other.b" in block
-    assert "return not self.__eq__(other)" in block
+    assert "return not (self == other)" in block
     ast.parse(block.replace("class Fz", "@extend\nclass Fz", 1))
 
 
@@ -5802,3 +5802,44 @@ def test_the_some_branch_is_wrapped_once_whatever_else_is_rewritten() -> None:
     assert text.count("_acs_some(") == 1
     assert text.startswith("a = _acs_some(") and ".format(" not in text
     assert text.endswith(") if m else None\n")
+
+
+# ---------------------------------------------------------------------------
+# a.__eq__(b) is written a == b (#596)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("line", "expected"),
+    [
+        ("r = not self.__eq__(other)", "r = not (self == (other))"),
+        ("r = a.b.__ne__(c)", "r = (a.b != (c))"),
+        ("r = a.__eq__(x if c else y)", "r = (a == (x if c else y))"),
+        ("r = f(a).__eq__(b)", "r = (f(a) == (b))"),
+    ],
+)
+def test_an_explicit_eq_call_is_written_as_the_operator(
+    line: str, expected: str
+) -> None:
+    assert _rewritten(line + "\n") == expected + "\n"
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "r = super().__eq__(other)",  # the base's own method
+        "r = (a or b).__eq__(c)",  # a parenthesized receiver
+        "r = A.__eq__(a, b)",  # through the class
+        "r = a.__eq__(*b)",
+        "r = a.__lt__(b)",
+    ],
+)
+def test_other_dunder_calls_are_left_alone(line: str) -> None:
+    assert _rewritten(line + "\n") == line + "\n"
+
+
+def test_an_explicit_eq_call_keeps_its_lines_and_inner_rewrites() -> None:
+    text = _rewritten('r = a.__eq__(\n    "{}".format(b),\n)\nz = 1\n')
+    assert text.splitlines()[0].startswith("r = (a == (")
+    assert ".format(" not in text and ".__eq__(" not in text
+    assert text.splitlines()[3] == "z = 1"

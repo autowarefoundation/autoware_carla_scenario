@@ -64,6 +64,11 @@ so a rewrite has to keep the *types*, not the values, of what it replaces.
   None``) becomes ``_acs_some(a) if x else None`` (#597): Codon cannot unify
   the narrowed branch's type with the ``None``; ``_acs_some`` makes it an
   ``Optional`` itself, the type Python gives the expression.
+* ``a.__eq__(b)`` / ``a.__ne__(b)`` becomes ``(a == (b))`` / ``(a != (b))``
+  (#596): Codon refuses the explicit call of an ``__eq__`` that overrides an
+  inherited one (the identity ``__eq__`` the check gives a plain class, or
+  the model's ``BaseCondition``), and ``==`` is how Python calls it.
+  ``super().__eq__(b)`` is left alone.
 * ``namedtuple("P", "x y")`` / ``namedtuple("P", "x, y")`` (Codon crashes on a
   string) becomes ``namedtuple("P", ["x", "y"])`` (#510).  Field names that
   are not a literal, and ``rename=`` / ``defaults=``, are refused with a hint.
@@ -1282,9 +1287,39 @@ class _Pass(ShadowScopes):
         if text is not None:
             self.edits.replace(*self.edits.node_span(node), text)
             return
+        text = self._dunder_comparison(node)
+        if text is not None:
+            # An edit inside it this pass wins; this one is made on the next.
+            self.edits.replace(*self.edits.node_span(node), text)
         if self._is_namedtuple(node.func):
             self._namedtuple(node)
         self.generic_visit(node)
+
+    def _dunder_comparison(self, node: ast.Call) -> str | None:
+        """``(a == (b))`` for ``a.__eq__(b)`` (``!=`` for ``__ne__``, #596):
+        Codon cannot pick between an ``__eq__`` and the one it overrides when
+        it is called by name, but ``==`` it resolves."""
+        func = node.func
+        if (
+            not isinstance(func, ast.Attribute)
+            or func.attr not in ("__eq__", "__ne__")
+            or len(node.args) != 1
+            or node.keywords
+            or isinstance(node.args[0], ast.Starred)
+        ):
+            return None
+        value = func.value
+        if isinstance(value, ast.Call) and _dotted(value.func) == "super":
+            return None  # the base's method, which `==` would not call
+        start, value_end = self.edits.node_span(value)
+        arg_start, arg_end = self.edits.node_span(node.args[0])
+        if self.edits.node_span(node)[0] != start:
+            return None  # a parenthesized receiver: `(a or b).__eq__(c)`
+        op = "==" if func.attr == "__eq__" else "!="
+        return (
+            f"({self.edits.text(start, value_end)} {op} "
+            f"({self.edits.text(arg_start, arg_end)}))"
+        )
 
     # -- isinstance(<JSONValue>, T) (#563) -------------------------------------
 
