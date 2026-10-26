@@ -11,10 +11,13 @@ import ast
 import importlib
 import sys
 import textwrap
+import threading
+import time
 from pathlib import Path
 
 import pytest
 
+from autoware_carla_scenario.typecheck import class_rules
 from autoware_carla_scenario.typecheck.class_rules import (
     ClassProblem,
     skipped_base_inits,
@@ -509,6 +512,180 @@ def test_a_class_of_a_third_party_base_is_left_alone(tmp_path: Path) -> None:
     """
     modules, _ = _modules(tmp_path, body)
     assert unassigned_attributes(modules) == []
+
+
+_MIXIN = """
+class VehicleInfoMixin:
+    ego_config: EgoConfig
+
+    def vehicle_label(self) -> str:
+        return "ego:" + self.ego_config.vehicle_type
+
+
+class CaseScenario({bases}):
+    def setup(self, world: carla.World) -> None:
+        print(self.vehicle_label())
+"""
+
+
+@pytest.mark.parametrize(
+    "bases",
+    ["BaseScenario, VehicleInfoMixin", "VehicleInfoMixin, BaseScenario"],
+    ids=["mixin-last", "mixin-first"],
+)
+def test_a_mixin_attribute_the_framework_base_of_a_subclass_assigns_is_left_alone(
+    tmp_path: Path, bases: str
+) -> None:
+    # BaseScenario.__init__ assigns ego_config on the mixin's subclass (#620).
+    modules, _ = _modules(tmp_path, _MIXIN.replace("{bases}", bases))
+    assert unassigned_attributes(modules) == []
+
+
+def test_a_mixin_attribute_no_base_of_a_subclass_assigns_is_refused(
+    tmp_path: Path,
+) -> None:
+    body = (
+        _MIXIN.replace("{bases}", "BaseScenario, VehicleInfoMixin")
+        .replace("ego_config: EgoConfig", "fleet_config: EgoConfig")
+        .replace("self.ego_config", "self.fleet_config")
+    )
+    modules, path = _modules(tmp_path, body)
+    problem = _only(unassigned_attributes(modules))
+    assert problem.line == _line_of(path, "fleet_config: EgoConfig")
+    assert "VehicleInfoMixin.fleet_config" in problem.message
+
+
+def test_a_mixin_attribute_one_subclass_has_no_base_to_assign_is_refused(
+    tmp_path: Path,
+) -> None:
+    # Plain().vehicle_label() raises AttributeError: BaseScenario assigns
+    # ego_config on CaseScenario only (#620).
+    body = _MIXIN.replace("{bases}", "BaseScenario, VehicleInfoMixin") + (
+        "\n\nclass Plain(VehicleInfoMixin):\n    pass\n"
+    )
+    modules, path = _modules(tmp_path, body)
+    problem = _only(unassigned_attributes(modules))
+    assert problem.line == _line_of(path, "ego_config: EgoConfig")
+    assert "VehicleInfoMixin.ego_config" in problem.message
+
+
+def test_a_mixin_attribute_assigned_below_an_intermediate_class_is_left_alone(
+    tmp_path: Path,
+) -> None:
+    # Only CaseScenario, below Middle, is built; BaseScenario assigns
+    # ego_config on it (#620).
+    body = _MIXIN.replace("{bases}", "BaseScenario, Middle").replace(
+        "class CaseScenario(",
+        "class Middle(VehicleInfoMixin):\n    pass\n\n\nclass CaseScenario(",
+    )
+    modules, _ = _modules(tmp_path, body)
+    assert unassigned_attributes(modules) == []
+
+
+# ---------------------------------------------------------------------------
+# #619: the framework's stores, parsed only when needed, once
+# ---------------------------------------------------------------------------
+
+
+def _example_modules() -> dict[str, tuple[str, ast.Module]]:
+    """The example scenarios' modules and the template's, imported."""
+    import autoware_carla_scenario.examples as examples
+
+    root = Path(examples.__file__).parent
+    found = {
+        f"autoware_carla_scenario.examples.{p.stem}": p
+        for p in sorted(root.glob("*.py"))
+        if p.stem not in ("__init__", "run", "expand")
+    }
+    template = (
+        Path(__file__).resolve().parents[3]
+        / "examples/scenario_package_template/src/my_scenario_package"
+    )
+    if template.is_dir():
+        sys.path.insert(0, str(template.parent))
+        found.update(
+            {f"my_scenario_package.{p.stem}": p for p in sorted(template.glob("*.py"))}
+        )
+    out: dict[str, tuple[str, ast.Module]] = {}
+    try:
+        for name, path in found.items():
+            importlib.import_module(name)
+            out[name] = (str(path), ast.parse(path.read_text()))
+    finally:
+        if template.is_dir():
+            sys.path.remove(str(template.parent))
+    return out
+
+
+def test_the_examples_check_never_parses_the_framework(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Parsing the whole package costs seconds a cached check would pay too:
+    # it is needed only where nothing cheaper excuses an attribute (#619).
+    def refused() -> frozenset[str]:
+        raise AssertionError("the framework's stores were parsed")
+
+    monkeypatch.setattr(class_rules, "_FRAMEWORK_STORES", None)
+    monkeypatch.setattr(class_rules, "_parse_framework_stores", refused)
+    modules = _example_modules()
+    assert len(modules) >= 7
+    assert unassigned_attributes(modules) == []
+    assert skipped_base_inits(modules) == []
+
+
+def test_an_attribute_only_the_framework_assigns_parses_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The framework assigns goal_pose on a scenario from outside.
+    body = """
+    class Holder:
+        goal_pose: object
+
+        def show(self) -> None:
+            print(self.goal_pose)
+    """
+    calls: list[int] = []
+    parse = class_rules._parse_framework_stores
+
+    def counted() -> frozenset[str]:
+        calls.append(1)
+        return parse()
+
+    monkeypatch.setattr(class_rules, "_FRAMEWORK_STORES", None)
+    monkeypatch.setattr(class_rules, "_parse_framework_stores", counted)
+    modules, _ = _modules(tmp_path, body)
+    assert unassigned_attributes(modules) == []
+    assert unassigned_attributes(modules) == []
+    assert calls == [1]
+
+
+def test_concurrent_checks_parse_the_framework_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # scenario-check checks configs on several threads (#619).
+    calls: list[int] = []
+
+    def slow() -> frozenset[str]:
+        calls.append(1)
+        time.sleep(0.2)
+        return frozenset({"goal_pose"})
+
+    monkeypatch.setattr(class_rules, "_FRAMEWORK_STORES", None)
+    monkeypatch.setattr(class_rules, "_parse_framework_stores", slow)
+    start = threading.Barrier(4)
+    results: list[frozenset[str]] = []
+
+    def worker() -> None:
+        start.wait()
+        results.append(class_rules._framework_stores())
+
+    threads = [threading.Thread(target=worker) for _ in range(4)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert calls == [1]
+    assert results == [frozenset({"goal_pose"})] * 4
 
 
 # ---------------------------------------------------------------------------
