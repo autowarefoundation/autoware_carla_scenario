@@ -11724,6 +11724,86 @@ def test_rewrites_inside_fstrings_and_on_optional_tuples_compile(
     assert result.ok, result.format()
 
 
+_OPTIONAL_OWN_COUNT = """
+
+
+class Tally:
+    hits: dict[str, float]
+
+    def __init__(self) -> None:
+        self.hits = {}
+
+    def count(self, kind: str) -> float:
+        return self.hits.get(kind, 0.0)
+
+
+class Route:
+    def index(self, name: str) -> str:
+        return name.upper()
+
+
+class Holder:
+    route: Route | None
+    tally: Tally | None
+    pair: tuple[int, int] | None
+
+    def __init__(self, on: bool) -> None:
+        self.route = Route() if on else None
+        self.tally = Tally() if on else None
+        self.pair = (1, 2) if on else None
+
+    def label(self) -> str:
+        if self.route is not None and self.tally is not None:
+            return self.route.index("a") + "!" + str(self.tally.count("npc") / 2.0)
+        return ""
+
+    def positions(self) -> int:
+        if self.pair is not None:
+            n: int = self.pair.count(1) + self.pair.index(2) + self.pair.index(2, 1)
+            return n
+        return 0
+"""
+
+
+def test_count_and_index_of_an_optional_class_of_yours_keep_their_types(
+    tmp_path: Path,
+) -> None:
+    # Unwrapping an Optional, the model's `_acs_count` / `_acs_index` call
+    # the class's own method: declared `-> int`, they refused a count() of a
+    # float and an index() of a str (#620). An Optional tuple's still type
+    # as int.
+    scenario, config, _ = _write_case(
+        tmp_path,
+        "h = Holder(cfg.timeout_seconds > 1.0)\n"
+        'logger.info("%s %d", h.label(), h.positions())\n',
+        extra=_OPTIONAL_OWN_COUNT,
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_a_mixin_attribute_its_subclass_framework_base_assigns_compiles(
+    tmp_path: Path,
+) -> None:
+    # BaseScenario.__init__ assigns ego_config on the mixin's subclass, so
+    # the declared attribute is assigned (#620).
+    header = _HEADER.replace(
+        "class CaseScenario(BaseScenario):",
+        "class VehicleInfoMixin:\n"
+        "    ego_config: EgoConfig\n\n"
+        "    def vehicle_label(self) -> str:\n"
+        '        return "ego:" + self.ego_config.vehicle_type\n\n\n'
+        "class CaseScenario(BaseScenario, VehicleInfoMixin):",
+    )
+    scenario, config, _ = _write_case(
+        tmp_path,
+        'logger.info("%s", self.vehicle_label())\n',
+        header=header,
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
 def test_a_crash_of_the_tuple_helpers_is_compiled_again_for_a_diagnostic(
     tmp_path: Path,
 ) -> None:
