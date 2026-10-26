@@ -11784,7 +11784,8 @@ def test_the_builtin_idioms_of_613_compile(tmp_path: Path) -> None:
         "merged = dict(base, a=1, b=2)\n"
         "xs = [0, 1, 2]\n"
         "nz = list(filter(None, xs))\n"
-        'logger.info("%d %s", merged["a"], nz)\n',
+        'logger.info("%d %s", merged["a"], nz)\n'
+        'logger.info(f"{dict(base, c=3)}")\n',
     )
     result = typecheck_scenario(scenario, config)
     assert result.ok, result.format()

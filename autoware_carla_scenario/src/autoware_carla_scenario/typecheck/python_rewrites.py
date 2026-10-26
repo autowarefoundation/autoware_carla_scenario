@@ -546,12 +546,16 @@ def _field_needs_rewrite(field: ast.FormattedValue) -> bool:
 
 
 def _keyword_dict(node: ast.AST) -> bool:
-    """``dict(k=v, ...)``: what the transform writes as ``{"k": v, ...}``."""
+    """``dict(k=v, ...)`` / ``dict(base, k=v, ...)``: what the transform writes
+    as ``{"k": v, ...}`` / ``(dict(base) | {"k": v, ...})`` (#613)."""
     return (
         isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
         and node.func.id == "dict"
-        and not node.args
+        and (
+            not node.args
+            or (len(node.args) == 1 and not isinstance(node.args[0], ast.Starred))
+        )
         and bool(node.keywords)
         and all(k.arg is not None for k in node.keywords)
     )
