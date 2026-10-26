@@ -1608,7 +1608,11 @@ def test_a_type_error_mentioning_none_is_not_called_optional_misuse(
     result = typecheck_scenario(scenario, config)
     error = _only_error(result)
     assert "expected a float" in error.message, result.format()
-    assert not [d for d in result.diagnostics if "None" in d.message], result.format()
+    # The error's own hint may say a measure can be None (#599); no other
+    # diagnostic may.
+    assert not [
+        d for d in result.diagnostics if d is not error and "None" in d.message
+    ], result.format()
 
 
 _VARIADIC_HELPERS = """
@@ -11301,3 +11305,220 @@ def test_a_conditional_expression_of_two_types_is_refused_with_a_hint(
     assert "does not match expected type" in error.message, error.format()
     assert "a conditional expression (`a if c else b`) has one type" in error.message
     assert error.line == _line_of(path, "label = cfg.name if")
+
+
+# ---------------------------------------------------------------------------
+# Hints for common slips (#599)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("setup", "needle", "codon", "hint"),
+    [
+        (
+            "for i in range(len(cfg.goal_lanelet_ids) / 2):\n"
+            '    logger.info("%d", i)\n',
+            "for i in range(",
+            "range() cannot be called with (float)",
+            "range() takes ints, and `/` always gives a float",
+        ),
+        (
+            "ids = cfg.goal_lanelet_ids\n"
+            "mid = ids[len(ids) / 2]\n"
+            'logger.info("%d", mid)\n',
+            "mid = ids[",
+            "__getitem__() cannot be called with (float)",
+            "an index must be an int, and `/` always gives a float",
+        ),
+        (
+            'logger.info("ids: %s", ",".join(cfg.goal_lanelet_ids))\n',
+            '",".join(',
+            "'Generator[int]' does not match expected type 'Generator[str]'",
+            "`sep.join(map(str, values))`",
+        ),
+        (
+            "self.register_pre_tick(lambda: None)\n",
+            "register_pre_tick(",
+            "takes 0 arguments (1 given)",
+            "register_pre_tick() is called with the world (a carla.World): "
+            "take it as a parameter, `lambda world: ...`",
+        ),
+        (
+            'self.register_measure("flag", lambda w: True, unit="n")\n',
+            'register_measure("flag"',
+            "expected a float (or an int)",
+            "the read function (the second argument) of measure 'flag' returns "
+            "a bool, and a measure is a float (or an int), or None",
+        ),
+    ],
+    ids=["range-of-float", "float-index", "join-of-ints", "tick-arity", "measure-bool"],
+)
+def test_a_common_slip_is_refused_with_a_hint(
+    tmp_path: Path, setup: str, needle: str, codon: str, hint: str
+) -> None:
+    scenario, config, path = _write_case(tmp_path, setup)
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert codon in error.message, error.format()
+    assert hint in error.message, error.format()
+    assert error.line == _line_of(path, needle), error.format()
+    # Only the hint that applies: not the one about lambda defaults (`k=k`).
+    assert "k=k" not in error.message, error.format()
+
+
+# ---------------------------------------------------------------------------
+# Enum values the check cannot type (#600)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("members", "why"),
+    [
+        (
+            '    LEFT = (-3.5, "left")\n'
+            '    RIGHT = (3.5, "right")\n\n'
+            "    def __init__(self, offset: float, label: str) -> None:\n"
+            "        self.offset = offset\n"
+            "        self.label = label\n",
+            "its member `LEFT` has a tuple value",
+        ),
+        (
+            '    LEFT = 1\n    RIGHT = "r"\n',
+            "its members' values are of different types (int, str)",
+        ),
+        (
+            "    LEFT = WIDTH\n    RIGHT = 2 * WIDTH\n",
+            "the value of its member `LEFT` is not an int",
+        ),
+    ],
+    ids=["tuple", "mixed", "not-literal"],
+)
+def test_an_enum_whose_value_type_cannot_be_told_is_refused_at_its_class(
+    tmp_path: Path, members: str, why: str
+) -> None:
+    extra = (
+        "\n\nfrom enum import Enum\n\nWIDTH = 3.5\n\n\nclass Lane(Enum):\n" + members
+    )
+    scenario, config, path = _write_case(
+        tmp_path, 'logger.info("%s", Lane.LEFT.name)\n', extra=extra
+    )
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert f"Enum Lane cannot be checked: {why}" in error.message, error.format()
+    assert "literals of one type" in error.message
+    assert error.line == _line_of(path, "class Lane(Enum):")
+
+
+def test_an_enum_with_negative_values_compiles(tmp_path: Path) -> None:
+    extra = (
+        "\n\nfrom enum import Enum\n\n\nclass Side(Enum):\n"
+        "    LEFT = -1\n    CENTER = 0\n    RIGHT = +1\n"
+    )
+    scenario, config, _ = _write_case(
+        tmp_path,
+        'logger.info("%s %d %s", Side.LEFT.name, Side.LEFT.value, Side(-1))\n'
+        "assert [s.value for s in Side] == [-1, 0, 1]\n",
+        extra=extra,
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+# ---------------------------------------------------------------------------
+# Builtin gaps (#601)
+# ---------------------------------------------------------------------------
+
+_BUILTIN_GAPS = """
+
+
+import itertools
+from typing import Optional
+
+
+class Base:
+    k: float
+
+    def __init__(self, k: float) -> None:
+        self.k = k
+
+
+class Derived(Base):
+    def __init__(self, k: float) -> None:
+        super(Derived, self).__init__(k)
+
+
+class Counted:
+    hits: list[int]
+
+    def __init__(self) -> None:
+        self.hits = [1, 2, 2]
+
+    def count(self, x: int) -> int:
+        return self.hits.count(x)
+
+
+def gaps(d: dict[str, int], e: dict[str, int], pair: tuple[int, str]) -> str:
+    xs = [1, 2, 3, 2]
+    i: int = xs.index(2, 2) + xs.index(2, 0, 2) + xs.index(3, -2) + xs.index(1)
+    t = (1, 2, 2)
+    n: int = t.count(2) + t.index(2) + t.index(2, 2) + (4, 5, 4).count(4)
+    m: int = pair.count(1) + pair.index("a") + "banana".count("a") + xs.count(2)
+    c: int = Counted().count(2) + next(itertools.count(5))
+    xs += (4, 5)
+    xs += [6]
+    xs += []
+    grown = []
+    grown += [1]
+    maybe: list[Optional[int]] = []
+    maybe += [1]
+    maybe += [None]
+    floats: list[float] = [1.0]
+    floats += [2, 3]
+    bases: list[Base] = []
+    bases += [Derived(1.0)]
+    common: set[str] = d.keys() & e.keys()
+    only: set[str] = d.keys() - {"a"}
+    either: set[str] = d.keys() | ["z"]
+    pairs: set[tuple[str, int]] = d.items() ^ e.items()
+    sub: bool = d.items() <= e.items()
+    same: bool = d.keys() == e.keys()
+    back: list[str] = list(reversed(d))
+    table = str.maketrans("lo", "01")
+    a = "hello".translate(table)
+    b = "hello".translate(str.maketrans("l", "L", "o"))
+    f = "hello".translate(str.maketrans({"h": "H"}))
+    return f"{i} {n} {m} {c} {xs} {common} {only} {either} {pairs} {sub} {same} {back} {a} {b} {f} {Derived(2.0).k} {grown} {len(maybe)} {floats} {len(bases)}"
+"""
+
+
+def test_the_builtin_gaps_of_601_compile(tmp_path: Path) -> None:
+    scenario, config, _ = _write_case(
+        tmp_path,
+        'logger.info("%s", gaps({"a": 1}, {"a": 2}, (1, "a")))\n',
+        extra=_BUILTIN_GAPS,
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_count_of_a_value_that_has_none_is_still_refused(tmp_path: Path) -> None:
+    # The `hasattr` branch keeps a tuple working; anything else without the
+    # method is still refused, at the author's line (#601).
+    scenario, config, path = _write_case(
+        tmp_path,
+        "v = 2.5\n" 'logger.info("%d", v.count(2))\n',
+    )
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "count" in error.message, error.format()
+    assert error.line == _line_of(path, "v.count(2)"), error.format()
+
+
+def test_sys_version_info_is_refused_with_a_hint(tmp_path: Path) -> None:
+    scenario, config, path = _write_case(
+        tmp_path,
+        "import sys\n" "if sys.version_info >= (3, 11):\n" '    logger.info("new")\n',
+    )
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "cannot import name 'version_info' from 'sys'" in error.message
+    assert "sys.version_info (and sys.version, sys.hexversion) is not modelled" in (
+        error.message
+    ), error.format()
+    assert error.line == _line_of(path, "sys.version_info")

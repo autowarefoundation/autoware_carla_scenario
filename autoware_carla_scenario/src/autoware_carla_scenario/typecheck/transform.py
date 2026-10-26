@@ -225,7 +225,8 @@ PRELUDE = (
     "from autoware_carla_scenario._lists import _acs_list, _acs_base, "
     "_acs_dict_into, _acs_list_into\n"
     "from autoware_carla_scenario._tc import _Required as _acs_Required, "
-    "_acs_Returning, _acs_callable, _acs_tuple, _acs_reduce, _acs_some\n"
+    "_acs_Returning, _acs_callable, _acs_tuple, _acs_reduce, _acs_some, "
+    "_acs_count, _acs_index\n"
     "from enum import IntEnum as _acs_IntEnum, IntFlag as _acs_IntFlag, "
     "StrEnum as _acs_StrEnum\n"
     "from autoware_carla_scenario._exceptions import "
@@ -2003,8 +2004,9 @@ class _Rewriter(ShadowScopes):
         """Rewrite an Enum class for the ``enum`` shim; its members, or ``None``.
 
         ``None`` too for an Enum whose value type cannot be told from its
-        members (values of different types, or not literals): it is left as
-        written, and Codon reports it.
+        members (tuples, values of different types, or not literals): it is
+        left as written, and refused at its class line
+        (:func:`enum_value_refusals`, #600).
         """
         bases = [_dotted(b) or "" for b in node.bases]
         enum_base = next(
@@ -2013,36 +2015,12 @@ class _Rewriter(ShadowScopes):
         if enum_base is None or node.keywords:
             return None
         kind = enum_base.rsplit(".", 1)[-1]
-        members: list[tuple[ast.Assign, str, ast.expr]] = []
-        for stmt in node.body:
-            if (
-                isinstance(stmt, ast.Assign)
-                and len(stmt.targets) == 1
-                and isinstance(stmt.targets[0], ast.Name)
-                and not stmt.targets[0].id.startswith("_")
-            ):
-                members.append((stmt, stmt.targets[0].id, stmt.value))
+        members = _enum_members(node)
+        is_auto = _is_auto
 
-        def is_auto(value: ast.expr) -> bool:
-            return isinstance(value, ast.Call) and _dotted(value.func) in _AUTO
-
-        value_type = _ENUM_VALUE_TYPES.get(kind) or next(
-            (b for b in bases if b in _ENUM_MIXINS), None
-        )
+        value_type = _enum_value_type(node, members)
         if value_type is None:
-
-            def literal_type(value: ast.expr) -> str | None:
-                if is_auto(value):
-                    return "int"
-                if isinstance(value, ast.Constant):
-                    name = type(value.value).__name__  # bool is not int here
-                    return name if name in _ENUM_MIXINS else None
-                return None
-
-            kinds = {literal_type(v) for _, _, v in members}
-            value_type = kinds.pop() if len(kinds) == 1 else None
-            if value_type is None:
-                return None
+            return None
         flag = kind in {"Flag", "IntFlag"}
         last = 0
         seen_values: set[str] = set()
@@ -2071,8 +2049,8 @@ class _Rewriter(ShadowScopes):
                     text = str(number)
                 else:
                     text = self.edits.text(*self.edits.node_span(value))
-                if isinstance(value, ast.Constant) and isinstance(value.value, int):
-                    last = value.value
+                if _enum_literal_type(value) == "int" and not is_auto(value):
+                    last = ast.literal_eval(value)
             if number is not None:
                 known[name] = number
                 every |= max(number, 0)
@@ -2887,6 +2865,159 @@ def _class_body_hoists(
     return hoists, refused
 
 
+def _is_auto(value: ast.expr) -> bool:
+    return isinstance(value, ast.Call) and _dotted(value.func) in _AUTO
+
+
+def _enum_members(node: ast.ClassDef) -> list[tuple[ast.Assign, str, ast.expr]]:
+    """The members of an Enum class body: (the assignment, the name, the value)."""
+    members: list[tuple[ast.Assign, str, ast.expr]] = []
+    for stmt in node.body:
+        if (
+            isinstance(stmt, ast.Assign)
+            and len(stmt.targets) == 1
+            and isinstance(stmt.targets[0], ast.Name)
+            and not stmt.targets[0].id.startswith("_")
+        ):
+            members.append((stmt, stmt.targets[0].id, stmt.value))
+    return members
+
+
+def _enum_literal_type(value: ast.expr) -> str | None:
+    """``int``, ``float`` or ``str`` for a member value that is a literal of
+    that type (a signed number, ``-1``, too, and ``auto()``), else ``None``."""
+    if _is_auto(value):
+        return "int"
+    if (
+        isinstance(value, ast.UnaryOp)
+        and isinstance(value.op, (ast.USub, ast.UAdd))
+        and isinstance(value.operand, ast.Constant)
+        and type(value.operand.value) in (int, float)  # bool is not int here
+    ):
+        return type(value.operand.value).__name__
+    if isinstance(value, ast.Constant):
+        name = type(value.value).__name__  # bool is not int here
+        return name if name in _ENUM_MIXINS else None
+    return None
+
+
+def _enum_base_kind(node: ast.ClassDef) -> str | None:
+    """``Enum``, ``IntEnum``, ... for a class deriving from one, else ``None``."""
+    if node.keywords:
+        return None
+    for base in node.bases:
+        name = (_dotted(base) or "").rsplit(".", 1)[-1]
+        if name in _ENUM_BASES:
+            return name
+    return None
+
+
+def _enum_value_type(
+    node: ast.ClassDef, members: list[tuple[ast.Assign, str, ast.expr]]
+) -> str | None:
+    """The type of an Enum's values: its base's (``IntEnum``, ``(str, Enum)``)
+    or that of its literal values, if they all have one; else ``None``."""
+    kind = _enum_base_kind(node)
+    if kind is None:
+        return None
+    bases = [_dotted(b) or "" for b in node.bases]
+    value_type = _ENUM_VALUE_TYPES.get(kind) or next(
+        (b for b in bases if b in _ENUM_MIXINS), None
+    )
+    if value_type is not None:
+        return value_type
+    kinds = {_enum_literal_type(v) for _, _, v in members}
+    return kinds.pop() if len(kinds) == 1 else None
+
+
+def _enum_value_members(
+    node: ast.ClassDef,
+) -> list[tuple[ast.Assign, str, ast.expr]]:
+    """:func:`_enum_members` of the source as written, less the lambdas
+    (``f = lambda self: ...``), which are methods, not members, and which
+    :func:`class_body_lambdas` turns into ``def`` before the Enum is
+    rewritten."""
+    return [m for m in _enum_members(node) if _wrapped_lambda(m[2])[1] is None]
+
+
+def _unchecked_enum(node: ast.ClassDef) -> bool:
+    """Whether *node* is an Enum with members whose value type the check
+    cannot tell (:func:`enum_value_refusals`)."""
+    if _enum_base_kind(node) is None:
+        return False
+    members = _enum_value_members(node)
+    return bool(members) and _enum_value_type(node, members) is None
+
+
+def enum_value_refusals(tree: ast.Module) -> list[tuple[int, str]]:
+    """The Enum classes whose value type the check cannot tell, as (line,
+    message) at the class line (#600).
+
+    The ``enum`` shim types an Enum by its values (``Enum[T]``), which must
+    be literals of one type (``int``, ``float``, ``str`` or ``auto()``) unless
+    the base gives it (``IntEnum``, ``class M(str, Enum)``).  A class with
+    tuple values (``LEFT = (-3.5, "left")`` unpacked into ``__init__``),
+    values of different types, or values that are not literals, would be left
+    as written, and Codon would misread its members as plain values
+    (``'Tuple[float,str]' object has no attribute 'offset'``).  An Enum with
+    no member (a base for others) is left alone.
+    """
+    refused: list[tuple[int, str]] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ClassDef) or not _unchecked_enum(node):
+            continue
+        members = _enum_value_members(node)
+        names = {n for _, n, _ in members}
+        tuples = [n for _, n, v in members if isinstance(v, ast.Tuple)]
+        # A member read by a later one (an alias, `B = A`) is refused by the
+        # class-constant rewrite when it cannot write the value (python_rewrites).
+        others = [
+            n
+            for _, n, v in members
+            if _enum_literal_type(v) is None
+            and not (isinstance(v, ast.Name) and v.id in names)
+        ]
+        kinds = sorted(
+            {k for _, _, v in members if (k := _enum_literal_type(v)) is not None}
+        )
+        if tuples:
+            why = (
+                f"its member `{tuples[0]}` has a tuple value, which the check "
+                "does not model (nor an __init__ that unpacks it)"
+            )
+            fix = (
+                "make the record a @dataclass(frozen=True) or a NamedTuple and "
+                "keep the instances in a module-level dict keyed by a plain "
+                'Enum (`LANES = {Lane.LEFT: LaneInfo(-3.5, "left")}`), or '
+                "use one Enum per field"
+            )
+        elif others:
+            why = (
+                f"the value of its member `{others[0]}` is not an int, float "
+                "or str literal (or auto())"
+            )
+            fix = (
+                "write the literal value (the check does not work out a "
+                "named constant or an expression), or keep the values in a "
+                "module-level dict keyed by the Enum"
+            )
+        elif len(kinds) <= 1:
+            continue
+        else:
+            why = f"its members' values are of different types ({', '.join(kinds)})"
+            fix = "give every member a value of one type"
+        refused.append(
+            (
+                node.lineno,
+                f"Enum {node.name} cannot be checked: {why}. The check types an "
+                "Enum by its values, which must be literals of one type (all "
+                "int, all float, all str, or auto()): "
+                f"{fix}",
+            )
+        )
+    return refused
+
+
 def class_body_refusals(source: str) -> list[tuple[int, str]]:
     """What :func:`hoist_class_bodies` and :func:`class_body_lambdas` cannot
     move or rewrite, and the fields Codon cannot type, as (line, message)."""
@@ -2896,6 +3027,7 @@ def class_body_refusals(source: str) -> list[tuple[int, str]]:
         *lambda_default_refusals(source),
         *bare_collection_refusals(tree),
         *replace_refusals(tree),
+        *enum_value_refusals(tree),
     ]
 
 
@@ -5132,8 +5264,8 @@ def undeclared_attributes(
 
     found: list[UndeclaredAttribute] = []
     for node in tree.body:
-        if not isinstance(node, ast.ClassDef):
-            continue
+        if not isinstance(node, ast.ClassDef) or _unchecked_enum(node):
+            continue  # an Enum refused as a whole (enum_value_refusals)
         bases, _ = classes[node.name]
         annotated = any(
             isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name)
