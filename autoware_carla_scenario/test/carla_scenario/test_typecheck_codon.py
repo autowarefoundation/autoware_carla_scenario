@@ -11107,3 +11107,197 @@ def name_or_none(n: Named | None) -> str | None:
     )
     result = typecheck_scenario(scenario, config)
     assert result.ok, result.format()
+
+
+# ---------------------------------------------------------------------------
+# What Python raises for, decided from the syntax (#602, #603)
+# ---------------------------------------------------------------------------
+
+_LITERAL_HEADER = _HEADER.replace(
+    "from .configs import CaseConfig\n",
+    "from autoware_carla_scenario import (\n"
+    "    MetricCondition,\n"
+    "    RouteCrossingPose,\n"
+    "    RouteRoadsidePose,\n"
+    ")\n\nfrom .configs import CaseConfig\n",
+    1,
+)
+
+
+@pytest.mark.parametrize(
+    ("call", "message"),
+    [
+        (
+            'MetricCondition("no_such_metric", label="m")',
+            "MetricCondition: 'no_such_metric' is not a metric; known: ",
+        ),
+        (
+            'ElapsedTimeCondition(1.0, label="")',
+            "ElapsedTimeCondition: label must not be empty",
+        ),
+        (
+            'RouteCrossingPose(approach="Left")',
+            "RouteCrossingPose.approach must be one of ['left', 'right', "
+            "'opposite'], got 'Left'",
+        ),
+        (
+            'RouteRoadsidePose(side="kerb")',
+            "RouteRoadsidePose.side must be one of ['left', 'right'], got 'kerb'",
+        ),
+    ],
+)
+def test_a_literal_argument_the_framework_refuses_is_refused_at_the_call(
+    tmp_path: Path, call: str, message: str
+) -> None:
+    setup = _TIMEOUT_SETUP + f"logger.info('%s', {call})\n"
+    scenario, config, path = _write_case(tmp_path, setup, header=_LITERAL_HEADER)
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "raises ValueError when the scenario runs" in error.message
+    assert message in error.message, error.format()
+    assert error.path == str(path)
+    assert error.line == _line_of(path, call)
+    line = path.read_text().splitlines()[error.line - 1]
+    assert line[error.column - 1 :].startswith(call)
+
+
+def test_literal_arguments_the_framework_accepts_pass(tmp_path: Path) -> None:
+    setup = _TIMEOUT_SETUP + textwrap.dedent(
+        """
+        self.register_fail_condition(MetricCondition("offroad", label="m"))
+        traj = Trajectory(
+            "t",
+            [
+                TrajectoryVertex(RouteCrossingPose(approach="left", distance=5.0)),
+                TrajectoryVertex(RouteRoadsidePose(ds=3.0, side="right")),
+            ],
+        )
+        self.register_pre_tick(FollowTrajectoryAction("npc", traj))
+        """
+    )
+    scenario, config, _ = _write_case(tmp_path, setup, header=_LITERAL_HEADER)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+@pytest.mark.parametrize(
+    ("test", "generic"),
+    [
+        ("isinstance(v, list[int])", "list[int]"),
+        ("isinstance(v, (str, dict[str, int]))", "dict[str, int]"),
+        ("issubclass(type(v), dict[str, int])", "dict[str, int]"),
+    ],
+)
+def test_isinstance_with_a_subscripted_generic_is_refused_at_the_call(
+    tmp_path: Path, test: str, generic: str
+) -> None:
+    setup = _TIMEOUT_SETUP + textwrap.dedent(
+        f"""
+        v: object = cfg.goal_lanelet_ids
+        if {test}:
+            logger.info("list")
+        """
+    )
+    scenario, config, path = _write_case(tmp_path, setup)
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert f"cannot take the subscripted generic `{generic}`" in error.message
+    assert "Python raises TypeError" in error.message
+    assert error.path == str(path)
+    assert error.line == _line_of(path, test)
+
+
+def test_isinstance_with_a_union_of_classes_passes(tmp_path: Path) -> None:
+    setup = _TIMEOUT_SETUP + textwrap.dedent(
+        """
+        n = cfg.timeout_seconds
+        if isinstance(n, int | float) and isinstance(n, (int, float)):
+            logger.info("%f", n)
+        """
+    )
+    scenario, config, _ = _write_case(tmp_path, setup)
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_a_class_decorator_is_refused_with_a_hint(tmp_path: Path) -> None:
+    extra = """
+
+
+class Base:
+    def speed(self) -> float:
+        return 0.0
+
+
+def register(cls):
+    return cls
+
+
+@register
+class Fast(Base):
+    def speed(self) -> float:
+        return 10.0
+"""
+    setup = _TIMEOUT_SETUP + 'logger.info("%f", Fast().speed())\n'
+    scenario, config, path = _write_case(tmp_path, setup, extra)
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert error.message.startswith("unsupported class decorator: "), error.format()
+    assert "choose the class with an if/elif chain" in error.message
+    assert error.line == _line_of(path, "@register")
+
+
+def test_an_async_def_is_refused_with_a_hint(tmp_path: Path) -> None:
+    extra = """
+
+
+async def fetch() -> int:
+    return 1
+"""
+    scenario, config, path = _write_case(tmp_path, _TIMEOUT_SETUP, extra)
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert error.message.startswith("async not yet supported: "), error.format()
+    assert "make it a plain `def`" in error.message
+    assert error.line == _line_of(path, "async def fetch")
+
+
+@pytest.mark.parametrize(
+    ("members", "shown"),
+    [
+        (
+            "    def __len__(self) -> int:\n        return len(self.items)\n",
+            "'Bag[List[int]]'",
+        ),
+        ("", "'Bag[List[int]]'"),
+    ],
+)
+def test_the_truth_of_an_object_without_bool_is_refused_with_a_hint(
+    tmp_path: Path, members: str, shown: str
+) -> None:
+    extra = (
+        "\n\nclass Bag:\n"
+        "    def __init__(self) -> None:\n"
+        "        self.items: list[int] = []\n\n" + members
+    )
+    setup = _TIMEOUT_SETUP + 'b = Bag()\nif b:\n    logger.info("nonempty")\n'
+    scenario, config, path = _write_case(tmp_path, setup, extra)
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert error.message.startswith(
+        f"{shown} object has no attribute '__bool__': "
+    ), error.format()
+    assert "`x is not None`" in error.message
+    assert "`len(x) > 0`" in error.message
+    assert error.line == _line_of(path, "if b:")
+
+
+def test_a_conditional_expression_of_two_types_is_refused_with_a_hint(
+    tmp_path: Path,
+) -> None:
+    setup = _TIMEOUT_SETUP + textwrap.dedent(
+        """
+        label = cfg.name if cfg.min_speed_kmh is None else 3
+        logger.info("%s", label)
+        """
+    )
+    scenario, config, path = _write_case(tmp_path, setup)
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert "does not match expected type" in error.message, error.format()
+    assert "a conditional expression (`a if c else b`) has one type" in error.message
+    assert error.line == _line_of(path, "label = cfg.name if")

@@ -1717,6 +1717,10 @@ the check needs the other spelling.
 | `int.from_bytes(b, "big")`, `n.to_bytes(2, "big")` (#439) | `'int' object has no attribute 'from_bytes'` | shifts and masks (`n = (n << 8) \| byte`); Codon's `bytes` is a `str` |
 | `"{a}".format_map(d)` (#439) | `'{a}' object has no attribute 'format_map'` | an f-string, or `"{a}".format(a=d["a"])` |
 | `b.decode()`, `b.hex()` on a bytes value (#439) | `'str' object has no attribute 'decode'` | Codon's `bytes` is a `str`: it is already text |
+| A class decorator other than those the check drops (`@register`, adding the class to a registry, #603) | `unsupported class decorator` | drop it, and choose the class with an `if`/`elif` chain (or a `match`) on the name: Codon cannot hold a class as a value. `@dataclass`, `@enum.unique`, `@typing.runtime_checkable` and `@functools.total_ordering` are handled by the check |
+| `async def`, `await`, `async for`, `async with` anywhere in a checked module, called or not (#603) | `async not yet supported` | a plain `def`: the runner calls the scenario synchronously; or move the coroutine to a module the scenario does not import |
+| `if obj:` (`not obj`, `bool(obj)`) on an object of a class with no `__bool__`: a plain object, or one with only `__len__` (#603) | `'Bag[List[int]]' object has no attribute '__bool__'` | say what is meant: `obj is not None` for a value that may be missing, `len(obj) > 0` for a container, or define `__bool__` on the class |
+| `x = a if c else 3` with branches of different types (#603) | `'str' does not match expected type 'int'`, at the conditional expression | one type for both branches (`str(3)`, `float(n)`), or an `if`/`else` statement that uses each value in its own branch |
 
 Plain value, or-pattern, guard, sequence (without `*`) and enum-member
 (`case Mode.A:`) patterns compile, as does `case int():` of a builtin type.
@@ -1724,6 +1728,48 @@ Plain value, or-pattern, guard, sequence (without `*`) and enum-member
 A `Protocol` is not structural in the check: Codon compares class names, so a
 class is a `HasArea` only if it lists `HasArea` among its bases. Python runs
 the same code either way, because a `Protocol` base is only a marker there.
+
+### What Python raises for that Codon compiles (#602, #603)
+
+Codon checks types, so a call it compiles may still raise in CPython. Two
+kinds are decided from the syntax and refused at the call, before Codon
+runs (`typecheck/static_raises.py`):
+
+- **`isinstance` / `issubclass` with a subscripted generic** (#603):
+  `isinstance(v, list[int])`, `issubclass(C, dict[str, int])`,
+  `isinstance(v, typing.List[int])`, also inside a tuple of classes
+  (`(str, list[int])`), a `|` union (`int | list[int]`) or a
+  `typing.Union` / `Optional`. Python raises `TypeError` ("isinstance()
+  argument 2 cannot be a parameterized generic"); in a tuple or a union, as
+  soon as the value is none of the classes before it. Test against the bare
+  class (`isinstance(v, list)`) and check the elements separately; for a
+  `Literal[...]`, compare the value. `isinstance(x, int | float)`, an
+  unsubscripted `typing.List`, `Optional[int]` and an index into a tuple of
+  classes (`TYPES[0]`) are left alone, and so is a name the module binds
+  itself (a parameter called `list`).
+- **A framework class built with literal arguments it refuses** (#602):
+  `MetricCondition("no_such_metric", label="m")`,
+  `ElapsedTimeCondition(1.0, label="")`, `RouteCrossingPose(approach="Left")`,
+  `RouteRoadsidePose(side="kerb")`. When every argument of a call is a literal
+  (a constant, or a tuple, list, set or dict of them, by position or by
+  keyword) and the callee is imported from the framework, the check builds the
+  class with those literals and reports the `ValueError` it raises, in the
+  framework's own words:
+
+  ```text
+  scenario.py:71:34: error: RouteCrossingPose(...) with these literal arguments raises ValueError when the scenario runs: RouteCrossingPose.approach must be one of ['left', 'right', 'opposite'], got 'Left'
+  ```
+
+  The validation is the constructor's own, so the check refuses what the run
+  would and nothing else. Only classes whose constructor just validates and
+  stores its arguments (no CARLA, world or map) are built:
+  `AlwaysTrueCondition`, `ElapsedTimeCondition`, `MetricCondition`,
+  `OffRoadFractionCondition`, `RouteProgressCondition`, `TimeoutCondition`,
+  `RouteCrossingPose`, `RouteCrosswalkPose`, `RouteLanePose`,
+  `RouteOppositePose` and `RouteRoadsidePose` (`LITERAL_CHECKED`). A call
+  with any argument that is not a literal (a config field, a constant's name
+  such as `OFFROAD`, an enum member such as `ComparisonRule.LESS_THAN`,
+  `*args`) is left to the run, as is a `TypeError` (Codon reports the type).
 
 ### Standard library names Codon lacks
 
@@ -2005,6 +2051,11 @@ The known gaps:
   mode.
 - **A scenario registered with `register_scenario_builder()`** is not
   checked at all: only its builder knows how it is built.
+- **A value a framework constructor refuses**, unless every argument of
+  the call is a literal and the class is one of those
+  [built with literal arguments](#what-python-raises-for-that-codon-compiles-602-603)
+  (#602): `MetricCondition(cfg.metric, label="m")` with an unknown metric,
+  or any other framework class, raises at `setup()`.
 
 ## Checking the framework itself
 

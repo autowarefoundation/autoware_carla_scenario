@@ -131,6 +131,7 @@ from .call_diagnostics import (
 )
 from .class_rules import skipped_base_inits, unassigned_attributes
 from .return_paths import return_problems
+from .static_raises import literal_argument_refusals, subscripted_isinstances
 from .typing_rewrites import TYPING_HINTS, typing_rewrite_refusals
 
 __all__ = [
@@ -828,6 +829,15 @@ def _build_workspace(
         problems += [
             Diagnostic(message, str(module.path), line) for line, message in refused
         ]
+        # What Python raises for when it runs, decided from the syntax
+        # (#602, #603): Codon checks types, so it compiles these.
+        problems += [
+            Diagnostic(r.message, str(module.path), r.line, r.column)
+            for r in [
+                *subscripted_isinstances(module.tree),
+                *literal_argument_refusals(module.tree),
+            ]
+        ]
         problems += [
             Diagnostic(message, str(module.path), line)
             for line, message in [
@@ -897,6 +907,35 @@ _VARIADIC_LIMITS = (
         re.compile(r"^'Tuple\[[^']*\]' object has no attribute '__bool__'"),
         "Codon gives no tuple a truth value, *args included: test "
         "len(t) > 0 instead of the tuple t itself",
+    ),
+    (
+        # Any other class without __bool__ (#603): a plain object, or one
+        # with only __len__.  Not a bound method (`'flag(Cls)'`), whose
+        # forgotten call has its own hint (call_diagnostics.forgotten_self).
+        re.compile(
+            r"^'[A-Za-z_][\w.]*(?:\[[^']*\])?' object has no attribute '__bool__'$"
+        ),
+        "Codon gives an object a truth value only through __bool__, and this "
+        "class has none (Python takes a plain object as true, and one with "
+        "__len__ as len() != 0): test what you mean, `x is not None` for a "
+        "value that may be missing, `len(x) > 0` for a container, or define "
+        "__bool__ on the class",
+    ),
+    (
+        re.compile(r"^unsupported class decorator$"),
+        "Codon refuses a decorator on a class, other than those the check "
+        "drops (@dataclass, @enum.unique, @typing.runtime_checkable, "
+        "@functools.total_ordering): a decorator that registers the class "
+        "(`@register`) does not compile. Drop it, and choose the class with an "
+        "if/elif chain (or a `match`) on the name, as Codon cannot hold a "
+        "class as a value",
+    ),
+    (
+        re.compile(r"^async not yet supported$"),
+        "Codon compiles no `async def`, `await`, `async for` or `async with` "
+        "anywhere in a checked module, called or not (the runner calls the "
+        "scenario synchronously): make it a plain `def`, or move it to a "
+        "module the scenario does not import",
     ),
     (
         # getattr(x, "name", default) with a literal name and a plain receiver
@@ -1054,6 +1093,32 @@ _LIST_SUM = re.compile(
 )
 
 
+_ANY_MISMATCH = re.compile(r"^'[^']+' does not match expected type '[^']+'$")
+_CONDITIONAL_HINT = (
+    "a conditional expression (`a if c else b`) has one type in Codon: if "
+    "its two branches have different types (Python allows that), convert one "
+    "(`str(n)`, `float(n)`), or write an if/else statement that uses each "
+    "value in its own branch"
+)
+
+
+def _conditional_expression_at(diagnostic: Diagnostic) -> bool:
+    """Whether *diagnostic* is at the start of a conditional expression of
+    the author's file, where Codon reports its branches' mismatch (#603)."""
+    if diagnostic.path is None or diagnostic.line is None or not diagnostic.column:
+        return False
+    try:
+        tree = ast.parse(Path(diagnostic.path).read_text())
+    except (OSError, SyntaxError, UnicodeDecodeError):
+        return False
+    return any(
+        isinstance(node, ast.IfExp)
+        and node.lineno == diagnostic.line
+        and node.col_offset == diagnostic.column - 1
+        for node in ast.walk(tree)
+    )
+
+
 def _source_line(diagnostic: Diagnostic) -> str:
     """The line of the author's file *diagnostic* is at, or ``""``."""
     if diagnostic.path is None or diagnostic.line is None:
@@ -1137,6 +1202,10 @@ def _display_hint(diagnostic: Diagnostic, in_display: bool) -> str | None:
         return _LIST_DISPLAY_HINT
     if any("_acs_dict_into" in frame for frame in diagnostic.trace):
         return None  # already a dict of the target type: the value is refused
+    if _ANY_MISMATCH.match(diagnostic.message) and _conditional_expression_at(
+        diagnostic
+    ):
+        return _CONDITIONAL_HINT
     sum_ = _LIST_SUM.match(diagnostic.message)
     if sum_ is not None and sum_[1] != sum_[2] and "+" in _source_line(diagnostic):
         return _SUM_DISPLAY_HINT
