@@ -176,6 +176,7 @@ import bisect
 import builtins
 import functools
 import io
+import re
 import tokenize
 from collections.abc import Callable, Collection, Iterator, Mapping
 from dataclasses import dataclass, field
@@ -458,6 +459,8 @@ class _Edits:
     #: Lines :meth:`drop_decorators` moved: their line after :meth:`apply`
     #: -> their line before.
     moves: dict[int, int] = field(default_factory=dict)
+    #: The f-string literals of :attr:`data` (:meth:`_fstrings`).
+    _fstring_spans: list[tuple[int, int, str]] | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         self.data = b"".join(self.lines)
@@ -483,7 +486,36 @@ class _Edits:
         # keeps them (after the replacement, inside the brackets or the
         # statement it belonged to).
         lost = self.text(start, end).count("\n") - text.count("\n")
+        text = self._inside_fstring(start, end, text)
         self.edits.append((start, end, text + "\n" * max(lost, 0)))
+
+    def _inside_fstring(self, start: int, end: int, text: str) -> str:
+        """*text* made safe in place of ``start:end`` when that span is inside
+        the replacement field of an f-string (#609): a string literal a
+        rewrite writes (``hasattr(t, "count")``) is quoted with a quote the
+        enclosing f-strings do not use.  Codon 0.19's parser (as Python's
+        before 3.12) ends the f-string at its own quote, and reports
+        "unexpected dedent" on a later line.  (A brace ends the field for
+        Codon whatever it is in: an f-string a rewrite would write one into
+        is lowered first, ``python_rewrites._field_needs_rewrite``.)"""
+        quotes = {
+            quote
+            for first, last, quote in self._fstrings()
+            if first < start and end < last
+        }
+        return _requoted(text, quotes) if quotes else text
+
+    def _fstrings(self) -> list[tuple[int, int, str]]:
+        """Each f-string literal of :attr:`data` as (start, end, its quote
+        character), tokenized on first use; none if it cannot be."""
+        if self._fstring_spans is None:
+            self._fstring_spans = []
+            if re.search(rb"[fF][rRbB]?['\"]|[rR][fF]['\"]", self.data):
+                try:
+                    self._fstring_spans = _fstring_spans(self.lines, self.starts)
+                except (tokenize.TokenError, SyntaxError, UnicodeDecodeError):
+                    pass
+        return self._fstring_spans
 
     def supersede(self, start: int, end: int, text: str) -> None:
         """Like :meth:`replace`, but the edit wins over those already made on
@@ -573,6 +605,67 @@ class _Edits:
             data = data[:start] + text.encode() + data[end:]
             last = start
         return data.decode()
+
+
+def _fstring_spans(lines: list[bytes], starts: list[int]) -> list[tuple[int, int, str]]:
+    """Each f-string literal of *lines* as (start, end, its quote character),
+    in byte offsets (*starts* holds each line's).  An implicitly joined
+    ``"a" f'{x}'`` is a literal per part: each part has its own quote."""
+    text = [line.decode() for line in lines]
+
+    def offset(position: tuple[int, int]) -> int:
+        row, col = position
+        if row > len(text):
+            return starts[-1] + len(lines[-1]) if starts else 0
+        return starts[row - 1] + len(text[row - 1][:col].encode())
+
+    def quote(prefixed: str) -> str:
+        return prefixed.lstrip("rRbBuUfF")[:1]
+
+    found: list[tuple[int, int, str]] = []
+    opened: list[tuple[int, str]] = []
+    data = b"".join(lines)
+    for token in tokenize.tokenize(io.BytesIO(data).readline):
+        name = tokenize.tok_name[token.type]
+        if name == "FSTRING_START":  # Python 3.12+
+            opened.append((offset(token.start), quote(token.string)))
+        elif name == "FSTRING_END" and opened:
+            first, mark = opened.pop()
+            found.append((first, offset(token.end), mark))
+        elif token.type == tokenize.STRING:  # an f-string before Python 3.12
+            prefix = token.string[
+                : len(token.string) - len(token.string.lstrip("rRbBuUfF"))
+            ]
+            if "f" in prefix.lower():
+                found.append(
+                    (offset(token.start), offset(token.end), quote(token.string))
+                )
+    return found
+
+
+def _requoted(text: str, avoid: set[str]) -> str:
+    """*text* with each one-line string literal delimited by a quote in
+    *avoid* delimited by the other quote, where its content allows it."""
+    others = [q for q in "\"'" if q not in avoid]
+    out: list[str] = []
+    i = 0
+    while i < len(text):
+        char = text[i]
+        if char not in "\"'":
+            out.append(char)
+            i += 1
+            continue
+        delimiter = char * 3 if text.startswith(char * 3, i) else char
+        j = i + len(delimiter)
+        while j < len(text) and not text.startswith(delimiter, j):
+            j += 2 if text[j] == "\\" else 1
+        literal = text[i : j + len(delimiter)]
+        body = text[i + len(delimiter) : j]
+        if char in avoid and len(delimiter) == 1 and others and others[0] not in body:
+            literal = others[0] + body + others[0]
+        out.append(literal)
+        i = j + len(delimiter)
+    return "".join(out)
 
 
 def _dotted(node: ast.AST) -> str | None:
@@ -2489,6 +2582,8 @@ class _Rewriter(ShadowScopes):
         ):
             # `dict(a=1)`: Codon's dict takes no keywords (#469); the display
             # `{"a": 1}` is the same dict.
+            # (An f-string field holding one is lowered by python_rewrites
+            # first: a brace ends the field for Codon, #609.)
             start, end = self.edits.node_span(node)
             self.edits.replace(start, self.edits.node_span(node.keywords[0])[0], "{")
             for kw in node.keywords:
