@@ -408,9 +408,7 @@ def _card(client: TestClient, tmp_path: Path) -> tuple[str, str, DraftStore]:
         f"/draft/{draft_id}/action",
         data={"type_id": "routing", "actor": actor},
     )
-    card = next(
-        a for a in _stored(store, draft_id).actions if a.type == "routing"
-    )
+    card = next(a for a in _stored(store, draft_id).actions if a.type == "routing")
     client.post(
         f"/draft/{draft_id}/action/{card.id}",
         data={
@@ -575,9 +573,7 @@ class TestEditor:
         self, client: TestClient, tmp_path: Path
     ) -> None:
         draft_id, _, store = _card(client, tmp_path)
-        other = next(
-            a for a in _stored(store, draft_id).actions if a.type != "routing"
-        )
+        other = next(a for a in _stored(store, draft_id).actions if a.type != "routing")
         page = _add(client, draft_id, other.id, "1")
         assert "takes no waypoint conditions" in page.text
 

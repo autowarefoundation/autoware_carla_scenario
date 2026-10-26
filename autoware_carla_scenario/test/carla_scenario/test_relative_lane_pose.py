@@ -33,8 +33,6 @@ import lanelet2.traffic_rules
 from autoware_carla_scenario import (
     CarlaWorldPose,
     ElapsedTimeCondition,
-    RoutingAction,
-    RoutingMode,
     Lanelet2Pose,
     RelativeLanePose,
     Trajectory,
@@ -485,9 +483,7 @@ class TestTheAction:
                 TrajectoryVertex(RelativeLanePose(5.0, entity_ref="lead"), _time(0.5)),
             ],
         )
-        action = _route(
-            "npc1", trajectory, TrajectoryTiming(), once=False
-        )
+        action = _route("npc1", trajectory, TrajectoryTiming(), once=False)
         world = _World()
         register_entity("lead", _Entity(_Actor(x=20.0, y=0.0)))
         elapsed = 0.0
@@ -533,9 +529,7 @@ class TestTheAction:
                 TrajectoryVertex(RelativeLanePose(5.0), _time(0.5)),
             ],
         )
-        action = _route(
-            "npc1", trajectory, TrajectoryTiming(), once=False
-        )
+        action = _route("npc1", trajectory, TrajectoryTiming(), once=False)
         world = _World()
         elapsed = 0.0
         ends: list[float] = []

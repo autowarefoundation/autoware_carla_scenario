@@ -8,6 +8,7 @@ the runner and the routing action read it without pulling each other in.
 from __future__ import annotations
 
 from dataclasses import dataclass
+
 __all__ = ["WaypointArrival"]
 
 
