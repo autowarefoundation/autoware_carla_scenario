@@ -441,8 +441,11 @@ def _acs_bounds(n: int, bounds) -> Tuple[int, int]:
 def _acs_count(t, x) -> int:
     """What the checker puts in the place of t.count(x) when t has no count()
     (typecheck/python_rewrites.py, #601): Codon's tuple has none. An item of
-    another type than x is never equal to it."""
-    if isinstance(t, Tuple):
+    another type than x is never equal to it. An Optional (a tuple Python
+    narrowed with `is not None`, still Optional here) is unwrapped first."""
+    if isinstance(t, Optional):
+        return _acs_count(unwrap(t), x)
+    elif isinstance(t, Tuple):
         n = 0
         for i in static.range(static.len(t)):
             if isinstance(t[i], type(x)):
@@ -456,8 +459,10 @@ def _acs_count(t, x) -> int:
 def _acs_index(t, x, *bounds) -> int:
     """What the checker puts in the place of t.index(x[, start[, stop]]) when
     t has no index() (typecheck/python_rewrites.py, #601): Codon's tuple has
-    none."""
-    if isinstance(t, Tuple):
+    none. An Optional is unwrapped first, as in _acs_count."""
+    if isinstance(t, Optional):
+        return _acs_index(unwrap(t), x, *bounds)
+    elif isinstance(t, Tuple):
         start, stop = _acs_bounds(static.len(t), bounds)
         for i in static.range(static.len(t)):
             if isinstance(t[i], type(x)):

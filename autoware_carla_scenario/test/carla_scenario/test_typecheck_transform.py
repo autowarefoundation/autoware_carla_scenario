@@ -5890,6 +5890,52 @@ def test_count_is_left_alone_where_hasattr_is_shadowed() -> None:
     assert text.endswith("n = t.count(1)\n")
 
 
+def test_a_rewrite_in_an_fstring_field_quotes_with_the_other_quote() -> None:
+    # Codon's parser, as Python's before 3.12, ends an f-string at its own
+    # quote: a rewrite's `hasattr(t, 'count')` in `f'...'` was "unexpected
+    # dedent" on a later line (#609).
+    text = _rewritten(
+        """
+        a = f'{xs.count(1)} {name.count("_")}'
+        b = f'{xs.index(2)}' f"{xs.index(2)}"
+        c = f'{getattr(o, "a", 1)}'
+        d = f\"\"\"{xs.count(1)}\"\"\"
+        e = xs.count(1)
+        """
+    )
+    assert (
+        'a = f\'{(xs.count(1) if hasattr(xs, "count") else _acs_count(xs, 1))} '
+        '{(name.count("_") if hasattr(name, "count") else _acs_count(name, "_"))}\''
+    ) in text
+    assert (
+        "b = f'{(xs.index(2) if hasattr(xs, \"index\") else _acs_index(xs, 2))}' "
+        "f\"{(xs.index(2) if hasattr(xs, 'index') else _acs_index(xs, 2))}\""
+    ) in text
+    assert "c = f'{(((1), o.a if hasattr(o, \"a\") else (1))[1])}'" in text
+    assert 'hasattr(xs, \'count\') else _acs_count(xs, 1))}"""' in text
+    # Outside an f-string the rewrite is as before.
+    assert "e = (xs.count(1) if hasattr(xs, 'count') else _acs_count(xs, 1))" in text
+
+
+def test_requoted_swaps_only_the_quotes_it_must() -> None:
+    from autoware_carla_scenario.typecheck.transform import _requoted
+
+    assert _requoted("f(a, 'b', \"c\")", {"'"}) == 'f(a, "b", "c")'
+    assert _requoted("f('b', \"c\")", {'"'}) == "f('b', 'c')"
+    # A literal holding the other quote is left as it is.
+    assert _requoted("f('say \"hi\"')", {"'"}) == "f('say \"hi\"')"
+    assert _requoted("f('a\\'b')", {"'"}) == 'f("a\\\'b")'
+
+
+def test_a_keyword_dict_in_an_fstring_field_is_lowered() -> None:
+    # `dict(a=1)` becomes the display `{"a": 1}` (#469), whose brace would
+    # end the field for Codon (#609): the f-string is a `+` of its parts.
+    out = _body("s = f\"{dict(a=1)} {n}\"\nt = f'{dict(b=2)!r}'\n")
+    assert 's = (str({"a": 1}) + f" {n}")' in out, out
+    assert 't = (repr({"b": 2}))' in out, out
+    assert "{{" not in out
+
+
 def test_dict_view_set_operators_become_sets() -> None:
     text = _rewritten(
         """
