@@ -3536,6 +3536,16 @@ cannot express is refused at its line, with what to write instead.</p>
 <td></td>
 </tr>
 <tr>
+<td>a <code>def</code> in a function whose parameter default is a local of an enclosing function (#612): <code>for name in names: def log_it(world, n: str = name)</code>, <code>scale = 2; def f(k: int = scale)</code></td>
+<td><code>(name,)[0]</code>: Codon refuses the bare name ("name 'name' cannot be captured") but evaluates any other expression once, when the <code>def</code> runs, as Python does. The tuple holds the same value and type, and the parameter can still be passed</td>
+<td>a default that is no bare name is left as written (Codon takes it); a method of a class defined in a function is not rewritten. Another <code>cannot be captured</code> is hinted: bind the value with <code>functools.partial(f, n=value)</code>, or read the local in the body</td>
+</tr>
+<tr>
+<td>an f-string in a decorator (#616): <code>@tag(f"lane-{N}")</code>, <code>@tag(f"plain")</code></td>
+<td><code>str()</code> parts joined by <code>+</code>, as in a lambda above: <code>@tag(("lane-" + str(N)))</code>. Codon reads an f-string there as an attribute of the string ("'str' object has no attribute '<strong>prefix_f</strong>'"), with or without fields. An f-string in a default, an argument or a body is no decorator and is left as written</td>
+<td>a brace or a nested f-string inside an expression (as above)</td>
+</tr>
+<tr>
 <td><code>def __exit__(self, exc_type, exc, tb)</code> (annotated <code>type[BaseException] \| None</code>, <code>BaseException \| None</code>, <code>object</code>, ... or not)</td>
 <td>each parameter without a default gets <code>=None</code>: Codon calls <code>__exit__()</code> with no arguments, even when the block raised (#435). An annotation of <code>BaseException</code> or <code>Exception</code> (alone or <code>\| None</code>, <code>Optional[...]</code>) is kept as <code>X \| None</code>; any other annotation is dropped</td>
 <td></td>
@@ -3665,8 +3675,10 @@ cannot express is refused at its line, with what to write instead.</p>
   f-string starts on, at the faulting expression's column plus the length of
   the field's text: a column past the end of that line, or no line of the
   file when the f-string is on its last line. The check moves such an error
-  back when no expression on the reported line starts at the reported column
-  with the reported width (as Codon locates an error on that line itself) and
+  back when nothing on the reported line starts at the reported column, of
+  any width (Codon locates an error on that line itself there; its width of
+  a call on several lines counts the characters across the line breaks,
+  that of a <code>with</code> or <code>for</code> statement is one more than Python's), and
   an f-string that starts on the line before has a field holding an
   expression of that width that ends at or before the column (and, on a
   one-line f-string, no further from it than the f-string's end). The line
@@ -3674,7 +3686,17 @@ cannot express is refused at its line, with what to write instead.</p>
   f-string is shown on its line). An error of the line itself always has
   such an expression (a comprehension's <code>for c in n</code> clause, which Codon
   locates from its <code>for</code>, is matched by where it ends), so it stays where it
-  is, column and all.</li>
+  is, column and all.
+  An implicitly concatenated f-string (<code>"a" f"b{n + 'x'}"</code>, also on several
+  lines, #616) is reported on the line after its first literal's line too,
+  at a column the bound above does not hold for: the first literal's
+  0-based column, plus the offset of the field's <code>{</code> in its own literal,
+  plus the field's length, plus the expression's offset from the <code>{</code>. The
+  check computes that column for each field of an f-string that starts on
+  the line before (a triple-quoted literal, a field on several lines and a
+  line that is not ASCII excepted) and moves an error that matches it,
+  column and width, to the field's line, with the same guard (anything
+  that starts on the reported line at that column keeps it).</li>
 <li>A class constant read in the class body (#433): Python resolves the name in
   the class scope, Codon in the module's (<code>name 'LIMIT' is not defined</code>), so
   the check writes <code>Class.LIMIT</code>. It rewrites exactly what Python resolves
@@ -6199,7 +6221,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 26, 2026 15:10:12 UTC"><span class="timeago" datetime="2026-10-26T15:10:12+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 26, 2026 15:10:12 UTC">2026-10-26</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 26, 2026 16:51:45 UTC"><span class="timeago" datetime="2026-10-26T16:51:45+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 26, 2026 16:51:45 UTC">2026-10-26</span>
   </span>
 
     
