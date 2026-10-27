@@ -184,6 +184,9 @@ the TrafficManager).
   server;
 - any step above raises, an actor survives its destroy, or an actor of the map
   is gone;
+- the world has a traffic light the baseline does not list (the server listed
+  it only after the baseline was read): its timing and frozen state are not
+  known, so whatever a case did to it could not be put back;
 - `server.reload_every` is N > 0 and N - 1 soft resets have been done since
   the last load (every N-th reset is a reload; `1` is the same as `reload`).
 

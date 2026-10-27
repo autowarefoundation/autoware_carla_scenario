@@ -230,7 +230,8 @@ def soft_reset_world(
     """Put *world* back to *baseline* without loading the map again.
 
     In this order: the recorder is stopped; every actor the baseline does not
-    list (other than a traffic light, a sign or the spectator) is destroyed (sensors and controllers first), then the world is
+    list (other than a traffic light, a sign or the spectator) is destroyed
+    (sensors and controllers first), then the world is
     ticked; the traffic lights get their timing back, are reset to the start
     of their cycle and frozen as they were; the weather and the spectator are
     put back, the world is ticked once more, and the episode settings are
@@ -241,8 +242,10 @@ def soft_reset_world(
         How many actors were destroyed.
 
     Raises:
-        RuntimeError: the world is not in the baseline's episode, or an actor
-            survived (or a map actor is gone): the caller loads the map instead.
+        RuntimeError: the world is not in the baseline's episode, a traffic
+            light has no state in the baseline (whatever a case did to it could
+            not be put back), or an actor survived (or a map actor is gone):
+            the caller loads the map instead.
             Whatever CARLA raises along the way is passed on, for the same.
     """
     if not same_episode(episode_of(world), baseline.episode):
@@ -252,6 +255,18 @@ def soft_reset_world(
     except Exception:  # noqa: BLE001 - nothing may be recording
         pass
     kept = set(baseline.actor_ids)
+    # A traffic light the baseline does not list (read before the server
+    # listed it) is kept, but its timing and frozen state are not known: a
+    # case may have frozen it, and nothing here could put that back.
+    known_lights = set([saved.actor_id for saved in baseline.traffic_lights])
+    unknown_lights: List[int] = []
+    for light in world.get_actors().filter("traffic.traffic_light*"):
+        if int(light.id) not in known_lights:
+            unknown_lights.append(int(light.id))
+    if unknown_lights:
+        raise RuntimeError(
+            f"traffic light(s) {sorted(unknown_lights)} have no baseline state"
+        )
     doomed: List[carla.Actor] = []
     for actor in world.get_actors():
         if int(actor.id) not in kept and not _belongs_to_the_map(str(actor.type_id)):

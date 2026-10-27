@@ -341,16 +341,33 @@ class TestSoftResetOnTheSameMap:
         assert len(server.world.actors) == 4
 
     def test_a_map_actor_the_baseline_missed_is_kept(self, server: _Server) -> None:
-        """A light the server listed only after the baseline was read is the
+        """A sign the server listed only after the baseline was read is the
         map's, not a run's."""
         runner = _runner(server, world_reset="soft")
         runner.load_map_by_name("Town10HD_Opt")
-        late = server.world._add(_TrafficLight(server.world, 0))
+        late = server.world._add(_Actor(server.world, 0, "traffic.speed_limit.30"))
 
         runner.reset_world("Case0")
 
         assert server.loads == ["Town10HD_Opt"]
         assert late.id in server.world.actors
+
+    def test_a_light_the_baseline_missed_reloads(self, server: _Server) -> None:
+        """Its timing and frozen state are not known, so a case's freeze of it
+        could not be undone: the map is loaded instead."""
+        runner = _runner(server, world_reset="soft")
+        runner.load_map_by_name("Town10HD_Opt")
+        late = _TrafficLight(server.world, 0)
+        late.frozen = True
+        server.world._add(late)
+
+        runner.reset_world("Case0")
+
+        assert server.loads == ["Town10HD_Opt", "Town10HD_Opt"]
+        assert all(not light.frozen for light in server.world.lights())
+        # The reload's baseline lists every light: the next reset is soft.
+        runner.reset_world("Case1")
+        assert server.loads == ["Town10HD_Opt", "Town10HD_Opt"]
 
     def test_the_next_run_sets_up_on_the_soft_reset_world(
         self, server: _Server
