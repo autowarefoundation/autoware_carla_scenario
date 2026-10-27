@@ -39,15 +39,16 @@ intersection it ends at), with no taper in, buffer or termination zone:
   of the approach: at most three signs, every ``warning_zone_spacing``;
 * **work** -- the warning zone's end to the merge taper's start (with no merge
   taper, to 0.9 of the approach): along the closed side's edge, 0.5 m in,
-  every ``spacing``, short of its end; of ``construction_type`` ``"cone"``,
+  every ``spacing``, short of the merge taper (up to 0.9 of the approach
+  inclusive with none, as TeraSim's); of ``construction_type`` ``"cone"``,
   every fifth object is a barrier (TeraSim adds the barrier beside the cone);
 * **merge_signs** -- ``merge_signs`` signs, every 50 m before the merge taper;
 * **merge_taper** -- the last ``merge_distance`` before ``end``: cones every
   half ``spacing``, from the closed side's edge across to the other one, so
   the lane is shut before the intersection (TeraSim's ``merge_before``).
 
-The warning zone and the merge taper step up to their end inclusive, as
-TeraSim's do.  :data:`URBAN_CONSTRUCTION` holds TeraSim's urban numbers.
+The zones step up to their end inclusive, as TeraSim's do, but for a work
+zone that ends at the merge taper, whose first cone stands there.  :data:`URBAN_CONSTRUCTION` holds TeraSim's urban numbers.
 """
 
 from __future__ import annotations
@@ -187,9 +188,20 @@ def construction_zones(
     start: float, end: float, settings: ConstructionSettings = DEFAULT_CONSTRUCTION
 ) -> list[tuple[str, float, float]]:
     """The zones from *start* to *end* (m along the lane), as ``(zone,
-    from, to)``, in order; a zone of no length is left out."""
+    from, to)``, in order; a zone of no length is left out.
+
+    An urban layout's ``merge_signs`` zone is the exception to both: it lies
+    over the work zone, and when the merge taper starts at *start* it is of
+    no length, its signs clamped to *start* (as TeraSim's).
+
+    Raises:
+        ValueError: a layout that is neither :data:`HIGHWAY` nor
+            :data:`URBAN`.
+    """
     if settings.layout == URBAN:
         return _urban_zones(start, end, settings)
+    if settings.layout != HIGHWAY:
+        raise ValueError(f"no construction layout '{settings.layout}'")
     zones: list[tuple[str, float, float]] = []
     if settings.warning_zone_length > 0.0:
         zones.append(("warning", max(0.0, start - settings.warning_zone_length), start))
@@ -396,9 +408,10 @@ def _urban_layout(
                 )
             continue
         kinds = _kinds(zone, settings)
-        # The warning zone up to its end, as TeraSim's; the work zone short
-        # of it, which is where the merge taper's first cone stands.
-        last = zone_end + _EPSILON_M if zone == "warning" else zone_end - _EPSILON_M
+        # Each zone up to its end, as TeraSim's, but for a work zone that
+        # ends at the merge taper: its first cone stands there.
+        inclusive = zone == "warning" or not settings.merge_distance > 0.0
+        last = zone_end + _EPSILON_M if inclusive else zone_end - _EPSILON_M
         index = 0
         s = zone_start
         while s <= last:

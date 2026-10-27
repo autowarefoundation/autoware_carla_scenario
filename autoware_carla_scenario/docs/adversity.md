@@ -276,8 +276,8 @@ An urban zone has no taper in, buffer or termination zone, and no
 `work_zone_offset` or MUTCD spacing. `taper_type="curved"` shapes the merge
 taper. The warning zone and the merge taper include their end, as TeraSim's
 do, so with a whole number of steps the last cone stands at the intersection.
-The work zone stops short of its end, where the merge taper's first cone
-stands.
+The work zone does too when there is no merge taper; with one, it stops
+short of its end, where the merge taper's first cone stands.
 
 `URBAN_CONSTRUCTION` holds TeraSim's urban values. They come from the
 `UrbanConstructionAdversity` source and its Ann Arbor example
@@ -337,5 +337,8 @@ self.register_pre_tick(
 | Construction zones: SUMO vtypes for cones, barriers and signs; full_lane only closes the lane | CARLA props (`static.prop.*`), always placed, plus the lane closed to the backend (#402) |
 | `UrbanConstructionAdversity`: a corridor of edges across `num_intersections`, found by the edges' road priority, with a merge taper before each intersection | One approach per `ConstructionZoneAction` (`layout="urban"`), from `start_s` to the intersection at `end_s`; a corridor is one action per approach (#445) |
 | Urban work zone: a barrier added beside every fifth cone | The barrier replaces that cone, so the two props do not overlap |
+| Urban work zone up to the merge taper's start inclusive, where the taper's first cone stands too | Short of it, so the two props do not overlap |
+| Urban spacings hard-coded: warning signs 30 m, work zone 10 m, merge taper 5 m; the merge taper always linear | `warning_zone_spacing`, `spacing` and half `spacing` (the same with `URBAN_CONSTRUCTION`); `taper_type="curved"` shapes the merge taper |
+| Urban warning zone of no length: one sign at the edge's start | No warning zone, no sign |
 | Urban signs: always on the right shoulder; merge signs named by `merge_signs` texts | On the closed side's shoulder; `merge_signs` is how many, all the same prop |
 | Urban construction vehicles and workers (excavator, dump trucks, warning vehicles) | Not placed |

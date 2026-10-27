@@ -1,7 +1,8 @@
 """TeraSim's construction zone as an action: cones, barriers and signs on a lane (#402).
 
 :class:`ConstructionZoneAction` lays out TeraSim's ``ConstructionAdversity``
-(:mod:`~..adversity.construction`) along a lane of the Lanelet2 map, from
+or, with ``layout="urban"``, its ``UrbanConstructionAdversity`` on one
+intersection approach (:mod:`~..adversity.construction`) along a lane of the Lanelet2 map, from
 ``start_s`` to ``end_s`` metres along it -- past its lanelet's end, on along
 the straightest successors -- and from ``start_time`` to ``end_time``
 (scenario seconds; ``None`` for good) it stands the objects there as CARLA
@@ -75,10 +76,14 @@ class ConstructionZoneAction(_BackendAction):
 
     Args:
         lanelet_id: The lanelet the lane is measured from.
-        start_s: Where the work starts, metres along it.
+        start_s: Where the work starts, metres along it; for an urban
+            layout (``settings.layout == "urban"``), where the approach
+            starts, the warning signs from there.
         end_s: Where it ends; past the lanelet's end, along the straightest
-            successors.
-        settings: TeraSim's layout numbers (zones, spacing, tapers, side).
+            successors.  Urban: the intersection the approach ends at.
+        settings: TeraSim's layout numbers (zones, spacing, tapers, side,
+            and the layout: :data:`~..adversity.construction.URBAN_CONSTRUCTION`
+            is TeraSim's ``UrbanConstructionAdversity``).
         start_time: When the zone appears (s from the scenario's start).
         end_time: When it is cleared away; ``None`` never.
         close_lane: Tell the traffic backend the lane is closed (TeraSim's

@@ -253,6 +253,47 @@ def test_the_urban_work_zone_kinds_and_spacing() -> None:
     assert [o.s for o in clamped if o.zone == "merge_signs"] == [0.0]
 
 
+def test_an_urban_work_zone_with_no_merge_taper_includes_its_end() -> None:
+    # As TeraSim's: with nothing standing at 0.9 of the approach, the work
+    # zone's last object does.
+    objects = construction_layout(0.0, 100.0, 3.5, _urban(merge_distance=0.0))
+    assert [o.s for o in objects if o.zone == "work"] == pytest.approx(
+        [30.0 + 10.0 * i for i in range(7)]
+    )
+    assert {o.zone for o in objects} == {"warning", "work"}
+
+
+def test_an_urban_zone_with_no_warning_zone_has_no_warning_signs() -> None:
+    settings = _urban(warning_zone_length=0.0)
+    zones = construction_zones(0.0, 300.0, settings)
+    assert zones[0] == ("work", 0.0, 150.0)
+    objects = construction_layout(0.0, 300.0, 3.5, settings)
+    assert not [o for o in objects if o.zone == "warning"]
+
+
+def test_the_urban_editor_action_starts_from_the_preset() -> None:
+    # The editor's urban_construction_zone, at its defaults, is the preset.
+    from autoware_carla_scenario.actions.base import TickTiming
+    from autoware_carla_scenario.authoring import registry
+    from autoware_carla_scenario.authoring._builders_generated import (
+        build_urban_construction_zone_action,
+    )
+
+    spec = registry.get_action_spec("urban_construction_zone")
+    assert spec is not None
+    compiled = SimpleNamespace(
+        params=registry.default_params(spec.fields), label="urban"
+    )
+    action = build_urban_construction_zone_action(
+        compiled,  # type: ignore[arg-type]
+        None,
+        TickTiming.PRE_TICK,
+        None,  # type: ignore[arg-type]
+    )
+    assert isinstance(action, ConstructionZoneAction)
+    assert action._settings == URBAN_CONSTRUCTION
+
+
 def test_what_the_urban_layout_refuses() -> None:
     with pytest.raises(ValueError):
         construction_layout(0.0, 100.0, 3.5, _urban(spacing=0.0))
@@ -260,6 +301,8 @@ def test_what_the_urban_layout_refuses() -> None:
         construction_layout(0.0, 300.0, 3.5, _urban(warning_zone_spacing=0.0))
     with pytest.raises(ValueError):
         construction_layout(0.0, 100.0, 3.5, _urban(layout="rural"))
+    with pytest.raises(ValueError):
+        construction_zones(0.0, 100.0, _urban(layout="rural"))
 
 
 # -- the action -------------------------------------------------------------------
