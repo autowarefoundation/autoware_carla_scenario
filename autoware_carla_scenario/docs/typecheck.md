@@ -2331,8 +2331,8 @@ To check one more module:
 
 ### What is checked of the framework
 
-Every module now has an entry other than `"not yet checked (#45)"`. 209 of
-the package's 315 modules (66%; about 47,900 of 90,300 lines) are `CHECKED`:
+Every module now has an entry other than `"not yet checked (#45)"`. 210 of
+the package's 315 modules (67%; about 48,100 of 90,300 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the conversions between
 Lanelet2, OpenDRIVE and CARLA world poses (`coordinate.transform`), the stop
 lines read off a Lanelet2 map (`utils.stop_line`, `coordinate.stop_line`)
@@ -2371,7 +2371,8 @@ of `maps.catalogue`, the `map` config's paths of `maps.config`, the clone
 cache of map repositories, `maps.cache`, and the
 OpenDRIVE taken from CARLA by `maps.opendrive`), what an exported scenario
 package pins the framework to and how it runs `uv` (`authoring.framework_pin`,
-`authoring.uv_tool`), the CARLA server manager (`server`), the markers an ego
+`authoring.uv_tool`), the CARLA server manager (`server`), the summary a batch prints and
+writes to `batch_results.json` (`batch_report`), the markers an ego
 entity hands the runner for the trajectory log (`debug_markers`), the Autoware
 launcher that runs a stack as a process group (`autoware_stack.launcher`),
 the `scenario_bridge` node's command and Python root beside it
@@ -2427,12 +2428,12 @@ a `TrajectoryVertex` call's arguments, each of any type (`Any`), walks or
 binds a sweeper constraint of any kind, builds a condition's status (its
 details), or takes the list a plain tick callback goes into
 (`BaseScenario._register_tick()`, a `List[Callable[[carla.World], None]]`,
-which the check has no value of). The 106 `EXCLUDED` modules fall in
-three groups. Many fit more than one (about 78 import what Codon cannot
+which the check has no value of). The 105 `EXCLUDED` modules fall in
+three groups. Many fit more than one (about 77 import what Codon cannot
 compile, 31 build on an excluded module and 24 hold values Codon has no type
 for), so each is counted once, in the first group that fits it:
 
-- **78 import what Codon cannot compile**: pyxodr,
+- **77 import what Codon cannot compile**: pyxodr,
   pydantic, pickle, lxml, grpc, omegaconf and hydra, yaml, openodd and hilspy (Rust extensions), cv2,
   cyclonedds (`ros2.cyclone` and `ros2.messages`, the ROS 2 ego's DDS
   transport and its message types), or
@@ -2446,7 +2447,7 @@ for), so each is counted once, in the first group that fits it:
   repositories and the pyxodr road network), the Autoware
   stack's dev container, the
   record of a run's environment, the SLURM launcher's submitting side,
-  its worker and its manifest, the batch summary they share, the Rerun
+  its worker and its manifest, the Rerun
   recordings of a run's logs and LiDAR sweeps, its T4 dataset, and the HILS bridge and its ego entity), the ODD and coverage modules that wrap
   openodd, and the rest of what reads Lanelet2. A reason names `pathlib`
   only where the module uses more of it than the shim declares, and the
@@ -4142,6 +4143,23 @@ What Codon 0.19 needs that Python does not, beyond
   it, so `dataclasses.asdict()` of a set-level constraint includes it, and
   raises `AttributeError` before the constraint is bound; nothing in the
   framework calls either on a constraint).
+- **A Protocol that is only read through** (`batch_report`'s `_Result` and
+  `_Status`, the results it summarises): each property and method has a
+  typed stub body (`return ""`, `return False`, `return 0.0`, `return
+  None`, `return {}`, `return list[_Status]()`) instead of `...`, which Codon
+  types as returning `None` (`'NoneType' object has no attribute
+  '__iter__'`); a bare `[]` would be a `List[NoneType]`. Nothing instantiates
+  or calls the Protocol at run time, so the bodies change nothing there; an
+  `abc.abstractmethod` on a `@property` is a Codon syntax error, so an ABC is
+  no alternative. An attribute a result may lack (`rerun_recording`) is a
+  property of the Protocol, read in `try:` / `except AttributeError:`, since
+  Codon's `getattr()` takes no default. The module imports `Collection`,
+  `Mapping` and `Sequence` from `typing` (with `# noqa: UP035`), since Codon
+  has no `collections.abc`, and writes `batch_results.json` as text a member
+  at a time, each value through `json.dumps(..., indent=2)`, since an entry
+  merges the result's `to_dict()` (`dict[str, Any]`) with its own keys;
+  `test_batch_report.py` holds that text to what `json.dumps` of the whole
+  list gives.
 - **A registry of classes at module level** (`sweeper.constraints`'
   `_LEAF_REGISTRY`, `sweeper.bindings`' `_BINDING_REGISTRY`): Codon holds no
   class as a value, and cannot type `dict[str, type]`. Declare it
