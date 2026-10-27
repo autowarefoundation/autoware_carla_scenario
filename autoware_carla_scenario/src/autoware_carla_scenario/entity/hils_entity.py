@@ -28,7 +28,7 @@ import logging
 import socket
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Dict, Mapping, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional, Tuple
 
 from ..hils.protocol import (
     COMMAND_FIELDS,
@@ -262,6 +262,59 @@ class HilsEgoEntity(ExternallyDrivenEgo):
             if ended:
                 logger.info("The HILS bridge finalized the ECUs")
         self._close()
+
+    def disconnect(
+        self,
+        cut_id: str,
+        device: Optional[str] = None,
+        messages: Optional[List[str]] = None,
+        direction: str = "both",
+    ) -> bool:
+        """Have the bridge stop data between it and the ECUs (fault injection)
+        until :meth:`reconnect` with the same *cut_id*, or the scenario's end.
+
+        :class:`~autoware_carla_scenario.actions.CommunicationLossAction` is
+        the way a scenario says so.
+
+        Args:
+            cut_id: Names this cut, for :meth:`reconnect`; cuts with other ids
+                stay as they are.
+            device: The bridge's device, by name; ``None`` for every device.
+            messages: The names of the messages to stop; ``None`` for
+                everything the device carries.
+            direction: One of :data:`~autoware_carla_scenario.hils.protocol.LINK_DIRECTIONS`.
+
+        Returns:
+            Whether the request went to the bridge: not before it is reached,
+            nor once the link to it failed.  A device the bridge does not have
+            ends the run, as its other errors do.
+        """
+        if self._sock is None or self.termination_requested:
+            logger.warning(
+                "The HILS bridge is not connected; the data of %s is not stopped",
+                "every device" if device is None else repr(device),
+            )
+            return False
+        return self._send(
+            {
+                "type": "disconnect",
+                "id": cut_id,
+                "device": device,
+                "messages": messages,
+                "direction": direction,
+            }
+        )
+
+    def reconnect(self, cut_id: str) -> bool:
+        """Have the bridge carry the data the cut *cut_id* stopped again.
+
+        Returns:
+            Whether the request went to the bridge (when it did not, the
+            bridge restores everything at the scenario's end).
+        """
+        if self._sock is None or self.termination_requested:
+            return False
+        return self._send({"type": "reconnect", "id": cut_id})
 
     # ------------------------------------------------------------------
     # The link

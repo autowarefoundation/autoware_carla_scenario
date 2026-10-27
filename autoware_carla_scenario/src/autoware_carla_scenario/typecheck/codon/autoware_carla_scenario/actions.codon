@@ -3,6 +3,7 @@
 import typesafe_carla.carla as carla
 
 from ._tc import (_keyword_only, _expect_float, _expect_optional_float, _expect_optional_bool,
+                  _expect_optional_str,
                   _acs_expect_return, _acs_sequence)
 from .action_state import ActionState
 from .conditions import (AdversityKind, AdversityLocation, BaseCondition, TurnIndicatorState,
@@ -263,6 +264,47 @@ class LaneChangeAction(BaseAction):
         _keyword_only(_kw, "LaneChangeAction(): label, once and until")
         _expect_role(entity_name)
         super().__init__(label, condition, timing, once=once, until=until)
+
+
+class CommunicationLossAction(BaseAction):
+    def __init__(self, label):
+        compile_error("CommunicationLossAction(): no constructor takes these arguments "
+                      "(device, messages, direction and duration come first, then entity_name)")
+
+    def __init__(self, device = None, messages = None, direction: str = "both",
+                 duration = None, entity_name = "Ego", condition = None,
+                 timing: TickTiming = TickTiming("pre_tick"), *_kw,
+                 label: str = "communication_loss", once: bool = True, until = None):
+        _keyword_only(_kw, "CommunicationLossAction(): label, once and until")
+        _expect_optional_str(device)
+        _expect_optional_float(duration)
+        _expect_role(entity_name)
+        super().__init__(label, condition, timing, once=once, until=until)
+
+    @property
+    def device(self) -> Optional[str]:
+        raise NotImplementedError()
+
+    # tuple[str, ...] in Python: a List here, as a class-level variadic tuple
+    # is (_acs_tuple, _tc.codon).
+    @property
+    def messages(self) -> Optional[List[str]]:
+        raise NotImplementedError()
+
+    @property
+    def duration(self) -> Optional[float]:
+        raise NotImplementedError()
+
+    @property
+    def direction(self) -> str:
+        raise NotImplementedError()
+
+    @property
+    def cutting(self) -> bool:
+        raise NotImplementedError()
+
+    def restore(self) -> None:
+        raise NotImplementedError()
 
 
 class TurnIndicatorAction(BaseAction):

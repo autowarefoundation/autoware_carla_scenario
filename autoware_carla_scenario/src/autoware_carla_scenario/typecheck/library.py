@@ -415,6 +415,7 @@ UNCALLED: dict[str, str] = {
 #: Every other module, with the reason it is not compiled.
 EXCLUDED: dict[str, str] = {
     "autoware_carla_scenario": "loads its public names lazily with importlib (a PEP 562 `__getattr__` returning `object`), and Codon reads its `TYPE_CHECKING` re-exports as imports of every subpackage, two of which are neither checked nor modelled: pytest_fixtures (pytest) and registry (omegaconf)",
+    "autoware_carla_scenario.actions.communication_loss": "builds on entity.hils_entity (socket) and hils.protocol (json), which are neither checked nor modelled",
     "autoware_carla_scenario.authoring": "re-exports authoring.models (pydantic), authoring.persistence (yaml), authoring.package_export and authoring.wheelhouse (tempfile)",
     "autoware_carla_scenario.authoring._builders_generated": "its builders take authoring.compiler's CompiledCondition, CompiledAction and BuildContext, which reach pydantic models through authoring.models",
     "autoware_carla_scenario.authoring.builders": "dispatches to builders by name through vars() and globals() as Callable[..., Any]; its parameters reach pydantic models through authoring.compiler, and it imports authoring._builders_generated and authoring.models (pydantic) inside functions, which are not checked",

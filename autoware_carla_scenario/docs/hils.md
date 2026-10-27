@@ -25,7 +25,7 @@ flowchart LR
         bridge <--> hilspy
     end
     carla -- "ticks, ego state, sensor data" --> bridge
-    runner <-- "TCP :7700<br/>start / ready / command / end / ended" --> bridge
+    runner <-- "TCP :7700<br/>start / ready / command / disconnect / reconnect / end / ended" --> bridge
     hilspy <-- "can:// dbc<br/>(inputs: ECU commands)" --> ecu1["ECU: vehicle CAN"]
     hilspy -- "tcp:// sbf, serial:// nmea" --> ecu2["ECU: GNSS input"]
     hilspy -- "udp:// lidar:MODEL" --> ecu3["ECU: LiDAR driver"]
@@ -360,6 +360,60 @@ does not follow the world, and with `clock: simulation` its clock follows the
 wall clock instead, so periodic messages keep flowing to an ECU that is being
 waited on. `startup` and `shutdown` steps have no ego, so their fields are
 constants.
+
+### Communication loss
+
+`CommunicationLossAction` reproduces a break in the communication path to an
+ECU: the data it names -- a CAN frame, a LiDAR's or a camera's packets, a GNSS
+receiver's stream -- stops, **for as long as the action runs**. The run asks
+the bridge (`disconnect` on the link) when the action fires and asks it to
+carry the data again (`reconnect`) when the action ends; the bridge stops it in
+the device's hilspy channel (`Channel.disconnect`). The bus or socket stays
+open and the device's other traffic carries on.
+
+```python
+from autoware_carla_scenario import CommunicationLossAction, ElapsedTimeCondition
+
+# VehicleSpeed stops reaching the ECU for 2 s, 10 s into the scenario.
+self.register_pre_tick(
+    CommunicationLossAction(
+        "vehicle_can",
+        messages=["VehicleSpeed"],
+        direction="to_ecu",
+        duration=2.0,
+        condition=ElapsedTimeCondition(10.0, label="at_10s"),
+    )
+)
+# The top LiDAR's packets stop from 20 s until 25 s.
+self.register_pre_tick(
+    CommunicationLossAction(
+        "lidar_top",
+        condition=ElapsedTimeCondition(20.0, label="at_20s"),
+        until=ElapsedTimeCondition(25.0, label="at_25s"),
+    )
+)
+```
+
+| Argument | Default | |
+| --- | --- | --- |
+| `device` | `None` | the configuration's device; `None` for every device |
+| `messages` | `None` | the messages to stop, by the names the device's codec gives them (`VehicleSpeed` of a DBC, `scan` of a LiDAR); a list or one comma-separated string. `None` stops everything the device carries (camera frames, which have no name, included) |
+| `direction` | `both` | `to_ecu` (what the bridge sends the ECU), `from_ecu` (what the ECU sends back), or `both` |
+| `duration` | `None` | scenario seconds the action runs |
+| `until` | `None` | a condition that ends the action |
+| `entity_name` | `Ego` | the HILS ego |
+
+The action runs from its trigger until `until` fires or `duration` has passed,
+whichever comes first; with neither, until the scenario ends. Several actions
+add up: a device stops what any running action names. While data is stopped,
+the periodic messages are still encoded and only their frames are dropped, so
+an E2E counter or a sequence number moves on as an ECU's would on a cut bus.
+Stopping an ECU's command messages (`from_ecu`) makes the run's command go
+stale after `hils.stale_s`, and the ego brakes or holds it (`hils.on_stale`).
+The bridge carries everything again when the scenario ends. A device the bridge
+does not have ends the run with an error; on any ego but `ego.entity=hils` the
+action only logs a warning, so one scenario serves HILS and simulation runs
+alike.
 
 ### Time
 

@@ -1,7 +1,7 @@
 """The bridge's end of the link with scenario runs (:mod:`.protocol`).
 
 :class:`RunnerLink` listens for runs and serves one at a time: what a run asks
-(``start``, ``end``) and its going away become events on a queue the bridge's
+(``start``, ``end``, ``disconnect``, ``reconnect``) and its going away become events on a queue the bridge's
 loop takes them from, so lifecycle steps run on the bridge's own thread, in
 order with its ticks; :meth:`RunnerLink.send` answers (from any thread: the
 ECUs' commands are forwarded from the threads receiving them).
@@ -21,7 +21,8 @@ __all__ = ["RunnerLink"]
 
 logger = logging.getLogger(__name__)
 
-#: An event for the bridge: ``("connect" | "start" | "end" | "gone", message)``.
+#: An event for the bridge: ``("connect" | "start" | "end" | "disconnect" |
+#: "reconnect" | "gone", message)``.
 Event = Tuple[str, Dict[str, Any]]
 
 #: How often the threads look at whether the link is closing, seconds.
@@ -117,7 +118,7 @@ class RunnerLink:
                 return
             for message in messages:
                 kind = str(message.get("type"))
-                if kind in ("start", "end"):
+                if kind in ("start", "end", "disconnect", "reconnect"):
                     self._events.put((kind, message))
                 else:
                     logger.warning("a run sent an unknown message %r", kind)

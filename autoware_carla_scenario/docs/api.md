@@ -126,6 +126,7 @@ tree internally:
 | `TickTiming` | Enum: `PRE_TICK` / `POST_TICK`. |
 | `TurnAction`, `TurnDirection` | Steer the ego through left / right turns via the CARLA TrafficManager route hints. |
 | `TurnIndicatorAction` | Light a vehicle's turn indicators (`TurnIndicatorState`: `OFF` / `LEFT` / `RIGHT` / `HAZARD`), its other lights as they are; they stay so until set again. |
+| `CommunicationLossAction` | Stop data between the HILS bridge and an ECU under test (`ego.entity=hils`) while the action runs (until `until` fires or `duration` passes, else to the scenario's end): `messages` by name (a CAN frame, a LiDAR's `scan`) or everything of a `device` (or of every device), `to_ecu` / `from_ecu` / `both`; no effect on any other ego. See [HILS](hils.md#communication-loss). |
 | `LaneChangeAction`, `LaneChangeDirection` | Trigger a TrafficManager lane change. |
 | `TrafficSignalAction`, `TrafficLightTarget` | Set traffic-light states (e.g. all RED, all GREEN, or a specific actor). |
 | `FollowTrajectoryAction` | Move a vehicle or pedestrian along a `Trajectory` (OpenSCENARIO `FollowTrajectoryAction`); `speed` paces the segments no time does; `held_vertex` names the vertex a waypoint condition is holding it at; `appear_on_start=True` brings a hidden entity in on its first vertex, moving at `speed`, when a run starts. See [Trajectories and Recorded-Scene Replay](trajectory.md). |

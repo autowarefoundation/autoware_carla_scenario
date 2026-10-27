@@ -1055,6 +1055,147 @@ def test_a_failing_startup_step_stops_the_bridge(world: _World, dbc: Path) -> No
         bridge.close()
 
 
+def test_a_communication_loss_stops_its_data_while_it_runs(
+    world: _World, dbc: Path
+) -> None:
+    """CommunicationLossAction through the run's entity: the bridge stops the
+    data named, each way, for as long as the action runs."""
+    from autoware_carla_scenario.actions import CommunicationLossAction
+    from autoware_carla_scenario.entity.hils_entity import HilsEgoConfig, HilsEgoEntity
+    from autoware_carla_scenario.entity.registry import (
+        register_entity,
+        unregister_entity,
+    )
+    from autoware_carla_scenario.hils.bridge import HilsBridge
+
+    url = _mem()
+    ecu = _Ecu(url, dbc)
+    bridge = HilsBridge(
+        parse_config(_hils_config(url, dbc)), carla_module=_carla(world)
+    )
+    thread = threading.Thread(target=bridge.run, daemon=True)
+    thread.start()
+    try:
+        assert _until(lambda: bridge.link_address is not None)
+        host, port = bridge.link_address  # type: ignore[misc]
+        entity = HilsEgoEntity(
+            HilsEgoConfig(host=host, port=port, ready_timeout_s=5.0, stale_s=0.2)
+        )
+        ego: _Ego = world.actors[0]
+        entity._vehicle = ego  # type: ignore[assignment]
+        register_entity("Ego", entity)
+        entity.on_scenario_start(world)  # type: ignore[arg-type]
+        tick = lambda: entity.on_tick(world, 0.0)  # type: ignore[arg-type]  # noqa: E731
+        assert _until(lambda: (tick(), entity.is_initialized)[1], world)
+        channel = bridge._channels["can"]
+
+        def speeds() -> int:
+            return sum(1 for m in ecu.received if m.name == "VehicleSpeed")
+
+        # VehicleSpeed to the ECU stops; the ECU's commands still arrive.
+        ecu.control = {"Throttle": 40.0, "Steer": 0.0}
+        assert _until(lambda: (tick(), entity.command is not None)[1], world)
+        speed_loss = CommunicationLossAction(
+            "can", messages=["VehicleSpeed"], direction="to_ecu", label="speed_loss"
+        )
+        speed_loss.tick(world, 1.0)  # type: ignore[arg-type]
+        assert speed_loss.cutting
+        assert _until(lambda: channel.disconnected("send"), world)
+        assert not channel.disconnected("recv")
+        time.sleep(0.1)
+        before = speeds()
+        for _ in range(5):
+            world.tick()
+            time.sleep(0.02)
+            tick()
+        assert speeds() == before
+        assert ego.controls[-1].throttle == pytest.approx(0.4)
+
+        # Everything from the ECU, for 0.5 s: its command goes stale and the
+        # ego brakes, then the commands come back.
+        command_loss = CommunicationLossAction(direction="from_ecu", duration=0.5)
+        command_loss.tick(world, 2.0)  # type: ignore[arg-type]
+        assert _until(lambda: channel.disconnected("recv"), world)
+        time.sleep(0.3)
+        tick()
+        assert ego.controls[-1].brake == 1.0
+        command_loss.tick(world, 2.3)  # type: ignore[arg-type]
+        assert command_loss.cutting
+        command_loss.tick(world, 2.5)  # type: ignore[arg-type]
+        assert not command_loss.cutting
+        assert _until(lambda: not channel.disconnected("recv"), world)
+        assert _until(
+            lambda: (tick(), ego.controls[-1].throttle == pytest.approx(0.4))[1],
+            world,
+        )
+        # The first one still runs, with no end: VehicleSpeed is still stopped.
+        assert channel.disconnected("send") and speeds() == before
+
+        # The scenario's end carries everything again.
+        entity.on_scenario_end(world)  # type: ignore[arg-type]
+        assert not bridge.active and not channel.disconnected()
+        speed_loss.close()
+        ecu.control = None
+    finally:
+        unregister_entity("Ego")
+        bridge.stop()
+        thread.join(timeout=5.0)
+        bridge.close()
+        ecu.close()
+
+
+def test_the_bridge_stops_what_its_cuts_name_together(world: _World, dbc: Path) -> None:
+    from autoware_carla_scenario.hils.bridge import HilsBridge
+
+    url = _mem()
+    ecu = _Ecu(url, dbc, answers=False)
+    document = _hils_config(url, dbc, runner={"listen": None})
+    document["lifecycle"] = {}
+    bridge = HilsBridge(parse_config(document), carla_module=_carla(world))
+    bridge.startup()
+    bridge.connect()
+    try:
+        with pytest.raises(ValueError, match="no scenario runs"):
+            bridge.disconnect("x")
+        world.tick()
+        assert bridge.step(0.5) and bridge.active
+        with pytest.raises(ValueError, match="no device 'nope'; the devices are can"):
+            bridge.disconnect("x", "nope")
+        with pytest.raises(ValueError, match="direction must be one of"):
+            bridge.disconnect("x", direction="send")
+        channel = bridge._channels["can"]
+
+        def arrives() -> set[str]:
+            """What of VehicleSpeed (periodic) and Wake (sent now) reaches the ECU."""
+            ecu.received.clear()
+            channel.send("Wake", {"On": 1})
+            for _ in range(3):
+                world.tick()
+                bridge.step(0.5)
+            time.sleep(0.1)
+            return {m.name for m in ecu.received}
+
+        assert arrives() == {"VehicleSpeed", "Wake"}
+        bridge.disconnect("a", "can", ["VehicleSpeed"], "to_ecu")
+        bridge.disconnect("b", None, ["Wake"], "to_ecu")
+        assert arrives() == set()
+        bridge.reconnect("a")
+        assert arrives() == {"VehicleSpeed"}
+        bridge.disconnect("c", "can")  # everything, both ways
+        assert arrives() == set() and channel.disconnected("recv")
+        bridge.reconnect("c")
+        bridge.reconnect("unknown")
+        assert arrives() == {"VehicleSpeed"} and not channel.disconnected("recv")
+        # The scenario's end carries everything again.
+        world.actors[0].is_alive = False
+        world.tick()
+        bridge.step(0.5)
+        assert not bridge.active and not channel.disconnected()
+    finally:
+        bridge.close()
+        ecu.close()
+
+
 # -- the run's entity, against a scripted bridge -----------------------------------
 
 
@@ -1181,3 +1322,69 @@ def test_the_runner_builds_the_hils_entity() -> None:
         build_ego_entity(
             OmegaConf.create({"ego": {"entity": "hils"}, "hils": {"prot": 1}})
         )
+
+
+def test_the_communication_loss_action_asks_the_bridge() -> None:
+    from autoware_carla_scenario.actions import CommunicationLossAction
+    from autoware_carla_scenario.conditions import ElapsedTimeCondition
+    from autoware_carla_scenario.entity.registry import (
+        register_entity,
+        unregister_entity,
+    )
+
+    with pytest.raises(ValueError, match="direction must be one of"):
+        CommunicationLossAction(direction="send")
+    with pytest.raises(ValueError, match="duration must be positive"):
+        CommunicationLossAction(duration=0.0)
+    action = CommunicationLossAction(
+        "can",
+        messages="VehicleSpeed, scan,VehicleSpeed",
+        direction="from_ecu",
+        until=ElapsedTimeCondition(5.0, label="later"),
+    )
+    assert (action.device, action.messages, action.direction, action.duration) == (
+        "can",
+        ("VehicleSpeed", "scan"),
+        "from_ecu",
+        None,
+    )
+    assert CommunicationLossAction("", messages=" ").messages is None
+    assert CommunicationLossAction(messages=["scan"]).messages == ("scan",)
+
+    # Another ego: nothing to stop, and nothing breaks.
+    CommunicationLossAction().tick(None, 0.0)  # type: ignore[arg-type]
+
+    bridge = _ScriptedBridge([{"type": "ready"}])
+    entity = _entity(bridge.port)
+    register_entity("Ego", entity)
+    try:
+        action.tick(None, 1.0)  # type: ignore[arg-type]
+        assert action.cutting
+        everything = CommunicationLossAction()
+        everything.tick(None, 1.0)  # type: ignore[arg-type]
+        assert _until(lambda: len(bridge.received) == 3)
+        cut, every = bridge.received[1:]
+        assert {k: v for k, v in cut.items() if k != "id"} == {
+            "type": "disconnect",
+            "device": "can",
+            "messages": ["VehicleSpeed", "scan"],
+            "direction": "from_ecu",
+        }
+        assert every["device"] is None and every["messages"] is None
+        assert cut["id"] != every["id"]
+        # Running until its end condition fires: then the data comes back.
+        action.tick(None, 3.0)  # type: ignore[arg-type]
+        assert action.cutting
+        action.tick(None, 5.0)  # type: ignore[arg-type]
+        assert not action.cutting
+        assert _until(lambda: len(bridge.received) == 4)
+        assert bridge.received[3] == {"type": "reconnect", "id": cut["id"]}
+        # The bridge refusing a cut ends the run.
+        bridge.send({"type": "error", "message": "disconnect: no device 'can'"})
+        assert _ticked(entity, lambda: entity.termination_requested)
+        assert "no device 'can'" in entity.termination_reason
+        assert not entity.disconnect("x", "can")
+        everything.close()
+        assert not everything.cutting
+    finally:
+        unregister_entity("Ego")

@@ -44,7 +44,20 @@ import queue
 import threading
 import time
 from types import ModuleType
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Mapping, Optional, Tuple
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Callable,
+    Dict,
+    FrozenSet,
+    List,
+    Literal,
+    Mapping,
+    NamedTuple,
+    Optional,
+    Sequence,
+    Tuple,
+)
 
 import numpy as np
 
@@ -94,6 +107,17 @@ _WALL_QUEUE = 2
 #: A failing send is logged the first time and then once in this many.
 _LOG_EVERY = 100
 
+#: A ``disconnect``'s direction (:data:`~.protocol.LINK_DIRECTIONS`) as the
+#: device channel's: the bridge sends the ECU its inputs and receives its output.
+_CHANNEL_DIRECTIONS: Dict[str, Literal["send", "recv", "both"]] = {
+    "to_ecu": "send",
+    "from_ecu": "recv",
+    "both": "both",
+}
+
+#: A channel's two sides, which cuts stop separately.
+_SIDES: Tuple[Literal["send", "recv"], ...] = ("send", "recv")
+
 OpenChannel = Callable[..., "hilspy.Channel"]
 
 
@@ -132,6 +156,17 @@ def _matches(fields: Mapping[str, Any], expected: Mapping[str, Any]) -> bool:
         elif got != want:
             return False
     return True
+
+
+class _Cut(NamedTuple):
+    """Data a scenario stops (:meth:`HilsBridge.disconnect`)."""
+
+    #: The device, or ``None`` for every device.
+    device: Optional[str]
+    #: The names of the messages, or ``None`` for everything.
+    messages: Optional[FrozenSet[str]]
+    #: The channel's direction: ``send``, ``recv`` or ``both``.
+    direction: str
 
 
 class _Failures:
@@ -467,6 +502,8 @@ class HilsBridge:
         self._forwarding = False
         self._command: Dict[str, float] = {}
         self._command_lock = threading.Lock()
+        #: What the scenario stops (:meth:`disconnect`), by cut id.
+        self._cuts: Dict[str, _Cut] = {}
         self._stop = threading.Event()
 
     # -- set-up and shut-down ------------------------------------------------
@@ -678,9 +715,81 @@ class HilsBridge:
             sensor_device.detach()
         with self._command_lock:
             self._command = {}
+        self._reconnect_all()
         self._ego = None
         self._active = False
         logger.info("scenario ended")
+
+    def disconnect(
+        self,
+        cut_id: str,
+        device: Optional[str] = None,
+        messages: Optional[Sequence[str]] = None,
+        direction: str = "both",
+    ) -> None:
+        """Stop data, as a break in the communication path would, until
+        :meth:`reconnect` with *cut_id* or the scenario's end: *messages* (by
+        name; everything when ``None``) of *device* (every device when
+        ``None``), in *direction* (:data:`~.protocol.LINK_DIRECTIONS`).
+
+        Cuts add up: a device stops what any of its cuts stops, and a cut
+        given again under its *cut_id* is replaced.
+
+        Raises:
+            ValueError: No scenario runs, or no such device or direction.
+        """
+        if not self._active:
+            raise ValueError("no scenario runs")
+        if direction not in _CHANNEL_DIRECTIONS:
+            raise ValueError(
+                f"direction must be one of {', '.join(_CHANNEL_DIRECTIONS)}, "
+                f"got {direction!r}"
+            )
+        if device is not None and device not in self._channels:
+            raise ValueError(
+                f"no device {device!r}; the devices are "
+                f"{', '.join(sorted(self._channels)) or 'none'}"
+            )
+        names = None if messages is None else frozenset(str(m) for m in messages)
+        self._cuts[cut_id] = _Cut(device, names, _CHANNEL_DIRECTIONS[direction])
+        logger.warning(
+            "%s: %s stopped (%s)",
+            device or "every device",
+            "every message" if names is None else ", ".join(sorted(names)),
+            direction,
+        )
+        self._apply_cuts()
+
+    def reconnect(self, cut_id: str) -> None:
+        """Carry what the cut *cut_id* stopped again (nothing if there is none)."""
+        if self._cuts.pop(cut_id, None) is not None:
+            logger.info("cut %r restored", cut_id)
+            self._apply_cuts()
+
+    def _apply_cuts(self) -> None:
+        """Set every device's channel to stop what its cuts stop together."""
+        for name, channel in self._channels.items():
+            for side in _SIDES:
+                cuts = [
+                    c
+                    for c in self._cuts.values()
+                    if c.device in (None, name) and c.direction in (side, "both")
+                ]
+                if not cuts:
+                    if channel.disconnected(side):
+                        channel.reconnect(direction=side)
+                elif any(c.messages is None for c in cuts):
+                    channel.disconnect(direction=side)
+                else:
+                    stopped = sorted(set().union(*(c.messages or () for c in cuts)))
+                    channel.disconnect(direction=side, messages=stopped)
+
+    def _reconnect_all(self) -> None:
+        """Carry everything again."""
+        if self._cuts:
+            self._cuts.clear()
+            logger.info("every cut restored")
+        self._apply_cuts()
 
     def _on_input(self, spec: DeviceSpec, message: Any) -> None:
         """A receiving thread's message: merge its command fields, forward them."""
@@ -722,6 +831,24 @@ class HilsBridge:
             if self._active:
                 self._finish()
             link.send({"type": "ended"})
+            return
+        if kind == "disconnect":
+            device = message.get("device")
+            messages = message.get("messages")
+            try:
+                if messages is not None and not isinstance(messages, list):
+                    raise ValueError("messages must be a list of names")
+                self.disconnect(
+                    str(message.get("id", "")),
+                    None if device is None else str(device),
+                    messages,
+                    str(message.get("direction", "both")),
+                )
+            except ValueError as exc:
+                link.send({"type": "error", "message": f"disconnect: {exc}"})
+            return
+        if kind == "reconnect":
+            self.reconnect(str(message.get("id", "")))
             return
         # start
         if self._active:

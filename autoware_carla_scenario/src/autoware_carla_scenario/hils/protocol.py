@@ -11,6 +11,14 @@ runner -> bridge
                           ``scenario_start`` steps, then answers ``ready``.
 ``end``                   the scenario ends: the bridge runs its
                           ``scenario_end`` steps, then answers ``ended``.
+``disconnect``            stop data (fault injection): ``id`` (names the
+                          cut), ``device`` (its name; ``null`` for every
+                          device), ``messages`` (names; ``null`` for
+                          everything) and ``direction`` (one of
+                          :data:`LINK_DIRECTIONS`), until ``reconnect`` with
+                          the ``id`` or the scenario's end.  The bridge
+                          answers ``error`` for a device it does not have.
+``reconnect``             ``id``: carry what that cut stopped again.
 bridge -> runner
 ``hello``                 on connecting: ``protocol`` (:data:`PROTOCOL_VERSION`).
 ``ready``                 the ECUs are initialized; the scenario may start.
@@ -36,6 +44,7 @@ __all__ = [
     "COMMAND_FIELDS",
     "COMMAND_MODES",
     "DEFAULT_PORT",
+    "LINK_DIRECTIONS",
     "PROTOCOL_VERSION",
     "LineReader",
     "encode",
@@ -74,6 +83,11 @@ COMMAND_FIELDS: Dict[str, Dict[str, str]] = {
         "jerk": "m/s^3",
     },
 }
+
+
+#: Which way of a device's link a ``disconnect`` stops: what the simulation
+#: sends the ECU, what the ECU sends back, or both.
+LINK_DIRECTIONS: Tuple[str, ...] = ("to_ecu", "from_ecu", "both")
 
 
 def encode(message: Mapping[str, Any]) -> bytes:
