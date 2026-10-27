@@ -54,6 +54,7 @@ from ..trajectory.model import (
     RouteRoadsidePose,
     TrajectoryVertex,
 )
+from ..route.active import lane_place
 from ..trajectory.resolve import resolve_position, road_height
 from .base import BaseAction, TickTiming
 
@@ -432,6 +433,14 @@ class SpawnAction(BaseAction):
         due_yaw = 0.0
         if yaw0 is not None:
             due_yaw = float(yaw0)
+        else:
+            # No heading of its own (a route pose without a yaw): along the
+            # lane it is on, where it is on one.
+            along = lane_place(position)
+            if along is not None:
+                _lx, _ly, _lz, lane_yaw = resolve_position(along, reference.pose)
+                if lane_yaw is not None:
+                    due_yaw = float(lane_yaw)
         due = (x0, y0, due_z, due_yaw)
         if self._shift_max <= 0.0 and not self._entity_name:
             return due  # a prop not asked to look for a clear place
@@ -442,7 +451,7 @@ class SpawnAction(BaseAction):
         if blocker < 0:
             self._claim(world, actor_id, due, half_length, half_width)
             return due
-        on_lane = _lane_place(position)
+        on_lane = lane_place(position)
         if on_lane is not None:
             lane: Lanelet2Pose = on_lane
             shift = SHIFT_STEP_M
@@ -499,45 +508,6 @@ class SpawnAction(BaseAction):
         half_width: float,
     ) -> None:
         _hold(world, actor_id, place[0], place[1], place[3], half_length, half_width)
-
-
-def _lane_place(
-    position: Union[
-        CarlaWorldPose,
-        Lanelet2Pose,
-        OpenDrivePose,
-        MapPose,
-        RelativeLanePose,
-        RouteLanePose,
-        RouteOppositePose,
-        RouteCrossingPose,
-        RouteCrosswalkPose,
-        RouteRoadsidePose,
-    ],
-) -> Optional[Lanelet2Pose]:
-    """The place on a lane a shift runs along from: a Lanelet2 place as it
-    is, a route pose on a lane (lane, opposite, crossing; one counted from an
-    anchor) as the scenario's route places it; ``None`` for any other."""
-    if isinstance(position, Lanelet2Pose):
-        given: Lanelet2Pose = position
-        return given
-    if TYPE_CHECKING:
-        return None  # the route's frame is not compiled (docs/typecheck.md)
-    if not isinstance(position, (RouteLanePose, RouteOppositePose, RouteCrossingPose)):
-        return None
-    from ..route.active import scenario_route_frame  # noqa: PLC0415
-    from ..route.positions import resolve_route_pose  # noqa: PLC0415
-
-    frame = scenario_route_frame()
-    if frame is None:
-        return None
-    try:
-        # A pose counted from the ego (no anchor) has no ego position here:
-        # it is not shifted.
-        placed = resolve_route_pose(position, frame)
-    except ValueError:
-        return None
-    return placed if isinstance(placed, Lanelet2Pose) else None
 
 
 def _along_lane(
