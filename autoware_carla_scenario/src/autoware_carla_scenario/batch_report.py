@@ -10,44 +10,78 @@ process reports itself (``examples/run.py``).  A result is anything with a
 from __future__ import annotations
 
 import json
-from collections.abc import Collection, Mapping, Sequence
 from pathlib import Path
-from typing import Any, Protocol
+
+# typing's, not collections.abc's: Codon has no collections.abc (the library
+# check compiles this module, docs/typecheck.md).
+from typing import Any, Collection, Mapping, Protocol, Sequence  # noqa: UP035
 
 __all__ = ["print_summary", "write_batch_result_json"]
 
 
+# The Protocols' bodies are typed stubs, not `...`, for the library check:
+# Codon types a `...` body as returning None.  Nothing instantiates or calls
+# them.
 class _Status(Protocol):
     @property
-    def label(self) -> str: ...
+    def label(self) -> str:
+        return ""
 
     @property
-    def satisfied(self) -> bool: ...
+    def satisfied(self) -> bool:
+        return False
 
     @property
-    def message(self) -> str: ...
+    def message(self) -> str:
+        return ""
 
 
 class _Result(Protocol):
     @property
-    def passed(self) -> bool: ...
+    def passed(self) -> bool:
+        return False
 
     @property
-    def message(self) -> str: ...
+    def message(self) -> str:
+        return ""
 
     @property
-    def elapsed_seconds(self) -> float: ...
+    def elapsed_seconds(self) -> float:
+        return 0.0
 
     @property
-    def condition_statuses(self) -> Sequence[_Status]: ...
+    def condition_statuses(self) -> Sequence[_Status]:
+        return list[_Status]()
 
-    def to_dict(self) -> dict[str, Any]: ...
+    @property
+    def rerun_recording(self) -> str | None:
+        """Optional: a result without it has no recording (see _recording)."""
+        return None
+
+    def to_dict(self) -> dict[str, Any]:
+        return dict[str, Any]()
 
 
 def _recording(result: _Result) -> str | None:
     """The Rerun recording of *result*'s run, if one was made."""
-    recording = getattr(result, "rerun_recording", None)
+    try:
+        recording = result.rerun_recording
+    except AttributeError:
+        return None
     return None if recording is None else str(recording)
+
+
+def _member(member_json: str) -> str:
+    """A member of an entry, laid out at an entry's depth.
+
+    *member_json* is ``json.dumps({key: value}, indent=2,
+    ensure_ascii=False)``, a dict of the one member (made by the caller:
+    the library check cannot call a function with a value of any type).  The
+    result is what ``json.dumps(entries, indent=2, ensure_ascii=False)``
+    gives for the member: its lines between the braces, indented one level
+    further.
+    """
+    return "\n".join("  " + line for line in member_json.split("\n")[1:-1])
 
 
 def write_batch_result_json(
@@ -66,24 +100,65 @@ def write_batch_result_json(
     ``"error": true``.  A case in *rerun_errors* (index -> why) has a Rerun
     recording (``rerun_recording``) that failed to convert, and its entry
     says why in ``rerun_error``.
+
+    The file is what ``json.dumps(entries, indent=2, ensure_ascii=False)``
+    gives, laid out as text a member at a time, since an entry's values (a
+    condition's details) are of any type.
     """
-    rerun_errors = rerun_errors or {}
+    failed_recordings: dict[int, str] = {}
+    if rerun_errors is not None:
+        failed_recordings = dict(rerun_errors)
     output_dir.mkdir(parents=True, exist_ok=True)
     json_path = output_dir / "batch_results.json"
-    json_results = [
-        {
-            "scenario": name,
-            **({"overrides": overrides[i]} if overrides is not None else {}),
-            **result.to_dict(),
-            **({"error": True} if i in errored else {}),
-            **({"rerun_error": rerun_errors[i]} if i in rerun_errors else {}),
+    entries: list[str] = []
+    for i, (name, result) in enumerate(zip(names, results)):
+        # The entry was the dict merge {"scenario": name, "overrides": ...,
+        # **result.to_dict(), "error": True, "rerun_error": ...}.  A key of
+        # the result's dict that the entry also sets is written once, as the
+        # merge kept it: in its first place, with its last value.
+        own: dict[str, str] = {
+            "scenario": _member(
+                json.dumps({"scenario": name}, indent=2, ensure_ascii=False)
+            )
         }
-        for i, (name, result) in enumerate(zip(names, results))
-    ]
-    json_path.write_text(
-        json.dumps(json_results, indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
+        if overrides is not None:
+            own["overrides"] = _member(
+                json.dumps({"overrides": overrides[i]}, indent=2, ensure_ascii=False)
+            )
+        if i in errored:
+            own["error"] = _member(
+                json.dumps({"error": True}, indent=2, ensure_ascii=False)
+            )
+        if i in failed_recordings:
+            own["rerun_error"] = _member(
+                json.dumps(
+                    {"rerun_error": failed_recordings[i]}, indent=2, ensure_ascii=False
+                )
+            )
+        data = result.to_dict()
+        members: list[str] = []
+        for key in ("scenario", "overrides"):
+            if key in own and key in data:
+                members.append(
+                    _member(json.dumps({key: data[key]}, indent=2, ensure_ascii=False))
+                )
+            elif key in own:
+                members.append(own[key])
+        for key, value in data.items():
+            if key in ("scenario", "overrides") and key in own:
+                continue
+            if key in ("error", "rerun_error") and key in own:
+                members.append(own[key])
+            else:
+                members.append(
+                    _member(json.dumps({key: value}, indent=2, ensure_ascii=False))
+                )
+        for key in ("error", "rerun_error"):
+            if key in own and key not in data:
+                members.append(own[key])
+        entries.append("  {\n" + ",\n".join(members) + "\n  }")
+    text = "[\n" + ",\n".join(entries) + "\n]" if entries else "[]"
+    json_path.write_text(text, encoding="utf-8")
     return json_path
 
 
@@ -105,7 +180,9 @@ def print_summary(
     (*rerun_errors*, index -> why).  They do not change whether the batch
     passed.
     """
-    rerun_errors = rerun_errors or {}
+    failed_recordings: dict[int, str] = {}
+    if rerun_errors is not None:
+        failed_recordings = dict(rerun_errors)
     sep = "=" * 60
     thin = "-" * 60
     print(f"\n{sep}")  # noqa: T201
@@ -132,19 +209,19 @@ def print_summary(
         output_dir,
         overrides,
         errored=errored,
-        rerun_errors=rerun_errors,
+        rerun_errors=failed_recordings,
     )
     print(thin)  # noqa: T201
     print(f"Result JSON: {json_path}")  # noqa: T201
     recorded = [i for i, result in enumerate(results) if _recording(result) is not None]
     if recorded:
-        written = sum(1 for i in recorded if i not in rerun_errors)
+        written = sum(1 for i in recorded if i not in failed_recordings)
         print(  # noqa: T201
             f"Rerun recordings: {written}/{len(recorded)} written "
             "(open one with: rerun <file.rrd>)"
         )
-        for i in sorted(rerun_errors):
-            print(f"  [FAILED] {names[i]}: {rerun_errors[i]}")  # noqa: T201
+        for i in sorted(failed_recordings):
+            print(f"  [FAILED] {names[i]}: {failed_recordings[i]}")  # noqa: T201
 
     passed = sum(1 for r in results if r.passed)
     total = len(results)
