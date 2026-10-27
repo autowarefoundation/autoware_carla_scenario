@@ -1,10 +1,11 @@
 """The bridge's end of the link with scenario runs (:mod:`.protocol`).
 
 :class:`RunnerLink` listens for runs and serves one at a time: what a run asks
-(``start``, ``end``, ``disconnect``, ``reconnect``) and its going away become events on a queue the bridge's
-loop takes them from, so lifecycle steps run on the bridge's own thread, in
-order with its ticks; :meth:`RunnerLink.send` answers (from any thread: the
-ECUs' commands are forwarded from the threads receiving them).
+(``start``, ``end``, ``disconnect``, ``reconnect``) and its going away become
+events on a queue the bridge's loop takes them from, so lifecycle steps run on
+the bridge's own thread, in order with its ticks; :meth:`RunnerLink.send`
+answers (from any thread: the ECUs' commands are forwarded from the threads
+receiving them).
 """
 
 from __future__ import annotations

@@ -410,7 +410,8 @@ the periodic messages are still encoded and only their frames are dropped, so
 an E2E counter or a sequence number moves on as an ECU's would on a cut bus.
 Stopping an ECU's command messages (`from_ecu`) makes the run's command go
 stale after `hils.stale_s`, and the ego brakes or holds it (`hils.on_stale`).
-The bridge carries everything again when the scenario ends. A device the bridge
+The bridge carries everything again when the scenario ends, before its
+`scenario_end` steps, so they reach the ECUs. A device the bridge
 does not have ends the run with an error; on any ego but `ego.entity=hils` the
 action only logs a warning, so one scenario serves HILS and simulation runs
 alike.

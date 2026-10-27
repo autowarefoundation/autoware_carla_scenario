@@ -1150,7 +1150,9 @@ def test_the_bridge_stops_what_its_cuts_name_together(world: _World, dbc: Path) 
     url = _mem()
     ecu = _Ecu(url, dbc, answers=False)
     document = _hils_config(url, dbc, runner={"listen": None})
-    document["lifecycle"] = {}
+    document["lifecycle"] = {
+        "scenario_end": [{"send": "can", "name": "Wake", "fields": {"On": 0}}]
+    }
     bridge = HilsBridge(parse_config(document), carla_module=_carla(world))
     bridge.startup()
     bridge.connect()
@@ -1186,11 +1188,19 @@ def test_the_bridge_stops_what_its_cuts_name_together(world: _World, dbc: Path) 
         bridge.reconnect("c")
         bridge.reconnect("unknown")
         assert arrives() == {"VehicleSpeed"} and not channel.disconnected("recv")
-        # The scenario's end carries everything again.
+        # A cut naming no message is refused, and leaves the others as they are.
+        with pytest.raises(ValueError, match="messages names none"):
+            bridge.disconnect("e", "can", [])
+        assert set(bridge._cuts) == {"b"}
+        # The scenario's end carries everything again, before its steps: the
+        # ECU hears Wake(On=0) although everything was stopped.
+        bridge.disconnect("d")
+        ecu.received.clear()
         world.actors[0].is_alive = False
         world.tick()
         bridge.step(0.5)
         assert not bridge.active and not channel.disconnected()
+        assert _until(lambda: ("Wake", {"On": 0}) in ecu.names())
     finally:
         bridge.close()
         ecu.close()
@@ -1350,6 +1360,9 @@ def test_the_communication_loss_action_asks_the_bridge() -> None:
     )
     assert CommunicationLossAction("", messages=" ").messages is None
     assert CommunicationLossAction(messages=["scan"]).messages == ("scan",)
+    # Registered for initialization, it runs on the tick loop: the bridge is
+    # reached only once the ego has started.
+    assert action.needs_tick_loop
 
     # Another ego: nothing to stop, and nothing breaks.
     CommunicationLossAction().tick(None, 0.0)  # type: ignore[arg-type]

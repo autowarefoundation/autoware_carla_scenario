@@ -150,6 +150,12 @@ class CommunicationLossAction(BaseAction):
         return self._direction
 
     @property
+    def needs_tick_loop(self) -> bool:
+        """Always: the bridge is reached only once the ego has started, after
+        the initialization phase, and the loss lasts while the action runs."""
+        return True
+
+    @property
     def cutting(self) -> bool:
         """Whether the bridge has been asked to stop the data and not yet to
         carry it again."""

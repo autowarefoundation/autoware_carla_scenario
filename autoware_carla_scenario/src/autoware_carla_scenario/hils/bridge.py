@@ -705,9 +705,14 @@ class HilsBridge:
         self._run_steps("scenario_start", strict=True)
 
     def _finish(self) -> None:
-        """End the scenario: the ``scenario_end`` steps, then stop the periodic
-        messages and remove the sensors."""
+        """End the scenario: carry what its cuts stopped again, so that the
+        ``scenario_end`` steps reach the ECUs (and hear back from them), run
+        those steps, then stop the periodic messages and remove the sensors."""
         self._forwarding = False
+        try:
+            self._reconnect_all()
+        except Exception:  # noqa: BLE001 - the scenario must still end
+            logger.exception("failed to restore the cut data")
         self._run_steps("scenario_end", strict=False)
         for message_device in self._messages:
             message_device.stop()
@@ -715,7 +720,6 @@ class HilsBridge:
             sensor_device.detach()
         with self._command_lock:
             self._command = {}
-        self._reconnect_all()
         self._ego = None
         self._active = False
         logger.info("scenario ended")
@@ -736,7 +740,9 @@ class HilsBridge:
         given again under its *cut_id* is replaced.
 
         Raises:
-            ValueError: No scenario runs, or no such device or direction.
+            ValueError: No scenario runs, no such device or direction, an
+                empty list of messages, or the device's channel refused the
+                cut (which is then not made).
         """
         if not self._active:
             raise ValueError("no scenario runs")
@@ -751,14 +757,26 @@ class HilsBridge:
                 f"{', '.join(sorted(self._channels)) or 'none'}"
             )
         names = None if messages is None else frozenset(str(m) for m in messages)
+        if names is not None and not names:
+            raise ValueError("messages names none; null stops everything")
+        previous = self._cuts.get(cut_id)
         self._cuts[cut_id] = _Cut(device, names, _CHANNEL_DIRECTIONS[direction])
+        try:
+            self._apply_cuts()
+        except self._hilspy.Error as exc:
+            # Undone, so the cut does not fail every later change of the cuts.
+            if previous is None:
+                del self._cuts[cut_id]
+            else:
+                self._cuts[cut_id] = previous
+            self._apply_cuts()
+            raise ValueError(str(exc)) from exc
         logger.warning(
             "%s: %s stopped (%s)",
             device or "every device",
             "every message" if names is None else ", ".join(sorted(names)),
             direction,
         )
-        self._apply_cuts()
 
     def reconnect(self, cut_id: str) -> None:
         """Carry what the cut *cut_id* stopped again (nothing if there is none)."""
