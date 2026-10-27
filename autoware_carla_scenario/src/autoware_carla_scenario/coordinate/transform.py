@@ -297,7 +297,10 @@ def to_lanelet2(pose: CarlaWorldPose) -> Lanelet2Pose: ...
 def to_lanelet2(pose: Union[OpenDrivePose, CarlaWorldPose]) -> Lanelet2Pose:
     """Convert an OpenDrivePose or CarlaWorldPose to a Lanelet2Pose.
 
-    An :class:`OpenDrivePose` goes through CARLA world coordinates.
+    An :class:`OpenDrivePose` goes through CARLA world coordinates.  The pose
+    is read on the nearest lanelet: ``s`` is the arc length to the foot of the
+    perpendicular on its centerline (not the nearest centerline vertex), and
+    ``t`` and ``heading`` are measured against the segment that foot lies on.
     """
     if isinstance(pose, CarlaWorldPose):
         return _carla_to_lanelet2(pose)
@@ -816,29 +819,68 @@ def _signed_perp_distance(
 def _project_to_centerline(
     points: list[tuple[float, float, float]], x: float, y: float
 ) -> tuple[float, float, float]:
-    """Project (x, y) onto a 3D polyline centerline.
+    """Project (x, y) onto a 3D polyline centerline, in plan view.
+
+    The point is projected onto every segment at once (the foot of the
+    perpendicular, clamped to the segment) and the nearest foot wins, so ``s``
+    is exact along the centerline rather than snapped to a vertex.
+
+    A foot that falls exactly on an interior vertex belongs to the segment
+    that *starts* there -- the same segment :func:`_interpolate_at_s` and
+    :func:`_heading_at_s` read at that arc length -- so a point projecting onto
+    a vertex reads the same ``s``, ``t`` and heading as it did when this took
+    the nearest vertex.  Zero-length segments (repeated points) are skipped;
+    a centerline of one distinct point reads ``s = 0`` and heading 0.
 
     Returns
     -------
     (s, t, heading)
-        s       – arc length to nearest point
-        t       – signed lateral offset (positive=left)
-        heading – centerline tangent direction at nearest point (radians)
+        s       – arc length to the foot of the perpendicular, in
+                  [0, centerline length]
+        t       – signed lateral offset from that segment's line
+                  (positive=left); past either end, from the end segment's
+                  line extended
+        heading – direction of that segment (radians)
     """
-    xs = np.array([p[0] for p in points])
-    ys = np.array([p[1] for p in points])
+    xy = np.array([(p[0], p[1]) for p in points], dtype=np.float64)
+    point = np.array([x, y], dtype=np.float64)
 
-    arc = _compute_arc_lengths_2d(np.column_stack([xs, ys]))
-    dists = np.sqrt((xs - x) ** 2 + (ys - y) ** 2)
+    starts = xy[:-1]
+    deltas = np.diff(xy, axis=0)
+    lengths = np.linalg.norm(deltas, axis=1)
+    arc_starts = np.concatenate(([0.0], np.cumsum(lengths)))[:-1]
+    keep = lengths > 0.0
+    if not keep.any():
+        # One distinct point: no direction to measure along.
+        return 0.0, float(point[1] - xy[0, 1]), 0.0
+    starts, deltas, lengths, arc_starts = (
+        starts[keep],
+        deltas[keep],
+        lengths[keep],
+        arc_starts[keep],
+    )
+
+    offsets = point - starts
+    # Fraction of each segment at the foot of the perpendicular, clamped.
+    # (Row-wise dot products written out: Codon's numpy has no einsum.)
+    dot = offsets[:, 0] * deltas[:, 0] + offsets[:, 1] * deltas[:, 1]
+    u = np.clip(dot / lengths**2, 0.0, 1.0)
+    gap_x = offsets[:, 0] - u * deltas[:, 0]
+    gap_y = offsets[:, 1] - u * deltas[:, 1]
+    dists = gap_x * gap_x + gap_y * gap_y
     idx = int(np.argmin(dists))
-    s = float(arc[idx])
+    if u[idx] == 1.0 and idx + 1 < len(u):
+        # The foot is the end vertex, which the next segment starts at: it is
+        # at least as near there, and a vertex belongs to the segment it starts.
+        idx += 1
 
-    seg_idx = max(0, min(idx, len(points) - 2))
-    heading = math.atan2(ys[seg_idx + 1] - ys[seg_idx], xs[seg_idx + 1] - xs[seg_idx])
-
-    t = _signed_perp_distance(x, y, np.column_stack([xs, ys]), idx, heading)
-
-    return s, t, heading
+    dx, dy = float(deltas[idx, 0]), float(deltas[idx, 1])
+    length = float(lengths[idx])
+    s = float(arc_starts[idx] + u[idx] * length)
+    # 2D cross product of the unit direction with the offset: positive = left.
+    ox, oy = float(offsets[idx, 0]), float(offsets[idx, 1])
+    t = (dx * oy - dy * ox) / length
+    return s, t, math.atan2(dy, dx)
 
 
 def _normalize_angle(angle: float) -> float:
