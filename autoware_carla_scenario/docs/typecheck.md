@@ -1124,7 +1124,11 @@ scenario has to do itself:
 
     Codon compiles some of these as written (a `None` first binding read
     only after an `is None` test), so a local named after a crash is a
-    candidate, not a verdict: the crash may have another cause.
+    candidate, not a verdict: the crash may have another cause. A Codon
+    killed with SIGKILL (exit status -9: the out-of-memory killer, as when
+    two library checks of about 8 GB each run at once) is no crash of the
+    code: the check says so, names no local, and should be run again with
+    more memory free.
 - **Write the element types of a class attribute** (#482): `xs: list[int] =
   field(default_factory=list)`, `d: dict[str, float]`, `ids: set[int]`,
   `xy: tuple[float, float] = (0.0, 0.0)` or `tuple[X, ...]`. Codon types a

@@ -11061,6 +11061,42 @@ def test_a_local_first_bound_to_none_and_rebound_names_its_annotation(
         assert hinted[0].line == _line_of(path, "best = x")
 
 
+def test_codon_killed_by_the_oom_killer_blames_no_code(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Codon killed with SIGKILL (the out-of-memory killer, two Codon builds at
+    # once) printed nothing wrong: the check says so, and neither reruns the
+    # compile nor names a local first bound to None (#584) as the cause.
+    from autoware_carla_scenario.typecheck import check
+
+    monkeypatch.setenv(check.CACHE_DIR_ENV, "")  # this process's verdicts only
+    monkeypatch.setattr(check, "_CACHE", {})
+    run = subprocess.run
+    builds: list[object] = []
+
+    def killed(args: Any, *rest: Any, **kwargs: Any) -> Any:
+        if len(args) > 1 and args[1] == "build":
+            builds.append(args)
+            warning = "m.codon:158: warning: function '__add__' marked with unnecessary @overload\n"
+            return subprocess.CompletedProcess(args, -9, "", warning)
+        return run(args, *rest, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", killed)
+    extra = _RUNNING_MIN.format(
+        annotation="", result="bool", tail="    return best is not None\n"
+    )
+    scenario, config, _ = _write_case(tmp_path, "pass\n", extra=extra)
+    checked = typecheck_scenario(scenario, config)
+    assert not checked.ok
+    assert checked.crashed
+    assert len(builds) == 1
+    assert len(checked.diagnostics) == 1, checked.format()
+    message = checked.diagnostics[0].message
+    assert "killed (SIGKILL)" in message
+    assert "out-of-memory killer" in message
+    assert "annotate it" not in checked.format()
+
+
 # ---------------------------------------------------------------------------
 # Identity == and hash of a plain class (#596)
 # ---------------------------------------------------------------------------
@@ -11342,7 +11378,9 @@ def test_literal_arguments_the_framework_accepts_pass(tmp_path: Path) -> None:
                 TrajectoryVertex(RouteRoadsidePose(ds=3.0, side="right")),
             ],
         )
-        self.register_pre_tick(FollowTrajectoryAction("npc", traj))
+        self.register_pre_tick(
+            RoutingAction("npc", trajectory=traj, mode=RoutingMode.FOLLOW)
+        )
         """
     )
     scenario, config, _ = _write_case(tmp_path, setup, header=_LITERAL_HEADER)

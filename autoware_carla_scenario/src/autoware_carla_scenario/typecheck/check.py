@@ -44,6 +44,7 @@ import logging
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -179,6 +180,16 @@ _LLVM_ERROR = "LLVM: error:"
 #: Codon 0.19 aborting with no location, as for a ``Callable`` attribute that
 #: a value of another type is stored in (#488).
 _BAD_ALLOC = "std::bad_alloc"
+#: Codon killed by SIGKILL, with no error of its own: in practice the
+#: out-of-memory killer (a full library check takes about 8 GB), which says
+#: nothing about the program compiled.
+_KILLED = (
+    "Codon was killed (SIGKILL) after {seconds:.0f} s, with no error of its "
+    "own: most likely by the out-of-memory killer (the library check takes "
+    "about 8 GB; another Codon build running at the same time can use up the "
+    "memory). This says nothing about the code checked: run the check again "
+    "with more memory free"
+)
 #: LLVM refusing a call that passes a function where a ``Callable`` is
 #: expected, with the signature of another: Codon 0.19 converts the function
 #: without comparing the two and only the verifier of the IR it generated
@@ -3349,6 +3360,11 @@ def _compile(
         or codegen
         or any(m in output for m in _CRASH_MARKERS)
     )
+    # Killed from outside (the out-of-memory killer): no verdict on the code,
+    # so neither the #609 rerun nor the #584 hints, which would blame it.
+    killed = proc.returncode == -signal.SIGKILL
+    if killed:
+        diagnostics = [Diagnostic(_KILLED.format(seconds=seconds)), *diagnostics]
     if proc.returncode != 0 and not diagnostics and _SIGNATURE_MISMATCH in output:
         try:
             diagnostics = _callable_signature_hints(output, sources)
@@ -3361,6 +3377,7 @@ def _compile(
             diagnostics = []
     if (
         crashed
+        and not killed
         and not codegen
         and not diagnostics
         and any(uses_sequence_helpers(m.text) for m in sources.modules.values())
