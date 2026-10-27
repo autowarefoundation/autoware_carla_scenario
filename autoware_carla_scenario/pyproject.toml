@@ -148,6 +148,14 @@ rerun-lidar = [
 t4 = [
     "autoware-carla-scenario-t4>=0.1,<0.2",
 ]
+# A HILS bridge (`scenario-hils`, docs/hils.md): a separate process, on the
+# HILS PC, that follows the run's ego through typesafe_carla (its sensors
+# optionally rendered by carla_canvas) and streams it to the ECUs under test
+# as their own traffic -- CAN frames, GNSS receiver output, LiDAR UDP packets,
+# camera frames -- through hilspy (a Rust core in one abi3 wheel).
+hils = [
+    "hilspy>=0.16,<0.17",
+]
 # The Rerun viewer the recordings are opened with (`rerun X.rrd`): the
 # converter's own `viewer` extra, which pins the Rerun minor version its
 # recordings are written with.
@@ -190,3 +198,5 @@ viewer = "autoware_carla_scenario.ui:main"
 # The editor is a separate application from the viewer; running one does not
 # start the other.
 scenario-editor = "autoware_carla_scenario.editor:main"
+# Stream the run's ego to ECUs under test (the `hils` extra; docs/hils.md).
+scenario-hils = "autoware_carla_scenario.hils.cli:main"

@@ -523,9 +523,27 @@ def build_ego_entity(cfg: DictConfig) -> EgoVehicle | None:
         control = ControlConfig.from_mapping(ros2_dict.get("control") or {})
         return Ros2EgoEntity(Ros2EgoConfig.from_mapping(ros2_dict), control)
 
+    if entity == "hils":
+        # ECUs under test drive the ego, through the HILS bridge resident on
+        # the HILS PC (scenario-hils, docs/hils.md): the entity tells it when
+        # the scenario starts and ends, and applies the ECUs' command.
+        from autoware_carla_scenario.entity.hils_entity import (  # noqa: PLC0415
+            HilsEgoConfig,
+            HilsEgoEntity,
+        )
+
+        hils_cfg = cfg.get("hils")
+        scenario_cfg = cfg.get("scenario") or {}
+        return HilsEgoEntity(
+            HilsEgoConfig.from_mapping(
+                _to_dict(hils_cfg) if hils_cfg is not None else {}
+            ),
+            episode_name=str(scenario_cfg.get("name", "")),
+        )
+
     msg = (
         f"Unknown ego.entity: {entity!r}. "
-        "Expected one of: 'autopilot', 'autoware', 'carla_driver', 'ros2'."
+        "Expected one of: 'autopilot', 'autoware', 'carla_driver', 'ros2', 'hils'."
     )
     raise ValueError(msg)
 

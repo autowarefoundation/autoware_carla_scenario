@@ -1379,6 +1379,7 @@ class TestEnvironmentTrack:
             assert actor is not None
             offers[actor.group(1)] = set(re.findall(r'<option value="([^"]+)"', form))
         assert offers["ego"] == {
+            "communication_loss",
             "lane_change",
             "routing",
             "set_speed",

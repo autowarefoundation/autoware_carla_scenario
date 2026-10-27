@@ -560,6 +560,13 @@ _DIRECTIONS: tuple[SelectOption, ...] = (
     SelectOption("right", "Right"),
 )
 
+#: Mirrors ``hils.protocol.LINK_DIRECTIONS`` (same reason as above).
+_LINK_DIRECTIONS: tuple[SelectOption, ...] = (
+    SelectOption("both", "Both ways"),
+    SelectOption("to_ecu", "To the ECU"),
+    SelectOption("from_ecu", "From the ECU"),
+)
+
 #: A junction is also driven straight through, which a lane is not changed.
 _TURN_DIRECTIONS: tuple[SelectOption, ...] = (
     *_DIRECTIONS,
@@ -991,6 +998,65 @@ register_action_spec(
         description=(
             "Light the vehicle's turn indicators (or hazard lights, or neither); "
             "they stay so until set again."
+        ),
+    )
+)
+
+register_action_spec(
+    ActionSpec(
+        type_id="communication_loss",
+        title="Communication Loss",
+        category="Vehicle / HILS",
+        builder="build_communication_loss_action",
+        target="..actions:CommunicationLossAction",
+        actor_kinds=("ego",),
+        visual_kind="continuous",
+        fields=(
+            FieldSpec(
+                name="device",
+                label="Device",
+                kind="text",
+                default=None,
+                required=False,
+                help=(
+                    "The HILS bridge configuration's device whose data stops. "
+                    "Leave empty for every device."
+                ),
+            ),
+            FieldSpec(
+                name="messages",
+                label="Messages",
+                kind="text",
+                default=None,
+                required=False,
+                help=(
+                    "The messages that stop, comma-separated, by the names the "
+                    "device's codec gives them (VehicleSpeed, scan). Leave empty "
+                    "to stop everything the device carries."
+                ),
+            ),
+            FieldSpec(
+                name="direction",
+                label="Direction",
+                kind="select",
+                default="both",
+                options=_LINK_DIRECTIONS,
+            ),
+            FieldSpec(
+                name="duration",
+                label="Duration",
+                kind="number",
+                default=None,
+                required=False,
+                unit="s",
+                help="Leave empty to keep the data stopped until the scenario ends.",
+            ),
+        ),
+        description=(
+            "Stop data between the HILS bridge and an ECU under test "
+            "(ego.entity=hils) while the card runs, as a break in the "
+            "communication path would: a CAN frame, a LiDAR's or a camera's "
+            "packets.  No effect on any other ego."
         ),
     )
 )
@@ -3483,8 +3549,7 @@ register_condition_spec(
                 label="Lanelet",
                 kind="lanelet",
                 default=0,
-                help="Where the reference position is -- a spawn, a junction's "
-                "start.",
+                help="Where the reference position is -- a spawn, a junction's start.",
             ),
             FieldSpec(
                 name="s",

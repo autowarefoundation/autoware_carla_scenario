@@ -643,6 +643,7 @@ uv run scenario ego.entity=carla_driver driver.address=localhost:50051
 | `autoware` | Autoware drives the ego, over the `AutowareBridge`; with `autoware.launcher` the framework starts a fresh Autoware per scenario ([Autoware as the Ego](autoware.md)) |
 | `carla_driver` | An external policy drives the ego |
 | `ros2` | ROS 2 nodes drive the ego over DDS, with no bridge node ([ROS 2 over DDS](ros2.md)) |
+| `hils` | ECUs under test drive the ego, through the resident HILS bridge `scenario-hils` (`hils.host`, `hils.port`; [HILS Bridge](hils.md)) |
 
 Common overrides:
 
@@ -690,6 +691,23 @@ nothing answers at `renderer.endpoint` and the file gives a
 carla_canvas is not an extra of this package: it needs protobuf 7, and the
 vendored alpasim modules are regenerated on protobuf 4. Under SLURM the file is
 the nodes' path.
+
+---
+
+## `scenario-hils` - Streaming the Ego to ECUs (HILS)
+
+A resident process on the HILS PC that follows a run's ego in CARLA, sends ECUs
+under test their sensors' and buses' traffic (CAN, GNSS, LiDAR packets, camera
+frames) through hilspy, initializes and finalizes them around each scenario,
+and hands their commands back to a run with `ego.entity=hils`; configured by
+one YAML file:
+
+```bash
+uvx --from 'autoware-carla-scenario[hils]' scenario-hils --example > hils.yaml
+uvx --from 'autoware-carla-scenario[hils]' scenario-hils hils.yaml
+```
+
+See [HILS Bridge](hils.md).
 
 ---
 

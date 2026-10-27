@@ -1,6 +1,7 @@
 """Actions that execute side effects in response to conditions during scenarios."""
 
 from .base import BaseAction, TickTiming
+from .communication_loss import CommunicationLossAction
 from .despawn import DespawnAction
 from .spawn import SpawnAction
 from .environment import EnvironmentAction
@@ -17,6 +18,7 @@ from .walk_straight import WalkStraightAction
 
 __all__ = [
     "BaseAction",
+    "CommunicationLossAction",
     "DespawnAction",
     "SpawnAction",
     "EnvironmentAction",

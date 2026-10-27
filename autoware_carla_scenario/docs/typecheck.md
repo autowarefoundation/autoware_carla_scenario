@@ -2331,8 +2331,8 @@ To check one more module:
 
 ### What is checked of the framework
 
-Every module now has an entry other than `"not yet checked (#45)"`. 208 of
-the package's 305 modules (68%; about 47,700 of 85,900 lines) are `CHECKED`:
+Every module now has an entry other than `"not yet checked (#45)"`. 209 of
+the package's 315 modules (66%; about 47,900 of 90,300 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the conversions between
 Lanelet2, OpenDRIVE and CARLA world poses (`coordinate.transform`), the stop
 lines read off a Lanelet2 map (`utils.stop_line`, `coordinate.stop_line`)
@@ -2427,16 +2427,16 @@ a `TrajectoryVertex` call's arguments, each of any type (`Any`), walks or
 binds a sweeper constraint of any kind, builds a condition's status (its
 details), or takes the list a plain tick callback goes into
 (`BaseScenario._register_tick()`, a `List[Callable[[carla.World], None]]`,
-which the check has no value of). The 97 `EXCLUDED` modules fall in
-three groups. Many fit more than one (about 71 import what Codon cannot
-compile, 29 build on an excluded module and 24 hold values Codon has no type
+which the check has no value of). The 106 `EXCLUDED` modules fall in
+three groups. Many fit more than one (about 78 import what Codon cannot
+compile, 31 build on an excluded module and 24 hold values Codon has no type
 for), so each is counted once, in the first group that fits it:
 
-- **71 import what Codon cannot compile**: pyxodr,
-  pydantic, pickle, lxml, grpc, omegaconf and hydra, yaml, openodd (a Rust extension),
+- **78 import what Codon cannot compile**: pyxodr,
+  pydantic, pickle, lxml, grpc, omegaconf and hydra, yaml, openodd and hilspy (Rust extensions), cv2,
   cyclonedds (`ros2.cyclone` and `ros2.messages`, the ROS 2 ego's DDS
   transport and its message types), or
-  a standard module Codon lacks (`inspect`, `concurrent.futures`,
+  a standard module Codon lacks (`socket`, `inspect`, `concurrent.futures`,
   `importlib`
   beyond `importlib.metadata`, or more of `os`, `pathlib`, `shutil`, `signal`,
   `subprocess`, `tempfile`, `threading`, `dataclasses`, `importlib.metadata`
@@ -2447,16 +2447,17 @@ for), so each is counted once, in the first group that fits it:
   stack's dev container, the
   record of a run's environment, the SLURM launcher's submitting side,
   its worker and its manifest, the batch summary they share, the Rerun
-  recordings of a run's logs and LiDAR sweeps, and its T4 dataset), the ODD and coverage modules that wrap
+  recordings of a run's logs and LiDAR sweeps, its T4 dataset, and the HILS bridge and its ego entity), the ODD and coverage modules that wrap
   openodd, and the rest of what reads Lanelet2. A reason names `pathlib`
   only where the module uses more of it than the shim declares, and the
   other shimmed modules likewise; `test_typecheck_library.py` holds every
   reason to that.
-- **19 build on an excluded module**, and import nothing Codon lacks
+- **21 build on an excluded module**, and import nothing Codon lacks
   themselves: they import a module that is neither checked nor modelled, or
   names that its package's model does not declare. Among them are the
   packages that re-export one (`authoring`, `odd`, `sweeper`,
-  `examples`, `scaffold`, `slurm`), `slurm.collect`, the
+  `examples`, `scaffold`, `slurm`, `hils`), `actions.communication_loss` (on the
+  HILS ego entity), `slurm.collect`, the
   authoring compiler, builders and validator, `odd.route`, the coverage
   half of the route check (names of `odd.model` and `coverage.items` that
   the odd and coverage models do not declare, such as `OddDefinition.evaluate()`
@@ -2464,7 +2465,7 @@ for), so each is counted once, in the first group that fits it:
   `dict[str, Any]`, which it hands to openodd, and finds a probe's
   `on_lanelet` reader on any callable) and
   `traffic.registry` (the `Callable[[Mapping[str, Any]], TrafficBackend]` alias it
-  holds its factories by, and the `registry` its plugin loader imports); 4 of the 19
+  holds its factories by, and the `registry` its plugin loader imports); 4 of the 21
   also hold values Codon has no type for.
 - **7 hold values Codon has no type for**, and nothing else keeps them out:
   `Any` (`trajectory.authoring`, `authoring.registry`'s
