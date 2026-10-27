@@ -254,6 +254,61 @@ self.register_pre_tick(
 )
 ```
 
+### Urban construction zones
+
+`layout="urban"` lays out TeraSim's `UrbanConstructionAdversity`
+(`adversity/static/urban_construction.py`) instead (#445). TeraSim builds a
+corridor of SUMO edges across several intersections and lays out each edge
+on its own. Here one `ConstructionZoneAction` is one approach of that
+corridor: `start_s` is where the approach begins and `end_s` is the
+intersection it ends at. For a corridor, add one action per approach. Lane
+closure, clearing traffic and the props are the same as above. These are the
+zones:
+
+| Zone | Where | Objects |
+|---|---|---|
+| warning | from the start, `warning_zone_length` (200 m) but at most 0.3 of the approach | at most three signs, every `warning_zone_spacing` (30 m) |
+| work | to the merge taper (with no merge taper, to 0.9 of the approach) | along the closed side, 0.5 m inside the lane's edge, every `spacing` (10 m); for `construction_type="cone"`, every fifth object is a barrier |
+| merge_signs | before the merge taper | `merge_signs` (2) signs, 50 m apart, none before the start |
+| merge_taper | the last `merge_distance` (150 m) before the end | cones every half `spacing` (5 m), from 0.3 m inside the closed side's edge across to 0.3 m inside the other edge, shutting the lane before the intersection (TeraSim's `merge_before`) |
+
+An urban zone has no taper in, buffer or termination zone, and no
+`work_zone_offset` or MUTCD spacing. `taper_type="curved"` shapes the merge
+taper. The warning zone and the merge taper include their end, as TeraSim's
+do, so with a whole number of steps the last cone stands at the intersection.
+The work zone does too when there is no merge taper; with one, it stops
+short of its end, where the merge taper's first cone stands.
+
+`URBAN_CONSTRUCTION` holds TeraSim's urban values. They come from the
+`UrbanConstructionAdversity` source and its Ann Arbor example
+(`examples/scenarios/ann_arbor/urban_construction.yaml`): cones every 10 m in
+the work zone and every 5 m in the merge taper, three warning signs 30 m
+apart, merge signs 50 m apart, signs 2 m out on the shoulder, a 200 m warning
+zone and a 150 m merge taper. In the editor, the `urban_construction_zone`
+action starts from these values.
+
+```python
+from autoware_carla_scenario import (
+    URBAN_CONSTRUCTION,
+    ConstructionSettings,
+    ConstructionZoneAction,
+)
+
+# The 300 m approach to an intersection, closed from the right.
+self.register_pre_tick(ConstructionZoneAction(1043, 0.0, 300.0, URBAN_CONSTRUCTION))
+# Closed from the left, with a shorter merge taper and three signs before it.
+self.register_pre_tick(
+    ConstructionZoneAction(
+        1051, 0.0, 200.0,
+        ConstructionSettings(
+            layout="urban", spacing=10.0, warning_zone_length=200.0,
+            warning_sign_offset=2.0, side="left",
+            merge_distance=80.0, merge_signs=3,
+        ),
+    )
+)
+```
+
 ## Coordinate conventions
 
 - **Triggers and NADE**: everything is in the Lanelet2 map frame: x East,
@@ -280,3 +335,10 @@ self.register_pre_tick(
 | `is_lane_changing`: heading 5° or more off the SUMO lane's angle | The same, off the Lanelet2 lanelet's direction (`LanePosition.heading`) |
 | Background vehicles are adversarial | So are they, with `drive_background` (default): the backend's background vehicles in the world (#417) |
 | Construction zones: SUMO vtypes for cones, barriers and signs; full_lane only closes the lane | CARLA props (`static.prop.*`), always placed, plus the lane closed to the backend (#402) |
+| `UrbanConstructionAdversity`: a corridor of edges across `num_intersections`, found by the edges' road priority, with a merge taper before each intersection | One approach per `ConstructionZoneAction` (`layout="urban"`), from `start_s` to the intersection at `end_s`; a corridor is one action per approach (#445) |
+| Urban work zone: a barrier added beside every fifth cone | The barrier replaces that cone, so the two props do not overlap |
+| Urban work zone up to the merge taper's start inclusive, where the taper's first cone stands too | Short of it, so the two props do not overlap |
+| Urban spacings hard-coded: warning signs 30 m, work zone 10 m, merge taper 5 m; the merge taper always linear | `warning_zone_spacing`, `spacing` and half `spacing` (the same with `URBAN_CONSTRUCTION`); `taper_type="curved"` shapes the merge taper |
+| Urban warning zone of no length: one sign at the edge's start | No warning zone, no sign |
+| Urban signs: always on the right shoulder; merge signs named by `merge_signs` texts | On the closed side's shoulder; `merge_signs` is how many, all the same prop |
+| Urban construction vehicles and workers (excavator, dump trucks, warning vehicles) | Not placed |

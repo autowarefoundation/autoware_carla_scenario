@@ -116,6 +116,7 @@ _CONSTANTS_COMPARED_ON_THEIR_OWN = {
     "BUILT_IN_MEASURES",  # test_the_measures_model_holds_python_s_values
     "BUILT_IN_METRICS",  # test_the_metrics_model_holds_python_s_values
     "EGO_ROLE_NAME",  # test_the_constants_model_holds_python_s_values
+    "URBAN_CONSTRUCTION",  # test_the_urban_construction_model_holds_python_s_values
     "UNDECIDED",  # test_the_undecided_model_is_openodd_s_sentinel
 }
 
@@ -1095,6 +1096,24 @@ def test_the_constants_model_holds_python_s_values() -> None:
     assert ast.unparse(node.annotation) == "EntityRole"
     assert ast.unparse(node.value) == "EntityRole.ego()"
     assert constants.EGO_ROLE_NAME == acs.EntityRole.ego()
+
+
+def test_the_urban_construction_model_holds_python_s_values() -> None:
+    # The preset is a ConstructionSettings call: the model's keywords are the
+    # fields Python's differs from the defaults in, with the same values.
+    node = _definitions("actions")["URBAN_CONSTRUCTION"][0]
+    assert isinstance(node, ast.AnnAssign) and isinstance(node.value, ast.Call)
+    assert ast.unparse(node.annotation) == "ConstructionSettings"
+    assert ast.unparse(node.value.func) == "ConstructionSettings"
+    assert not node.value.args
+    model = {k.arg: ast.literal_eval(k.value) for k in node.value.keywords}
+    default = acs.ConstructionSettings()
+    python = {
+        field.name: getattr(acs.URBAN_CONSTRUCTION, field.name)
+        for field in dataclasses.fields(acs.ConstructionSettings)
+        if getattr(acs.URBAN_CONSTRUCTION, field.name) != getattr(default, field.name)
+    }
+    assert model == python
 
 
 #: Every class the tests above compare with Python: name -> (model module,

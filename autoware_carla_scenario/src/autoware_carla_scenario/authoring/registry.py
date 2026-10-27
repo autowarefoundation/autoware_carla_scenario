@@ -1946,6 +1946,159 @@ register_action_spec(
     )
 )
 
+_URBAN_CONSTRUCTION_SETTINGS = (
+    "construction_type",
+    "spacing",
+    "warning_zone_length",
+    "merge_distance",
+    "merge_signs",
+    "side",
+)
+
+register_action_spec(
+    ActionSpec(
+        type_id="urban_construction_zone",
+        title="Urban Construction Zone",
+        category="Adversity",
+        builder="build_urban_construction_zone_action",
+        target="..actions.construction_zone:ConstructionZoneAction",
+        scope="environment",
+        visual_kind="continuous",
+        builds=(
+            BuiltArgument(
+                kwarg="settings",
+                target="..adversity.construction:ConstructionSettings",
+                parts=(
+                    BuiltPart(
+                        args=tuple(
+                            (name, name) for name in _URBAN_CONSTRUCTION_SETTINGS
+                        ),
+                        constants=(
+                            ("layout", '"urban"'),
+                            ("warning_sign_offset", "2.0"),
+                        ),
+                    ),
+                ),
+            ),
+        ),
+        fields=(
+            FieldSpec(
+                name="lanelet_id",
+                label="Lanelet",
+                kind="lanelet",
+                default=0,
+                help="The approach is measured from this lanelet's start.",
+            ),
+            FieldSpec(
+                name="start_s",
+                label="Approach starts at",
+                kind="number",
+                default=0.0,
+                unit="m",
+                help="Along the lane; the warning signs stand from here.",
+            ),
+            FieldSpec(
+                name="end_s",
+                label="Intersection at",
+                kind="number",
+                default=300.0,
+                unit="m",
+                help="Along the lane: where the approach meets the intersection.",
+            ),
+            FieldSpec(
+                name="start_time",
+                label="Appears at",
+                kind="number",
+                default=0.0,
+                unit="s",
+                help="From the scenario's start.",
+            ),
+            FieldSpec(
+                name="end_time",
+                label="Cleared away at",
+                kind="number",
+                default=None,
+                required=False,
+                unit="s",
+                help="From the scenario's start; empty: never.",
+            ),
+            FieldSpec(
+                name="construction_type",
+                label="Work zone of",
+                kind="select",
+                default="cone",
+                options=(
+                    SelectOption("cone", "Cones, every fifth a barrier"),
+                    SelectOption("barrier", "Barriers"),
+                    SelectOption("mixed", "Cones and barriers"),
+                ),
+            ),
+            FieldSpec(
+                name="side",
+                label="Closed from",
+                kind="select",
+                default="right",
+                options=(
+                    SelectOption("right", "The right"),
+                    SelectOption("left", "The left"),
+                ),
+            ),
+            FieldSpec(
+                name="spacing",
+                label="Spacing",
+                kind="number",
+                default=10.0,
+                unit="m",
+                help="Between the work zone's objects; half of it in the merge taper.",
+            ),
+            FieldSpec(
+                name="warning_zone_length",
+                label="Warning zone",
+                kind="number",
+                default=200.0,
+                required=False,
+                unit="m",
+                help="At most 0.3 of the approach, and three signs.",
+            ),
+            FieldSpec(
+                name="merge_distance",
+                label="Merge taper",
+                kind="number",
+                default=150.0,
+                required=False,
+                unit="m",
+                help="Before the intersection, cones across the lane; 0: none.",
+            ),
+            FieldSpec(
+                name="merge_signs",
+                label="Merge signs",
+                kind="int",
+                default=2,
+                required=False,
+                help="Before the merge taper, 50 m apart.",
+            ),
+            FieldSpec(
+                name="close_lane",
+                label="Close the lane to the traffic backend",
+                kind="bool",
+                default=True,
+                help="SUMO routes no traffic onto it; the TrafficManager cannot.",
+            ),
+            FieldSpec(
+                name="clear_traffic",
+                label="Take background traffic in the zone off the road",
+                kind="bool",
+                default=True,
+            ),
+        ),
+        description=(
+            "TeraSim's urban construction zone on an intersection approach: "
+            "a short warning zone, cones along the curb, merge signs and a "
+            "merge taper that shuts the lane before the intersection."
+        ),
+    )
+)
+
 _NADE_SETTINGS = (
     "max_controlled",
     "control_radius",

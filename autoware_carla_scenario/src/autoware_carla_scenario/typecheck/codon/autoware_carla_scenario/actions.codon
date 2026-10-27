@@ -946,8 +946,11 @@ class ConstructionSettings:
     termination_zone_length: float
     warning_sign_offset: float
     side: str
+    layout: str
+    merge_distance: float
+    merge_signs: int
 
-    def __init__(self, construction_type: str = "cone", spacing: float = 20.0, work_zone_offset: float = 0.0, speed_limit_mph: float = 0.0, use_dynamic_spacing: bool = False, taper_length_in: float = 60.0, taper_length_out: float = 30.0, taper_type: str = "linear", warning_zone_length: float = 100.0, warning_zone_spacing: float = 30.0, buffer_zone_length: float = 10.0, termination_zone_length: float = 30.0, warning_sign_offset: float = 2.5, side: str = "right"):
+    def __init__(self, construction_type: str = "cone", spacing: float = 20.0, work_zone_offset: float = 0.0, speed_limit_mph: float = 0.0, use_dynamic_spacing: bool = False, taper_length_in: float = 60.0, taper_length_out: float = 30.0, taper_type: str = "linear", warning_zone_length: float = 100.0, warning_zone_spacing: float = 30.0, buffer_zone_length: float = 10.0, termination_zone_length: float = 30.0, warning_sign_offset: float = 2.5, side: str = "right", layout: str = "highway", merge_distance: float = 150.0, merge_signs: int = 2):
         self.construction_type = construction_type
         self.spacing = spacing
         self.work_zone_offset = work_zone_offset
@@ -962,6 +965,12 @@ class ConstructionSettings:
         self.termination_zone_length = termination_zone_length
         self.warning_sign_offset = warning_sign_offset
         self.side = side
+        self.layout = layout
+        self.merge_distance = merge_distance
+        self.merge_signs = merge_signs
+
+
+URBAN_CONSTRUCTION: ConstructionSettings = ConstructionSettings(spacing=10.0, warning_zone_length=200.0, warning_sign_offset=2.0, layout="urban")
 
 
 class ConstructionZoneAction(BaseAction):
