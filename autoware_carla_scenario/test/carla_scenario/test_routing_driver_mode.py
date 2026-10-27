@@ -336,6 +336,26 @@ class TestNpcCollisions:
         monitor.close()
         assert all(sensor.stopped for sensor in world.sensors)
 
+    def test_a_sensor_data_is_heard_through_its_collision_event(self) -> None:
+        """#648: typesafe_carla's Codon library hands the listener a
+        SensorData, read through as_collision(); CPython hands it the
+        CollisionEvent itself (the test above). Both are one collision."""
+        a = _actor(2, "vehicle.mini", "npc1")
+        b = _actor(3, "vehicle.mini", "npc2")
+        world = _MonitoredWorld([a, b])
+        monitor = NpcCollisionMonitor()
+        monitor.tick(world, 0.0)  # type: ignore[arg-type]
+        for sensor, other in zip(world.sensors, (b, a)):
+            event = SimpleNamespace(
+                frame=7,
+                other_actor=other,
+                normal_impulse=SimpleNamespace(x=0.0, y=0.0, z=2.0),
+            )
+            sensor.listener(SimpleNamespace(as_collision=lambda e=event: e))
+        collisions, _, _ = monitor.tick(world, 0.05)  # type: ignore[arg-type]
+        assert [(c.actors, c.impulse) for c in collisions] == [(["npc1", "npc2"], 2.0)]
+        monitor.close()
+
     def test_a_walker_that_falls_is_logged_once(self) -> None:
         walker = _actor(5, "walker.pedestrian.0001", "w1")
         world = _MonitoredWorld([walker])

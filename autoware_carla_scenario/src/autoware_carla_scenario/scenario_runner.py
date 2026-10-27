@@ -61,6 +61,9 @@ from .visibility import forget_visibility
 from .traffic.parameters import record_run_parameters
 from .trajectory_recorder import TrajectoryRecorder
 
+if TYPE_CHECKING:
+    from .npc_collisions import NpcCollisionMonitor
+
 logger = logging.getLogger(__name__)
 
 
@@ -291,7 +294,7 @@ def _condition_statuses(
         return _collect_condition_statuses(scenario, world, elapsed, scenario_name)
 
 
-def _npc_collision_monitor() -> Any:
+def _npc_collision_monitor() -> "NpcCollisionMonitor":
     """The run's :class:`~autoware_carla_scenario.npc_collisions.NpcCollisionMonitor`:
     the road users' own collisions and falls, logged, not judged."""
     from .npc_collisions import NpcCollisionMonitor  # noqa: PLC0415
@@ -335,9 +338,11 @@ def _write_result(
 
     What it ran with: the lock and the environment beside the result, and
     their summary (with the environment's id) in it, and what drove the
-    traffic (*traffic*, :func:`_traffic_record`).  With ``json`` and
-    :mod:`.environment` (platform, json), which Codon does not have: the check
-    (docs/typecheck.md) does not compile it.
+    traffic (*traffic*, :func:`_traffic_record`).  It merges values of mixed
+    types (the traffic record, ``Any``, and :mod:`.environment`'s record, a
+    module the check does not compile: platform, importlib.metadata) into the
+    result document, which Codon cannot express: the check (docs/typecheck.md)
+    does not compile it.
     """
     import json  # noqa: PLC0415
 
@@ -1276,7 +1281,7 @@ class ScenarioRunner:
         result: Optional[ScenarioResult] = None
         coverage: Optional[CoverageCollector] = None
         t4_recording: Optional[T4Recording] = None
-        npc_events: Any = None
+        npc_events: Optional["NpcCollisionMonitor"] = None
 
         try:
             # Let the traffic backend get ready before anything is spawned: this
@@ -1518,12 +1523,7 @@ class ScenarioRunner:
             coverage.start(world, clock.simulated)
 
             # The road users' own collisions and falls, logged (not judged).
-            if TYPE_CHECKING:
-                # The monitor's sensor callbacks and Any-typed snapshot reads
-                # are not modelled (EXCLUDED in typecheck/library.py).
-                pass
-            else:
-                npc_events = _npc_collision_monitor()
+            npc_events = _npc_collision_monitor()
 
             # Tick loop
             while not scenario.is_done():
@@ -1610,19 +1610,16 @@ class ScenarioRunner:
                                     trajectory.record_despawn(
                                         action.label, entity, actor_id
                                     )
-                if TYPE_CHECKING:
-                    pass
-                else:
-                    if npc_events is not None:
-                        collisions, falls, fallen_gone = npc_events.tick(world, elapsed)
-                        for collision in collisions:
-                            trajectory.record_collision(collision)
-                        for fall in falls:
-                            trajectory.record_walker_fallen(fall)
-                        for entity, actor_id in fallen_gone:
-                            trajectory.record_despawn(
-                                "fallen walker", entity, actor_id, "fallen"
-                            )
+                if npc_events is not None:
+                    collisions, falls, fallen_gone = npc_events.tick(world, elapsed)
+                    for collision in collisions:
+                        trajectory.record_collision(collision)
+                    for fall in falls:
+                        trajectory.record_walker_fallen(fall)
+                    for entity, actor_id in fallen_gone:
+                        trajectory.record_despawn(
+                            "fallen walker", entity, actor_id, "fallen"
+                        )
 
                 # The weight the actions above leave the run with, for the
                 # metric that reads it.
@@ -1765,9 +1762,7 @@ class ScenarioRunner:
                     scenario_name,
                     exc_info=True,
                 )
-            if TYPE_CHECKING:
-                pass
-            elif npc_events is not None:
+            if npc_events is not None:
                 # Its sensors, through their own handles, as the conditions'.
                 npc_events.close()
             # And the props a SpawnAction placed: the leftovers' sweep takes
@@ -1853,7 +1848,8 @@ class ScenarioRunner:
             json_path = self.output_dir / f"{file_stem}_result.json"
             json_path.parent.mkdir(parents=True, exist_ok=True)
             if TYPE_CHECKING:
-                # json and environment (platform, json): Codon has neither.
+                # The result document of mixed value types, with the traffic
+                # and environment records (UNCALLED in typecheck/library.py).
                 pass
             else:
                 _write_result(

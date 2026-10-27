@@ -94,7 +94,11 @@ an absolute `XDG_CACHE_HOME`): a later process with the same inputs reads the
 verdict instead of compiling. Set `AUTOWARE_CARLA_SCENARIO_TYPECHECK_CACHE`
 to use another directory, or to an empty string to keep each verdict for its
 process only (as happens anyway without a home directory, or with one that
-cannot be written). Nothing prunes the directory; delete it, or its files
+cannot be written). A verdict read back is the program's, and is reported
+for the check that read it (#652): a scenario check's line names that
+scenario, and a library check's names the modules this run was given and
+says `cached`, with the time this run took rather than the compile's.
+Nothing prunes the directory; delete it, or its files
 not accessed for a while, to reclaim the space. The key covers
 everything the verdict depends on. For the compile, that is the scenario's
 (or the framework's) modules, the generated driver's shape, the model,
@@ -2316,13 +2320,15 @@ one), each with its reason: one whose job Codon cannot express, in a module
 that otherwise compiles. Today that is
 what builds a condition's details (`get_details()`, `to_summary_dict()`,
 `to_dict()`: a `dict[str, Any]` of mixed value types) and what serialises
-them (`ScenarioResult.to_json()`, with `json`), and what reads the
+them (`ScenarioResult.to_json()`, which forwards `**kwargs: Any`), and what reads the
 authoring package's pydantic specs, typed `Any`
 (`signals.build_controllers()`). Codon compiles a function
 only when something calls it, so neither its body nor an import made inside
-it is compiled: a module that needs a standard module Codon lacks for one
-function imports it inside that function (`import json` in `to_json()`) and
-lists the function here. A test checks that every entry names a function or
+it is compiled: a module that needs a package or a standard module Codon
+lacks for one function imports it inside that function (`import yaml` in
+`constraints_from_text()`) and lists the function here. (`json` is not one of
+them: its shim, `typecheck/codon/json.codon`, writes any one-typed value and
+reads opaquely; what keeps `to_json()` out is the mixed-type dict it writes.) A test checks that every entry names a function or
 method of a checked module.
 
 To check one more module:
@@ -2335,8 +2341,8 @@ To check one more module:
 
 ### What is checked of the framework
 
-Every module now has an entry other than `"not yet checked (#45)"`. 213 of
-the package's 315 modules (68%; about 49,300 of 90,300 lines) are `CHECKED`:
+Every module now has an entry other than `"not yet checked (#45)"`. 214 of
+the package's 315 modules (68%; about 49,800 of 90,300 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the conversions between
 Lanelet2, OpenDRIVE and CARLA world poses (`coordinate.transform`), the stop
 lines read off a Lanelet2 map (`utils.stop_line`, `coordinate.stop_line`)
@@ -2381,7 +2387,8 @@ OpenDRIVE taken from CARLA by `maps.opendrive`), what an exported scenario
 package pins the framework to and how it runs `uv` (`authoring.framework_pin`,
 `authoring.uv_tool`), the CARLA server manager (`server`), the summary a batch prints and
 writes to `batch_results.json` (`batch_report`), the markers an ego
-entity hands the runner for the trajectory log (`debug_markers`), the Autoware
+entity hands the runner for the trajectory log (`debug_markers`), the log of
+the other road users' collisions and falls (`npc_collisions`), the Autoware
 launcher that runs a stack as a process group (`autoware_stack.launcher`),
 the `scenario_bridge` node's command and Python root beside it
 (`autoware_stack.bridge_node`) and the one that runs a workspace in its dev
@@ -2401,8 +2408,8 @@ driver's configs and client interface, trajectory follower and observations
 `driver.geometry`), and the `autoware_bridge`, `autoware_stack`, `entity`,
 `driver`, `maps` and `coverage` packages themselves, whose `__init__` re-exports what is not checked
 through models of it (see *A class a checked package only re-exports*
-below). 107
-functions and methods of those modules are `UNCALLED` (26 of them
+below). 105
+functions and methods of those modules are `UNCALLED` (24 of them
 protected helpers, see *What is compiled* below): most of them a
 condition's `get_details()` or a backend's `describe()`, what takes a traffic
 backend's options node (`Mapping[str, Any]`), what reads a route search, a
@@ -2424,8 +2431,9 @@ node's command from its ROS parameters (`bridge_ros_args()`,
 `bridge_command()`: a `Mapping[str, Any]` of bool, int, float and str
 values; Codon 0.19 fails on a `Union` in a parameter annotation, `union
 already sealed`, so the checker drops one and the check has nothing to call
-with), what the runner does with `json` or a condition's details (writing
-the result and its environment, `_write_result()`; collecting the condition
+with), what the runner does with values of mixed types or a condition's
+details (merging the traffic and environment records into the result
+document, `_write_result()`; collecting the condition
 statuses, `_collect_condition_statuses()`), the queue's pytest fixture
 (`ScenarioQueue.as_fixture()`), `maps.config.resolve_map_paths()`,
 which reads the `map` config node of any shape (`Any`), the driver and
@@ -2436,9 +2444,9 @@ a `TrajectoryVertex` call's arguments, each of any type (`Any`), walks or
 binds a sweeper constraint of any kind, builds a condition's status (its
 details), or takes the list a plain tick callback goes into
 (`BaseScenario._register_tick()`, a `List[Callable[[carla.World], None]]`,
-which the check has no value of). The 102 `EXCLUDED` modules fall in
+which the check has no value of). The 101 `EXCLUDED` modules fall in
 three groups. Many fit more than one (about 77 import what Codon cannot
-compile, 31 build on an excluded module and 21 hold values Codon has no type
+compile, 31 build on an excluded module and 20 hold values Codon has no type
 for), so each is counted once, in the first group that fits it:
 
 - **77 import what Codon cannot compile**: pyxodr,
@@ -2476,10 +2484,9 @@ for), so each is counted once, in the first group that fits it:
   `traffic.registry` (the `Callable[[Mapping[str, Any]], TrafficBackend]` alias it
   holds its factories by, and the `registry` its plugin loader imports); 4 of the 21
   also hold values Codon has no type for.
-- **4 hold values Codon has no type for**, and nothing else keeps them out:
+- **3 hold values Codon has no type for**, and nothing else keeps them out:
   `Any` (`trajectory.authoring`, `authoring.registry`'s
-  field defaults, `npc_collisions`' actors and world snapshots, which it also
-  hears through collision-sensor callbacks), or a class as a value (`utils.config`, which `traffic.config`,
+  field defaults), or a class as a value (`utils.config`, which `traffic.config`,
   `traffic.fidelity` and `traffic.sumo.config` import only in their uncalled
   `from_mapping()`).
 

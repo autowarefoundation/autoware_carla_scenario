@@ -15,7 +15,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from autoware_carla_scenario.typecheck import check
+from autoware_carla_scenario.typecheck import check, typecheck_library
 from autoware_carla_scenario.typecheck.check import (
     CACHE_DIR_ENV,
     Diagnostic,
@@ -505,3 +505,60 @@ def test_another_compiler_at_the_same_path_is_another_key(
     patched = digest()
     _toolchain_digest.cache_clear()
     assert len({before, upgraded, patched}) == 3
+
+
+def test_a_library_cache_hit_reports_this_runs_modules_and_time(
+    cache_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#652: modules named differently that share a closure are one program,
+    one key; a hit says what this run checked and how long it took, not what
+    the run that compiled it did."""
+    monkeypatch.setattr(check, "codon_path_dir", lambda: Path("/codon"))
+    monkeypatch.setattr(check, "_toolchain_digest", lambda tc: "tc")
+    monkeypatch.setattr(check, "_framework_digest", lambda codon_path: "fw")
+    monkeypatch.setattr(check, "_library_imports", lambda *args: None)
+    monkeypatch.setattr(check, "run_none_check", lambda paths, timeout: [])
+    compiled: list[str] = []
+
+    def compile_(name: str, *args: object, **kwargs: object) -> TypeCheckResult:
+        compiled.append(name)
+        return TypeCheckResult(name, ok=True, seconds=13.2)
+
+    monkeypatch.setattr(check, "_compile", compile_)
+    package = "autoware_carla_scenario.coordinate"
+
+    def run(*modules: str) -> TypeCheckResult:
+        return typecheck_library(
+            [f"{package}.{m}" for m in modules],
+            toolchain=SimpleNamespace(),  # type: ignore[arg-type]
+        )
+
+    first = run("frames", "poses")
+    assert first.ok and not first.cached
+    assert "(2 checked modules" in first.scenario
+    assert first.format().endswith("static check passed (13.2s)")
+    check._CACHE.clear()  # as a fresh process has it
+    second = run("frames")
+    assert len(compiled) == 1, "the same program is compiled once"
+    assert len(list(cache_dir.glob("*.json"))) == 1
+    assert second.ok and second.cached
+    assert "(1 checked modules" in second.scenario
+    assert second.seconds < 13.2
+    assert second.format().endswith(f"passed ({second.seconds:.1f}s, cached)")
+    # The kept verdict is not changed by the hit.
+    assert check._CACHE[next(iter(check._CACHE))].scenario == first.scenario
+    third = run("frames", "poses")  # a hit in the same process
+    assert third.cached and third.scenario == first.scenario
+
+
+def test_a_reused_scenario_verdict_is_named_for_the_check_it_answers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#652: a verdict kept under a key another check shares carries that
+    check's name; one for the same name is handed back as it is."""
+    monkeypatch.setattr(check, "_CHECKED_FOR", {})
+    kept = TypeCheckResult("pkg.First", ok=True, seconds=4.0)
+    assert check._reused("pkg.First", "k", {}, kept) is kept
+    other = check._reused("pkg.Second", "k", {}, kept)
+    assert other.scenario == "pkg.Second" and other.seconds == 4.0
+    assert kept.scenario == "pkg.First"

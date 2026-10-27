@@ -31,7 +31,7 @@ import logging
 import math
 import threading
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Optional, Union
 
 from .constants import EGO_ROLE_NAME
 
@@ -102,6 +102,13 @@ class NpcCollision:
 class _Contact:
     """A contact between two actors under way: since when, and how hard."""
 
+    frame: int
+    start: float
+    last: float
+    names: list[str]
+    ids: list[int]
+    impulse: float
+
     def __init__(
         self, frame: int, start: float, names: list[str], ids: list[int], impulse: float
     ) -> None:
@@ -156,13 +163,12 @@ class WalkerFallen:
 class _Sensed:
     """A vehicle heard: its sensor, and what to call it."""
 
-    def __init__(self, sensor: Any, name: str) -> None:
+    sensor: "carla.Actor"
+    name: str
+
+    def __init__(self, sensor: "carla.Actor", name: str) -> None:
         self.sensor = sensor
         self.name = name
-
-
-#: The run's monitor, for :func:`release_actor`; ``None`` between runs.
-_ACTIVE: Optional["NpcCollisionMonitor"] = None
 
 
 def release_actor(actor_id: int) -> None:
@@ -180,12 +186,28 @@ class NpcCollisionMonitor:
     stopped through the handle that started it listening.
     """
 
+    _ego_role: str
+    _ticks: int
+    _sensed: dict[int, _Sensed]
+    _names: dict[int, str]
+    _lock: threading.Lock
+    _heard: list[tuple[int, int, int, str, float]]
+    _contacts: dict[tuple[int, int], _Contact]
+    _down: dict[int, float]
+    _despawn_fallen_after: Optional[float]
+    _walkers: dict[int, tuple[float, float, float, float]]
+    _heights: dict[int, list[float]]
+    _settled: dict[int, int]
+    _gone: set[int]
+    _fallen: set[int]
+    _broken: bool
+
     def __init__(
         self,
-        ego_role: str = str(EGO_ROLE_NAME),
+        ego_role: Optional[str] = None,
         despawn_fallen_after_s: Optional[float] = FALLEN_DESPAWN_S,
     ) -> None:
-        self._ego_role = ego_role
+        self._ego_role = str(EGO_ROLE_NAME) if ego_role is None else ego_role
         self._ticks = 0
         self._sensed: dict[int, _Sensed] = {}
         self._names: dict[int, str] = {}
@@ -251,7 +273,7 @@ class NpcCollisionMonitor:
         if self._ticks % SCAN_EVERY_TICKS == 0:
             self._scan(world)
         fallen: list[WalkerFallen] = []
-        if self._ticks % FALL_CHECK_EVERY_TICKS == 0 and self._walkers:
+        if self._ticks % FALL_CHECK_EVERY_TICKS == 0 and len(self._walkers) > 0:
             fallen = self._look_for_falls(world, elapsed)
             for fall in fallen:
                 self._down[fall.id] = elapsed
@@ -263,7 +285,7 @@ class NpcCollisionMonitor:
     ) -> list[tuple[str, int]]:
         """Despawn the walkers down :data:`FALLEN_DESPAWN_S` (never the ego)."""
         after = self._despawn_fallen_after
-        if after is None or not self._down:
+        if after is None or len(self._down) == 0:
             return []
         from .actions.despawn import despawn_entity  # noqa: PLC0415
 
@@ -277,14 +299,16 @@ class NpcCollisionMonitor:
                 continue
             gone = despawn_entity(world, role, "fallen walker")
             if gone is not None:
-                out.append((role, gone))
+                out.append((role, int(gone)))
         return out
 
     def _scan(self, world: "carla.World") -> None:
         """Hear new vehicles, let go of gone ones, note the walkers."""
+        import typesafe_carla.carla as carla  # noqa: PLC0415
+
         actors = world.get_actors()
         present: set[int] = set()
-        blueprint: Any = None
+        blueprint: Optional["carla.ActorBlueprint"] = None
         for actor in actors:
             type_id = str(actor.type_id)
             if not (type_id.startswith("vehicle.") or type_id.startswith("walker.")):
@@ -303,11 +327,9 @@ class NpcCollisionMonitor:
                 continue
             if blueprint is None:
                 blueprint = world.get_blueprint_library().find("sensor.other.collision")
-            import typesafe_carla.carla as carla  # noqa: PLC0415
-
             sensor = world.spawn_actor(blueprint, carla.Transform(), attach_to=actor)
             parent = actor.id
-            sensor.listen(lambda event, parent=parent: self._on_event(parent, event))
+            sensor.listen(_Listener(self, parent))
             self._sensed[parent] = _Sensed(sensor, name)
         for gone in [i for i in self._sensed if i not in present]:
             _release(self._sensed.pop(gone).sensor)
@@ -315,8 +337,26 @@ class NpcCollisionMonitor:
             del self._walkers[gone]
             self._heights.pop(gone, None)
 
-    def _on_event(self, parent: int, event: Any) -> None:
-        """The sensor's listener, on CARLA's thread: queue the collision."""
+    def _on_sensor_data(
+        self, parent: int, data: Union["carla.CollisionEvent", "carla.SensorData"]
+    ) -> None:
+        """*parent*'s sensor's listener (:class:`_Listener`), on CARLA's thread.
+
+        CARLA's Python API, and typesafe_carla's CPython package, call it with
+        the ``carla.CollisionEvent`` itself.  typesafe_carla's Codon library
+        calls it with the ``carla.SensorData``, which ``as_collision()`` turns
+        into the event; the static check sees that branch, and Python, whose
+        ``CollisionEvent`` has no ``as_collision``, never takes it
+        (:meth:`~autoware_carla_scenario.conditions.CollisionCondition._on_sensor_data`
+        does the same).
+        """
+        if hasattr(data, "as_collision"):
+            self._on_event(parent, data.as_collision())
+        else:
+            self._on_event(parent, data)
+
+    def _on_event(self, parent: int, event: "carla.CollisionEvent") -> None:
+        """Queue the collision *parent*'s sensor heard (on CARLA's thread)."""
         other = event.other_actor
         if other is None:
             return  # map geometry
@@ -378,7 +418,7 @@ class NpcCollisionMonitor:
         snapshot = world.get_snapshot()
         out: list[WalkerFallen] = []
         for walker_id, (x0, y0, z0, half) in list(self._walkers.items()):
-            seen: Optional[Any] = snapshot.find(walker_id)
+            seen: Optional["carla.ActorSnapshot"] = snapshot.find(walker_id)
             if seen is None:
                 continue
             transform = seen.get_transform()
@@ -389,7 +429,7 @@ class NpcCollisionMonitor:
                 self._heights.pop(walker_id, None)
                 continue
             heights = self._heights.setdefault(walker_id, [])
-            standing = min(heights) if heights else z
+            standing = min(heights) if len(heights) > 0 else z
             heights.append(z)
             del heights[:-_STANDING_LOOKS]
             looks = self._settled.get(walker_id, 0) + 1
@@ -427,14 +467,18 @@ class NpcCollisionMonitor:
         return out
 
 
-def _name_of(actor: Any) -> str:
+#: The run's monitor, for :func:`release_actor`; ``None`` between runs.
+_ACTIVE: Optional[NpcCollisionMonitor] = None
+
+
+def _name_of(actor: "carla.Actor") -> str:
     """*actor*'s ``role_name``, or its type id when it has none."""
     attributes = actor.attributes
     role = attributes.get("role_name", "") if hasattr(attributes, "get") else ""
     return str(role) if role else str(actor.type_id)
 
 
-def _release(sensor: Any) -> None:
+def _release(sensor: "carla.Actor") -> None:
     """Stop and destroy *sensor*; one already gone is let go."""
     try:
         sensor.stop()
@@ -444,3 +488,23 @@ def _release(sensor: Any) -> None:
         sensor.destroy()
     except RuntimeError:
         pass
+
+
+class _Listener:
+    """A vehicle's collision sensor's listener: hands *parent*'s events to
+    *monitor*.
+
+    An object rather than a lambda with a default argument (``parent=parent``),
+    which the static check (docs/typecheck.md) cannot compile; ``listen()``
+    takes any callable.
+    """
+
+    monitor: NpcCollisionMonitor
+    parent: int
+
+    def __init__(self, monitor: NpcCollisionMonitor, parent: int) -> None:
+        self.monitor = monitor
+        self.parent = parent
+
+    def __call__(self, data: Union["carla.CollisionEvent", "carla.SensorData"]) -> None:
+        self.monitor._on_sensor_data(self.parent, data)
