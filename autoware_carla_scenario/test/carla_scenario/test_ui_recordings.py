@@ -289,10 +289,10 @@ def test_a_read_only_session_keeps_its_recording_in_the_cache(
 def test_the_web_viewer_is_the_recordings_version_from_the_cdn(
     converter: _FakeConverter,
 ) -> None:
-    converter.RERUN_VERSION = "0.38.7"
+    converter.RERUN_VERSION = "0.38.0"
     viewer = recordings.web_viewer()
-    assert (viewer.source, viewer.version) == ("cdn", "0.38.7")
-    assert viewer.base_url == "https://unpkg.com/@rerun-io/web-viewer@0.38.7"
+    assert (viewer.source, viewer.version) == ("cdn", "0.38.0")
+    assert viewer.base_url == "https://unpkg.com/@rerun-io/web-viewer@0.38.0"
 
 
 def test_without_the_converter_the_web_viewer_is_the_default_version(
