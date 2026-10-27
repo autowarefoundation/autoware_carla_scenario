@@ -134,6 +134,16 @@ class PlaceClearCondition(BaseCondition):
             yaw_deg = 0.0
             if yaw0 is not None:
                 yaw_deg = float(yaw0)
+            else:
+                # No heading of its own (a route pose without a yaw): along
+                # the lane it is on, where it is on one.
+                from ..route.active import lane_place  # noqa: PLC0415
+
+                along = lane_place(self._at.position)
+                if along is not None:
+                    _lx, _ly, _lz, lane_yaw = resolve_position(along)
+                    if lane_yaw is not None:
+                        yaw_deg = float(lane_yaw)
             spot = (x0, y0, yaw_deg)
             self._spot = spot
         x, y, yaw = spot

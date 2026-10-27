@@ -1061,10 +1061,48 @@ def test_a_place_clear_condition_on_a_route_pose(
     assert nowhere.check(None, 0.0) is None  # type: ignore[arg-type]
 
 
+def test_a_place_with_no_heading_faces_along_its_lane(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A route pose without a yaw: the rectangle lies along the lane it is on."""
+    from autoware_carla_scenario.conditions import PlaceClearCondition
+    from autoware_carla_scenario.conditions import place_clear as place_module
+    from autoware_carla_scenario.coordinate import Lanelet2Pose
+    from autoware_carla_scenario.route import active as active_module
+    from autoware_carla_scenario.trajectory import resolve as resolve_module
+    from autoware_carla_scenario.trajectory.model import RouteOppositePose
+
+    monkeypatch.setattr(
+        resolve_module,
+        "resolve_position",
+        lambda position, reference=None: (
+            (4.0, -3.0, 0.0, -90.0)
+            if isinstance(position, Lanelet2Pose)
+            else (4.0, -3.0, 0.0, None)
+        ),
+    )
+    monkeypatch.setattr(
+        active_module, "lane_place", lambda position: Lanelet2Pose(7, 2.0)
+    )
+    seen: list[float] = []
+
+    def look(
+        world: Any, x: float, y: float, yaw: float, hl: float, hw: float, m: float
+    ) -> int:
+        seen.append(yaw)
+        return -1
+
+    monkeypatch.setattr(place_module, "_occupant", look)
+    pose = RouteOppositePose(ds=5.0, lane=1, anchor="start")
+    PlaceClearCondition(pose, 4.0, 2.0, label="p").check(None, 0.0)  # type: ignore[arg-type]
+    assert seen == [-90.0]
+
+
 def test_a_spawn_on_a_route_pose_shifts_along_the_lane_it_is_placed_on(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A route pose on a lane shifts as the Lanelet2 place the route gives it."""
+    """A route pose on a lane shifts as the Lanelet2 place the route gives it,
+    and with no yaw of its own faces along that lane."""
     from autoware_carla_scenario.actions import SpawnAction
     from autoware_carla_scenario.actions import spawn as spawn_module
     from autoware_carla_scenario.coordinate import Lanelet2Pose
@@ -1073,16 +1111,16 @@ def test_a_spawn_on_a_route_pose_shifts_along_the_lane_it_is_placed_on(
     pose = RouteCrossingPose(approach="same", turn="right", distance=-5.0)
     monkeypatch.setattr(
         spawn_module,
-        "_lane_place",
+        "lane_place",
         lambda position: Lanelet2Pose(3, 10.0) if position == pose else None,
     )
     monkeypatch.setattr(
         spawn_module,
         "resolve_position",
         lambda position, reference: (
-            (float(position.s), 0.0, 0.0, 0.0)
+            (float(position.s), 0.0, 0.0, 90.0)
             if isinstance(position, Lanelet2Pose)
-            else (10.0, 0.0, 0.0, 0.0)
+            else (10.0, 0.0, 0.0, None)
         ),
     )
     monkeypatch.setattr(
@@ -1098,6 +1136,13 @@ def test_a_spawn_on_a_route_pose_shifts_along_the_lane_it_is_placed_on(
     monkeypatch.setattr(spawn_module, "_hold", lambda *args: None)
     action = SpawnAction("npc1", position=pose, shift_max=30.0)
     assert action._place(None, 1, 2.0, 1.0)[0] == 14.0  # type: ignore[arg-type,index]
+    # Its own place, clear, faces along its lane: 90 deg here.
+    monkeypatch.setattr(
+        spawn_module,
+        "_taken",
+        lambda world, actor_id, x, y, yaw, hl, hw, ahead=0.0: -1,
+    )
+    assert action._place(None, 1, 2.0, 1.0) == (10.0, 0.0, 0.0, 90.0)  # type: ignore[arg-type]
 
 
 def test_the_place_clear_card_builds_its_condition() -> None:
