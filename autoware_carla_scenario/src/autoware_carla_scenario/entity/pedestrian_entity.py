@@ -311,10 +311,7 @@ class PedestrianEntity(WalkedEntity):
         """Destroy the pedestrian actor and release resources (its walker
         controller, first)."""
         if self._walker is not None:
-            if TYPE_CHECKING:
-                pass  # the walker controller is not compiled (docs/typecheck.md)
-            else:
-                _release_walker_ai(self._walker)
+            _release_walker_ai(self._walker)
             self._walker.destroy()
             self._walker = None
 
@@ -490,9 +487,7 @@ class PedestrianEntity(WalkedEntity):
         # Typed locals: Codon unwraps the Optionals here.
         path: "ResolvedTrajectory" = walk
         walker: "carla.Actor" = actor
-        if TYPE_CHECKING:
-            pass  # the walker controller is not compiled (docs/typecheck.md)
-        elif _killed_by_crowd(walker):
+        if _killed_by_crowd(walker):
             revived = self._revive(walker)
             if revived is None:
                 return
@@ -502,18 +497,13 @@ class PedestrianEntity(WalkedEntity):
         self._walk_distance = here
         if here >= path.length - WALK_ARRIVAL_M:
             self._walk = None
-            if TYPE_CHECKING:
-                pass  # the walker controller is not compiled (docs/typecheck.md)
-            else:
-                _release_walker_ai(walker)
+            _release_walker_ai(walker)
             walker.apply_control(carla.WalkerControl(speed=0.0))
             return
         speed = self._walk_speed
         if speed_mps is not None:
             speed = speed_mps
-        if TYPE_CHECKING:
-            steer_walker(walker, location, path, here, speed)
-        elif not _walk_by_ai(
+        if not _walk_by_ai(
             walker, path, here, speed, location, self._walk_cross, self._walk_turn_back
         ):
             # Stepped along the route (over a road stretch, or on a map with
@@ -534,10 +524,7 @@ class PedestrianEntity(WalkedEntity):
         if blueprint.has_attribute("is_invincible"):
             blueprint.set_attribute("is_invincible", "false")
         old_id = int(walker.id)
-        if TYPE_CHECKING:
-            pass  # the walker controller is not compiled (docs/typecheck.md)
-        else:
-            _release_walker_ai(walker)
+        _release_walker_ai(walker)
         walker.destroy()
         self._walker = None
         revived: "Optional[carla.Actor]" = None

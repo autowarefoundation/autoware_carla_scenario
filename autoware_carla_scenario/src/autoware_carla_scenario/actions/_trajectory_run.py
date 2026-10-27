@@ -712,9 +712,7 @@ class TrajectoryRun(BaseAction):
             gear = control.gear
         except AttributeError:
             gear = 0
-        if TYPE_CHECKING:
-            pass  # utils.clearance is not compiled (docs/typecheck.md)
-        elif _walker_in_way(actor, transform, math.hypot(velocity.x, velocity.y)):
+        if _walker_in_way(actor, transform, math.hypot(velocity.x, velocity.y)):
             # A walker in its way: stopped for, as the TrafficManager would.
             import typesafe_carla.carla as carla  # noqa: PLC0415
 

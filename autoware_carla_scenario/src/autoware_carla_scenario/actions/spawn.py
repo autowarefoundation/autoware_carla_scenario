@@ -435,12 +435,9 @@ class SpawnAction(BaseAction):
         if self._shift_max <= 0.0 and not self._entity_name:
             return due  # a prop not asked to look for a clear place
         x, y, z, yaw = due
-        if TYPE_CHECKING:
-            blocker = -1  # utils.clearance is not compiled (docs/typecheck.md)
-        else:
-            blocker = _taken(
-                world, actor_id, x, y, yaw, half_length, half_width, self._ahead
-            )
+        blocker = _taken(
+            world, actor_id, x, y, yaw, half_length, half_width, self._ahead
+        )
         if blocker < 0:
             self._claim(world, actor_id, due, half_length, half_width)
             return due
@@ -460,19 +457,16 @@ class SpawnAction(BaseAction):
                 if yaw1 is not None:
                     there_yaw = float(yaw1)
                 there = (x1, y1, there_z, there_yaw)
-                if TYPE_CHECKING:
-                    other = -1
-                else:
-                    other = _taken(
-                        world,
-                        actor_id,
-                        there[0],
-                        there[1],
-                        there[3],
-                        half_length,
-                        half_width,
-                        self._ahead,
-                    )
+                other = _taken(
+                    world,
+                    actor_id,
+                    there[0],
+                    there[1],
+                    there[3],
+                    half_length,
+                    half_width,
+                    self._ahead,
+                )
                 if other < 0:
                     logger.warning(
                         "%s: spawns %.0f m on along its lane: actor %d stands "
@@ -502,12 +496,7 @@ class SpawnAction(BaseAction):
         half_length: float,
         half_width: float,
     ) -> None:
-        if TYPE_CHECKING:
-            pass  # utils.clearance is not compiled (docs/typecheck.md)
-        else:
-            _hold(
-                world, actor_id, place[0], place[1], place[3], half_length, half_width
-            )
+        _hold(world, actor_id, place[0], place[1], place[3], half_length, half_width)
 
 
 def _along_lane(

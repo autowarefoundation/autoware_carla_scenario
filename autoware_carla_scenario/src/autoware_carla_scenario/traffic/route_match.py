@@ -15,9 +15,12 @@ stops a vehicle's route through which keeps to the recorded lanes.
 from __future__ import annotations
 
 import math
-from typing import TYPE_CHECKING, Any, Optional, Sequence
+from typing import TYPE_CHECKING, Optional, Sequence
 
 if TYPE_CHECKING:
+    import lanelet2.core
+    import lanelet2.routing
+
     from ..coordinate.poses import Lanelet2Pose
 
 __all__ = ["TrackMatchError", "match_track"]
@@ -45,11 +48,20 @@ _DETOUR_SLACK_M = 30.0
 class TrackMatchError(ValueError):
     """No drivable sequence of lanes follows the track."""
 
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+
 
 class _Candidate:
     """A lanelet a sample may be on: where along it, and at what cost."""
 
-    def __init__(self, lanelet: Any, s: float, cost: float) -> None:
+    lanelet: "lanelet2.core.ConstLanelet"
+    s: float
+    cost: float
+
+    def __init__(
+        self, lanelet: "lanelet2.core.ConstLanelet", s: float, cost: float
+    ) -> None:
         self.lanelet = lanelet
         self.s = s
         self.cost = cost
@@ -57,8 +69,8 @@ class _Candidate:
 
 def match_track(
     samples: Sequence[tuple[float, float, float]],
-    lanelet_map: Any,
-    routing_graph: Any,
+    lanelet_map: "lanelet2.core.LaneletMap",
+    routing_graph: "lanelet2.routing.RoutingGraph",
     *,
     radius: float = MATCH_RADIUS_M,
 ) -> list["Lanelet2Pose"]:
@@ -129,7 +141,11 @@ def match_track(
 
 
 def _candidates(
-    lanelet_map: Any, x: float, y: float, heading: float, radius: float
+    lanelet_map: "lanelet2.core.LaneletMap",
+    x: float,
+    y: float,
+    heading: float,
+    radius: float,
 ) -> list[_Candidate]:
     """The road lanelets within *radius* of ``(x, y)`` running its way."""
     import lanelet2.core  # noqa: PLC0415
@@ -162,7 +178,7 @@ def _candidates(
 def _transition(
     before: _Candidate,
     after: _Candidate,
-    graph: Any,
+    graph: "lanelet2.routing.RoutingGraph",
     lengths: dict[int, float],
     paths: dict[tuple[int, int], Optional[float]],
     samples: Sequence[tuple[float, float, float]],
@@ -183,7 +199,8 @@ def _transition(
         if path is None:
             paths[key] = None
         else:
-            lanelets = list(path)
+            found: "lanelet2.routing.LaneletPath" = path
+            lanelets = list(found)
             middle = sum(_length(ll, lengths) for ll in lanelets[1:-1])
             paths[key] = middle + (_length(a, lengths) - before.s) + after.s
     driven = paths[key]
@@ -197,7 +214,7 @@ def _transition(
     return _PATH_COST + max(0.0, driven - straight) / 10.0
 
 
-def _length(lanelet: Any, lengths: dict[int, float]) -> float:
+def _length(lanelet: "lanelet2.core.ConstLanelet", lengths: dict[int, float]) -> float:
     import lanelet2.geometry  # noqa: PLC0415
 
     key = int(lanelet.id)
@@ -206,7 +223,7 @@ def _length(lanelet: Any, lengths: dict[int, float]) -> float:
     return lengths[key]
 
 
-def _heading_at(centre: Any, s: float) -> float:
+def _heading_at(centre: "lanelet2.core.ConstLineString2d", s: float) -> float:
     """The heading (rad) of polyline *centre* at *s* metres along it."""
     points = [(p.x, p.y) for p in centre]
     travelled = 0.0

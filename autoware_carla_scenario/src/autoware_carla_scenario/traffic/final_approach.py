@@ -142,24 +142,21 @@ class FinalApproach:
                 vehicle.apply_control(carla.VehicleControl(throttle=0.0, brake=1.0))
             return
         velocity = actor.get_velocity()
-        if TYPE_CHECKING:
-            pass  # utils.clearance is not compiled (docs/typecheck.md)
-        else:
-            from ..actions._trajectory_run import (  # noqa: PLC0415
-                _vehicle_in_way,
-                _walker_in_way,
-            )
+        from ..actions._trajectory_run import (  # noqa: PLC0415
+            _vehicle_in_way,
+            _walker_in_way,
+        )
 
-            speed = math.hypot(velocity.x, velocity.y)
-            walker = _walker_in_way(actor, transform, speed)
-            if walker or _vehicle_in_way(actor, transform, speed):
-                vehicle.apply_control(carla.VehicleControl(throttle=0.0, brake=1.0))
-                self._blocked_s += dt
-                wait = LEAD_OUT_WALKER_WAIT_S if walker else LEAD_OUT_WAIT_S
-                if not self._stop and self._blocked_s >= wait:
-                    self.done = True  # the TrafficManager takes it on as it is
-                return
-            self._blocked_s = 0.0
+        speed = math.hypot(velocity.x, velocity.y)
+        walker = _walker_in_way(actor, transform, speed)
+        if walker or _vehicle_in_way(actor, transform, speed):
+            vehicle.apply_control(carla.VehicleControl(throttle=0.0, brake=1.0))
+            self._blocked_s += dt
+            wait = LEAD_OUT_WALKER_WAIT_S if walker else LEAD_OUT_WAIT_S
+            if not self._stop and self._blocked_s >= wait:
+                self.done = True  # the TrafficManager takes it on as it is
+            return
+        self._blocked_s = 0.0
         if not self._stop:
             # Making no way, nothing in its way: wedged; handed on.
             if self._here > self._progress_at + _PROGRESS_M:

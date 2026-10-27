@@ -91,18 +91,15 @@ class PlaceClearCondition(BaseCondition):
             spot = (pose.x, pose.y, pose.yaw)
             self._spot = spot
         x, y, yaw = spot
-        if TYPE_CHECKING:
-            blocker = -1  # utils.clearance is not compiled (docs/typecheck.md)
-        else:
-            blocker = _occupant(
-                world,
-                x,
-                y,
-                yaw,
-                self._length / 2.0,
-                self._width / 2.0,
-                self._margin,
-            )
+        blocker = _occupant(
+            world,
+            x,
+            y,
+            yaw,
+            self._length / 2.0,
+            self._width / 2.0,
+            self._margin,
+        )
         if blocker >= 0:
             if blocker != self._said_blocker:
                 self._said_blocker = blocker
