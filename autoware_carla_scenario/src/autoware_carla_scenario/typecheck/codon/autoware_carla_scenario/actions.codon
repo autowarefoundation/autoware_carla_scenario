@@ -311,6 +311,10 @@ class CommunicationLossAction(BaseAction):
         raise NotImplementedError()
 
     @property
+    def started_at(self) -> float:
+        raise NotImplementedError()
+
+    @property
     def cutting(self) -> bool:
         raise NotImplementedError()
 

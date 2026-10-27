@@ -65,6 +65,7 @@ from ..canvas import use_canvas
 from ..entity_role import find_actor_in_world
 from .config import DeviceSpec, HilsConfig, MessageSpec, SensorSpec, StepSpec
 from .link import Event, RunnerLink
+from .protocol import LINK_DIRECTIONS
 from .measurements import (
     LidarRevolution,
     camera_frame,
@@ -107,16 +108,19 @@ _WALL_QUEUE = 2
 #: A failing send is logged the first time and then once in this many.
 _LOG_EVERY = 100
 
-#: A ``disconnect``'s direction (:data:`~.protocol.LINK_DIRECTIONS`) as the
-#: device channel's: the bridge sends the ECU its inputs and receives its output.
-_CHANNEL_DIRECTIONS: Dict[str, Literal["send", "recv", "both"]] = {
-    "to_ecu": "send",
-    "from_ecu": "recv",
-    "both": "both",
-}
+Side = Literal["send", "recv"]
 
 #: A channel's two sides, which cuts stop separately.
-_SIDES: Tuple[Literal["send", "recv"], ...] = ("send", "recv")
+_SIDES: Tuple[Side, ...] = ("send", "recv")
+
+#: The device channel's sides a ``disconnect``'s direction stops: the bridge
+#: sends the ECU its inputs and receives its output.
+_DIRECTION_SIDES: Dict[str, FrozenSet[Side]] = {
+    "to_ecu": frozenset({"send"}),
+    "from_ecu": frozenset({"recv"}),
+    "both": frozenset(_SIDES),
+}
+assert set(_DIRECTION_SIDES) == set(LINK_DIRECTIONS)
 
 OpenChannel = Callable[..., "hilspy.Channel"]
 
@@ -165,8 +169,8 @@ class _Cut(NamedTuple):
     device: Optional[str]
     #: The names of the messages, or ``None`` for everything.
     messages: Optional[FrozenSet[str]]
-    #: The channel's direction: ``send``, ``recv`` or ``both``.
-    direction: str
+    #: The channel's sides it stops.
+    sides: FrozenSet[Side]
 
 
 class _Failures:
@@ -504,6 +508,9 @@ class HilsBridge:
         self._command_lock = threading.Lock()
         #: What the scenario stops (:meth:`disconnect`), by cut id.
         self._cuts: Dict[str, _Cut] = {}
+        #: What each channel side was last set to stop (:meth:`_apply_cuts`):
+        #: these names (none when absent), or everything (``None``).
+        self._applied: Dict[Tuple[str, Side], Optional[FrozenSet[str]]] = {}
         self._stop = threading.Event()
 
     # -- set-up and shut-down ------------------------------------------------
@@ -740,15 +747,15 @@ class HilsBridge:
         given again under its *cut_id* is replaced.
 
         Raises:
-            ValueError: No scenario runs, no such device or direction, an
-                empty list of messages, or the device's channel refused the
-                cut (which is then not made).
+            ValueError: No scenario runs, no such device or direction,
+                messages that are not a list of names or name none, or the
+                device's channel refused the cut (which is then not made).
         """
         if not self._active:
             raise ValueError("no scenario runs")
-        if direction not in _CHANNEL_DIRECTIONS:
+        if direction not in LINK_DIRECTIONS:
             raise ValueError(
-                f"direction must be one of {', '.join(_CHANNEL_DIRECTIONS)}, "
+                f"direction must be one of {', '.join(LINK_DIRECTIONS)}, "
                 f"got {direction!r}"
             )
         if device is not None and device not in self._channels:
@@ -756,19 +763,20 @@ class HilsBridge:
                 f"no device {device!r}; the devices are "
                 f"{', '.join(sorted(self._channels)) or 'none'}"
             )
+        if messages is not None and (
+            isinstance(messages, str) or not isinstance(messages, (list, tuple))
+        ):
+            raise ValueError("messages must be a list of names")
         names = None if messages is None else frozenset(str(m) for m in messages)
         if names is not None and not names:
             raise ValueError("messages names none; null stops everything")
-        previous = self._cuts.get(cut_id)
-        self._cuts[cut_id] = _Cut(device, names, _CHANNEL_DIRECTIONS[direction])
+        saved = dict(self._cuts)
+        self._cuts[cut_id] = _Cut(device, names, _DIRECTION_SIDES[direction])
         try:
             self._apply_cuts()
         except self._hilspy.Error as exc:
             # Undone, so the cut does not fail every later change of the cuts.
-            if previous is None:
-                del self._cuts[cut_id]
-            else:
-                self._cuts[cut_id] = previous
+            self._cuts = saved
             self._apply_cuts()
             raise ValueError(str(exc)) from exc
         logger.warning(
@@ -785,22 +793,30 @@ class HilsBridge:
             self._apply_cuts()
 
     def _apply_cuts(self) -> None:
-        """Set every device's channel to stop what its cuts stop together."""
+        """Set every device's channel to stop what its cuts stop together,
+        changing only the sides whose combined cut changed."""
         for name, channel in self._channels.items():
             for side in _SIDES:
                 cuts = [
                     c
                     for c in self._cuts.values()
-                    if c.device in (None, name) and c.direction in (side, "both")
+                    if c.device in (None, name) and side in c.sides
                 ]
-                if not cuts:
-                    if channel.disconnected(side):
-                        channel.reconnect(direction=side)
-                elif any(c.messages is None for c in cuts):
+                # Nothing (an empty set), everything (None), or these names.
+                stopped: Optional[FrozenSet[str]] = (
+                    None
+                    if any(c.messages is None for c in cuts)
+                    else frozenset().union(*(c.messages or () for c in cuts))
+                )
+                if self._applied.get((name, side), frozenset()) == stopped:
+                    continue
+                if stopped is None:
                     channel.disconnect(direction=side)
+                elif stopped:
+                    channel.disconnect(direction=side, messages=sorted(stopped))
                 else:
-                    stopped = sorted(set().union(*(c.messages or () for c in cuts)))
-                    channel.disconnect(direction=side, messages=stopped)
+                    channel.reconnect(direction=side)
+                self._applied[(name, side)] = stopped
 
     def _reconnect_all(self) -> None:
         """Carry everything again."""
@@ -852,14 +868,11 @@ class HilsBridge:
             return
         if kind == "disconnect":
             device = message.get("device")
-            messages = message.get("messages")
             try:
-                if messages is not None and not isinstance(messages, list):
-                    raise ValueError("messages must be a list of names")
                 self.disconnect(
                     str(message.get("id", "")),
                     None if device is None else str(device),
-                    messages,
+                    message.get("messages"),
                     str(message.get("direction", "both")),
                 )
             except ValueError as exc:

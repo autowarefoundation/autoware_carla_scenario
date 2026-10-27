@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import itertools
 import logging
 from typing import TYPE_CHECKING, Optional, Sequence, Union
 
@@ -12,7 +11,7 @@ from ..entity.hils_entity import HilsEgoEntity
 from ..entity.registry import find_vehicle_entity
 from ..entity_role import EntityRole
 from ..hils.protocol import LINK_DIRECTIONS
-from .base import BaseAction, TickTiming
+from .base import ActionState, BaseAction, TickTiming
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
@@ -20,9 +19,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 __all__ = ["CommunicationLossAction"]
-
-#: Tells the cuts of one run apart: several actions may cut the same device.
-_CUT_IDS = itertools.count(1)
 
 
 def _names(messages: Union[str, Sequence[str], None]) -> Optional[tuple[str, ...]]:
@@ -85,7 +81,6 @@ class CommunicationLossAction(BaseAction):
     _messages: Optional[tuple[str, ...]]
     _duration: Optional[float]
     _direction: str
-    _end: Optional[BaseCondition]
     _now: float
     _started_at: float
     _cut: Optional[tuple[HilsEgoEntity, str]]
@@ -114,9 +109,9 @@ class CommunicationLossAction(BaseAction):
                 f"CommunicationLossAction: duration must be positive, got {duration}"
             )
         # The run lasts until the loss ends, so it is never instantaneous.
-        restored: BaseCondition = _Restored(self, label)
+        end: BaseCondition = _LossEnds(self, until, duration, label)
         super().__init__(
-            label=label, condition=condition, timing=timing, once=once, until=restored
+            label=label, condition=condition, timing=timing, once=once, until=end
         )
         self._entity_name = str(entity_name)
         # An editor's empty field means every device too.
@@ -124,7 +119,6 @@ class CommunicationLossAction(BaseAction):
         self._messages = _names(messages)
         self._direction = direction
         self._duration = None if duration is None else float(duration)
-        self._end = until
         self._now = 0.0
         self._started_at = 0.0
         self._cut = None
@@ -156,15 +150,23 @@ class CommunicationLossAction(BaseAction):
         return True
 
     @property
+    def started_at(self) -> float:
+        """Scenario time the action last fired at, seconds."""
+        return self._started_at
+
+    @property
     def cutting(self) -> bool:
         """Whether the bridge has been asked to stop the data and not yet to
         carry it again."""
         return self._cut is not None
 
     def tick(self, world: "carla.World", elapsed: float) -> None:
-        """Evaluate as :meth:`BaseAction.tick`; *elapsed* times *duration*."""
+        """Evaluate as :meth:`BaseAction.tick` (*elapsed* times *duration*),
+        and restore the data once the run is over."""
         self._now = elapsed
         super().tick(world, elapsed)
+        if self.state not in (ActionState.START_TRANSITION, ActionState.RUNNING):
+            self.restore()
 
     def execute(self, world: "carla.World") -> None:
         """Have the HILS bridge stop the data."""
@@ -177,13 +179,14 @@ class CommunicationLossAction(BaseAction):
                 self._entity_name,
             )
             return
-        cut_id = f"{self.label}-{next(_CUT_IDS)}"
-        messages = None if self._messages is None else list(self._messages)
-        if entity.disconnect(cut_id, self._device, messages, self._direction):
+        cut_id = entity.disconnect(self._device, self._messages, self._direction)
+        if cut_id is not None:
             self._cut = (entity, cut_id)
             logger.info(
                 "CommunicationLossAction: %s of %s stopped (%s)",
-                "every message" if messages is None else ", ".join(messages),
+                "every message"
+                if self._messages is None
+                else ", ".join(self._messages),
                 "every device" if self._device is None else repr(self._device),
                 self._direction,
             )
@@ -203,38 +206,46 @@ class CommunicationLossAction(BaseAction):
         super().close()
 
 
-class _Restored(BaseCondition):
-    """Ends a :class:`CommunicationLossAction`'s run -- once its *until* fires
-    or its *duration* has passed -- and restores the data as it does."""
+class _LossEnds(BaseCondition):
+    """Satisfied once a :class:`CommunicationLossAction`'s *until* fires or its
+    *duration* has passed since it fired; never without either."""
 
     _action: CommunicationLossAction
+    _until: Optional[BaseCondition]
+    _duration: Optional[float]
 
-    def __init__(self, action: CommunicationLossAction, label: str) -> None:
-        super().__init__(label=f"{label}_restored")
+    def __init__(
+        self,
+        action: CommunicationLossAction,
+        until: Optional[BaseCondition],
+        duration: Optional[float],
+        label: str,
+    ) -> None:
+        super().__init__(label=f"{label}_ends")
         self._action = action
+        self._until = until
+        self._duration = duration
 
     def check(self, world: "carla.World", elapsed: float) -> Optional[ScenarioResult]:
-        action = self._action
-        result: Optional[ScenarioResult] = None
-        end = action._end
-        if end is not None:
-            result = end.check(world, elapsed)
-        duration = action.duration
+        if self._until is not None:
+            # Annotated, so Codon unwraps the Optional (docs/typecheck.md).
+            until: BaseCondition = self._until
+            result = until.check(world, elapsed)
+            if result is not None:
+                return result
+        duration = self._duration
         if (
-            result is None
-            and duration is not None
-            and elapsed - action._started_at >= duration - 1e-9
+            duration is not None
+            and elapsed - self._action.started_at >= duration - 1e-9
         ):
-            result = ScenarioResult(
+            return ScenarioResult(
                 passed=True,
-                message=f"{action.label}: {duration:g} s passed",
+                message=f"{self._action.label}: {duration:g} s passed",
                 elapsed_seconds=elapsed,
             )
-        if result is not None:
-            action.restore()
-        return result
+        return None
 
     def close(self) -> None:
-        end = self._action._end
-        if end is not None:
-            end.close()
+        if self._until is not None:
+            until: BaseCondition = self._until
+            until.close()

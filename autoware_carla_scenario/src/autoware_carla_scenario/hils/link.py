@@ -16,7 +16,13 @@ import socket
 import threading
 from typing import Any, Dict, Mapping, Optional, Tuple
 
-from .protocol import PROTOCOL_VERSION, LineReader, encode, parse_address
+from .protocol import (
+    PROTOCOL_VERSION,
+    RUNNER_MESSAGES,
+    LineReader,
+    encode,
+    parse_address,
+)
 
 __all__ = ["RunnerLink"]
 
@@ -119,7 +125,7 @@ class RunnerLink:
                 return
             for message in messages:
                 kind = str(message.get("type"))
-                if kind in ("start", "end", "disconnect", "reconnect"):
+                if kind in RUNNER_MESSAGES:
                     self._events.put((kind, message))
                 else:
                     logger.warning("a run sent an unknown message %r", kind)

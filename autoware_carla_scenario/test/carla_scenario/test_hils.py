@@ -1396,7 +1396,7 @@ def test_the_communication_loss_action_asks_the_bridge() -> None:
         bridge.send({"type": "error", "message": "disconnect: no device 'can'"})
         assert _ticked(entity, lambda: entity.termination_requested)
         assert "no device 'can'" in entity.termination_reason
-        assert not entity.disconnect("x", "can")
+        assert entity.disconnect("can") is None
         everything.close()
         assert not everything.cutting
     finally:

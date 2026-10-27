@@ -45,6 +45,7 @@ __all__ = [
     "COMMAND_MODES",
     "DEFAULT_PORT",
     "LINK_DIRECTIONS",
+    "RUNNER_MESSAGES",
     "PROTOCOL_VERSION",
     "LineReader",
     "encode",
@@ -84,6 +85,9 @@ COMMAND_FIELDS: Dict[str, Dict[str, str]] = {
     },
 }
 
+
+#: The messages a run sends the bridge (the table above).
+RUNNER_MESSAGES: Tuple[str, ...] = ("start", "end", "disconnect", "reconnect")
 
 #: Which way of a device's link a ``disconnect`` stops: what the simulation
 #: sends the ECU, what the ECU sends back, or both.

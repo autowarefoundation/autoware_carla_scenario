@@ -28,7 +28,7 @@ import logging
 import socket
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, Mapping, Optional, Sequence, Tuple
 
 from ..hils.protocol import (
     COMMAND_FIELDS,
@@ -120,6 +120,7 @@ class HilsEgoEntity(ExternallyDrivenEgo):
     _command: Optional[Tuple[str, Dict[str, float]]]
     _command_at: float
     _stale: bool
+    _cuts: int
 
     def __init__(
         self, config: Optional[HilsEgoConfig] = None, episode_name: str = ""
@@ -134,6 +135,8 @@ class HilsEgoEntity(ExternallyDrivenEgo):
         self._command = None
         self._command_at = 0.0
         self._stale = False
+        #: Numbers the cuts asked of the bridge (:meth:`disconnect`).
+        self._cuts = 0
 
     @property
     def config(self) -> HilsEgoConfig:
@@ -265,45 +268,43 @@ class HilsEgoEntity(ExternallyDrivenEgo):
 
     def disconnect(
         self,
-        cut_id: str,
         device: Optional[str] = None,
-        messages: Optional[List[str]] = None,
+        messages: Optional[Sequence[str]] = None,
         direction: str = "both",
-    ) -> bool:
+    ) -> Optional[str]:
         """Have the bridge stop data between it and the ECUs (fault injection)
-        until :meth:`reconnect` with the same *cut_id*, or the scenario's end.
+        until :meth:`reconnect` with the id this returns, or the scenario's end.
 
         :class:`~autoware_carla_scenario.actions.CommunicationLossAction` is
-        the way a scenario says so.
+        the way a scenario says so.  Cuts add up on the bridge.
 
         Args:
-            cut_id: Names this cut, for :meth:`reconnect`; cuts with other ids
-                stay as they are.
             device: The bridge's device, by name; ``None`` for every device.
             messages: The names of the messages to stop; ``None`` for
                 everything the device carries.
             direction: One of :data:`~autoware_carla_scenario.hils.protocol.LINK_DIRECTIONS`.
 
         Returns:
-            Whether the request went to the bridge: not before it is reached,
-            nor once the link to it failed.  A device the bridge does not have
-            ends the run, as its other errors do.
+            The cut's id, or ``None`` when the request did not go to the bridge
+            (before it is reached, or once the link to it failed).  A device
+            the bridge does not have ends the run, as its other errors do.
         """
         if self._sock is None or self.termination_requested:
             logger.warning(
                 "The HILS bridge is not connected; the data of %s is not stopped",
                 "every device" if device is None else repr(device),
             )
-            return False
-        return self._send(
-            {
-                "type": "disconnect",
-                "id": cut_id,
-                "device": device,
-                "messages": messages,
-                "direction": direction,
-            }
-        )
+            return None
+        self._cuts += 1
+        cut_id = str(self._cuts)
+        message = {
+            "type": "disconnect",
+            "id": cut_id,
+            "device": device,
+            "messages": None if messages is None else list(messages),
+            "direction": direction,
+        }
+        return cut_id if self._send(message) else None
 
     def reconnect(self, cut_id: str) -> bool:
         """Have the bridge carry the data the cut *cut_id* stopped again.
@@ -312,9 +313,9 @@ class HilsEgoEntity(ExternallyDrivenEgo):
             Whether the request went to the bridge (when it did not, the
             bridge restores everything at the scenario's end).
         """
-        if self._sock is None or self.termination_requested:
-            return False
-        return self._send({"type": "reconnect", "id": cut_id})
+        return not self.termination_requested and self._send(
+            {"type": "reconnect", "id": cut_id}
+        )
 
     # ------------------------------------------------------------------
     # The link
