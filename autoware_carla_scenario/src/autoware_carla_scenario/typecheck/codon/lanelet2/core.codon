@@ -2,8 +2,11 @@
 #
 # lanelet2 hands out every primitive as the Python class of what it is; the
 # model declares those classes with the members the checked modules read.
-# Everything here is read-only: nothing builds or edits a map (lanelet2.io
-# loads one).
+# Almost everything here is read-only (lanelet2.io loads a map). What edits
+# one is declared for coordinate.projection._read_local_tags(), which moves a
+# Local map's points to their local_x/local_y tags and rebuilds the map from
+# its primitives: a Point3d's x/y/z setters, every layer of a LaneletMap,
+# LaneletMap() and an add() overload per primitive.
 #
 # Const and mutable twins. lanelet2 has a Const class and a mutable one for
 # each primitive (ConstLanelet / Lanelet, ConstLineString3d / LineString3d,
@@ -126,7 +129,29 @@ class ConstPoint3d:
 
 
 class Point3d(ConstPoint3d):
-    pass
+    @property
+    def x(self) -> float:
+        raise NotImplementedError()
+
+    @x.setter
+    def x(self, value: float):
+        raise NotImplementedError()
+
+    @property
+    def y(self) -> float:
+        raise NotImplementedError()
+
+    @y.setter
+    def y(self, value: float):
+        raise NotImplementedError()
+
+    @property
+    def z(self) -> float:
+        raise NotImplementedError()
+
+    @z.setter
+    def z(self, value: float):
+        raise NotImplementedError()
 
 
 # A point of a 2D line string or polygon (to2D() of a line string, a
@@ -325,9 +350,88 @@ class LaneletLayer:
         raise NotImplementedError()
 
 
+class Polygon3d:
+    @property
+    def id(self) -> int:
+        raise NotImplementedError()
+
+
+class Area:
+    @property
+    def id(self) -> int:
+        raise NotImplementedError()
+
+
+class PointLayer:
+    def __iter__(self) -> Generator[Point3d]:
+        raise NotImplementedError()
+
+
+class LineStringLayer:
+    def __iter__(self) -> Generator[LineString3d]:
+        raise NotImplementedError()
+
+
+class PolygonLayer:
+    def __iter__(self) -> Generator[Polygon3d]:
+        raise NotImplementedError()
+
+
+class AreaLayer:
+    def __iter__(self) -> Generator[Area]:
+        raise NotImplementedError()
+
+
+class RegulatoryElementLayer:
+    def __iter__(self) -> Generator[RegulatoryElement]:
+        raise NotImplementedError()
+
+
 class LaneletMap:
+    def __init__(self):
+        pass
+
     @property
     def laneletLayer(self) -> LaneletLayer:
+        raise NotImplementedError()
+
+    @property
+    def pointLayer(self) -> PointLayer:
+        raise NotImplementedError()
+
+    @property
+    def lineStringLayer(self) -> LineStringLayer:
+        raise NotImplementedError()
+
+    @property
+    def polygonLayer(self) -> PolygonLayer:
+        raise NotImplementedError()
+
+    @property
+    def areaLayer(self) -> AreaLayer:
+        raise NotImplementedError()
+
+    @property
+    def regulatoryElementLayer(self) -> RegulatoryElementLayer:
+        raise NotImplementedError()
+
+    # add(primitive): Python takes any of the primitives (an overload each).
+    def add(self, value: Point3d) -> None:
+        raise NotImplementedError()
+
+    def add(self, value: LineString3d) -> None:
+        raise NotImplementedError()
+
+    def add(self, value: Polygon3d) -> None:
+        raise NotImplementedError()
+
+    def add(self, value: Lanelet) -> None:
+        raise NotImplementedError()
+
+    def add(self, value: Area) -> None:
+        raise NotImplementedError()
+
+    def add(self, value: RegulatoryElement) -> None:
         raise NotImplementedError()
 
 

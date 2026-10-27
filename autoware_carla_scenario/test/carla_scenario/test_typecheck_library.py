@@ -79,10 +79,15 @@ def test_every_excluded_module_has_a_reason() -> None:
 
 
 def _shim(module: str) -> str | None:
-    """The source of the standard module's shim in the model, if it has one."""
+    """The source of the standard module's shim in the model, if it has one.
+
+    A dotted module is a submodule's shim (``importlib.metadata`` is
+    ``importlib/metadata.codon``).
+    """
+    stem = module.replace(".", "/")
     for path in (
-        model_dir() / f"{module}.codon",
-        model_dir() / module / "__init__.codon",
+        model_dir() / f"{stem}.codon",
+        model_dir() / stem / "__init__.codon",
     ):
         if path.is_file():
             return path.read_text(encoding="utf-8")
@@ -105,11 +110,22 @@ def _declares(shim: str, name: str) -> bool:
     )
 
 
+def _dotted(node: ast.expr) -> str | None:
+    """``a.b.c`` for a chain of attributes of a name, else ``None``."""
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        owner = _dotted(node.value)
+        return None if owner is None else f"{owner}.{node.attr}"
+    return None
+
+
 def _shimmed_uses(source: str) -> dict[str, set[str]]:
     """The names a module takes from each standard module with a shim.
 
     ``import X`` counts the ``X.name`` it reads, ``from X import name`` the
-    names; a method of a class (``Path.rename()``) is not seen.
+    names, a submodule's (``import X.Y``, ``from X.Y import name``) included;
+    a method of a class (``Path.rename()``) is not seen.
     """
     tree = ast.parse(source)
     aliases: dict[str, str] = {}
@@ -117,24 +133,30 @@ def _shimmed_uses(source: str) -> dict[str, set[str]]:
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
-                if "." not in alias.name and _shim(alias.name) is not None:
+                if _shim(alias.name) is not None:
                     aliases[alias.asname or alias.name] = alias.name
                     uses.setdefault(alias.name, set())
         elif (
             isinstance(node, ast.ImportFrom)
             and node.level == 0
             and node.module
-            and "." not in node.module
             and _shim(node.module) is not None
         ):
-            uses.setdefault(node.module, set()).update(a.name for a in node.names)
+            names = uses.setdefault(node.module, set())
+            for alias in node.names:
+                submodule = f"{node.module}.{alias.name}"
+                if _shim(submodule) is None:
+                    names.add(alias.name)
+                else:
+                    # `from lxml import etree`: what is read of etree is
+                    # taken from lxml.etree.
+                    aliases[alias.asname or alias.name] = submodule
+                    uses.setdefault(submodule, set())
     for node in ast.walk(tree):
-        if (
-            isinstance(node, ast.Attribute)
-            and isinstance(node.value, ast.Name)
-            and node.value.id in aliases
-        ):
-            uses[aliases[node.value.id]].add(node.attr)
+        if isinstance(node, ast.Attribute):
+            owner = _dotted(node.value)
+            if owner in aliases:
+                uses[aliases[owner]].add(node.attr)
     return uses
 
 
@@ -147,7 +169,7 @@ def test_an_excluded_reason_names_no_api_its_shim_declares() -> None:
     modules = package_modules()
     wrong = []
     for module, reason in EXCLUDED.items():
-        for name, attr in re.findall(r"`(\w+)\.(\w+)(?:\(\))?`", reason):
+        for name, attr in re.findall(r"`([\w.]+)\.(\w+)(?:\(\))?`", reason):
             shim = _shim(name)
             if shim is not None and _declares(shim, attr):
                 wrong.append(f"{module}: `{name}.{attr}` is declared by its shim")

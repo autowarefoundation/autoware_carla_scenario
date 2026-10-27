@@ -40,14 +40,11 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Optional
+from typing import Any, Optional
 
 import typesafe_carla.carla as carla
 
 from ..coordinate.traffic_light import find_traffic_lights_for_lanelet2_id
-
-if TYPE_CHECKING:
-    pass
 
 logger = logging.getLogger(__name__)
 

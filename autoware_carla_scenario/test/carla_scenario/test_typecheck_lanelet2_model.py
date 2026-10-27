@@ -576,3 +576,118 @@ def test_a_projector_projects_a_gps_point_and_loads_the_map(projector: Any) -> N
     ):
         assert isinstance(loaded, core.LaneletMap)
         assert len(loaded.laneletLayer) > 0
+
+
+# ---------------------------------------------------------------------------
+# What coordinate.projection._read_local_tags does: move points, rebuild a map
+# ---------------------------------------------------------------------------
+
+
+def _model_class(name: str) -> ast.ClassDef:
+    return dict((c.name, c) for _m, c in _classes())[name]
+
+
+def _returned(fn: ast.FunctionDef) -> str:
+    """The class a model function returns (``X``, or ``X`` of ``Generator[X]``)."""
+    returns = fn.returns
+    if isinstance(returns, ast.Subscript):
+        returns = returns.slice
+    assert isinstance(returns, ast.Name), ast.dump(fn)
+    return returns.id
+
+
+def _model_layers() -> dict[str, str]:
+    """Layer property of the model's ``LaneletMap`` -> the class it yields."""
+    lanelet_map = _model_class("LaneletMap")
+    layers: dict[str, str] = {}
+    for node in lanelet_map.body:
+        if isinstance(node, ast.FunctionDef) and node.name.endswith("Layer"):
+            layer = _model_class(_returned(node))
+            iterate = next(
+                n
+                for n in layer.body
+                if isinstance(n, ast.FunctionDef) and n.name == "__iter__"
+            )
+            layers[node.name] = _returned(iterate)
+    return layers
+
+
+def _model_adds() -> list[str]:
+    """The class of each ``LaneletMap.add()`` overload the model declares."""
+    adds: list[str] = []
+    for node in _model_class("LaneletMap").body:
+        if isinstance(node, ast.FunctionDef) and node.name == "add":
+            annotation = node.args.args[1].annotation
+            assert isinstance(annotation, ast.Name)
+            adds.append(annotation.id)
+    return adds
+
+
+def test_the_model_declares_every_layer_and_an_add_for_each() -> None:
+    layers = _model_layers()
+    assert layers == {
+        "pointLayer": "Point3d",
+        "lineStringLayer": "LineString3d",
+        "polygonLayer": "Polygon3d",
+        "laneletLayer": "Lanelet",
+        "areaLayer": "Area",
+        "regulatoryElementLayer": "RegulatoryElement",
+    }
+    # Python's LaneletMap has these layers and no other.
+    assert set(layers) == {
+        name for name in dir(lanelet2.core.LaneletMap) if name.endswith("Layer")
+    }
+    assert sorted(_model_adds()) == sorted(layers.values())
+
+
+def _area(lanelet_map: Any) -> Any:
+    """An Area (the fixture map has none), bounded by a line string of it."""
+    bound = next(iter(lanelet_map.lineStringLayer))
+    return lanelet2.core.Area(lanelet2.core.getId(), [bound])
+
+
+def test_a_layer_yields_what_the_model_says() -> None:
+    lanelet_map = lanelet2.io.load(
+        str(_OSM_PATH), MGRSProjector(lanelet2.io.Origin(0.0, 0.0, 0.0))
+    )
+    lanelet_map.add(_area(lanelet_map))
+    for name, cls in _model_layers().items():
+        elements = list(getattr(lanelet_map, name))
+        assert elements, name
+        assert all(
+            isinstance(e, getattr(lanelet2.core, cls)) for e in elements
+        ), f"{name}: {({type(e).__name__ for e in elements})}"
+
+
+def test_a_point_moves_and_a_map_is_rebuilt_from_its_primitives() -> None:
+    lanelet_map = lanelet2.io.load(
+        str(_OSM_PATH), MGRSProjector(lanelet2.io.Origin(0.0, 0.0, 0.0))
+    )
+    point = next(iter(lanelet_map.pointLayer))
+    point.x = 1.5
+    point.y = -2.5
+    point.z = 3.0
+    assert (point.x, point.y, point.z) == (1.5, -2.5, 3.0)
+    assert all(isinstance(v, float) for v in (point.x, point.y, point.z))
+
+    rebuilt = lanelet2.core.LaneletMap()
+    assert isinstance(rebuilt, lanelet2.core.LaneletMap)
+    assert len(rebuilt.laneletLayer) == 0
+    area = _area(lanelet_map)
+    # One element of each class an add() overload of the model takes.
+    samples = {
+        "Point3d": point,
+        "LineString3d": next(iter(lanelet_map.lineStringLayer)),
+        "Polygon3d": next(iter(lanelet_map.polygonLayer)),
+        "Lanelet": next(iter(lanelet_map.laneletLayer)),
+        "Area": area,
+        "RegulatoryElement": next(iter(lanelet_map.regulatoryElementLayer)),
+    }
+    for cls in _model_adds():
+        sample = samples[cls]
+        assert isinstance(sample, getattr(lanelet2.core, cls))
+        assert isinstance(sample.id, int)
+        assert rebuilt.add(sample) is None
+    assert rebuilt.pointLayer.exists(point.id)
+    assert rebuilt.areaLayer.exists(area.id)
+    assert rebuilt.regulatoryElementLayer.exists(samples["RegulatoryElement"].id)

@@ -97,6 +97,30 @@ class AdversityEvent:
         self.response = response
 
 
+# waypoint_arrival.WaypointArrival: what take_waypoint_arrivals() hands the
+# runner for the trajectory log.
+class WaypointArrival:
+    entity: str
+    vertex: int
+    kind: str
+    mode: str
+    target_t: float
+    actual_t: float
+
+    def __init__(self, entity: str, vertex: int, kind: str, mode: str,
+                 target_t: float, actual_t: float):
+        self.entity = entity
+        self.vertex = vertex
+        self.kind = kind
+        self.mode = mode
+        self.target_t = target_t
+        self.actual_t = actual_t
+
+    @property
+    def error_s(self) -> float:
+        return self.actual_t - self.target_t
+
+
 class BaseAction:
     # Codon also builds a class by its fields, by position: a subclass with
     # its inherited label alone (`TurnAction("npc1")`). Each subclass declares
@@ -148,6 +172,12 @@ class BaseAction:
         elif name == "take_adversity_events":
             _acs_expect_return(r, List[AdversityEvent],
                                "BaseAction.take_adversity_events() returns List[AdversityEvent]")
+        elif name == "take_waypoint_arrivals":
+            _acs_expect_return(r, List[WaypointArrival],
+                               "BaseAction.take_waypoint_arrivals() returns List[WaypointArrival]")
+        elif name == "take_despawns":
+            _acs_expect_return(r, List[Tuple[str, int]],
+                               "BaseAction.take_despawns() returns List[Tuple[str, int]]")
         elif name == "reissues_while_running":
             _acs_expect_return(r, bool, "BaseAction.reissues_while_running returns bool")
         elif name == "needs_tick_loop":
@@ -182,6 +212,12 @@ class BaseAction:
         raise NotImplementedError()
 
     def take_adversity_events(self) -> List[AdversityEvent]:
+        raise NotImplementedError()
+
+    def take_waypoint_arrivals(self) -> List[WaypointArrival]:
+        raise NotImplementedError()
+
+    def take_despawns(self) -> List[Tuple[str, int]]:
         raise NotImplementedError()
 
     @property

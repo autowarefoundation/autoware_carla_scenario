@@ -1593,23 +1593,10 @@ class ScenarioRunner:
                         # What it sampled this tick (NADE's adversities).
                         for event in action.take_adversity_events():
                             trajectory.record_adversity(action.label, event)
-                        if TYPE_CHECKING:
-                            # Only a RoutingAction has arrivals; Codon reads
-                            # no subclass method off a BaseAction.
-                            pass
-                        else:
-                            take = getattr(action, "take_waypoint_arrivals", None)
-                            if take is not None:
-                                for arrival in take():
-                                    trajectory.record_waypoint_arrival(
-                                        action.label, arrival
-                                    )
-                            gone = getattr(action, "take_despawns", None)
-                            if gone is not None:
-                                for entity, actor_id in gone():
-                                    trajectory.record_despawn(
-                                        action.label, entity, actor_id
-                                    )
+                        for arrival in action.take_waypoint_arrivals():
+                            trajectory.record_waypoint_arrival(action.label, arrival)
+                        for entity, actor_id in action.take_despawns():
+                            trajectory.record_despawn(action.label, entity, actor_id)
                 if npc_events is not None:
                     collisions, falls, fallen_gone = npc_events.tick(world, elapsed)
                     for collision in collisions:
