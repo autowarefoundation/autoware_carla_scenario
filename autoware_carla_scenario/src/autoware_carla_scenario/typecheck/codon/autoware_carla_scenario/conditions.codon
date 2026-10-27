@@ -835,7 +835,9 @@ class EntityPositionDistanceCondition(BaseCondition):
                  vertical: bool = False, tolerance: float = 1e-06, *_kw, label = _Required()):
         _keyword_only(_kw, "EntityPositionDistanceCondition(): label")
         _expect_role(entity_name)
-        _expect_pose(position)
+        # Here, not at the top: trajectory imports this module.
+        from .trajectory import _expect_trajectory_position
+        _expect_trajectory_position(position)
         super().__init__(_required_str(label, "EntityPositionDistanceCondition(): label"))
 
 
@@ -917,7 +919,9 @@ class PlaceClearCondition(BaseCondition):
     def __init__(self, position, length: float, width: float, margin: float = 0.3,
                  *_kw, label = _Required()):
         _keyword_only(_kw, "PlaceClearCondition(): label")
-        _expect_pose(position)
+        # Here, not at the top: trajectory imports this module.
+        from .trajectory import _expect_trajectory_position
+        _expect_trajectory_position(position)
         super().__init__(_required_str(label, "PlaceClearCondition(): label"))
 
 

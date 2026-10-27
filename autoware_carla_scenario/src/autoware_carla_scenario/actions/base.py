@@ -241,6 +241,22 @@ class BaseAction(ABC):
         """
         ...
 
+    def _settle_start(self, world: "carla.World", elapsed: float) -> None:
+        """Step one that fired out of ``startTransition`` without running it
+        again or looking at its trigger: under way, or -- one that ended the
+        moment it was commanded and does not reissue -- complete (standby for
+        a repeating one).  For the init phase, which has no ticks for an
+        action's lifecycle to step through."""
+        if self._lifecycle is not ActionState.START_TRANSITION:
+            return
+        self._lifecycle = ActionState.RUNNING
+        if self.reissues_while_running:
+            return
+        if self._until is None or self._until.check(world, elapsed) is not None:
+            self._lifecycle = (
+                ActionState.COMPLETE if self._once else ActionState.STANDBY
+            )
+
     def tick(self, world: "carla.World", elapsed: float) -> None:
         """Evaluate the condition and, if met, run :meth:`execute`.
 

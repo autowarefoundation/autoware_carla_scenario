@@ -21,7 +21,6 @@ if TYPE_CHECKING:
 
 import typesafe_carla.carla as carla
 
-from .action_state import ActionState
 from .actions import BaseAction, RoutingAction
 from .actions.environment import follow_tire_friction
 from .conditions.base import BaseCondition, find_actor_by_role_name
@@ -671,8 +670,7 @@ class BaseScenario(ABC):
         # way -- so what waits on it (the route of an entity a spawn card
         # brought in) starts with the run rather than never.
         for action in self._init_actions:
-            if action.state is ActionState.START_TRANSITION:
-                action.tick(world, 0.0)
+            action._settle_start(world, 0.0)
 
     def register_pre_tick(
         self, cb: Union[BaseAction, Callable[["carla.World"], None]]

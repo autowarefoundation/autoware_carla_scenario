@@ -148,26 +148,39 @@ _LANE_CHANGE_AHEAD_M = 8.0
 #: A sideways step (m) between two points of a path this long or longer is a
 #: crossing to the lane beside.
 _LANE_STEP_M = 2.0
+#: A step (m) longer than this is no lane change: a gap a junction left.
+_LANE_CHANGE_SPAN_M = 12.0
+#: How near parallel (cosine) the path goes on after a lane change.
+_PARALLEL_COS = math.cos(math.radians(15.0))
 
 
 def _lane_change_marks(
     path: List["carla.Location"],
 ) -> List[tuple["carla.Location", bool]]:
     """Where *path* crosses to the lane beside -- a point it steps sideways
-    from by :data:`_LANE_STEP_M` or more, against the way it was going -- and
+    from by :data:`_LANE_STEP_M` or more, against the way it was going, no
+    longer a step than :data:`_LANE_CHANGE_SPAN_M`, and going on parallel to
+    the way it came (not a turn, nor the gap a junction left in it) -- and
     whether to the right (CARLA's world is left-handed: y points south)."""
     marks: List[tuple["carla.Location", bool]] = []
-    for i in range(1, len(path) - 1):
-        a, b, c = path[i - 1], path[i], path[i + 1]
+    for i in range(1, len(path) - 2):
+        a, b, c, d = path[i - 1], path[i], path[i + 1], path[i + 2]
         hx, hy = b.x - a.x, b.y - a.y
         span = math.hypot(hx, hy)
         if span < 1e-6:
             continue
         hx, hy = hx / span, hy / span
         sx, sy = c.x - b.x, c.y - b.y
+        if math.hypot(sx, sy) > _LANE_CHANGE_SPAN_M:
+            continue
         across = hx * sy - hy * sx
-        if abs(across) >= _LANE_STEP_M:
-            marks.append((b, across > 0.0))
+        if abs(across) < _LANE_STEP_M:
+            continue
+        ox, oy = d.x - c.x, d.y - c.y
+        on = math.hypot(ox, oy)
+        if on < 1e-6 or (hx * ox + hy * oy) / on < _PARALLEL_COS:
+            continue
+        marks.append((b, across > 0.0))
     return marks
 
 

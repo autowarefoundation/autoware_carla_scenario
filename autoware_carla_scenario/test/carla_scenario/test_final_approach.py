@@ -349,6 +349,12 @@ def test_a_path_crossing_to_the_lane_beside_marks_a_lane_change() -> None:
     assert [(m.x, m.y, right) for m, right in marks] == [(4.0, 0.0, True)]
     curve = [carla.Location(float(x), 0.1 * x * x, 0.0) for x in range(6)]
     assert _lane_change_marks(curve) == []
+    # A turn, its junction points left out: a long step to the side and on
+    # another way, not a lane change.
+    turn = [carla.Location(float(x), 0.0, 0.0) for x in (0, 2, 4)] + [
+        carla.Location(20.0, 16.0 + float(y), 0.0) for y in (0, 2, 4)
+    ]
+    assert _lane_change_marks(turn) == []
 
 
 def test_a_vehicle_wedged_on_a_kerb_is_given_full_throttle(

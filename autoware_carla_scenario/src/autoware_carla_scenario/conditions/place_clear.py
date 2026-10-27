@@ -54,6 +54,7 @@ class PlaceClearCondition(BaseCondition):
     _width: float
     _margin: float
     _spot: Optional[tuple[float, float, float]]
+    _unplaced: bool
     _said_blocker: int
 
     def __init__(
@@ -86,6 +87,7 @@ class PlaceClearCondition(BaseCondition):
         self._width = float(width)
         self._margin = float(margin)
         self._spot = None
+        self._unplaced = False
         self._said_blocker = -1
 
     def get_details(self) -> dict[str, Any]:
@@ -122,11 +124,15 @@ class PlaceClearCondition(BaseCondition):
         """
         spot = self._spot
         if spot is None:
+            if self._unplaced:
+                return None
             from ..trajectory.resolve import resolve_position  # noqa: PLC0415
 
             try:
                 x0, y0, _z, yaw0 = resolve_position(self._at.position)
             except ValueError as exc:
+                # Said once: the place will not resolve on a later tick.
+                self._unplaced = True
                 logger.warning("%s: no place to look at: %s", self.label, exc)
                 return None
             # Branched: Codon types no conditional expression of a None and a

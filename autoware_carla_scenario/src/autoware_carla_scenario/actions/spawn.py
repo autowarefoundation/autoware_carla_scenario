@@ -696,11 +696,12 @@ def _speed_ahead(world: "carla.World", blocker: int, yaw: float) -> float:
     """*blocker*'s speed (m/s) the way *yaw* faces: brought in on this tick,
     the one it enters at (it has none yet, nor its new heading, and in the
     room ahead it is taken to go this way: vehicle_117, bicycle_87)."""
-    from ..entity.vehicle_entity import entry_speeds  # noqa: PLC0415
+    from ..entity.vehicle_entity import entry_speeds, warmup_done  # noqa: PLC0415
 
-    held = entry_speeds().get(int(blocker))
-    if held is not None:
-        return held
+    if not warmup_done():
+        held = entry_speeds().get(int(blocker))
+        if held is not None:
+            return held
     try:
         frame = int(world.get_snapshot().frame)
     except (AttributeError, RuntimeError):

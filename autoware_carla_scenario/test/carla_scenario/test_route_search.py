@@ -759,7 +759,10 @@ class TestPathsOfTheEgosApproach:
         with pytest.raises(ValueError, match="there is no path 3"):
             on(3)
         with pytest.raises(ValueError, match="counts from 1"):
-            RouteCrossingPose(approach="same", path=0)
+            RouteCrossingPose(approach="same", turn="right", path=0)
+        # The search counts the paths of one turn: a path names one.
+        with pytest.raises(ValueError, match="needs a turn"):
+            RouteCrossingPose(approach="same", path=1)
 
     @pytest.mark.parametrize(
         ("paths", "message"),

@@ -471,6 +471,9 @@ class SumoTrafficBackend(TrafficBackend):
         self._approaches: dict[str, Any] = {}
         #: Vehicles put on their route's junction lane once (_onto_route_lane).
         self._rerouted: set[str] = set()
+        #: Actors CARLA drives (skipped at start, or finished in CARLA): one
+        #: of them coming back up is published, not driven.
+        self._published_ids: set[int] = set()
         #: Since when (s) each vehicle SUMO drives has stood, and those going
         #: on through their junction with the speed mode they had.
         self._standing_since: dict[str, float] = {}
@@ -915,6 +918,7 @@ class SumoTrafficBackend(TrafficBackend):
         if not self._running:
             return
         skip = set(skip_actor_ids)
+        self._published_ids = {int(i) for i in skip}
         if self._tm_drives_scenario:
             # Before any ambient vehicle exists, so the TrafficManager takes
             # only the scenario's own.
@@ -1063,7 +1067,12 @@ class SumoTrafficBackend(TrafficBackend):
         for sumo_id, (actor, entity) in list(self._arriving.items()):
             if sumo_id in on_the_road:
                 del self._arriving[sumo_id]
-                self._join(sumo_id, actor, entity, published=False)
+                self._join(
+                    sumo_id,
+                    actor,
+                    entity,
+                    published=int(actor.id) in self._published_ids,
+                )
 
     def _drive_approaches(self, world: Any, elapsed: float) -> None:
         """One tick of each vehicle driven to its goal in CARLA (finish_at)."""
@@ -1240,6 +1249,7 @@ class SumoTrafficBackend(TrafficBackend):
         self._settling = set()
         self._approaches = {}
         self._rerouted = set()
+        self._published_ids = set()
         self._standing_since = {}
         self._unstuck = {}
         self._external = {}
@@ -1423,6 +1433,8 @@ class SumoTrafficBackend(TrafficBackend):
         sumo_id = self._driven_id(entity, "set_desired_speed")
         if sumo_id is None:
             return
+        # Newer than one held for it before it was on SUMO's road.
+        self._waiting_speeds.pop(id(entity), None)
         try:
             self._traci.vehicle.setSpeed(sumo_id, speed)
         except Exception as exc:  # noqa: BLE001
@@ -2435,7 +2447,9 @@ class SumoTrafficBackend(TrafficBackend):
         """Take published *sumo_id* out of SUMO: its *actor* left the world.
         Parked again, it is brought back in when it comes up."""
         self._external.pop(sumo_id, None)
-        self._approaches.pop(sumo_id, None)
+        if self._approaches.pop(sumo_id, None) is not None:
+            # Driven in CARLA: published again when it comes back up.
+            self._published_ids.add(int(actor.id))
         try:
             self._traci.vehicle.remove(sumo_id)
         except Exception as exc:  # noqa: BLE001
@@ -2771,7 +2785,8 @@ class SumoTrafficBackend(TrafficBackend):
         )
         sumo_acceleration = float(tc.vehicle.getAcceleration(sumo_id))
         guard = self._guard_speed(actor, sumo_id, tf, speed)
-        if guard is not None and guard < target_speed:
+        guarded = guard is not None and guard < target_speed
+        if guard is not None and guarded:
             # Something stands in its way in CARLA that SUMO does not see
             # there (a car on another of a junction's lanes, say): it stops
             # for it, and SUMO's vehicle is held back with it.
@@ -2782,7 +2797,7 @@ class SumoTrafficBackend(TrafficBackend):
         else:
             self._let_go(sumo_id)
         if (
-            guard is None
+            not guarded
             and math.hypot(long_error, side_error) > self._config.resync_distance_m
         ):
             logger.info(

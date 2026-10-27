@@ -357,6 +357,7 @@ class RoutingAction(TrajectoryRun):
 
     _stop_at_goal: bool
     _finishing: bool
+    _finish_m: Optional[float]
     _goal: Optional[Lanelet2Pose]
     _from_where_it_stands: bool
     _initial_pose: Optional[CarlaWorldPose]
@@ -454,6 +455,7 @@ class RoutingAction(TrajectoryRun):
         self._goal = goal
         self._stop_at_goal = bool(stop_at_goal)
         self._finishing = False
+        self._finish_m = None
         self._from_where_it_stands = False
         self._initial_pose = initial_pose
         self._ground_projection = ground_projection
@@ -813,7 +815,7 @@ class RoutingAction(TrajectoryRun):
         if (
             self._stop_at_goal
             and not self._finishing
-            and planned.length - self._here <= _finish_from(planned, self._resolved)
+            and planned.length - self._here <= self._finish_distance(planned)
         ):
             self._finish_exactly(world, entity, location)
         if self._here >= planned.length - ARRIVAL_TOLERANCE_M:
@@ -846,6 +848,13 @@ class RoutingAction(TrajectoryRun):
         ):
             entity.set_desired_speed(world, speed * 3.6)
             self._sent = speed
+
+    def _finish_distance(self, planned: ResolvedTrajectory) -> float:
+        """:func:`_finish_from` for *planned*, worked out once."""
+        if self._finish_m is None:
+            self._finish_m = _finish_from(planned, self._resolved)
+        finish: float = self._finish_m
+        return finish
 
     def _finish_exactly(
         self, world: "carla.World", entity: BackendDriven, location: "carla.Location"

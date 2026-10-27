@@ -348,6 +348,10 @@ class RouteCrossingPose:
             path = _whole("RouteCrossingPose", "path", self.path)
             if path < 1:
                 raise ValueError("RouteCrossingPose.path counts from 1")
+            if self.turn is None:
+                # The search counts the paths of one turn; any turn would
+                # count others.
+                raise ValueError("RouteCrossingPose.path needs a turn")
             object.__setattr__(self, "path", path)
         if self.turn is not None:
             _one_of(
