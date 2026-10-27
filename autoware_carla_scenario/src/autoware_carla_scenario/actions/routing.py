@@ -157,20 +157,17 @@ def _finish_points(
 
 def _kerb_free(
     world: "carla.World",
-    entity: Any,
+    actor: "carla.Actor",
     points: list[tuple[float, float, float]],
     x: float,
     y: float,
 ) -> list[tuple[float, float, float]]:
-    """*points* -- *entity*'s path from ``(x, y)`` -- moved off the sidewalks
+    """*points* -- *actor*'s path from ``(x, y)`` -- moved off the sidewalks
     its corners would stand on (:func:`~..utils.clearance.off_the_kerb`), as
-    they are with no actor or map to look at."""
+    they are with no map to look at."""
     from ..coordinate.map_manager import run_carla_map  # noqa: PLC0415
     from ..utils.clearance import off_the_kerb  # noqa: PLC0415
 
-    actor = getattr(entity, "actor", None)
-    if actor is None:
-        return points
     try:
         carla_map = run_carla_map(world)
     except (AttributeError, RuntimeError):
@@ -866,10 +863,9 @@ class RoutingAction(TrajectoryRun):
         end = written.end()
         here = written.project(location.x, location.y)
         placed = _finish_points(written, self._path, location.x, location.y)
-        if TYPE_CHECKING:
-            pass  # utils.clearance is not compiled (docs/typecheck.md)
-        else:
-            placed = _kerb_free(world, entity, placed, location.x, location.y)
+        if hasattr(entity, "actor") and entity.actor is not None:
+            moving: "carla.Actor" = entity.actor
+            placed = _kerb_free(world, moving, placed, location.x, location.y)
         points = [carla.Location(x=x, y=y, z=z) for x, y, z in placed]
         points.append(carla.Location(x=end.x, y=end.y, z=end.z))
         if entity.finish_at(world, points):

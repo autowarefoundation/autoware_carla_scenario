@@ -2342,7 +2342,7 @@ To check one more module:
 ### What is checked of the framework
 
 Every module now has an entry other than `"not yet checked (#45)"`. 214 of
-the package's 315 modules (68%; about 49,800 of 90,300 lines) are `CHECKED`:
+the package's 316 modules (68%; about 49,800 of 90,300 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the conversions between
 Lanelet2, OpenDRIVE and CARLA world poses (`coordinate.transform`), the stop
 lines read off a Lanelet2 map (`utils.stop_line`, `coordinate.stop_line`)
@@ -2444,9 +2444,9 @@ a `TrajectoryVertex` call's arguments, each of any type (`Any`), walks or
 binds a sweeper constraint of any kind, builds a condition's status (its
 details), or takes the list a plain tick callback goes into
 (`BaseScenario._register_tick()`, a `List[Callable[[carla.World], None]]`,
-which the check has no value of). The 101 `EXCLUDED` modules fall in
+which the check has no value of). The 102 `EXCLUDED` modules fall in
 three groups. Many fit more than one (about 77 import what Codon cannot
-compile, 31 build on an excluded module and 20 hold values Codon has no type
+compile, 31 build on an excluded module and 21 hold values Codon has no type
 for), so each is counted once, in the first group that fits it:
 
 - **77 import what Codon cannot compile**: pyxodr,
@@ -2484,9 +2484,10 @@ for), so each is counted once, in the first group that fits it:
   `traffic.registry` (the `Callable[[Mapping[str, Any]], TrafficBackend]` alias it
   holds its factories by, and the `registry` its plugin loader imports); 4 of the 21
   also hold values Codon has no type for.
-- **3 hold values Codon has no type for**, and nothing else keeps them out:
+- **4 hold values Codon has no type for**, and nothing else keeps them out:
   `Any` (`trajectory.authoring`, `authoring.registry`'s
-  field defaults), or a class as a value (`utils.config`, which `traffic.config`,
+  field defaults, `entity.fit`'s world and blueprints), or a class as a value
+  (`utils.config`, which `traffic.config`,
   `traffic.fidelity` and `traffic.sumo.config` import only in their uncalled
   `from_mapping()`).
 

@@ -201,7 +201,7 @@ def _rectangles_meet(
 
 
 def first_box_in_way(
-    world: Any,
+    world: "carla.World",
     self_id: int,
     x: float,
     y: float,
@@ -289,7 +289,7 @@ KERB_SHIFT_STEP_M = 0.25
 
 
 def off_the_kerb(
-    carla_map: Any,
+    carla_map: "carla.Map",
     points: list[tuple[float, float, float]],
     half_length: float,
     half_width: float,
@@ -357,7 +357,7 @@ def _unit(dx: float, dy: float) -> Optional[tuple[float, float]]:
 
 
 def _on_kerb(
-    carla_map: Any,
+    carla_map: "carla.Map",
     x: float,
     y: float,
     z: float,
