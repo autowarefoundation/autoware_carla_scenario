@@ -200,6 +200,49 @@ def _rectangles_meet(
     return True
 
 
+def first_box_in_way(
+    world: Any,
+    self_id: int,
+    x: float,
+    y: float,
+    heading_deg: float,
+    kind: str,
+    distance: float,
+    half_width: float,
+) -> Optional[Obstacle]:
+    """The nearest *kind* (``"vehicle"`` or ``"walker"``) actor whose outline
+    (its bounding box, turned as it stands) meets the rectangle *distance*
+    metres ahead of ``(x, y)`` facing *heading_deg* (CARLA), *half_width*
+    across, or ``None``.  Unlike :func:`first_in_way`, which takes each actor
+    as a circle round its box, a vehicle in the lane beside the rectangle is
+    not in it (vehicle_56 waited for the ego passing in the next lane)."""
+    heading = math.radians(heading_deg)
+    cos_h, sin_h = math.cos(heading), math.sin(heading)
+    half = distance / 2.0
+    mine = (x + cos_h * half, y + sin_h * half, heading, half, half_width)
+    best: Optional[Obstacle] = None
+    for actor_id, ox, oy, oz, speed in _states(world):
+        if actor_id == self_id or oz < _HIDDEN_BELOW_M:
+            continue
+        dx, dy = ox - x, oy - y
+        if dx * dx + dy * dy > (distance + 6.0) ** 2:
+            continue
+        found_kind, radius = _kind(world, actor_id)
+        if found_kind != kind:
+            continue
+        length, width = _CACHE.boxes.get(actor_id, (radius, radius))
+        yaw = math.radians(_CACHE.yaws.get(actor_id, 0.0))
+        if not _rectangles_meet(mine, (ox, oy, yaw, length, width)):
+            continue
+        ahead = dx * cos_h + dy * sin_h
+        if best is None or ahead < best.ahead:
+            found = Obstacle(actor_id, ox, oy, radius, speed)
+            found.ahead = ahead
+            found.side = -dx * sin_h + dy * cos_h
+            best = found
+    return best
+
+
 def first_in_way(
     world: "carla.World",
     self_id: int,
@@ -237,3 +280,109 @@ def first_in_way(
             found.side = side
             best = found
     return best
+
+
+#: How far (m) a point a vehicle's corner would stand on a sidewalk at is
+#: moved over, at most -- a lane -- and in what steps.
+KERB_SHIFT_MAX_M = 3.5
+KERB_SHIFT_STEP_M = 0.25
+
+
+def off_the_kerb(
+    carla_map: Any,
+    points: list[tuple[float, float, float]],
+    half_length: float,
+    half_width: float,
+    x0: float,
+    y0: float,
+) -> list[tuple[float, float, float]]:
+    """*points* -- a vehicle's path from ``(x0, y0)``, its middle's -- each
+    moved over (up to :data:`KERB_SHIFT_MAX_M`) where a corner of the
+    vehicle, *half_length* by *half_width*, would stand on a sidewalk -- its
+    goal too -- facing along the path there or still the way it came in: a
+    long vehicle turns later than its path does, its front swinging in.  So
+    it swings wide round a corner a recording made with no kerbs (SUMO's)
+    has an 11 m bus cut, over a kerb it cannot climb (vehicle_41).  Moved
+    the way the point before was, where either way would do."""
+    out: list[tuple[float, float, float]] = []
+    previous = (x0, y0)
+    sign_before = 1.0
+    for index, (x, y, z) in enumerate(points):
+        if index + 1 < len(points):
+            nx, ny = points[index + 1][0], points[index + 1][1]
+        else:
+            # The goal: facing the way it came in.
+            nx, ny = 2.0 * x - previous[0], 2.0 * y - previous[1]
+        headings = [
+            _unit(nx - previous[0], ny - previous[1]),
+            _unit(x - previous[0], y - previous[1]),
+        ]
+        along = [h for h in headings if h is not None]
+        if not along:
+            out.append((x, y, z))
+            continue
+        hx, hy = along[0]
+        # Left of the way it goes, in CARLA's frame (y down): (hy, -hx).
+        lx, ly = hy, -hx
+
+        def clear(cx: float, cy: float) -> bool:
+            return not any(
+                _on_kerb(carla_map, cx, cy, z, ux, uy, half_length, half_width)
+                for ux, uy in along
+            )
+
+        best = (x, y)
+        if not clear(x, y):
+            shift = KERB_SHIFT_STEP_M
+            while shift <= KERB_SHIFT_MAX_M + 1e-9:
+                found = False
+                for sign in (sign_before, -sign_before):
+                    cx, cy = x + lx * shift * sign, y + ly * shift * sign
+                    if clear(cx, cy):
+                        best, found, sign_before = (cx, cy), True, sign
+                        break
+                if found:
+                    break
+                shift += KERB_SHIFT_STEP_M
+        out.append((best[0], best[1], z))
+        previous = (x, y)
+    return out
+
+
+def _unit(dx: float, dy: float) -> Optional[tuple[float, float]]:
+    norm = math.hypot(dx, dy)
+    if norm < 1e-6:
+        return None
+    return dx / norm, dy / norm
+
+
+def _on_kerb(
+    carla_map: Any,
+    x: float,
+    y: float,
+    z: float,
+    hx: float,
+    hy: float,
+    half_length: float,
+    half_width: float,
+) -> bool:
+    """Whether a corner of the box at ``(x, y)`` facing ``(hx, hy)`` stands
+    on a sidewalk."""
+    import typesafe_carla.carla as carla  # noqa: PLC0415
+
+    lx, ly = hy, -hx
+    for along in (half_length, -half_length):
+        for side in (half_width, -half_width):
+            cx = x + hx * along + lx * side
+            cy = y + hy * along + ly * side
+            try:
+                waypoint = carla_map.get_waypoint(
+                    carla.Location(cx, cy, z),
+                    project_to_road=False,
+                    lane_type=carla.LaneType.Any,
+                )
+            except RuntimeError:
+                continue
+            if waypoint is not None and waypoint.lane_type == carla.LaneType.Sidewalk:
+                return True
+    return False

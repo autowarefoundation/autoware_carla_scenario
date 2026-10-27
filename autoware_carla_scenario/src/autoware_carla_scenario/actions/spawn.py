@@ -86,6 +86,9 @@ _PROP_HALF_M = 0.5
 _ENTRY_BRAKING_MPS2 = 4.0
 #: The room (m) a vehicle entering at speed keeps beyond that.
 _ENTRY_GAP_M = 2.0
+#: What was brought in, by actor id: the frame and the speed (m/s) it
+#: entered at (_speed_ahead).
+_ENTERED: dict[int, tuple[int, float]] = {}
 #: How deep (m) under the map a hidden entity is parked (``HIDDEN_DEPTH_M``).
 _PARKED_DEPTH_M: float = 500.0
 
@@ -332,6 +335,11 @@ class SpawnAction(BaseAction):
             )
         x, y, z, yaw = place
         _put(world, found, x, y, z, yaw, self._speed)
+        _keep_entry_speed(found, self._speed)
+        try:
+            _ENTERED[int(found.id)] = (int(world.get_snapshot().frame), self._speed)
+        except (AttributeError, RuntimeError):
+            pass
         self._spawned.append((self._entity_name, int(found.id)))
         logger.info(
             "%s: '%s' spawned at (%.1f, %.1f) at %.1f m/s",
@@ -445,9 +453,25 @@ class SpawnAction(BaseAction):
         if self._shift_max <= 0.0 and not self._entity_name:
             return due  # a prop not asked to look for a clear place
         x, y, z, yaw = due
-        blocker = _taken(
-            world, actor_id, x, y, yaw, half_length, half_width, self._ahead
-        )
+        if TYPE_CHECKING:
+            blocker = -1  # utils.clearance is not compiled (docs/typecheck.md)
+        else:
+            blocker = _taken(
+                world, actor_id, x, y, yaw, half_length, half_width, self._ahead
+            )
+        if blocker >= 0 and self._ahead > 0.0:
+            if TYPE_CHECKING:
+                pass  # utils.clearance is not compiled (docs/typecheck.md)
+            elif _taken(world, actor_id, x, y, yaw, half_length, half_width) < 0:
+                # Only the room to stop in is taken, by one ahead: shifted on
+                # it would be put past that one (vehicle_135 past vehicle_117,
+                # bicycle_89 past bicycle_87).  It keeps its place, entering
+                # no faster than it can stop short of the one ahead as that
+                # goes on.
+                self._enter_behind(
+                    world, actor_id, blocker, due, half_length, half_width
+                )
+                blocker = -1
         if blocker < 0:
             self._claim(world, actor_id, due, half_length, half_width)
             return due
@@ -499,6 +523,47 @@ class SpawnAction(BaseAction):
         self._claim(world, actor_id, due, half_length, half_width)
         return due
 
+    def _enter_behind(
+        self,
+        world: "carla.World",
+        actor_id: int,
+        blocker: int,
+        due: tuple[float, float, float, float],
+        half_length: float,
+        half_width: float,
+    ) -> None:
+        """Slow the entry speed until the room it needs behind *blocker* --
+        to brake to *blocker*'s speed and the gap kept -- is clear (said),
+        down to standing."""
+        x, y, _z, yaw = due
+        braking = self._speed * self._speed / (2.0 * _ENTRY_BRAKING_MPS2)
+        gap = max(self._ahead - braking, 0.0)
+        ahead_speed = _speed_ahead(world, blocker, yaw)
+        slower = 0.0
+        for factor in (1.0, 0.75, 0.5, 0.25):
+            trying = self._speed * factor
+            room = max(trying * trying - ahead_speed * ahead_speed, 0.0)
+            room = room / (2.0 * _ENTRY_BRAKING_MPS2) + gap
+            if TYPE_CHECKING:
+                taken = -1
+            else:
+                taken = _taken(
+                    world, actor_id, x, y, yaw, half_length, half_width, room
+                )
+            if taken < 0:
+                slower = trying
+                break
+        if slower < self._speed:
+            logger.info(
+                "%s: enters at %.1f m/s, not %.1f: actor %d is %s ahead",
+                self.label,
+                slower,
+                self._speed,
+                blocker,
+                "close" if ahead_speed <= 0.0 else f"{ahead_speed:.1f} m/s",
+            )
+            self._speed = slower
+
     def _claim(
         self,
         world: "carla.World",
@@ -547,6 +612,16 @@ def _along_lane(
     except ValueError:
         return None
     return Lanelet2Pose(lanelet_id=lanelet_id, s=along, t=pose.t, heading=pose.heading)
+
+
+def _keep_entry_speed(actor: "carla.Actor", speed: float) -> None:
+    """A vehicle brought in before the clock starts (an ``init`` card) is
+    held still until it does: have it start the run at *speed* then."""
+    from ..entity.vehicle_entity import hold_entry_speed, warmup_done  # noqa: PLC0415
+    from ._trajectory_run import _is_walker  # noqa: PLC0415
+
+    if speed > 0.0 and not warmup_done() and not _is_walker(actor):
+        hold_entry_speed(int(actor.id), speed)
 
 
 def _put(
@@ -615,6 +690,36 @@ def _taken(
     except (AttributeError, RuntimeError):
         return -1
     return -1 if found is None else int(found)
+
+
+def _speed_ahead(world: "carla.World", blocker: int, yaw: float) -> float:
+    """*blocker*'s speed (m/s) the way *yaw* faces: brought in on this tick,
+    the one it enters at (it has none yet, nor its new heading, and in the
+    room ahead it is taken to go this way: vehicle_117, bicycle_87)."""
+    from ..entity.vehicle_entity import entry_speeds  # noqa: PLC0415
+
+    held = entry_speeds().get(int(blocker))
+    if held is not None:
+        return held
+    try:
+        frame = int(world.get_snapshot().frame)
+    except (AttributeError, RuntimeError):
+        frame = -1
+    entered = _ENTERED.get(int(blocker))
+    if entered is not None and entered[0] == frame:
+        return entered[1]
+    try:
+        other = world.get_actor(blocker)
+        if other is None:
+            return 0.0
+        velocity = other.get_velocity()
+    except (AttributeError, RuntimeError):
+        return 0.0
+    heading = math.radians(yaw)
+    return max(
+        float(velocity.x) * math.cos(heading) + float(velocity.y) * math.sin(heading),
+        0.0,
+    )
 
 
 def _hold(

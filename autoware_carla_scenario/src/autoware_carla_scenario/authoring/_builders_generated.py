@@ -1599,6 +1599,7 @@ def build_routing_action(
         time_reference=time_reference,
         initial_distance_offset=params["initial_distance_offset"],
         speed=params["speed_ms"],
+        stop_at_goal=params["stop_at_goal"],
     )
 
 

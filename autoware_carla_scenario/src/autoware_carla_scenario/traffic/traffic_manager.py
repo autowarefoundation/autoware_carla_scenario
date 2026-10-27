@@ -35,7 +35,7 @@ from .base import (
     _entity_name,
 )
 from .config import TrafficManagerBackendConfig
-from .final_approach import FinalApproach
+from .final_approach import APPROACH_SPEED_MPS, FinalApproach
 from .parameters import VEHICLE_BOUNDS, Spread, VehicleParameters
 from ..world_reset import episode_of
 from ..visibility import (
@@ -142,6 +142,35 @@ _DEAD_END_STEP_M: float = 5.0
 _DEAD_END_MAX_WAYPOINTS: int = 256
 
 
+#: How near (m) a point where its path crosses to the lane beside a vehicle is
+#: told to change lanes.
+_LANE_CHANGE_AHEAD_M = 8.0
+#: A sideways step (m) between two points of a path this long or longer is a
+#: crossing to the lane beside.
+_LANE_STEP_M = 2.0
+
+
+def _lane_change_marks(
+    path: List["carla.Location"],
+) -> List[tuple["carla.Location", bool]]:
+    """Where *path* crosses to the lane beside -- a point it steps sideways
+    from by :data:`_LANE_STEP_M` or more, against the way it was going -- and
+    whether to the right (CARLA's world is left-handed: y points south)."""
+    marks: List[tuple["carla.Location", bool]] = []
+    for i in range(1, len(path) - 1):
+        a, b, c = path[i - 1], path[i], path[i + 1]
+        hx, hy = b.x - a.x, b.y - a.y
+        span = math.hypot(hx, hy)
+        if span < 1e-6:
+            continue
+        hx, hy = hx / span, hy / span
+        sx, sy = c.x - b.x, c.y - b.y
+        across = hx * sy - hy * sx
+        if abs(across) >= _LANE_STEP_M:
+            marks.append((b, across > 0.0))
+    return marks
+
+
 class _Kept:
     """One vehicle the backend keeps from the TrafficManager's removal
     (:meth:`TrafficManagerBackend._keep_scenario_vehicles`)."""
@@ -158,6 +187,7 @@ class _Kept:
     refreshed: bool
     approach: Optional[FinalApproach]
     leading_out: bool
+    lane_changes: List[tuple["carla.Location", bool]]
 
     def __init__(self, actor: "carla.Actor") -> None:
         self.actor = actor
@@ -185,6 +215,10 @@ class _Kept:
         #: The approach drives it out of the junction it started in, to be
         #: handed back to the TrafficManager at its end.
         self.leading_out = False
+        #: Where its path crosses to the lane beside, and whether to the
+        #: right, in order (:func:`_lane_change_marks`): it is told to change
+        #: lanes there, as its own lane changes are off.
+        self.lane_changes = []
 
 
 class TrafficManagerBackend(TrafficBackend):
@@ -240,6 +274,7 @@ class TrafficManagerBackend(TrafficBackend):
     _held: dict[int, float]
     _sight_due: float
     _kept: dict[int, _Kept]
+    _desired_mps: dict[int, float]
     _given: dict[int, List["carla.Location"]]
 
     def __init__(
@@ -297,6 +332,8 @@ class TrafficManagerBackend(TrafficBackend):
         self._drawn = set()
         #: Every vehicle on autopilot but a background one, by actor id.
         self._kept = {}
+        #: The speed (m/s) each vehicle was last asked to hold, by actor id.
+        self._desired_mps = {}
         #: The path each vehicle was last given, by actor id, kept or not yet.
         self._given = {}
         if vehicles is not None:
@@ -483,6 +520,7 @@ class TrafficManagerBackend(TrafficBackend):
         self._drawn = set()
         self._draws = None
         self._kept = {}
+        self._desired_mps = {}
         self._given = {}
         self._restore_parameters()
         if self._closed or self._client is None:
@@ -701,6 +739,15 @@ class TrafficManagerBackend(TrafficBackend):
         logger.debug(
             "%s: desired speed set to %.1f km/h", _entity_name(entity), speed_kmh
         )
+        # Driven out of its junction off autopilot: at this speed too.
+        self._desired_mps[int(actor.id)] = speed_kmh / 3.6
+        found = self._kept.get(int(actor.id))
+        if found is not None:
+            kept: _Kept = found
+            approach = kept.approach
+            if kept.leading_out and approach is not None:
+                leading: FinalApproach = approach
+                leading.set_speed(speed_kmh / 3.6)
 
     def turn_at_junction(
         self,
@@ -845,7 +892,13 @@ class TrafficManagerBackend(TrafficBackend):
         kept = self._kept[actor.id]
         actor.set_autopilot(False, self.port)
         kept.held = True
-        approach = FinalApproach(actor, start, out, stop=False)
+        approach = FinalApproach(
+            actor,
+            start,
+            out,
+            stop=False,
+            speed=self._desired_mps.get(int(actor.id), APPROACH_SPEED_MPS),
+        )
         kept.approach = approach
         kept.leading_out = True
         logger.info(
@@ -855,6 +908,35 @@ class TrafficManagerBackend(TrafficBackend):
             _actor_name(actor),
             approach.length,
         )
+
+    def finish_at(
+        self,
+        entity: DrivenEntity,
+        world: "carla.World",
+        points: List["carla.Location"],
+    ) -> bool:
+        """Take *entity*'s vehicle off autopilot and drive it along *points* to
+        the last and stop it there (:class:`FinalApproach`): the TrafficManager
+        keeps a vehicle to the middle of its lane, and one that stopped beside
+        a cyclist in the recording would stop in the cyclist's way."""
+        actor = _require_actor(entity, "finish_at")
+        if actor is None or len(points) == 0:
+            return False
+        kept = self._kept.get(int(actor.id))
+        if kept is None:
+            return False
+        actor.set_autopilot(False, self.port)
+        kept.held = True
+        kept.leading_out = False
+        approach = FinalApproach(actor, actor.get_location(), list(points), stop=True)
+        kept.approach = approach
+        logger.info(
+            "%s: off autopilot, it drives the last %.0f m of its route to where "
+            "it is to stop, itself, and stops there",
+            _actor_name(actor),
+            approach.length,
+        )
+        return True
 
     def release(self, entity: DrivenEntity, world: "carla.World") -> None:
         """Take *entity*'s vehicle off autopilot, and keep it off at :meth:`start`."""
@@ -1014,6 +1096,8 @@ class TrafficManagerBackend(TrafficBackend):
                 if kept.leading_out and driving.done:
                     self._hand_on(kept)
                 continue
+            if not kept.held and len(kept.lane_changes) > 0:
+                self._change_lanes_on_path(kept)
             if kept.held or elapsed < kept.check_due:
                 continue
             actor = kept.actor
@@ -1115,6 +1199,7 @@ class TrafficManagerBackend(TrafficBackend):
         kept.near_route_end = False
         kept.checked_lookahead = -1.0
         kept.approach = None
+        kept.lane_changes = _lane_change_marks(path)
 
     def _drive_on(self, actor: "carla.Actor") -> None:
         """Put a vehicle held at a dead end back on autopilot: it was given a
@@ -1128,6 +1213,30 @@ class TrafficManagerBackend(TrafficBackend):
         logger.info(
             "%s: given a new route, back on autopilot from where it was held",
             _actor_name(actor),
+        )
+
+    def _change_lanes_on_path(self, kept: _Kept) -> None:
+        """Tell a vehicle to change lanes where its path crosses to the lane
+        beside, once it is within :data:`_LANE_CHANGE_AHEAD_M` of that point
+        (or past it): the TrafficManager keeps to its lane on a path that
+        jumps across, and the vehicle would cross only at the path's end."""
+        tm = self._require_tm("force_lane_change")
+        if tm is None:
+            return
+        try:
+            location = kept.actor.get_location()
+        except RuntimeError:
+            return
+        mark, to_the_right = kept.lane_changes[0]
+        if location.distance(mark) > _LANE_CHANGE_AHEAD_M:
+            return
+        kept.lane_changes = kept.lane_changes[1:]
+        # CARLA's force_lane_change: True to the left.
+        tm.force_lane_change(_vehicle(kept.actor), not to_the_right)
+        logger.info(
+            "%s: changes lanes to the %s where its path crosses",
+            _actor_name(kept.actor),
+            "right" if to_the_right else "left",
         )
 
     def _keep_off_dead_ends(

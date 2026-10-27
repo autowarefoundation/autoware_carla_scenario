@@ -21,6 +21,7 @@ if TYPE_CHECKING:
 
 import typesafe_carla.carla as carla
 
+from .action_state import ActionState
 from .actions import BaseAction, RoutingAction
 from .actions.environment import follow_tire_friction
 from .conditions.base import BaseCondition, find_actor_by_role_name
@@ -665,6 +666,13 @@ class BaseScenario(ABC):
             cb(world)
         for action in self._init_actions:
             action.tick(world, 0.0)
+        # The phase has no ticks for an action's lifecycle to step through: one
+        # that fired is settled now -- complete, or for one that runs on, under
+        # way -- so what waits on it (the route of an entity a spawn card
+        # brought in) starts with the run rather than never.
+        for action in self._init_actions:
+            if action.state is ActionState.START_TRANSITION:
+                action.tick(world, 0.0)
 
     def register_pre_tick(
         self, cb: Union[BaseAction, Callable[["carla.World"], None]]
@@ -1148,11 +1156,15 @@ class BaseScenario(ABC):
         What :meth:`set_initial_speed` will apply: the registered entities and
         the ego.  A vehicle not named starts still.
         """
+        from .entity.vehicle_entity import entry_speeds  # noqa: PLC0415
+
         speeds = {
             entity.actor.id: entity.initial_speed_kmh / 3.6
             for entity in self._entities
             if entity.actor is not None and entity.initial_speed_kmh > 0.0
         }
+        # The vehicles a spawn card brought in before the clock started.
+        speeds.update(entry_speeds())
         if ego_actor is not None and self.ego_config.initial_speed_kmh > 0.0:
             speeds[ego_actor.id] = self.ego_config.initial_speed_kmh / 3.6
         return speeds
@@ -1182,3 +1194,14 @@ class BaseScenario(ABC):
 
         if ego_actor is not None:
             _apply(ego_actor, self.ego_config.initial_speed_kmh)
+            # The vehicles a spawn card brought in before the clock started,
+            # held still since: at the speed they entered at.
+            from .entity.vehicle_entity import entry_speeds  # noqa: PLC0415
+
+            held = entry_speeds()
+            if len(held) > 0:
+                world = ego_actor.get_world()
+                for actor_id, speed in held.items():
+                    actor = world.get_actor(actor_id)
+                    if actor is not None:
+                        _apply(actor, speed * 3.6)

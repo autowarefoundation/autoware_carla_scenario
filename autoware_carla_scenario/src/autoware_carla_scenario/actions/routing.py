@@ -33,6 +33,7 @@ has happened, is an ordinary tick-loop action.
 
 from __future__ import annotations
 
+import bisect
 import enum
 import logging
 import math
@@ -86,6 +87,171 @@ _HIDDEN_BELOW_M: float = 100.0
 #: How far (m) off its path an entity may stand for its run to start where
 #: it stands, the path's nearest point.
 _ON_PATH_M: float = 6.0
+
+#: How near (m) its goal a stop_at_goal vehicle is driven the rest of the way
+#: itself, to stop exactly where it is to (:meth:`RoutingAction._finish_exactly`).
+_FINISH_M: float = 15.0
+#: The spacing (m) of the points it is driven along.
+_FINISH_STEP_M: float = 2.0
+#: Waypoints further apart (m) than this are joined along the lanes, not
+#: straight (_finish_points).
+_CHORD_M: float = 4.0
+#: A sideways step (m) between two points of a route this long or longer is a
+#: change to the lane beside.
+_LANE_STEP_M: float = 2.0
+#: Two stretches of a route run the same way within this (cosine, 15 deg).
+_PARALLEL_COS: float = math.cos(math.radians(15.0))
+#: How far (m) before such a change a stop_at_goal vehicle is driven itself.
+_BEFORE_LANE_CHANGE_M: float = 5.0
+#: A waypoint this far (m) off its lanes' middle leaves them; and how far
+#: before its goal (m) one may, for it to be driven itself from before.
+_OFF_LANE_M: float = 0.75
+_OFF_LANE_WITHIN_M: float = 40.0
+
+
+def _finish_points(
+    written: ResolvedTrajectory,
+    planned: Optional[ResolvedTrajectory],
+    x: float,
+    y: float,
+) -> list[tuple[float, float, float]]:
+    """The points, every :data:`_FINISH_STEP_M` m from ``(x, y)``, a
+    stop_at_goal vehicle drives the rest of its route along (its goal not
+    among them): its trajectory as written -- off its lanes' middle as the
+    recording was (vehicle_96, moved over early to pass vehicle_88) -- but
+    where two of its waypoints are more than :data:`_CHORD_M` apart, along
+    its lanes (*planned*) between them, moved over from how far off them the
+    one lies to how far the other does: straight, the line cut the corner its
+    lanes turn (vehicle_41, onto the kerb)."""
+    out: list[tuple[float, float, float]] = []
+    here = written.project(x, y)
+    marks = [written.vertex_distance(i) for i in range(len(written.xs))]
+    along = here + _FINISH_STEP_M
+    near = 0.0
+    while along < written.length:
+        index = max(bisect.bisect_right(marks, along) - 1, 0)
+        index = min(index, len(marks) - 2)
+        span = marks[index + 1] - marks[index]
+        sample = written.at_distance(along)
+        if planned is None or span <= _CHORD_M:
+            out.append((sample.x, sample.y, sample.z))
+            along += _FINISH_STEP_M
+            continue
+        lanes: ResolvedTrajectory = planned
+        ax, ay = written.xs[index], written.ys[index]
+        bx, by = written.xs[index + 1], written.ys[index + 1]
+        a_s = lanes.project(ax, ay, near=near)
+        b_s = lanes.project(bx, by, near=a_s)
+        near = a_s
+        share = (along - marks[index]) / span
+        on = a_s + (b_s - a_s) * share
+        side = (
+            _side(lanes, a_s, ax, ay) * (1.0 - share)
+            + _side(lanes, b_s, bx, by) * share
+        )
+        px, py, pz = _beside(lanes, on, side)
+        out.append((px, py, pz))
+        along += _FINISH_STEP_M
+    return out
+
+
+def _kerb_free(
+    world: "carla.World",
+    entity: Any,
+    points: list[tuple[float, float, float]],
+    x: float,
+    y: float,
+) -> list[tuple[float, float, float]]:
+    """*points* -- *entity*'s path from ``(x, y)`` -- moved off the sidewalks
+    its corners would stand on (:func:`~..utils.clearance.off_the_kerb`), as
+    they are with no actor or map to look at."""
+    from ..coordinate.map_manager import run_carla_map  # noqa: PLC0415
+    from ..utils.clearance import off_the_kerb  # noqa: PLC0415
+
+    actor = getattr(entity, "actor", None)
+    if actor is None:
+        return points
+    try:
+        carla_map = run_carla_map(world)
+    except (AttributeError, RuntimeError):
+        return points
+    extent = actor.bounding_box.extent
+    return off_the_kerb(carla_map, points, float(extent.x), float(extent.y), x, y)
+
+
+def _side(path: ResolvedTrajectory, s: float, x: float, y: float) -> float:
+    """How far (m) ``(x, y)`` lies left of *path* at *s* (negative: right)."""
+    at = path.at_distance(s)
+    ahead = path.at_distance(min(s + 0.5, path.length))
+    behind = path.at_distance(max(s - 0.5, 0.0))
+    hx, hy = ahead.x - behind.x, ahead.y - behind.y
+    norm = math.hypot(hx, hy)
+    if norm < 1e-6:
+        return 0.0
+    return (hx * (y - at.y) - hy * (x - at.x)) / norm
+
+
+def _beside(
+    path: ResolvedTrajectory, s: float, side: float
+) -> tuple[float, float, float]:
+    """The point *side* m left of *path* at *s*."""
+    at = path.at_distance(s)
+    ahead = path.at_distance(min(s + 0.5, path.length))
+    behind = path.at_distance(max(s - 0.5, 0.0))
+    hx, hy = ahead.x - behind.x, ahead.y - behind.y
+    norm = math.hypot(hx, hy)
+    if norm < 1e-6:
+        return at.x, at.y, at.z
+    return at.x - hy / norm * side, at.y + hx / norm * side, at.z
+
+
+def _finish_from(
+    path: ResolvedTrajectory, written: Optional[ResolvedTrajectory] = None
+) -> float:
+    """How far (m) before *path*'s end a stop_at_goal vehicle is driven the
+    rest of the way itself: :data:`_FINISH_M`, or from before the route's last
+    change to the lane beside -- which its driver, keeping to its lane, would
+    leave to the last metres (vehicle_134, crossing behind a lorry)."""
+    xs, ys = path.xs, path.ys
+    last = -1
+    for i in range(1, len(xs) - 2):
+        hx, hy = xs[i] - xs[i - 1], ys[i] - ys[i - 1]
+        span = math.hypot(hx, hy)
+        on_x, on_y = xs[i + 2] - xs[i + 1], ys[i + 2] - ys[i + 1]
+        on = math.hypot(on_x, on_y)
+        if span < 1e-6 or on < 1e-6:
+            continue
+        # Stepped sideways from the line it was on, onto one running the same
+        # way: the lane beside (not a bend, nor the way back off a crossing).
+        across = (hx * (ys[i + 1] - ys[i]) - hy * (xs[i + 1] - xs[i])) / span
+        parallel = (hx * on_x + hy * on_y) / (span * on)
+        if abs(across) >= _LANE_STEP_M and parallel >= _PARALLEL_COS:
+            last = i
+    finish = _FINISH_M
+    if last >= 0:
+        before = path.length - path.vertex_distance(last) + _BEFORE_LANE_CHANGE_M
+        finish = max(finish, before)
+    if written is not None:
+        # And from before where its trajectory as written leaves its lanes'
+        # middle (vehicle_96, moved over early to pass a bus's corner, which
+        # its driver -- keeping to the middle -- ran into).
+        off = _leaves_lanes(path, written)
+        if off is not None and path.length - off <= _OFF_LANE_WITHIN_M:
+            finish = max(finish, path.length - off + _BEFORE_LANE_CHANGE_M)
+    return finish
+
+
+def _leaves_lanes(
+    path: ResolvedTrajectory, written: ResolvedTrajectory
+) -> Optional[float]:
+    """How far (m) along *path* the first of *written*'s waypoints more than
+    :data:`_OFF_LANE_M` off it lies, or ``None``."""
+    near = 0.0
+    for x, y in zip(written.xs, written.ys):
+        near = path.project(x, y, near=near)
+        if abs(_side(path, near, x, y)) > _OFF_LANE_M:
+            return near
+    return None
 
 
 class RoutingMode(enum.Enum):
@@ -181,6 +347,10 @@ class RoutingAction(TrajectoryRun):
             when the run starts; ``driver``: its driver's).
         stop_at_end: Brake a vehicle to a stop where a ``follow`` or
             ``position`` run ends (default).
+        stop_at_goal: In ``driver`` mode, stop a vehicle where its route ends
+            and hold it there (its driver asked for no speed) rather than let
+            its driver drive on at its own speed (the default): a road user
+            replayed from a recording waits where it was last seen going.
 
     Raises:
         ValueError: Without a goal or a trajectory, with both, with
@@ -188,6 +358,8 @@ class RoutingAction(TrajectoryRun):
             positive, or what :class:`~._trajectory_run.TrajectoryRun` refuses.
     """
 
+    _stop_at_goal: bool
+    _finishing: bool
     _goal: Optional[Lanelet2Pose]
     _from_where_it_stands: bool
     _initial_pose: Optional[CarlaWorldPose]
@@ -238,6 +410,7 @@ class RoutingAction(TrajectoryRun):
         control_config: Optional["ControlConfig"] = None,
         speed: Optional[float] = None,
         stop_at_end: bool = True,
+        stop_at_goal: bool = False,
     ) -> None:
         if not walking_speed > 0.0:
             raise ValueError("walking_speed must be positive")
@@ -282,6 +455,8 @@ class RoutingAction(TrajectoryRun):
             stop_at_end=stop_at_end,
         )
         self._goal = goal
+        self._stop_at_goal = bool(stop_at_goal)
+        self._finishing = False
         self._from_where_it_stands = False
         self._initial_pose = initial_pose
         self._ground_projection = ground_projection
@@ -638,14 +813,23 @@ class RoutingAction(TrajectoryRun):
         if self._given_speed is not None:
             given: float = self._given_speed
             cruise = min(given, limit)
+        if (
+            self._stop_at_goal
+            and not self._finishing
+            and planned.length - self._here <= _finish_from(planned, self._resolved)
+        ):
+            self._finish_exactly(world, entity, location)
         if self._here >= planned.length - ARRIVAL_TOLERANCE_M:
             logger.info(
                 "%s: '%s' reached the end of its route",
                 self.label,
                 str(self._entity_name),
             )
-            # Arrived: the driver's own speed again from here on.
-            if paced.paced or self._given_speed is not None:
+            if self._stop_at_goal:
+                # Stopped where it arrived, and held there.
+                entity.set_desired_speed(world, 0.0)
+            elif paced.paced or self._given_speed is not None:
+                # Arrived: the driver's own speed again from here on.
                 entity.set_desired_speed(world, cruise * 3.6)
             self._finished = True
             self._stepping = False
@@ -665,6 +849,36 @@ class RoutingAction(TrajectoryRun):
         ):
             entity.set_desired_speed(world, speed * 3.6)
             self._sent = speed
+
+    def _finish_exactly(
+        self, world: "carla.World", entity: BackendDriven, location: "carla.Location"
+    ) -> None:
+        """Have the backend drive the rest of the route -- the trajectory as
+        written, its last vertex where it is to stop, a lane's width off the
+        middle as it may be -- itself and stop there (stop_at_goal)."""
+        import typesafe_carla.carla as carla  # noqa: PLC0415
+
+        self._finishing = True
+        resolved = self._resolved
+        if resolved is None:
+            return
+        written: ResolvedTrajectory = resolved
+        end = written.end()
+        here = written.project(location.x, location.y)
+        placed = _finish_points(written, self._path, location.x, location.y)
+        if TYPE_CHECKING:
+            pass  # utils.clearance is not compiled (docs/typecheck.md)
+        else:
+            placed = _kerb_free(world, entity, placed, location.x, location.y)
+        points = [carla.Location(x=x, y=y, z=z) for x, y, z in placed]
+        points.append(carla.Location(x=end.x, y=end.y, z=end.z))
+        if entity.finish_at(world, points):
+            logger.info(
+                "%s: '%s' is driven the last %.0f m to where it is to stop",
+                self.label,
+                str(self._entity_name),
+                written.length - here,
+            )
 
     # ------------------------------------------------------------------
     # driver: a pedestrian
@@ -737,6 +951,16 @@ class RoutingAction(TrajectoryRun):
                 _WALKER_LIMIT_MPS,
                 (location.x, location.y),
             )
+        if actor is not None:
+            if TYPE_CHECKING:
+                pass  # utils.clearance is not compiled (docs/typecheck.md)
+            else:
+                from ._trajectory_run import _vehicle_before_walker  # noqa: PLC0415
+
+                if _vehicle_before_walker(actor):
+                    # A vehicle in its way (a car stopped where a cyclist rides
+                    # on): it waits for it rather than walk into it.
+                    speed = 0.0
         if speed is None:
             walker.walk_on()
         else:

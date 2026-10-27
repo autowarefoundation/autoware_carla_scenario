@@ -2727,6 +2727,17 @@ register_action_spec(
                 ),
             ),
             FieldSpec(
+                name="stop_at_goal",
+                label="Stop at the goal",
+                kind="bool",
+                default=False,
+                required=False,
+                help=(
+                    "Driver mode, a vehicle: stop where the route ends and stay "
+                    "there, rather than drive on at its driver's own speed."
+                ),
+            ),
+            FieldSpec(
                 name="time_domain",
                 label="Time reference",
                 kind="select",
