@@ -3379,10 +3379,19 @@ value whose members are <code>int</code>, not as a type: it becomes <code>int</c
     overrides. A wrong value for it is reported as
     <code>dataclasses.replace: field 'a' of Derived is declared int, not str</code>.
     Any other error raised inside the <code>_acs_with__&lt;field&gt;</code> method is
-    reported at the <code>replace(...)</code> call of the same file, not at the class
-    (#614). It holds for a dataclass the scenario package defines, in
-    any of its modules, whose bases are dataclasses of the same module (or
-    none) and which has no <code>__init__</code> of its own; for any other class (a
+    reported at the <code>replace(...)</code> call, not at the class (#614), also when
+    the call is in another module than the class (<code>replace(cfg.lanes,
+    ids=...)</code> in <code>scenario.py</code> of a dataclass of <code>configs.py</code>, #623). Codon
+    names that module by its file name alone, so when two checked modules
+    share it (<code>configs.py</code> and <code>sub/configs.py</code>) the error stays at the
+    class. It holds for a dataclass the scenario package defines, in
+    any of its modules, also one nested in a class or a function
+    (<code>Plans.Leg</code>, #623: its methods, and its <code>==</code>, hash and ordering, go at
+    the end of its body, as <code>@extend</code> cannot name it; a nested dataclass
+    whose body is on the <code>class</code> line, <code>class Leg: x: int = 0</code>, gets none),
+    whose bases are dataclasses of the same module (of the same body, for a
+    nested one) or none, and which has no <code>__init__</code> of its own; for any
+    other class (a
     framework or library dataclass) the call is refused with a hint to build
     the object yourself (<code>OpenDrivePose</code> and <code>DevContainer</code> have the methods in their
     models, as the framework uses <code>replace</code> on them). The object goes by position and the fields by keyword:
@@ -3828,6 +3837,42 @@ in step:</p>
   <code>Generic</code>, and write a <code>@dataclass</code> (or a <code>Dict[str, X]</code>) instead of a
   <code>TypedDict</code>.</li>
 </ul>
+<h3 id="python-312-syntax-624">Python 3.12+ syntax (#624)<a class="headerlink" href="#python-312-syntax-624" title="Permanent link">&para;</a></h3>
+<p>The package runs on Python 3.10 to 3.14. Codon 0.19 parses Python 3.11's
+syntax, so the check rewrites the newer syntax first, with every line and
+column kept:</p>
+<table>
+<thead>
+<tr>
+<th>Python 3.12+</th>
+<th>What the check makes of it</th>
+<th>Refused (with a hint, at its line)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>A string in an f-string's field quoted with the f-string's own quote (PEP 701): <code>f"{cfg.name.replace("_", "-")} {d["k"]}"</code></td>
+<td>the string quoted with the other quote, <code>f"{cfg.name.replace('_', '-')} {d['k']}"</code> (Codon's parser, as Python's before 3.12, ends the f-string at its own quote, and reported <code>unexpected dedent</code> a line later)</td>
+<td>a string that holds the other quote too (<code>f"{d["it's"]}"</code>), and a backslash anywhere in a field (<code>f"{"\n".join(names)}"</code>), which Codon's parser refuses whatever the quotes: bind the value to a local first. A nested f-string is refused as before ("A brace or a nested f-string")</td>
+</tr>
+<tr>
+<td><code>type LaneIds = list[int]</code> (PEP 695), at any level</td>
+<td><code>LaneIds = list[int]</code>, as <code>X: TypeAlias = T</code> is</td>
+<td>a generic alias, <code>type Pair[T] = tuple[T, T]</code>: Codon has no generic alias; write the type out, or make the alias concrete</td>
+</tr>
+<tr>
+<td>Type parameters of a function, a method or a class (PEP 695): <code>def first[T](xs: list[T]) -&gt; T</code>, <code>class Box[K, V]:</code></td>
+<td>kept: they are Codon's own generics syntax. A bound, constraints or a default (<code>[B: Base]</code>, <code>[N: (int, float)]</code>, <code>[T = int]</code>) are dropped, as a <code>TypeVar</code>'s are, since Codon reads <code>[T: int]</code> as a static integer parameter</td>
+<td><code>*Ts</code> and <code>**P</code> (PEP 646, PEP 612): Codon has no variadic generics</td>
+</tr>
+</tbody>
+</table>
+<p>A generic function or class is compiled, and checked, where the scenario
+uses it (<code>Box("a").get() + 1</code> is refused): like a function annotated with a
+module-level <code>TypeVar</code>, it is not called on its own, and a warning says so
+("parameter <code>xs</code> is annotated with a TypeVar", "the class is generic").
+On Python 3.10 and 3.11 this syntax does not parse, so a scenario using it
+needs Python 3.12 or later to run at all.</p>
 <h3 id="python-constructs-codon-refuses-379">Python constructs Codon refuses (#379)<a class="headerlink" href="#python-constructs-codon-refuses-379" title="Permanent link">&para;</a></h3>
 <p>Each of these is valid, mypy-clean Python that Codon 0.19 cannot compile and
 that the check cannot cheaply rewrite. The check refuses it at its line with a
@@ -6228,7 +6273,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 26, 2026 23:15:39 UTC"><span class="timeago" datetime="2026-10-26T23:15:39+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 26, 2026 23:15:39 UTC">2026-10-26</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 27, 2026 01:31:31 UTC"><span class="timeago" datetime="2026-10-27T01:31:31+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 27, 2026 01:31:31 UTC">2026-10-27</span>
   </span>
 
     
