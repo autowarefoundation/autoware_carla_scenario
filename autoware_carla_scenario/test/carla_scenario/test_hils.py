@@ -805,6 +805,30 @@ def _until(condition: Callable[[], bool], world: Optional[_World] = None) -> boo
     return condition()
 
 
+def _settled(count: Callable[[], int]) -> int:
+    """*count* once it stops changing for 0.1 s (bounded): what was sent before
+    a cut or a stop has reached the ECU's thread, however loaded the host."""
+    deadline = time.monotonic() + 5.0
+    last = count()
+    while time.monotonic() < deadline:
+        time.sleep(0.1)
+        now = count()
+        if now == last:
+            return now
+        last = now
+    return last
+
+
+def _put_to_sleep(ecu: "_Ecu") -> bool:
+    """Whether the ECU's last Wake is Wake(On=0), after a Wake(On=1).
+
+    A VehicleSpeed sent just before the periodic messages stop can still land
+    after it, so this does not ask for Wake(On=0) to be the very last message.
+    """
+    wakes = [n for n in ecu.names() if isinstance(n, tuple) and n[0] == "Wake"]
+    return ("Wake", {"On": 1}) in wakes and wakes[-1] == ("Wake", {"On": 0})
+
+
 def _hils_config(url: str, dbc: Path, **extra: Any) -> dict[str, Any]:
     return {
         "runner": {"listen": "127.0.0.1:0"},
@@ -964,8 +988,10 @@ def test_the_resident_bridge_serves_a_run_end_to_end(world: _World, dbc: Path) -
         ecu.control = None
         entity.on_scenario_end(world)  # type: ignore[arg-type]
         assert not bridge.active
-        assert _until(lambda: ecu.names()[-1] == ("Wake", {"On": 0}))
-        speeds = sum(1 for m in ecu.received if m.name == "VehicleSpeed")
+        assert _until(lambda: _put_to_sleep(ecu))
+        speeds = _settled(
+            lambda: sum(1 for m in ecu.received if m.name == "VehicleSpeed")
+        )
         time.sleep(0.2)
         assert sum(1 for m in ecu.received if m.name == "VehicleSpeed") == speeds
     finally:
@@ -993,19 +1019,22 @@ def test_an_ecu_that_does_not_answer_fails_the_run(world: _World, dbc: Path) -> 
         entity = HilsEgoEntity(HilsEgoConfig(host=host, port=port))
         entity._vehicle = world.actors[0]  # type: ignore[assignment]
         entity.on_scenario_start(world)  # type: ignore[arg-type]
+        # The world is not ticked: the entity closes the link as the error
+        # comes, and a tick the bridge serves once the run is gone finds the
+        # ego still in the world and starts a scenario of its own (as a
+        # resident bridge does), which then stays active.
         assert _until(
             lambda: (
                 entity.on_tick(world, 0.0),  # type: ignore[func-returns-value, arg-type]
                 entity.termination_requested,
-            )[1],
-            world,
+            )[1]
         )
         assert "sent no EcuStatus with {'Ready': 1}" in str(entity.termination_reason)
         assert not entity.is_initialized
         # The run going away ends the scenario on the bridge too.
         entity.on_scenario_end(world)  # type: ignore[arg-type]
         assert _until(lambda: not bridge.active)
-        assert ecu.names()[-1] == ("Wake", {"On": 0})
+        assert _until(lambda: _put_to_sleep(ecu))
     finally:
         bridge.stop()
         thread.join(timeout=5.0)
@@ -1102,23 +1131,28 @@ def test_a_communication_loss_stops_its_data_while_it_runs(
         assert speed_loss.cutting
         assert _until(lambda: channel.disconnected("send"), world)
         assert not channel.disconnected("recv")
-        time.sleep(0.1)
-        before = speeds()
+        before = _settled(speeds)
         for _ in range(5):
             world.tick()
             time.sleep(0.02)
             tick()
         assert speeds() == before
-        assert ego.controls[-1].throttle == pytest.approx(0.4)
+        # Polled: stale after 0.2 s, the ego needs a command read that recently.
+        assert _until(
+            lambda: (tick(), ego.controls[-1].throttle == pytest.approx(0.4))[1],
+            world,
+        )
 
         # Everything from the ECU, for 0.5 s: its command goes stale and the
         # ego brakes, then the commands come back.
         command_loss = CommunicationLossAction(direction="from_ecu", duration=0.5)
         command_loss.tick(world, 2.0)  # type: ignore[arg-type]
         assert _until(lambda: channel.disconnected("recv"), world)
-        time.sleep(0.3)
-        tick()
-        assert ego.controls[-1].brake == 1.0
+        # Polled, not slept: the entity times a command from the tick that
+        # reads it off the link, so one the bridge forwarded before the cut
+        # took effect is fresh on the first tick after it, however long ago
+        # the cut started.
+        assert _until(lambda: (tick(), ego.controls[-1].brake == 1.0)[1], world)
         command_loss.tick(world, 2.3)  # type: ignore[arg-type]
         assert command_loss.cutting
         command_loss.tick(world, 2.5)  # type: ignore[arg-type]
@@ -1167,27 +1201,29 @@ def test_the_bridge_stops_what_its_cuts_name_together(world: _World, dbc: Path) 
             bridge.disconnect("x", direction="send")
         channel = bridge._channels["can"]
 
-        def arrives() -> set[str]:
-            """What of VehicleSpeed (periodic) and Wake (sent now) reaches the ECU."""
+        def arrives(expected: set[str]) -> bool:
+            """Whether what of VehicleSpeed (periodic) and Wake (sent now)
+            reaches the ECU is *expected*: polled, as on a loaded host the
+            ECU's thread can take longer than the 0.1 s to pick it up."""
             ecu.received.clear()
             channel.send("Wake", {"On": 1})
             for _ in range(3):
                 world.tick()
                 bridge.step(0.5)
             time.sleep(0.1)
-            return {m.name for m in ecu.received}
+            return _until(lambda: {m.name for m in ecu.received} == expected)
 
-        assert arrives() == {"VehicleSpeed", "Wake"}
+        assert arrives({"VehicleSpeed", "Wake"})
         bridge.disconnect("a", "can", ["VehicleSpeed"], "to_ecu")
         bridge.disconnect("b", None, ["Wake"], "to_ecu")
-        assert arrives() == set()
+        assert arrives(set())
         bridge.reconnect("a")
-        assert arrives() == {"VehicleSpeed"}
+        assert arrives({"VehicleSpeed"})
         bridge.disconnect("c", "can")  # everything, both ways
-        assert arrives() == set() and channel.disconnected("recv")
+        assert arrives(set()) and channel.disconnected("recv")
         bridge.reconnect("c")
         bridge.reconnect("unknown")
-        assert arrives() == {"VehicleSpeed"} and not channel.disconnected("recv")
+        assert arrives({"VehicleSpeed"}) and not channel.disconnected("recv")
         # A cut naming no message is refused, and leaves the others as they are.
         with pytest.raises(ValueError, match="messages names none"):
             bridge.disconnect("e", "can", [])
