@@ -1,7 +1,7 @@
 """Calls that raise when Python runs them, decided from the syntax alone.
 
 Codon checks types, not values, so a call it compiles may still raise in
-CPython.  Two kinds are decidable without running the scenario:
+CPython.  Three kinds are decidable without running the scenario:
 
 * ``isinstance`` / ``issubclass`` with a subscripted generic as the classes
   (``isinstance(v, list[int])``, ``issubclass(C, typing.Dict[str, int])``),
@@ -27,6 +27,11 @@ CPython.  Two kinds are decidable without running the scenario:
   first import builds its CPython package where no prebuilt one applies
   (15-50 min): where that would happen, the check imports them with
   ``TYPESAFE_CARLA_PYCARLA_BUILD=0``, so they are left to the run instead.
+* ``sum(xs, "")`` (a ``str`` start: a string literal, an f-string or a
+  ``str(...)`` call, by position or as ``start=``; a ``bytes`` / ``bytearray``
+  one too): CPython refuses it before it adds anything ("sum() can't sum
+  strings [use ''.join(seq) instead]"), while Codon concatenates (#625).
+  A start that is a variable holding a string is left to the run.
 """
 
 from __future__ import annotations
@@ -45,6 +50,7 @@ __all__ = [
     "LITERAL_CHECKED",
     "StaticRaise",
     "literal_argument_refusals",
+    "str_sums",
     "subscripted_isinstances",
 ]
 
@@ -457,4 +463,63 @@ def literal_argument_refusals(tree: ast.Module) -> list[StaticRaise]:
             )
         except Exception:  # noqa: BLE001 -- a type error is Codon's to report
             continue
+    return sorted(set(found))
+
+
+# ---------------------------------------------------------------------------
+# sum() of strings (#625)
+# ---------------------------------------------------------------------------
+
+#: CPython's refusal of a start of each type, in its own words.
+_SUM_REFUSALS = {
+    "str": "sum() can't sum strings [use ''.join(seq) instead]",
+    "bytes": "sum() can't sum bytes [use b''.join(seq) instead]",
+    "bytearray": "sum() can't sum bytearray [use b''.join(seq) instead]",
+}
+
+
+def _start_type(node: ast.expr, names: _Names) -> str | None:
+    """``str`` / ``bytes`` / ``bytearray`` when *node* is evidently one: a
+    literal, an f-string or a call of the builtin class."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, (str, bytes)):
+        return type(node.value).__name__
+    if isinstance(node, ast.JoinedStr):
+        return "str"
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+        dotted = names.dotted(node.func)
+        for name in _SUM_REFUSALS:
+            if dotted == f"builtins.{name}":
+                return name
+    return None
+
+
+def str_sums(tree: ast.Module) -> list[StaticRaise]:
+    """Each ``sum(values, start)`` of *tree* whose start is a ``str`` (or
+    ``bytes``), which CPython refuses with ``TypeError`` and Codon compiles."""
+    names = _Names(tree)
+    found: list[StaticRaise] = []
+    for node in ast.walk(tree):
+        if not (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "sum"
+            and names.dotted(node.func) == "builtins.sum"
+            and not any(isinstance(a, ast.Starred) for a in node.args)
+        ):
+            continue
+        start: ast.expr | None = node.args[1] if len(node.args) == 2 else None
+        for keyword in node.keywords:
+            if keyword.arg == "start":
+                start = keyword.value
+        kind = None if start is None else _start_type(start, names)
+        if kind is None:
+            continue
+        found.append(
+            StaticRaise(
+                node.lineno,
+                node.col_offset + 1,
+                f"sum() with a {kind} start raises TypeError when the scenario "
+                f"runs ({_SUM_REFUSALS[kind]}), though Codon compiles it",
+            )
+        )
     return sorted(set(found))

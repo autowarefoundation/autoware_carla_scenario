@@ -2185,6 +2185,19 @@ class _Pass(ShadowScopes):
 
     def visit_Lambda(self, node: ast.Lambda) -> None:
         args = node.args
+        if args.kwonlyargs and args.vararg is None:
+            # `lambda a, *, k=1: ...` (#629): Codon 0.19 cannot parse the
+            # bare `*` of a lambda ("unexpected dedent"), and a lambda that
+            # takes `*_acs_kw` instead (what a def's becomes, #622) is not
+            # one Codon passes as a key or callback.
+            names = ", ".join(a.arg for a in args.kwonlyargs)
+            self._refuse(
+                node,
+                "Codon cannot compile a lambda with keyword-only parameters "
+                f"(`{names}` after a bare `*`): write a nested def instead "
+                "(`def f(a, *, k=1): return ...`), whose keyword-only "
+                "parameters the check compiles",
+            )
         positional = [*args.posonlyargs, *args.args]
         first = len(positional) - len(args.defaults)
         moved: list[tuple[str, ast.expr]] = []

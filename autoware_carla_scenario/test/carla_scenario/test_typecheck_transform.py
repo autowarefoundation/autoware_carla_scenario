@@ -18,7 +18,14 @@ from typing import Any, Optional
 import pytest
 
 from autoware_carla_scenario.typecheck import model_dir
-from autoware_carla_scenario.typecheck.check import Diagnostic, _keyword_only_hint
+from autoware_carla_scenario.typecheck.check import (
+    Diagnostic,
+    _keyword_only_hint,
+    _keyword_only_hints,
+    _Module,
+    _Sources,
+    _variadic_hints,
+)
 from autoware_carla_scenario.typecheck.driver import render_driver
 from autoware_carla_scenario.typecheck.python_rewrites import (
     REWRITE_HINTS,
@@ -34,6 +41,7 @@ from autoware_carla_scenario.typecheck.transform import (
     flag_member_values,
     inherited_inits,
     literal_all,
+    plain_classes,
     relative_module_imports,
     split_tuple_excepts,
     transform_source,
@@ -6609,3 +6617,235 @@ def test_a_list_display_of_an_annotated_target_gets_no_annotate_hint(
     assert "annotated element type" in annotated.message
     assert "annotate the target" not in annotated.message
     assert "annotate the target" in bare.message
+
+
+# ---------------------------------------------------------------------------
+# list[tuple[X, ...]] locals (#625)
+# ---------------------------------------------------------------------------
+
+
+def test_a_local_list_of_variable_length_tuples_keeps_its_annotation() -> None:
+    # Dropped, the annotation would leave Codon to type the list from its
+    # first append, a tuple of fixed length.
+    out = _transform(
+        """
+        def f() -> None:
+            pairs: list[tuple[int, ...]] = []
+            pairs.append((1, 2))
+            pairs.append((3,))
+            pairs.insert(0, ())
+            by: dict[str, tuple[float, ...]] = {}
+            other = []
+            other.append((1, 2))
+            fixed: list[tuple[int, int]] = []
+            fixed.append((1, 2))
+            xs = [pairs.append((5, 6)) for pairs in [[]]]
+        """
+    )
+    assert "pairs = List[List[int]]()" in out
+    assert "pairs.append(List[int]([1, 2]))" in out
+    assert "pairs.append(List[int]([3,]))" in out
+    assert "pairs.insert(0, List[int]())" in out
+    assert "by = Dict[str, List[float]]()" in out
+    assert "other.append((1, 2))" in out
+    assert "fixed.append((1, 2))" in out
+    # A comprehension's own `pairs` is no such local.
+    assert "pairs.append((5, 6)) for pairs in" in out
+
+
+def test_codon_annotation_takes_a_variadic_tuple_only_where_asked() -> None:
+    node = ast.parse("list[tuple[int, ...]]", mode="eval").body
+    assert codon_annotation(node) is None
+    assert codon_annotation(node, variadic_tuples=True) == "list[List[int]]"
+    assert codon_annotation(node, class_level=True) == "list[List[int]]"
+
+
+# ---------------------------------------------------------------------------
+# super().__init__ past a mixin listed first (#626)
+# ---------------------------------------------------------------------------
+
+_MIXINS = """
+from autoware_carla_scenario import BaseScenario
+
+
+class VehicleInfoMixin:
+    ego_config: int
+
+    def label(self) -> str:
+        return "x"
+
+
+class Deeper(VehicleInfoMixin):
+    pass
+
+
+class CaseScenario(Deeper, BaseScenario):
+    def __init__(self, ego_config, spawn_pose):
+        super().__init__(ego_config, spawn_pose=spawn_pose)
+
+    def again(me):
+        super().__init__()
+
+        def inner():
+            super().__init__(1)
+
+
+class First(BaseScenario, VehicleInfoMixin):
+    def __init__(self, c):
+        super().__init__(c)
+
+
+class WithInit:
+    def __init__(self) -> None:
+        pass
+
+
+class OwnInitFirst(WithInit, BaseScenario):
+    def __init__(self, c):
+        super().__init__()
+
+
+@dataclass
+class Fields:
+    a: int = 0
+
+
+class DataclassFirst(Fields, BaseScenario):
+    def __init__(self, c):
+        super().__init__(c)
+
+
+class UnknownFirst(Unknown, BaseScenario):
+    def __init__(self, c):
+        super().__init__(c)
+"""
+
+
+def test_super_init_passes_over_a_mixin_listed_first_by_naming_the_base() -> None:
+    out = transform_source(textwrap.dedent(_MIXINS), init_classes={"BaseScenario"})
+    lines = out.splitlines()
+
+    def at(needle: str, after: int = 0) -> str:
+        line = next(n for n, text in enumerate(lines) if needle in text and n > after)
+        return lines[line + 1].strip()
+
+    # Python's MRO passes Deeper and VehicleInfoMixin, which define no
+    # __init__, to BaseScenario's; Codon's super() is Deeper's.
+    assert at("class CaseScenario(") == "def __init__(self, ego_config, spawn_pose):"
+    assert "BaseScenario.__init__(self, ego_config, spawn_pose=spawn_pose)" in out
+    assert "BaseScenario.__init__(me)" in out
+    assert "            super().__init__(1)" in out  # a nested function's
+    # A first base with an __init__ (its own, or a dataclass's), or one the
+    # check cannot see, keeps super().
+    assert out.count("super().__init__(c)") == 3
+    assert "        super().__init__()\n" in out
+
+
+def test_plain_classes_are_the_mixins_without_an_init() -> None:
+    tree = ast.parse(textwrap.dedent(_MIXINS))
+    classes = {n.name: n for n in tree.body if isinstance(n, ast.ClassDef)}
+    with_init = classes_with_init(classes, {"BaseScenario"})
+    assert plain_classes(classes, with_init) == {"VehicleInfoMixin", "Deeper"}
+    # A mixin of another module counts as one too.
+    elsewhere = ast.parse("class Local(Shared):\n    pass\n")
+    local = {n.name: n for n in elsewhere.body if isinstance(n, ast.ClassDef)}
+    assert plain_classes(local, set(), {"Shared"}) == {"Local", "Shared"}
+    assert plain_classes(local, set()) == set()
+    # Python gives a protocol class an __init__ of its own; ABC and Generic
+    # add none.
+    bases = ast.parse(
+        "class P(Protocol):\n    pass\n"
+        "class A(ABC):\n    pass\n"
+        "class G(Generic[T]):\n    pass\n"
+    )
+    found = {n.name: n for n in bases.body if isinstance(n, ast.ClassDef)}
+    assert plain_classes(found, set()) == {"A", "G"}
+
+
+# ---------------------------------------------------------------------------
+# Keyword-only lambdas, overrides and Callable tables (#629)
+# ---------------------------------------------------------------------------
+
+
+def test_a_lambda_with_keyword_only_parameters_is_refused() -> None:
+    [(line, message)] = python_rewrite_refusals("x = 1\nf = lambda a, *, k=1: a * k\n")
+    assert line == 2
+    assert "`k` after a bare `*`" in message
+    assert "write a nested def instead" in message
+    # `*args` before them is no bare `*`, and a def is compiled as it is.
+    assert python_rewrite_refusals("g = lambda *a, k=1: k\n") == []
+    assert python_rewrite_refusals("def h(a, *, k=1):\n    return a\n") == []
+
+
+@pytest.mark.parametrize(
+    ("message", "hint"),
+    [
+        (
+            "'s' is an invalid keyword argument for class_thunk_dispatch()",
+            "through a dispatch thunk, which takes no keyword argument",
+        ),
+        (
+            "unsupported operand type(s) for +: 'Capsule[Optional[int]]' and '1'",
+            "copy it into an annotated local",
+        ),
+    ],
+)
+def test_a_codon_limit_of_629_gets_its_hint(message: str, hint: str) -> None:
+    (out,) = _variadic_hints([Diagnostic(message)])
+    assert out.message.startswith(message + ": ")
+    assert hint in out.message
+
+
+_KEYWORD_ONLY_SOURCES = """
+def key_of(x: int, *, rev: bool = False) -> int:
+    return x
+
+
+def dbl(x: int) -> int:
+    return x
+
+
+class Base:
+    def m(self, a: float, *, s: float = 1.0) -> float:
+        return a
+
+
+class Sub(Base):
+    def m(self, a: float, *, s: float = 2.0) -> float:
+        return a
+
+    def n(self) -> int:
+        return 1
+"""
+
+
+def test_keyword_only_hints_name_the_function_and_the_override(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "scenario.py"
+    path.write_text(_KEYWORD_ONLY_SOURCES)
+    sources = _Sources(
+        modules={
+            "pkg.scenario": _Module(
+                path, False, _KEYWORD_ONLY_SOURCES, ast.parse(_KEYWORD_ONLY_SOURCES)
+            )
+        }
+    )
+    table = "no function 'Callable.__new__' with arguments (key_of[int,T2,bool])"
+    plain = "no function 'Callable.__new__' with arguments (dbl[int])"
+    call = "cannot typecheck 'b.m(1.0)'"
+    other = "cannot typecheck 'b.n()'"
+    out = _keyword_only_hints(
+        [
+            Diagnostic(f"{table}: generic"),
+            Diagnostic(plain),
+            Diagnostic(call),
+            Diagnostic(other),
+        ],
+        sources,
+    )
+    assert out[0].message.startswith(table + ": `key_of` has keyword-only")
+    assert "(`lambda x: key_of(x)`)" in out[0].message
+    assert out[1].message == plain
+    assert out[2].message.startswith(call + ": `m` is overridden. ")
+    assert out[3].message == other

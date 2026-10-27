@@ -158,6 +158,14 @@ which :func:`transform_source_lines` maps back onto the handler):
   (in the module, or among *init_classes*: another module's, the model's) is
   given one passing everything on to the base's, with ``@extend`` after the
   module: Codon 0.19 inherits no ``__init__`` (#201).
+* ``super().__init__(...)`` in a method of a top-level class whose first
+  bases are plain mixins (no ``__init__``, :func:`plain_classes`) becomes
+  ``Base.__init__(self, ...)``, ``Base`` the first base with one: Python's
+  MRO reaches it, Codon 0.19's ``super()`` is the first base's (#626).
+* A local ``pairs: list[tuple[X, ...]] = []`` keeps its annotation, as
+  ``List[List[X]]()``, and a tuple display it is given by ``append`` /
+  ``insert`` becomes ``List[X]([...])`` (#625): dropped, the annotation left
+  Codon to type the list from its first element, a fixed-length tuple.
 
 Before that, the scenario check gives each of the scenario's modules to
 :func:`relative_module_imports`, which imports a module of the scenario's
@@ -199,6 +207,8 @@ __all__ = [
     "inherited_inits",
     "redirect_imports",
     "literal_all",
+    "mixin_super_inits",
+    "plain_classes",
     "relative_module_imports",
     "split_tuple_excepts",
     "tuple_named_tuples",
@@ -798,8 +808,14 @@ def _ndarray(node: ast.Subscript, base_name: str) -> str | None:
     return f"{base_name}[{scalar}, {len(dims)}]"
 
 
-def codon_annotation(node: ast.AST, *, class_level: bool = False) -> str | None:
-    """The Codon spelling of a Python annotation, or ``None`` to drop it."""
+def codon_annotation(
+    node: ast.AST, *, class_level: bool = False, variadic_tuples: bool = False
+) -> str | None:
+    """The Codon spelling of a Python annotation, or ``None`` to drop it.
+
+    *variadic_tuples*: a ``tuple[X, ...]`` becomes ``List[X]`` outside a
+    class body too (the element of a local's ``list[tuple[X, ...]]``, #625).
+    """
     literal = _literal_type(node)
     if literal is not None:
         return literal
@@ -811,14 +827,18 @@ def codon_annotation(node: ast.AST, *, class_level: bool = False) -> str | None:
                 inner = ast.parse(node.value, mode="eval").body
             except SyntaxError:
                 return None
-            return codon_annotation(inner, class_level=class_level)
+            return codon_annotation(
+                inner, class_level=class_level, variadic_tuples=variadic_tuples
+            )
         return None
     members = _union_members(node)
     if members is not None:
         rest = [m for m in members if not _is_none(m)]
         if len(rest) != 1:
             return None  # a real Union: Codon 0.19 cannot take one
-        inner_text = codon_annotation(rest[0], class_level=class_level)
+        inner_text = codon_annotation(
+            rest[0], class_level=class_level, variadic_tuples=variadic_tuples
+        )
         if inner_text is None:
             return None
         return f"Optional[{inner_text}]" if len(rest) < len(members) else inner_text
@@ -828,13 +848,19 @@ def codon_annotation(node: ast.AST, *, class_level: bool = False) -> str | None:
         return None
     base = base_name.removeprefix("typing.")
     if subscript and base_name in _OPTIONAL_NAMES:
-        inner_text = codon_annotation(node.slice, class_level=class_level)  # type: ignore[attr-defined]
+        inner_text = codon_annotation(
+            node.slice,  # type: ignore[attr-defined]
+            class_level=class_level,
+            variadic_tuples=variadic_tuples,
+        )
         return None if inner_text is None else f"Optional[{inner_text}]"
     if subscript and base in _WRAPPERS:
         wrapped = node.slice  # type: ignore[attr-defined]
         if isinstance(wrapped, ast.Tuple):
             wrapped = wrapped.elts[0]
-        return codon_annotation(wrapped, class_level=class_level)
+        return codon_annotation(
+            wrapped, class_level=class_level, variadic_tuples=variadic_tuples
+        )
     if base in _UNEXPRESSIBLE or (base in _ABSTRACT_GENERICS and not class_level):
         return None
     if subscript and base.rsplit(".", 1)[-1] in _BOOL_GUARDS:
@@ -842,7 +868,11 @@ def codon_annotation(node: ast.AST, *, class_level: bool = False) -> str | None:
     if base_name in _FROZENSET_NAMES:
         if not subscript:
             return None  # a bare frozenset: the element type is unknown
-        inner_text = codon_annotation(node.slice, class_level=class_level)  # type: ignore[attr-defined]
+        inner_text = codon_annotation(
+            node.slice,  # type: ignore[attr-defined]
+            class_level=class_level,
+            variadic_tuples=variadic_tuples,
+        )
         return None if inner_text is None else f"Set[{inner_text}]"
     if not subscript:
         if base_name in _BYTES_NAMES:
@@ -863,13 +893,24 @@ def codon_annotation(node: ast.AST, *, class_level: bool = False) -> str | None:
             # tuple[X, ...]: Codon's tuples have a fixed length.  A class-level
             # declaration holds a list instead, as `tuple(x)` is checked as one;
             # a parameter, which a caller may pass a tuple, is dropped.
-            if not class_level or len(args) != 2 or base not in _TUPLE_NAMES:
+            if (
+                not (class_level or variadic_tuples)
+                or len(args) != 2
+                or base not in _TUPLE_NAMES
+            ):
                 return None
-            item = codon_annotation(args[0], class_level=class_level)
+            item = codon_annotation(
+                args[0], class_level=class_level, variadic_tuples=variadic_tuples
+            )
             if item is None:
                 item = _class_union(args[0])
             return None if item is None else f"List[{item}]"
-        converted = [codon_annotation(a, class_level=class_level) for a in args]
+        converted = [
+            codon_annotation(
+                a, class_level=class_level, variadic_tuples=variadic_tuples
+            )
+            for a in args
+        ]
         if any(c is None for c in converted):
             return None
         return f"{base_name}[{', '.join(c for c in converted if c is not None)}]"
@@ -1240,6 +1281,20 @@ def _sequence_list(annotation: ast.AST) -> str | None:
     return None if item is None else f"List[{item}]"
 
 
+def _variadic_tuple_element(annotation: ast.AST) -> ast.expr | None:
+    """The ``tuple[X, ...]`` of a ``list[tuple[X, ...]]`` annotation, or ``None``."""
+    if not (
+        isinstance(annotation, ast.Subscript)
+        and _dotted(annotation.value) in _LIST_ANNOTATIONS
+    ):
+        return None
+    element = annotation.slice
+    if _sequence_list(element) is None or not isinstance(element, ast.Subscript):
+        return None
+    base = (_dotted(element.value) or "").rsplit(".", 1)[-1]
+    return element if base in _TUPLE_NAMES else None
+
+
 def _optional_member(annotation: ast.AST) -> ast.AST | None:
     """``X`` of an ``Optional[X]`` / ``X | None`` / ``Union[X, None]``, or ``None``."""
     if isinstance(annotation, ast.Constant) and isinstance(annotation.value, str):
@@ -1332,6 +1387,11 @@ class _Rewriter(ShadowScopes):
         self._list_scopes: list[tuple[dict[str, str | None], set[str] | None, int]] = [
             ({}, None, 0)
         ]
+        #: The locals annotated ``list[tuple[X, ...]]`` of the module and of
+        #: each function being visited, innermost last, to the element
+        #: annotation: a tuple display appended to one is the ``List[X]`` the
+        #: element is checked as (#625).
+        self._tuple_lists: list[dict[str, ast.expr]] = [{}]
         #: The element class of the ``-> list[B]`` of each function being
         #: visited (``None``: no such return annotation).
         self._return_elements: list[str | None] = []
@@ -2157,8 +2217,10 @@ class _Rewriter(ShadowScopes):
             if node.returns is None or isinstance(node, ast.AsyncFunctionDef)
             else self._list_element(node.returns)
         )
+        self._tuple_lists.append({})
         for stmt in node.body:
             self.visit(stmt)
+        self._tuple_lists.pop()
         self._return_elements.pop()
         self._list_scopes.pop()
         self._function_depth -= 1
@@ -2418,7 +2480,12 @@ class _Rewriter(ShadowScopes):
             # `children: list[Node] = []` in the body of `Node`: the class is
             # not defined yet, and Codon crashes on `List[Node]()` there.
             return False
-        typed = codon_annotation(annotation, class_level=class_level)
+        # A `tuple[X, ...]` inside is the `List[X]` a class-level one is
+        # checked as (#625): dropped, the annotation would leave Codon to type
+        # the container from its first element, a tuple of fixed length.
+        typed = codon_annotation(
+            annotation, class_level=class_level, variadic_tuples=True
+        )
         if typed is None or "[" not in typed:
             return False
         typed = concrete + "[" + typed.split("[", 1)[1]
@@ -2541,6 +2608,10 @@ class _Rewriter(ShadowScopes):
             self._note_list_local(
                 node.target.id, self._list_element(node.annotation), node.target
             )
+            if self._class_depth == 0 or self._function_depth > 0:
+                element = _variadic_tuple_element(node.annotation)
+                if element is not None:
+                    self._tuple_lists[-1][node.target.id] = element
         converted = self._rewrite_annotation(node.annotation, class_level=class_level)
         if (
             converted is None
@@ -2573,7 +2644,30 @@ class _Rewriter(ShadowScopes):
             self.edits.replace(start, end, f"{node.exc.id}()")
         self.generic_visit(node)
 
+    def _tuple_list_element(self, node: ast.expr) -> ast.expr | None:
+        """The ``tuple[X, ...]`` element annotation of the local *node*, when
+        it is a ``list[tuple[X, ...]]`` of this scope not bound otherwise
+        since (a comprehension, a lambda)."""
+        if not isinstance(node, ast.Name):
+            return None
+        if any(
+            node.id in bound
+            for bound, _ in self._local_bound[self._list_scopes[-1][2] :]
+        ):
+            return None
+        return self._tuple_lists[-1].get(node.id)
+
     def visit_Call(self, node: ast.Call) -> None:
+        if (
+            isinstance(node.func, ast.Attribute)
+            and node.func.attr in ("append", "insert")
+            and len(node.args) == (1 if node.func.attr == "append" else 2)
+            and not node.keywords
+        ):
+            # `pairs.append((1, 2))` with `pairs: list[tuple[int, ...]]` (#625).
+            element = self._tuple_list_element(node.func.value)
+            if element is not None:
+                self._tuple_argument(node.args[-1], element)
         self._mark_list_arguments(node)
         if (
             isinstance(node.func, ast.Attribute)
@@ -3770,6 +3864,7 @@ def transform_source(
     init_classes: Collection[str] = (),
     enum_classes: Collection[str] = (),
     file: str | None = None,
+    mixins: Collection[str] = (),
 ) -> str:
     """Rewrite *source* for Codon; the result starts with :data:`PRELUDE`.
 
@@ -3780,10 +3875,12 @@ def transform_source(
     model) that define an ``__init__``, their own or a base's
     (:func:`classes_with_init`): a class of *source* deriving from one
     without an ``__init__`` of its own inherits it (:func:`inherited_inits`).
-    *file* is the module's path, bound to ``__file__`` (#515).
+    *file* is the module's path, bound to ``__file__`` (#515).  *mixins*
+    names the plain mixins of other modules (:func:`plain_classes`), which a
+    ``super().__init__`` passes over (:func:`mixin_super_inits`).
     """
     return transform_source_lines(
-        source, dropped_decorators, init_classes, enum_classes, file
+        source, dropped_decorators, init_classes, enum_classes, file, mixins
     )[0]
 
 
@@ -3793,6 +3890,7 @@ def transform_source_lines(
     init_classes: Collection[str] = (),
     enum_classes: Collection[str] = (),
     file: str | None = None,
+    mixins: Collection[str] = (),
 ) -> tuple[str, list[int]]:
     """:func:`transform_source`, and the line of *source* each line comes from.
 
@@ -3846,6 +3944,7 @@ def transform_source_lines(
     enum_iteration(tree, edits, own | (model_enum_names() - other))
     repeated_imports(tree, edits)
     lower_replace_calls(tree, edits)
+    mixin_super_inits(tree, edits, init_classes, mixins)
     # The decorators moved down to their `def` (#595).
     origin = [origin[line - 1] for line in edits.line_origin()]
     lines = {
@@ -4999,6 +5098,128 @@ def lower_replace_calls(tree: ast.Module, edits: _Edits) -> None:
                 break
             edits.replace(start + comma, end, f").{replace_method(str(keyword.arg))}(")
             previous = keyword.value
+
+
+#: Bases a class of no ``__init__`` may have and stay a plain mixin (#626).
+#: Not ``Protocol``: Python gives a protocol class an ``__init__`` of its own.
+_MIXIN_BASES = {"object", "ABC", "Generic"}
+
+
+def plain_classes(
+    classes: Mapping[str, ast.ClassDef],
+    with_init: Collection[str],
+    known: Collection[str] = (),
+) -> set[str]:
+    """The classes of *classes* that Python's ``super().__init__`` passes
+    over (#626): no ``__init__`` of their own or of a base (*with_init*), no
+    ``@dataclass`` (which generates one), no class keywords, and only bases
+    that are such classes too (of *classes*, or *known* ones) or ``object``,
+    ``ABC`` or ``Generic[...]``.  Bases are looked up by their
+    last name, as :func:`classes_with_init` does."""
+    known = set(known)
+    memo: dict[str, bool] = {}
+
+    def plain(name: str, seen: frozenset[str]) -> bool:
+        if name in memo:
+            return memo[name]
+        node = classes.get(name)
+        if node is None:
+            return name in known
+        if name in seen or name in with_init:
+            return False
+        found = (
+            not _defines_init(node)
+            and not _is_dataclass_node(node)
+            and not node.keywords
+            and all(
+                base in _MIXIN_BASES or plain(base, seen | {name})
+                for base in (
+                    (
+                        _dotted(b.value if isinstance(b, ast.Subscript) else b) or ""
+                    ).rsplit(".", 1)[-1]
+                    for b in node.bases
+                )
+            )
+        )
+        memo[name] = found
+        return found
+
+    return {name for name in classes if plain(name, frozenset())} | known
+
+
+def mixin_super_inits(
+    tree: ast.Module,
+    edits: _Edits,
+    init_classes: Collection[str] = (),
+    mixins: Collection[str] = (),
+) -> None:
+    """``super().__init__(...)`` in a method of a class whose first bases are
+    plain mixins becomes ``Base.__init__(self, ...)`` (#626).
+
+    Python's ``super()`` follows the MRO: past the mixins of ``class
+    S(Mixin, BaseScenario)``, which define no ``__init__`` (nor do their
+    bases), to ``BaseScenario.__init__``.  Codon 0.19's ``super()`` is the
+    first base's, the mixin's constructor of its fields, which refuses the
+    base's arguments.  The call is made through the first base that has an
+    ``__init__`` by name, which the MRO makes the same method: every class
+    before it in the MRO is one of those mixins (:func:`plain_classes`, of
+    the module, or *mixins* of the scenario's other modules).  A class whose
+    first base has an ``__init__``, or whose earlier bases are not all such
+    mixins, is left alone.
+    """
+    local = {n.name: n for n in tree.body if isinstance(n, ast.ClassDef)}
+    aliases = _import_aliases(tree)
+    known = {
+        alias
+        for alias, name in aliases.items()
+        if name in init_classes and alias not in local
+    } | (set(init_classes) - set(local))
+    with_init = classes_with_init(local, known)
+    plain = plain_classes(local, with_init, set(mixins) - set(local))
+    for node in local.values():
+        bases = [(_dotted(b) or "").rsplit(".", 1)[-1] for b in node.bases]
+        index = next((i for i, b in enumerate(bases) if b in with_init), None)
+        if not index or not all(b in plain for b in bases[:index]):
+            continue
+        target = ast.unparse(node.bases[index])
+        for method in node.body:
+            if not (
+                isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and method.args.args
+            ):
+                continue
+            receiver = method.args.args[0].arg
+            for call in _own_calls(method):
+                func = call.func
+                if not (
+                    isinstance(func, ast.Attribute)
+                    and func.attr == "__init__"
+                    and isinstance(func.value, ast.Call)
+                    and isinstance(func.value.func, ast.Name)
+                    and func.value.func.id == "super"
+                    and not func.value.args
+                    and not func.value.keywords
+                ):
+                    continue
+                start, end = edits.node_span(func)
+                paren = end + edits.text(end, edits.node_span(call)[1]).index("(")
+                edits.replace(start, end, f"{target}.__init__")
+                more = ", " if call.args or call.keywords else ""
+                edits.replace(paren + 1, paren + 1, f"{receiver}{more}")
+
+
+def _own_calls(function: ast.FunctionDef | ast.AsyncFunctionDef) -> Iterator[ast.Call]:
+    """The calls of *function*'s body, not of a function or class in it."""
+    stack: list[ast.AST] = list(function.body)
+    while stack:
+        node = stack.pop()
+        if isinstance(
+            node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
+        ):
+            continue
+        if isinstance(node, ast.Call):
+            yield node
+        stack.extend(ast.iter_child_nodes(node))
 
 
 def _replaceable_fields(node: ast.ClassDef) -> list[tuple[str, ast.expr, bool]] | None:

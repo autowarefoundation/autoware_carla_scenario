@@ -14,13 +14,16 @@ from autoware_carla_scenario.typecheck.check import (
     _Module,
     _Sources,
     _data_model_hints,
+    _narrowed_none_first_hints,
     _none_first_binding_hints,
     _unplaced_none_mismatches,
 )
 from autoware_carla_scenario.typecheck.local_bindings import (
     int_literal_hint,
+    narrowed_none_first_bindings,
     none_first_bindings,
     none_mismatch_hint,
+    none_only_tests,
 )
 
 _INT = "'float' does not match expected type 'int'"
@@ -255,3 +258,58 @@ def test_a_crash_or_an_unplaced_none_mismatch_lists_the_none_locals(
     placed = Diagnostic(f"{_OPT_NONE}: Codon fixes the type of the local `best`")
     assert _unplaced_none_mismatches([placed], sources) == []
     assert _unplaced_none_mismatches([Diagnostic(_INT)], sources) == []
+
+
+# ---------------------------------------------------------------------------
+# A None-first local a conditional expression tests (#629)
+# ---------------------------------------------------------------------------
+
+_NARROWED = """
+def deltas(xs: list[float]) -> list:
+    out = []
+    prev = None
+    for v in xs:
+        d = v - prev if prev is not None else None
+        out.append(d)
+        prev = v
+    return out
+
+
+def none_only():
+    z = None
+    w = None
+    w = None
+    return (z + 1 if z is not None else None, 1 if w is None else 2)
+
+
+def not_tested(n):
+    q = None
+    k: None = None
+    return 1 if n else (2 if k is None else 3)
+
+
+def parameter(p=None):
+    return 1 if p is None else 2
+"""
+
+
+def test_a_local_only_ever_none_tested_by_a_conditional_is_found() -> None:
+    found = none_only_tests(_tree(_NARROWED))
+    assert [(t.name, t.line, t.test_line) for t in found] == [
+        ("z", _line(_NARROWED, "z = None"), _line(_NARROWED, "return (z + 1")),
+        ("w", _line(_NARROWED, "w = None"), _line(_NARROWED, "return (z + 1")),
+    ]
+    assert "`z: <T> | None = None`" in found[0].message()
+
+
+def test_a_none_first_local_tested_by_a_conditional_is_named(tmp_path: Path) -> None:
+    (binding,) = narrowed_none_first_bindings(_tree(_NARROWED))
+    assert (binding.name, binding.line) == ("prev", _line(_NARROWED, "prev = None"))
+    sources = _sources(tmp_path, _NARROWED)
+    made_up = "'Optional[int]' does not match expected type 'Optional[float]'"
+    (hint,) = _narrowed_none_first_hints([Diagnostic(made_up)], sources)
+    assert hint.line == binding.line
+    assert "`prev: float | None = None`" in hint.message
+    # Any other refusal is not Codon's made-up int.
+    assert _narrowed_none_first_hints([Diagnostic(_OPT_INT)], sources) == []
+    assert _narrowed_none_first_hints([Diagnostic(_INT)], sources) == []

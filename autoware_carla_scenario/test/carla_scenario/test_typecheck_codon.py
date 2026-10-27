@@ -12268,3 +12268,235 @@ def test_a_positional_argument_for_a_keyword_only_parameter_is_refused_at_the_ca
     assert len(result.diagnostics) == 1, result.format()
     assert error.message == message, error.format()
     assert error.line == _line_of(path, call)
+
+
+# ---------------------------------------------------------------------------
+# sum() of strings, dict.fromkeys(xs), list[tuple[X, ...]] (#625)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("call", ['sum(["a", "b"], "")', 'sum(["a"], start="")'])
+def test_sum_with_a_str_start_is_refused_as_python_refuses_it(
+    tmp_path: Path, call: str
+) -> None:
+    # CPython raises TypeError before it adds anything; Codon concatenates.
+    scenario, config, path = _write_case(tmp_path, f'logger.info("%s", {call})\n')
+    result = typecheck_scenario(scenario, config)
+    error = _only_error(result)
+    assert "sum() can't sum strings [use ''.join(seq) instead]" in error.message
+    assert error.line == _line_of(path, call)
+
+
+def test_dict_fromkeys_of_one_argument_and_a_list_of_variable_length_tuples_pass(
+    tmp_path: Path,
+) -> None:
+    scenario, config, _ = _write_case(
+        tmp_path,
+        """
+        d = dict.fromkeys(["a", "b", "a"])
+        logger.info("%s %s", list(d), d["a"] is None)
+        e = dict.fromkeys(["a"], 0)
+        logger.info("%s", e["a"] + 1)
+        pairs: list[tuple[int, ...]] = []
+        pairs.append((1, 2))
+        pairs.append((3,))
+        pairs.insert(0, ())
+        for p in pairs:
+            logger.info("%d", len(p))
+        """,
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_a_list_of_variable_length_tuples_still_checks_its_elements(
+    tmp_path: Path,
+) -> None:
+    # The annotation is kept, not dropped: a tuple of str is no tuple[int, ...].
+    scenario, config, path = _write_case(
+        tmp_path,
+        """
+        pairs: list[tuple[int, ...]] = []
+        pairs.append((1, 2))
+        pairs.append(("a",))
+        """,
+    )
+    result = typecheck_scenario(scenario, config)
+    error = _only_error(result)
+    assert error.line == _line_of(path, 'pairs.append(("a",))'), result.format()
+
+
+# ---------------------------------------------------------------------------
+# A mixin listed before the framework base (#626)
+# ---------------------------------------------------------------------------
+
+
+def _mixin_first_header(init_call: str) -> str:
+    return _HEADER.replace(
+        "class CaseScenario(BaseScenario):",
+        "class VehicleInfoMixin:\n"
+        "    ego_config: EgoConfig\n\n"
+        "    def vehicle_label(self) -> str:\n"
+        '        return "ego:" + self.ego_config.vehicle_type\n\n\n'
+        "class CaseScenario(VehicleInfoMixin, BaseScenario):",
+        1,
+    ).replace(
+        "super().__init__(ego_config, spawn_pose=spawn_pose, "
+        "ground_projection=ground_projection)",
+        init_call,
+        1,
+    )
+
+
+def test_super_init_passes_over_a_mixin_listed_before_the_framework_base(
+    tmp_path: Path,
+) -> None:
+    # Codon's super() is the first base's; Python's follows the MRO past the
+    # mixin, which defines no __init__, to BaseScenario.__init__.
+    scenario, config, _ = _write_case(
+        tmp_path,
+        _VALID_SETUP + '        logger.info("%s", self.vehicle_label())\n',
+        header=_mixin_first_header(
+            "super().__init__(ego_config, spawn_pose=spawn_pose, "
+            "ground_projection=ground_projection)"
+        ),
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_super_init_past_a_mixin_still_checks_the_base_arguments(
+    tmp_path: Path,
+) -> None:
+    scenario, config, path = _write_case(
+        tmp_path,
+        _VALID_SETUP,
+        header=_mixin_first_header(
+            "super().__init__(ego_config, spawn_pose=spawn_pose, no_such=1)"
+        ),
+    )
+    result = typecheck_scenario(scenario, config)
+    error = _only_error(result)
+    assert "no_such" in error.message, result.format()
+    assert error.line == _line_of(path, "no_such=1")
+
+
+# ---------------------------------------------------------------------------
+# Keyword-only overrides, kw-only lambdas and None-first locals (#629)
+# ---------------------------------------------------------------------------
+
+_OVERRIDES = r"""
+
+
+class Base:
+    def m(self, a: float, *, s: float = 1.0) -> float:
+        return a * s
+
+
+class Sub(Base):
+    def m(self, a: float, *, s: float = 2.0) -> float:
+        return a + s
+
+
+def use(b: Base) -> float:
+    return b.m(1.0)
+
+
+def key_of(x: int, *, rev: bool = False) -> int:
+    return -x if rev else x
+
+
+def dbl(x: int) -> int:
+    return 2 * x
+
+
+def counter(v: Optional[int]) -> Optional[int]:
+    y = v
+    out: Optional[int] = None
+
+    def bump() -> None:
+        nonlocal y, out
+        out = y + 1 if y is not None else None
+        y = 3
+
+    bump()
+    return out
+
+
+def deltas(xs: list[float]) -> list[Optional[float]]:
+    out: list[Optional[float]] = []
+    prev = None
+    for v in xs:
+        d = v - prev if prev is not None else None
+        out.append(d)
+        prev = v
+    return out
+
+
+def none_only() -> Optional[int]:
+    z = None
+    return z + 1 if z is not None else None
+"""
+
+
+@pytest.mark.parametrize(
+    ("setup", "needle", "hint"),
+    [
+        # A call of an overridden method with a keyword-only parameter: through
+        # the base, then by keyword.
+        ('logger.info("%s", use(Sub()))\n', "return b.m(1.0)", "dispatch thunk"),
+        (
+            'logger.info("%s", Sub().m(1.0, s=3.0))\n',
+            "Sub().m(1.0, s=3.0)",
+            "dispatch thunk",
+        ),
+        (
+            "fs: list[Callable[[int], int]] = [key_of, dbl]\n"
+            'logger.info("%s", [f(1) for f in fs])\n',
+            "fs: list",
+            "put a lambda that calls it in the table instead (`lambda x: key_of(x)`)",
+        ),
+        (
+            'logger.info("%s", counter(1))\n',
+            "out = y + 1",
+            "copy it into an annotated local",
+        ),
+        (
+            'logger.info("%s", deltas([1.0, 2.0]))\n',
+            "prev = None",
+            "`prev: float | None = None`",
+        ),
+        (
+            'logger.info("%s", none_only())\n',
+            "return z + 1",
+            "the local `z` is only ever None",
+        ),
+    ],
+)
+def test_keyword_only_overrides_and_none_first_locals_say_why(
+    tmp_path: Path, setup: str, needle: str, hint: str
+) -> None:
+    scenario, config, path = _write_case(
+        tmp_path,
+        setup,
+        _OVERRIDES,
+        header=_stdlib_header("from typing import Callable, Optional\n"),
+    )
+    result = typecheck_scenario(scenario, config)
+    assert not result.ok, result.format()
+    hinted = [d for d in result.diagnostics if hint in d.message]
+    assert hinted, result.format()
+    assert hinted[0].line == _line_of(path, needle), result.format()
+
+
+def test_a_lambda_with_keyword_only_parameters_is_refused_with_a_hint(
+    tmp_path: Path,
+) -> None:
+    scenario, config, path = _write_case(
+        tmp_path,
+        "f = lambda a, *, k=1: a * k\n" 'logger.info("%s", f(2, k=3))\n',
+    )
+    result = typecheck_scenario(scenario, config)
+    error = _only_error(result)
+    assert "write a nested def instead" in error.message, error.format()
+    assert error.line == _line_of(path, "f = lambda")
