@@ -11,8 +11,10 @@ for an ECU's message, sleep) run at four points:
 * ``scenario_start`` -- when a scenario starts.  A run with
   ``ego.entity=hils`` says so over the link (:mod:`.link`, :mod:`.protocol`)
   and waits for the steps -- the ECUs initialized -- before its clock starts;
-  without one, the ego appearing starts it.  The periodic messages start and
-  the sensors are attached first, so the ECUs have their inputs;
+  without one, the ego appearing starts it -- not the ego of a run that went
+  away, which its failure or end can leave in the world a while.  The
+  periodic messages start and the sensors are attached first, so the ECUs
+  have their inputs;
 * ``scenario_end`` -- when it ends: the run's ``end``, the run going away, or
   the ego disappearing; then the periodic messages stop and the sensors go;
 * ``shutdown`` -- when the bridge stops (Ctrl-C, SIGTERM).
@@ -502,6 +504,12 @@ class HilsBridge:
         #: Whether a run is connected: then the run, not the ego appearing,
         #: starts scenarios.
         self._session = False
+        #: The actor id of the last run's ego (its ``start``), while that
+        #: actor lives.  Once the run is gone (it failed, or ended) its ego
+        #: can stay in the world a while: it does not start a scenario of the
+        #: bridge's own.  Forgotten once the actor is gone, so that an id
+        #: CARLA hands out again is not ignored.
+        self._run_ego: Optional[int] = None
         #: Whether the ECUs' commands go to the run (after its ``ready``).
         self._forwarding = False
         self._command: Dict[str, float] = {}
@@ -889,6 +897,7 @@ class HilsBridge:
             self._world = self._client.get_world()
         assert self._world is not None
         ego_id = message.get("ego_id")
+        self._run_ego = ego_id if isinstance(ego_id, int) else None
         ego = self._world.get_actor(int(ego_id)) if isinstance(ego_id, int) else None
         if ego is None:
             link.send({"type": "error", "message": f"no ego with actor id {ego_id}"})
@@ -906,14 +915,15 @@ class HilsBridge:
             link.send({"type": "command", "mode": self.config.command_mode, **command})
 
     def _find_ego(self) -> None:
-        """Without a run connected, the ego appearing starts a scenario."""
+        """Without a run connected, the ego appearing starts a scenario -- not
+        the ego of a run that went away."""
         now = time.monotonic()
         if now < self._next_scan:
             return
         self._next_scan = now + _EGO_SCAN_INTERVAL_S
         assert self._world is not None
         ego = find_actor_in_world(self._world, self.config.role_name)
-        if ego is None:
+        if ego is None or ego.id == self._run_ego:
             return
         try:
             self._begin(ego, "")
@@ -989,6 +999,8 @@ class HilsBridge:
             return False
         self._last_tick = time.monotonic()
         if not self._active and not self._session:
+            if self._run_ego is not None and snapshot.find(self._run_ego) is None:
+                self._run_ego = None
             self._find_ego()
         if self._active and self._ego is not None:
             state = self._state(snapshot)
