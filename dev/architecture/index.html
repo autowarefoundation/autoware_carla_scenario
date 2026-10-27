@@ -3879,11 +3879,19 @@ itself, and an entity's manoeuvre intents (<code>change_lane</code>, <code>turn_
 vehicle the backend drives, the ego or an NPC, becomes one of them:
 <code>BackendDriven.route_to</code> hands the backend the route from where the vehicle is,
 through any waypoints, to it. A pedestrian given one lays its walk out on the
-walkable lanelets (<code>PedestrianEntity.route_to</code>: a straight line for a leg they
-do not join up, as across a road whose crosswalks only overlap its walkways),
-and the <code>RoutingAction</code> walks it a tick at a time (<code>PedestrianEntity.walk_on</code>,
-steered as a <code>RoutingAction</code> steers a walker in <code>follow</code> mode) -- so on
-a pedestrian the action needs the tick loop (<code>BaseAction.needs_tick_loop</code>).</p>
+walkable lanelets (<code>PedestrianEntity.route_to</code>), and the <code>RoutingAction</code> walks
+it a tick at a time (<code>PedestrianEntity.walk_on</code>, steered as a <code>RoutingAction</code>
+steers a walker in <code>follow</code> mode) -- so on a pedestrian the action needs the
+tick loop (<code>BaseAction.needs_tick_loop</code>). The walk is searched on
+<code>coordinate.walk_graph.WalkGraph</code>, not on Lanelet2's routing graph: a crosswalk
+is usually drawn across the walkways it joins, reaching onto them without
+sharing a point, so Lanelet2 joins nothing across a road. The walk graph joins a
+walkable lanelet's end to any walkable lanelet it lies on (or within 0.5 m of),
+at that point along it, joins two walkable lanelets where their centrelines
+cross (a crosswalk drawn right across a walkway), and walks every walkway both
+ways whatever its <code>one_way</code> tag. A leg it has no walk for (a map with no
+walkways, as most Autoware maps, or a waypoint off them) is a straight line,
+with a warning.</p>
 <p><strong>Who drives the ego</strong>: <code>use_autopilot</code> decides whether the backend is given the
 ego actor to drive or told to keep its hands off it. <code>EgoVehicle</code> opts in (TrafficManager drives);
 every <code>ExternallyDrivenEgo</code> opts out: on its own it leaves the actor for something
@@ -4153,7 +4161,7 @@ CARLA map name using the <code>_map_name_to_env_var()</code> function:</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 27, 2026 01:48:11 UTC"><span class="timeago" datetime="2026-10-27T01:48:11+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 27, 2026 01:48:11 UTC">2026-10-27</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 27, 2026 06:50:14 UTC"><span class="timeago" datetime="2026-10-27T06:50:14+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 27, 2026 06:50:14 UTC">2026-10-27</span>
   </span>
 
     
