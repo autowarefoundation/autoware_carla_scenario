@@ -137,3 +137,44 @@ class TestDetails:
         assert math.isclose(details["target_y"], 0.0)
         assert details["rule"] == "LESS_THAN"
         assert details["vertical"] is False
+
+
+class TestARoutePose:
+    """A route pose is placed on the scenario's route when first measured to."""
+
+    @staticmethod
+    def _pose():
+        from autoware_carla_scenario.trajectory.model import RouteLanePose
+
+        return RouteLanePose(anchor="junction:0:entry", ds=-10.0)
+
+    def test_it_is_placed_once_when_first_measured_to(self) -> None:
+        from unittest.mock import patch
+
+        condition = EntityPositionDistanceCondition(
+            entity_name="Ego", position=self._pose(), value=10.0, label="near"
+        )
+        assert condition.get_details()["position"] == "RouteLanePose"
+        with patch(
+            "autoware_carla_scenario.trajectory.resolve.resolve_position",
+            return_value=(100.0, 0.0, None, None),
+        ) as resolve:
+            assert condition.check(_world(_actor("Ego", (85, 0, 0))), 1.0) is None
+            result = condition.check(_world(_actor("Ego", (95, 0, 0))), 2.0)
+        assert result is not None and result.passed
+        assert resolve.call_count == 1
+        assert math.isclose(condition.get_details()["target_x"], 100.0)
+
+    def test_one_it_cannot_place_holds_nothing(self) -> None:
+        from unittest.mock import patch
+
+        condition = EntityPositionDistanceCondition(
+            entity_name="Ego", position=self._pose(), value=10.0, label="near"
+        )
+        with patch(
+            "autoware_carla_scenario.trajectory.resolve.resolve_position",
+            side_effect=ValueError("no route"),
+        ) as resolve:
+            assert condition.check(_world(_actor("Ego", (99, 0, 0))), 1.0) is None
+            assert condition.check(_world(_actor("Ego", (99, 0, 0))), 2.0) is None
+        assert resolve.call_count == 1

@@ -545,13 +545,14 @@ def build_distance_condition(
 ) -> "BaseCondition":
     """Build an :class:`EntityPositionDistanceCondition`."""
     from ..conditions import EntityPositionDistanceCondition  # noqa: PLC0415
-    from ..coordinate import Lanelet2Pose  # noqa: PLC0415
+    from ..trajectory.authoring import authored_place  # noqa: PLC0415
     from ..conditions import ComparisonRule  # noqa: PLC0415
 
     params = compiled.params
-    position = Lanelet2Pose(
+    position = authored_place(
         lanelet_id=params["lanelet_id"],
         s=params["s"],
+        route_vertex=params["route_pose"],
     )
     return EntityPositionDistanceCondition(
         entity_name=str(params["entity"]),
