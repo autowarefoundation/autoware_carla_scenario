@@ -2172,10 +2172,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#world-reload-for-clean-state" class="md-nav__link">
+  <a href="#world-reset-for-clean-state" class="md-nav__link">
     <span class="md-ellipsis">
       
-        World Reload for Clean State
+        World Reset for Clean State
       
     </span>
   </a>
@@ -2714,10 +2714,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#world-reload-for-clean-state" class="md-nav__link">
+  <a href="#world-reset-for-clean-state" class="md-nav__link">
     <span class="md-ellipsis">
       
-        World Reload for Clean State
+        World Reset for Clean State
       
     </span>
   </a>
@@ -2955,7 +2955,7 @@
             SR-&gt;&gt;W: stop_recorder()
             SR-&gt;&gt;TB: close()
             TB-&gt;&gt;TM: shut_down()
-            SR-&gt;&gt;W: reload_world()
+            SR-&gt;&gt;W: reset_world() (map reload, or soft reset)
         end
 
         SR--&gt;&gt;SQ: ScenarioResult
@@ -4183,8 +4183,8 @@ CARLA map name using the <code>_map_name_to_env_var()</code> function:</p>
 <a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a><span class="p">)</span>
 </code></pre></div>
 <p><code>StickyCondition</code> latches once its child is satisfied, so each road only needs to be visited once. <code>AndCondition</code> requires all children to be satisfied simultaneously.</p>
-<h3 id="world-reload-for-clean-state">World Reload for Clean State<a class="headerlink" href="#world-reload-for-clean-state" title="Permanent link">&para;</a></h3>
-<p>After each scenario, <code>ScenarioRunner</code> calls <code>client.reload_world()</code> instead of manually destroying actors. This guarantees a completely clean state (actors, sensors, physics, Traffic Manager internal maps) and avoids "failed to destroy actor" errors from the CARLA server.</p>
+<h3 id="world-reset-for-clean-state">World Reset for Clean State<a class="headerlink" href="#world-reset-for-clean-state" title="Permanent link">&para;</a></h3>
+<p>After each scenario but the last, <code>ScenarioRunner.reset_world()</code> resets the world. By default (<code>server.world_reset: reload</code>) it loads the batch's map again by name (<code>client.reload_world()</code> fails on CARLA UE5): a new episode, with the run's actors destroyed first so their sensor streams are released. <code>server.world_reset: soft</code> keeps the episode and puts back what a run changes -- destroying every actor the freshly loaded world did not have and restoring the settings, weather, traffic lights and spectator read right after the load (<code>world_reset.py</code>) -- and falls back to a reload when the world is another episode or anything is left over. See <a href="../usage/#resetting-the-world-between-cases">Resetting the world between cases</a> for what a soft reset does and does not reset.</p>
 
 
 
@@ -4207,7 +4207,7 @@ CARLA map name using the <code>_map_name_to_env_var()</code> function:</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 27, 2026 06:50:14 UTC"><span class="timeago" datetime="2026-10-27T06:50:14+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 27, 2026 06:50:14 UTC">2026-10-27</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 27, 2026 08:42:06 UTC"><span class="timeago" datetime="2026-10-27T08:42:06+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 27, 2026 08:42:06 UTC">2026-10-27</span>
   </span>
 
     
