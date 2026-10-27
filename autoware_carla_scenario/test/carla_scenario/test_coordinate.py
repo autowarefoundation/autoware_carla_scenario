@@ -34,6 +34,7 @@ from autoware_carla_scenario.coordinate.transform import (
     _carla_to_opendrive,
     _lanelet2_to_carla,
     _opendrive_to_carla,
+    _project_to_centerline,
 )
 
 # Generous bound on the nishishinjuku map's half-extent, in metres. Used to
@@ -524,6 +525,130 @@ class TestRoundTripLanelet2:
             map_manager, lanelet_id, s=0.0, t=0.5
         )
         assert error < 1.0
+
+
+# ---------------------------------------------------------------------------
+# TestProjectToCenterline – the foot of the perpendicular, not a vertex
+# ---------------------------------------------------------------------------
+
+
+class TestProjectToCenterline:
+    """``_project_to_centerline`` projects onto the polyline's segments."""
+
+    # An L: 100 m East, then 50 m North.
+    _L = [(0.0, 0.0, 0.0), (100.0, 0.0, 0.0), (100.0, 50.0, 0.0)]
+
+    def test_a_point_between_far_apart_vertices(self):
+        s, t, heading = _project_to_centerline(self._L, 37.5, 2.0)
+        assert s == pytest.approx(37.5, abs=1e-12)
+        assert t == pytest.approx(2.0, abs=1e-12)
+        assert heading == pytest.approx(0.0, abs=1e-12)
+
+    def test_right_of_the_line_is_negative(self):
+        s, t, _heading = _project_to_centerline(self._L, 62.0, -1.5)
+        assert s == pytest.approx(62.0, abs=1e-12)
+        assert t == pytest.approx(-1.5, abs=1e-12)
+
+    def test_near_a_corner_reads_the_segment_it_is_beside(self):
+        # 1 m before the corner, inside it: the first segment, not the vertex.
+        s, t, heading = _project_to_centerline(self._L, 99.0, 0.5)
+        assert s == pytest.approx(99.0, abs=1e-12)
+        assert t == pytest.approx(0.5, abs=1e-12)
+        assert heading == pytest.approx(0.0, abs=1e-12)
+        # 1 m after it: the second segment, its heading and its own t.
+        s, t, heading = _project_to_centerline(self._L, 99.5, 1.0)
+        assert s == pytest.approx(101.0, abs=1e-12)
+        assert t == pytest.approx(0.5, abs=1e-12)
+        assert heading == pytest.approx(math.pi / 2, abs=1e-12)
+
+    def test_a_foot_on_a_vertex_belongs_to_the_segment_starting_there(self):
+        # Outside the corner both segments' feet are the corner itself.
+        s, t, heading = _project_to_centerline(self._L, 102.0, -2.0)
+        assert s == pytest.approx(100.0, abs=1e-12)
+        assert heading == pytest.approx(math.pi / 2, abs=1e-12)
+        assert t == pytest.approx(-2.0, abs=1e-12)
+        # A point on the vertex reads the same.
+        s, t, heading = _project_to_centerline(self._L, 100.0, 0.0)
+        assert (s, t) == (pytest.approx(100.0), pytest.approx(0.0))
+        assert heading == pytest.approx(math.pi / 2, abs=1e-12)
+
+    def test_past_the_ends_is_clamped(self):
+        s, t, heading = _project_to_centerline(self._L, -3.0, 1.0)
+        assert (s, t, heading) == (0.0, pytest.approx(1.0), pytest.approx(0.0))
+        s, t, heading = _project_to_centerline(self._L, 101.0, 60.0)
+        assert s == pytest.approx(150.0, abs=1e-12)
+        assert t == pytest.approx(-1.0, abs=1e-12)
+        assert heading == pytest.approx(math.pi / 2, abs=1e-12)
+
+    def test_repeated_points_are_skipped(self):
+        line = [
+            (0.0, 0.0, 0.0),
+            (10.0, 0.0, 0.0),
+            (10.0, 0.0, 0.0),
+            (10.0, 10.0, 0.0),
+        ]
+        s, t, heading = _project_to_centerline(line, 10.5, 4.0)
+        assert s == pytest.approx(14.0, abs=1e-12)
+        assert t == pytest.approx(-0.5, abs=1e-12)
+        assert heading == pytest.approx(math.pi / 2, abs=1e-12)
+        # The corner, through a zero-length segment, still starts the next one.
+        s, _t, heading = _project_to_centerline(line, 11.0, -1.0)
+        assert s == pytest.approx(10.0, abs=1e-12)
+        assert heading == pytest.approx(math.pi / 2, abs=1e-12)
+
+    def test_a_single_point(self):
+        assert _project_to_centerline([(1.0, 2.0, 0.0)], 4.0, 5.0) == (
+            0.0,
+            3.0,
+            0.0,
+        )
+        assert _project_to_centerline([(1.0, 2.0, 0.0)] * 3, 4.0, 1.0) == (
+            0.0,
+            -1.0,
+            0.0,
+        )
+
+
+class TestToLanelet2ProjectsOntoThePolyline:
+    """``to_lanelet2`` reads ``s`` and ``t`` off the polyline, not a vertex."""
+
+    def test_a_point_mid_segment_on_the_map(self, map_manager):
+        # The lanelet with the longest centreline segment, and its midpoint.
+        def longest(lanelet) -> tuple[float, int]:
+            pts = [(p.x, p.y) for p in lanelet.centerline]
+            return max(
+                (math.dist(a, b), i) for i, (a, b) in enumerate(zip(pts, pts[1:]))
+            )
+
+        lanelet = max(map_manager.lanelet_map.laneletLayer, key=longest)
+        length, index = longest(lanelet)
+        assert length > 20.0  # far enough apart for a vertex snap to show
+        pts = [(p.x, p.y) for p in lanelet.centerline]
+        s = sum(math.dist(a, b) for a, b in zip(pts[:index], pts[1 : index + 1]))
+        s += length / 2
+
+        pose = to_carla_world(Lanelet2Pose(lanelet_id=lanelet.id, s=s, t=0.4))
+        recovered = to_lanelet2(pose)
+
+        assert recovered.lanelet_id == lanelet.id
+        assert recovered.s == pytest.approx(s, abs=1e-6)
+        assert recovered.t == pytest.approx(0.4, abs=1e-6)
+        assert recovered.heading == pytest.approx(0.0, abs=1e-9)
+
+    def test_round_trip_on_every_centreline(self, map_manager):
+        """to_carla_world(to_lanelet2(p)) is p for a point on a centreline."""
+        for lanelet in map_manager.lanelet_map.laneletLayer:
+            pts = [(p.x, p.y) for p in lanelet.centerline]
+            total = sum(math.dist(a, b) for a, b in zip(pts, pts[1:]))
+            for fraction in (0.1, 0.3, 0.5, 0.7, 0.9):
+                point = to_carla_world(
+                    Lanelet2Pose(lanelet_id=lanelet.id, s=fraction * total)
+                )
+                back = to_carla_world(to_lanelet2(point))
+                assert math.hypot(back.x - point.x, back.y - point.y) < 1e-6, (
+                    lanelet.id,
+                    fraction,
+                )
 
 
 # ---------------------------------------------------------------------------
