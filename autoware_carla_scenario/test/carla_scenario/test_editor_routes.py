@@ -1397,6 +1397,7 @@ class TestEnvironmentTrack:
             "traffic_signal_controller",
             "traffic_sink",
             "traffic_source",
+            "urban_construction_zone",
         }
 
     def test_a_pedestrian_track_offers_walking_and_following_a_path(

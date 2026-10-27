@@ -15,7 +15,11 @@ from collections.abc import Iterator
 
 import pytest
 
-from autoware_carla_scenario import ConstructionSettings, ConstructionZoneAction
+from autoware_carla_scenario import (
+    URBAN_CONSTRUCTION,
+    ConstructionSettings,
+    ConstructionZoneAction,
+)
 from autoware_carla_scenario.action_state import ActionState
 from autoware_carla_scenario.actions import spawn as prop_module
 from autoware_carla_scenario.adversity.construction import (
@@ -130,6 +134,132 @@ def test_what_the_layout_refuses() -> None:
         construction_layout(50.0, 50.0, 3.5)
     with pytest.raises(ValueError):
         construction_layout(0.0, 100.0, 3.5, ConstructionSettings(spacing=0.0))
+
+
+# -- the urban layout (#445) -------------------------------------------------------
+
+
+def _urban(**changes: Any) -> ConstructionSettings:
+    return ConstructionSettings(**{**URBAN_CONSTRUCTION.__dict__, **changes})
+
+
+def test_the_urban_preset_is_terasims() -> None:
+    assert URBAN_CONSTRUCTION.layout == "urban"
+    assert URBAN_CONSTRUCTION.spacing == 10.0
+    assert URBAN_CONSTRUCTION.warning_zone_length == 200.0
+    assert URBAN_CONSTRUCTION.warning_sign_offset == 2.0
+    assert URBAN_CONSTRUCTION.merge_distance == 150.0
+    assert URBAN_CONSTRUCTION.merge_signs == 2
+
+
+def test_the_urban_zones_end_in_a_merge_taper_at_the_intersection() -> None:
+    # A 300 m approach: a warning zone of 0.3 of it (not 200 m), the work zone
+    # to the merge taper, the merge signs 100 m before it, no taper in,
+    # buffer or termination zone.
+    assert construction_zones(100.0, 400.0, URBAN_CONSTRUCTION) == [
+        ("warning", 100.0, 190.0),
+        ("work", 190.0, 250.0),
+        ("merge_signs", 150.0, 250.0),
+        ("merge_taper", 250.0, 400.0),
+    ]
+    # A long approach: the warning zone is capped at its length.
+    long = construction_zones(0.0, 1000.0, URBAN_CONSTRUCTION)
+    assert long[0] == ("warning", 0.0, 200.0)
+    # No merge taper: the work zone runs to 0.9 of the approach.
+    assert construction_zones(0.0, 100.0, _urban(merge_distance=0.0)) == [
+        ("warning", 0.0, 30.0),
+        ("work", 30.0, 90.0),
+    ]
+    # A merge taper longer than the approach starts at its start, and the
+    # merge signs do not stand before it.
+    short = construction_zones(0.0, 100.0, URBAN_CONSTRUCTION)
+    assert [z for z, _, _ in short] == ["warning", "merge_signs", "merge_taper"]
+    assert short[-1] == ("merge_taper", 0.0, 100.0)
+
+
+def test_the_urban_layout_steps_through_each_zone() -> None:
+    objects = construction_layout(0.0, 300.0, 3.5, URBAN_CONSTRUCTION)
+    signs = [(o.zone, o.s) for o in objects if o.kind == SIGN]
+    # At most three warning signs, 30 m apart; the merge signs 50 m apart
+    # before the taper, the nearest first.
+    assert signs == [
+        ("warning", 0.0),
+        ("warning", 30.0),
+        ("warning", 60.0),
+        ("merge_signs", 100.0),
+        ("merge_signs", 50.0),
+    ]
+    work = [(o.kind, o.s) for o in objects if o.zone == "work"]
+    # Every 10 m from the warning zone's end, short of the taper's start; a
+    # barrier every fifth, from the first.
+    assert work == [
+        (BARRIER, 90.0),
+        (CONE, 100.0),
+        (CONE, 110.0),
+        (CONE, 120.0),
+        (CONE, 130.0),
+        (BARRIER, 140.0),
+    ]
+    taper = [o.s for o in objects if o.zone == "merge_taper"]
+    # Every 5 m, both ends included: the last cone at the intersection.
+    assert taper == pytest.approx([150.0 + 5.0 * i for i in range(31)])
+    assert {o.kind for o in objects if o.zone == "merge_taper"} == {CONE}
+
+
+def test_the_urban_offsets_follow_the_curb_then_cross_the_lane() -> None:
+    objects = construction_layout(0.0, 300.0, 3.5, URBAN_CONSTRUCTION)
+    edge = 3.5 / 2 - 0.3
+    work = [o.t for o in objects if o.zone == "work"]
+    # 0.5 m inside the right edge.
+    assert work == [pytest.approx(-(3.5 / 2 - 0.5))] * len(work) and work
+    taper = [o.t for o in objects if o.zone == "merge_taper"]
+    # From 0.3 m inside the right edge to 0.3 m inside the left: shut.
+    assert taper[0] == pytest.approx(-edge)
+    assert taper[15] == pytest.approx(0.0)
+    assert taper[-1] == pytest.approx(edge)
+    assert all(b > a for a, b in zip(taper, taper[1:]))
+    # Signs 2 m out on the shoulder of the closed side.
+    signs = [o.t for o in objects if o.kind == SIGN]
+    assert signs == [pytest.approx(-(1.75 + 2.0))] * len(signs) and signs
+    # From the left, mirrored, and a curved taper an s-curve.
+    left = construction_layout(
+        0.0, 300.0, 3.5, _urban(side="left", taper_type="curved")
+    )
+    curved = [o.t for o in left if o.zone == "merge_taper"]
+    p = 3 / 30
+    assert curved[0] == pytest.approx(edge) and curved[-1] == pytest.approx(-edge)
+    assert curved[3] == pytest.approx(edge - 2 * edge * (3 * p * p - 2 * p**3))
+    assert {o.t for o in left if o.zone == "work"} == {1.25}
+
+
+def test_the_urban_work_zone_kinds_and_spacing() -> None:
+    def kinds(settings: ConstructionSettings) -> list[str]:
+        layout = construction_layout(0.0, 1000.0, 3.5, settings)
+        return [o.kind for o in layout if o.zone == "work"][:6]
+
+    assert kinds(_urban(construction_type="barrier")) == [BARRIER] * 6
+    assert kinds(_urban(construction_type="mixed")) == [CONE, CONE, BARRIER] * 2
+    taper = [
+        o.s
+        for o in construction_layout(0.0, 300.0, 3.5, _urban(spacing=8.0))
+        if o.zone == "merge_taper"
+    ]
+    # Half the spacing; as TeraSim's, the last cone a whole step on, short of
+    # the intersection when the taper is no whole number of steps (150 / 4).
+    assert taper[1] - taper[0] == pytest.approx(4.0)
+    assert taper[-1] == pytest.approx(298.0) and len(taper) == 38
+    # Merge signs clamped to the approach's start stand there once.
+    clamped = construction_layout(0.0, 200.0, 3.5, _urban(merge_signs=3))
+    assert [o.s for o in clamped if o.zone == "merge_signs"] == [0.0]
+
+
+def test_what_the_urban_layout_refuses() -> None:
+    with pytest.raises(ValueError):
+        construction_layout(0.0, 100.0, 3.5, _urban(spacing=0.0))
+    with pytest.raises(ValueError):
+        construction_layout(0.0, 300.0, 3.5, _urban(warning_zone_spacing=0.0))
+    with pytest.raises(ValueError):
+        construction_layout(0.0, 100.0, 3.5, _urban(layout="rural"))
 
 
 # -- the action -------------------------------------------------------------------
@@ -259,6 +389,24 @@ def test_a_missing_prop_is_skipped() -> None:
     action = ConstructionZoneAction(rm.W_IN1, 20.0, 70.0, SHORT)
     _run(action, world, [0.0])
     assert {p.blueprint for p in world.spawned} == {"static.prop.constructioncone"}
+
+
+def test_an_urban_zone_is_placed_by_the_same_action() -> None:
+    world, backend = _World(), _Backend()
+    urban = _urban(merge_distance=40.0, warning_zone_length=20.0)
+    action = ConstructionZoneAction(rm.W_IN1, 0.0, 100.0, urban)
+    action.set_traffic_backend(backend)  # type: ignore[arg-type]
+    _run(action, world, [0.0])
+    expected = construction_layout(0.0, 100.0, 3.5, urban)
+    assert len(world.spawned) == len(expected) == action.prop_count
+    # The last cone of the merge taper, at W_IN2's end, 0.3 m inside the
+    # left edge: the lane is shut before the intersection.
+    last = world.spawned[-1].transform.location
+    assert (last.x, last.y) == pytest.approx((-10.0, 1.75 - 1.45), abs=0.05)
+    assert "construction_zone/merge_taper/" + str(len(expected) - 1) in (
+        prop_module.standing_props()
+    )
+    assert backend.removed == ["in_zone"] and len(backend.closed) == 2
 
 
 def test_what_the_action_refuses() -> None:

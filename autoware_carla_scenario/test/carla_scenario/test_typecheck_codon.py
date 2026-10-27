@@ -3687,12 +3687,19 @@ from autoware_carla_scenario import (
     StalledObjectAction,
     StopCrossingAction,
     TrajectoryFollowingMode,
+    URBAN_CONSTRUCTION,
     collision_objects,
 )
 self.register_pre_tick(AdversarialBrakeAction("npc1", AdversityLocation.ANY))
 self.register_pre_tick(
     ConstructionZoneAction(
         12, 20.0, 80.0, ConstructionSettings(construction_type="mixed"), end_time=30.0
+    )
+)
+self.register_pre_tick(ConstructionZoneAction(14, 0.0, 300.0, URBAN_CONSTRUCTION))
+self.register_pre_tick(
+    ConstructionZoneAction(
+        15, 0.0, 200.0, ConstructionSettings(layout="urban", merge_signs=3)
     )
 )
 self.register_pre_tick(LaneChangeAbortAction("npc2", AdversityLocation.HIGHWAY))

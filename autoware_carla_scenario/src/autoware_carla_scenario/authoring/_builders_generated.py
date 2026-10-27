@@ -77,6 +77,7 @@ __all__ = [
     "build_run_traffic_rule_action",
     "build_stalled_object_action",
     "build_stop_crossing_action",
+    "build_urban_construction_zone_action",
     "build_traffic_signal_controller_action",
     "build_traffic_signal_action",
     "build_environment_action",
@@ -1171,6 +1172,42 @@ def build_stop_crossing_action(
         label=compiled.label,
         once=compiled.node.once,
         following_mode=TrajectoryFollowingMode[str(params["following_mode"]).upper()],
+    )
+
+
+def build_urban_construction_zone_action(
+    compiled: "CompiledAction",
+    condition: "BaseCondition | None",
+    timing: Any,
+    ctx: "BuildContext",
+) -> "BaseAction":
+    """Build a :class:`ConstructionZoneAction`."""
+    from ..actions.construction_zone import ConstructionZoneAction  # noqa: PLC0415
+    from ..adversity.construction import ConstructionSettings  # noqa: PLC0415
+
+    params = compiled.params
+    settings = ConstructionSettings(
+        layout="urban",
+        warning_sign_offset=2.0,
+        construction_type=params["construction_type"],
+        spacing=params["spacing"],
+        warning_zone_length=params["warning_zone_length"],
+        merge_distance=params["merge_distance"],
+        merge_signs=params["merge_signs"],
+        side=params["side"],
+    )
+    return ConstructionZoneAction(
+        lanelet_id=params["lanelet_id"],
+        start_s=params["start_s"],
+        end_s=params["end_s"],
+        settings=settings,
+        start_time=params["start_time"],
+        end_time=params["end_time"],
+        close_lane=params["close_lane"],
+        clear_traffic=params["clear_traffic"],
+        condition=condition,
+        timing=timing,
+        label=compiled.label,
     )
 
 
