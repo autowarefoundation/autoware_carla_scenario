@@ -7,3 +7,9 @@ server:
   # carla.Weather.FogDensityScale for the server and the LiDARs' fog (0.01:
   # fog a camera sees); null keeps the server's own 0.001.
   fog_density_scale: null
+  # How the world is reset between the cases of a batch: reload (load the
+  # map again) or soft (destroy what the case spawned and restore the world as
+  # it was loaded, without a load; docs/usage.md). reload_every: with soft,
+  # load the map on every N-th reset anyway (0: only when soft cannot).
+  world_reset: reload
+  reload_every: 0

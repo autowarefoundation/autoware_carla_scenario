@@ -18,6 +18,7 @@ from .t4 import T4Recorder
 from .scenario_base import BaseScenario
 from .server import CarlaServerManager
 from .traffic.base import TrafficBackend
+from .world_reset import RESET_RELOAD, check_world_reset
 
 if TYPE_CHECKING:
     from .autoware_stack.launcher import AutowareLauncher
@@ -80,6 +81,8 @@ class ScenarioQueue:
     _map_source: Optional[str]
     _rerun: Optional[RerunConverter]
     _t4: Optional[T4Recorder]
+    _world_reset: str
+    _reload_every: int
     _scenarios: List[BaseScenario]
     #: id(scenario) -> its own timeout, in place of ``timeout_seconds``.
     _timeouts: dict[int, float]
@@ -122,6 +125,8 @@ class ScenarioQueue:
         map_source: Optional[str] = None,
         rerun: Optional[RerunConverter] = None,
         t4: Optional[T4Recorder] = None,
+        world_reset: str = RESET_RELOAD,
+        reload_every: int = 0,
     ) -> None:
         """Create a scenario queue.
 
@@ -197,6 +202,18 @@ class ScenarioQueue:
                 (:meth:`RerunConverter.wait`) once the runs are done.
             t4: What writes each run as a T4 dataset, with sensors of its own
                 on the ego (``t4.enabled``); *None* writes none.
+            world_reset: How the world is reset between the scenarios:
+                ``"reload"`` (the default) loads the map again, ``"soft"``
+                puts the loaded map back as it was without a load, and loads
+                it when that cannot be done (:class:`ScenarioRunner`,
+                docs/usage.md "Resetting the world between cases").
+            reload_every: With ``world_reset="soft"``, load the map instead on
+                every *reload_every*-th reset; 0 (the default) only when a
+                soft reset cannot be done.
+
+        Raises:
+            ValueError: *cooldown_max_retries* or *reload_every* is negative,
+                or *world_reset* is neither ``"reload"`` nor ``"soft"``.
         """
         if server is not None:
             self._server = server
@@ -228,6 +245,10 @@ class ScenarioQueue:
                 f"got {cooldown_max_retries}."
             )
         self._cooldown_max_retries = cooldown_max_retries
+        # Refused now, before CARLA starts, rather than when the runner is made.
+        check_world_reset(world_reset, reload_every)
+        self._world_reset = world_reset
+        self._reload_every = reload_every
         self._max_tick_rate_hz = max_tick_rate_hz
         self._projector_type = projector_type
         self._traffic_backend = traffic_backend
@@ -371,9 +392,9 @@ class ScenarioQueue:
                             if attempt == 0
                             else "CARLA cooldown (retry)",
                         )
-                    # The map is reloaded for the next scenario; after the
-                    # last there is none, and a later run_all() or a new
-                    # queue loads it first.
+                    # The world is reset (reloaded, or soft-reset) for the
+                    # next scenario; after the last there is none, and a
+                    # later run_all() resets it or a new queue loads it first.
                     reset_world = i < total - 1
                     if file_stem is None:
                         result = self._runner.run_scenario(
@@ -514,6 +535,8 @@ class ScenarioQueue:
             max_tick_rate_hz=self._max_tick_rate_hz,
             traffic_backend=self._traffic_backend,
             odd=self._odd,
+            world_reset=self._world_reset,
+            reload_every=self._reload_every,
         )
         if self._overwrite_xodr:
             if self._xodr_path is None or self._map_name is None:

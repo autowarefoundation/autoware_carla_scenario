@@ -126,6 +126,104 @@ uv run scenario --multirun 'scenario=cut_in/*' +sweep.odd_sample.count=24 \
   launcher=slurm launcher.array_parallelism=2
 ```
 
+#### Resetting the world between cases
+
+Between two cases of a batch (and between two cases of a SLURM task) the world
+is reset, so that nothing of one case is in the next. `server.world_reset`
+says how:
+
+| `server.world_reset` | What happens | Cost per case (CARLA UE5, Town10HD_Opt) |
+|----------------------|--------------|-----------------------------------------|
+| `reload` (default)   | The map is loaded again: a new episode | ~5 s |
+| `soft`               | The map stays loaded; the world is put back as it was right after the load | well under a second |
+
+```bash
+uv run scenario --multirun 'scenario=cut_in/*' map=town10hd_opt server.world_reset=soft
+# Soft resets, with a full reload on every 10th reset anyway
+uv run scenario --multirun 'scenario=cut_in/*' map=town10hd_opt \
+  server.world_reset=soft server.reload_every=10
+```
+
+`soft` is opt-in: it is not yet shown that every case gives the same result
+after a soft reset as after a reload (#282). Compare a sweep run both ways
+before relying on it, and keep `reload` for results that have to be
+order-independent until that is shown for your scenarios.
+
+**What a soft reset does.** Right after the map is loaded (at the start, and
+after every reload) the runner reads a *baseline* off the world: its actors,
+the episode settings, the weather, every traffic light's green, yellow and red
+times and whether it is frozen, and the spectator's transform. A soft reset
+then, in this order:
+
+1. stops the CARLA recorder (the run stops its own already; this catches one
+   a failed run left going);
+2. destroys every actor the baseline does not list -- sensors and controllers
+   first, then walkers, vehicles and anything else (props, an ego an external
+   stack spawned) -- and ticks the world. Traffic lights, traffic signs and the
+   spectator are the map's and are never destroyed;
+3. gives every traffic light its baseline timing back, resets all of them to
+   the start of their cycle (`World.reset_all_traffic_lights()`) and freezes or
+   unfreezes each as it was;
+4. puts the weather and the spectator back, and ticks the world;
+5. checks that no actor outside the baseline is left and that none of the
+   map's is gone;
+6. applies the baseline episode settings (asynchronous, as a loaded world is;
+   the next run makes it synchronous again).
+
+What the run itself cleans up is cleaned up as before, whatever the reset: the
+ego, the conditions' sensors, the props, the T4 and Rerun sensors, the
+recorder, and the traffic backend (closed after every run, which is what resets
+the TrafficManager).
+
+**When it loads the map instead.** The map is loaded, as with `reload`, when
+
+- there is no baseline (the map was not loaded by this runner yet, or reading
+  the baseline failed);
+- the server runs another episode than the one the baseline was read in:
+  another client loaded a world -- another map, or the same one -- on the
+  server;
+- any step above raises, an actor survives its destroy, or an actor of the map
+  is gone;
+- the world has a traffic light the baseline does not list (the server listed
+  it only after the baseline was read): its timing and frozen state are not
+  known, so whatever a case did to it could not be put back;
+- `server.reload_every` is N > 0 and N - 1 soft resets have been done since
+  the last load (every N-th reset is a reload; `1` is the same as `reload`).
+
+A reload reads a new baseline, so the resets after it are soft again.
+
+**What a soft reset cannot guarantee.** These differ from a reload, and a
+scenario whose result depends on them can give a different result after a soft
+reset:
+
+- **The episode goes on.** The frame number and the episode's elapsed time keep
+  counting, and actor ids keep growing (a fresh episode starts both again).
+  The runner measures a case on its own clock from its first tick, so its
+  conditions and timeouts do not see this, but anything that reads raw frame
+  numbers, `elapsed_seconds` or actor ids does.
+- **Traffic light phase.** The lights are reset to the start of their cycle,
+  which is where a load leaves them too, but how far into it they are on the
+  case's first tick may differ by the ticks the reset itself takes.
+- **Vehicle and physics state.** The previous case's vehicles are destroyed and
+  new ones spawned, but state the server keeps outside an actor (physics
+  scene, pooled resources) is not reset. In the trials behind #282 an ego's
+  gear differed on every tick from a fresh-world run of the same case.
+- **What has no getter in the CARLA API.** Map layers unloaded with
+  `World.unload_map_layer()`, environment objects toggled with
+  `enable_environment_objects()`, street lights switched through the
+  `LightManager`, the pedestrians' cross factor and seed, and debug drawings
+  still within their `life_time`. The framework changes none of these but the
+  pedestrians' cross factor, which it puts back itself after starting each
+  walker; a scenario that changes the others needs `reload`.
+- **The TrafficManager.** It lives outside the episode, so a reload does not
+  reset it either: the traffic backend's `close()` after each run is what does.
+
+`server.world_reset` applies to the cases one batch runs in one queue
+(`--multirun` with a glob or a `sweep:`, and the cases of one SLURM task). A
+Hydra sweeper such as `hydra/sweeper=lanelet_constraint` runs each case as a
+job of its own, which loads the map when it starts, so there is nothing to
+reset between its cases.
+
 ### Selecting a Published HD Map
 
 A map group can name a git repository instead of local files, and the map is
@@ -281,6 +379,8 @@ Defines the default config group composition:
 | `server.port` | int | `2000` | CARLA server port |
 | `server.cooldown_seconds` | float | `2.0` | Wait time between consecutive scenario runs |
 | `server.cooldown_max_retries` | int | `0` | Maximum retries on failure |
+| `server.world_reset` | str | `reload` | How the world is reset between a batch's cases: `reload` or `soft` (see [Resetting the world between cases](#resetting-the-world-between-cases)) |
+| `server.reload_every` | int | `0` | With `world_reset: soft`, load the map on every N-th reset anyway; `0`: only when a soft reset cannot be done |
 
 #### Ego Vehicle Configuration
 
@@ -643,6 +743,7 @@ uv run scenario ego.entity=carla_driver driver.address=localhost:50051
 | `autoware` | Autoware drives the ego, over the `AutowareBridge`; with `autoware.launcher` the framework starts a fresh Autoware per scenario ([Autoware as the Ego](autoware.md)) |
 | `carla_driver` | An external policy drives the ego |
 | `ros2` | ROS 2 nodes drive the ego over DDS, with no bridge node ([ROS 2 over DDS](ros2.md)) |
+| `hils` | ECUs under test drive the ego, through the resident HILS bridge `scenario-hils` (`hils.host`, `hils.port`; [HILS Bridge](hils.md)) |
 
 Common overrides:
 
@@ -690,6 +791,23 @@ nothing answers at `renderer.endpoint` and the file gives a
 carla_canvas is not an extra of this package: it needs protobuf 7, and the
 vendored alpasim modules are regenerated on protobuf 4. Under SLURM the file is
 the nodes' path.
+
+---
+
+## `scenario-hils` - Streaming the Ego to ECUs (HILS)
+
+A resident process on the HILS PC that follows a run's ego in CARLA, sends ECUs
+under test their sensors' and buses' traffic (CAN, GNSS, LiDAR packets, camera
+frames) through hilspy, initializes and finalizes them around each scenario,
+and hands their commands back to a run with `ego.entity=hils`; configured by
+one YAML file:
+
+```bash
+uvx --from 'autoware-carla-scenario[hils]' scenario-hils --example > hils.yaml
+uvx --from 'autoware-carla-scenario[hils]' scenario-hils hils.yaml
+```
+
+See [HILS Bridge](hils.md).
 
 ---
 

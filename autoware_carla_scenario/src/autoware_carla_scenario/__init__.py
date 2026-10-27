@@ -77,6 +77,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from .actions import (
         BaseAction as BaseAction,
+        CommunicationLossAction as CommunicationLossAction,
         DespawnAction as DespawnAction,
         SpawnAction as SpawnAction,
         EnvironmentAction as EnvironmentAction,
@@ -492,6 +493,7 @@ __all__ = [
     "FrenetAcceleration",
     # Actions
     "BaseAction",
+    "CommunicationLossAction",
     "EnvironmentAction",
     "ConstructionSettings",
     "ConstructionZoneAction",
@@ -563,6 +565,7 @@ __all__ = [
 _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     # actions
     "BaseAction": (".actions", "BaseAction"),
+    "CommunicationLossAction": (".actions", "CommunicationLossAction"),
     "EnvironmentAction": (".actions", "EnvironmentAction"),
     "ConstructionSettings": (".adversity.construction", "ConstructionSettings"),
     "ConstructionZoneAction": (".actions.construction_zone", "ConstructionZoneAction"),

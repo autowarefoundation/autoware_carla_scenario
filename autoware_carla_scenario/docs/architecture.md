@@ -194,7 +194,7 @@ sequenceDiagram
             SR->>W: stop_recorder()
             SR->>TB: close()
             TB->>TM: shut_down()
-            SR->>W: reload_world()
+            SR->>W: reset_world() (map reload, or soft reset)
         end
 
         SR-->>SQ: ScenarioResult
@@ -1121,11 +1121,19 @@ itself, and an entity's manoeuvre intents (`change_lane`, `turn_at_junction`,
 vehicle the backend drives, the ego or an NPC, becomes one of them:
 `BackendDriven.route_to` hands the backend the route from where the vehicle is,
 through any waypoints, to it. A pedestrian given one lays its walk out on the
-walkable lanelets (`PedestrianEntity.route_to`: a straight line for a leg they
-do not join up, as across a road whose crosswalks only overlap its walkways),
-and the `RoutingAction` walks it a tick at a time (`PedestrianEntity.walk_on`,
-steered as a `RoutingAction` steers a walker in `follow` mode) -- so on
-a pedestrian the action needs the tick loop (`BaseAction.needs_tick_loop`).
+walkable lanelets (`PedestrianEntity.route_to`), and the `RoutingAction` walks
+it a tick at a time (`PedestrianEntity.walk_on`, steered as a `RoutingAction`
+steers a walker in `follow` mode) -- so on a pedestrian the action needs the
+tick loop (`BaseAction.needs_tick_loop`). The walk is searched on
+`coordinate.walk_graph.WalkGraph`, not on Lanelet2's routing graph: a crosswalk
+is usually drawn across the walkways it joins, reaching onto them without
+sharing a point, so Lanelet2 joins nothing across a road. The walk graph joins a
+walkable lanelet's end to any walkable lanelet it lies on (or within 0.5 m of),
+at that point along it, joins two walkable lanelets where their centrelines
+cross (a crosswalk drawn right across a walkway), and walks every walkway both
+ways whatever its `one_way` tag. A leg it has no walk for (a map with no
+walkways, as most Autoware maps, or a waypoint off them) is a straight line,
+with a warning.
 
 **Who drives the ego**: `use_autopilot` decides whether the backend is given the
 ego actor to drive or told to keep its hands off it. `EgoVehicle` opts in (TrafficManager drives);
@@ -1292,6 +1300,6 @@ pass_condition = AndCondition(
 
 `StickyCondition` latches once its child is satisfied, so each road only needs to be visited once. `AndCondition` requires all children to be satisfied simultaneously.
 
-### World Reload for Clean State
+### World Reset for Clean State
 
-After each scenario, `ScenarioRunner` calls `client.reload_world()` instead of manually destroying actors. This guarantees a completely clean state (actors, sensors, physics, Traffic Manager internal maps) and avoids "failed to destroy actor" errors from the CARLA server.
+After each scenario but the last, `ScenarioRunner.reset_world()` resets the world. By default (`server.world_reset: reload`) it loads the batch's map again by name (`client.reload_world()` fails on CARLA UE5): a new episode, with the run's actors destroyed first so their sensor streams are released. `server.world_reset: soft` keeps the episode and puts back what a run changes -- destroying every actor the freshly loaded world did not have and restoring the settings, weather, traffic lights and spectator read right after the load (`world_reset.py`) -- and falls back to a reload when the world is another episode or anything is left over. See [Resetting the world between cases](usage.md#resetting-the-world-between-cases) for what a soft reset does and does not reset.

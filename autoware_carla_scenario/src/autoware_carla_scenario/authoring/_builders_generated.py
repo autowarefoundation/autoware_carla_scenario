@@ -84,6 +84,7 @@ __all__ = [
     "build_traffic_source_action",
     "build_walk_straight_action",
     "build_traffic_parameters_action",
+    "build_communication_loss_action",
     "build_turn_indicator_action",
     "build_despawn_action",
     "build_lane_change_action",
@@ -1399,6 +1400,30 @@ def build_traffic_parameters_action(
         vehicles=vehicles,
         pedestrians=pedestrians,
         bicycles=bicycles,
+        condition=condition,
+        timing=timing,
+        label=compiled.label,
+        once=compiled.node.once,
+    )
+
+
+def build_communication_loss_action(
+    compiled: "CompiledAction",
+    condition: "BaseCondition | None",
+    timing: Any,
+    ctx: "BuildContext",
+) -> "BaseAction":
+    """Build a :class:`CommunicationLossAction`."""
+    from ..actions import CommunicationLossAction  # noqa: PLC0415
+
+    assert compiled.actor_role is not None  # noqa: S101 -- required by the spec
+    params = compiled.params
+    return CommunicationLossAction(
+        device=(str(params["device"]) if params["device"] is not None else None),
+        messages=(str(params["messages"]) if params["messages"] is not None else None),
+        direction=str(params["direction"]),
+        duration=params["duration"],
+        entity_name=compiled.actor_role,
         condition=condition,
         timing=timing,
         label=compiled.label,

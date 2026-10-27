@@ -102,6 +102,20 @@ class ServerConfig:
     #: the LiDARs' fog; *None* keeps the server's own (docs/driver_interface.md).
     fog_density_scale: float | None = None
 
+    #: How the world is reset between the cases of a batch (``--multirun``,
+    #: a SLURM task's cases): ``reload`` loads the map again (~5 s a case on
+    #: CARLA UE5); ``soft`` destroys what the case spawned and puts the
+    #: weather, the episode settings, the traffic lights and the spectator
+    #: back as the map was loaded, and loads the map only when that cannot be
+    #: done.  ``soft`` is not yet shown to give every case the same result a
+    #: reload does (#282): see docs/usage.md, "Resetting the world between
+    #: cases", for what it does and does not reset.
+    world_reset: str = "reload"
+
+    #: With ``world_reset: soft``, load the map instead of a soft reset on
+    #: every this many-th reset; 0 only when a soft reset cannot be done.
+    reload_every: int = 0
+
 
 @dataclass
 class MapConfig:

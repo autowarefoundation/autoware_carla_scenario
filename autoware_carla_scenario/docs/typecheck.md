@@ -1129,6 +1129,19 @@ scenario has to do itself:
     two library checks of about 8 GB each run at once) is no crash of the
     code: the check says so, names no local, and should be run again with
     more memory free.
+
+    The same holds where a conditional expression tests the local before it
+    is rebound, the previous value of a loop (`prev = None`, then `d = v -
+    prev if prev is not None else None` and `prev = v`, #629): Codon decides
+    the test while the local's type is still the unresolved `Optional` of its
+    `= None`, completes it as `Optional[int]`, its default, and refuses
+    `'Optional[int]' does not match expected type 'Optional[float]'` further
+    on. The check adds the local's `= None` line and its annotation
+    (`prev: float | None = None`). A local that is *only ever* `None` and
+    that a conditional expression tests (`z = None`, then `z + 1 if z is not
+    None else None`, even `1 if z is None else 2`) crashes Codon 0.19 with no
+    diagnostic; the check names it after the crash, at the conditional
+    expression. Annotate it, or drop the branch that cannot run.
 - **Write the element types of a class attribute** (#482): `xs: list[int] =
   field(default_factory=list)`, `d: dict[str, float]`, `ids: set[int]`,
   `xy: tuple[float, float] = (0.0, 0.0)` or `tuple[X, ...]`. Codon types a
@@ -1407,6 +1420,23 @@ Two things Python does that Codon 0.19 does not are filled in for you:
   argument to its default, pass a variable declared `Optional[X]`, or give
   the subclass an `__init__` of its own.
 
+  A subclass with an `__init__` of its own that lists a mixin before its
+  framework base (`class CaseScenario(VehicleInfoMixin, BaseScenario)`)
+  calls `super().__init__(ego_config, spawn_pose=..., ...)`, which Python
+  follows through the MRO past the mixin to `BaseScenario.__init__`. Codon's
+  `super()` is the mixin's constructor of its fields, which refused the
+  base's arguments (`'ground_projection' is an invalid keyword argument for
+  __init__()`), so the check rewrites the call to
+  `BaseScenario.__init__(self, ego_config, spawn_pose=..., ...)` (#626),
+  which checks every argument against the base's `__init__` as before. It
+  does so only where the MRO makes the two the same method: every base
+  before it is a plain mixin of the scenario's modules (no `__init__` of its
+  own or inherited, no `@dataclass`, and only such mixins, `object`, `ABC`
+  or `Generic[...]` as bases). A class whose first base has an
+  `__init__`, or whose earlier bases the check cannot see, keeps `super()`;
+  listing the framework base first (`class CaseScenario(BaseScenario,
+  VehicleInfoMixin)`) always works.
+
 - **`return None` from a function returning `Optional[X]`.** A bare `None`
   is Codon's `NoneType`, so a function whose only return is `return None`
   could not be typed ("cannot typecheck 'None'"), and, when nothing else in
@@ -1571,6 +1601,7 @@ cannot express is refused at its line, with what to write instead.
 | `dict(base, a=1)` (#613) | `(dict(base) \| {"a": 1})`: the same dict, the keywords winning (in an f-string field, the f-string is lowered first, as for `dict(a=1)`) | `dict(base, **more)`, or a `dict` the module binds itself |
 | `filter(None, xs)` (#613) | `(_acs_v for _acs_v in xs if _acs_v)`: the truthy items, as Python's `filter` yields them (Codon's takes a function) | a `filter` the module binds itself; the items still need a truth value (an enum member has none, see [Iterating an enum](#iterating-an-enum)) |
 | `items: list[int] = []`, `tags: dict[str, int] = {}`, `seen: set[str] = set()` (annotated, in a class body, a function or the module, #611) | an empty one of the annotated type, `List[int]()`: Codon types a display from its elements, and an empty one is a container of `None` (a class with no `__init__` of its own was refused at its constructor call) | an annotation Codon cannot name there (`Any`, a `TypeVar`, a class defined further down outside a function) |
+| `pairs: list[tuple[int, ...]] = []` (a local of a function, #625), then tuple displays of more than one length appended or inserted in that function: `pairs.append((1, 2))`, `pairs.insert(0, (3,))` | `pairs = List[List[int]]()`, `pairs.append(List[int]([1, 2]))`: the `tuple[X, ...]` inside is the `List[X]` a class-level one is checked as (Codon's tuples have a fixed length), so tuples of different lengths go in, and the elements are still checked. Dropped, the annotation left Codon to type the list from its first `append`. Given tuples of one length only, the annotation is dropped as before (the list of fixed-length tuples Codon types then takes a tuple held in a name, `extend`, `in` with a tuple display), and so is a `tuple[X, ...]` in a dict, a set, a nested list or an `Optional` | a list given tuples of more than one length that is also given a tuple from a name (`pairs.append(t)`), or another way (`+=`, `extend`), or tested with `(1, 2) in pairs`: refused with a hint to build it with `tuple([...])`; a module-level one, or one a nested function appends to, is typed from its first append as before |
 | `lst: list[Npc \| None] = [None, a]`, `d: dict[str, Npc \| None] = {"x": None, "y": a}` (a display whose first element or value is `None`, #611) | the elements put into a list (dict) of the annotated type, each `None` the `Optional`'s (`_acs_list_into(List[Optional[Npc]](), Optional[Npc](), a)`): Codon types a display by its first element | as above |
 | `Plan(lanes=(1, 2, 1))`, `replace(Plan(), lanes=(1, 2))`, `replace(self, lanes=())`, for a dataclass field `lanes: tuple[int, ...]` (or `Sequence[int]`) of the module (#614) | `List[int]([1, 2, 1])` / `List[int]()`, the list the field is checked as, as for its default | a tuple held in a name, a positional argument of a dataclass with a base, `ClassVar` or `init=False` field, or `replace()` of an object whose class is not told by a constructor call or `self`: refused with `'Tuple[int,int,int]' does not match expected type 'List[int]'` and a hint to write `tuple([1, 2, 1])` |
 
@@ -1826,6 +1857,10 @@ the check needs the other spelling.
 | `if obj:` (`not obj`, `bool(obj)`) on an object of a class with no `__bool__`: a plain object, or one with only `__len__` (#603) | `'Bag[List[int]]' object has no attribute '__bool__'` | say what is meant: `obj is not None` for a value that may be missing, `len(obj) > 0` for a container, or define `__bool__` on the class |
 | `class Registry(dict[str, int])`, `class Bag(list)`, `class Meters(int)`: a class deriving from a builtin type alone (`dict`, `list`, `set`, `frozenset`, `tuple`, `int`, `float`, `str`, `bytes`, or their `typing` names), #613 | `__init__() missing 1 required positional argument: '_n_buckets'`, at the call (Codon's builtins are its own classes); refused at the class line | hold one as an attribute (`items: dict[str, int]`) and give the class the methods it needs; a class with another base besides (`class Mode(str, Enum)`) and exceptions are left alone |
 | `x = a if c else 3` with branches of different types (#603) | `'str' does not match expected type 'int'`, at the conditional expression | one type for both branches (`str(3)`, `float(n)`), or an `if`/`else` statement that uses each value in its own branch |
+| `lambda a, *, k=1: a * k`, a lambda with keyword-only parameters (#629) | a syntax error (`unexpected dedent`); refused at its line before Codon runs | a nested `def f(a, *, k=1): return a * k`, whose keyword-only parameters the check compiles (#622) |
+| A call of a method that a subclass of yours overrides, passing a keyword (`b.m(1.0, s=3.0)`), or leaving out a parameter with a default (`b.m(1.0)`), keyword-only parameters included (#629) | `'s' is an invalid keyword argument for class_thunk_dispatch()`, or `cannot typecheck 'b.m(1.0)'`, with a hint | pass every argument by position: Codon calls an overridden method through a dispatch thunk, which takes no keyword and fills in no default. A keyword-only parameter cannot be passed by position, so in an overridden method make it a positional one with its default, in the base and in each override |
+| A function with keyword-only parameters in a table annotated `Callable` (`fs: list[Callable[[int], int]] = [key_of, dbl]` with `def key_of(x, *, rev=False)`, #629) | `no function 'Callable.__new__' with arguments (key_of[int,T2,bool])`, with a hint naming it | a lambda that calls it, `[lambda x: key_of(x), dbl]`. An annotated variable (`g: Callable[[int], int] = key_of`) and a `Callable` parameter take it as it is |
+| A `nonlocal` variable that may be `None` used as its value, even narrowed (`out = y + 1 if y is not None else None` in the inner function, #629) | `unsupported operand type(s) for +: 'Capsule[Optional[int]]' and '1'`, with a hint | copy it into an annotated local of the inner function (`cur: int \| None = y`), and test and use that; an unannotated copy is a `Capsule` too |
 
 Plain value, or-pattern, guard, sequence (without `*`) and enum-member
 (`case Mode.A:`) patterns compile, as does `case int():` of a builtin type.
@@ -1836,9 +1871,16 @@ the same code either way, because a `Protocol` base is only a marker there.
 
 ### What Python raises for that Codon compiles (#602, #603)
 
-Codon checks types, so a call it compiles may still raise in CPython. Two
+Codon checks types, so a call it compiles may still raise in CPython. Three
 kinds are decided from the syntax and refused at the call, before Codon
 runs (`typecheck/static_raises.py`):
+
+- **`sum()` with a `str` start** (#625): `sum(["a", "b"], "")`,
+  `sum(parts, start="-")`, a start that is an f-string or `str(...)`, and
+  likewise a `bytes` or `bytearray` one. CPython refuses it before it adds
+  anything ("sum() can't sum strings [use ''.join(seq) instead]"); Codon
+  concatenates. Use `"".join(parts)`. A start held in a variable is left to
+  the run.
 
 - **`isinstance` / `issubclass` with a subscripted generic** (#603):
   `isinstance(v, list[int])`, `issubclass(C, dict[str, int])`,
@@ -2169,6 +2211,17 @@ The known gaps:
   mode.
 - **A scenario registered with `register_scenario_builder()`** is not
   checked at all: only its builder knows how it is built.
+- **The `None` branch of a conditional expression chosen statically**
+  (#629). The check makes Codon decide `a if x else None` (and `None if x
+  else a`) from `x`'s type (#597): where `x` is always `None` to Codon, only
+  the `None` branch is compiled. When the test does not narrow as Python
+  does (`None if x else x.a`, which evaluates `x.a` exactly when `x` is
+  `None`), the error in the other branch is not compiled. mypy's pass
+  reports it where `x` is annotated (`Item "None" of "Npc | None" has no
+  attribute "a"`); an unannotated parameter only ever given `None` passes.
+- **A `sum()` whose `str` start is a variable** (`sum(parts, sep)`), which
+  CPython refuses: only a start written as a string, an f-string or
+  `str(...)` is decided from the syntax (#625).
 - **A value a framework constructor refuses**, unless every argument of
   the call is a literal and the class is one of those
   [built with literal arguments](#what-python-raises-for-that-codon-compiles-602-603)
@@ -2282,8 +2335,8 @@ To check one more module:
 
 ### What is checked of the framework
 
-Every module now has an entry other than `"not yet checked (#45)"`. 207 of
-the package's 304 modules (68%; about 47,400 of 85,600 lines) are `CHECKED`:
+Every module now has an entry other than `"not yet checked (#45)"`. 209 of
+the package's 315 modules (66%; about 47,900 of 90,300 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the conversions between
 Lanelet2, OpenDRIVE and CARLA world poses (`coordinate.transform`), the stop
 lines read off a Lanelet2 map (`utils.stop_line`, `coordinate.stop_line`)
@@ -2343,8 +2396,8 @@ driver's configs and client interface, trajectory follower and observations
 `driver.geometry`), and the `autoware_bridge`, `autoware_stack`, `entity`,
 `driver`, `maps` and `coverage` packages themselves, whose `__init__` re-exports what is not checked
 through models of it (see *A class a checked package only re-exports*
-below). 116
-functions and methods of those modules are `UNCALLED` (35 of them
+below). 117
+functions and methods of those modules are `UNCALLED` (36 of them
 protected helpers, see *What is compiled* below): most of them a
 condition's `get_details()` or a backend's `describe()`, what takes a traffic
 backend's options node (`Mapping[str, Any]`), what reads a route search, a
@@ -2378,16 +2431,16 @@ a `TrajectoryVertex` call's arguments, each of any type (`Any`), walks or
 binds a sweeper constraint of any kind, builds a condition's status (its
 details), or takes the list a plain tick callback goes into
 (`BaseScenario._register_tick()`, a `List[Callable[[carla.World], None]]`,
-which the check has no value of). The 97 `EXCLUDED` modules fall in
-three groups. Many fit more than one (about 71 import what Codon cannot
-compile, 29 build on an excluded module and 24 hold values Codon has no type
+which the check has no value of). The 106 `EXCLUDED` modules fall in
+three groups. Many fit more than one (about 78 import what Codon cannot
+compile, 31 build on an excluded module and 24 hold values Codon has no type
 for), so each is counted once, in the first group that fits it:
 
-- **71 import what Codon cannot compile**: pyxodr,
-  pydantic, pickle, lxml, grpc, omegaconf and hydra, yaml, openodd (a Rust extension),
+- **78 import what Codon cannot compile**: pyxodr,
+  pydantic, pickle, lxml, grpc, omegaconf and hydra, yaml, openodd and hilspy (Rust extensions), cv2,
   cyclonedds (`ros2.cyclone` and `ros2.messages`, the ROS 2 ego's DDS
   transport and its message types), or
-  a standard module Codon lacks (`inspect`, `concurrent.futures`,
+  a standard module Codon lacks (`socket`, `inspect`, `concurrent.futures`,
   `importlib`
   beyond `importlib.metadata`, or more of `os`, `pathlib`, `shutil`, `signal`,
   `subprocess`, `tempfile`, `threading`, `dataclasses`, `importlib.metadata`
@@ -2398,16 +2451,17 @@ for), so each is counted once, in the first group that fits it:
   stack's dev container, the
   record of a run's environment, the SLURM launcher's submitting side,
   its worker and its manifest, the batch summary they share, the Rerun
-  recordings of a run's logs and LiDAR sweeps, and its T4 dataset), the ODD and coverage modules that wrap
+  recordings of a run's logs and LiDAR sweeps, its T4 dataset, and the HILS bridge and its ego entity), the ODD and coverage modules that wrap
   openodd, and the rest of what reads Lanelet2. A reason names `pathlib`
   only where the module uses more of it than the shim declares, and the
   other shimmed modules likewise; `test_typecheck_library.py` holds every
   reason to that.
-- **19 build on an excluded module**, and import nothing Codon lacks
+- **21 build on an excluded module**, and import nothing Codon lacks
   themselves: they import a module that is neither checked nor modelled, or
   names that its package's model does not declare. Among them are the
   packages that re-export one (`authoring`, `odd`, `sweeper`,
-  `examples`, `scaffold`, `slurm`), `slurm.collect`, the
+  `examples`, `scaffold`, `slurm`, `hils`), `actions.communication_loss` (on the
+  HILS ego entity), `slurm.collect`, the
   authoring compiler, builders and validator, `odd.route`, the coverage
   half of the route check (names of `odd.model` and `coverage.items` that
   the odd and coverage models do not declare, such as `OddDefinition.evaluate()`
@@ -2415,7 +2469,7 @@ for), so each is counted once, in the first group that fits it:
   `dict[str, Any]`, which it hands to openodd, and finds a probe's
   `on_lanelet` reader on any callable) and
   `traffic.registry` (the `Callable[[Mapping[str, Any]], TrafficBackend]` alias it
-  holds its factories by, and the `registry` its plugin loader imports); 4 of the 19
+  holds its factories by, and the `registry` its plugin loader imports); 4 of the 21
   also hold values Codon has no type for.
 - **7 hold values Codon has no type for**, and nothing else keeps them out:
   `Any` (`trajectory.authoring`, `authoring.registry`'s
@@ -2932,7 +2986,10 @@ What Codon 0.19 needs that Python does not, beyond
   `dict.get` does; `d.get(key)` is an `Optional` of it, as in Python (the
   model's `_tc.codon` declares it). So does `d.pop(key, default)` (#590,
   Codon's `pop` takes the key only), and `d.pop(key, None)` is an `Optional`
-  of the value's type. Likewise `if not x: continue` instead
+  of the value's type. `dict.fromkeys(xs)` of one argument (#625) is a
+  dict whose values are all `None`, as in Python (`Dict[K,
+  Optional[NoneType]]`, so it holds only `None`: give the value in the call,
+  `dict.fromkeys(xs, 0)`, for a dict to fill with other values). Likewise `if not x: continue` instead
   of `(x or {})`, `s.startswith(a) or s.startswith(b)` instead of
   `s.startswith((a, b))`, and `if x is None: return None` / `return x.attr`
   instead of `None if x is None else x.attr`.
