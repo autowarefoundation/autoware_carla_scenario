@@ -162,10 +162,13 @@ which :func:`transform_source_lines` maps back onto the handler):
   bases are plain mixins (no ``__init__``, :func:`plain_classes`) becomes
   ``Base.__init__(self, ...)``, ``Base`` the first base with one: Python's
   MRO reaches it, Codon 0.19's ``super()`` is the first base's (#626).
-* A local ``pairs: list[tuple[X, ...]] = []`` keeps its annotation, as
-  ``List[List[X]]()``, and a tuple display it is given by ``append`` /
-  ``insert`` becomes ``List[X]([...])`` (#625): dropped, the annotation left
-  Codon to type the list from its first element, a fixed-length tuple.
+* A local ``pairs: list[tuple[X, ...]] = []`` of a function that appends
+  (or inserts) tuple displays of more than one length to it keeps its
+  annotation, as ``List[List[X]]()``, and each tuple display it is given by
+  ``append`` / ``insert`` becomes ``List[X]([...])`` (#625): dropped, the
+  annotation left Codon to type the list from its first element, a
+  fixed-length tuple.  Given tuples of one length, it is dropped as before:
+  the list of tuples Codon types is then the one the rest of the code uses.
 
 Before that, the scenario check gives each of the scenario's modules to
 :func:`relative_module_imports`, which imports a module of the scenario's
@@ -1295,6 +1298,38 @@ def _variadic_tuple_element(annotation: ast.AST) -> ast.expr | None:
     return element if base in _TUPLE_NAMES else None
 
 
+def _mixed_tuple_appends(
+    function: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> set[str]:
+    """The names *function*'s own body gives tuple displays of more than one
+    length by ``append`` / ``insert`` (``pairs.append((1, 2))``,
+    ``pairs.append((3,))``, #625)."""
+    lengths: dict[str, set[int]] = {}
+    stack: list[ast.AST] = list(function.body)
+    while stack:
+        node = stack.pop()
+        if isinstance(
+            node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
+        ):
+            continue
+        stack.extend(ast.iter_child_nodes(node))
+        if not (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name)
+            and node.func.attr in ("append", "insert")
+            and len(node.args) == (1 if node.func.attr == "append" else 2)
+            and not node.keywords
+        ):
+            continue
+        value = node.args[-1]
+        if isinstance(value, ast.Tuple) and not any(
+            isinstance(e, ast.Starred) for e in value.elts
+        ):
+            lengths.setdefault(node.func.value.id, set()).add(len(value.elts))
+    return {name for name, each in lengths.items() if len(each) > 1}
+
+
 def _optional_member(annotation: ast.AST) -> ast.AST | None:
     """``X`` of an ``Optional[X]`` / ``X | None`` / ``Union[X, None]``, or ``None``."""
     if isinstance(annotation, ast.Constant) and isinstance(annotation.value, str):
@@ -1390,8 +1425,10 @@ class _Rewriter(ShadowScopes):
         #: The locals annotated ``list[tuple[X, ...]]`` of the module and of
         #: each function being visited, innermost last, to the element
         #: annotation: a tuple display appended to one is the ``List[X]`` the
-        #: element is checked as (#625).
-        self._tuple_lists: list[dict[str, ast.expr]] = [{}]
+        #: element is checked as (#625).  With them, the names the scope
+        #: gives tuple displays of more than one length
+        #: (:func:`_mixed_tuple_appends`), the only locals so kept.
+        self._tuple_lists: list[tuple[dict[str, ast.expr], set[str]]] = [({}, set())]
         #: The element class of the ``-> list[B]`` of each function being
         #: visited (``None``: no such return annotation).
         self._return_elements: list[str | None] = []
@@ -2217,7 +2254,7 @@ class _Rewriter(ShadowScopes):
             if node.returns is None or isinstance(node, ast.AsyncFunctionDef)
             else self._list_element(node.returns)
         )
-        self._tuple_lists.append({})
+        self._tuple_lists.append(({}, _mixed_tuple_appends(node)))
         for stmt in node.body:
             self.visit(stmt)
         self._tuple_lists.pop()
@@ -2449,7 +2486,12 @@ class _Rewriter(ShadowScopes):
         return True
 
     def _annotated_display(
-        self, value: ast.expr, annotation: ast.expr, *, class_level: bool
+        self,
+        value: ast.expr,
+        annotation: ast.expr,
+        *,
+        class_level: bool,
+        variadic_tuples: bool = False,
     ) -> bool:
         """Type an empty or ``None``-first display from its annotation (#611).
 
@@ -2481,10 +2523,9 @@ class _Rewriter(ShadowScopes):
             # not defined yet, and Codon crashes on `List[Node]()` there.
             return False
         # A `tuple[X, ...]` inside is the `List[X]` a class-level one is
-        # checked as (#625): dropped, the annotation would leave Codon to type
-        # the container from its first element, a tuple of fixed length.
+        # checked as, where *variadic_tuples* asks for it (#625).
         typed = codon_annotation(
-            annotation, class_level=class_level, variadic_tuples=True
+            annotation, class_level=class_level, variadic_tuples=variadic_tuples
         )
         if typed is None or "[" not in typed:
             return False
@@ -2586,10 +2627,27 @@ class _Rewriter(ShadowScopes):
             else:
                 self.edits.replace(*self.edits.node_span(value), default)
             value = None  # replaced as a whole
+        # `pairs: list[tuple[int, ...]] = []` given tuples of more than one
+        # length (#625): dropped, the annotation would leave Codon to type the
+        # list from its first append, a tuple of fixed length.  Given tuples
+        # of one length, the list Codon types from them is the one Python
+        # code uses (a tuple display `in` it, `extend`, a tuple variable),
+        # so the annotation is dropped as before.
+        variadic = (
+            isinstance(node.target, ast.Name)
+            and self._function_depth > 0
+            and node.target.id in self._tuple_lists[-1][1]
+            and _variadic_tuple_element(node.annotation) is not None
+        )
         if value is not None and self._annotated_display(
-            value, node.annotation, class_level=class_level
+            value, node.annotation, class_level=class_level, variadic_tuples=variadic
         ):
             value = None  # replaced as a whole
+            if variadic:
+                assert isinstance(node.target, ast.Name)
+                element = _variadic_tuple_element(node.annotation)
+                assert element is not None
+                self._tuple_lists[-1][0][node.target.id] = element
         typed = (
             self._dict_annotation_type(node.annotation)
             if isinstance(value, ast.Dict)
@@ -2608,10 +2666,6 @@ class _Rewriter(ShadowScopes):
             self._note_list_local(
                 node.target.id, self._list_element(node.annotation), node.target
             )
-            if self._class_depth == 0 or self._function_depth > 0:
-                element = _variadic_tuple_element(node.annotation)
-                if element is not None:
-                    self._tuple_lists[-1][node.target.id] = element
         converted = self._rewrite_annotation(node.annotation, class_level=class_level)
         if (
             converted is None
@@ -2655,7 +2709,7 @@ class _Rewriter(ShadowScopes):
             for bound, _ in self._local_bound[self._list_scopes[-1][2] :]
         ):
             return None
-        return self._tuple_lists[-1].get(node.id)
+        return self._tuple_lists[-1][0].get(node.id)
 
     def visit_Call(self, node: ast.Call) -> None:
         if (
@@ -5186,6 +5240,12 @@ def mixin_super_inits(
             if not (
                 isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef))
                 and method.args.args
+                # Not a classmethod's `cls`, nor a staticmethod's argument.
+                and not any(
+                    (_dotted(d) or "").rsplit(".", 1)[-1]
+                    in ("classmethod", "staticmethod")
+                    for d in method.decorator_list
+                )
             ):
                 continue
             receiver = method.args.args[0].arg

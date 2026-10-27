@@ -12309,6 +12309,33 @@ def test_dict_fromkeys_of_one_argument_and_a_list_of_variable_length_tuples_pass
     assert result.ok, result.format()
 
 
+def test_variable_length_tuples_of_one_length_pass_as_before(
+    tmp_path: Path,
+) -> None:
+    # Given tuples of one length, the annotation is dropped as before (#625
+    # review): the list of fixed-length tuples Codon types takes a tuple held
+    # in a name, `extend` and `in`, and so do a dict, a set and an Optional.
+    scenario, config, _ = _write_case(
+        tmp_path,
+        """
+        pairs: list[tuple[int, ...]] = []
+        t = (3, 4)
+        pairs.append(t)
+        pairs.extend([(5, 6)])
+        logger.info("%s", (3, 4) in pairs)
+        d: dict[str, tuple[int, ...]] = {}
+        d["a"] = (1, 2)
+        s: set[tuple[int, ...]] = set()
+        s.add((1, 2))
+        o: list[tuple[int, ...] | None] = []
+        o.append((1, 2))
+        logger.info("%d %d %d %d", len(pairs), len(d), len(s), len(o))
+        """,
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
 def test_a_list_of_variable_length_tuples_still_checks_its_elements(
     tmp_path: Path,
 ) -> None:

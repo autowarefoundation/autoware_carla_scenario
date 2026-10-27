@@ -6646,11 +6646,45 @@ def test_a_local_list_of_variable_length_tuples_keeps_its_annotation() -> None:
     assert "pairs.append(List[int]([1, 2]))" in out
     assert "pairs.append(List[int]([3,]))" in out
     assert "pairs.insert(0, List[int]())" in out
-    assert "by = Dict[str, List[float]]()" in out
+    assert "by = {}" in out
     assert "other.append((1, 2))" in out
     assert "fixed.append((1, 2))" in out
     # A comprehension's own `pairs` is no such local.
     assert "pairs.append((5, 6)) for pairs in" in out
+
+
+def test_a_list_of_variable_length_tuples_of_one_length_is_left_to_codon() -> None:
+    # Given tuples of one length only, the annotation is dropped as before
+    # (#625 review): the list of fixed-length tuples Codon types from them
+    # takes a tuple held in a name, `extend`, `in` with a tuple display, and
+    # a `tuple[X, ...]` in a dict, a set, a nested list or an Optional, which
+    # no append rewrites, is left to Codon too.
+    out = _transform(
+        """
+        def f() -> None:
+            pairs: list[tuple[int, ...]] = []
+            pairs.append((1, 2))
+            t = (3, 4)
+            pairs.append(t)
+            ok = (1, 2) in pairs
+            d: dict[str, tuple[int, ...]] = {}
+            s: set[tuple[int, ...]] = set()
+            nested: list[list[tuple[int, ...]]] = []
+            o: list[tuple[int, ...] | None] = []
+            seeded: list[tuple[int, ...]] = [(1, 2)]
+            seeded.append((3,))
+            seeded.append((4, 5))
+        """
+    )
+    assert "pairs = []" in out
+    assert "pairs.append((1, 2))" in out
+    assert "d = {}" in out
+    assert "s = set()" in out
+    assert "nested = []" in out
+    assert "o = []" in out
+    # Not an empty display: Codon types it from its first element as before,
+    # and the tuples given to it are left alone.
+    assert "seeded.append((3,))" in out
 
 
 def test_codon_annotation_takes_a_variadic_tuple_only_where_asked() -> None:
@@ -6688,6 +6722,10 @@ class CaseScenario(Deeper, BaseScenario):
 
         def inner():
             super().__init__(1)
+
+    @classmethod
+    def make(cls, c):
+        super().__init__(c)
 
 
 class First(BaseScenario, VehicleInfoMixin):
@@ -6737,7 +6775,9 @@ def test_super_init_passes_over_a_mixin_listed_first_by_naming_the_base() -> Non
     assert "            super().__init__(1)" in out  # a nested function's
     # A first base with an __init__ (its own, or a dataclass's), or one the
     # check cannot see, keeps super().
-    assert out.count("super().__init__(c)") == 3
+    # A classmethod has no `self` to pass (#626 review).
+    assert out.count("super().__init__(c)") == 4
+    assert "BaseScenario.__init__(cls" not in out
     assert "        super().__init__()\n" in out
 
 
