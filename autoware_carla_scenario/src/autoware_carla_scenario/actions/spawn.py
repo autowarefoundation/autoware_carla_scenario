@@ -152,7 +152,8 @@ class SpawnAction(BaseAction):
             ``None`` (or a Lanelet2 pose on lanelet 0 or less, what a card
             leaves empty): where it was declared to spawn, which it waits
             under.  A prop needs one.
-        shift_max: How far (m) on along its lane (a Lanelet2 place) it may be
+        shift_max: How far (m) on along its lane (a Lanelet2 place, or a
+            route pose on a lane counted from an anchor) it may be
             put instead, at the nearest place clear of road users, when its
             place is taken as it fires; 0 (the default) puts it there all the
             same, and a prop is not looked at then.
@@ -441,8 +442,9 @@ class SpawnAction(BaseAction):
         if blocker < 0:
             self._claim(world, actor_id, due, half_length, half_width)
             return due
-        if isinstance(position, Lanelet2Pose):
-            lane: Lanelet2Pose = position
+        on_lane = _lane_place(position)
+        if on_lane is not None:
+            lane: Lanelet2Pose = on_lane
             shift = SHIFT_STEP_M
             while shift <= self._shift_max + 1e-9:
                 on = _along_lane(lane, shift, self._lanes)
@@ -497,6 +499,45 @@ class SpawnAction(BaseAction):
         half_width: float,
     ) -> None:
         _hold(world, actor_id, place[0], place[1], place[3], half_length, half_width)
+
+
+def _lane_place(
+    position: Union[
+        CarlaWorldPose,
+        Lanelet2Pose,
+        OpenDrivePose,
+        MapPose,
+        RelativeLanePose,
+        RouteLanePose,
+        RouteOppositePose,
+        RouteCrossingPose,
+        RouteCrosswalkPose,
+        RouteRoadsidePose,
+    ],
+) -> Optional[Lanelet2Pose]:
+    """The place on a lane a shift runs along from: a Lanelet2 place as it
+    is, a route pose on a lane (lane, opposite, crossing; one counted from an
+    anchor) as the scenario's route places it; ``None`` for any other."""
+    if isinstance(position, Lanelet2Pose):
+        given: Lanelet2Pose = position
+        return given
+    if TYPE_CHECKING:
+        return None  # the route's frame is not compiled (docs/typecheck.md)
+    if not isinstance(position, (RouteLanePose, RouteOppositePose, RouteCrossingPose)):
+        return None
+    from ..route.active import scenario_route_frame  # noqa: PLC0415
+    from ..route.positions import resolve_route_pose  # noqa: PLC0415
+
+    frame = scenario_route_frame()
+    if frame is None:
+        return None
+    try:
+        # A pose counted from the ego (no anchor) has no ego position here:
+        # it is not shifted.
+        placed = resolve_route_pose(position, frame)
+    except ValueError:
+        return None
+    return placed if isinstance(placed, Lanelet2Pose) else None
 
 
 def _along_lane(

@@ -1188,23 +1188,21 @@ def _check_route(out: _Collector, document: ScenarioDocument) -> None:
     segments = len(route.segments) if route is not None else 0
     junctions = route.junction_count if route is not None else 0
 
-    for index, action in enumerate(document.actions):
-        params = action.params
-        if action.type != "routing" or params.get("path_source") != "route":
-            continue
-        where = f"actions[{index}].route_vertices"
+    def route_rows(where: str, owner: str, value: Any, what: str) -> None:
+        """Check route vertices *value* against the route search: there is
+        one, and it has the anchors and junctions they name."""
         if route is None:
             out.error(
                 where,
-                "Route vertices are placed on the scenario's route, and this "
-                "scenario has no route search.",
-                action.id,
+                f"{what} placed on the scenario's route, and this scenario has "
+                "no route search.",
+                owner,
             )
-            continue
+            return
         try:
-            rows = parse_route_vertices(params.get("route_vertices"))
+            rows = parse_route_vertices(value)
         except ValueError:
-            continue  # already reported against the field
+            return  # already reported against the field
         for number, row in enumerate(rows, start=1):
             problem = anchor_problem(row.get("anchor"), segments, junctions)
             if problem is None and "junction" in row and row["junction"] >= junctions:
@@ -1213,7 +1211,31 @@ def _check_route(out: _Collector, document: ScenarioDocument) -> None:
                     f"{junctions} junction segment(s)"
                 )
             if problem is not None:
-                out.error(where, f"Route vertex {number}: {problem}.", action.id)
+                out.error(where, f"Route vertex {number}: {problem}.", owner)
+
+    for index, action in enumerate(document.actions):
+        params = action.params
+        if action.type == "routing" and params.get("path_source") == "route":
+            route_rows(
+                f"actions[{index}].route_vertices",
+                action.id,
+                params.get("route_vertices"),
+                "Route vertices are",
+            )
+        if action.type == "spawn" and params.get("route_pose"):
+            route_rows(
+                f"actions[{index}].route_pose",
+                action.id,
+                params.get("route_pose"),
+                "A route pose is",
+            )
+
+    for root in document.condition_roots():
+        for node in root.walk():
+            if node.type == "place_clear" and node.params.get("route_pose"):
+                route_rows(
+                    node.id, node.id, node.params.get("route_pose"), "A route pose is"
+                )
 
     for root in document.condition_roots():
         for node in root.walk():

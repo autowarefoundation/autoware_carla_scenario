@@ -27,6 +27,7 @@ from autoware_carla_scenario import (
     RoutingMode,
     Lanelet2Pose,
     RouteCrossingPose,
+    RouteCrosswalkPose,
     RouteLanePose,
     RouteProgressCondition,
     SpawnTransform,
@@ -159,7 +160,9 @@ actions:
     trigger:
       type: route_progress
       params: {value: 0, anchor: "junction:0:entry"}
-    params: {speed_ms: 1.3}
+    params:
+      speed_ms: 1.3
+      route_pose: "crosswalk junction=0 leg=exit side=right along=-1.5"
 assertions:
   pass:
     - type: route_progress
@@ -265,6 +268,16 @@ class TestValidation:
         assert any("has 1 junction(s)" in m for m in messages)
         assert any("Route vertex 1: junction 2" in m for m in messages)
 
+    def test_a_spawn_cards_route_pose_is_checked_as_route_vertices_are(self) -> None:
+        raw = _raw()
+        raw["actions"][4]["params"]["route_pose"] = "crosswalk junction=3 leg=exit"
+        messages = _messages(ScenarioDocument.model_validate(raw))
+        assert any("Route vertex 1: junction 3" in m for m in messages)
+        raw["actions"][4]["params"]["route_pose"] = "lane ds=1\nlane ds=2"
+        built = compile_document(ScenarioDocument.model_validate(raw))
+        with pytest.raises(ValueError, match="one route vertex"):
+            instantiate_action(built.actions[4], BuildContext(scenario=None))
+
     def test_a_malformed_vertex_is_reported_against_its_field(self) -> None:
         raw = _raw()
         raw["actions"][1]["params"]["route_vertices"] = "crosswalk leg=sideways\nlane"
@@ -350,6 +363,13 @@ class TestBuild:
         enters = instantiate_action(compiled.actions[3], ctx)
         assert isinstance(enters, SpawnAction)
         assert enters.entity_name == oncoming._entity_name
+        # A Spawn card with a route pose is placed on the route.
+        walks_in = instantiate_action(compiled.actions[4], ctx)
+        assert isinstance(walks_in, SpawnAction)
+        assert walks_in._at is not None
+        assert walks_in._at.position == RouteCrosswalkPose(
+            junction=0, leg="exit", side="right", along=-1.5
+        )
 
     def test_the_assertion_builds(self) -> None:
         compiled = compile_document(_document())
@@ -495,6 +515,7 @@ class TestTheRunPicksItsRoute:
         for action in raw["actions"]:
             action["params"]["path_source"] = "vertices"
             action["params"]["vertices"] = [[0, 0], [1, 0]]
+            action["params"].pop("route_pose", None)
             action.pop("trigger")
             action.pop("advance_conditions", None)
         raw["assertions"]["pass"] = [

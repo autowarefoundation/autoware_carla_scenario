@@ -288,15 +288,19 @@ recorded point.
 
 An entity spawned `hidden` is brought into the scene by a **Spawn** card
 (`SpawnAction`, the counterpart of `despawn`; `appear_on_start` until 1.0):
-set on its place (`lanelet_id`, `s`, `t`, `heading`; none: where it was
-declared to spawn), physics on, facing its heading, moving at `speed_ms`.
+set on its place (`lanelet_id`, `s`, `t`, `heading`; or `route_pose`, one
+route vertex as `route_vertices` takes them, placed on the scenario's route
+-- what keeps a logical scenario map-independent; none: where it was declared
+to spawn), physics on, facing its heading, moving at `speed_ms`.
 Its *Set Goal* card is triggered on the Spawn card completing (`action_state`
 `completeState`) and routes it from where it stands.  To wait until its place
-is clear, put a `place_clear` condition on the same place in the Spawn card's
+is clear, put a `place_clear` condition on the same place (`route_pose` too)
+in the Spawn card's
 trigger -- with a give-up, e.g.
 `all(<progress>, any(place_clear, persistent(sticky(<progress>), 20)))`; with
 `shift_max` it then takes the nearest clear place that far on along its lane
-if its own is still taken.  An entity a Spawn card brings in that is not
+if its own is still taken (a route pose shifts when it is on a lane --
+`lane`, `opposite`, `crossing` -- and counted from an anchor).  An entity a Spawn card brings in that is not
 spawned hidden draws a warning (it would stand at its spawn until then).
 
 ### Entities in a logical scenario
