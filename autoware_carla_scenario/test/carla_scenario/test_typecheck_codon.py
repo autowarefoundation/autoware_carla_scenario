@@ -11342,7 +11342,7 @@ def test_literal_arguments_the_framework_accepts_pass(tmp_path: Path) -> None:
                 TrajectoryVertex(RouteRoadsidePose(ds=3.0, side="right")),
             ],
         )
-        self.register_pre_tick(FollowTrajectoryAction("npc", traj))
+        self.register_pre_tick(RoutingAction("npc", trajectory=traj, label="npc"))
         """
     )
     scenario, config, _ = _write_case(tmp_path, setup, header=_LITERAL_HEADER)
