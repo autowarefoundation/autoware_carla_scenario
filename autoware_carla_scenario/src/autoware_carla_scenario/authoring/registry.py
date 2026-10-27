@@ -1261,7 +1261,7 @@ register_action_spec(
         builds=(
             BuiltArgument(
                 kwarg="position",
-                target="..coordinate:Lanelet2Pose",
+                target="..trajectory.authoring:authored_place",
                 parts=(
                     BuiltPart(
                         args=(
@@ -1269,12 +1269,25 @@ register_action_spec(
                             ("s", "s"),
                             ("t", "t"),
                             ("heading", "heading"),
+                            ("route_vertex", "route_pose"),
                         ),
                     ),
                 ),
             ),
         ),
         fields=(
+            FieldSpec(
+                name="route_pose",
+                label="Route pose",
+                kind="route_trajectory",
+                default=None,
+                required=False,
+                help=(
+                    "Its place as one route vertex ('kind key=value ...', as Route "
+                    "vertices take them), placed on the scenario's route; it "
+                    "takes the place of lanelet, s, t and heading."
+                ),
+            ),
             FieldSpec(
                 name="lanelet_id",
                 label="Lanelet",
@@ -3755,7 +3768,7 @@ register_condition_spec(
         builds=(
             BuiltArgument(
                 kwarg="position",
-                target="..coordinate:Lanelet2Pose",
+                target="..trajectory.authoring:authored_place",
                 parts=(
                     BuiltPart(
                         args=(
@@ -3763,6 +3776,7 @@ register_condition_spec(
                             ("s", "s"),
                             ("t", "t"),
                             ("heading", "heading"),
+                            ("route_vertex", "route_pose"),
                         )
                     ),
                 ),
@@ -3776,17 +3790,31 @@ register_condition_spec(
         ),
         fields=(
             FieldSpec(
+                name="route_pose",
+                label="Route pose",
+                kind="route_trajectory",
+                default=None,
+                required=False,
+                help=(
+                    "The place as one route vertex ('kind key=value ...', as Route "
+                    "vertices take them), placed on the scenario's route; it "
+                    "takes the place of lanelet, s, t and heading."
+                ),
+            ),
+            FieldSpec(
                 name="lanelet_id",
                 label="Lanelet",
                 kind="lanelet",
                 default=0,
-                help="The lanelet holding the place's centre.",
+                required=False,
+                help="The lanelet holding the place's centre (with no route pose).",
             ),
             FieldSpec(
                 name="s",
                 label="s",
                 kind="number",
                 default=0.0,
+                required=False,
                 unit="m",
                 help="Along the lanelet from its start.",
             ),

@@ -987,12 +987,12 @@ def test_a_place_clear_condition_holds_while_nothing_stands_there(
     from autoware_carla_scenario.conditions import PlaceClearCondition
     from autoware_carla_scenario.conditions import place_clear as place_module
     from autoware_carla_scenario.coordinate import Lanelet2Pose
-    from autoware_carla_scenario.coordinate import transform as transform_module
+    from autoware_carla_scenario.trajectory import resolve as resolve_module
 
     monkeypatch.setattr(
-        transform_module,
-        "to_carla_world",
-        lambda pose: SimpleNamespace(x=10.0, y=2.0, z=0.0, yaw=90.0),
+        resolve_module,
+        "resolve_position",
+        lambda position, reference=None: (10.0, 2.0, 0.0, 90.0),
     )
     seen: list[tuple[float, ...]] = []
     occupant = {"id": 7}
@@ -1015,6 +1015,91 @@ def test_a_place_clear_condition_holds_while_nothing_stands_there(
         PlaceClearCondition(Lanelet2Pose(3, 5.0), 0.0, 2.0, label="p")
 
 
+def test_a_place_clear_condition_on_a_route_pose(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A route pose is placed (on the scenario's route) when the place is
+    first looked at, and once; one that cannot be placed holds nothing."""
+    from autoware_carla_scenario.conditions import PlaceClearCondition
+    from autoware_carla_scenario.conditions import place_clear as place_module
+    from autoware_carla_scenario.trajectory import resolve as resolve_module
+    from autoware_carla_scenario.trajectory.model import RouteLanePose
+
+    placed: list[Any] = []
+
+    def resolve(position: Any, reference: Any = None) -> tuple[float, ...]:
+        placed.append(position)
+        if position.ds < 0.0:
+            raise ValueError("before the route's start")
+        return (4.0, -3.0, 0.0, 180.0)
+
+    monkeypatch.setattr(resolve_module, "resolve_position", resolve)
+    seen: list[tuple[float, float, float]] = []
+
+    def look(
+        world: Any, x: float, y: float, yaw: float, hl: float, hw: float, m: float
+    ) -> int:
+        seen.append((x, y, yaw))
+        return -1
+
+    monkeypatch.setattr(place_module, "_occupant", look)
+    pose = RouteLanePose(ds=5.0, anchor="start")
+    condition = PlaceClearCondition(pose, 4.0, 2.0, label="p")
+    assert condition.check(None, 0.0) is not None  # type: ignore[arg-type]
+    assert condition.check(None, 0.1) is not None  # type: ignore[arg-type]
+    assert placed == [pose]
+    assert seen == [(4.0, -3.0, 180.0)] * 2
+    details = condition.get_details()
+    assert (details["position"], details["x"], details["y"]) == (
+        "RouteLanePose",
+        4.0,
+        -3.0,
+    )
+    nowhere = PlaceClearCondition(
+        RouteLanePose(ds=-5.0, anchor="start"), 4.0, 2.0, label="q"
+    )
+    assert nowhere.check(None, 0.0) is None  # type: ignore[arg-type]
+
+
+def test_a_spawn_on_a_route_pose_shifts_along_the_lane_it_is_placed_on(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A route pose on a lane shifts as the Lanelet2 place the route gives it."""
+    from autoware_carla_scenario.actions import SpawnAction
+    from autoware_carla_scenario.actions import spawn as spawn_module
+    from autoware_carla_scenario.coordinate import Lanelet2Pose
+    from autoware_carla_scenario.trajectory.model import RouteCrossingPose
+
+    pose = RouteCrossingPose(approach="same", turn="right", distance=-5.0)
+    monkeypatch.setattr(
+        spawn_module,
+        "_lane_place",
+        lambda position: Lanelet2Pose(3, 10.0) if position == pose else None,
+    )
+    monkeypatch.setattr(
+        spawn_module,
+        "resolve_position",
+        lambda position, reference: (
+            (float(position.s), 0.0, 0.0, 0.0)
+            if isinstance(position, Lanelet2Pose)
+            else (10.0, 0.0, 0.0, 0.0)
+        ),
+    )
+    monkeypatch.setattr(
+        spawn_module,
+        "_along_lane",
+        lambda lane, d, lanes=None: Lanelet2Pose(lane.lanelet_id, lane.s + d),
+    )
+    monkeypatch.setattr(
+        spawn_module,
+        "_taken",
+        lambda world, actor_id, x, y, yaw, hl, hw, ahead=0.0: 5 if x < 14.0 else -1,
+    )
+    monkeypatch.setattr(spawn_module, "_hold", lambda *args: None)
+    action = SpawnAction("npc1", position=pose, shift_max=30.0)
+    assert action._place(None, 1, 2.0, 1.0)[0] == 14.0  # type: ignore[arg-type,index]
+
+
 def test_the_place_clear_card_builds_its_condition() -> None:
     """The card's lanelet pose and footprint reach the condition."""
     from autoware_carla_scenario.authoring import _builders_generated as builders
@@ -1030,6 +1115,7 @@ def test_the_place_clear_card_builds_its_condition() -> None:
             "length": 0.5,
             "width": 0.4,
             "margin": 0.3,
+            "route_pose": None,
         },
     )
     built = builders.build_place_clear_condition(compiled, [], None)  # type: ignore[arg-type]
@@ -1037,6 +1123,17 @@ def test_the_place_clear_card_builds_its_condition() -> None:
     details = built.get_details()
     assert (details["lanelet_id"], details["s"], details["t"]) == (12, 3.0, -1.5)
     assert (details["length"], details["width"], details["margin"]) == (0.5, 0.4, 0.3)
+    routed = SimpleNamespace(
+        label="q",
+        params={
+            **compiled.params,
+            "route_pose": [
+                {"kind": "crossing", "junction": 0, "approach": "same", "turn": "right"}
+            ],
+        },
+    )
+    on_route = builders.build_place_clear_condition(routed, [], None)  # type: ignore[arg-type]
+    assert on_route.get_details()["position"] == "RouteCrossingPose"
 
 
 def test_a_walker_the_crowd_took_for_run_over_goes_on_as_a_new_one(

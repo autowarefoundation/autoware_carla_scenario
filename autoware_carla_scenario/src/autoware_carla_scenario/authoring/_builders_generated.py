@@ -757,14 +757,15 @@ def build_place_clear_condition(
 ) -> "BaseCondition":
     """Build a :class:`PlaceClearCondition`."""
     from ..conditions import PlaceClearCondition  # noqa: PLC0415
-    from ..coordinate import Lanelet2Pose  # noqa: PLC0415
+    from ..trajectory.authoring import authored_place  # noqa: PLC0415
 
     params = compiled.params
-    position = Lanelet2Pose(
+    position = authored_place(
         lanelet_id=params["lanelet_id"],
         s=params["s"],
         t=params["t"],
         heading=params["heading"],
+        route_vertex=params["route_pose"],
     )
     return PlaceClearCondition(
         position=position,
@@ -1563,14 +1564,15 @@ def build_spawn_action(
 ) -> "BaseAction":
     """Build a :class:`SpawnAction`."""
     from ..actions import SpawnAction  # noqa: PLC0415
-    from ..coordinate import Lanelet2Pose  # noqa: PLC0415
+    from ..trajectory.authoring import authored_place  # noqa: PLC0415
 
     params = compiled.params
-    position = Lanelet2Pose(
+    position = authored_place(
         lanelet_id=params["lanelet_id"],
         s=params["s"],
         t=params["t"],
         heading=params["heading"],
+        route_vertex=params["route_pose"],
     )
     return SpawnAction(
         entity_name=compiled.actor_role,

@@ -60,6 +60,7 @@ __all__ = [
     "TIME_DOMAINS",
     "VertexRow",
     "authored_goal",
+    "authored_place",
     "authored_route",
     "authored_timing",
     "authored_trajectory",
@@ -675,6 +676,36 @@ def authored_goal(
     if path_source != "goal":
         return None
     return Lanelet2Pose(lanelet_id=int(lanelet_id or 0), s=float(s or 0.0))
+
+
+def authored_place(
+    lanelet_id: Optional[int] = 0,
+    s: Optional[float] = 0.0,
+    t: Optional[float] = 0.0,
+    heading: Optional[float] = 0.0,
+    route_vertex: Any = None,
+) -> Any:
+    """A ``spawn`` or ``place_clear`` card's place: the route pose its
+    ``route_pose`` names (one route vertex, as a ``route_vertices`` row),
+    placed on the scenario's route when it is used; else *s* metres along
+    lanelet *lanelet_id*, *t* off its centreline, turned *heading*.
+
+    Raises:
+        ValueError: For a ``route_pose`` of more than one vertex.
+    """
+    from ..coordinate.poses import Lanelet2Pose  # noqa: PLC0415
+
+    rows = parse_route_vertices(route_vertex)
+    if len(rows) > 1:
+        raise ValueError(f"a place is one route vertex, got {len(rows)}")
+    if rows:
+        return route_pose(rows[0])
+    return Lanelet2Pose(
+        lanelet_id=int(lanelet_id or 0),
+        s=float(s or 0.0),
+        t=float(t or 0.0),
+        heading=float(heading or 0.0),
+    )
 
 
 def authored_waypoints(
