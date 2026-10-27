@@ -315,6 +315,8 @@ class TestRoutingActionBuilder:
         action = instantiate_action(compiled.actions[0], BuildContext(scenario=None))
 
         assert isinstance(action, RoutingAction)
+
+        assert action.goal is not None
         assert action.goal.lanelet_id == 265
         assert action.goal.s == 4.0
         assert action.label == "Drive to the far side"

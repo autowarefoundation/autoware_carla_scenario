@@ -1,4 +1,4 @@
-"""Trajectories for entities to follow (OpenSCENARIO `FollowTrajectoryAction`).
+"""Trajectories for entities to follow: the waypoints of a `RoutingAction`.
 
 * :mod:`.model` -- the OpenSCENARIO-style trajectory (polyline, vertices,
   timing, following mode) and its interpolation;
@@ -9,7 +9,7 @@ Reading a recorded scene (a T4 dataset) into trajectories is left to tools
 outside the framework, such as ``scene_to_scenario_transpiler``.
 
 The action that follows a trajectory is
-:class:`~autoware_carla_scenario.actions.FollowTrajectoryAction`.
+:class:`~autoware_carla_scenario.actions.RoutingAction`.
 """
 
 from .model import (

@@ -94,7 +94,7 @@ class TestKindAndBlueprint:
 
 
 class TestWhatAPedestrianMayDo:
-    @pytest.mark.parametrize("action", ["lane_change", "turn", "routing"])
+    @pytest.mark.parametrize("action", ["lane_change", "turn"])
     def test_a_vehicle_action_is_refused_on_a_pedestrian(self, action: str) -> None:
         messages = _errors(_document(action=action))
         assert any("cannot be performed by a pedestrian" in m for m in messages)

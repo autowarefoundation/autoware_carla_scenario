@@ -13,6 +13,8 @@ function per question rather than one that returns a tuple nobody wants whole:
 
 * :func:`lane_separation` -- how far apart, unsigned.  Needs no velocity.
 * :func:`lane_gap` -- how far *ahead*, signed by the source's travel.
+* :func:`lane_offset` -- how far ahead, signed by the source's heading: the
+  same for a source standing still.
 * :func:`lane_closing_speed` -- how fast that gap is shrinking.
 
 What is here, and what is not
@@ -66,6 +68,7 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "lane_closing_speed",
     "lane_gap",
+    "lane_offset",
     "lane_separation",
 ]
 
@@ -176,6 +179,31 @@ def lane_gap(
     driving_forward = along > 0
     sign = 1.0 if reach.forward == driving_forward else -1.0
     return sign * reach.distance
+
+
+def lane_offset(
+    source: CarlaWorldPose,
+    target: CarlaWorldPose,
+    *,
+    across_junctions: bool = True,
+) -> Optional[float]:
+    """Return how far *target* is ahead of *source* along their shared road,
+    signed by the way *source* faces (its ``yaw``): positive ahead, negative
+    behind.
+
+    :func:`lane_gap` with the source's heading for its travel, so a source
+    standing still has a front and a back too (a car stopped at a light, and
+    the road users it has left behind).  ``None`` as :func:`lane_gap` says,
+    but for the source not moving.
+    """
+    heading = math.radians(source.yaw)
+    return lane_gap(
+        source,
+        math.cos(heading),
+        math.sin(heading),
+        target,
+        across_junctions=across_junctions,
+    )
 
 
 def lane_closing_speed(

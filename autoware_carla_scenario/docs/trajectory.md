@@ -1,23 +1,50 @@
-# Trajectories and Recorded-Scene Replay
+# Routes, Trajectories and Recorded-Scene Replay
 
-`FollowTrajectoryAction` moves a vehicle or a pedestrian along a given
-trajectory. It is OpenSCENARIO's `FollowTrajectoryAction`, and it is what lets a
-recorded drive be **written down as a scenario**: a recording is transcribed
-into one trajectory per road user, and each one is replayed around the ego.
+`RoutingAction` sends a vehicle or a pedestrian through **waypoints** to a
+goal. Each waypoint may carry *when*: an **arrival time** or a **departure
+condition**. Who moves the entity is its `mode`:
+
+| `mode` | Who drives | Between waypoints | Timing |
+|---|---|---|---|
+| `RoutingMode.DRIVER` (default) | The entity's own driver: the TrafficManager or SUMO for a vehicle, the pedestrian route walker, Autoware for an Autoware ego | Lanelet2 routes (walkable lanelets for a pedestrian) | Met by speed commands to the driver ([below](#driver-mode-and-timing)); an Autoware ego takes the route only |
+| `RoutingMode.FOLLOW` | The action's own controller (OpenSCENARIO's trajectory following, `FOLLOW`) | Straight legs | Kept by the controller on the trajectory's clock |
+| `RoutingMode.POSITION` | Nobody: the entity is placed every tick (`POSITION`) | Straight legs | Exact (a kinematic replay) |
+
+It is what lets a recorded drive be **written down as a scenario**: a recording
+is transcribed into one trajectory per road user, and each one is replayed
+around the ego (`follow` or `position`), or handed to the road user's own driver
+to keep its timing (`driver`).
+
+!!! warning "Breaking change (19.0.0): `FollowTrajectoryAction` is gone"
+    `FollowTrajectoryAction` and the editor's *Follow Trajectory* card
+    (`follow_trajectory`) were removed; `RoutingAction` and the *Set Goal*
+    card (`routing`) do everything they did. In Python write
+    `RoutingAction(entity, trajectory=..., time_reference=..., mode=RoutingMode.FOLLOW)`
+    (or `POSITION`) for `FollowTrajectoryAction(entity, trajectory,
+    time_reference, TrajectoryFollowingMode.FOLLOW)`. In a document change
+    `type: follow_trajectory` to `type: routing` and `following_mode` to
+    `mode` (`follow` / `position` as before, or `driver`), and state
+    `time_domain` (the card's default is now `none`). A document that still
+    has a `follow_trajectory` card is refused with a message saying so; there
+    is no automatic conversion.
 Reading a dataset is left to tools outside the framework (see
 [Replaying a recorded scene](#replaying-a-recorded-scene)), so the framework
 carries no dataset format.
 
 ## The action
 
+A goal and Lanelet2 waypoints are what an ego is given
+(`RoutingAction("ego", Lanelet2Pose(42, 10.0), waypoints=[Lanelet2Pose(17, 0.0)])`);
+a `trajectory` writes the waypoints out, the last one the goal:
+
 ```python
 from autoware_carla_scenario import (
-    FollowTrajectoryAction,
     Lanelet2Pose,
     MapPose,
     ReferenceContext,
+    RoutingAction,
+    RoutingMode,
     Trajectory,
-    TrajectoryFollowingMode,
     TrajectoryTimeCondition as At,
     TrajectoryTiming,
     TrajectoryVertex,
@@ -32,24 +59,24 @@ path = Trajectory(
     ],
 )
 self.register_pre_tick(
-    FollowTrajectoryAction(
+    RoutingAction(
         "npc1",
-        path,
+        trajectory=path,
         time_reference=TrajectoryTiming(ReferenceContext.RELATIVE),
-        following_mode=TrajectoryFollowingMode.POSITION,
+        mode=RoutingMode.POSITION,
         label="npc1_follows_path",
     )
 )
 ```
 
-It has the same four parts as in OpenSCENARIO:
+A trajectory has the same four parts as OpenSCENARIO's trajectory following:
 
 | OpenSCENARIO | Here | Notes |
 |---|---|---|
 | `Trajectory` (`name`, `closed`, `shape`) | `Trajectory(name, vertices, closed=False)` | Only the `Polyline` shape. A recording is a sequence of samples; a clothoid or NURBS fitted to one would add an approximation between the data and the vehicle. |
 | `Vertex` (`time`, `Position`) | `TrajectoryVertex(position, advance=None)` | A vertex's time is its departure condition, `advance=TrajectoryTimeCondition(t)` (read back as `vertex.time`); any other condition can take its place -- see [Waypoint conditions](#waypoint-conditions). Either every vertex has a time or none has, a vertex with another condition counting as having one. |
 | `TimeReference` | `time_reference=None` or `TrajectoryTiming(domain, scale, offset)` | `None` is `<None/>`: the vertex times are ignored and the entity keeps the speed it had when the action started. With a timing, a vertex at time `τ` is reached at `τ * scale + offset` seconds after the scenario (`ABSOLUTE`) or the action (`RELATIVE`) started. |
-| `TrajectoryFollowingMode` | `following_mode=POSITION` or `FOLLOW` | See below. |
+| `TrajectoryFollowingMode` | `mode=RoutingMode.POSITION` or `FOLLOW` (or `DRIVER`) | See below. |
 | `initialDistanceOffset` | `initial_distance_offset` | Start that many metres along. With a timing, the clock starts at the time the trajectory reaches that point. |
 
 A vertex's position may be written in any frame the framework addresses:
@@ -86,7 +113,13 @@ overtake = Trajectory(
     ],
 )
 self.register_pre_tick(
-    FollowTrajectoryAction("npc1", overtake, TrajectoryTiming(), label="npc1_overtakes")
+    RoutingAction(
+        "npc1",
+        trajectory=overtake,
+        time_reference=TrajectoryTiming(),
+        mode=RoutingMode.FOLLOW,
+        label="npc1_overtakes",
+    )
 )
 ```
 
@@ -135,8 +168,10 @@ not have raises a
 `ValueError` naming the trajectory and the vertex. These lane checks can only
 be made then: they depend on where the reference entity is.
 
-### Following modes
+### Modes
 
+- **`DRIVER`** hands the route to the entity's own driver -- see
+  [Driver mode and timing](#driver-mode-and-timing).
 - **`POSITION`** places the entity on the trajectory every tick, with the
   velocity the trajectory implies (so speed conditions and the recorder see the
   recorded speed). It is a kinematic replay: it reproduces a recording exactly,
@@ -149,7 +184,70 @@ be made then: they depend on where the reference entity is.
   the vehicle's own, so it can lag or cut a corner. A pedestrian is walked
   towards the path.
 
-### Who drives, and when it ends
+### Driver mode and timing
+
+In `driver` mode the route starts where the entity is -- the nearest point of
+its path within 6 m, a hidden one having been brought in by a `SpawnAction` --
+and passes every waypoint after it, each
+placed on the lanelet under it (a walkable one for a pedestrian). A vehicle
+the traffic backend drives is handed it as a path
+(`BackendDriven.route_to`), a pedestrian walks it (`PedestrianEntity.route_to`),
+an Autoware ego is given it as a mission.
+
+**Timing.** When waypoints carry times (with a time reference) or departure
+conditions, the action keeps running until the entity reaches the goal and,
+every tick, sets the driver's speed to meet them (`TrafficManager`
+`set_desired_speed`, SUMO `setSpeed`, the walker's step speed):
+
+- the next waypoint with a time: the distance left to it **along the planned
+  path** over the time left, clamped to `[0, limit]` (the lane's speed limit,
+  2 m/s for a walker) and smoothed. A late entity goes at the limit to catch
+  up. The driver still stops for lights and yields; the speed is a target;
+- the next waypoint with a departure condition: a rising `route_progress`
+  condition (what a logical scenario times its road users by) is
+  **predicted** -- its entity's progress rate says when it will hold -- and
+  the entity is paced to arrive then. Any other condition, or a measured
+  entity that is not moving forward, is approached at cruise speed (`speed`,
+  else the limit) braking to stop 2 m short of the waypoint, where it **holds**
+  until the condition does;
+- with nothing due ahead: `speed` if given, else the limit.
+
+!!! warning "A hold can deadlock"
+    An NPC holding before a waypoint until the ego has progressed, while it
+    stands in the ego's way, waits for ever: the ego cannot pass it. Prediction
+    slows the NPC down long before it would hold, so a `route_progress`
+    condition on a moving ego seldom holds it; a condition that cannot be
+    predicted does. Place waypoints that wait for the ego out of its path.
+
+**An Autoware ego** takes no speed: it is given the route only, and the action
+warns once that its waypoints' times and conditions cannot be met.
+
+**Arrivals.** In every mode, each waypoint with a time or a condition is
+logged when reached -- when it was due (its time; the moment its condition
+first held) against when the entity arrived -- as a `waypoint_arrival`
+record of the [trajectory log](trajectory_log.md), so a run can be scored on
+its timing.
+
+**Keeping to the recorded lanes.** A vehicle's written-out waypoints are not
+routed one by one onto the nearest lane: the whole track between them is
+sampled every 2 m and matched to the lanes it runs along -- road lanelets
+within 4 m running within 60 degrees of its heading, joined on the routing
+graph by following on, a lane change or a short path, the closest sequence
+chosen (`traffic.route_match`) -- and the route goes through where it leaves
+each one. A track that cannot be matched falls back to its waypoints one by
+one, leaving out those no lane route reaches, with a warning. The
+TrafficManager is given the route with its own lane changes off, and a route
+ending in a junction is carried on along the lane after it until it is clear
+of the junction, so it is never handed an empty path.
+
+**When it ends.** A route given as a goal (and Lanelet2 waypoints) with
+nothing to time ends as soon as the vehicle has it (as an ego's initial goal
+always has); a route written out as waypoints, timed or not, runs until the
+vehicle is within 1 m of its end along the planned path (a timed one then sets
+its driver's speed back to the cruise speed); a pedestrian's ends when it
+arrives.
+
+### Who drives in follow and position modes, and when it ends
 
 For the length of the run the action is the entity's only driver. A vehicle is
 taken back from the [traffic backend](traffic_backends.md) first
@@ -167,23 +265,95 @@ where the trajectory ended. Pass `until=` to end it on a condition of your own.
 hands it straight back to traffic, as the adversarial actions do
 (`resume_traffic`).
 
-`hidden_outside_trajectory=True` (an extension, `POSITION` mode with a timing
-only) keeps the entity out of the world -- parked under the map with its physics
-off -- before its first vertex's time and after its last. That is what a road
-user that enters a recording late or leaves it early needs, since an entity
-cannot be spawned once a run has started.
-
-`appear_on_start=True` (an extension, either mode) is the other way in: when a
-run of the action starts, the entity -- spawned hidden -- is put on the first
-vertex facing along the path, physics on, moving at `speed` (standing if
-unset), and then follows the trajectory. Triggered by a `RouteProgressCondition`
-it enters when the ego has come as far as it had when the road user was first
-seen; it cannot be combined with `hidden_outside_trajectory`.
+`RoutingAction` routes an entity that is in the scene; it does not bring one
+in or take it out (`appear_on_start` and `hidden_outside_trajectory` are gone
+from it as of 1.0).  A road user that enters a recording late is spawned
+hidden and brought in by a `SpawnAction` (the `spawn` card): put on its place,
+physics on, facing its heading, moving at `speed`; its routing card is
+triggered on the spawn card completing and starts where it stands.  Triggered
+by a `RouteProgressCondition` it enters when the ego has come as far as it had
+when the road user was first seen; a `PlaceClearCondition` on the same place
+in its trigger waits for the place to be clear, and `shift_max` lets it take
+the nearest clear place further on along its lane once the trigger gives up
+waiting.  One that leaves early is removed by a `DespawnAction`.
 
 Vertices may also be placed against a logical scenario's *route*
 (`RouteLanePose`, `RouteOppositePose`, `RouteCrossingPose`,
 `RouteCrosswalkPose`, `RouteRoadsidePose`; `path_source: route` in a
 document) -- see [Logical Scenarios from Routes](logical_scenarios.md).
+
+### When a road user leaves: `DespawnAction`
+
+A route's end is where the road user's recording ends, but its driver does not
+know that: a vehicle the TrafficManager drives carries on wherever its traffic
+takes it. `DespawnAction(entity, condition)` (card **Despawn**, `despawn`)
+takes a vehicle or a pedestrian -- never the ego -- out of the world when its
+condition holds: the traffic backend lets go of it (and stops protecting it),
+the collision log stops listening to it, its actor is destroyed and the entity
+is unregistered. An action still naming it afterwards logs that once and does
+nothing (a routing run on it ends); a condition reads it as absent. The run
+writes a `despawn` record to the [trajectory log](trajectory_log.md).
+
+```yaml
+- id: npc1_leaves
+  type: despawn
+  actor: npc1
+  trigger:
+    type: action_state
+    params: {action: npc1_drive, state: completeState}
+```
+
+A `driver` route written out as waypoints runs until the entity reaches its
+last one, timed or not, so its completion is the moment it arrives.
+
+A road user the ego has left behind for good can leave too: one standing at
+least 30 m behind the ego along the road reads, in a trigger,
+
+```yaml
+type: any
+children:
+- {type: action_state, params: {action: npc1_drive, state: completeState}}
+- type: all
+  children:
+  - {type: action_state, params: {action: npc1_drive, state: runningState}}
+  - {type: standstill, params: {entity: npc1, duration: 5.0}}
+  - type: entity_distance
+    params: {source: ego, target: npc1, measure: lane, signed: true,
+             rule: less_than_or_equal, distance: -30.0}
+```
+
+`signed` (lane frame only) measures how far the target is ahead of the
+subject along the road, the way the subject faces, negative behind it
+(`coordinate.lane_distance.lane_offset`), so it reads the same whether the ego
+is moving or stopped.
+
+A pedestrian routed in `driver` mode is walked by CARLA's own walker
+controller (`controller.ai.walker`) where the map has a pedestrian navigation
+mesh: it keeps to the pavements, crosses at crossings (waiting at the kerb, as
+CARLA's walkers do), and walks round what stands in its way. It is sent along
+its route a target every 10 m (reached 2 m short of it along the walk, or
+2 m from it), its top speed the walk's pace; a walker held by its route's
+timing is taken off the controller while it stands (CARLA sends a walker
+standing 4 s somewhere random) and its target is sent again every 2 s.
+Whether it may cross a road away from a crossing is its own: the
+RoutingAction's `cross_factor` (the card's *Crosses away from crossings*), the
+probability its route may use the road anywhere -- 1 for a recorded walk that
+crossed there, 0 keeps it to crossings, empty is CARLA's default (0). CARLA
+keeps one such factor for the world and reads it only as a walker's controller
+starts (`Navigation::AddWalker`), so it is set to the walker's own just then
+and put back straight after. A map without a navigation mesh is said once, and its walkers are
+stepped along their routes as before. The navigation mesh comes with the map's
+import (roadgen's `<Name>Package.py` builds it with CARLA's RecastBuilder).
+A vehicle driven by the framework's own controller (`follow` mode, a final
+approach), which the TrafficManager does not drive, brakes for a walker in its
+way within its stopping distance (`utils.clearance`). A walker that falls over all the same is taken out of the
+world once it has lain there 5 s (`npc_collisions.FALLEN_DESPAWN_S`, the
+monitor's `despawn_fallen_after_s`; never the ego), with a `despawn` record
+of reason `fallen`.
+
+A pedestrian's written-out waypoints a few metres apart (no more than 10 m
+from one to the next: a recorded walk) are walked as written, from where it
+starts; farther apart they are routed between on the walkable lanelets.
 
 ## Waypoint conditions
 
@@ -252,8 +422,9 @@ from autoware_carla_scenario import (
     ComparisonRule,
     ElapsedTimeCondition,
     EntityDistanceCondition,
-    FollowTrajectoryAction,
     MapPose,
+    RoutingAction,
+    RoutingMode,
     Trajectory,
     TrajectoryTimeCondition as At,
     TrajectoryTiming,
@@ -277,8 +448,13 @@ crossing = Trajectory(
     ],
 )
 self.register_pre_tick(
-    FollowTrajectoryAction(
-        "walker1", crossing, TrajectoryTiming(), speed=1.4, label="cross"
+    RoutingAction(
+        "walker1",
+        trajectory=crossing,
+        time_reference=TrajectoryTiming(),
+        mode=RoutingMode.FOLLOW,
+        speed=1.4,
+        label="cross",
     )
 )
 
@@ -287,7 +463,11 @@ self.register_pre_tick(
 held = recorded.gated({12: ElapsedTimeCondition(20.0, label="not_before_20s")})
 ```
 
-**By following mode.**
+**By mode.**
+
+- `DRIVER`: see [Driver mode and timing](#driver-mode-and-timing) -- the
+  entity is paced to arrive when the condition holds, or held 2 m short of
+  the waypoint until it does.
 
 - `POSITION` places the entity where that timeline has it every tick; waiting,
   it stands on the vertex itself.
@@ -311,9 +491,7 @@ held = recorded.gated({12: ElapsedTimeCondition(20.0, label="not_before_20s")})
   path to its start -- so in `FOLLOW` mode a closed path's conditions are
   reliable on the first lap only. `POSITION` has no such limit.
 
-`hidden_outside_trajectory` keeps the entity out of the world until the first
-vertex is departed on its time, and after the run ends -- for a trajectory of
-times alone, exactly as before. `FollowTrajectoryAction.held_vertex` names the
+`RoutingAction.held_vertex` names the
 vertex (0-based) the entity waits at for a condition other than a time, or
 `None`.
 
@@ -326,10 +504,13 @@ vertex (0-based) the entity waits at for a condition other than a time, or
 
 ## In the Scenario Editor
 
-**Follow Trajectory** (category *Vehicle / Motion*) is a card like any other,
-for a vehicle, a pedestrian or a TrafficManager ego. Its path comes from one of
-three sources:
+**Set Goal** (category *Vehicle / Motion*) is a card like any other, for the
+ego, a vehicle or a pedestrian. **Driven by** is its mode (Driver, Follow,
+Position). Its route comes from one of five sources:
 
+- **Goal lanelet, via lanelets** (the default) -- a goal lanelet and `s`
+  along it, and the lanelets to pass on the way: what an ego is sent to. It
+  takes no waypoint conditions and no time reference.
 - **Vertices (map frame)** -- written in the card, one vertex per line:
   `x, y[, yaw]` (metres, radians; `81234.5, 50123.0` leaves the yaw to the
   path). The line above the text says how many vertices and how long. Their
@@ -337,6 +518,8 @@ three sources:
   transcribes to, so a replayed road user's card can be edited like any other.
 - **Along lanelets** -- the lanelets picked on the map, followed along their
   centrelines at a lateral offset and timed at a constant speed.
+- **Along the scenario's route** -- route vertices, see
+  [Logical Scenarios from Routes](logical_scenarios.md).
 - **Relative to an entity's lane** -- [lane-relative vertices](#lane-relative-vertices),
   one per line: `ds[, offset][, d_lane][, yaw]` (metres, metres, lanes,
   radians; only `ds` is required, `d_lane` is a whole number),
@@ -365,10 +548,11 @@ node:
 ```yaml
 actions:
 - id: a_walker
-  type: follow_trajectory
+  type: routing
   actor: walker1
   params:
     path_source: vertices
+    mode: follow
     vertices: [[81200.0, 50100.0, null], [81205.0, 50100.0, null],
                [81205.0, 50110.0, null]]
     time_domain: relative
@@ -400,7 +584,7 @@ reference to the card's own action but "is running" is refused, even under a
 with a message that gives the `trajectory_time` condition to write instead.
 
 The other fields are the action's: the time reference (from the action start,
-from the scenario start, or none), its scale and offset, the following mode,
+from the scenario start, or none -- the default), its scale and offset, the mode,
 how far along to start, and whether the entity is out of the world outside the
 trajectory's time. The validator checks what the fields only mean together: a
 time reference needs vertex times (or a speed, for lanelets), and keeping the
@@ -422,7 +606,7 @@ above:
 
 - the ego spawns where the recording's ego started and is sent where it went;
 - every road user is an entity spawned on the lanelet it was first seen on,
-  with one Follow Trajectory card: map-frame vertices, each departed at its
+  with one Set Goal card: map-frame vertices, each departed at its
   recorded time (a `trajectory_time` waypoint condition) on the scenario
   clock (`time_domain: absolute`, `time_offset` moving the recording's first
   frame to `t = 0`), in Position mode and hidden outside its trajectory;

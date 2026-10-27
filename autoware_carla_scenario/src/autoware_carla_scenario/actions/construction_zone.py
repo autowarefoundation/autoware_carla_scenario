@@ -5,7 +5,7 @@
 ``start_s`` to ``end_s`` metres along it -- past its lanelet's end, on along
 the straightest successors -- and from ``start_time`` to ``end_time``
 (scenario seconds; ``None`` for good) it stands the objects there as CARLA
-props, each added and removed by a :class:`~.prop.PropAction` (named
+props, each added and removed by a :class:`~.spawn.SpawnAction` (named
 ``<label>/<zone>/<n>``).  Then, as TeraSim's ``initialize``:
 
 * the traffic backend's background vehicles in the zone are taken off the
@@ -18,7 +18,7 @@ TeraSim's ``full_lane`` places no object, only closes the lane; in CARLA a
 closure nobody sees is one Autoware drives into, so the objects are always
 placed.  At ``end_time`` the props are removed and the lane reopened; when the
 run ends, the lane is reopened and the runner takes the props away with every
-other (:func:`~.prop.clear_props`).
+other (:func:`~.spawn.clear_props`).
 """
 
 from __future__ import annotations
@@ -48,7 +48,7 @@ from ..trajectory.relative_lane import _centreline, _point_at, advance_along_lan
 from ..trajectory.resolve import road_height
 from .background_traffic import _BackendAction
 from .base import BaseAction, TickTiming
-from .prop import PropAction, PropOperation
+from .spawn import SpawnAction, remove_prop
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
@@ -237,10 +237,9 @@ class ConstructionZoneAction(_BackendAction):
             except ValueError:
                 continue  # past the lane's last lanelet
             name = f"{self.label}/{item.zone}/{index}"
-            added = PropAction(
-                name,
-                PropOperation.ADD,
-                Lanelet2Pose(lanelet_id, along, item.t),
+            added = SpawnAction(
+                name=name,
+                position=Lanelet2Pose(lanelet_id, along, item.t),
                 blueprint=self._blueprints[item.kind],
                 label=self.label,
             )
@@ -299,7 +298,7 @@ class ConstructionZoneAction(_BackendAction):
     def _teardown(self, world: "carla.World") -> None:
         """Remove the props and reopen the lane."""
         for name in self._props:
-            PropAction(name, PropOperation.REMOVE, label=self.label).apply(world)
+            remove_prop(name)
         self._props = []
         self._reopen(world)
 

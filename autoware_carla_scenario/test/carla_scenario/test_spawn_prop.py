@@ -1,4 +1,5 @@
-"""PropAction: a prop added to the world and taken away, by name (#447).
+"""SpawnAction with a prop: one added to the world and taken away by name
+(#447; PropAction until 1.0).
 
 The Lanelet2 position is placed on the synthetic crossroads of
 :mod:`._route_maps`, standing in the MapManager with no offset (CARLA's frame
@@ -13,8 +14,8 @@ from typing import Any, Optional
 
 import pytest
 
-from autoware_carla_scenario import PropAction, PropOperation
-from autoware_carla_scenario.actions import prop as prop_module
+from autoware_carla_scenario import DespawnAction, SpawnAction
+from autoware_carla_scenario.actions import spawn as prop_module
 from autoware_carla_scenario.coordinate.poses import CarlaWorldPose, Lanelet2Pose
 from autoware_carla_scenario.trajectory.model import RelativeLanePose
 
@@ -68,8 +69,8 @@ def _no_props_standing() -> Iterator[None]:
     prop_module._STANDING.clear()
 
 
-def _add(name: str, position: Any, **kwargs: Any) -> PropAction:
-    return PropAction(name, PropOperation.ADD, position, **kwargs)
+def _add(name: str, position: Any, **kwargs: Any) -> SpawnAction:
+    return SpawnAction(name=name, position=position, **kwargs)
 
 
 def test_a_prop_is_added_on_the_road_and_removed_by_name() -> None:
@@ -85,11 +86,11 @@ def test_a_prop_is_added_on_the_road_and_removed_by_name() -> None:
     assert (location.x, location.y, location.z) == pytest.approx((10.0, -3.0, 0.55))
     assert box.transform.rotation.yaw == pytest.approx(90.0)
     assert prop_module.standing_props() == ["box"]
-    removed = PropAction("box", PropOperation.REMOVE)
+    removed = DespawnAction(name="box")
     removed.tick(world, 0.1)  # type: ignore[arg-type]
     assert box.destroyed and prop_module.standing_props() == []
     # Removing it again finds nothing.
-    assert not PropAction("box", PropOperation.REMOVE).apply(world)  # type: ignore[arg-type]
+    assert not prop_module.remove_prop("box")
 
 
 def test_off_the_ground_it_stands_at_its_own_height() -> None:
@@ -138,7 +139,9 @@ def test_many_props_share_the_library_and_the_ground() -> None:
 def test_what_cannot_be_added() -> None:
     world = _World()
     with pytest.raises(ValueError):
-        PropAction("cone", PropOperation.ADD)
+        SpawnAction(name="cone")
+    with pytest.raises(ValueError):
+        SpawnAction("npc1", name="cone", position=CarlaWorldPose(0.0, 0.0, 0.0))
     assert not _add(
         "x", CarlaWorldPose(0.0, 0.0, 0.0, 0.0), blueprint="vehicle.no_such"
     ).apply(world)  # type: ignore[arg-type]
