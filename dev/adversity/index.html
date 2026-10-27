@@ -1653,6 +1653,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Construction zones">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#urban-construction-zones" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Urban construction zones
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -2117,6 +2134,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Construction zones">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#urban-construction-zones" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Urban construction zones
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -2524,6 +2558,79 @@ reopened and the runner takes the props away with every other.</p>
 <a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a>    <span class="p">)</span>
 <a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="p">)</span>
 </code></pre></div>
+<h3 id="urban-construction-zones">Urban construction zones<a class="headerlink" href="#urban-construction-zones" title="Permanent link">&para;</a></h3>
+<p><code>layout="urban"</code> lays out TeraSim's <code>UrbanConstructionAdversity</code>
+(<code>adversity/static/urban_construction.py</code>) instead (#445). TeraSim builds a
+corridor of SUMO edges across several intersections and lays out each edge
+on its own. Here one <code>ConstructionZoneAction</code> is one approach of that
+corridor: <code>start_s</code> is where the approach begins and <code>end_s</code> is the
+intersection it ends at. For a corridor, add one action per approach. Lane
+closure, clearing traffic and the props are the same as above. These are the
+zones:</p>
+<table>
+<thead>
+<tr>
+<th>Zone</th>
+<th>Where</th>
+<th>Objects</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>warning</td>
+<td>from the start, <code>warning_zone_length</code> (200 m) but at most 0.3 of the approach</td>
+<td>at most three signs, every <code>warning_zone_spacing</code> (30 m)</td>
+</tr>
+<tr>
+<td>work</td>
+<td>to the merge taper (with no merge taper, to 0.9 of the approach)</td>
+<td>along the closed side, 0.5 m inside the lane's edge, every <code>spacing</code> (10 m); for <code>construction_type="cone"</code>, every fifth object is a barrier</td>
+</tr>
+<tr>
+<td>merge_signs</td>
+<td>before the merge taper</td>
+<td><code>merge_signs</code> (2) signs, 50 m apart, none before the start</td>
+</tr>
+<tr>
+<td>merge_taper</td>
+<td>the last <code>merge_distance</code> (150 m) before the end</td>
+<td>cones every half <code>spacing</code> (5 m), from 0.3 m inside the closed side's edge across to 0.3 m inside the other edge, shutting the lane before the intersection (TeraSim's <code>merge_before</code>)</td>
+</tr>
+</tbody>
+</table>
+<p>An urban zone has no taper in, buffer or termination zone, and no
+<code>work_zone_offset</code> or MUTCD spacing. <code>taper_type="curved"</code> shapes the merge
+taper. The warning zone and the merge taper include their end, as TeraSim's
+do, so with a whole number of steps the last cone stands at the intersection.
+The work zone does too when there is no merge taper; with one, it stops
+short of its end, where the merge taper's first cone stands.</p>
+<p><code>URBAN_CONSTRUCTION</code> holds TeraSim's urban values. They come from the
+<code>UrbanConstructionAdversity</code> source and its Ann Arbor example
+(<code>examples/scenarios/ann_arbor/urban_construction.yaml</code>): cones every 10 m in
+the work zone and every 5 m in the merge taper, three warning signs 30 m
+apart, merge signs 50 m apart, signs 2 m out on the shoulder, a 200 m warning
+zone and a 150 m merge taper. In the editor, the <code>urban_construction_zone</code>
+action starts from these values.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>    <span class="n">URBAN_CONSTRUCTION</span><span class="p">,</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>    <span class="n">ConstructionSettings</span><span class="p">,</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>    <span class="n">ConstructionZoneAction</span><span class="p">,</span>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="p">)</span>
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>
+<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="c1"># The 300 m approach to an intersection, closed from the right.</span>
+<a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="bp">self</span><span class="o">.</span><span class="n">register_pre_tick</span><span class="p">(</span><span class="n">ConstructionZoneAction</span><span class="p">(</span><span class="mi">1043</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">300.0</span><span class="p">,</span> <span class="n">URBAN_CONSTRUCTION</span><span class="p">))</span>
+<a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a><span class="c1"># Closed from the left, with a shorter merge taper and three signs before it.</span>
+<a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a><span class="bp">self</span><span class="o">.</span><span class="n">register_pre_tick</span><span class="p">(</span>
+<a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a>    <span class="n">ConstructionZoneAction</span><span class="p">(</span>
+<a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a>        <span class="mi">1051</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">200.0</span><span class="p">,</span>
+<a id="__codelineno-4-13" name="__codelineno-4-13" href="#__codelineno-4-13"></a>        <span class="n">ConstructionSettings</span><span class="p">(</span>
+<a id="__codelineno-4-14" name="__codelineno-4-14" href="#__codelineno-4-14"></a>            <span class="n">layout</span><span class="o">=</span><span class="s2">"urban"</span><span class="p">,</span> <span class="n">spacing</span><span class="o">=</span><span class="mf">10.0</span><span class="p">,</span> <span class="n">warning_zone_length</span><span class="o">=</span><span class="mf">200.0</span><span class="p">,</span>
+<a id="__codelineno-4-15" name="__codelineno-4-15" href="#__codelineno-4-15"></a>            <span class="n">warning_sign_offset</span><span class="o">=</span><span class="mf">2.0</span><span class="p">,</span> <span class="n">side</span><span class="o">=</span><span class="s2">"left"</span><span class="p">,</span>
+<a id="__codelineno-4-16" name="__codelineno-4-16" href="#__codelineno-4-16"></a>            <span class="n">merge_distance</span><span class="o">=</span><span class="mf">80.0</span><span class="p">,</span> <span class="n">merge_signs</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span>
+<a id="__codelineno-4-17" name="__codelineno-4-17" href="#__codelineno-4-17"></a>        <span class="p">),</span>
+<a id="__codelineno-4-18" name="__codelineno-4-18" href="#__codelineno-4-18"></a>    <span class="p">)</span>
+<a id="__codelineno-4-19" name="__codelineno-4-19" href="#__codelineno-4-19"></a><span class="p">)</span>
+</code></pre></div>
 <h2 id="coordinate-conventions">Coordinate conventions<a class="headerlink" href="#coordinate-conventions" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>Triggers and NADE</strong>: everything is in the Lanelet2 map frame: x East,
@@ -2585,6 +2692,34 @@ reopened and the runner takes the props away with every other.</p>
 <td>Construction zones: SUMO vtypes for cones, barriers and signs; full_lane only closes the lane</td>
 <td>CARLA props (<code>static.prop.*</code>), always placed, plus the lane closed to the backend (#402)</td>
 </tr>
+<tr>
+<td><code>UrbanConstructionAdversity</code>: a corridor of edges across <code>num_intersections</code>, found by the edges' road priority, with a merge taper before each intersection</td>
+<td>One approach per <code>ConstructionZoneAction</code> (<code>layout="urban"</code>), from <code>start_s</code> to the intersection at <code>end_s</code>; a corridor is one action per approach (#445)</td>
+</tr>
+<tr>
+<td>Urban work zone: a barrier added beside every fifth cone</td>
+<td>The barrier replaces that cone, so the two props do not overlap</td>
+</tr>
+<tr>
+<td>Urban work zone up to the merge taper's start inclusive, where the taper's first cone stands too</td>
+<td>Short of it, so the two props do not overlap</td>
+</tr>
+<tr>
+<td>Urban spacings hard-coded: warning signs 30 m, work zone 10 m, merge taper 5 m; the merge taper always linear</td>
+<td><code>warning_zone_spacing</code>, <code>spacing</code> and half <code>spacing</code> (the same with <code>URBAN_CONSTRUCTION</code>); <code>taper_type="curved"</code> shapes the merge taper</td>
+</tr>
+<tr>
+<td>Urban warning zone of no length: one sign at the edge's start</td>
+<td>No warning zone, no sign</td>
+</tr>
+<tr>
+<td>Urban signs: always on the right shoulder; merge signs named by <code>merge_signs</code> texts</td>
+<td>On the closed side's shoulder; <code>merge_signs</code> is how many, all the same prop</td>
+</tr>
+<tr>
+<td>Urban construction vehicles and workers (excavator, dump trucks, warning vehicles)</td>
+<td>Not placed</td>
+</tr>
 </tbody>
 </table>
 
@@ -2609,7 +2744,7 @@ reopened and the runner takes the props away with every other.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 27, 2026 01:48:11 UTC"><span class="timeago" datetime="2026-10-27T01:48:11+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 27, 2026 01:48:11 UTC">2026-10-27</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 27, 2026 11:51:38 UTC"><span class="timeago" datetime="2026-10-27T11:51:38+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 27, 2026 11:51:38 UTC">2026-10-27</span>
   </span>
 
     
