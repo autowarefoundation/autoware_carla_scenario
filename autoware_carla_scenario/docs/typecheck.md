@@ -4146,20 +4146,22 @@ What Codon 0.19 needs that Python does not, beyond
 - **A Protocol that is only read through** (`batch_report`'s `_Result` and
   `_Status`, the results it summarises): each property and method has a
   typed stub body (`return ""`, `return False`, `return 0.0`, `return
-  None`, `return {}`, `return list[_Status]()`) instead of `...`, which Codon
-  types as returning `None` (`'NoneType' object has no attribute
-  '__iter__'`); a bare `[]` would be a `List[NoneType]`. Nothing instantiates
-  or calls the Protocol at run time, so the bodies change nothing there; an
-  `abc.abstractmethod` on a `@property` is a Codon syntax error, so an ABC is
-  no alternative. An attribute a result may lack (`rerun_recording`) is a
-  property of the Protocol, read in `try:` / `except AttributeError:`, since
-  Codon's `getattr()` takes no default. The module imports `Collection`,
-  `Mapping` and `Sequence` from `typing` (with `# noqa: UP035`), since Codon
-  has no `collections.abc`, and writes `batch_results.json` as text a member
-  at a time, each value through `json.dumps(..., indent=2)`, since an entry
-  merges the result's `to_dict()` (`dict[str, Any]`) with its own keys;
-  `test_batch_report.py` holds that text to what `json.dumps` of the whole
-  list gives.
+  None`, `return list[_Status]()`, `return dict[str, Any]()`) instead of
+  `...`, which Codon types as returning `None` (`'NoneType' object has no
+  attribute '__iter__'`); a bare `[]` or `{}` would be a `List[NoneType]` or
+  `Dict[NoneType,NoneType]`. Nothing instantiates or calls the Protocol at
+  run time, so the bodies change nothing there; an `abc.abstractmethod` on a
+  `@property` is a Codon syntax error, so an ABC is no alternative. An
+  attribute a result may lack (`rerun_recording`) is a property of the
+  Protocol, read in `try:` / `except AttributeError:`, since Codon's
+  `getattr()` takes no default. The module imports `Collection`, `Mapping`
+  and `Sequence` from `typing` (with `# noqa: UP035`), since Codon has no
+  `collections.abc`, and writes `batch_results.json` as text a member at a
+  time, each member through `json.dumps({key: value}, indent=2)`, since an
+  entry was a `**` merge of the result's `to_dict()` (`dict[str, Any]`) with
+  its own keys. A key both set is written once, where the merge put it and
+  with the value it kept; `test_batch_report.py` holds the text to what
+  `json.dumps` of the merged entries gives.
 - **A registry of classes at module level** (`sweeper.constraints`'
   `_LEAF_REGISTRY`, `sweeper.bindings`' `_BINDING_REGISTRY`): Codon holds no
   class as a value, and cannot type `dict[str, type]`. Declare it

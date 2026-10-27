@@ -59,7 +59,7 @@ class _Result(Protocol):
         return None
 
     def to_dict(self) -> dict[str, Any]:
-        return {}
+        return dict[str, Any]()
 
 
 def _recording(result: _Result) -> str | None:
@@ -71,31 +71,17 @@ def _recording(result: _Result) -> str | None:
     return None if recording is None else str(recording)
 
 
-#: The indent of a member of an entry of ``batch_results.json``.
-_MEMBER_INDENT = "    "
+def _member(member_json: str) -> str:
+    """A member of an entry, laid out at an entry's depth.
 
-
-def _member(key: str, value_json: str) -> str:
-    """The line ``"key": value`` of an entry, *value_json* re-indented to it.
-
-    *value_json* is ``json.dumps(value, indent=2, ensure_ascii=False)``.
+    *member_json* is ``json.dumps({key: value}, indent=2,
+    ensure_ascii=False)``, a dict of the one member (made by the caller:
+    the library check cannot call a function with a value of any type).  The
+    result is what ``json.dumps(entries, indent=2, ensure_ascii=False)``
+    gives for the member: its lines between the braces, indented one level
+    further.
     """
-    value = value_json.replace("\n", "\n" + _MEMBER_INDENT)
-    return f"{_MEMBER_INDENT}{json.dumps(key, ensure_ascii=False)}: {value}"
-
-
-def _result_members(result: _Result) -> list[str]:
-    """*result*'s ``to_dict()`` members at an entry's indent, as one item.
-
-    The members' lines already end in their commas, so they are one item of
-    the entry's members (none for an empty dict).
-    """
-    text = json.dumps(result.to_dict(), indent=2, ensure_ascii=False)
-    # "{}" for an empty dict; otherwise "{", the members' lines, "}".
-    lines = text.split("\n")[1:-1]
-    if not lines:
-        return []
-    return ["\n".join("  " + line for line in lines)]
+    return "\n".join("  " + line for line in member_json.split("\n")[1:-1])
 
 
 def write_batch_result_json(
@@ -126,24 +112,50 @@ def write_batch_result_json(
     json_path = output_dir / "batch_results.json"
     entries: list[str] = []
     for i, (name, result) in enumerate(zip(names, results)):
-        members = [_member("scenario", json.dumps(name, ensure_ascii=False))]
+        # The entry was the dict merge {"scenario": name, "overrides": ...,
+        # **result.to_dict(), "error": True, "rerun_error": ...}.  A key of
+        # the result's dict that the entry also sets is written once, as the
+        # merge kept it: in its first place, with its last value.
+        own: dict[str, str] = {
+            "scenario": _member(
+                json.dumps({"scenario": name}, indent=2, ensure_ascii=False)
+            )
+        }
         if overrides is not None:
-            members.append(
-                _member(
-                    "overrides",
-                    json.dumps(overrides[i], indent=2, ensure_ascii=False),
-                )
+            own["overrides"] = _member(
+                json.dumps({"overrides": overrides[i]}, indent=2, ensure_ascii=False)
             )
-        members.extend(_result_members(result))
         if i in errored:
-            members.append(_member("error", "true"))
+            own["error"] = _member(
+                json.dumps({"error": True}, indent=2, ensure_ascii=False)
+            )
         if i in failed_recordings:
-            members.append(
-                _member(
-                    "rerun_error",
-                    json.dumps(failed_recordings[i], ensure_ascii=False),
+            own["rerun_error"] = _member(
+                json.dumps(
+                    {"rerun_error": failed_recordings[i]}, indent=2, ensure_ascii=False
                 )
             )
+        data = result.to_dict()
+        members: list[str] = []
+        for key in ("scenario", "overrides"):
+            if key in own and key in data:
+                members.append(
+                    _member(json.dumps({key: data[key]}, indent=2, ensure_ascii=False))
+                )
+            elif key in own:
+                members.append(own[key])
+        for key, value in data.items():
+            if key in ("scenario", "overrides") and key in own:
+                continue
+            if key in ("error", "rerun_error") and key in own:
+                members.append(own[key])
+            else:
+                members.append(
+                    _member(json.dumps({key: value}, indent=2, ensure_ascii=False))
+                )
+        for key in ("error", "rerun_error"):
+            if key in own and key not in data:
+                members.append(own[key])
         entries.append("  {\n" + ",\n".join(members) + "\n  }")
     text = "[\n" + ",\n".join(entries) + "\n]" if entries else "[]"
     json_path.write_text(text, encoding="utf-8")
