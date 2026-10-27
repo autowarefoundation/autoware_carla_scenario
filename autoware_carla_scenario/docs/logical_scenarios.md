@@ -344,6 +344,14 @@ far enough away.
   one map only.
 * A route search and a lanelet constraint search cannot both drive the
   expansion (validation error).
+* A vehicle other than the ego with `vehicle_type: auto` and a `size`
+  (`{length, width}`, m -- a recorded box, say) is the vehicle of the running
+  CARLA whose bounding box is nearest that size, chosen when it is spawned:
+  each candidate (a car, van, truck or bus; no emergency vehicle) is spawned
+  once out of sight to read its box, so the choice follows the server's
+  version and assets rather than a table written for one (`entity.fit`).
+  With none fitting, it is the kind's default. `auto` on a pedestrian, or
+  without a size, is a validation error.
 
 ## Matching semantics
 

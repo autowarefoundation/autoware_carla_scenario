@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal, Optional
 
 from .models import (
+    AUTO_MODEL,
     SIGNAL_STATE_NAMES,
     ActionNode,
     BindingRef,
@@ -854,6 +855,22 @@ def _check_model(out: _Collector, path: str, entity: Entity) -> None:
     failed spawn against a live server.
     """
     wanted = "walker." if entity.kind == "pedestrian" else "vehicle."
+    if entity.vehicle_type == AUTO_MODEL:
+        if entity.kind != "vehicle":
+            out.error(
+                f"{path}.vehicle_type",
+                f"Only a vehicle other than the ego is chosen by its size "
+                f"(vehicle_type: {AUTO_MODEL}); a {entity.kind} names its blueprint.",
+                entity.id,
+            )
+        elif entity.size is None:
+            out.error(
+                f"{path}.size",
+                f"vehicle_type: {AUTO_MODEL} is the vehicle nearest the entity's "
+                "size, and this one has none.",
+                entity.id,
+            )
+        return
     if not entity.vehicle_type.startswith(wanted):
         out.error(
             f"{path}.vehicle_type",

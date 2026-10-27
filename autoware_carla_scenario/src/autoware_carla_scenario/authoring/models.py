@@ -47,7 +47,9 @@ __all__ = [
     "ConstraintNode",
     "CountRange",
     "EgoDriver",
+    "AUTO_MODEL",
     "Entity",
+    "EntitySize",
     "DEFAULT_MODELS",
     "EntityKind",
     "GoalSpec",
@@ -394,6 +396,19 @@ class GoalSpec(LaneletChoice):
     s: float = 0.0
 
 
+#: An entity's ``vehicle_type`` that names no blueprint: the vehicle of the
+#: running CARLA nearest the entity's :attr:`Entity.size`, chosen when it is
+#: spawned (:mod:`autoware_carla_scenario.entity.fit`).
+AUTO_MODEL = "auto"
+
+
+class EntitySize(_Node):
+    """The size of the box an entity is to fill, in metres."""
+
+    length: float = Field(gt=0.0)
+    width: float = Field(gt=0.0)
+
+
 class Entity(_Node):
     """A vehicle taking part in the scenario.
 
@@ -410,12 +425,19 @@ class Entity(_Node):
     thing it can be asked to do is walk -- so :attr:`vehicle_type` follows the
     kind's default (see :data:`DEFAULT_MODELS`) and the actions it may perform
     are the ones whose spec names its kind.
+
+    A vehicle other than the ego may have ``vehicle_type: auto`` and a
+    :attr:`size`: it is then the vehicle of the running CARLA whose bounding
+    box is nearest that size, chosen when it is spawned -- whatever the
+    server's version and assets -- and the kind's default where there is none.
     """
 
     id: str
     kind: EntityKind = "vehicle"
     title: str = ""
     vehicle_type: str = "vehicle.mini.cooper"
+    #: The box a ``vehicle_type: auto`` vehicle is to fill (a recorded one).
+    size: Optional[EntitySize] = None
     initial_speed_kmh: float = 0.0
     spawn: SpawnSpec = Field(default_factory=SpawnSpec)
     #: Which stack drives the ego.  Only the ego is driven by anything the
