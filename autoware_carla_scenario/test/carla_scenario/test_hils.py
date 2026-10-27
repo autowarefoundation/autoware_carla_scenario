@@ -1105,6 +1105,74 @@ def test_a_failed_runs_ego_does_not_start_a_scenario_of_the_bridges(
         ecu.close()
 
 
+def test_an_ended_runs_ego_is_ignored_while_it_lives(
+    world: _World, dbc: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Issue #644, for a run that ends normally: its ego, still in the world
+    once the link closes, does not start a scenario of the bridge's own.
+    Once that actor is gone the bridge forgets it, so an actor CARLA gives
+    the same id afterwards does."""
+    from autoware_carla_scenario.entity.hils_entity import HilsEgoConfig, HilsEgoEntity
+    from autoware_carla_scenario.hils import bridge as bridge_module
+
+    monkeypatch.setattr(bridge_module, "_EGO_SCAN_INTERVAL_S", 0.0)
+    url = _mem()
+    ecu = _Ecu(url, dbc)
+    bridge = bridge_module.HilsBridge(
+        parse_config(_hils_config(url, dbc)), carla_module=_carla(world)
+    )
+    bridge.startup()
+    bridge.connect()
+    try:
+        host, port = bridge.link_address  # type: ignore[misc]
+        entity = HilsEgoEntity(HilsEgoConfig(host=host, port=port))
+        entity._vehicle = world.actors[0]  # type: ignore[assignment]
+        entity.on_scenario_start(world)  # type: ignore[arg-type]
+
+        def ready() -> bool:
+            bridge.handle_events()
+            entity.on_tick(world, 0.0)  # type: ignore[arg-type]
+            return entity.is_initialized
+
+        assert _until(ready)
+        # The run ends: it waits for the bridge's ``ended``, then closes.
+        ending = threading.Thread(target=entity.on_scenario_end, args=(world,))
+        ending.start()
+
+        def served(condition: Callable[[], bool]) -> Callable[[], bool]:
+            def check() -> bool:
+                bridge.handle_events()
+                return condition()
+
+            return check
+
+        assert _until(served(lambda: not ending.is_alive()))
+        ending.join()
+        assert _until(served(lambda: not bridge._session))
+        assert not bridge.active
+
+        # The ego stays in the world: ticks do not start a scenario for it.
+        for _ in range(3):
+            world.tick()
+        for _ in range(3):
+            assert bridge.step(0.5)
+            assert not bridge.active
+        assert _settled(lambda: ecu.names().count(("Wake", {"On": 1}))) == 1
+
+        # The ego is destroyed; an actor with its id appears later.
+        world.actors[0].is_alive = False
+        world.tick()
+        assert bridge.step(0.5)
+        assert not bridge.active
+        world.actors[0].is_alive = True
+        world.tick()
+        assert bridge.step(0.5)
+        assert bridge.active and bridge.ego is world.actors[0]
+    finally:
+        bridge.close()
+        ecu.close()
+
+
 def test_without_a_run_the_ego_appearing_starts_the_scenario(
     world: _World, dbc: Path
 ) -> None:
