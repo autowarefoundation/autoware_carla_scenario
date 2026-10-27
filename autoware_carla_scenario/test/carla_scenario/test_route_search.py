@@ -832,3 +832,48 @@ def test_a_junction_segment_bounds_the_length_of_the_egos_way(
         ],
     )
     assert bool(matches) is found
+
+
+class TestJunctionTrafficLights:
+    """The lights of a route junction's paths, on the map the run is on."""
+
+    @staticmethod
+    def _frame(road: tuple[Any, Any]) -> Any:
+        from autoware_carla_scenario.route.frame import RouteFrame
+
+        (match,) = _find(
+            road,
+            segments=[
+                _lane(length={"max": 50}),
+                _junction(turn="straight", traffic_light="yes"),
+            ],
+        )
+        return RouteFrame(match, *road)
+
+    @pytest.mark.parametrize(
+        ("approach", "turn", "lights"),
+        [
+            # The W road's light: on its approach and its junction lanelets.
+            ("same", None, [rm.TRAFFIC_LIGHT]),
+            ("same", "straight", [rm.TRAFFIC_LIGHT]),
+            ("same", "right", [rm.TRAFFIC_LIGHT]),
+            # The ego goes straight on: its own way is not a left turn, but
+            # its lane turning left is.
+            ("same", "left", [rm.TRAFFIC_LIGHT]),
+            # Nothing else is signalised.
+            ("right", None, []),
+            ("opposite", "straight", []),
+        ],
+    )
+    def test_the_lights_of_a_path(
+        self, road: tuple[Any, Any], approach: str, turn: Any, lights: list[int]
+    ) -> None:
+        from autoware_carla_scenario.route.positions import junction_traffic_lights
+
+        assert junction_traffic_lights(self._frame(road), 0, approach, turn) == lights
+
+    def test_a_junction_the_route_lacks(self, road: tuple[Any, Any]) -> None:
+        from autoware_carla_scenario.route.positions import junction_traffic_lights
+
+        with pytest.raises((ValueError, IndexError)):
+            junction_traffic_lights(self._frame(road), 3, "same", None)

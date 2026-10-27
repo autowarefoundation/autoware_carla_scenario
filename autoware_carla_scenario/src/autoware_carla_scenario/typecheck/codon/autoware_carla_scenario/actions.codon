@@ -50,24 +50,29 @@ class TickTiming:
 class TrafficLightTarget:
     value: str
     ALL: ClassVar[TrafficLightTarget] = TrafficLightTarget("all")
+    ROUTE: ClassVar[TrafficLightTarget] = TrafficLightTarget("route")
 
     # Enum's name (#307): Codon has no Enum to give a framework enum one.
     @property
     def name(self) -> str:
         if self == TrafficLightTarget.ALL:
             return "ALL"
+        if self == TrafficLightTarget.ROUTE:
+            return "ROUTE"
         raise ValueError("not a member of TrafficLightTarget")
 
     # What `for m in E`, `list(E)` and `E["A"]` read: the checker rewrites
     # them (#437). Declared in Python's order, as the test checks.
     @staticmethod
     def _acs_members() -> List[TrafficLightTarget]:
-        return [TrafficLightTarget.ALL]
+        return [TrafficLightTarget.ALL, TrafficLightTarget.ROUTE]
 
     @staticmethod
     def _acs_by_name(name: str) -> TrafficLightTarget:
         if name == "ALL":
             return TrafficLightTarget.ALL
+        if name == "ROUTE":
+            return TrafficLightTarget.ROUTE
         raise KeyError(name)
 
 
@@ -507,8 +512,10 @@ class TrafficSignalAction(BaseAction):
 
     def __init__(self, state: int, lanelet2_traffic_light_ids = None, condition = None,
                  timing: TickTiming = TickTiming("pre_tick"), *_kw,
-                 label: str = "traffic_signal", once: bool = True, freeze: bool = True):
-        _keyword_only(_kw, "TrafficSignalAction(): label, once and freeze")
+                 label: str = "traffic_signal", once: bool = True, freeze: bool = True,
+                 route_junction: int = 0, route_approach: str = "same", route_turn: str = "any"):
+        _keyword_only(_kw, "TrafficSignalAction(): label, once, freeze, route_junction, "
+                      "route_approach and route_turn")
         _expect_traffic_light_ids(lanelet2_traffic_light_ids)
         super().__init__(label, condition, timing, once=once)
 

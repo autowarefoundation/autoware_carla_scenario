@@ -287,6 +287,28 @@ assertion, inside `all`/`any`/`not`, and as a **waypoint condition**
 (`advance_conditions`) -- a vertex departs when the ego has progressed to the
 recorded point.
 
+### Traffic lights: the `traffic_signal` card on a route junction
+
+A **Set Traffic Signal** card with `target: route` sets the lights of a path
+through a junction of the route, not lights named by their Lanelet2 ids: the
+paths through junction `route_junction` (from 0) that enter it from
+`route_approach` (`same` -- the ego's own approach --, `left`, `right`,
+`opposite`) and turn `route_turn` (`any`, `left`, `right`, `straight`). Their
+lights are the traffic light regulatory elements on each such path's first
+junction lanelet and on the lanelet entering it (for `same`, on the ego's own
+way through the junction and the lanelet it enters on too, when it turns
+so), found on the map the run is on when the card fires. A junction the route
+search does not have is a validation error; a path with no light there is
+said and changes nothing. `freeze` (default on) keeps CARLA's own cycle off
+those lights.
+
+```yaml
+- id: ego_light_red        # no trigger: on the first tick
+  type: traffic_signal
+  params: {state: Red, target: route, route_junction: 0, route_approach: same,
+           route_turn: any, freeze: true}
+```
+
 ### Bringing an entity in: the `spawn` card
 
 An entity spawned `hidden` is brought into the scene by a **Spawn** card

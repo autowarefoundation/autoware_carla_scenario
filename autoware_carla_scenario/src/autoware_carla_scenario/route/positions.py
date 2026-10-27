@@ -36,7 +36,7 @@ from .frame import RouteFrame
 if TYPE_CHECKING:
     from lanelet2.core import ConstLanelet
 
-__all__ = ["RoutePose", "resolve_route_pose", "route_base_s"]
+__all__ = ["RoutePose", "junction_traffic_lights", "resolve_route_pose", "route_base_s"]
 
 RoutePose = Union[
     RouteLanePose,
@@ -196,6 +196,49 @@ def _crossing(pose: RouteCrossingPose, frame: RouteFrame) -> Lanelet2Pose:
     return Lanelet2Pose(
         lanelet_id=lanelet_id, s=along, t=float(pose.offset), heading=_yaw(pose.yaw)
     )
+
+
+def junction_traffic_lights(
+    frame: RouteFrame, junction: int, approach: str, turn: Optional[str]
+) -> list[int]:
+    """The traffic lights (regulatory element ids) of the paths through
+    junction *junction* of the route that enter it from *approach* and turn
+    *turn* (``None``: any way) -- on their first junction lanelet and on the
+    lanelet entering it; for ``same``, the ego's own way too when it turns
+    so.  In order found, each once.
+
+    Raises:
+        ValueError: If the route has no such junction.
+    """
+    from .geometry import MapFeatures  # noqa: PLC0415
+    from .search import junction_turn  # noqa: PLC0415
+
+    way, entry, _exit = frame.junction_way(junction)
+    features = frame.features
+    lanelets: list[ConstLanelet] = []
+    if approach == "same" and (turn is None or junction_turn(features, way) == turn):
+        for own in way:
+            lanelets.append(own)
+        if entry is not None:
+            entering: ConstLanelet = entry
+            lanelets.append(entering)
+    for member in features.junction_members(way):
+        if member.approach != approach:
+            continue
+        if turn is not None and member.turn != turn:
+            continue
+        lanelets.append(member.lanelet)
+        before = features.straightest_previous(member.lanelet)
+        if before is not None:
+            previous: ConstLanelet = before
+            lanelets.append(previous)
+    ids: list[int] = []
+    for lanelet in lanelets:
+        for element in lanelet.regulatoryElements:
+            key = int(element.id)
+            if MapFeatures.is_traffic_light(element) and key not in ids:
+                ids.append(key)
+    return ids
 
 
 def _crosswalk(pose: RouteCrosswalkPose, frame: RouteFrame) -> MapPose:

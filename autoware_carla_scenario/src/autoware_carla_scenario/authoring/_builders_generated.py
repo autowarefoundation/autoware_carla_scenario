@@ -1211,6 +1211,8 @@ def build_traffic_signal_action(
         lanelet2_traffic_light_ids = TrafficLightTarget.ALL
     elif params["target"] == "ids":
         lanelet2_traffic_light_ids = params["lanelet2_traffic_light_ids"]
+    elif params["target"] == "route":
+        lanelet2_traffic_light_ids = TrafficLightTarget.ROUTE
     else:  # pragma: no cover -- the generator checks the cases are exhaustive
         raise ValueError(f"traffic_signal: unknown target {params['target']!r}")
     return TrafficSignalAction(
@@ -1221,6 +1223,9 @@ def build_traffic_signal_action(
         label=compiled.label,
         once=compiled.node.once,
         freeze=params["freeze"],
+        route_junction=params["route_junction"],
+        route_approach=str(params["route_approach"]),
+        route_turn=str(params["route_turn"]),
     )
 
 
