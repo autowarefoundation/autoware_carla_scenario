@@ -52,3 +52,7 @@ file://.*
 ^https://s3\.us-east-005\.backblazeb2\.com/carla-releases/Linux/Dev/$
 # ISO answers link checkers with 403; the standard's page is there.
 ^https://www\.iso\.org/standard/
+# The web viewer's CDN and npm registry URLs are templates (`{version}` is
+# filled in from the installed rerun), not links (#572).
+^https://unpkg\.com/@rerun-io/web-viewer@(%7B|\{)version(%7D|\})$
+^https://registry\.npmjs\.org/@rerun-io/web-viewer/(%7B|\{)version(%7D|\})$
