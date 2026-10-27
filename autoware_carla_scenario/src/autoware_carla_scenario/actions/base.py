@@ -11,6 +11,7 @@ from ..action_state import ActionState
 from ..conditions.base import BaseCondition
 from ..conditions.always_true import AlwaysTrueCondition
 from ..adversity_event import AdversityEvent
+from ..waypoint_arrival import WaypointArrival
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
@@ -173,6 +174,18 @@ class BaseAction(ABC):
         """The adversities the action sampled since it was last asked, for
         the run's log; none unless it samples them."""
         none: list[AdversityEvent] = []
+        return none
+
+    def take_waypoint_arrivals(self) -> list[WaypointArrival]:
+        """The timed waypoints reached since the last call, for the run's
+        log; none unless the action paces a route."""
+        none: list[WaypointArrival] = []
+        return none
+
+    def take_despawns(self) -> list[tuple[str, int]]:
+        """The ``(role, actor id)`` removed since the last call, for the
+        run's log; none unless the action removes entities."""
+        none: list[tuple[str, int]] = []
         return none
 
     @property

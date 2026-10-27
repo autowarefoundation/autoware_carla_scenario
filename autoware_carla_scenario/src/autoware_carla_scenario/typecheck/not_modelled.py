@@ -460,26 +460,14 @@ NOT_MODELLED_MEMBERS: dict[str, dict[str, str]] = {
     },
     "SpawnAction": {
         "take_spawns": (
-            "the entities brought in, for the runner's log; a scenario reads "
-            "the log, not the action"
+            "the entities brought in, kept for a log; the runner does not read "
+            "it (the trajectory log records despawns, not spawns), and neither "
+            "does a scenario"
         ),
         "apply": (
             "spawns at once with a blueprint library and a ground lookup shared "
             "by many props, what ConstructionZoneAction does; a scenario "
             "registers the action instead"
-        ),
-    },
-    "DespawnAction": {
-        "take_despawns": (
-            "the entities removed, which the runner reads for the trajectory "
-            "log; a scenario reads the log, not the action"
-        ),
-    },
-    "RoutingAction": {
-        "take_waypoint_arrivals": (
-            "the timed waypoints reached, as waypoint_arrival's WaypointArrival, "
-            "which the runner reads for the trajectory log; a scenario reads "
-            "the log, not the action"
         ),
     },
     "AdversarialTrafficAction": {

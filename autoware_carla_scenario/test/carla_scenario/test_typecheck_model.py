@@ -55,6 +55,7 @@ from autoware_carla_scenario import (
 )
 from autoware_carla_scenario import rerun as rerun_module
 from autoware_carla_scenario import t4 as t4_module
+from autoware_carla_scenario import waypoint_arrival
 from autoware_carla_scenario.autoware_bridge import base as bridge_base
 from autoware_carla_scenario.autoware_bridge import grpc_server as bridge_grpc_server
 from autoware_carla_scenario.autoware_stack import devcontainer as stack_devcontainer
@@ -435,6 +436,8 @@ _BOUNDARY: dict[str, tuple[str, Any]] = {
     },
     "RouteFrame": ("route", route_frame.RouteFrame),
     "TrajectorySample": ("trajectory", trajectory_model.TrajectorySample),
+    # What BaseAction.take_waypoint_arrivals() returns.
+    "WaypointArrival": ("actions", waypoint_arrival.WaypointArrival),
     "to_map_frame": ("coordinate", coordinate_transform.to_map_frame),
     "reset_probes": ("odd", odd_probes.reset_probes),
     "resolve_odd": ("odd", odd_registry.resolve_odd),

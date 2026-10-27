@@ -54,7 +54,7 @@ import math
 import random
 from dataclasses import dataclass
 from enum import Enum
-from typing import TYPE_CHECKING, Optional
+from typing import Optional
 
 from ..route.geometry import MapFeatures
 from ..trajectory.relative_lane import _centreline, _point_at, _start_heading, _turn
@@ -78,9 +78,6 @@ from .observation import (
     SignalState,
     VehicleObservation,
 )
-
-if TYPE_CHECKING:
-    pass
 
 __all__ = [
     "DEFAULT_THRESHOLDS",

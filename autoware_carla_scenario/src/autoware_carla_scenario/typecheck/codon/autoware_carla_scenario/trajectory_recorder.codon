@@ -55,8 +55,8 @@ class TrajectoryRecorder:
     def record_adversity(self, label: str, event) -> None:
         raise NotImplementedError()
 
-    # The runner hands these over in the `else` branch of `if TYPE_CHECKING:`:
-    # declared, taken as they come.
+    # The runner's waypoint arrivals (BaseAction.take_waypoint_arrivals()),
+    # NPC collisions and falls: taken as they come, as the adversity events.
     def record_waypoint_arrival(self, label: str, arrival) -> None:
         raise NotImplementedError()
 

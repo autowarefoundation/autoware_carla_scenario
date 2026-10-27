@@ -2408,8 +2408,8 @@ driver's configs and client interface, trajectory follower and observations
 `driver.geometry`), and the `autoware_bridge`, `autoware_stack`, `entity`,
 `driver`, `maps` and `coverage` packages themselves, whose `__init__` re-exports what is not checked
 through models of it (see *A class a checked package only re-exports*
-below). 105
-functions and methods of those modules are `UNCALLED` (24 of them
+below). 104
+functions and methods of those modules are `UNCALLED` (23 of them
 protected helpers, see *What is compiled* below): most of them a
 condition's `get_details()` or a backend's `describe()`, what takes a traffic
 backend's options node (`Mapping[str, Any]`), what reads a route search, a
@@ -2422,9 +2422,7 @@ framework pin, a dict of str and bool values (`Pin.uv_source()`), the two member
 the run-time wrapper of `TrajectoryVertex.__init__`
 (`_refusing_vertex_times`), the road-marking pattern of the stop lines, which returns a `refers`
 parameter (any of lanelet2's primitives) as a line string
-(`utils.stop_line._road_marking_stop_lines()`), what moves a `Local` map's
-points to their `local_x`/`local_y` tags and rebuilds the map, which the
-lanelet2 model has no setters for (`coordinate.projection._read_local_tags()`),
+(`utils.stop_line._road_marking_stop_lines()`),
 `signals.build_controllers()`, which reads
 the authoring package's pydantic specs, what builds the `scenario_bridge`
 node's command from its ROS parameters (`bridge_ros_args()`,
@@ -2449,8 +2447,8 @@ three groups. Many fit more than one (about 77 import what Codon cannot
 compile, 31 build on an excluded module and 20 hold values Codon has no type
 for), so each is counted once, in the first group that fits it:
 
-- **77 import what Codon cannot compile**: pyxodr,
-  pydantic, pickle, lxml, grpc, omegaconf and hydra, yaml, openodd and hilspy (Rust extensions), cv2,
+- **77 import what Codon cannot compile**:
+  pydantic, pickle, grpc, omegaconf and hydra, yaml, openodd and hilspy (Rust extensions), cv2,
   cyclonedds (`ros2.cyclone` and `ros2.messages`, the ROS 2 ego's DDS
   transport and its message types), or
   a standard module Codon lacks (`socket`, `inspect`, `concurrent.futures`,
@@ -2459,8 +2457,7 @@ for), so each is counted once, in the first group that fits it:
   `subprocess`, `tempfile`, `threading`, `dataclasses`, `importlib.metadata`
   or `urllib.parse` than their shims declare), at module level or inside a function the check calls. This is
   the tooling around a run (the editor, the UI, authoring, the sweeper's
-  expansion, Hydra sweeper and map loader, the map caches (the map
-  repositories and the pyxodr road network), the Autoware
+  expansion and Hydra sweeper, the pyxodr road network cache, the Autoware
   stack's dev container, the
   record of a run's environment, the SLURM launcher's submitting side,
   its worker and its manifest, the Rerun
