@@ -45,6 +45,7 @@ from ..entity.pedestrian_entity import DEFAULT_WALKING_SPEED_MPS, PedestrianEnti
 from ..entity.registry import find_pedestrian_entity, find_vehicle_entity
 from ..entity_role import EntityRole
 from ..traffic.driven import BackendDriven
+from ..traffic.final_approach import lane_changes
 from ..trajectory.model import (
     ResolvedTrajectory,
     Trajectory,
@@ -96,11 +97,6 @@ _FINISH_STEP_M: float = 2.0
 #: Waypoints further apart (m) than this are joined along the lanes, not
 #: straight (_finish_points).
 _CHORD_M: float = 4.0
-#: A sideways step (m) between two points of a route this long or longer is a
-#: change to the lane beside.
-_LANE_STEP_M: float = 2.0
-#: Two stretches of a route run the same way within this (cosine, 15 deg).
-_PARALLEL_COS: float = math.cos(math.radians(15.0))
 #: How far (m) before such a change a stop_at_goal vehicle is driven itself.
 _BEFORE_LANE_CHANGE_M: float = 5.0
 #: A waypoint this far (m) off its lanes' middle leaves them; and how far
@@ -176,16 +172,22 @@ def _kerb_free(
     return off_the_kerb(carla_map, points, float(extent.x), float(extent.y), x, y)
 
 
-def _side(path: ResolvedTrajectory, s: float, x: float, y: float) -> float:
-    """How far (m) ``(x, y)`` lies left of *path* at *s* (negative: right)."""
-    at = path.at_distance(s)
+def _direction(path: ResolvedTrajectory, s: float) -> tuple[float, float]:
+    """The unit direction of *path* at *s*; ``(0, 0)`` where it has none."""
     ahead = path.at_distance(min(s + 0.5, path.length))
     behind = path.at_distance(max(s - 0.5, 0.0))
     hx, hy = ahead.x - behind.x, ahead.y - behind.y
     norm = math.hypot(hx, hy)
     if norm < 1e-6:
-        return 0.0
-    return (hx * (y - at.y) - hy * (x - at.x)) / norm
+        return 0.0, 0.0
+    return hx / norm, hy / norm
+
+
+def _side(path: ResolvedTrajectory, s: float, x: float, y: float) -> float:
+    """How far (m) ``(x, y)`` lies left of *path* at *s* (negative: right)."""
+    at = path.at_distance(s)
+    hx, hy = _direction(path, s)
+    return hx * (y - at.y) - hy * (x - at.x)
 
 
 def _beside(
@@ -193,13 +195,8 @@ def _beside(
 ) -> tuple[float, float, float]:
     """The point *side* m left of *path* at *s*."""
     at = path.at_distance(s)
-    ahead = path.at_distance(min(s + 0.5, path.length))
-    behind = path.at_distance(max(s - 0.5, 0.0))
-    hx, hy = ahead.x - behind.x, ahead.y - behind.y
-    norm = math.hypot(hx, hy)
-    if norm < 1e-6:
-        return at.x, at.y, at.z
-    return at.x - hy / norm * side, at.y + hx / norm * side, at.z
+    hx, hy = _direction(path, s)
+    return at.x - hy * side, at.y + hx * side, at.z
 
 
 def _finish_from(
@@ -209,21 +206,8 @@ def _finish_from(
     rest of the way itself: :data:`_FINISH_M`, or from before the route's last
     change to the lane beside -- which its driver, keeping to its lane, would
     leave to the last metres (vehicle_134, crossing behind a lorry)."""
-    xs, ys = path.xs, path.ys
-    last = -1
-    for i in range(1, len(xs) - 2):
-        hx, hy = xs[i] - xs[i - 1], ys[i] - ys[i - 1]
-        span = math.hypot(hx, hy)
-        on_x, on_y = xs[i + 2] - xs[i + 1], ys[i + 2] - ys[i + 1]
-        on = math.hypot(on_x, on_y)
-        if span < 1e-6 or on < 1e-6:
-            continue
-        # Stepped sideways from the line it was on, onto one running the same
-        # way: the lane beside (not a bend, nor the way back off a crossing).
-        across = (hx * (ys[i + 1] - ys[i]) - hy * (xs[i + 1] - xs[i])) / span
-        parallel = (hx * on_x + hy * on_y) / (span * on)
-        if abs(across) >= _LANE_STEP_M and parallel >= _PARALLEL_COS:
-            last = i
+    changes = lane_changes(list(path.xs), list(path.ys))
+    last = changes[-1][0] if changes else -1
     finish = _FINISH_M
     if last >= 0:
         before = path.length - path.vertex_distance(last) + _BEFORE_LANE_CHANGE_M

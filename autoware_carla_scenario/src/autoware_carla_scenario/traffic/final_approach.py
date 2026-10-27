@@ -78,6 +78,42 @@ _WEDGED_PROGRESS_M = 0.3
 _WEDGED_S = 1.5
 #: How long (s) more full throttle is tried before it stops where it is.
 _CLIMB_S = 3.0
+#: A sideways step (m) between two points of a path this long or longer is a
+#: crossing to the lane beside.
+LANE_STEP_M: float = 2.0
+#: A step (m) longer than this is no lane change: a gap a junction left.
+_LANE_CHANGE_SPAN_M: float = 12.0
+#: How near parallel (cosine, 15 deg) the path goes on after a lane change.
+_PARALLEL_COS: float = math.cos(math.radians(15.0))
+
+
+def lane_changes(xs: List[float], ys: List[float]) -> List[tuple[int, float]]:
+    """Where the path through ``(xs, ys)`` crosses to the lane beside: the
+    index of each point it steps sideways from by :data:`LANE_STEP_M` or
+    more, against the way it was going, no longer a step than
+    :data:`_LANE_CHANGE_SPAN_M`, and going on parallel to the way it came
+    (not a turn, nor the gap a junction left in it) -- with how far across
+    (m; positive to the left of the way in a right-handed frame, to the
+    right in CARLA's left-handed one)."""
+    out: List[tuple[int, float]] = []
+    for i in range(1, len(xs) - 2):
+        hx, hy = xs[i] - xs[i - 1], ys[i] - ys[i - 1]
+        span = math.hypot(hx, hy)
+        if span < 1e-6:
+            continue
+        hx, hy = hx / span, hy / span
+        sx, sy = xs[i + 1] - xs[i], ys[i + 1] - ys[i]
+        if math.hypot(sx, sy) > _LANE_CHANGE_SPAN_M:
+            continue
+        across = hx * sy - hy * sx
+        if abs(across) < LANE_STEP_M:
+            continue
+        ox, oy = xs[i + 2] - xs[i + 1], ys[i + 2] - ys[i + 1]
+        on = math.hypot(ox, oy)
+        if on < 1e-6 or (hx * ox + hy * oy) / on < _PARALLEL_COS:
+            continue
+        out.append((i, across))
+    return out
 
 
 class FinalApproach:
@@ -297,9 +333,6 @@ class FinalApproach:
         try:
             world = self._actor.get_world()
             own = int(self._actor.id)
-        except (AttributeError, RuntimeError):
-            return False  # no world to ask (a test double)
-        try:
             transform = self._actor.get_transform()
             behind = (
                 float(transform.location.x),
@@ -322,12 +355,9 @@ class FinalApproach:
         end = self._here + reach
         while distance < end - 1e-6:
             on_path = distance < path.length - 1e-6
-            span = (
-                min(_IN_WAY_STEP_M, path.length - distance)
-                if on_path
-                else end - distance
-            )
-            span = min(span, end - distance)
+            span = end - distance
+            if on_path:
+                span = min(span, _IN_WAY_STEP_M, path.length - distance)
             at = path.at_distance(distance, 1.0)
             # The piece's own direction, end to end: a short first segment
             # (to the route's next point) may point anywhere.
