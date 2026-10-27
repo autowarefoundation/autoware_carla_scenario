@@ -55,7 +55,9 @@ A scenario's life, with `ego.entity=hils`:
 
 Without a run connected (any other `ego.entity`), the bridge streams the ego to
 the ECUs all the same, and the ego appearing and disappearing start and end the
-scenario; the ECUs' commands then go nowhere.
+scenario; the ECUs' commands then go nowhere. The ego of a run that went away
+-- it failed, or ended -- can stay in the world a while: it does not start one,
+an ego that appears after it does.
 
 ## Running it
 

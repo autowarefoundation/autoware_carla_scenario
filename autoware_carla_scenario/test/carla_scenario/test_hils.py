@@ -1019,15 +1019,15 @@ def test_an_ecu_that_does_not_answer_fails_the_run(world: _World, dbc: Path) -> 
         entity = HilsEgoEntity(HilsEgoConfig(host=host, port=port))
         entity._vehicle = world.actors[0]  # type: ignore[assignment]
         entity.on_scenario_start(world)  # type: ignore[arg-type]
-        # The world is not ticked: the entity closes the link as the error
-        # comes, and a tick the bridge serves once the run is gone finds the
-        # ego still in the world and starts a scenario of its own (as a
-        # resident bridge does), which then stays active.
+        # The world ticks meanwhile, as the runner's does: the entity closes
+        # the link as the error comes, and a tick the bridge serves once the
+        # run is gone finds the ego still in the world (issue #644).
         assert _until(
             lambda: (
                 entity.on_tick(world, 0.0),  # type: ignore[func-returns-value, arg-type]
                 entity.termination_requested,
-            )[1]
+            )[1],
+            world,
         )
         assert "sent no EcuStatus with {'Ready': 1}" in str(entity.termination_reason)
         assert not entity.is_initialized
@@ -1038,6 +1038,69 @@ def test_an_ecu_that_does_not_answer_fails_the_run(world: _World, dbc: Path) -> 
     finally:
         bridge.stop()
         thread.join(timeout=5.0)
+        bridge.close()
+        ecu.close()
+
+
+def test_a_failed_runs_ego_does_not_start_a_scenario_of_the_bridges(
+    world: _World, dbc: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Issue #644: ticks queued when a failed run's link goes away find its ego
+    still in the world; the bridge must not start a scenario of its own for
+    it.  An ego that appears afterwards still does, as without a run."""
+    from autoware_carla_scenario.entity.hils_entity import HilsEgoConfig, HilsEgoEntity
+    from autoware_carla_scenario.hils import bridge as bridge_module
+
+    # Every tick scans for the ego: the queued ticks below all would.
+    monkeypatch.setattr(bridge_module, "_EGO_SCAN_INTERVAL_S", 0.0)
+    url = _mem()
+    ecu = _Ecu(url, dbc, answers=False)
+    document = _hils_config(url, dbc)
+    document["lifecycle"]["scenario_start"][1]["timeout"] = 0.2
+    bridge = bridge_module.HilsBridge(
+        parse_config(document), carla_module=_carla(world)
+    )
+    # The bridge's loop is driven here, one call at a time.
+    bridge.startup()
+    bridge.connect()
+    try:
+        host, port = bridge.link_address  # type: ignore[misc]
+        entity = HilsEgoEntity(HilsEgoConfig(host=host, port=port))
+        entity._vehicle = world.actors[0]  # type: ignore[assignment]
+        entity.on_scenario_start(world)  # type: ignore[arg-type]
+
+        # The bridge serves the run's start, fails it and reports the error;
+        # the entity closes the link as the error comes.
+        def served(condition: Callable[[], bool]) -> Callable[[], bool]:
+            def check() -> bool:
+                bridge.handle_events()
+                entity.on_tick(world, 0.0)  # type: ignore[arg-type]
+                return condition()
+
+            return check
+
+        assert _until(served(lambda: entity.termination_requested))
+        assert "sent no EcuStatus" in str(entity.termination_reason)
+        # The run going away ends the scenario the failed start left running.
+        assert _until(served(lambda: not bridge.active))
+
+        # Ticks the runner queued meanwhile: the ego is still in the world.
+        for _ in range(3):
+            world.tick()
+        for _ in range(3):
+            assert bridge.step(0.5)
+            assert not bridge.active
+        assert bridge.ego is None
+        wakes = _settled(lambda: ecu.names().count(("Wake", {"On": 1})))
+        assert wakes == 1
+
+        # Without a run, an ego that appears later starts a scenario.
+        world.actors[0].is_alive = False
+        world.actors.append(_Ego(2))
+        world.tick()
+        assert bridge.step(0.5)
+        assert bridge.active and bridge.ego is world.actors[1]
+    finally:
         bridge.close()
         ecu.close()
 
