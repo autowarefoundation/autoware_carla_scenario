@@ -3338,7 +3338,11 @@ What Codon 0.19 needs that Python does not, beyond
   functions of simple-lanelet2's Python API the checked modules use, with
   its parameter names: `lanelet2.core`'s map, lanelet layer, lanelets, line
   strings, points, attribute maps and regulatory elements (their ids,
-  attributes, centrelines, bounds, rule parameters and stop lines),
+  attributes, centrelines, bounds, rule parameters and stop lines), the
+  map's other layers, polygons and areas, and what
+  `coordinate.projection._read_local_tags()` edits a `Local` map with (a
+  `Point3d`'s `x`/`y`/`z` setters, `LaneletMap()` and an `add()` of each
+  primitive),
   `BasicPoint2d`, `BasicPoint3d`, `GPSPoint`, and the lanelets whose bound a
   line string is
   (`LaneletLayer.findUsages()`, of a line string only); `lanelet2.geometry`'s
@@ -3358,7 +3362,7 @@ What Codon 0.19 needs that Python does not, beyond
   `GPSPoint`); and Autoware's `MGRSProjector`, `TransverseMercatorProjector`,
   `AutowareTrafficLight` and `RoadMarking`. Each module's header says what
   it leaves out; parts of the API the framework does not use yet (writing a
-  map, routes, matching, editing) are not declared, and the check refuses
+  map, routes, matching, any other editing) are not declared, and the check refuses
   them. `MapManager` (`coordinate.map_manager`, checked) and
   `sweeper.map_loader` load the map with them and hand it out as these
   classes, and `MapManager` its `routing_graph` too. Python's
