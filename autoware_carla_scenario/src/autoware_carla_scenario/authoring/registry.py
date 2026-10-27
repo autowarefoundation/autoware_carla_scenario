@@ -2471,7 +2471,7 @@ register_action_spec(
                     "One vertex per line, 'kind key=value ...': "
                     "lane ds= offset= d_lane= yaw= anchor= | "
                     "opposite ds= lane= offset= yaw= anchor= | "
-                    "crossing junction= approach=left|right|opposite distance= "
+                    "crossing junction= approach=same|left|right|opposite distance= "
                     "turn= offset= yaw= | "
                     "crosswalk junction= leg=entry|exit side=left|right along= "
                     "yaw= | roadside ds= side= kerb_distance= yaw= anchor=.  "

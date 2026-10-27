@@ -58,7 +58,7 @@ from autoware_carla_scenario.route import (
     parse_route_search,
     scenario_route,
 )
-from autoware_carla_scenario.route.model import LaneSegmentSpec
+from autoware_carla_scenario.route.model import JunctionSegmentSpec, LaneSegmentSpec
 from autoware_carla_scenario.route.search import find_route_matches
 
 from . import _route_maps as rm
@@ -211,6 +211,20 @@ class TestTheDocument:
         lane, junction, _out = again.route.segments
         assert isinstance(lane, LaneSegment) and lane.opposite_lane == "yes"
         assert isinstance(junction, JunctionSegment)
+
+    def test_a_junctions_paths_reach_the_search(self) -> None:
+        raw = _raw()
+        raw["route"]["segments"][1]["paths"] = [{"approach": "same", "turn": "right"}]
+        document = ScenarioDocument.model_validate(raw)
+        assert document.route is not None
+        dumped = document.route.to_sweep_dict()
+        assert dumped["segments"][1]["paths"] == [{"approach": "same", "turn": "right"}]
+        junction = parse_route_search(dumped).segments[1]
+        assert isinstance(junction, JunctionSegmentSpec)
+        assert [(p.approach, p.turn) for p in junction.paths] == [("same", "right")]
+        assert "path from same turning right" in document.route.segments[1].summary()
+        # A junction asking for none says nothing of them.
+        assert "paths" not in _document().route.to_sweep_dict()["segments"][1]  # type: ignore[union-attr]
 
     def test_a_document_without_a_route_says_nothing_of_one(self) -> None:
         assert "route" not in ScenarioDocument().to_yaml_dict()

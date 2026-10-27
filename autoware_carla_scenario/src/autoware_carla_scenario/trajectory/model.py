@@ -297,7 +297,9 @@ class RouteCrossingPose:
 
     Junction ``junction`` of the route (its junction segments counted from 0)
     is entered by other lanelets as well; the *approach* says which, seen from
-    the ego coming in: from its ``left``, its ``right`` or ``opposite`` it.
+    the ego coming in: from its ``left``, its ``right`` or ``opposite`` it, or
+    ``same`` -- another lane of the ego's own approach (a car turning beside
+    it).
     ``turn`` narrows them to those that turn that way.  The pose is
     ``distance`` metres along that lanelet's path from where it enters the
     junction: negative is before it, on the approach road; positive is inside
@@ -305,7 +307,7 @@ class RouteCrossingPose:
 
     Args:
         junction: Which junction of the route, from 0.
-        approach: ``left``, ``right`` or ``opposite``.
+        approach: ``same``, ``left``, ``right`` or ``opposite``.
         distance: Metres along the crossing path from its junction entry.
         turn: ``left``, ``right``, ``straight`` or ``None`` (any).
         offset: Metres from that path's centreline, positive to its left.
@@ -321,7 +323,7 @@ class RouteCrossingPose:
     yaw: Optional[float] = None
 
     def __post_init__(self) -> None:
-        from ..route.model import APPROACHES  # noqa: PLC0415
+        from ..route.model import PATH_APPROACHES  # noqa: PLC0415
 
         _finite("RouteCrossingPose", "distance", self.distance)
         _finite("RouteCrossingPose", "offset", self.offset)
@@ -329,7 +331,7 @@ class RouteCrossingPose:
         if junction < 0:
             raise ValueError("RouteCrossingPose.junction counts from 0")
         object.__setattr__(self, "junction", junction)
-        _one_of("RouteCrossingPose", "approach", self.approach, APPROACHES)
+        _one_of("RouteCrossingPose", "approach", self.approach, PATH_APPROACHES)
         if self.turn is not None:
             _one_of(
                 "RouteCrossingPose", "turn", self.turn, ("left", "right", "straight")

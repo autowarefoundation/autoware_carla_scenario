@@ -138,8 +138,8 @@ def test_a_rebound_name_is_not_taken_for_the_builtin() -> None:
         ('ElapsedTimeCondition(-1.0, label="x")', "duration_seconds must be positive"),
         (
             'RouteCrossingPose(approach="Left")',
-            "RouteCrossingPose.approach must be one of ['left', 'right', "
-            "'opposite'], got 'Left'",
+            "RouteCrossingPose.approach must be one of ['same', 'left', "
+            "'right', 'opposite'], got 'Left'",
         ),
         (
             'RouteRoadsidePose(side="kerb")',

@@ -51,6 +51,7 @@ __all__ = [
     "DEFAULT_MODELS",
     "EntityKind",
     "GoalSpec",
+    "JunctionPath",
     "JunctionSegment",
     "LaneSegment",
     "LaneletChoice",
@@ -1015,6 +1016,16 @@ class LaneSegment(_Node):
         return ", ".join(parts)
 
 
+class JunctionPath(_Node):
+    """Another path through the ego's junction a match must have.
+
+    See :class:`autoware_carla_scenario.route.model.JunctionPathSpec`.
+    """
+
+    approach: Literal["same", "left", "right", "opposite"]
+    turn: Literal["left", "right", "straight"]
+
+
 class JunctionSegment(_Node):
     """The ego's way through a junction, by its properties.
 
@@ -1029,6 +1040,7 @@ class JunctionSegment(_Node):
     crossing_from_opposite: Tristate = "any"
     crosswalk_entry: Tristate = "any"
     crosswalk_exit: Tristate = "any"
+    paths: list[JunctionPath] = Field(default_factory=list)
 
     _yes_no = field_validator(
         "traffic_light",
@@ -1054,6 +1066,8 @@ class JunctionSegment(_Node):
             value = getattr(self, name)
             if value != "any":
                 parts.append(f"{label}: {value}")
+        for path in self.paths:
+            parts.append(f"path from {path.approach} turning {path.turn}")
         return ", ".join(parts)
 
 
@@ -1115,8 +1129,16 @@ class RouteSearch(_Node):
         return sum(1 for s in self.segments if s.kind == "junction")
 
     def to_sweep_dict(self) -> dict[str, Any]:
-        """This search as the ``sweep.route`` mapping the route search reads."""
-        return cast(dict[str, Any], self.model_dump(mode="json", exclude_none=True))
+        """This search as the ``sweep.route`` mapping the route search reads.
+
+        A junction segment that asks for no other path says nothing about
+        ``paths``, as it did before they existed.
+        """
+        out = cast(dict[str, Any], self.model_dump(mode="json", exclude_none=True))
+        for segment in out.get("segments", []):
+            if segment.get("paths") == []:
+                del segment["paths"]
+        return out
 
 
 # ---------------------------------------------------------------------------
