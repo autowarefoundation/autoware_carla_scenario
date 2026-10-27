@@ -644,3 +644,94 @@ class TestJunctionPaths:
             RouteFrame(match, *split),
         )
         assert (pose.lanelet_id, pose.s) == (rm.SPLIT_FIRST, pytest.approx(1.0))  # type: ignore[union-attr]
+
+
+class TestPathsOfTheEgosApproach:
+    """Other paths of the ego's own approach through its junction (``same``):
+    the ego's lane turning another way, and another lane of its road."""
+
+    @pytest.fixture(scope="class")
+    def side(self) -> tuple[Any, Any]:
+        lanelet_map = rm.crossroads(side_turn=True)
+        return lanelet_map, rm.routing_graph(lanelet_map)
+
+    @staticmethod
+    def _straight(**junction: Any) -> dict[str, Any]:
+        return {
+            "segments": [
+                _lane(length={"max": 50}),
+                _junction(turn="straight", traffic_light="yes", **junction),
+            ]
+        }
+
+    def test_members_of_the_egos_approach_are_same(
+        self, road: tuple[Any, Any], side: tuple[Any, Any]
+    ) -> None:
+        from autoware_carla_scenario.route.geometry import MapFeatures
+
+        def members(at: tuple[Any, Any]) -> dict[int, tuple[str, str]]:
+            lanelet_map, graph = at
+            found = MapFeatures(lanelet_map, graph).junction_members(
+                [lanelet_map.laneletLayer[rm.J[("W", "E")]]]
+            )
+            return {int(m.lanelet.id): (m.approach, m.turn) for m in found}
+
+        # The ego's own lane turning right and left...
+        plain = members(road)
+        assert plain[rm.J[("W", "S")]] == ("same", "right")
+        assert plain[rm.J[("W", "N")]] == ("same", "left")
+        # ...and the lane beside it turning right.
+        assert members(side)[rm.SIDE_RIGHT] == ("same", "right")
+
+    def test_a_path_is_required_by_approach_and_turn(
+        self, road: tuple[Any, Any]
+    ) -> None:
+        def ways(approach: str, turn: str) -> list[tuple[int, ...]]:
+            wanted = [{"approach": approach, "turn": turn}]
+            return [
+                m.segments[1].lanelet_ids
+                for m in _find(road, **self._straight(paths=wanted))
+            ]
+
+        assert ways("same", "right") == [(rm.J[("W", "E")],)]
+        # The S road (the ego's right) turns left onto the W road.
+        assert ways("right", "left") == [(rm.J[("W", "E")],)]
+        # The plain crossroads has no left turn from beside the ego's lane:
+        # the W road's own left turn leaves from the ego's lane.
+        assert ways("same", "left") == [(rm.J[("W", "E")],)]
+
+    def test_a_crossing_pose_from_the_egos_approach(
+        self, road: tuple[Any, Any]
+    ) -> None:
+        from autoware_carla_scenario.route.frame import RouteFrame
+        from autoware_carla_scenario.route.positions import resolve_route_pose
+        from autoware_carla_scenario.trajectory.model import RouteCrossingPose
+
+        (match,) = find_route_matches(
+            parse_route_search(
+                self._straight(paths=[{"approach": "same", "turn": "right"}])
+            ),
+            *road,
+        )
+        frame = RouteFrame(match, *road)
+        inside = resolve_route_pose(
+            RouteCrossingPose(approach="same", turn="right", distance=1.0), frame
+        )
+        assert (inside.lanelet_id, inside.s) == (rm.J[("W", "S")], pytest.approx(1.0))  # type: ignore[union-attr]
+        before = resolve_route_pose(
+            RouteCrossingPose(approach="same", turn="right", distance=-5.0), frame
+        )
+        assert (before.lanelet_id, before.s) == (rm.W_IN2, pytest.approx(45.0))  # type: ignore[union-attr]
+
+    @pytest.mark.parametrize(
+        ("paths", "message"),
+        [
+            ("same", "paths must be a list"),
+            ([{"approach": "behind", "turn": "left"}], "approach must be one of"),
+            ([{"approach": "same", "turn": "u"}], "turn must be one of"),
+            ([{"approach": "same", "turn": "left", "lanes": 2}], "does not take"),
+        ],
+    )
+    def test_a_malformed_path_is_refused(self, paths: Any, message: str) -> None:
+        with pytest.raises(ValueError, match=message):
+            parse_route_search(self._straight(paths=paths))
