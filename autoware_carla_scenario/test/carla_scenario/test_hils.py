@@ -1116,9 +1116,9 @@ def test_a_communication_loss_stops_its_data_while_it_runs(
         command_loss = CommunicationLossAction(direction="from_ecu", duration=0.5)
         command_loss.tick(world, 2.0)  # type: ignore[arg-type]
         assert _until(lambda: channel.disconnected("recv"), world)
-        time.sleep(0.3)
-        tick()
-        assert ego.controls[-1].brake == 1.0
+        # Polled, not slept: a command already in flight when the cut starts
+        # can still land, so the 0.2 s to stale counts from it.
+        assert _until(lambda: (tick(), ego.controls[-1].brake == 1.0)[1], world)
         command_loss.tick(world, 2.3)  # type: ignore[arg-type]
         assert command_loss.cutting
         command_loss.tick(world, 2.5)  # type: ignore[arg-type]
