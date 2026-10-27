@@ -1471,10 +1471,19 @@ Two things Python does that Codon 0.19 does not are filled in for you:
     overrides. A wrong value for it is reported as
     `dataclasses.replace: field 'a' of Derived is declared int, not str`.
     Any other error raised inside the `_acs_with__<field>` method is
-    reported at the `replace(...)` call of the same file, not at the class
-    (#614). It holds for a dataclass the scenario package defines, in
-    any of its modules, whose bases are dataclasses of the same module (or
-    none) and which has no `__init__` of its own; for any other class (a
+    reported at the `replace(...)` call, not at the class (#614), also when
+    the call is in another module than the class (`replace(cfg.lanes,
+    ids=...)` in `scenario.py` of a dataclass of `configs.py`, #623). Codon
+    names that module by its file name alone, so when two checked modules
+    share it (`configs.py` and `sub/configs.py`) the error stays at the
+    class. It holds for a dataclass the scenario package defines, in
+    any of its modules, also one nested in a class or a function
+    (`Plans.Leg`, #623: its methods, and its `==`, hash and ordering, go at
+    the end of its body, as `@extend` cannot name it; a nested dataclass
+    whose body is on the `class` line, `class Leg: x: int = 0`, gets none),
+    whose bases are dataclasses of the same module (of the same body, for a
+    nested one) or none, and which has no `__init__` of its own; for any
+    other class (a
     framework or library dataclass) the call is refused with a hint to build
     the object yourself (`OpenDrivePose` and `DevContainer` have the methods in their
     models, as the framework uses `replace` on them). The object goes by position and the fields by keyword:
@@ -1767,6 +1776,25 @@ in step:
   unannotated (Codon makes it generic over them) instead of subclassing
   `Generic`, and write a `@dataclass` (or a `Dict[str, X]`) instead of a
   `TypedDict`.
+
+### Python 3.12+ syntax (#624)
+
+The package runs on Python 3.10 to 3.14. Codon 0.19 parses Python 3.11's
+syntax, so the check rewrites the newer syntax first, with every line and
+column kept:
+
+| Python 3.12+ | What the check makes of it | Refused (with a hint, at its line) |
+|---|---|---|
+| A string in an f-string's field quoted with the f-string's own quote (PEP 701): `f"{cfg.name.replace("_", "-")} {d["k"]}"` | the string quoted with the other quote, `f"{cfg.name.replace('_', '-')} {d['k']}"` (Codon's parser, as Python's before 3.12, ends the f-string at its own quote, and reported `unexpected dedent` a line later) | a string that holds the other quote too (`f"{d["it's"]}"`), and a backslash anywhere in a field (`f"{"\n".join(names)}"`), which Codon's parser refuses whatever the quotes: bind the value to a local first. A nested f-string is refused as before ("A brace or a nested f-string") |
+| `type LaneIds = list[int]` (PEP 695), at any level | `LaneIds = list[int]`, as `X: TypeAlias = T` is | a generic alias, `type Pair[T] = tuple[T, T]`: Codon has no generic alias; write the type out, or make the alias concrete |
+| Type parameters of a function, a method or a class (PEP 695): `def first[T](xs: list[T]) -> T`, `class Box[K, V]:` | kept: they are Codon's own generics syntax. A bound, constraints or a default (`[B: Base]`, `[N: (int, float)]`, `[T = int]`) are dropped, as a `TypeVar`'s are, since Codon reads `[T: int]` as a static integer parameter | `*Ts` and `**P` (PEP 646, PEP 612): Codon has no variadic generics |
+
+A generic function or class is compiled, and checked, where the scenario
+uses it (`Box("a").get() + 1` is refused): like a function annotated with a
+module-level `TypeVar`, it is not called on its own, and a warning says so
+("parameter `xs` is annotated with a TypeVar", "the class is generic").
+On Python 3.10 and 3.11 this syntax does not parse, so a scenario using it
+needs Python 3.12 or later to run at all.
 
 ### Python constructs Codon refuses (#379)
 

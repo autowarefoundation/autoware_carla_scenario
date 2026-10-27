@@ -31,7 +31,10 @@ which :func:`transform_source_lines` maps back onto the handler):
   each dataclass of the module gets one ``_acs_with__<field>`` method per field
   (:func:`_dataclass_replacers`), a typed copy of the object with that field
   changed, so Codon checks the field name and the value's type (the erased
-  ``**changes`` it replaces crashed Codon on a ``None``, #487).
+  ``**changes`` it replaces crashed Codon on a ``None``, #487).  A dataclass
+  nested in a class or a function gets these methods, and those of
+  :func:`_dataclass_dunders`, at the end of its body
+  (:func:`nested_dataclass_methods`, #623), as ``@extend`` cannot name it.
 * A ``class Pt(NamedTuple)`` becomes a Codon ``@tuple`` class, the decorator
   on a new line above it (:func:`tuple_named_tuples`).
 * ``@abstractmethod`` is removed (Codon 0.19 cannot decorate a method; the
@@ -3859,6 +3862,23 @@ def transform_source_lines(
     # class reads them while Codon reads the module (#437, #469).  Its lines
     # come from the class's line.
     after_class: dict[int, tuple[str, str]] = {}
+    #: The methods of a nested dataclass (#623), at the end of its body: the
+    #: line after which they go -> (their lines, the line they map to), the
+    #: innermost class first.
+    in_class: dict[int, list[tuple[int, str, int]]] = {}
+    for node, methods in nested_dataclass_methods(tree, exceptions):
+        first = node.body[0]
+        indent = edits.lines[first.lineno - 1][: first.col_offset].decode()
+        if first.lineno == node.lineno or indent.strip():
+            continue  # `class Leg: x: int = 0`: no line to put a method on
+        block = "".join(
+            indent + line.removeprefix("    ")
+            for line in methods.splitlines(keepends=True)
+        )
+        last = node.end_lineno or node.lineno
+        in_class.setdefault(last, []).append(
+            (node.col_offset, block, origin[node.lineno - 1])
+        )
     at_end = []
     for name, block in _enum_lookups(rewriter.enums):
         end = next(
@@ -3892,10 +3912,18 @@ def transform_source_lines(
         *ordering,
     ]
     origin = list(origin)
-    for end, (name, block) in sorted(after_class.items(), reverse=True):
+    inserted: dict[int, list[tuple[str, int]]] = {
+        end: [(block, line) for _, block, line in sorted(blocks, reverse=True)]
+        for end, blocks in in_class.items()
+    }
+    for end, (name, block) in after_class.items():
+        inserted.setdefault(end, []).append((block[1:], lines[name]))
+    for end, blocks in sorted(inserted.items(), reverse=True):
         at = edits.starts[end] if end < len(edits.starts) else len(edits.data)
-        edits.replace(at, at, block[1:])
-        origin[end:end] = [lines[name]] * (block.count("\n") - 1)
+        edits.replace(at, at, "".join(block for block, _ in blocks))
+        origin[end:end] = [
+            line for block, line in blocks for _ in range(block.count("\n"))
+        ]
     # Python sets a module's `__file__`, which Codon 0.19 does not (#515): it
     # is bound on the prelude's last line, before any code of the module and
     # with no line moved.
@@ -4699,7 +4727,20 @@ def _defined_methods(node: ast.ClassDef) -> set[str]:
 
 
 def _dataclass_dunders(tree: ast.Module, exceptions: set[str]) -> list[tuple[str, str]]:
-    """The methods Python's ``@dataclass`` generates that Codon does not, per class.
+    """The methods Python's ``@dataclass`` generates that Codon does not, per
+    top-level class (:func:`_dataclass_dunder_methods`), each appended after
+    the module with ``@extend``.  Each is (the class, the lines)."""
+    return [
+        (node.name, f"\n\n@extend\nclass {node.name}:\n" + lines)
+        for node, lines in _dataclass_dunder_methods(tree.body, exceptions)
+    ]
+
+
+def _dataclass_dunder_methods(
+    body: list[ast.stmt], exceptions: set[str], prefix: str | None = None
+) -> list[tuple[ast.ClassDef, str]]:
+    """The methods Python's ``@dataclass`` generates that Codon does not, per
+    class of *body*.
 
     The check drops ``@dataclass`` (Codon's constructor takes the fields), so
     ``==``, ``!=`` and ``in``, hashing (``frozen=True``, ``unsafe_hash=True``)
@@ -4708,13 +4749,17 @@ def _dataclass_dunders(tree: ast.Module, exceptions: set[str]) -> list[tuple[str
     dataclass base first), as Python does: ``eq=False`` and a method the
     class defines itself are respected.  A top-level dataclass with a base the
     module does not define (a framework dataclass, ``Generic``) is left as it
-    is: its fields are not known here.  Each is (the class, the lines).
+    is: its fields are not known here.  *prefix* qualifies the name of a
+    class nested in a class (``Plans`` for ``Plans.Leg``; empty in a function,
+    where the bare name is bound).  Each is (the class, its methods, indented
+    as a class body's).
     """
     fields: dict[str, list[str]] = {}
-    out: list[tuple[str, str]] = []
-    for node in tree.body:
+    out: list[tuple[ast.ClassDef, str]] = []
+    for node in body:
         if not isinstance(node, ast.ClassDef):
             continue
+        qualified = f"{prefix}.{node.name}" if prefix else node.name
         options = _dataclass_options(node)
         if options is None or node.name in exceptions or node.keywords:
             continue
@@ -4742,7 +4787,7 @@ def _dataclass_dunders(tree: ast.Module, exceptions: set[str]) -> list[tuple[str
         ) -> None:
             if name in own:
                 return
-            other = "" if name == "__hash__" else f", other: {node.name}"
+            other = "" if name == "__hash__" else f", other: {qualified}"
             lines.append(
                 f"    def {name}(self{other}) -> {result}:\n        return {body}\n"
             )
@@ -4783,9 +4828,7 @@ def _dataclass_dunders(tree: ast.Module, exceptions: set[str]) -> list[tuple[str
             ):
                 method(dunder, "bool", tuples(op))
         if lines:
-            out.append(
-                (node.name, f"\n\n@extend\nclass {node.name}:\n" + "".join(lines))
-            )
+            out.append((node, "".join(lines)))
     return out
 
 
@@ -5034,7 +5077,19 @@ def _replaceable_fields(node: ast.ClassDef) -> list[tuple[str, ast.expr, bool]] 
 def _dataclass_replacers(
     tree: ast.Module, exceptions: set[str]
 ) -> list[tuple[str, str]]:
-    """The ``_acs_with__<field>`` methods of each dataclass, per class.
+    """The ``_acs_with__<field>`` methods of each top-level dataclass
+    (:func:`_dataclass_replacer_methods`), each appended after the module
+    with ``@extend``.  Each is (the class, the lines)."""
+    return [
+        (node.name, f"\n\n@extend\nclass {node.name}:\n" + lines)
+        for node, lines in _dataclass_replacer_methods(tree.body, exceptions)
+    ]
+
+
+def _dataclass_replacer_methods(
+    body: list[ast.stmt], exceptions: set[str], prefix: str | None = None
+) -> list[tuple[ast.ClassDef, str]]:
+    """The ``_acs_with__<field>`` methods of each dataclass of *body*.
 
     Each returns the object's copy built through the constructor with that
     field changed (``Plan(points=self.points, best=best)``), typed as the
@@ -5043,13 +5098,16 @@ def _dataclass_replacers(
     declared ``init=False`` gets none, as Python's ``replace`` refuses it (the
     hint of the "no attribute" error says so).  A class with a base the module does not
     define, an ``__init__`` of its own or an ``InitVar`` has none: ``replace``
-    of it is refused ("no attribute").  Each is (the class, the lines).
+    of it is refused ("no attribute").  *prefix* qualifies a nested class's
+    name (:func:`_dataclass_dunder_methods`).  Each is (the class, its
+    methods, indented as a class body's).
     """
     fields: dict[str, list[tuple[str, ast.expr, bool]]] = {}
-    out: list[tuple[str, str]] = []
-    for node in tree.body:
+    out: list[tuple[ast.ClassDef, str]] = []
+    for node in body:
         if not isinstance(node, ast.ClassDef):
             continue
+        qualified = f"{prefix}.{node.name}" if prefix else node.name
         if _dataclass_options(node) is None or node.name in exceptions or node.keywords:
             continue
         inherited: list[tuple[str, ast.expr, bool]] | None = []
@@ -5081,14 +5139,53 @@ def _dataclass_replacers(
                 f"{n}={n}" if n == name else f"{n}=self.{n}" for n, _, i in listed if i
             )
             lines.append(
-                f"    def {method}(self, {param}) -> {node.name}:\n"
-                f"        return {node.name}({call})\n"
+                f"    def {method}(self, {param}) -> {qualified}:\n"
+                f"        return {qualified}({call})\n"
             )
         if lines:
-            out.append(
-                (node.name, f"\n\n@extend\nclass {node.name}:\n" + "".join(lines))
-            )
+            out.append((node, "".join(lines)))
     return out
+
+
+def _nested_class_bodies(
+    tree: ast.Module,
+) -> Iterator[tuple[list[ast.stmt], str]]:
+    """Each body below the module's that defines classes (a class's, a
+    function's), with the prefix that qualifies a class of it: the enclosing
+    classes since the innermost function (``Plans`` for ``Plans.Leg``; empty
+    in a function, whose classes are bound by their bare name)."""
+
+    def walk(body: list[ast.stmt], prefix: str) -> Iterator[tuple[list[ast.stmt], str]]:
+        for node in body:
+            if isinstance(node, ast.ClassDef):
+                inner = f"{prefix}.{node.name}" if prefix else node.name
+                yield node.body, inner
+                yield from walk(node.body, inner)
+            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                yield node.body, ""
+                yield from walk(node.body, "")
+
+    yield from walk(tree.body, "")
+
+
+def nested_dataclass_methods(
+    tree: ast.Module, exceptions: set[str]
+) -> list[tuple[ast.ClassDef, str]]:
+    """The generated methods of each dataclass nested in a class or a function
+    (#623): what :func:`_dataclass_dunders` and :func:`_dataclass_replacers`
+    append after the module for a top-level one, which ``@extend`` cannot
+    name for a nested one (``Plans.Leg``).  They go at the end of its body
+    instead (:func:`transform_source_lines`).  Each is (the class, its
+    methods, indented as a class body's by four spaces)."""
+    out: dict[int, tuple[ast.ClassDef, str]] = {}
+    for body, prefix in _nested_class_bodies(tree):
+        for node, lines in [
+            *_dataclass_dunder_methods(body, exceptions, prefix),
+            *_dataclass_replacer_methods(body, exceptions, prefix),
+        ]:
+            done = out.get(id(node), (node, ""))[1]
+            out[id(node)] = (node, done + lines)
+    return list(out.values())
 
 
 def _inherited_init_extensions(

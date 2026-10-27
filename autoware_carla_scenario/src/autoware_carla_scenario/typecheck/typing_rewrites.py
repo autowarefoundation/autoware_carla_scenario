@@ -29,6 +29,21 @@ only the checked copy of a module changes: what runs is the code as written.
   annotated ``Exception`` is rebuilt as an ``Exception`` of its type name and
   message: Codon does not upcast an exception to its base.
 
+Python 3.12+ syntax (#624):
+
+* A string literal in an f-string's replacement field quoted with the
+  f-string's own quote (PEP 701: ``f"{d["k"]}"``) is quoted with the other
+  quote (:func:`requote_fstring_fields`), on the same columns: Codon 0.19's
+  parser, as Python's before 3.12, ends the f-string at its own quote.  One
+  that cannot be (it holds the other quote too, or a backslash) is refused.
+* ``type X = T`` becomes ``X = T``.  A generic alias (``type Pair[T] =
+  tuple[T, T]``) is refused: Codon has no generic alias.
+* The type parameters of a function or class (PEP 695: ``def first[T](xs:
+  list[T]) -> T``, ``class Box[T]:``) are Codon's own generics syntax and
+  stay; a bound, constraints or a default (``[T: Base]``, ``[T = int]``) are
+  dropped (Codon would read ``T: int`` as a static integer parameter), and
+  ``*Ts`` / ``**P`` are refused.
+
 ``Never`` and ``Container`` annotations are dropped, and ``TypeGuard[X]`` is
 read as ``bool``, where the transform reads annotations.  ``copy.copy`` and
 ``copy.deepcopy`` of a class of the module get the ``__copy__`` and
@@ -38,7 +53,9 @@ read as ``bool``, where the transform reads annotations.  ``copy.copy`` and
 from __future__ import annotations
 
 import ast
+import io
 import re
+import tokenize
 
 from .scopes import ShadowScopes
 from .transform import _dotted, _Edits, _union_members
@@ -46,6 +63,7 @@ from .transform import _dotted, _Edits, _union_members
 __all__ = [
     "TYPING_HINTS",
     "copy_dunders",
+    "requote_fstring_fields",
     "typing_rewrite_refusals",
     "typing_rewrites",
     "typing_rewrites_lines",
@@ -394,6 +412,7 @@ class _Pass(ShadowScopes):
                 self.edits.replace(*self.edits.node_span(sub), owner)
 
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        self._type_params(node)
         for decorator in node.decorator_list:
             self.visit(decorator)
         for base in node.bases:
@@ -412,6 +431,7 @@ class _Pass(ShadowScopes):
         self._function(node)
 
     def _function(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
+        self._type_params(node)
         dropped: list[ast.expr] = []
         for decorator in node.decorator_list:
             if self.names.typing_name(decorator) == "override":
@@ -446,6 +466,65 @@ class _Pass(ShadowScopes):
         self._scope.pop()
         self._returns.pop()
         self._annotations.pop()
+
+    # -- Python 3.12+ type parameters and aliases (#624) ---------------------
+
+    def _type_params(
+        self, node: ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef
+    ) -> None:
+        """The type parameters of *node* (PEP 695), as Codon has them: a
+        bare name each.  ``[T: Base]`` loses its bound (Codon would read
+        ``T: int`` as a static integer), ``[T: (int, float)]`` its
+        constraints and ``[T = int]`` (3.13) its default, as a ``TypeVar``
+        does (``TypeVar("T", bound=B)`` becomes ``TypeVar("T")``).  ``*Ts``
+        and ``**P`` are refused."""
+        for param in getattr(node, "type_params", ()):
+            kind = type(param).__name__
+            name = getattr(param, "name", "")
+            if kind != "TypeVar":
+                spelling = "*" if kind == "TypeVarTuple" else "**"
+                self.refused.append(
+                    (
+                        param.lineno,
+                        f"the type parameter `{spelling}{name}` of `{node.name}` "
+                        "(PEP 646 / PEP 612) is not supported by the check: "
+                        "Codon 0.19 has no variadic generics; type the "
+                        "parameters (`*args: int`), or leave them unannotated",
+                    )
+                )
+            elif (
+                getattr(param, "bound", None) is not None
+                or getattr(param, "default_value", None) is not None
+            ):
+                self.edits.replace(*self.edits.node_span(param), name)
+
+    def visit_TypeAlias(self, node: ast.AST) -> None:
+        """``type X = T`` (Python 3.12+) becomes ``X = T``; a generic alias
+        (``type Pair[T] = tuple[T, T]``) is refused."""
+        name = getattr(node, "name", None)
+        value = getattr(node, "value", None)
+        if not isinstance(name, ast.Name) or not isinstance(value, ast.expr):
+            return
+        if getattr(node, "type_params", None):
+            params = ", ".join(
+                getattr(p, "name", "?") for p in getattr(node, "type_params", ())
+            )
+            self.refused.append(
+                (
+                    node.lineno,  # type: ignore[attr-defined]
+                    f"the generic type alias `type {name.id}[{params}] = ...` is "
+                    "not supported by the check: Codon 0.19 has no generic "
+                    "alias. Write the type out where it is used "
+                    f"(`{ast.unparse(value)}` with the parameters filled in), "
+                    f"or make the alias concrete (`type {name.id} = ...` "
+                    "naming no type parameter)",
+                )
+            )
+            return
+        start = self.edits.offset(node.lineno, node.col_offset)  # type: ignore[attr-defined]
+        end = self.edits.offset(value.lineno, value.col_offset)
+        self.edits.replace(start, end, f"{name.id} = ")
+        self.visit(value)
 
     # -- from collections.abc import ... (#586) ------------------------------
 
@@ -758,10 +837,127 @@ class _Pass(ShadowScopes):
                 self._store(by_name[keyword.arg], keyword.value)
 
 
+_FSTRING_PREFIX = re.compile(r"[fF][rR]?['\"]|[rR][fF]['\"]")
+_FSTRING_QUOTE_REFUSAL = (
+    "an f-string's replacement field holds a string quoted with the "
+    "f-string's own quote (Python 3.12+, PEP 701), which Codon 0.19 cannot "
+    "parse, and the check cannot quote it with the other quote, which it "
+    "holds too: put the value in a variable before the f-string "
+    """(`key = "it's"`, then `f"{d[key]}"`)"""
+)
+_FSTRING_BACKSLASH_REFUSAL = (
+    "an f-string's replacement field holds a backslash (Python 3.12+, PEP "
+    "701), which Codon 0.19 cannot parse: put the value in a variable before "
+    """the f-string (`sep = "\\n"`, then `f"{sep.join(names)}"`)"""
+)
+
+
+def requote_fstring_fields(source: str) -> tuple[str, list[tuple[int, str]]]:
+    """*source* with each string literal of an f-string's replacement field
+    that is quoted with the quote of an f-string around it (PEP 701,
+    ``f"{name.replace("_", "-")}"``) quoted with the other quote
+    (``f"{name.replace('_', '-')}"``), and what cannot be requoted, as
+    (line, message) (#624).
+
+    Python before 3.12, and Codon 0.19's parser, end an f-string at its own
+    quote, so Codon reports "unexpected dedent" on a later line.  A nested
+    f-string is requoted in the same way (its opening and closing quote).
+    Only the quote characters change, so every line and column stays.  A
+    literal that holds the other quote, a triple-quoted one inside an
+    f-string of its quote, and a backslash anywhere in a field (which
+    Codon's parser refuses too) are refused, and then nothing is requoted.  Before Python 3.12 the
+    tokenizer has no f-string tokens, and such source does not parse: the
+    source is returned as it is.
+    """
+    if "FSTRING_START" not in tokenize.tok_name.values() or not _FSTRING_PREFIX.search(
+        source
+    ):
+        return source, []
+    try:
+        tokens = list(tokenize.generate_tokens(io.StringIO(source).readline))
+    except (tokenize.TokenError, SyntaxError):
+        return source, []
+    # The tokenizer's rows: split at "\n" only, as `str.splitlines` would
+    # also split at a form feed or "\u2028" a line of the source may hold.
+    lines = io.StringIO(source).readlines()
+    #: (row, column, the quote there now, the quote to put there).
+    changes: list[tuple[int, int, str, str]] = []
+    refused: list[tuple[int, str]] = []
+    #: The f-strings around the token: (its quote as it will be, triple,
+    #: its quote as written).
+    opened: list[tuple[str, bool, str]] = []
+
+    def refuse(line: int, message: str) -> None:
+        if (line, message) not in refused:
+            refused.append((line, message))
+
+    def quote_of(text: str) -> tuple[str, str, bool]:
+        """(prefix, quote character, triple) of a literal or FSTRING_START."""
+        body = text.lstrip("rRbBuUfFtT")
+        prefix = text[: len(text) - len(body)]
+        return prefix, body[:1], body[:3] == body[:1] * 3
+
+    def requoted(quote: str, triple: bool, body: str, line: int) -> str:
+        """The quote a literal of *quote* takes inside :data:`opened`."""
+        single = {q for q, t, _ in opened if not t}
+        every = {q for q, _, _ in opened}
+        if triple:
+            if quote in every:
+                refuse(line, _FSTRING_QUOTE_REFUSAL)
+            return quote
+        if quote not in single:
+            return quote
+        other = "'" if quote == '"' else '"'
+        if other in single or other in body:
+            refuse(line, _FSTRING_QUOTE_REFUSAL)
+            return quote
+        return other
+
+    for token in tokens:
+        name = tokenize.tok_name[token.type]
+        row, col = token.start
+        if name == "FSTRING_START":
+            prefix, quote, triple = quote_of(token.string)
+            new = requoted(quote, triple, "", row) if opened else quote
+            if new != quote:
+                at = col + len(prefix)
+                changes.append((row, at, quote, new))
+            opened.append((new, triple, quote))
+        elif name == "FSTRING_MIDDLE" and len(opened) > 1:
+            new, _, quote = opened[-1]
+            if "\\" in token.string:
+                refuse(row, _FSTRING_BACKSLASH_REFUSAL)
+            elif new != quote and new in token.string:
+                refuse(row, _FSTRING_QUOTE_REFUSAL)
+        elif name == "FSTRING_END" and opened:
+            new, _, quote = opened.pop()
+            if new != quote:
+                changes.append((row, col, quote, new))
+        elif token.type == tokenize.STRING and opened:
+            if "\\" in token.string:
+                refuse(row, _FSTRING_BACKSLASH_REFUSAL)
+                continue
+            prefix, quote, triple = quote_of(token.string)
+            size = 3 if triple else 1
+            body = token.string[len(prefix) + size : -size]
+            new = requoted(quote, triple, body, row)
+            if new != quote:
+                changes.append((row, col + len(prefix), quote, new))
+                end_row, end_col = token.end
+                changes.append((end_row, end_col - 1, quote, new))
+    if not changes or refused:
+        # Refused: the check fails, and the source stays as it parses.
+        return source, refused
+    edited = [list(line) for line in lines]
+    for row, col, _, new in changes:
+        edited[row - 1][col] = new
+    return "".join("".join(line) for line in edited), refused
+
+
 def _run(source: str) -> tuple[str, list[tuple[int, str]], list[int]]:
     if not source.endswith("\n"):
         source += "\n"
-    refused: list[tuple[int, str]] = []
+    source, refused = requote_fstring_fields(source)
     origin = list(range(1, len(source.encode().splitlines()) + 1))
     for _ in range(_MAX_PASSES):
         tree = ast.parse(source)
