@@ -1302,7 +1302,8 @@ def test_a_stepped_walker_turns_back_within_reach_of_the_kerb(
     assert not _walker_ai._turns_back(walker, driven, path, 4.6, at, 1.4)  # clear
     threat["on"] = True
     assert _walker_ai._turns_back(walker, driven, path, 4.6, at, 1.4)
-    assert driven.turning_back and driven.back_to.x == pytest.approx(3.5)
+    assert driven.turning_back and driven.back_to is not None
+    assert driven.back_to.x == pytest.approx(3.5)
     assert controls[-1].direction.x < 0.0  # walking back
     back = SimpleNamespace(x=3.6, y=0.0, z=0.0)
     assert _walker_ai._turns_back(walker, driven, path, 3.6, back, 1.4)

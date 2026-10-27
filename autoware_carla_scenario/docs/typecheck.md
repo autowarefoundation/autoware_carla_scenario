@@ -2335,8 +2335,8 @@ To check one more module:
 
 ### What is checked of the framework
 
-Every module now has an entry other than `"not yet checked (#45)"`. 210 of
-the package's 315 modules (67%; about 48,100 of 90,300 lines) are `CHECKED`:
+Every module now has an entry other than `"not yet checked (#45)"`. 213 of
+the package's 315 modules (68%; about 49,200 of 90,300 lines) are `CHECKED`:
 the kinematics, the coordinate frames and poses, the conversions between
 Lanelet2, OpenDRIVE and CARLA world poses (`coordinate.transform`), the stop
 lines read off a Lanelet2 map (`utils.stop_line`, `coordinate.stop_line`)
@@ -2354,11 +2354,15 @@ frame, poses and search (`route.geometry`, `route.frame`, `route.positions`,
 `route.search`), all against the lanelet2 model, the condition base and
 every condition, the action base with the environment, follow-trajectory,
 traffic-signal, signal-controller, lane-change, routing, set-speed, traffic-parameters, turn and
-walk-straight actions, the stalled object (`actions.stalled_object`) and the background-traffic source and sink
+walk-straight actions, the routing action's matching of a track to the lanes
+(`traffic.route_match`), the test of what stands on a place or in a road
+user's way (`utils.clearance`), which the spawn action, the place-clear
+condition, the trajectory run and the final approach call, the stalled object (`actions.stalled_object`) and the background-traffic source and sink
 (`actions.background_traffic`), the logical scenario's route search and matches (`route.model`) and
 the scenario's route (`route.active`),
 the `signals` package (the signal controllers and their registry), the ego,
-NPC vehicle and pedestrian entities, the base of the externally driven egos
+NPC vehicle and pedestrian entities (the pedestrian's walk on CARLA's walker
+controller included, `entity._walker_ai`), the base of the externally driven egos
 (`entity.externally_driven`), the ego that takes its mission over the bridge
 (`entity.bridged_ego`) and the Autoware ego on it (`entity.autoware_entity`), the ego driven by ROS 2 nodes over DDS
 (`entity.ros2_entity`) with its configs, commands, arbitration and transport
@@ -2397,8 +2401,8 @@ driver's configs and client interface, trajectory follower and observations
 `driver.geometry`), and the `autoware_bridge`, `autoware_stack`, `entity`,
 `driver`, `maps` and `coverage` packages themselves, whose `__init__` re-exports what is not checked
 through models of it (see *A class a checked package only re-exports*
-below). 117
-functions and methods of those modules are `UNCALLED` (36 of them
+below). 107
+functions and methods of those modules are `UNCALLED` (26 of them
 protected helpers, see *What is compiled* below): most of them a
 condition's `get_details()` or a backend's `describe()`, what takes a traffic
 backend's options node (`Mapping[str, Any]`), what reads a route search, a
@@ -2432,9 +2436,9 @@ a `TrajectoryVertex` call's arguments, each of any type (`Any`), walks or
 binds a sweeper constraint of any kind, builds a condition's status (its
 details), or takes the list a plain tick callback goes into
 (`BaseScenario._register_tick()`, a `List[Callable[[carla.World], None]]`,
-which the check has no value of). The 105 `EXCLUDED` modules fall in
+which the check has no value of). The 102 `EXCLUDED` modules fall in
 three groups. Many fit more than one (about 77 import what Codon cannot
-compile, 31 build on an excluded module and 24 hold values Codon has no type
+compile, 31 build on an excluded module and 21 hold values Codon has no type
 for), so each is counted once, in the first group that fits it:
 
 - **77 import what Codon cannot compile**: pyxodr,
@@ -2472,12 +2476,10 @@ for), so each is counted once, in the first group that fits it:
   `traffic.registry` (the `Callable[[Mapping[str, Any]], TrafficBackend]` alias it
   holds its factories by, and the `registry` its plugin loader imports); 4 of the 21
   also hold values Codon has no type for.
-- **7 hold values Codon has no type for**, and nothing else keeps them out:
+- **4 hold values Codon has no type for**, and nothing else keeps them out:
   `Any` (`trajectory.authoring`, `authoring.registry`'s
   field defaults, `npc_collisions`' actors and world snapshots, which it also
-  hears through collision-sensor callbacks, `traffic.route_match`'s lanelet2
-  maps, lanelets and routing graphs, `utils.clearance`'s world snapshots, `entity._walker_ai`'s walker
-  controllers), or a class as a value (`utils.config`, which `traffic.config`,
+  hears through collision-sensor callbacks), or a class as a value (`utils.config`, which `traffic.config`,
   `traffic.fidelity` and `traffic.sumo.config` import only in their uncalled
   `from_mapping()`).
 
@@ -3337,8 +3339,10 @@ What Codon 0.19 needs that Python does not, beyond
   line string is
   (`LaneletLayer.findUsages()`, of a line string only); `lanelet2.geometry`'s
   `to2D()`, `length()`, `length2d()` (of a lanelet), `toArcCoordinates()`
-  (an `ArcCoordinates`), `findNearest()` (of the lanelet layer) and
-  `inside()`; `lanelet2.routing.RoutingGraph(laneletMap, trafficRules)` with
+  (an `ArcCoordinates`), `findNearest()` and `findWithin2d()` (of the
+  lanelet layer, around a point) and `inside()`, with the points a 2D line
+  string yields (`ConstPoint2d`) and a lanelet's outline
+  (`ConstLanelet.polygon2d()`, a `CompoundPolygon2d` of them); `lanelet2.routing.RoutingGraph(laneletMap, trafficRules)` with
   `following()`, `previous()`, `left()`, `right()`, `adjacentLeft()`,
   `adjacentRight()` and `conflicting()` (a list of `ConstLanelet`s, as
   simple-lanelet2 hands them out: lanelet2's own binding wraps each in a
@@ -3899,6 +3903,13 @@ What Codon 0.19 needs that Python does not, beyond
   expected type 'Optional[BaseCondition]'"). Read the value through a function
   that returns it unwrapped (`_trajectory_run._gate_at()`), and test the
   `Optional` expression itself where the loop needs the test.
+- **No attribute assigned through an `Optional` local** (#649):
+  `driven = _DRIVEN.get(key)`, then `if driven is None: driven = _Driven(...)`
+  and `driven.stretches = ...` in the branch and `driven.turn_back = ...`
+  after it, crashed Codon without a diagnostic. Build the new value in a
+  local of its own type (`created = _Driven(...)`, assigned through and
+  stored), and read the stored one back after the branch
+  (`driven = _DRIVEN[key]`), as `entity._walker_ai.drive()` does.
 - **A call into a module Codon cannot compile, from a function it must**: a
   function `UNCALLED` names is still compiled when a checked function calls
   it. Call it in the `else` branch of `if TYPE_CHECKING:` and check in the
