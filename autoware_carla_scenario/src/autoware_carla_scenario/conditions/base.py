@@ -140,8 +140,9 @@ class ScenarioResult:
             **kwargs: Forwarded to :func:`json.dumps`
                 (e.g. ``indent=2``, ``ensure_ascii=False``).
         """
-        # Imported here: Codon has no json, and the library check leaves this
-        # method out (typecheck/library.py), so it never compiles the import.
+        # The library check leaves this method out (typecheck/library.py):
+        # to_dict() is a dict of mixed value types and **kwargs is Any, which
+        # Codon cannot express (json itself has a Codon shim).
         import json  # noqa: PLC0415
 
         kwargs.setdefault("ensure_ascii", False)

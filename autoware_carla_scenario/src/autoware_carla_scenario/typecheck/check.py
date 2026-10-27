@@ -504,12 +504,16 @@ class TypeCheckResult:
     #: What the check left unchecked and why; none fails it.  Last, so the
     #: fields before it keep their positions.
     warnings: list[Diagnostic] = field(default_factory=list)
+    #: The verdict is one an earlier run kept (the library check's cache
+    #: hit); :attr:`seconds` is then the time this run took, not the compile's.
+    cached: bool = False
 
     def format(self) -> str:
         if self.skipped is not None:
             return f"{self.scenario}: static check skipped: {self.skipped}"
         if self.ok:
-            head = f"{self.scenario}: static check passed ({self.seconds:.1f}s)"
+            took = f"{self.seconds:.1f}s" + (", cached" if self.cached else "")
+            head = f"{self.scenario}: static check passed ({took})"
             shown = self.warnings
         else:
             head = f"{self.scenario}: static check failed"
@@ -3077,7 +3081,13 @@ def _reused(
     name: str, key: str, case: dict[str, str], result: TypeCheckResult
 ) -> TypeCheckResult:
     """*result*, the verdict kept (or being made) under *key*, for the check
-    *name* of the case *case*: logged when it was made for another case."""
+    *name* of the case *case*: logged when it was made for another case.
+
+    Named *name*: the key is the program, which another check may share with
+    this one under another name (#652).
+    """
+    if result.scenario != name:
+        result = dataclasses.replace(result, scenario=name)
     checked_for = _CHECKED_FOR.setdefault(key, case)
     changed = [k for k, v in case.items() if checked_for.get(k) != v]
     if changed:
@@ -4133,6 +4143,7 @@ def typecheck_library(
         The result; ``result.ok`` is ``False`` when a module does not compile
         or uses a value that may be ``None`` where it may not be.
     """
+    started = time.monotonic()
     names = sorted(CHECKED if modules is None else set(modules))
     title = f"{_PACKAGE} library ({len(names)} checked modules)"
     if not names:
@@ -4186,7 +4197,15 @@ def typecheck_library(
     )
     cached = _cached(key, sources)
     if cached is not None:
-        return cached
+        # The key is the compiled program, every module of the closure: other
+        # named modules with the same closure are the same program (#652).  The
+        # verdict is the program's; the title and the time are this run's.
+        return dataclasses.replace(
+            cached,
+            scenario=title,
+            seconds=time.monotonic() - started,
+            cached=True,
+        )
     none_check = _none_check_started(sources, timeout)
     result = _compile(
         title,

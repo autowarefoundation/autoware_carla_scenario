@@ -20,8 +20,8 @@ two (``test_typecheck_library.py``), so a new module needs an entry here.
 
 :data:`UNCALLED` names the few functions and methods of a checked module the
 check leaves out, each with its reason: one whose job Codon cannot express (a
-dict of mixed value types, ``json``, a parameter of ``Any``), in a module that
-otherwise compiles.
+dict of mixed value types, a parameter of ``Any``, a standard module Codon has
+nothing for, such as ``platform``), in a module that otherwise compiles.
 
 To move a module into :data:`CHECKED`, delete its :data:`EXCLUDED` entry, add
 it to :data:`CHECKED`, run ``uv run scenario-check --library`` and fix what
@@ -225,6 +225,7 @@ CHECKED: tuple[str, ...] = (
     "autoware_carla_scenario.maps.z_offset_cache",
     "autoware_carla_scenario.measures",
     "autoware_carla_scenario.metrics",
+    "autoware_carla_scenario.npc_collisions",
     "autoware_carla_scenario.placement",
     "autoware_carla_scenario.scenario_base",
     "autoware_carla_scenario.scenario_config",
@@ -314,7 +315,8 @@ _YAML = (
 #: by dotted name (``module.Class.method``), with the reason.  Codon compiles
 #: a function only when something calls it, so the body of one listed here is
 #: not checked; nor are the imports made inside it, which is where a module
-#: imports what Codon has nothing for (``json``) and only that function uses.
+#: imports what Codon has nothing for (``platform``, ``argparse``) and only that
+#: function uses.
 #: Everything else in the module still is.
 UNCALLED: dict[str, str] = {
     "autoware_carla_scenario.actions.background_traffic.constraints_from_text": "reads YAML (yaml, imported inside it) into a list of `dict[str, Any]` constraint mappings of mixed value types, which Codon cannot express",
@@ -330,7 +332,7 @@ UNCALLED: dict[str, str] = {
     "autoware_carla_scenario.conditions.base.BaseCondition.to_summary_dict": _DETAILS,
     "autoware_carla_scenario.conditions.base.ConditionStatus.to_dict": _DETAILS,
     "autoware_carla_scenario.conditions.base.ScenarioResult.to_dict": _DETAILS,
-    "autoware_carla_scenario.conditions.base.ScenarioResult.to_json": "serialises with json, which Codon does not have",
+    "autoware_carla_scenario.conditions.base.ScenarioResult.to_json": "serialises to_dict(), a `dict[str, Any]` of mixed value types (see `_DETAILS`), and forwards `**kwargs: Any`, which Codon cannot express",
     "autoware_carla_scenario.conditions.comparison.ScalarComparisonRule.to_dict": _DETAILS,
     "autoware_carla_scenario.conditions.collision.CollisionCondition.get_details": _DETAILS,
     "autoware_carla_scenario.conditions.composition.acceleration.AccelerationCondition.get_details": _DETAILS,
@@ -405,7 +407,6 @@ UNCALLED: dict[str, str] = {
     "autoware_carla_scenario.scenario_runner._collect_condition_statuses": "builds ConditionStatus values, which hold a condition's details (`dict[str, Any]`), which Codon cannot express; _condition_statuses calls it in the `else` branch of `if TYPE_CHECKING:`",
     "autoware_carla_scenario.actions.spawn._taken": "looks for a road user on the place with utils.clearance, an EXCLUDED module (world snapshots held as `Any`); SpawnAction._place calls it in the `else` branch of `if TYPE_CHECKING:`",
     "autoware_carla_scenario.actions.spawn._hold": "holds the place for the frame with utils.clearance, an EXCLUDED module (world snapshots held as `Any`); SpawnAction._claim calls it in the `else` branch of `if TYPE_CHECKING:`",
-    "autoware_carla_scenario.actions.despawn._release_collision_sensor": "tells npc_collisions, an EXCLUDED module (sensor callbacks, actors held as `Any`), to let go of an actor; DespawnAction._forget calls it in the `else` branch of `if TYPE_CHECKING:`",
     "autoware_carla_scenario.actions._trajectory_run._walker_in_way": "looks for a walker ahead with utils.clearance, an EXCLUDED module (world snapshots and actors held as `Any`); TrajectoryRun._drive and FinalApproach.step call it in the `else` branch of `if TYPE_CHECKING:`",
     "autoware_carla_scenario.actions._trajectory_run._vehicle_in_way": "looks for a vehicle ahead with utils.clearance, an EXCLUDED module (world snapshots and actors held as `Any`); FinalApproach.step calls it in the `else` branch of `if TYPE_CHECKING:`",
     "autoware_carla_scenario.entity.pedestrian_entity._walk_by_ai": "drives the walker with CARLA's walker controller through entity._walker_ai, an EXCLUDED module (the controller held as `Any`); PedestrianEntity.walk_on calls it in the `else` branch of `if TYPE_CHECKING:`",
@@ -413,9 +414,8 @@ UNCALLED: dict[str, str] = {
     "autoware_carla_scenario.entity.pedestrian_entity._killed_by_crowd": "asks entity._walker_ai, an EXCLUDED module (the controller held as `Any`), whether CARLA's crowd has taken the walker for run over; PedestrianEntity.walk_on calls it in the `else` branch of `if TYPE_CHECKING:`",
     "autoware_carla_scenario.entity.pedestrian_entity._release_walker_ai": "stops the walker's controller through entity._walker_ai, an EXCLUDED module (the controller held as `Any`); PedestrianEntity.walk_on and destroy call it in the `else` branch of `if TYPE_CHECKING:`",
     "autoware_carla_scenario.actions.routing._matched_lanes": "matches a track to the lanes with traffic.route_match, an EXCLUDED module (lanelet2 geometry searches it holds as `Any`); RoutingAction._lane_stops calls it in the `else` branch of `if TYPE_CHECKING:`",
-    "autoware_carla_scenario.scenario_runner._npc_collision_monitor": "builds npc_collisions' NpcCollisionMonitor, an EXCLUDED module (sensor callbacks, actors held as `Any`); run_scenario calls it in the `else` branch of `if TYPE_CHECKING:`",
     "autoware_carla_scenario.scenario_runner._traffic_record": "reads the traffic backend's describe() and fidelity_census(), dicts of mixed value types, which Codon cannot express; run_scenario calls it in the `else` branch of `if TYPE_CHECKING:`",
-    "autoware_carla_scenario.scenario_runner._write_result": "writes the result with json, and the environment with environment.write() (platform, json), imported inside it, which Codon does not have; run_scenario calls it in the `else` branch of `if TYPE_CHECKING:`",
+    "autoware_carla_scenario.scenario_runner._write_result": "merges the traffic record (`Any`) and environment.write()'s record (environment is EXCLUDED: platform, importlib.metadata) into the result document, which Codon cannot express; run_scenario calls it in the `else` branch of `if TYPE_CHECKING:`",
     "autoware_carla_scenario.signals.controller.build_controllers": "reads the authoring package's pydantic specs (MapRef.traffic_signal_controllers and signal_groups), typed `list[Any]` so the runtime does not import authoring, with getattr defaults for fields older documents lack",
     "autoware_carla_scenario.sweeper.bindings.parse_binding": _YAML,
     "autoware_carla_scenario.sweeper.constraints.parse_constraint": _YAML,
@@ -531,7 +531,6 @@ EXCLUDED: dict[str, str] = {
     "autoware_carla_scenario.traffic.route_match": "holds lanelet2 lanelets, routing graphs and maps as `Any` and reads lanelet2.geometry's findWithin2d and toArcCoordinates, which the lanelet2 model does not declare; actions.routing uses it in the `else` branch of `if TYPE_CHECKING:`",
     "autoware_carla_scenario.entity._walker_ai": "holds CARLA's walker controllers and the world as `Any` (a controller.ai.walker is an Actor the Codon library gives no go_to_location to); pedestrian_entity uses it in the `else` branch of `if TYPE_CHECKING:`",
     "autoware_carla_scenario.utils.clearance": "reads every actor's position off a world snapshot it iterates, and holds the world and actors as `Any`, which Codon cannot express; pedestrian_entity and _trajectory_run use it in the `else` branch of `if TYPE_CHECKING:`",
-    "autoware_carla_scenario.npc_collisions": "listens to collision sensors through lambdas with default arguments, run on CARLA's threads, and reads actors and world snapshots it holds as `Any`, which Codon cannot express; scenario_runner uses it in the `else` branch of `if TYPE_CHECKING:`",
     "autoware_carla_scenario.trajectory_recorder": "writes JSON-lines records of mixed value types (`dict[str, Any]`, which Codon cannot express) serialised with orjson (module level; `orjson.JSONEncodeError`), reads the projector's settings with yaml (inside `_projector_info`), and neither has a Codon model; trajectory_recorder.codon models what scenario_runner uses of it",
     "autoware_carla_scenario.ui": "imports uvicorn and ui.app (fastapi) inside main(), and argparse and ui.recordings (tarfile) inside a function",
     "autoware_carla_scenario.ui.app": "imports fastapi, asyncio, fnmatch",

@@ -162,11 +162,7 @@ def _forget(actor: Optional["carla.Actor"]) -> None:
     if actor is None:
         return
     found: "carla.Actor" = actor
-    if TYPE_CHECKING:
-        # The collision log is not compiled (npc_collisions, EXCLUDED).
-        pass
-    else:
-        _release_collision_sensor(int(found.id))
+    _release_collision_sensor(int(found.id))
 
 
 def _release_collision_sensor(actor_id: int) -> None:
