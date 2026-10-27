@@ -923,12 +923,7 @@ class RoutingAction(TrajectoryRun):
             sample = path.at_distance(min(along, path.length))
             samples.append((sample.x, sample.y, sample.yaw))
             along += _MATCH_STEP_M
-        if TYPE_CHECKING:
-            # The matcher is not compiled (traffic.route_match, EXCLUDED).
-            matched: list[Lanelet2Pose] = []
-            problem = ""
-        else:
-            matched, problem = _matched_lanes(samples)
+        matched, problem = _matched_lanes(samples)
         if matched:
             # Started where the track starts, on its lane, rather than on
             # whichever lane is under the vehicle (the opposite one, a

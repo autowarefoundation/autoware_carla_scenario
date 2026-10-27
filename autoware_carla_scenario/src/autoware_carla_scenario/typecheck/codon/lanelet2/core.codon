@@ -129,6 +129,23 @@ class Point3d(ConstPoint3d):
     pass
 
 
+# A point of a 2D line string or polygon (to2D() of a line string, a
+# lanelet's polygon2d()). A LineString2d yields Point2ds, declared, as the
+# 3D twins are, with the Const class.
+class ConstPoint2d:
+    @property
+    def id(self) -> int:
+        raise NotImplementedError()
+
+    @property
+    def x(self) -> float:
+        raise NotImplementedError()
+
+    @property
+    def y(self) -> float:
+        raise NotImplementedError()
+
+
 class ConstLineString2d:
     @property
     def id(self) -> int:
@@ -139,6 +156,12 @@ class ConstLineString2d:
         raise NotImplementedError()
 
     def __len__(self) -> int:
+        raise NotImplementedError()
+
+    def __getitem__(self, key: int) -> ConstPoint2d:
+        raise NotImplementedError()
+
+    def __iter__(self) -> Generator[ConstPoint2d]:
         raise NotImplementedError()
 
 
@@ -232,6 +255,16 @@ class TrafficSign(RegulatoryElement):
     pass
 
 
+# A lanelet's outline (ConstLanelet.polygon2d()): its left bound's points,
+# then its right bound's backwards.
+class CompoundPolygon2d:
+    def __len__(self) -> int:
+        raise NotImplementedError()
+
+    def __iter__(self) -> Generator[ConstPoint2d]:
+        raise NotImplementedError()
+
+
 class ConstLanelet:
     @property
     def id(self) -> int:
@@ -261,6 +294,9 @@ class ConstLanelet:
 
     @property
     def regulatoryElements(self) -> List[RegulatoryElement]:
+        raise NotImplementedError()
+
+    def polygon2d(self) -> CompoundPolygon2d:
         raise NotImplementedError()
 
 

@@ -80,7 +80,12 @@ from __future__ import annotations
 
 import logging
 import math
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Optional
+
+if TYPE_CHECKING:
+    import typesafe_carla.carla as carla
+
+    from ..trajectory.model import ResolvedTrajectory, TrajectorySample
 
 logger = logging.getLogger(__name__)
 
@@ -161,10 +166,30 @@ _NAVMESH: dict[int, bool] = {}
 class _Driven:
     """A walker on its controller: where it is sent, and how fast."""
 
+    controller: "carla.WalkerAIController"
+    targets: list[tuple[float, "carla.Location"]]
+    cross_factor: Optional[float]
+    index: int
+    speed: float
+    running: bool
+    since_sent: float
+    stretches: list[tuple[float, float]]
+    stepping: bool
+    started_at: Optional[tuple[float, float]]
+    kerb_waited: float
+    kerb_light: Optional["carla.TrafficLight"]
+    kerb_light_read: bool
+    kerb_said: str
+    turn_back: Optional[tuple[Optional[float], Optional[float], float]]
+    kerb_here: float
+    turning_back: bool
+    back_to: Optional["TrajectorySample"]
+    waiting_back: bool
+
     def __init__(
         self,
-        controller: Any,
-        targets: list[tuple[float, Any]],
+        controller: "carla.WalkerAIController",
+        targets: list[tuple[float, "carla.Location"]],
         cross_factor: Optional[float],
     ) -> None:
         self.controller = controller
@@ -182,7 +207,7 @@ class _Driven:
         #: How long (s) it has waited at the kerb of the stretch ahead, and
         #: the light it checks there (read once, as CARLA does), if any.
         self.kerb_waited = 0.0
-        self.kerb_light: Any = None
+        self.kerb_light = None
         self.kerb_light_read = False
         self.kerb_said = ""
         #: ``(distance_m, ttc_s, within_m)`` it waits and turns back by, or
@@ -192,7 +217,7 @@ class _Driven:
         #: turning back, or no kerb), turning back to, or waiting behind it.
         self.kerb_here = -1.0
         self.turning_back = False
-        self.back_to: Any = None
+        self.back_to = None
         self.waiting_back = False
 
 
@@ -200,7 +225,7 @@ class _Driven:
 _DRIVEN: dict[int, _Driven] = {}
 
 
-def has_navmesh(world: Any) -> bool:
+def has_navmesh(world: "carla.World") -> bool:
     """Whether *world*'s map has a pedestrian navigation mesh (asked once per
     episode; a map without one is said once)."""
     key = int(world.id) if hasattr(world, "id") else 0
@@ -220,7 +245,7 @@ def has_navmesh(world: Any) -> bool:
     return _NAVMESH[key]
 
 
-def _start(world: Any, driven: _Driven) -> None:
+def _start(world: "carla.World", driven: _Driven) -> None:
     """Put the walker on its controller, with its own cross factor."""
     factor = driven.cross_factor
     if factor is not None:
@@ -237,11 +262,11 @@ def _start(world: Any, driven: _Driven) -> None:
 
 
 def drive(
-    walker: Any,
-    path: Any,
+    walker: "carla.Actor",
+    path: "ResolvedTrajectory",
     here: float,
     speed: float,
-    location: Any = None,
+    location: Optional["carla.Location"] = None,
     cross_factor: Optional[float] = None,
     turn_back: Optional[tuple[Optional[float], Optional[float], float]] = None,
 ) -> bool:
@@ -258,8 +283,7 @@ def drive(
         return False
     if location is None:
         location = walker.get_location()
-    driven = _DRIVEN.get(int(walker.id))
-    if driven is None:
+    if int(walker.id) not in _DRIVEN:
         # Not before the walker stands where its walk is: one just brought in
         # (set where it appears) still reads its old place until the world
         # ticks, and a controller started then registers it there -- under
@@ -270,7 +294,7 @@ def drive(
             or math.hypot(location.x - on.x, location.y - on.y) > _START_NEAR_M
         ):
             return True
-        targets: list[tuple[float, Any]] = []
+        targets: list[tuple[float, "carla.Location"]] = []
         along = TARGET_SPACING_M
         while along < path.length:
             sample = path.at_distance(along)
@@ -290,33 +314,38 @@ def drive(
                     int(walker.id),
                     moved,
                     len(targets),
-                    "default" if cross_factor is None else "%.2f" % cross_factor,
+                    "default" if cross_factor is None else "%.2f" % float(cross_factor),
                 )
         blueprint = world.get_blueprint_library().find("controller.ai.walker")
-        controller = world.spawn_actor(blueprint, carla.Transform(), attach_to=walker)
-        driven = _Driven(controller, targets, cross_factor)
+        spawned = world.spawn_actor(blueprint, carla.Transform(), attach_to=walker)
+        if TYPE_CHECKING:
+            controller = spawned.as_walker_ai_controller()
+        else:
+            controller = spawned
+        created = _Driven(controller, targets, cross_factor)
         if cross_factor is not None and cross_factor >= STEP_CROSSING_FROM:
             try:
-                driven.stretches = road_stretches(path)
+                created.stretches = road_stretches(path)
             except RuntimeError:  # no Lanelet2 map to read the walk against
-                driven.stretches = []
-            if driven.stretches:
+                created.stretches = []
+            if created.stretches:
                 logger.info(
                     "walker %d crosses a road away from a crossing: %s m of "
                     "its walk stepped",
                     int(walker.id),
-                    ", ".join("%.0f-%.0f" % stretch for stretch in driven.stretches),
+                    ", ".join("%.0f-%.0f" % stretch for stretch in created.stretches),
                 )
-        _DRIVEN[int(walker.id)] = driven
+        _DRIVEN[int(walker.id)] = created
         logger.debug(
             "walker %d: on CARLA's controller (cross factor %s), %d targets to "
             "(%.1f, %.1f)",
             int(walker.id),
-            "default" if cross_factor is None else "%.2f" % cross_factor,
+            "default" if cross_factor is None else "%.2f" % float(cross_factor),
             len(targets),
             targets[-1][1].x,
             targets[-1][1].y,
         )
+    driven = _DRIVEN[int(walker.id)]
     driven.turn_back = turn_back
     _check_snap(walker, driven, location)
     stepped = _stepped(driven, here, location)
@@ -388,8 +417,8 @@ def drive(
 
 
 def _threat(
-    walker: Any,
-    location: Any,
+    walker: "carla.Actor",
+    location: "carla.Location",
     turn_back: Optional[tuple[Optional[float], Optional[float], float]],
     standing: bool,
 ) -> str:
@@ -423,7 +452,12 @@ def _threat(
 
 
 def _turns_back(
-    walker: Any, driven: _Driven, path: Any, here: float, location: Any, speed: float
+    walker: "carla.Actor",
+    driven: _Driven,
+    path: "ResolvedTrajectory",
+    here: float,
+    location: "carla.Location",
+    speed: float,
 ) -> bool:
     """One tick of a stepped walker watching for a threat off the kerb
     (``turn_back``): whether it walks back to the kerb, or waits behind it,
@@ -452,6 +486,7 @@ def _turns_back(
         return False
     if driven.turning_back:
         target = driven.back_to
+        assert target is not None
         dx, dy = target.x - location.x, target.y - location.y
         gap = math.hypot(dx, dy)
         if gap <= _BACK_REACHED_M:
@@ -489,7 +524,11 @@ def _turns_back(
 
 
 def _kerb_wait(
-    walker: Any, driven: _Driven, path: Any, here: float, location: Any
+    walker: "carla.Actor",
+    driven: _Driven,
+    path: "ResolvedTrajectory",
+    here: float,
+    location: "carla.Location",
 ) -> bool:
     """Whether *walker*, at the kerb of the road stretch ahead (``here`` m
     along *path*, at *location*), waits this tick before it steps off: the
@@ -543,18 +582,24 @@ def _kerb_wait(
 
 
 #: Each episode's traffic lights' stop waypoints, by world id.
-_LIGHTS: dict[int, list[tuple[Any, float, float, float]]] = {}
+_LIGHTS: dict[int, list[tuple["carla.TrafficLight", float, float, float]]] = {}
 
 
-def _nearest_light(world: Any, location: Any) -> Any:
+def _nearest_light(
+    world: "carla.World", location: "carla.Location"
+) -> Optional["carla.TrafficLight"]:
     """The traffic light whose stop waypoint is nearest *location*, at any
     distance (``WalkerManager::GetTrafficLightAffecting``, max_distance -1),
     or ``None`` on a map with none."""
     key = int(world.id) if hasattr(world, "id") else 0
     if key not in _LIGHTS:
-        stops: list[tuple[Any, float, float, float]] = []
+        stops: list[tuple["carla.TrafficLight", float, float, float]] = []
         try:
-            for light in world.get_actors().filter("traffic.traffic_light"):
+            for actor in world.get_actors().filter("traffic.traffic_light"):
+                if TYPE_CHECKING:
+                    light = actor.as_traffic_light()
+                else:
+                    light = actor
                 for waypoint in light.get_stop_waypoints():
                     at = waypoint.transform.location
                     stops.append((light, at.x, at.y, at.z))
@@ -562,7 +607,7 @@ def _nearest_light(world: Any, location: Any) -> Any:
             stops = []
         _LIGHTS.clear()
         _LIGHTS[key] = stops
-    best: Any = None
+    best: Optional["carla.TrafficLight"] = None
     nearest = float("inf")
     for light, x, y, z in _LIGHTS[key]:
         d = (location.x - x) ** 2 + (location.y - y) ** 2 + (location.z - z) ** 2
@@ -571,7 +616,12 @@ def _nearest_light(world: Any, location: Any) -> Any:
     return best
 
 
-def give_way(walker: Any, path: Any, here: float, location: Any) -> bool:
+def give_way(
+    walker: "carla.Actor",
+    path: "ResolvedTrajectory",
+    here: float,
+    location: "carla.Location",
+) -> bool:
     """Whether *walker*, stepped (``here`` m along *path*, at *location*),
     is to stand this tick for a walker in its way: one within
     :data:`GIVE_WAY_M` ahead along its walk, for at most
@@ -624,7 +674,7 @@ def give_way(walker: Any, path: Any, here: float, location: Any) -> bool:
     return True
 
 
-def road_stretches(path: Any) -> list[tuple[float, float]]:
+def road_stretches(path: "ResolvedTrajectory") -> list[tuple[float, float]]:
     """``(start, end)`` along *path* (m) of its stretches on a road lanelet
     and on no walkway or crossing: where it crosses a road away from one."""
     stretches: list[tuple[float, float]] = []
@@ -636,17 +686,17 @@ def road_stretches(path: Any) -> list[tuple[float, float]]:
             if start is None:
                 start = max(0.0, along - _SAMPLE_M / 2.0)
         elif start is not None:
-            stretches.append((start, along - _SAMPLE_M / 2.0))
+            stretches.append((float(start), along - _SAMPLE_M / 2.0))
             start = None
         if along >= path.length:
             break
         along += _SAMPLE_M
     if start is not None:
-        stretches.append((start, path.length))
+        stretches.append((float(start), path.length))
     return stretches
 
 
-def _stepped(driven: _Driven, here: float, location: Any) -> bool:
+def _stepped(driven: _Driven, here: float, location: "carla.Location") -> bool:
     """Whether the walker, *here* m along its walk, is to be stepped: in a
     road stretch (from just before it), or past one and not yet on a
     walkway or a crossing :data:`HAND_BACK_PAST_M` beyond it."""
@@ -665,20 +715,25 @@ def _stepped(driven: _Driven, here: float, location: Any) -> bool:
     return False
 
 
-def _own_steps(walker: Any) -> None:
+def _own_steps(walker: "carla.Actor") -> None:
     """Let *walker* take steps again (``apply_control``) off its controller.
     Starting the controller set the walker's physics and its collisions off
     (``WalkerAIController::Start``) and stopping it sets neither on again: a
     walker moved by CARLA's navigation ignores steps until its physics is on,
     and with its collisions off it falls through the ground."""
-    for turn_on in ("set_simulate_physics", "set_collisions"):
-        try:
-            getattr(walker, turn_on)(True)
-        except (AttributeError, RuntimeError):
-            pass
+    try:
+        walker.set_simulate_physics(True)
+    except (AttributeError, RuntimeError):
+        pass
+    try:
+        walker.set_collisions(True)
+    except (AttributeError, RuntimeError):
+        pass
 
 
-def _check_snap(walker: Any, driven: _Driven, location: Any) -> None:
+def _check_snap(
+    walker: "carla.Actor", driven: _Driven, location: "carla.Location"
+) -> None:
     """Say a jump over the tick the walker's controller started."""
     before = driven.started_at
     if before is None:
@@ -695,7 +750,7 @@ def _check_snap(walker: Any, driven: _Driven, location: Any) -> None:
         )
 
 
-def _onto_walkways(targets: list[tuple[float, Any]]) -> int:
+def _onto_walkways(targets: list[tuple[float, "carla.Location"]]) -> int:
     """Move each of *targets* on a road lanelet (and on no walkway or
     crossing) to the nearest walkway or crossing; how many were moved."""
     moved = 0
@@ -826,7 +881,7 @@ def _stop(driven: _Driven) -> None:
         pass
 
 
-def _tick_seconds(world: Any) -> float:
+def _tick_seconds(world: "carla.World") -> float:
     try:
         return float(world.get_snapshot().timestamp.delta_seconds)
     except (AttributeError, RuntimeError):

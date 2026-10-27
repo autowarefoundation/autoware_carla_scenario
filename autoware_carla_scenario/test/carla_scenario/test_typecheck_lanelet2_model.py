@@ -413,6 +413,15 @@ def test_the_geometry_functions(lanelet_map: Any) -> None:
     assert isinstance(centerline_2d, core.ConstLineString2d)
     assert isinstance(centerline_2d.id, int)
     assert isinstance(len(centerline_2d), int)
+    assert isinstance(centerline_2d[0], core.ConstPoint2d)
+    for point_2d in centerline_2d:
+        assert isinstance(point_2d, core.ConstPoint2d)
+        assert isinstance(point_2d.id, int)
+        assert all(isinstance(v, float) for v in (point_2d.x, point_2d.y))
+    polygon = lanelet.polygon2d()
+    assert isinstance(polygon, core.CompoundPolygon2d)
+    assert len(polygon) == len(lanelet.leftBound) + len(lanelet.rightBound)
+    assert all(isinstance(corner, core.ConstPoint2d) for corner in polygon)
     mutable = core.LineString3d(
         lanelet2.core.getId(),
         [
@@ -437,6 +446,16 @@ def test_the_geometry_functions(lanelet_map: Any) -> None:
     for distance, nearest in found:
         assert isinstance(distance, float)
         assert isinstance(nearest, core.Lanelet)
+    within = geometry.findWithin2d(lanelet_map.laneletLayer, point, 5.0)
+    assert isinstance(within, list) and within
+    for distance, near in within:
+        assert isinstance(distance, float)
+        assert isinstance(near, core.Lanelet)
+    assert [d for d, _l in within] == sorted(d for d, _l in within)
+    # maxDist defaults to 0.0: the lanelets the point is on.
+    assert lanelet.id in {
+        near.id for _d, near in geometry.findWithin2d(lanelet_map.laneletLayer, point)
+    }
     assert isinstance(geometry.inside(lanelet, point), bool)
     assert isinstance(geometry.length2d(lanelet), float)
 

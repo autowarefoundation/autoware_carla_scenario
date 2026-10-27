@@ -14,7 +14,10 @@ once per actor.
 from __future__ import annotations
 
 import math
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Optional
+
+if TYPE_CHECKING:
+    import typesafe_carla.carla as carla
 
 __all__ = ["Obstacle", "claim_spot", "first_in_way", "overlaps"]
 
@@ -58,7 +61,7 @@ class _Cache:
 _CACHE = _Cache()
 
 
-def _states(world: Any) -> list[tuple[int, float, float, float, float]]:
+def _states(world: "carla.World") -> list[tuple[int, float, float, float, float]]:
     """``(id, x, y, z, speed)`` of every actor this frame."""
     snapshot = world.get_snapshot()
     frame = int(snapshot.frame)
@@ -91,7 +94,7 @@ def _states(world: Any) -> list[tuple[int, float, float, float, float]]:
     return _CACHE.states
 
 
-def _kind(world: Any, actor_id: int) -> tuple[str, float]:
+def _kind(world: "carla.World", actor_id: int) -> tuple[str, float]:
     """``("vehicle" | "walker" | "", radius)`` of *actor_id*, read once."""
     if actor_id not in _CACHE.kinds:
         kind, radius = "", 0.0
@@ -111,7 +114,7 @@ def _kind(world: Any, actor_id: int) -> tuple[str, float]:
 
 
 def claim_spot(
-    world: Any,
+    world: "carla.World",
     actor_id: int,
     x: float,
     y: float,
@@ -130,7 +133,7 @@ def claim_spot(
 
 
 def overlaps(
-    world: Any,
+    world: "carla.World",
     self_id: int,
     x: float,
     y: float,
@@ -198,7 +201,7 @@ def _rectangles_meet(
 
 
 def first_in_way(
-    world: Any,
+    world: "carla.World",
     self_id: int,
     x: float,
     y: float,
