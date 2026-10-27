@@ -15,20 +15,21 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Optional, Union
 
-from ..coordinate.poses import CarlaWorldPose, Lanelet2Pose, OpenDrivePose
-from ..trajectory.model import (
-    MapPose,
-    RelativeLanePose,
-    RouteCrossingPose,
-    RouteCrosswalkPose,
-    RouteLanePose,
-    RouteOppositePose,
-    RouteRoadsidePose,
-)
 from .model import RouteMatch
 
 if TYPE_CHECKING:
     from lanelet2.core import LaneletMap
+
+    from ..coordinate.poses import CarlaWorldPose, Lanelet2Pose, OpenDrivePose
+    from ..trajectory.model import (
+        MapPose,
+        RelativeLanePose,
+        RouteCrossingPose,
+        RouteCrosswalkPose,
+        RouteLanePose,
+        RouteOppositePose,
+        RouteRoadsidePose,
+    )
 
     from lanelet2.routing import RoutingGraph
 
@@ -126,6 +127,10 @@ def lane_place(
     What a spawn shifts along, and the way a place without a heading of its
     own faces (along the lane).
     """
+    # Imported here: trajectory.model imports this package (a cycle at the
+    # top of the module).
+    from ..coordinate.poses import Lanelet2Pose  # noqa: PLC0415
+
     if isinstance(position, Lanelet2Pose):
         # Named as the class: Codon does not narrow a union by isinstance()
         # (docs/typecheck.md).
@@ -133,6 +138,11 @@ def lane_place(
         return given
     if TYPE_CHECKING:
         return None  # the route's poses are not compiled here (docs/typecheck.md)
+    from ..trajectory.model import (  # noqa: PLC0415
+        RouteCrossingPose,
+        RouteLanePose,
+        RouteOppositePose,
+    )
     from .positions import resolve_route_pose  # noqa: PLC0415
 
     if not isinstance(position, (RouteLanePose, RouteOppositePose, RouteCrossingPose)):
