@@ -358,6 +358,9 @@ class _Search:
         f = self.features
         if seg.turn != "any" and junction_turn(f, way) != seg.turn:
             return False
+        if seg.length.min is not None or seg.length.max is not None:
+            if not seg.length.contains(math.fsum(f.length(ll) for ll in way)):
+                return False
         if seg.traffic_light != "any":
             lit = any(f.has_traffic_light(ll) for ll in way) or (
                 entry is not None and f.has_traffic_light(entry)
@@ -372,9 +375,28 @@ class _Search:
                 if not tristate_holds(want, present):
                     return False
             for path in seg.paths:
-                if not any(
-                    m.approach == path.approach and m.turn == path.turn for m in members
-                ):
+                options = [
+                    m
+                    for m in members
+                    if m.approach == path.approach and m.turn == path.turn
+                ]
+                if not options:
+                    return False
+                bounds = (
+                    path.before.min,
+                    path.before.max,
+                    path.after.min,
+                    path.after.max,
+                )
+                if all(bound is None for bound in bounds):
+                    continue
+                # The path a crossing pose takes: conflicting first, then the
+                # lowest id.
+                chosen = min(
+                    options, key=lambda m: (not m.conflicts, int(m.lanelet.id))
+                )
+                before, _through, after = f.path_reach(chosen.lanelet)
+                if not path.before.contains(before) or not path.after.contains(after):
                     return False
         if seg.crosswalk_entry != "any" or seg.crosswalk_exit != "any":
             crosswalks = f.junction_crosswalks(way, entry, exit_)

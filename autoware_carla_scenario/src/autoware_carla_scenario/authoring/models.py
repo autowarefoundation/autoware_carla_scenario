@@ -1024,6 +1024,8 @@ class JunctionPath(_Node):
 
     approach: Literal["same", "left", "right", "opposite"]
     turn: Literal["left", "right", "straight"]
+    before: LengthRange = Field(default_factory=LengthRange)
+    after: LengthRange = Field(default_factory=LengthRange)
 
 
 class JunctionSegment(_Node):
@@ -1041,6 +1043,7 @@ class JunctionSegment(_Node):
     crosswalk_entry: Tristate = "any"
     crosswalk_exit: Tristate = "any"
     paths: list[JunctionPath] = Field(default_factory=list)
+    length: LengthRange = Field(default_factory=LengthRange)
 
     _yes_no = field_validator(
         "traffic_light",
@@ -1055,6 +1058,8 @@ class JunctionSegment(_Node):
     def summary(self) -> str:
         """One line for the editor: what this segment asks for."""
         parts = [f"junction, turn {self.turn}"]
+        if self.length.min is not None or self.length.max is not None:
+            parts.append(f"length {_range_text(self.length, 'm')}")
         for name, label in (
             ("traffic_light", "traffic light"),
             ("crossing_from_left", "crossing from left"),
@@ -1067,7 +1072,12 @@ class JunctionSegment(_Node):
             if value != "any":
                 parts.append(f"{label}: {value}")
         for path in self.paths:
-            parts.append(f"path from {path.approach} turning {path.turn}")
+            text = f"path from {path.approach} turning {path.turn}"
+            for name in ("before", "after"):
+                reach = _range_text(getattr(path, name), "m")
+                if reach != "any":
+                    text += f" ({name} {reach})"
+            parts.append(text)
         return ", ".join(parts)
 
 
@@ -1138,6 +1148,12 @@ class RouteSearch(_Node):
         for segment in out.get("segments", []):
             if segment.get("paths") == []:
                 del segment["paths"]
+            if segment.get("kind") == "junction" and segment.get("length") == {}:
+                del segment["length"]
+            for path in segment.get("paths", []):
+                for name in ("before", "after"):
+                    if path.get(name) == {}:
+                        del path[name]
         return out
 
 

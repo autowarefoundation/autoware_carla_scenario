@@ -2704,7 +2704,7 @@ register_action_spec(
                     "lane ds= offset= d_lane= yaw= anchor= | "
                     "opposite ds= lane= offset= yaw= anchor= | "
                     "crossing junction= approach=same|left|right|opposite distance= "
-                    "turn= offset= yaw= | "
+                    "turn= offset= yaw= d_lane= | "
                     "crosswalk junction= leg=entry|exit side=left|right along= "
                     "yaw= | roadside ds= side= kerb_distance= yaw= anchor=.  "
                     "ds counts from the anchor (start, end, segment:K:start|end, "
