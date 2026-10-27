@@ -288,6 +288,43 @@ class TestValidation:
         assert any("has 1 junction(s)" in m for m in messages)
         assert any("Route vertex 1: junction 2" in m for m in messages)
 
+    def test_a_traffic_signal_on_a_route_junction(self) -> None:
+        from autoware_carla_scenario.actions import (
+            TrafficLightTarget,
+            TrafficSignalAction,
+        )
+
+        raw = _raw()
+        raw["actions"].append(
+            {
+                "id": "light",
+                "type": "traffic_signal",
+                "params": {
+                    "state": "Red",
+                    "target": "route",
+                    "route_junction": 0,
+                    "route_approach": "same",
+                    "route_turn": "left",
+                },
+            }
+        )
+        document = ScenarioDocument.model_validate(raw)
+        assert not _messages(document)
+        built = instantiate_action(
+            compile_document(document).actions[-1], BuildContext(scenario=None)
+        )
+        assert isinstance(built, TrafficSignalAction)
+        assert built._route and not built._all_lights
+        assert (built._route_junction, built._route_approach, built._route_turn) == (
+            0,
+            "same",
+            "left",
+        )
+        raw["actions"][-1]["params"]["route_junction"] = 2
+        messages = _messages(ScenarioDocument.model_validate(raw))
+        assert any("Route junction 2" in m for m in messages)
+        assert TrafficLightTarget.ROUTE.value == "route"
+
     def test_a_spawn_cards_route_pose_is_checked_as_route_vertices_are(self) -> None:
         raw = _raw()
         raw["actions"][4]["params"]["route_pose"] = "crosswalk junction=3 leg=exit"

@@ -2815,6 +2815,9 @@ register_action_spec(
                 cases=(
                     ArgumentCase("all", constant="..actions:TrafficLightTarget.ALL"),
                     ArgumentCase("ids", field="lanelet2_traffic_light_ids"),
+                    ArgumentCase(
+                        "route", constant="..actions:TrafficLightTarget.ROUTE"
+                    ),
                 ),
             ),
         ),
@@ -2836,6 +2839,7 @@ register_action_spec(
                 options=(
                     SelectOption("all", "All traffic lights"),
                     SelectOption("ids", "Selected Lanelet2 IDs"),
+                    SelectOption("route", "A route junction's path"),
                 ),
             ),
             FieldSpec(
@@ -2854,8 +2858,50 @@ register_action_spec(
                 required=False,
                 help="Stop the TrafficManager from overriding the state.",
             ),
+            FieldSpec(
+                name="route_junction",
+                label="Route junction",
+                kind="int",
+                default=0,
+                required=False,
+                help=(
+                    "With Target 'A route junction's path': which junction of the "
+                    "route, from 0."
+                ),
+            ),
+            FieldSpec(
+                name="route_approach",
+                label="Approach",
+                kind="select",
+                default="same",
+                required=False,
+                options=(
+                    SelectOption("same", "The ego's own"),
+                    SelectOption("left", "From the left"),
+                    SelectOption("right", "From the right"),
+                    SelectOption("opposite", "Opposite"),
+                ),
+                help="Where the path enters the junction, seen from the ego.",
+            ),
+            FieldSpec(
+                name="route_turn",
+                label="Turn",
+                kind="select",
+                default="any",
+                required=False,
+                options=(
+                    SelectOption("any", "Any"),
+                    SelectOption("left", "Left"),
+                    SelectOption("right", "Right"),
+                    SelectOption("straight", "Straight"),
+                ),
+                help="Which way the path turns.",
+            ),
         ),
-        description="Set traffic lights by Lanelet2 regulatory element ID.",
+        description=(
+            "Set traffic lights by Lanelet2 regulatory element ID, or those of "
+            "a path through a junction of the scenario's route."
+        ),
     )
 )
 

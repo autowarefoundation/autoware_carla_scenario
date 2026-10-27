@@ -1222,6 +1222,23 @@ def _check_route(out: _Collector, document: ScenarioDocument) -> None:
                 params.get("route_vertices"),
                 "Route vertices are",
             )
+        if action.type == "traffic_signal" and params.get("target") == "route":
+            where = f"actions[{index}].route_junction"
+            junction = int(params.get("route_junction") or 0)
+            if route is None:
+                out.error(
+                    where,
+                    "A route junction's traffic lights are found on the scenario's "
+                    "route, and this scenario has no route search.",
+                    action.id,
+                )
+            elif junction >= junctions:
+                out.error(
+                    where,
+                    f"Route junction {junction}: the route search has {junctions} "
+                    "junction segment(s).",
+                    action.id,
+                )
         if action.type == "spawn" and params.get("route_pose"):
             route_rows(
                 f"actions[{index}].route_pose",
