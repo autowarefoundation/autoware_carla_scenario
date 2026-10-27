@@ -194,7 +194,7 @@ sequenceDiagram
             SR->>W: stop_recorder()
             SR->>TB: close()
             TB->>TM: shut_down()
-            SR->>W: reload_world()
+            SR->>W: reset_world() (map reload, or soft reset)
         end
 
         SR-->>SQ: ScenarioResult
@@ -1292,6 +1292,6 @@ pass_condition = AndCondition(
 
 `StickyCondition` latches once its child is satisfied, so each road only needs to be visited once. `AndCondition` requires all children to be satisfied simultaneously.
 
-### World Reload for Clean State
+### World Reset for Clean State
 
-After each scenario, `ScenarioRunner` calls `client.reload_world()` instead of manually destroying actors. This guarantees a completely clean state (actors, sensors, physics, Traffic Manager internal maps) and avoids "failed to destroy actor" errors from the CARLA server.
+After each scenario but the last, `ScenarioRunner.reset_world()` resets the world. By default (`server.world_reset: reload`) it loads the batch's map again by name (`client.reload_world()` fails on CARLA UE5): a new episode, with the run's actors destroyed first so their sensor streams are released. `server.world_reset: soft` keeps the episode and puts back what a run changes -- destroying every actor the freshly loaded world did not have and restoring the settings, weather, traffic lights and spectator read right after the load (`world_reset.py`) -- and falls back to a reload when the world is another episode or anything is left over. See [Resetting the world between cases](usage.md#resetting-the-world-between-cases) for what a soft reset does and does not reset.

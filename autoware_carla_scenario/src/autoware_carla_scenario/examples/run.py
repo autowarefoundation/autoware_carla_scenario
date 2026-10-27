@@ -650,6 +650,8 @@ def run_scenario_with_queue(
     map_source: str | None = None,
     rerun: RerunConverter | None = None,
     t4: T4Recorder | None = None,
+    world_reset: str = "reload",
+    reload_every: int = 0,
 ) -> ScenarioResult:
     """Run a single pre-built scenario using :class:`ScenarioQueue`.
 
@@ -661,6 +663,8 @@ def run_scenario_with_queue(
     *rerun* converts the run's trajectory log into a Rerun recording once it
     is closed (:func:`build_rerun_converter`); the caller waits for it.
     *t4* writes the run as a T4 dataset (:func:`build_t4_recorder`).
+    *world_reset* and *reload_every* are how the queue resets the world
+    (:func:`world_reset_settings`).
 
     This is the extracted orchestration logic that was previously embedded
     inside :func:`run_scenario`.  Downstream projects can use this to execute
@@ -694,6 +698,8 @@ def run_scenario_with_queue(
         map_source=map_source,
         rerun=rerun,
         t4=t4,
+        world_reset=world_reset,
+        reload_every=reload_every,
     )
     queue.add(scenario, case=case)
     with queue:
@@ -704,6 +710,25 @@ def run_scenario_with_queue(
 def _optional_float(value: object) -> float | None:
     """Read an optional numeric config value that may be absent or null."""
     return None if value is None else float(value)  # type: ignore[arg-type]
+
+
+def world_reset_settings(cfg: DictConfig) -> tuple[str, int]:
+    """``server.world_reset`` and ``server.reload_every``, checked.
+
+    Raises:
+        ValueError: naming the key, when ``world_reset`` is neither ``reload``
+            nor ``soft`` or ``reload_every`` is negative.
+    """
+    from ..world_reset import RESET_RELOAD, check_world_reset  # noqa: PLC0415
+
+    server = cfg.get("server") or {}
+    world_reset = str(server.get("world_reset", RESET_RELOAD) or RESET_RELOAD)
+    reload_every = int(server.get("reload_every", 0) or 0)
+    try:
+        check_world_reset(world_reset, reload_every)
+    except ValueError as exc:
+        raise ValueError(f"server.{exc}") from None
+    return world_reset, reload_every
 
 
 def _fog_density_scale(cfg: DictConfig) -> float | None:
@@ -1155,6 +1180,7 @@ def _batch_queue(
     """
     cooldown = float(first_cfg.server.get("cooldown_seconds", 0.0))
     cooldown_max_retries = int(first_cfg.server.get("cooldown_max_retries", 0))
+    world_reset, reload_every = world_reset_settings(first_cfg)
     return ScenarioQueue(
         host=first_cfg.server.host,
         port=first_cfg.server.port,
@@ -1176,6 +1202,8 @@ def _batch_queue(
         map_source=_map_source(first_cfg),
         rerun=rerun,
         t4=build_t4_recorder(first_cfg),
+        world_reset=world_reset,
+        reload_every=reload_every,
     )
 
 
@@ -1350,6 +1378,8 @@ def run_batch(
     check_odd(_odd_spec(first_cfg), typecheck_mode(first_cfg))
 
     map_paths = resolve_map_paths(first_cfg.map)
+    # Refused here, before a SLURM submission or CARLA starts.
+    world_reset_settings(first_cfg)
 
     # Batch mode bypasses @hydra.main, so we create the output directory
     # ourselves following Hydra's timestamped convention.
@@ -1625,6 +1655,7 @@ def _run_scenario(
     map_paths = resolve_map_paths(cfg.map)
     cooldown = float(cfg.server.get("cooldown_seconds", 0.0))
     cooldown_max_retries = int(cfg.server.get("cooldown_max_retries", 0))
+    world_reset, reload_every = world_reset_settings(cfg)
 
     # Retrieve the Hydra output directory (works regardless of
     # ``hydra.job.chdir`` which defaults to False since Hydra 1.2).
@@ -1656,6 +1687,8 @@ def _run_scenario(
         map_source=_map_source(cfg),
         rerun=rerun,
         t4=build_t4_recorder(cfg),
+        world_reset=world_reset,
+        reload_every=reload_every,
     )
 
     status = "PASSED" if result.passed else "FAILED"

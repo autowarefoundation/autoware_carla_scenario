@@ -41,7 +41,18 @@ from .scenario_base import BaseScenario
 from .server import CarlaServerManager
 from .traffic.base import TrafficBackend, TrafficContext
 from .traffic.driven import BackendDriven
-from .world_reset import episode_of, reload_current_map, same_episode, short_map_name
+from .world_reset import (
+    RESET_RELOAD,
+    RESET_SOFT,
+    WorldBaseline,
+    capture_baseline,
+    check_world_reset,
+    episode_of,
+    reload_current_map,
+    same_episode,
+    short_map_name,
+    soft_reset_world,
+)
 from .traffic.config import TrafficManagerBackendConfig
 from .traffic.traffic_manager import TrafficManagerBackend
 from .rerun import RerunConverter
@@ -574,6 +585,17 @@ class ScenarioRunner:
     _batch_xodr: Optional[Path]
     #: The episode this runner last loaded _batch_map into, if it knows it.
     _batch_episode: Optional[int]
+    #: How the world is reset between runs: RESET_RELOAD or RESET_SOFT.
+    _world_reset: str
+    #: With RESET_SOFT, load the map instead on every this many-th reset (0:
+    #: only when a soft reset cannot be done).
+    _reload_every: int
+    #: Soft resets since the map was last loaded.
+    _soft_resets: int
+    #: What a soft reset puts the world back to, read when the map was last
+    #: loaded; None when there is none to soft-reset to (RESET_RELOAD, or the
+    #: map was not loaded by this runner yet).
+    _baseline: Optional[WorldBaseline]
     #: The map the runs are on, as the trajectory log's ``map`` record names
     #: it: where it came from (``map.source``), the Lanelet2 file read, and the
     #: projection the config overrode its own with.  The queue sets them.
@@ -599,6 +621,8 @@ class ScenarioRunner:
         max_tick_rate_hz: Optional[float] = None,
         traffic_backend: Optional[TrafficBackend] = None,
         odd: Optional[OddDefinition] = None,
+        world_reset: str = RESET_RELOAD,
+        reload_every: int = 0,
     ) -> None:
         """Initialize the scenario runner.
 
@@ -628,7 +652,28 @@ class ScenarioRunner:
             odd: The ODD every run is measured against: its attributes are
                 the ODD coverage, its modules say which ticks were outside it
                 (docs/odd.md).  *None* selects the built-in ``default`` ODD.
+            world_reset: How :meth:`reset_world` resets the world between
+                runs.  ``"reload"`` (the default) loads the map again.
+                ``"soft"`` keeps the loaded map and destroys what the run
+                spawned, restoring the weather, the episode settings, the
+                traffic lights and the spectator as they were when the map
+                was loaded (:func:`~autoware_carla_scenario.world_reset.soft_reset_world`);
+                the map is loaded instead when the world is not that one any
+                more, or the soft reset fails or finds anything left over
+                (docs/usage.md, "Resetting the world between cases").
+            reload_every: With ``world_reset="soft"``, load the map instead of
+                a soft reset on every *reload_every*-th reset; 0 (the default)
+                only when a soft reset cannot be done.
+
+        Raises:
+            ValueError: *world_reset* is not ``"reload"`` or ``"soft"``, or
+                *reload_every* is negative.
         """
+        check_world_reset(world_reset, reload_every)
+        self._world_reset = world_reset
+        self._reload_every = reload_every
+        self._soft_resets = 0
+        self._baseline = None
         self.map_source = None
         self.lanelet2_path = None
         self.projector_type = None
@@ -911,12 +956,14 @@ class ScenarioRunner:
                 f"Available maps: {short_names}"
             )
 
-        self._world = self._client.load_world(map_name)
+        loaded = self._client.load_world(map_name)
+        self._world = loaded
         # The map the runs are for, to reset the world to -- not whatever map
         # the server happens to run then (see _world_for_next_run).
         self._batch_map = short_map_name(map_name)
         self._batch_xodr = None
-        self._batch_episode = episode_of(self._world)
+        self._batch_episode = episode_of(loaded)
+        self._baseline = self._capture_baseline(loaded, map_name)
 
     def _load_batch_map(self) -> None:
         """Load the runs' map again, the way it was loaded first."""
@@ -975,12 +1022,89 @@ class ScenarioRunner:
     # Scenario execution
     # ------------------------------------------------------------------
 
-    def reset_world(self, scenario_name: str = "") -> None:
-        """Reload the map, so the next scenario starts on a clean world.
+    @property
+    def world_reset(self) -> str:
+        """How :meth:`reset_world` resets the world: ``"reload"`` or ``"soft"``."""
+        return self._world_reset
 
-        The map is the one :meth:`load_map_by_name` loaded, when this runner
-        loaded one, and the server's current map otherwise.
+    def _capture_baseline(
+        self, world: "carla.World", scenario_name: str
+    ) -> Optional[WorldBaseline]:
+        """What a soft reset of *world*, freshly loaded, puts back; None when
+        the runner reloads, or the world cannot be read (the next reset then
+        loads the map)."""
+        self._soft_resets = 0
+        if self._world_reset != RESET_SOFT:
+            return None
+        try:
+            return capture_baseline(world)
+        except Exception:  # noqa: BLE001 - the next reset reloads instead
+            logger.warning(
+                "[%s] Reading the world for a soft reset failed: the next "
+                "reset loads the map",
+                scenario_name,
+                exc_info=True,
+            )
+            return None
+
+    def _soft_reset(self, scenario_name: str) -> bool:
+        """Reset the world without loading the map, if it can be done.
+
+        Returns False -- the caller then loads the map -- when there is no
+        baseline, a reload is due (*reload_every*), the server runs another
+        episode than the one the baseline was read in (another client loaded
+        a world), or the soft reset raises or finds anything left over.
         """
+        if self._baseline is None:
+            logger.info(
+                "[%s] No baseline to soft-reset to: loading the map", scenario_name
+            )
+            return False
+        baseline: WorldBaseline = self._baseline
+        if self._reload_every > 0 and self._soft_resets + 1 >= self._reload_every:
+            logger.info(
+                "[%s] Reload due (every %d resets): loading the map",
+                scenario_name,
+                self._reload_every,
+            )
+            return False
+        try:
+            world = self._client.get_world()
+            if not same_episode(episode_of(world), baseline.episode):
+                logger.warning(
+                    "[%s] The CARLA world is not the one the soft reset knows "
+                    "(another client loaded a world on this server): loading "
+                    "the map",
+                    scenario_name,
+                )
+                return False
+            soft_reset_world(self._client, world, baseline, scenario_name)
+            self._world = world
+        except Exception:  # noqa: BLE001 - the map is loaded instead
+            logger.warning(
+                "[%s] The soft reset failed: loading the map",
+                scenario_name,
+                exc_info=True,
+            )
+            return False
+        self._soft_resets += 1
+        return True
+
+    def reset_world(self, scenario_name: str = "") -> None:
+        """Reset the world, so the next scenario starts on a clean one.
+
+        With ``world_reset="reload"`` (the default) the map is loaded again:
+        the one :meth:`load_map_by_name` loaded, when this runner loaded one,
+        and the server's current map otherwise.  With ``world_reset="soft"``
+        the world is put back as it was loaded, without a load, when it can
+        be (:meth:`_soft_reset`), and the map is loaded otherwise.
+        """
+        if self._world_reset == RESET_SOFT and self._soft_reset(scenario_name):
+            return
+        self._reload_world(scenario_name)
+
+    def _reload_world(self, scenario_name: str) -> None:
+        """Load the map again (see :meth:`reset_world`)."""
         # Reload the world to guarantee a completely clean state (all
         # actors, sensors, physics state, settings and weather are reset).
         # This is more reliable than destroying actors individually, which
@@ -1006,8 +1130,11 @@ class ScenarioRunner:
             fresh.tick()
             self._world = fresh
             self._batch_episode = episode_of(fresh)
+            self._baseline = self._capture_baseline(fresh, scenario_name)
             logger.info("[%s] World reloaded and ticked", scenario_name)
         except Exception:
+            # Whatever the world is now, it is not one to soft-reset to.
+            self._baseline = None
             logger.warning(
                 "[%s] Reloading the map failed — world may retain residual state",
                 scenario_name,
@@ -1060,8 +1187,9 @@ class ScenarioRunner:
                 space it was drawn in: recorded in the coverage file with the
                 run's outcome, so that the merged report can assess its
                 flakiness and the next sweep's flaky search learn from it.
-            reset_world: Reload the map at the end, so the next scenario starts
-                on a clean world.  A queue's last scenario has no next one, and
+            reset_world: Reset the world at the end (:meth:`reset_world`: a
+                map reload, or a soft reset), so the next scenario starts on a
+                clean world.  A queue's last scenario has no next one, and
                 whatever runs on the server after it loads its map anyway.
             file_stem: The stem the run's files are named by.  ``None`` (the
                 default) names them by the scenario's class, numbered past the
@@ -1124,8 +1252,9 @@ class ScenarioRunner:
         )
 
         # Enable synchronous mode so we control the simulation tick rate.
-        # Original settings are not saved because the map reload at the
-        # end of this method resets everything to defaults.
+        # Original settings are not saved because the reset at the end of
+        # this method (a map reload, or a soft reset to the settings the map
+        # was loaded with) puts them back.
         settings = world.get_settings()
         settings.synchronous_mode = True
         settings.fixed_delta_seconds = FIXED_DELTA_SECONDS
