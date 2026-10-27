@@ -1468,7 +1468,9 @@ def test_teleport_mode_batches_the_pose_and_sends_a_speed_once(
             backend.tick(world, i * 0.05)
         sent = [c for batch in client.batches for c in batch]
         mine = [m for m in moves if m.actor_id == npc.id]
-        assert len(mine) == ticks and all(m in sent for m in mine)
+        # Not the first tick: on SUMO's road from that step, it is put where
+        # its car is and followed from the next.
+        assert len(mine) == ticks - 1 and all(m in sent for m in mine)
         assert placed == []  # never one RPC of its own
         # Sent again only when it differs from the one the actor has: once
         # for the standstill it ends in, however many ticks that lasts.
@@ -2875,3 +2877,200 @@ def test_an_override_redraws_every_bicycle_sumo_drives(
         backend.close()
     # The next run starts from its config.
     assert backend.bicycle_parameters.decel == Spread(2.0)
+
+
+@needs_sumo
+def test_a_vehicle_parked_under_the_map_joins_sumo_when_it_comes_up(
+    crossroads: Path, tmp_path: Path
+) -> None:
+    """Spawned hidden, an NPC stays out of SUMO -- its speed and route kept
+    for later -- until a spawn brings it up; then SUMO drives it from there."""
+    backend, world, _npc, _ego = _prepared(crossroads, tmp_path)
+    hidden = _FakeActor(_carla_transform(-60.0, 5.25, 0.0), "late")
+    hidden.transform.location.z = -500.0
+    entity = _Entity(hidden, "late")
+    try:
+        backend.adopt(entity)
+        backend._parked[hidden.id] = (hidden, entity)
+        backend.set_desired_speed(entity, world, 18.0)
+        backend.tick(world, 0.0)
+        assert backend._id_of(entity) is None
+        assert backend._waiting_speeds[id(entity)] == pytest.approx(5.0)
+        hidden.transform = _carla_transform(-60.0, 5.25, 0.0)
+        for i in range(60):
+            backend.tick(world, (i + 1) * 0.05)
+        sumo_id = backend._id_of(entity)
+        assert sumo_id is not None and sumo_id in backend._traci.vehicle.getIDList()
+        assert hidden.transform.location.x > -60.0 + 1.0
+        assert backend._traci.vehicle.getSpeed(sumo_id) == pytest.approx(5.0, abs=0.3)
+    finally:
+        backend.close()
+
+
+@needs_sumo
+def test_a_published_vehicle_that_leaves_the_world_leaves_sumo(
+    crossroads: Path, tmp_path: Path
+) -> None:
+    """The ego, published, destroyed (a despawn): out of SUMO, and the run
+    goes on."""
+    backend, world, _npc, ego = _prepared(crossroads, tmp_path)
+    ego_id = next(iter(backend._external))
+    try:
+        backend.tick(world, 0.0)
+        ego.transform.location.z = -500.0
+        backend.tick(world, 0.05)
+        assert ego_id not in backend._external
+        assert ego_id not in backend._traci.vehicle.getIDList()
+        assert ego.id in backend._parked  # back when it comes up
+    finally:
+        backend.close()
+
+
+@needs_sumo
+def test_a_vehicle_stopping_at_its_goal_stands_there(
+    crossroads: Path, tmp_path: Path
+) -> None:
+    """finish_at stops the NPC with its middle at the last point, on the lane
+    of its route there, and it stays standing."""
+    import typesafe_carla.carla as carla
+
+    backend, world, npc, _ego = _prepared(crossroads, tmp_path)
+    sumo_id, entity = next(iter(backend._driven.items()))
+    try:
+        backend.tick(world, 0.0)
+        points = [carla.Location(x, 5.25, 0.0) for x in (-44.0, -42.0, -40.0)]
+        assert backend.finish_at(entity, world, points)
+        for i in range(400):
+            backend.tick(world, (i + 1) * 0.05)
+        assert npc.transform.location.x == pytest.approx(-40.0, abs=1.0)
+        assert backend._traci.vehicle.getSpeed(sumo_id) == pytest.approx(0.0, abs=0.05)
+    finally:
+        backend.close()
+
+
+@needs_sumo
+def test_a_routes_points_are_matched_to_the_lanes_running_their_way(
+    crossroads: Path, tmp_path: Path
+) -> None:
+    """A point between the two carriageways of arm 0 is on the eastbound
+    lanes heading east and on the westbound heading west; a route's edges are
+    kept once each, in order."""
+    backend, _world, _npc, _ego = _prepared(crossroads, tmp_path)
+    try:
+        offset = backend._offset
+        x, y = -60.0 + offset[0], 0.0 + offset[1]
+        east = backend._lane_at(x, y, 0.0, "passenger")
+        west = backend._lane_at(x, y, 180.0, "passenger")
+        assert east is not None and west is not None
+        assert east[0].getEdge().getID() != west[0].getEdge().getID()
+        into = east[0].getEdge()
+        out = next(iter(into.getOutgoing()))
+        joined = backend._join_edges(
+            [into.getID(), into.getID(), out.getID()], "passenger"
+        )
+        assert joined == [into.getID(), out.getID()]
+    finally:
+        backend.close()
+
+
+@needs_sumo
+def test_a_car_sumo_drives_stops_for_what_stands_in_its_way_in_carla(
+    crossroads: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A car standing 6 m ahead of the NPC in CARLA -- one SUMO does not see
+    there -- has it braked, and its SUMO vehicle held back with it; gone, both
+    go on."""
+    import typesafe_carla.carla as carla
+
+    from autoware_carla_scenario.utils import clearance
+
+    controls: list[Any] = []
+
+    def apply_vehicle_control(actor_id: int, control: Any) -> SimpleNamespace:
+        controls.append(control)
+        return SimpleNamespace(actor_id=actor_id, control=control)
+
+    monkeypatch.setattr(carla.command, "ApplyVehicleControl", apply_vehicle_control)
+    client = _BatchClient()
+    _CLIENT["client"] = client
+    try:
+        backend, world, npc, _ego = _prepared(
+            crossroads, tmp_path, vehicle_control="physics"
+        )
+    finally:
+        _CLIENT.clear()
+    npc.get_world = lambda: world  # type: ignore[attr-defined]
+    standing: list[Any] = []
+
+    def in_way(world_: Any, self_id: int, x: float, y: float, *rest: Any) -> Any:
+        if not standing or rest[1] != "vehicle":
+            return None
+        found = clearance.Obstacle(7, standing[0], 5.25, 2.5, 0.0)
+        found.ahead = standing[0] - x
+        return found if 0.0 < found.ahead <= rest[2] + 2.5 else None
+
+    monkeypatch.setattr(clearance, "first_box_in_way", in_way)
+    sumo_id = next(iter(backend._driven))
+    try:
+        for i in range(40):
+            backend.tick(world, i * 0.05)
+        before = backend._traci.vehicle.getSpeed(sumo_id)
+        standing.append(npc.transform.location.x + 6.0)
+        controls.clear()
+        backend.tick(world, 2.0)
+        assert controls[-1].brake > 0.0 and controls[-1].throttle == 0.0
+        assert sumo_id in backend._held_back
+        # SUMO slows it from its next step on.
+        backend.tick(world, 2.05)
+        assert backend._traci.vehicle.getSpeed(sumo_id) < before
+        standing.clear()
+        backend.tick(world, 2.1)
+        assert sumo_id not in backend._held_back
+    finally:
+        backend.close()
+
+
+@needs_sumo
+def test_a_vehicle_stopping_at_its_goal_is_driven_there_in_carla(
+    crossroads: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """finish_at hands the NPC from SUMO to a final approach in CARLA, along
+    the points given (off its lane's middle as they may be), published into
+    SUMO meanwhile; told no more speeds, it is not SUMO's to drive again."""
+    import typesafe_carla.carla as carla
+
+    from autoware_carla_scenario.traffic import final_approach
+
+    stepped: list[float] = []
+
+    class _Approach:
+        def __init__(
+            self,
+            actor: Any,
+            start: Any,
+            points: Any,
+            stop: bool = True,
+            speed: float = 4.0,
+        ) -> None:
+            self.points = points
+            self.length = 4.0
+
+        def step(self, dt: float, elapsed: float) -> None:
+            stepped.append(elapsed)
+
+    monkeypatch.setattr(final_approach, "FinalApproach", _Approach)
+    backend, world, npc, _ego = _prepared(crossroads, tmp_path)
+    sumo_id, entity = next(iter(backend._driven.items()))
+    try:
+        backend.tick(world, 0.0)
+        points = [carla.Location(-76.0, 6.0, 0.0), carla.Location(-74.0, 6.2, 0.0)]
+        assert backend.finish_at(entity, world, points)
+        assert sumo_id not in backend._driven
+        assert backend._external[sumo_id] is npc
+        backend.set_desired_speed(entity, world, 0.0)  # said nothing of it
+        backend.tick(world, 0.05)
+        backend.tick(world, 0.1)
+        assert stepped == [0.05, 0.1]
+        assert sumo_id in backend._traci.vehicle.getIDList()
+    finally:
+        backend.close()
